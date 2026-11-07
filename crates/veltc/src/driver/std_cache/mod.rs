@@ -1,6 +1,7 @@
-//! The std cache (`VELT_STD_OBJECT=1`, release builds; #1728 step 3): std's functions compiled
-//! once per variant, stored in the build cache, and linked into every program that compiles the
-//! same code (design/std-object.md "The std cache").
+//! The std cache (#1728 step 3): std's functions compiled once per variant, stored in the build
+//! cache, and linked into every program that compiles the same code (design/std-object.md "The
+//! std cache"). Release builds use it behind `VELT_STD_OBJECT=1`, through [`split`] and [`link`];
+//! debug builds by default, through [`serve::serve`], where a miss stays in the program.
 //!
 //! - Std's code is std's own and what std's generators wrote for the program (`select::is_std`).
 //! - After lowering, every std function that may be served (`select`) gets a key (`key`): its
@@ -22,6 +23,7 @@
 mod compile;
 mod key;
 mod select;
+pub(super) mod serve;
 mod statics;
 
 use std::collections::HashSet;
@@ -48,17 +50,42 @@ fn min_misses() -> usize {
         .unwrap_or(MIN_MISSES)
 }
 
-/// Whether the std cache is on: `VELT_STD_OBJECT=1`, for release executables built by LLVM
-/// without debug info. An object, VIR or LLVM IR (`--emit`) would name std functions it does not
-/// define; the cached objects carry no line info; and the cache holds LLVM's code.
-pub(super) fn wanted(opts: &BuildOptions) -> bool {
-    let llvm = crate::backend::Backend::resolve(opts.backend, opts.release).0
-        == crate::backend::Backend::Llvm;
-    opts.release
-        && opts.emit == super::Emit::Exe
-        && !opts.debug_info
-        && llvm
-        && std::env::var("VELT_STD_OBJECT").is_ok_and(|v| v == "1")
+/// How a build uses the std cache.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Use {
+    Off,
+    /// [`split`] and [`link`].
+    Release,
+    /// [`serve::serve`].
+    Debug,
+}
+
+/// How `opts` uses the std cache. Only executables do: an object, VIR or LLVM IR (`--emit`) would
+/// name std functions it does not define, and `--report numbers` reads their code. Nor does a
+/// `--host` build, whose directory holds what the build writes and nothing else
+/// (`commands::host`).
+///
+/// Release builds: `VELT_STD_OBJECT=1`, by LLVM without debug info (the cached objects carry no
+/// line info, and the cache holds LLVM's code). Debug builds: unless `VELT_STD_OBJECT=0`, with
+/// either backend and with `-g`: stepping stays in the program's own code, as the objects have no
+/// lines to step through. WebAssembly has no objects to find: its programs compile everything.
+pub(super) fn wanted(opts: &BuildOptions) -> Use {
+    if opts.emit != super::Emit::Exe || opts.report_numbers || opts.host.is_some() {
+        return Use::Off;
+    }
+    let setting = std::env::var("VELT_STD_OBJECT");
+    if opts.release {
+        let llvm = crate::backend::Backend::resolve(opts.backend, opts.release).0
+            == crate::backend::Backend::Llvm;
+        return match !opts.debug_info && llvm && setting.is_ok_and(|v| v == "1") {
+            true => Use::Release,
+            false => Use::Off,
+        };
+    }
+    match setting.is_ok_and(|v| v == "0") || velt_codegen_llvm::is_wasm(&opts.target()) {
+        true => Use::Off,
+        false => Use::Debug,
+    }
 }
 
 /// `VELT_STD_OBJECT_STATS`: say what the std cache did, and why std code stayed in the program.
@@ -95,6 +122,42 @@ pub(crate) struct Place {
 }
 
 impl Place {
+    /// `<dir>.lock`: beside the directory, since the directory itself comes and goes.
+    fn lock_path(&self) -> PathBuf {
+        let mut path = self.dir.clone().into_os_string();
+        path.push(".lock");
+        PathBuf::from(path)
+    }
+
+    /// Whether a build has got as far as taking this output's turn.
+    pub fn lock_exists(&self) -> bool {
+        self.lock_path().is_file()
+    }
+
+    /// Take this output's turn, held until the file is dropped: builds of one output at once
+    /// would remove the objects another is linking. `None` where no lock can be had (a file
+    /// system without them), and the build goes on as it would alone.
+    pub fn lock(&self) -> Option<std::fs::File> {
+        let path = self.lock_path();
+        std::fs::create_dir_all(path.parent()?).ok()?;
+        let file = (std::fs::File::options().create(true).truncate(false))
+            .write(true)
+            .open(&path)
+            .ok()?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                eprintln!(
+                    "velt: waiting for another build of this output (`{}`)",
+                    path.display()
+                );
+                file.lock().ok()?;
+            }
+            Err(_) => return None,
+        }
+        Some(file)
+    }
+
     /// Remove what an earlier build put there.
     pub fn clear(&self) {
         let _ = std::fs::remove_dir_all(&self.dir);
@@ -141,10 +204,10 @@ pub(super) fn split(
     if stats() {
         eprintln!(
             "velt: std cache: std statements by reason: {:?}",
-            select::reasons(program, &names)
+            select::reasons(program, &names, select::Rule::Release)
         );
     }
-    let candidates = select::candidates(program, &names);
+    let candidates = select::candidates(program, &names, select::Rule::Release);
     if candidates.is_empty() {
         return plan;
     }
@@ -305,7 +368,7 @@ fn take_out(program: &mut vir::Program, linked: &[usize]) {
             if f.linkage == Linkage::Internal {
                 f.linkage = Linkage::Export;
             }
-            if select::small(f) {
+            if select::inlines(f) {
                 pending.push(c);
             }
         }

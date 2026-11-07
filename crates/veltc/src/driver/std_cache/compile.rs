@@ -103,6 +103,8 @@ pub(super) fn program_of(program: &vir::Program, i: usize, names: &Names) -> vir
     for &j in &order {
         let mut f = program.funcs[j].clone();
         f.locs.clear();
+        // No line info, so no variables: this program has no files or types for them.
+        f.locals.iter_mut().for_each(|l| l.debug = None);
         f.linkage = if j == i {
             Linkage::Export
         } else {

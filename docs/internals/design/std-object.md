@@ -87,12 +87,59 @@ functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds
   reads them through hard links (or copies) named like object files, `<program>.std/<n>.o`, so
   MSVC's linker, which reads a name without an extension as `<name>.obj`, takes them too, and a
   build keeps linking what it was built with whatever the cache's garbage collection does.
+  Builds of one output take turns on `<program>.std.lock`, through the link: each replaces that
+  directory, and the linker reads it. Once the lock exists a build takes it before the stamp,
+  which names those objects; a first build takes it when it comes to placing them, so a program
+  that doesn't compile leaves none. A build that has to wait says so. A `--host` build uses no
+  objects and takes no lock, as its directory is deployed and holds only what it writes.
 
 The cache serves release executables built by LLVM without debug info (`-g`): an object or
 IR from `--emit` would name std functions it does not define, and the cached objects carry no
 line info. The key also covers clang's optimization flag and, for every function a cached
 object calls without compiling it, the signature and parameter attributes it is declared with,
 which are whole-program facts the caller is optimized against.
+
+### Debug builds
+
+Debug builds read the cache by default. A std port has to run within 3% of the Rust it replaces,
+in debug too, and no route through Cranelift gets there (measurements on #2460): the Rust was
+compiled optimized, once, and so is what the cache holds. A debug build
+(`std_cache/serve.rs`):
+
+- links what it finds. A miss stays in the program and Cranelift compiles it with the rest, so a
+  build costs the same or less, and a program's run cost depends on what the cache holds only
+  where nothing has stored the function yet. A debug build never starts clang, which may not be
+  installed.
+- stores nothing. `velt cache warm` stores objects (its builds set `VELT_STD_OBJECT_FILL`, and
+  clang has to be there). Prebuilt objects in the toolchain come next (below), as .NET's
+  ReadyToRun images do: the install has them, and code without one is compiled.
+- serves more than a release build does. A debug build inlines only the helpers
+  `velt_opt::debug_inlined` names, which stay in the program, so small functions and those marked
+  `inline()` are linked as well; and it specializes no closures, so functions that call through a
+  pointer are too. In every build, a function compiled alone inlines what is small or marked
+  `inline()`, which is therefore in its key.
+- leaves in the program what shows a place in its own files: a caller-tracking instance per call
+  site (`m.set(...)` in `app.velt`), and what would inline one. The location is in the object's
+  key, an absolute path, so no other program could link it, whereas Cranelift's key leaves data out
+  and shares the instance's code. So `velt cache warm` stores it in Cranelift's cache, and a
+  project's first build finds it there. An instance for a call in std has one key everywhere and
+  is served.
+- keys objects without naming clang, and always for the target's default CPU. So `velt run` and
+  `velt test`, which build for `native`, link the same objects as `velt build`. A program for a
+  CPU lacking what the default requires links none.
+- places each object before the function comes out of the program, so an object that has gone
+  from the cache is one more miss, and the program needs no copy to fall back on.
+- shares the program's thread-local values with the objects: Cranelift's `velt_tls_data_<id>` are
+  `hidden`, as LLVM's are. Where Cranelift keeps them on thread keys instead (arm64 Windows), code
+  reaching one stays in the program.
+- on Windows, links through a response file once the objects' paths won't fit a command line.
+- works out what the program reaches outside itself (`outside::reaches`) before the functions
+  become declarations, which hide it. A generator host, and the `velt dev` JIT host, which has no
+  link, stay whole.
+- With `-g`, a debugger steps over std as it steps over the runtime: the objects have no lines.
+  A stack trace names the functions it finds, with their symbols; a helper inlined into an object
+  has no frame of its own, as in a release build. `Error.stack` has no frames (its first line
+  only). `VELT_STD_OBJECT=0` compiles all of std in the program, for debugging std itself.
 
 What the cache does not serve, and why (`VELT_STD_OBJECT_STATS=1` prints the std statements of
 a build by reason):
@@ -120,7 +167,7 @@ a build by reason):
 |---|---|---|
 | Generic (`function f<T>`, methods of generic classes) | Program, one instance per type, as today | Instances depend on the program's types |
 | Caller-tracking (`track_caller.rs`: small ones get an instance per call site, larger ones take the caller's location as a parameter) | Program | An instance per call site is the point of the small ones |
-| Marked as a fast path (`inline()`, below) | Program | Callers must be able to inline it, such as the integer path of number printing |
+| Marked as a fast path (`inline()`, below) | Program (a debug build, which does not inline it: object) | Callers must be able to inline it, such as the integer path of number printing |
 | Optimized cost ≤ `SMALL_COST` (40, `inline/mod.rs`) | Both: the object has it, the program keeps its body to inline it | Inlining a small function usually shrinks the caller |
 | Every other non-generic function | Object | The cost this note removes |
 | One whose VIR in this program differs from the object's (next section) | Program, as today | The object's code would be wrong for this program |
@@ -424,7 +471,7 @@ build the object.
 | Build | Std code |
 |---|---|
 | `velt build --release` (LLVM or Cranelift) | Object |
-| `velt build` / `velt run` (debug, Cranelift) | Object, so std is optimized. Debug builds link the shared runtime (`link.rs`); the object's runtime calls resolve against it as the program's do |
+| `velt build` / `velt run` (debug, Cranelift) | Object where the cache has it, so std is optimized; else the program ("Debug builds" above). Debug builds link the shared runtime (`link.rs`); the object's runtime calls resolve against it as the program's do |
 | `--backend llvm` debug | Object |
 | `velt dev` with the JIT host | In the program, as today (first version). The host JIT-compiles in memory and resolves symbols from a table (`velt_codegen_cl/src/dev/version.rs`); it cannot load an object file. Later the host can compile the std part once when it starts and keep it across reloads (hot-reload.md, "keep parsed and type-checked std") |
 | `velt dev` restarting a built program | Object |

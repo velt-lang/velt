@@ -5,7 +5,9 @@
 //! instances. Each is built in debug, as an executable (what `velt build`, `velt run` and `velt
 //! test` build: an object alone compiles some code differently), for this machine's CPU (what `velt run` and `velt test` build for) and for the
 //! target's default CPU (what `velt build` builds for). The build cache then holds std's
-//! functions, so a project's first build compiles little more than its own code. A marker per
+//! functions, so a project's first build compiles little more than its own code; with clang, as
+//! objects optimized by LLVM (`VELT_STD_OBJECT_FILL`, `std_cache::serve`), so its debug builds
+//! run them too. A marker per
 //! toolchain (`<cache>/warm/<key>`) makes later runs return at once; the toolchain installers
 //! start `velt cache warm --background` after installing a version, except in CI (`$CI` set),
 //! whose cache goes with the runner, and when `$VELT_CACHE_WARM` is `off`.
@@ -28,7 +30,8 @@ pub fn warm_command(background: bool) -> Result<(), String> {
     let Some(dir) = warm_dir() else {
         return Err("no warm-up programs: this velt has no share/velt/warm/".into());
     };
-    let marker = root.join("warm").join(toolchain_key().hex());
+    let clang = velt_codegen_llvm::find_clang().is_some();
+    let marker = root.join("warm").join(marker_name(&toolchain_key(), clang));
     if marker.is_file() {
         eprintln!("velt: the build cache is warm for this velt already");
         return Ok(());
@@ -97,6 +100,7 @@ fn compile(program: &Path, cpu: Option<&str>, out: &Path) -> bool {
         .arg("-o")
         .arg(out.join(if cfg!(windows) { "warm.exe" } else { "warm" }))
         .env("VELT_BUILD_STAMP", "off")
+        .env("VELT_STD_OBJECT_FILL", "1")
         .env_remove(super::cpu::CPU_VAR)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -153,6 +157,15 @@ fn detach(_: &mut Command) {}
 /// development velt is another toolchain).
 fn toolchain_key() -> velt_build_cache::Key {
     crate::build_cache::compiler_identity()
+}
+
+/// The marker of a warm-up by this toolchain. One with clang stores objects, which one without
+/// has not: clang installed later is work left to do.
+fn marker_name(toolchain: &velt_build_cache::Key, clang: bool) -> String {
+    match clang {
+        true => format!("{}-objects", toolchain.hex()),
+        false => toolchain.hex(),
+    }
 }
 
 /// The warm-up programs: the `.velt` files of `dir` by name, then those `programs.txt` there lists
@@ -225,6 +238,12 @@ mod tests {
                 warm.join("../g/c.velt")
             ]
         );
+    }
+
+    #[test]
+    fn a_warm_up_without_clang_does_not_count_for_one_with_it() {
+        let key = velt_build_cache::Key([1; 32]);
+        assert_ne!(marker_name(&key, true), marker_name(&key, false));
     }
 
     /// The checkout's list names programs that exist (a golden renamed or removed would make

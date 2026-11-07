@@ -1,5 +1,6 @@
-//! The std cache (`VELT_STD_OBJECT=1`, release builds; #1728): std functions compiled once per
-//! key, stored in the build cache, linked into every program that compiles the same code.
+//! The std cache (#1728): std functions compiled once per key, stored in the build cache, linked
+//! into every program that compiles the same code: release builds with `VELT_STD_OBJECT=1`, debug
+//! builds by default, where only `velt cache warm` stores objects.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -393,3 +394,374 @@ async function main() {
   console.log(text.length > 0);
 }
 ";
+
+/// `velt <args>` (a `velt dev`) with the cache on prints the program's first line.
+fn assert_first_line_of_dev(dir: &Path, cache: &Path, args: &[&str]) {
+    use std::io::BufRead;
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let mut dev = (cmd.args(args))
+        .current_dir(dir)
+        .env("VELT_STD_OBJECT", "1")
+        .env("VELT_BUILD_CACHE", cache)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let out = dev.stdout.take().unwrap();
+    let (sent, first) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sent.send(std::io::BufReader::new(out).lines().next());
+    });
+    // timing: `velt dev` runs until stopped, and a host that can't start prints nothing and waits
+    // for an edit, so only a time limit ends this when it is broken.
+    let first = first.recv_timeout(std::time::Duration::from_secs(600));
+    let _ = dev.kill();
+    let _ = dev.wait();
+    let first = first
+        .expect("the JIT host printed nothing")
+        .unwrap()
+        .unwrap();
+    assert_eq!(first, OUTPUT.lines().next().unwrap());
+}
+
+/// The command of a debug build of `file` to `out`, with its objects in `cache`, without a build
+/// stamp.
+fn debug_command(dir: &Path, file: &str, out: &str, cache: &Path) -> std::process::Command {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    cmd.args(["build", file, "-o", out])
+        .current_dir(dir)
+        .env("VELT_STD_OBJECT_STATS", "1")
+        .env("VELT_BUILD_CACHE", cache)
+        .env("VELT_BUILD_STAMP", "off")
+        .env_remove("VELT_STD_OBJECT")
+        .env_remove("VELT_RT_LINK");
+    cmd
+}
+
+/// A debug build of `file` to `out`, with its objects in `cache`, without a build stamp.
+fn debug_build(dir: &Path, file: &str, out: &str, cache: &Path, extra: &[(&str, &str)]) -> Output {
+    let mut cmd = debug_command(dir, file, out, cache);
+    for (k, v) in extra {
+        cmd.env(k, v);
+    }
+    let o = cmd.output().unwrap();
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    o
+}
+
+/// Store what a debug build of `file` can link in `cache`, as `velt cache warm` does.
+fn fill(dir: &Path, file: &str, cache: &Path) -> usize {
+    let filled = debug_build(dir, file, "fill", cache, &[("VELT_STD_OBJECT_FILL", "1")]);
+    let (_, compiled) = counts(&filled);
+    assert!(compiled > 0, "{}", text(&filled.stderr));
+    compiled
+}
+
+/// Without objects in the cache, a debug build compiles all of std itself; it never stores any;
+/// and once there are some it links them, and prints the same.
+#[test]
+fn a_debug_build_links_what_is_stored_and_compiles_the_rest() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    let cold = debug_build(dir, "a.velt", "cold", &cache, &[]);
+    assert!(
+        !text(&cold.stderr).contains("found,"),
+        "nothing to look for"
+    );
+    assert!(entries(&cache).is_empty(), "a debug build stores nothing");
+    assert_eq!(run(dir, "cold"), OUTPUT);
+    let compiled = fill(dir, "a.velt", &cache);
+    assert_eq!(entries(&cache).len(), compiled);
+    let warm = debug_build(dir, "a.velt", "warm", &cache, &[]);
+    assert_eq!(counts(&warm), (compiled, 0), "{}", text(&warm.stderr));
+    assert_eq!(run(dir, "warm"), OUTPUT);
+    let off = debug_build(dir, "a.velt", "off", &cache, &[("VELT_STD_OBJECT", "0")]);
+    assert!(!text(&off.stderr).contains("found,"), "the escape hatch");
+    assert_eq!(run(dir, "off"), OUTPUT);
+}
+
+/// `-g` links the objects too: a debugger steps over them, and names their frames. The objects are
+/// the same whether the program describes its variables or not.
+#[test]
+fn a_debug_build_with_debug_info_links_the_same_objects() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    let compiled = fill(dir, "a.velt", &cache);
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let o = (cmd.args(["build", "a.velt", "-g", "-o", "g"]))
+        .current_dir(dir)
+        .env("VELT_STD_OBJECT_STATS", "1")
+        .env("VELT_BUILD_CACHE", &cache)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    assert_eq!(counts(&o), (compiled, 0), "{}", text(&o.stderr));
+    assert_eq!(run(dir, "g"), OUTPUT);
+}
+
+/// A program whose objects are only partly there: what is missing stays in the program and what
+/// the objects call is found there, with no clang started, in a build whose clang is gone.
+#[cfg(unix)]
+#[test]
+fn a_miss_stays_in_the_program_and_a_debug_build_never_starts_clang() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    let compiled = fill(dir, "a.velt", &cache);
+    let mut stored = entries(&cache);
+    stored.sort();
+    for e in stored.iter().step_by(2) {
+        std::fs::write(e, b"damaged").unwrap();
+    }
+    let clang = dir.join("clang-that-tells");
+    let started = dir.join("clang-started");
+    let script = format!("#!/bin/sh\ntouch {}\nexit 1\n", started.display());
+    std::fs::write(&clang, script).unwrap();
+    std::fs::set_permissions(&clang, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let partly = debug_build(
+        dir,
+        "a.velt",
+        "partly",
+        &cache,
+        &[("VELT_CLANG", clang.to_str().unwrap())],
+    );
+    let (found, none) = counts(&partly);
+    assert_eq!(none, 0, "{}", text(&partly.stderr));
+    assert!(found > 0 && found < compiled, "{}", text(&partly.stderr));
+    assert_eq!(run(dir, "partly"), OUTPUT);
+    assert!(!started.exists(), "a debug build started clang");
+}
+
+/// Objects are for the target's default CPU: a program for this machine's CPU links them (`velt
+/// run`), and one for less than the default doesn't.
+#[test]
+fn a_debug_build_links_objects_only_when_its_cpu_can_run_them() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    let compiled = fill(dir, "a.velt", &cache);
+    let native = debug_build(dir, "a.velt", "n", &cache, &[("VELT_CPU", "native")]);
+    assert_eq!(counts(&native), (compiled, 0), "{}", text(&native.stderr));
+    assert_eq!(run(dir, "n"), OUTPUT);
+    // Only x86-64's default requires anything a lesser CPU may lack.
+    if cfg!(target_arch = "x86_64") {
+        let required = velt_codegen_cl::required_features(&velt_codegen_cl::host_triple(), None);
+        if required.is_ok_and(|r| r != 0) {
+            let lesser = debug_build(dir, "a.velt", "l", &cache, &[("VELT_CPU", "x86-64")]);
+            assert!(!text(&lesser.stderr).contains("found,"));
+        }
+    }
+}
+
+/// Builds of one output at once, against a cache holding its objects. Each removes the objects of
+/// the build before and places its own, so without turns one removes what another is linking.
+#[test]
+fn builds_of_one_output_take_turns() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    fill(dir, "a.velt", &cache);
+    for _ in 0..5 {
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| debug_build(dir, "a.velt", "same", &cache, &[]));
+            }
+        });
+        assert_eq!(run(dir, "same"), OUTPUT);
+    }
+}
+
+/// A build that finds its output taken says what it waits for, and goes on when it is free.
+#[test]
+fn a_build_says_what_it_waits_for() {
+    use std::io::BufRead;
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    let lock = std::fs::File::create(dir.join("taken.std.lock")).unwrap();
+    lock.lock().unwrap();
+    let mut child = debug_command(dir, "a.velt", "taken", &cache)
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = std::io::BufReader::new(child.stderr.take().unwrap());
+    let mut lines = stderr.lines().map_while(Result::ok);
+    let line = (lines.by_ref()).find(|l| l.contains("waiting for another build"));
+    assert!(line.is_some_and(|l| l.contains("taken.std.lock")));
+    drop(lock);
+    lines.for_each(drop);
+    assert!(child.wait().unwrap().success());
+    assert_eq!(run(dir, "taken"), OUTPUT);
+}
+
+/// A program that doesn't compile leaves no lock beside the output it never had.
+#[test]
+fn a_failed_compile_takes_no_turn() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), "function main() {\n  nope();\n}\n").unwrap();
+    let o = debug_command(dir, "a.velt", "bad", &cache)
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    assert!(!dir.join("bad.std.lock").exists());
+}
+
+/// What a served function does is what the compiled one does: its output, its panics and where
+/// they say they are, its exit code; integer overflow, bounds and throws, from std's code.
+#[test]
+fn served_functions_fail_the_way_compiled_ones_do() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let programs = [
+        // A throw out of std's URL parser, uncaught.
+        "function main() {\n  console.log(new URL(\"https://a.example/x\").href);\n  new URL(\"not a url\");\n}\n",
+        // A panic in std on an out-of-range argument.
+        "function main() {\n  const u = new URL(\"https://a.example/x\");\n  console.log(u.href);\n  console.log(\"ab\".repeat(-1));\n}\n",
+        // Bounds and overflow in the program's code, with std's on the stack before.
+        "function main() {\n  const u = new URL(\"https://a.example/x\");\n  const xs: i32[] = [2147483647];\n  console.log(u.href.length);\n  const y: i32 = xs[0] + (u.href.length as i32);\n  console.log(y, xs[process.argv.length + 5]);\n}\n",
+    ];
+    for (n, program) in programs.iter().enumerate() {
+        let file = format!("p{n}.velt");
+        std::fs::write(dir.join(&file), program).unwrap();
+        // Not `fill`: what the programs before stored may be all this one needs.
+        debug_build(dir, &file, "fill", &cache, &[("VELT_STD_OBJECT_FILL", "1")]);
+        let run_all = |out: &str| {
+            let exe = dir
+                .join(out)
+                .with_extension(std::env::consts::EXE_EXTENSION);
+            let o = crate::no_window::command(&exe).output().unwrap();
+            (o.status.code(), text(&o.stdout), text(&o.stderr))
+        };
+        let served = debug_build(dir, &file, "served", &cache, &[]);
+        assert!(counts(&served).0 > 0, "{}", text(&served.stderr));
+        let compiled = debug_build(dir, &file, "compiled", &cache, &[("VELT_STD_OBJECT", "0")]);
+        assert!(!text(&compiled.stderr).contains("found,"));
+        let (a, b) = (run_all("served"), run_all("compiled"));
+        assert_ne!(a.0, Some(0), "program {n} is to fail: {a:?}");
+        assert_eq!(a, b, "program {n}");
+    }
+}
+
+/// std's thread-local values are one value each between the objects and what Cranelift compiled:
+/// epoch reclamation (`ConcurrentMap`) with half its functions served.
+#[test]
+fn a_thread_local_is_shared_between_objects_and_the_program() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
+    let source = golden.join("concurrent_map.velt");
+    std::fs::copy(source, dir.join("a.velt")).unwrap();
+    let expected = std::fs::read_to_string(golden.join("concurrent_map.out")).unwrap();
+    let compiled = fill(dir, "a.velt", &cache);
+    assert_eq!(run(dir, "fill"), expected);
+    let mut stored = entries(&cache);
+    stored.sort();
+    for e in stored.iter().step_by(2) {
+        std::fs::write(e, b"damaged").unwrap();
+    }
+    let partly = debug_build(dir, "a.velt", "partly", &cache, &[]);
+    assert!(counts(&partly).0 < compiled, "{}", text(&partly.stderr));
+    assert_eq!(run(dir, "partly"), expected);
+}
+
+/// `velt cache warm` is what stores objects for debug builds; a build of the same program then
+/// compiles none of them.
+#[test]
+fn the_warm_up_stores_what_debug_builds_link() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let share = dir.join("share");
+    std::fs::create_dir_all(share.join("warm")).unwrap();
+    std::fs::write(share.join("warm/a.velt"), PROGRAM).unwrap();
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let warm = (cmd.args(["cache", "warm"]))
+        .current_dir(dir)
+        .env("VELT_BUILD_CACHE", &cache)
+        .env("VELT_SHARE", &share)
+        .output()
+        .unwrap();
+    assert!(warm.status.success(), "{}", text(&warm.stderr));
+    assert!(!entries(&cache).is_empty(), "{}", text(&warm.stderr));
+    let built = debug_build(dir, "a.velt", "a", &cache, &[]);
+    let (found, compiled) = counts(&built);
+    assert!(found > 0 && compiled == 0, "{}", text(&built.stderr));
+    assert_eq!(run(dir, "a"), OUTPUT);
+}
+
+/// The same in a debug build, which is one by default.
+#[test]
+fn what_a_served_function_reaches_counts_as_reached_in_a_debug_build() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), READS_A_FILE).unwrap();
+    assert!(fill(dir, "a.velt", &cache) > 0);
+    let served = outside_line(dir, "served", &cache, &[], &[]);
+    assert!(served.contains("the file system"), "{served}");
+    let off = [("VELT_STD_OBJECT", "0")];
+    assert_eq!(served, outside_line(dir, "compiled", &cache, &[], &off));
+}
+
+/// The JIT host has no link, so `velt dev` compiles std itself, whatever the cache holds.
+#[test]
+fn the_jit_host_never_uses_the_std_cache() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    fill(dir, "a.velt", &cache);
+    assert_first_line_of_dev(dir, &cache, &["dev", "a.velt"]);
+}
+
+/// A generator must reach nothing outside its request, and that is read from the host's code: a
+/// host never takes std's functions from the cache, where what they reach would hide behind
+/// declarations. The fill setting would store and link them all, had the host used the cache.
+#[test]
+fn a_generator_host_stays_whole() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let generator = "import { InstanceRequest, Output } from \"velt/generate\";
+import { readFileSync } from \"velt/fs\";
+export function sized(req: InstanceRequest, out: Output): void {
+  out.line(`return ${out.literal(readFileSync(\"gen.velt\").length.toString())};`);
+}
+";
+    std::fs::write(dir.join("gen.velt"), generator).unwrap();
+    let program = "declare generated(\"./gen\") function sized<T>(): string;
+class User {}
+function main() {
+  console.log(sized<User>());
+}
+";
+    std::fs::write(dir.join("a.velt"), program).unwrap();
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let o = (cmd.args(["build", "a.velt", "-o", "a"]))
+        .current_dir(dir)
+        .env("VELT_BUILD_CACHE", &cache)
+        .env("VELT_STD_OBJECT_FILL", "1")
+        .env_remove("VELT_STD_OBJECT")
+        .output()
+        .unwrap();
+    let err = text(&o.stderr);
+    assert!(!o.status.success(), "built: {err}");
+    assert!(err.contains("cannot reach the file system"), "{err}");
+}

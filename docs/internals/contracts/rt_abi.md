@@ -581,7 +581,7 @@ symbol's meaning and VIR signature (`TlsCall`), and each backend implements them
 | Backend and target | Storage | A call |
 |---|---|---|
 | LLVM (every target) | `@velt_tls_data_<id> = hidden thread_local(initialexec) global iN init`, defined by the unit that defines `velt_main` and declared by the others | a load or store through `llvm.threadlocal.address` |
-| Cranelift on ELF, Mach-O, x86-64 COFF | a thread-local data object `velt_tls_data_<id>` (`tls_model` `elf_gd`, `macho`, `coff`) | a load or store through `tls_value` |
+| Cranelift on ELF, Mach-O, x86-64 COFF | a `hidden` thread-local data object `velt_tls_data_<id>` (`tls_model` `elf_gd`, `macho`, `coff`), which LLVM-built objects of the std cache use too | a load or store through `tls_value` |
 | Cranelift JIT (`velt dev`), arm64 COFF | an operating system thread key, made the first time it is used, in `velt_tls_key_<id>` (the key plus one): defined by the object, or, in `velt dev`, a slot the session owns and every version imports, so all versions use one key | a call of the extern, which the module defines on `pthread_getspecific`/`pthread_setspecific` (`TlsGetValue`/`TlsSetValue` on Windows); the key holds the word XOR `init`, so a thread that never set it reads `init`. A failed key creation traps rather than use another key |
 
 LLVM strips thread-local globals to plain ones for single-threaded WebAssembly.

@@ -51,11 +51,11 @@ fn names(p: &Program) -> Names {
 }
 
 fn cands(p: &Program) -> Vec<usize> {
-    candidates(p, &names(p))
+    candidates(p, &names(p), Rule::Release)
 }
 
 fn reasons_of(p: &Program) -> BTreeMap<&'static str, usize> {
-    reasons(p, &names(p))
+    reasons(p, &names(p), Rule::Release)
 }
 
 fn program(funcs: Vec<Function>, statics: Vec<StaticData>) -> Program {
@@ -170,4 +170,171 @@ fn callback_callers_stay_in_the_program() {
     let p = program(vec![f], vec![]);
     assert!(cands(&p).is_empty());
     assert!(reasons_of(&p).contains_key("callbacks"));
+}
+
+/// `inline()` makes a function of any size part of what its callers' objects inline, and in a
+/// release build keeps it in the program, as a small one is.
+#[test]
+fn a_function_marked_inline_counts_as_small_whatever_its_size() {
+    let mut marked = func("marked", 200, &[], None);
+    marked.inline = Inline::Always;
+    let caller = func("caller", 60, &[1], None);
+    let plain = func("plain", 200, &[], None);
+    let caller_of_plain = func("caller_of_plain", 60, &[2], None);
+    let p = program(vec![caller, marked, plain, caller_of_plain], vec![]);
+    assert_eq!(inlinable(&p, 0), [0, 1], "followed");
+    assert_eq!(inlinable(&p, 3), [3], "a large unmarked function is not");
+    assert_eq!(declared(&p, &inlinable(&p, 3)), [2]);
+    assert_eq!(cands(&p), [0, 2, 3], "stays where callers can inline it");
+}
+
+/// A debug build inlines only its helpers, so it serves small and marked functions too.
+#[test]
+fn a_debug_build_serves_small_functions_but_not_what_it_inlines() {
+    let small = func("small", 3, &[], None);
+    let helper = func("helper", 3, &[], None);
+    let mut marked = func("marked", 3, &[], None);
+    marked.inline = Inline::Always;
+    let p = program(vec![small, helper, marked], vec![]);
+    let helpers = [false, true, false];
+    let rule = Rule::Debug {
+        helpers: &helpers,
+        thread_data: true,
+        user_sites: &[],
+    };
+    assert_eq!(candidates(&p, &names(&p), rule), [0, 2]);
+    assert_eq!(cands(&p), Vec::<usize>::new(), "release keeps all three");
+}
+
+/// Where a program's thread-local values are on thread keys, an object has no way to reach them:
+/// what reads one stays in the program, and so does what would inline that.
+#[test]
+fn code_reaching_a_thread_local_stays_where_it_has_no_data_to_share() {
+    let symbol = velt_vir::tls::TlsCall::Get {
+        id: 1,
+        bits: 64,
+        init: 0,
+    }
+    .symbol();
+    let mut reader = func("reader", 3, &[], None);
+    reader.blocks.insert(
+        0,
+        BasicBlock {
+            stmts: vec![],
+            term: Terminator::Call {
+                callee: Callee::Extern(vir::ExternId(0)),
+                args: vec![],
+                dest: Some(Place::local(Local(0))),
+                next: vir::BlockId(1),
+            },
+        },
+    );
+    let caller = func("caller", 3, &[0], None);
+    let other = func("other", 3, &[], None);
+    let mut p = program(vec![reader, caller, other], vec![]);
+    p.externs.push(vir::ExternFn {
+        symbol,
+        params: vec![],
+        ret: Ty::I64,
+        noreturn: false,
+        host: None,
+        c_decl: None,
+    });
+    let helpers = [false; 3];
+    let rule = |thread_data| Rule::Debug {
+        helpers: &helpers,
+        thread_data,
+        user_sites: &[],
+    };
+    assert_eq!(candidates(&p, &names(&p), rule(true)), [0, 1, 2]);
+    assert_eq!(candidates(&p, &names(&p), rule(false)), [2]);
+}
+
+/// A string's header static, pointing at its text as a location's does.
+fn header(text: u32) -> StaticData {
+    StaticData {
+        bytes: vec![0; 8],
+        align: 8,
+        relocs: vec![(0, Const::Static(StaticId(text)))],
+        ..Default::default()
+    }
+}
+
+fn text(s: &str) -> StaticData {
+    StaticData {
+        bytes: s.as_bytes().to_vec(),
+        align: 1,
+        ..Default::default()
+    }
+}
+
+/// A caller-tracking instance of a call in the program's own file holds that path: no other
+/// program has its key. It stays for Cranelift, whose code any program shares, and so does what
+/// would inline it. One for a call in std, or in code a std generator wrote, has the same key in
+/// every program. `Program::files` stays empty, as in a build without line information.
+#[test]
+fn code_showing_a_place_in_the_program_stays_in_the_program() {
+    let site = func("set_at_user_call", 3, &[], addr(1));
+    let caller = func("constructor_at_user_call", SMALL, &[0], None);
+    let in_std = func("set_at_std_call", 3, &[], addr(3));
+    let generated = func("set_at_generated_call", 3, &[], addr(5));
+    let plain = func("other", 3, &[], None);
+    let on_windows = func("set_at_windows_call", 3, &[], addr(7));
+    let p = program(
+        vec![site, caller, in_std, generated, plain, on_windows],
+        vec![
+            text(" at /home/me/app.velt:3:3"),
+            header(0),
+            text(" at std/prelude/map.velt:117:24"),
+            header(2),
+            text(" at <generated>/std/json/reader.velt:1:2"),
+            header(4),
+            text(" at C:/Users/me/app.velt:3:3"),
+            header(6),
+        ],
+    );
+    assert!(p.files.is_empty());
+    let helpers = [false; 6];
+    let sites = user_sites(&p);
+    assert_eq!(
+        sites,
+        [true, false, false, false, false, false, true, false]
+    );
+    let rule = Rule::Debug {
+        helpers: &helpers,
+        thread_data: true,
+        user_sites: &sites,
+    };
+    assert_eq!(candidates(&p, &names(&p), rule), [2, 3, 4]);
+}
+
+/// Only a text of the form a location has names a file, whatever colons its path holds.
+#[test]
+fn a_location_is_a_path_a_line_and_a_column() {
+    fn path(text: &str) -> Option<&str> {
+        site_path(text.as_bytes())
+    }
+    assert_eq!(path(" at a/b.velt:3:14"), Some("a/b.velt"));
+    assert_eq!(path(" at C:/a b/c.velt:3:14"), Some("C:/a b/c.velt"));
+    assert_eq!(path(" at C:\\a\\c.velt:3:14"), Some("C:\\a\\c.velt"));
+    assert_eq!(path(" at //?/C:/a/c.velt:3:14"), Some("//?/C:/a/c.velt"));
+    assert_eq!(
+        path(" at \\\\?\\C:\\c.velt:3:14"),
+        Some("\\\\?\\C:\\c.velt")
+    );
+    assert_eq!(
+        path(" at //server/share/c.velt:3:14"),
+        Some("//server/share/c.velt")
+    );
+    assert_eq!(path("a/b.velt:3:14"), None, "no ` at `");
+    assert_eq!(path(" at 12:30"), None, "no path");
+    assert_eq!(
+        path(" at C:/a/c.velt"),
+        None,
+        "a drive's colon is no number"
+    );
+    assert_eq!(path(" at a:b:14"), None);
+    assert_eq!(path(" at a:3:"), None);
+    assert_eq!(path("no location"), None);
+    assert_eq!(site_path(&[0xff, b':', b':']), None);
 }

@@ -6,6 +6,14 @@
 # ones before it did not cover. A program listed here must build on its own (no relative imports)
 # and use std alone: the HTTP server and the database drivers are packages (packages/), which
 # the cache warms for a program that depends on them when it is built.
+#
+# Every port of runtime code to std has its benchmark here (`bench(...)` in velt_common's
+# std_hooks.rs; its test `hook_replaces.rs` checks): debug builds run std at the speed of what this
+# list reaches.
+../../../bench/stdport/int_to_string.velt
+../../../bench/stdport/float_to_string.velt
+#
+# The rest, greedily:
 ../../../tests/std/fetch/server_api.test.velt
 ../../../tests/golden/std/number_parse.velt
 ../../../tests/golden/std/simd_partial.velt
