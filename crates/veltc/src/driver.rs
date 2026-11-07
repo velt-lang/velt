@@ -189,8 +189,7 @@ pub struct Session {
     pub details: Vec<(&'static str, &'static str, Duration)>,
     /// Print [`Session::details`] under their stage (`--timings`).
     pub show_details: bool,
-    /// `-v`: say at once that the build waits for another build of its output, rather than
-    /// only once the wait is long (`std_cache::Place::lock`).
+    /// `-v`: say at once that the build waits for another of its output (`std_cache::Place::lock`).
     pub verbose: bool,
     /// Reports the build was asked for (`--report`), printed after the diagnostics.
     pub reports: Vec<String>,
