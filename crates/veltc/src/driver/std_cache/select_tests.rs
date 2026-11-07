@@ -271,7 +271,7 @@ fn text(s: &str) -> StaticData {
 /// A caller-tracking instance of a call in the program's own file holds that path: no other
 /// program has its key. It stays for Cranelift, whose code any program shares, and so does what
 /// would inline it. One for a call in std, or in code a std generator wrote, has the same key in
-/// every program.
+/// every program. `Program::files` stays empty, as in a build without line information.
 #[test]
 fn code_showing_a_place_in_the_program_stays_in_the_program() {
     let site = func("set_at_user_call", 3, &[], addr(1));
@@ -279,8 +279,9 @@ fn code_showing_a_place_in_the_program_stays_in_the_program() {
     let in_std = func("set_at_std_call", 3, &[], addr(3));
     let generated = func("set_at_generated_call", 3, &[], addr(5));
     let plain = func("other", 3, &[], None);
-    let mut p = program(
-        vec![site, caller, in_std, generated, plain],
+    let on_windows = func("set_at_windows_call", 3, &[], addr(7));
+    let p = program(
+        vec![site, caller, in_std, generated, plain, on_windows],
         vec![
             text(" at /home/me/app.velt:3:3"),
             header(0),
@@ -288,16 +289,17 @@ fn code_showing_a_place_in_the_program_stays_in_the_program() {
             header(2),
             text(" at <generated>/std/json/reader.velt:1:2"),
             header(4),
+            text(" at C:/Users/me/app.velt:3:3"),
+            header(6),
         ],
     );
-    p.files = vec![
-        "/home/me/app.velt".into(),
-        "/opt/velt/std/prelude/map.velt".into(),
-        "<generated>/std/json/reader.velt".into(),
-    ];
-    let helpers = [false; 5];
+    assert!(p.files.is_empty());
+    let helpers = [false; 6];
     let sites = user_sites(&p);
-    assert_eq!(sites, [true, false, false, false, false, false]);
+    assert_eq!(
+        sites,
+        [true, false, false, false, false, false, true, false]
+    );
     let rule = Rule::Debug {
         helpers: &helpers,
         thread_data: true,
@@ -306,12 +308,33 @@ fn code_showing_a_place_in_the_program_stays_in_the_program() {
     assert_eq!(candidates(&p, &names(&p), rule), [2, 3, 4]);
 }
 
-/// Only a text of the form a location has names a file.
+/// Only a text of the form a location has names a file, whatever colons its path holds.
 #[test]
 fn a_location_is_a_path_a_line_and_a_column() {
-    assert_eq!(site_path(b" at a/b.velt:3:14"), Some("a/b.velt"));
-    assert_eq!(site_path(b"a/b.velt:3:14"), Some("a/b.velt"));
-    assert_eq!(site_path(b"C:/a/b.velt:3:14"), Some("C:/a/b.velt"));
-    assert_eq!(site_path(b"no location"), None);
+    fn path(text: &str) -> Option<&str> {
+        site_path(text.as_bytes())
+    }
+    assert_eq!(path(" at a/b.velt:3:14"), Some("a/b.velt"));
+    assert_eq!(path(" at C:/a b/c.velt:3:14"), Some("C:/a b/c.velt"));
+    assert_eq!(path(" at C:\\a\\c.velt:3:14"), Some("C:\\a\\c.velt"));
+    assert_eq!(path(" at //?/C:/a/c.velt:3:14"), Some("//?/C:/a/c.velt"));
+    assert_eq!(
+        path(" at \\\\?\\C:\\c.velt:3:14"),
+        Some("\\\\?\\C:\\c.velt")
+    );
+    assert_eq!(
+        path(" at //server/share/c.velt:3:14"),
+        Some("//server/share/c.velt")
+    );
+    assert_eq!(path("a/b.velt:3:14"), None, "no ` at `");
+    assert_eq!(path(" at 12:30"), None, "no path");
+    assert_eq!(
+        path(" at C:/a/c.velt"),
+        None,
+        "a drive's colon is no number"
+    );
+    assert_eq!(path(" at a:b:14"), None);
+    assert_eq!(path(" at a:3:"), None);
+    assert_eq!(path("no location"), None);
     assert_eq!(site_path(&[0xff, b':', b':']), None);
 }

@@ -120,24 +120,27 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     None
 }
 
-/// Per static of `program`, whether it is a location in one of the program's own files, as a
-/// caller-tracking instance reports it. Std's files show as `std/<path>`, never by their paths in
-/// `Program::files`, so a path found there is the program's.
+/// Per static of `program`, whether it is a location outside std, as a caller-tracking instance
+/// reports it. Std's files show as `std/<path>`, and what its generators wrote as
+/// `<generated>/std/<path>`. By the text alone: `Program::files` is empty where a build keeps no
+/// line information, as a debug build linked by MSVC's linker does.
 pub(super) fn user_sites(program: &vir::Program) -> Vec<bool> {
-    let files: HashSet<&str> = (program.files.iter())
-        .map(String::as_str)
-        .filter(|f| !f.starts_with(GENERATED_STD))
-        .collect();
     (program.statics.iter())
-        .map(|s| site_path(&s.bytes).is_some_and(|path| files.contains(path)))
+        .map(|s| {
+            site_path(&s.bytes)
+                .is_some_and(|path| !path.starts_with("std/") && !path.starts_with(GENERATED_STD))
+        })
         .collect()
 }
 
-/// The path of a location's text: `[ at ]<path>:<line>:<col>`.
+/// The path of a location's text, ` at <path>:<line>:<col>`. The path may hold colons of its own
+/// (`C:/app.velt`), so the numbers are read from the end.
 fn site_path(bytes: &[u8]) -> Option<&str> {
-    let text = std::str::from_utf8(bytes).ok()?;
-    let text = text.strip_prefix(" at ").unwrap_or(text);
-    Some(text.rsplit_once(':')?.0.rsplit_once(':')?.0)
+    let text = std::str::from_utf8(bytes).ok()?.strip_prefix(" at ")?;
+    let (text, col) = text.rsplit_once(':')?;
+    let (path, line) = text.rsplit_once(':')?;
+    let number = |n: &str| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit());
+    (number(line) && number(col)).then_some(path)
 }
 
 /// The std code of `program` by why it stays in the program (statements), and how much the
