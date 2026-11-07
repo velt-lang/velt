@@ -444,7 +444,8 @@ break makes a stamp that never matches). The objects it names
   with their bodies, declarations of what they call, the statics they name; optimized at
   `Speed`; LLVM, one unit; the entry declared, vir.rs invariant 5) and stored (`Cache::put_file`).
   If one fails, the build optimizes the program as lowered, without the cache. Each object is
-  placed as soon as it is looked up again or stored, before codegen, in `<object stem>.std/<n>.<o|obj>`
+  placed as soon as it is looked up again or stored, before codegen (builds of one output wait for
+  each other on `<object stem>.std.lock`), in `<object stem>.std/<n>.<o|obj>`
   beside the program's objects (hard links to the cache's files, copies where the file system has
   none, replaced by each build; MSVC's linker reads an input without an extension as
   `<name>.obj`); one gone from the cache by then makes the build fall back as above. The link
@@ -647,7 +648,7 @@ break makes a stamp that never matches). The objects it names
   root's directory: `<prefix>/share/velt/warm`, or the checkout's) with a child `velt build
   <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, `VELT_STD_OBJECT_FILL=1`, no `VELT_CPU`), once with `--cpu native` and once without, then
   writes the marker `<cache>/warm/<hex>` (BLAKE3 of the version line and the executable's size
-  and time) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
+  and time; `<hex>-objects` with clang found, whose builds store objects) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
   present it prints that the cache is warm and does nothing; one run per marker at a time
   (`<marker>.lock`). A program that fails to build is reported (exit 1, no marker) after the
   others ran. `--background` starts `velt cache warm` detached (own process group, lowest

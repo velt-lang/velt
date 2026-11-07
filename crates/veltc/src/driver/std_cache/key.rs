@@ -187,6 +187,18 @@ mod tests {
                 opt: "-O1".into(),
                 ..base()
             },
+            Inputs {
+                backend: "other".into(),
+                ..base()
+            },
+            Inputs {
+                cpu: Some("other".into()),
+                ..base()
+            },
+            Inputs {
+                optimize: !base().optimize,
+                ..base()
+            },
         ] {
             assert_ne!(key, other.key_of_digests(&[a, b]));
         }

@@ -333,12 +333,24 @@ fn run_coff_linker(mut cmd: Command, args: Vec<OsString>, output: &Path) -> Resu
 
 /// `args` as a response file, one quoted argument per line, in the UTF-16 with a byte order mark
 /// that both `link.exe` and `lld-link` read. Backslashes are literal unless they come before a
-/// quote, which a Windows path has no way to contain.
+/// quote, as the closing one does after a directory's trailing `\`: doubled there.
 fn response_file(args: &[OsString]) -> Vec<u8> {
     let mut text = String::new();
     for a in args {
         text.push('"');
-        text.push_str(&a.to_string_lossy());
+        let mut backslashes = 0;
+        for c in a.to_string_lossy().chars() {
+            match c {
+                '\\' => backslashes += 1,
+                '"' => {
+                    text.extend(std::iter::repeat_n('\\', backslashes + 1));
+                    backslashes = 0;
+                }
+                _ => backslashes = 0,
+            }
+            text.push(c);
+        }
+        text.extend(std::iter::repeat_n('\\', backslashes));
         text.push_str("\"\r\n");
     }
     let mut bytes = vec![0xff, 0xfe];
@@ -587,6 +599,20 @@ mod tests {
             .collect();
         let text = String::from_utf16(&units).unwrap();
         assert_eq!(text, "\"/OUT:C:\\a b\\c.exe\"\r\n\"x.obj\"\r\n");
+    }
+
+    #[test]
+    fn a_response_file_keeps_a_closing_quote_after_backslashes() {
+        let text = |arg: &str| {
+            let bytes = response_file(&[OsString::from(arg)]);
+            let units: Vec<u16> = (bytes[2..].chunks(2))
+                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                .collect();
+            String::from_utf16(&units).unwrap()
+        };
+        assert_eq!(text("/LIBPATH:C:\\kit\\"), "\"/LIBPATH:C:\\kit\\\\\"\r\n");
+        assert_eq!(text("a\\\"b"), "\"a\\\\\\\"b\"\r\n");
+        assert_eq!(text("a\\b"), "\"a\\b\"\r\n");
     }
 
     #[test]

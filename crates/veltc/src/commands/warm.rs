@@ -30,7 +30,8 @@ pub fn warm_command(background: bool) -> Result<(), String> {
     let Some(dir) = warm_dir() else {
         return Err("no warm-up programs: this velt has no share/velt/warm/".into());
     };
-    let marker = root.join("warm").join(toolchain_key().hex());
+    let clang = velt_codegen_llvm::find_clang().is_some();
+    let marker = root.join("warm").join(marker_name(&toolchain_key(), clang));
     if marker.is_file() {
         eprintln!("velt: the build cache is warm for this velt already");
         return Ok(());
@@ -158,6 +159,15 @@ fn toolchain_key() -> velt_build_cache::Key {
     crate::build_cache::compiler_identity()
 }
 
+/// The marker of a warm-up by this toolchain. One with clang stores objects, which one without
+/// has not: clang installed later is work left to do.
+fn marker_name(toolchain: &velt_build_cache::Key, clang: bool) -> String {
+    match clang {
+        true => format!("{}-objects", toolchain.hex()),
+        false => toolchain.hex(),
+    }
+}
+
 /// The warm-up programs: the `.velt` files of `dir` by name, then those `programs.txt` there lists
 /// (one path per line, relative to `dir`; `#` starts a comment line).
 fn programs(dir: &Path) -> Vec<PathBuf> {
@@ -228,6 +238,12 @@ mod tests {
                 warm.join("../g/c.velt")
             ]
         );
+    }
+
+    #[test]
+    fn a_warm_up_without_clang_does_not_count_for_one_with_it() {
+        let key = velt_build_cache::Key([1; 32]);
+        assert_ne!(marker_name(&key, true), marker_name(&key, false));
     }
 
     /// The checkout's list names programs that exist (a golden renamed or removed would make

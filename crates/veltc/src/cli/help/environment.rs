@@ -49,6 +49,11 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
          once in the build cache (experimental)",
     ),
     (
+        "VELT_STD_OBJECT_FILL",
+        "set: a debug build compiles the std functions it does not find with clang and stores \
+         them (`velt cache warm` sets it)",
+    ),
+    (
         "VELT_BUILD_STAMP",
         "`off`: compile even when nothing changed since the last build of the same output",
     ),
