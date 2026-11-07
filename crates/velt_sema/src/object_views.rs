@@ -362,7 +362,19 @@ impl VisitMut for FreshUses<'_> {
             StmtKind::Let { local, .. } if *local == self.local && self.decl == Some(s.span) => {
                 self.declared = true;
             }
-            StmtKind::While { body, .. } | StmtKind::ForOf { body, .. } => {
+            // Each round runs after the last: the loop's condition and step too.
+            StmtKind::While {
+                cond, body, step, ..
+            } => {
+                let mut inner = FreshUses::new(self.local, None, self.closures);
+                visit::expr(cond, &mut inner);
+                visit::block(body, &mut inner);
+                if let Some(step) = step {
+                    visit::expr(step, &mut inner);
+                }
+                self.shared |= inner.gone && inner.wrote;
+            }
+            StmtKind::ForOf { body, .. } => {
                 let mut inner = FreshUses::new(self.local, None, self.closures);
                 visit::block(body, &mut inner);
                 self.shared |= inner.gone && inner.wrote;
@@ -387,8 +399,15 @@ impl VisitMut for FreshUses<'_> {
                 if matches!(receiver, Some(ExprKind::Local(l, _)) if *l == self.local) {
                     self.receivers += 1;
                     if matches!(i, Intrinsic::AnySet | Intrinsic::AnySetIndex) {
+                        // The key and the value are evaluated before the write.
+                        let mut before = FreshUses::new(self.local, None, self.closures);
+                        for a in args.iter().skip(1) {
+                            let mut a = a.clone();
+                            visit::expr(&mut a, &mut before);
+                        }
+                        self.gone |= before.gone;
                         self.wrote = true;
-                        self.shared |= self.gone;
+                        self.shared |= self.gone || before.shared;
                     }
                 }
             }
