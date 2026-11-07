@@ -1,5 +1,6 @@
-// registry-cloudflare: users and the hashes of their tokens in the D1 database. Unlike registry-core's
-// `TokenAuth` it is never open: with no users, every write is refused.
+// registry-cloudflare: users and the hashes of their tokens in the D1 database (a user may have
+// several: one per sign-in). Unlike registry-core's `TokenAuth` it is never open: with no users,
+// every write is refused.
 
 import { D1Database, d1Database } from "cloudflare";
 import { AuthProvider, bearerToken, Caller, tokenHash } from "registry-core";
@@ -24,7 +25,7 @@ export class D1TokenAuth implements AuthProvider {
     }
     try {
       const row = await this.db
-        .prepare("SELECT name FROM users WHERE token_hash = ?")
+        .prepare("SELECT user AS name FROM tokens WHERE token_hash = ?")
         .bind(tokenHash(token))
         .first<NameRow>();
       return row == null ? Caller.nobody() : Caller.ofUser(row.name);

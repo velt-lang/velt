@@ -175,6 +175,7 @@ fn the_conformance_suite_passes() {
         "purged `{file}`"
     );
     uploads_are_limited_to_10_mib(&base, &url, alice);
+    signing_in_gives_tokens_that_publish(&base, &url);
     drop(server);
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -233,26 +234,72 @@ fn uploads_are_limited_to_10_mib(base: &Path, url: &str, token: &str) {
     );
     const MIB: usize = 1024 * 1024;
     for (name, size, ok) in [("big-9", 9 * MIB, true), ("big-11", 11 * MIB, false)] {
-        let dir = base.join(name);
-        std::fs::create_dir_all(dir.join("src")).expect("package dir");
-        let manifest = format!(
-            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"{name}\",\n  version: \"1.0.0\",\n  entry: \"src/lib.velt\",\n}};\n"
-        );
-        std::fs::write(dir.join("package.velt"), manifest).expect("package.velt");
-        std::fs::write(dir.join("src/lib.velt"), "export const V: i64 = 1;\n").expect("lib");
-        std::fs::write(dir.join("src/data.bin"), vec![b'x'; size]).expect("data");
-        let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
-            .arg("publish")
-            .env("VELT_HOME", base.join("velt-home"))
-            .env("VELT_REGISTRY", url)
-            .env("VELT_REGISTRY_TOKEN", token)
-            .current_dir(&dir)
-            .output()
-            .expect("run velt");
+        let out = publish(base, url, token, name, "1.0.0", size);
         assert_eq!(
             out.status.success(),
             ok,
             "velt publish of {name}:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// `velt publish` of package `name` `version`, with a file of `size` bytes, as `token`'s user.
+fn publish(
+    base: &Path,
+    url: &str,
+    token: &str,
+    name: &str,
+    version: &str,
+    size: usize,
+) -> std::process::Output {
+    let dir = base.join(format!("{name}-{version}"));
+    std::fs::create_dir_all(dir.join("src")).expect("package dir");
+    let manifest = format!(
+        "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"{name}\",\n  version: \"{version}\",\n  entry: \"src/lib.velt\",\n}};\n"
+    );
+    std::fs::write(dir.join("package.velt"), manifest).expect("package.velt");
+    std::fs::write(dir.join("src/lib.velt"), "export const V: i64 = 1;\n").expect("lib");
+    std::fs::write(dir.join("src/data.bin"), vec![b'x'; size]).expect("data");
+    no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .arg("publish")
+        .env("VELT_HOME", base.join("velt-home"))
+        .env("VELT_REGISTRY", url)
+        .env("VELT_REGISTRY_TOKEN", token)
+        .current_dir(&dir)
+        .output()
+        .expect("run velt")
+}
+
+/// Signing in with GitHub (registry_worker/login.mjs, against serve.mjs's stub of GitHub) gives
+/// tokens that publish: carol publishes with her first token, and a second version, which only
+/// an owner may, with the token of her second sign-in.
+fn signing_in_gives_tokens_that_publish(base: &Path, url: &str) {
+    let out = no_window::command("node")
+        .current_dir(base)
+        .arg(script(base, "login.mjs"))
+        .arg(url)
+        .output()
+        .expect("run node");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let line = stdout.lines().find_map(|l| l.strip_prefix("tokens "));
+    let [first, second] = line
+        .expect("no tokens from login.mjs")
+        .split(' ')
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("two tokens from login.mjs: {stdout}");
+    };
+    for (token, version) in [(first, "1.0.0"), (second, "1.1.0")] {
+        let out = publish(base, url, token, "carols-lib", version, 10);
+        assert!(
+            out.status.success(),
+            "carol's publish of {version}:\n{}",
             String::from_utf8_lossy(&out.stderr)
         );
     }

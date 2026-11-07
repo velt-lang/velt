@@ -13,8 +13,17 @@ CREATE TABLE owners (
   PRIMARY KEY (package, position)
 );
 
--- Only the hash of a token (`sha256:<hex>`), never the token.
+-- `github_id` is the GitHub account a user signs in with (null for one an administrator added):
+-- a user keeps their name when they rename the account.
 CREATE TABLE users (
   name TEXT PRIMARY KEY,
-  token_hash TEXT NOT NULL UNIQUE
+  github_id INTEGER UNIQUE
+);
+
+-- A user's tokens: only the hash of each (`sha256:<hex>`), never the token. `created` is in
+-- milliseconds since 1970.
+CREATE TABLE tokens (
+  token_hash TEXT PRIMARY KEY,
+  user TEXT NOT NULL REFERENCES users (name),
+  created INTEGER NOT NULL
 );
