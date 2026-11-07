@@ -52,9 +52,9 @@ enum Need {
     NoLock,
 }
 
-/// What a body constructs: the type, its arguments, the span and the guard bits, resolved by
-/// [`constructed`] once all bodies are visited.
-type News = Vec<(DefId, Vec<TyId>, Span, u64)>;
+/// What a body constructs: the type, its arguments, the span, the guard bits and whether it is
+/// given no value, resolved by [`constructed`] once all bodies are visited.
+type News = Vec<(DefId, Vec<TyId>, Span, u64, bool)>;
 
 /// JSON-relevant facts of one function body, or of one type's field initializers.
 #[derive(Default)]
@@ -264,14 +264,21 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let mut inits: Vec<_> = inits.into_iter().collect();
     inits.sort_by_key(|(d, _)| *d);
     bodies.extend(inits.into_iter().map(|(d, (u, news, _))| (d, u, news)));
-    let mut done: FxHashSet<(DefId, Vec<TyId>, u64)> = FxHashSet::default();
+    let mut done: FxHashSet<(DefId, Vec<TyId>, u64, bool)> = FxHashSet::default();
     for (d, mut u, news) in bodies {
         done.clear();
-        for (c, targs, span, guard) in news {
-            if done.insert((c, targs.clone(), guard)) {
+        for (c, targs, span, guard, empty) in news {
+            if done.insert((c, targs.clone(), guard, empty)) {
                 for (callee, args) in constructed(cx, c, targs) {
-                    u.calls.push((callee, args, span));
-                    u.guards.push(guard);
+                    // A std constructor given nothing has nothing to look at (`new Set<T>()`);
+                    // the looks in its body are of what it is given to hold.
+                    let idle = empty
+                        && is_std_fn(cx, callee)
+                        && matches!(cx.info[callee.0 as usize], DefInfo::Fn(_));
+                    if !idle {
+                        u.calls.push((callee, args, span));
+                        u.guards.push(guard);
+                    }
                 }
             }
         }
@@ -324,8 +331,16 @@ impl Walk<'_> {
         if u.calls.len() > calls {
             u.guards.push(guard);
         }
-        if let E::New { def, type_args, .. } | E::AdtLit { def, type_args, .. } = &e.kind {
-            news.push((*def, type_args.clone(), e.span, guard));
+        match &e.kind {
+            E::New {
+                def,
+                type_args,
+                args,
+            } => news.push((*def, type_args.clone(), e.span, guard, args.is_empty())),
+            E::AdtLit { def, type_args, .. } => {
+                news.push((*def, type_args.clone(), e.span, guard, true));
+            }
+            _ => {}
         }
         if self.looks {
             self.ids.uses(&mut u.direct, e);
