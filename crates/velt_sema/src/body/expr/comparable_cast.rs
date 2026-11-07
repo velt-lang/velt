@@ -41,7 +41,10 @@ impl FnCx<'_, '_> {
         let core = self.cx.ty.core(target).unwrap_or(target);
         // `{ href?: string } as Record<string, string | undefined>`: a record of its fields, as
         // through `any` (`x as any as Record<...>`).
-        let record = self.record_args(core).is_some() && self.object_members(h.ty).is_some();
+        // A class's value doesn't compare with one (TS2352).
+        let record = self.record_args(core).is_some()
+            && self.cx.class_of(h.ty).is_none()
+            && self.object_members(h.ty).is_some();
         let viewable = record || self.viewable(core);
         if !viewable || self.cx.ty.has_error(h.ty) {
             return Err(h);

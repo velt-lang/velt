@@ -210,6 +210,23 @@ pub(crate) fn check_view_spreads(
     }
 }
 
+/// A record cast of a type a cast makes a view of another object: a write to that object's own type
+/// would not show as a write to the record's source.
+pub(crate) fn check_record_sources(cx: &mut Ctx, copies: &[Copy], view_casts: &[(Span, TyId)]) {
+    for c in copies.iter().filter(|c| c.record) {
+        if view_casts.iter().any(|v| related(cx, c.from, v.1)) {
+            let (from, to) = (cx.display(c.from), cx.display(c.to));
+            cx.error(
+                Diagnostic::error(
+                    format!("a value of type `{from}` converts to `{to}` by copying its fields, and a cast in this program makes a `{from}` a view of another object, whose writes the record would not see"),
+                    c.span,
+                )
+                .with_note("build the record with the fields you need (`{ a: x.a }`)"),
+            );
+        }
+    }
+}
+
 /// A write through `any` to the object a `const` made itself reaches no object a conversion copied
 /// while the local's value has gone nowhere: as the receiver of a member read or write it stays
 /// the local's, and a copy made after the write has what it wrote. So such writes count (go to

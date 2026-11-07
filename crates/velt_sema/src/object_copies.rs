@@ -239,6 +239,17 @@ pub(crate) fn check(cx: &mut Ctx) {
                 report_record_write(cx, c, at);
                 continue;
             }
+            // Identity: the record is another object, which a dynamic value may hold.
+            let shown = seen.iter().find(|s| {
+                matches!(s.2, Seen::Identity | Seen::Key)
+                    && compared(cx, s.0, &mut FxHashSet::default())
+                        .into_iter()
+                        .any(|m| cx.dynamic(m).is_some() || related(cx, m, c.to))
+            });
+            if let Some(&(t, span, how)) = shown {
+                report_seen(cx, c, t, span, how, &in_keys);
+                continue;
+            }
         }
         let proxy_only = proxies && !c.record && !built.iter().any(|&t| related(cx, t, c.from));
         if let Some(w) = assigned(cx, (c, ci), &writes, &looks) {
@@ -277,6 +288,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         }
     }
     crate::object_views::check_frozen_dynamic(cx, &seen, &writes);
+    crate::object_views::check_record_sources(cx, &copies, &view_casts);
     crate::object_views::check_view_spreads(cx, &seen, &view_casts);
     if !strict.is_empty() {
         mark_proxy_only(cx, &strict);

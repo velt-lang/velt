@@ -1,0 +1,7 @@
+// As `record_cast_identity`, as a key (Node prints 1).
+const made = new Proxy({}, {});
+const o: { a?: string } = { a: "x" };
+const r = o as Record<string, string | undefined>;
+const m = new Map<any, number>();
+m.set(o, 1);
+console.log(m.get(r));
