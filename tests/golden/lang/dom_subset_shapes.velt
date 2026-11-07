@@ -1,0 +1,49 @@
+// What client code does with the generated `lib.dom` declarations (std/lang/dom): it compiles on
+// the server, where none of it runs.
+
+// Node methods with a type parameter (`appendChild<T extends Node>(node: T): T`) take a node made
+// by `document`, which reads as Node's `ReferenceError` here.
+function mount(parent: Element, dom: Node | null, el: HTMLElement | null): Node {
+  const comment = document.createComment("");
+  if (el && el.parentNode) {
+    el.parentNode.removeChild(el);
+  }
+  return dom ? parent.insertBefore(comment, dom) : parent.appendChild(comment);
+}
+
+// Nodes compared across the interfaces they extend.
+function skip(ph: Node | null, marker: Comment | null, parent: Node): Node | null {
+  let at = ph;
+  while (at && at !== marker && at.nodeType !== Node.ELEMENT_NODE) {
+    at = at.nextSibling;
+  }
+  return at !== null && at.parentNode === parent ? at : null;
+}
+
+// Collections index, iterate and convert like arrays.
+function selected(sel: HTMLSelectElement): string[] {
+  const options = sel.options;
+  for (let i = 0; i < options.length; i++) {
+    options[i].selected = options[i].value === "a";
+  }
+  for (const o of sel.selectedOptions) {
+    console.log(o.value);
+  }
+  return Array.from(sel.selectedOptions).map((o) => o.value);
+}
+
+// A listener may throw, as any JavaScript function may.
+function wire(dom: Element): void {
+  const handler = (e: Event): void => {
+    if (e.type === "x") throw new Error("bad");
+  };
+  dom.addEventListener("input", handler);
+  dom.removeEventListener("input", handler);
+}
+
+console.log(typeof mount, typeof skip, typeof selected, typeof wire);
+try {
+  console.log(document.createComment("x").appendChild(document.createTextNode("y")));
+} catch (e) {
+  console.log(e instanceof ReferenceError, (e as Error).message);
+}
