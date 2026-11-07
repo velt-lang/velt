@@ -143,20 +143,24 @@ export function eightWords(v: u64, neg: bool): Words {
 }
 
 /**
- * `intWords` of a `v` from 10^8 up: three groups of eight digits, 24 digits with leading zeros,
- * of which the first `24 - len` are dropped. At least four are (the text is at most 20 bytes):
- * with a minus, the last one dropped becomes it. The first group is below 1845, so at most four
- * digits (`digits4`), in the upper half of its word, and its lower half is never read. Inlined
- * (`inline()`) into `longPositive`, `longNegative` and `console.log`'s writer (velt/lang/number/integer_write),
- * each out of line, whose three-word result would otherwise come back through memory.
+ * `intWords` of a `v` from 10^8 up, then the byte `end` when it isn't 0 (`console.log`'s space or
+ * newline, counted in `len`): three groups of eight digits, 24 digits with leading zeros, and
+ * `end` in a fourth word, of which the first `24 - len` bytes are dropped. At least four are (the
+ * digits are at most 20 bytes): with a minus, the last one dropped becomes it. Dropping them
+ * shifts `end` to just after the last digit. The first group is below 1845, so at most four digits
+ * (`digits4`), in the upper half of its word, and its lower half is never read. Inlined
+ * (`inline()`) into `longPositive`, `longNegative` and `console.log`'s writer
+ * (velt/lang/number/integer_write), each out of line, whose three-word result would otherwise
+ * come back through memory.
  */
-export function longWords(v: u64, neg: bool): Words {
+export function longWords(v: u64, neg: bool, end: u64): Words {
   inline();
   const lo = v % 100000000;
   const rest = v / 100000000;
   let a0 = digits4(rest / 100000000) << 32;
   let a1 = digits8(rest % 100000000);
   let a2 = digits8(lo);
+  let a3 = end;
   // The leading zeros: in the first group, or, when it is 0, in the second, which isn't then (`v`
   // is at least 10^8). The first group's lower half is 0, not "0", and is dropped either way.
   const first = a0 ^ 0x3030303000000000;
@@ -168,30 +172,31 @@ export function longWords(v: u64, neg: bool): Words {
   if (k >= 8) {
     a0 = a1;
     a1 = a2;
-    a2 = 0;
+    a2 = a3;
+    a3 = 0;
   }
   // The remaining bytes to drop as bits (0 to 56); `(a << 1) << (63 - r)` is `a << (64 - r)`
   // without a shift by 64 when `r` is 0.
   const r = (k & 7) * 8;
   let w0 = (a0 >> r) | ((a1 << 1) << (63 - r));
   const w1 = (a1 >> r) | ((a2 << 1) << (63 - r));
-  const w2 = a2 >> r;
+  const w2 = (a2 >> r) | ((a3 << 1) << (63 - r));
   if (neg) {
     w0 = (w0 & ~(0xff as u64)) | MINUS;
   }
-  return Words { w0, w1, w2, len: len as usize };
+  return Words { w0, w1, w2, len: (end != 0 ? len + 1 : len) as usize };
 }
 
 // `longWords` without a minus, and with one: out of their callers (rare, 10^8 and up, and each
 // caller would otherwise get a copy), two functions so that neither tests the sign.
 function longPositive(v: u64): Words {
   noInline();
-  return longWords(v, false);
+  return longWords(v, false, 0);
 }
 
 function longNegative(v: u64): Words {
   noInline();
-  return longWords(v, true);
+  return longWords(v, true, 0);
 }
 
 /**
