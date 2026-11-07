@@ -254,6 +254,10 @@ fn f16_paths() -> Vec<Vec<&'static str>> {
         if cfg!(target_arch = "aarch64") {
             paths.push([&llvm[..], &["cortex-a53"]].concat());
         }
+        if cfg!(target_arch = "x86_64") {
+            // The default level has no F16C, and the fast goldens run debug builds only.
+            paths.push([&llvm[..], &["x86-64-v2"]].concat());
+        }
     }
     paths
 }
