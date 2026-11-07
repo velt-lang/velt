@@ -16,10 +16,6 @@ impl FnLower<'_, '_> {
         let read = std::mem::take(&mut self.read_copy);
         if let K::Upcast(inner) = &e.kind {
             let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
-            if let Some(v) = self.literal_upcast(inner, from, to) {
-                self.read_copy = read;
-                return v;
-            }
             // An interface upcast builds a new interface value, and an object type as one with
             // some of its fields a copy of them (`expr`, below).
             if self.upcast_slot(from, to).is_none() && !self.part_copy(from, to) {
@@ -251,9 +247,6 @@ impl FnLower<'_, '_> {
             K::New { args, .. } => self.new_object(e.ty, args),
             K::Upcast(inner) => {
                 let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
-                if let Some(v) = self.literal_upcast(inner, from, to) {
-                    return v;
-                }
                 // An object type as one with some of its fields (sema's `part_copy`, checked by
                 // `object_copies`): a new object of those fields.
                 // It is an owned temporary (`build_agg`), which `consume` takes over.

@@ -39,7 +39,8 @@ impl FnCx<'_, '_> {
             return Err(h);
         }
         let span = h.span;
-        Ok(self.mk(H::Upcast(Box::new(h)), exp, span))
+        let boxed = self.generic_as_any(h)?;
+        Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![boxed], exp, span))
     }
 
     /// A value of a type parameter bounded by an array type (`xs: T`, `T extends readonly
