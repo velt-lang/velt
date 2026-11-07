@@ -436,6 +436,9 @@ struct Cx<'h> {
     /// The data of each static atomic used so far, `None` for a global that is not one
     /// (static_atomic.rs).
     static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
+    /// The class id number of each `struct` type with an interface table (class_test.rs
+    /// `VALUE_IDS`), in the order the tables are made.
+    value_ids: FxHashMap<TyId, u64>,
     /// Slots are filled as the worklist is processed.
     funcs: Vec<Option<Function>>,
     work_map: FxHashMap<Work, FuncId>,

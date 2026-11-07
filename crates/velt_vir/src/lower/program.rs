@@ -70,6 +70,7 @@ impl<'h> Cx<'h> {
             statics: vec![],
             module_desc: None,
             static_atomics: FxHashMap::default(),
+            value_ids: FxHashMap::default(),
             reassigned_slots: None,
             assigned_fields: None,
             fn_writes: None,
