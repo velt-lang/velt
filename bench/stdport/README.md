@@ -149,39 +149,44 @@ instructions before.
 ## gzip compression
 
 `gzip_fast` and `gzip_default` are `velt/compress`'s `gzip` at levels 1 and 6 against `flate2`
-(its default `miniz_oxide` backend) at the same levels: the 1 MB JSON of `gen_inputs.rs`,
-compressed 20 times. The runtime had no encoder, so these rows measure a new component, not a
-port. Instructions retired (`/usr/bin/time -l`, Apple M4, macOS, `VELT_THREADS=1`), and the size
-of one stream against stock zlib 1.3.2 and Node's bundled zlib:
+(its default `miniz_oxide` backend) at the same levels: the 1 MB JSON of `gen_inputs.rs`. The
+runtime had no encoder, so these rows measure a new component, not a port. Instructions per
+compression (cachegrind, arm64 Linux): Velt is (3 runs − 1 run) / 2 of one program that links both
+encoders, so start-up and the file read drop out; Rust is the port's total for 20 compressions,
+less its one decode, ÷ 20. The size of one stream against stock zlib 1.3.2 and Node's bundled
+zlib:
 
 | benchmark | Velt | Rust | Velt / Rust | Velt bytes | flate2 bytes | stock zlib bytes | Node bytes |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| gzip_fast | 673 M | 337 M | 2.00 | 148,814 | 134,091 | 148,818 | 141,166 |
-| gzip_default | 1,644 M | 2,170 M | 0.76 | 127,698 | 126,411 | 127,698 | 127,619 |
+| gzip_fast | 14.6 M | 15.3 M | 0.95 | 140,903 | 134,091 | 148,818 | 141,166 |
+| gzip_default | 76.1 M | 107 M | 0.71 | 127,698 | 126,411 | 127,698 | 127,619 |
 
-The match finder follows zlib (hash chains, lazy matching from level 4, zlib's parameters per
-level, a candidate tried only when the two bytes at the end of the best match so far agree), so
-the sizes track stock zlib's: at level 9 both give 126,039 bytes. Level 1 takes zlib's
-`deflate_fast` path, where `miniz_oxide` checks a single candidate per position: that is the gap
-in the first row.
+Levels 2 to 9 follow zlib (hash chains, lazy matching from level 4, zlib's parameters per level, a
+candidate tried only when the two bytes at the end of the best match so far agree), so their sizes
+track stock zlib's: at level 9 both give 126,039 bytes. Level 1 has no chains: one table of
+six-byte prefixes, then one of three-byte prefixes on a miss, whose entries are positions modulo
+2^16, so a window slide doesn't touch them. Over the interop corpus and a set of real files, level
+1 comes to 1.004 of Node's size. Level 2 now costs more than level 1 (23.5 M) and is larger on
+this JSON (145,470 bytes), though smaller over the real files (5.11 MB against 5.34 MB).
 
 ## Brotli compression
 
 `brotli_fast` and `brotli_default` are `velt/compress`'s `brotliCompress` at qualities 1 and 4
 (`"fastest"` and `"optimal"`) against the `brotli` crate at the same qualities (window 2^22): the
-1 MB JSON of `gen_inputs.rs`, compressed 20 times. A new component, not a port. Instructions
-retired (`/usr/bin/time -l`, Apple M4, macOS, `VELT_THREADS=1`, load about 100), and the size of
-one stream against Node's encoder (the reference encoder, as the crate is):
+1 MB JSON of `gen_inputs.rs`. A new component, not a port. Instructions per compression, measured
+as for gzip above, and the size of one stream against Node's encoder (the reference encoder, as the
+crate is):
 
 | benchmark | Velt | Rust | Velt / Rust | Velt bytes | Node bytes |
 |---|---:|---:|---:|---:|---:|
-| brotli_fast | 1,972 M | 1,227 M | 1.61 | 112,887 | 96,467 |
-| brotli_default | 2,797 M | 1,264 M | 2.21 | 53,534 | 47,346 |
+| brotli_fast | 43.7 M | 59.3 M | 0.74 | 76,379 | 96,467 |
+| brotli_default | 61.5 M | 61.7 M | 1.00 | 46,327 | 47,346 |
 
-The encoder writes one prefix code per category in each meta-block, with no block splitting,
-context modeling or static dictionary: what the reference encoder does only at its fastest
-qualities. On the interop corpus (tests/std/compress/interop) its sizes are within 1 to 5 % of
-Node's at qualities 1 to 9, and 11 % above at quality 11, which searches as 9 does for now.
+From quality 4 the encoder splits literals into block types, each with its own prefix code, with
+the reference's greedy splitter; it has no context modeling or static dictionary yet. Over the
+interop corpus (tests/std/compress/interop) and a set of real files, its sizes against Node's at
+qualities 0, 1, 4, 6, 9 and 11 are 0.92, 0.94, 1.01, 1.04, 1.04 and 1.15; quality 11 searches as 9
+does for now.
 
 ## Brotli
 

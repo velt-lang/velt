@@ -2,7 +2,7 @@
 // window of 64 KiB, hash chains over three-byte prefixes, and the greedy (levels 2 and 3) or lazy
 // (4 to 9) choice between a match and a literal; level 1 is `FastMatcher`.
 //
-// The parameters of each level are zlib's, so its levels compare with zlib's. Input is copied into
+// The parameters of levels 2 to 9 are zlib's, so they compare with zlib's. Input is copied into
 // the window; when the position reaches the top, the upper half moves down and the chains are
 // rebased. Chain links are `u16` positions in the window, 0 ending a chain, in arrays made once.
 

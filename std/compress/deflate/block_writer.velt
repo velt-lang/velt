@@ -1,14 +1,12 @@
 // velt/compress (internal): the block layer of the DEFLATE encoder (RFC 1951 §3.2): the symbols of
 // the current block with their frequencies, the choice between a stored, a fixed and a dynamic
-// block by their exact sizes, and the bits of the chosen one.
-//
-// Length and distance codes come from arithmetic on the value, no tables: past the first few, the
-// codes step twice (distances) or four times (lengths) per power of two.
+// block by their exact sizes, and the bits of the chosen one. A match finder works out each
+// symbol's codes and counts them as it chooses it, so here they are only written.
 
 import { CODE_ORDER, DIST_EXTRA, LENGTH_EXTRA } from "velt/compress/inflate/tables";
 import { CodeBuilder, entryLength } from "velt/compress/deflate/code_builder";
 import { copyBytes, setBytes } from "velt/lang/bytes/copy";
-import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { arraySetLen, arrayWithCapacity, inline } from "velt/lang/intrinsics";
 import { u64x2, u8x16 } from "velt/simd";
 
 // Unchecked: `flushBlock` makes room past a block's last byte for the 16 bytes of the last store.
@@ -58,8 +56,8 @@ function fixedLitLengths(): u8[] {
 }
 
 /**
- * The output of a DEFLATE stream and its current block: `tally` adds symbols, `flushBlock` writes
- * them. Whole bytes go to `out[0..op]` at once, up to 31 bits wait in `bb`.
+ * The output of a DEFLATE stream and its current block: `FastMatcher` adds symbols, `flushBlock`
+ * writes them. Whole bytes go to `out[0..op]` at once, up to 31 bits wait in `bb`.
  */
 export class BlockWriter {
   out: u8[] = [];
@@ -325,7 +323,8 @@ export class BlockWriter {
     // An entry's bits from 24 on: the extra bits its code has (`entryLength` is what the header
     // and the end of the block read, of entries with none).
     for (let i: i64 = 0; i < 29; i++) {
-      lit[FIRST_LENGTH_SYMBOL + i] = (lit[FIRST_LENGTH_SYMBOL + i] & 0xffffff) | (LENGTH_EXTRA[i] << 24);
+      lit[FIRST_LENGTH_SYMBOL + i] =
+        (lit[FIRST_LENGTH_SYMBOL + i] & 0xffffff) | (LENGTH_EXTRA[i] << 24);
     }
     for (let i: i64 = 0; i < DIST_SYMBOLS; i++) {
       dist[i] = (dist[i] & 0xffffff) | (DIST_EXTRA[i] << 24);
@@ -380,6 +379,7 @@ export class BlockWriter {
 
 /** The low 32 bits of `bits` at `out[at..]`, little-endian; the store is 16 bytes wide. */
 function store(out: u8[], at: i64, bits: u64) {
+  inline();
   velt_simd_u8x16_store(velt_simd_u64x2_as_u8x16(velt_simd_u64x2_splat(bits)), out, at as u64);
 }
 

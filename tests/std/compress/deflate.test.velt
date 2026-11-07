@@ -283,7 +283,9 @@ describe("deflate encoder", () => {
         input.push(unit[i % 300]);
       }
       for (const level of [1, 2, 6]) {
-        expect(same(inflateRaw(deflateRaw(input, level)), input) ? "" : `${n} at ${level}`).toBe("");
+        expect(same(inflateRaw(deflateRaw(input, level)), input) ? "" : `${n} at ${level}`).toBe(
+          "",
+        );
       }
     }
   });
@@ -297,7 +299,9 @@ describe("deflate encoder", () => {
     for (const gap of gaps) {
       const input = block.concat(fresh.slice(0, gap)).concat(block);
       for (let level = 1; level <= 9; level++) {
-        expect(same(inflateRaw(deflateRaw(input, level)), input) ? "" : `${gap} at ${level}`).toBe("");
+        expect(same(inflateRaw(deflateRaw(input, level)), input) ? "" : `${gap} at ${level}`).toBe(
+          "",
+        );
       }
     }
   });

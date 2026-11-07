@@ -1,0 +1,159 @@
+// velt/compress (internal): what a Brotli meta-block's header says about its literal block types
+// (RFC 7932 sections 6 and 9.2): their number, the prefix codes of the block switches, and the
+// context map that gives each type a tree of its own.
+
+import { BitSink } from "velt/compress/brotli/bit_sink";
+import { LiteralBlocks, MAX_TYPES } from "velt/compress/brotli/literal_blocks";
+import { PrefixWriter } from "velt/compress/brotli/prefix_writer";
+import { BLOCK_LENGTH_CODES } from "velt/compress/brotli/tables";
+
+const BLOCK_COUNT_CODES: i64 = 26;
+/** The run-length code of the context map (`storeTypeMap`): a run of 63 zeros, 5 extra bits. */
+const MAP_RUN: i64 = 5;
+
+/** The bits of a meta-block's header about literal block types, and of the switches between them. */
+export class BlockTypeWriter extends BitSink {
+  blocks: LiteralBlocks = new LiteralBlocks();
+  prefix: PrefixWriter = new PrefixWriter();
+  typeCodes: u32[] = [];
+  private typeFreq: u32[] = [];
+  private typeLens: u8[] = [];
+  private mapFreq: u32[] = [];
+  private mapLens: u8[] = [];
+  private mapCodes: u32[] = [];
+  private countFreq: u32[] = [];
+  private countLens: u8[] = [];
+  private countCodes: u32[] = [];
+
+  constructor() {
+    super();
+  }
+
+  /** Makes the codes' arrays, which a stream without block types doesn't need. */
+  prepareTypes() {
+    this.typeFreq = new Array<u32>((MAX_TYPES + 2) as usize).fill(0);
+    this.typeLens = new Array<u8>((MAX_TYPES + 2) as usize).fill(0);
+    this.typeCodes = new Array<u32>((MAX_TYPES + 2) as usize).fill(0);
+    this.mapFreq = new Array<u32>((MAX_TYPES + MAP_RUN) as usize).fill(0);
+    this.mapLens = new Array<u8>((MAX_TYPES + MAP_RUN) as usize).fill(0);
+    this.mapCodes = new Array<u32>((MAX_TYPES + MAP_RUN) as usize).fill(0);
+    this.countFreq = new Array<u32>(BLOCK_COUNT_CODES as usize).fill(0);
+    this.countLens = new Array<u8>(BLOCK_COUNT_CODES as usize).fill(0);
+    this.countCodes = new Array<u32>(BLOCK_COUNT_CODES as usize).fill(0);
+  }
+
+  /**
+   * Section 9.2's NBLTYPES, for `types` above 1, with its two prefix codes and the first block's
+   * count. Returns the bits of the switches that the commands will carry.
+   */
+  storeBlockSwitches(types: i64): i64 {
+    const b = this.blocks;
+    this.typeFreq.fill(0);
+    this.countFreq.fill(0);
+    const n = b.types.length;
+    let last: i64 = 1;
+    let previous: i64 = 0;
+    let bits: i64 = 0;
+    for (let i: usize = 0; i < n; i++) {
+      const type = b.types[i] as i64;
+      if (i > 0) {
+        this.typeFreq[typeCode(type, last, previous)] += 1;
+      }
+      previous = last;
+      last = type;
+      const code = countCode(b.lengths[i] as u64);
+      this.countFreq[code] += 1;
+      if (i > 0) {
+        bits += (BLOCK_LENGTH_CODES[code] & 31) as i64;
+      }
+    }
+    this.room(16);
+    this.varLength((types - 1) as u64);
+    const p = this.prefix;
+    const alphabet = types + 2;
+    const typeSingle = p.build(this.typeFreq, alphabet, this.typeLens, this.typeCodes);
+    const countSingle = p.build(this.countFreq, BLOCK_COUNT_CODES, this.countLens, this.countCodes);
+    p.store(this, this.typeLens.slice(), alphabet, bitWidth(alphabet), typeSingle);
+    p.store(this, this.countLens.slice(), BLOCK_COUNT_CODES, 5, countSingle);
+    this.room(16);
+    this.storeCount(b.lengths[0] as u64);
+    // The first block's count is written once, here.
+    this.countFreq[countCode(b.lengths[0] as u64)] -= 1;
+    bits += PrefixWriter.cost(this.typeFreq, this.typeLens, alphabet);
+    bits += PrefixWriter.cost(this.countFreq, this.countLens, BLOCK_COUNT_CODES);
+    return bits;
+  }
+
+  // A number from 0 to 255 (section 9.2: NBLTYPES and NTREES less one).
+  private varLength(n: u64) {
+    if (n == 0) {
+      this.put(0, 1);
+      return;
+    }
+    const nbits = 63 - (n.leadingZeros() as u64);
+    this.put(1, 1);
+    this.put(nbits, 3);
+    this.put(n - (1 << nbits), nbits);
+  }
+
+  /** A block's count of literals, in the code of block counts. */
+  storeCount(count: u64) {
+    const code = countCode(count);
+    const entry = BLOCK_LENGTH_CODES[code];
+    this.code(this.countCodes[code]);
+    this.put(count - ((entry >> 5) as u64), (entry & 31) as u64);
+  }
+
+  /**
+   * The context map that gives each block type its own tree, as the reference encoder writes it:
+   * each type's number, moved to the front, then a run of zeros for its other 63 contexts.
+   */
+  storeTypeMap(types: i64) {
+    this.room(32);
+    this.varLength((types - 1) as u64);
+    this.put(1, 1);
+    this.put((MAP_RUN - 1) as u64, 4);
+    const alphabet = types + MAP_RUN;
+    const freq = this.mapFreq;
+    const lens = this.mapLens;
+    const codes = this.mapCodes;
+    freq.fill(0);
+    freq[0] = 1;
+    freq[MAP_RUN] = types as u32;
+    for (let i = MAP_RUN + 1; i < alphabet; i++) {
+      freq[i] = 1;
+    }
+    const p = this.prefix;
+    const single = p.build(freq, alphabet, lens, codes);
+    p.store(this, lens.slice(), alphabet, bitWidth(alphabet), single);
+    this.room(types * 8 + 8);
+    for (let t: i64 = 0; t < types; t++) {
+      this.code(codes[t == 0 ? t : t + MAP_RUN]);
+      this.code(codes[MAP_RUN]);
+      this.put((1 << (MAP_RUN as u64)) - 1, MAP_RUN as u64);
+    }
+    this.put(1, 1);
+  }
+}
+
+/** The block type code of `type` after `last` and `previous` (section 6). */
+export function typeCode(type: i64, last: i64, previous: i64): i64 {
+  if (type == last + 1) {
+    return 1;
+  }
+  return type == previous ? 0 : type + 2;
+}
+
+/** The block count code of `count` literals (section 6). */
+function countCode(count: u64): i64 {
+  let code: i64 = BLOCK_COUNT_CODES - 1;
+  while (code > 0 && ((BLOCK_LENGTH_CODES[code] >> 5) as u64) > count) {
+    code--;
+  }
+  return code;
+}
+
+/** The bits a symbol of an alphabet of `n` takes in a simple prefix code. */
+function bitWidth(n: i64): u64 {
+  return 64 - (((n - 1) as u64).leadingZeros() as u64);
+}

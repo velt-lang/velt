@@ -2,10 +2,12 @@
 // commands of one, with a prefix code each for its literals, commands and distances, or its bytes
 // stored when that is smaller; and the stream's empty last meta-block and flush marker.
 //
-// Every meta-block has one block type in each category and one literal tree, so it needs no
-// block switches or context map: what the reference encoder writes at its fastest qualities.
+// A meta-block has one block type for commands and for distances. Literals have one too at the
+// fastest qualities; above them (`splitting`) they have several, with a prefix code each and a
+// context map that only says which is which.
 
-import { BitSink } from "velt/compress/brotli/bit_sink";
+import { MAX_TYPES } from "velt/compress/brotli/literal_blocks";
+import { BlockTypeWriter, typeCode } from "velt/compress/brotli/block_type_writer";
 import { PrefixWriter } from "velt/compress/brotli/prefix_writer";
 import {
   commandSymbol,
@@ -24,9 +26,10 @@ const COMMANDS: i64 = 704;
 const DISTANCES: i64 = 64;
 /** The copy length of a meta-block's last command when it only inserts (the decoder stops). */
 const NO_COPY: u64 = 4;
+const NO_LIMIT: u64 = 1 << 32;
 
 /** The commands of the current meta-block, and how they are written. */
-export class MetaBlock extends BitSink {
+export class MetaBlock extends BlockTypeWriter {
   /** The input the commands' literals and copies are in. */
   data: u8[] = [];
   /** Per command: the bytes it inserts, the bytes it copies, and its distance code (-1: none). */
@@ -40,15 +43,25 @@ export class MetaBlock extends BitSink {
   private cmdLens: u8[] = new Array<u8>(COMMANDS as usize).fill(0);
   private distLens: u8[] = new Array<u8>(DISTANCES as usize).fill(0);
   private litCodes: u32[] = new Array<u32>(LITERALS as usize).fill(0);
+  private typeLit: u32[] = new Array<u32>(LITERALS as usize).fill(0);
   private cmdCodes: u32[] = new Array<u32>(COMMANDS as usize).fill(0);
   private distCodes: u32[] = new Array<u32>(DISTANCES as usize).fill(0);
-  private prefix: PrefixWriter = new PrefixWriter();
   /** Per command, its symbol (bits 0-9) and distance symbol (10-15); scratch for `write`. */
   private symbols: u32[] = [];
   private dist: u64[] = [0, 0, 0];
+  /** Whether this stream's literals may be split, and this meta-block's are. */
+  private splitting: bool = false;
+  private split: bool = false;
 
   constructor() {
     super();
+  }
+
+  /** Lets meta-blocks split their literals, a quality's choice. */
+  splitLiterals() {
+    this.splitting = true;
+    this.litCodes = new Array<u32>((MAX_TYPES * LITERALS) as usize).fill(0);
+    this.prepareTypes();
   }
 
   /** The commands so far. */
@@ -90,29 +103,43 @@ export class MetaBlock extends BitSink {
    */
   writeBlock(start: i64, end: i64, last: bool): bool {
     const data = this.data;
-    const extra = this.count(data, start);
+    let extra = this.count(data, start);
+    const types = this.split ? this.blocks.typeCount : 1;
     const at = this.mark();
     const before = this.bits;
     this.header(end - start, last);
     if (!last) {
       this.put(0, 1);
     }
-    // One block type in each category, no postfix bits or direct codes, the literal context mode
-    // LSB6 (any would do with one tree), one literal tree and one distance tree.
-    this.put(0, 3);
+    // The literals' block types, one type of commands and of distances, no postfix bits or direct
+    // codes, the literal context mode LSB6 per type (any would do with a tree per type), the
+    // literal trees and one distance tree.
+    if (types > 1) {
+      extra += this.storeBlockSwitches(types);
+    } else {
+      this.put(0, 1);
+    }
+    this.put(0, 2);
     this.put(0, 6);
-    this.put(0, 2);
-    this.put(0, 2);
+    this.room(types / 4 + 8);
+    for (let t: i64 = 0; t < types; t++) {
+      this.put(0, 2);
+    }
+    if (types > 1) {
+      this.storeTypeMap(types);
+    } else {
+      this.put(0, 1);
+    }
+    this.put(0, 1);
     const p = this.prefix;
-    const litSingle = p.build(this.litFreq, LITERALS, this.litLens, this.litCodes);
+    const litBits = this.storeLiteralCodes(types);
     const cmdSingle = p.build(this.cmdFreq, COMMANDS, this.cmdLens, this.cmdCodes);
     const distSingle = p.build(this.distFreq, DISTANCES, this.distLens, this.distCodes);
     // Copies: `store` writes to this object, which holds them (1 KB a meta-block).
-    p.store(this, this.litLens.slice(), LITERALS, 8, litSingle);
     p.store(this, this.cmdLens.slice(), COMMANDS, 10, cmdSingle);
     p.store(this, this.distLens.slice(), DISTANCES, 6, distSingle);
     const body =
-      PrefixWriter.cost(this.litFreq, this.litLens, LITERALS) +
+      litBits +
       PrefixWriter.cost(this.cmdFreq, this.cmdLens, COMMANDS) +
       PrefixWriter.cost(this.distFreq, this.distLens, DISTANCES) +
       extra;
@@ -135,6 +162,32 @@ export class MetaBlock extends BitSink {
     }
     this.clear();
     return wasStored;
+  }
+
+  // Builds and writes the prefix code of each literal block type; returns the literals' bits.
+  private storeLiteralCodes(types: i64): i64 {
+    const p = this.prefix;
+    if (types == 1) {
+      const single = p.build(this.litFreq, LITERALS, this.litLens, this.litCodes);
+      p.store(this, this.litLens.slice(), LITERALS, 8, single);
+      return PrefixWriter.cost(this.litFreq, this.litLens, LITERALS);
+    }
+    const h = this.blocks.histograms;
+    const codes = this.litCodes;
+    let bits: i64 = 0;
+    for (let t: i64 = 0; t < types; t++) {
+      const from = t * LITERALS;
+      for (let i: i64 = 0; i < LITERALS; i++) {
+        this.litFreq[i] = h[from + i];
+      }
+      const single = p.build(this.litFreq, LITERALS, this.litLens, this.typeLit);
+      p.store(this, this.litLens.slice(), LITERALS, 8, single);
+      bits += PrefixWriter.cost(this.litFreq, this.litLens, LITERALS);
+      for (let i: i64 = 0; i < LITERALS; i++) {
+        codes[from + i] = this.typeLit[i];
+      }
+    }
+    return bits;
   }
 
   /** `data[start..end]` as a stored meta-block (never the last). */
@@ -174,12 +227,22 @@ export class MetaBlock extends BitSink {
     const dist = this.dist;
     let extra: i64 = 0;
     let pos = start;
+    let literals: i64 = 0;
+    for (let i: usize = 0; i < n; i++) {
+      literals += this.inserts[i] as i64;
+    }
+    const split = this.splitting && this.blocks.start(literals);
+    this.split = split;
     for (let i: usize = 0; i < n; i++) {
       const ins = this.inserts[i] as u64;
       const copy = this.copies[i] as u64;
       const code = this.dists[i];
-      for (let k: u64 = 0; k < ins; k++) {
-        this.litFreq[data[pos + (k as i64)] as i64] += 1;
+      if (split) {
+        this.blocks.add(data, pos, pos + (ins as i64));
+      } else {
+        for (let k: u64 = 0; k < ins; k++) {
+          this.litFreq[data[pos + (k as i64)] as i64] += 1;
+        }
       }
       pos += (ins + copy) as i64;
       const ic = insertCode(ins);
@@ -196,6 +259,14 @@ export class MetaBlock extends BitSink {
       }
       symbols.push(entry);
     }
+    if (split) {
+      this.blocks.finish();
+      if (this.blocks.typeCount == 1) {
+        for (let i: i64 = 0; i < LITERALS; i++) {
+          this.litFreq[i] = this.blocks.histograms[i];
+        }
+      }
+    }
     return extra;
   }
 
@@ -204,7 +275,16 @@ export class MetaBlock extends BitSink {
     const n = this.inserts.length;
     const symbols = this.symbols;
     const dist = this.dist;
+    const b = this.blocks;
+    const switching = this.split && b.typeCount > 1;
+    const litCodes = this.litCodes;
     let pos = start;
+    // The literals' block: the next one's index, the literals left in this one, its codes.
+    let next: usize = 1;
+    let left: u64 = switching ? (b.lengths[0] as u64) : NO_LIMIT;
+    let base: i64 = 0;
+    let last: i64 = 0;
+    let previous: i64 = 1;
     for (let i: usize = 0; i < n; i++) {
       const ins = this.inserts[i] as u64;
       const copy = this.copies[i] as u64;
@@ -215,9 +295,25 @@ export class MetaBlock extends BitSink {
       const cc = copyCode(copy);
       this.put(insertExtraValue(ic, ins), insertExtraBits(ic));
       this.put(copyExtraValue(cc, copy), copyExtraBits(cc));
-      const litCodes = this.litCodes;
-      for (let k: u64 = 0; k < ins; k++) {
-        this.code(litCodes[data[pos + (k as i64)] as i64]);
+      let at = pos;
+      const to = pos + (ins as i64);
+      while (at < to) {
+        if (left == 0) {
+          const type = b.types[next] as i64;
+          this.code(this.typeCodes[typeCode(type, last, previous)]);
+          previous = last;
+          last = type;
+          left = b.lengths[next] as u64;
+          this.storeCount(left);
+          next++;
+          base = type * LITERALS;
+        }
+        const run = ((to - at) as u64) < left ? to - at : (left as i64);
+        for (let k = at; k < at + run; k++) {
+          this.code(litCodes[base + (data[k] as i64)]);
+        }
+        at += run;
+        left -= run as u64;
       }
       pos += (ins + copy) as i64;
       if (symbol >= 128 && code >= 0) {
