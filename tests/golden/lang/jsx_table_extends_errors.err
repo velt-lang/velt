@@ -2,3 +2,6 @@ Property 'nope' does not exist on type 'JSX.IntrinsicElements["a"]'.
 Property 'need' is missing
 Property 'go' is missing
 Property 'id' does not exist on type 'JSX.IntrinsicElements["n"]'.
+jsx_table_extends_errors.velt:6:18: error: Type 'string' is not assignable to type 'f64 | undefined'.
+jsx_table_extends_errors.velt:7:20: error: Type 'f64' is not assignable to type '((string) => void) | undefined'.
+jsx_table_extends_errors.velt:8:22: error: Type 'string' is not assignable to type 'f64 | undefined'.

@@ -270,12 +270,21 @@ fn flatten_items(
 ) -> Vec<ast::Item> {
     // A namespace in `declare global { … }` is declared in its module, as `declare namespace`.
     let mut hoisted = vec![];
+    // The namespaces of `declare global` blocks, which see the global members; one in
+    // `declare module "m" { … }` is that module's, as in TypeScript.
+    let mut global: Vec<String> = vec![];
     for item in &mut items {
         if let ast::ItemKind::Augment(a) = &mut item.kind {
-            let (ns, rest) = std::mem::take(&mut a.items)
+            let (ns, rest): (Vec<ast::Item>, _) = std::mem::take(&mut a.items)
                 .into_iter()
                 .partition(|i| matches!(i.kind, ast::ItemKind::Namespace(_)));
             a.items = rest;
+            if a.module.is_none() {
+                global.extend(ns.iter().filter_map(|i| match &i.kind {
+                    ast::ItemKind::Namespace(n) => Some(n.name.name.clone()),
+                    _ => None,
+                }));
+            }
             hoisted.extend(ns.into_iter().map(|mut i: ast::Item| {
                 if let ast::ItemKind::Namespace(n) = &mut i.kind {
                     n.declare = true;
@@ -287,12 +296,6 @@ fn flatten_items(
             }));
         }
     }
-    let global: Vec<String> = (hoisted.iter())
-        .filter_map(|i: &ast::Item| match &i.kind {
-            ast::ItemKind::Namespace(n) => Some(n.name.name.clone()),
-            _ => None,
-        })
-        .collect();
     items.extend(hoisted);
     let mut blocks = Blocks::default();
     for item in &items {
