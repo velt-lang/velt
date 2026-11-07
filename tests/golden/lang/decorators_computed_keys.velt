@@ -6,22 +6,33 @@ declare decorator function m(): MethodDecorator;
 const k = "x";
 
 class C {
-  @nosuch [k] = 1;
+  @nosuch
+  [k] = 1;
 }
+
 class D {
-  @t(1) [k] = 1;
+  @t(1)
+  [k] = 1;
 }
+
 class E {
-  @t(2) readonly [k]: i64 = 1;
+  @t(2)
+  readonly [k]: i64 = 1;
 }
+
 struct S {
-  @t(3) [k]: i64 = 1;
+  @t(3)
+  [k]: i64 = 1;
 }
+
 class F {
-  @m [k]: i64 = 1;
+  @m
+  [k]: i64 = 1;
 }
+
 class Fine {
-  @t("ok") [k]: i64 = 1;
+  @t("ok")
+  [k]: i64 = 1;
 }
 
 function main() {}

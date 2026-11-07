@@ -1,2 +1,2 @@
-_decorators_computed_key_tc39.ts:5:3: error: TC39 run-time decorators are not supported yet (#2204)
-_decorators_computed_key_tc39.ts:8:3: error: TC39 run-time decorators are not supported yet (#2204)
+_decorators_computed_key_tc39.ts:7:3: error: TC39 run-time decorators are not supported yet (#2204)
+_decorators_computed_key_tc39.ts:12:3: error: TC39 run-time decorators are not supported yet (#2204)

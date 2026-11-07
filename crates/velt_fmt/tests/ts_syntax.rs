@@ -558,6 +558,8 @@ fn a_method_decorator_stays_on_the_implementation() {
     // Modifiers stay after the decorator, and comments where they were.
     round_trips("class D {\n  // a\n  static m(x: number): void;\n  // b\n  @logged\n  static m(x: any) {}\n}\n");
     round_trips("abstract class D {\n  @logged\n  abstract m(x: number): void;\n}\n");
+    // A decorated abstract property keeps its setter: it is not `readonly`.
+    round_trips("abstract class D {\n  @f\n  abstract x: number;\n  @f\n  abstract readonly y: string;\n}\n");
 }
 
 #[test]

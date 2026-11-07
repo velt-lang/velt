@@ -15,23 +15,34 @@ interface P {
 
 const WIDE = 1i64;
 const POINTS = [{ x: 1i64 }];
+
 declare decorator function points(ps: P[]): FieldDecorator;
 declare decorator function narrow(ps: { x: i8 }[]): FieldDecorator;
 
 class C {
-  @small(1i64) a: i64 = 0;
-  @small(WIDE) b: i64 = 0;
-  @single(1e300) c: i64 = 0;
-  @single(-1e39) d: i64 = 0;
-  @half(65536) e: i64 = 0;
-  @point({ x: 1, x: 2 }) f: i64 = 0;
-  @narrow(POINTS) g: i64 = 0;
-  @points(POINTS) fine: i64 = 0;
-  @single(1.5f32) alsoFine: i64 = 0;
+  @small(1i64)
+  a: i64 = 0;
+  @small(WIDE)
+  b: i64 = 0;
+  @single(1e300)
+  c: i64 = 0;
+  @single(-1e39)
+  d: i64 = 0;
+  @half(65536)
+  e: i64 = 0;
+  @point({ x: 1, x: 2 })
+  f: i64 = 0;
+  @narrow(POINTS)
+  g: i64 = 0;
+  @points(POINTS)
+  fine: i64 = 0;
+  @single(1.5f32)
+  alsoFine: i64 = 0;
 }
 
 abstract class A {
-  @method abstract x: i64;
+  @method
+  abstract x: i64;
 }
 
 function main() {}

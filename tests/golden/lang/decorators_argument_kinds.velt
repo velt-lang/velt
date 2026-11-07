@@ -13,24 +13,33 @@ enum Num {
   A = 1,
   B = 20,
 }
+
 enum Word {
   Up = "UP",
 }
+
 const UP = Word.Up;
 
 @anything(1, "two")
 @anything({ a: [1, 2] }, Num.A)
 class C {
-  @count(Num.B) a: i64 = 0;
-  @ratio(Num.A) b: i64 = 0;
-  @label(Word.Up) c: i64 = 0;
-  @labels([Word.Up, UP, "down"]) d: i64 = 0;
-  @sized(1i8) e: i64 = 0;
+  @count(Num.B)
+  a: i64 = 0;
+  @ratio(Num.A)
+  b: i64 = 0;
+  @label(Word.Up)
+  c: i64 = 0;
+  @labels([Word.Up, UP, "down"])
+  d: i64 = 0;
+  @sized(1i8)
+  e: i64 = 0;
 }
 
 abstract class A {
-  @field abstract x: i64;
-  @field abstract readonly y: string;
+  @field
+  abstract x: i64;
+  @field
+  abstract readonly y: string;
 }
 
 class B extends A {

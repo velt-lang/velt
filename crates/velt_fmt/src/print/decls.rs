@@ -59,7 +59,8 @@ impl<'a> Printer<'a> {
                 !decl
                     .methods
                     .iter()
-                    .any(|s| s.is_setter && s.decl.sig.span == g.decl.sig.span)
+                    // The two share the name; a decorator moves only the getter's start.
+                    .any(|s| s.is_setter && s.decl.sig.name.span == g.decl.sig.name.span)
             })
             .map(|g| g.decl.sig.name.span.lo)
             .collect();

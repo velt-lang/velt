@@ -1,5 +1,5 @@
 decorators_computed_keys.velt:9:4: error: cannot find `nosuch` in this scope
-decorators_computed_keys.velt:12:6: error: this argument of the decorator doesn't fit its parameter's type `string`
-decorators_computed_keys.velt:15:6: error: this argument of the decorator doesn't fit its parameter's type `string`
-decorators_computed_keys.velt:18:6: error: this argument of the decorator doesn't fit its parameter's type `string`
-decorators_computed_keys.velt:21:3: error: the decorator `m` cannot be applied to a field
+decorators_computed_keys.velt:14:6: error: this argument of the decorator doesn't fit its parameter's type `string`
+decorators_computed_keys.velt:19:6: error: this argument of the decorator doesn't fit its parameter's type `string`
+decorators_computed_keys.velt:24:6: error: this argument of the decorator doesn't fit its parameter's type `string`
+decorators_computed_keys.velt:29:3: error: the decorator `m` cannot be applied to a field
