@@ -1,0 +1,12 @@
+// The key parameter written by a closure's default.
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, prop: any, r: any) {
+    const z = (a: any = (prop = "sort")) => a;
+    if (prop === "order") {
+      z();
+    }
+    return Reflect.get(t, prop, r);
+  },
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

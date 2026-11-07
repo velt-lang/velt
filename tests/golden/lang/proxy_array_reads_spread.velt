@@ -1,0 +1,18 @@
+// A forwarding `get` called with another key: a spread counts as one argument.
+const h = {
+  get(t: any, prop: any) {
+    return Reflect.get(t, prop);
+  },
+};
+const kv = (t: any): any[] => [t, "sort"];
+const g: any = h;
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, prop: any, r: any) {
+    if (prop === "order") {
+      return g.get(...kv(t));
+    }
+    return Reflect.get(t, prop, r);
+  },
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

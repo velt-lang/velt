@@ -223,7 +223,13 @@ pub(crate) fn lower_program(
     let facts_only = std::env::var_os("VELT_LOWER_WHOLE").is_none();
     let profile = std::env::var_os("VELT_LOWER_PROFILE").is_some();
     // One more pass when the `await` steps turn out to be unobservable (await_order.rs).
-    for pass in 0..MAX_PASSES {
+    // A pass that only finds more names called through `any` doesn't count (a finite set: the
+    // string literals of the program).
+    let mut next_pass = 0;
+    let mut counted_passes = 0;
+    while counted_passes < MAX_PASSES {
+        let pass = next_pass;
+        next_pass += 1;
         lower_profile::start_pass();
         let pass_start = std::time::Instant::now();
         let mut cx = Cx::new(hir, types, counted.clone());
@@ -307,11 +313,15 @@ pub(crate) fn lower_program(
                 // Lower again without the steps: the program then has no step code at all.
                 no_await_steps = true;
                 types = types_now;
+                counted_passes += 1;
                 continue;
             }
             return (program, diags);
         }
         types = cx.types;
+        if !counted.same_but_call_keys(&next) {
+            counted_passes += 1;
+        }
         counted = next;
     }
     ice("the counted types did not converge")

@@ -667,8 +667,10 @@ impl FnLower<'_, '_> {
         self.any_class_call((data, key, argv, argc), (ty, d), &outp);
         let vp = self.any_value_place(data, ty);
         let fields = self.member_fields(d);
+        // A name the program never calls through `any` can't be the key here, and a member that
+        // has no such call brings no code in (`Cx::any_called`).
         for (i, name) in fields.iter().enumerate() {
-            if name.starts_with('#') {
+            if name.starts_with('#') || !self.cx.any_called(name) {
                 continue;
             }
             let next = self.on_key(key, name);
@@ -704,7 +706,7 @@ impl FnLower<'_, '_> {
             self.switch_to(next);
         }
         for m in self.dyn_members_of(d) {
-            if m.kind.is_setter() || fields.contains(&m.name) {
+            if m.kind.is_setter() || fields.contains(&m.name) || !self.cx.any_called(&m.name) {
                 continue;
             }
             let next = self.on_key(key, &m.name);
@@ -713,12 +715,7 @@ impl FnLower<'_, '_> {
                 self.switch_to(next);
                 continue;
             }
-            // A method that throws only when the program calls one of that name through `any`
-            // (`""`: a computed name), so the classes of the standard library held as `any` do
-            // not bring in every one of their throwing methods.
-            let keys = &self.cx.boxing.any_call_keys;
-            let throwing =
-                m.kind == DynMemberKind::Method && (keys.contains(&m.name) || keys.contains(""));
+            let throwing = m.kind == DynMemberKind::Method;
             match (m.kind, self.ready_with(ty, &m, throwing)) {
                 (DynMemberKind::Method, Some(r)) => {
                     let f = self.cx.fn_def(r.def);
@@ -742,6 +739,9 @@ impl FnLower<'_, '_> {
             self.switch_to(next);
         }
         for name in OBJECT_PROTO {
+            if !self.cx.any_called(name) {
+                continue;
+            }
             let next = self.on_key(key, name);
             self.any_drop_args(argv, 0, argc);
             self.ret_status(ST_UNSUPPORTED);

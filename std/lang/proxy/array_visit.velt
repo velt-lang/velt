@@ -1,0 +1,73 @@
+// velt/lang/proxy (internal): `map`, `filter`, `forEach`, `some`, `every` and `slice` called on a
+// proxy of an array (array.velt), in Node's order of trap calls.
+
+import { Proxy } from "velt/lang/proxy";
+import { arrayArg, arrayCallback, arrayRel, trapGet, trapHas } from "velt/lang/proxy/array";
+
+/** The method `name` of the proxy `p` (length `len`, receiver `o`), `a0` its first argument. */
+export function proxyArrayVisit(
+  p: Proxy,
+  name: string,
+  args: any[],
+  o: any,
+  len: number,
+  a0: any,
+): any {
+  const out: any[] = [];
+  let from = 0;
+  let to = len;
+  if (name === "slice") {
+    from = arrayRel(a0, len, 0);
+    to = Math.max(arrayRel(arrayArg(args, 1), len, len), from);
+  }
+  const f = name === "slice" ? undefined : arrayCallback(a0);
+  if (name === "map" || name === "filter" || name === "slice") {
+    trapGet(p, "constructor", o);
+  }
+  for (let k = from; k < to; k++) {
+    const key = `${k}`;
+    if (!trapHas(p, key)) {
+      if (name === "map" || name === "slice") {
+        // Node keeps the hole in the new array, which Velt's arrays cannot have.
+        panic(
+          `TypeError: \`${name}\` of a proxy of an array whose element ${k} is absent is not supported yet (#823): Velt's arrays have no holes`,
+        );
+      }
+      continue;
+    }
+    const v = trapGet(p, key, o);
+    if (name === "slice") {
+      out.push(v);
+      continue;
+    }
+    const r = f(v, k, o);
+    if (name === "map") {
+      out.push(r);
+    } else if (name === "filter" && (r ? true : false)) {
+      out.push(v);
+    } else if (name === "some" && (r ? true : false)) {
+      return true;
+    } else if (name === "every" && !(r ? true : false)) {
+      return false;
+    }
+  }
+  if (name === "some" || name === "every") {
+    return name === "every";
+  }
+  if (name === "forEach") {
+    return undefined;
+  }
+  return out;
+}
+
+/** `find` of the proxy `p` (length `len`, receiver `o`), `a0` its callback. */
+export function proxyFind(p: Proxy, a0: any, o: any, len: number): any {
+  const f = arrayCallback(a0);
+  for (let k = 0; k < len; k++) {
+    const v = trapGet(p, `${k}`, o);
+    if (f(v, k, o) ? true : false) {
+      return v;
+    }
+  }
+  return undefined;
+}

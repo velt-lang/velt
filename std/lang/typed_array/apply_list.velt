@@ -1,0 +1,44 @@
+// velt/lang/typed_array (internal): a typed array as the list of `f.apply(self, list)`.
+
+import { TYPED_ARRAY_GET } from "velt/lang/hooks/keys";
+import { anyIsList } from "velt/lang/intrinsics";
+import { TypedArray } from "velt/lang/typed_array/base";
+
+/**
+ * The elements of the typed array `list` as an `any[]` (`any` reads none yet); another list as it
+ * is, and any list when `f` isn't a function: the `apply` called is then a plain method, which
+ * takes `list` as a value.
+ */
+export function typedApplyList(f: any, list: any): any {
+  if (anyIsList(list)) {
+    return list;
+  }
+  return typedElements(f, list);
+}
+
+function typedElements(f: any, list: any): any {
+  // Held before the test: `list` narrowed to a class and converted back would make that class's
+  // `any` table, and with it every typed array's members, in each program that loads them.
+  const held: any = list;
+  if (typeof f !== "function" || !(list instanceof TypedArray)) {
+    return list;
+  }
+  const n: number = held.length;
+  const out: any[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(list[TYPED_ARRAY_GET](i as usize));
+  }
+  return out;
+}
+
+/**
+ * `list`, unless `target`, a proxy's innermost, is a typed array and `f` a function: a typed array's
+ * accessors stop on a proxy, as in Node. A `get` trap that answers them isn't told apart yet: reading
+ * elements through `any` gives `undefined` (#1540), and a loud error is the better of the two.
+ */
+export function typedProxyList(f: any, target: any, list: any): any {
+  if (typeof f === "function" && target instanceof TypedArray) {
+    throw new TypeError("this is not a typed array.");
+  }
+  return list;
+}

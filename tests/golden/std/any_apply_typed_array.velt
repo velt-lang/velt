@@ -1,0 +1,11 @@
+// A typed array as the list of `f.apply`, and of an array method's.
+function args(this: any, a: any, b: any, c: any): any {
+  return `${this.tag}:${a},${b},${c}`;
+}
+const f: any = args;
+const list: any = new Uint8Array([1, 2]);
+console.log(f.apply({ tag: "x" }, list));
+const target: any = new Proxy([1, 2, 3] as any, {});
+const slice = target.slice;
+const start: any = new Uint8Array([2]);
+console.log(JSON.stringify(slice.apply(target, start)));

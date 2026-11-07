@@ -144,6 +144,13 @@ impl Boxing {
 
     /// The counted types before any share is observed: the recursive object types, and the
     /// object types sema relies on being counted (`hir::Program::counted_objects`).
+    /// Do `self` and `next` differ at most in the names called through `any`?
+    pub(in crate::lower) fn same_but_call_keys(&self, next: &Boxing) -> bool {
+        let mut a = self.clone();
+        a.any_call_keys.clone_from(&next.any_call_keys);
+        a == *next
+    }
+
     pub(super) fn initial(hir: &hir::Program) -> Boxing {
         let mut recursive = recursive_objects(hir);
         // A generic counted type (a generic interface adapter): every instance of it.
@@ -158,6 +165,7 @@ impl Boxing {
             }
         }
         Boxing {
+            any_call_keys: hir.any_call_names.iter().cloned().collect(),
             recursive,
             boxes: hir.counted_objects.iter().copied().collect(),
             ..Boxing::default()

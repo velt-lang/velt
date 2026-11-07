@@ -108,7 +108,7 @@ impl FnCx<'_, '_> {
                 return h;
             }
         }
-        self.note_reflect_call(d, &prop.name, span);
+        self.note_reflect_call(d, &prop.name, args, span);
         let cname = self.cx.adt(d).expect("ICE: adt").name.clone();
         // `JSON.parse(text)` with its type from the context (`as T`, an annotated variable):
         // TypeScript's form, decoded strictly where `JSON.parse<T>` is lenient (the hook

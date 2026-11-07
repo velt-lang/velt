@@ -92,7 +92,12 @@ impl FnCx<'_, '_> {
         let new = synth(
             ast::ExprKind::New {
                 class,
-                args: vec![arrow],
+                args: if uses_arguments(d) {
+                    let yes = synth(ast::ExprKind::Lit(ast::Lit::Bool(true)), span);
+                    vec![arrow, yes]
+                } else {
+                    vec![arrow]
+                },
             },
             span,
         );
@@ -405,4 +410,35 @@ fn rest_elem(t: &ast::TypeExpr) -> Option<&ast::TypeExpr> {
     let any = matches!(&elem.kind, ast::TypeExprKind::Named { path, args }
         if args.is_empty() && matches!(path.as_slice(), [p] if p.name == "any"));
     (!any).then_some(elem)
+}
+
+/// Does `d`'s body or a parameter's default name `arguments` (nested functions and their defaults
+/// included: a closure in it may hold them)?
+fn uses_arguments(d: &ast::FnDecl) -> bool {
+    use velt_syntax::visit::{walk_block, walk_expr, walk_pattern, Visit};
+    struct Find(bool);
+    impl<'a> Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            match &e.kind {
+                ast::ExprKind::Ident(i) => self.0 |= i.name == ARGUMENTS,
+                ast::ExprKind::Arrow { params, .. } => {
+                    for p in params {
+                        p.default.iter().for_each(|x| walk_expr(x, self));
+                        p.pattern.iter().for_each(|x| walk_pattern(x, self));
+                    }
+                }
+                _ => {}
+            }
+        }
+        fn function(&mut self, sig: &'a ast::FnSig, _: &'a ast::Block) {
+            for p in &sig.params {
+                p.default.iter().for_each(|x| walk_expr(x, self));
+                p.pattern.iter().for_each(|x| walk_pattern(x, self));
+            }
+        }
+    }
+    let mut f = Find(false);
+    f.function(&d.sig, &d.body);
+    walk_block(&d.body, &mut f);
+    f.0
 }

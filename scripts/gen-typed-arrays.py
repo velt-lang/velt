@@ -886,6 +886,7 @@ def main():
     write(os.path.join(DIR, "base.velt"),
           BASE_DOC + GENERATED + "\n" + imports(base, BUFFER_NAMES, "velt/lang/typed_array/buffer")
           + 'import { BufferView } from "velt/lang/typed_array/buffer_view";\n'
+          + 'import "velt/lang/typed_array/apply_list";\n'
           + imports(base, KEY_NAMES, "velt/lang/hooks/keys") + "\n" + base)
     lay = LAYOUT_BODY
     write(os.path.join(DIR, "layout.velt"),

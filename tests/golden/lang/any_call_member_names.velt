@@ -1,0 +1,28 @@
+// A call through `any` finds the member it names, and only that: the other members of the class
+// and of a plain object aren't called, and a name no value has is Node's `TypeError`.
+class Counter {
+  n: number = 1;
+  step: () => number = () => 10;
+  bump(): number {
+    this.n++;
+    return this.n;
+  }
+  unused(): number {
+    return -1;
+  }
+}
+
+const c: any = new Counter();
+console.log(c.bump(), c.step());
+const o: any = { step: () => 20, n: 2 };
+console.log(o.step());
+try {
+  c.missing();
+} catch (e) {
+  console.log((e as Error).name);
+}
+try {
+  o.n();
+} catch (e) {
+  console.log((e as Error).name);
+}

@@ -170,7 +170,7 @@ fn walk_var<'a>(decl: &'a ast::VarDecl, v: &mut dyn Visit<'a>) {
     opt_expr(decl.init.as_ref(), v);
 }
 
-fn walk_block<'a>(b: &'a ast::Block, v: &mut dyn Visit<'a>) {
+pub fn walk_block<'a>(b: &'a ast::Block, v: &mut dyn Visit<'a>) {
     for s in &b.stmts {
         walk_stmt(s, v);
     }

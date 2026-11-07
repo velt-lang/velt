@@ -1,0 +1,8 @@
+// An array method only read through a proxy is a function, and a program that calls none of them
+// still reads, writes and lists the array.
+const p: any = new Proxy([3, 1, 2] as any, {});
+const sort = p.sort;
+console.log(typeof sort, typeof p.push, typeof p.nothing);
+console.log(p.length, p[0]);
+p[1] = 7;
+console.log(JSON.stringify(p), Object.keys(p).length, 1 in p);

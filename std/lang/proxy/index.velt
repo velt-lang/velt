@@ -39,6 +39,7 @@ import {
   PROXY_TARGET,
   PROXY_VIEW,
 } from "velt/lang/hooks/keys";
+import { stdUsed } from "velt/lang/intrinsics";
 import { PropertyDescriptor, ProxyHandler } from "velt/lang/proxy/descriptor";
 import { proxyKey, proxyKeyText } from "velt/lang/proxy/keys";
 import { Reflect } from "velt/lang/proxy/reflect";
@@ -176,7 +177,7 @@ export class Proxy {
     if (trap == null) {
       return Reflect.get(this.#target, key, receiver);
     }
-    if (this.#getterMarked) {
+    if (stdUsed("brandGetter") && this.#getterMarked) {
       return this.#getWhileMarked(key, receiver);
     }
     if (typeof key === "string") {

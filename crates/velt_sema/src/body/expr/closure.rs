@@ -292,6 +292,7 @@ impl FnCx<'_, '_> {
         // A JS API predicate's result is tested like a condition (`xs.filter((n) => n)`).
         frame.truthy_returns =
             std_callback.is_some() && ret.is_none() && ret_ty == Some(self.cx.ty.bool_);
+        frame.trap_key = self.trap_key_of(e);
         let saved = std::mem::replace(&mut self.f, frame);
         self.outer.push(saved);
         if let Some((g, m, _)) = member {
@@ -375,6 +376,7 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
+        self.finish_trap(&frame);
         // Reads outside the body's statements (an expression body) check at its start.
         let late = self.late_check_stmts(frame.late.checks.clone(), span);
         block.stmts.splice(0..0, late);

@@ -412,6 +412,8 @@ pub(crate) struct Ctx<'m> {
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Objects converted by copying their fields, and telling writes (`crate::object_copies`).
     pub object_copies: crate::object_copies::Copies,
+    /// What bodies do that lets a program hold an array method under another name.
+    pub(crate) method_facts: crate::body::expr::proxy_method_values::MethodFacts,
     /// The spans of the `super.m(args)` calls (`hir::Program::super_calls`).
     pub super_calls: rustc_hash::FxHashSet<velt_common::Span>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
@@ -640,6 +642,7 @@ impl<'m> Ctx<'m> {
             borrow_pass_errors: false,
             fresh_checks: vec![],
             object_copies: Default::default(),
+            method_facts: Default::default(),
             super_calls: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],

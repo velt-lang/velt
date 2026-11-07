@@ -1,0 +1,108 @@
+// Each class is reached only through a call through `any` in the one before.
+class C1 {
+  o: any = null;
+  m1(): any {
+    return this.o.m2();
+  }
+}
+class C2 {
+  o: any = null;
+  m2(): any {
+    return this.o.m3();
+  }
+}
+class C3 {
+  o: any = null;
+  m3(): any {
+    return this.o.m4();
+  }
+}
+class C4 {
+  o: any = null;
+  m4(): any {
+    return this.o.m5();
+  }
+}
+class C5 {
+  o: any = null;
+  m5(): any {
+    return this.o.m6();
+  }
+}
+class C6 {
+  o: any = null;
+  m6(): any {
+    return this.o.m7();
+  }
+}
+class C7 {
+  o: any = null;
+  m7(): any {
+    return this.o.m8();
+  }
+}
+class C8 {
+  o: any = null;
+  m8(): any {
+    return this.o.m9();
+  }
+}
+class C9 {
+  o: any = null;
+  m9(): any {
+    return this.o.m10();
+  }
+}
+class C10 {
+  o: any = null;
+  m10(): any {
+    return this.o.m11();
+  }
+}
+class C11 {
+  o: any = null;
+  m11(): any {
+    return this.o.m12();
+  }
+}
+class C12 {
+  m12(): any {
+    return 12;
+  }
+}
+const last: any = new C12();
+let next: any = last;
+const c11 = new C11();
+c11.o = next;
+next = c11;
+const c10 = new C10();
+c10.o = next;
+next = c10;
+const c9 = new C9();
+c9.o = next;
+next = c9;
+const c8 = new C8();
+c8.o = next;
+next = c8;
+const c7 = new C7();
+c7.o = next;
+next = c7;
+const c6 = new C6();
+c6.o = next;
+next = c6;
+const c5 = new C5();
+c5.o = next;
+next = c5;
+const c4 = new C4();
+c4.o = next;
+next = c4;
+const c3 = new C3();
+c3.o = next;
+next = c3;
+const c2 = new C2();
+c2.o = next;
+next = c2;
+const c1 = new C1();
+c1.o = next;
+next = c1;
+console.log(next.m1());

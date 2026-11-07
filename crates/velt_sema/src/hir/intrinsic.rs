@@ -555,6 +555,21 @@ pub enum Intrinsic {
     /// removed and an optional field made absent (`true`), a key the value does not have is
     /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
     AnyDelete,
+    /// std only: `(name: string literal) -> bool`, a constant: can the program call the array
+    /// method `name` through `any`, so that its generic algorithm on a proxy can run
+    /// (velt/lang/proxy/array)? True when `name` is called by name, when a method is called by a
+    /// computed name, when `call`, `apply` or `bind` is called, which run a method read as a value,
+    /// or when the program can hold a method under another name (`Program::array_methods_open`;
+    /// hir_encodings.md "any and unknown").
+    AnyMethodCalled,
+    /// std only: `(x: borrow any) -> bool`: does `x` hold an `any[]` itself (not a view, a proxy or
+    /// another array)? A comparison of its descriptor.
+    AnyIsList,
+    /// std only: `(name: string literal)`: nothing runs. Where it is lowered, the program can reach
+    /// this code, so `StdUsed(name)` is true for the whole program.
+    NoteStdUse,
+    /// std only: `(name: string literal) -> bool`, a constant: is `NoteStdUse(name)` reachable?
+    StdUsed,
     /// std only: `(x: borrow any, op: i64) -> i64`, an array method running on a proxy of the
     /// array `x` holds (velt/lang/proxy/array; identified by its data pointer): `op` 1 starts it, -1
     /// ends it and answers the first hole it leaves (or -1), 2 and -2 start and end a trap call

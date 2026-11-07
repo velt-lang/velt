@@ -1,0 +1,11 @@
+// A proxy of a typed array as the list of `f.apply`: its `length` stops, as in Node.
+function args(this: any, a: any, b: any): any {
+  return `${this.tag}:${a},${b}`;
+}
+const f: any = args;
+const list: any = new Proxy(new Uint8Array([1, 2]) as any, {});
+try {
+  console.log(f.apply({ tag: "x" }, list));
+} catch (e) {
+  console.log((e as Error).name);
+}

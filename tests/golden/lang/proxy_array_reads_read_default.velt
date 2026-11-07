@@ -1,0 +1,12 @@
+// A read in a parameter's default, at module level.
+const pick = (a: any, m: any = Reflect.get(a, "sort")) => m;
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, prop: any, r: any) {
+    if (prop === "order") {
+      return pick(t);
+    }
+    return Reflect.get(t, prop, r);
+  },
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

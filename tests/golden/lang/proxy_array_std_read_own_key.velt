@@ -1,0 +1,10 @@
+// Std reads a real own key of the target, through a trap that reads another object by that key.
+const src: any = new Proxy({ sort: 1 } as any, {
+  get: (t: any, prop: any, r: any) => Reflect.get([0], prop),
+});
+const m: any = Object.values(src)[0];
+const p: any = new Proxy([3, 1, 2] as any, {
+  get: (t: any, prop: any, r: any) => (prop === "order" ? m : Reflect.get(t, prop, r)),
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

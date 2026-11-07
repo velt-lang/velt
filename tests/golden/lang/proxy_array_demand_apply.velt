@@ -1,0 +1,9 @@
+// An array method read as a value and run by `apply`: no call in the program names the method.
+const p: any = new Proxy([3, 1, 2] as any, {});
+const unshift = p.unshift;
+console.log(unshift.apply(p, [9, 8]));
+const proto: any = Array.prototype;
+const pop = proto.pop;
+console.log(pop.apply(p));
+const join = proto.join;
+console.log(join.apply(p, ["-"]));

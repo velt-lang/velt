@@ -85,6 +85,9 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Ident(ns) = &object.kind else {
             return None;
         };
+        if prop.name.starts_with("getOwnPropertyDescriptor") {
+            self.note_descriptor_read();
+        }
         if ns.name == "Reflect" && prop.name == "ownKeys" && !self.is_local_name("Reflect") {
             // `Reflect.ownKeys(r)` of a record: its string keys, then its symbol keys.
             if let Some(h) =

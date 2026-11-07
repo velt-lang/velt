@@ -1,0 +1,11 @@
+// A method that throws, called through `any`: it runs, and its error ends the program, as an error
+// nothing can catch through a descriptor slot does (#1174).
+class C {
+  m(): any {
+    throw new Error("M");
+  }
+}
+const c: any = new C();
+console.log("before");
+c.m();
+console.log("after");

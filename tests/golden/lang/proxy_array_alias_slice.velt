@@ -1,0 +1,8 @@
+// The name a `get` trap reads is computed from the key.
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, k: any, r: any) {
+    return Reflect.get(t, k.slice(2), r);
+  },
+});
+console.log(p.xxpop(), p.xxshift());
+console.log(p.length);

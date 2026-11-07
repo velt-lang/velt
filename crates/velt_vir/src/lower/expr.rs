@@ -547,6 +547,9 @@ impl FnLower<'_, '_> {
     /// `||` (std/prelude/map.velt). Other constant conditions are left to velt_opt, so their
     /// code keeps its shape.
     pub(super) fn const_cond(&mut self, e: &hir::Expr) -> Option<bool> {
+        if let Some(fact) = self.cx.std_fact_of(e) {
+            return Some(fact);
+        }
         match &e.kind {
             hir::ExprKind::Call {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsNull),

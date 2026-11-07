@@ -90,3 +90,16 @@ fn assignments_anywhere_include_closures() {
         ["x", "y"]
     );
 }
+
+#[test]
+fn a_default_in_a_closures_destructured_parameter_assigns() {
+    let arrow = "const f = ({ a = (x = 1) }: any) => a;";
+    assert_eq!(by_closures(arrow), ["x"]);
+    assert_eq!(anywhere(arrow), ["x"]);
+    let nested = "const f = ([{ b = (y = 2) }]: any) => b;";
+    assert_eq!(by_closures(nested), ["y"]);
+    let function = "const o = { *g({ a = (x = 1) }: any) { yield a; } };";
+    assert_eq!(by_closures(function), ["x"]);
+    // A name the pattern binds is the closure's own.
+    assert!(by_closures("const f = ({ a = (a = 1) }: any) => a;").is_empty());
+}

@@ -270,6 +270,9 @@ impl Walk<'_, '_, '_> {
                     | Intrinsic::MayAlias
                     | Intrinsic::HoldsNull
                     | Intrinsic::MayHoldPrimitive
+                    | Intrinsic::AnyMethodCalled
+                    | Intrinsic::NoteStdUse
+                    | Intrinsic::StdUsed
                     | Intrinsic::HoldsDynamic
                     | Intrinsic::HoldsDynamicOrClass
             )

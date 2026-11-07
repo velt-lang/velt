@@ -1,0 +1,16 @@
+// An `ownKeys` trap under a computed key, with a forwarding `get` trap.
+const K = "ownKeys";
+const src: any = new Proxy([0] as any, {
+  get: (t: any, prop: any) => Reflect.get(t, prop),
+  [K]: (t: any) => ["length", "sort"],
+  getOwnPropertyDescriptor: (t: any, prop: any) =>
+    prop === "length"
+      ? { value: 1, writable: true, enumerable: false, configurable: false }
+      : { value: 1, writable: true, enumerable: true, configurable: true },
+});
+const m: any = Object.values(src)[0];
+const p: any = new Proxy([3, 1, 2] as any, {
+  get: (t: any, prop: any, r: any) => (prop === "order" ? m : Reflect.get(t, prop, r)),
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

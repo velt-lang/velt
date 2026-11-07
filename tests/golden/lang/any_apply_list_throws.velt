@@ -1,0 +1,47 @@
+// An error thrown while `f.apply` reads its list leaves at the call, where it can be caught.
+function one(this: any, a: any): any {
+  return a;
+}
+const f: any = one;
+const length: any = new Proxy([1] as any, {
+  get(t: any, k: any, r: any) {
+    if (k === "length") {
+      throw new Error("L");
+    }
+    return Reflect.get(t, k, r);
+  },
+});
+const element: any = new Proxy([1] as any, {
+  get(t: any, k: any, r: any) {
+    if (k === "0") {
+      throw new Error("E");
+    }
+    return Reflect.get(t, k, r);
+  },
+});
+for (const list of [length, element]) {
+  try {
+    console.log(f.apply(null, list));
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+const method: any = (Array.prototype as any).push;
+try {
+  method.apply([], length);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+try {
+  f.apply(null, 5);
+} catch (e) {
+  console.log((e as Error).name);
+}
+class Own {
+  apply(a: any, b: any): any {
+    return b;
+  }
+}
+const own: any = new Own();
+const kept: any = [1];
+console.log(own.apply(null, kept) === kept);

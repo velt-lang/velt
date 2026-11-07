@@ -1,0 +1,50 @@
+// Each method is reached only through a call through `any` in the one before.
+class C {
+  s: any = null;
+  m1(): any {
+    return this.s.m2();
+  }
+  m2(): any {
+    return this.s.m3();
+  }
+  m3(): any {
+    return this.s.m4();
+  }
+  m4(): any {
+    return this.s.m5();
+  }
+  m5(): any {
+    return this.s.m6();
+  }
+  m6(): any {
+    return this.s.m7();
+  }
+  m7(): any {
+    return this.s.m8();
+  }
+  m8(): any {
+    return this.s.m9();
+  }
+  m9(): any {
+    return this.s.m10();
+  }
+  m10(): any {
+    return this.s.m11();
+  }
+  m11(): any {
+    return this.s.m12();
+  }
+  m12(): any {
+    return this.s.m13();
+  }
+  m13(): any {
+    return this.s.m14();
+  }
+  m14(): any {
+    return 14;
+  }
+}
+const c = new C();
+c.s = c;
+const x: any = c;
+console.log(x.m1());

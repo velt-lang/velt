@@ -1,0 +1,23 @@
+// `f.apply` with a list too long to pass is a `RangeError`, as in Node.
+function args(this: any, a: any, b: any, c: any): any {
+  return `${this.tag}:${a},${b},${c}`;
+}
+const f: any = args;
+const self = { tag: "x" };
+const target: any = new Proxy([] as any, {});
+const push = target.push;
+for (const n of [Infinity, 1e10, 2 ** 53, 2 ** 30]) {
+  try {
+    console.log(f.apply(self, { length: n }));
+  } catch (e) {
+    console.log((e as Error).name, (e as Error).message);
+  }
+  try {
+    console.log(push.apply(target, { length: n }));
+  } catch (e) {
+    console.log((e as Error).name, (e as Error).message);
+  }
+}
+for (const n of [2.5, -1, "3", null, undefined]) {
+  console.log(f.apply(self, { length: n, 0: "a", 1: "b", 2: "c" }));
+}
