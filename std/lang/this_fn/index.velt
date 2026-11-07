@@ -17,9 +17,12 @@ let declared: Map<string, ThisFn> | null = null;
 /** A function value whose `this` is bound at the call (module docs). */
 export class ThisFn {
   #f: Function;
+  // The body uses `arguments`, which is then its own, not the list `apply` was given.
+  #ownsArguments: boolean;
 
-  constructor(f: Function) {
+  constructor(f: Function, ownsArguments: boolean = false) {
     this.#f = f;
+    this.#ownsArguments = ownsArguments;
   }
 
   /**
@@ -51,7 +54,8 @@ export class ThisFn {
     if (args == null) {
       return this[THIS_FN_APPLY](self, []);
     }
-    return this[THIS_FN_APPLY](self, anyArgList(args));
+    const list = anyArgList(args);
+    return this[THIS_FN_APPLY](self, this.#ownsArguments ? list.slice() : list);
   }
 
   /**
