@@ -1,20 +1,16 @@
 // velt/net (internal): `TlsEngine`, a TLS 1.3 client connection over any `ByteStream`: the
-// record layer (RFC 8446 §5), the handshake driven by `ClientHandshake`, and what comes after
-// it (NewSessionTicket, KeyUpdate, alerts, close_notify).
+// handshake driven by `ClientHandshake`, the reading side of the record layer (RFC 8446 §5), and
+// what comes after the handshake (NewSessionTicket, KeyUpdate, alerts, close_notify).
 //
 // Built for throughput: `RecordReader` reads and decrypts records in place in one reused
 // buffer, and writes seal up to four records in place in a second reused buffer and go out in
-// one transport write. Opening and sealing a record allocate nothing; each transport read
-// allocates its view of the buffer (3 blocks, all freed), `TlsStream.read` its result, and the
-// handshake and each post-handshake message allocate.
-//
-// Writes take turns (`Turns`): records carry implicit sequence numbers, so each write
-// seals and sends its records while no other does, in the order the writes were called; a
-// KeyUpdate and close_notify wait their turn the same way.
+// one transport write (`RecordWriter`). Opening and sealing a record allocate nothing; each
+// transport read allocates its view of the buffer (3 blocks, all freed), `TlsStream.read` its
+// result, and the handshake and each post-handshake message allocate.
 
 import { IoError } from "velt/io/error";
-import { ByteStream, TryStream } from "velt/net/byte_stream";
-import { CLOSE_NOTIFY, TlsFailure, UNEXPECTED_MESSAGE } from "velt/net/tls/alert";
+import { ByteStream } from "velt/net/byte_stream";
+import { TlsFailure, UNEXPECTED_MESSAGE } from "velt/net/tls/alert";
 import {
   checkKeyUpdate,
   ClientHandshake,
@@ -27,26 +23,16 @@ import {
 import { HelloInput } from "velt/net/tls/client_hello";
 import { HandshakeBuffer } from "velt/net/tls/handshake_buffer";
 import { nextSecret } from "velt/net/tls/key_schedule";
-import { HEADER, RecordCipher, TAG } from "velt/net/tls/record_cipher";
+import { RecordCipher } from "velt/net/tls/record_cipher";
 import {
-  ALERT,
   APPLICATION_DATA,
   CHANGE_CIPHER_SPEC,
   END,
   HANDSHAKE,
-  MAX_PLAIN,
   MORE,
   RecordReader,
 } from "velt/net/tls/record_reader";
-import { Turns } from "velt/net/tls/turns";
-
-// Records sealed per transport write, and the room each takes.
-const BATCH: usize = 4;
-const RECORD: usize = 5 + 16384 + 1 + 16;
-// Records one write key seals before a KeyUpdate: AES-GCM is good for about 2^24.5 full-size
-// records (RFC 8446 §5.5), which leaves room for the alerts and KeyUpdates sent besides them.
-// Both suites follow this one rule; the peer's records are for the peer to count.
-const KEY_RECORDS: u64 = 16777216;
+import { RecordWriter } from "velt/net/tls/record_writer";
 
 /** What `tryFill` found: nothing has arrived yet. */
 export const NOTHING_YET: u8 = 0;
@@ -57,25 +43,12 @@ export const ENDED: u8 = 2;
 
 /** One TLS 1.3 client connection. */
 export class TlsEngine {
-  private t: ByteStream;
-  // `t`, when it can read and write without waiting.
-  private direct: TryStream | null;
   private r: RecordReader;
+  /** The writing half. */
+  out: RecordWriter;
   private hs: HandshakeBuffer;
-  private writer: RecordCipher | null;
-  /** Records one write key seals before a KeyUpdate. */
-  writeLimit: u64;
-  private wbuf: u8[];
-  // How much of its input the last `seal` took.
-  private sealedPlain: usize;
-  private turns: Turns;
   private suite: usize;
   private readSecret: u8[];
-  private writeSecret: u8[];
-  private shutDown: bool;
-  // The server asked for a KeyUpdate: it goes before the next application data (RFC 8446 §4.6.3).
-  private updateOwed: bool;
-  private failure: IoError | null;
   /** The protocol chosen with ALPN, or null. */
   alpn: string | null;
   /** The server's certificate chain (DER, leaf first), unchecked with `verify: false`. */
@@ -83,21 +56,11 @@ export class TlsEngine {
 
   /** A connection over `t`, before its handshake. */
   constructor(t: ByteStream) {
-    this.t = t;
-    this.direct = t.tryStream();
     this.r = new RecordReader(t);
+    this.out = new RecordWriter(t);
     this.hs = new HandshakeBuffer();
-    this.writer = null;
-    this.writeLimit = KEY_RECORDS;
-    this.wbuf = Buffer.alloc(BATCH * RECORD);
-    this.sealedPlain = 0;
-    this.turns = new Turns();
     this.suite = 0;
     this.readSecret = [];
-    this.writeSecret = [];
-    this.shutDown = false;
-    this.updateOwed = false;
-    this.failure = null;
     this.alpn = null;
     this.certificates = [];
   }
@@ -111,35 +74,36 @@ export class TlsEngine {
     const compat = input.sessionId.length > 0;
     let ccsSent = false;
     try {
-      await this.sendPlain(HANDSHAKE, h.hello(), 1);
+      await this.out.sendPlain(HANDSHAKE, h.hello(), 1);
       while (!h.done()) {
         const step = h.onMessage(await this.handshakeMessage(false));
         if (step == SEND_RETRY) {
           if (compat) {
-            await this.sendCcs();
+            await this.out.sendCcs();
             ccsSent = true;
           }
-          await this.sendPlain(HANDSHAKE, h.retryHello, 3);
+          await this.out.sendPlain(HANDSHAKE, h.retryHello, 3);
         } else if (step == HANDSHAKE_KEYS) {
           this.hs.checkEmpty();
           this.suite = h.suite;
           this.r.cipher = new RecordCipher(h.suite, h.serverHandshake);
-          this.writer = new RecordCipher(h.suite, h.clientHandshake);
+          this.out.cipher = new RecordCipher(h.suite, h.clientHandshake);
         } else if (step == FINISHED_DONE) {
           this.hs.checkEmpty();
           // The ChangeCipherSpec (once, in compatibility mode) goes out with the flight.
-          await this.sendProtected(HANDSHAKE, h.lastFlight, compat && !ccsSent);
+          await this.out.sendProtected(HANDSHAKE, h.lastFlight, compat && !ccsSent);
           this.readSecret = h.serverApplication;
-          this.writeSecret = h.clientApplication;
           this.r.cipher = new RecordCipher(h.suite, this.readSecret);
-          this.writer = new RecordCipher(h.suite, this.writeSecret);
+          this.out.secret = h.clientApplication;
+          this.out.suite = h.suite;
+          this.out.cipher = new RecordCipher(h.suite, h.clientApplication);
         }
       }
       this.r.handshaking = false;
       this.alpn = h.alpn;
       this.certificates = h.certificates;
     } catch (e) {
-      throw await this.failed(e);
+      throw await this.out.failed(e);
     }
   }
 
@@ -147,7 +111,7 @@ export class TlsEngine {
   async fill(): Promise<bool> {
     const r = this.r;
     while (r.available() == 0) {
-      const f = this.failure;
+      const f = this.out.failure;
       if (f != null) {
         throw f;
       }
@@ -167,7 +131,7 @@ export class TlsEngine {
           throw new TlsFailure(UNEXPECTED_MESSAGE, `unexpected record type ${type}`);
         }
       } catch (e) {
-        throw await this.failed(e);
+        throw await this.out.failed(e);
       }
     }
     return true;
@@ -178,11 +142,11 @@ export class TlsEngine {
    * only here, so whoever then waits on the transport and goes away leaves nothing half done.
    */
   tryFill(): u8 {
-    const t = this.tryTransport();
+    const t = this.out.tryTransport();
     const r = this.r;
     try {
       while (r.available() == 0) {
-        const f = this.failure;
+        const f = this.out.failure;
         if (f != null) {
           throw f;
         }
@@ -209,7 +173,7 @@ export class TlsEngine {
         }
       }
     } catch (e) {
-      throw this.failedNow(e, t);
+      throw this.out.failedNow(e);
     }
     return DATA;
   }
@@ -220,7 +184,7 @@ export class TlsEngine {
    */
   hasBuffered(): bool {
     const r = this.r;
-    return r.available() > 0 || r.ended || this.failure != null || r.hasRecord();
+    return r.available() > 0 || r.ended || this.out.failure != null || r.hasRecord();
   }
 
   /** Application data buffered by `fill`. */
@@ -240,147 +204,17 @@ export class TlsEngine {
 
   /** Writes `bytes[from..to]` as application data, after the writes called before. */
   async write(bytes: u8[], from: usize, to: usize): Promise<void, IoError> {
-    this.checkWritable();
-    await this.turns.turn();
-    try {
-      // The connection may have failed while this write waited (a shutdown since lets the
-      // writes called before it finish first).
-      const f = this.failure;
-      if (f != null) {
-        throw f;
-      }
-      const current = this.writer;
-      if (current == null) {
-        throw new IoError("ENOTCONN", "TLS stream: no handshake");
-      }
-      let writer: RecordCipher = current;
-      const limit = this.writeLimit;
-      let off = from;
-      while (off < to) {
-        if (writer.seq >= limit || this.updateOwed) {
-          writer = await this.updateWriteKey();
-        }
-        const n = this.seal(writer, bytes, off, to);
-        off += this.sealedPlain;
-        await this.t.writeBytes(this.wbuf, 0, n as number);
-      }
-    } catch (e) {
-      // The sealed records are gone and the sequence has moved on: nothing after them would open.
-      throw await this.failed(e);
-    } finally {
-      this.turns.done();
-    }
-  }
-
-  // Seals up to BATCH records of `bytes[from..to]` at the front of `wbuf` and returns their size;
-  // `sealedPlain` says how much of `bytes` that took.
-  private seal(writer: RecordCipher, bytes: u8[], from: usize, to: usize): usize {
-    const limit = this.writeLimit;
-    const buf = this.wbuf;
-    let off = from;
-    let n: usize = 0;
-    for (let r: usize = 0; r < BATCH && off < to && writer.seq < limit; r++) {
-      const len = to - off < MAX_PLAIN ? to - off : MAX_PLAIN;
-      for (let i: usize = 0; i < len; i++) {
-        buf[n + HEADER + i] = bytes[off + i];
-      }
-      buf[n + HEADER + len] = APPLICATION_DATA;
-      n += writer.seal(buf, n, len + 1);
-      off += len;
-    }
-    this.sealedPlain = off - from;
-    return n;
-  }
-
-  /**
-   * Seals `bytes[from..to]` and queues the records on the transport for this task's next wait: the
-   * bytes the transport has left to send. Over a transport that can; not during a `write`.
-   */
-  writeLater(bytes: u8[], from: usize, to: usize): i64 {
-    const t = this.tryTransport();
-    let writer = this.writerForNow();
-    const limit = this.writeLimit;
-    let left: i64 = 0;
-    let off = from;
-    try {
-      while (off < to) {
-        if (writer.seq >= limit || this.updateOwed) {
-          t.writeBytesLater(this.protect(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]), 0);
-          writer = this.nextWriter();
-        }
-        const n = this.seal(writer, bytes, off, to);
-        off += this.sealedPlain;
-        left = t.writeBytesLater(this.wbuf, 0, n as number);
-      }
-    } catch (e) {
-      throw this.failedNow(e, t);
-    }
-    return left;
-  }
-
-  /**
-   * Seals `bytes[from..to]` and writes the records now, for a last small message. Records go whole
-   * or the connection fails, so a socket that doesn't take them all ends it: the bytes written, 0
-   * in that case. Over a transport that can; not during a `write`.
-   */
-  tryWrite(bytes: u8[], from: usize, to: usize): i64 {
-    const t = this.tryTransport();
-    this.writerForNow();
-    if (from >= to) {
-      return 0;
-    }
-    const out = this.protect(APPLICATION_DATA, bytes.slice(from as i64, to as i64));
-    const sent = t.tryWrite(out, 0);
-    if ((sent as usize) < out.length) {
-      this.failedNow(new IoError("EPIPE", "TLS stream: the socket took part of a record"), t);
-      return 0;
-    }
-    return (to - from) as i64;
-  }
-
-  // The transport, for the operations that don't wait.
-  private tryTransport(): TryStream {
-    const t = this.direct;
-    if (t == null) {
-      throw new IoError("ENOTSUP", "TLS stream: this transport can't read or write without waiting");
-    }
-    return t;
-  }
-
-  // The write keys, for a write that takes no turn.
-  private writerForNow(): RecordCipher {
-    this.checkWritable();
-    if (this.turns.busy) {
-      throw new IoError("EBUSY", "TLS stream: a write is in progress");
-    }
-    const writer = this.writer;
-    if (writer == null) {
-      throw new IoError("ENOTCONN", "TLS stream: no handshake");
-    }
-    return writer;
+    await this.out.write(bytes, from, to);
   }
 
   /** Sends close_notify (once) and half-closes the transport: reading stays open (§6.1). */
   async shutdown(): Promise<void> {
-    if (this.shutDown || this.writer == null || this.failure != null) {
-      return;
-    }
-    this.shutDown = true;
-    await this.turns.turn();
-    try {
-      await this.sendProtected(ALERT, [1, CLOSE_NOTIFY]);
-      await this.t.halfClose();
-    } catch (e) {
-      throw await this.failed(e);
-    } finally {
-      this.turns.done();
-    }
+    await this.out.shutdown();
   }
 
   /** Closes the transport at once. */
   close() {
-    this.shutDown = true;
-    this.t.close();
+    this.out.close();
   }
 
   // The next whole handshake message (with its header) during the handshake.
@@ -426,13 +260,13 @@ export class TlsEngine {
         `unexpected handshake message ${type} after the handshake`,
       );
     }
-    if (this.keyUpdate(m) && !this.shutDown) {
+    if (this.keyUpdate(m) && !this.out.shutDown) {
       // After the writes in progress, which keep the old keys; the ones after it use the next.
-      await this.turns.turn();
+      await this.out.turns.turn();
       try {
-        await this.updateWriteKey();
+        await this.out.updateWriteKey();
       } finally {
-        this.turns.done();
+        this.out.turns.done();
       }
     }
   }
@@ -449,8 +283,8 @@ export class TlsEngine {
         `unexpected handshake message ${type} after the handshake`,
       );
     }
-    if (this.keyUpdate(m) && !this.shutDown) {
-      this.updateOwed = true;
+    if (this.keyUpdate(m) && !this.out.shutDown) {
+      this.out.updateOwed = true;
     }
   }
 
@@ -462,130 +296,5 @@ export class TlsEngine {
     this.readSecret = nextSecret(this.readSecret);
     this.r.cipher = new RecordCipher(this.suite, this.readSecret);
     return m[4] == 1;
-  }
-
-  // Sends KeyUpdate(update_not_requested) under the current write key and moves to the next,
-  // which it returns. Only during a write's turn.
-  private async updateWriteKey(): Promise<RecordCipher> {
-    await this.sendProtected(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]);
-    return this.nextWriter();
-  }
-
-  private nextWriter(): RecordCipher {
-    this.writeSecret = nextSecret(this.writeSecret);
-    const next = new RecordCipher(this.suite, this.writeSecret);
-    this.writer = next;
-    this.updateOwed = false;
-    return next;
-  }
-
-  // Throws the connection's failure, or EPIPE after `shutdown` or `close`.
-  private checkWritable() {
-    const f = this.failure;
-    if (f != null) {
-      throw f;
-    }
-    if (this.shutDown) {
-      throw new IoError("EPIPE", "TLS stream: write after shutdown()");
-    }
-  }
-
-  // Sends `content` in plaintext records of `type` (record version 0x0301 for the first
-  // ClientHello, `minor` 1, else 0x0303).
-  private async sendPlain(type: u8, content: u8[], minor: u8): Promise<void> {
-    const out: u8[] = [
-      type,
-      3,
-      minor,
-      ((content.length >> 8) & 0xff) as u8,
-      (content.length & 0xff) as u8,
-    ];
-    for (let i: usize = 0; i < content.length; i++) {
-      out.push(content[i]);
-    }
-    await this.t.writeBytes(out, 0);
-  }
-
-  private async sendCcs(): Promise<void> {
-    await this.t.writeBytes([CHANGE_CIPHER_SPEC, 3, 3, 0, 1, 1], 0);
-  }
-
-  // Sends `content` of `type` in protected records under the current write keys, after a
-  // ChangeCipherSpec record when `ccs`, all in one transport write.
-  private async sendProtected(type: u8, content: u8[], ccs: bool = false): Promise<void> {
-    const out = this.protect(type, content, ccs);
-    await this.t.writeBytes(out, 0);
-  }
-
-  // `content` of `type` in protected records under the current write keys, after a ChangeCipherSpec
-  // record when `ccs`.
-  private protect(type: u8, content: u8[], ccs: bool = false): u8[] {
-    const writer = this.writer;
-    if (writer == null) {
-      throw new IoError("ENOTCONN", "ICE: TLS: no write keys");
-    }
-    const records = content.length / MAX_PLAIN + 1;
-    const buf = Buffer.alloc(content.length + records * (HEADER + 1 + TAG) + 6);
-    let n: usize = 0;
-    if (ccs) {
-      buf[0] = CHANGE_CIPHER_SPEC;
-      buf[1] = 3;
-      buf[2] = 3;
-      buf[4] = 1;
-      buf[5] = 1;
-      n = 6;
-    }
-    const start = n;
-    let off: usize = 0;
-    while (off < content.length || n == start) {
-      const len = content.length - off < MAX_PLAIN ? content.length - off : MAX_PLAIN;
-      for (let i: usize = 0; i < len; i++) {
-        buf[n + HEADER + i] = content[off + i];
-      }
-      buf[n + HEADER + len] = type;
-      n += writer.seal(buf, n, len + 1);
-      off += len;
-    }
-    return buf.slice(0, n as i64);
-  }
-
-  // Records the failure `e` (sending its alert when it has one to send), closes the
-  // transport, and returns the error to throw.
-  private async failed(e: unknown): Promise<IoError> {
-    const err = e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
-    if (this.failure == null) {
-      this.failure = err;
-      // The alert only when no write is in progress: it may wait on the transport for good.
-      if (e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.turns.busy) {
-        try {
-          if (this.writer != null) {
-            await this.sendProtected(ALERT, [2, e.alert]);
-          } else {
-            await this.sendPlain(ALERT, [2, e.alert], 3);
-          }
-        } catch (ignored) {
-          // The peer may be gone already; the failure is what matters.
-        }
-      }
-      this.t.close();
-    }
-    return err;
-  }
-
-  // `failed` for a caller that can't wait: an alert goes only if the socket takes it now.
-  private failedNow(e: unknown, t: TryStream): IoError {
-    const err = e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
-    if (this.failure == null) {
-      this.failure = err;
-      if (e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.turns.busy) {
-        try {
-          t.tryWrite(this.protect(ALERT, [2, e.alert]), 0);
-        } catch (ignored) {
-          // The peer may be gone already; the failure is what matters.
-        }
-      }
-      this.t.close();
-    }
-    return err;
   }
 }

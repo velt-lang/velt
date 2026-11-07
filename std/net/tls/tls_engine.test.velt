@@ -339,8 +339,8 @@ describe("the write key's record limit", () => {
   it("starts a KeyUpdate at the limit, in the middle of a write and again after it", async () => {
     const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD + SERVER_ALERT_RECORD));
     const e = await handshaken(t);
-    expect(e.writeLimit).toBe(16777216);
-    e.writeLimit = 3;
+    expect(e.out.writeLimit).toBe(16777216);
+    e.out.writeLimit = 3;
     const big = payload(8 * 16384);
     await e.write(big, 0, big.length);
     const out = t.written;
@@ -370,7 +370,7 @@ describe("the write key's record limit", () => {
   it("turns a failure that is no IoError during a KeyUpdate into the stream's EPROTO", async () => {
     const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD + SERVER_ALERT_RECORD));
     const e = await handshaken(t);
-    e.writeLimit = 1;
+    e.out.writeLimit = 1;
     t.failure = new CryptoError("no new key");
     t.writesBeforeFailing = 1;
     let code = "";
@@ -393,7 +393,7 @@ describe("the write key's record limit", () => {
   it("ends the connection when the transport's write fails, with its error", async () => {
     const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD + SERVER_ALERT_RECORD));
     const e = await handshaken(t);
-    e.writeLimit = 1;
+    e.out.writeLimit = 1;
     t.failure = new IoError("EPIPE", "the pipe broke");
     t.writesBeforeFailing = 1;
     let code = "";
@@ -411,7 +411,7 @@ describe("the write key's record limit", () => {
   it("waits for the next record: a write that ends at the limit sends no KeyUpdate", async () => {
     const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD + SERVER_ALERT_RECORD));
     const e = await handshaken(t);
-    e.writeLimit = 2;
+    e.out.writeLimit = 2;
     await e.write(payload(5), 0, 5);
     await e.write(payload(6), 0, 6);
     const first = t.written.length;

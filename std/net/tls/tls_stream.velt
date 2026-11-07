@@ -147,10 +147,10 @@ export class TlsStream implements ByteStream {
       const len = data.len as number;
       const at = data.off as u64;
       const from = at + clampTo(start, len);
-      return this.e.writeLater(data.buf.bytes, from as usize, (at + clampTo(end ?? len, len)) as usize);
+      return this.e.out.writeLater(data.buf.bytes, from as usize, (at + clampTo(end ?? len, len)) as usize);
     }
     const len = data.length as number;
-    return this.e.writeLater(data, clampTo(start, len) as usize, clampTo(end ?? len, len) as usize);
+    return this.e.out.writeLater(data, clampTo(start, len) as usize, clampTo(end ?? len, len) as usize);
   }
 
   /**
@@ -164,10 +164,10 @@ export class TlsStream implements ByteStream {
       const len = data.len as number;
       const at = data.off as u64;
       const from = at + clampTo(start, len);
-      return this.e.tryWrite(data.buf.bytes, from as usize, (at + clampTo(end ?? len, len)) as usize);
+      return this.e.out.tryWrite(data.buf.bytes, from as usize, (at + clampTo(end ?? len, len)) as usize);
     }
     const len = data.length as number;
-    return this.e.tryWrite(data, clampTo(start, len) as usize, clampTo(end ?? len, len) as usize);
+    return this.e.out.tryWrite(data, clampTo(start, len) as usize, clampTo(end ?? len, len) as usize);
   }
 
   /** `shutdown()`, as `ByteStream` has it. */
