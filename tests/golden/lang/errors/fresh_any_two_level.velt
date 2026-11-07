@@ -1,0 +1,6 @@
+// As `fresh_any_chain_noproxy`, through a function.
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+const p: any = { a: 1, b: 2 };
+const q = seen(p);
+p.a = 5;
+console.log(q.a);

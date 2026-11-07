@@ -104,10 +104,15 @@ impl FnCx<'_, '_> {
             },
             _ => return (self.error_expr(span), false),
         };
-        // `const slots: any = Object.create(null); slots[k] = v`: the object the local made is
-        // no object a conversion copied, so the write shows no copy (`crate::object_copies`).
-        if matches!(&obj.kind, H::Local(l, _) if self.f.fresh_objects.contains(l)) {
-            self.cx.object_copies.writes.truncate(noted);
+        // `const slots: any = Object.create(null); slots[k] = v`: until the local's value goes
+        // anywhere, the object it made is no object a conversion copied, so the write shows no
+        // copy (`crate::object_views::fresh_writes_seen`).
+        if let H::Local(l, _) = &obj.kind {
+            if let Some(&decl) = self.f.fresh_objects.get(l) {
+                let written = self.cx.object_copies.writes.split_off(noted);
+                let at = written.into_iter().map(|w| (*l, decl, w));
+                self.cx.object_copies.fresh_writes.extend(at);
+            }
         }
         // Used as a value, the receiver and key are bound first: JavaScript evaluates them
         // before the right-hand side, which may replace the object the receiver names.
@@ -425,9 +430,10 @@ impl FnCx<'_, '_> {
         local: hir::LocalId,
         kind: LocalKind,
         init: Option<&ast::Expr>,
+        span: Span,
     ) {
         if kind == LocalKind::Const && init.is_some_and(makes_object) {
-            self.f.fresh_objects.insert(local);
+            self.f.fresh_objects.insert(local, span);
         }
     }
 

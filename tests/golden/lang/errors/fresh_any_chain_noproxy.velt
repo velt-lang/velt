@@ -1,0 +1,6 @@
+// As `fresh_any_chain`, in a program with no proxies.
+const p: any = { a: 1, b: 2 };
+const c: { a: number; b: number } = p;
+const q: { a: number } = c;
+p.a = 5;
+console.log(q.a, c.a);

@@ -1,0 +1,1 @@
+fresh_any_key_after.velt:4:26: error: a value of type `{ a: f64; b: f64 }` converts to `{ a: f64 }` by copying its fields, and this program assigns a field through `any`, which the other object would not see

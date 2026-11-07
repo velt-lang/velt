@@ -124,6 +124,10 @@ pub(crate) struct Copies {
     pub null_literals: Vec<(String, Span)>,
     /// Writes to a record (`r[k] = v`, `delete r[k]`), which a record cast's copy would miss.
     pub record_writes: Vec<(TyId, Span)>,
+    /// Writes through `any` to the object a `const` made with its initializer: the local, its
+    /// declaration and the write, which counts once the local's value may have gone elsewhere
+    /// (`crate::object_views::fresh_writes_seen`).
+    pub fresh_writes: Vec<(crate::hir::LocalId, Span, Write)>,
     /// Casts that make a view of another object (`FnCx::comparable_cast`, `FnCx::assignable_view`)
     /// and the object type each is seen as.
     pub view_casts: Vec<(Span, TyId)>,
@@ -142,7 +146,7 @@ pub(crate) struct Copies {
 
 impl Copies {
     /// How many of each there are now (`body::recheck::Lens`).
-    pub(crate) fn mark(&self) -> [usize; 7] {
+    pub(crate) fn mark(&self) -> [usize; 8] {
         [
             self.copies.len(),
             self.writes.len(),
@@ -151,11 +155,12 @@ impl Copies {
             self.null_literals.len(),
             self.record_writes.len(),
             self.view_casts.len(),
+            self.fresh_writes.len(),
         ]
     }
 
     /// Drop what was added since `mark`.
-    pub(crate) fn rollback(&mut self, mark: [usize; 7]) {
+    pub(crate) fn rollback(&mut self, mark: [usize; 8]) {
         self.copies.truncate(mark[0]);
         self.writes.truncate(mark[1]);
         self.seen.truncate(mark[2]);
@@ -163,6 +168,7 @@ impl Copies {
         self.null_literals.truncate(mark[4]);
         self.record_writes.truncate(mark[5]);
         self.view_casts.truncate(mark[6]);
+        self.fresh_writes.truncate(mark[7]);
     }
 
     /// The index of key `k` in `in_keys` (for `Seen::In`).
@@ -186,15 +192,17 @@ impl Copies {
 pub(crate) fn check(cx: &mut Ctx) {
     let Copies {
         copies,
-        writes,
         seen,
         in_keys,
         proxies,
         dyn_sources,
         record_writes,
         mut view_casts,
+        fresh_writes,
+        mut writes,
         ..
     } = std::mem::take(&mut cx.object_copies);
+    crate::object_views::fresh_writes_seen(cx, fresh_writes, &mut writes);
     let spans: Vec<(Span, TyId)> = copies.iter().map(|c| (c.span, c.to)).collect();
     let flow = match seen.iter().any(|s| matches!(s.2, Seen::Dynamic(_))) {
         true => CopyFlow::new(cx, &spans),
