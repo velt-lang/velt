@@ -16,10 +16,10 @@
 //!
 //! The same propagation carries how generic code looks at its values for
 //! [`crate::object_copies`]: `console.log` and `===` on a type parameter (std's `indexOf` and
-//! `includes`, a user's `eq<T>`) look at whatever type each call instantiates it with. `new C<A>`
-//! and a literal of `C<A>` are such calls, of the constructor and of the field initializers of
-//! `C` and its base classes, which are a unit of their own, keyed by the class
-//! ([`crate::inst_sites`]), as a module constant's initializer is.
+//! `includes`, a user's `eq<T>`) look at whatever type each call instantiates it with. `new C<A>` is
+//! such a call, of the constructor and of the field initializers of `C` and its base classes,
+//! which are a unit of their own, keyed by the class ([`crate::inst_sites`]), as a module
+//! constant's initializer is.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -328,7 +328,7 @@ impl Walk<'_> {
         if u.calls.len() > calls {
             u.guards.push(guard);
         }
-        if let E::New { def, type_args, .. } | E::AdtLit { def, type_args, .. } = &e.kind {
+        if let E::New { def, type_args, .. } = &e.kind {
             news.push((*def, type_args.clone(), e.span, guard));
         }
         if self.looks {
