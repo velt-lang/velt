@@ -129,6 +129,7 @@ mod script_tdz;
 mod source_module;
 mod source_scans;
 mod std_load;
+mod struct_tuples;
 mod suggest;
 mod symbols;
 mod synth_ifaces;
@@ -653,6 +654,9 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     timings::pass("json::check_json_types", || json::check_json_types(cx));
     timings::pass("void_fields::check_instantiations", || {
         void_fields::check_instantiations(cx)
+    });
+    timings::pass("struct_tuples::check_instantiations", || {
+        struct_tuples::check_instantiations(cx)
     });
     timings::pass("undefined_args::check_instantiations", || {
         undefined_args::check_instantiations(cx)

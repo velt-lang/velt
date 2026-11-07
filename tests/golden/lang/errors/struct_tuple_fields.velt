@@ -1,0 +1,29 @@
+// A struct can't hold a tuple yet (#641): directly, or null, or as a generic struct's type
+// argument. A struct holding such a struct is reported through the inner one.
+
+struct R {
+  m: [number, number, number];
+  b: number;
+}
+
+struct M {
+  m: [number, number] | null;
+}
+
+struct G<T> {
+  v: T;
+  k: number;
+}
+
+struct N {
+  r: R;
+}
+
+function main() {
+  const r: R = { m: [1, 2, 3], b: 4 };
+  const g: G<[number, number, number]> = { v: [1, 2, 3], k: 1 };
+  const ok: G<number> = { v: 1, k: 1 };
+  const mm: M = { m: null };
+  const n: N = { r: r };
+  console.log(r.b, g.k, ok.v, mm.m == null, n.r.b);
+}

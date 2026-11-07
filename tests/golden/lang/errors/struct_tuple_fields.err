@@ -1,0 +1,8 @@
+struct_tuple_fields.velt:5:3: error: field `m` of struct `R` holds a tuple (`[f64, f64, f64]`), which a struct can't hold yet
+  = note: a struct is a value copied inline with read-only fields, and a tuple's storage and elements are neither; until fixed-size arrays (`T[N]`) declare the elements as fields of their own, or make the type a class
+
+struct_tuple_fields.velt:10:3: error: field `m` of struct `M` holds a tuple (`[f64, f64] | null`), which a struct can't hold yet
+  = note: a struct is a value copied inline with read-only fields, and a tuple's storage and elements are neither; until fixed-size arrays (`T[N]`) declare the elements as fields of their own, or make the type a class
+
+struct_tuple_fields.velt:14:3: error: field `v` of struct `G` holds a tuple (`[f64, f64, f64]`) (in `G<[f64, f64, f64]>`), which a struct can't hold yet
+  = note: a struct is a value copied inline with read-only fields, and a tuple's storage and elements are neither; until fixed-size arrays (`T[N]`) declare the elements as fields of their own, or make the type a class
