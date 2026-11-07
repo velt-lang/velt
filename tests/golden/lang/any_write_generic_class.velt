@@ -1,0 +1,4 @@
+// The same, a `u8` field in a generic class.
+const made = new Proxy({}, {});
+class C<T> { v: T; constructor(v: T) { this.v = v; } w(): number | undefined { (this.v as { a?: number }).a = 1.5; return (this.v as { a?: number }).a; } }
+console.log(new C<{ a: u8 }>({ a: 1 }).w());

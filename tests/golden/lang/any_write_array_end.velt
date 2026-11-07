@@ -1,0 +1,5 @@
+// An element just past the end likewise.
+const a: i32[] = [1, 2];
+const x: any = a;
+x[2] = 1.5;
+console.log(a[2]);

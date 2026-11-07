@@ -1,0 +1,10 @@
+// A nullable field takes `null` and what fits, and stops on the rest.
+class C { a: i32 | null = 1; }
+const c = new C();
+const x: any = c;
+x.a = null;
+console.log(c.a);
+x.a = 2;
+console.log(c.a);
+x.a = 1.5;
+console.log(c.a);

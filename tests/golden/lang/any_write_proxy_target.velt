@@ -1,0 +1,6 @@
+// A proxy's target likewise.
+class C { a: i32 = 1; }
+const c = new C();
+const p = new Proxy(c as any, {});
+p.a = 1.5;
+console.log(c.a);

@@ -1,0 +1,8 @@
+// An `f16` field keeps the value, not its bits, and stops on a number it would round.
+class C { a: f16 = 1; }
+const c = new C();
+const x: any = c;
+x.a = 1.5;
+console.log(c.a);
+x.a = 0.1;
+console.log(c.a);

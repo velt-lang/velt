@@ -1,0 +1,6 @@
+// The same, a negative number in an unsigned field.
+class C { a: u32 = 1; }
+const c = new C();
+const x: any = c;
+x.a = -1;
+console.log(c.a);

@@ -65,6 +65,7 @@ pub(super) use vtable::{VtableKey, SLOT_GENERIC_TABLE, SLOT_GENERIC_TYPE};
 
 use velt_sema::hir::{TyId, TyKind};
 
+use super::any_number::Numeric;
 use super::rt::Rt;
 use super::{Cx, FnLower, Work};
 use crate::vir::{self, Function, Operand, Place, Proj, Ty};
@@ -132,6 +133,9 @@ pub(crate) enum Glue {
     /// `(desc)`, never returning: the `TypeError` of a value that is not a number, for
     /// `AnyNumericOrError` (any_number.rs).
     AnyNumberError,
+    /// `(data, desc, out)`: as `AnyNumericOrError`, for a write through `any`: a number the
+    /// type can't hold stops too (any_number.rs).
+    AnyNumericExact,
     /// `(data, desc, out)`: the slow path of an `any` converted to the type, taking the `any`
     /// and writing the value or stopping with the `TypeError` (any_unbox_slow.rs).
     AnyUnbox,
@@ -210,6 +214,7 @@ impl Glue {
             Glue::AnyNumeric => "anynumeric",
             Glue::AnyNumericOrError => "anynumericorerror",
             Glue::AnyNumberError => "anynumbererror",
+            Glue::AnyNumericExact => "anynumericexact",
             Glue::AnyUnbox => "anyunbox",
             Glue::JsText => "jstext",
             Glue::ViewDrop => "viewdrop",
@@ -260,7 +265,9 @@ impl Glue {
             Glue::AnyReflect => (vec![Ptr, U64, U64, Ptr, Ptr], U64),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::AnyIface | Glue::AnyNumeric => (vec![Ptr, Ptr, Ptr], Bool),
-            Glue::AnyNumericOrError | Glue::AnyUnbox => (vec![Ptr, Ptr, Ptr], Unit),
+            Glue::AnyNumericOrError | Glue::AnyNumericExact | Glue::AnyUnbox => {
+                (vec![Ptr, Ptr, Ptr], Unit)
+            }
             Glue::AnyNumberError => (vec![Ptr], Unit),
             Glue::JsText => (vec![Ptr, Ptr], Unit),
         }
@@ -322,8 +329,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
             Glue::AnyIface => lw.any_iface_body(args[0], args[1], args[2], ty),
-            Glue::AnyNumeric => lw.any_numeric_body(args[0], args[1], args[2], ty, false),
-            Glue::AnyNumericOrError => lw.any_numeric_body(args[0], args[1], args[2], ty, true),
+            Glue::AnyNumeric => lw.any_numeric_body(args[0], args[1], args[2], ty, Numeric::Asks),
+            Glue::AnyNumericOrError => {
+                lw.any_numeric_body(args[0], args[1], args[2], ty, Numeric::Stops)
+            }
+            Glue::AnyNumericExact => {
+                lw.any_numeric_body(args[0], args[1], args[2], ty, Numeric::Exact)
+            }
             Glue::AnyNumberError => lw.any_type_error(a(0), ty),
             Glue::AnyUnbox => lw.any_unbox_body(args[0], args[1], args[2], ty),
             Glue::JsText => lw.js_text_body(args[0], a(1), ty),

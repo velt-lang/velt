@@ -47,7 +47,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The number `v` (of VIR type `from`) rounded once to the storage float `h`, as its bits.
-    fn narrow_half(&mut self, v: Operand, from: Ty, h: FloatTy) -> Operand {
+    pub(super) fn narrow_half(&mut self, v: Operand, from: Ty, h: FloatTy) -> Operand {
         let bf = h == FloatTy::BF16;
         let op = match from {
             Ty::F32 if bf => MathOp::F32ToBf16,

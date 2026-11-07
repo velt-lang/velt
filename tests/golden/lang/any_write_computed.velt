@@ -1,0 +1,7 @@
+// A computed key likewise.
+class C { a: i32 = 1; }
+const c = new C();
+const x: any = c;
+const k = "a" + "";
+x[k] = 1.5;
+console.log(c.a);

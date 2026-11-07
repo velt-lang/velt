@@ -1,0 +1,7 @@
+// The same, a member seen as `unknown`.
+const made = new Proxy({}, {});
+type A = { a: i32; b: number };
+const a: A = { a: 1, b: 2 };
+const n = a as { a: unknown; c?: string };
+n.a = 1.5;
+console.log(a.a);

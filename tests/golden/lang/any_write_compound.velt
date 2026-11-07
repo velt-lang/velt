@@ -1,0 +1,6 @@
+// A compound assignment likewise.
+class C { a: i32 = 1; }
+const c = new C();
+const x: any = c;
+x.a += 0.5;
+console.log(c.a);

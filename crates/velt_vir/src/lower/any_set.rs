@@ -9,7 +9,8 @@
 //! | 10 | `AnySetIndex`: `(data, i: f64, v: *any) -> u8` |
 //!
 //! The slot owns `*v`: it converts it to the member's type with the checked conversion of
-//! `AnyTo` (a `TypeError` for a value of another type) and stores it, dropping the old value,
+//! `AnyTo` (a `TypeError` for a value of another type, and for a number a Velt-only numeric
+//! type can't hold, any_number.rs) and stores it, dropping the old value,
 //! or passes it to the member's setter; otherwise it drops it. Besides `ST_OK` and
 //! `ST_UNSUPPORTED` the status is `ST_MISSING`: the fixed shape has no such member (Node would
 //! add it). A getter without a setter stops in the slot itself with Node's `TypeError`.
@@ -19,7 +20,7 @@
 //! `Record<string, V>` (added when missing, as in Node), and elements of an array inside its
 //! length or just past it (the array grows by one), and an array's `length` made shorter.
 
-use velt_sema::hir::{DynMember, DynMemberKind, LitValue, TyId, TyKind};
+use velt_sema::hir::{DynMember, DynMemberKind, FloatTy, LitValue, TyId, TyKind};
 
 use super::any_glue::OBJECT_PROTO;
 use super::any_member::{ST_OK, ST_UNSUPPORTED};
@@ -61,7 +62,20 @@ impl FnLower<'_, '_> {
         let vp = self.any_out(v);
         let avt = self.cx.ty(any);
         let tmp = Place::local(self.copy_to_temp(Operand::Copy(vp), avt));
-        self.any_unbox(&tmp, any, t)
+        self.any_write = self.narrow_number(t);
+        let val = self.any_unbox(&tmp, any, t);
+        self.any_write = false;
+        val
+    }
+
+    /// Is `t` a number type other than `number`, or that or-null?
+    fn narrow_number(&self, t: TyId) -> bool {
+        match self.cx.kind(t) {
+            TyKind::Int(_) => true,
+            TyKind::Float(k) => k != FloatTy::F64,
+            TyKind::Option(x, _) => self.narrow_number(x),
+            _ => false,
+        }
     }
 
     /// Store the owned value `val` of type `t` at `p`, dropping the value it replaces (after
