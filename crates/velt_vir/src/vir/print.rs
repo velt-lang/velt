@@ -28,12 +28,11 @@ impl fmt::Display for Program {
                 };
                 format!(" symbol={sym} {how}")
             });
+            write!(f, "static#{} align={} ", i, s.align)?;
+            write_static_bytes(f, &s.bytes)?;
             writeln!(
                 f,
-                "static#{} align={} {:?}{}{}",
-                i,
-                s.align,
-                String::from_utf8_lossy(&s.bytes),
+                "{}{}",
                 mutable.unwrap_or_default(),
                 named.unwrap_or_default()
             )?;
@@ -101,5 +100,62 @@ impl fmt::Display for Program {
             writeln!(f, "}}")?;
         }
         Ok(())
+    }
+}
+
+/// From this size, a static that isn't text prints as hex (`hex"00ff"`). Escaping a table of numbers
+/// as a string costs hundreds of instructions per byte and loses what isn't UTF-8 (#2501).
+const HEX_FROM: usize = 1024;
+
+/// A static's bytes: a quoted string, or hex for a large one that isn't text.
+fn write_static_bytes(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+    if bytes.len() < HEX_FROM || std::str::from_utf8(bytes).is_ok() {
+        return write!(f, "{:?}", String::from_utf8_lossy(bytes));
+    }
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut hex = Vec::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        hex.push(DIGITS[(b >> 4) as usize]);
+        hex.push(DIGITS[(b & 15) as usize]);
+    }
+    let hex = String::from_utf8(hex).expect("ICE: hex digits are ASCII");
+    write!(f, "hex\"{hex}\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Program, StaticData};
+    use super::HEX_FROM;
+
+    fn line(bytes: Vec<u8>) -> String {
+        let data = StaticData {
+            bytes,
+            align: 1,
+            ..Default::default()
+        };
+        let p = Program {
+            statics: vec![data],
+            ..Default::default()
+        };
+        p.to_string().trim_end().to_string()
+    }
+
+    #[test]
+    fn a_large_static_that_is_not_text_prints_as_hex() {
+        let mut bytes = vec![0x41; HEX_FROM];
+        bytes[0] = 0xff;
+        let want = format!("static#0 align=1 hex\"ff{}\"", "41".repeat(HEX_FROM - 1));
+        assert_eq!(line(bytes), want);
+    }
+
+    #[test]
+    fn text_and_small_tables_print_as_strings() {
+        assert_eq!(line(b"hi\n".to_vec()), "static#0 align=1 \"hi\\n\"");
+        assert_eq!(
+            line(vec![0xff; HEX_FROM - 1]).matches('\u{fffd}').count(),
+            HEX_FROM - 1
+        );
+        let text = vec![b'a'; HEX_FROM * 2];
+        assert!(line(text).contains("\"aaa"));
     }
 }
