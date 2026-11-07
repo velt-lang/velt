@@ -6,6 +6,7 @@ import { CloudflareCachePurge } from "./cloudflare_cache_purge";
 import { D1MetadataDb } from "./d1_metadata_db";
 import { D1TokenAuth } from "./d1_token_auth";
 import { DurableObjectPublishLock } from "./durable_object_publish_lock";
+import { GitHubLogin } from "./github_login";
 import { R2BlobStore } from "./r2_blob_store";
 
 /**
@@ -37,4 +38,9 @@ const registry = new Registry(
 // MAX_ARCHIVE_BYTES itself, by its declared length before reading it and while it streams, with
 // a message saying the limit. Cloudflare caps a request's body before it gets here.
 const opts: HttpServeOptions = { port: 8080, maxBodySize: Number.MAX_SAFE_INTEGER };
-await serve(opts, (req: Request): Promise<Response> => registry.handle(req));
+const login = new GitHubLogin("DB");
+await serve(
+  opts,
+  async (req: Request): Promise<Response> =>
+    login.handles(req) ? await login.handle(req) : await registry.handle(req),
+);

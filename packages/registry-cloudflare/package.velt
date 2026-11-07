@@ -10,8 +10,12 @@ export const pkg: Package = {
     "http-server": { path: "../http-server" },
     "registry-core": { path: "../registry-core" },
   },
-  // The JavaScript of the host module `registry-cloudflare` (src/purge.velt declares its function).
-  hostModules: { "registry-cloudflare": "./src/purge.mjs" },
+  // The JavaScript of the host modules: the cache purge (src/purge.velt declares its function),
+  // and signing in with GitHub (src/github.velt).
+  hostModules: {
+    "registry-cloudflare": "./src/purge.mjs",
+    "registry-cloudflare-github": "./src/github.mjs",
+  },
   // Its own host, not host-cloudflare: a Durable Object's class has to be exported by the Worker's
   // entry, so the entry here also holds the publish lock's class.
   host: {
