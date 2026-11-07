@@ -166,6 +166,7 @@ describe("the lock", () => {
       contentChecksum(files),
       alice,
     );
+    expect(other.status).toBe(400);
     expect(other.text).toBe("the archive is `my-lib` 2.0.0, not `my-lib` 3.0.0");
     const native = packageFiles(
       "my-lib",

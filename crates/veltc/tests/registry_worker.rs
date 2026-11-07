@@ -179,9 +179,58 @@ fn the_conformance_suite_passes() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// The answer to a `PUT` of `path` whose head announces a body of `length` bytes, none of which is
+/// sent: the registry refuses a body announced too large before reading it.
+fn put_announcing(url: &str, path: &str, token: &str, length: usize) -> String {
+    use std::io::{Read, Write};
+    let addr = url.trim_start_matches("http://").trim_end_matches('/');
+    let mut stream = std::net::TcpStream::connect(addr).expect("connect to the Worker");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .expect("read timeout");
+    write!(
+        stream,
+        "PUT {path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nX-Velt-Checksum: sha256:00\r\nContent-Length: {length}\r\n\r\n"
+    )
+    .expect("send the head");
+    let mut answer = Vec::new();
+    let mut buf = [0u8; 4096];
+    // Up to the end of the body, which the head's `content-length` gives.
+    loop {
+        let n = stream.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        answer.extend_from_slice(&buf[..n]);
+        let text = String::from_utf8_lossy(&answer).to_string();
+        if let Some(end) = text.find("\r\n\r\n") {
+            let length = text[..end]
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    k.eq_ignore_ascii_case("content-length")
+                        .then(|| v.trim().parse().ok())?
+                })
+                .unwrap_or(0usize);
+            if answer.len() >= end + 4 + length {
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&answer).to_string()
+}
+
 /// The Worker takes archives up to its 10 MiB, past http-server's default body limit (8 MiB),
 /// and refuses a larger one. Publishes with `velt publish`, as `token`'s user.
 fn uploads_are_limited_to_10_mib(base: &Path, url: &str, token: &str) {
+    // `velt publish` of a larger one only fails (the Worker answers before the body is sent, and
+    // the client reports the closed connection), so the refusal itself is read here.
+    let answer = put_announcing(url, "/api/v1/big-11/1.0.0", token, 11 * 1024 * 1024);
+    assert!(
+        answer.starts_with("HTTP/1.1 413")
+            && answer.ends_with("the upload is larger than 10485760 bytes"),
+        "a body announced as 11 MiB: {answer}"
+    );
     const MIB: usize = 1024 * 1024;
     for (name, size, ok) in [("big-9", 9 * MIB, true), ("big-11", 11 * MIB, false)] {
         let dir = base.join(name);
