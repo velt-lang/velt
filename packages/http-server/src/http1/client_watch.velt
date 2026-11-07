@@ -70,36 +70,34 @@ export class ClientWatch {
   /// The handler ran up to its first wait, or to its end.
   handlerWaits() {
     this.waited = true;
-    const t = this.target;
-    if (t != null && t.listens()) {
-      this.start();
-    }
+    this.listen();
   }
 
   /// The handler asked for its signal, or started a streamed response: from its next wait on.
   listen() {
     if (this.waited) {
-      this.start();
+      const t = this.target;
+      if (t != null && t.listens()) {
+        this.start();
+      }
     }
   }
 
-  /// The handler is about to read the body from the socket.
-  async bodyRead() {
+  /// The handler is about to read the body from the socket. True: a watch has it, and must `stop`
+  /// first. No promise otherwise, as a body is read in pieces.
+  bodyRead(): bool {
     const mode = this.head.bodyMode;
     if (mode == BODY_LENGTH || mode == BODY_CHUNKED) {
       this.bodyBusy = true;
-      if (this.running != null) {
-        await this.stop();
-      }
+      return this.running != null;
     }
+    return false;
   }
 
   /// The request's body was read to its end.
   bodyEnded() {
     this.bodyBusy = false;
-    if (this.waited) {
-      this.start();
-    }
+    this.listen();
   }
 
   /// The client ended the request's body early.

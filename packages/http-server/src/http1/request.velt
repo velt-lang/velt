@@ -117,7 +117,9 @@ export class Http1Request extends HttpRequest {
 
   async read(): Promise<u8[] | null, IoError | RangeError> {
     try {
-      await this.watch.bodyRead();
+      if (this.watch.bodyRead()) {
+        await this.watch.stop();
+      }
       const piece = await this.reader.read();
       if (this.reader.ended) {
         this.watch.bodyEnded();
@@ -131,7 +133,9 @@ export class Http1Request extends HttpRequest {
 
   async body(): Promise<u8[], IoError | BodyTooLarge | RangeError> {
     try {
-      await this.watch.bodyRead();
+      if (this.watch.bodyRead()) {
+        await this.watch.stop();
+      }
       const all = await this.reader.all();
       this.watch.bodyEnded();
       return all;
