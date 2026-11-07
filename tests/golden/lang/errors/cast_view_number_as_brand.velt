@@ -1,0 +1,7 @@
+// The same the other way (Node prints 1.5).
+const made = new Proxy({}, {});
+type B = i32 & { __b: 1 };
+type A = { a: number; b: number };
+const a: A = { a: 1.5, b: 2 };
+const n = a as { a: B; c?: string };
+console.log(n.a);

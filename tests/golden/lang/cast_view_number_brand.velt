@@ -1,0 +1,7 @@
+// A brand of `number` is a `number`.
+const made = new Proxy({}, {});
+type B = number & { __b: 1 };
+type A = { a: B; b: number };
+const a: A = { a: 1 as B, b: 2 };
+const n = a as { a: number; c?: string };
+console.log(a.a, n.a);

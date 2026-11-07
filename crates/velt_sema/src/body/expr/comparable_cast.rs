@@ -351,8 +351,13 @@ impl FnCx<'_, '_> {
 
     /// Does a value of one of the non-object types `a` and `b` convert to the other?
     fn member_converts(&mut self, a: TyId, b: TyId, span: Span) -> bool {
-        // A view writes what its type holds: an `i32` seen as a `number` would lose a value.
-        let (x, y) = (self.cx.widened(a), self.cx.widened(b));
+        // A view writes what its type holds: an `i32` seen as a `number` would lose a value. A
+        // brand holds what its base does.
+        let base = |s: &mut Self, t: TyId| {
+            let b = s.cx.brand_base(t).unwrap_or(t);
+            s.cx.widened(b)
+        };
+        let (x, y) = (base(self, a), base(self, b));
         if x != y && self.cx.ty.is_numeric(x) && self.cx.ty.is_numeric(y) {
             return false;
         }
