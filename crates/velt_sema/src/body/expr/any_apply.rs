@@ -19,6 +19,14 @@ impl FnCx<'_, '_> {
         if args.len() != 2 || spread {
             return false;
         }
+        // Nothing to read, and the read's `throws` would give the caller a type of its own, whose
+        // call through `any` is a slot that isn't inlined (bench/any_ops/apply/expr_null.velt).
+        if matches!(
+            args[1].kind,
+            ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
+        ) {
+            return false;
+        }
         let list = self.any_ty();
         let held = self
             .trial_type(&args[1])

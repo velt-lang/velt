@@ -19,6 +19,7 @@ function h(this: any, a: any, b: any): any {
 }
 const f: any = h;
 console.log(f.apply({ tag: "y" }, plain));
+console.log(f.apply({ tag: "z" }, null), f.apply({ tag: "z" }, undefined));
 try {
   console.log(f.apply({ tag: "y" }, list));
 } catch (e: any) {
