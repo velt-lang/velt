@@ -1,0 +1,40 @@
+// std/random: each thread seeds its own generator, so threads never share a sequence. One task
+// pinned to each worker and many on any worker draw 64-bit numbers; none repeats.
+import { randomInt } from "velt/random";
+import { workerCount } from "velt/task";
+
+const LOW: i64 = -9223372036854775808;
+const HIGH: i64 = 9223372036854775807;
+
+async function draws(n: i64): Promise<i64[]> {
+  const out: i64[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(randomInt(LOW, HIGH));
+  }
+  return out;
+}
+
+async function main() {
+  const tasks: Promise<i64[]>[] = [];
+  for (let w = 0; w < workerCount(); w++) {
+    tasks.push(spawn(draws(200), { worker: w }));
+  }
+  for (let i = 0; i < 200; i++) {
+    tasks.push(spawn(draws(4)));
+  }
+  const all: i64[] = [];
+  for (const part of await Promise.all(tasks)) {
+    for (const v of part) {
+      all.push(v);
+    }
+  }
+  all.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  let duplicates = 0;
+  for (let i = 1; i < all.length; i++) {
+    if (all[i] == all[i - 1]) {
+      duplicates++;
+    }
+  }
+  console.log("every number drawn:", all.length == workerCount() * 200 + 800);
+  console.log("duplicates:", duplicates);
+}

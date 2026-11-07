@@ -38,7 +38,7 @@ that serves through `velt:worker` (packages/http-server's JS-host variant, condi
   without `--release` warns.
 - Host modules: every import module the program reaches (a `declare host("m")` function it
   calls; the module's `velt.host` section lists them) needs JavaScript. Modules named `velt:…`
-  are the runtime glue's (`velt:worker` below, `velt:fetch` of velt_web.mjs): only std declares
+  are the runtime glue's (`velt:worker` below, `velt:fetch` and `velt:random` of velt_web.mjs): only std declares
   their functions (sema: "the import modules `velt:…` are the runtime glue's"), so their types
   are the glue's and the compiler keeps no table of them. Any other comes from the package whose
   `package.velt` lists it under `hostModules` (manifest.md), which must be a package whose own

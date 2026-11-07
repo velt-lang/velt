@@ -495,16 +495,6 @@ const fromByteString = (bytes) =>
   utf8.decoder.decode(Uint8Array.from(bytes, (c) => c.charCodeAt(0)));
 
 /**
- * The import module `velt:fetch`: std's `fetch` on JS hosts over `hostFetch`
- * (std/net/http/fetch/client/transport/js_host.velt). A call is an object holding the request's
- * AbortController, then its Response, the reader of its body and the piece last read. What a
- * call rejects with is named as native `fetch` names the failure (the program's `IoError.code`):
- * `AbortError` once the call was aborted, else the code of the error's `cause` (`fetchCode`).
- * Header values cross as UTF-8, as native `fetch` sends and reads them. A call remembers the
- * context it started in (`contexts.context()`, `loadVelt`'s `host.context`), and its body is
- * read and cancelled there (`contexts.within`), wherever the program asks.
- */
-/**
  * The `velt:random` host module: the seed of `Math.random()`'s generator
  * (std/lang/random/seed_js.velt). `buf` is a view of the program's memory.
  */
@@ -516,6 +506,16 @@ export function randomHost() {
   };
 }
 
+/**
+ * The import module `velt:fetch`: std's `fetch` on JS hosts over `hostFetch`
+ * (std/net/http/fetch/client/transport/js_host.velt). A call is an object holding the request's
+ * AbortController, then its Response, the reader of its body and the piece last read. What a
+ * call rejects with is named as native `fetch` names the failure (the program's `IoError.code`):
+ * `AbortError` once the call was aborted, else the code of the error's `cause` (`fetchCode`).
+ * Header values cross as UTF-8, as native `fetch` sends and reads them. A call remembers the
+ * context it started in (`contexts.context()`, `loadVelt`'s `host.context`), and its body is
+ * read and cancelled there (`contexts.within`), wherever the program asks.
+ */
 export function fetchHost(hostFetch = (url, init) => globalThis.fetch(url, init), contexts = {}) {
   const within = (call, job) =>
     call.owner !== undefined && contexts.within ? contexts.within(call.owner, job) : job();

@@ -47,6 +47,12 @@ queries, paths and `data:` URLs, which `url_parse` has none of. 2,324M instructi
 `url` crate's 730M on the same machine, 3.18: in text that is not ASCII every `charCodeAt` first
 finds its position, and the parser reads the input that way.
 
+`prng` was added after it too: `Math.random()`'s wyrand generator, from the runtime (Rust) to Velt
+(#2406). Release, Linux, cachegrind (the reviewer's run on #2406): 1,820M instructions before
+(runtime), 820M after (Velt), against the Rust port's 1,300M built with plain
+`rustc -C opt-level=3`; Velt / Rust 0.63. Debug builds are slower after (3,631M against 2,031M),
+the unoptimized std calls on the path (#2460).
+
 Reading it:
 
 - The four number rows call the same crates as the Rust column, so their gap is the cost of

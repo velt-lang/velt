@@ -1,15 +1,15 @@
 # std calls WASI through `declare c("c")` on wasm32-wasip1
 
-Status: **implemented** (#2408, part of #2196; design review on #2461, 2026-11-06). Owner:
-`velt_vir` (`crates/velt_vir/src/lower/c_call.rs`, `crates/velt_vir/src/lower/system.rs`).
-Unblocks #2406.
+Status: **implemented** (#2408, part of #2196; design review on #2461, 2026-11-06; implemented
+with its first caller, `Math.random()`'s seed, in #2406). Owner: `velt_vir`
+(`crates/velt_vir/src/lower/c_call.rs`, `crates/velt_vir/src/lower/system.rs`).
 
 ## Problem
 
 On `wasm32-wasip1`, std can't call a WASI function. So anything std needs from WASI stays Rust
 in `velt_rt_wasm`. The first case is the seed of `Math.random()`'s generator. #2406 moves the
-generator into Velt, but it still needs a new runtime function for the WebAssembly seed,
-`velt_rt_prng_seed`, against #2196's rule of no new runtime functions.
+generator into Velt, and its first version needed a new runtime function for the WebAssembly
+seed, `velt_rt_prng_seed`, against #2196's rule of no new runtime functions.
 
 Two routes exist, and both refuse on wasip1:
 
@@ -35,7 +35,7 @@ no WASI-specific declaration form, and no table naming WASI functions in the com
 targets today (`std/ffi/read.velt` declares `strlen` and `memcpy`), and picks the file through an
 import condition. `wasi` already exists in vpm's condition list for wasip1 (`crates/vpm/src/imports.rs`).
 
-```ts planned
+```ts
 // std/lang/random/seed_wasi.velt: #random-seed's `wasi` variant (#2406)
 declare c("c") function getentropy(buf: u8[], len: usize): i32;
 
@@ -99,7 +99,7 @@ No linker change: `libc.a` is already on the link line, and library `c` adds not
 `wasm32-unknown-unknown` has no libc, so its seed goes through a `declare host` function in a
 std glue module, like `velt:fetch`:
 
-```ts planned
+```ts
 // std/lang/random/seed_js.velt
 declare host("velt:random") function fill(buf: u8[]): void;   // crypto.getRandomValues
 ```
@@ -129,21 +129,30 @@ with #2406.
   - a program's own `declare c("c")` and `declare c("z")` are refused on wasip1 with their notes.
 - **Integration (`crates/veltc/tests/c_functions.rs`):** a package's C call is refused on both
   WebAssembly targets with the right note.
-- **End to end:** a std function calling `strlen` and `memcpy` was linked against wasi-libc and
-  run under wasmtime, debug and `--release`, from a scratch copy of std (no std code calls C on
-  wasip1 yet). The wasm golden comes with the first caller: in #2406, the `std/random_runs`
-  golden joins `WASI_STD`.
+- **End to end:**
+  - `Math.random()`'s seed is wasi-libc's `getentropy`.
+  - `std/random` runs in the WASI goldens.
+  - `math_random_seeds_each_run_on_webassembly` (`crates/veltc/tests/wasm_goldens.rs`) runs a
+    program twice under wasmtime and twice in the browser glue under node, and expects different
+    numbers.
+  - `a_failed_wasi_seed_panics` runs it under node:wasi with a `random_get` that returns EIO, and
+    expects a panic with exit 101.
+  - The `std/random_runs` golden starts child processes, so it stays native-only.
 - **Deliberate breaks:**
   - leaving the gate as it was fails the std unit test;
   - dropping the 32-bit `size_t` fails it too;
-  - opening the gate to every file fails the package test.
+  - opening the gate to every file fails the package test;
+  - a constant WASI seed, a `fill` that does nothing, and a `getentropy` result left unchecked
+    each fail one of the two WebAssembly tests.
   - Opening it to every library fails nothing, as expected: std may only name `c`
     (`crates/veltc/src/native/c_decls.rs` stops on any other library), and a non-std call is
     refused before the library matters.
 
-## Afterwards
+## Follow-ups
 
-- #2406: `seed_wasi.velt` and `seed_js.velt` replace `seed_wasm.velt`, and `velt_rt_prng_seed`
-  and `crates/velt_rt_wasm/src/prng.rs` are deleted.
+- **`Out<usize>` and `OutPtr` on wasm32:** these cross by address with no narrowing, so C would
+  write 4 bytes into an 8-byte field. Nothing reachable declares one today: std's only C calls
+  on wasip1 are `strlen`, `memcpy` and `getentropy`, and packages are refused. Narrow them (a
+  32-bit temporary, widened after the call) before the first such declaration.
 - Other `velt_rt_wasm` code that only wraps WASI (clocks, environment, files) can move to std the
   same way, each in its own #2196 step.

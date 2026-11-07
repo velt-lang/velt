@@ -331,7 +331,6 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// The VIR type a C type crosses as.
 /// `wasm32-wasip1` (`wasm32-wasi` is its older name): WebAssembly with wasi-libc.
 pub(super) fn wasi(target: &str) -> bool {
     matches!(target.trim(), "wasm32-wasip1" | "wasm32-wasi")
@@ -347,7 +346,7 @@ fn narrow(t: CTy, wasm32: bool) -> bool {
     wasm32 && matches!(t, CTy::Int(IntTy::USize | IntTy::ISize))
 }
 
-/// The VIR type `t` crosses as; on wasm32 (`wasm32`), `usize`/`isize` are C's 32-bit `size_t`
+/// The VIR type a C type `t` crosses as; on wasm32 (`wasm32`), `usize`/`isize` are C's 32-bit `size_t`
 /// and `ssize_t`.
 fn c_vir(t: CTy, wasm32: bool) -> Ty {
     match t {
