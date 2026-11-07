@@ -1,0 +1,50 @@
+// velt/compress (internal): unchecked reads of the Brotli encoder's input, for the match finder.
+
+import { inline } from "velt/lang/intrinsics";
+import { u64x2, u8x16 } from "velt/simd";
+
+// Unchecked: each caller keeps the 16 bytes inside the array.
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+
+/** The eight bytes at `at`, little-endian; 16 from it must be inside `d`. */
+export function word(d: u8[], at: i64): u64 {
+  inline();
+  return velt_simd_u64x2_lane(velt_simd_u8x16_as_u64x2(velt_simd_u8x16_load(d, at as u64)), 0);
+}
+
+/**
+ * The bytes `d[a..]` and `d[b..]` (a < b) have in common, at most `max`: 16 at a time while a
+ * load of 16 stays inside the array, then one at a time.
+ */
+export function common(d: u8[], a: i64, b: i64, max: i64): i64 {
+  inline();
+  let n: i64 = 0;
+  const wide = (d.length as i64) - 16 - b;
+  const most = max < wide ? max : wide;
+  while (n < most) {
+    const x = velt_simd_u8x16_as_u64x2(
+      velt_simd_u8x16_xor(
+        velt_simd_u8x16_load(d, (a + n) as u64),
+        velt_simd_u8x16_load(d, (b + n) as u64),
+      ),
+    );
+    const lo = velt_simd_u64x2_lane(x, 0);
+    if (lo != 0) {
+      n += (lo.trailingZeros() >> 3) as i64;
+      return n < max ? n : max;
+    }
+    const hi = velt_simd_u64x2_lane(x, 1);
+    if (hi != 0) {
+      n += 8 + (hi.trailingZeros() >> 3) as i64;
+      return n < max ? n : max;
+    }
+    n += 16;
+  }
+  while (n < max && d[a + n] == d[b + n]) {
+    n++;
+  }
+  return n < max ? n : max;
+}

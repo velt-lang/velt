@@ -239,11 +239,71 @@ describe("deflate encoder", () => {
   });
 
   it("gives stock zlib's sizes on text, which a poor choice of codes would grow", () => {
-    // zlib 1.2.12's raw DEFLATE of the same bytes, at levels 1, 6 and 9.
+    // zlib 1.2.12's raw DEFLATE of the same bytes, at levels 6 and 9; level 1 searches its own
+    // way and does no worse than its 24,810.
     const t = text(100000);
-    expect(deflateRaw(t, 1).length).toBe(24810);
+    expect(deflateRaw(t, 1).length <= 24810).toBe(true);
     expect(deflateRaw(t, 6).length).toBe(18321);
     expect(deflateRaw(t, 9).length).toBe(17140);
+  });
+
+  it("reads a slot of level 1 that wrapped around 2^16 as no more than a candidate", () => {
+    // The same block every `period` bytes: slots left from a period ago name the position
+    // itself (65,536) or a place with other bytes (the others), and only the bytes can tell.
+    const periods: i64[] = [65536, 65536 + 7, 65536 + 32000, 98304, 131072];
+    for (const period of periods) {
+      const block = noise(40000, 256, 11);
+      const input: u8[] = [];
+      for (let i: i64 = 0; i < 400000; i++) {
+        input.push(i % period < 40000 ? block[i % period] : ((i * 2654435761) >> 13) as u8);
+      }
+      expect(same(inflateRaw(deflateRaw(input, 1)), input) ? "" : `period ${period}`).toBe("");
+    }
+  });
+
+  it("keeps finding matches at level 1 after the window slides", () => {
+    // 30,000 random bytes over and over: the first copy costs all of its bytes, the others
+    // almost none, unless the slots stop meaning what they did after a slide, when a whole
+    // copy goes out as literals.
+    const block = noise(30000, 256, 13);
+    const input: u8[] = [];
+    for (let i: i64 = 0; i < 300000; i++) {
+      input.push(block[i % 30000]);
+    }
+    expect(deflateRaw(input, 1).length < 40000).toBe(true);
+  });
+
+  it("stops a match where the input stops, around the last full-length match", () => {
+    // A repeat running to the end, with the end at every distance around where level 1 changes
+    // how it compares: 258 bytes and a 16-byte load from the end of the input.
+    const unit = noise(1000, 256, 5);
+    for (let n: i64 = 1200; n < 1300; n++) {
+      const input: u8[] = [];
+      for (let i: i64 = 0; i < n; i++) {
+        input.push(unit[i % 300]);
+      }
+      for (const level of [1, 2, 6]) {
+        expect(same(inflateRaw(deflateRaw(input, level)), input) ? "" : `${n} at ${level}`).toBe(
+          "",
+        );
+      }
+    }
+  });
+
+  it("gives back the farthest distances and the longest lengths at every level", () => {
+    // Distances in the last code, whose 13 extra bits are all set or all clear, then lengths in
+    // the codes around 258.
+    const block = noise(3000, 256, 9);
+    const fresh = noise(40000, 256, 21);
+    const gaps: i64[] = [29506, 21577, 25672, 13385];
+    for (const gap of gaps) {
+      const input = block.concat(fresh.slice(0, gap)).concat(block);
+      for (let level = 1; level <= 9; level++) {
+        expect(same(inflateRaw(deflateRaw(input, level)), input) ? "" : `${gap} at ${level}`).toBe(
+          "",
+        );
+      }
+    }
   });
 
   it("refuses a level that isn't a whole number from 1 to 9", () => {

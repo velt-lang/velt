@@ -57,6 +57,24 @@ function farRepeat(): u8[] {
   return block.concat(text(1100000)).concat(block).concat(text(5000)).concat(block);
 }
 
+/** Runs of random bytes from one of `kinds` alphabets of 16, of varied lengths, with few matches. */
+function sections(n: i64, kinds: i64): u8[] {
+  const r = noise(n, 16, 3);
+  const out: u8[] = [];
+  let kind: i64 = 0;
+  let left: i64 = 2000;
+  for (let i: i64 = 0; i < n; i++) {
+    if (left == 0) {
+      // On to the next, and at times back to the one before, which has a block type code of its own.
+      kind = (kind + (i % 3 == 0 ? kinds - 1 : 1)) % kinds;
+      left = 1500 + (i % 5) * 1000;
+    }
+    left--;
+    out.push(((r[i] as i64) + kind * (240 / kinds)) as u8);
+  }
+  return out;
+}
+
 function same(a: u8[], b: u8[]): bool {
   if (a.length != b.length) {
     return false;
@@ -104,6 +122,38 @@ describe("brotli encoder", () => {
         expect(ok ? "" : `${name} at quality ${q}`).toBe("");
       }
     }
+  });
+
+  it("gives back literals split into block types, smaller than in one", () => {
+    const input = sections(120000, 3);
+    const split = brotliCompress(input, 4);
+    const whole = brotliCompress(input, 3);
+    expect(same(brotliDecompress(split), input)).toBe(true);
+    // Three alphabets of 16 take 4 bits a literal apart, about 5.6 in one code.
+    expect(split.length * 8 < whole.length * 7).toBe(true);
+  });
+
+  it("gives back more kinds of literals than it keeps block types for, at each quality", () => {
+    const input = sections(200000, 40);
+    for (let q = 4; q <= 9; q++) {
+      expect(same(brotliDecompress(brotliCompress(input, q)), input) ? "" : `quality ${q}`).toBe(
+        "",
+      );
+    }
+  });
+
+  it("splits each meta-block, streamed with flushes between", () => {
+    const input = sections(90000, 5);
+    const e = new BrotliEncoding(4).encoder();
+    let out: u8[] = [];
+    let at: i64 = 0;
+    while (at < 90000) {
+      out = out.concat(e.write(input, at, at + 30000));
+      out = out.concat(e.flush());
+      at += 30000;
+    }
+    out = out.concat(e.finish());
+    expect(same(brotliDecompress(out), input)).toBe(true);
   });
 
   it("gives back several meta-blocks with matches across them", () => {

@@ -1,14 +1,18 @@
 // velt/compress (internal): the block layer of the DEFLATE encoder (RFC 1951 §3.2): the symbols of
 // the current block with their frequencies, the choice between a stored, a fixed and a dynamic
-// block by their exact sizes, and the bits of the chosen one.
-//
-// Length and distance codes come from arithmetic on the value, no tables: past the first few, the
-// codes step twice (distances) or four times (lengths) per power of two.
+// block by their exact sizes, and the bits of the chosen one. A match finder works out each
+// symbol's codes and counts them as it chooses it, so here they are only written.
 
 import { CODE_ORDER, DIST_EXTRA, LENGTH_EXTRA } from "velt/compress/inflate/tables";
 import { CodeBuilder, entryLength } from "velt/compress/deflate/code_builder";
 import { copyBytes, setBytes } from "velt/lang/bytes/copy";
-import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { arraySetLen, arrayWithCapacity, inline } from "velt/lang/intrinsics";
+import { u64x2, u8x16 } from "velt/simd";
+
+// Unchecked: `flushBlock` makes room past a block's last byte for the 16 bytes of the last store.
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u64x2_splat(x: u64): u64x2;
+declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;
 
 const LIT_SYMBOLS: i64 = 286;
 const DIST_SYMBOLS: i64 = 30;
@@ -16,7 +20,8 @@ const FIXED_LIT_SYMBOLS: i64 = 288;
 const CL_SYMBOLS: i64 = 19;
 const END_OF_BLOCK: i64 = 256;
 const FIRST_LENGTH_SYMBOL: i64 = 257;
-/** A symbol is `(distance << 16) | length - 3`, or a literal byte with distance 0. */
+/** Set in a symbol that is a match (`tally`); otherwise it is a literal byte. */
+export const MATCH_SYMBOL: u64 = 1 << 31;
 const BLOCK_SYMBOLS: i64 = 16383;
 const MAX_STORED: i64 = 65535;
 /** The code-length alphabet's repeat symbols (RFC 1951 §3.2.7). */
@@ -51,8 +56,8 @@ function fixedLitLengths(): u8[] {
 }
 
 /**
- * The output of a DEFLATE stream and its current block: `tally` adds symbols, `flushBlock` writes
- * them. Whole bytes go to `out[0..op]` at once, up to 31 bits wait in `bb`.
+ * The output of a DEFLATE stream and its current block: `FastMatcher` adds symbols, `flushBlock`
+ * writes them. Whole bytes go to `out[0..op]` at once, up to 31 bits wait in `bb`.
  */
 export class BlockWriter {
   out: u8[] = [];
@@ -315,6 +320,15 @@ export class BlockWriter {
   private symbols(dynamic: bool) {
     const lit = dynamic ? this.litCodes : this.fixedLit;
     const dist = dynamic ? this.distCodes : this.fixedDist;
+    // An entry's bits from 24 on: the extra bits its code has (`entryLength` is what the header
+    // and the end of the block read, of entries with none).
+    for (let i: i64 = 0; i < 29; i++) {
+      lit[FIRST_LENGTH_SYMBOL + i] =
+        (lit[FIRST_LENGTH_SYMBOL + i] & 0xffffff) | (LENGTH_EXTRA[i] << 24);
+    }
+    for (let i: i64 = 0; i < DIST_SYMBOLS; i++) {
+      dist[i] = (dist[i] & 0xffffff) | (DIST_EXTRA[i] << 24);
+    }
     const syms = this.syms;
     const out = this.out;
     const n = this.count;
@@ -322,61 +336,34 @@ export class BlockWriter {
     let bc = this.bc;
     let op = this.op;
     for (let i: i64 = 0; i < n; i++) {
-      const v = syms[i];
-      const d = (v >> 16) as u64;
+      const v = syms[i] as u64;
       let e: u32;
-      if (d == 0) {
+      if (v < MATCH_SYMBOL) {
         e = lit[v as i64];
         bb |= ((e & 0xffff) as u64) << bc;
         bc += (e >> 16) as u64;
       } else {
-        // The length's symbol and extra bits, at most 20 bits.
-        const x = (v & 255) as u64;
-        let symbol: i64;
-        let extra: u64 = 0;
-        if (x < 8) {
-          symbol = FIRST_LENGTH_SYMBOL + (x as i64);
-        } else if (x == 255) {
-          symbol = 285;
-        } else {
-          extra = 61 - (x.leadingZeros() as u64);
-          symbol = FIRST_LENGTH_SYMBOL + ((((extra + 1) << 2) | ((x >> extra) & 3)) as i64);
-        }
-        e = lit[symbol];
+        // The length's code and extra bits, at most 20 bits.
+        e = lit[FIRST_LENGTH_SYMBOL + ((v & 31) as i64)];
         bb |= ((e & 0xffff) as u64) << bc;
-        bc += (e >> 16) as u64;
-        bb |= (x & ((1 << extra) - 1)) << bc;
-        bc += extra;
+        bc += ((e >> 16) & 255) as u64;
+        bb |= ((v >> 5) & 31) << bc;
+        bc += (e >> 24) as u64;
         if (bc >= 32) {
-          out[op] = (bb & 255) as u8;
-          out[op + 1] = ((bb >> 8) & 255) as u8;
-          out[op + 2] = ((bb >> 16) & 255) as u8;
-          out[op + 3] = ((bb >> 24) & 255) as u8;
+          store(out, op, bb);
           op += 4;
           bb >>= 32;
           bc -= 32;
         }
-        // The distance's symbol and extra bits, at most 28 bits.
-        const y = d - 1;
-        let code: i64;
-        let more: u64 = 0;
-        if (y < 4) {
-          code = y as i64;
-        } else {
-          more = 62 - (y.leadingZeros() as u64);
-          code = (((more + 1) << 1) | ((y >> more) & 1)) as i64;
-        }
-        e = dist[code];
+        // The distance's code and extra bits, at most 28 bits.
+        e = dist[((v >> 10) & 31) as i64];
         bb |= ((e & 0xffff) as u64) << bc;
-        bc += (e >> 16) as u64;
-        bb |= (y & ((1 << more) - 1)) << bc;
-        bc += more;
+        bc += ((e >> 16) & 255) as u64;
+        bb |= ((v >> 15) & 8191) << bc;
+        bc += (e >> 24) as u64;
       }
       if (bc >= 32) {
-        out[op] = (bb & 255) as u8;
-        out[op + 1] = ((bb >> 8) & 255) as u8;
-        out[op + 2] = ((bb >> 16) & 255) as u8;
-        out[op + 3] = ((bb >> 24) & 255) as u8;
+        store(out, op, bb);
         op += 4;
         bb >>= 32;
         bc -= 32;
@@ -388,6 +375,12 @@ export class BlockWriter {
     const end = lit[END_OF_BLOCK];
     this.put((end & 0xffff) as u64, entryLength(end) as u64);
   }
+}
+
+/** The low 32 bits of `bits` at `out[at..]`, little-endian; the store is 16 bytes wide. */
+function store(out: u8[], at: i64, bits: u64) {
+  inline();
+  velt_simd_u8x16_store(velt_simd_u64x2_as_u8x16(velt_simd_u64x2_splat(bits)), out, at as u64);
 }
 
 /** The fixed distance code's lengths (5 bits each). */
