@@ -106,12 +106,14 @@ directly name). A call through a function value treats a part of another argumen
 `f(r, r.s)` where the callee sets `q.s`. So does a direct call of a function that passes the param
 holding `r` on to a function value (`velt_sema::value_params`), itself, through the functions it
 calls or closures it makes, or through a method chosen at run time, whose modes are fixed like a
-function value's and which counts as every method of its name. Only an object this frame owns, with
-no field on the way written anywhere, is left alone: nothing can replace `o.name` in `k(ctx, o.name)`.
+function value's and which counts as every method of its name, or a constructor `new` runs. A path
+with no field on the way written anywhere, from a variable no closure assigns, is left alone:
+nothing can replace `o.name` in `k(ctx, o.name)`.
 Otherwise the value is read through containers retained for the statement (`retained_hop`), which
 costs no count update on the value. By-reference `const`s and `switch`/`match` scrutinees read
 through retained containers too; a `const` of a part of what such a call is given later in its block
-becomes a share, and a `for...of` over it holds the array and shares each element, as below.
+becomes a share unless that path stays put, and a `for...of` over it shares each element, as below,
+and holds the array only if the path doesn't: a reference would count every array of the type.
 Compound assignments form the place again after the right-hand side, and assignments store the new
 value before the old one is dropped. A share would copy the parts a callee can change in place (tuples, object types stored
 inline), so those types are counted when they are borrowed this way, and the share is the same

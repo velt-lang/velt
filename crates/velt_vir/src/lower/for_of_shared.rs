@@ -21,7 +21,7 @@ pub(super) enum ArrayHeld {
     Shared,
     /// It consumes the array; the binding is owned.
     Consumed,
-    /// Where it is: the frame keeps it, and nothing can replace it.
+    /// Where it is: nothing can replace it (`stays_put`).
     Frame,
 }
 

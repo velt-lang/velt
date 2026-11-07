@@ -83,7 +83,7 @@ impl FnLower<'_, '_> {
         // (replaceable.rs), and one read beside its possible container by a callee that writes
         // through that param, which may replace any object on the way to it, `x` in `g(a, x.s)` too.
         // The callee may read its parameter after that. JavaScript's callee keeps what it was passed.
-        if reach.sibling && is_part(a) && !self.frame_owns_unwritten(a)
+        if reach.sibling && is_part(a) && !self.stays_put(a)
             || self.in_array_buffer(a)
             || self.in_module_slot(a)
             || self.may_replace(a, reach)
@@ -122,26 +122,23 @@ impl FnLower<'_, '_> {
         v
     }
 
-    /// Is the place `e` in a value this frame holds a reference of its own to (`const o = new C()`,
-    /// not a borrowed param or a by-reference `const`, which may lie inside what another argument
-    /// reaches, and neither of which is droppable),
-    /// with no field on the way written anywhere? Then nothing can replace or free it, whatever
-    /// the callee is given (`k(ctx, o.name)`).
-    pub(super) fn frame_owns_unwritten(&mut self, e: &hir::Expr) -> bool {
+    /// Does the place `e` stay where it is whatever a call does: a path from a variable no closure
+    /// can assign, with no field on the way written anywhere? Then nothing can replace or free it
+    /// (`k(ctx, o.name)`): what the path starts from lives on, as this frame owns it, its caller keeps
+    /// a param's for the call, and a by-reference `const` is shared when its owner goes to a call.
+    pub(super) fn stays_put(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &e.kind {
             K::Local(l, _) => {
                 let info = &self.info[l.0 as usize];
-                info.droppable
-                    && !info.indirect
-                    && !info.in_cell
+                !info.indirect && !info.in_cell
             }
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
-                !self.cx.field_written(bty, *index) && self.frame_owns_unwritten(base)
+                !self.cx.field_written(bty, *index) && self.stays_put(base)
             }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
-                self.frame_owns_unwritten(base)
+                self.stays_put(base)
             }
             _ => false,
         }

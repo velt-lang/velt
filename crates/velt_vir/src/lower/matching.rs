@@ -211,7 +211,7 @@ impl FnLower<'_, '_> {
                 self.freeze_bindings(pat);
             }
             let shared = !frozen && (self.through_counted(init, ty) || self.in_shared_cell(init));
-            let shared = shared || !frozen && hazard.is_some() && !self.frame_owns_unwritten(init);
+            let shared = shared || !frozen && hazard.is_some() && !self.stays_put(init);
             let v = self.expr(init);
             if !self.dead() {
                 let p = match shared {
