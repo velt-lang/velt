@@ -740,11 +740,11 @@ checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
 name = "velt_common"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "velt_fmt"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "velt_common",
  "velt_syntax",
@@ -761,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "velt_http"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "rustls",
  "webpki-roots",
@@ -769,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "velt_syntax"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "rustc-hash",
  "velt_common",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "velt_toolchain"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "flate2",
  "lzma-rs",
@@ -800,7 +800,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vpm"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "flate2",
  "icu_normalizer",
