@@ -6,7 +6,6 @@ let second = false;
 const p = new Promise<void>((r) => {
   wake = r;
 });
-setTimeout(() => console.log("first unref'd runs"), 50).unref();
 setTimeout(() => {
   const end = Date.now() + 150;
   while (Date.now() < end) {}
@@ -23,6 +22,8 @@ setTimeout(() => {
     }, 10);
   }, 50);
 }, 10);
+// Made after the busy timer, so that one is due first however long these lines take.
+setTimeout(() => console.log("first unref'd runs"), 50).unref();
 await p;
 console.log("resumed");
 setTimeout(() => console.log("second unref'd ran:", second), 20);
