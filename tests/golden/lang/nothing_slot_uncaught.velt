@@ -1,0 +1,16 @@
+// A member read of a slot that holds `null` (`null!`) is Node's `TypeError`. Where no `catch` of
+// the same function takes it, it stops the program (#2350): the caller's `catch` does not run,
+// where Node's does.
+class Foo {
+  v = 1;
+}
+function read(f: Foo): number {
+  return f.v;
+}
+const f: Foo = null!;
+console.log("before", f);
+try {
+  console.log(read(f));
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}

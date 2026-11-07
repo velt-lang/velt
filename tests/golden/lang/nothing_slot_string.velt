@@ -1,0 +1,5 @@
+// `null!` where a `string` is expected: a `string` slot can't hold `null`, so the program stops
+// with a `TypeError` where the null would enter (#2350). Node prints `kept null` and goes on.
+console.log("before");
+const s: string = null!;
+console.log("kept", s);

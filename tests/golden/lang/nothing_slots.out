@@ -1,0 +1,21 @@
+1 true
+true null
+t
+true null
+1
+2
+true 1
+1 1
+true
+4
+true true false true false
+false true true true
+null undefined null null object undefined
+true no no fallback
+true true
+true none no
+true {"a":null,"n":1}
+caught true Cannot read properties of null (reading 'title') ok
+Cannot set properties of null (setting 'v') wrote
+Cannot read properties of undefined (reading 'm') 2
+true

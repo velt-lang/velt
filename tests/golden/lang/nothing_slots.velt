@@ -1,0 +1,100 @@
+// `null!` and `null as any` in a slot whose type has no null (#2350): the slot keeps the null,
+// as in Node, and only a member read or write of it is a `TypeError`.
+class Foo {
+  v = 1;
+  m(): number {
+    return this.v + 1;
+  }
+}
+type Title = { title: string };
+
+class A {
+  x: Foo = null!;
+  constructor(init: boolean) {
+    if (init) this.x = new Foo();
+  }
+}
+console.log(new A(true).x.v, new A(false).x === null);
+
+let ctx: Title = null!;
+function init(): void {
+  ctx = { title: "t" };
+}
+console.log(ctx === null, ctx);
+init();
+console.log(ctx.title);
+
+function useRef<T>(v: T): { current: T } {
+  return { current: v };
+}
+const r = useRef<Foo>(null!);
+console.log(r.current === null, r.current);
+r.current = new Foo();
+console.log(r.current.v);
+
+function f(a: Foo, b: number): number {
+  return b;
+}
+console.log(f(null!, 2));
+
+type B = { value: Foo; n: number };
+const b: B = { value: null!, n: 1 };
+console.log(b.value === null, b.n);
+b.value = new Foo();
+console.log(b.value.v, b.n);
+
+class S {
+  static inst: S = null!;
+  v = 4;
+  static init(): void {
+    S.inst = new S();
+  }
+}
+console.log(S.inst === null);
+S.init();
+console.log(S.inst.v);
+
+const a: Title = null as any;
+const u: Foo = undefined!;
+console.log(a === null, a == null, a === undefined, a == undefined, a !== null);
+console.log(u === null, u == null, u === undefined, u === (undefined as any));
+console.log(a, u, String(a), `${a}`, typeof a, typeof u);
+console.log(!a, a ? "yes" : "no", u ? "yes" : "no", a ?? "fallback");
+const a2: Title = null as any;
+console.log(a === a2, (a as any) === null);
+const asOpt: Title | null = a;
+console.log(asOpt === null, asOpt ?? "none", asOpt ? "yes" : "no");
+const back: any = a;
+console.log(back === null, JSON.stringify({ a, n: 1 }));
+
+function read(t: Title): string {
+  try {
+    return t.title;
+  } catch (e) {
+    return "caught " + (e instanceof TypeError) + " " + (e as Error).message;
+  }
+}
+console.log(read(a), read({ title: "ok" }));
+
+function write(foo: Foo): string {
+  try {
+    foo.v = 3;
+    return "wrote";
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+console.log(write(null!), write(new Foo()));
+
+function call(foo: Foo): string {
+  try {
+    return String(foo.m());
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+console.log(call(undefined as any), call(new Foo()));
+
+const DEV = Math.random() > 2;
+const warned = DEV ? new Set<string>() : null!;
+console.log(warned === null);

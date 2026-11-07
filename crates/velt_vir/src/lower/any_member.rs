@@ -138,7 +138,12 @@ impl Cx<'_> {
         }
         match self.raw_kind(t) {
             TyKind::Unit => true,
-            TyKind::Option(inner, _) => self.is_dynamic(*inner) || self.any_boxable_plain(*inner),
+            // `null` alone (`{ a: null }`'s field) is boxed as its nothing.
+            TyKind::Option(inner, _) => {
+                self.is_dynamic(*inner)
+                    || matches!(self.raw_kind(*inner), TyKind::Never)
+                    || self.any_boxable_plain(*inner)
+            }
             _ => self.any_boxable_plain(t),
         }
     }

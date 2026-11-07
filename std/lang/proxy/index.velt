@@ -57,10 +57,6 @@ export { PropertyDescriptor, ProxyHandler } from "velt/lang/proxy/descriptor";
 export { symbolKeyName } from "velt/lang/proxy/keys";
 export { Reflect } from "velt/lang/proxy/reflect";
 
-// The views of the two nothings (`Proxy.#nothing`), made once, so that two `null`s are the same.
-let nullView: Proxy | null = null;
-let undefinedView: Proxy | null = null;
-
 /**
  * A proxy for another object: the operations on it run the handler's traps. Create one with
  * `new Proxy(target, handler)`; the result is an `any`.
@@ -122,13 +118,8 @@ export class Proxy {
    * object without a live view: it asks the runtime's table of views first (`any_view.rs`).
    */
   static [PROXY_VIEW](target: any): Proxy {
-    if (target === null) {
-      nullView ??= Proxy.#nothing(null);
-      return nullView;
-    }
-    if (target === undefined) {
-      undefinedView ??= Proxy.#nothing(undefined);
-      return undefinedView;
+    if (target == null) {
+      return Proxy.#nothing(target);
     }
     const p = new Proxy(target, {});
     p.#view = true;
@@ -136,9 +127,9 @@ export class Proxy {
   }
 
   /**
-   * The one view of `null` or of `undefined` (`target`), what a `Foo` slot holds after `null!`
-   * or `null as any` (velt_vir `lower/any_view.rs`). As in Node, nothing stops until a member is
-   * read or written, and that is a `TypeError`.
+   * A view of `null` or of `undefined` (`target`), what a `Foo` slot holds after `null!` or
+   * `null as any` (velt_vir `lower/any_view.rs`, which also makes two of them `===`). As in Node,
+   * nothing stops until a member is read or written, and that is a `TypeError`.
    */
   static #nothing(target: any): Proxy {
     const word = target === null ? "null" : "undefined";

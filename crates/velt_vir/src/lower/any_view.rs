@@ -21,8 +21,9 @@
 //! `null` or `undefined` converted to any proxiable type, a class too, is a view of that nothing
 //! (hir_encodings.md "A nothing in a slot"): `Proxy[PROXY_VIEW]` gives one view per nothing, whose
 //! `get` and `set` traps throw Node's `TypeError`, so a member read fails where JavaScript's does
-//! and nothing before it does. It has no entry in the table of views. `=== null`, truthiness and
-//! a conversion to a `T | null` ask `view_nothing`.
+//! and nothing before it does. It has no entry in the table of views, and each conversion makes
+//! one, so `===` compares two of them by the nothing they view (`same_nothing`). `=== null`, truthiness and
+//! the patterns of a `T | null` holding one (`option_present`) ask `view_nothing`.
 //!
 //! A primitive stays a `TypeError`, as does an object converted to a class (whose methods would
 //! run on another type's layout). A program without typed proxies has no views: there `P` holds
@@ -172,26 +173,34 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `WrapSome` of the owned pointer `v` of the proxiable type `inner` into the pointer-sized
-    /// option `ty`: a view of a nothing becomes the option's own nothing, so what a `T | null`
-    /// holds is tested and matched as ever.
-    pub(super) fn wrap_some_view(&mut self, v: Operand, inner: TyId, ty: TyId) -> Operand {
-        let vp = Place::local(self.temp(Ty::Ptr));
-        self.assign(vp.clone(), Rvalue::Use(v));
-        let nil = self.view_nothing(Operand::Copy(vp.clone()), true);
-        let out = Place::local(self.temp(Ty::Ptr));
-        let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(nil, yes, no);
-        self.switch_to(yes);
-        self.drop_glue(vp.clone(), inner);
-        let none = self.none_value(ty);
-        self.assign(out.clone(), Rvalue::Use(none));
-        self.goto(join);
-        self.switch_to(no);
-        self.assign(out.clone(), Rvalue::Use(Operand::Copy(vp)));
-        self.goto(join);
-        self.switch_to(join);
-        self.own_value(Operand::Copy(out), ty)
+    /// `a === b` of two pointers of a proxiable type, given `eq`, their identity: two views of
+    /// the same nothing are the same value too.
+    pub(super) fn same_nothing(&mut self, a: &Place, b: &Place, eq: Operand) -> Operand {
+        let (pa, pb) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+        let nil_a = self.view_nothing(pa.clone(), true);
+        let nil_b = self.view_nothing(pb.clone(), true);
+        let null_a = self.view_nothing(pa, false);
+        let null_b = self.view_nothing(pb, false);
+        let both = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, nil_a, nil_b));
+        let kind = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, null_a, null_b));
+        let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, both, kind));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, eq, same))
+    }
+
+    /// Does the option at `p` (of type `ty`) hold a value, as a pattern and `=== null` see it:
+    /// a pointer option whose payload may be a view of a nothing (a `T | null` given a `T` that
+    /// holds `null!`) holds that nothing then, so `??`, `?.`, `if (x)` and `switch` see `null`.
+    pub(super) fn option_present(&mut self, p: &Place, ty: TyId) -> Operand {
+        let some = self.option_is_some(p, ty);
+        let TyKind::Option(e, _) = self.cx.kind(ty) else {
+            return some;
+        };
+        if self.cx.ty(ty) != Ty::Ptr || !self.holds_view(e) {
+            return some;
+        }
+        let nil = self.view_nothing(Operand::Copy(p.clone()), true);
+        let real = self.rvalue_temp(Ty::Bool, Rvalue::Unary(vir::UnOp::Not, nil));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, some, real))
     }
 
     /// In `AnyTo` to the union `ty` (`n` variants) of the `any` at `p` (owned) that holds none
