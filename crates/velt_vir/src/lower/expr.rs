@@ -669,9 +669,7 @@ impl FnLower<'_, '_> {
         }
         self.note_scope_ends(b, false);
         self.push_scope(ScopeKind::Block);
-        for s in &b.stmts {
-            self.stmt(s);
-        }
+        self.block_stmts(b);
         let t = self.vty(ty);
         let value = match &b.value {
             Some(v) if t != Ty::Unit => Some(self.consume(v)),

@@ -78,6 +78,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             mirror_drop: false,
             any_context: None,
             view_loops: Default::default(),
+            str_datas: vec![],
             lk_mode: None,
             rw_reader: None,
             mode: LkMode::Plain,
@@ -474,11 +475,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.note_scope_ends(&f.body.block, true);
         self.ctor_entry_inits();
         let unit_super = self.unit_super_at(f);
-        for (i, s) in f.body.block.stmts.iter().enumerate() {
+        let block = &f.body.block;
+        for (i, s) in block.stmts.iter().enumerate() {
             self.stmt(s);
             if unit_super == Some(i) {
                 self.unit_super_inits();
             }
+            self.note_str_data(s, (&block.stmts[i + 1..], block.value.as_deref()));
         }
         // A generator's body yields its values and returns nothing.
         let returns_value = !self.returns_unit() && !self.in_generator();

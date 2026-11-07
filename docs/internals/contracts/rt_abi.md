@@ -924,6 +924,10 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   invalid sequence as U+FFFD, one per maximal invalid subpart): making a string is the runtime's.
   Writing a string's bytes and comparing them (`write`, `utf8Equals`) is Velt code that reads the
   string's bytes in place (intrinsics `StrByteAt`, `StrLoadU8x16`, `StrLoadPartialU8x16`).
+  After `const n = strByteLen(s)` with a local `s`, in a function that is not async, a generator
+  or generic, `StrByteAt` of `s` in the rest of that block reads through a pointer worked out once
+  at that `let`, when the rest of the block reads a byte of `s` and is quiet (`lower/quiet.rs`,
+  strict): nothing there can grow a builder or replace what `s` borrows (`lower/str_data.rs`).
 - BigInt (`std/math/bigint.velt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
   `parse(s, radix)`, `clone`, `assign(dst, a)`, `neg(dst, a)`, `op(dst, a, b, op: u32): bool` and
   `op_i64(dst, a, k: i64, op: u32): bool` (false: division by zero or a negative or huge shift; `dst` unchanged), `cmp`/`cmp_i64` (−1/0/1),

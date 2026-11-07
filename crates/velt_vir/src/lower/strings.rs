@@ -186,6 +186,11 @@ impl FnLower<'_, '_> {
     pub(super) fn str_byte_at(&mut self, v: Operand, i: Operand) -> Operand {
         let p = self.operand_place(v, Ty::Agg(STR_AGG));
         let data = self.str_data(&p);
+        self.text_byte_at(data, i)
+    }
+
+    /// The byte at `i` (a `u8`) of the text at `data`, unchecked.
+    pub(super) fn text_byte_at(&mut self, data: Operand, i: Operand) -> Operand {
         let Operand::Copy(bp) = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, data, i))
         else {
             ice("rvalue_temp returns a place")
