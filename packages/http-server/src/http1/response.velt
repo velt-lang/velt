@@ -15,9 +15,10 @@ import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { EventStream } from "../event_stream";
 import { lengthValue } from "../fields";
-import { BodySink, HttpStream } from "../http_stream";
+import { BodySink, HttpStream, sendBody, SourceHold } from "../http_stream";
 import { HttpResponse } from "../response";
 import { lastChunk, oneChunk, writePiece } from "./chunks";
+import { ClientEnd, ClientWatch } from "./client_watch";
 import { FieldBuf } from "./fields_buf";
 import { Head } from "./head";
 import { HeadParts, TYPE_BYTES, TYPE_HTML, TYPE_JSON, TYPE_SSE, TYPE_TEXT } from "./head_parts";
@@ -28,7 +29,7 @@ import { writeHead } from "./write_head";
 const QUEUED: number = 65536;
 
 /// A response on an HTTP/1.1 connection (the methods are documented on `HttpResponse`).
-export class Http1Response extends HttpResponse implements BodySink {
+export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
   /** The responses not yet written to the connection. */
   out: Out = new Out();
   /** The fixed parts of a head, and the `Date` value. */
@@ -63,16 +64,23 @@ export class Http1Response extends HttpResponse implements BodySink {
   /// The connection was switched to another protocol (`upgrade`): the server lets it go.
   private switched: bool = false;
   private conn: TcpStream;
-  // Aborted when a write to the client fails or the server closes (made when first asked for).
+  // The request's signal (made when first asked for): aborted when the client goes away
+  // (`ClientWatch`), a write to it fails or the server closes.
   private stopped: AbortSignal;
   private failed: AbortController = new AbortController();
   private either: AbortSignal | null = null;
+  /// Writing to the client failed, or its connection did.
+  private gone: bool = false;
+  private watch: ClientWatch;
+  /// The source of a streamed body being written.
+  private source: SourceHold | null = null;
 
-  constructor(conn: TcpStream, stopped: AbortSignal, request: Head) {
+  constructor(conn: TcpStream, stopped: AbortSignal, request: Head, watch: ClientWatch) {
     super();
     this.conn = conn;
     this.stopped = stopped;
     this.request = request;
+    this.watch = watch;
   }
 
   status(code: number) {
@@ -145,13 +153,21 @@ export class Http1Response extends HttpResponse implements BodySink {
     } else {
       writeHead(this, -1, t, -1);
     }
+    // A source with nothing to write hears of a client that goes away too.
+    this.watch.want(this);
+    const source = body[Symbol.asyncIterator]();
+    const hold = new SourceHold(source);
+    this.source = hold;
     try {
-      for await (const chunk of body) {
-        await this.piece(chunk);
+      await sendBody(source, hold, this);
+      this.source = null;
+      if (this.gone) {
+        throw new Error("the client went away");
       }
       if (this.left > 0) {
         throw new Error(`the body ended ${this.left} bytes short of its Content-Length`);
       }
+      await this.finishStream();
     } catch (e) {
       // The client went away, or the source failed: nothing more can be sent, and the
       // connection closes without the body's end (the client sees it cut off).
@@ -161,9 +177,7 @@ export class Http1Response extends HttpResponse implements BodySink {
       this.streaming = false;
       this.keepAlive = false;
       this.cut = this.left >= 0;
-      return;
     }
-    await this.finishStream();
   }
 
   async sse(): Promise<EventStream> {
@@ -180,6 +194,10 @@ export class Http1Response extends HttpResponse implements BodySink {
     }
     const made = AbortSignal.any([this.failed.signal, this.stopped]);
     this.either = made;
+    if (this.gone) {
+      this.failed.abort();
+    }
+    this.watch.want(this);
     return made;
   }
 
@@ -247,11 +265,33 @@ export class Http1Response extends HttpResponse implements BodySink {
 
   /** Whether writing to the client failed: it went away. */
   clientGone(): bool {
-    return this.failed.signal.aborted;
+    return this.gone;
+  }
+
+  /** The connection failed: nothing more reaches the client. */
+  connectionFailed() {
+    this.gone = true;
+    this.failed.abort();
+    const hold = this.source;
+    if (hold != null) {
+      this.source = null;
+      // Runs beside the wait for the source's next chunk, which it may end.
+      const ending = hold.end();
+    }
+  }
+
+  /** See `ClientEnd`: a response written later still goes out. */
+  closedEarly() {
+    this.failed.abort();
   }
 
   /** A new request: status 200, no headers. */
   begin(keepAlive: bool, http11: bool, headOnly: bool = false) {
+    if (this.either != null) {
+      // A signal is its request's: what happens to the connection later doesn't abort it.
+      this.either = null;
+      this.failed = new AbortController();
+    }
     this.headOnly = headOnly;
     this.headLength = -1;
     this.switched = false;
@@ -309,7 +349,7 @@ export class Http1Response extends HttpResponse implements BodySink {
         await this.conn.writeBytes(out.buf, 0, out.length as number);
       } catch (e) {
         out.length = 0;
-        this.failed.abort();
+        this.connectionFailed();
         throw e;
       }
       out.length = 0;
@@ -330,7 +370,7 @@ export class Http1Response extends HttpResponse implements BodySink {
         await this.conn.drained(QUEUED);
       } catch (e) {
         out.length = 0;
-        this.failed.abort();
+        this.connectionFailed();
         throw e;
       }
     }

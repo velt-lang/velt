@@ -8,6 +8,7 @@ import { BodyTooLarge } from "../errors";
 import { hasToken } from "../fields";
 import { HttpRequest } from "../request";
 import { BodyReader } from "./body_reader";
+import { ClientWatch } from "./client_watch";
 import { Head } from "./head";
 import { Parser } from "./parser";
 
@@ -16,8 +17,10 @@ import { Parser } from "./parser";
 export class Http1Request extends HttpRequest {
   /// The head.
   head: Head = new Head();
-  // The connection and its parser. Nothing here is shared with the response, so a handler may
-  // pass what it reads from one to the other.
+  /// Whether the client is still there, read from the socket once the body was (`ClientWatch`).
+  watch: ClientWatch;
+  // The connection and its parser. Nothing else here is shared with the response, so a handler
+  // may pass what it reads from one to the other.
   private parser: Parser;
   private conn: TcpStream;
   private reader: BodyReader;
@@ -27,11 +30,13 @@ export class Http1Request extends HttpRequest {
     this.parser = parser;
     this.conn = conn;
     this.reader = new BodyReader(this.head, parser, conn, idle, requestMs);
+    this.watch = new ClientWatch(conn, parser, this.head);
   }
 
   /// A new request's head was parsed into `head`.
   begin(now: i64) {
     this.reader.begin(now);
+    this.watch.begin();
   }
 
   get keepAlive(): bool {
@@ -112,11 +117,27 @@ export class Http1Request extends HttpRequest {
   }
 
   async read(): Promise<u8[] | null, IoError | RangeError> {
-    return await this.reader.read();
+    try {
+      const piece = await this.reader.read();
+      if (this.reader.ended) {
+        this.watch.bodyEnded();
+      }
+      return piece;
+    } catch (e) {
+      this.bodyFailed(e);
+      throw e;
+    }
   }
 
   async body(): Promise<u8[], IoError | BodyTooLarge | RangeError> {
-    return await this.reader.all();
+    try {
+      const all = await this.reader.all();
+      this.watch.bodyEnded();
+      return all;
+    } catch (e) {
+      this.bodyFailed(e);
+      throw e;
+    }
   }
 
   bodyRead(): bool {
@@ -146,6 +167,13 @@ export class Http1Request extends HttpRequest {
   /// request, false when the rest is too large to skip (the connection then closes).
   async finish(): Promise<bool> {
     return await this.reader.finish();
+  }
+
+  /// A body cut off by the client tells the response, as `ClientWatch` would.
+  private bodyFailed(e: IoError | BodyTooLarge | RangeError) {
+    if (e instanceof IoError && e.code == "ECONNRESET") {
+      this.watch.clientLeft();
+    }
   }
 
   /// Whether any header `name` holds `token` in its comma-separated value (any case).

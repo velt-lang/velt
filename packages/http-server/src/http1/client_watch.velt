@@ -1,0 +1,146 @@
+// http-server (internal): `ClientWatch`, how an HTTP/1.1 connection notices a client that went
+// away while nothing is being written to it: a promise on the connection's task reads the socket
+// while a request is being answered. Only a request that needs to know pays for it (one that
+// asked for its signal, or a streamed response); the others never start it.
+//
+// What a read can tell: an error means the connection is gone. The end of the stream means the
+// client sent all it will send, which is what a client that closed and one that only shut its
+// sending side and goes on reading both look like (a write tells them apart). So it ends a
+// request only when the client can't be waiting for an answer that way: before the response
+// began, on a keep-alive request with nothing pipelined behind it, and then only the request's
+// signal. What the client pipelined is read into the parser, where the connection finds it.
+
+import { TcpStream } from "velt/net";
+import { AbortController, AbortSignal } from "velt/task";
+import { BODY_CHUNKED, BODY_LENGTH, Head } from "./head";
+import { Parser } from "./parser";
+
+/// The most of the next requests read ahead; past it, only writes tell.
+const READ_AHEAD: i64 = 65536;
+
+/// What a watch reports to: the response of the request being answered.
+export interface ClientEnd {
+  /// The connection failed.
+  connectionFailed(): void;
+  /// The client closed, or shut its sending side, while the request has no response yet.
+  closedEarly(): void;
+  /// A response was started.
+  sent(): bool;
+}
+
+/// The watch of one connection, started at most once per request.
+export class ClientWatch {
+  private conn: TcpStream;
+  private parser: Parser;
+  private head: Head;
+  /// Who hears what it finds, while the request wants it (held no longer, or the two would keep
+  /// each other alive past the connection).
+  private target: ClientEnd | null = null;
+  /// The request wants it, and its body is not on the socket any more.
+  private wanted: bool = false;
+  /// The request is answered: the connection has the socket again.
+  private closed: bool = true;
+  private bodyDone: bool = false;
+  private stopper: AbortController | null = null;
+  private running: Promise<void> | null = null;
+
+  constructor(conn: TcpStream, parser: Parser, head: Head) {
+    this.conn = conn;
+    this.parser = parser;
+    this.head = head;
+  }
+
+  /// A new request.
+  begin() {
+    this.wanted = false;
+    this.bodyDone = false;
+    this.closed = false;
+  }
+
+  /// Watches from now on, or from the end of a body still being read from the socket: the
+  /// body's reader has the socket until then.
+  want(target: ClientEnd) {
+    this.wanted = true;
+    this.target = target;
+    this.start();
+  }
+
+  /// The request's body was read to its end.
+  bodyEnded() {
+    this.bodyDone = true;
+    if (this.wanted) {
+      this.start();
+    }
+  }
+
+  /// The client ended the request's body early.
+  clientLeft() {
+    const t = this.target;
+    if (t != null) {
+      t.closedEarly();
+    }
+  }
+
+  /// The handler is done: from here on nothing starts a watch.
+  close() {
+    this.closed = true;
+    this.target = null;
+  }
+
+  /// Whether a watch is running: the connection stops it before it reads again.
+  active(): bool {
+    return this.running != null;
+  }
+
+  /// Ends the watch, and waits for it.
+  async stop() {
+    const s = this.stopper;
+    if (s != null) {
+      s.abort();
+      this.stopper = null;
+    }
+    const r = this.running;
+    if (r != null) {
+      await r;
+      this.running = null;
+    }
+  }
+
+  private start() {
+    const t = this.target;
+    const mode = this.head.bodyMode;
+    if (
+      t == null ||
+      this.closed ||
+      this.running != null ||
+      ((mode == BODY_LENGTH || mode == BODY_CHUNKED) && !this.bodyDone) ||
+      // The handler may take the connection, with what came after the head (`upgrade`).
+      this.head.find("upgrade") >= 0
+    ) {
+      return;
+    }
+    const s = new AbortController();
+    this.stopper = s;
+    this.running = this.run(s.signal, t);
+  }
+
+  private async run(stop: AbortSignal, target: ClientEnd): Promise<void> {
+    const p = this.parser;
+    try {
+      while (!stop.aborted && p.available() < READ_AHEAD) {
+        const n = p.readFrom(this.conn);
+        if (n == null) {
+          if (!target.sent() && this.head.keepAlive && !p.pending()) {
+            target.closedEarly();
+          }
+          return;
+        }
+        if (n == 0 && !(await this.conn.readableWithin(-1, stop))) {
+          return;
+        }
+      }
+    } catch (e) {
+      target.connectionFailed();
+    }
+  }
+}

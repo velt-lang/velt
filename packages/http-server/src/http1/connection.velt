@@ -58,7 +58,7 @@ export async function connection<E>(
   }
   const parser = new Parser(maxHead, maxBody, limits.maxHeaders);
   const req = new Http1Request(parser, conn, idle, limits.requestMs);
-  const res = new Http1Response(conn, stopped, req.head);
+  const res = new Http1Response(conn, stopped, req.head, req.watch);
   let open = true;
   let rejected = false;
   // When the head being read began to arrive (`Date.now()`), or -1 between requests.
@@ -146,6 +146,11 @@ export async function connection<E>(
             }
             // Otherwise the client went away while the response was being written (a streamed
             // one): nothing can be sent, and it is not the handler's failure.
+          }
+          // The connection reads the socket again from here.
+          req.watch.close();
+          if (req.watch.active()) {
+            await req.watch.stop();
           }
           if (res.cutOff()) {
             // Its response failed after the head (`fail`): it can't be finished.

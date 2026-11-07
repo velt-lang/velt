@@ -194,10 +194,24 @@ request lazily: a handler pays only for what it reads.
   upload need not be held in memory. A body is read once; a read that fails (the client went away)
   throws `IoError`.
 - `req.signal` is aborted when the client can no longer be answered, as in Deno and Bun: over
-  HTTP/2 when it resets its stream, over HTTP/1.1 when writing the response to it fails, and when
-  the server closes. Pass it to the work done for the request (`fetch(url, { signal: req.signal })`)
-  so that work stops with the client. Take it before the handler returns if a streamed body or a
-  spawned task uses it.
+  HTTP/2 when it resets its stream or its connection ends; over HTTP/1.1 when its connection fails,
+  when writing the response to it fails, or when it closes before a response started (see below);
+  and when the server closes. Pass it to the work done for the request
+  (`fetch(url, { signal: req.signal })`) so that work stops with the client. Take it before the
+  handler returns if a streamed body or a spawned task uses it. A request that never asks for it
+  pays nothing for this.
+- A client that goes away ends a streamed response's source, as in Node: a `ReadableStream`'s
+  `cancel` runs and `pull` stops, an async generator's `finally` runs (at its next `yield`, as in
+  JS), through `compress()` too. A slow client only holds the source back. An exception from
+  `cancel` goes nowhere.
+- Over HTTP/1.1 a client that closed and one that only shut its sending side and goes on reading
+  look the same until something is written to them. So once a response started, only a failed write
+  or a failed connection counts as gone: such a client gets its whole body, and one that closed
+  while a source has nothing to write is noticed by the writes after its next chunks. Before a
+  response started, the end of its input aborts `req.signal` on a keep-alive request with nothing
+  pipelined behind it (a client that means to go on reading says `Connection: close`); a response
+  written anyway still goes out. `server.shutdown()` waits for an open stream as for any request:
+  a source that never ends should listen to `req.signal`, which the shutdown aborts.
 - A `Request` is valid until its handler settles: what the handler read stays readable, but
   reading something new afterwards (in a streamed body or a spawned task) stops the program
   with a clear error. Read what outlives the handler first (`const url = req.url`).
