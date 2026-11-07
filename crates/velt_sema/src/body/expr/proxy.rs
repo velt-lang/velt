@@ -79,6 +79,12 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let std = self.cx.scopes[self.module].is_std;
+        if i == hir::Intrinsic::AnyGet {
+            match args.get(1).map(|k| &k.kind) {
+                Some(H::Lit(hir::Lit::Str(name))) => self.note_named_read(&name.clone()),
+                _ => self.note_computed_read(span),
+            }
+        }
         if !std || PROXY_MODULES.contains(&self.cx.modules[self.module].path.as_str()) {
             let m = Self::proxy_method_of(i).and_then(|name| {
                 let p = self.cx.prelude_adt("Proxy")?;
@@ -185,8 +191,21 @@ impl FnCx<'_, '_> {
     /// A call of the static method `name` of class `d`: `Reflect.*` in the program's own code
     /// makes it use `any` members (the prelude's bodies read and write through `any`), and
     /// `Reflect.set` writes a field through `any`.
-    pub(crate) fn note_reflect_call(&mut self, d: DefId, name: &str, span: Span) {
+    pub(crate) fn note_reflect_call(
+        &mut self,
+        d: DefId,
+        name: &str,
+        args: &[ast::Expr],
+        span: Span,
+    ) {
         if Some(d) == self.cx.prelude_adt("Reflect") && !self.cx.scopes[self.module].is_std {
+            match name {
+                "get" => self.note_reflect_get(args, span),
+                "getOwnPropertyDescriptor" | "getOwnPropertyDescriptors" => {
+                    self.note_descriptor_read()
+                }
+                _ => {}
+            }
             self.cx.any_impl();
             self.cx.note_dyn_members();
             if name == "set" {

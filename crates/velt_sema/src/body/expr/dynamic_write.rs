@@ -291,6 +291,7 @@ impl FnCx<'_, '_> {
                 call.emit(self, any, span)
             }
             WriteKey::Keyed(k) => {
+                self.note_computed_read(span);
                 let call = hooks::any_get_key(ty::Any::of(obj.clone()), ty::Any::of(k.clone()));
                 call.emit(self, any, span)
             }

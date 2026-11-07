@@ -1,0 +1,5 @@
+// An array method kept in a field of a proxy's target, read by its own name first.
+const a: any = new Proxy([3, 1, 2] as any, {});
+const t: any = { go: a.sort, n: 1 };
+const p: any = new Proxy(t, {});
+console.log(typeof p.go, p.n);

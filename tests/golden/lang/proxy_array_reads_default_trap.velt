@@ -1,0 +1,8 @@
+// A handler written directly, with a default on the key parameter, called by the proxy with a key.
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, prop: any = "sort", r?: any) {
+    return Reflect.get(t, prop === "order" ? "sort" : prop, r);
+  },
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

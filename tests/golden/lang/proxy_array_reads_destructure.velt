@@ -1,0 +1,17 @@
+// A forwarding `get` called with another key: destructured out of its object.
+const h = {
+  get(t: any, prop: any) {
+    return Reflect.get(t, prop);
+  },
+};
+const { get } = h;
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, prop: any, r: any) {
+    if (prop === "order") {
+      return get(t, "sort");
+    }
+    return Reflect.get(t, prop, r);
+  },
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

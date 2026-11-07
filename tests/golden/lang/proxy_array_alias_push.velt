@@ -1,0 +1,8 @@
+// A `get` trap can answer a call of one name with an array method of another.
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, k: any, r: any) {
+    return Reflect.get(t, k === "add" ? "push" : k, r);
+  },
+});
+console.log(p.add(5));
+console.log(JSON.stringify(p));

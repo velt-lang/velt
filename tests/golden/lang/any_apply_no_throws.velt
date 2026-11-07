@@ -1,0 +1,38 @@
+// `f.apply` with a list to read keeps its function free of `throws`: a comparator, a `Promise`
+// executor, `toString` and `toJSON` can't throw.
+function diff(this: any, a: any, b: any): any {
+  return a - b + (this === null ? 0 : 0);
+}
+function show(this: any, a: any): any {
+  return `${this.tag}:${a}`;
+}
+const f: any = diff;
+const fmt: any = show;
+const pair: any = [2, 1];
+const nums: number[] = [2, 1];
+const a: number[] = [3, 1, 2];
+a.sort((x: number, y: number) => f.apply(null, pair));
+console.log(a.length);
+const b: number[] = [3, 1, 2];
+b.sort((x: number, y: number) => f.apply(null, nums));
+console.log(b.length);
+const c = [3, 1, 2].toSorted((x: number, y: number) => f.apply(null, [x, y] as any));
+console.log(c[0], c[2]);
+class Item {
+  tag = "t";
+  args: any = [7];
+  toString(): string {
+    return fmt.apply(this, this.args);
+  }
+  toJSON(): any {
+    return fmt.apply(this, this.args);
+  }
+}
+console.log(`${new Item()}`, JSON.stringify(new Item()));
+async function main(): Promise<void> {
+  const p = new Promise<any>((res: any, rej: any) => {
+    res(f.apply(null, pair));
+  });
+  console.log(await p);
+}
+await main();

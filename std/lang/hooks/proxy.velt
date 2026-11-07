@@ -18,6 +18,7 @@ import {
   spreadAny,
 } from "velt/lang/hooks/any_object";
 import { arrayIndex } from "velt/lang/hooks/record";
+import { noteStdUse } from "velt/lang/intrinsics";
 import {
   PROXY_DELETE,
   PROXY_GET,
@@ -131,6 +132,7 @@ export function anyDeleteProxy(o: any, k: any): boolean {
  * `Reflect.get(target, key, receiver)` stops (#1732).
  */
 export function brandGetterRead(o: any, key: string): any {
+  noteStdUse("brandGetter");
   if (o instanceof Proxy) {
     return o[PROXY_GET_GETTER](key);
   }

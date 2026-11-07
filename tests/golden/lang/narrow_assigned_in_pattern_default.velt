@@ -1,0 +1,10 @@
+// A closure's destructured parameter assigns the variable in its default: the narrowing goes.
+let v: string | null = "a";
+function clear(): void {
+  const f = ({ a = (v = null) }: any) => a;
+  f({});
+}
+if (v !== null) {
+  clear();
+  console.log(v === null);
+}

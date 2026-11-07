@@ -1,0 +1,12 @@
+// Std reads the key an `ownKeys` trap lists, with a forwarding `get` trap.
+const src: any = new Proxy({} as any, {
+  get: (t: any, prop: any, r: any) => Reflect.get([0], prop),
+  ownKeys: (t: any) => ["sort"],
+  getOwnPropertyDescriptor: (t: any, prop: any) => ({ value: 1, writable: true, enumerable: true, configurable: true }),
+});
+const m: any = Object.entries(src)[0][1];
+const p: any = new Proxy([3, 1, 2] as any, {
+  get: (t: any, prop: any, r: any) => (prop === "order" ? m : Reflect.get(t, prop, r)),
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

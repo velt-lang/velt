@@ -7,6 +7,8 @@
 // `callOn`, and `call` (`[THIS_FN_APPLY]`), `apply` and `bind` (`[THIS_FN_BIND]`) below; a plain call `f(x)`
 // passes `undefined`. `typeof` is `"function"`.
 
+import { anyIsList, noInline } from "velt/lang/intrinsics";
+import { anyArgList } from "velt/lang/hooks/any_ops";
 import { THIS_FN_APPLY, THIS_FN_BIND } from "velt/lang/hooks/keys";
 
 // The values of the declared functions with a `this: any` parameter read as values, by the
@@ -16,9 +18,12 @@ let declared: Map<string, ThisFn> | null = null;
 /** A function value whose `this` is bound at the call (module docs). */
 export class ThisFn {
   #f: Function;
+  // The body uses `arguments`, which is then its own, not the list `apply` was given.
+  #ownsArguments: boolean;
 
-  constructor(f: Function) {
+  constructor(f: Function, ownsArguments: boolean = false) {
     this.#f = f;
+    this.#ownsArguments = ownsArguments;
   }
 
   /**
@@ -50,8 +55,17 @@ export class ThisFn {
     if (args == null) {
       return this[THIS_FN_APPLY](self, []);
     }
-    const list: any[] = args;
+    // One expression and one call: any other shape here keeps a slot's `_Ganyapply_` out of a
+    // caller in a function expression, or `[THIS_FN_APPLY]` out of this (bench/any_ops/apply).
+    const list: any[] = anyIsList(args) && !this.#ownsArguments ? args : this.#listOf(args);
     return this[THIS_FN_APPLY](self, list);
+  }
+
+  // A list to read, or to copy for a body that uses `arguments`.
+  #listOf(args: any): any[] {
+    noInline();
+    const list = anyArgList(args);
+    return this.#ownsArguments ? list.slice() : list;
   }
 
   /**

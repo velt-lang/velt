@@ -249,6 +249,7 @@ impl FnCx<'_, '_> {
             }
             _ => index,
         };
+        self.note_index_forward(&obj, index, span);
         let key = match &index.kind {
             ast::ExprKind::Lit(ast::Lit::Str(k)) => Some(k.as_str()),
             _ => None,
@@ -300,6 +301,7 @@ impl FnCx<'_, '_> {
             let k = self.coerce(k, any);
             if self.uses_proxy() {
                 // A proxy's `get` trap and a record's symbol table see the symbol.
+                self.note_computed_read(span);
                 let call = hooks::any_get_key(ty::Any::of(obj), ty::Any::of(k));
                 return Ok(call.emit(self, any, span));
             }
@@ -352,9 +354,17 @@ impl FnCx<'_, '_> {
                 lw.text_helper_call(call, span)
             }));
         }
+        let user = !self.cx.scopes[self.module].is_std;
+        if user {
+            let names = &mut self.cx.method_facts.call_names;
+            names.insert(prop.name.clone());
+        }
         let key = self.key_lit(&prop.name, prop.span);
         let text = format!("{}.{}", self.callee_text(&recv), prop.name);
         let text = self.key_lit(&text, span);
+        if user && prop.name == "apply" && self.apply_reads_list(args) {
+            return Ok(self.any_apply_method(recv, key, text, args, any, span));
+        }
         let mut all = vec![recv, key, text];
         let outer = self.any_callback;
         let boxed = self.dynamic_args(args, any, typed_callbacks);
@@ -553,7 +563,7 @@ impl FnCx<'_, '_> {
     /// The arguments of a dynamic call, each boxed as an `any` (moved into the call). With a
     /// spread (`f(a, ...xs)`), the arguments are one `any[]` built as the array literal
     /// `[a, ...xs]`, whose elements the call takes (hir_encodings.md "any and unknown").
-    fn dynamic_args(
+    pub(super) fn dynamic_args(
         &mut self,
         args: &[ast::Expr],
         any: TyId,

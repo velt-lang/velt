@@ -1,0 +1,10 @@
+const f: any = function (this: any) {
+  return arguments.length;
+};
+const self = { base: 1 };
+const xs: any[] = [1, 2, 3, 4];
+let sum = 0;
+for (let i = 0; i < 100000; i++) {
+  sum += f.apply(self, xs) as number;
+}
+console.log(sum);

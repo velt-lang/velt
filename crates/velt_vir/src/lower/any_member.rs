@@ -50,6 +50,58 @@ impl Cx<'_> {
         self.intern(TyKind::Dyn(iface, vec![]))
     }
 
+    /// Can the program call a member named `name` through `any`: is that name called, or a
+    /// computed one (`""`)? Every key that reaches an `AnyCall` slot has been noted
+    /// (`FnLower::any_call`), so a slot compares only these.
+    pub(super) fn any_called(&self, name: &str) -> bool {
+        let keys = &self.boxing.any_call_keys;
+        keys.contains(name) || keys.contains("")
+    }
+
+    /// `Intrinsic::AnyMethodCalled`: can the array method `name` run on a proxy? Called by name,
+    /// or held as a value (velt/lang/proxy/array's `ArrayMethod`), which only a read can make, so
+    /// a `call`, `apply` or `bind` of one comes with `array_methods_open`.
+    pub(super) fn any_method_called(&self, name: &str) -> bool {
+        self.hir.array_methods_open || self.any_called(name)
+    }
+
+    /// `e`, when it is a call of `Intrinsic::AnyMethodCalled` or `StdUsed`: its value.
+    pub(super) fn std_fact_of(&self, e: &hir::Expr) -> Option<bool> {
+        let hir::ExprKind::Call {
+            callee:
+                hir::Callee::Intrinsic(i @ (hir::Intrinsic::AnyMethodCalled | hir::Intrinsic::StdUsed)),
+            args,
+        } = &e.kind
+        else {
+            return None;
+        };
+        Some(self.std_fact(*i, args.first()?))
+    }
+
+    /// `Intrinsic::AnyMethodCalled` or `StdUsed` of `name`: a non-literal argument counts as used.
+    pub(super) fn std_fact(&self, i: hir::Intrinsic, name: &hir::Expr) -> bool {
+        let hir::ExprKind::Lit(hir::Lit::Str(n)) = &name.kind else {
+            return true;
+        };
+        match i {
+            hir::Intrinsic::StdUsed => self.std_used(n),
+            _ => self.any_method_called(n),
+        }
+    }
+
+    /// `Intrinsic::StdUsed`: is `NoteStdUse(name)` in code the program reaches? It is kept with
+    /// the call keys under the prefix U+0001, and grows from pass to pass like them. A method a
+    /// program itself names with that prefix could only turn a guard on, which is safe.
+    pub(super) fn std_used(&self, name: &str) -> bool {
+        let keys = &self.boxing.any_call_keys;
+        keys.contains(&format!("\u{1}{name}"))
+    }
+
+    /// Records `Intrinsic::NoteStdUse`.
+    pub(super) fn note_std_use(&mut self, name: &str) {
+        self.note_any_call_key(&format!("\u{1}{name}"));
+    }
+
     /// The member slots of the `any` table of `ty` (module docs), when the program has them.
     pub(super) fn any_member_entries(&mut self, ty: TyId) -> Vec<(i128, Const)> {
         if self.hir.dyn_members.is_none() {

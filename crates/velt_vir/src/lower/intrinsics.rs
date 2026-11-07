@@ -272,6 +272,17 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(!self.cx.object_only(t)), Ty::Bool)
             }
+            (I::AnyMethodCalled | I::StdUsed, [name]) => {
+                let fact = self.cx.std_fact(i, name);
+                Operand::Const(crate::vir::Const::Bool(fact), Ty::Bool)
+            }
+            (I::AnyIsList, [a]) => self.any_is_list(a),
+            (I::NoteStdUse, [name]) => {
+                if let hir::ExprKind::Lit(hir::Lit::Str(n)) = &name.kind {
+                    self.cx.note_std_use(n);
+                }
+                Operand::Const(crate::vir::Const::Unit, Ty::Unit)
+            }
             (I::HoldsDynamic, [a]) => {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(self.cx.holds_dynamic(t)), Ty::Bool)

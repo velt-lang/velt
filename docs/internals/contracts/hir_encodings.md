@@ -170,6 +170,16 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   `&&` and `||` itself (`const_cond`): an `if` lowers only the branch taken and `&&` / `||` only
   the operand that decides, so the code of an instantiation for which the test is false is the
   code without it (std/prelude/map.velt: a `Map` whose `V` excludes null keeps its VIR).
+- Array methods on a proxy (issue #2424): `Call { Intrinsic(AnyMethodCalled), [Lit(Str(name))] }`,
+  std only, is a constant of the program, taken like the tests above: can the array method `name`
+  be called through `any`? True when a call through `any` names it or a computed key, or when the
+  program can hold a method under another name, which a `call`, `apply` or `bind` of one needs
+  (`Program::array_methods_open`, velt_sema's `proxy_method_values.rs`). An `AnyCall`
+  slot likewise compares only the names the program calls; lowering starts from
+  `Program::any_call_names`, those in its own code. `Call { Intrinsic(AnyIsList), [x] }`, std only,
+  is not a constant: a comparison of the descriptor of the `any` `x` with the table of `any[]`. `Call { Intrinsic(StdUsed), [Lit(Str(name))] }`, std only, is the
+  same kind of constant: is a `Call { Intrinsic(NoteStdUse), [Lit(Str(name))] }` in code the program
+  reaches?
 - Type predicates on a type parameter (issue #1251): `if (g(x)) A else B`, where `g` is a type
   predicate `v is P` whose `P` has only primitive members and `x` has the type of a type
   parameter `T`, has the condition `Logical { And, g(x), Call { Intrinsic(MayHoldPrimitive),

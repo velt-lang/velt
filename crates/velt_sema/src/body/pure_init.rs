@@ -648,6 +648,9 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::IsNullish
         | I::LooseEq
         | I::MayHoldPrimitive
+        | I::AnyMethodCalled
+        | I::NoteStdUse
+        | I::StdUsed
         | I::HoldsDynamic
         | I::HoldsDynamicOrClass
         | I::FnCapturesNothing

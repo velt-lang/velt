@@ -10,9 +10,13 @@
 export { addressLoad } from "velt/lang/intrinsics/address";
 export {
   anyDelete,
+  anyIsList,
+  anyMethodCalled,
   anyToPrimitive,
+  noteStdUse,
   proxyArrayCall,
   proxyArrayHole,
+  stdUsed,
 } from "velt/lang/intrinsics/any";
 export {
   arrayCopyBytes,

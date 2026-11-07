@@ -1,0 +1,15 @@
+function pick(this: any, a: any, b: any): any {
+  return this.base + (a as number) + (b as number);
+}
+const f: any = pick;
+const self = { base: 1 };
+const xs: any[] = [1, 2];
+let sum = 0;
+function run(this: any): any {
+  return f.apply(this, xs);
+}
+const w: any = run;
+for (let i = 0; i < 100000; i++) {
+  sum += w.call(self) as number;
+}
+console.log(sum);

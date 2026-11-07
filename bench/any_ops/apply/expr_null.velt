@@ -1,0 +1,13 @@
+function pick(this: any): any {
+  return this.base;
+}
+const f: any = pick;
+const self = { base: 1 };
+let sum = 0;
+const w: any = function (this: any) {
+  return f.apply(this, null);
+};
+for (let i = 0; i < 100000; i++) {
+  sum += w.call(self) as number;
+}
+console.log(sum);

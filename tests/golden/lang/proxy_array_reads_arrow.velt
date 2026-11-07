@@ -1,0 +1,13 @@
+// A forwarding `get` in arrow form, called with another key.
+const h = { get: (t: any, prop: any) => Reflect.get(t, prop) };
+const read = h.get;
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, prop: any, r: any) {
+    if (prop === "order") {
+      return read(t, "sort");
+    }
+    return Reflect.get(t, prop, r);
+  },
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

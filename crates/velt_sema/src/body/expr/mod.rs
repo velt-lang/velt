@@ -4,6 +4,7 @@
 mod abstract_ctor;
 mod access;
 mod accessor_rmw;
+mod any_apply;
 mod any_prim;
 mod any_record_cast;
 mod any_text;
@@ -175,6 +176,7 @@ mod promise_then;
 mod promise_union;
 mod prop_values;
 pub(crate) mod proxy;
+pub(crate) mod proxy_method_values;
 mod push_items;
 mod record;
 mod record_call;

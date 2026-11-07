@@ -1,0 +1,9 @@
+// A `get` trap answers with a method read from `Array.prototype`.
+const proto: any = Array.prototype;
+const reverse = proto.reverse;
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, k: any, r: any) {
+    return k === "flip" ? reverse : Reflect.get(t, k, r);
+  },
+});
+console.log(JSON.stringify(p.flip()));

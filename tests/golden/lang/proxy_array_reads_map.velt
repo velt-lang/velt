@@ -1,0 +1,18 @@
+// A forwarding `get` called with another key, from a handler held in a `Map`.
+const h = {
+  get(t: any, prop: any) {
+    return Reflect.get(t, prop);
+  },
+};
+const m = new Map<string, any>();
+m.set("h", h);
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, prop: any, r: any) {
+    if (prop === "order") {
+      return m.get("h").get(t, "sort");
+    }
+    return Reflect.get(t, prop, r);
+  },
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

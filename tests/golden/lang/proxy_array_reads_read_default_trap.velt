@@ -1,0 +1,9 @@
+// A read in a parameter's default, inside a trap.
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, prop: any, r: any) {
+    const pick = (m: any = Reflect.get(t, "sort")) => m;
+    return prop === "order" ? pick() : Reflect.get(t, prop, r);
+  },
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

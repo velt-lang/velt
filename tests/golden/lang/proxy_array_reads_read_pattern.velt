@@ -1,0 +1,15 @@
+// A read in a destructuring pattern's default.
+function pick({ m = Reflect.get([0], "sort") }: any): any {
+  return m;
+}
+
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, prop: any, r: any) {
+    if (prop === "order") {
+      return pick({});
+    }
+    return Reflect.get(t, prop, r);
+  },
+});
+const s = p.order((a: any, b: any) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

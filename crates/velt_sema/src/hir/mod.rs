@@ -197,6 +197,10 @@ pub struct Program {
     /// (`Intrinsic::AnyGet`, `AnyIndex`, `AnyCall`, `AnyApply`); `None` otherwise, and then
     /// the `any` tables have no member slots (hir_encodings.md "any and unknown").
     pub dyn_members: Option<HashMap<DefId, Vec<DynMember>>>,
+    /// The program can hold an array method under another name (`proxy_method_values.rs`).
+    pub array_methods_open: bool,
+    /// The literal names the program's own code calls through `any`, where lowering starts.
+    pub any_call_names: Vec<String>,
     /// The program may call a generator's `throw()` (hir_encodings.md "Generators"): a
     /// generator's resume function then also handles an error thrown in at each `yield`;
     /// otherwise it has no code for that.
