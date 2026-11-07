@@ -56,3 +56,30 @@ export function test_wal_file_second_connection_and_reopen() {
   }
   assertEq(existsSync(path), false);
 }
+
+// A negative timeout means no wait: -2^32 + 60000 must not wrap to a 60-second wait when cut to
+// SQLite's 32-bit milliseconds.
+export function test_a_negative_timeout_does_not_wait() {
+  const path = `${tmpdir()}/velt-sqlite-${uuidv4()}.db`;
+  const db = open(path);
+  db.exec("CREATE TABLE t (x INTEGER)");
+  db.exec("BEGIN IMMEDIATE");
+  const other = open(path, { timeout: -4294907296 });
+  const start = Date.now();
+  let failed = false;
+  try {
+    other.exec("INSERT INTO t VALUES (1)");
+  } catch (e) {
+    failed = true;
+  }
+  assertEq(failed, true);
+  assertEq(Date.now() - start < 30000, true);
+  other.close();
+  db.exec("ROLLBACK");
+  db.close();
+  for (const suffix of ["", "-journal"]) {
+    if (existsSync(path + suffix)) {
+      removeSync(path + suffix);
+    }
+  }
+}

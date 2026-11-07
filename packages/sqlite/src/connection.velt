@@ -227,7 +227,9 @@ export function openState(path: string, readonly: bool, create: bool, timeoutMs:
   }
   // SAFETY: `db` is open.
   unsafe {
-    sqlite3_busy_timeout(db, timeoutMs > LONGEST_WAIT ? LONGEST_WAIT as i32 : timeoutMs as i32);
+    // A negative timeout means no wait (cut to `i32` it could wrap to a long one).
+    const ms = timeoutMs < 0 ? 0 : timeoutMs > LONGEST_WAIT ? LONGEST_WAIT : timeoutMs;
+    sqlite3_busy_timeout(db, ms as i32);
     sqlite3_limit(db, SQLITE_LIMIT_LENGTH, MAX_CELL);
   }
   return new State(db, shared(new Mutex<Book>(new Book())));
