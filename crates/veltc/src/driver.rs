@@ -453,10 +453,9 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         cpu: opts.cpu.clone(),
     };
     let std_wanted = std_cache::wanted(opts);
-    if std_wanted {
-        // A declaration hides what its function reaches.
-        sess.reaches = Some(outside::reaches(&program));
-    }
+    // A declaration hides what its function reaches. Set either way: a build on this session that
+    // stopped early must not leave its answer for this one.
+    sess.reaches = std_wanted.then(|| outside::reaches(&program));
     let std_plan = std_wanted.then(|| {
         let t = Instant::now();
         let unsplit = program.clone();
