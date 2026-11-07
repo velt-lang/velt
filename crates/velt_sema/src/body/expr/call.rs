@@ -237,6 +237,48 @@ impl FnCx<'_, '_> {
         c
     }
 
+    /// The type of call `e` when its callee's written result type and its written type arguments
+    /// give it, whatever the arguments are (`f<A>(…)`, the other type parameters at their
+    /// defaults): nothing of the check is kept but the type. TypeScript types a constant whose
+    /// initializer reads it in a closure the same way (`const C = f<P>(() => C)`).
+    pub(crate) fn written_call_type(&mut self, e: &ast::Expr) -> Option<TyId> {
+        let ast::ExprKind::Call {
+            callee, type_args, ..
+        } = &e.kind
+        else {
+            return None;
+        };
+        let ast::ExprKind::Ident(id) = &callee.kind else {
+            return None;
+        };
+        if type_args.is_empty() {
+            return None;
+        }
+        let Some(crate::ctx::Item::Def(d)) = self.cx.lookup_item(self.module, &id.name) else {
+            return None;
+        };
+        let f = self.cx.try_fn(d)?;
+        if !matches!(f.ret_source, crate::defs::RetSource::Known)
+            || f.is_async
+            || f.is_generator
+            || self.overloaded(d)
+        {
+            return None;
+        }
+        let diags = self.cx.diags.len();
+        let c = self.fn_callable(d, String::new(), e.span);
+        let mut slots = vec![None; c.slot_names.len()];
+        let n = slots.len();
+        let spans = self.explicit_type_spans.take();
+        self.explicit_type_args(&mut slots, n, type_args, (&c.defaults, &c.params), e.span);
+        self.explicit_type_spans = spans;
+        let clean = self.cx.diags.len() == diags;
+        self.cx.diags.truncate(diags);
+        let slots: Vec<TyId> = slots.into_iter().collect::<Option<_>>().filter(|_| clean)?;
+        let ret = self.cx.subst(c.ret, &slots);
+        (!self.cx.ty.has_error(ret)).then_some(ret)
+    }
+
     /// Explicit `<T, U>` type args fill the trailing `own` slots. Slots they leave out take
     /// their `defaults` (`f<number>()` of `function f<A, B = A[]>()`), as in TypeScript: not
     /// inferred. They may also leave out a type parameter that only says what a callback throws

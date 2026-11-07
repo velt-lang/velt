@@ -1,0 +1,6 @@
+// An integer has no `-0`.
+class C { a: i32 = 1; }
+const c = new C();
+const x: any = c;
+x.a = -0;
+console.log(c.a);

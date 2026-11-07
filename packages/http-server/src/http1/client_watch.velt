@@ -1,0 +1,187 @@
+// http-server (internal): `ClientWatch`, how an HTTP/1.1 connection notices a client that goes
+// away while its request is answered. A handler that asked for its signal, or a streamed response,
+// has a promise on the connection's task reading the socket while it waits, as Node's server always
+// does. Any other handler has nothing watching it, and pays nothing: a look at the socket for it
+// would cost every keep-alive request a read, so its answer goes out whatever the client did, and
+// the connection ends after it.
+//
+// Node's rule (`httpAllowHalfOpen` off), for what is watched: the end of the client's input while a
+// response is pending is the client gone, on any request. What was written stays written, nothing
+// more is, and the connection ends at once. A client that sends a request and shuts its sending
+// side gets an answer only if the handler made it before really waiting. Input behind the request
+// stays in the parser, where the connection finds it. A request with an `Upgrade` header isn't
+// watched: the handler may take the connection, with what came after the head.
+
+import { TcpStream } from "velt/net";
+import { AbortController, AbortSignal } from "velt/task";
+import { delay } from "velt/time";
+import { BodyReader } from "./body_reader";
+import { BODY_CHUNKED, BODY_LENGTH, Head } from "./head";
+import { Parser } from "./parser";
+
+/// The most read ahead of the handler (the rest of a body, the next requests); past it, only
+/// writes tell.
+const READ_AHEAD: i64 = 65536;
+
+/// What a watch reports to: the response of the request being answered.
+export interface ClientEnd {
+  /// The connection failed.
+  connectionFailed(): void;
+  /// The client's input ended; `cut`: in the middle of the request's body.
+  closedEarly(cut: bool): Promise<void>;
+  /// Whether a handler that waits has something to lose: a response not done, or a signal.
+  stillAnswering(): bool;
+  /// Whether it must hear at once: a streamed response, or a signal.
+  listens(): bool;
+}
+
+/// The watch of one connection, started at most once per wait of a request.
+export class ClientWatch {
+  private conn: TcpStream;
+  private parser: Parser;
+  private head: Head;
+  private body: BodyReader;
+  /// The response being answered; held only until then, or the two would keep each other alive
+  /// past the connection.
+  private target: ClientEnd | null = null;
+  /// The handler reads the body from the socket: the socket is its until the body's end.
+  private bodyBusy: bool = false;
+  /// The handler waited once.
+  private waited: bool = false;
+  /// The client's input ended, or its connection failed: nothing more to watch for.
+  private over: bool = false;
+  private stopper: AbortController | null = null;
+  private running: Promise<void> | null = null;
+
+  constructor(conn: TcpStream, parser: Parser, head: Head, body: BodyReader) {
+    this.conn = conn;
+    this.parser = parser;
+    this.head = head;
+    this.body = body;
+  }
+
+  /// A new request.
+  begin(target: ClientEnd) {
+    this.target = target;
+    this.bodyBusy = false;
+    this.waited = false;
+  }
+
+  /// The handler ran up to its first wait, or to its end.
+  handlerWaits() {
+    this.waited = true;
+    this.listen();
+  }
+
+  /// The handler asked for its signal, or started a streamed response: from its next wait on.
+  listen() {
+    if (this.waited) {
+      const t = this.target;
+      if (t != null && t.listens()) {
+        this.start();
+      }
+    }
+  }
+
+  /// The handler is about to read the body from the socket. True: a watch has it, and must `stop`
+  /// first. No promise otherwise, as a body is read in pieces.
+  bodyRead(): bool {
+    const mode = this.head.bodyMode;
+    if (mode == BODY_LENGTH || mode == BODY_CHUNKED) {
+      this.bodyBusy = true;
+      return this.running != null;
+    }
+    return false;
+  }
+
+  /// The request's body was read to its end.
+  bodyEnded() {
+    this.bodyBusy = false;
+    this.listen();
+  }
+
+  /// The client ended the request's body early.
+  async cutOff() {
+    const t = this.target;
+    if (t != null && !this.over) {
+      this.over = true;
+      await t.closedEarly(true);
+    }
+  }
+
+  /// The handler is done: from here on nothing starts a watch.
+  close() {
+    this.target = null;
+  }
+
+  /// Whether a watch is running: the connection stops it before it reads again.
+  active(): bool {
+    return this.running != null;
+  }
+
+  /// Ends the watch, and waits for it.
+  async stop() {
+    const s = this.stopper;
+    if (s != null) {
+      s.abort();
+      this.stopper = null;
+    }
+    const r = this.running;
+    if (r != null) {
+      await r;
+      this.running = null;
+    }
+  }
+
+  private start() {
+    const t = this.target;
+    if (
+      t == null ||
+      this.over ||
+      this.bodyBusy ||
+      this.running != null ||
+      this.head.find("upgrade") >= 0
+    ) {
+      return;
+    }
+    const s = new AbortController();
+    this.stopper = s;
+    this.running = this.run(s.signal, t);
+  }
+
+  private async run(stop: AbortSignal, target: ClientEnd): Promise<void> {
+    const p = this.parser;
+    let woken = false;
+    try {
+      while (!stop.aborted && p.available() < READ_AHEAD) {
+        const n = p.readFrom(this.conn);
+        if (n == null) {
+          // In Node the end of the input is an event of its own, after the promises that were
+          // ready: what the handler does without really waiting comes first.
+          await delay(0);
+          if (target.stillAnswering()) {
+            this.over = true;
+            await target.closedEarly(!this.body.arrived());
+          }
+          return;
+        }
+        if (n == 0) {
+          // A wake with nothing to read, again: the poll ends, or what the handler wrote in it
+          // would never be sent while this goes round.
+          if (woken) {
+            await delay(0);
+          }
+          if (!(await this.conn.readableWithin(-1, stop))) {
+            return;
+          }
+          woken = true;
+        } else {
+          woken = false;
+        }
+      }
+    } catch (e) {
+      this.over = true;
+      target.connectionFailed();
+    }
+  }
+}

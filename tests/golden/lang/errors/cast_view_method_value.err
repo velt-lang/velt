@@ -1,0 +1,2 @@
+cast_view_method_value.velt:7:11: error: cannot cast `K` as `{ inc: () => f64; q?: f64 }`
+cast_view_method_value.velt:9:11: error: cannot cast `S` as `{ inc?: () => f64 }`

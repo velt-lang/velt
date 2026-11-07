@@ -1,0 +1,27 @@
+// A cast between object types that only overlap keeps the one object, as in TypeScript: a view in
+// a program with proxies. Reads see the object, an optional member the static type lacks too, and
+// writes reach it.
+const made = new Proxy({}, {});
+interface Cx { name: string; hello(): string; }
+function provides(c: Cx) { return (c as { provides?: number }).provides; }
+const m = { name: "a", hello() { return "x"; }, provides: 2 };
+console.log(provides(m), provides({ name: "b", hello() { return "y"; } }));
+class K implements Cx { name = "k"; provides = 5; hello() { return "k"; } }
+console.log(provides(new K()));
+function disposer<T>(instance: T): unknown {
+  return (instance as { dispose?: unknown } | null)?.dispose;
+}
+class A { dispose() { return 1; } }
+class B { x = 1; }
+console.log(typeof disposer(new A()), typeof disposer(new B()), disposer({ dispose: 3 }));
+console.log(disposer(null));
+function up(c: { name?: string }): Cx { return c as Cx; }
+console.log(typeof up);
+let node = { provides: new Map<string, number>([["k", 1]]), parent: null as unknown } as { provides?: Map<string, number>; parent?: unknown } | null;
+while (node) {
+  console.log(node.provides?.get("k"));
+  node = node.parent as typeof node;
+}
+const base: { href?: string; target?: string } = { href: "h" };
+const r = base as Record<string, string | undefined>;
+console.log(r["href"], Object.keys(r));

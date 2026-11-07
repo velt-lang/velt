@@ -1,0 +1,1 @@
+new_copy_ctor.velt:8:16: error: a value of type `W` converts to `N` by copying its fields, and this program assigns field `a`, which the other object would not see

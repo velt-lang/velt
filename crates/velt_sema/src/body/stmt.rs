@@ -609,7 +609,7 @@ impl FnCx<'_, '_> {
         if let (LocalKind::Const, Some(o)) = (kind, root.filter(|o| o.name != name.name)) {
             if self.is_local_name(&o.name) {
                 if let Some(r) = self.lookup_local(&o.name, o.span) {
-                    self.f.member_reads.insert(local, r);
+                    self.note_member_read(local, r, v.init.as_ref());
                 }
             }
         }

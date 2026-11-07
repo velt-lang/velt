@@ -1,0 +1,7 @@
+// As `cast_view_i32_as_number`, for a `u8`.
+const made = new Proxy({}, {});
+interface H { a: u8; f(): void; }
+const h: H = { a: 1, f() {} };
+const v = h as { a: number; c?: string };
+v.a = 300;
+console.log(v.a);

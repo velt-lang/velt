@@ -1,0 +1,32 @@
+// A write through a cast's view reaches the object, and a write to the object shows through the
+// view, as in Node: a cast, a generic body's cast, and a conversion to a type with fewer fields.
+const made = new Proxy({}, {});
+interface Cx { name: string; hello(): string; provides?: number; }
+const m: Cx = { name: "a", hello() { return "x"; }, provides: 1 };
+const v = m as { provides?: number };
+v.provides = 7;
+console.log(m.provides, v.provides);
+m.provides = 8;
+console.log(m.provides, v.provides);
+class K { name = "k"; provides = 5; hello() { return "k"; } }
+function viewed<T>(x: T) { return x as { provides?: number } | null; }
+const k = new K();
+const w = viewed(k);
+if (w) { w.provides = 6; }
+console.log(k.provides, w?.provides);
+k.provides = 10;
+console.log(k.provides, w?.provides);
+const wide = m as { name?: string; provides?: number };
+function set(x: { provides?: number }) { x.provides = 9; }
+set(wide);
+console.log(m.provides, wide.provides);
+const log: string[] = [];
+const target = { provides: 1, other: 2 };
+const p = new Proxy(target, {
+  get(t: any, key: any) { log.push("get " + String(key)); return t[key]; },
+  set(t: any, key: any, value: any) { log.push("set " + String(key)); t[key] = value; return true; },
+});
+const through = viewed(p);
+console.log(through?.provides);
+if (through) { through.provides = 3; }
+console.log(target.provides, log);

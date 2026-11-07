@@ -1,0 +1,1 @@
+spread_view_more_keys.velt:8:18: error: a spread of a `{ a?: f64 }`, which a cast in this program makes a view of another object, is not supported yet

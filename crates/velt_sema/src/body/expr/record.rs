@@ -122,6 +122,9 @@ impl FnCx<'_, '_> {
         } else {
             velt_common::std_key!(record_get)
         };
+        if !closed {
+            self.f.record_reads.insert(span);
+        }
         self.record_call_keyed(obj, method, key, &[], span)
     }
 

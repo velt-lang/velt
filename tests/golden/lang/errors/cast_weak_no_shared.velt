@@ -1,0 +1,6 @@
+// A target whose members are all optional and shared with nothing (TS2559).
+const made = new Proxy({}, {});
+interface Cx { name: string; hello(): string; }
+const c: Cx = { name: "n", hello() { return "h"; } };
+const w: { other?: number } = c;
+console.log(w.other);

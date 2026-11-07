@@ -188,6 +188,10 @@ impl FnCx<'_, '_> {
         for (h, p) in checked.into_iter().zip(&c.params) {
             let outer = self.cx.type_level.use_site.replace(h.span);
             let target = self.cx.subst(p.ty, &type_args);
+            let target = match args.get(hargs.len()) {
+                Some(a) => self.rest_form_target(c, hargs.len(), target, a),
+                None => target,
+            };
             self.cx.type_level.use_site = outer;
             // Only a parameter the library declares an integer (`slice(start: i64)`), not a
             // type argument the program chose (`push` on an `i64[]`).
@@ -467,6 +471,7 @@ impl FnCx<'_, '_> {
             self.fix_for_context_sensitive(c, &args[i], p.ty, slots, &mut known);
             let outer = self.cx.type_level.use_site.replace(args[i].span);
             let expected = self.cx.subst_known(p.ty, &known);
+            let expected = self.rest_form_target(c, i, expected, &args[i]);
             self.cx.type_level.use_site = outer;
             let expected = match keys {
                 Some(k) => {

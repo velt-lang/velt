@@ -1,0 +1,59 @@
+// A handler that leaves a read of its body for after its response: the request's body stays readable
+// only until the response was written, so the read is a clear panic, never a read of the next
+// request's body on the connection. The panic ends that promise only: the next request's body comes
+// back whole, and the server keeps serving.
+import { connect } from "velt/net";
+import { serve } from "http-server";
+import { channel } from "velt/sync";
+
+/// One turn of the event loop.
+async function turn() {
+  await new Promise<void>((resolve) => {
+    setImmediate(() => {
+      resolve();
+    });
+  });
+}
+
+async function main() {
+  const go = channel<i64>();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    if (new URL(req.url).pathname == "/first") {
+      // Left running: it reads the body once the connection is on its next request.
+      const late = (async () => {
+        await go.receive();
+        console.log(`late read ${await req.text()}`);
+      })();
+      return new Response("first answer");
+    }
+    go.trySend(1);
+    for (let i = 0; i < 200; i++) {
+      await turn();
+    }
+    return new Response(req.body);
+  });
+  const c = await connect(`127.0.0.1:${server.port}`);
+  await c.write("POST /first HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nfirst");
+  let got = "";
+  while (!got.includes("first answer")) {
+    got += await c.readString();
+  }
+  console.log("first answered");
+  await c.write("POST /second HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\n\r\nsecond");
+  got = "";
+  while (!got.includes("0\r\n\r\n")) {
+    got += await c.readString();
+  }
+  console.log(
+    got.includes("6\r\nsecond\r\n") ? "second echoed whole" : `second lost: ${JSON.stringify(got)}`,
+  );
+  c.close();
+  const again = await fetch(`http://127.0.0.1:${server.port}/third`, {
+    method: "POST",
+    body: "third",
+  });
+  console.log(await again.text());
+  server.close();
+}
+
+// timing: the turns only let the left read run before the body is read

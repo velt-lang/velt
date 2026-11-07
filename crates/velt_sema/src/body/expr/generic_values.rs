@@ -49,6 +49,9 @@ impl FnCx<'_, '_> {
         };
         let exp = self.hint(exp);
         let g = exp.and_then(|t| self.cx.generic_sig(t));
+        if let Some(arrow) = g.as_ref().and_then(|g| self.rest_items_arrow(e, g)) {
+            return self.generic_closure(&arrow, exp);
+        }
         if g.is_none() && (type_params.is_empty() || params.iter().any(|p| p.ty.is_none())) {
             return self.generic_arrow_without_type(e.span);
         }
@@ -266,6 +269,7 @@ impl FnCx<'_, '_> {
             ret: sub(self.cx, ret),
             throws,
             rest,
+            rest_form: None,
             bounds: bounds
                 .into_iter()
                 .map(|bs| {
@@ -301,9 +305,24 @@ impl FnCx<'_, '_> {
         }
         // At a type over the caller's type parameters: a new function at each evaluation.
         let arrow = self.generic_fn_arrow(d, id, exp);
+        let unbounded = self.lifted_at_one_value(d, exp);
+        self.forward_unbounded.set(unbounded);
         let mut value = self.generic_closure(&arrow, Some(exp));
+        self.forward_unbounded.set(false);
         self.mark_fresh(&mut value, exp);
         value
+    }
+
+    /// Is `d` a constant lifted to a function (`generic_arrows`), with string bounds, seen as a
+    /// value of a type whose instances are one value? It is the value of one of them, as it is
+    /// where a local holds it, so its bounds don't decide the conversion. A declared function's
+    /// do.
+    fn lifted_at_one_value(&mut self, d: DefId, exp: TyId) -> bool {
+        let f = self.cx.fn_info(d);
+        let (name, bounds) = (f.name_span, f.generics.constraints.clone());
+        self.cx.generic_arrow_all.contains(&name)
+            && bounds.iter().flatten().all(|b| self.cx.string_bound(*b))
+            && self.instances_one_value(exp)
     }
 
     /// Function `d` needs more arguments than a call of generic function type `exp` passes (as
@@ -396,6 +415,8 @@ impl FnCx<'_, '_> {
             let mut fcx = crate::body::driver::detached(self.cx, module, &[]);
             fcx.fn_name = format!("{qual}#value");
             let arrow = fcx.generic_fn_arrow(d, &id, exp);
+            let unbounded = fcx.lifted_at_one_value(d, exp);
+            fcx.forward_unbounded.set(unbounded);
             fcx.generic_closure(&arrow, Some(exp))
         };
         if let DefInfo::Global(info) = &mut self.cx.info[g.0 as usize] {
@@ -449,6 +470,7 @@ impl FnCx<'_, '_> {
             ret: sub(self.cx, ret),
             throws: throws.map(|t| sub(self.cx, t)),
             rest: false,
+            rest_form: None,
             bounds: (generics.bounds.iter())
                 .map(|bs| {
                     bs.iter()
@@ -626,6 +648,7 @@ impl FnCx<'_, '_> {
             ret: self.cx.subst(m.ret, &map),
             throws: (m.throws.and_then(|t| t.ty)).map(|t| self.cx.subst(t, &map)),
             rest: false,
+            rest_form: None,
             bounds: (m.generics.bounds.iter())
                 .map(|bs| {
                     bs.iter()

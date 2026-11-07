@@ -44,6 +44,12 @@ impl Looks<'_> {
                 direct.push((expr.ty, e.span, Need::Seen(Seen::Dynamic(i))));
             }
             E::Call {
+                callee: Callee::Intrinsic(Intrinsic::AnyTo),
+                ..
+            } if !self.primitive(e.ty) => {
+                direct.push((e.ty, e.span, Need::Seen(Seen::FromDynamic)));
+            }
+            E::Call {
                 callee: Callee::Intrinsic(i),
                 args,
             } => {

@@ -1,0 +1,1 @@
+frozen_dynamic_written.velt:3:11: error: an `Object.freeze` result converted to a dynamic type, in a program that assigns field `a`, is not supported yet

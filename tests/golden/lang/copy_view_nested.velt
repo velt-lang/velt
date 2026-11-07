@@ -1,0 +1,16 @@
+// A conversion with a nested one keeps the one object all the way down, as in Node.
+const made = new Proxy({}, {});
+interface In { x: number; y: number; }
+interface InP { x: number; }
+interface O { i: In; z: number; }
+interface OP { i: InP; }
+const o: O = { i: { x: 1, y: 2 }, z: 3 };
+function f(p: OP) { return p; }
+const p = f(o);
+const a: any = o;
+const k = "z";
+a[k] = 9;
+a.i["x"] = 5;
+console.log(p.i.x, o.i.x);
+p.i.x = 6;
+console.log(o.i.x, a.i.x);

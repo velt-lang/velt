@@ -1,0 +1,7 @@
+is null
+not null 2 { x: 2 } truthy {"x":2}
+true undefined
+false s
+true true null null
+false true 3 null
+true null

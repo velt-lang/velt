@@ -35,6 +35,7 @@ pub(crate) mod ext_fn_errors;
 pub(crate) mod ext_impls;
 mod extend_shadow;
 pub(crate) mod extended_layouts;
+mod extensions;
 mod field_only;
 pub(crate) mod fill_defaults;
 pub(crate) mod forwarders;

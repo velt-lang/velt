@@ -7,8 +7,10 @@
 //!
 //! So, in a program with proxiable types:
 //! - a method read as a value through `any` (`AnyGet` of a method name) is a function value
-//!   whose code is the method's *unbound* thunk (`ThunkKind::Unbound`, env null). Called on its
-//!   own it throws a `TypeError` (it has no `this`), but it identifies the method;
+//!   whose code is the method's *unbound* thunk (`ThunkKind::Unbound`) and whose env is one
+//!   static object with null drop and clone entries (`unbound_env`), the mark
+//!   `Intrinsic::AnyUnboundMethod` reads. Called on its own it throws a `TypeError` (it has no
+//!   `this`), but it identifies the method;
 //! - a method call on a proxiable class tests the receiver's tag. A proxy whose handler has a
 //!   `get` trap runs it for the method's name, and the answer must be that method read as a
 //!   value (the instance the call would run: one candidate for a direct call; for a virtual
@@ -108,12 +110,47 @@ impl FnLower<'_, '_> {
             .cx
             .func(Work::Thunk(ThunkKind::Unbound, r.def, r.targs.clone()));
         let ca = self.cx.closure_agg();
-        let v = self.rvalue_temp(
-            Ty::Agg(ca),
-            Rvalue::Aggregate(ca, vec![cfunc(code), cint(0, Ty::Ptr)]),
-        );
+        let env = self.unbound_env();
+        let v = self.rvalue_temp(Ty::Agg(ca), Rvalue::Aggregate(ca, vec![cfunc(code), env]));
         self.any_box_into(v, fty, out);
         true
+    }
+
+    /// The env of every method read as a value (module docs), which is how
+    /// `Intrinsic::AnyUnboundMethod` tells one from a function value: static data whose drop and
+    /// clone entries are null, so a closure holding it neither counts nor copies it. The rest
+    /// keeps it from being shared with other static data.
+    fn unbound_env(&mut self) -> Operand {
+        let mut bytes = vec![0u8; 16];
+        bytes.extend_from_slice(b"unbound\0");
+        let id = self.cx.static_bytes(bytes, 8);
+        Operand::Const(Const::Static(id), Ty::Ptr)
+    }
+
+    /// `AnyUnboundMethod(a)`.
+    pub(super) fn any_unbound_method(&mut self, a: &hir::Expr) -> Operand {
+        let t = self.sub(a.ty);
+        let v = self.expr(a);
+        let (data, desc) = self.any_parts(v, t);
+        let out = Place::local(self.temp(Ty::Bool));
+        self.assign(
+            out.clone(),
+            Rvalue::Use(Operand::Const(Const::Bool(false), Ty::Bool)),
+        );
+        let tag = self.any_tag_of(desc);
+        let fun = cint(super::any::TAG_FUNCTION as i128, Ty::U64);
+        let is_fn = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, fun));
+        let (yes, done) = (self.new_block(), self.new_block());
+        self.branch(is_fn, yes, done);
+        self.switch_to(yes);
+        let ca = self.cx.closure_agg();
+        let p = self.operand_place(data, Ty::Ptr);
+        let env = Operand::Copy(proj(&proj(&p, Proj::Deref(Ty::Agg(ca))), Proj::Field(1)));
+        let want = self.unbound_env();
+        self.assign(out.clone(), Rvalue::Binary(BinOp::Eq, env, want));
+        self.goto(done);
+        self.switch_to(done);
+        Operand::Copy(out)
     }
 
     /// In `lower_args`, once the receiver `recv` of a direct call of the method `def<targs>`

@@ -32,7 +32,7 @@ export class BodyStream {
    * `IoError` ("EIO") with its text.
    */
   static from<E>(chunks: AsyncIterable<u8[], E>): BodyStream {
-    return BodyStream.adopt(relay(chunks));
+    return BodyStream.adopt(new Relay<E>(chunks[Symbol.asyncIterator]()));
   }
 
   [Symbol.asyncIterator](): AsyncIterator<u8[], IoError | AbortError> {
@@ -51,17 +51,32 @@ export class BodyStream {
   }
 }
 
-async function* relay<E>(
-  chunks: AsyncIterable<u8[], E>,
-): AsyncGenerator<u8[], IoError | AbortError> {
-  try {
-    for await (const chunk of chunks) {
-      // A copy: the program may still hold `chunk`, and a chunk may become an `ArrayBuffer`'s
+// The chunks of `BodyStream.from`. Ending it goes straight to the source, also while a `next`
+// waits, so a source that can stop then does.
+class Relay<E> implements AsyncIterator<u8[], IoError | AbortError> {
+  private source: AsyncIterator<u8[], E>;
+
+  constructor(source: AsyncIterator<u8[], E>) {
+    this.source = source;
+  }
+
+  async next(): Promise<IteratorResult<u8[]>, IoError | AbortError> {
+    try {
+      const r = await this.source.next();
+      if (r.done) {
+        return { done: true };
+      }
+      // A copy: the program may still hold the chunk, and a chunk may become an `ArrayBuffer`'s
       // bytes (see `bodyParts`).
-      yield chunk.slice();
+      return { value: r.value.slice(), done: false };
+    } catch (e) {
+      throw new IoError("EIO", `${e}`);
     }
-  } catch (e) {
-    throw new IoError("EIO", `${e}`);
+  }
+
+  async return(): Promise<IteratorResult<u8[]>> {
+    await this.source.return();
+    return { done: true };
   }
 }
 

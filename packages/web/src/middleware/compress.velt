@@ -1,7 +1,9 @@
 // web (internal): `compress()`, response bodies compressed with an encoding the client accepts.
 
 import { BrotliEncoding, DeflateEncoding, Encoder, Encoding } from "velt/compress";
+import { IoError } from "velt/io";
 import { BodyStream } from "velt/net/http";
+import { AbortController, AbortSignal } from "velt/task";
 import { Handler, Middleware } from "../types";
 
 /** The options of `compress`. */
@@ -73,7 +75,7 @@ export function compress(options: CompressOptions = {}): Middleware {
     const events = type.toLowerCase().startsWith("text/event-stream");
     const head: u8[][] = [];
     if (!events && length == null) {
-      const r = await reader.read();
+      const r = await firstRead(reader, req.signal);
       if (r.done) {
         return withVary(
           new Response(null, { status, statusText: res.statusText, headers: res.headers }),
@@ -85,7 +87,7 @@ export function compress(options: CompressOptions = {}): Middleware {
         const plain = new Headers(res.headers);
         addVary(plain);
         const init: ResponseInit = { status, statusText: res.statusText, headers: plain };
-        return new Response(BodyStream.from(relay(head, reader)), init);
+        return new Response(BodyStream.from(new CancelsFirst(relay(head, reader), reader)), init);
       }
     }
     const headers = new Headers(res.headers);
@@ -99,8 +101,59 @@ export function compress(options: CompressOptions = {}): Middleware {
       headers.set("etag", `W/${etag}`);
     }
     const stream = encode(chosen.encoder(), head, reader, events);
-    return new Response(BodyStream.from(stream), init);
+    return new Response(BodyStream.from(new CancelsFirst(stream, reader)), init);
   };
+}
+
+// The first chunk of the handler's body; a client leaving meanwhile cancels the body, as a
+// quiet one might never produce it.
+async function firstRead(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<IteratorResult<Uint8Array>> {
+  const done = new AbortController();
+  const either = AbortSignal.any([signal, done.signal]);
+  const guard = (async () => {
+    await either.whenAborted();
+    if (signal.aborted) {
+      await cancelQuietly(reader);
+    }
+  })();
+  try {
+    return await reader.read();
+  } finally {
+    done.abort();
+    await guard;
+  }
+}
+
+// `gen`, whose ending cancels the handler's body first: `gen` may be waiting on that body, and an
+// async generator's `return` waits for its turn, so a quiet body would never hear.
+class CancelsFirst implements AsyncIterable<u8[], IoError>, AsyncIterator<u8[], IoError> {
+  private gen: AsyncGenerator<u8[]>;
+  private rest: ReadableStreamDefaultReader<Uint8Array>;
+
+  constructor(gen: AsyncGenerator<u8[]>, rest: ReadableStreamDefaultReader<Uint8Array>) {
+    this.gen = gen;
+    this.rest = rest;
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<u8[], IoError> {
+    return this;
+  }
+
+  async next(): Promise<IteratorResult<u8[]>, IoError> {
+    try {
+      return await this.gen.next();
+    } catch (e) {
+      throw new IoError("EIO", `${e}`);
+    }
+  }
+
+  async return(): Promise<IteratorResult<u8[]>> {
+    await cancelQuietly(this.rest);
+    return await this.gen.return();
+  }
 }
 
 // The chunks of `head`, then the rest of `rest`, as they are. If the client stops reading (the

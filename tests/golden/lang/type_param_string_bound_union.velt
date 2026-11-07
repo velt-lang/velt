@@ -1,0 +1,15 @@
+// A value of a type parameter bounded by a string type, at a union of literals and at `any`.
+// Expected output from `node`; `tsc --strict` accepts it.
+type Def<T> = { __d: T };
+type Names<E> = { [K in keyof E]: E[K] extends Def<any> | undefined ? K : never }[keyof E] & string;
+function named<E, K extends Names<E>>(k: K): string { const s: string = k; return s; }
+type Ev = { a: Def<number>; b: Def<string> };
+const ks: Names<Ev>[] = ["a", "b"];
+for (const k of ks) console.log(named<Ev, Names<Ev>>(k));
+function open<K extends string>(k: K): string { const s: string = k; return s + "!"; }
+const u = "p" as "p" | "q";
+console.log(open(u), open("lit"), open("x" + "y"));
+function pick<K extends "p" | "q">(k: K): number { const s: string = k; return s.length; }
+console.log(pick(u));
+const x: any = "dyn";
+console.log(open(x), open<any>(x));

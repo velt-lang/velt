@@ -1,0 +1,7 @@
+// A write through `any` and a copy of the same shape, in a program with no proxies: refused, though
+// here the copy comes after the write (Node prints 5 5).
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+const p: any = { a: 1, b: 2 };
+p.a = 5;
+const q = seen(p);
+console.log(q.a, p.a);

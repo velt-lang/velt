@@ -33,6 +33,9 @@ impl FnCx<'_, '_> {
         if c.constraints.iter().all(Option::is_none) || !has_literal(arg) {
             return expected;
         }
+        if let Some(t) = self.literal_for_form(c, arg, pty, slots) {
+            return t;
+        }
         let mut with_bounds = known.to_vec();
         let mut changed = false;
         let mut fixed: Option<Vec<Option<TyId>>> = None;
@@ -57,6 +60,53 @@ impl FnCx<'_, '_> {
             true => self.cx.subst_known(pty, &with_bounds),
             false => expected,
         }
+    }
+
+    /// String or number literal `arg` for a parameter `N` still open, bounded by that type, with a form over
+    /// `N` in the signature (`n: N, ...a: N extends "x" ? [] : [number]`): its literal type, what
+    /// the form is evaluated at, as in TypeScript.
+    fn literal_for_form(
+        &mut self,
+        c: &Callable,
+        arg: &ast::Expr,
+        pty: TyId,
+        slots: &[Option<TyId>],
+    ) -> Option<TyId> {
+        let TyKind::Param(k) = *self.cx.ty.kind(pty) else {
+            return None;
+        };
+        let bound = c.constraints.get(k as usize).copied().flatten()?;
+        if slots.get(k as usize).is_none_or(Option::is_some) {
+            return None;
+        }
+        let lit = match (
+            &super::object_builtins::strip_parens(arg).kind,
+            self.cx.ty.kind(bound),
+        ) {
+            (ast::ExprKind::Lit(ast::Lit::Str(s)), TyKind::Str) => {
+                crate::hir::LitValue::Str(s.clone())
+            }
+            (
+                ast::ExprKind::Lit(l @ (ast::Lit::Int { .. } | ast::Lit::Float { .. })),
+                TyKind::Float(_),
+            ) => {
+                let written = ast::SignedLit {
+                    lit: l.clone(),
+                    negative: false,
+                };
+                self.cx.lit_value_of(&written, arg.span)?
+            }
+            _ => return None,
+        };
+        let mut form = false;
+        for t in c.params.iter().map(|p| p.ty).chain([c.ret]) {
+            self.cx.ty.visit(t, &mut |x| {
+                if let TyKind::Op(crate::hir::TyOp::Inline(_) | crate::hir::TyOp::Alias(_), _) = x {
+                    form = true;
+                }
+            });
+        }
+        form.then(|| self.cx.lit_type(lit))
     }
 
     /// An array literal of string literals (`["id", "name"]`) for a parameter `K[]` whose `K`
@@ -197,6 +247,11 @@ impl FnCx<'_, '_> {
         name: &str,
         span: Span,
     ) -> bool {
+        // A forwarding closure's call passes the target's type parameters on: the two types'
+        // bounds were related where the closure was made.
+        if self.forward_unbounded.get() {
+            return true;
+        }
         let Some(bound) = c.constraints.get(k).copied().flatten() else {
             return true;
         };

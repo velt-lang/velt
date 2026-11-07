@@ -1,0 +1,19 @@
+// A generic function type with no rest form and string bounds: its instances are one value, whatever
+// the bounds, the function seeing a string at every name. Expected output from `node`; `tsc --strict`
+// accepts it.
+type Def<T> = { __d: T };
+type Names<E> = { [K in keyof E]: E[K] extends Def<any> ? K : never }[keyof E] & string;
+type Emit<E extends Record<string, any>> = <N extends Names<E>>(n: N) => void;
+const a: Emit<{ s: Def<1> }> = (n) => { console.log("disjoint", n); };
+const b: Emit<{ t: Def<1> }> = a;
+b("t");
+const c: Emit<{ s: Def<1>; t: Def<2> }> = a;
+c("t");
+type Back<E extends Record<string, any>> = <N extends Names<E>>(n: N) => N;
+const d: Back<{ s: Def<1>; t: Def<2> }> = (n) => n;
+const e: Back<{ t: Def<2>; u: Def<3> }> = d;
+console.log(e("u"));
+type Say<E extends Record<string, any>> = <N extends Names<E>>(n: N, x: string) => string;
+const f: Say<{ s: Def<1> }> = (n, x) => n + x;
+const g: Say<{ t: Def<1> }> = f;
+console.log(g("t", "?"));

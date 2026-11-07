@@ -1,0 +1,24 @@
+change 1 [1]
+close 0 []
+pick 1 [{"id":"x","tags":["p","q"]}]
+maybe 1 [null]
+maybe 1 ["s"]
+arrow change 1
+arrow close 0
+none
+none
+held plain [ 0 ]
+held change [ 11 ]
+made change [ 4 ]
+made pick [ { id: 'y', tags: [] } ]
+field change [ 5 ]
+field close []
+change 1 [7]
+generic change [ 8 ]
+generic close []
+gen
+3 1 0
+s1 2
+change 1 [9]
+change 1 [10]
+item

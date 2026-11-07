@@ -1,0 +1,10 @@
+// As `fresh_create_null`, of an object that holds itself.
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+function main() {
+  const p: any = { a: 1, b: 2, me: null };
+  p.me = p;
+  const q = seen(p.me);
+  p.a = 5;
+  console.log(q.a, p.a);
+}
+main();

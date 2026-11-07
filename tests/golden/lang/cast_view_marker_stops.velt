@@ -1,0 +1,9 @@
+// A member the object's layout has no room for, written through a view, stops at the write: Node
+// adds the property.
+const made = new Proxy({}, {});
+interface D { run?: (v: number) => void; }
+type M = D & { marked?: boolean };
+function mark(d: D): D { (d as M).marked = true; return d; }
+console.log("before");
+const d = mark({});
+console.log((d as M).marked);

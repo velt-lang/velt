@@ -1,0 +1,7 @@
+// Neither type has the other's required members, or a shared member does not compare (TS2352).
+const made = new Proxy({}, {});
+function a(x: { a: number }) { return x as { b: string }; }
+function b(x: { a: number }) { return x as { a: string }; }
+interface Cx { name: string; hello(): string; }
+function c(x: Cx) { return x as { p: number }; }
+function d(x: { name: number }) { return x as Cx; }

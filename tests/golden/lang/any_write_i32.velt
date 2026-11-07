@@ -1,0 +1,6 @@
+// A number an `i32` field can't hold, written through `any`, stops (#2522).
+class C { a: i32 = 1; b: u8 = 1; }
+const c = new C();
+const x: any = c;
+x.a = 1.5;
+console.log(c.a);

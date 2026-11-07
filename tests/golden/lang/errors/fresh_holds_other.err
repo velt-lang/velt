@@ -1,0 +1,1 @@
+fresh_holds_other.velt:2:68: error: a value of type `{ a: f64; b: f64 }` converts to `{ a: f64 }` by copying its fields, and this program assigns field `a`, which the other object would not see

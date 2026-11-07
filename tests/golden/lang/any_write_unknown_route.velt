@@ -1,0 +1,7 @@
+// The same, `as unknown as`.
+const made = new Proxy({}, {});
+type A = { a: i32; b: number };
+const a: A = { a: 1, b: 2 };
+const n = a as unknown as { a: number; c?: string };
+n.a = 1.5;
+console.log(a.a, n.a);

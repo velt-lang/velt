@@ -1,0 +1,13 @@
+// A `new` in a generic function (Node prints 5 5).
+type W = { a: number; b: number };
+type N = { a: number };
+class Box<T> { v: T; constructor(x: any) { this.v = x; } get(): T { return this.v; } }
+function make<T>(x: any): Box<T> { return new Box<T>(x); }
+function main() {
+  const p: any = Object.create(null);
+  p.a = 1; p.b = 2;
+  const q: N = make<W>(p).get();
+  p.a = 5;
+  console.log(q.a, p.a);
+}
+main();

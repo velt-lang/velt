@@ -1,0 +1,5 @@
+// `Reflect.set` likewise.
+class C { a: i32 = 1; }
+const c = new C();
+Reflect.set(c as any, "a", 1.5);
+console.log(c.a);

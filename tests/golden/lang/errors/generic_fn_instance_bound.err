@@ -1,0 +1,3 @@
+generic_fn_instance_bound.velt:6:23: error: mismatched types
+  = note: expected <N>(N) => string, found <N>(N) => string
+  = note: its function was checked at the type parameters' bounds of its own type arguments; as a value at other type arguments, whose bounds differ, it is not supported yet (#943)

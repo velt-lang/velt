@@ -1,0 +1,13 @@
+// A proxy receiver: its `get` trap runs once, at the read, and what it gave is what is called.
+const log: string[] = [];
+const target = { m: () => "first" };
+let reads = 0;
+const p = new Proxy(target, {
+  get(t: any, k: any) { log.push(String(k)); reads++; return reads === 1 ? t[k] : () => "second"; },
+});
+function run<T>(o: T) {
+  const d = (o as { m?: unknown } | null)?.m;
+  console.log((d as () => string).call(o));
+}
+run(p);
+console.log(log);

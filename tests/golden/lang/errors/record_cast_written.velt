@@ -1,0 +1,6 @@
+// The record holds a copy of the fields, where Node keeps one object: a write to it is not seen.
+const made = new Proxy({}, {});
+const base: { href?: string; target?: string } = { href: "h" };
+const r = base as Record<string, string | undefined>;
+r["target"] = "t";
+console.log(base.target);

@@ -1,0 +1,12 @@
+// A function value with a required parameter at the position of a rest form (`tsc`: TS2322), with a
+// wrong element type there (TS2322), or with a default there, which `tsc` accepts and Velt refuses:
+// the function value doesn't carry its default.
+type M = <N extends "a" | "b">(n: N, ...r: N extends "a" ? [number] : []) => void;
+function req(name: string, x: number): void {}
+const a: M = req;
+function wrong(name: string, x?: string): void {}
+const b: M = wrong;
+function many(name: string, x: number, y: number, z: number): void {}
+const c: M = many;
+function dflt(name: string, x = 5): void {}
+const d: M = dflt;

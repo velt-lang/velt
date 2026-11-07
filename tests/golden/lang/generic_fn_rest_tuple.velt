@@ -1,0 +1,8 @@
+// A rest parameter typed by a tuple over the type's own type parameter. Expected output from
+// `node`; `tsc --strict` accepts it.
+const f: <T>(...a: [T, T]) => T = (...a) => a[1];
+console.log(f(1, 2), f("a", "b"));
+const g: <T>(...a: [x: T, y: number]) => T = (...a) => a[0];
+console.log(g("s", 1));
+const r: <T>(...a: readonly T[]) => number = (...a) => a.length;
+console.log(r(1, 2, 3));

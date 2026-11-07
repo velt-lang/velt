@@ -1,0 +1,8 @@
+// Recursive object types compare as TypeScript assumes: the comparison of a pair in progress holds.
+const made = new Proxy({}, {});
+interface A { next?: A; kids?: Map<string, A>; x: number; hello(): void; }
+interface B { next?: B; kids?: Map<string, B>; }
+const a: A = { x: 1, hello() {} };
+const b = a as B;
+const c: B = a;
+console.log(b.next === undefined, c.kids === undefined);

@@ -1,0 +1,6 @@
+// A primitive in a type parameter's cast to an object type stops at the cast: Node reads `undefined`.
+const made = new Proxy({}, {});
+function disposer<T>(x: T) { return (x as { dispose?: unknown } | null)?.dispose; }
+console.log(disposer(null));
+console.log(disposer(5));
+console.log("after");

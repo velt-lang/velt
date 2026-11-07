@@ -1,0 +1,8 @@
+// An optional field likewise.
+class C { a?: i32; }
+const c = new C();
+const x: any = c;
+x.a = 2;
+console.log(c.a);
+x.a = 1.5;
+console.log(c.a);

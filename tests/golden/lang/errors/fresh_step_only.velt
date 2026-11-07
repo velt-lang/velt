@@ -1,0 +1,9 @@
+// A `for` step runs between one round's write and the next (Node prints 11 11 11).
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+function main() {
+  const p: any = { a: 1, b: 2 };
+  const qs: { a: number }[] = [];
+  for (let i = 0; i < 2; qs.push(seen(p)), i++) { p.a = i + 10; }
+  console.log(qs[0].a, qs[1].a, p.a);
+}
+main();

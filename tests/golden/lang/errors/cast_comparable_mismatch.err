@@ -1,0 +1,4 @@
+cast_comparable_mismatch.velt:3:39: error: cannot cast `{ a: f64 }` as `{ b: string }`
+cast_comparable_mismatch.velt:4:39: error: cannot cast `{ a: f64 }` as `{ a: string }`
+cast_comparable_mismatch.velt:6:28: error: cannot cast `Cx` as `{ p: f64 }`
+cast_comparable_mismatch.velt:7:42: error: cannot cast `{ name: f64 }` as `Cx`

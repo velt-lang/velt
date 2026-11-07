@@ -3,7 +3,8 @@
 // connection's `HttpRequest`, read when first asked for. Only while its handler runs: the
 // connection reuses its `HttpRequest` for the next request, so a read after `release` stops the
 // program with a clear message (as a read of a released value does), never answering with
-// another request's data.
+// another request's data. Its body stays readable until the response was written, as that may be
+// the response's body.
 
 import { IoError } from "velt/io";
 import { TcpStream } from "velt/net";
@@ -21,6 +22,7 @@ export class Received implements RequestSource, Peer {
   // `http://host` or `https://host`, from the `Host` header.
   private origin: string;
   private live: bool = true;
+  private bodyLive: bool = true;
 
   constructor(req: HttpRequest, res: HttpResponse, secure: bool) {
     this.req = req;
@@ -37,17 +39,32 @@ export class Received implements RequestSource, Peer {
     return this.res.signal();
   }
 
-  /** The handler returned: the request may no longer be read. */
+  /** The handler returned: only the body may still be read. */
   release() {
     this.live = false;
   }
 
+  /** The response was written: nothing may be read any more. */
+  responded() {
+    this.bodyLive = false;
+  }
+
   private check() {
     if (!this.live) {
-      panic(
-        "TypeError: a request was read after its handler returned (read what the response needs before returning)",
-      );
+      this.tooLate();
     }
+  }
+
+  private checkBody() {
+    if (!this.bodyLive) {
+      this.tooLate();
+    }
+  }
+
+  private tooLate() {
+    panic(
+      "TypeError: a request was read after its handler returned (read what the response needs before returning)",
+    );
   }
 
   method(): string {
@@ -79,13 +96,13 @@ export class Received implements RequestSource, Peer {
   }
 
   hasBody(): bool {
-    this.check();
+    this.checkBody();
     return !this.req.bodyRead();
   }
 
   /** The next piece of the body, or null at its end; `IoError` "EPROTO" for a malformed one. */
   async read(): Promise<u8[] | null, IoError> {
-    this.check();
+    this.checkBody();
     try {
       return await this.req.read();
     } catch (e) {
@@ -98,7 +115,7 @@ export class Received implements RequestSource, Peer {
    * "EPROTO" for a malformed one.
    */
   async body(): Promise<u8[], IoError> {
-    this.check();
+    this.checkBody();
     try {
       return await this.req.body();
     } catch (e) {

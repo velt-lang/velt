@@ -1,0 +1,8 @@
+// `undefined extends void`, and `any` inside a checked tuple. Expected output from `node`;
+// `tsc --strict` accepts it.
+type F = <E>(e: E, ...a: E extends void ? [] : [E]) => number;
+const f: F = (e, ...a) => a.length;
+console.log(f(undefined), f(1, 1));
+type Y = [any] extends [string] ? 1 : 2;
+const y: Y = 1;
+console.log(y);

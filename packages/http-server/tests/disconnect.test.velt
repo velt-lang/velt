@@ -1,0 +1,984 @@
+// A client that goes away while its request is being answered, on `serve` over HTTP/1.1 (HTTP/2:
+// h2/standard.test.velt): the response body's source stops (its `cancel` or `finally` runs, `pull`
+// stops) and `req.signal` aborts. A client whose input ended is gone, by Node's rule; a slow one
+// isn't. Each test waits for what the server does; the timeouts only keep a broken
+// version from hanging. Package tests run with block counters (`VELT_RC_STATS=1`), so this file also
+// fails on a connection that is never freed, as when its response and its watch hold each other.
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http";
+import { connect, TcpStream } from "velt/net";
+import { platform } from "velt/os";
+import { timeout } from "velt/task";
+import { describe, expect, it } from "velt/test";
+import { serve } from "../src/lib";
+import { arrivals, arrive, Gate, gate, hold, open, shut } from "./_gate";
+
+const LIMIT: i64 = 10000;
+
+/// An endless stream of `size`-byte chunks; `cancelled` hears the source's `cancel`.
+function endless(size: i64, cancelled: Gate, pulls: Shared<i64>): ReadableStream<Uint8Array> {
+  const chunk = new Uint8Array(size as number);
+  return new ReadableStream<Uint8Array>({
+    pull: (ctl) => {
+      pulls.add(1);
+      ctl.enqueue(chunk.slice());
+    },
+    cancel: (reason) => {
+      arrive(cancelled);
+    },
+  });
+}
+
+/// An endless generator of 1 KiB chunks; `ended` hears its `finally`.
+async function* rows(ended: Gate): AsyncGenerator<u8[], never> {
+  try {
+    while (true) {
+      yield Buffer.alloc(1024);
+    }
+  } finally {
+    arrive(ended);
+  }
+}
+
+/// A body of `a`, then `b` once `g` lets it go on; `ended` hears a `finally`, `early` whether it
+/// was left before its end.
+async function* twoPieces(
+  a: string,
+  b: string,
+  g: Gate,
+  early: Shared<i64>,
+): AsyncGenerator<u8[], never> {
+  let finished = false;
+  try {
+    yield utf8Encode(a);
+    await hold(g);
+    yield utf8Encode(b);
+    finished = true;
+  } finally {
+    if (!finished) {
+      early.set(1);
+    }
+  }
+}
+
+/// Reads from `s` until `text` came, or the end of the stream: what was read.
+async function readUntil(s: TcpStream, text: string): Promise<string> {
+  let got = "";
+  while (!got.includes(text)) {
+    const piece = await s.readString();
+    if (piece == "") {
+      break;
+    }
+    got += piece;
+  }
+  return got;
+}
+
+async function readAll(s: TcpStream): Promise<string> {
+  return await readUntil(s, "\u0001never\u0001");
+}
+
+const GET = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+
+describe("a client that goes away during a streamed response", () => {
+  it("cancels a ReadableStream, and pull stops", async () => {
+    const cancelled = gate();
+    const pulls = shared<i64>(0);
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      return new Response(endless(1024, cancelled, pulls), {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await readUntil(c, "\r\n\r\n");
+      c.close();
+      await timeout(arrivals(cancelled), LIMIT);
+      const seen = pulls.get();
+      // Every handler has returned here: one pull may have been under way, no more.
+      await timeout(server.shutdown(), LIMIT);
+      expect(pulls.get() - seen <= 1).toBe(true);
+    } finally {
+      server.close();
+      shut(cancelled);
+    }
+  });
+
+  it("cancels an event stream when a fetch is aborted and read", async () => {
+    const cancelled = gate();
+    const pulls = shared<i64>(0);
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const made = pulls.clone();
+      const told = cancelled;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull: async (ctl) => {
+            made.add(1);
+            // timing: the event stream of #2499, a chunk now and then with nothing queued
+            await sleep(5);
+            ctl.enqueue(Uint8Array.fromBytes(utf8Encode("data: x")));
+          },
+          cancel: (reason) => {
+            arrive(told);
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    try {
+      const abort = new AbortController();
+      const res = await fetch(`http://127.0.0.1:${server.port}/`, { signal: abort.signal });
+      const reader = res.body!.getReader();
+      await reader.read();
+      abort.abort();
+      // A read that waits is what closes the connection of an aborted fetch (#2515); one that
+      // finds a chunk there doesn't wait, so this reads until one does.
+      try {
+        while (!(await reader.read()).done) {}
+      } catch (e) {
+        // The abort.
+      }
+      await timeout(arrivals(cancelled), LIMIT);
+    } finally {
+      await server.shutdown();
+      shut(cancelled);
+    }
+  });
+
+  it("runs an async generator's finally, through BodyStream.from", async () => {
+    const ended = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      return new Response(BodyStream.from(rows(ended)));
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await readUntil(c, "\r\n\r\n");
+      c.close();
+      await timeout(arrivals(ended), LIMIT);
+    } finally {
+      await server.shutdown();
+      shut(ended);
+    }
+  });
+
+  it("survives a cancel that throws, and serves the next request", async () => {
+    const cancelled = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      if (new URL(req.url).pathname == "/next") {
+        return new Response("next");
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull: (ctl) => {
+            ctl.enqueue(new Uint8Array(1024));
+          },
+          cancel: (reason) => {
+            arrive(cancelled);
+            throw new Error("the cancel failed");
+          },
+        }),
+      );
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await readUntil(c, "\r\n\r\n");
+      c.close();
+      await timeout(arrivals(cancelled), LIMIT);
+      expect(await (await fetch(`http://127.0.0.1:${server.port}/next`)).text()).toBe("next");
+    } finally {
+      await server.shutdown();
+      shut(cancelled);
+    }
+  });
+
+  it("aborts req.signal", async () => {
+    const aborted = gate();
+    const ended = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      const watching = (async () => {
+        await signal.whenAborted();
+        arrive(aborted);
+      })();
+      return new Response(BodyStream.from(rows(ended)));
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await readUntil(c, "\r\n\r\n");
+      c.close();
+      await timeout(arrivals(aborted), LIMIT);
+    } finally {
+      await server.shutdown();
+      shut(aborted);
+      shut(ended);
+    }
+  });
+});
+
+describe("a client whose connection fails", () => {
+  it("cancels a ReadableStream that has nothing to write, and aborts req.signal", async () => {
+    // Closing with unread input resets the connection on Linux; other systems may send a plain
+    // end of stream, which a response under way doesn't take for a client gone.
+    if (platform() != "linux") {
+      return;
+    }
+    const wrote = gate();
+    const cancelled = gate();
+    const aborted = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      const watching = (async () => {
+        await signal.whenAborted();
+        arrive(aborted);
+      })();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start: (ctl) => {
+            ctl.enqueue(new Uint8Array(1024));
+            arrive(wrote);
+          },
+          cancel: (reason) => {
+            arrive(cancelled);
+          },
+        }),
+      );
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await timeout(arrivals(wrote), LIMIT);
+      // The chunk reached the socket once the client can read its first byte; a look at it
+      // would take it, so the client waits until it is readable and closes with it unread.
+      await timeout(c.readable(), LIMIT);
+      c.close();
+      await timeout(arrivals(aborted), LIMIT);
+      await timeout(arrivals(cancelled), LIMIT);
+    } finally {
+      await server.shutdown();
+      shut(wrote);
+      shut(cancelled);
+      shut(aborted);
+    }
+  });
+});
+
+describe("a slow client", () => {
+  it("holds the source back, and isn't cancelled for it", async () => {
+    // timing: backpressure is pulls stopping, seen by their count not moving over a while.
+    const cancelled = gate();
+    const pulls = shared<i64>(0);
+    const size: i64 = 65536;
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      return new Response(endless(size, cancelled, pulls));
+    });
+    const c = await connect(`127.0.0.1:${server.port}`);
+    try {
+      await c.write(GET);
+      let last: i64 = -1;
+      while (pulls.get() != last && last < 2000) {
+        last = pulls.get();
+        // timing: long enough for a pull to show, were pulls going on
+        await sleep(300);
+      }
+      // Bounded by what the sockets hold: the source stopped, and it wasn't cancelled.
+      expect(last < 2000).toBe(true);
+      expect(cancelled.arrived.tryReceive()).toBe(null);
+      // Reading makes it go on.
+      await timeout(c.read(), LIMIT);
+      let read: i64 = 0;
+      while (pulls.get() == last) {
+        read += (await timeout(c.read(), LIMIT)).length as i64;
+      }
+      expect(read > 0).toBe(true);
+      expect(cancelled.arrived.tryReceive()).toBe(null);
+      c.close();
+      await timeout(arrivals(cancelled), LIMIT);
+    } finally {
+      // A failed check leaves a source that only a client going away stops.
+      c.close();
+      await server.shutdown();
+      shut(cancelled);
+    }
+  });
+});
+
+// Each case's answer is what Node's server (`httpAllowHalfOpen` off, its default) sends the same
+// client: the end of the client's input while a response is pending is the client gone. The client
+// reads to the end of the stream with the handler still held, so the connection ending at once is
+// part of each check.
+describe("a client that shuts its sending side", () => {
+  it("gets the answer of a handler that didn't wait, then the end", async () => {
+    const server = await serve({ port: 0 }, (req: Request): Response => new Response("answer"));
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      c.shutdown();
+      expect((await timeout(readAll(c), LIMIT)).endsWith("answer")).toBe(true);
+      c.close();
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("gets the answer of an async handler that didn't wait", async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      await Promise.resolve();
+      return new Response("answer");
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      c.shutdown();
+      expect((await timeout(readAll(c), LIMIT)).endsWith("answer")).toBe(true);
+      c.close();
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  for (const head of [
+    "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    "GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+  ]) {
+    it(
+      `gets nothing while the handler waits: ${head.split("\r\n")[0]} ${head.includes("close") ? "close" : ""}`,
+      async () => {
+        const g = gate();
+        const aborted = shared<i64>(0);
+        const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+          const signal = req.signal;
+          await hold(g);
+          aborted.set(signal.aborted ? 1 : 0);
+          return new Response("late");
+        });
+        try {
+          const c = await connect(`127.0.0.1:${server.port}`);
+          await c.write(head);
+          await timeout(arrivals(g), LIMIT);
+          c.shutdown();
+          // The end comes with the handler still held.
+          expect(await timeout(readAll(c), LIMIT)).toBe("");
+          open(g);
+          c.close();
+        } finally {
+          await server.shutdown();
+          expect(aborted.get()).toBe(1);
+          shut(g);
+        }
+      },
+    );
+  }
+
+  it(
+    "gets the answer of a handler with neither a signal nor a stream, decided for its cost",
+    async () => {
+      // Node sends nothing here. Nothing watches such a handler, as a look at the socket would cost
+      // every keep-alive request a read, and its answer does no harm (README.md).
+      const g = gate();
+      const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+        if (new URL(req.url).pathname == "/other") {
+          return new Response("other");
+        }
+        await hold(g);
+        return new Response("late");
+      });
+      try {
+        const c = await connect(`127.0.0.1:${server.port}`);
+        await c.write(GET);
+        await timeout(arrivals(g), LIMIT);
+        c.shutdown();
+        // The end of its input has reached the server by the time another request was answered.
+        expect(await (await fetch(`http://127.0.0.1:${server.port}/other`)).text()).toBe("other");
+        open(g);
+        expect((await timeout(readAll(c), LIMIT)).endsWith("late")).toBe(true);
+        c.close();
+      } finally {
+        open(g);
+        await server.shutdown();
+        shut(g);
+      }
+    },
+  );
+
+  it("cuts a stream off after what was written, and stops a quiet source", async () => {
+    const g = gate();
+    const cancelled = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start: (ctl) => {
+            ctl.enqueue(Uint8Array.fromBytes(utf8Encode("first")));
+          },
+          cancel: (reason) => {
+            arrive(cancelled);
+          },
+        }),
+      );
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await timeout(readUntil(c, "first"), LIMIT);
+      // Nothing is written from here on: only the end of the client's input can tell.
+      c.shutdown();
+      await timeout(arrivals(cancelled), LIMIT);
+      // No last chunk: the client sees a cut body.
+      expect((await timeout(readAll(c), LIMIT)).includes("0\r\n\r\n")).toBe(false);
+      c.close();
+    } finally {
+      open(g);
+      await server.shutdown();
+      shut(g);
+      shut(cancelled);
+    }
+  });
+
+  it("gets nothing of a stream whose first chunk hasn't come", async () => {
+    const cancelled = gate();
+    const started = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start: (ctl) => {
+            arrive(started);
+          },
+          cancel: (reason) => {
+            arrive(cancelled);
+          },
+        }),
+      );
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await timeout(arrivals(started), LIMIT);
+      c.shutdown();
+      await timeout(arrivals(cancelled), LIMIT);
+      expect(await timeout(readAll(c), LIMIT)).toBe("");
+      c.close();
+    } finally {
+      await server.shutdown();
+      shut(cancelled);
+      shut(started);
+    }
+  });
+
+  it("with two pipelined requests that don't wait, gets both answers", async () => {
+    const server = await serve(
+      { port: 0 },
+      (req: Request): Response => new Response(req.url.slice(-2)),
+    );
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+      c.shutdown();
+      const all = await timeout(readAll(c), LIMIT);
+      expect(all.includes("/a") && all.indexOf("/b") > all.indexOf("/a")).toBe(true);
+      c.close();
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("gets the answer before a handler that waits, not the one after", async () => {
+    const g = gate();
+    const ran = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const path = new URL(req.url).pathname;
+      if (path == "/slow") {
+        const signal = req.signal;
+        await hold(g);
+      }
+      arrive(ran);
+      return new Response(path);
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(
+        "GET /fast HTTP/1.1\r\nHost: x\r\n\r\nGET /slow HTTP/1.1\r\nHost: x\r\n\r\nGET /after HTTP/1.1\r\nHost: x\r\n\r\n",
+      );
+      await timeout(arrivals(g), LIMIT);
+      c.shutdown();
+      // The end comes with the handler still held.
+      const all = await timeout(readAll(c), LIMIT);
+      expect(all.includes("/fast")).toBe(true);
+      expect(all.includes("/slow")).toBe(false);
+      // The request behind runs, as Node has started it, and its answer goes nowhere.
+      open(g);
+      await timeout(arrivals(ran, 3), LIMIT);
+      c.close();
+    } finally {
+      open(g);
+      await server.shutdown();
+      shut(g);
+      shut(ran);
+    }
+  });
+
+  it("gets nothing for a pipelined request behind one in progress", async () => {
+    const g = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const path = new URL(req.url).pathname;
+      if (path == "/slow") {
+        const signal = req.signal;
+        await hold(g);
+      }
+      return new Response(path);
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("GET /slow HTTP/1.1\r\nHost: x\r\n\r\n");
+      await timeout(arrivals(g), LIMIT);
+      await c.write("GET /fast HTTP/1.1\r\nHost: x\r\n\r\n");
+      c.shutdown();
+      expect(await timeout(readAll(c), LIMIT)).toBe("");
+      open(g);
+      c.close();
+    } finally {
+      open(g);
+      await server.shutdown();
+      shut(g);
+    }
+  });
+
+  it("gets an answer from a handler that read its whole body and didn't wait", async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      return new Response(`read ${await req.text()}`);
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
+      c.shutdown();
+      expect((await timeout(readAll(c), LIMIT)).endsWith("read hello")).toBe(true);
+      c.close();
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("gets an answer when its body ended with its input while the handler read", async () => {
+    const g = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      arrive(g);
+      return new Response(`read ${await req.text()}`);
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n");
+      await timeout(arrivals(g), LIMIT);
+      await c.write("hello");
+      c.shutdown();
+      expect((await timeout(readAll(c), LIMIT)).endsWith("read hello")).toBe(true);
+      c.close();
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("gets nothing when the whole body came and the handler waits without it", async () => {
+    const g = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      await hold(g);
+      return new Response("late");
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
+      await timeout(arrivals(g), LIMIT);
+      c.shutdown();
+      expect(await timeout(readAll(c), LIMIT)).toBe("");
+      open(g);
+      c.close();
+    } finally {
+      open(g);
+      await server.shutdown();
+      shut(g);
+    }
+  });
+
+  for (const body of ["Content-Length: 5\r\n\r\nhe", "Transfer-Encoding: chunked\r\n\r\n5\r\nhe"]) {
+    const name = body.split(":")[0];
+    it(`gets a 400 for a body cut off that the handler reads: ${name}`, async () => {
+      const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+        return new Response(`read ${await req.text()}`);
+      });
+      try {
+        const c = await connect(`127.0.0.1:${server.port}`);
+        await c.write(`POST / HTTP/1.1\r\nHost: x\r\n${body}`);
+        c.shutdown();
+        expect((await timeout(readAll(c), LIMIT)).startsWith("HTTP/1.1 400")).toBe(true);
+        c.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+  }
+
+  it("gets a 400 for a body cut off that the handler ignores, with it still held", async () => {
+    const g = gate();
+    const aborted = shared<i64>(0);
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      await hold(g);
+      aborted.set(signal.aborted ? 1 : 0);
+      return new Response("late");
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhe");
+      await timeout(arrivals(g), LIMIT);
+      c.shutdown();
+      expect((await timeout(readAll(c), LIMIT)).startsWith("HTTP/1.1 400")).toBe(true);
+      open(g);
+      c.close();
+    } finally {
+      open(g);
+      await server.shutdown();
+      expect(aborted.get()).toBe(1);
+      shut(g);
+    }
+  });
+
+  for (const asks of [false, true]) {
+    it(
+      `leaves a request with an Upgrade header unwatched, ${asks ? "asking" : "not asking"} for its signal`,
+      async () => {
+        // Node's server without an `upgrade` listener would drop this answer. Here the handler may
+        // take the connection, with what came after the head, so nothing reads it meanwhile.
+        const g = gate();
+        const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+          if (req.method != "HEAD") {
+            if (asks) {
+              const signal = req.signal;
+            }
+            await hold(g);
+          }
+          return new Response("answer");
+        });
+        try {
+          const c = await connect(`127.0.0.1:${server.port}`);
+          await c.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: x\r\n\r\n");
+          await timeout(arrivals(g), LIMIT);
+          c.shutdown();
+          expect((await fetch(`http://127.0.0.1:${server.port}/`, { method: "HEAD" })).status).toBe(
+            200,
+          );
+          open(g);
+          expect((await timeout(readAll(c), LIMIT)).endsWith("answer")).toBe(true);
+          c.close();
+        } finally {
+          open(g);
+          await server.shutdown();
+          shut(g);
+        }
+      },
+    );
+  }
+});
+
+describe("a kept-alive connection", () => {
+  it("leaves a finished body and its signal alone, and serves the next request", async () => {
+    const early = shared<i64>(0);
+    const aborted = gate();
+    const g = gate();
+    const next = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const path = new URL(req.url).pathname;
+      if (path == "/second") {
+        return new Response("second answer");
+      }
+      if (path == "/third") {
+        const third = req.signal;
+        arrive(next);
+        await third.whenAborted();
+        arrive(next);
+        return new Response("nobody reads this");
+      }
+      const signal = req.signal;
+      const watching = (async () => {
+        await signal.whenAborted();
+        arrive(aborted);
+      })();
+      return new Response(BodyStream.from(twoPieces("one", "two", g, early)));
+    });
+    open(g);
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\n");
+      await timeout(readUntil(c, "0\r\n\r\n"), LIMIT);
+      await c.write("GET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+      await timeout(readUntil(c, "second answer"), LIMIT);
+      // A later request's client going away has nothing to do with the first one's signal.
+      await c.write("GET /third HTTP/1.1\r\nHost: x\r\n\r\n");
+      await timeout(arrivals(next), LIMIT);
+      c.close();
+      await timeout(arrivals(next), LIMIT);
+      expect(aborted.arrived.tryReceive()).toBe(null);
+      expect(early.get()).toBe(0);
+    } finally {
+      await server.shutdown();
+      shut(aborted);
+      shut(g);
+      shut(next);
+    }
+  });
+});
+
+describe("a client that goes away before the response", () => {
+  it("aborts req.signal for a handler still working", async () => {
+    const started = gate();
+    const aborted = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      arrive(started);
+      await signal.whenAborted();
+      arrive(aborted);
+      return new Response("nobody reads this");
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await timeout(arrivals(started), LIMIT);
+      c.close();
+      await timeout(arrivals(aborted), LIMIT);
+    } finally {
+      await server.shutdown();
+      shut(started);
+      shut(aborted);
+    }
+  });
+
+  it("aborts req.signal once the body was read", async () => {
+    const started = gate();
+    const aborted = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      arrive(started);
+      const text = await req.text();
+      arrive(started);
+      await signal.whenAborted();
+      arrive(aborted, text.length as i64);
+      return new Response("nobody reads this");
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n");
+      // The body comes after the handler asked for the signal: the watch starts at its end.
+      await timeout(arrivals(started), LIMIT);
+      await c.write("hello");
+      await timeout(arrivals(started), LIMIT);
+      c.close();
+      await timeout(arrivals(aborted), LIMIT);
+    } finally {
+      await server.shutdown();
+      shut(started);
+      shut(aborted);
+    }
+  });
+
+  it("aborts req.signal when the handler waited, read its body, and waits again", async () => {
+    const g = gate();
+    const read = gate();
+    const aborted = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      // The watch starts here, and gives the socket up to the body's read.
+      await hold(g);
+      arrive(read);
+      const text = await req.text();
+      arrive(read, text.length as i64);
+      await signal.whenAborted();
+      arrive(aborted);
+      return new Response("nobody reads this");
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n");
+      await timeout(arrivals(g), LIMIT);
+      open(g);
+      await timeout(arrivals(read), LIMIT);
+      await c.write("hello");
+      await timeout(arrivals(read), LIMIT);
+      c.close();
+      await timeout(arrivals(aborted), LIMIT);
+    } finally {
+      open(g);
+      await server.shutdown();
+      shut(g);
+      shut(read);
+      shut(aborted);
+    }
+  });
+
+  it("aborts a signal asked for only after the handler waited", async () => {
+    const g = gate();
+    const aborted = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      await hold(g);
+      const signal = req.signal;
+      arrive(g);
+      await signal.whenAborted();
+      arrive(aborted);
+      return new Response("nobody reads this");
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await timeout(arrivals(g), LIMIT);
+      open(g);
+      await timeout(arrivals(g), LIMIT);
+      c.close();
+      await timeout(arrivals(aborted), LIMIT);
+    } finally {
+      open(g);
+      await server.shutdown();
+      shut(g);
+      shut(aborted);
+    }
+  });
+
+  it("cancels a stream that began only after the handler waited", async () => {
+    const g = gate();
+    const cancelled = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      await hold(g);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start: (ctl) => {
+            ctl.enqueue(Uint8Array.fromBytes(utf8Encode("first")));
+          },
+          cancel: (reason) => {
+            arrive(cancelled);
+          },
+        }),
+      );
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await timeout(arrivals(g), LIMIT);
+      open(g);
+      await timeout(readUntil(c, "first"), LIMIT);
+      c.close();
+      await timeout(arrivals(cancelled), LIMIT);
+    } finally {
+      open(g);
+      await server.shutdown();
+      shut(g);
+      shut(cancelled);
+    }
+  });
+
+  it("stops a fetch the handler passed req.signal to", async () => {
+    const upstreamWaits = gate();
+    const upstreamGone = gate();
+    const upstream = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      arrive(upstreamWaits);
+      await signal.whenAborted();
+      arrive(upstreamGone);
+      return new Response("nobody reads this");
+    });
+    const to = `http://127.0.0.1:${upstream.port}/`;
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      try {
+        return await fetch(to, { signal: req.signal });
+      } catch (e) {
+        return new Response("aborted");
+      }
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await timeout(arrivals(upstreamWaits), LIMIT);
+      c.close();
+      await timeout(arrivals(upstreamGone), LIMIT);
+    } finally {
+      await server.shutdown();
+      await upstream.shutdown();
+      shut(upstreamWaits);
+      shut(upstreamGone);
+    }
+  });
+
+  it("aborts req.signal when the body is cut off", async () => {
+    const aborted = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      try {
+        await req.text();
+      } catch (e) {
+        arrive(aborted, signal.aborted ? 1 : 0);
+      }
+      return new Response("nobody reads this");
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhe");
+      c.close();
+      expect(await timeout(aborted.arrived.receive(), LIMIT)).toBe(1);
+    } finally {
+      await server.shutdown();
+      shut(aborted);
+    }
+  });
+
+  it("lets a handler ignoring its signal finish, and writes go nowhere", async () => {
+    const g = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      if (new URL(req.url).pathname == "/next") {
+        return new Response("next");
+      }
+      const signal = req.signal;
+      await hold(g);
+      return new Response("late");
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write(GET);
+      await timeout(arrivals(g), LIMIT);
+      c.close();
+      open(g);
+      expect(await (await fetch(`http://127.0.0.1:${server.port}/next`)).text()).toBe("next");
+    } finally {
+      open(g);
+      await server.shutdown();
+      shut(g);
+    }
+  });
+});
+
+describe("shutting down with an open stream", () => {
+  it("aborts req.signal, so a source that listens ends, and resolves", async () => {
+    const started = gate();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      const source = async function* (): AsyncGenerator<u8[], never> {
+        yield utf8Encode("first");
+        arrive(started);
+        await signal.whenAborted();
+      };
+      return new Response(BodyStream.from(source()));
+    });
+    const c = await connect(`127.0.0.1:${server.port}`);
+    try {
+      await c.write(GET);
+      await timeout(arrivals(started), LIMIT);
+      await timeout(server.shutdown(), LIMIT);
+      const all = await timeout(readAll(c), LIMIT);
+      expect(all.includes("first")).toBe(true);
+    } finally {
+      c.close();
+      shut(started);
+    }
+  });
+});

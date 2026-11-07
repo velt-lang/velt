@@ -353,6 +353,7 @@ impl FnLower<'_, '_> {
             (I::AnyKeys, [o]) => self.any_keys(o, ty),
             (I::AnyTruthy, [a]) => self.any_truthy(a),
             (I::AnyTag, [a]) => self.any_tag_value(a),
+            (I::AnyUnboundMethod, [a]) => self.any_unbound_method(a),
             (I::AnyToExact, [a]) => self.any_to_exact(a, ty),
             (I::AnyToNumber, [a]) => self.any_to_number(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),

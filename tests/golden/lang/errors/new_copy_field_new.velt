@@ -1,0 +1,15 @@
+// A `new` inside a field initializer (Node prints 5 5).
+type W = { a: number; b: number };
+type N = { a: number };
+var held: any = null;
+class In<T> { v: T = held; }
+class Box<T> { i: In<T> = new In<T>(); }
+function mk(): any { const p: any = Object.create(null); p.a = 1; p.b = 2; return p; }
+function main() {
+  const p: any = mk();
+  held = p;
+  const q: N = new Box<W>().i.v;
+  p.a = 5;
+  console.log(q.a, p.a);
+}
+main();

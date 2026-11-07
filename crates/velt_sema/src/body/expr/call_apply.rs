@@ -26,6 +26,7 @@ use crate::collect::static_this::uses_this;
 use crate::ctx::Item;
 use crate::defs::DefInfo;
 use crate::hir::{self, DefId, TyId, TyKind};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// `f.call(...)` / `f.apply(...)` where `f` is a function (`None`: another call).
@@ -96,6 +97,11 @@ impl FnCx<'_, '_> {
                         return Some(h);
                     }
                 }
+            }
+        }
+        if !bind {
+            if let Some(h) = this_arg.and_then(|t| self.read_method_call(f, t, &call_args, exp)) {
+                return Some(h);
             }
         }
         if let Some(t) = this_arg {
@@ -317,6 +323,9 @@ impl FnCx<'_, '_> {
         if !self.is_local_name(name) {
             return false;
         }
+        if self.read_from_outer(name, this_arg) {
+            return true;
+        }
         let Some(l) = self.lookup_local(name, Span::default()) else {
             return false;
         };
@@ -343,7 +352,156 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Does the visible local `name` hold a method read as a value (`const f = o.m`)?
+    /// `f.call(o, …)` where `f`, a dynamic value, was read as `o.m` (`const d = (o as T)?.m`). A
+    /// function value is called as it was read, as in JavaScript, whatever `o.m` holds by now. A
+    /// class's method read through `any` is no function value yet (#823): that one, which can't
+    /// be replaced through `any`, is the call `(o as any).m(…)`, which reads the member again, and
+    /// a proxy `o` stops instead (`proxyCallCheck`).
+    fn read_method_call(
+        &mut self,
+        f: &ast::Expr,
+        this_arg: &ast::Expr,
+        args: &[ast::Expr],
+        exp: Option<hir::TyId>,
+    ) -> Option<hir::Expr> {
+        let ast::ExprKind::Ident(id) = &strip(f).kind else {
+            return None;
+        };
+        if !self.read_from(&id.name, this_arg) || !self.uses_proxy() {
+            return None;
+        }
+        let (ty, prop) = self.member_read_of(&id.name)?;
+        self.cx.dynamic(ty)?;
+        let span = f.span;
+        let held = self.expr(strip(f), None, Want::Borrow);
+        self.cx.dynamic(held.ty)?;
+        let diags = self.cx.diags.len();
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(f.clone()),
+                type_args: vec![],
+                args: args.to_vec(),
+                optional: false,
+            },
+            span,
+        );
+        let value_call = self.expr(&call, exp, Want::Move);
+        let result = value_call.ty;
+        if self.cx.diags.len() > diags || self.cx.ty.is_bottom(result) {
+            return Some(value_call);
+        }
+        let any = ast::TypeExpr {
+            kind: ast::TypeExprKind::Named {
+                path: vec![ast::Ident {
+                    name: "any".into(),
+                    span,
+                }],
+                args: vec![],
+            },
+            span,
+        };
+        let object = synth(
+            ast::ExprKind::Cast {
+                expr: Box::new(this_arg.clone()),
+                ty: any,
+            },
+            span,
+        );
+        let check = hooks::proxy_call_check(ty::Any::of(object.clone())).check(self, span);
+        let member = synth(
+            ast::ExprKind::Member {
+                object: Box::new(object),
+                prop: ast::Ident { name: prop, span },
+                optional: false,
+            },
+            span,
+        );
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(member),
+                type_args: vec![],
+                args: args.to_vec(),
+                optional: false,
+            },
+            span,
+        );
+        let method_call = self.expr(&call, None, Want::Move);
+        let unit = self.cx.ty.unit;
+        let mut stmts = vec![hir::Stmt {
+            kind: hir::StmtKind::Expr(check),
+            span,
+        }];
+        let value = if result == unit {
+            stmts.push(hir::Stmt {
+                kind: hir::StmtKind::Expr(method_call),
+                span,
+            });
+            self.unit_expr(span)
+        } else {
+            match self.assert_value(method_call, result, span) {
+                Ok(h) => h,
+                Err(h) => self.cast_error(h, result, span),
+            }
+        };
+        let method_call = self.with_lets(stmts, value);
+        let cond = self.intrinsic(
+            hir::Intrinsic::AnyUnboundMethod,
+            vec![held],
+            self.cx.ty.bool_,
+            span,
+        );
+        let kind = hir::ExprKind::If {
+            cond: Box::new(cond),
+            then: Box::new(method_call),
+            els: Box::new(value_call),
+        };
+        Some(self.mk(kind, result, span))
+    }
+
+    /// The declared type and the member read of local `name`, here or in a function around this
+    /// closure (`FnFrame::member_props`).
+    fn member_read_of(&self, name: &str) -> Option<(hir::TyId, String)> {
+        let frames = std::iter::once(&self.f).chain(self.outer.iter().rev());
+        frames.into_iter().find_map(|o| {
+            let l = crate::body::locals::frame_lookup(o, name)?;
+            let prop = o.member_props.get(&l)?.clone();
+            Some((o.locals[l.0 as usize].ty, prop))
+        })
+    }
+
+    /// [`Self::read_from`] in a closure, of variables of a function around it (`const f = o.m;
+    /// onDone(() => f.call(o))`) that nothing assigns.
+    fn read_from_outer(&self, name: &str, this_arg: &ast::Expr) -> bool {
+        let ast::ExprKind::Ident(t) = &strip(this_arg).kind else {
+            return false;
+        };
+        if crate::body::locals::frame_lookup(&self.f, name).is_some() {
+            return false;
+        }
+        (self.outer.iter().rev())
+            .find_map(|o| crate::body::locals::frame_lookup(o, name).map(|l| (o, l)))
+            .is_some_and(|(o, l)| {
+                let root = o.member_reads.get(&l).copied();
+                root.is_some()
+                    && root == crate::body::locals::frame_lookup(o, &t.name)
+                    && !o.assign_ends.contains_key(&t.name)
+                    && !o.closure_assigned.contains_key(&t.name)
+            })
+    }
+
+    /// `const f = o.m`: `f` was read from the variable `o`.
+    pub(in crate::body) fn note_member_read(
+        &mut self,
+        local: hir::LocalId,
+        root: hir::LocalId,
+        init: Option<&ast::Expr>,
+    ) {
+        self.f.member_reads.insert(local, root);
+        if let Some(ast::ExprKind::Member { prop, .. }) = init.map(|e| &strip(e).kind) {
+            self.f.member_props.insert(local, prop.name.clone());
+        }
+    }
+
     fn holds_method_value(&mut self, name: &str) -> bool {
         self.is_local_name(name)
             && self
@@ -366,11 +524,7 @@ pub(crate) fn is_member_read(e: &ast::Expr) -> bool {
 /// The variable the property read `e` reads from (`o` of `o.m`, `(o as T).m`), if `e` is one.
 pub(crate) fn read_root(e: &ast::Expr) -> Option<&ast::Ident> {
     match &strip(e).kind {
-        ast::ExprKind::Member {
-            object,
-            optional: false,
-            ..
-        } => match &strip(object).kind {
+        ast::ExprKind::Member { object, .. } => match &strip(object).kind {
             ast::ExprKind::Ident(id) => Some(id),
             _ => None,
         },

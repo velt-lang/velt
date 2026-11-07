@@ -218,6 +218,7 @@ impl Ctx<'_> {
                 fresh: false,
                 in_order,
                 generic: true,
+                record: false,
             });
             return to;
         }

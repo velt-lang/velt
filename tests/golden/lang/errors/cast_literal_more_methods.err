@@ -1,0 +1,1 @@
+cast_literal_more_methods.velt:4:19: error: `Cx` has no member `z`: an object literal implementing it may only give its members

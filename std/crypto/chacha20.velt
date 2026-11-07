@@ -1,7 +1,8 @@
 // velt/crypto (internal): the ChaCha20 stream cipher (RFC 8439 §2.3-2.4): add-rotate-xor on
-// `u32` words, constant time by construction (no branches or indexes on the key or the data). It works in
-// place on the caller's buffer, with the state and the block in the caller's scratch words, so
-// encrypting a record allocates nothing.
+// `u32` words, constant time by construction (no branches or indexes on the key or the data).
+// This file has the state and the one-block function in scalar words; chacha20_simd.velt XORs
+// data with the keystream four blocks at a time, in place, so encrypting a record allocates
+// nothing.
 
 /** Little-endian `u32` at `off` of `b`. */
 export function load32le(b: u8[], off: usize): u32 {
@@ -54,7 +55,10 @@ function quarter(x: u32[], a: usize, b: usize, c: usize, d: usize) {
   x[b] = (x[b] ^ x[c]).rotateLeft(7);
 }
 
-/** The 64-byte keystream block of `state` (its counter in word 12) into `x` (16 words). */
+/**
+ * The 64-byte keystream block of `state` (its counter in word 12) into `x` (16 words): the
+ * one-time Poly1305 key, and the reference the four-block path is tested against.
+ */
 export function chachaBlock(state: u32[], x: u32[]) {
   for (let i: usize = 0; i < 16; i++) {
     x[i] = state[i];
@@ -71,38 +75,6 @@ export function chachaBlock(state: u32[], x: u32[]) {
   }
   for (let i: usize = 0; i < 16; i++) {
     x[i] = x[i] + state[i];
-  }
-}
-
-/**
- * XORs `buf[start..end]` in place with the keystream of `state` from block `counter` on
- * (encryption and decryption are the same operation); `x` is 16 words of scratch.
- */
-export function chachaXorInPlace(
-  state: u32[],
-  x: u32[],
-  counter: u32,
-  buf: u8[],
-  start: usize,
-  end: usize,
-) {
-  let block = counter;
-  let off = start;
-  while (end - off >= 64) {
-    state[12] = block;
-    chachaBlock(state, x);
-    for (let i: usize = 0; i < 16; i++) {
-      store32le(buf, off + 4 * i, load32le(buf, off + 4 * i) ^ x[i]);
-    }
-    block = block + 1;
-    off += 64;
-  }
-  if (off < end) {
-    state[12] = block;
-    chachaBlock(state, x);
-    for (let i: usize = 0; i < end - off; i++) {
-      buf[off + i] ^= ((x[i >> 2] >>> (8 * ((i & 3) as u32))) & 0xff) as u8;
-    }
   }
 }
 

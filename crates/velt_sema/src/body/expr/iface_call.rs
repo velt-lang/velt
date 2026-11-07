@@ -126,24 +126,42 @@ impl FnCx<'_, '_> {
         slot_names.extend(s.method.generics.names.iter().cloned());
         let mut bounds = vec![vec![]; n + 1];
         bounds.extend(s.method.generics.bounds.iter().cloned());
+        let mut params = s.method.params.clone();
+        let rest_form = self.cx.generic_fn_rest_form(s.iface);
+        if let (Some(form), Some(last)) = (rest_form, params.last_mut()) {
+            last.ty = form;
+        }
+        let mut constraints = vec![];
+        if !self.forward_unbounded.take()
+            && s.method.generics.constraints.iter().any(Option::is_some)
+        {
+            constraints.resize(n + 1, None);
+            constraints.extend(s.method.generics.constraints.iter().copied());
+        }
         let c = Callable {
             what: match s.method.name == crate::generic_fns::CALL {
                 // A generic function value's call (`crate::generic_fns`).
                 true => "this function".into(),
                 false => format!("method `{}`", s.method.name),
             },
-            params: s.method.params.clone(),
+            params,
             ret: s.method.ret,
             slot_names,
             bounds,
-            constraints: vec![],
+            constraints,
             js_numbers: false,
             positions: false,
             js_api: false,
             rest: s.rest,
             defaults: vec![],
         };
-        let ck = self.check_call(&c, slots, args, exp.filter(|_| own > 0), span);
+        if rest_form.is_some() && self.spreads_deferred_form(args) {
+            return self.error_expr(span);
+        }
+        let mut ck = self.check_call(&c, slots, args, exp.filter(|_| own > 0), span);
+        if let Some(form) = rest_form {
+            self.rest_form_args(&c, form, &mut ck, args, span);
+        }
         let mode = if s.method.mut_this {
             PassMode::BorrowMut
         } else {

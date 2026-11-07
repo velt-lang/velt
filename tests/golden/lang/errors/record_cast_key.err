@@ -1,0 +1,1 @@
+record_cast_key.velt:4:11: error: a value of type `{ a?: string }` converts to `Record<string, string | undefined>` by copying its fields, and this program uses `any` values as keys compared by identity: two copies of one object are different keys

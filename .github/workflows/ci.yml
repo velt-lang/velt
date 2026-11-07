@@ -316,10 +316,10 @@ jobs:
       VELT_DEBUG_VARS: ${{ needs.queue-plan.outputs.debug_vars }}
       # The WebAssembly goldens run in shards of their own (`queue-golden`).
       VELT_WASM_GOLDENS: skip
-    # The slowest job (Windows) takes about 50 minutes on a slow runner (2026-11-02: two queue
-    # entries cancelled at 45 minutes with every test passing so far): a runner that hangs still
-    # fails the queue entry well within two hours.
-    timeout-minutes: 75
+    # The slowest job (Windows) took 58 to 74 minutes on 2026-11-07, and 75 on a slower runner,
+    # cancelled in its last steps with every test passing so far: a runner that hangs still fails
+    # the queue entry well within two hours.
+    timeout-minutes: 100
     steps:
       # With its parent: std-lint compares the allow lists with the change's base (`HEAD^1`).
       - uses: actions/checkout@v4

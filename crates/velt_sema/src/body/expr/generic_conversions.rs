@@ -238,9 +238,13 @@ impl FnCx<'_, '_> {
         let frames = self.trial_frames();
         let diags = self.cx.diags.len();
         let shape = (to.method.params.len(), to.rest);
+        // The closure's call passes the target's type parameters on: the two types' bounds are
+        // related by their shapes (`Ky<A>` as `Ky<any>`), not at this call.
+        self.forward_unbounded.set(true);
         let mut g = self.forwarding(h.clone(), exp, shape, |s, arrow, exp| {
             s.generic_closure(arrow, Some(exp))
         });
+        self.forward_unbounded.set(false);
         if self.cx.diags.len() == diags {
             self.mark_fresh(&mut g, exp);
             return Ok(g);
@@ -249,6 +253,124 @@ impl FnCx<'_, '_> {
         mark.rollback(self.cx);
         self.restore_trial_frames(frames);
         Err(h)
+    }
+
+    /// Function value `h` of fixed types as a value of generic function type `exp`, as
+    /// TypeScript assigns it where it takes what every instantiation passes
+    /// (`(name: string, ...args: any[]) => void` as `<N extends string>(name: N, ...args: A<N>) =>
+    /// void`): the generic closure `(a0, …) => g(a0, …)` over `g`, a local holding `h`. `Err` when
+    /// it doesn't take them.
+    pub(super) fn fn_value_as_generic(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let (TyKind::FnPtr { params, rest, .. }, Some(to)) =
+            (self.cx.ty.kind(h.ty).clone(), self.cx.generic_sig(exp))
+        else {
+            return Err(h);
+        };
+        if !self.fixed_takes_rest(&to, &params, rest) {
+            return Err(h);
+        }
+        let n = to.method.params.len();
+        // A function value may take fewer parameters than its type gives.
+        let shape = (n.min(params.len()), to.rest && params.len() >= n);
+        // One with parameters at a form's rest position takes the arguments there.
+        let items = match self.cx.generic_fn_rest_form(to.iface).is_some() && !rest {
+            true => (params.len() + 1).saturating_sub(n),
+            false => 0,
+        };
+        let held = self.forwarding_items.replace(items);
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let mut g = self.forwarding(h.clone(), exp, shape, |s, arrow, exp| {
+            s.generic_closure(arrow, Some(exp))
+        });
+        self.forwarding_items.set(held);
+        if self.cx.diags.len() == diags {
+            self.mark_fresh(&mut g, exp);
+            return Ok(g);
+        }
+        self.cx.diags.truncate(diags);
+        mark.rollback(self.cx);
+        self.restore_trial_frames(frames);
+        Err(h)
+    }
+
+    /// Are the instances of generic function type `t` one value at any type arguments? Its
+    /// bounds are string types, so a function sees a string at every name, and it has no rest
+    /// form, so a call passes the same arguments; a form it can't evaluate at a name is an error
+    /// when lowering meets it. The bounds only say what a call may name.
+    pub(super) fn instances_one_value(&self, t: TyId) -> bool {
+        self.cx.generic_sig(t).is_some_and(|g| {
+            self.cx.generic_fn_free_of_args(g.iface)
+                && self.cx.generic_fn_rest_form(g.iface).is_none()
+        })
+    }
+
+    /// May an instance of `iface` (`Ctx::generic_fn_free_of_args`) at `from` be seen as one at
+    /// `to`? Without a rest form, always (`instances_one_value`). With one, what a call passes
+    /// depends on the arguments: at each position one is `any` or `unknown`, or `to` has no
+    /// members, or the target's bound lies within the source's.
+    pub(super) fn generic_fn_opens(&mut self, iface: DefId, from: &[TyId], to: &[TyId]) -> bool {
+        let Some(form) = self.cx.generic_fn_rest_form(iface) else {
+            return true;
+        };
+        let open = from.iter().zip(to).all(|(f, t)| {
+            f == t
+                || self.cx.dynamic(*f).is_some()
+                || self.cx.dynamic(*t).is_some()
+                || (matches!(self.cx.ty.kind(*t), TyKind::Adt(..))
+                    && self.cx.public_fields(*t).is_empty())
+        });
+        open || self.bound_within(iface, form, from, to)
+    }
+
+    /// Does the bound of `iface`'s one own type parameter at `to`, string literals, lie within
+    /// its bound at `from`, its rest form `form` being one type at each of them? A function
+    /// checked at the wider bound runs at the narrower one.
+    fn bound_within(&mut self, iface: DefId, form: TyId, from: &[TyId], to: &[TyId]) -> bool {
+        let Some(m) = self
+            .cx
+            .iface(iface)
+            .and_then(|i| i.methods.first())
+            .cloned()
+        else {
+            return false;
+        };
+        let ([Some(bound)], Some(from_all)) = (&m.generics.constraints[..], Some(from)) else {
+            return false;
+        };
+        let wide = self.cx.subst(*bound, from_all);
+        let narrow = self.cx.subst(*bound, to);
+        let Some(names) = self.string_literals(narrow) else {
+            return false;
+        };
+        let whole = *self.cx.ty.kind(wide) == TyKind::Str;
+        let held = self.string_literals(wide).unwrap_or_default();
+        if !whole && !names.iter().all(|n| held.contains(n)) {
+            return false;
+        }
+        for n in names {
+            let lit = self.cx.lit_type(hir::LitValue::Str(n));
+            let unit = self.cx.ty.unit;
+            let at = |args: &[TyId]| [args, &[unit, lit]].concat();
+            let (a, b) = (at(from), at(to));
+            if self.cx.subst(form, &a) != self.cx.subst(form, &b) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// `h`, an instance of a generic function type whose call doesn't depend on its arguments
+    /// (they are only in what a call checks), as the instance `exp`: the same value and table.
+    pub(super) fn same_generic_fn(&mut self, mut h: hir::Expr, exp: TyId) -> hir::Expr {
+        self.force_move(&mut h);
+        let span = h.span;
+        self.mk(H::Upcast(Box::new(h)), exp, span)
     }
 
     /// Records the closure `h` makes as a fresh one, its values of type `ty`: each evaluation is
@@ -329,12 +451,16 @@ impl FnCx<'_, '_> {
                 rest: rest && k + 1 == n,
             })
             .collect();
+        let items = self.forwarding_items.take();
         let args = (0..n)
-            .map(|k| match rest && k + 1 == n {
-                true => mk(ast::ExprKind::Spread(Box::new(mk(ast::ExprKind::Ident(
-                    name(k),
-                ))))),
-                false => mk(ast::ExprKind::Ident(name(k))),
+            .flat_map(|k| match (rest && k + 1 == n, items) {
+                (true, 0) => vec![mk(ast::ExprKind::Spread(Box::new(mk(
+                    ast::ExprKind::Ident(name(k)),
+                ))))],
+                (true, _) => (0..items)
+                    .map(|j| super::rest_forms::rest_item(&name(k), j))
+                    .collect(),
+                (false, _) => vec![mk(ast::ExprKind::Ident(name(k)))],
             })
             .collect();
         let held = ast::Ident {

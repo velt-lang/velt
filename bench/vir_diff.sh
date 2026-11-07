@@ -43,6 +43,7 @@ for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     line = re.sub(r"_L\d+_", "_L#_", line)
     line = re.sub(r"_Gunclaimed_\d+", "_Gunclaimed_#", line)
     line = re.sub(r'^(static#\d+ align=8 ")(\\u\{[0-9a-f]+\}|[^\\])', r"\1#", line)
+    line = re.sub(r'^(static#\d+ align=8 hex")[0-9a-f]{16}', r"\1#", line)
     sys.stdout.write(line)
 EOF
 }

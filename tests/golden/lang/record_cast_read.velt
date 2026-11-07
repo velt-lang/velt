@@ -1,0 +1,6 @@
+// `x as Record<K, V>` of an object with fields, in a program that writes to no such record and to
+// no field of `x`: its keys and values, as in Node.
+const made = new Proxy({}, {});
+function attrs(a: Record<string, string | undefined>) { return Object.keys(a).map((k) => k + "=" + a[k]).join(","); }
+const base: { href?: string; target?: string } = { href: "h" };
+console.log(attrs(base as Record<string, string | undefined>));

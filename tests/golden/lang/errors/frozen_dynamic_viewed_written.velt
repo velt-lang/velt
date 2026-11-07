@@ -1,0 +1,6 @@
+// As `frozen_dynamic_written`, through a typed view of the frozen object.
+const made = new Proxy({}, {});
+interface Sig { n: number; }
+const s = Object.freeze({ n: 1 }) as unknown as Sig;
+s.n = 2;
+console.log(s.n);

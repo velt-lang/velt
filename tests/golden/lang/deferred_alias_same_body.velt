@@ -1,0 +1,19 @@
+// check: no leaks
+// One helper type declared twice with one body is one type while deferred. Expected output from `node`. TypeScript 7 accepts it; 5.9 reports TS2322 at the writes of `__setup`.
+type Plain<T> = { [K in keyof T as K extends `__${string}` ? never : K]: T[K] };
+type Same<T> = { [K in keyof T as K extends `__${string}` ? never : K]: T[K] };
+type Access<P> = { readonly [K in keyof P]: P[K] };
+interface Ctx<P extends Record<string, any>, E extends Record<string, any>> {
+    props: Access<P>;
+    events: E;
+    parent: Ctx<any, any> | null;
+}
+type Setup<P extends Record<string, any>, E extends Record<string, any>> = (ctx: Ctx<P, E>) => string;
+type Factory<C extends Record<string, any>> = { __setup: Setup<Same<C>, C>; __name: string };
+function make<C extends Record<string, any>>(setup: (ctx: Ctx<Plain<C>, C>) => string): Factory<C> {
+    const f: Factory<C> = { __setup: setup as Setup<Plain<C>, C>, __name: "made" };
+    f.__setup = setup as Setup<Plain<C>, C>;
+    return f;
+}
+const m = make<{ a: number; __hidden: string }>((ctx) => "a=" + ctx.props.a);
+console.log(m.__name, m.__setup({ props: { a: 1 }, events: { a: 2, __hidden: "h" }, parent: null }));

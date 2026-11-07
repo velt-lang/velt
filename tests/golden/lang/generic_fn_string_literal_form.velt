@@ -1,0 +1,13 @@
+// `N extends string` keeps a string literal where a form in the signature is over `N`. Expected
+// output from `node`; `tsc --strict` accepts it.
+type F = <N extends string>(n: N, ...x: N extends "nums" ? number[] : string[]) => number;
+const f: F = (n, ...x) => x.length;
+console.log(f("nums", 1, 2), f("strs", "a"));
+function r<N extends string>(n: N): N extends "nums" ? number : string { return ((n as string) === "nums" ? 1 : "s") as any; }
+const y: number = r("nums");
+const s: string = r("other");
+console.log(y, s);
+function sel<const N extends string>(n: N): N extends "nums" ? number : string { return ((n as string) === "nums" ? 1 : "s") as any; }
+console.log(typeof sel("nums"), sel("nums"));
+const w = "dyn" as string;
+console.log(f(w, "z"));

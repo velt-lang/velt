@@ -1,0 +1,5 @@
+// Without typed proxies an object type holds only its own layout: no view.
+interface Cx { name: string; hello(): string; }
+const c: Cx = { name: "n", hello() { return "h"; } };
+const v = c as { name?: string; provides?: number };
+console.log(v.provides);

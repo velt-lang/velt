@@ -1,0 +1,17 @@
+// `null` and `undefined` through a rest parameter a call's type arguments decide are JavaScript's.
+// Expected output from `node`; `tsc --strict` accepts it.
+type M = <N extends "a">(n: N, ...r: N extends "a" ? [{ x: number } | null] : []) => void;
+const m: M = (n, ...r) => { const v: any = r[0]; if (v === null) console.log("is null"); else console.log("not null", v?.x, v ?? "dflt", v ? "truthy" : "falsy", JSON.stringify(v)); };
+m("a", null);
+m("a", { x: 2 });
+type U = <N extends "a">(n: N, ...r: N extends "a" ? [string | undefined] : []) => void;
+const u: U = (n, ...r) => { const v: any = r[0]; console.log(v === undefined, v); };
+u("a", undefined);
+u("a", "s");
+type P = <N extends "a">(n: N, ...r: N extends "a" ? [number | null, null] : []) => void;
+const p: P = (n, ...r) => { const a: any = r[0]; const b: any = r[1]; console.log(a === null, b === null, a, b); };
+p("a", null, null);
+p("a", 3, null);
+function rec(n: string, ...a: any[]): void { console.log(a[0] === null, a[0]); }
+const viaFn: M = rec;
+viaFn("a", null);

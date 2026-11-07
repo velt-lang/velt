@@ -1,0 +1,5 @@
+// The record is a copy, which identity tells from the object (Node prints true).
+const made = new Proxy({}, {});
+const o: { a?: string } = { a: "x" };
+const r = o as Record<string, string | undefined>;
+console.log((r as any) === (o as any));

@@ -82,7 +82,7 @@ impl FnCx<'_, '_> {
 
     /// Does a value of `a` convert to `b`, or one of `b` to `a` (a member and the field it is
     /// seen as)?
-    fn view_member_comparable(&mut self, a: TyId, b: TyId, span: Span) -> bool {
+    pub(super) fn view_member_comparable(&mut self, a: TyId, b: TyId, span: Span) -> bool {
         if a == b {
             return true;
         }

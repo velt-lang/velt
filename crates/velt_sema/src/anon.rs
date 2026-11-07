@@ -505,6 +505,10 @@ impl Ctx<'_> {
             return false;
         }
         let to = self.ty.opt_payload(to).unwrap_or(to);
+        // `Object.freeze(o) as unknown`: an `any` or `unknown` holds the object.
+        if self.dynamic(to).is_some() {
+            return false;
+        }
         let members = self.union_members(to).unwrap_or_else(|| vec![to]);
         members.iter().any(|m| match self.ty.kind(*m) {
             TyKind::Adt(d, _) => self

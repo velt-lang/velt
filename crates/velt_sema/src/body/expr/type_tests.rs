@@ -28,6 +28,16 @@ pub(crate) enum LitEq {
 
 impl FnCx<'_, '_> {
     /// `typeof e` as a string value.
+    /// Is the place `s` a field of a value that may be a view (`Self::may_be_typed_proxy`), whose
+    /// object may lack it or hold another type there? Then reading it is what checks it.
+    fn read_through_view(&mut self, s: &hir::Expr) -> bool {
+        let H::Field { base, .. } = &s.kind else {
+            return false;
+        };
+        let t = self.cx.ty.core(base.ty).unwrap_or(base.ty);
+        self.may_be_typed_proxy(t)
+    }
+
     pub(crate) fn typeof_value(&mut self, operand: &ast::Expr, span: Span) -> hir::Expr {
         if let Some(h) = self.global_typeof_value(operand, span) {
             return h;
@@ -56,7 +66,7 @@ impl FnCx<'_, '_> {
         let inner = self.cx.ty.core(sty).unwrap_or(sty);
         if inner == sty && self.cx.union_def(sty).is_none() {
             let tag = self.str_lit(self.cx.typeof_tag(sty), span);
-            if is_place(&s) {
+            if is_place(&s) && !self.read_through_view(&s) {
                 return tag;
             }
             let stmt = hir::Stmt {

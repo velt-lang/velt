@@ -16,7 +16,10 @@
 //!
 //! The same propagation carries how generic code looks at its values for
 //! [`crate::object_copies`]: `console.log` and `===` on a type parameter (std's `indexOf` and
-//! `includes`, a user's `eq<T>`) look at whatever type each call instantiates it with.
+//! `includes`, a user's `eq<T>`) look at whatever type each call instantiates it with. `new C<A>` is
+//! such a call, of the constructor and of the field initializers of `C` and its base classes,
+//! which are a unit of their own, keyed by the class ([`crate::inst_sites`]), as a module
+//! constant's initializer is.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -26,7 +29,7 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
-use crate::inst_sites::{carry_guard, guards_of};
+use crate::inst_sites::{carry_guard, constructed, for_each_init, guards_of};
 use crate::object_copies::Seen;
 use crate::types::children;
 use crate::visit;
@@ -49,7 +52,11 @@ enum Need {
     NoLock,
 }
 
-/// JSON-relevant facts of one function body.
+/// What a body constructs: the type, its arguments, the span and the guard bits, resolved by
+/// [`constructed`] once all bodies are visited.
+type News = Vec<(DefId, Vec<TyId>, Span, u64)>;
+
+/// JSON-relevant facts of one function body, or of one type's field initializers.
 #[derive(Default)]
 struct Uses {
     /// Types given to the JSON intrinsics, `console.log` and `===` directly.
@@ -206,15 +213,16 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
             _ => false,
         })
         .collect();
-    // Looks at values matter only for object copies; most programs make none.
-    let looks = !cx.object_copies.copies.is_empty();
+    // Looks at values matter only for object copies and frozen objects (`object_copies`); most
+    // programs have neither.
+    let looks = !cx.object_copies.copies.is_empty() || !cx.objects.frozen_defs.is_empty();
     let copies: Vec<(Span, TyId)> = cx
         .object_copies
         .copies
         .iter()
         .map(|c| (c.span, c.to))
         .collect();
-    let mut ids = identity::Looks {
+    let ids = identity::Looks {
         any_impl: cx.any.and_then(|a| a.imp),
         proxy: cx.prelude_adt("Proxy"),
         tys: &cx.ty,
@@ -223,56 +231,122 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         first: cx.object_copies.dyn_sources.len(),
         sources: vec![],
     };
+    let mut walk = Walk {
+        ids,
+        looks,
+        parsers: &parsers,
+        lookers: &lookers,
+    };
+    let mut bodies: Vec<(DefId, Uses, News)> = vec![];
     for (i, d) in cx.defs.iter_mut().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
+        let mut news = vec![];
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
-        ids.f = DefId(i as u32);
-        let guards = guards_of(ids.tys, &mut f.body.block);
+        walk.ids.f = DefId(i as u32);
+        let guards = guards_of(walk.ids.tys, &mut f.body.block);
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
-            let calls = u.calls.len();
-            if seen.insert(e.ty) {
-                u.types.push((e.ty, e.span));
-            }
-            // Type arguments of generic calls and of generic functions used as values.
-            let targs = match &e.kind {
-                E::Call {
-                    callee: Callee::Def(_, targs),
-                    ..
-                }
-                | E::FnRef(_, targs) => targs.as_slice(),
-                _ => &[],
-            };
-            for t in targs {
-                if seen.insert(*t) {
-                    u.types.push((*t, e.span));
-                }
-            }
-            uses_of(ids.tys, &mut u, e, looks, &parsers);
-            if looks {
-                identity::generated_look(&lookers, e, &mut u.direct);
-            }
-            if u.calls.len() > calls {
-                let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
-                u.guards.push(guard);
-            }
-            if looks {
-                ids.uses(&mut u.direct, e);
-            }
+            let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
+            walk.expr(&mut u, &mut news, &mut seen, e, guard);
         });
-        out.push((DefId(i as u32), u));
+        bodies.push((DefId(i as u32), u, news));
     }
-    let sources = std::mem::take(&mut ids.sources);
+    // An initializer has no locals of a function, as a constant's has none (`copy_flow::GLOBAL`).
+    walk.ids.f = crate::copy_flow::GLOBAL;
+    let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
+    let tys = walk.ids.tys;
+    for_each_init(tys, &mut cx.info, true, &mut |_, d, e| {
+        let (u, news, seen) = inits.entry(d).or_default();
+        walk.expr(u, news, seen, e, 0);
+    });
+    let sources = std::mem::take(&mut walk.ids.sources);
     cx.object_copies.dyn_sources.extend(sources);
+    let mut inits: Vec<_> = inits.into_iter().collect();
+    inits.sort_by_key(|(d, _)| *d);
+    bodies.extend(inits.into_iter().map(|(d, (u, news, _))| (d, u, news)));
+    let mut done: FxHashSet<(DefId, Vec<TyId>, u64)> = FxHashSet::default();
+    for (d, mut u, news) in bodies {
+        done.clear();
+        for (c, targs, span, guard) in news {
+            if done.insert((c, targs.clone(), guard)) {
+                for (callee, args) in constructed(cx, c, targs) {
+                    // Std's own run on what it is given, which its callers' looks see: `new
+                    // Set<T>()` shows nothing of a `T`, though `Set`'s body can hash one.
+                    if !is_std_fn(cx, callee) {
+                        u.calls.push((callee, args, span));
+                        u.guards.push(guard);
+                    }
+                }
+            }
+        }
+        out.push((d, u));
+    }
     out
 }
 
-/// Is `f` a function (or closure) of the standard library?
+/// One visit of the program's expressions, in [`collect`].
+struct Walk<'a> {
+    ids: identity::Looks<'a>,
+    /// Looks at values matter (`collect`).
+    looks: bool,
+    parsers: &'a FxHashSet<DefId>,
+    lookers: &'a FxHashSet<DefId>,
+}
+
+impl Walk<'_> {
+    /// Records what `e`, with guard bits `guard`, uses in `u`, and what it constructs in `news`.
+    fn expr(
+        &mut self,
+        u: &mut Uses,
+        news: &mut News,
+        seen: &mut FxHashSet<TyId>,
+        e: &Expr,
+        guard: u64,
+    ) {
+        let calls = u.calls.len();
+        if seen.insert(e.ty) {
+            u.types.push((e.ty, e.span));
+        }
+        // Type arguments of generic calls and of generic functions used as values.
+        let targs = match &e.kind {
+            E::Call {
+                callee: Callee::Def(_, targs),
+                ..
+            }
+            | E::FnRef(_, targs) => targs.as_slice(),
+            _ => &[],
+        };
+        for t in targs {
+            if seen.insert(*t) {
+                u.types.push((*t, e.span));
+            }
+        }
+        uses_of(self.ids.tys, u, e, self.looks, self.parsers);
+        if self.looks {
+            identity::generated_look(self.lookers, e, &mut u.direct);
+        }
+        if u.calls.len() > calls {
+            u.guards.push(guard);
+        }
+        if let E::New { def, type_args, .. } = &e.kind {
+            news.push((*def, type_args.clone(), e.span, guard));
+        }
+        if self.looks {
+            self.ids.uses(&mut u.direct, e);
+        }
+    }
+}
+
+/// Is `f` a function (or closure) of the standard library, or the initializers of a type or a
+/// constant of it?
 fn is_std_fn(cx: &Ctx, f: DefId) -> bool {
-    let Some(DefInfo::Fn(info)) = cx.info.get(f.0 as usize) else {
-        return false;
+    let module = match cx.info.get(f.0 as usize) {
+        Some(DefInfo::Fn(info)) => info.module,
+        Some(DefInfo::Global(g)) => g.module,
+        Some(DefInfo::Adt(_)) => return cx.declared_in_std(f),
+        _ => return false,
     };
-    cx.modules.get(info.module).is_some_and(|m| m.is_std)
+    cx.modules.get(module).is_some_and(|m| m.is_std)
 }
 
 /// [`has_param`] with the types at hand.

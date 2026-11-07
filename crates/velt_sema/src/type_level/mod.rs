@@ -9,9 +9,11 @@
 //! binds (a mapped type's key, `infer X`, the member a distributive conditional is at) are
 //! `TyEnv::locals`.
 //!
-//! A form whose argument is still a type parameter (in a generic function's signature, a generic
-//! class's field) would need deferred evaluation, which is not implemented: it is a "not
-//! supported yet" error, never a guess. Declaring such an alias is fine, as in TypeScript.
+//! A form whose argument is still a type parameter is deferred: an alias as `TyOp::Alias`, a form
+//! written in a generic definition or in a generic function type's signature as `TyOp::Inline`
+//! (`inline`, `crate::generic_fns`), evaluated with the arguments known. Where neither applies it
+//! is a "not supported yet" error, never a guess. Declaring such an alias is fine, as in
+//! TypeScript.
 //!
 //! An optional field's `T[K]` is `F | undefined`, as TypeScript reads it, so
 //! `undefined extends T[K]` finds the optional keys; an optional field of a mapped type's result
@@ -88,6 +90,10 @@ pub(crate) struct State {
     pub(crate) reduced: rustc_hash::FxHashMap<TyId, TyId>,
     /// The deferred forms written outside aliases (`TyOp::Inline`).
     pub(crate) inline: inline::Forms,
+    /// The alias each deferred alias is known by (`Ctx::canonical_alias`).
+    pub(crate) alias_canon: rustc_hash::FxHashMap<u32, u32>,
+    /// Per alias body that means the same in every module: the first alias with it.
+    pub(crate) alias_shapes: rustc_hash::FxHashMap<(usize, String), u32>,
 }
 
 /// The deferred types lowering may meet, with what they reduce to (`hir::Program::type_ops`):
@@ -151,6 +157,7 @@ impl Ctx<'_> {
     /// The deferred application of alias `a` to `args` (which mention type parameters), as
     /// written at `span`.
     pub(crate) fn deferred_alias(&mut self, a: u32, args: Vec<TyId>, span: Span) -> TyId {
+        let a = self.canonical_alias(a);
         let op = self.ty.intern(TyKind::Op(TyOp::Alias(a), args));
         self.type_level.op_sites.entry(op).or_insert(span);
         op
@@ -244,6 +251,15 @@ impl Ctx<'_> {
         let mut out = vec![];
         let mut nothing: Option<Nothing> = None;
         for s in subjects {
+            if let Some(r) = self.conditional_over_any(s, c, naked, env, &mut out) {
+                return r;
+            }
+            if matches!(s, Subject::Ty(st) if self.dynamic(st) == Some(crate::any::Dynamic::Any))
+                && !is_name(&c.extends, "any")
+                && !is_name(&c.extends, "unknown")
+            {
+                continue;
+            }
             let Ok(found) = self.match_pattern(s, &c.extends, env) else {
                 return self.ty.error;
             };
@@ -281,6 +297,44 @@ impl Ctx<'_> {
             ([one], None) => *one,
             _ => self.union_with(&out, nothing, t.span),
         }
+    }
+
+    /// `any extends E ? T : F` (`s` is `any`, `E` isn't): `T | F`, each `infer` of `E` at
+    /// `unknown`, as TypeScript has it. Adds them to `out`; `Some` with the result when one of
+    /// them takes in all others (`any`, `unknown`) or is an error.
+    fn conditional_over_any(
+        &mut self,
+        s: Subject,
+        c: &ast::ConditionalType,
+        naked: Option<&str>,
+        env: &TyEnv,
+        out: &mut Vec<TyId>,
+    ) -> Option<TyId> {
+        let Subject::Ty(st) = s else {
+            return None;
+        };
+        if self.dynamic(st) != Some(crate::any::Dynamic::Any)
+            || is_name(&c.extends, "any")
+            || is_name(&c.extends, "unknown")
+        {
+            return None;
+        }
+        let mut with_any = env.clone();
+        if let Some(name) = naked {
+            with_any.locals.push((name.to_string(), st));
+        }
+        let mut then_env = with_any.clone();
+        then_env.unknowns.extend(infer_names(&c.extends));
+        for (branch, inner) in [(&c.then, &then_env), (&c.else_, &with_any)] {
+            let r = self.resolve_type(branch, inner);
+            if r == self.ty.error || self.dynamic(r).is_some() {
+                return Some(r);
+            }
+            if r != self.ty.never && !out.contains(&r) {
+                out.push(r);
+            }
+        }
+        None
     }
 
     /// `true` and `false` both among `ts` are `boolean` again.
@@ -684,6 +738,25 @@ fn infer_names(t: &ast::TypeExpr) -> Vec<String> {
             | K::Void
             | K::Query(_) => {}
         }
+    }
+    let mut out = vec![];
+    go(t, &mut out);
+    out
+}
+
+/// [`infer_names`], for scoping names.
+pub(super) fn infer_names_ref(t: &ast::TypeExpr) -> Vec<&str> {
+    fn go<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
+        use velt_syntax::visit::{walk_type_expr, Visit};
+        struct F<'o, 't>(&'o mut Vec<&'t str>);
+        impl<'t> Visit<'t> for F<'_, 't> {
+            fn ty(&mut self, t: &'t ast::TypeExpr) {
+                if let ast::TypeExprKind::Infer(n) = &t.kind {
+                    self.0.push(&n.name);
+                }
+            }
+        }
+        walk_type_expr(t, &mut F(out));
     }
     let mut out = vec![];
     go(t, &mut out);

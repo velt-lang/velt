@@ -1,0 +1,1 @@
+copy_generic_nolit.velt:5:61: error: a value of type `{ a: f64; tag: string }` converts to `{ a: f64 }` by copying its fields, and this program assigns field `a`, which the other object would not see

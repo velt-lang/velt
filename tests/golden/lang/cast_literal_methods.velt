@@ -1,0 +1,5 @@
+// An object literal with an interface's members, cast to it, is a value of it.
+const made = new Proxy({}, {});
+interface Cx { n: number; z: number; hello(): string; }
+const c = { n: 1, z: 2, hello() { return "h"; } } as Cx;
+console.log(c.hello());

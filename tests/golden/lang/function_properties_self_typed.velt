@@ -1,0 +1,16 @@
+// A constant reading itself in a closure of its initializer, first reached from a function's
+// body, takes its type from the call's written type arguments and the callee's written result
+// type. Expected output from `node`; `tsc --strict` accepts it.
+type Setup<C> = (c: C) => () => string;
+type Factory<C> = ((props: C) => string) & { __setup: Setup<C> };
+function component<C>(setup: Setup<C>): Factory<C> {
+    const f = function (props: any) { return "called"; } as unknown as Factory<C>;
+    f.__setup = setup;
+    return f;
+}
+function el(type: Function, depth: number): string {
+    return typeof type + depth;
+}
+function make(): string { return el(Level, 1); }
+const Level = component<{ depth: number }>((c) => (): string => el(Level, c.depth - 1));
+console.log(make(), Level.__setup({ depth: 2 })());

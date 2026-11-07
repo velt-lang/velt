@@ -17,18 +17,21 @@ import { EventStream } from "../event_stream";
 import { lengthValue } from "../fields";
 import { BodySink, HttpStream } from "../http_stream";
 import { HttpResponse } from "../response";
-import { lastChunk, oneChunk, writePiece } from "./chunks";
+import { SourceHold } from "../source_hold";
+import { lastChunk, oneChunk, pieceLength, writePiece } from "./chunks";
+import { ClientEnd, ClientWatch } from "./client_watch";
 import { FieldBuf } from "./fields_buf";
 import { Head } from "./head";
 import { HeadParts, TYPE_BYTES, TYPE_HTML, TYPE_JSON, TYPE_SSE, TYPE_TEXT } from "./head_parts";
 import { Out } from "./out";
-import { writeHead } from "./write_head";
+import { endEarly, writeStreamBody } from "./stream_body";
+import { writeHead, writeSwitch } from "./write_head";
 
 /// How many bytes of a streamed body may wait to be sent before `write` waits.
 const QUEUED: number = 65536;
 
 /// A response on an HTTP/1.1 connection (the methods are documented on `HttpResponse`).
-export class Http1Response extends HttpResponse implements BodySink {
+export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
   /** The responses not yet written to the connection. */
   out: Out = new Out();
   /** The fixed parts of a head, and the `Date` value. */
@@ -49,12 +52,12 @@ export class Http1Response extends HttpResponse implements BodySink {
   /// A response was started.
   done: bool = false;
   /// The handler's response was cut off (`fail`): the connection closes without its end.
-  private cut: bool = false;
+  cut: bool = false;
   /** A streamed body is being written, chunked (HTTP/1.1) or until the connection closes. */
   streaming: bool = false;
   chunked: bool = false;
   /// The bytes a streamed body of known length still has to send (-1: not such a body).
-  private left: i64 = -1;
+  left: i64 = -1;
   /// The request was `HEAD`: the response has the head a `GET` would get, and no body.
   headOnly: bool = false;
   /// The response has no body (a `HEAD` request, or status 1xx, 204 or 304): what the handler
@@ -63,16 +66,27 @@ export class Http1Response extends HttpResponse implements BodySink {
   /// The connection was switched to another protocol (`upgrade`): the server lets it go.
   private switched: bool = false;
   private conn: TcpStream;
-  // Aborted when a write to the client fails or the server closes (made when first asked for).
+  /**
+   * What the request's signal (made when first asked for) follows: the client going away
+   * (`ClientWatch`), a write to it failing, and the server closing.
+   */
   private stopped: AbortSignal;
   private failed: AbortController = new AbortController();
   private either: AbortSignal | null = null;
+  /** Writing to the client failed, or its connection did. */
+  private gone: bool = false;
+  watch: ClientWatch;
+  /** Where this response's bytes start in `out`. */
+  outStart: i64 = 0;
+  /** The source of a streamed body being written. */
+  source: SourceHold | null = null;
 
-  constructor(conn: TcpStream, stopped: AbortSignal, request: Head) {
+  constructor(conn: TcpStream, stopped: AbortSignal, request: Head, watch: ClientWatch) {
     super();
     this.conn = conn;
     this.stopped = stopped;
     this.request = request;
+    this.watch = watch;
   }
 
   status(code: number) {
@@ -131,44 +145,19 @@ export class Http1Response extends HttpResponse implements BodySink {
 
   async stream(type?: string): Promise<HttpStream> {
     writeHead(this, -1, type ?? "text/plain; charset=utf-8", -1);
+    this.watch.listen();
     await this.queue();
     return new HttpStream(this);
   }
 
   async sendStream(body: BodyStream, type?: string, length?: number): Promise<void> {
-    // The head goes out with the first chunk: one write less per response. Trailers need
-    // chunks, so a length is only used without them.
-    const t = type ?? "text/html; charset=utf-8";
-    if (length != undefined && length >= 0 && this.trailers.length == 0) {
-      writeHead(this, -1, t, length as i64, true);
-      this.left = this.noBody ? -1 : length as i64;
-    } else {
-      writeHead(this, -1, t, -1);
-    }
-    try {
-      for await (const chunk of body) {
-        await this.piece(chunk);
-      }
-      if (this.left > 0) {
-        throw new Error(`the body ended ${this.left} bytes short of its Content-Length`);
-      }
-    } catch (e) {
-      // The client went away, or the source failed: nothing more can be sent, and the
-      // connection closes without the body's end (the client sees it cut off).
-      if (!this.clientGone()) {
-        console.error("request handler failed: the response body failed:", e);
-      }
-      this.streaming = false;
-      this.keepAlive = false;
-      this.cut = this.left >= 0;
-      return;
-    }
-    await this.finishStream();
+    await writeStreamBody(this, body, type, length);
   }
 
   async sse(): Promise<EventStream> {
     this.header("Cache-Control", "no-cache");
     writeHead(this, TYPE_SSE, null, -1);
+    this.watch.listen();
     await this.queue();
     return new EventStream(new HttpStream(this));
   }
@@ -180,6 +169,10 @@ export class Http1Response extends HttpResponse implements BodySink {
     }
     const made = AbortSignal.any([this.failed.signal, this.stopped]);
     this.either = made;
+    if (this.gone) {
+      this.failed.abort();
+    }
+    this.watch.listen();
     return made;
   }
 
@@ -207,13 +200,7 @@ export class Http1Response extends HttpResponse implements BodySink {
     this.done = true;
     this.switched = true;
     this.keepAlive = false;
-    out.text("HTTP/1.1 101 Switching Protocols\r\nUpgrade: ");
-    out.text(protocol);
-    out.text("\r\nConnection: Upgrade\r\n");
-    for (const h of fields) {
-      out.field(h[0], h[1]);
-    }
-    out.text("\r\n");
+    writeSwitch(out, protocol, fields);
     this.conn.writeBytesLater(out.buf, 0, out.length as number);
     out.length = 0;
     return this.conn;
@@ -247,11 +234,48 @@ export class Http1Response extends HttpResponse implements BodySink {
 
   /** Whether writing to the client failed: it went away. */
   clientGone(): bool {
-    return this.failed.signal.aborted;
+    return this.gone;
+  }
+
+  /** The connection failed: nothing more reaches the client. */
+  connectionFailed() {
+    this.gone = true;
+    this.failed.abort();
+    const hold = this.source;
+    if (hold != null) {
+      // Runs beside the wait for the source's next chunk, which it may end.
+      const ending = hold.end();
+    }
+  }
+
+  /**
+   * The client's input ended while this response is pending (`ClientEnd`, Node's rule): what is
+   * written stays written, nothing more is, and the connection ends now. A body cut off in the
+   * middle is answered 400 first, if nothing was.
+   */
+  async closedEarly(cut: bool) {
+    this.connectionFailed();
+    await endEarly(this, this.conn, cut);
+  }
+
+  /** See `ClientEnd`. */
+  stillAnswering(): bool {
+    return !this.done || this.streaming || this.either != null;
+  }
+
+  /** See `ClientEnd`. */
+  listens(): bool {
+    return this.streaming || this.either != null;
   }
 
   /** A new request: status 200, no headers. */
   begin(keepAlive: bool, http11: bool, headOnly: bool = false) {
+    if (this.either != null) {
+      // A signal is its request's: what happens to the connection later doesn't abort it.
+      this.either = null;
+      this.failed = new AbortController();
+    }
+    this.outStart = this.out.length;
     this.headOnly = headOnly;
     this.headLength = -1;
     this.switched = false;
@@ -308,11 +332,11 @@ export class Http1Response extends HttpResponse implements BodySink {
       try {
         await this.conn.writeBytes(out.buf, 0, out.length as number);
       } catch (e) {
-        out.length = 0;
-        this.failed.abort();
+        this.emptied();
+        this.connectionFailed();
         throw e;
       }
-      out.length = 0;
+      this.emptied();
     }
   }
 
@@ -326,11 +350,11 @@ export class Http1Response extends HttpResponse implements BodySink {
     if (out.length > 0) {
       try {
         this.conn.writeBytesLater(out.buf, 0, out.length as number);
-        out.length = 0;
+        this.emptied();
         await this.conn.drained(QUEUED);
       } catch (e) {
-        out.length = 0;
-        this.failed.abort();
+        this.emptied();
+        this.connectionFailed();
         throw e;
       }
     }
@@ -338,8 +362,8 @@ export class Http1Response extends HttpResponse implements BodySink {
 
   /** One piece of a streamed body (`HttpStream.write`). */
   async piece(data: string | u8[] | Uint8Array) {
-    if (!this.streaming) {
-      throw new Error("the streamed response has ended");
+    if (!this.streaming || this.gone) {
+      throw new Error(this.gone ? "the client went away" : "the streamed response has ended");
     }
     if (this.noBody) {
       return;
@@ -364,6 +388,12 @@ export class Http1Response extends HttpResponse implements BodySink {
     this.endChunks();
     // Otherwise (HTTP/1.0) the body ends with the connection: the head set `keepAlive` false.
     await this.queue();
+  }
+
+  /// What was buffered is written, this response's too.
+  private emptied() {
+    this.out.length = 0;
+    this.outStart = 0;
   }
 
   /// A body written at once: `send`, `json`, `html`.
@@ -395,14 +425,4 @@ export class Http1Response extends HttpResponse implements BodySink {
     }
     this.endChunks();
   }
-}
-
-/// The bytes `data` adds to a body.
-function pieceLength(data: string | u8[] | Uint8Array): i64 {
-  if (typeof data == "string") {
-    return Buffer.byteLength(data) as i64;
-  } else if (data instanceof Uint8Array) {
-    return data.length as i64;
-  }
-  return data.length as i64;
 }

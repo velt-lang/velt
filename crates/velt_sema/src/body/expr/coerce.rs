@@ -58,6 +58,12 @@ impl FnCx<'_, '_> {
         if self.cx.brand_base(h.ty).is_none() {
             return self.try_coerce_value(h, exp);
         }
+        // A brand as another of the same primitive whose object part it has.
+        if self.brand_assignable(h.ty, exp, h.span) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
         // A branded value converts as itself (`UserId` to `UserId | null`), else like its
         // primitive (a primitive never converts to a brand).
         match self.try_coerce_value(h, exp) {
@@ -79,6 +85,18 @@ impl FnCx<'_, '_> {
         }
         let h = match self.cx.is_generic_fn(h.ty) && self.cx.is_generic_fn(exp) {
             true => match self.generic_as_generic(h, exp) {
+                Ok(g) => return Ok(g),
+                Err(h) => h,
+            },
+            false => h,
+        };
+        let h = match self.string_bound_value(h, exp) {
+            Ok(s) => return Ok(s),
+            Err(h) => h,
+        };
+        let fixed = matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. });
+        let h = match fixed && self.cx.is_generic_fn(exp) {
+            true => match self.fn_value_as_generic(h, exp) {
                 Ok(g) => return Ok(g),
                 Err(h) => h,
             },
@@ -115,6 +133,11 @@ impl FnCx<'_, '_> {
             Err(h) => h,
         };
         self.coerce_as_written(h, exp, false)
+            .or_else(|h| self.record_value_as(h, exp))
+            .or_else(|h| {
+                let span = h.span;
+                self.assignable_view(h, exp, span)
+            })
     }
 
     pub(super) fn try_coerce_typed(
@@ -467,8 +490,10 @@ impl FnCx<'_, '_> {
             // An interface value where an interface whose members it has is expected (a part
             // of an intersection, a `Pick` of it, an interface it extends): the same object
             // (`crate::synth_ifaces`).
+            // (Not a generic function type's: a generic closure's table holds no other tables.)
             if self.cx.dynamic(h.ty).is_none()
                 && self.cx.dynamic(exp).is_none()
+                && !self.cx.is_generic_fn(exp)
                 && self.cx.iface_upcast((have, &from), (iface, args))
             {
                 let mut h = h;

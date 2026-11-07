@@ -13,6 +13,11 @@
 //! converts as `as` converts its value, not a `TypeError`: a float truncates and saturates
 //! (`NaN` is 0), an integer wraps (`300 as u8` is 44), and a 64-bit integer is read as itself,
 //! exact past 2^53.
+//!
+//! A write through `any` to an integer type keeps the value it was given or stops: `x.a = 1.5`
+//! on an `i32` field, `x.b = 300` on a `u8` one (`Glue::AnyNumericExact`). A float narrowed
+//! rounds, as a typed write does: `0.1` on an `f32` field. A value of the field's own type never
+//! gets here.
 
 use velt_sema::hir::{self, FloatTy, IntTy, TyId, TyKind};
 
@@ -22,6 +27,17 @@ use super::{cint, FnLower};
 use crate::vir::{
     BinOp, BlockId, Callee, Const, Local, Operand, Place, Proj, Rvalue, Terminator, Ty,
 };
+
+/// What `Glue::AnyNumeric` and its variants do with what isn't converted as it is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Numeric {
+    /// A value that isn't a number gives `false`.
+    Asks,
+    /// A value that isn't a number stops with the `TypeError`.
+    Stops,
+    /// So does a number the integer type can't hold (module docs).
+    Exact,
+}
 
 impl FnLower<'_, '_> {
     /// `AnyTag(a)`: the tag word of the value's descriptor, as an `i64`.
@@ -85,10 +101,11 @@ impl FnLower<'_, '_> {
             TyKind::Int(_) | TyKind::Float(_) => self.cx.ty(ty),
             _ => return false,
         };
-        let stops = self.any_context.is_none();
-        let g = match stops {
-            true => Glue::AnyNumericOrError,
-            false => Glue::AnyNumeric,
+        let stops = self.any_context.is_none() || self.any_write;
+        let g = match (self.any_write, stops) {
+            (true, _) => Glue::AnyNumericExact,
+            (_, true) => Glue::AnyNumericOrError,
+            _ => Glue::AnyNumeric,
         };
         let f = self.cx.late_glue(g, ty);
         let slot = Place::local(self.temp(vt));
@@ -122,16 +139,18 @@ impl FnLower<'_, '_> {
     /// `Glue::AnyNumeric` of the numeric type `ty`: the number of another numeric type held by
     /// the `any` of data `data` and descriptor `desc`, converted to `ty` (module docs) and
     /// written to `out`, and `true`, the `any` dropped; `false` for a value that is not a
-    /// number, the `any` kept. With `stops` (`Glue::AnyNumericOrError`), nothing is returned
-    /// and a value that is not a number stops with the `TypeError`.
+    /// number, the `any` kept. Otherwise (`Numeric`) nothing is returned and a value that is
+    /// not a number stops with the `TypeError`.
     pub(super) fn any_numeric_body(
         &mut self,
         data: Local,
         desc: Local,
         out: Local,
         ty: TyId,
-        stops: bool,
+        how: Numeric,
     ) {
+        let stops = how != Numeric::Asks;
+        let exact = how == Numeric::Exact;
         let vt = self.cx.ty(ty);
         let dest = self.deref_param(out, ty);
         let (data, desc) = (
@@ -181,20 +200,24 @@ impl FnLower<'_, '_> {
             let i = Operand::Copy(super::operand::proj(&dp, Proj::Deref(it)));
             let i = self.copy_to_temp(i, it);
             let i = Operand::Copy(Place::local(i));
-            let v = if vt == it {
-                i
-            } else {
-                self.rvalue_temp(vt, Rvalue::Cast(i, vt))
+            let v = match self.half_of(ty) {
+                Some(h) => self.narrow_half(i.clone(), it, h),
+                None if vt == it => i.clone(),
+                None => self.rvalue_temp(vt, Rvalue::Cast(i.clone(), vt)),
             };
+            if exact {
+                self.any_write_keeps_int(&i, &v, it, ty);
+            }
             self.assign(dest.clone(), Rvalue::Use(v));
             self.goto(yes);
             self.switch_to(miss);
         }
         let f = self.any_slot_call(desc.clone(), SLOT_NUMBER, vec![data.clone()], Ty::F64);
-        let v = match vt {
-            Ty::F64 => f,
-            Ty::F32 => self.rvalue_temp(vt, Rvalue::Cast(f, vt)),
-            _ => {
+        let v = match (self.half_of(ty), vt) {
+            (Some(h), _) => self.narrow_half(f.clone(), Ty::F64, h),
+            (_, Ty::F64) => f.clone(),
+            (_, Ty::F32) => self.rvalue_temp(vt, Rvalue::Cast(f.clone(), vt)),
+            (None, _) => {
                 // A float casts as `as` casts it (truncating, saturating: `NaN` is 0); a
                 // narrower integer goes through `i64` (exact), so that it wraps as `300 as u8`.
                 let fl = self.new_block();
@@ -212,12 +235,18 @@ impl FnLower<'_, '_> {
                 }
                 let i = self.rvalue_temp(Ty::I64, Rvalue::Cast(f.clone(), Ty::I64));
                 let c = self.rvalue_temp(vt, Rvalue::Cast(i, vt));
+                if exact {
+                    self.any_write_keeps_float(&f, &c, ty);
+                }
                 self.assign(dest.clone(), Rvalue::Use(c));
                 self.goto(yes);
                 self.switch_to(fl);
-                self.rvalue_temp(vt, Rvalue::Cast(f, vt))
+                self.rvalue_temp(vt, Rvalue::Cast(f.clone(), vt))
             }
         };
+        if exact {
+            self.any_write_keeps_float(&f, &v, ty);
+        }
         self.assign(dest, Rvalue::Use(v));
         self.goto(yes);
         self.switch_to(yes);
@@ -228,5 +257,66 @@ impl FnLower<'_, '_> {
             false => Operand::Const(Const::Bool(true), Ty::Bool),
         };
         self.terminate(Terminator::Return(r));
+    }
+
+    /// Stops unless `kept`, the `f64` number `f` as the integer type `ty`, is `f`. Past the top
+    /// a 64-bit integer saturates to a value that reads back as `f`, and an integer has no `-0`.
+    fn any_write_keeps_float(&mut self, f: &Operand, kept: &Operand, ty: TyId) {
+        let vt = self.cx.ty(ty);
+        let back = self.rvalue_temp(Ty::F64, Rvalue::Cast(kept.clone(), Ty::F64));
+        let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, back, f.clone()));
+        let limit = match vt {
+            Ty::I64 => Some(9_223_372_036_854_775_808.0),
+            Ty::U64 => Some(18_446_744_073_709_551_616.0),
+            _ => None,
+        };
+        let ok = match limit {
+            Some(top) => {
+                let top = Operand::Const(Const::Float(top), Ty::F64);
+                let under = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, f.clone(), top));
+                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, same, under))
+            }
+            None => same,
+        };
+        let one = Operand::Const(Const::Float(1.0), Ty::F64);
+        let inv = self.rvalue_temp(Ty::F64, Rvalue::Binary(BinOp::Div, one, f.clone()));
+        let down = Operand::Const(Const::Float(f64::NEG_INFINITY), Ty::F64);
+        let signed = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, inv, down));
+        let ok = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, ok, signed));
+        self.any_write_fits(ok, ty);
+    }
+
+    /// Stops unless `kept`, the integer `i` of the type `st` as the integer type `ty`, is `i`.
+    fn any_write_keeps_int(&mut self, i: &Operand, kept: &Operand, st: Ty, ty: TyId) {
+        let vt = self.cx.ty(ty);
+        let back = self.rvalue_temp(st, Rvalue::Cast(kept.clone(), st));
+        let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, back, i.clone()));
+        // `i64` and `u64` hold each other's top half as other values with the same bits.
+        let ok = if matches!((st, vt), (Ty::I64, Ty::U64) | (Ty::U64, Ty::I64)) {
+            let s = self.rvalue_temp(Ty::I64, Rvalue::Cast(i.clone(), Ty::I64));
+            let zero = cint(0, Ty::I64);
+            let up = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, zero, s));
+            self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, same, up))
+        } else {
+            same
+        };
+        self.any_write_fits(ok, ty);
+    }
+
+    /// The `TypeError` of a number that doesn't fit `ty`, unless `ok`.
+    fn any_write_fits(&mut self, ok: Operand, ty: TyId) {
+        let (good, bad) = (self.new_block(), self.new_block());
+        self.branch(ok, good, bad);
+        self.switch_to(bad);
+        let name = match self.cx.kind(ty) {
+            TyKind::Int(k) => format!("{k:?}"),
+            _ => "integer".to_string(),
+        };
+        self.panic_msg(&format!(
+            "TypeError: the number written through `any` doesn't fit the type {}",
+            name.to_lowercase()
+        ));
+        self.terminate(Terminator::Unreachable);
+        self.switch_to(good);
     }
 }

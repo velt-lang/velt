@@ -1,0 +1,9 @@
+// A getter that returns a function runs once, at the read, as in Node.
+const made = new Proxy({}, {});
+let reads = 0;
+class A { get m() { reads++; return () => "got"; } }
+function run<T>(o: T) {
+  const d = (o as { m?: unknown } | null)?.m;
+  if (typeof d === "function") { console.log((d as () => string).call(o), reads); }
+}
+run(new A());

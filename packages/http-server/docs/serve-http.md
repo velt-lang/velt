@@ -157,8 +157,10 @@ HTTP/1.0 request's expectation is ignored.
 - `sse(): Promise<EventStream>`: Server-Sent Events (`text/event-stream`, `Cache-Control:
   no-cache`): `send(data, event?, id?)` writes an event (each line of `data` a `data:` line),
   `comment(text?)` a line clients ignore (a keep-alive), `end()`.
-- `signal(): AbortSignal`: aborted when the client can no longer be written to or the server
-  closes; pass it to the work done for the request (`fetch(url, { signal })`).
+- `signal(): AbortSignal`: aborted when the client can no longer be written to, its input ends while
+  the response is pending (Node's rule, see the README's "end of a client's input"), its connection
+  fails, or the server closes; pass it to the work done for the request (`fetch(url, { signal })`).
+  A signal is its request's: the connection's later requests don't abort it.
 - `sent(): bool`; `upgraded(): bool`: `upgrade` handed the connection over.
 - `addTrailers(trailers: [string, string][])` (Node's `res.addTrailers`): fields sent after the
   body, checked as `header` checks them; call it before the body ends. Over HTTP/1.1 they end a

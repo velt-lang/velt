@@ -1,0 +1,11 @@
+// As `fresh_rhs_call`, in a program with proxies: the conversion keeps the one object.
+const made = new Proxy({}, {});
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+let q: { a: number } = { a: 0 };
+function take(x: any): number { q = seen(x); return 5; }
+function main() {
+  const p: any = { a: 1, b: 2 };
+  p.a = take(p);
+  console.log(q.a, p.a);
+}
+main();

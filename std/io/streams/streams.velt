@@ -100,7 +100,7 @@ export class ReadableStream<R> extends ByteSource {
    * must be a `Uint8Array` (copied, as a body's bytes are), else the read fails as Node's does.
    */
   [BYTE_CHUNKS](): AsyncIterator<u8[], IoError | AbortError> {
-    return bodyBytes<R>(this);
+    return new BodyBytes<R>(this);
   }
 
   /** How `console.log` shows the stream, as Node does. */
@@ -161,44 +161,62 @@ async function* relay<T, E>(src: AsyncIterable<T, E>): AsyncGenerator<T, Error> 
 // stream gives, reaches the body's reader as an `IoError`. When the body's reader stops early
 // (a client gone, a `for await` left), the stream is cancelled, so its source's `cancel` runs,
 // as when a JS `Response` body is cancelled.
-async function* bodyBytes<R>(
-  stream: ReadableStream<R>,
-): AsyncGenerator<u8[], IoError | AbortError> {
-  let reader: ReadableStreamDefaultReader<R>;
-  try {
-    reader = stream.getReader();
-  } catch (e) {
-    throw new IoError("EINVAL", e.message);
+class BodyBytes<R> implements AsyncIterator<u8[], IoError | AbortError> {
+  private stream: ReadableStream<R>;
+  private reader: ReadableStreamDefaultReader<R> | null = null;
+  private ended: bool = false;
+
+  constructor(stream: ReadableStream<R>) {
+    this.stream = stream;
   }
-  let ended = false;
-  try {
-    while (true) {
-      let r: IteratorResult<R>;
-      try {
-        r = await reader.read();
-      } catch (e) {
-        ended = true;
-        throw new IoError("EIO", `${e}`);
-      }
-      if (r.done) {
-        ended = true;
-        return;
-      }
-      const chunk: unknown = r.value;
-      if (!(chunk instanceof Uint8Array)) {
-        ended = true;
-        throw new IoError("EINVAL", "Received non-Uint8Array chunk");
-      }
-      const at = chunk.off as i64;
-      yield chunk.buf.bytes.slice(at, at + (chunk.len as i64));
+
+  async next(): Promise<IteratorResult<u8[]>, IoError | AbortError> {
+    if (this.ended) {
+      return { done: true };
     }
-  } finally {
-    if (!ended) {
+    const reader = this.reader ?? this.open();
+    let r: IteratorResult<R>;
+    try {
+      r = await reader.read();
+    } catch (e) {
+      this.ended = true;
+      throw new IoError("EIO", `${e}`);
+    }
+    if (r.done) {
+      this.ended = true;
+      return { done: true };
+    }
+    const chunk: unknown = r.value;
+    if (!(chunk instanceof Uint8Array)) {
+      this.ended = true;
+      throw new IoError("EINVAL", "Received non-Uint8Array chunk");
+    }
+    const at = chunk.off as i64;
+    return { value: chunk.buf.bytes.slice(at, at + (chunk.len as i64)), done: false };
+  }
+
+  private open(): ReadableStreamDefaultReader<R> throws IoError {
+    try {
+      const reader = this.stream.getReader();
+      this.reader = reader;
+      return reader;
+    } catch (e) {
+      this.ended = true;
+      throw new IoError("EINVAL", e.message);
+    }
+  }
+
+  // Also while a `next` waits: a read waiting ends with the cancel.
+  async return(): Promise<IteratorResult<u8[]>> {
+    if (!this.ended) {
+      this.ended = true;
       try {
+        const reader = this.reader ?? this.stream.getReader();
         await reader.cancel(null);
       } catch (e) {
         // The body's reader has gone: there is no one to tell.
       }
     }
+    return { done: true };
   }
 }

@@ -1,0 +1,8 @@
+// As `spread_view_more_keys`, for a rest pattern, and of a value that may be null.
+const made = new Proxy({}, {});
+function viewed<T>(x: T) { return x as { a?: number; b?: string } | null; }
+const v = viewed({ a: 1, b: "s", c: 2 });
+if (v) {
+  const { a, ...r } = v;
+  console.log(a, r);
+}

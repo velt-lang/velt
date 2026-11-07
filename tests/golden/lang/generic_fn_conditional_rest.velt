@@ -1,0 +1,79 @@
+// check: no leaks
+// A rest parameter that the type arguments of each call decide (#934): the type checks the call
+// against the evaluated form, and any function that takes those arguments is a value of it.
+// Expected output from `node`; `tsc --strict` accepts it.
+type Def<T> = { __d: T };
+type Names<E> = { [K in keyof E]: E[K] extends Def<any> | undefined ? K : never }[keyof E] & string;
+type Detail<E, N extends Names<E>> = E extends { [K in N]?: Def<infer D> } ? D : never;
+type Emit<E extends Record<string, any>> = <N extends Names<E>>(
+    name: N,
+    ...args: Detail<E, N> extends void ? [] : [detail: Detail<E, N>]
+) => void;
+type Ev = {
+    change: Def<number>;
+    close: Def<void>;
+    pick: Def<{ id: string; tags: string[] }>;
+    maybe: Def<string | undefined>;
+    other: string;
+};
+const log: unknown[][] = [];
+function rec(name: string, ...args: any[]): void { log.push([name, ...args]); console.log(name, args.length, JSON.stringify(args)); }
+const a: Emit<Ev> = rec;
+a("change", 1);
+a("close");
+a("pick", { id: "x", tags: ["p", "q"] });
+a("maybe", undefined);
+a("maybe", "s");
+const b: Emit<Ev> = (name, ...args) => { console.log("arrow", name, args.length); };
+b("change", 2);
+b("close");
+const none = (): void => { console.log("none"); };
+const c: Emit<Ev> = none;
+c("close");
+c("change", 3);
+function mk(prefix: string): (event: string, ...args: any[]) => void {
+    return (event: string, ...args: any[]) => { console.log(prefix, event, args); };
+}
+// The value stays usable as what it was.
+const held = mk("held");
+const viaHeld: Emit<Ev> = held;
+held("plain", 0);
+viaHeld("change", 11);
+const d: Emit<Ev> = mk("made");
+d("change", 4);
+d("pick", { id: "y", tags: [] });
+interface Ctx<E extends Record<string, any>> { title: string; emit: Emit<E> }
+const ctx: Ctx<Ev> = { title: "t", emit: mk("field") };
+ctx.emit("change", 5);
+ctx.emit("close");
+class Holder<E extends Record<string, any>> implements Ctx<E> {
+    title = "held";
+    emit: Emit<E> = rec;
+}
+const h = new Holder<Ev>();
+h.emit("change", 7);
+function use<E extends Record<string, any>>(f: (c: Ctx<E>) => void, e: Emit<E>): void {
+    f({ title: "gen", emit: e });
+}
+use<Ev>((c) => { c.emit("change", 8); c.emit("close"); console.log(c.title); }, mk("generic"));
+// A rest parameter whose form is an array at this type argument.
+type Many = <N extends "nums" | "strs">(n: N, ...xs: N extends "nums" ? number[] : string[]) => number;
+const m: Many = (n, ...xs) => xs.length;
+console.log(m("nums", 1, 2, 3), m("strs", "a"), m("strs"));
+// A form in a parameter and in the result, not a rest parameter.
+type Sel = <N extends "a" | "b">(n: N, other: N extends "a" ? number : string) => N extends "a" ? string : number;
+function sel<N extends "a" | "b">(n: N, other: N extends "a" ? number : string): N extends "a" ? string : number {
+    const name: string = n;
+    return (name === "a" ? "s" + other : 2) as any;
+}
+console.log(sel("a", 1), sel("b", "x"));
+// An instance at `any`: the same function, through a value and through an interface with methods.
+const wide: Emit<any> = a;
+wide("change", 9);
+interface Live<E extends Record<string, any>> { emit: Emit<E>; label(): string }
+class Item<E extends Record<string, any>> implements Live<E> {
+    emit: Emit<E> = rec;
+    label(): string { return "item"; }
+}
+function all(c: Live<any>): void { c.emit("change", 10); console.log(c.label()); }
+all(new Item<Ev>());

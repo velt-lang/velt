@@ -1,0 +1,5 @@
+// An array element likewise.
+const a: i32[] = [1, 2];
+const x: any = a;
+x[0] = 1.5;
+console.log(a[0]);

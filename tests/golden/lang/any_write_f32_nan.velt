@@ -1,0 +1,8 @@
+// `NaN` and `Infinity` are an `f32`'s own.
+class C { d: f32 = 1; }
+const c = new C();
+const x: any = c;
+x.d = NaN;
+console.log(c.d);
+x.d = Infinity;
+console.log(c.d);

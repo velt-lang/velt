@@ -1,0 +1,14 @@
+// `typeof` of a member reads it: a view's object decides. Node's `undefined` for a missing one is
+// this golden's stop, since a `number` here can't hold it.
+const made = new Proxy({}, {});
+function viewed<T>(x: T) { return x as { n?: number; s?: string } | null; }
+const has = viewed({ n: 1, s: "a" });
+console.log(typeof has?.n, typeof has?.s);
+const a: { a?: number } = { a: 2 };
+const b = a as { a: number };
+console.log(typeof b.a);
+const absent: { a?: number } = {};
+const n = absent as { a: number };
+console.log("before");
+console.log(typeof n.a);
+console.log("after");

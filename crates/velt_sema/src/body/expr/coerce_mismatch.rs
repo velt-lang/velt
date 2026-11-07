@@ -96,7 +96,9 @@ impl FnCx<'_, '_> {
         if matches!(self.cx.ty.kind(found.ty), TyKind::Shared(t) if *t == expected) {
             d = d.with_note(self.unreadable_shared_note(found.ty));
         }
-        if self.cx.is_generic_fn(expected) {
+        if self.cx.is_generic_fn(expected) && self.cx.is_generic_fn(found.ty) {
+            d = d.with_note("its function was checked at the type parameters' bounds of its own type arguments; as a value at other type arguments, whose bounds differ, it is not supported yet (#943)");
+        } else if self.cx.is_generic_fn(expected) {
             d = d.with_note(super::generic_conversions::fixed_note(&e, &f));
         } else if let Some(name) = self.bound_only_iface(expected) {
             d = d.with_note(format!(

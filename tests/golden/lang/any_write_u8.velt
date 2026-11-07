@@ -1,0 +1,6 @@
+// The same, a `u8` field.
+class C { a: i32 = 1; b: u8 = 1; }
+const c = new C();
+const x: any = c;
+x.b = 300;
+console.log(c.b);

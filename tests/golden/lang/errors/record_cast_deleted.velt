@@ -1,0 +1,6 @@
+// As `record_cast_written`, with `delete`.
+const made = new Proxy({}, {});
+const base: { href?: string; target?: string } = { href: "h" };
+function drop(a: Record<string, string | undefined>) { delete a["href"]; }
+drop(base as Record<string, string | undefined>);
+console.log(base.href);

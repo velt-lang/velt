@@ -1,0 +1,11 @@
+// `f.call(o)` from a closure around which `f` and `o` are never assigned.
+const made = new Proxy({}, {});
+class A { n = 4; dispose() { console.log("d", this.n); } }
+function reg(cb: () => void) { cb(); }
+function mk<T>(o: T) {
+  const d = (o as { dispose?: unknown } | null)?.dispose;
+  if (typeof d === "function") { reg(() => (d as () => void).call(o)); }
+}
+mk(new A());
+mk({ dispose: 1 });
+mk(null);

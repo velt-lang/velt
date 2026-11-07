@@ -1,0 +1,8 @@
+// A brand holds what its base does: an `i32` brand is no `number` (Node prints 1.5 1.5).
+const made = new Proxy({}, {});
+type B = i32 & { __b: 1 };
+type A = { a: B; b: number };
+const a: A = { a: 1 as B, b: 2 };
+const n = a as { a: number; c?: string };
+n.a = 1.5;
+console.log(a.a, n.a);

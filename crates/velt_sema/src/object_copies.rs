@@ -21,6 +21,18 @@
 //!
 //! The fix keeps Node's behavior: an object literal with the fields (`{ a: x.a }`) is a new
 //! object in TypeScript too. Generic code is checked where it has concrete types (`JSON.stringify` everywhere).
+//!
+//! In a program with typed proxies (#823) an object type can hold a view of another object
+//! (velt_vir lower/any_view.rs), so a conversion that a write, an identity test or `in` could tell
+//! from a copy is no error: it is the conversion through `any` a view comes from (`AnyTo(to, x as
+//! any)`), and its reads and writes go to the one object, as in Node. The other conversions stay
+//! copies, which cost a view's field access nothing. What prints, serializes or spreads a value
+//! goes by its static type, so a view would show too few fields: those stay as above, or
+//! `Conversion::ProxyOnly` where no object literal builds the source type (a proxy keeps its
+//! identity through it, a plain value throws a `TypeError`).
+//!
+//! A record has no view: `x as Record<K, V>` of an object with fields is a copy too
+//! (`Copy::record`), an error once the program writes to such a record or to a field of `x`'s type.
 
 use std::cell::RefCell;
 
@@ -31,6 +43,7 @@ use velt_common::{Diagnostic, Span};
 use crate::copy_flow::{CopyFlow, Store};
 use crate::ctx::Ctx;
 use crate::hir::{TyId, TyKind};
+use crate::object_views::Why;
 
 /// One conversion that copied the fields `fields` of a `from` value into a new `to`.
 pub(crate) struct Copy {
@@ -52,6 +65,9 @@ pub(crate) struct Copy {
     /// `Upcast`): [`CopyFlow`] does not follow it, so any value converted to a dynamic type
     /// whose type holds `to` may be it.
     pub generic: bool,
+    /// `x as Record<K, V>` of an object with fields: the record holds a copy of the fields, and
+    /// has no view (`FnCx::comparable_cast`).
+    pub record: bool,
 }
 
 /// An assignment to field `name` of a value of type `ty` (`None`: a type parameter's, which may
@@ -81,6 +97,9 @@ pub(crate) enum Seen {
     Spread,
     /// `"k" in x` for a key `x`'s type lacks: `Copies::in_keys[i]`.
     In(u32),
+    /// A dynamic value converted to this type (`AnyTo`): it may be any object a write through
+    /// `any` reaches.
+    FromDynamic,
     /// A value converted to a dynamic type (`ToDyn` of `Program::any_impl`), from where
     /// `Copies::dyn_sources[i]` says.
     Dynamic(u32),
@@ -103,9 +122,16 @@ pub(crate) struct Copies {
     /// The optional fields without a presence flag an object literal's property gives a value
     /// that may be null, by name (`crate::absent_fields`).
     pub null_literals: Vec<(String, Span)>,
-    /// The program's own code constructs a `Proxy` (#823): a conversion that would be reported
-    /// but whose source type no object literal builds is `Conversion::ProxyOnly` instead (a
-    /// proxy keeps its identity through it, a plain value throws a `TypeError`).
+    /// Writes to a record (`r[k] = v`, `delete r[k]`), which a record cast's copy would miss.
+    pub record_writes: Vec<(TyId, Span)>,
+    /// Casts that make a view of another object (`FnCx::comparable_cast`, `FnCx::assignable_view`)
+    /// and the object type each is seen as.
+    pub view_casts: Vec<(Span, TyId)>,
+    /// The pairs of object types being compared as a view (`FnCx::comparable_cast`): recursive
+    /// types compare as TypeScript's assume-true does.
+    pub view_pairs: Vec<(TyId, TyId)>,
+    /// The program's own code constructs a `Proxy` (#823): views and `Conversion::ProxyOnly`
+    /// (module docs).
     pub proxies: bool,
     /// Where the value of each `Seen::Dynamic` conversion may come from.
     pub dyn_sources: Vec<Vec<Store>>,
@@ -116,23 +142,27 @@ pub(crate) struct Copies {
 
 impl Copies {
     /// How many of each there are now (`body::recheck::Lens`).
-    pub(crate) fn mark(&self) -> [usize; 5] {
+    pub(crate) fn mark(&self) -> [usize; 7] {
         [
             self.copies.len(),
             self.writes.len(),
             self.seen.len(),
             self.in_optional.len(),
             self.null_literals.len(),
+            self.record_writes.len(),
+            self.view_casts.len(),
         ]
     }
 
     /// Drop what was added since `mark`.
-    pub(crate) fn rollback(&mut self, mark: [usize; 5]) {
+    pub(crate) fn rollback(&mut self, mark: [usize; 7]) {
         self.copies.truncate(mark[0]);
         self.writes.truncate(mark[1]);
         self.seen.truncate(mark[2]);
         self.in_optional.truncate(mark[3]);
         self.null_literals.truncate(mark[4]);
+        self.record_writes.truncate(mark[5]);
+        self.view_casts.truncate(mark[6]);
     }
 
     /// The index of key `k` in `in_keys` (for `Seen::In`).
@@ -156,11 +186,13 @@ impl Copies {
 pub(crate) fn check(cx: &mut Ctx) {
     let Copies {
         copies,
-        writes,
         seen,
         in_keys,
         proxies,
         dyn_sources,
+        record_writes,
+        mut view_casts,
+        writes,
         ..
     } = std::mem::take(&mut cx.object_copies);
     let spans: Vec<(Span, TyId)> = copies.iter().map(|c| (c.span, c.to)).collect();
@@ -176,29 +208,76 @@ pub(crate) fn check(cx: &mut Ctx) {
         dynamic: Default::default(),
         generic: Default::default(),
     };
+    // Conversions that keep the one object, as views (module docs); a type with its own
+    // methods (a class) has no view, nor has a copy with no conversion in the source to rewrite.
+    let views = |cx: &Ctx, c: &Copy| {
+        proxies && !c.generic && !c.record && c.span != Span::DUMMY && cx.class_of(c.to).is_none()
+    };
     let built = match proxies {
         true => built_types(cx),
         false => vec![],
     };
+    let mut viewed: Vec<(&Copy, Why)> = vec![];
     // Conversions allowed only for proxies: a plain source throws instead of being copied.
     let mut strict = vec![];
     for (ci, c) in copies.iter().enumerate() {
-        let proxy_only = proxies && !built.iter().any(|&t| related(cx, t, c.from));
+        if c.record {
+            let written = record_writes.iter().find(|w| related(cx, w.0, c.to));
+            if let Some(&(_, at)) = written {
+                report_record_write(cx, c, at);
+                continue;
+            }
+            // Identity: the record is another object, which a dynamic value may hold.
+            let shown = seen.iter().find(|s| {
+                matches!(s.2, Seen::Identity | Seen::Key)
+                    && compared(cx, s.0, &mut FxHashSet::default())
+                        .into_iter()
+                        .any(|m| cx.dynamic(m).is_some() || related(cx, m, c.to))
+            });
+            if let Some(&(t, span, how)) = shown {
+                report_seen(cx, c, t, span, how, &in_keys);
+                continue;
+            }
+        }
+        let proxy_only = proxies && !c.record && !built.iter().any(|&t| related(cx, t, c.from));
         if let Some(w) = assigned(cx, (c, ci), &writes, &looks) {
-            match proxy_only {
-                true => strict.push((c.span, c.to)),
+            match views(cx, c) {
+                true => viewed.push((c, Why::Write(w))),
+                false if proxy_only && !c.generic => strict.push((c.span, c.to)),
                 false => report_write(cx, c, w),
             }
         } else if let Some(&(t, span, how)) = seen
             .iter()
             .find(|s| sees(cx, (c, ci), s.0, s.2, &in_keys, &looks))
         {
-            match proxy_only {
-                true => strict.push((c.span, c.to)),
+            let shown = matches!(
+                how,
+                Seen::Printed | Seen::Serialized | Seen::Keys | Seen::Spread
+            );
+            match views(cx, c) && !shown {
+                true => viewed.push((c, Why::Seen(t, span, how))),
+                false if proxy_only && !c.generic => strict.push((c.span, c.to)),
                 false => report_seen(cx, c, t, span, how, &in_keys),
             }
         }
     }
+    if !viewed.is_empty() {
+        let done = crate::object_views::convert_to_views(cx, &viewed);
+        view_casts.extend(done.iter().copied());
+        // A conversion left a copy (no literal found for it) stays the error it was.
+        for (c, why) in viewed
+            .iter()
+            .filter(|(c, _)| !done.contains(&(c.span, c.to)))
+        {
+            match *why {
+                Why::Write(w) => report_write(cx, c, w),
+                Why::Seen(t, span, how) => report_seen(cx, c, t, span, how, &in_keys),
+            }
+        }
+    }
+    crate::object_views::check_frozen_dynamic(cx, &seen, &writes);
+    crate::object_views::check_record_sources(cx, &copies, &view_casts);
+    crate::object_views::check_view_spreads(cx, &seen, &view_casts);
     if !strict.is_empty() {
         mark_proxy_only(cx, &strict);
     }
@@ -216,16 +295,20 @@ fn mark_proxy_only(cx: &mut Ctx, strict: &[(Span, TyId)]) {
             }
         }
     }
-    let mut v = Mark(strict);
+    each_body(cx, &mut Mark(strict));
+}
+
+/// Visit the program's function bodies and constants' initializers.
+pub(crate) fn each_body(cx: &mut Ctx, v: &mut dyn crate::visit::VisitMut) {
     for d in cx.defs.iter_mut().flatten() {
         if let crate::hir::Def::Fn(f) = d {
-            crate::visit::block(&mut f.body.block, &mut v);
+            crate::visit::block(&mut f.body.block, v);
         }
     }
     for i in cx.info.iter_mut() {
         if let crate::defs::DefInfo::Global(g) = i {
             if let Some(e) = &mut g.init {
-                crate::visit::expr(e, &mut v);
+                crate::visit::expr(e, v);
             }
         }
     }
@@ -289,7 +372,7 @@ fn sees(
             }
             members.into_iter().any(|m| related(cx, m, c.to))
         }
-        Seen::Dynamic(_) => false,
+        Seen::Dynamic(_) | Seen::FromDynamic => false,
         // A copy of an object type's value (which has exactly its type's fields) with every
         // field in order shows what the original would, as one of a fresh source does.
         Seen::Spread | Seen::Printed | Seen::Serialized | Seen::Keys
@@ -365,16 +448,18 @@ fn dynamic_holds(cx: &mut Ctx, c: &Copy, ci: usize, looks: &Dynamic) -> bool {
 }
 
 /// Does the program convert the copy `c` (number `ci`), or a value that may hold its source, to
-/// a dynamic type? Only then can a write through `any` reach either object.
+/// a dynamic type, or a dynamic value to a type that may hold its source? Only then can a write
+/// through `any` reach either object.
 fn dynamic_reaches(cx: &mut Ctx, (c, ci): (&Copy, usize), looks: &Dynamic) -> bool {
     dynamic_holds(cx, c, ci, looks)
         || looks.seen.iter().any(|&(t, _, how)| {
-            matches!(how, Seen::Dynamic(_)) && holds(cx, t, c.from, &mut FxHashSet::default())
+            matches!(how, Seen::Dynamic(_) | Seen::FromDynamic)
+                && holds(cx, t, c.from, &mut FxHashSet::default())
         })
 }
 
 /// Are `a` and `b` one object type, as conversions see it?
-fn related(cx: &mut Ctx, a: TyId, b: TyId) -> bool {
+pub(crate) fn related(cx: &mut Ctx, a: TyId, b: TyId) -> bool {
     a == b || cx.canon(a) == cx.canon(b) || cx.same_layout(a, b)
 }
 
@@ -403,7 +488,7 @@ fn holds(cx: &mut Ctx, t: TyId, target: TyId, seen: &mut FxHashSet<TyId>) -> boo
 }
 
 /// Can a value of type `t` hold a value of a type `is` accepts (itself, an element, a field, …)?
-fn holds_by(
+pub(crate) fn holds_by(
     cx: &mut Ctx,
     t: TyId,
     is: &mut dyn FnMut(&mut Ctx, TyId) -> bool,
@@ -432,6 +517,19 @@ fn holds_by(
         parts.extend(fields.into_iter().map(|f| cx.subst(f, &args)));
     }
     parts.into_iter().any(|p| holds_by(cx, p, is, seen))
+}
+
+/// A record cast (`Copy::record`) in a program that writes to such a record.
+fn report_record_write(cx: &mut Ctx, c: &Copy, at: Span) {
+    let (from, to) = (cx.display(c.from), cx.display(c.to));
+    cx.error(
+        Diagnostic::error(
+            format!("a value of type `{from}` converts to `{to}` by copying its fields, and this program writes to such a record, which the object would not see"),
+            c.span,
+        )
+        .with_label(at, "written here")
+        .with_note("build the record with the fields you need (`{ a: x.a }`)"),
+    );
 }
 
 fn report_write(cx: &mut Ctx, c: &Copy, w: &Write) {
@@ -501,6 +599,7 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
         Seen::Identity => format!("compares `{shown}` values with `===` or `!==`"),
         Seen::Key => format!("uses `{shown}` values as keys compared by identity"),
         // Never reported itself (`sees`).
+        Seen::FromDynamic => format!("converts a dynamic value to {a} `{shown}`"),
         Seen::Dynamic(_) => format!("converts {a} `{shown}` to a dynamic type"),
         Seen::Spread => format!("spreads {a} `{shown}`"),
         Seen::In(i) => format!(
@@ -549,6 +648,11 @@ fn with_notes(cx: &mut Ctx, d: Diagnostic, c: &Copy) -> Diagnostic {
     ))
 }
 
+/// Is `t` an anonymous object type?
+fn anon(cx: &Ctx, t: TyId) -> bool {
+    matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
+}
+
 /// The types of the object literals (`AdtLit`) in the program's bodies and constants. Generated
 /// code is left out: the objects a generator builds (a value `JSON.parse` decodes) are made as
 /// the compiler's own glue made them, which no literal of the program built.
@@ -583,9 +687,4 @@ fn built_types(cx: &mut Ctx) -> Vec<TyId> {
         }
     }
     v.0.into_iter().collect()
-}
-
-/// Is `t` an anonymous object type?
-fn anon(cx: &Ctx, t: TyId) -> bool {
-    matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
 }

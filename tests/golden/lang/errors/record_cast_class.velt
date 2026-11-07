@@ -1,0 +1,7 @@
+// A class's value doesn't compare with a record (TS2352).
+const made = new Proxy({}, {});
+class K { a = "x"; set(s: string) { this.a = s; } }
+const k = new K();
+const r = k as Record<string, string>;
+k.set("y");
+console.log(r["a"]);

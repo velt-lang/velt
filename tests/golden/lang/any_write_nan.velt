@@ -1,0 +1,6 @@
+// The same, `NaN` in an integer field.
+class C { a: i32 = 1; }
+const c = new C();
+const x: any = c;
+x.a = NaN;
+console.log(c.a);

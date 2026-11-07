@@ -1,0 +1,12 @@
+// A function value taking a type with fewer fields, written through: the one object, as in Node.
+const made = new Proxy({}, {});
+type W = { id: number; name: string };
+const f = (o: { id: number }) => { o.id = 2; };
+const g: (o: W) => void = f;
+const h = f as (o: W) => void;
+const w: W = { id: 1, name: "a" };
+g(w);
+console.log(w.id);
+w.id = 1;
+h(w);
+console.log(w.id);

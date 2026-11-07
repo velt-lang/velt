@@ -12,6 +12,7 @@ import { TcpStream } from "velt/net";
 import { EventStream } from "../event_stream";
 import { checkName, checkValue, lengthValue } from "../fields";
 import { BodySink, HttpStream } from "../http_stream";
+import { sendBody, SourceHold } from "../source_hold";
 import { HttpResponse } from "../response";
 import { H2Connection } from "./connection";
 import { endBody, sendBytes, sendText, writeHead } from "./outbound";
@@ -202,27 +203,40 @@ export class H2Response extends HttpResponse implements BodySink {
    * `content-length`, and a source that ends short of it or goes past it resets the stream.
    */
   async sendStream(body: BodyStream, type?: string, length?: number): Promise<void> {
-    const t = type ?? "text/html; charset=utf-8";
-    if (length != undefined && length >= 0) {
-      // A length of 0 ends the stream with the head.
-      this.head(t, length as i64);
-      this.streaming = !this.noBody && length > 0;
-      this.left = this.streaming ? length as i64 : -1;
-      await this.drain();
-    } else {
-      await this.startStream(t);
+    if (this.done) {
+      throw new Error("the response was already sent");
     }
+    const t = type ?? "text/html; charset=utf-8";
+    const source = body[Symbol.asyncIterator]();
+    const hold = new SourceHold(source);
+    this.s.source = hold;
     try {
-      for await (const chunk of body) {
-        await this.piece(chunk);
+      if (length != undefined && length >= 0) {
+        // A length of 0 ends the stream with the head.
+        this.head(t, length as i64);
+        this.streaming = !this.noBody && length > 0;
+        this.left = this.streaming ? length as i64 : -1;
+        await this.drain();
+      } else {
+        await this.startStream(t);
+      }
+      await sendBody(source, hold, this);
+      this.s.source = null;
+      if (this.s.reset) {
+        return;
       }
       if (this.left > 0) {
         throw new Error(`the body ended ${this.left} bytes short of its Content-Length`);
       }
     } catch (e) {
-      // The client reset the stream: nothing more can be sent. The source failed: the stream
-      // is reset, not ended, so the client doesn't take the body so far for the whole one.
-      if (!this.s.reset) {
+      // The client reset the stream, also before the source began, or a write found its connection
+      // gone before the connection read that: nothing more can be sent, and the source ends if it
+      // hasn't. The source failed: the stream is reset, not ended, so the client doesn't take the
+      // body so far for the whole one.
+      this.s.source = null;
+      await hold.end();
+      const gone = e instanceof IoError && (e.code == "ECONNRESET" || e.code == "EPIPE");
+      if (!this.s.reset && !gone) {
         console.error("request handler failed: the response body failed:", e);
         this.fail();
       }

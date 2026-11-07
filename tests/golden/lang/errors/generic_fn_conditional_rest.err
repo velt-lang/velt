@@ -1,0 +1,9 @@
+generic_fn_conditional_rest.velt:8:1: error: this function takes 2 arguments but 1 argument was supplied
+generic_fn_conditional_rest.velt:9:13: error: mismatched types
+  = note: expected f64, found string
+generic_fn_conditional_rest.velt:10:12: error: expected a tuple of type `[]` (0 elements)
+generic_fn_conditional_rest.velt:11:3: error: the type `"nope"` does not satisfy the constraint `"change" | "close"`
+  = note: required by `N extends "change" | "close"` of this function
+generic_fn_conditional_rest.velt:12:3: error: the type `"other"` does not satisfy the constraint `"change" | "close"`
+  = note: required by `N extends "change" | "close"` of this function
+generic_fn_conditional_rest.velt:13:13: error: expected a tuple of type `[f64]` (1 elements)

@@ -1,0 +1,8 @@
+// A view from identity alone, with no write in the program.
+const made = new Proxy({}, {});
+type W = { a: number; b: string };
+type N = { a: number };
+const w: W = { a: 1, b: "x" };
+const v: N = w;
+const u: N = w;
+console.log(v === u, new Set<N>([v]).has(u));

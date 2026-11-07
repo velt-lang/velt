@@ -1,0 +1,19 @@
+// A conversion the program could tell from a copy (a field assigned through `any` here) keeps the
+// one object, as in Node, in a program with proxies.
+const made = new Proxy({}, {});
+interface Options { mode: string; extra: number; }
+interface Part { mode: string; }
+const opts: Options = { mode: "a", extra: 1 };
+function view(p: Part): Part { return p; }
+const part = view(opts);
+const through: any = opts;
+const key = "mode";
+through[key] = "b";
+console.log(part.mode, opts.mode);
+part.mode = "c";
+console.log(opts.mode, through.mode);
+console.log(Object.keys(part as any));
+console.log(JSON.stringify(part as any));
+const parts = new Set<Part>();
+parts.add(part);
+console.log(parts.has(view(opts)));

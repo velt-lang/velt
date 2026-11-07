@@ -1,0 +1,19 @@
+// `r[k]` where a value is expected: TypeScript types it as the record's value type.
+function escape(s: string): string { return s.toUpperCase(); }
+const attrs: Record<string, string> = { a: "x", b: "y" };
+const one: string = attrs["a"];
+console.log(one, escape(attrs["b"]));
+for (const k of Object.keys(attrs)) {
+  console.log(`${k}=${escape(attrs[k])}`);
+}
+const maybe = attrs["c"];
+console.log(maybe === undefined);
+const kept: string | undefined = attrs["c"];
+console.log(kept);
+const first: string = attrs["c"] || "fallback";
+console.log(first);
+if (!attrs["d"]) console.log("no d");
+const flags: Record<string, boolean> = {};
+if (!flags["x"]) console.log("no x");
+const n: string = attrs["e"] ? "yes" : "no";
+console.log(n);

@@ -1,0 +1,15 @@
+// A generic function value where the target's bound lies within the source's: the function runs
+// at the narrower bound. Expected output from `node`; `tsc --strict` accepts it.
+type Def<T> = { __d: T };
+type Names<E> = { [K in keyof E]: E[K] extends Def<any> ? K : never }[keyof E] & string;
+type Emit<E extends Record<string, any>> = <N extends Names<E>>(n: N) => void;
+const a: Emit<{ s: Def<1>; t: Def<2> }> = (n) => { console.log(n); };
+const b: Emit<{ s: Def<1> }> = a;
+b("s");
+function pass(e: Emit<{ t: Def<2> }>): void { e("t"); }
+pass(a);
+type Detail<E, N extends Names<E>> = E extends { [K in N]?: Def<infer D> } ? D : never;
+type Emit2<E extends Record<string, any>> = <N extends Names<E>>(n: N, ...r: Detail<E, N> extends void ? [] : [Detail<E, N>]) => void;
+const c: Emit2<{ s: Def<number>; t: Def<string> }> = (n, ...r) => { console.log(n, r.length); };
+const d: Emit2<{ s: Def<number> }> = c;
+d("s", 1);

@@ -1,0 +1,14 @@
+// A closure a field initializer makes (Node prints 5 5).
+type W = { a: number; b: number };
+type N = { a: number };
+var held: any = null;
+class Box<T> { f: () => T = () => held; }
+function mk(): any { const p: any = Object.create(null); p.a = 1; p.b = 2; return p; }
+function main() {
+  const p: any = mk();
+  held = p;
+  const q: N = new Box<W>().f();
+  p.a = 5;
+  console.log(q.a, p.a);
+}
+main();

@@ -1,0 +1,13 @@
+// A conversion whose fields are all optional keeps the one object too: a write through it reaches
+// the object where the field is one the object has.
+const made = new Proxy({}, {});
+interface Part { mode?: string; }
+interface Whole { mode?: string; extra?: number; }
+const whole: Whole = { mode: "a", extra: 1 };
+function set(p: Part) { p.mode = "b"; }
+set(whole);
+console.log(whole.mode);
+const part: Part = whole;
+const through: any = whole;
+through.mode = "c";
+console.log(part.mode);
