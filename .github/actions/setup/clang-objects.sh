@@ -32,6 +32,7 @@ case "${1:-}" in
     # every tar must be an object, a regular file, or nothing is unpacked. `tar -t` writes a name
     # with a newline as `\n`, so a line is a member. Objects are only added, never replaced.
     mapfile -t tars < <(find "$2" -type f -name '*.tar')
+    [ "${#tars[@]}" -gt 0 ] || { echo "no artifact: no tars under $2"; exit 1; }
     for tar in "${tars[@]}"; do
       names=$(tar -tf "$tar")
       types=$(tar -tvf "$tar" | cut -c1)

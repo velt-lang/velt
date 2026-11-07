@@ -442,8 +442,8 @@ jobs:
   # restores (maintaining.md "Merging"). What a queue job uploaded gets no more than a job with
   # nothing else in its workspace, only this script from the commit, and no token in `.git/config`:
   # `actions: write` to delete old entries stays out of the gate's jobs. No artifact (the commit
-  # compiled nothing new) saves nothing, and a failure costs the queue a staler cache, not a red
-  # `main`.
+  # compiled nothing new) saves nothing. Any failure stops the job before the save, which leaves the
+  # newest entry as it was and costs the queue a staler cache, not a red `main`.
   clang-objects:
     needs: main-plan
     if: github.event_name == 'push' && needs.main-plan.outputs.queue_run != ''
@@ -460,14 +460,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: ci
-          sparse-checkout: .github/actions/setup
+          sparse-checkout: .github/actions/setup/clang-objects.sh
+          sparse-checkout-cone-mode: false
           persist-credentials: false
-      # The same `path` as setup's restore: it is part of what a cache entry is found by.
+      # The same `path` as setup's restore: it is part of what a cache entry is found by. A miss
+      # must save nothing: this commit's objects alone would replace the whole entry as the newest.
       - uses: actions/cache/restore@v4
         with:
           path: target/velt-build-cache/v*/llvm
           key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
           restore-keys: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-
+          fail-on-cache-miss: true
       - name: clang's objects from the queue
         env:
           RUN: ${{ needs.main-plan.outputs.queue_run }}
