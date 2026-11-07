@@ -4,6 +4,7 @@ function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
 class I2 { s: string = heap("a"); }
 class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
 const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; junk(); };
-function run(h: A2[]) { for (const a of h) { KK(a); } }
+function r2(q: A2) { KK(q); }
+function run(h: A2[]) { for (const a of h) { r2(a); } }
 function t() { const h = [new A2()]; const x = h[0].c; run(h); junk(); console.log(x.s); }
 t();

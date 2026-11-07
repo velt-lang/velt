@@ -1,10 +1,11 @@
-// A local bound to the param or a part of it passes the param on (#2527). Output checked against Node.
+// A local bound to a part of the param passes the param on (#2527). Output checked against Node.
 function heap(a: string) { return a + "-".repeat(40); }
 function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
 class I2 { s: string = heap("a"); }
 class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
 const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; junk(); };
 class H { a: A2 = new A2(); }
-function run(q: H) { const z = q.a; KK(z); }
+function r2(q: A2) { KK(q); }
+function run(q: H) { const z = q.a; r2(z); }
 function t() { const h = new H(); const x = h.a.c; run(h); junk(); console.log(x.s); }
 t();

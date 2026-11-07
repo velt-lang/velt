@@ -1,0 +1,13 @@
+// A loop over an array of a param, whose object the function value frees (#2527). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
+class H { a: A2 = new A2(); }
+function t() {
+  const h = new H();
+  const k = (q: A2) => { h.a = new A2(); junk(); };
+  function g(o: A2) { for (const e of o.xs) { k(o); junk(); console.log(e.s); } }
+  g(h.a);
+}
+t();

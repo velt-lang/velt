@@ -5,6 +5,7 @@ class I2 { s: string = heap("a"); }
 class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
 const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; junk(); };
 class H { a: A2 = new A2(); }
-function run(q: H) { const { a } = q; KK(a); }
+function r2(q: A2) { KK(q); }
+function run(q: H) { const { a } = q; r2(a); }
 function t() { const h = new H(); const x = h.a.c; run(h); junk(); console.log(x.s); }
 t();

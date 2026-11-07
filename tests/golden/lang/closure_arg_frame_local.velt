@@ -1,10 +1,16 @@
-// The part lies in a by-reference local: not the frame's (#2527). Output checked against Node.
+// The same through a by-reference local (#2527). Output checked against Node.
 function heap(a: string) { return a + "-".repeat(40); }
 function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
 class I2 { s: string = heap("a"); }
 class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
-const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; junk(); };
 class H { a: A2 = new A2(); }
-const k = (h: H, v: string) => { h.a = new A2(); h.a.c.s = heap("zzzzzzzz"); junk(); return v; };
-function t() { const h = new H(); const o = h.a; console.log(k(h, o.c.s)); }
+function t() {
+  const h = new H();
+  const k = (q: A2) => { h.a = new A2(); junk(); };
+  const o = h.a;
+  const x = o.c;
+  k(o);
+  junk();
+  console.log(x.s);
+}
 t();
