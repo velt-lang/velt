@@ -175,16 +175,31 @@ impl FnLower<'_, '_> {
 
     /// `a === b` of two pointers of a proxiable type, given `eq`, their identity: two views of
     /// the same nothing are the same value too.
+    /// Only two different pointers that are both tagged need the test.
     pub(super) fn same_nothing(&mut self, a: &Place, b: &Place, eq: Operand) -> Operand {
         let (pa, pb) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+        let out = Place::local(self.temp(Ty::Bool));
+        self.assign(out.clone(), Rvalue::Use(eq.clone()));
+        let wa = self.rvalue_temp(Ty::U64, Rvalue::Cast(pa.clone(), Ty::U64));
+        let wb = self.rvalue_temp(Ty::U64, Rvalue::Cast(pb.clone(), Ty::U64));
+        let both = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, wa, wb));
+        let bit = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, both, cint(1, Ty::U64)));
+        let tagged = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bit, cint(0, Ty::U64)));
+        let (cold, join) = (self.new_block(), self.new_block());
+        self.branch(tagged, cold, join);
+        self.switch_to(cold);
         let nil_a = self.view_nothing(pa.clone(), true);
         let nil_b = self.view_nothing(pb.clone(), true);
         let null_a = self.view_nothing(pa, false);
         let null_b = self.view_nothing(pb, false);
-        let both = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, nil_a, nil_b));
+        let nils = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, nil_a, nil_b));
         let kind = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, null_a, null_b));
-        let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, both, kind));
-        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, eq, same))
+        let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, nils, kind));
+        let r = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, eq, same));
+        self.assign(out.clone(), Rvalue::Use(r));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(out)
     }
 
     /// Does the option at `p` (of type `ty`) hold a value, as a pattern and `=== null` see it:
