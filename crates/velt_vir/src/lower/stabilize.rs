@@ -503,7 +503,7 @@ impl FnLower<'_, '_> {
                 (bases.iter()).any(|&b| matches!(self.cx.kind(b), TyKind::Adt(..)))
                     || self
                         .cx
-                        .adt_field_tys(t)
+                        .part_types(t)
                         .into_iter()
                         .any(|f| self.can_hold(f, bases, seen))
             }

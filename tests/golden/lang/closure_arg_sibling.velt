@@ -158,6 +158,12 @@ function objectHoldsArray() {
   const f = (q: { xs: string[] }, v: string) => { q.xs[0] = heap("new"); junk(); return v; };
   console.log("object holding the array", f(o, xs[0]), xs[0]);
 }
+function unionBeside() {
+  const r = new R();
+  const u: string | number = heap("u");
+  const f = (a: string | number, v: string) => { r.s = heap("new"); junk(); return String(a).length + v; };
+  console.log("a union beside a part", f(u, r.s), r.s);
+}
 function asyncAndGenerator() {
   const r = new R();
   const g = function* (q: R, v: string) { q.s = heap("new"); yield v; yield q.s; };
@@ -171,5 +177,5 @@ async function asyncClosure() {
 string_(); optional(); union(); any_(); object_(); tuple(); copyAggregate(); classField();
 throughClass(); arrayPop(); arrayStore(); tupleStore(); objectType(); forwarded(); held();
 converted(); twoParts(); arrayHoldsContainer(); arrayHoldsArray(); arrayOfObjects(); tupleHolds();
-objectHoldsArray(); asyncAndGenerator();
+objectHoldsArray(); unionBeside(); asyncAndGenerator();
 asyncClosure().then(() => console.log("done"));
