@@ -54,7 +54,8 @@ function main() {
 }
 
 // The same through what no direct call shows: a method that dispatch runs, a method called
-// through a type parameter, a deferred type, and an `extend` on an array.
+// through a type parameter, and a deferred type. An `extend` that implements an interface is
+// refused at its method: a value of any type reaches it, through `any` too.
 type P3 = [number, number, number];
 
 interface Generic {
@@ -253,4 +254,44 @@ function nested<T>(): number {
 
 function deeplyNested(): number {
   return nested<P3>();
+}
+
+interface Reached<X> {
+  r(f: (t: X) => void): number;
+}
+
+extend<T> Array<T> implements Reached<T> {
+  r(f: (t: T) => void): number {
+    const g: G<T> = { v: this[0], n: 7 };
+    const h = g;
+    f(g.v);
+    const a: any = h.v;
+    return a[0];
+  }
+}
+
+function throughAny(p: P3): number {
+  const a: P3[] = [p];
+  const o: any = a;
+  return (o as Reached<P3>).r((q: P3) => {
+    q[0] = 9;
+  });
+}
+
+type Tn<T> = T extends number ? [number, number, number] : T;
+type T4<T> = Tn<Tn<Tn<Tn<T>>>>;
+type T16<T> = T4<T4<T4<T4<T>>>>;
+type T20<T> = T4<T16<T>>;
+
+function storesDeep<T>(x: T20<T>): number {
+  const g: G<T20<T>> = { v: x, n: 1 };
+  return g.n;
+}
+
+function middle<T>(x: T20<T>): number {
+  return storesDeep<T>(x);
+}
+
+function tooDeep(p: P3): number {
+  return middle<number>(p);
 }
