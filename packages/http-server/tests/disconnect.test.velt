@@ -338,30 +338,6 @@ describe("a client that shuts its sending side", () => {
     }
   });
 
-  it(
-    "gets the answer when its input ended before a handler's first wait, however long",
-    async () => {
-      const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-        // timing: its input has ended by the first wait, and the handler takes time past that
-        const until = Date.now() + 30;
-        while (Date.now() < until) {}
-        await Promise.resolve();
-        const later = Date.now() + 30;
-        while (Date.now() < later) {}
-        return new Response("answer");
-      });
-      try {
-        const c = await connect(`127.0.0.1:${server.port}`);
-        await c.write(GET);
-        c.shutdown();
-        expect((await timeout(readAll(c), LIMIT)).endsWith("answer")).toBe(true);
-        c.close();
-      } finally {
-        await server.shutdown();
-      }
-    },
-  );
-
   for (const head of [
     "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
     "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
@@ -401,7 +377,7 @@ describe("a client that shuts its sending side", () => {
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
       await hold(g);
       // timing: the answer of a handler that took time
-      await sleep(30);
+      await sleep(300);
       return new Response("late");
     });
     try {
@@ -505,7 +481,7 @@ describe("a client that shuts its sending side", () => {
     const slow = async (): Promise<Response> => {
       await hold(g);
       // timing: the answer of a handler that took time
-      await sleep(30);
+      await sleep(300);
       arrive(ran);
       return new Response("/slow");
     };
@@ -548,7 +524,7 @@ describe("a client that shuts its sending side", () => {
       if (path == "/slow") {
         await hold(g);
         // timing: the answer of a handler that took time
-        await sleep(30);
+        await sleep(300);
       }
       return new Response(path);
     });
@@ -607,7 +583,7 @@ describe("a client that shuts its sending side", () => {
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
       await hold(g);
       // timing: the answer of a handler that took time
-      await sleep(30);
+      await sleep(300);
       return new Response("late");
     });
     try {

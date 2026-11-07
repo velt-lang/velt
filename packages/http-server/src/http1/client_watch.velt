@@ -1,10 +1,10 @@
 // http-server (internal): `ClientWatch`, how an HTTP/1.1 connection notices a client that goes
 // away while its request is answered. A handler that asked for its signal, or a streamed response,
 // has a promise on the connection's task reading the socket while it waits, as Node's server always
-// does. Any other handler pays one look at the socket when it first waits and, if it took time,
-// another before its answer goes out: what it answers then is dropped if the client's input ended,
-// so what the client sees is the same, only the connection ends with the handler. One that answers
-// before it waits starts nothing.
+// does. Any other handler that waits pays one look at the socket before its answer goes out: if the
+// client's input ended and the handler took `TOOK_TIME`, the answer is dropped, so what the client
+// sees is the same, only the connection ends with the handler. One that answers before it waits
+// pays nothing.
 //
 // Node's rule (`httpAllowHalfOpen` off): the end of the client's input while a response is pending
 // is the client gone, on any request. What was written stays written, nothing more is, and the
@@ -23,8 +23,10 @@ import { Parser } from "./parser";
 /// writes tell.
 const READ_AHEAD: i64 = 65536;
 
-/// The milliseconds after which a handler that waited unwatched has its answer checked.
-const TOOK_TIME: i64 = 5;
+/// How long a handler that waited unwatched takes for its answer to be dropped. The clock is read
+/// only when the input ended. Below this, the handler may not have really waited (awaiting only
+/// ready promises, on a loaded machine), and Node would send that answer.
+const TOOK_TIME: i64 = 100;
 /// What `look` says when the client's input ended and a handler took time.
 export const GONE: i64 = -2;
 
@@ -93,19 +95,6 @@ export class ClientWatch {
     }
     this.lookAgain = true;
     t.answersFromHere();
-    if (this.parser.available() > 0) {
-      return;
-    }
-    try {
-      // Input that ended with the request: only real waiting (`run`) loses the answer.
-      if (this.parser.readFrom(this.conn) == null) {
-        this.lookAgain = false;
-        this.start();
-      }
-    } catch (e) {
-      this.over = true;
-      t.connectionFailed();
-    }
   }
 
   /// The handler asked for its signal, or started a streamed response: from its next wait on.

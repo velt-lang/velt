@@ -212,13 +212,13 @@ request lazily: a handler pays only for what it reads.
   400 (one with `Transfer-Encoding: chunked` that came whole but wasn't read is too). Differing from
   Node: a request with an `Upgrade` header isn't watched, as the handler may take the connection;
   what a handler does while it reads a body from the socket isn't watched until the body's end;
-  an unwatched handler that took under 5 ms still answers; and when pipelined requests were read
-  together, an `async` handler's answer before one that took time is dropped with it.
-- A handler that answers before it waits costs nothing for this. One that waits pays a look at the
-  socket when it first waits and another before its answer goes out, and for it the connection
-  ends with the handler, not at once, though the client gets the same bytes. Only one that asked for
-  `req.signal`, or a streamed response, has the socket read while it waits (up to 64 KiB past what
-  it took), which costs more.
+  a handler that asked for neither a signal nor a stream has the connection end with it, not at
+  once, and if it took under 100 ms its answer still goes out, as it can't be told from one that
+  didn't really wait; and when pipelined requests were read together, an `async` handler's answer
+  before one that took time is dropped with it.
+- A handler that answers before it waits costs nothing for this. One that waits pays one look at
+  the socket before its answer goes out. Only one that asked for `req.signal`, or a streamed
+  response, has the socket read while it waits (up to 64 KiB past what it took), which costs more.
 - `server.shutdown()` waits for an open stream as for any request, as Node's `close()` does, and
   aborts `req.signal`: a source that never ends should listen to it.
 - A `Request` is valid until its handler settles: what the handler read stays readable, but
