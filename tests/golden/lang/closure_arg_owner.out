@@ -1,0 +1,29 @@
+function value 41 48
+const 41 48
+module let 41
+field of a module object 41
+array element 41
+returned 41
+named function as a value 41
+static method as a value 41
+class field through a method 41
+two levels 41
+through a closure it makes 41
+through a local 41
+part, one level 42
+part, two levels 42
+part through a local 42
+part, class field through a method 42
+element replaced 41
+element replaced 41
+array replaced 41 0
+array replaced 41 0
+array passed directly 41 1
+strings 41 0
+strings 41 0
+destructured 41 1
+through a closure 41
+through a closure 41
+named function forwarding 41
+named function forwarding 41
+own object beside another 44

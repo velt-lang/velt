@@ -104,6 +104,8 @@ pub(super) struct Collector<'a, 'm> {
     /// Non-escaping closures held in a local (`crate::ownership::held_closures`): a call
     /// through one uses the variables it borrows, as a closure argument would.
     pub held: &'a FxHashMap<LocalId, DefId>,
+    /// The params of each function that may reach a function value.
+    pub value_params: &'a crate::value_params::ValueParams,
 }
 
 impl Collector<'_, '_> {

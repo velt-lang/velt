@@ -83,7 +83,7 @@ impl FnLower<'_, '_> {
         // (replaceable.rs), and one read beside its possible container by a callee that writes
         // through that param, which may replace any object on the way to it, `x` in `g(a, x.s)` too.
         // The callee may read its parameter after that. JavaScript's callee keeps what it was passed.
-        if reach.sibling && is_part(a)
+        if reach.sibling && is_part(a) && !self.frame_owns_unwritten(a)
             || self.in_array_buffer(a)
             || self.in_module_slot(a)
             || self.may_replace(a, reach)
@@ -120,6 +120,40 @@ impl FnLower<'_, '_> {
         let v = self.borrowed_arg(a);
         self.retain_hops = prev;
         v
+    }
+
+    /// Is the place `e` in a value this frame holds a reference of its own to (`const o = new C()`,
+    /// not a param or a by-reference `const`, which may lie inside what another argument reaches),
+    /// with no field on the way written anywhere? Then nothing can replace or free it, whatever
+    /// the callee is given (`k(ctx, o.name)`).
+    fn frame_owns_unwritten(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Local(l, _) => {
+                let info = &self.info[l.0 as usize];
+                info.droppable
+                    && !info.indirect
+                    && !info.in_cell
+                    && !self.ref_bindings.contains(l)
+                    && !self.is_param(*l)
+            }
+            K::Field { base, index, .. } => {
+                let bty = self.sub(base.ty);
+                !self.cx.field_written(bty, *index) && self.frame_owns_unwritten(base)
+            }
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.frame_owns_unwritten(base)
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `l` a param of the function being lowered?
+    fn is_param(&self, l: hir::LocalId) -> bool {
+        match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
+            Some(hir::Def::Fn(f)) => f.params.iter().any(|p| p.local == l),
+            _ => true,
+        }
     }
 
     /// Can the call assign the place `e`, or a part stored inline on the way to it? A counted
@@ -442,7 +476,12 @@ impl FnLower<'_, '_> {
         i: usize,
         changed: u64,
     ) -> ArgReach {
-        let others = if i < 64 { changed & !(1 << i) } else { changed };
+        let reach = match how {
+            Stabilize::Direct(d) => self.cx.value_param_bits(d, args.len()),
+            _ => 0,
+        };
+        let others = changed | reach;
+        let others = if i < 64 { others & !(1 << i) } else { others };
         ArgReach {
             callee: match how {
                 Stabilize::Direct(d) => Some(d),

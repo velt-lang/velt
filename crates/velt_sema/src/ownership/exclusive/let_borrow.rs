@@ -202,8 +202,9 @@ fn changed_while_borrowed(
     ))
 }
 
-/// A call through a function value given what owns `place` (`const x = a.b; g(a)`): its params read
-/// as borrows however the function value changes them, as it may replace `a.b`.
+/// A call through a function value, or to a function that passes the param on to one
+/// (`crate::value_params`), given what owns `place` (`const x = a.b; g(a)`): its params read as
+/// borrows however the function value changes them, as it may replace `a.b`.
 fn changed_by_function_value(
     col: &Collector,
     rest: &mut [Stmt],
@@ -213,6 +214,7 @@ fn changed_by_function_value(
     let mut v = ValueCalls {
         col,
         place,
+        equal: false,
         hit: None,
     };
     for s in rest {
@@ -224,38 +226,74 @@ fn changed_by_function_value(
     v.hit
 }
 
+/// The same for the body of a loop over `place`, or (`equal`) given `place` itself too: a function
+/// value given the array may empty it.
+pub(super) fn handed_to_function_value(
+    col: &Collector,
+    body: &mut Block,
+    place: &Place,
+    equal: bool,
+) -> Option<Use> {
+    let mut v = ValueCalls {
+        col,
+        place,
+        equal,
+        hit: None,
+    };
+    visit::block(body, &mut v);
+    v.hit
+}
+
 struct ValueCalls<'c, 'a, 'm> {
     col: &'c Collector<'a, 'm>,
     place: &'c Place,
+    equal: bool,
     hit: Option<Use>,
+}
+
+impl ValueCalls<'_, '_, '_> {
+    /// Argument `a` of such a call, when it is what owns the place.
+    fn argument(&mut self, a: &Expr) {
+        let mut x = a;
+        while let E::Upcast(y) | E::WrapSome(y) | E::ToDyn { expr: y, .. } | E::Cast(y) = &x.kind {
+            x = y;
+        }
+        let Some((p, _)) = self.col.place_of(x) else {
+            return;
+        };
+        let owner =
+            (self.equal || p.proj.len() < self.place.proj.len()) && contains(&p, self.place);
+        if owner && self.hit.is_none() {
+            self.hit = Some(Use {
+                place: p,
+                access: Access::Unique,
+                span: a.span,
+                text: self.col.text(x),
+                captured: false,
+                capture: None,
+                identity: false,
+                inside: false,
+            });
+        }
+    }
 }
 
 impl VisitMut for ValueCalls<'_, '_, '_> {
     fn expr(&mut self, e: &mut Expr) {
-        let E::Call {
-            callee: Callee::Indirect(_),
-            args,
-        } = &e.kind
-        else {
+        let E::Call { callee, args } = &e.kind else {
             return;
         };
-        for a in args {
-            let Some((p, _)) = self.col.place_of(a) else {
-                continue;
-            };
-            let owner = p.proj.len() < self.place.proj.len() && contains(&p, self.place);
-            if owner && self.hit.is_none() {
-                self.hit = Some(Use {
-                    place: p,
-                    access: Access::Unique,
-                    span: a.span,
-                    text: self.col.text(a),
-                    captured: false,
-                    capture: None,
-                    identity: false,
-                    inside: false,
-                });
+        match callee {
+            Callee::Indirect(_) => args.iter().for_each(|a| self.argument(a)),
+            Callee::Def(d, _) => {
+                let bits = self.col.value_params.of_args(*d, args.len());
+                for (i, a) in args.iter().enumerate().take(64) {
+                    if bits >> i & 1 == 1 {
+                        self.argument(a);
+                    }
+                }
             }
+            _ => {}
         }
     }
 }

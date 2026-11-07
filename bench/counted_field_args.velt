@@ -183,6 +183,16 @@ function writtenToString() {
   for (let i = 0; i < N; i++) { c += boolText(o, o.written); }
   return c;
 }
+class Ctx { depth: number = 0; }
+class Named { name: string = "named-string-on-the-heap-".repeat(2); }
+function ctxCheck(c: Ctx, v: string): boolean { return c.depth === 0 && v.startsWith("nam"); }
+function ctxOwned() {
+  const o = new Named();
+  const ctx = new Ctx(); let c = 0;
+  const k: (x: Ctx, v: string) => boolean = ctxCheck;
+  for (let i = 0; i < N; i++) { if (k(ctx, o.name)) c++; }
+  return c;
+}
 function all() {
   console.log(thisPlain());
   console.log(recvStartsWithField());
@@ -209,5 +219,6 @@ function all() {
   console.log(writtenMapGet());
   console.log(writtenIncludes());
   console.log(writtenToString());
+  console.log(ctxOwned());
 }
 all();

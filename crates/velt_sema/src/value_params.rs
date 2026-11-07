@@ -1,0 +1,344 @@
+//! Which params of each function may reach a function value (#2527): `run(q)` calling `KK(q)`, or
+//! `r2(q)` that does, directly or through a closure it makes. Such a param reads as a borrow in
+//! `run`'s signature, but what it holds can be replaced under whoever lent it: a `const x = a.c`
+//! before `run(a)`, an element a loop is bound to, or an argument `run(a, a.c.s)` beside it. So can
+//! a param a function modifies though it is `Borrow` (used as a value too: `finish::demote_fn_values`).
+//! Asked by the exclusivity check (`const`s, loops) and by lowering (`stable_borrow`); one scan of
+//! every body, then a walk up the callers from what changed.
+
+use rustc_hash::FxHashMap;
+
+use crate::hir::{
+    Block, Callee, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode, Pat, PatKind, Stmt,
+    StmtKind as S,
+};
+
+/// For each function, the params (bit `i`: `params[i]`, the first 64) that may reach a function
+/// value.
+#[derive(Default)]
+pub struct ValueParams {
+    bits: FxHashMap<DefId, u64>,
+    params: FxHashMap<DefId, usize>,
+}
+
+impl ValueParams {
+    /// Of a call of `def` with `args` arguments, the arguments (bit `i`: argument `i`) that may
+    /// reach a function value. A closure's captures come before the params its arguments fill.
+    pub fn of_args(&self, def: DefId, args: usize) -> u64 {
+        let bits = self.bits.get(&def).copied().unwrap_or(0);
+        let skip = (self.params.get(&def).copied().unwrap_or(0)).saturating_sub(args);
+        match skip < 64 {
+            true => bits >> skip,
+            false => 0,
+        }
+    }
+}
+
+/// A param's reach passed on: to `param` of `callee`, or argument `from_end` from its end.
+struct Edge {
+    caller: DefId,
+    bits: u64,
+    callee: DefId,
+    param: Param,
+}
+
+enum Param {
+    At(usize),
+    FromEnd(usize),
+}
+
+/// What one body does with its params.
+struct Scan<'a> {
+    def: DefId,
+    /// Each closure's captures, in the order of the params that hold them.
+    captures: &'a FxHashMap<DefId, Vec<LocalId>>,
+    /// Per local: the params its value comes from.
+    roots: FxHashMap<LocalId, u64>,
+    direct: u64,
+    edges: Vec<Edge>,
+}
+
+/// Every function's params that may reach a function value.
+pub fn compute<'a>(fns: impl Iterator<Item = (DefId, &'a FnDef)>) -> ValueParams {
+    let mut out: FxHashMap<DefId, u64> = FxHashMap::default();
+    let mut params: FxHashMap<DefId, usize> = FxHashMap::default();
+    let mut callers: FxHashMap<DefId, Vec<Edge>> = FxHashMap::default();
+    let mut work = vec![];
+    let fns: Vec<(DefId, &FnDef)> = fns.collect();
+    let captures: FxHashMap<DefId, Vec<LocalId>> = (fns.iter())
+        .filter(|(_, f)| !f.captures.is_empty())
+        .map(|(d, f)| (*d, f.captures.iter().map(|c| c.outer).collect()))
+        .collect();
+    for (def, f) in fns {
+        params.insert(def, f.params.len());
+        let mut s = Scan {
+            def,
+            captures: &captures,
+            roots: FxHashMap::default(),
+            direct: 0,
+            edges: vec![],
+        };
+        for (i, p) in f.params.iter().enumerate().take(64) {
+            s.roots.insert(p.local, 1 << i);
+            if p.mode == PassMode::Borrow && f.body.locals[p.local.0 as usize].mutable {
+                s.direct |= 1 << i;
+            }
+        }
+        s.block(&f.body.block);
+        for e in s.edges {
+            callers.entry(e.callee).or_default().push(e);
+        }
+        if s.direct != 0 {
+            out.insert(def, s.direct);
+            work.push(def);
+        }
+    }
+    while let Some(d) = work.pop() {
+        let bits = out.get(&d).copied().unwrap_or(0);
+        let count = params.get(&d).copied().unwrap_or(0);
+        let Some(edges) = callers.get(&d) else {
+            continue;
+        };
+        for e in edges {
+            let i = match e.param {
+                Param::At(i) => i,
+                Param::FromEnd(k) => match count.checked_sub(k + 1) {
+                    Some(i) => i,
+                    None => continue,
+                },
+            };
+            if i >= 64 || bits >> i & 1 == 0 {
+                continue;
+            }
+            let was = out.entry(e.caller).or_insert(0);
+            if *was | e.bits != *was {
+                *was |= e.bits;
+                work.push(e.caller);
+            }
+        }
+    }
+    ValueParams { bits: out, params }
+}
+
+/// The local the place `e` starts from, through shares and conversions.
+fn root(e: &Expr) -> Option<LocalId> {
+    let mut x = e;
+    loop {
+        match &x.kind {
+            E::Local(l, _) => return Some(*l),
+            E::Field { base: b, .. }
+            | E::Index { base: b, .. }
+            | E::UnwrapSome(b, _)
+            | E::UnwrapVariant { expr: b, .. }
+            | E::Upcast(b)
+            | E::Downcast(b)
+            | E::WrapSome(b)
+            | E::Cast(b)
+            | E::ToDyn { expr: b, .. } => x = b,
+            E::Call {
+                callee: Callee::Intrinsic(crate::hir::Intrinsic::Share),
+                args,
+            } if args.len() == 1 => x = &args[0],
+            _ => return None,
+        }
+    }
+}
+
+impl Scan<'_> {
+    fn bits_of(&self, e: &Expr) -> u64 {
+        root(e).map_or(0, |l| self.roots.get(&l).copied().unwrap_or(0))
+    }
+
+    fn block(&mut self, b: &Block) {
+        b.stmts.iter().for_each(|s| self.stmt(s));
+        if let Some(e) = &b.value {
+            self.expr(e);
+        }
+    }
+
+    fn stmt(&mut self, s: &Stmt) {
+        match &s.kind {
+            S::Let { local, init } => {
+                if let Some(e) = init {
+                    let bits = self.bits_of(e);
+                    if bits != 0 {
+                        self.roots.insert(*local, bits);
+                    }
+                    self.expr(e);
+                }
+            }
+            S::LetPat { pat, init } => {
+                let bits = self.bits_of(init);
+                if bits != 0 {
+                    let mut ls = vec![];
+                    pat_locals(pat, &mut ls);
+                    for l in ls {
+                        self.roots.insert(l, bits);
+                    }
+                }
+                self.expr(init);
+            }
+            S::Expr(e) | S::Return(Some(e)) => self.expr(e),
+            S::Return(None) | S::Break(_) | S::Continue(_) => {}
+            S::If { cond, then, els } => {
+                self.expr(cond);
+                self.block(then);
+                els.iter().for_each(|b| self.block(b));
+            }
+            S::While {
+                cond, body, step, ..
+            } => {
+                self.expr(cond);
+                self.block(body);
+                step.iter().for_each(|e| self.expr(e));
+            }
+            S::ForOf {
+                binding,
+                iter,
+                body,
+                ..
+            } => {
+                let bits = self.bits_of(iter);
+                if bits != 0 {
+                    let mut ls = vec![];
+                    pat_locals(binding, &mut ls);
+                    for l in ls {
+                        self.roots.insert(l, bits);
+                    }
+                }
+                self.expr(iter);
+                self.block(body);
+            }
+            S::Try {
+                body,
+                catch,
+                finally,
+            } => {
+                self.block(body);
+                catch.iter().for_each(|(_, b)| self.block(b));
+                finally.iter().for_each(|b| self.block(b));
+            }
+            S::Block(b) => self.block(b),
+        }
+    }
+
+    fn expr(&mut self, e: &Expr) {
+        match &e.kind {
+            E::Call { callee, args } => match callee {
+                Callee::Indirect(_) => {
+                    for a in args {
+                        self.direct |= self.bits_of(a);
+                    }
+                }
+                Callee::Def(d, _) => {
+                    for (i, a) in args.iter().enumerate() {
+                        let bits = self.bits_of(a);
+                        if bits != 0 {
+                            self.edges.push(Edge {
+                                caller: self.def,
+                                bits,
+                                callee: *d,
+                                param: Param::FromEnd(args.len() - 1 - i),
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            },
+            E::Closure(d) => {
+                let outers = self.captures.get(d).cloned().unwrap_or_default();
+                for (k, outer) in outers.into_iter().enumerate() {
+                    let bits = self.roots.get(&outer).copied().unwrap_or(0);
+                    if bits != 0 {
+                        self.edges.push(Edge {
+                            caller: self.def,
+                            bits,
+                            callee: *d,
+                            param: Param::At(k),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+        if let E::Block(b) = &e.kind {
+            return self.block(b);
+        }
+        children(e, &mut |x| self.expr(x));
+    }
+}
+
+/// The expressions directly inside `e`, but for a block's.
+fn children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    match &e.kind {
+        E::Lit(_)
+        | E::ConstArray(_)
+        | E::Global(_)
+        | E::FnRef(..)
+        | E::Closure(_)
+        | E::Local(..)
+        | E::Block(_) => {}
+        E::Unary { expr: x, .. }
+        | E::Cast(x)
+        | E::Await(x)
+        | E::WrapSome(x)
+        | E::UnwrapSome(x, _)
+        | E::UnwrapVariant { expr: x, .. }
+        | E::Upcast(x)
+        | E::Downcast(x)
+        | E::ToDyn { expr: x, .. }
+        | E::Throw(x)
+        | E::Field { base: x, .. } => f(x),
+        E::Binary { lhs, rhs, .. } | E::Logical { lhs, rhs, .. } => {
+            f(lhs);
+            f(rhs);
+        }
+        E::Assign { place, value } | E::CompoundAssign { place, value, .. } => {
+            f(place);
+            f(value);
+        }
+        E::Index { base, index, .. } => {
+            f(base);
+            f(index);
+        }
+        E::Call { callee, args } => {
+            if let Callee::Indirect(c) = callee {
+                f(c);
+            }
+            args.iter().for_each(&mut *f);
+        }
+        E::If { cond, then, els } => {
+            f(cond);
+            f(then);
+            f(els);
+        }
+        E::AdtLit { fields: xs, .. }
+        | E::Variant { args: xs, .. }
+        | E::ArrayLit(xs)
+        | E::Tuple(xs)
+        | E::New { args: xs, .. } => xs.iter().for_each(&mut *f),
+        E::Match { scrutinee, arms } => {
+            f(scrutinee);
+            for a in arms {
+                if let Some(g) = &a.guard {
+                    f(g);
+                }
+                f(&a.body);
+            }
+        }
+    }
+}
+
+/// The variables pattern `p` binds.
+fn pat_locals(p: &Pat, out: &mut Vec<LocalId>) {
+    match &p.kind {
+        PatKind::Binding(l, _) => out.push(*l),
+        PatKind::Variant { args: ps, .. } | PatKind::Tuple(ps) | PatKind::Or(ps) => {
+            ps.iter().for_each(|p| pat_locals(p, out))
+        }
+        PatKind::Array { elems, .. } => elems.iter().for_each(|p| pat_locals(p, out)),
+        PatKind::Adt { fields } => fields.iter().for_each(|(_, p)| pat_locals(p, out)),
+        PatKind::Some(p) => pat_locals(p, out),
+        _ => {}
+    }
+}

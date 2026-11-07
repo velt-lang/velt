@@ -51,6 +51,7 @@ use conflict::first_conflict;
 use uses::{Access, Aliases, Collector, Place, Proj, Use};
 
 use super::closure_names::Closures;
+use super::soft::make_share;
 
 pub(crate) fn check_exclusive(cx: &mut Ctx) {
     let fns: Vec<DefId> = cx
@@ -63,6 +64,11 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
     // program (`Checker::relaxed_callee`): built once, when the first of them is checked, while
     // every body is in place.
     let mut closures: Option<Closures> = None;
+    let value_params =
+        crate::value_params::compute(cx.defs.iter().enumerate().filter_map(|(i, d)| match d {
+            Some(Def::Fn(f)) => Some((DefId(i as u32), f)),
+            _ => None,
+        }));
     for d in fns {
         if closures.is_none() && !cx.modules[cx.fn_info(d).module].is_std && as_value(cx, d) {
             closures = Some(Closures::of(cx));
@@ -87,6 +93,7 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             locals: &f.body.locals,
             aliases: &aliases,
             held: &held,
+            value_params: &value_params,
         };
         let_borrow::check_body(
             &col,
@@ -106,6 +113,7 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             at: (d, &f.captures),
             closures: closures.as_ref(),
             held: &held,
+            value_params: &value_params,
             soft: &soft,
             errors: vec![],
             shares: vec![],
@@ -130,6 +138,17 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             share_capture(cx, c, outer);
         }
     }
+}
+
+/// Is `e` already a share?
+fn iter_is_shared(e: &Expr) -> bool {
+    matches!(
+        e.kind,
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::Share),
+            ..
+        }
+    )
 }
 
 /// Does closure `c` modify or take over what it captured of enclosing variable `outer`? Through
@@ -418,6 +437,8 @@ struct Checker<'a, 'm> {
     closures: Option<&'a Closures>,
     /// Non-escaping closures held in a local (`crate::ownership::held_closures`).
     held: &'a FxHashMap<LocalId, DefId>,
+    /// The params of each function that may reach a function value.
+    value_params: &'a crate::value_params::ValueParams,
     /// The function's soft moves (`FnInfo::soft_moves`).
     soft: &'a FxHashSet<Span>,
     errors: Vec<Diagnostic>,
@@ -436,6 +457,7 @@ impl Checker<'_, '_> {
             locals: self.locals,
             aliases: &self.aliases,
             held: self.held,
+            value_params: self.value_params,
         }
     }
 
@@ -712,6 +734,13 @@ impl VisitMut for Checker<'_, '_> {
                         let hit = iteration::modified_while_iterating(&uses, &p, &text, iter.span);
                         self.errors.extend(hit);
                         *share_elems = iteration::replaces_bound(&uses, &p, binding);
+                        // The array or what owns it given to a function value, which may empty it
+                        // or replace it: the loop holds the array itself, and shares each element.
+                        let col = self.collector();
+                        let handed = let_borrow::handed_to_function_value(&col, body, &p, true);
+                        if handed.is_some() && !iter_is_shared(iter) {
+                            make_share(iter);
+                        }
                     }
                     p.proj.push(Proj::Index);
                     self.bind(binding, &p, false);

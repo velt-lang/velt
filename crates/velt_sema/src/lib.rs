@@ -78,6 +78,7 @@ mod hasher_tests;
 mod holds_promise;
 mod hook_calls;
 mod hooks;
+pub mod value_params;
 #[doc(hidden)]
 pub use hook_calls::hook_args;
 pub use hooks::NAMES as HOOK_NAMES;
