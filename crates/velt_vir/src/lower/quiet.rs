@@ -9,9 +9,9 @@
 //! assigns values that need no drop, to locals or through its params (elements and fields);
 //! and it only calls quiet functions, `velt_simd_*` externs and intrinsics that run no user
 //! code and are handed no place to modify or move. Anything else (`new`, closures, `await`,
-//! `try`, `throw`, `for…of`, patterns, indirect, virtual and interface calls, module state but
-//! a named literal)
-//! makes it not quiet, and so does a field read or write on a type that may hold a typed proxy
+//! `try`, `throw`, `for…of`, patterns, indirect, virtual and interface calls, module state,
+//! though a named literal is no state) makes it not quiet, and so does a field read or write
+//! on a type that may hold a typed proxy
 //! (proxy_typed.rs): it may run a `get` or `set` trap, which is user code. Std's byte readers
 //! and writers (`loadF64(this.buf.bytes, o)` in a typed array's element access) are quiet, so
 //! the access counts no reference per element.
