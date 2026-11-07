@@ -197,6 +197,10 @@ hooks! {
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
+    /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare` for a
+    /// string held as `any`).
+    locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),
+        replaces("velt_rt_str_locale_compare"), bench("locale_compare");
     /// `String(v)` of a signed integer: `${v}` alone, `v.toString()` (`velt_vir` `template.rs`).
     /// `IndexCheck`: the message of an out-of-bounds signed index. Sema casts every index it
     /// builds to an unsigned type, so no program reaches that call; only `velt_vir`'s
@@ -712,6 +716,8 @@ pub const DELETED: &[&str] = &[
     "velt_rt_strbuf_push_u64",
     // #2196, only std called them: error-code names (std/native/error).
     "velt_rt_err_code_name",
+    // #2196: collation (std/lang/string/collate).
+    "velt_rt_str_locale_compare",
 ];
 
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).

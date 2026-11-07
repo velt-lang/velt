@@ -1,0 +1,45 @@
+// `s.localeCompare(t)`, whose Rust the runtime had (`Intl.Collator("und")`'s order, from a table
+// generated from ICU): pairs of ASCII words, of Latin words with accents, and of words in other
+// scripts, 460,800 calls, a quarter of the words too long to be inline, then 3 calls on 100,000
+// combining marks. The Rust port is the runtime's code as it was.
+
+const ASCII = ["apple", "Apple", "application", "banana", "Banana", "cherry", "date", "elder", "fig", "a-b", "ab", "a b"];
+const LATIN = ["résumé", "resume", "Résumé", "Straße", "strasse", "Ångström", "angle", "łódź", "lodz", "Việt", "viet", "Œuvre"];
+const OTHER = ["москва", "Москва", "ёлка", "елка", "αλφα", "Άλφα", "βήτα", "中文", "一", "가나", "あい", "😀"];
+
+function next(seed: u64[], n: u64): u64 {
+  seed[0] = seed[0].wrappingMul(6364136223846793005).wrappingAdd(1442695040888963407);
+  return (seed[0] >> 33) % n;
+}
+
+function build(group: string[], seed: u64[]): string[] {
+  const list: string[] = [];
+  for (let k = 0; k < 512; k++) {
+    const a = group[next(seed, 12) as usize];
+    const b = group[next(seed, 12) as usize];
+    list.push(next(seed, 4) == 0 ? a + b + a + b + a : a + b);
+  }
+  return list;
+}
+
+function main() {
+  const seed: u64[] = [2196];
+  const lists = [build(ASCII, seed), build(LATIN, seed), build(OTHER, seed)];
+  let sum: i64 = 0;
+  for (const list of lists) {
+    for (let round: usize = 0; round < 300; round++) {
+      for (let i: usize = 0; i < 512; i++) {
+        const j = (i * 7 + round) % 512;
+        sum = (sum * 3) % 1000003 + list[i].localeCompare(list[j]);
+      }
+    }
+  }
+  // Combining marks: U+0301 U+0323 against U+0323 U+0301, which weigh nothing at the first level,
+  // so it reads both strings to the end. Each call gets a string of its own, so that no two calls
+  // can be folded into one.
+  const marks = "\u0301\u0323".repeat(50000);
+  for (let k: i64 = 1; k <= 3; k++) {
+    sum = (sum * 3) % 1000003 + marks.localeCompare("\u0323\u0301".repeat(50000)) * k;
+  }
+  console.log(sum);
+}

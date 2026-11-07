@@ -9,7 +9,8 @@ pub struct HookTests {
     /// signature (a few seconds once built).
     pub signatures: bool,
     /// `cargo test -p velt_common --test hook_replaces`: the extern guard, which reads the
-    /// compiler's sources, the runtime's and bench/stdport (well under a second).
+    /// compiler's sources, the runtime's and bench/stdport (well under a second), and the list
+    /// of the runtime's exports, which only shrinks.
     pub guard: bool,
 }
 
@@ -30,7 +31,9 @@ const GUARDED: &[&str] = &[
     "crates/velt_codegen_llvm/src/",
     "crates/velt_codegen_cl/src/",
     "crates/velt_rt/src/",
+    "crates/velt_rt_wasm/src/",
     "crates/velt_common/tests/hook_replaces.rs",
+    "crates/velt_common/tests/runtime_exports.txt",
     "bench/stdport/",
 ];
 
@@ -58,8 +61,9 @@ impl HookTests {
             out.push((
                 "replaced runtime externs (velt_common hook_replaces)",
                 ["test", "-p", "velt_common", "--test", "hook_replaces"],
-                "call the hook instead of the extern it replaces, or remove the ALLOWED entries \
-                 of a use you deleted (crates/velt_common/tests/hook_replaces.rs)",
+                "call the hook instead of the extern it replaces, remove the ALLOWED entries of a \
+                 use you deleted, or the runtime_exports.txt lines of an export you deleted \
+                 (crates/velt_common/tests/); a new runtime export is not allowed (#2196)",
             ));
         }
         out

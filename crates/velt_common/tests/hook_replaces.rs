@@ -347,3 +347,293 @@ fn the_compiler_names_a_replaced_extern_only_where_allowed() {
         wrong.join("\n")
     );
 }
+
+/// The runtime's exports, one `<crate> <name>` per line, sorted (#2196: the runtime only
+/// shrinks): what the runtime may define with `#[no_mangle]` or `#[export_name]`.
+const EXPORTS: &str = include_str!("runtime_exports.txt");
+
+/// `src` as bytes with its comments blanked to spaces and the insides of its string and
+/// character literals to `x` (newlines kept), so that each byte stays where it was in `src` and
+/// an attribute or keyword found in it is code, not text.
+fn code_only(src: &str) -> Vec<u8> {
+    let b = src.as_bytes();
+    let mut out = b.to_vec();
+    let blank = |out: &mut Vec<u8>, from: usize, to: usize, with: u8| {
+        for c in &mut out[from..to.min(b.len())] {
+            if *c != b'\n' {
+                *c = with;
+            }
+        }
+    };
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'/' if b.get(i + 1) == Some(&b'/') => {
+                let end = src[i..].find('\n').map_or(b.len(), |n| i + n);
+                blank(&mut out, i, end, b' ');
+                i = end;
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                // Block comments nest in Rust.
+                let (mut depth, mut j) = (0usize, i);
+                while j < b.len() {
+                    if b[j..].starts_with(b"/*") {
+                        depth += 1;
+                        j += 2;
+                    } else if b[j..].starts_with(b"*/") {
+                        depth -= 1;
+                        j += 2;
+                        if depth == 0 {
+                            break;
+                        }
+                    } else {
+                        j += 1;
+                    }
+                }
+                blank(&mut out, i, j, b' ');
+                i = j;
+            }
+            // A raw string `r#"…"#`, or a raw byte or C string (`br#"…"#`, `cr#"…"#`); a raw
+            // identifier `r#name` has no quote.
+            b'r' if matches!(b.get(i + 1), Some(b'#' | b'"'))
+                && (i == 0
+                    || !ident(b[i - 1])
+                    || (matches!(b[i - 1], b'b' | b'c') && (i == 1 || !ident(b[i - 2])))) =>
+            {
+                let hashes = b[i + 1..].iter().take_while(|&&c| c == b'#').count();
+                if b.get(i + 1 + hashes) != Some(&b'"') {
+                    i += 1;
+                    continue;
+                }
+                let open = i + 2 + hashes;
+                let close: Vec<u8> = std::iter::once(b'"')
+                    .chain(std::iter::repeat_n(b'#', hashes))
+                    .collect();
+                let end = b[open..]
+                    .windows(close.len())
+                    .position(|w| w == close.as_slice())
+                    .map_or(b.len(), |n| open + n);
+                blank(&mut out, open, end, b'x');
+                i = end + close.len();
+            }
+            b'"' => {
+                let mut j = i + 1;
+                while j < b.len() && b[j] != b'"' {
+                    j += if b[j] == b'\\' { 2 } else { 1 };
+                }
+                blank(&mut out, i + 1, j, b'x');
+                i = j + 1;
+            }
+            // A character literal (`'"'`, `'\''`), not a lifetime (`'a`); the escaped character
+            // may itself be a quote.
+            b'\'' if b.get(i + 1) == Some(&b'\\') => {
+                let close = b[(i + 3).min(b.len())..]
+                    .iter()
+                    .position(|&c| c == b'\'')
+                    .map_or(b.len(), |n| i + 3 + n);
+                blank(&mut out, i + 1, close, b'x');
+                i = close + 1;
+            }
+            // An unescaped character literal, whose character may take up to 4 bytes (`'é'`).
+            b'\''
+                if src
+                    .get(i + 1..)
+                    .and_then(|rest| rest.chars().next())
+                    .is_some_and(|c| b.get(i + 1 + c.len_utf8()) == Some(&b'\'')) =>
+            {
+                let len = src[i + 1..].chars().next().map_or(1, char::len_utf8);
+                blank(&mut out, i + 1, i + 1 + len, b'x');
+                i += 2 + len;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// Where `word` first occurs in `code` as a whole word, from `from` on.
+fn find_word(code: &[u8], word: &str, from: usize) -> Option<usize> {
+    let w = word.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    (from..(code.len() + 1).saturating_sub(w.len())).find(|&i| {
+        code[i..].starts_with(w)
+            && (i == 0 || !ident(code[i - 1]))
+            && code.get(i + w.len()).is_none_or(|&c| !ident(c))
+    })
+}
+
+/// The symbols `src` exports. An attribute that names `no_mangle` anywhere in it
+/// (`#[no_mangle]`, `#[unsafe(no_mangle)]`, `#[cfg_attr(not(test), no_mangle)]`, on a line of its
+/// own or on the item's) exports the name of the `fn` or `static` it is on; one that names
+/// `export_name` exports the name it gives. Comments and literals don't count.
+fn no_mangle_names(src: &str) -> Vec<String> {
+    let code = code_only(src);
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let skip_space = |mut at: usize| {
+        while code.get(at).is_some_and(u8::is_ascii_whitespace) {
+            at += 1;
+        }
+        at
+    };
+    let mut out = vec![];
+    let mut at = 0;
+    while let Some(n) = code[at..].windows(2).position(|w| w == b"#[") {
+        let open = at + n;
+        let line = src[..open].matches('\n').count() + 1;
+        // The attribute ends at its matching `]` (literals are blanked, so brackets count).
+        let mut depth = 0usize;
+        let mut close = code.len();
+        for (k, &c) in code.iter().enumerate().skip(open + 1) {
+            if c == b'[' {
+                depth += 1;
+            } else if c == b']' {
+                depth -= 1;
+                if depth == 0 {
+                    close = k;
+                    break;
+                }
+            }
+        }
+        let attr = &code[open..close];
+        if let Some(e) = find_word(attr, "export_name", 0) {
+            let quote = attr[e..]
+                .iter()
+                .position(|&c| c == b'"')
+                .unwrap_or_else(|| panic!("line {line}: `export_name` gives no name"));
+            let from = open + e + quote + 1;
+            let len = src[from..].find('"').expect("a closed string");
+            out.push(src[from..from + len].to_string());
+        } else if find_word(attr, "no_mangle", 0).is_some() {
+            let (kw, kw_len) = ["fn", "static"]
+                .iter()
+                .filter_map(|kw| find_word(&code, kw, close).map(|i| (i, kw.len())))
+                .min()
+                .unwrap_or_else(|| panic!("line {line}: `no_mangle` on no fn or static"));
+            let mut name = skip_space(kw + kw_len);
+            if code[name..].starts_with(b"mut") && !code.get(name + 3).is_some_and(|&c| ident(c)) {
+                name = skip_space(name + 3);
+            }
+            let len = code[name..].iter().take_while(|&&c| ident(c)).count();
+            assert!(
+                len > 0,
+                "line {line}: `no_mangle` on an item with no plain name"
+            );
+            out.push(src[name..name + len].to_string());
+        }
+        at = close.max(open + 2);
+    }
+    out
+}
+
+#[test]
+fn no_mangle_names_finds_each_form_of_export() {
+    let names = no_mangle_names;
+    assert_eq!(names("#[no_mangle]\npub extern \"C\" fn a() {}"), ["a"]);
+    assert_eq!(
+        names("#[unsafe(no_mangle)]\npub static mut B: u8 = 0;"),
+        ["B"]
+    );
+    assert_eq!(
+        names("#[no_mangle]\n#[inline(never)]\n/// Doc.\npub unsafe extern \"C\" fn c() {}"),
+        ["c"]
+    );
+}
+
+#[test]
+fn no_mangle_names_finds_no_mangle_on_the_items_line() {
+    assert_eq!(
+        no_mangle_names("#[no_mangle] pub extern \"C\" fn d() {}"),
+        ["d"]
+    );
+}
+
+#[test]
+fn no_mangle_names_finds_no_mangle_inside_cfg_attr() {
+    let src = "#[cfg_attr(not(test), no_mangle)]\npub extern \"C\" fn e() {}";
+    assert_eq!(no_mangle_names(src), ["e"]);
+}
+
+#[test]
+fn no_mangle_names_finds_export_name() {
+    let src = "#[export_name = \"f_sym\"]\npub extern \"C\" fn f() {}";
+    assert_eq!(no_mangle_names(src), ["f_sym"]);
+    let src = "#[unsafe(export_name = \"g_sym\")] extern \"C\" fn g() {}";
+    assert_eq!(no_mangle_names(src), ["g_sym"]);
+}
+
+#[test]
+fn no_mangle_names_skips_comments_and_literals() {
+    let src = "//! Every export is `#[no_mangle] extern \"C\"`.\n\
+               /* #[no_mangle] /* nested */ fn h() {} */\n\
+               const S: &str = \"#[no_mangle] fn s\";\n\
+               const R: &str = r#\"#[export_name = \"r\"]\"#;\n\
+               const Q: char = '\"'; const E: char = '\\''; #[inline] fn plain() {}\n";
+    assert!(
+        no_mangle_names(src).is_empty(),
+        "{:?}",
+        no_mangle_names(src)
+    );
+    // A byte or C raw string with an odd number of quotes inside, and a non-ASCII character
+    // literal before a quote literal: read wrongly, each turns the code after it into text.
+    let src = "const X: &[u8] = br#\"a\"b\"#;\n#[no_mangle]\npub extern \"C\" fn hidden() {}\n";
+    assert_eq!(no_mangle_names(src), ["hidden"]);
+    let src = "const X: &CStr = cr#\"a\"b\"#;\n#[no_mangle]\npub extern \"C\" fn hidden() {}\n";
+    assert_eq!(no_mangle_names(src), ["hidden"]);
+    let src = "const X: [char; 2] = ['é','\"'];\n#[no_mangle]\npub extern \"C\" fn hidden() {}\n";
+    assert_eq!(no_mangle_names(src), ["hidden"]);
+    let src = "const X: [char; 2] = ['é','\"'];\nconst S: &str = \"#[no_mangle] fn s\";\n";
+    assert!(
+        no_mangle_names(src).is_empty(),
+        "{:?}",
+        no_mangle_names(src)
+    );
+}
+
+/// Every symbol the runtime exports is in `runtime_exports.txt`, and every line there is one it
+/// exports: a new export fails here (the runtime gets no new Rust, #2196: write it in Velt, or
+/// add what Velt lacks to the language), and a port that deletes one deletes its line, so the
+/// list only shrinks.
+#[test]
+fn the_runtime_exports_only_what_runtime_exports_lists() {
+    let mut have = vec![];
+    for krate in ["velt_rt", "velt_rt_wasm"] {
+        let mut files = vec![];
+        sources(&crates().join(krate).join("src"), &mut files);
+        for (_, src) in &files {
+            have.extend(
+                no_mangle_names(src)
+                    .into_iter()
+                    .map(|n| format!("{krate} {n}")),
+            );
+        }
+    }
+    have.sort();
+    have.dedup();
+    let listed: Vec<&str> = EXPORTS.lines().filter(|l| !l.is_empty()).collect();
+    let mut sorted = listed.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(
+        listed, sorted,
+        "runtime_exports.txt must be sorted, each line once"
+    );
+    let new: Vec<&String> = have
+        .iter()
+        .filter(|h| !listed.contains(&h.as_str()))
+        .collect();
+    assert!(
+        new.is_empty(),
+        "the runtime exports symbols runtime_exports.txt doesn't list: {new:?}. The runtime gets \
+         no new Rust (#2196): write it in Velt, or file what Velt lacks"
+    );
+    let gone: Vec<&&str> = listed
+        .iter()
+        .filter(|l| !have.iter().any(|h| h == **l))
+        .collect();
+    assert!(
+        gone.is_empty(),
+        "runtime_exports.txt lists symbols the runtime no longer exports: {gone:?}. Delete \
+         their lines"
+    );
+}
