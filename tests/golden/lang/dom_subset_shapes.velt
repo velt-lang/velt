@@ -41,7 +41,20 @@ function wire(dom: Element): void {
   dom.removeEventListener("input", handler);
 }
 
-console.log(typeof mount, typeof skip, typeof selected, typeof wire);
+// A method's optional parameter inherited from a base (`scrollIntoView(arg?)` of `Element`), called
+// in a module constant's initializer.
+function component(setup: (n: number) => () => string): string {
+  return setup(1)();
+}
+const rendered = component((n) => {
+  const toggle = (el: HTMLDivElement, key: string): void => {
+    el.scrollIntoView();
+    el.style.setProperty(key, String(n));
+  };
+  return () => typeof toggle;
+});
+
+console.log(typeof mount, typeof skip, typeof selected, typeof wire, rendered);
 try {
   console.log(document.createComment("x").appendChild(document.createTextNode("y")));
 } catch (e) {
