@@ -502,12 +502,19 @@ describe("a client that shuts its sending side", () => {
   it("gets the answer before a handler that waits, not the one after", async () => {
     const g = gate();
     const ran = gate();
-    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const slow = async (): Promise<Response> => {
+      await hold(g);
+      // timing: the answer of a handler that took time
+      await sleep(30);
+      arrive(ran);
+      return new Response("/slow");
+    };
+    // The one before answers without being async: an async handler before one that takes time
+    // loses its answer too, where Node would send it (README.md).
+    const server = await serve({ port: 0 }, (req: Request): Response | Promise<Response> => {
       const path = new URL(req.url).pathname;
       if (path == "/slow") {
-        await hold(g);
-        // timing: the answer of a handler that took time
-        await sleep(30);
+        return slow();
       }
       arrive(ran);
       return new Response(path);

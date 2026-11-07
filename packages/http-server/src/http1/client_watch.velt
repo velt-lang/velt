@@ -36,8 +36,10 @@ export interface ClientEnd {
   stillAnswering(): bool;
   /// Whether it must hear at once: a streamed response, or a signal.
   listens(): bool;
-  /// Takes back the answer the handler made: it comes too late.
-  dropAnswer(): void;
+  /// This response on may have to be taken back (`dropAnswers`).
+  answersFromHere(): void;
+  /// Takes back the answers made from there on: they come too late.
+  dropAnswers(): void;
 }
 
 /// The watch of one connection, started at most once per wait of a request.
@@ -72,7 +74,6 @@ export class ClientWatch {
     this.target = target;
     this.bodyBusy = false;
     this.waited = false;
-    this.lookAgain = false;
   }
 
   /// The handler ran up to its first wait, or to its end.
@@ -87,12 +88,14 @@ export class ClientWatch {
       return;
     }
     this.lookAgain = true;
+    t.answersFromHere();
     if (this.parser.available() > 0) {
       return;
     }
     try {
       // Input that ended with the request: only real waiting (`run`) loses the answer.
       if (this.parser.readFrom(this.conn) == null) {
+        this.lookAgain = false;
         this.start();
       }
     } catch (e) {
@@ -108,36 +111,42 @@ export class ClientWatch {
     }
   }
 
-  /// Whether `lookBack` has something to do, for a handler that began at `now`: one that took
-  /// less than `TOOK_TIME` answers before the client's input could be seen to end.
-  lookDue(now: i64): bool {
-    return this.lookAgain && !this.over && (Date.now() as i64) >= now + TOOK_TIME;
+  /// Whether a handler of this batch of requests waited unwatched: `lookBack` is due.
+  lookDue(): bool {
+    return this.lookAgain;
   }
 
-  /// The handler took time, unwatched: if the client's input ended meanwhile, its answer goes
-  /// nowhere.
-  async lookBack() {
-    const t = this.target;
+  /// Before the batch's answers go out, a look at the socket in place of the connection's next
+  /// read: what it found (`n` as `readFrom` gives it, -1 for the connection to read itself). If
+  /// the client's input ended and a handler took time (from `now`), what that handler and those
+  /// behind it answered goes nowhere.
+  async lookBack(target: ClientEnd, now: i64): Promise<i64> {
+    this.lookAgain = false;
     const p = this.parser;
-    if (t == null || this.bodyBusy || this.head.find("upgrade") >= 0) {
-      return;
-    }
+    let read: i64 = 0;
     try {
       while (p.available() < READ_AHEAD) {
         const n = p.readFrom(this.conn);
         if (n == null) {
-          this.over = true;
-          t.dropAnswer();
-          await t.closedEarly(!this.body.arrived());
-          return;
+          if (
+            !this.over && (Date.now() as i64) >= now + TOOK_TIME && this.head.find("upgrade") < 0
+          ) {
+            this.over = true;
+            target.dropAnswers();
+            await target.closedEarly(!this.body.arrived());
+          }
+          return -1;
         }
         if (n == 0) {
-          return;
+          return read;
         }
+        read += n as i64;
       }
+      return read;
     } catch (e) {
       this.over = true;
-      t.connectionFailed();
+      target.connectionFailed();
+      return -1;
     }
   }
 

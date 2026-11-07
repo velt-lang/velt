@@ -211,7 +211,9 @@ request lazily: a handler pays only for what it reads.
   one in progress still runs, and its answer goes nowhere. A body cut off in the middle is answered
   400 (one with `Transfer-Encoding: chunked` that came whole but wasn't read is too). Differing from
   Node: a request with an `Upgrade` header isn't watched, as the handler may take the connection;
-  and what a handler does while it reads a body from the socket isn't watched until the body's end.
+  what a handler does while it reads a body from the socket isn't watched until the body's end;
+  an unwatched handler that took under 5 ms still answers; and when pipelined requests were read
+  together, an `async` handler's answer before one that took time is dropped with it.
 - A handler that answers before it waits costs nothing for this. One that waits pays a look at the
   socket when it first waits and another before its answer goes out, and for it the connection
   ends with the handler, not at once, though the client gets the same bytes. Only one that asked for
