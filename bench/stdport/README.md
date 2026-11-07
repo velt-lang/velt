@@ -50,8 +50,9 @@ finds its position, and the parser reads the input that way.
 `prng` was added after it too: `Math.random()`'s wyrand generator, from the runtime (Rust) to Velt
 (#2406). Release, Linux, cachegrind (the reviewer's run on #2406): 1,820M instructions before
 (runtime), 820M after (Velt), against the Rust port's 1,300M built with plain
-`rustc -C opt-level=3`; Velt / Rust 0.63. Debug builds are slower after (3,631M against 2,031M),
-the unoptimized std calls on the path (#2460).
+`rustc -C opt-level=3`; Velt / Rust 0.63. Debug, Linux arm64, cachegrind: 1,891M with the
+generator linked from a warmed std cache, against the runtime's 2,691M; 3,791M when the cache
+doesn't serve it and it compiles with Cranelift.
 
 Reading it:
 
