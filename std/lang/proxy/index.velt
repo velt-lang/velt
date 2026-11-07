@@ -129,16 +129,18 @@ export class Proxy {
   /**
    * A view of `null` or of `undefined` (`target`), what a `Foo` slot holds after `null!` or
    * `null as any` (velt_vir `lower/any_view.rs`, which also makes two of them `===`). As in Node,
-   * nothing stops until a member is read or written, and that is a `TypeError`.
+   * nothing stops until a member is read or written, and that is a `TypeError`: thrown to a
+   * `catch` of the reading function by the read itself, else it stops the program here (a trap
+   * that throws would make every proxy read throwing).
    */
   static #nothing(target: any): Proxy {
     const word = target === null ? "null" : "undefined";
     const p = new Proxy(target, {
       get(_t: any, key: string | symbol, _r: any): any {
-        throw new TypeError(`Cannot read properties of ${word} (reading '${proxyKeyText(key)}')`);
+        panic(`TypeError: Cannot read properties of ${word} (reading '${proxyKeyText(key)}')`);
       },
       set(_t: any, key: string | symbol, _v: any, _r: any): boolean {
-        throw new TypeError(`Cannot set properties of ${word} (setting '${proxyKeyText(key)}')`);
+        panic(`TypeError: Cannot set properties of ${word} (setting '${proxyKeyText(key)}')`);
       },
     });
     p.#view = true;

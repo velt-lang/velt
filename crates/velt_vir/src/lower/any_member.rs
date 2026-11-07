@@ -213,6 +213,11 @@ impl FnLower<'_, '_> {
             TyKind::Unit => self.any_nothing_into(Nothing::Undefined, out),
             // A literal type (zero-sized, `flag?: false`'s payload): the value its type names.
             TyKind::Literal(l) => self.any_literal_into(&l, out),
+            // `null` or `undefined` alone (`{ a: null }`'s field): no value to test.
+            TyKind::Option(inner, n) if matches!(self.cx.kind(inner), TyKind::Never) => {
+                let n = if std_result { Nothing::Undefined } else { n };
+                self.any_nothing_into(n, out);
+            }
             TyKind::Option(inner, n) => {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
