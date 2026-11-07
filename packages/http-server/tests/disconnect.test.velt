@@ -644,33 +644,43 @@ describe("a client that shuts its sending side", () => {
     }
   });
 
-  it("leaves a request with an Upgrade header unwatched", async () => {
-    // Node's server without an `upgrade` listener would drop this answer. Here the handler may
-    // take the connection, with what came after the head, so nothing reads it meanwhile.
-    const g = gate();
-    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-      if (req.method != "HEAD") {
-        await hold(g);
-      }
-      return new Response("answer");
-    });
-    try {
-      const c = await connect(`127.0.0.1:${server.port}`);
-      await c.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: x\r\n\r\n");
-      await timeout(arrivals(g), LIMIT);
-      c.shutdown();
-      expect(
-        await (await fetch(`http://127.0.0.1:${server.port}/`, { method: "HEAD" })).status,
-      ).toBe(200);
-      open(g);
-      expect((await timeout(readAll(c), LIMIT)).endsWith("answer")).toBe(true);
-      c.close();
-    } finally {
-      open(g);
-      await server.shutdown();
-      shut(g);
-    }
-  });
+  for (const asks of [false, true]) {
+    it(
+      `leaves a request with an Upgrade header unwatched, ${asks ? "asking" : "not asking"} for its signal`,
+      async () => {
+        // Node's server without an `upgrade` listener would drop this answer. Here the handler may
+        // take the connection, with what came after the head, so nothing reads it meanwhile.
+        const g = gate();
+        const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+          if (req.method != "HEAD") {
+            if (asks) {
+              const signal = req.signal;
+            }
+            await hold(g);
+            // timing: the answer of a handler that took time
+            await sleep(300);
+          }
+          return new Response("answer");
+        });
+        try {
+          const c = await connect(`127.0.0.1:${server.port}`);
+          await c.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: x\r\n\r\n");
+          await timeout(arrivals(g), LIMIT);
+          c.shutdown();
+          expect((await fetch(`http://127.0.0.1:${server.port}/`, { method: "HEAD" })).status).toBe(
+            200,
+          );
+          open(g);
+          expect((await timeout(readAll(c), LIMIT)).endsWith("answer")).toBe(true);
+          c.close();
+        } finally {
+          open(g);
+          await server.shutdown();
+          shut(g);
+        }
+      },
+    );
+  }
 });
 
 describe("a kept-alive connection", () => {
