@@ -1,0 +1,46 @@
+// A class's table holds its format glue only where the program can format it. Each path that
+// reaches the glue gets it, for a class that prints integers of both signs through a subclass.
+class Base {
+  id: u32 = 7;
+}
+class Sub extends Base {
+  delta: i64 = -2;
+}
+interface Named {
+  name(): string;
+}
+class Tagged extends Sub implements Named {
+  tag: string = "t";
+  name(): string {
+    return "tagged";
+  }
+}
+struct Pair {
+  a: u32;
+  b: i32;
+}
+
+function viaAny(a: any): void {
+  console.log(a);
+}
+
+function viaInterface(n: Named): void {
+  viaAny(n);
+}
+
+function main() {
+  const b: Base = new Sub();
+  console.log(b);
+  console.log([b]);
+  console.log({ inner: b });
+  viaInterface(new Tagged());
+  viaAny(new Sub());
+  const p: Pair = { a: 1, b: -1 };
+  viaAny(p);
+  console.log(p);
+  try {
+    throw new Sub();
+  } catch (e) {
+    console.log(e);
+  }
+}

@@ -1,0 +1,8 @@
+Sub { id: 7, delta: -2 }
+[ Sub { id: 7, delta: -2 } ]
+{ inner: Sub { id: 7, delta: -2 } }
+Tagged { id: 7, delta: -2, tag: 't' }
+Sub { id: 7, delta: -2 }
+Pair { a: 1, b: -1 }
+Pair { a: 1, b: -1 }
+Sub { id: 7, delta: -2 }

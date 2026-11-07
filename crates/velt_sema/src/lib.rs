@@ -322,6 +322,8 @@ fn check_timed(
     let record_accessors = modules
         .iter()
         .any(|m| !m.is_std && defined_accessors::defines_accessors(&m.ast));
+    // Constructs a round found it needed once it was too late to demand their hooks.
+    let assumed = std::cell::Cell::new(0);
     let new_cx = |round: &'static str,
                   held_borrows: bool,
                   seeds: &throws::FnTypeSeeds,
@@ -332,6 +334,7 @@ fn check_timed(
         if opts.eager_std {
             cx.lazy.on = false;
         }
+        body::lazy_std::assume_constructs(&mut cx, assumed.get());
         cx.loads = loads;
         generating::install(&mut cx, gen, generator.as_ref());
         cx.union_views.assumed = views.clone();
@@ -420,6 +423,10 @@ fn check_timed(
             held = false;
             let last = rounds == FN_SITE_ROUNDS;
             (cx, entry) = new_cx("round: sharing retry", false, &seeds, last, &views);
+        } else if error_count(&cx) == 0 && body::lazy_std::thrown_needs_format(&mut cx) {
+            assumed.set(velt_common::std_hooks::Construct::Format.bit());
+            let last = rounds == FN_SITE_ROUNDS;
+            (cx, entry) = new_cx("round: thrown values format", held, &seeds, last, &views);
         } else {
             break;
         }

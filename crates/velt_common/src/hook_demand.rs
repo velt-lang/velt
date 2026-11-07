@@ -52,8 +52,8 @@ pub enum Construct {
     /// enum's discriminant, an array's or a map's size, a class's fields, a value of a type
     /// parameter or held as `any`): `console.log` and `console.error` of it, `inspect`,
     /// `errorText`, `String()` and `${}` of a value that is no scalar, the report of it thrown
-    /// and not caught, and the `format` slot of a class's or an interface value's table, which
-    /// every class value in live code has.
+    /// and not caught, its conversion to an interface or `any`, and the `format` slot of an
+    /// interface value's table. A class's table has that slot only where this is present.
     Format,
     /// A bounds-checked index of an array (`xs[i]`, an array pattern, the array intrinsics): the
     /// out-of-bounds message prints the length and the index.

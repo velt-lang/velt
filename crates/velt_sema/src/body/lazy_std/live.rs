@@ -78,6 +78,9 @@ pub(crate) struct Live {
     full: Option<u64>,
     /// The constructs met in live code.
     pub(super) present: ConstructSet,
+    /// Constructs this round starts with: what an earlier round learned too late to demand
+    /// ([`thrown_needs_format`]).
+    assumed: ConstructSet,
     /// Per type: may its text or format print an integer ([`may_print_int`])?
     int_text: FxHashMap<TyId, bool>,
 }
@@ -142,6 +145,11 @@ pub(crate) fn demanded(cx: &Ctx) -> HookSet {
     }
 }
 
+/// Start this check with the constructs `set`.
+pub(crate) fn assume_constructs(cx: &mut Ctx, set: ConstructSet) {
+    cx.lazy.live.assumed = set;
+}
+
 /// The live definitions for lowering to check against (`hir::Program::live`), when they were
 /// worked out in full, with the definitions made since [`finish`]: the forwarders of an interface
 /// converted to another (`Ctx::upcast_tables`), made once ownership is settled, so that a hook can
@@ -180,6 +188,7 @@ pub(super) fn step(cx: &mut Ctx, found: &mut Vec<DefId>) {
         seed(cx);
     }
     let before = cx.lazy.live.present;
+    cx.lazy.live.present |= cx.lazy.live.assumed;
     let mut pending = vec![];
     loop {
         if saturated(cx) {
@@ -598,8 +607,9 @@ fn live_types_of(cx: &mut Ctx, mut todo: Vec<TyId>, mut adts: Vec<DefId>) {
             let bit = match &kind {
                 TyKind::Array(_) => Construct::IndexCheck.bit(),
                 TyKind::Dyn(..) if cx.dynamic(t).is_some() => Construct::Dynamic.bit(),
-                // The `format` slot of its table (`velt_vir` `glue/vtable.rs`).
-                TyKind::Adt(..) | TyKind::Dyn(..) => format_bit(cx, t),
+                // The `format` slot of its table (`velt_vir` `glue/vtable.rs`). A class's is
+                // left out of a program that formats nothing (`Cx::format_demanded`).
+                TyKind::Dyn(..) => format_bit(cx, t),
                 // A rejected promise not handled is reported with its error.
                 TyKind::Promise(_, e) | TyKind::Result(_, e) => format_bit(cx, *e),
                 _ => 0,
@@ -740,6 +750,7 @@ const DYNAMIC: u32 = 1 << 23;
 
 #[path = "live_constructs.rs"]
 mod constructs;
+pub(crate) use constructs::thrown_needs_format;
 use constructs::{evaluate, format_bit};
 
 #[cfg(test)]
