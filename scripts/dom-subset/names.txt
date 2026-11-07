@@ -3,8 +3,9 @@
 #   Type         the type and what it extends, with no members of its own beyond those listed
 #   Type.member  a member, found on the type or on what it extends (the last overload of a method)
 #   Type.*       all of the type's own members
-# Each name costs compile time in every program that names one of them (std/prelude/global/dom.velt
-# loads them all): about 23 KB of declarations is within 3% of a program naming one type.
+# The names before `@core-end` and what they reach load when a program names one of them
+# (std/prelude/global/dom.velt); the others load by group (`dom_html`, `dom_svg`, `dom_events`,
+# `dom_doc`), so a program pays for the group it names.
 
 # The first list (#2369): what code shared between server and browser names in signatures.
 CustomEvent
@@ -78,6 +79,7 @@ HTMLTextAreaElement.value
 HTMLSelectElement.value
 HTMLSelectElement.multiple
 HTMLSelectElement.options
+@core-end
 
 # What sigx (packages/*/src and its examples) names, by TypeScript's checker.
 AddEventListenerOptions
