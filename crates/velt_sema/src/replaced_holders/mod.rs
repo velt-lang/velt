@@ -245,7 +245,7 @@ fn has_params(cx: &Ctx, t: TyId) -> bool {
 }
 
 /// The member name of a method (`greet` for `User.greet`).
-fn member(name: &str) -> &str {
+pub(crate) fn member(name: &str) -> &str {
     let name = name.rsplit("::").next().unwrap_or(name);
     name.rsplit('.').next().unwrap_or(name)
 }

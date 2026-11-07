@@ -3,14 +3,19 @@
 //! `run`'s signature, but what it holds can be replaced under whoever lent it: a `const x = a.c`
 //! before `run(a)`, an element a loop is bound to, or an argument `run(a, a.c.s)` beside it. So can
 //! a param a function modifies though it is `Borrow` (used as a value too: `finish::demote_fn_values`).
+//! A method chosen at run time (virtual, interface, bounded type param) counts as every method of
+//! its name, as its modes are fixed like a function value's: an override that calls `KK(q)` hides
+//! it from `go`'s callers just the same.
 //! Asked by the exclusivity check (`const`s, loops) and by lowering (`stable_borrow`); one scan of
 //! every body, then a walk up the callers from what changed.
 
 use rustc_hash::FxHashMap;
 
+use crate::replaced_holders::member;
+
 use crate::hir::{
-    Block, Callee, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode, Pat, PatKind, Stmt,
-    StmtKind as S,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode, Pat, PatKind,
+    Program, Stmt, StmtKind as S, TyKind,
 };
 
 /// For each function, the params (bit `i`: `params[i]`, the first 64) that may reach a function
@@ -19,6 +24,9 @@ use crate::hir::{
 pub struct ValueParams {
     bits: FxHashMap<DefId, u64>,
     params: FxHashMap<DefId, usize>,
+    /// Per method name, the params that may reach one in any method of that name, counted from
+    /// the end (bit `k`: the `k`th from the last), as a closure's captures and `this` come first.
+    methods: FxHashMap<String, u64>,
 }
 
 impl ValueParams {
@@ -32,13 +40,31 @@ impl ValueParams {
             false => 0,
         }
     }
+
+    /// Of a call with `args` arguments of the method named `name` (its full name or not), chosen
+    /// at run time, the arguments that may reach a function value: all of them with no name.
+    pub fn of_method(&self, name: Option<&str>, args: usize) -> u64 {
+        let Some(name) = name else {
+            return u64::MAX;
+        };
+        let from_end = self.methods.get(member(name)).copied().unwrap_or(0);
+        (0..args.min(64))
+            .filter(|i| {
+                let k = args - 1 - i;
+                k < 64 && from_end >> k & 1 == 1
+            })
+            .fold(0, |bits, i| bits | 1 << i)
+    }
 }
 
-/// A param's reach passed on: to `param` of `callee`, or argument `from_end` from its end.
+/// The name of the method `callee` chooses at run time, when `callee` is such a call and the
+/// receiver's type says.
+pub type MethodName<'n> = dyn for<'e> Fn(&'e Callee, &'e [Expr]) -> Option<&'n str> + 'n;
+
+/// A param's reach passed on: to `param` of a callee, or argument `from_end` from its end.
 struct Edge {
     caller: DefId,
     bits: u64,
-    callee: DefId,
     param: Param,
 }
 
@@ -48,21 +74,62 @@ enum Param {
 }
 
 /// What one body does with its params.
-struct Scan<'a> {
+struct Scan<'s, 'n> {
     def: DefId,
+    method_name: &'s MethodName<'n>,
     /// Each closure's captures, in the order of the params that hold them.
-    captures: &'a FxHashMap<DefId, Vec<LocalId>>,
+    captures: &'s FxHashMap<DefId, Vec<LocalId>>,
     /// Per local: the params its value comes from.
     roots: FxHashMap<LocalId, u64>,
     direct: u64,
-    edges: Vec<Edge>,
+    edges: Vec<(DefId, Edge)>,
+    /// Edges to every method of a name.
+    methods: Vec<(&'n str, Edge)>,
 }
 
-/// Every function's params that may reach a function value.
-pub fn compute<'a>(fns: impl Iterator<Item = (DefId, &'a FnDef)>) -> ValueParams {
+/// [`compute`] of a finished program.
+pub fn of_program(hir: &Program) -> ValueParams {
+    let fns = hir.defs.iter().enumerate().filter_map(|(i, d)| match d {
+        Def::Fn(f) => Some((DefId(i as u32), f)),
+        _ => None,
+    });
+    let iface_method = |d: DefId, slot: u32| match hir.def(d) {
+        Def::Interface(i) => i.methods.get(slot as usize).map(|m| m.name.as_str()),
+        _ => None,
+    };
+    compute(fns, &|callee, args| match callee {
+        Callee::Virtual { slot } => {
+            let TyKind::Adt(class, _) = hir.types.kind(args.first()?.ty) else {
+                return None;
+            };
+            let Def::Adt(a) = hir.def(*class) else {
+                return None;
+            };
+            match hir.def(*a.vtable.get(*slot as usize)?) {
+                Def::Fn(f) => Some(f.name.as_str()),
+                _ => None,
+            }
+        }
+        Callee::Dyn { slot, .. } => match hir.types.kind(args.first()?.ty) {
+            TyKind::Dyn(iface, _) => iface_method(*iface, *slot),
+            _ => None,
+        },
+        Callee::ParamMethod { iface, slot, .. } => iface_method(*iface, *slot),
+        _ => None,
+    })
+}
+
+/// Every function's params that may reach a function value. `method_name` names the methods calls
+/// choose at run time.
+pub fn compute<'a>(
+    fns: impl Iterator<Item = (DefId, &'a FnDef)>,
+    method_name: &MethodName<'a>,
+) -> ValueParams {
     let mut out: FxHashMap<DefId, u64> = FxHashMap::default();
     let mut params: FxHashMap<DefId, usize> = FxHashMap::default();
+    let mut names: FxHashMap<DefId, &str> = FxHashMap::default();
     let mut callers: FxHashMap<DefId, Vec<Edge>> = FxHashMap::default();
+    let mut method_callers: FxHashMap<&str, Vec<Edge>> = FxHashMap::default();
     let mut work = vec![];
     let fns: Vec<(DefId, &FnDef)> = fns.collect();
     let captures: FxHashMap<DefId, Vec<LocalId>> = (fns.iter())
@@ -71,12 +138,15 @@ pub fn compute<'a>(fns: impl Iterator<Item = (DefId, &'a FnDef)>) -> ValueParams
         .collect();
     for (def, f) in fns {
         params.insert(def, f.params.len());
+        names.insert(def, member(&f.name));
         let mut s = Scan {
             def,
+            method_name,
             captures: &captures,
             roots: FxHashMap::default(),
             direct: 0,
             edges: vec![],
+            methods: vec![],
         };
         for (i, p) in f.params.iter().enumerate().take(64) {
             s.roots.insert(p.local, 1 << i);
@@ -85,8 +155,11 @@ pub fn compute<'a>(fns: impl Iterator<Item = (DefId, &'a FnDef)>) -> ValueParams
             }
         }
         s.block(&f.body.block);
-        for e in s.edges {
-            callers.entry(e.callee).or_default().push(e);
+        for (callee, e) in s.edges {
+            callers.entry(callee).or_default().push(e);
+        }
+        for (name, e) in s.methods {
+            method_callers.entry(member(name)).or_default().push(e);
         }
         if s.direct != 0 {
             out.insert(def, s.direct);
@@ -96,10 +169,9 @@ pub fn compute<'a>(fns: impl Iterator<Item = (DefId, &'a FnDef)>) -> ValueParams
     while let Some(d) = work.pop() {
         let bits = out.get(&d).copied().unwrap_or(0);
         let count = params.get(&d).copied().unwrap_or(0);
-        let Some(edges) = callers.get(&d) else {
-            continue;
-        };
-        for e in edges {
+        let by_def = callers.get(&d).into_iter().flatten();
+        let by_name = names.get(&d).and_then(|n| method_callers.get(n));
+        for e in by_def.chain(by_name.into_iter().flatten()) {
             let i = match e.param {
                 Param::At(i) => i,
                 Param::FromEnd(k) => match count.checked_sub(k + 1) {
@@ -117,7 +189,23 @@ pub fn compute<'a>(fns: impl Iterator<Item = (DefId, &'a FnDef)>) -> ValueParams
             }
         }
     }
-    ValueParams { bits: out, params }
+    let mut methods: FxHashMap<String, u64> = FxHashMap::default();
+    for (d, bits) in &out {
+        let (Some(name), Some(&count)) = (names.get(d), params.get(d)) else {
+            continue;
+        };
+        for i in (0..count.min(64)).filter(|i| bits >> i & 1 == 1) {
+            let k = count - 1 - i;
+            if k < 64 {
+                *methods.entry(name.to_string()).or_insert(0) |= 1 << k;
+            }
+        }
+    }
+    ValueParams {
+        bits: out,
+        params,
+        methods,
+    }
 }
 
 /// The local the place `e` starts from, through shares and conversions.
@@ -144,7 +232,7 @@ fn root(e: &Expr) -> Option<LocalId> {
     }
 }
 
-impl Scan<'_> {
+impl Scan<'_, '_> {
     fn bits_of(&self, e: &Expr) -> u64 {
         root(e).map_or(0, |l| self.roots.get(&l).copied().unwrap_or(0))
     }
@@ -234,12 +322,34 @@ impl Scan<'_> {
                     for (i, a) in args.iter().enumerate() {
                         let bits = self.bits_of(a);
                         if bits != 0 {
-                            self.edges.push(Edge {
-                                caller: self.def,
+                            let param = Param::FromEnd(args.len() - 1 - i);
+                            let caller = self.def;
+                            let edge = Edge {
+                                caller,
                                 bits,
-                                callee: *d,
-                                param: Param::FromEnd(args.len() - 1 - i),
-                            });
+                                param,
+                            };
+                            self.edges.push((*d, edge));
+                        }
+                    }
+                }
+                Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
+                    let name = (self.method_name)(callee, args);
+                    for (i, a) in args.iter().enumerate() {
+                        let bits = self.bits_of(a);
+                        match name {
+                            _ if bits == 0 => {}
+                            Some(n) => {
+                                let param = Param::FromEnd(args.len() - 1 - i);
+                                let caller = self.def;
+                                let edge = Edge {
+                                    caller,
+                                    bits,
+                                    param,
+                                };
+                                self.methods.push((n, edge));
+                            }
+                            None => self.direct |= bits,
                         }
                     }
                 }
@@ -250,12 +360,14 @@ impl Scan<'_> {
                 for (k, outer) in outers.into_iter().enumerate() {
                     let bits = self.roots.get(&outer).copied().unwrap_or(0);
                     if bits != 0 {
-                        self.edges.push(Edge {
-                            caller: self.def,
+                        let caller = self.def;
+                        let param = Param::At(k);
+                        let edge = Edge {
+                            caller,
                             bits,
-                            callee: *d,
-                            param: Param::At(k),
-                        });
+                            param,
+                        };
+                        self.edges.push((*d, edge));
                     }
                 }
             }

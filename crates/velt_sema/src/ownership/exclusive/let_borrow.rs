@@ -11,7 +11,7 @@
 use velt_common::{Diagnostic, Span};
 
 use crate::hir::{
-    Block, Callee, Expr, ExprKind as E, LocalDef, PatKind, Stmt, StmtKind as S, UseMode,
+    Block, Callee, Expr, ExprKind as E, LocalDef, PatKind, Stmt, StmtKind as S, TyKind, UseMode,
 };
 use crate::visit::{self, VisitMut};
 
@@ -202,8 +202,8 @@ fn changed_while_borrowed(
     ))
 }
 
-/// A call through a function value, or to a function that passes the param on to one
-/// (`crate::value_params`), given what owns `place` (`const x = a.b; g(a)`): its params read as
+/// A call through a function value, or to a function or a method chosen at run time that passes
+/// the param on to one (`crate::value_params`), given what owns `place` (`const x = a.b; g(a)`): its params read as
 /// borrows however the function value changes them, as it may replace `a.b`.
 fn changed_by_function_value(
     col: &Collector,
@@ -224,6 +224,32 @@ fn changed_by_function_value(
         visit::expr(e, &mut v);
     }
     v.hit
+}
+
+/// The name of the method a call chooses at run time (`crate::value_params`), when the receiver's
+/// type says.
+pub(super) fn method_name<'c>(
+    cx: &'c crate::ctx::Ctx,
+    callee: &Callee,
+    args: &[Expr],
+) -> Option<&'c str> {
+    let iface = |d, slot: &u32| {
+        let m = cx.iface(d)?.methods.get(*slot as usize)?;
+        Some(m.name.as_str())
+    };
+    match callee {
+        Callee::Virtual { slot } => {
+            let (class, _) = cx.class_of(args.first()?.ty)?;
+            let m = *cx.adt(class)?.vtable.get(*slot as usize)?;
+            Some(cx.try_fn(m)?.name.as_str())
+        }
+        Callee::Dyn { slot, .. } => match cx.ty.kind(args.first()?.ty) {
+            TyKind::Dyn(d, _) => iface(*d, slot),
+            _ => None,
+        },
+        Callee::ParamMethod { iface: d, slot, .. } => iface(*d, slot),
+        _ => None,
+    }
 }
 
 /// The same for the body of a loop over `place`, or (`equal`) given `place` itself too: a function
@@ -252,6 +278,15 @@ struct ValueCalls<'c, 'a, 'm> {
 }
 
 impl ValueCalls<'_, '_, '_> {
+    /// The arguments `bits` says.
+    fn arguments(&mut self, args: &[Expr], bits: u64) {
+        for (i, a) in args.iter().enumerate().take(64) {
+            if bits >> i & 1 == 1 {
+                self.argument(a);
+            }
+        }
+    }
+
     /// Argument `a` of such a call, when it is what owns the place.
     fn argument(&mut self, a: &Expr) {
         let mut x = a;
@@ -287,11 +322,12 @@ impl VisitMut for ValueCalls<'_, '_, '_> {
             Callee::Indirect(_) => args.iter().for_each(|a| self.argument(a)),
             Callee::Def(d, _) => {
                 let bits = self.col.value_params.of_args(*d, args.len());
-                for (i, a) in args.iter().enumerate().take(64) {
-                    if bits >> i & 1 == 1 {
-                        self.argument(a);
-                    }
-                }
+                self.arguments(args, bits);
+            }
+            Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
+                let name = method_name(self.col.cx, callee, args);
+                let bits = self.col.value_params.of_method(name, args.len());
+                self.arguments(args, bits);
             }
             _ => {}
         }

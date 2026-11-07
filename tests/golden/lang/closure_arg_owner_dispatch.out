@@ -1,0 +1,26 @@
+override 41
+override, named caller 41
+interface 41
+interface, named caller 41
+bounded type param 41
+interface in a field 41
+abstract method 41
+object literal 41
+object literal, named caller 41
+class field holding a function 41
+interface field holding a function 41
+receiver, override 41
+receiver, bounded type param 41
+interface on this 41
+part, override 42
+part, interface 42
+part through a local, override 42
+part through a local, interface 42
+part, override, named caller 42
+part, interface, named caller 42
+loop, override 41 0
+loop, override 41 0
+loop, interface 41 0
+loop, interface 41 0
+loop, named caller 41 0
+loop, named caller 41 0

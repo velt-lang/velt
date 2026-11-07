@@ -313,6 +313,29 @@ function p_${id}(q: H_${id}, v: ${k.t}): string { r_${id}(q); ${junk}return ${k.
   console.log("${id}", p_${id}(h, h.v), ${k.show("h.v")});`,
   },
   {
+    name: "owner-const-interface",
+    top: (k, id) => `class H_${id} { v: ${k.t} = ${k.a}; }
+const K_${id} = (q: H_${id}) => { q.v = ${k.b}; ${junk}};
+interface R_${id} { go(q: H_${id}): void }
+class T_${id} implements R_${id} { go(q: H_${id}): void { K_${id}(q); } }
+function r_${id}(t: R_${id}, q: H_${id}): void { t.go(q); }`,
+    body: (k, id) => `const h = new H_${id}();
+  const x = h.v;
+  r_${id}(new T_${id}(), h);
+  ${junk}
+  console.log("${id}", ${k.show("x")}, ${k.show("h.v")});`,
+  },
+  {
+    name: "owner-part-override",
+    top: (k, id) => `class H_${id} { v: ${k.t} = ${k.a}; }
+const K_${id} = (q: H_${id}) => { q.v = ${k.b}; ${junk}};
+class B_${id} { go(q: H_${id}): void {} }
+class S_${id} extends B_${id} { override go(q: H_${id}): void { K_${id}(q); } }
+function p_${id}(b: B_${id}, q: H_${id}, v: ${k.t}): string { b.go(q); ${junk}return ${k.show("v")} + "!"; }`,
+    body: (k, id) => `const h = new H_${id}();
+  console.log("${id}", p_${id}(new S_${id}(), h, h.v), ${k.show("h.v")});`,
+  },
+  {
     name: "owner-loop-binding",
     top: (k, id) => `class H_${id} { vs: ${k.t.includes("|") ? `(${k.t})` : k.t}[] = [${k.a}, ${k.a}]; }`,
     body: (k, id) => `const h = new H_${id}();

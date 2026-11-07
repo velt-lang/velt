@@ -64,11 +64,16 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
     // program (`Checker::relaxed_callee`): built once, when the first of them is checked, while
     // every body is in place.
     let mut closures: Option<Closures> = None;
-    let value_params =
-        crate::value_params::compute(cx.defs.iter().enumerate().filter_map(|(i, d)| match d {
+    let value_params = {
+        let cx = &*cx;
+        let fns = cx.defs.iter().enumerate().filter_map(|(i, d)| match d {
             Some(Def::Fn(f)) => Some((DefId(i as u32), f)),
             _ => None,
-        }));
+        });
+        crate::value_params::compute(fns, &|callee, args| {
+            let_borrow::method_name(cx, callee, args)
+        })
+    };
     for d in fns {
         if closures.is_none() && !cx.modules[cx.fn_info(d).module].is_std && as_value(cx, d) {
             closures = Some(Closures::of(cx));

@@ -137,12 +137,7 @@ impl<'h> Cx<'h> {
     /// (`velt_sema::value_params`).
     pub(super) fn value_param_bits(&mut self, callee: CalleeId, args: usize) -> u64 {
         if self.value_params.is_none() {
-            let hir = self.hir;
-            let fns = hir.defs.iter().enumerate().filter_map(|(i, d)| match d {
-                hir::Def::Fn(f) => Some((DefId(i as u32), f)),
-                _ => None,
-            });
-            self.value_params = Some(Rc::new(velt_sema::value_params::compute(fns)));
+            self.value_params = Some(Rc::new(velt_sema::value_params::of_program(self.hir)));
         }
         let def = self.callees[callee.0 as usize].0;
         self.value_params
