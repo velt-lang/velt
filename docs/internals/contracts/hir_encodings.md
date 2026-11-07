@@ -738,6 +738,7 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   content, field by field: a struct has no identity, #641). A declared `struct` compares its
   numbers by their bits under every one of these; a C struct (`AdtDef::c_struct`) compares them
   as the operation compares numbers (IEEE under `Same`, SameValueZero for keys and `includes`).
+  A C struct held in a declared `struct` compares by the outer struct's rule, its bits.
   `Array.includes` compares with `Intrinsic::IncludesEq` (JS SameValueZero for everything but
   structs: `Same`, with a number `NaN` equal to `NaN`; a struct by content as above). A struct
   whose fields are all Copy is Copy (`AdtDef::is_copy`); object types never are.

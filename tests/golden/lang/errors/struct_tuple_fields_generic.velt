@@ -1,0 +1,54 @@
+// A struct can't hold a tuple as a union member, nor through an instance made only inside a
+// generic body: the call that gives the tuple is reported, through calls of other generic
+// functions too (#641).
+
+struct U1 {
+  m: [number, number, number] | number;
+}
+
+struct U2 {
+  m: [number, number, number] | boolean;
+}
+
+struct G<T> {
+  v: T;
+  n: number;
+}
+
+struct H<T> {
+  g: G<T>;
+}
+
+struct N<T> {
+  v: T | null;
+}
+
+function outer<T>(x: T, f: (t: T) => void): T {
+  const g: G<T> = { v: x, n: 1 };
+  const h = g;
+  f(g.v);
+  return h.v;
+}
+
+function viaH<T>(x: T): number {
+  const h: H<T> = { g: { v: x, n: 2 } };
+  return h.g.n;
+}
+
+function viaN<T>(x: T): number {
+  const n: N<T> = { v: x };
+  return n.v == null ? 0 : 1;
+}
+
+function chain<T>(x: T): T {
+  return outer(x, (q: T) => {});
+}
+
+function main() {
+  const p: [number, number, number] = [1, 2, 3];
+  const r = outer(p, (q: [number, number, number]) => {
+    q[0] = 9;
+  });
+  console.log(r[0], viaH(p), viaN(p), chain(p)[0]);
+  console.log(outer(5, (q: number) => {}), viaH("ok"));
+}

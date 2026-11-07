@@ -153,8 +153,9 @@ impl FnLower<'_, '_> {
                 let id = self.promise_id(place);
                 self.fx_combine(cint(0, Ty::U64), id)
             }
-            // A C struct key hashes its content, as `KeyEq` compares it (same.rs).
-            _ if self.cx.c_struct(ty) => {
+            // A C struct key hashes its content, as `KeyEq` compares it (same.rs); inside a
+            // `struct`, by its bits as below.
+            _ if self.cx.c_struct(ty) && !self.bits_mode => {
                 let a = self.addr(place.clone());
                 self.call_glue(Glue::Hash, ty, vec![a])
             }
