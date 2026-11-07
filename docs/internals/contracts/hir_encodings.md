@@ -79,7 +79,8 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   last compare it with the code of each function that became a value, whose answers are in
   `Program::fn_shapes` (by `FnDef::span`; a wrapper sema made to fit a function type reads as the
   function in its `wraps`, or as itself when that is only known at run time). A declared function's
-  `name` comes from its qualified name, a literal's from `ast::Module::fn_names`.
+  `name` comes from its qualified name, a literal's from `ast::Module::fn_names`. `console.log` of one
+  through `any` writes that name.
 - Errors: see "Errors" below.
 - `x ?? d`, `a?.b`, `if (x != null)` narrowing are desugared by sema into `Match` with
   `PatKind::Some/None`; narrowed uses read the payload via `ExprKind::UnwrapSome`.

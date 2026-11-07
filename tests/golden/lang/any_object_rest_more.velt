@@ -1,0 +1,43 @@
+// `...rest` of an `any` in assignments, parameters, loops, of classes, strings, arrays and proxies
+// (#1364).
+const x: any = { a: 1, b: 2, c: 3 };
+let a: any, r: any;
+({ a, ...r } = x);
+console.log(a, r);
+function f({ a, ...r }: any = { a: 9, z: 1 }) { return [a, r]; }
+console.log(f(), f({ a: 1, y: 2 }));
+const g = ({ a, ...r }: any) => r;
+console.log(g(x));
+const list: any[] = [x];
+list.forEach(({ b, ...others }: any) => console.log(b, others));
+for (const [i, { c, ...o }] of list.entries() as any) console.log(i, c, o);
+const map = new Map<string, any>([["k", { p: 1, q: 2 }]]);
+for (const [k, { p, ...rest }] of map) console.log(k, p, rest);
+class C { x = 1; y = 2; #h = 3; get z() { return 4; } }
+const inst: any = new C();
+const { x: cx, ...cr } = inst;
+console.log(cx, cr);
+const s: any = "ab";
+const { length, ...sr } = s;
+console.log(length, sr);
+const sym = Symbol("s");
+const withSym: any = { [sym]: 1, k: 2 };
+const { k, ...sr2 } = withSym;
+console.log(k, Object.keys(sr2));
+const { ["a"]: viaLit, ...afterLit } = x;
+console.log(viaLit, afterLit);
+const key = "c" as string;
+const { [key]: viaVar = 7, ...afterVar } = x;
+console.log(viaVar, afterVar);
+const prox: any = new Proxy({ m: 1, n: 2 }, {});
+const { m, ...pr } = prox;
+console.log(m, pr);
+const arrv: any = [1, 2];
+const { length: alen, ...ar } = arrv;
+console.log(alen, ar);
+const nested: any = { o: { p: { q: 1, w: 2 }, e: 3 } };
+const { o: { p: { q, ...w }, ...e }, ...none } = nested;
+console.log(q, w, e, none);
+const emptyRest: any = { only: 1 };
+const { only, ...nothing } = emptyRest;
+console.log(only, nothing, Object.keys(nothing).length);

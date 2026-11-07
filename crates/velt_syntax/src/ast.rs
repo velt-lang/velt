@@ -60,15 +60,6 @@ pub struct Module {
     pub fn_names: Vec<(Span, String)>,
 }
 
-impl Module {
-    /// The name of the function literal at `span` (`fn_names`), `None` for an anonymous one.
-    pub fn fn_name(&self, span: Span) -> Option<&str> {
-        let at = (self.fn_names).partition_point(|(s, _)| (s.lo, s.hi) < (span.lo, span.hi));
-        let (s, name) = self.fn_names.get(at)?;
-        (*s == span).then_some(name.as_str())
-    }
-}
-
 // ───────────────────────────── Items ─────────────────────────────
 
 #[derive(Clone, Debug)]

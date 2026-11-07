@@ -12,7 +12,8 @@ use super::any_member::ST_OK;
 use super::glue::Glue;
 use super::kinds::ThunkKind;
 use super::operand::proj;
-use super::{cfunc, Cx, FnLower, Work};
+use super::rt::Rt;
+use super::{cfunc, cint, Cx, FnLower, Work};
 use crate::vir::{self, BinOp, Callee, FuncId, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// The function whose value has the code of `work`, if `work` is such code.
@@ -22,17 +23,6 @@ fn value_def(work: &Work) -> Option<(DefId, bool)> {
         Work::Thunk(ThunkKind::Env(_), d, _) => Some((*d, true)),
         Work::Fn(d, _) | Work::Frozen(d, _, _, _, _) => Some((*d, false)),
         _ => None,
-    }
-}
-
-/// What the qualified name of a declared function says `name` is: `f` of `std/fs::f` and of
-/// `User.f`; nothing for a closure, whose name is in its shape.
-fn declared_name(full: &str) -> &str {
-    let last = full.rsplit("::").next().unwrap_or(full);
-    let last = last.rsplit('.').next().unwrap_or(last);
-    match last.starts_with('{') {
-        true => "",
-        false => last.split('#').next().unwrap_or(last),
     }
 }
 
@@ -83,7 +73,7 @@ impl Cx<'_> {
             }
             let name = match shape.and_then(|s| s.name.as_deref()) {
                 Some(n) => n,
-                None => declared_name(&f.name),
+                None => hir::declared_fn_name(&f.name),
             };
             out.push((fid, name.to_string(), shape.map_or(0, |s| s.length)));
         }
@@ -127,6 +117,30 @@ impl FnLower<'_, '_> {
         let at = self.addr(out.clone());
         self.call(Callee::Func(glue), vec![code, at], None, false);
         Operand::Copy(out)
+    }
+
+    /// A function value in the text of `console.log`, as Node writes it (`format.rs`).
+    pub(super) fn format_fn(&mut self, buf: &Operand, place: &Place) {
+        let name = self.fn_name_of(Operand::Copy(proj(place, Proj::Field(0))));
+        let st = self.cx.str_ty();
+        let vt = self.cx.ty(st);
+        let name = Place::local(self.copy_to_temp(name, vt));
+        // The word of a string's lengths: zero for an empty one.
+        let lengths = Operand::Copy(proj(&name, Proj::Field(1)));
+        let none = Rvalue::Binary(BinOp::Eq, lengths, cint(0, Ty::U64));
+        let none = self.rvalue_temp(Ty::Bool, none);
+        let (anonymous, named, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(none, anonymous, named);
+        self.switch_to(anonymous);
+        self.push_text(buf, "[Function (anonymous)]");
+        self.goto(join);
+        self.switch_to(named);
+        self.push_text(buf, "[Function: ");
+        let at = self.addr(name);
+        self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), at], None);
+        self.push_text(buf, "]");
+        self.goto(join);
+        self.switch_to(join);
     }
 
     /// `length` and `name` in the `AnyGet` slot body of a function type: answered here, and any

@@ -1,0 +1,23 @@
+m 2
+s 1
+true 1
+bound two 2
+bound m 2
+over 2
+string number
+0 
+two 2
+f 1 h 2
+1 s1 1
+1 true
+inner 1
+two 2
+incr 0
+m2
+withProps 0 2
+true
+[ 'two' ] [ 2 ]
+0
+quoted-key
+[Function: two] [Function: f] [Function: heldArrow] [ [Function: two] ] { held: [Function: two] }
+[Function (anonymous)]

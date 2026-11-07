@@ -1,0 +1,65 @@
+// `length` and `name` of methods, bound functions, overloads, a `Function`, optional chains, values
+// kept in collections, and what `any` reads of them (#1588).
+function two(a: number, b: string) { return a + b; }
+class K {
+  n = 1;
+  m(a: number, b: number) { return a + b + this.n; }
+  static s(a: number) { return a; }
+  get g() { return (x: number) => x; }
+}
+const k = new K();
+console.log(k.m.name, k.m.length);
+console.log(K.s.name, K.s.length);
+console.log(k.g.name === "", k.g.length);
+const b1 = two.bind(null);
+console.log(b1.name, b1.length);
+const b2 = k.m.bind(k);
+console.log(b2.name, b2.length);
+function over(a: string): void;
+function over(a: number, b: number): void;
+function over(a: any, b?: any): void {}
+console.log(over.name, over.length);
+console.log(typeof two.name, typeof two.length);
+const opt: (() => void) | undefined = Math.random() > 2 ? undefined : () => {};
+console.log(opt?.length, opt?.name);
+const g2: Function = two;
+console.log(g2.name, g2.length);
+const rec = { f(a: number) { return a; }, async h(a: number, b: number) { return a; } };
+console.log(rec.f.name, rec.f.length, rec.h.name, rec.h.length);
+function pass(f: (a: number) => any) { return f.name + f.length; }
+console.log(pass(k.g), pass(K.s), pass((x: number) => x));
+const m = new Map<string, (x: number) => number>();
+m.set("a", (x) => x);
+console.log(m.get("a")!.length, m.get("a")!.name === "");
+function outer() { function inner(a: number) { return a; } return inner; }
+console.log(outer().name, outer().length);
+const aliased = two;
+console.log(aliased.name, aliased.length);
+let counter = 0;
+const incr = () => { counter++; };
+const held: any = { incr };
+console.log(held.incr.name, held.incr.length);
+class Sub extends K { m2: (q: number) => number = (q) => q; }
+console.log(new Sub().m2.name);
+const withProps: any = () => 1;
+withProps.extra = 2;
+console.log(withProps.name, withProps.length, withProps.extra);
+console.log("name" in held.incr);
+console.log([two].map((f) => f.name), [two].map((f) => f.length));
+function dflt(a = 1, b: number) { return a + b; }
+console.log(dflt.length);
+const objFn = { "quoted-key": () => 1, 3: () => 2 };
+console.log(objFn["quoted-key"].name);
+
+// As `console.log` writes a function reached through `any`.
+class WithField {
+  f: () => number = () => 1;
+}
+const heldFn: any = two;
+const heldField: any = new WithField();
+const heldArrow: any = (a: number) => a;
+console.log(heldFn, heldField.f, heldArrow, [heldFn], { held: heldFn });
+function anonymousHolder(v: any) {
+  return v;
+}
+console.log(anonymousHolder(() => 1));

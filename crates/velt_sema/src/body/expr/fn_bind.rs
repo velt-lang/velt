@@ -90,6 +90,7 @@ impl FnCx<'_, '_> {
             true => h,
             false => self.coerce(h, fty),
         };
+        self.note_bound_name(f, span, params.len());
         let names: Vec<String> = (0..params.len()).map(|k| format!("#b{k}")).collect();
         let n = names.len();
         let ps = (names.iter().enumerate())

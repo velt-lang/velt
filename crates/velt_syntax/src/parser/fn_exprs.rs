@@ -21,6 +21,15 @@ use crate::ast::*;
 use crate::lexer::{Kw, Tok};
 use velt_common::{Diagnostic, Span};
 
+impl Module {
+    /// The name of the function literal at `span` (`fn_names`), `None` for an anonymous one.
+    pub fn fn_name(&self, span: Span) -> Option<&str> {
+        let at = (self.fn_names).partition_point(|(s, _)| (s.lo, s.hi) < (span.lo, span.hi));
+        let (s, name) = self.fn_names.get(at)?;
+        (*s == span).then_some(name.as_str())
+    }
+}
+
 impl<'a> Parser<'a> {
     /// `value` stands where JavaScript calls a function literal `name` (`Module::fn_names`):
     /// noted when it is one, as written (a cast is gone at run time) or in parentheses.

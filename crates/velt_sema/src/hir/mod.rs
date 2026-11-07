@@ -296,6 +296,18 @@ pub struct Param {
     pub mode: PassMode,
 }
 
+/// What the qualified name of a declared function says `name` is: `f` of `std/fs::f` and of
+/// `User.f`, also of `f#1` (an overload's signature); nothing for a closure, whose name is in its
+/// [`FnShape`].
+pub fn declared_fn_name(full: &str) -> &str {
+    let last = full.rsplit("::").next().unwrap_or(full);
+    let last = last.rsplit('.').next().unwrap_or(last);
+    match last.starts_with('{') {
+        true => "",
+        false => last.split('#').next().unwrap_or(last),
+    }
+}
+
 /// What JavaScript says of a function as a value (`hir::Program::fn_shapes`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FnShape {

@@ -107,6 +107,7 @@ impl FnCx<'_, '_> {
             }
         }
         let obj = self.expr(object, None, Want::Borrow);
+        self.note_bound_name(inner, span, 0);
         Some(self.method_value(obj, object, prop, exp, span))
     }
 
@@ -197,6 +198,7 @@ impl FnCx<'_, '_> {
             self.cx.error(d);
             return self.error_expr(span);
         };
+        self.note_method_value(&arrow, prop);
         if direct {
             return match generic {
                 Some(g) => self.generic_closure(&arrow, Some(g)),

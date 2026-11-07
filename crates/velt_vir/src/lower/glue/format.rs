@@ -5,7 +5,7 @@
 //! like `util.inspect` (`'a'`, `"it's"`, `'a\\n'`), `null`,
 //! objects `Name { x: 1, y: 'a' }` (anonymous objects `{ x: 1 }`), numeric enums as their
 //! number, string enums and string literal types as their string, `Ok(1)` / `Err('e')`, function
-//! values `[Function (anonymous)]`, unions as their active member. At the top level
+//! values `[Function: name]` or `[Function (anonymous)]`, unions as their active member. At the top level
 //! (`format_top`) strings are raw, and options and unions are `null` / their payload / member in
 //! top-level style. The prelude `Map` prints like node's (format_map.rs), a `JsonValue` like
 //! node prints the parsed value (`{ a: 1, b: [ 2, 'x' ] }`, a string raw at the top level).
@@ -322,9 +322,7 @@ impl FnLower<'_, '_> {
             TyKind::FnPtr { .. } if self.class_object_tag(ty).is_some() => {
                 self.format_class_object(buf, place, ty)
             }
-            TyKind::FnPtr { .. } | TyKind::Closure(_) => {
-                self.push_text(buf, "[Function (anonymous)]")
-            }
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => self.format_fn(buf, place),
             TyKind::Promise(..) => self.within_depth(buf, depth, "[Promise]", None, |lw, child| {
                 lw.format_promise(buf, place, ty, &child)
             }),

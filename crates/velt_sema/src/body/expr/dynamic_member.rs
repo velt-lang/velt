@@ -38,16 +38,18 @@ impl FnCx<'_, '_> {
             None => return Err(obj),
             Some(d) => d,
         };
+        // Every function has these two: the `any` read answers them (fn_shapes.rs).
+        let fn_own = d == Dynamic::Function && matches!(member, Some(Some("name" | "length")));
         match (d, member) {
             (Dynamic::Unknown, _) => {
                 self.unknown_use_error(obj.span);
                 Ok((obj, None))
             }
-            (Dynamic::Object | Dynamic::Function, Some(m)) => {
+            (Dynamic::Object | Dynamic::Function, Some(m)) if !fn_own => {
                 self.narrow_dynamic_error(d, m, obj.span);
                 Ok((obj, None))
             }
-            (Dynamic::Object, None) => {
+            (Dynamic::Object, _) => {
                 self.cx.error(
                     Diagnostic::error("an `object` value is not callable", obj.span)
                         .with_note("narrow it with `typeof x === \"function\"` or convert it with `as Function` first"),
