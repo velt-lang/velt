@@ -380,6 +380,9 @@ describe("a client that shuts its sending side", () => {
       // every keep-alive request a read, and its answer does no harm (README.md).
       const g = gate();
       const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+        if (new URL(req.url).pathname == "/other") {
+          return new Response("other");
+        }
         await hold(g);
         return new Response("late");
       });
@@ -388,6 +391,8 @@ describe("a client that shuts its sending side", () => {
         await c.write(GET);
         await timeout(arrivals(g), LIMIT);
         c.shutdown();
+        // The end of its input has reached the server by the time another request was answered.
+        expect(await (await fetch(`http://127.0.0.1:${server.port}/other`)).text()).toBe("other");
         open(g);
         expect((await timeout(readAll(c), LIMIT)).endsWith("late")).toBe(true);
         c.close();
