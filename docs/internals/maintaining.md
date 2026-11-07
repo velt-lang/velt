@@ -187,12 +187,16 @@ not a reason for another round.
   twice as slow as a fresh one, and a `check` job 190-360 s slower. The nightly gate saves one from
   an empty cache, which drops what no program uses any more. A queue entry saves no cache: its
   shards and `check` job upload what they added as artifacts (`clang-objects.sh`, kept a day), and
-  the push to `main` from that entry adds them to the newest entry and saves it (the `main` job, a
-  few seconds). So a queue entry restores what the last merge compiled, and no job compiles
+  the push to `main` from that entry adds them to the newest entry and saves it (the
+  `clang-objects` job). That job takes only files named as objects, and only adds them. So what
+  ran in a queue entry reaches a cache `main` restores, and the one check is that the queue run
+  passed on the commit that landed: a key's content can't be verified without compiling it. The
+  cache is Linux-only, so this doesn't reach releases, and the next nightly save, from an empty
+  cache, drops it. So a queue entry restores what the last merge compiled, and no job compiles
   anything to refresh the cache; a push whose `main` run was replaced by a later one (only the
   latest waiting push runs) is the exception, and the next one catches up. A build of every golden
   on `main` would give the same cache without artifacts, but costs up to 14 minutes per push.
-  Only the two newest entries stay (the `main` job and `cache-prune` delete the rest), at about
+  Only the two newest entries on `main` stay (`clang-objects` and `cache-prune` delete the rest), at about
   115 MiB each, about 1% of the 10 GB limit. GitHub evicts what was used least recently once the
   total passes that limit, and on 2026-11-07 that reached entries last used four hours earlier, so
   a key that every job restores stays and one that sits idle doesn't.

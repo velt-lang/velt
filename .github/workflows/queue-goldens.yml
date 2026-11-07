@@ -156,7 +156,7 @@ jobs:
         env:
           VELT_GOLDEN_SHARD: ${{ matrix.shard }}
         run: cargo xtask check --full --part golden --archive golden.tar
-      # For the push to main that follows (ci.yml's `main`): a failure here must not fail the entry.
+      # For the push to main that follows (ci.yml's `clang-objects`): a failure here must not fail the entry.
       - name: the objects clang compiled (Linux)
         if: runner.os == 'Linux' && github.event_name == 'merge_group'
         continue-on-error: true

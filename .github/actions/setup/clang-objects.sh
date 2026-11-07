@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The objects a merge queue job added to clang's cache, for the push to main that follows: a run on
-# a queue branch can save no cache another branch restores (ci.yml's `main` job saves them).
+# a queue branch can save no cache another branch restores (ci.yml's `clang-objects` saves them).
 #   clang-objects.sh list         note what the job restored (setup does this)
 #   clang-objects.sh pack <tar>   pack what was added since, if anything
 #   clang-objects.sh unpack <dir> add the objects in every tar under <dir> to the cache

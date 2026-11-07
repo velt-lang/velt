@@ -351,7 +351,7 @@ jobs:
           # The Worker test fails instead of skipping when the packages are missing (Linux).
           VELT_WORKERD: ${{ runner.os == 'Linux' && '1' || '' }}
         run: cargo xtask check --full --part lint,test --base HEAD^1
-      # For the push to main that follows (`main`): a failure here must not fail the entry.
+      # For the push to main that follows (`clang-objects`): a failure here must not fail the entry.
       - name: the objects clang compiled (Linux)
         if: runner.os == 'Linux'
         continue-on-error: true
@@ -437,6 +437,55 @@ jobs:
           RUSTUP_TOOLCHAIN: stable
         run: cargo xtask affected --base HEAD^1 --github
 
+  # What clang compiled in the queue run that tested this commit, added to the newest entry and
+  # saved, so the next queue entry restores it: a queue branch can't save a cache another branch
+  # restores (maintaining.md "Merging"). What a queue job uploaded gets no more than a job with
+  # nothing else in its workspace, only this script from the commit, and no token in `.git/config`:
+  # `actions: write` to delete old entries stays out of the gate's jobs. No artifact (the commit
+  # compiled nothing new) saves nothing, and a failure costs the queue a staler cache, not a red
+  # `main`.
+  clang-objects:
+    needs: main-plan
+    if: github.event_name == 'push' && needs.main-plan.outputs.queue_run != ''
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ci
+          sparse-checkout: .github/actions/setup
+          persist-credentials: false
+      # The same `path` as setup's restore: it is part of what a cache entry is found by.
+      - uses: actions/cache/restore@v4
+        with:
+          path: target/velt-build-cache/v*/llvm
+          key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+          restore-keys: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-
+      - name: clang's objects from the queue
+        env:
+          RUN: ${{ needs.main-plan.outputs.queue_run }}
+        run: |
+          gh run download "$RUN" --pattern 'clang-objects-*' --dir "$RUNNER_TEMP/clang-objects"
+          bash ci/.github/actions/setup/clang-objects.sh unpack "$RUNNER_TEMP/clang-objects"
+      - uses: actions/cache/save@v4
+        with:
+          path: target/velt-build-cache/v*/llvm
+          key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+      # Each is a whole copy, about 1% of the 10 GB limit. Two stay: a job may be restoring the
+      # older one.
+      - name: only the newest clang objects stay
+        run: |
+          gh cache list --ref refs/heads/main --key "velt-clang-objects-$RUNNER_OS-$RUNNER_ARCH-" \
+            --sort created_at --order desc --limit 100 --json id --jq '.[2:][].id' |
+            while read -r id; do gh cache delete "$id"; done
+
   # After each push to main: on Linux the build cache, saved even when a check fails; on Windows
   # and macOS the whole gate (and their caches) when main-plan says so. Without a plan (not a queue
   # commit, or main-plan failed) every OS runs. The scheduled run is Windows and macOS.
@@ -458,7 +507,6 @@ jobs:
     permissions:
       contents: read
       issues: write
-      actions: write
     steps:
       - uses: actions/checkout@v4
       # Tools on Linux too, though it runs no tests: the wasmtime cache saved here is the one
@@ -466,6 +514,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           save-cache: "true"
+          code-cache: "false"
       # Linux: the queue checked it in full, so only build and lint what the gate builds, plus the
       # WebAssembly runtime the tests build.
       - name: build the cache (Linux)
@@ -482,38 +531,6 @@ jobs:
         if: runner.os != 'Linux'
         with:
           working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-      # What clang compiled in the queue run that tested this commit, added to the entry restored
-      # above and saved, so the next queue entry restores it: a queue branch can't save a cache
-      # another branch restores (maintaining.md "Merging"). No artifact (the commit compiled
-      # nothing new) saves nothing, and a failure costs the queue a staler cache, not a red `main`.
-      - name: clang's objects from the queue (Linux)
-        id: objects
-        if: runner.os == 'Linux' && needs.main-plan.outputs.queue_run != ''
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN: ${{ needs.main-plan.outputs.queue_run }}
-        run: |
-          gh run download "$RUN" --repo "$GITHUB_REPOSITORY" --pattern 'clang-objects-*' \
-            --dir "$RUNNER_TEMP/clang-objects"
-          bash .github/actions/setup/clang-objects.sh unpack "$RUNNER_TEMP/clang-objects"
-      - uses: actions/cache/save@v4
-        if: steps.objects.outcome == 'success'
-        with:
-          path: target/velt-build-cache/v*/llvm
-          key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
-      # Each is a whole copy, about 1% of the 10 GB limit. Two stay: a job may be restoring the
-      # older one.
-      - name: only the newest clang objects stay
-        if: steps.objects.outcome == 'success'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          gh cache list --ref refs/heads/main --key "velt-clang-objects-$RUNNER_OS-$RUNNER_ARCH-" \
-            --sort created_at --order desc --limit 100 --json id --jq '.[2:][].id' |
-            while read -r id; do gh cache delete "$id"; done
       - name: cargo xtask check --full
         if: runner.os != 'Linux'
         shell: bash
