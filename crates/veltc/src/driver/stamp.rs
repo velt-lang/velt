@@ -23,6 +23,10 @@
 //! - the system libraries the program's C functions need: an unchanged build isn't checked, and
 //!   the check is what finds them, but its link still needs them.
 //!
+//! The directories its paths are in are written once, in a table after the header (`d <dir>`),
+//! and an entry names one as `~<n>/<name>`: a package of 2,000 files has 10,000 entries, and
+//! with every path written whole most of a no-op build went to reading the stamp's text.
+//!
 //! Only builds without diagnostics get a stamp, so a build that warned warns every time.
 
 use std::fmt::Write as _;
@@ -36,7 +40,7 @@ use super::BuildOptions;
 use crate::backend::Backend;
 
 /// The stamp's first line; a new format changes it, so old stamps just miss.
-const HEADER: &str = "velt-build-stamp 5";
+const HEADER: &str = "velt-build-stamp 6";
 
 /// `<exe>.build-stamp`.
 pub(crate) fn path(exe: &Path) -> PathBuf {
@@ -165,6 +169,16 @@ pub(super) fn note_project(opts: &BuildOptions) {
     }
 }
 
+/// Before a build that is no longer a no-op compiles anything: the fetched dependencies (git,
+/// url) of `opts`'s package graph checked file by file against their locks. A no-op build only
+/// looked at their directories (`vpm::tree_stamp`), and an edit in place must not reach a build
+/// that compiles again.
+pub(super) fn check_fetched(opts: &BuildOptions) -> Result<(), String> {
+    opts.packages
+        .as_ref()
+        .map_or(Ok(()), vpm::PackageGraph::verify_fetched)
+}
+
 /// What a finished build read and made, besides its source map.
 pub(super) struct Built<'a> {
     /// What module resolution looked at.
@@ -241,40 +255,118 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
         };
         files.entry(PathBuf::from(path)).or_insert(read);
     }
-    let mut entries = 0;
+    let mut lines: Vec<(String, String)> = vec![];
     for (path, read) in &files {
         let time = read
             .stat
             .map_or_else(String::new, |(size, t)| format!(" {size} {t}"));
-        let _ = writeln!(s, "file {}{time}\t{}", read.hash, path.display());
-        entries += 1;
+        lines.push((
+            format!("file {}{time}", read.hash),
+            path.display().to_string(),
+        ));
     }
     for (dir, hash) in &seen.listed {
-        let _ = writeln!(s, "dir {hash}\t{}", dir.display());
-        entries += 1;
+        lines.push((format!("dir {hash}"), dir.display().to_string()));
     }
     for (path, kind) in &seen.probed {
-        let _ = writeln!(s, "probe {}\t{}", kind.letter(), path.display());
-        entries += 1;
+        lines.push((
+            format!("probe {}", kind.letter()),
+            path.display().to_string(),
+        ));
     }
     for (path, hash) in &seen.resolved {
-        let _ = writeln!(s, "real {hash}\t{}", path.display());
-        entries += 1;
+        lines.push((format!("real {hash}"), path.display().to_string()));
     }
     for line in generator_lookups {
-        let _ = writeln!(s, "{line}");
-        entries += 1;
+        if let Some((head, path)) = line.split_once('\t') {
+            lines.push((head.to_string(), path.to_string()));
+        }
     }
     for (kind, paths) in [("link", built.link_inputs), ("std", built.std_objects)] {
         for path in paths {
             let path = vpm::relpath::absolute(path);
             let time = probe::stat(&path).map_or_else(|| "-".into(), |(n, t)| format!("{n} {t}"));
-            let _ = writeln!(s, "{kind} {time}\t{}", path.display());
-            entries += 1;
+            lines.push((format!("{kind} {time}"), path.display().to_string()));
         }
     }
-    let _ = writeln!(s, "end {entries}");
+    write_entries(&mut s, &lines);
     s
+}
+
+/// Append `lines` (head, path) to stamp text `s`: the directory table, the entries naming their
+/// directory by its number, and `end`. A path holding a line break (`\n`, or `\r`, which
+/// `str::lines` drops before one) would read as more lines than it is, and a `d ` line in it as
+/// another directory of the table: then the stamp says only that, and never matches, so such a
+/// build is never a no-op. A head never holds one: heads are hashes, numbers and letters, or
+/// taken from a line already (a generator's lookups, [`compose`]'s entries), where a `\r`
+/// before the tab is inside the line.
+fn write_entries(s: &mut String, lines: &[(String, String)]) {
+    // One character each: `str::contains` searches a word at a time (`memchr`).
+    let breaks = |t: &str| t.contains('\n') || t.contains('\r');
+    if (lines.iter()).any(|(_, path)| breaks(path)) {
+        s.push_str("unusable: a path holds a line break\n");
+        return;
+    }
+    let mut dirs: Vec<&str> = vec![];
+    let mut index: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    // Each line's head, its directory's number and name when the path has a directory, and the
+    // path.
+    type Named<'a> = (&'a str, Option<(usize, &'a str)>, &'a str);
+    let mut named: Vec<Named> = Vec::with_capacity(lines.len());
+    // Entries come in runs from one directory: the last one's number is taken without a lookup.
+    let mut last: Option<(&str, usize)> = None;
+    for (head, path) in lines {
+        let split = path.rfind(std::path::is_separator).filter(|&i| i > 0);
+        let short = split.map(|i| {
+            let dir = &path[..i];
+            let n = match last {
+                Some((d, n)) if d == dir => n,
+                _ => *index.entry(dir).or_insert_with(|| {
+                    dirs.push(dir);
+                    dirs.len() - 1
+                }),
+            };
+            last = Some((dir, n));
+            (n, &path[i + 1..])
+        });
+        named.push((head, short, path));
+    }
+    for dir in &dirs {
+        let _ = writeln!(s, "d {dir}");
+    }
+    for (head, short, path) in &named {
+        let _ = match short {
+            Some((n, name)) => writeln!(s, "{head}\t~{n}/{name}"),
+            None => writeln!(s, "{head}\t{path}"),
+        };
+    }
+    let _ = writeln!(s, "end {}", lines.len());
+}
+
+/// The directory table of stamp text after its header lines (`lines`, advanced past it), and
+/// the first entry line, if any.
+fn dir_table<'a>(lines: &mut std::str::Lines<'a>) -> (Vec<&'a str>, Option<&'a str>) {
+    let mut dirs = vec![];
+    for line in lines.by_ref() {
+        match line.strip_prefix("d ") {
+            Some(dir) => dirs.push(dir),
+            None => return (dirs, Some(line)),
+        }
+    }
+    (dirs, None)
+}
+
+/// An entry's path, its directory number replaced by the directory.
+fn expand<'a>(path: &'a str, dirs: &[&str]) -> Option<std::borrow::Cow<'a, str>> {
+    let Some(rest) = path.strip_prefix('~') else {
+        return Some(std::borrow::Cow::Borrowed(path));
+    };
+    let (n, name) = rest.split_once('/')?;
+    let dir = dirs.get(n.parse::<usize>().ok()?)?;
+    Some(std::borrow::Cow::Owned(format!(
+        "{dir}{}{name}",
+        std::path::MAIN_SEPARATOR
+    )))
 }
 
 /// What the program `exe` reaches outside itself, as its build stamp records it
@@ -287,13 +379,23 @@ pub(crate) fn outside(exe: &Path) -> Option<String> {
     Some(lines.nth(2)?.strip_prefix("outside ")?.to_string())
 }
 
-/// The entries of stamp `text`: its lines between the header and `end`, as [`render`] writes
-/// them.
-pub(crate) fn entry_lines(text: &str) -> Vec<&str> {
-    text.lines()
-        .skip(5)
-        .take_while(|l| !l.starts_with("end "))
-        .collect()
+/// The entries of stamp `text`: its lines between the header and `end`, with each path whole
+/// (as [`compose`] takes them). `None` for a stamp that isn't whole (no `end`, or another count)
+/// or never matches (a path with a line break): what it records isn't known, so whoever builds
+/// on its entries must not take an empty list for "nothing to check".
+pub(crate) fn entry_lines(text: &str) -> Option<Vec<String>> {
+    let mut lines = text.lines();
+    let _header: Vec<&str> = lines.by_ref().take(5).collect();
+    let (dirs, first) = dir_table(&mut lines);
+    let mut out = vec![];
+    for line in first.into_iter().chain(lines) {
+        if let Some(n) = line.strip_prefix("end ") {
+            return (n.parse() == Ok(out.len())).then_some(out);
+        }
+        let (head, path) = line.split_once('\t')?;
+        out.push(format!("{head}\t{}", expand(path, &dirs)?));
+    }
+    None
 }
 
 /// A stamp of `key` with `objects` (a count its maker gives meaning to) and `entries` (lines as
@@ -303,11 +405,18 @@ pub(crate) fn compose(key: &Key, objects: usize, entries: &[String]) -> String {
         "{HEADER}\nkey {}\nobjects {objects}\noutside -\nc-libs \n",
         key.hex()
     );
-    for line in entries {
-        let _ = writeln!(s, "{line}");
-    }
-    let _ = writeln!(s, "end {}", entries.len());
+    let lines: Vec<(String, String)> = (entries.iter())
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(head, path)| (head.to_string(), path.to_string()))
+        .collect();
+    write_entries(&mut s, &lines);
     s
+}
+
+/// An entry that never matches, standing for inputs of `what` that aren't known: a stamp
+/// holding it is never valid ([`check_all`] knows no `unknown` kind).
+pub(crate) fn unknown_entry(what: &Path) -> String {
+    format!("unknown\t{}", what.display())
 }
 
 /// The entry of a directory listed with names hashing to `hash` ([`vpm::probe::Seen::listed`]).
@@ -344,8 +453,14 @@ pub(super) fn known(path: &Path) -> std::collections::BTreeMap<PathBuf, probe::R
     if text.lines().next() != Some(HEADER) {
         return known;
     }
-    for line in text.lines() {
+    let mut lines = text.lines();
+    let _header: Vec<&str> = lines.by_ref().take(5).collect();
+    let (dirs, first) = dir_table(&mut lines);
+    for line in first.into_iter().chain(lines) {
         let Some((head, file)) = line.split_once('\t') else {
+            continue;
+        };
+        let Some(file) = expand(file, &dirs) else {
             continue;
         };
         let mut fields = head.split(' ');
@@ -364,7 +479,7 @@ pub(super) fn known(path: &Path) -> std::collections::BTreeMap<PathBuf, probe::R
                 stat: Some((size, time)),
                 hash: hash.to_string(),
             };
-            known.insert(PathBuf::from(file), read);
+            known.insert(PathBuf::from(file.as_ref()), read);
         }
     }
     known
@@ -376,38 +491,64 @@ pub(super) fn known(path: &Path) -> std::collections::BTreeMap<PathBuf, probe::R
 pub(super) fn read(path: &Path, key: &Key) -> Option<(usize, Vec<PathBuf>, Vec<String>)> {
     let text = std::fs::read_to_string(path).ok()?;
     let written = probe::stat(path).map(|(_, t)| t);
-    let objects = check(&text, key, written)?;
-    let std = (text.lines())
-        .filter_map(|l| l.strip_prefix("std ")?.split_once('\t'))
-        .map(|(_, path)| PathBuf::from(path))
-        .collect();
-    let c_libs = (text.lines())
-        .find_map(|l| l.strip_prefix("c-libs "))?
-        .split_whitespace()
-        .map(String::from)
-        .collect();
-    Some((objects, std, c_libs))
+    check_all(&text, key, written)
 }
 
 /// Whether the stamp `text`, written at `written` (nanoseconds since 1970), still describes the
 /// build configured by `key`: `Some(objects)` when everything it records is unchanged.
 pub(crate) fn check(text: &str, key: &Key, written: Option<u128>) -> Option<usize> {
+    check_all(text, key, written).map(|(objects, _, _)| objects)
+}
+
+/// [`check`], with what [`read`] needs too, in one pass over the text: the std cache's objects
+/// (the `std` entries) and the system libraries of the program's C functions.
+fn check_all(
+    text: &str,
+    key: &Key,
+    written: Option<u128>,
+) -> Option<(usize, Vec<PathBuf>, Vec<String>)> {
     let mut lines = text.lines();
     (lines.next()? == HEADER).then_some(())?;
     (lines.next()?.strip_prefix("key ")? == key.hex()).then_some(())?;
     let objects = lines.next()?.strip_prefix("objects ")?.parse().ok()?;
     lines.next()?.strip_prefix("outside ")?;
-    lines.next()?.strip_prefix("c-libs ")?;
-    for (entries, line) in lines.by_ref().enumerate() {
+    let c_libs = lines.next()?.strip_prefix("c-libs ")?;
+    let c_libs = c_libs.split_whitespace().map(String::from).collect();
+    let (dirs, first) = dir_table(&mut lines);
+    let mut std = vec![];
+    let mut rest = first.into_iter().chain(lines.by_ref());
+    // One buffer for every expanded path: this loop runs over every entry of every no-op build.
+    // Entries come in runs from one directory, so its text stays in `buf` while the next entry
+    // names the same number (`last`: that number, and where the name starts in `buf`).
+    let mut buf = String::new();
+    let mut last: Option<(&str, usize)> = None;
+    for (entries, line) in rest.by_ref().enumerate() {
         if let Some(n) = line.strip_prefix("end ") {
             // Whole: as many entries as it says, and nothing after.
             (n.parse() == Ok(entries)).then_some(())?;
-            return lines.next().is_none().then_some(objects);
+            return rest.next().is_none().then_some((objects, std, c_libs));
         }
         let (head, path) = line.split_once('\t')?;
-        let path = Path::new(path);
+        let path = match path.strip_prefix('~') {
+            Some(short) => {
+                let (n, name) = short.split_once('/')?;
+                match last {
+                    Some((at, len)) if at == n => buf.truncate(len),
+                    _ => {
+                        buf.clear();
+                        buf.push_str(dirs.get(n.parse::<usize>().ok()?)?);
+                        buf.push(std::path::MAIN_SEPARATOR);
+                        last = Some((n, buf.len()));
+                    }
+                }
+                buf.push_str(name);
+                Path::new(buf.as_str())
+            }
+            None => Path::new(path),
+        };
         let mut fields = head.split(' ');
-        let unchanged = match fields.next()? {
+        let kind = fields.next()?;
+        let unchanged = match kind {
             "file" => {
                 let hash = fields.next()?;
                 let recorded = fields.next().zip(fields.next());
@@ -427,6 +568,9 @@ pub(crate) fn check(text: &str, key: &Key, written: Option<u128>) -> Option<usiz
             _ => false,
         };
         unchanged.then_some(())?;
+        if kind == "std" {
+            std.push(path.to_path_buf());
+        }
     }
     None
 }

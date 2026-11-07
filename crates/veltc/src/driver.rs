@@ -3,7 +3,7 @@
 //! dedicated thread with a large stack: recursive passes over deeply nested ASTs would overflow the
 //! 1 MB Windows main thread.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use velt_common::{Diagnostics, SourceMap};
@@ -28,6 +28,7 @@ pub(crate) mod stamp;
 mod std_cache;
 mod timings;
 
+use output::{codegen_units, link_stage, write_file};
 pub use output::{default_dir, OutputPaths};
 use pipeline::on_pipeline_thread;
 
@@ -619,6 +620,7 @@ fn build_on_current_thread(
         link_stage(sess, opts, &target, objects, paths)?;
         return Ok(Artifact::Executable(paths.executable.clone()));
     }
+    stamp::check_fetched(opts).map_err(BuildError::Failed)?;
     // What module resolution looked at, for the stamp.
     let (program, seen) = match &stamped {
         Some(_) => vpm::probe::record_reusing(known, || {
@@ -744,56 +746,6 @@ pub fn check_generator_host(sess: &mut Session, program: &vir::Program) -> Resul
         "a source generator cannot reach {reaches}: it runs at compile time and gets everything \
          from its request"
     )))
-}
-
-/// Link `objects` into `paths.executable` (nothing to do when its link stamp matches).
-fn link_stage(
-    sess: &mut Session,
-    opts: &BuildOptions,
-    target: &str,
-    objects: &[PathBuf],
-    paths: &OutputPaths,
-) -> Result<(), BuildError> {
-    let t = Instant::now();
-    let (packages, crates) = (opts.packages.as_ref(), !sess.generator_build);
-    let native = crate::native::program_links(packages, &sess.c_libs, crates, opts.release, target);
-    let linked = crate::link::link_executable(
-        target,
-        objects,
-        &paths.executable,
-        opts.release,
-        // Release settings strip debug info (and PDB generation on Windows).
-        opts.release && !opts.debug_info,
-        &native.map_err(BuildError::Failed)?,
-        &crate::native::c_link_args(&sess.c_libs, target),
-    )
-    .map_err(BuildError::Failed)?;
-    sess.record("link", t);
-    if linked == crate::link::Linked::UpToDate {
-        sess.record_details("link", &[("up to date", t.elapsed())]);
-    }
-    Ok(())
-}
-
-/// `$VELT_CODEGEN_UNITS`: how many codegen units the LLVM backend splits a program into, at most
-/// the core count (unset or not a positive number: `None`, the backend picks the count from the
-/// program's size).
-fn codegen_units() -> Option<usize> {
-    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
-    std::env::var("VELT_CODEGEN_UNITS")
-        .ok()
-        .and_then(|v| v.trim().parse().ok())
-        .filter(|&n: &usize| n > 0)
-        .map(|n: usize| n.min(cores))
-}
-
-fn write_file(path: &Path, bytes: &[u8]) -> Result<(), BuildError> {
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| BuildError::Failed(format!("cannot create `{}`: {e}", dir.display())))?;
-    }
-    std::fs::write(path, bytes)
-        .map_err(|e| BuildError::Failed(format!("cannot write `{}`: {e}", path.display())))
 }
 
 #[cfg(test)]

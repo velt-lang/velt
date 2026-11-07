@@ -342,13 +342,22 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "add",
         summary: "Add a dependency to package.velt and install it",
-        usage: &["add <pkg>[@<req>] [--path <dir>]"],
-        about: "Without a version requirement, uses the latest published version.",
-        options: &[("--path <dir>", "a local package instead of a registry one")],
+        usage: &["add <pkg>[@<req>] [--path <dir>]", "add <url> [--path <dir>]"],
+        about: "Without a version requirement, uses the latest published version. With a URL of \
+                a release archive (.tar.gz or .zip), downloads it once and writes its sha256; \
+                the package's name is its own.",
+        options: &[(
+            "--path <dir>",
+            "a local package instead of a registry one; with a URL, the package's directory in the archive",
+        )],
         examples: &[
             ("velt add json", "latest version from the registry"),
             ("velt add json@^1.2", "a version requirement"),
             ("velt add util --path ../util", "a package in a local directory"),
+            (
+                "velt add https://example.com/x/releases/download/v1/x-1.0.tar.gz",
+                "a release archive, pinned by its sha256",
+            ),
         ],
     },
     CommandHelp {

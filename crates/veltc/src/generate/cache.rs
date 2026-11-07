@@ -42,18 +42,24 @@ pub(super) fn cached_output(key: &Key) -> Option<(Vec<u8>, Vec<String>)> {
     Some((rest.to_vec(), files))
 }
 
-/// Store the host's output for `key`; `files`: what its build read (none: not cached, as its
-/// generators could change unseen).
+/// Store the host's output for `key`; `files`: what its build read (none, or not known: not
+/// cached, as its generators could change unseen).
 pub(super) fn store_output(key: &Key, output: &[u8], files: &[String]) {
     let Some(cache) = crate::build_cache::cache() else {
         return;
     };
-    if files.is_empty() {
+    if !known(files) {
         return;
     }
     let mut bytes = files_record(key, files).into_bytes();
     bytes.extend_from_slice(output);
     cache.put_key(OUTPUT_KIND, key, &bytes);
+}
+
+/// Whether `files` say what the generators read: not empty, and no [`stamp::unknown_entry`]
+/// (which would make an entry that never matches, written for nothing).
+fn known(files: &[String]) -> bool {
+    !files.is_empty() && !files.iter().any(|f| f.starts_with("unknown\t"))
 }
 
 /// `<written>\n<length>\n<stamp>`: a build stamp of `files` keyed by `key`, written now.
@@ -79,10 +85,7 @@ fn read_files<'a>(entry: &'a [u8], key: &Key) -> Option<(Vec<String>, &'a [u8])>
     let len: usize = line()?.parse().ok()?;
     let text = std::str::from_utf8(entry.get(pos..pos + len)?).ok()?;
     stamp::check(text, key, Some(written))?;
-    let files = stamp::entry_lines(text)
-        .into_iter()
-        .map(String::from)
-        .collect();
+    let files = stamp::entry_lines(text)?;
     Some((files, &entry[pos + len..]))
 }
 
@@ -159,7 +162,7 @@ pub(super) fn store_offer(key: &Key, offer: &Offer) {
     let Some(cache) = crate::build_cache::cache() else {
         return;
     };
-    if offer.generator_files.is_empty() {
+    if !known(&offer.generator_files) {
         return;
     }
     let v = json!({

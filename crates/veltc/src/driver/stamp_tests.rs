@@ -346,3 +346,89 @@ fn the_c_libraries_are_handed_back() {
         assert_eq!(read(&path, &key).unwrap().2, libs);
     }
 }
+
+/// A directory is written once, in the table, and its entries name it by number; reading the
+/// stamp gives every path whole again.
+#[test]
+fn directories_are_written_once_and_read_back_whole() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = vpm::relpath::absolute(tmp.path());
+    let (sm, seen) = build(&dir, &[("a.velt", "1"), ("b.velt", "2"), ("c.velt", "3")]);
+    let text = render_of(&sm, &seen, &[]);
+    let shown = dir.display().to_string();
+    let table: Vec<&str> = text
+        .lines()
+        .filter(|l| *l == format!("d {shown}"))
+        .collect();
+    assert_eq!(table.len(), 1, "{text}");
+    assert!(
+        !text.contains(&format!("\t{shown}{}", std::path::MAIN_SEPARATOR)),
+        "{text}"
+    );
+    let whole = entry_lines(&text).unwrap();
+    assert!(
+        whole.contains(&format!("probe f\t{}", dir.join("a.velt").display()))
+            || whole
+                .iter()
+                .any(|l| l.ends_with(&dir.join("a.velt").display().to_string())),
+        "{whole:?}"
+    );
+    assert_eq!(check(&text, &Key::of(&[b"opts"]), LATER), Some(2));
+    // `compose` of the whole lines gives the same entries back.
+    let again = compose(&Key::of(&[b"opts"]), 2, &whole);
+    assert_eq!(entry_lines(&again), Some(whole));
+    // An entry dropped, or the end cut off: the entries aren't known.
+    let mut lines: Vec<&str> = text.lines().collect();
+    let entry = lines.iter().position(|l| l.starts_with("probe ")).unwrap();
+    lines.remove(entry);
+    assert_eq!(entry_lines(&(lines.join("\n") + "\n")), None);
+    assert_eq!(entry_lines(text.rsplit_once("end ").unwrap().0), None);
+}
+
+#[test]
+fn entries_of_directories_in_turn_expand_to_their_own_paths() {
+    // The directory's text stays in the buffer through a run of entries; a run of another
+    // directory between two of one must not keep it.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = vpm::relpath::absolute(tmp.path());
+    for sub in ["a", "b"] {
+        std::fs::create_dir(dir.join(sub)).unwrap();
+    }
+    let files = [
+        ("a/1.velt", "1"),
+        ("b/1.velt", "2"),
+        ("a/2.velt", "3"),
+        ("b/2.velt", "4"),
+    ];
+    let (sm, seen) = build(&dir, &files);
+    let text = render_of(&sm, &seen, &[]);
+    assert_eq!(check(&text, &Key::of(&[b"opts"]), LATER), Some(2), "{text}");
+    // Each entry is its own file: an edit to any one of them is seen.
+    for (name, _) in files {
+        let path = dir.join(name);
+        let before = std::fs::read(&path).unwrap();
+        std::fs::write(&path, "edited").unwrap();
+        assert_eq!(check(&text, &Key::of(&[b"opts"]), LATER), None, "{name}");
+        std::fs::write(&path, before).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_path_with_a_line_break_makes_a_stamp_that_never_matches() {
+    // `d ` after a line break would be another row of the directory table, and every later
+    // `~n/` would read another directory.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = vpm::relpath::absolute(tmp.path());
+    let odd = "q\nd \nend 0";
+    std::fs::create_dir(dir.join(odd)).unwrap();
+    let (sm, seen) = build(&dir, &[("a.velt", "1"), ("q\nd \nend 0/b.velt", "2")]);
+    let text = render_of(&sm, &seen, &[]);
+    assert!(!text.lines().any(|l| l == "d " || l == "end 0"), "{text}");
+    assert_eq!(check(&text, &Key::of(&[b"opts"]), LATER), None, "{text}");
+    for c in ['\r', '\n'] {
+        let mut s = String::new();
+        write_entries(&mut s, &[("file h".into(), format!("/x{c}/a"))]);
+        assert!(!s.contains("end "), "{c:?}: {s}");
+    }
+}

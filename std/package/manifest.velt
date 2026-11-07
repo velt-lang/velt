@@ -124,8 +124,8 @@ export type Dependency = string | DependencySource;
 export type DependencySource = {
   /// A semver requirement.
   version?: string;
-  /// A local package directory, relative to this manifest; with `git`, the package's directory in
-  /// the repository.
+  /// A local package directory, relative to this manifest; with `git` or `url`, the package's
+  /// directory in the repository or the archive.
   path?: string;
   /// A git repository URL (`https://…`, `ssh://…`, `git@host:path`): the package comes from it,
   /// at the commit `velt.lock.json` records.
@@ -137,6 +137,16 @@ export type DependencySource = {
   tag?: string;
   /// With `git`: a full commit hash.
   rev?: string;
+  /// A release archive (`.tar.gz` or `.zip`) at an `https` URL: the package comes from it, pinned
+  /// by `sha256`. Use a project's real release assets: a forge's generated archive of a tag can
+  /// change bytes; for source, use `git` with a commit.
+  url?: string;
+  /// With `url`: the archive's SHA-256 in lowercase hex. Required; `velt add <url>` writes it.
+  /// Another archive at that URL is an error, not an update.
+  sha256?: string;
+  /// With `url`: how many leading directories to remove, each the only entry at its level (a
+  /// release's one top directory: `strip: 1`).
+  strip?: number;
 };
 
 /// JSX settings of a package.

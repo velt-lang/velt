@@ -106,3 +106,37 @@ fn extractions_into_one_parent_get_their_own_staging_directories() {
     }
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 50);
 }
+
+#[test]
+fn what_is_ready_is_recorded_before_the_tree_is_seen_and_a_replaced_tree_stays_until_then() {
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("abc");
+    let tree = read(&sample_tar(), Limits::DEFAULT).unwrap();
+    write_then(&tree, (&dest, Place::New), Links::NATIVE, |staged| {
+        assert!(staged.join("pkg/src/main.velt").is_file());
+        assert!(!dest.exists(), "renamed before it was ready");
+        Ok(())
+    })
+    .unwrap();
+    // New refuses what is there; Replace keeps it until the new tree is ready, and keeps it
+    // when that fails.
+    assert!(write(&tree, &dest, Links::NATIVE).is_err());
+    std::fs::write(dest.join("old"), "x").unwrap();
+    let failed = write_then(&tree, (&dest, Place::Replace), Links::NATIVE, |_| {
+        Err("no".to_string())
+    });
+    assert_eq!(failed, Err("no".to_string()));
+    assert!(dest.join("old").is_file());
+    write_then(&tree, (&dest, Place::Replace), Links::NATIVE, |_| {
+        assert!(
+            dest.join("old").is_file(),
+            "removed before the new tree was ready"
+        );
+        Ok(())
+    })
+    .unwrap();
+    assert!(!dest.join("old").exists());
+    assert!(dest.join("pkg/src/main.velt").is_file());
+    // Nothing is left beside it.
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}

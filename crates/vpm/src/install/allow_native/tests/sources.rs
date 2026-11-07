@@ -19,8 +19,37 @@ fn git_source(url: &str) -> Source {
     }
 }
 
+fn url_source(url: &str) -> Source {
+    Source::Url {
+        spec: crate::url_source::UrlSpec {
+            url: url.to_string(),
+            sha256: "a".repeat(64),
+            strip: 0,
+            subdir: None,
+        },
+        checksum: String::new(),
+        dir: PathBuf::new(),
+    }
+}
+
+/// An archive is suggested by its URL's directory, the narrowest prefix that allows it.
+#[test]
+fn an_archive_is_suggested_by_its_directory() {
+    let lib = dir_with(&manifest_text("lib", "native: { c: {} }"));
+    let url = "https://github.com/o/lib/releases/download/v1/lib-1.tar.gz";
+    let e = run_from(url_source(url), "", Some(lib.path())).unwrap_err();
+    assert!(
+        e.contains("allowNative: [{ name: \"lib\", url: \"https://github.com/o/lib/releases/download/v1/\" }]"),
+        "{e}"
+    );
+    // That entry allows it.
+    let fields =
+        "allowNative: [{ name: \"lib\", url: \"https://github.com/o/lib/releases/download/\" }]";
+    run_from(url_source(url), fields, Some(lib.path())).unwrap();
+}
+
 /// Every pair of entry kind and source: a bare name the registry and paths, a `git` entry its
-/// repository only, a `url` entry nothing until step 2 adds archive sources.
+/// repository only, a `url` entry archives under its prefix only.
 #[test]
 fn each_entry_allows_only_its_own_source() {
     let registry = Source::Registry {
@@ -40,7 +69,13 @@ fn each_entry_allows_only_its_own_source() {
     };
     let by_git = from(AllowedFrom::Git("https://github.com/o/llama.git".into()));
     let by_url = from(AllowedFrom::Url("https://github.com/o/".into()));
+    let archive = url_source("https://github.com/o/llama/releases/download/v1/x.tar.gz");
+    let evil_archive = url_source("https://github.com/o-evil/llama/releases/download/v1/x.tar.gz");
     let cases = [
+        (&named, &archive, false),
+        (&by_git, &archive, false),
+        (&by_url, &archive, true),
+        (&by_url, &evil_archive, false),
         (&named, &registry, true),
         (&named, &path, true),
         (&named, &git, false),

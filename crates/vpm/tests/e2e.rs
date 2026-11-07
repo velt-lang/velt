@@ -51,6 +51,7 @@ impl World {
         let spec = DependencySpec {
             version: version.map(Into::into),
             path: path.map(Into::into),
+            ..Default::default()
         };
         add_dependency(&self.app(), name, &spec).unwrap();
     }
@@ -190,6 +191,7 @@ fn path_dependency_with_registry_dependency() {
         &DependencySpec {
             version: Some("0.3".into()),
             path: None,
+            ..Default::default()
         },
     )
     .unwrap();

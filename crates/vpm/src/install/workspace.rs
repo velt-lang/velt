@@ -8,7 +8,7 @@ use super::{build_graph, fetch, natives, settle_lock, to_lockfile, InstallOption
 use crate::locations::Locations;
 use crate::lockfile::{Lockfile, LOCK_FILE};
 use crate::relpath;
-use crate::resolve::{resolve_members, Resolution, ResolvedPackage};
+use crate::resolve::{Resolution, ResolvedPackage};
 use crate::workspace::Workspace;
 
 /// Install the workspace `ws`. With `member` (a member's directory) the graph holds that member,
@@ -38,7 +38,13 @@ pub fn install(
     let existing = Lockfile::read(&ws.root)?;
     let prefer = if opts.update { None } else { existing.as_ref() };
     let manifests = ws.effective_manifests();
-    let resolution = resolve_members(&ws.root, &manifests, &loc, prefer)?;
+    let resolution = crate::resolve::resolve_members_with(
+        &ws.root,
+        &manifests,
+        &loc,
+        prefer,
+        crate::tree_stamp::for_install(&opts),
+    )?;
     let member_dirs: Vec<PathBuf> = ws.members.iter().map(|m| m.dir.clone()).collect();
     let lockfile = to_lockfile(&resolution, &ws.root, &member_dirs);
     let (lockfile, lock_changed) = settle_lock(
@@ -102,7 +108,8 @@ pub fn install(
         lockfile.write(&ws.root)?;
     }
     super::check_npm_overlap(packages.iter().copied())?;
-    let graph = build_graph(root, packages.iter().copied(), &dirs, natives);
+    let mut graph = build_graph(root, packages.iter().copied(), &dirs, natives);
+    graph.set_fetched(crate::tree_stamp::fetched(&loc, packages.iter().copied()));
     Ok(Installed {
         graph,
         lockfile,

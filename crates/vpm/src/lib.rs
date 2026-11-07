@@ -40,6 +40,8 @@ pub mod scaffold;
 pub mod search;
 pub mod source_url;
 pub mod sources;
+pub mod tree_stamp;
+pub mod url_source;
 pub mod workspace;
 pub mod yank;
 

@@ -79,7 +79,7 @@ pub(super) fn no_match(req: &Requirement, available: Option<&str>, registry: &Pa
             req.name,
             describe_want(&req.name, &req.want)
         ),
-        (Want::Path { .. } | Want::Git { .. }, _) => format!(
+        (Want::Path { .. } | Want::Git { .. } | Want::Url { .. }, _) => format!(
             "the package there does not match {} (required by {by})",
             describe_want(&req.name, &req.want)
         ),
@@ -99,6 +99,11 @@ pub(super) fn describe_want(name: &str, want: &Want) -> String {
             req: Some(req),
         } => format!("`{name} {req}` from {}", spec.describe()),
         Want::Git { spec, req: None } => format!("`{name}` from {}", spec.describe()),
+        Want::Url {
+            spec,
+            req: Some(req),
+        } => format!("`{name} {req}` from {}", spec.describe()),
+        Want::Url { spec, req: None } => format!("`{name}` from {}", spec.describe()),
     }
 }
 
@@ -112,5 +117,6 @@ fn describe_selected(sel: &Selected) -> String {
             spec.describe(),
             &commit[..12]
         ),
+        Source::Url { spec, .. } => format!("{} from {}", sel.pkg.version, spec.describe()),
     }
 }

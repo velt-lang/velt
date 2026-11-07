@@ -21,6 +21,8 @@ pub struct Field {
 pub enum Kind {
     Str,
     Bool,
+    /// A whole number.
+    Num,
     /// An array of strings; when `values` is not empty, each is one of them.
     StrArray {
         values: &'static [&'static str],
@@ -265,8 +267,8 @@ pub const DEPENDENCY: &[Field] = &[
         kind: Kind::Str,
         ty: "string",
         required: false,
-        doc: "A local package directory, relative to this manifest; with `git`, the \
-              package's directory in the repository.",
+        doc: "A local package directory, relative to this manifest; with `git` or `url`, the \
+              package's directory in the repository or the archive.",
     },
     Field {
         key: "git",
@@ -297,6 +299,31 @@ pub const DEPENDENCY: &[Field] = &[
         ty: "string",
         required: false,
         doc: "With `git`: a full commit hash.",
+    },
+    Field {
+        key: "url",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "A release archive (`.tar.gz` or `.zip`) at an `https` URL: the package comes from \
+              it, pinned by `sha256`. Use a project's real release assets: a forge's generated \
+              archive of a tag can change bytes; for source, use `git` with a commit.",
+    },
+    Field {
+        key: "sha256",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "With `url`: the archive's SHA-256 in lowercase hex. Required; `velt add <url>` \
+              writes it. Another archive at that URL is an error, not an update.",
+    },
+    Field {
+        key: "strip",
+        kind: Kind::Num,
+        ty: "number",
+        required: false,
+        doc: "With `url`: how many leading directories to remove, each the only entry at its \
+              level (a release's one top directory: `strip: 1`).",
     },
 ];
 

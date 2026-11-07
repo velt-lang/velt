@@ -36,6 +36,7 @@ use velt_common::{Diagnostics, FileId, SourceMap};
 
 pub mod allow_native;
 mod c_library;
+mod dependency;
 pub mod ide;
 pub mod legacy;
 mod lint;
@@ -46,6 +47,8 @@ pub use c_library::{CLibraryConfig, C_SOURCES_DIR};
 
 pub use lint::{LintConfig, LintLevel};
 pub(crate) mod write;
+
+pub(crate) use dependency::{check_dependency, check_dependency_name};
 
 /// File name of the manifest at a package root.
 pub const MANIFEST_FILE: &str = "package.velt";
@@ -238,8 +241,8 @@ pub struct DetailedDependency {
     /// Semver requirement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Local package directory, relative to the depending manifest; with `git`, the package's
-    /// directory in the repository.
+    /// Local package directory, relative to the depending manifest; with `git` or `url`, the
+    /// package's directory in the repository or archive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// A git repository URL ([`crate::git`]).
@@ -254,29 +257,17 @@ pub struct DetailedDependency {
     /// With `git`: a full commit hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
-}
-
-impl Dependency {
-    /// The semver requirement, if any.
-    pub fn version(&self) -> Option<&str> {
-        match self {
-            Dependency::Version(v) => Some(v),
-            Dependency::Detailed(d) => d.version.as_deref(),
-        }
-    }
-
-    /// The local path, if this is a path dependency (with `git`, the directory in the
-    /// repository).
-    pub fn path(&self) -> Option<&str> {
-        match self {
-            Dependency::Version(_) => None,
-            Dependency::Detailed(d) => d.path.as_deref(),
-        }
-    }
-    /// Whether this is `"workspace"`: provided by the enclosing workspace.
-    pub fn is_workspace(&self) -> bool {
-        matches!(self, Dependency::Version(v) if v == WORKSPACE_REQUIREMENT)
-    }
+    /// A release archive's URL (`.tar.gz` or `.zip`, [`crate::url_source`]); `path` is then the
+    /// package's directory in the archive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// With `url`: the archive's SHA-256, in lowercase hex. Required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// With `url`: how many leading directories to remove (each must be the only entry at its
+    /// level, as `tar --strip-components` on a release's one top directory).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strip: Option<u32>,
 }
 
 impl Manifest {
@@ -497,58 +488,6 @@ fn check_import_source(source: &str) -> Result<(), String> {
     } else {
         Ok(())
     }
-}
-
-fn check_dependency_name(name: &str) -> Result<(), String> {
-    if name.starts_with('@') {
-        return check_scoped_name(name, "dependency name");
-    }
-    if RESERVED_NAMES.contains(&name) {
-        return Err(reserved(name));
-    }
-    if is_windows_device_name(name) {
-        return Err(device_name(name));
-    }
-    if is_native_prefix_name(name) {
-        return Err(native_prefix(name));
-    }
-    if is_valid_package_name(name) {
-        Ok(())
-    } else {
-        Err(format!(
-            "invalid dependency name `{name}` (lowercase letters and digits, starting with a letter, with single `-` or `_` between words)"
-        ))
-    }
-}
-
-pub(crate) fn check_dependency(name: &str, dep: &Dependency) -> Result<(), String> {
-    if dep.is_workspace() {
-        return Ok(());
-    }
-    if dep.version() == Some(WORKSPACE_REQUIREMENT) {
-        return Err(format!(
-            "dependency `{name}`: `\"{WORKSPACE_REQUIREMENT}\"` is written as the whole value (`{name}: \"{WORKSPACE_REQUIREMENT}\"`), not as a `version`"
-        ));
-    }
-    if let Dependency::Detailed(d) = dep {
-        crate::git::check_fields(name, d)?;
-    }
-    if dep.version().is_none() && dep.path().is_none() && dep.git().is_none() {
-        return Err(format!(
-            "dependency `{name}` needs a `version`, a `path` or a `git` repository"
-        ));
-    }
-    if split_scoped(name).is_some() && dep.path().is_none() && dep.git().is_none() {
-        return Err(format!(
-            "dependency `{name}` needs a `path`: registries hold unscoped packages only"
-        ));
-    }
-    if let Some(req) = dep.version() {
-        semver::VersionReq::parse(req).map_err(|e| {
-            format!("dependency `{name}`: invalid version requirement `{req}`: {e}")
-        })?;
-    }
-    Ok(())
 }
 
 /// The message names the value, not the table: callers prefix it.

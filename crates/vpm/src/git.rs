@@ -116,7 +116,7 @@ impl GitSpec {
 
 /// `value` with the characters a lockfile source uses as delimiters (`&`, `=`, `#`, `?`) and `%`
 /// percent-encoded: git allows them in branch and directory names.
-fn encode(value: &str) -> String {
+pub(crate) fn encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
         match c {
@@ -128,7 +128,7 @@ fn encode(value: &str) -> String {
 }
 
 /// [`encode`] undone; `None` for a malformed escape.
-fn decode(value: &str) -> Option<String> {
+pub(crate) fn decode(value: &str) -> Option<String> {
     let mut out = Vec::with_capacity(value.len());
     let mut bytes = value.bytes();
     while let Some(b) = bytes.next() {
@@ -228,20 +228,21 @@ pub fn checkout(
     loc: &Locations,
     url: &str,
     commit: &str,
-    checksum: Option<&str>,
+    (checksum, depth): (Option<&str>, crate::tree_stamp::TreeCheck),
 ) -> Result<PathBuf, String> {
     let dir = repository_dir(loc, url).join(commit);
     if !dir.is_dir() {
         fetch(url, commit, &dir)?;
     }
-    if let Some(expected) = checksum {
-        let actual = tree_checksum(&dir)?;
-        if actual != expected {
-            return Err(format!(
+    if checksum.is_some() {
+        // From its stamp while the checkout is unchanged (`crate::tree_stamp`).
+        let mismatch = |expected: &str, actual: &str| {
+            format!(
                 "checksum mismatch for commit {commit} of {url}: velt.lock.json has {expected}, the checkout hashes to {actual} (delete `{}` to fetch it again)",
                 dir.display()
-            ));
-        }
+            )
+        };
+        crate::tree_stamp::checksum(loc, &dir, (checksum, depth), mismatch, || Ok(()))?;
     }
     Ok(dir)
 }
@@ -296,6 +297,11 @@ pub fn link_warnings(
             )
         })
         .collect()
+}
+
+/// Where commit `commit` of `url` is checked out in the cache.
+pub fn checkout_dir(loc: &Locations, url: &str, commit: &str) -> PathBuf {
+    repository_dir(loc, url).join(commit)
 }
 
 /// `<cache>/git/<repository>`: named by a hash of the URL, so two URLs never share checkouts.
@@ -366,7 +372,7 @@ fn fetch(url: &str, commit: &str, dir: &Path) -> Result<(), String> {
 /// file elsewhere on this machine) would build what the lock doesn't pin. Each link is resolved
 /// inside the checkout, following the checkout's own links, so a chain can't leave it either; a
 /// part that doesn't exist yet is taken as written.
-fn check_links(tree: &Path) -> Result<(), String> {
+pub(crate) fn check_links(tree: &Path) -> Result<(), String> {
     let mut files = vec![];
     collect(tree, "", &mut files)?;
     for rel in files {

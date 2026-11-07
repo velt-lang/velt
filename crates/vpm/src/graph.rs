@@ -69,6 +69,8 @@ pub struct PackageGraph {
     /// code the program allows (`None`: a graph without a root package, such as a workspace's).
     /// The directory, as a root's name is no secret: anything can be named like it.
     allow_native: Option<(PathBuf, Vec<String>)>,
+    /// The fetched trees (git, url) of the graph's packages, for [`PackageGraph::verify_fetched`].
+    fetched: Vec<crate::tree_stamp::Fetched>,
 }
 
 /// Canonical form of `p`; for a path that does not exist (yet), its deepest existing ancestor is
@@ -112,6 +114,20 @@ fn past_package_boundary(root: &Path, file: &Path) -> bool {
 }
 
 impl PackageGraph {
+    /// Record the graph's fetched trees (`crate::install`).
+    pub(crate) fn set_fetched(&mut self, fetched: Vec<crate::tree_stamp::Fetched>) {
+        self.fetched = fetched;
+    }
+
+    /// `Err` unless every fetched tree of the graph still has its locked checksum, each file's
+    /// metadata compared: what a build runs once it is no longer a no-op, before it compiles
+    /// (`crate::tree_stamp`). A no-op build needs none of it.
+    pub fn verify_fetched(&self) -> Result<(), String> {
+        self.fetched
+            .iter()
+            .try_for_each(crate::tree_stamp::Fetched::verify)
+    }
+
     /// Add a package (roots are matched against importing files by longest prefix); returns it
     /// so the caller can set its [`GraphPackage::paths`].
     pub fn add(

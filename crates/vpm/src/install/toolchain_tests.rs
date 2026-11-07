@@ -5,6 +5,7 @@ fn opts(locked: bool, update: bool) -> InstallOptions {
         locked,
         update,
         target: None,
+        ..Default::default()
     }
 }
 

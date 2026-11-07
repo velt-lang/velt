@@ -190,7 +190,7 @@ commit into a scratch bare repository, checked out into a staging directory, ren
 `GIT_TERMINAL_PROMPT=0`). The lock's `source` is `git+<url>[?branch=|tag=|rev=…][&path=…]#<commit>`
 (`GitSpec::source`/`parse_source`), and its `checksum` is `git::tree_checksum` of the whole
 checkout (every file, path order, `contents::checksum`'s encoding; symbolic links by target),
-verified on every use. Native code of a git package builds only with `VELT_NATIVE_FROM_SOURCE=1`,
+checked on every use as "Fetched trees" below says. Native code of a git package builds only with `VELT_NATIVE_FROM_SOURCE=1`,
 from a copy of the package in `<cache>/git-native/<name>/<commit>/`. `registry::publish` refuses a dependency with only
 `git` (a `version` beside it is published as the requirement). A target without `package.velt` is
 an npm source (`npm::provided::packages_at`): the `package.json` there, plus a workspace root's
@@ -206,13 +206,67 @@ dependent's
 `GraphPackage::npm` gets the packages, and the loader resolves a bare import of one in its
 directory (`NpmResolver::resolve_in`) before Node's search.
 
+## Archive dependencies (additive, #2367)
+`vpm::url_source`. `DetailedDependency` gains `url`, `sha256` and `strip` (a whole number, 0-16;
+the reader's `ValueKind::Num` keeps an unsuffixed integer's value); `Dependency::url_spec` gives
+the `UrlSpec { url, sha256, strip, subdir }` (`subdir` is `path`). `url_source::check_fields`:
+`sha256` and `strip` need `url`; `url` needs `sha256` (64 lowercase hex digits), not with `git`,
+`branch`, `tag` or `rev`; `path` is a `/`-separated directory inside the archive; `url` passes
+`url_source::check_url`: a lowercase scheme, `source_url::check_downloadable` (what an
+`allowNative` prefix comparison would refuse) and `https`, or plain `http` to this machine, which
+only a manifest the root controls may name (`dependency_requirements` refuses it in a fetched
+one). The resolver's `Want::Url`/`Source::Url { spec, checksum, dir }`: `url_source::checkout`
+downloads the archive (`url_source::fetch`: each redirect hop's scheme, host, credentials and
+path checked as the first URL, not its query, which is the server's, such as a storage service's
+signed one; plain `http` only after `http`; a `Location` absolute only when it starts with a
+scheme, otherwise resolved; no fragment sent; at most `MAX_ARCHIVE` = 512 MiB read) unless
+`<cache>/url/<sha256>/` holds it for this URL, checks the SHA-256 of the bytes, extracts it there
+with `vpm::extract` (`extract::write_then`; a concurrent install's equal tree is taken), and
+records in `<sha256>.verified` the raw tree's checksum, each URL whose bytes hashed to it, and its
+links, before the tree is renamed into place, so a raw tree never lacks its record. One found
+without (from before records, or the record removed) is replaced only once this URL's bytes are
+downloaded, checked and extracted (`extract::Place::Replace`: the old tree moved aside in one
+rename). A cache hit from a URL not recorded downloads and checks once (the raw tree is keyed by
+hash alone, and `allowNative` matches the URL as written); without a lock, a cached raw tree is
+read in full against the recorded checksum, so a changed tree never reaches a new lock. The
+extractor refuses `.git` in any spelling, and a directory git would take for a repository by its
+contents (`HEAD` with `objects` and `refs`, or with `commondir`) under any name. Then it goes
+`strip` levels down (each the only entry at its level) and into `path`, which must stay inside;
+`git::check_links` checks that directory's links again from it. The lock's `source` is
+`url+<url>[?strip=n][&path=…]#sha256:<hex>` (`UrlSpec::source`/`parse_source`, `&=#?%` escaped),
+its `checksum` the chosen directory's `git::tree_checksum`, checked as "Fetched trees" below
+says. A url package's
+`path` dependencies are other directories of the same archive (`Want::Url` with the same hash),
+never outside it. Native code builds only with `VELT_NATIVE_FROM_SOURCE=1`, from a copy in
+`<cache>/url-native/<name>/<sha256>-<strip>[-<path>]/`. `registry::publish` refuses a dependency
+with only `url`. A tree without `package.velt` is an error (no npm sources from archives yet).
+`velt add <url> [--path <dir>]` (`url_source::entry_for`) downloads once and writes `{ url, sha256,
+strip?, path? }` under the package's own name, refusing to replace an entry of that name from
+another source or hash (`url_source::check_replace`).
+
+**Fetched trees** (git checkouts, archives' package directories) are checked against the lock's
+checksum through a stamp in `<cache>/stamps/` (`vpm::tree_stamp`): the checksum with fingerprints
+of the tree's metadata, taken before it is read, and not written for a tree changed within 3 s
+of now. `InstallOptions::tree_check` says how much is looked at:
+- `TreeCheck::Files` (`velt install`, `update`, `add`, the default): every entry's name, type,
+  size, mtime and, on Unix, ctime; the tree is read in full when they differ.
+- `TreeCheck::Directories` (a build, `Project::open`): only the directories' times, so a file
+  added, removed or renamed is seen but an edit in place is not. When the build is no longer a
+  no-op, the driver runs `PackageGraph::verify_fetched` (every file) before compiling.
+- `TreeCheck::Bytes` (`velt install --locked`): every byte, whatever a stamp says.
+
+A changed tree's error names what to delete to fetch it again: the git checkout, or for an
+archive its raw tree `<cache>/url/<sha256>/` (`tree_stamp::Fetched::fetched_at`), never only the
+package directory inside it, which the record would still vouch for.
+
 ## One source per package, and `allowNative` by source (additive, #2367)
 `vpm::resolve`, `vpm::install::allow_native`, `vpm::manifest::allow_native`, `vpm::source_url`.
 - **Who wins.** A requirement is the root's when a manifest the root controls wrote it: the
   root's, a workspace member's, or a path package's (only those name a `path`: a git package's
   paths become its repository, a registry package has none). The solver takes the root's
   requirements first (`Requirement::root`). A transitive requirement of the same name from
-  another source (`same_source`: registry, the same directory, or the same git spec) is replaced
+  another source (`same_source`: registry, the same directory, the same git spec, or the same
+  archive by hash with the same `strip` and `path`, from whichever URL) is replaced
   by the root's entry when its version still fits (else "this package's entry for `x` gives …,
   which … does not accept"), and `Resolution::overrides` records it (`Override { by, wanted }`).
   Two of the root's entries that disagree, or two transitive ones the root doesn't settle, are an
@@ -222,7 +276,9 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   (`Installed::notes`), not builds.
 - **`allowNative`** entries are a name (`AllowedFrom::Root`: the registry or a path source) or
   `{ name, git }` (that repository at any commit and directory) or `{ name, url }` (archives
-  under an https prefix; no such sources until step 2). Read with each check at its value: `git`
+  under an https prefix, matched by `source_url::prefix_matches` against the url source's URL as
+  written; a refusal suggests the URL's directory, and none when that can't be a prefix, such as
+  plain `http` to this machine). Read with each check at its value: `git`
   through `source_url::git_identity`, `url` through `source_url::check_prefix` (a path under the
   host, no credentials, query, fragment, characters past ASCII, `.`/`..` segments or one
   starting with `..` and empty segments but a trailing `/` (each judged before a `;`), backslash,

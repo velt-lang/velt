@@ -212,6 +212,8 @@ pub enum Command {
         version: Option<String>,
         path: Option<String>,
     },
+    /// `velt add <url> [--path <dir>]`: a release archive, its hash written by `velt add`.
+    AddUrl { url: String, path: Option<String> },
     /// `velt install [--locked]`.
     Install { locked: bool },
     /// `velt update`: re-resolve ignoring the lockfile.

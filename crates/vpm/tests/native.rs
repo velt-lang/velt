@@ -116,6 +116,7 @@ fn native_packages_end_to_end() {
     let spec = DependencySpec {
         version: Some("1.0".into()),
         path: None,
+        ..Default::default()
     };
     add_dependency(&app, "db", &spec).unwrap();
     let for_linux = InstallOptions {

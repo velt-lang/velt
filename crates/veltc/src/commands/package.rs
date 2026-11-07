@@ -21,25 +21,12 @@ pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<
         (None, None) => Some(latest_version(&loc, name)?),
         (v, _) => v,
     };
-    let manifest_path = project_root.join(vpm::manifest::MANIFEST_FILE);
-    let original = std::fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("cannot read `{}`: {e}", manifest_path.display()))?;
     let spec = DependencySpec {
         version: version.clone(),
         path: path.clone(),
-    };
-    vpm::edit::add_dependency(&project_root, name, &spec)?;
-    let opts = InstallOptions {
-        target: Some(velt_codegen_cl::host_triple()),
         ..Default::default()
     };
-    let installed = match vpm::install(&project_root, &loc, opts) {
-        Ok(i) => i,
-        Err(e) => {
-            let _ = std::fs::write(&manifest_path, original);
-            return Err(e);
-        }
-    };
+    let installed = edit_and_install(&project_root, &loc, name, &spec)?;
     warn_yanked(&installed);
     let what = match (version, path) {
         (Some(v), Some(p)) => format!("{v} (path {p})"),
@@ -50,6 +37,63 @@ pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<
     style::status("Adding", &format!("`{name}` {what}"));
     report_native(&installed.graph);
     Ok(())
+}
+
+/// `velt add <url> [--path <dir>]`: download the archive once, write `{ url, sha256 }` (with
+/// `strip` and `path` as the archive needs) under the package's own name, then install.
+pub fn add_url(url: &str, path: Option<String>) -> Result<(), String> {
+    let project_root = Project::current_root()?;
+    let loc = Locations::from_env()?.with_manifest(&vpm::Manifest::from_dir(&project_root)?);
+    let (name, found) = vpm::url_source::entry_for(&loc, url, path.as_deref())?;
+    // The name is the archive's own, not the user's: never a silent replace of an entry.
+    vpm::url_source::check_replace(&vpm::Manifest::from_dir(&project_root)?, &name, &found)?;
+    let spec = DependencySpec {
+        path: found.subdir.clone(),
+        url: Some(found.url.clone()),
+        sha256: Some(found.sha256.clone()),
+        strip: (found.strip > 0).then_some(found.strip),
+        ..Default::default()
+    };
+    let installed = edit_and_install(&project_root, &loc, &name, &spec)?;
+    style::status("Adding", &format!("`{name}` from {}", found.url));
+    let strip = match found.strip {
+        0 => String::new(),
+        n => format!(", strip {n}"),
+    };
+    let at = found
+        .subdir
+        .as_ref()
+        .map_or(String::new(), |p| format!(", path {p}"));
+    style::status("Pinned", &format!("sha256 {}{strip}{at}", found.sha256));
+    style::status(
+        "Note",
+        "the sha256 was computed from this download; nothing checked it against the publisher. \
+         Pin a project's real release asset (a forge's generated archive of a tag can change \
+         bytes), or use `git` with a commit for source.",
+    );
+    report_native(&installed.graph);
+    Ok(())
+}
+
+/// Add `spec` as dependency `name` of the package at `root` and install; the manifest is
+/// restored if the install fails.
+fn edit_and_install(
+    root: &Path,
+    loc: &Locations,
+    name: &str,
+    spec: &DependencySpec,
+) -> Result<vpm::Installed, String> {
+    let manifest_path = root.join(vpm::manifest::MANIFEST_FILE);
+    let original = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("cannot read `{}`: {e}", manifest_path.display()))?;
+    vpm::edit::add_dependency(root, name, spec)?;
+    let opts = InstallOptions {
+        target: Some(velt_codegen_cl::host_triple()),
+        ..Default::default()
+    };
+    vpm::install(root, loc, opts).inspect_err(|_| {
+        let _ = std::fs::write(&manifest_path, original);
+    })
 }
 
 /// `velt manifest [--json]`: read and validate the package's manifest; with `json`, print it on

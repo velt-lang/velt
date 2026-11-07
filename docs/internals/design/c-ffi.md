@@ -481,9 +481,10 @@ native: {
 
 ### Fetched archives (#2367)
 
-Sources and packages may come from a release archive at a URL, pinned by its sha256 (#2367
-step 2). One extractor, `vpm::extract`, unpacks every such archive (`.tar.gz` or `.zip`, chosen by
-the first bytes). It reads the whole tree and checks it before writing anything:
+Packages may come from a release archive at a URL, pinned by its sha256 (#2367 step 2:
+`{ url, sha256, strip?, path? }` in `dependencies`; contracts/manifest.md "Archive
+dependencies"), and `native.c` sources will (step 3). One extractor, `vpm::extract`, unpacks
+every such archive (`.tar.gz` or `.zip`, chosen by the first bytes). It reads the whole tree and checks it before writing anything:
 
 - **Paths:** it refuses absolute paths, `..`, a backslash, NUL and other control characters, and
   what Windows can't hold or reads differently (`:`, `CON`/`NUL`/`COM1`…, a trailing dot or

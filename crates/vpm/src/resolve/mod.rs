@@ -25,6 +25,7 @@ use semver::{Version, VersionReq};
 use crate::locations::Locations;
 use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
+pub use crate::tree_stamp::TreeCheck;
 use candidates::{Candidate, Provider};
 
 /// Where a resolved package comes from.
@@ -57,6 +58,14 @@ pub enum Source {
         /// every package of its workspace), which its dependents import as npm packages
         /// (`crate::npm::provided`). Empty for a Velt package.
         npm: BTreeMap<String, PathBuf>,
+    },
+    /// A directory of a release archive pinned by its hash ([`crate::url_source`]).
+    Url {
+        spec: crate::url_source::UrlSpec,
+        /// [`crate::git::tree_checksum`] of the package directory.
+        checksum: String,
+        /// The package root, in the extracted archive.
+        dir: PathBuf,
     },
 }
 
@@ -110,6 +119,10 @@ enum Want {
         spec: crate::git::GitSpec,
         req: Option<VersionReq>,
     },
+    Url {
+        spec: crate::url_source::UrlSpec,
+        req: Option<VersionReq>,
+    },
 }
 
 /// A dependency edge being solved, with the chain of packages that introduced it
@@ -145,9 +158,20 @@ pub fn resolve(
     loc: &Locations,
     prefer: Option<&Lockfile>,
 ) -> Result<Resolution, String> {
+    resolve_with(root_dir, manifest, loc, prefer, TreeCheck::Files)
+}
+
+/// [`resolve`], looking at fetched trees as `check` says (`crate::tree_stamp`).
+pub fn resolve_with(
+    root_dir: &Path,
+    manifest: &Manifest,
+    loc: &Locations,
+    prefer: Option<&Lockfile>,
+    check: TreeCheck,
+) -> Result<Resolution, String> {
     let root_label = format!("{} {}", manifest.package.name, manifest.package.version);
     let root_reqs = dependency_requirements(manifest, root_dir, &[root_label], true)?;
-    let resolution = solve_root(root_dir, root_reqs, loc, prefer, &BTreeMap::new())?;
+    let resolution = solve_root(root_dir, root_reqs, (loc, check), prefer, &BTreeMap::new())?;
     refuse_root_name(root_dir, &manifest.package.name, &resolution)?;
     Ok(resolution)
 }
@@ -169,6 +193,7 @@ fn refuse_root_name(root_dir: &Path, name: &str, resolution: &Resolution) -> Res
             format!("from {}", dir.display())
         }
         Source::Git { spec, .. } => format!("from {}", spec.url),
+        Source::Url { spec, .. } => format!("from {}", spec.describe()),
         Source::Registry { .. } => "from the registry".to_string(),
     };
     let by: Vec<String> = resolution
@@ -196,6 +221,17 @@ pub fn resolve_members(
     loc: &Locations,
     prefer: Option<&Lockfile>,
 ) -> Result<Resolution, String> {
+    resolve_members_with(root_dir, members, loc, prefer, TreeCheck::Files)
+}
+
+/// [`resolve_members`], looking at fetched trees as `check` says (`crate::tree_stamp`).
+pub fn resolve_members_with(
+    root_dir: &Path,
+    members: &BTreeMap<PathBuf, Manifest>,
+    loc: &Locations,
+    prefer: Option<&Lockfile>,
+    check: TreeCheck,
+) -> Result<Resolution, String> {
     let root_reqs = members
         .iter()
         .map(|(dir, m)| Requirement {
@@ -209,18 +245,19 @@ pub fn resolve_members(
             root: true,
         })
         .collect();
-    solve_root(root_dir, root_reqs, loc, prefer, members)
+    solve_root(root_dir, root_reqs, (loc, check), prefer, members)
 }
 
 fn solve_root(
     root_dir: &Path,
     root_reqs: Vec<Requirement>,
-    loc: &Locations,
+    (loc, check): (&Locations, TreeCheck),
     prefer: Option<&Lockfile>,
     manifests: &BTreeMap<PathBuf, Manifest>,
 ) -> Result<Resolution, String> {
     let root_dependencies = root_reqs.iter().map(|r| r.name.clone()).collect();
     let mut provider = Provider::new(loc, root_dir, prefer, manifests);
+    provider.check = check;
     let state = State {
         selected: BTreeMap::new(),
         pending: root_reqs.into(),
@@ -341,21 +378,30 @@ fn select(state: &State, req: &Requirement, cand: Candidate) -> State {
 }
 
 /// Whether `want` asks for the source `source` is: the registry for the registry, the same
-/// directory, the same repository, reference and directory.
+/// directory, the same repository, reference and directory, the same archive (by its hash: two
+/// URLs serving one archive give one tree) and directory in it.
 fn same_source(source: &Source, want: &Want) -> bool {
     match (want, source) {
         (Want::Registry(_), Source::Registry { .. }) => true,
         (Want::Path { dir, .. }, Source::Path { dir: selected }) => dir == selected,
         (Want::Git { spec, .. }, Source::Git { spec: selected, .. }) => spec == selected,
+        (Want::Url { spec, .. }, Source::Url { spec: selected, .. }) => {
+            same_archive(spec, selected)
+        }
         _ => false,
     }
+}
+
+/// One archive (by hash) and one directory in it, from whichever URL.
+fn same_archive(a: &crate::url_source::UrlSpec, b: &crate::url_source::UrlSpec) -> bool {
+    (&a.sha256, a.strip, &a.subdir) == (&b.sha256, b.strip, &b.subdir)
 }
 
 /// Whether `pkg`'s version is one `want` accepts, whatever its source.
 fn version_fits(pkg: &ResolvedPackage, want: &Want) -> bool {
     match want {
         Want::Registry(req) => req.matches(&pkg.version),
-        Want::Path { req, .. } | Want::Git { req, .. } => {
+        Want::Path { req, .. } | Want::Git { req, .. } | Want::Url { req, .. } => {
             req.as_ref().is_none_or(|r| r.matches(&pkg.version))
         }
     }
@@ -370,7 +416,10 @@ fn satisfies(pkg: &ResolvedPackage, want: &Want) -> bool {
         (Want::Git { spec, req }, Source::Git { spec: selected, .. }) => {
             spec == selected && req.as_ref().is_none_or(|r| r.matches(&pkg.version))
         }
-        (Want::Path { .. } | Want::Git { .. }, _) => false,
+        (Want::Url { spec, req }, Source::Url { spec: selected, .. }) => {
+            same_archive(spec, selected) && req.as_ref().is_none_or(|r| r.matches(&pkg.version))
+        }
+        (Want::Path { .. } | Want::Git { .. } | Want::Url { .. }, _) => false,
     }
 }
 
@@ -402,6 +451,24 @@ fn dependency_requirements(
             });
             continue;
         }
+        if let Some(spec) = dep.url_spec() {
+            // Plain `http` reaches this machine only: a manifest fetched from elsewhere naming
+            // it would make an install send requests to local services.
+            if !root && crate::url_source::is_plain_http(&spec.url) {
+                return Err(format!(
+                    "dependency `{name}` of `{by}`: plain http ({}) is allowed only in a manifest this package controls (its own, a workspace member's or a local path's), not in one fetched from elsewhere",
+                    spec.url
+                ));
+            }
+            out.push(Requirement {
+                name: name.clone(),
+                want: Want::Url { spec, req },
+                chain: chain.to_vec(),
+                by: by.clone(),
+                root,
+            });
+            continue;
+        }
         let want = match (dep.path(), req) {
             (Some(path), req) => Want::Path {
                 dir: crate::relpath::normalize(&dir.join(path)),
@@ -410,7 +477,7 @@ fn dependency_requirements(
             (None, Some(req)) => Want::Registry(req),
             (None, None) => {
                 return Err(format!(
-                    "dependency `{name}` needs a `version`, a `path` or a `git` repository"
+                    "dependency `{name}` needs a `version`, a `path`, a `git` repository or a `url`"
                 ))
             }
         };

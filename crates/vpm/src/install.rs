@@ -13,7 +13,7 @@ use crate::manifest::Manifest;
 use crate::native::build::{build, cargo_available, BuildRequest};
 use crate::native::{missing_target_message, NativeLib, NativeOrigin, NATIVE_ABI};
 use crate::relpath;
-use crate::resolve::{resolve, Resolution, ResolvedPackage, Source};
+use crate::resolve::{Resolution, ResolvedPackage, Source};
 use crate::workspace::{Workspace, WorkspaceFile};
 
 mod allow_native;
@@ -32,6 +32,9 @@ pub struct InstallOptions {
     /// The target triple to provide native libraries for (`None`: none are fetched or built, and
     /// the graph carries no native libraries).
     pub target: Option<String>,
+    /// How much of each fetched tree (git, url) is looked at against its stamp: every file by
+    /// default; a build asks for its directories only ([`crate::tree_stamp::TreeCheck`]).
+    pub tree_check: crate::tree_stamp::TreeCheck,
 }
 
 /// The outcome of an install.
@@ -150,7 +153,13 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
     let loc = &loc.clone().with_manifest(&manifest);
     let existing = Lockfile::read(&root)?;
     let prefer = if opts.update { None } else { existing.as_ref() };
-    let resolution = resolve(&root, &manifest, loc, prefer)?;
+    let resolution = crate::resolve::resolve_with(
+        &root,
+        &manifest,
+        loc,
+        prefer,
+        crate::tree_stamp::for_install(&opts),
+    )?;
     let mut lockfile = to_lockfile(&resolution, &root, &[]);
     lockfile.allow_native = manifest.allow_native.clone();
     lockfile.allow_native.sort();
@@ -180,12 +189,16 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         lockfile.write(&root)?;
     }
     check_npm_overlap(resolution.packages.values())?;
-    let graph = build_graph(
+    let mut graph = build_graph(
         Some((&manifest, &root, &resolution.root_dependencies)),
         resolution.packages.values(),
         &dirs,
         natives,
     );
+    graph.set_fetched(crate::tree_stamp::fetched(
+        loc,
+        resolution.packages.values(),
+    ));
     Ok(Installed {
         graph,
         lockfile,
@@ -299,8 +312,8 @@ fn fetch<'r>(
             Source::Registry { checksum, .. } => {
                 cache::fetch(loc, &pkg.name, &pkg.version, checksum)?
             }
-            // Checked out, and verified against the lock, by the resolution.
-            Source::Path { dir } | Source::Git { dir, .. } => dir.clone(),
+            // Checked out (or extracted), and verified against the lock, by the resolution.
+            Source::Path { dir } | Source::Git { dir, .. } | Source::Url { dir, .. } => dir.clone(),
         };
         dirs.insert(pkg.name.clone(), dir);
     }
@@ -364,27 +377,19 @@ fn natives<'r>(
             Source::Git {
                 dir, spec, commit, ..
             } => {
-                let m = Manifest::from_dir(dir)?;
+                let from = format!("{} (a git dependency)", spec.describe());
                 let work = loc.cache.join("git-native").join(&pkg.name).join(commit);
-                if let Some(out) = c_sources::git_out(&pkg.name, spec, &m, &work, target)? {
-                    c_sources.insert(pkg.name.clone(), out);
-                }
-                // As a registry package without a prebuilt library: building runs its build
-                // scripts, so only when the user asks for it.
-                if m.native.is_some() && !from_source_allowed() {
-                    return Err(format!(
-                        "`{}` from {} has native code, which a git dependency builds from source with cargo (it runs the package's build scripts): set {FROM_SOURCE_VAR}=1 to allow it",
-                        pkg.name,
-                        spec.describe()
-                    ));
-                }
-                // Built from a copy: cargo writes `Cargo.lock` beside the crate, and the checkout
-                // must stay as fetched (its checksum is verified on every use).
-                let copy = work.join("package");
-                if m.native.is_some() && !copy.is_dir() {
-                    crate::contents::copy_package(dir, &copy)?;
-                }
-                native_from_source_in(&copy, &m, target, &work)?
+                remote_native(&pkg.name, dir, (&from, &work), &mut c_sources, target)?
+            }
+            Source::Url { dir, spec, .. } => {
+                let from = format!("{} (a url dependency)", spec.describe());
+                let key = format!("{}-{}", spec.sha256, spec.strip);
+                let key = match &spec.subdir {
+                    Some(d) => format!("{key}-{}", d.replace('/', "_")),
+                    None => key,
+                };
+                let work = loc.cache.join("url-native").join(&pkg.name).join(key);
+                remote_native(&pkg.name, dir, (&from, &work), &mut c_sources, target)?
             }
         };
         if let Some(lib) = lib {
@@ -551,12 +556,16 @@ fn check_locked_checksums(old: &Lockfile, new: &Lockfile) -> Result<(), String> 
             continue;
         }
         if locked.checksum != pkg.checksum {
+            let now = match pkg.source == REGISTRY_SOURCE {
+                true => "the registry has {} (the published package changed)",
+                false => "the fetched tree hashes to {} (it changed in the cache: delete it there to fetch it again)",
+            };
+            let now = now.replace("{}", pkg.checksum.as_deref().unwrap_or("none"));
             return Err(format!(
-                "checksum mismatch for `{}` {}: {LOCK_FILE} has {}, the registry has {} (the published package changed)",
+                "checksum mismatch for `{}` {}: {LOCK_FILE} has {}, {now}",
                 pkg.name,
                 pkg.version,
                 locked.checksum.as_deref().unwrap_or("none"),
-                pkg.checksum.as_deref().unwrap_or("none"),
             ));
         }
         for (target, sum) in &locked.native {
@@ -574,6 +583,35 @@ fn check_locked_checksums(old: &Lockfile, new: &Lockfile) -> Result<(), String> 
         }
     }
     Ok(())
+}
+
+/// The native library of a git or url package at `dir` (`from`: how its source reads; `work`:
+/// where its builds go), and where its C sources build (into `c_sources`). Building runs its
+/// build scripts or the pinned zig, as for a registry package without a prebuilt library, so
+/// only when the user asks for it; and cargo builds from a copy, since it writes `Cargo.lock`
+/// beside the crate and the fetched tree must stay as fetched (its checksum is verified on every
+/// use).
+fn remote_native(
+    name: &str,
+    dir: &Path,
+    (from, work): (&str, &Path),
+    c_sources: &mut BTreeMap<String, PathBuf>,
+    target: &str,
+) -> Result<Option<NativeLib>, String> {
+    let m = Manifest::from_dir(dir)?;
+    if let Some(out) = c_sources::remote_out(name, from, &m, work, target)? {
+        c_sources.insert(name.to_string(), out);
+    }
+    if m.native.is_some() && !from_source_allowed() {
+        return Err(format!(
+            "`{name}` from {from} has native code, which it builds from source with cargo (it runs the package's build scripts): set {FROM_SOURCE_VAR}=1 to allow it"
+        ));
+    }
+    let copy = work.join("package");
+    if m.native.is_some() && !copy.is_dir() {
+        crate::contents::copy_package(dir, &copy)?;
+    }
+    native_from_source_in(&copy, &m, target, work)
 }
 
 /// The lockfile of `resolution`, with path sources relative to `root`; the path packages in
@@ -597,6 +635,9 @@ fn to_lockfile(resolution: &Resolution, root: &Path, members: &[PathBuf]) -> Loc
                     checksum,
                     ..
                 } => (spec.source(commit), Some(checksum.clone()), BTreeMap::new()),
+                Source::Url { spec, checksum, .. } => {
+                    (spec.source(), Some(checksum.clone()), BTreeMap::new())
+                }
                 Source::Path { dir } => (
                     format!(
                         "{}+{}",

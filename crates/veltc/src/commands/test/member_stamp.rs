@@ -75,11 +75,13 @@ pub(super) fn write(
     }
     let mut entries: Vec<String> = vec![];
     for text in stamps {
-        let Some(text) = text else {
+        // A harness with no build stamp, or one whose entries aren't known (it never matches),
+        // would leave the member stamp recording less than the run read.
+        let Some(lines) = text.and_then(stamp::entry_lines) else {
             remove(root);
             return;
         };
-        entries.extend(stamp::entry_lines(text).into_iter().map(str::to_string));
+        entries.extend(lines);
     }
     entries.extend(listed.iter().map(|(dir, hash)| stamp::dir_entry(dir, hash)));
     entries.sort();
@@ -142,6 +144,35 @@ mod tests {
         write(root, &args, 3, &[Some(&build_stamp(&exe))], &[]);
         assert_eq!(up_to_date(root, &args), Some(3));
         write(root, &args, 3, &[None], &[]);
+        assert_eq!(up_to_date(root, &args), None);
+    }
+
+    /// A harness whose build stamp never matches (a path with a line break) records nothing
+    /// that could change: a member stamp of the listing alone would report a stale pass.
+    #[test]
+    fn a_harness_stamp_that_never_matches_leaves_no_member_stamp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let exe = root.join("target").join("velt").join("test").join("h");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, "one").unwrap();
+        let args = [OsString::from("test")];
+        write(root, &args, 1, &[Some(&build_stamp(&exe))], &[]);
+        assert_eq!(up_to_date(root, &args), Some(1));
+        let lib = root.join("li\nb").join("lib.velt");
+        let odd = stamp::compose(
+            &super::key(&[]),
+            0,
+            &[format!("file h 1 1\t{}", lib.display())],
+        );
+        assert_eq!(stamp::entry_lines(&odd), None);
+        write(root, &args, 1, &[Some(&odd)], &[]);
+        assert_eq!(up_to_date(root, &args), None);
+        // Nor one whose entries are cut short.
+        let whole = build_stamp(&exe);
+        let cut = whole.rsplit_once("end ").unwrap().0;
+        write(root, &args, 1, &[Some(&build_stamp(&exe))], &[]);
+        write(root, &args, 1, &[Some(cut)], &[]);
         assert_eq!(up_to_date(root, &args), None);
     }
 

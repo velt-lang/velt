@@ -48,11 +48,12 @@ pub(super) fn local_out(dir: &Path, manifest: &Manifest, target: &str) -> Option
         .then(|| dir.join("target").join("velt-native").join(target))
 }
 
-/// A git package's: only when the user asks for it, as for a crate. Compiling C runs none of its
-/// code, but it does download zig and take a build this machine alone made.
-pub(super) fn git_out(
+/// A git or url package's (`from`: how its source reads): only when the user asks for it, as for
+/// a crate. Compiling C runs none of its code, but it does download zig and take a build this
+/// machine alone made.
+pub(super) fn remote_out(
     name: &str,
-    spec: &crate::git::GitSpec,
+    from: &str,
     manifest: &Manifest,
     work: &Path,
     target: &str,
@@ -62,8 +63,7 @@ pub(super) fn git_out(
     }
     if !from_source_allowed() {
         return Err(format!(
-            "`{name}` from {} has C sources, which a git dependency builds here with the pinned zig: set {FROM_SOURCE_VAR}=1 to allow it",
-            spec.describe()
+            "`{name}` from {from} has C sources, which it builds here with the pinned zig: set {FROM_SOURCE_VAR}=1 to allow it"
         ));
     }
     Ok(Some(work.join(target)))

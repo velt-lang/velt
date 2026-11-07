@@ -26,6 +26,7 @@ impl Project {
                     locked,
                     update: false,
                     target: Some(target.to_string()),
+                    ..Default::default()
                 },
             )
             .map(Some),
@@ -45,8 +46,14 @@ impl Project {
         vpm::manifest::find_package_root(&cwd).ok_or_else(|| no_package_message(&cwd))
     }
 
-    /// Install the package rooted at `root`.
+    /// Install the package rooted at `root`. Fetched trees (git, url) are checked against their
+    /// stamps by their directories only, as a build needs (`vpm::tree_stamp::TreeCheck`): `velt
+    /// install`, `update` and `add` look at every file.
     pub fn open(root: &Path, opts: InstallOptions) -> Result<Project, String> {
+        let opts = InstallOptions {
+            tree_check: vpm::tree_stamp::TreeCheck::Directories,
+            ..opts
+        };
         let root = vpm::relpath::absolute(root);
         let manifest = Manifest::from_dir(&root)?;
         // A member's `velt` is its workspace's; a broken workspace is reported by the install.

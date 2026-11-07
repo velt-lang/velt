@@ -196,10 +196,15 @@ pub(super) fn to_json(m: &Manifest) -> Value {
                         ("branch", &d.branch),
                         ("tag", &d.tag),
                         ("rev", &d.rev),
+                        ("url", &d.url),
+                        ("sha256", &d.sha256),
                     ] {
                         if let Some(v) = value {
                             o.insert(key.into(), json!(v));
                         }
+                    }
+                    if let Some(n) = d.strip {
+                        o.insert("strip".into(), json!(n));
                     }
                     Value::Object(o)
                 }
@@ -360,11 +365,14 @@ pub(crate) fn dependency_lit(dep: &Dependency) -> String {
                 ("branch", &d.branch),
                 ("tag", &d.tag),
                 ("rev", &d.rev),
-                ("path", &d.path),
+                ("url", &d.url),
+                ("sha256", &d.sha256),
             ]
             .into_iter()
             .filter_map(|(key, value)| value.as_ref().map(|v| format!("{key}: {}", string_lit(v))));
-            inline_object(version.chain(rest))
+            let strip = d.strip.iter().map(|n| format!("strip: {n}"));
+            let path = d.path.iter().map(|p| format!("path: {}", string_lit(p)));
+            inline_object(version.chain(rest).chain(strip).chain(path))
         }
     }
 }

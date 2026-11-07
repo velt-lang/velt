@@ -644,6 +644,7 @@ mod tests {
         let spec = vpm::edit::DependencySpec {
             version: Some("0.1.0".into()),
             path: None,
+            ..Default::default()
         };
         // `velt add util`: the manifest, the lockfile and the package in the cache.
         vpm::edit::add_dependency(&app, "util", &spec).unwrap();
@@ -705,6 +706,7 @@ mod tests {
         let spec = vpm::edit::DependencySpec {
             version: None,
             path: Some("../util".into()),
+            ..Default::default()
         };
         vpm::edit::add_dependency(&app, "util", &spec).unwrap();
         let lock = app.join(vpm::lockfile::LOCK_FILE);

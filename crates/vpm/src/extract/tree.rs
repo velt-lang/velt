@@ -198,8 +198,10 @@ impl Tree {
         Ok(())
     }
 
-    /// Check what is known only once every entry is in: where each link leads.
+    /// Check what is known only once every entry is in: no directory that git would take for a
+    /// repository, and where each link leads.
     pub(super) fn finish(&mut self) -> Result<(), String> {
+        super::names::check_no_repository(self.nodes.keys().map(String::as_str))?;
         // By clash key: on macOS and Windows `d/UP` is the link `d/up`.
         let links: HashMap<String, &str> = (self.nodes.iter())
             .filter_map(|(p, n)| match n {

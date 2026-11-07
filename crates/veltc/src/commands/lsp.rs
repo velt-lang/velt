@@ -68,6 +68,7 @@ impl CliLoader {
                 locked: false,
                 update: false,
                 target: Some(velt_codegen_cl::host_triple()),
+                ..Default::default()
             };
             let graph = super::project::Project::open(&root, opts)
                 .map_err(|e| eprintln!("velt-lsp: cannot install `{}`: {e}", root.display()))
@@ -290,6 +291,7 @@ mod tests {
             &vpm::edit::DependencySpec {
                 version: None,
                 path: Some("../util".into()),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -314,6 +316,7 @@ mod tests {
         let spec = vpm::edit::DependencySpec {
             version: None,
             path: Some("../util".into()),
+            ..Default::default()
         };
         vpm::edit::add_dependency(&app, "util", &spec).unwrap();
         let main = app.join("src/main.velt");
@@ -422,6 +425,7 @@ mod tests {
         let path_dep = |path: &str| vpm::edit::DependencySpec {
             version: None,
             path: Some(path.into()),
+            ..Default::default()
         };
         vpm::edit::add_dependency(&app, "dep", &path_dep("../dep")).unwrap();
         vpm::edit::add_dependency(&dep, "dep2", &path_dep("../dep2")).unwrap();

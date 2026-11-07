@@ -149,6 +149,13 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             let spec = arg.ok_or(
                 "missing package (e.g. `velt add json@1.2` or `velt add util --path ../util`)",
             )?;
+            // A URL (it may hold an `@`): a release archive, whose hash `velt add` computes.
+            if spec.starts_with("https://") || spec.starts_with("http://") {
+                return Ok(Command::AddUrl {
+                    url: spec,
+                    path: flags.path,
+                });
+            }
             let (pkg, version) = match spec.split_once('@') {
                 Some((p, v)) if !v.is_empty() => (p.to_string(), Some(v.to_string())),
                 Some(_) => {
@@ -295,6 +302,13 @@ mod tests {
                 name: "util".into(),
                 version: None,
                 path: Some("../u".into())
+            }
+        );
+        assert_eq!(
+            p(&["add", "https://h.example/o/v@1/x.tar.gz", "--path", "pkg"]).unwrap(),
+            Command::AddUrl {
+                url: "https://h.example/o/v@1/x.tar.gz".into(),
+                path: Some("pkg".into())
             }
         );
         assert_eq!(
