@@ -717,18 +717,21 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
 - Modifying through a pattern / `for...of` / by-reference `const` binding is allowed (JS):
   mutation inference counts it against the place the binding points into.
 - `==` / `!=` on non-primitive types are `Intrinsic::Same` (JS `===`: objects — class instances,
-  arrays, structs, object literals, interface and function values — by identity; `T | null`,
-  unions and tuples part by part; `!=` wraps it in `Not`). Structural equality (`deepEqual`,
+  arrays, object literals, interface and function values — by identity; `T | null`,
+  unions and tuples part by part; a `struct` by content, see below; `!=` wraps it in `Not`). Structural equality (`deepEqual`,
   `assertEq`, `velt/test`'s `toEqual`) is no intrinsic: std's `equalByContent` and
   `equalByFields` (velt/lang/equal) are generated per type by a source generator
   (design/source-generators.md). `Map` and `Set` keys compare with
   `Intrinsic::KeyEq` (`keyEq`, JS SameValueZero: `Same` with `NaN` equal to itself
   and `0` to `-0`) and hash with `Intrinsic::Hash`, which agrees with it (objects hash their
   identity; a type declared with `struct`, `AdtDef::declared_struct`, compares and hashes by
-  content, field by field). `Array.includes` compares with `Intrinsic::IncludesEq` (`Same`, with a
-  number `NaN` equal to `NaN`). A C struct (`AdtDef::c_struct`) is the exception to identity:
-  it compares by content in every one of these, `Same` included. Structs are never Copy
-  (`AdtDef::is_copy` is false for every struct and object type) except C structs.
+  content, field by field: a struct has no identity, #641). A declared `struct` compares its
+  numbers by their bits under every one of these; a C struct (`AdtDef::c_struct`) compares them
+  as the operation compares numbers (IEEE under `Same`, SameValueZero for keys and `includes`).
+  A C struct held in a declared `struct` compares by the outer struct's rule, its bits.
+  `Array.includes` compares with `Intrinsic::IncludesEq` (JS SameValueZero for everything but
+  structs: `Same`, with a number `NaN` equal to `NaN`; a struct by content as above). A struct
+  whose fields are all Copy is Copy (`AdtDef::is_copy`); object types never are.
 
 ## ES private names
 

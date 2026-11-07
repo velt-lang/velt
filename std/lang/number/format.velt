@@ -30,7 +30,7 @@ struct FloatText {
 const INFINITY: u64 = 0x7974696e69666e49;
 
 function special(w0: u64, w1: u64, len: i64): FloatText {
-  return FloatText { t: Text { w0, w1, w2: 0, w3: 0 }, len };
+  return { t: { w0, w1, w2: 0, w3: 0 }, len };
 }
 
 /** `String(x)` of an `x` that is not 0: its text and length (at most 25 bytes). */
@@ -64,7 +64,7 @@ function floatText(x: f64): FloatText {
   // The value is 0.d1..dk * 10^n (ECMAScript's Number::toString names).
   const n = k + e;
   const d = intWords(m, false);
-  let t = Text { w0: d.w0, w1: d.w1, w2: d.w2, w3: 0 };
+  let t: Text = { w0: d.w0, w1: d.w1, w2: d.w2, w3: 0 };
   let len = k;
   if (k <= n && n <= 21) {
     // An integer: the digits, then zeros.
@@ -78,7 +78,7 @@ function floatText(x: f64): FloatText {
     // `0.`, then -n zeros, then the digits.
     const p = 2 - n;
     const head = (ZEROS & lowBytes(p)) ^ ((0x30 ^ DOT) << 8);
-    t = or(shift(t, p), Text { w0: head, w1: 0, w2: 0, w3: 0 });
+    t = or(shift(t, p), { w0: head, w1: 0, w2: 0, w3: 0 });
     len = k + p;
   } else {
     // `d.ddde+x`: the first digit, the others after a point, the exponent (up to three digits).
@@ -95,10 +95,10 @@ function floatText(x: f64): FloatText {
     len += 2 + nd;
   }
   if (neg) {
-    t = or(shift(t, 1), Text { w0: MINUS, w1: 0, w2: 0, w3: 0 });
+    t = or(shift(t, 1), { w0: MINUS, w1: 0, w2: 0, w3: 0 });
     len++;
   }
-  return FloatText { t, len };
+  return { t, len };
 }
 
 /**

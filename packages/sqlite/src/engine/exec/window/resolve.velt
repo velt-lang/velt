@@ -77,7 +77,7 @@ export function resolveWindow(o: Window, named: Window[]): Resolved {
     }
   }
   checkFrame(w);
-  return Resolved { w: constantOffsets(w), key: key };
+  return { w: constantOffsets(w), key: key };
 }
 
 // `w` with a frame offset that is not a constant replaced by NULL, as SQLite's parser replaces

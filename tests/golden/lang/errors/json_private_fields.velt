@@ -27,5 +27,5 @@ function main() {
   console.log(JSON.stringify(a));
   const admins = JSON.parse<Admin[]>("[]");
   const pair = JSON.parse<Owned>("{}");
-  console.log(JSON.stringify(Point { x: 1, y: 2 }), admins.length, pair.at.x);
+  console.log(JSON.stringify({ x: 1, y: 2 } as Point), admins.length, pair.at.x);
 }

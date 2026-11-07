@@ -18,7 +18,7 @@ export async function open(url: string, ca: string): Promise<Opened> {
   const stream =
     t.secure ? await connectTls(addr, { serverName: t.host, ca: ca }) : await connect(addr);
   try {
-    return Opened { stream: stream, rest: await handshake(stream, t) };
+    return { stream: stream, rest: await handshake(stream, t) };
   } catch (e) {
     stream.close();
     throw e;

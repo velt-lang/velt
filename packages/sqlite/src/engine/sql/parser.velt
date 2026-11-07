@@ -173,7 +173,7 @@ export class Parser extends ExprParser {
           nulls = 2;
         }
       }
-      out.push(OrderTerm { expr: e, desc: desc, nulls: nulls });
+      out.push({ expr: e, desc: desc, nulls: nulls });
       if (!this.eatOp(",")) {
         return out;
       }
@@ -245,16 +245,12 @@ export class Parser extends ExprParser {
     const out: ResultColumn[] = [];
     while (true) {
       if (this.isOp("*")) {
-        out.push(ResultColumn {
-          expr: new Expr(E_STAR, this.advance().start),
-          alias: "",
-          span: "*",
-        });
+        out.push({ expr: new Expr(E_STAR, this.advance().start), alias: "", span: "*" });
       } else if (this.isName() && this.isOpAt(1, ".") && this.isOpAt(2, "*")) {
         const star = new Expr(E_STAR, this.peek().start);
         star.table = this.advance().text;
         this.pos += 2;
-        out.push(ResultColumn { expr: star, alias: "", span: `${star.table}.*` });
+        out.push({ expr: star, alias: "", span: `${star.table}.*` });
       } else {
         const from = this.peek().start;
         const e = this.expr();
@@ -266,7 +262,7 @@ export class Parser extends ExprParser {
         } else if (this.isAlias()) {
           alias = this.advance().text;
         }
-        out.push(ResultColumn { expr: e, alias: alias, span: span });
+        out.push({ expr: e, alias: alias, span: span });
       }
       if (!this.eatOp(",")) {
         return out;

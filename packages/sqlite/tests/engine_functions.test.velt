@@ -102,7 +102,7 @@ struct Call {
 }
 
 function call(name: string, args: string[], want: string): Call {
-  return Call { name: name, args: args, want: want };
+  return { name: name, args: args, want: want } as Call;
 }
 
 /**

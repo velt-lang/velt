@@ -1,0 +1,91 @@
+// Struct arguments whose variable a later argument or a closure assigns (#641, #2489): the
+// callee gets the value at the call, for a small Copy struct, a large one and one holding a
+// string; and a part passed beside its container through a function value.
+
+struct V {
+  x: number;
+  y: number;
+}
+
+struct Big {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+}
+
+struct S {
+  name: string;
+  n: number;
+}
+
+function vs(a: V, b: V): string {
+  return `${a.x} ${b.x}`;
+}
+
+function bigs(a: Big, b: Big): string {
+  return `${a.a} ${b.a}`;
+}
+
+function strs(a: S, b: S): string {
+  return `${a.name} ${b.name}`;
+}
+
+function runs(a: S, f: () => void): string {
+  f();
+  return a.name;
+}
+
+function runv(a: V, f: () => void): number {
+  f();
+  return a.x;
+}
+
+function part(r: Big, a: number): number {
+  return r.a + a;
+}
+
+function main() {
+  let v: V = { x: 1, y: 1 };
+  console.log(vs(v, (v = { x: 2, y: 2 })));
+  let big: Big = { a: 1, b: 1, c: 1, d: 1 };
+  console.log(bigs(big, (big = { a: 2, b: 2, c: 2, d: 2 })));
+  let s: S = { name: "one", n: 1 };
+  console.log(strs(s, (s = { name: "two", n: 2 })));
+  let s2: S = { name: "one2", n: 1 };
+  console.log(
+    runs(s2, () => {
+      s2 = { name: "two2", n: 2 };
+    }),
+    s2.name,
+  );
+  let v2: V = { x: 1, y: 1 };
+  console.log(
+    runv(v2, () => {
+      v2 = { x: 9, y: 9 };
+    }),
+    v2.x,
+  );
+  let v3: V = { x: 1, y: 1 };
+  console.log(
+    ((q: V) => {
+      v3 = { x: 9, y: 9 };
+      return q.x;
+    })(v3),
+  );
+  let b3: Big = { a: 7, b: 7, c: 7, d: 7 };
+  const h = (q: Big) => {
+    b3 = { a: 9, b: 9, c: 9, d: 9 };
+    return q.a;
+  };
+  console.log(h(b3));
+  let s3: S = { name: "nine2", n: 1 };
+  const g = (q: S) => {
+    s3 = { name: "ten2", n: 2 };
+    return q.name;
+  };
+  console.log(g(s3), s3.name);
+  const r: Big = { a: 1, b: 2, c: 3, d: 4 };
+  const fp: (r: Big, a: number) => number = part;
+  console.log(fp(r, r.b), part(r, r.d));
+}

@@ -2,7 +2,7 @@
 // `Map` and `Set` keys of a type declared with `struct` compare and hash by content, field by
 // field (#641): a struct is a Velt value type, so an equal struct finds the entry. Object types,
 // classes and arrays keep comparing by identity, as in Node (#1257). `==`, `includes` and
-// `indexOf` still compare structs by identity.
+// `indexOf` compare structs by content too: a struct has no identity.
 struct Cell {
   x: number;
   y: number;
@@ -48,7 +48,7 @@ function main() {
   console.log(s.has({ x: 1, y: 2 }), s.has({ x: 2, y: 1 }), m.has({ x: 2, y: 1 }));
   console.log(m.delete({ x: 1, y: 2 }), m.size, s.delete(b), s.size);
 
-  // `==`, `includes` and `indexOf` compare structs by identity.
+  // `==`, `includes` and `indexOf` compare structs by content.
   const cells: Cell[] = [a];
   console.log(cells.includes(b), cells.indexOf(b), cells.includes(a), a == a);
 
@@ -68,7 +68,7 @@ function main() {
   names.add({ first: "bob", last: long });
   console.log(names.size, names.has({ first: "bob", last: long }), names.has({ first: "", last: long }));
 
-  // Number fields compare as JS `Map` keys do (SameValueZero): `NaN` finds itself, `0` is `-0`.
+  // Number fields compare by their bits (#641): `NaN` finds itself, `-0` is not `0`.
   const fs = new Map<F, string>();
   fs.set({ v: NaN }, "nan");
   fs.set({ v: 0 }, "zero");

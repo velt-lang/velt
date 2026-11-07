@@ -43,7 +43,7 @@ export function encodeCommand(out: StringBuilder, args: string[], from: usize, t
 
 /** An empty reply. */
 export function emptyReply(): RawReply {
-  return RawReply { tags: [], nums: [], strs: [] };
+  return { tags: [], nums: [], strs: [] };
 }
 
 /** Incremental reply parser (see the module header). */

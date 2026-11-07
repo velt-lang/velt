@@ -1,11 +1,11 @@
-1 2 1 false
+1 2 1 true
 true false false
 true 0 true 0
-false -1 true true
+true 0 true true
 2 diag
 none
 2 true false
-nan zero 2
+nan undefined 2
 2 3 2
 five none 2
 2 true

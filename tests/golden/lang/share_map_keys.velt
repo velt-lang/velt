@@ -2,7 +2,8 @@
 // Semantics stage 2: `Map` (and `Set`) keys of object-literal type compare by identity, as `==`
 // compares them (#1257): an equal but distinct key is another key, and a key passed on (shared)
 // is the same one. Keys of a type declared with `struct` compare by content (#641): an equal
-// struct finds the entry. Tuple keys compare part by part, as `==` compares tuples.
+// struct finds the entry, and `==` compares it by content. Tuple keys compare part by part, as
+// `==` compares tuples.
 struct P {
   x: i64;
   y: i64;
@@ -10,11 +11,11 @@ struct P {
 
 function main() {
   const byPoint = new Map<P, string>();
-  const p = P { x: 1, y: 2 };
+  const p: P = { x: 1, y: 2 };
   byPoint.set(p, "a");
-  byPoint.set(P { x: 1, y: 2 }, "b");
-  console.log(byPoint.get(p), byPoint.has(P { x: 1, y: 2 }), byPoint.has(P { x: 2, y: 1 }));
-  console.log(byPoint.size, p == P { x: 1, y: 2 });
+  byPoint.set({ x: 1, y: 2 }, "b");
+  console.log(byPoint.get(p), byPoint.has({ x: 1, y: 2 }), byPoint.has({ x: 2, y: 1 }));
+  console.log(byPoint.size, p == { x: 1, y: 2 });
   const byObject = new Map<{ name: string }, i64>();
   const ann = { name: "ann" };
   byObject.set(ann, 1);

@@ -14,10 +14,10 @@ import {
 } from "velt/fs/rt";
 
 /** The options of `remove`. */
-export struct RemoveOptions {
+export type RemoveOptions = {
   /** Remove a directory and everything in it (otherwise only files, symlinks, empty dirs). */
   recursive?: bool;
-}
+};
 
 /** Removes a file, symlink or empty directory (with `recursive`, a directory and its contents). */
 export async function remove(path: string, opts: RemoveOptions = {}): Promise<void> {

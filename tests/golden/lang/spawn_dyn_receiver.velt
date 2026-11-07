@@ -74,7 +74,7 @@ async function sum(tasks: Promise<i64>[]): Promise<i64> {
 async function main() {
   const b: Base = new Derived();
   const r: Reader = new Impl();
-  const p: Reader = Pt { x: 7, label: "a struct label long enough to live on the heap" };
+  const p: Reader = ({ x: 7, label: "a struct label long enough to live on the heap" } as Pt);
   const tasks: Promise<i64>[] = [];
   for (let i = 0; i < 50; i++) {
     tasks.push(spawn(b.read(1)));

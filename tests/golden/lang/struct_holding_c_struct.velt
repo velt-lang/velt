@@ -1,0 +1,35 @@
+// A `struct` holding a C struct compares the C struct by the struct's rule, its bits (#641,
+// #2475): a key holding `NaN` is found again, and `0` and `-0` differ.
+
+declare c struct CP {
+  x: f64;
+  y: f64;
+}
+struct W {
+  c: CP;
+  n: number;
+}
+function main() {
+  const wn: W = { c: { x: NaN, y: 0 }, n: 1 };
+  console.log(wn === wn);
+  const s = new Set<W>();
+  s.add(wn);
+  s.add(wn);
+  console.log(s.size, s.has(wn));
+  const m = new Map<W, number>();
+  m.set(wn, 1);
+  console.log(m.get(wn));
+  const arr: W[] = [wn];
+  console.log(arr.indexOf(wn), arr.includes(wn));
+  const z: W = { c: { x: 0, y: 0 }, n: 1 };
+  const nz: W = { c: { x: 0 * -1, y: 0 }, n: 1 };
+  console.log(z === nz);
+  const mz = new Map<W, number>();
+  mz.set(z, 1);
+  console.log(mz.get(nz));
+  const sa = new Set<any>();
+  const aw: any = wn;
+  sa.add(aw);
+  sa.add(aw);
+  console.log(sa.size, sa.has(aw));
+}

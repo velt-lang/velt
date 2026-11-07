@@ -53,10 +53,10 @@ export function decimalValue(w: u64, q: i64): Decimal {
     // Clinger: both exact, one rounding.
     const m = w as f64;
     const v = q < 0 ? m / POW10[(-q) as usize] : m * POW10[q as usize];
-    return Decimal { end: 0, ok: true, value: v, long: false };
+    return { end: 0, ok: true, value: v, long: false };
   }
   const r = decide(w, q);
-  return Decimal { end: 0, ok: r.ok, value: r.value, long: false };
+  return { end: 0, ok: r.ok, value: r.value, long: false };
 }
 
 // The longest unsigned decimal literal at byte `start` of `s` (digits, `.digits`, an exponent
@@ -107,7 +107,7 @@ function decimal(s: string, start: usize, n: usize): Decimal {
     }
   }
   if (!any) {
-    return Decimal { end: start, ok: false, value: 0, long: false };
+    return { end: start, ok: false, value: 0, long: false };
   }
   // An exponent counts only with digits.
   if (i < n && (strByteAt(s, i as u64) | 0x20) == 101) {
@@ -141,13 +141,13 @@ function decimal(s: string, start: usize, n: usize): Decimal {
     }
   }
   if (w == 0) {
-    return Decimal { end: i, ok: true, value: 0, long: false };
+    return { end: i, ok: true, value: 0, long: false };
   }
   if (digits > 19) {
-    return Decimal { end: i, ok: true, value: 0, long: true };
+    return { end: i, ok: true, value: 0, long: true };
   }
   const v = decimalValue(w, q);
-  return Decimal { end: i, ok: v.ok, value: v.value, long: !v.ok };
+  return { end: i, ok: v.ok, value: v.value, long: !v.ok };
 }
 
 // The value of the digits of radix 2, 8 or 16 at bytes `start` to `n` (all of them digits:

@@ -6,22 +6,23 @@ struct Point {
     return Math.sqrt(this.x * this.x + this.y * this.y);
   }
 
-  scale(k: f64) {
-    this.x *= k;
-    this.y *= k;
+  scale(k: f64): Point {
+    return { x: this.x * k, y: this.y * k };
   }
 }
 
 function add(a: Point, b: Point): Point {
-  return Point { x: a.x + b.x, y: a.y + b.y };
+  return { x: a.x + b.x, y: a.y + b.y };
 }
 
 function main() {
-  let p = Point { x: 3.0, y: 4.0 };
-  const q = p; // the same object (JS)
+  let p: Point = { x: 3.0, y: 4.0 };
+  const q = p; // a copy: a struct is a value
   console.log(p.len(), q.x);
-  p.scale(2.0);
+  p = p.scale(2.0);
   console.log(p.x, p.y, q.x);
+  const same: Point = { x: 3.0, y: 4.0 };
+  console.log(p == q, q == same, p != same);
   const r = add(p, q);
   console.log(`${r.x},${r.y}`);
   const o = { name: "anon", n: 1 };

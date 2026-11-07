@@ -240,7 +240,7 @@ function addInSelectBound(
   const k = c.expr(e.a!, sc);
   // As the IN test compares: the two sides' affinity, the left side's collation first.
   const aff = comparisonAffinity(q.affs[0], k.aff);
-  const coll = binaryColl(k, C { ev: k.ev, aff: q.affs[0], coll: q.colls[0], explicit: false });
+  const coll = binaryColl(k, { ev: k.ev, aff: q.affs[0], coll: q.colls[0], explicit: false });
   const b = new Bound(col, OP_IN, k.ev, aff == AFF_NONE ? A_BLOB : aff, coll, t);
   b.inQuery = q;
   out.push(b);

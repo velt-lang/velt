@@ -27,6 +27,9 @@ const FX_K: i128 = 0x517c_c1b7_2722_0a95;
 impl FnLower<'_, '_> {
     /// The equality glue for the current mode.
     fn eq_glue(&self) -> Glue {
+        if self.bits_mode {
+            return Glue::BitsEq;
+        }
         if self.value_mode {
             return Glue::SameValue;
         }
@@ -88,6 +91,16 @@ impl FnLower<'_, '_> {
             TyKind::Promise(..) => self.promise_identity(a, b),
             // An `f16`/`bf16` compares by value, never by its bits (#2049): widened to `f32`,
             // then as an `f32` (`-0` is `0`; NaN is itself only as a key or in value mode).
+            // Inside a `struct` (#641): the bits.
+            _ if self.bits_mode && (vt.is_float() || self.half_of(ty).is_some()) => {
+                let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+                if vt.is_float() {
+                    let (x, y) = (self.float_bits(x, vt), self.float_bits(y, vt));
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
+                } else {
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
+                }
+            }
             TyKind::Float(f) if f.is_storage() => {
                 let x = self.widen_half(Operand::Copy(a.clone()), f);
                 let y = self.widen_half(Operand::Copy(b.clone()), f);
@@ -140,10 +153,20 @@ impl FnLower<'_, '_> {
                 let id = self.promise_id(place);
                 self.fx_combine(cint(0, Ty::U64), id)
             }
-            // A `struct` key hashes its content, as `KeyEq` compares it (same.rs).
-            _ if self.cx.content_key(ty) => {
+            // A C struct key hashes its content, as `KeyEq` compares it (same.rs); inside a
+            // `struct`, by its bits as below.
+            _ if self.cx.c_struct(ty) && !self.bits_mode => {
                 let a = self.addr(place.clone());
                 self.call_glue(Glue::Hash, ty, vec![a])
+            }
+            // A `struct` value hashes its content, floats by bits, as `BitsEq` compares it.
+            _ if self.cx.value_struct(ty) => {
+                let a = self.addr(place.clone());
+                self.call_glue(Glue::BitsHash, ty, vec![a])
+            }
+            _ if self.bits_mode && vt.is_float() => {
+                let x = self.float_bits(Operand::Copy(place.clone()), vt);
+                self.fx_combine(cint(0, Ty::U64), x)
             }
             _ if self.cx.is_object(ty) && !self.cx.is_fn_or_dyn(ty) => {
                 self.identity_hash(place, ty)
@@ -160,8 +183,9 @@ impl FnLower<'_, '_> {
                 // Agreeing with `ref_identity`: the object an adapter wraps (adapters.rs).
                 let place = self.through_adapters(place, ty);
                 let p = Operand::Copy(proj(&place, Proj::Field(0)));
-                let x = self.cast_to(p, Ty::Ptr, Ty::U64);
-                self.fx_combine(cint(0, Ty::U64), x)
+                let x = self.cast_to(p.clone(), Ty::Ptr, Ty::U64);
+                let h = self.fx_combine(cint(0, Ty::U64), x);
+                self.dyn_value_hash(&place, ty, p, h)
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
                 self.note_fn_compared(ty);
@@ -173,7 +197,7 @@ impl FnLower<'_, '_> {
                 self.fx_combine(h, env)
             }
             // By value, as the key equality above: the widened `f32`'s key bits.
-            TyKind::Float(f) if f.is_storage() => {
+            TyKind::Float(f) if f.is_storage() && !self.bits_mode => {
                 let w = self.widen_half(Operand::Copy(place.clone()), f);
                 let x = self.key_float_bits(w, Ty::F32);
                 self.fx_combine(cint(0, Ty::U64), x)
@@ -193,9 +217,42 @@ impl FnLower<'_, '_> {
             }
             _ => {
                 let a = self.addr(place.clone());
-                self.call_glue(Glue::Hash, ty, vec![a])
+                let g = if self.bits_mode {
+                    Glue::BitsHash
+                } else {
+                    Glue::Hash
+                };
+                self.call_glue(g, ty, vec![a])
             }
         }
+    }
+
+    /// The hash `h` of the interface value at `place` (of type `ty`, `data` its data pointer),
+    /// or, holding a `struct` value, its content's hash: agreeing with same.rs
+    /// `dyn_values_same`.
+    fn dyn_value_hash(&mut self, place: &Place, ty: TyId, data: Operand, h: Operand) -> Operand {
+        if !self.cx.holds_values(ty) {
+            return h;
+        }
+        let r = self.temp(Ty::U64);
+        self.assign(Place::local(r), Rvalue::Use(h));
+        let done = self.new_block();
+        let vt = Operand::Copy(proj(place, Proj::Field(1)));
+        let id = self.vtable_class_id(vt.clone());
+        let lo = cint(crate::lower::class_test::VALUE_IDS as i128, Ty::U64);
+        let hi = cint((crate::lower::class_test::VALUE_IDS << 1) as i128, Ty::U64);
+        let ge = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ge, id.clone(), lo));
+        let lt = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, id, hi));
+        let is = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, ge, lt));
+        let then = self.new_block();
+        self.branch(is, then, done);
+        self.switch_to(then);
+        let slot = crate::lower::glue::vtable::SLOT_VALUE_HASH;
+        let v = self.any_slot_call(vt, slot, vec![data], Ty::U64);
+        self.assign(Place::local(r), Rvalue::Use(v));
+        self.goto(done);
+        self.switch_to(done);
+        Operand::Copy(Place::local(r))
     }
 
     /// Hash of the object of type `ty` at `place` (a class instance, an object type or an array),
@@ -420,7 +477,7 @@ impl FnLower<'_, '_> {
         });
     }
 
-    pub(super) fn hash_body(&mut self, p: vir::Local, ty: TyId) {
+    pub(in crate::lower) fn hash_body(&mut self, p: vir::Local, ty: TyId) {
         let place = self.deref_param(p, ty);
         let h = self.temp(Ty::U64);
         self.assign(Place::local(h), Rvalue::Use(cint(0, Ty::U64)));

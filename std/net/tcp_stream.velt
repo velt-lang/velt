@@ -265,11 +265,11 @@ export struct TcpStream implements ByteStream {
    */
   private static unpark(key: string, settled: bool = false): TcpStream | null {
     const h = velt_rt_tcp_unpark(key, settled ? 1 : 0);
-    return h == 0 ? null : TcpStream { handle: h };
+    return h == 0 ? null : { handle: h };
   }
 
   /** The stream behind runtime handle `h` (std only: a connect the `fetch` client raced). */
   private static ofHandle(h: u64): TcpStream {
-    return TcpStream { handle: h };
+    return { handle: h };
   }
 }

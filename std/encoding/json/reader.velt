@@ -344,7 +344,7 @@ export class Reader extends Scanner {
   readF64(): bool {
     if (!readerNumberStart(this)) {
       if (this.rows != 0 && this.failed == ROWS) {
-        let out = ReaderF64 { v: 0 };
+        let out: ReaderF64 = { v: 0 };
         const ok = velt_rt_json_reader_read_f64(this.rows, out) == 1;
         this.num = out.v;
         return ok;

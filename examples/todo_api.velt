@@ -21,7 +21,7 @@ class Store {
   nextId: i64 = 1;
 
   add(title: string): Todo {
-    const todo = Todo { id: this.nextId, title: title, done: false };
+    const todo: Todo = { id: this.nextId, title: title, done: false };
     this.nextId += 1;
     this.todos.push(todo.clone());
     return todo;
@@ -30,7 +30,7 @@ class Store {
   complete(id: i64): bool {
     for (let i: usize = 0; i < this.todos.length; i++) {
       if (this.todos[i].id == id) {
-        this.todos[i].done = true;
+        this.todos[i] = { ...this.todos[i], done: true };
         return true;
       }
     }

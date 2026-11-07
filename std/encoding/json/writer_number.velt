@@ -131,7 +131,7 @@ export function shortNumber(x: f64): ShortNumber {
   const a = neg ? -x : x;
   if (a >= 1e-6 && a < 1e15) {
     if (a == Math.trunc(a)) {
-      return ShortNumber { ok: true, neg, m: a as u64, k: 0 };
+      return { ok: true, neg, m: a as u64, k: 0 };
     }
     let n: usize = 0;
     while (n < 15 && a >= POW10[n]) {
@@ -159,10 +159,10 @@ export function shortNumber(x: f64): ShortNumber {
         m = m / 10;
         k--;
       }
-      return ShortNumber { ok: true, neg, m, k };
+      return { ok: true, neg, m, k };
     }
   }
-  return ShortNumber { ok: false, neg, m: 0, k: 0 };
+  return { ok: false, neg, m: 0, k: 0 };
 }
 
 /**

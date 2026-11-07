@@ -172,7 +172,7 @@ impl FnLower<'_, '_> {
             .filter(|(_, p)| f.body.locals[p.local.0 as usize].mutable)
             .fold(0u64, |m, (i, _)| m | 1 << i);
         let changed = std::mem::replace(&mut self.changed_args, changed);
-        argv.extend(self.lower_args(args, &modes, how));
+        argv.extend(self.lower_args(args, &modes, how, Some(def)));
         self.changed_args = changed;
         argv.extend(loc_arg);
         let handed = std::mem::replace(&mut self.kept_handed, handed);
@@ -245,7 +245,7 @@ impl FnLower<'_, '_> {
         let mut bufs = vec![];
         let argv = match foreign {
             true => self.foreign_args(&x.params, args, false, &mut bufs),
-            false => self.lower_args(args, &modes, Stabilize::No),
+            false => self.lower_args(args, &modes, Stabilize::No, None),
         };
         let fut = self.finish_call(vir::Callee::Extern(id), argv, x.ret, None);
         self.free_foreign_bufs(bufs);
@@ -347,6 +347,7 @@ impl FnLower<'_, '_> {
         args: &[hir::Expr],
         modes: &[PassMode],
         how: Stabilize,
+        callee: Option<DefId>,
     ) -> Vec<Operand> {
         if args.len() != modes.len() {
             ice("argument count does not match parameter count");
@@ -360,7 +361,11 @@ impl FnLower<'_, '_> {
         // Owned arguments evaluated before a later one that may throw: dropped on that path
         // until the call takes them (`pending_owned`).
         let mut pending: Vec<Place> = vec![];
+        // Where each argument's operands start, and which went in a register already.
+        let mut starts = vec![];
+        let mut in_reg = vec![];
         for (i, ((a, mode), later)) in args.iter().zip(modes).zip(later).enumerate() {
+            starts.push(argv.len());
             self.owner_write = false;
             if *mode == PassMode::BorrowMut {
                 // Held inline in an object (caller_stores.rs).
@@ -416,6 +421,21 @@ impl FnLower<'_, '_> {
                     };
                     argv.push(self.operand_addr(v, t));
                 }
+                (Ty::Agg(_), PassMode::Copy) if self.arg_reg(callee, a.ty, *mode).is_some() => {
+                    // A small struct in a register (abi.rs `reg_param`).
+                    let reg = self
+                        .arg_reg(callee, a.ty, *mode)
+                        .unwrap_or_else(|| ice("reg"));
+                    let v = self.consume_read(a);
+                    let ops = self.reg_arg(v, &reg);
+                    argv.extend(ops);
+                    in_reg.push(i);
+                }
+                (t @ Ty::Agg(_), PassMode::Copy) if self.fixed_local(a) => {
+                    // A value that cannot change during the call: its own address, no copy.
+                    let v = self.borrowed_arg(a);
+                    argv.push(self.operand_addr(v, t));
+                }
                 (t @ Ty::Agg(_), PassMode::Owned | PassMode::Copy) => {
                     // A fresh copy the callee now owns (Owned) or only reads (Copy structs).
                     let v = match mode {
@@ -455,6 +475,31 @@ impl FnLower<'_, '_> {
             }
         }
         self.owner_write = false;
+        // An argument for a param passed in a register that a path above lowered to a pointer
+        // (a frozen or kept argument, one lent to the caller): the value it points to, read
+        // when the callee would have read it.
+        // Last to first, as one operand may become several.
+        let pointed: Vec<(usize, super::abi::RegParam, Ty)> = (0..args.len())
+            .filter(|i| !in_reg.contains(i) && starts.get(*i).is_some_and(|&k| k < argv.len()))
+            .filter_map(|i| {
+                let (a, mode) = (&args[i], modes[i]);
+                let reg = self.arg_reg(callee, a.ty, mode)?;
+                let vt = self.vty(a.ty);
+                matches!(vt, Ty::Agg(_)).then_some((i, reg, vt))
+            })
+            .collect();
+        let mut reads = vec![];
+        for (i, reg, vt) in &pointed {
+            // Read in argument order, when the callee would have read them.
+            let k = starts[*i];
+            let p = self.temp(Ty::Ptr);
+            self.assign(Place::local(p), Rvalue::Use(argv[k].clone()));
+            let v = Operand::Copy(proj(&Place::local(p), Proj::Deref(*vt)));
+            reads.push((k, self.reg_arg(v, reg)));
+        }
+        for (k, ops) in reads.into_iter().rev() {
+            argv.splice(k..k + 1, ops);
+        }
         // The call takes them now.
         for p in pending {
             self.take_temp(&p);
@@ -576,7 +621,10 @@ impl FnLower<'_, '_> {
                     let copy = any_mut
                         || self.changes_during_call(a)
                         || args.len() > 1 && self.sibling_container(args, i);
-                    let v = if copy && mode != Some(PassMode::BorrowMut) && is_copy_read(a) {
+                    let v = if copy
+                        && mode != Some(PassMode::BorrowMut)
+                        && super::reg_args::is_copy_read(a)
+                    {
                         let tmp = self.copy_to_temp(v, t);
                         Operand::Copy(Place::local(tmp))
                     } else {
@@ -605,7 +653,16 @@ impl FnLower<'_, '_> {
         throws: Option<TyId>,
     ) -> Operand {
         let never = self.cx.is_never(ret) && throws.is_none();
-        let abi = self.cx.ret_abi(ret, throws);
+        let abi = match callee {
+            vir::Callee::Extern(_) => self.cx.extern_ret_abi(ret),
+            _ => self.cx.ret_abi(ret, throws),
+        };
+        if let Some(reg) = abi.reg {
+            let d = self.temp(Ty::V128);
+            self.call(callee, argv, Some(Place::local(d)), never);
+            let v = self.reg_value(d, reg);
+            return self.owned_result(Some(v), ret);
+        }
         if let Some(out) = abi.out {
             let tmp = self.temp(out);
             argv.push(self.addr(Place::local(tmp)));
@@ -680,30 +737,6 @@ pub(super) fn is_moved(a: &hir::Expr) -> bool {
             | hir::ExprKind::UnwrapSome(_, UseMode::Move)
             | hir::ExprKind::UnwrapVariant {
                 mode: UseMode::Move,
-                ..
-            }
-    )
-}
-
-/// A Copy value read out of a place (passed by pointer, it would still point into the place).
-fn is_copy_read(a: &hir::Expr) -> bool {
-    if let hir::ExprKind::Downcast(x) = &a.kind {
-        return is_copy_read(x);
-    }
-    matches!(
-        a.kind,
-        hir::ExprKind::Local(_, UseMode::Copy)
-            | hir::ExprKind::Field {
-                mode: UseMode::Copy,
-                ..
-            }
-            | hir::ExprKind::Index {
-                mode: UseMode::Copy,
-                ..
-            }
-            | hir::ExprKind::UnwrapSome(_, UseMode::Copy)
-            | hir::ExprKind::UnwrapVariant {
-                mode: UseMode::Copy,
                 ..
             }
     )

@@ -19,7 +19,7 @@ export struct C {
 
 /** An expression without affinity or collation. */
 export function plain(ev: Ev): C {
-  return C { ev: ev, aff: AFF_NONE, coll: -1, explicit: false };
+  return { ev: ev, aff: AFF_NONE, coll: -1, explicit: false };
 }
 
 /** The value of a constant expression. */
@@ -30,7 +30,7 @@ export function constant(v: Val): C {
   const r = v.r;
   const s = v.s;
   const o = v.o;
-  return plain(() => Val { t: t, i: i, r: r, s: s, o: o });
+  return plain(() => ({ t: t, i: i, r: r, s: s, o: o }) as Val);
 }
 
 /** The collation a comparison of `x` and `y` uses (sqlite3BinaryCompareCollSeq). */
@@ -53,10 +53,10 @@ export function binaryColl(x: C, y: C): u8 {
 /** An operator's result: it keeps an explicit COLLATE of an operand (SQLite's EP_Collate). */
 export function joinedColl(ev: Ev, x: C, y: C): C {
   if (x.explicit) {
-    return C { ev: ev, aff: AFF_NONE, coll: x.coll, explicit: true };
+    return { ev: ev, aff: AFF_NONE, coll: x.coll, explicit: true };
   }
   if (y.explicit) {
-    return C { ev: ev, aff: AFF_NONE, coll: y.coll, explicit: true };
+    return { ev: ev, aff: AFF_NONE, coll: y.coll, explicit: true };
   }
   return plain(ev);
 }

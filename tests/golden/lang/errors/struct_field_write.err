@@ -1,0 +1,2 @@
+struct_field_write.velt:10:5: error: cannot assign to `x`: struct fields are readonly
+  = note: a struct value never changes: replace it with a new one (`p = { ...p, x: v }`), or make the type a class

@@ -21,7 +21,7 @@ struct Entry {
 function top(counts: Map<string, i64>, n: usize): Entry[] {
   let entries: Entry[] = [];
   for (const [word, count] of counts) {
-    entries.push(Entry { word: word, count: count });
+    entries.push({ word: word, count: count });
   }
   entries.sort((a, b) => {
     if (a.count != b.count) {

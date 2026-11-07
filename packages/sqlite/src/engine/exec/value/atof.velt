@@ -61,11 +61,11 @@ export function atof(b: u8[], at: usize): AtoF {
         i++;
       }
     } else if (state == 0) {
-      return AtoF { value: 0, end: at, state: 0, whole: false };
+      return { value: 0, end: at, state: 0, whole: false };
     }
     state = state | 2;
   } else if (state == 0) {
-    return AtoF { value: 0, end: at, state: 0, whole: false };
+    return { value: 0, end: at, state: 0, whole: false };
   }
   if (i < n && (b[i] == 101 || b[i] == 69)) {
     let j = i + 1;
@@ -99,5 +99,5 @@ export function atof(b: u8[], at: usize): AtoF {
   while (i < n && isSpaceByte(b[i])) {
     i++;
   }
-  return AtoF { value: value, end: i, state: state, whole: i == n };
+  return { value: value, end: i, state: state, whole: i == n };
 }

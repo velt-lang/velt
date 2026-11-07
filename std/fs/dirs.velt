@@ -15,10 +15,10 @@ import {
 } from "velt/fs/rt";
 
 /** The options of `mkdir`. */
-export struct MkdirOptions {
+export type MkdirOptions = {
   /** Create missing parents; an existing directory is then not an error. */
   recursive?: bool;
-}
+};
 
 /** Entry names (not paths), sorted. */
 export async function readDir(path: string): Promise<string[]> {

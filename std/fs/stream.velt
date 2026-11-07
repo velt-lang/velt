@@ -20,23 +20,23 @@ import {
 } from "velt/fs/rt";
 
 /** The options of `openWrite`. */
-export struct OpenWriteOptions {
+export type OpenWriteOptions = {
   /** Append to the file instead of truncating it. */
   append?: bool;
-}
+};
 
 /** Opens `path` for chunked reading: the whole file, or the bytes `start` to `end` (included). */
 export async function openRead(path: string, opts: OpenReadOptions = {}): Promise<FileReader> {
   if (opts.start == undefined && opts.end == undefined) {
-    return FileReader { handle: unwrapIo(await velt_rt_fs_open_read(path)) };
+    return { handle: unwrapIo(await velt_rt_fs_open_read(path)) };
   }
   // The runtime's "to the end of the file" is the largest u64, a byte no file has.
   const start = opts.start ?? 0;
   const end = opts.end ?? (-1 as u64);
-  return FileReader { handle: unwrapIo(await velt_rt_fs_open_read_range(path, start, end)) };
+  return { handle: unwrapIo(await velt_rt_fs_open_read_range(path, start, end)) };
 }
 
 /** Creates (or truncates, or with `append` extends) `path` for buffered writing. */
 export async function openWrite(path: string, opts: OpenWriteOptions = {}): Promise<FileWriter> {
-  return FileWriter { handle: unwrapIo(await velt_rt_fs_open_write(path, opts.append ?? false)) };
+  return { handle: unwrapIo(await velt_rt_fs_open_write(path, opts.append ?? false)) };
 }

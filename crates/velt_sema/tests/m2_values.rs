@@ -427,7 +427,7 @@ fn throws_clauses_bound_the_body() {
 #[test]
 fn printing_and_formatting() {
     let p = ok_src(
-        "struct P { x: i64; } enum C { R } function main() { const xs = [1]; const o: i64 | null = null; console.log(xs, P { x: 1 }, C.R, o, `${xs} ${P { x: 2 }}`); }",
+        "struct P { x: i64; } enum C { R } function main() { const xs = [1]; const o: i64 | null = null; console.log(xs, ({ x: 1 } as P), C.R, o, `${xs} ${({ x: 2 } as P)}`); }",
     );
     assert!(calls(func(&p, "main"))
         .iter()
@@ -437,7 +437,7 @@ fn printing_and_formatting() {
         r.contains("cannot print a value of type `(i64) => i64`"),
         "{r}"
     );
-    let r = err_src("interface I { f(): i64; } struct S implements I { f(): i64 { return 1; } } function main() { const i: I = S {}; console.log(`${i}`); }");
+    let r = err_src("interface I { f(): i64; } struct S implements I { f(): i64 { return 1; } } function main() { const i: I = ({} as S); console.log(`${i}`); }");
     assert!(r.contains("cannot format a value of type `I`"), "{r}");
 }
 

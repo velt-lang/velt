@@ -1,9 +1,9 @@
 // registry-core (internal): part of a package's manifest (./manifest.velt).
 
 /** `host`: what `velt build --host` with this package builds. */
-export struct HostConfig {
+export type HostConfig = {
   target: string;
   condition: string;
   entry: string;
   scaffold: Map<string, string>;
-}
+};

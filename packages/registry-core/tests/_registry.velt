@@ -98,10 +98,7 @@ export class TestRegistry {
     headers: [string, string][],
     body: BodyInit | null,
   ): Promise<Answer> {
-    const init: RequestInit = { method, headers };
-    if (body != null) {
-      init.body = body;
-    }
+    const init: RequestInit = body != null ? { method, headers, body } : { method, headers };
     const res = await this.registry.handle(new Request(`http://registry.test${path}`, init));
     const bytes = (await res.bytes()).toBytes();
     return new Answer(res.status, res.headers.get("content-type") ?? "", bytes);

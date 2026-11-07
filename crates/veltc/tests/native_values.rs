@@ -1,8 +1,9 @@
 //! Arrays and structs across the native boundary, end to end (docs/internals/contracts/native_abi.md):
 //! the test package `native_values/vals` (a path dependency, its library built from source with
 //! cargo) passes `Row[]` and `f64[]` in, returns `Row[]`, a struct and, from an async export,
-//! `IoResult<Row[]>`, and takes `Row[][]` (nested views, each freed after the call). The program shares `Row` and `string[]` values, so both are counted
-//! (boxed) types and every value crosses through the compiler's foreign-layout conversion; the
+//! `IoResult<Row[]>`, and takes `Row[][]` (nested views, each freed after the call). The program shares `Row[]` and `string[]` values, so both are counted
+//! types (`Row` itself is a struct, a value, never boxed) and every value crosses through the
+//! compiler's foreign-layout conversion; the
 //! async results are awaited directly, kept and awaited later, and combined with `Promise.all`.
 //! It runs on both schedulers with the debug runtime's allocator checks and leak count.
 //!
@@ -32,14 +33,14 @@ async function main() {
     { id: 1, name: "a", tags: ["x", "y"] },
     { id: 2, name: "b", tags: [] },
   ];
-  // Values referenced twice: `Row` and `string[]` become counted (boxed) types.
+  // Values referenced twice: `Row[]` and `string[]` become counted types (a struct is a value).
   const keep: Row[] = [];
   keep.push(rows[0]);
   const tags = rows[0].tags;
   const tags2 = tags;
   const first = rows[0];
   const again = first;
-  rows[0].id = 1;
+  rows[0] = { ...rows[0], id: 1 };
   show(reverse(rows));
   const s = stats([1.5, 2.5, 3]);
   console.log(s.count, s.sum);
@@ -101,8 +102,8 @@ fn arrays_and_structs_cross_with_counted_types_on_both_schedulers() {
         );
         assert_eq!(stdout, EXPECTED, "{scheduler}; stderr:\n{stderr}");
         assert!(
-            stderr.contains("counted types: Row, string[]"),
-            "the program no longer counts `Row` and `string[]`:\n{stderr}"
+            stderr.contains("counted types: string[], vals::Row[]"),
+            "the program no longer counts `Row[]` and `string[]`:\n{stderr}"
         );
         let stats = stderr
             .lines()

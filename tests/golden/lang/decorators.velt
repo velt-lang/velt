@@ -56,6 +56,6 @@ function main() {
   class Local {
     x: i64 = 3;
   }
-  const s = S { x: 4 };
+  const s: S = { x: 4 };
   console.log(f(1), new C(5).m(), new C(1).g, new Local().x, s.x, E.One);
 }

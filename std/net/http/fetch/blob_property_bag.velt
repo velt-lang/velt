@@ -1,7 +1,7 @@
 // velt/net/http (internal): the options of `new Blob(parts, options)`.
 
 /** The options of `new Blob(parts, options)`. */
-export struct BlobPropertyBag {
+export type BlobPropertyBag = {
   /** The media type, lowercased ("" if it has a character outside printable ASCII). */
   type?: string;
-}
+};

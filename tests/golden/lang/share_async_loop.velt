@@ -2,8 +2,12 @@
 // A shared value passed to an async call in a loop (or in one of two branches) after an
 // earlier async call took it: every call gets its own share, so the value outlives them all
 // (#131: a database pool handed to spawned tasks after a query on it).
-struct Handle {
+class Handle {
   id: u64;
+
+  constructor(id: u64) {
+    this.id = id;
+  }
 
   async ping(): Promise<u64> {
     await sleep(1);
@@ -29,7 +33,7 @@ function keep(kept: Handle[], h: Handle) {
 }
 
 async function main() {
-  const h = Handle { id: 7 };
+  const h = new Handle(7);
   console.log("ping", await h.ping());
 
   // Spawned tasks in a loop, after the call above.

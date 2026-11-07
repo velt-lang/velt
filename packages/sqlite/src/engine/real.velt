@@ -18,7 +18,7 @@ function toDecimal(m: u64, e: i64): Decimal {
   const p = 17 - pwr2to10(e + 63);
   let h = mul128(m, powerOfTen(p).hi).hi;
   h = h >> ((-(e + pwr10to2(p) + 2)) as u64);
-  return Decimal { d: (h + ((h << 1) & 2)) >> 1, p: -p };
+  return { d: (h + ((h << 1) & 2)) >> 1, p: -p };
 }
 
 /** The digits of `r` (> 0, finite) rounded as sqlite3FpDecode(r, 17, 20) does, and `iDP`. */

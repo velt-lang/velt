@@ -3,9 +3,7 @@ import { serve } from "http-server";
 import { describe, expect, it } from "velt/test";
 import { App, Context, Handler, Middleware } from "../src/lib";
 
-struct Vars {
-  user: string;
-}
+type Vars = { user: string };
 
 function vars(): Vars {
   return { user: "anon" };
@@ -376,7 +374,8 @@ describe("App", () => {
   it("serves over HTTP, keeping each request's variables apart", async () => {
     const app = new App<Vars>(vars);
     app.around(async (c, next) => {
-      c.vars.user = c.req.headers.get("x-user") ?? "anon";
+      const user = c.req.headers.get("x-user") ?? "anon";
+      c.vars.user = user;
       return await next(c);
     });
     app.get("/who/:n", async (c) => c.text(`${c.param("n")} ${c.vars.user}`));

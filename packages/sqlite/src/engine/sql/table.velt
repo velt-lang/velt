@@ -82,12 +82,12 @@ function columnKeys(s: Statement, c: ColumnDef) {
   const e = new Expr(E_COLUMN, 0);
   e.name = c.name;
   if (c.primaryKey) {
-    const k = IndexedColumn { expr: e, collate: "", desc: c.desc };
-    s.keys.push(KeyConstraint { primary: true, columns: [k] });
+    const k: IndexedColumn = { expr: e, collate: "", desc: c.desc };
+    s.keys.push({ primary: true, columns: [k] });
   }
   if (c.unique) {
-    const k = IndexedColumn { expr: e, collate: "", desc: false };
-    s.keys.push(KeyConstraint { primary: false, columns: [k] });
+    const k: IndexedColumn = { expr: e, collate: "", desc: false };
+    s.keys.push({ primary: false, columns: [k] });
   }
 }
 
@@ -109,7 +109,7 @@ function tableConstraint(p: Parser, s: Statement) {
     s.primaryKey = keyColumns(p);
     const auto = p.eatKw("AUTOINCREMENT");
     p.expectOp(")");
-    s.keys.push(KeyConstraint { primary: true, columns: s.primaryKey });
+    s.keys.push({ primary: true, columns: s.primaryKey });
     if (auto && s.primaryKey.length == 1) {
       for (const c of s.columnDefs) {
         if (s.primaryKey[0].expr.kind == E_COLUMN && c.name == s.primaryKey[0].expr.name) {
@@ -121,7 +121,7 @@ function tableConstraint(p: Parser, s: Statement) {
   } else if (p.eatKw("UNIQUE")) {
     const u = indexedColumns(p);
     s.uniques.push(u);
-    s.keys.push(KeyConstraint { primary: false, columns: u });
+    s.keys.push({ primary: false, columns: u });
     conflictClause(p);
   } else if (p.eatKw("CHECK")) {
     p.expectOp("(");

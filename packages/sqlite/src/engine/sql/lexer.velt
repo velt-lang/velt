@@ -90,7 +90,7 @@ export function tokenize(sql: string): Token[] {
       }
       const hex = u.slice(from, i);
       i++;
-      out.push(Token { kind: T_BLOB, start: start, end: i, text: hex, upper: "", kw: K_ID });
+      out.push({ kind: T_BLOB, start: start, end: i, text: hex, upper: "", kw: K_ID });
       continue;
     }
     if (isIdentStart(b)) {
@@ -99,7 +99,7 @@ export function tokenize(sql: string): Token[] {
       }
       const word = u.slice(start, i);
       const upper = asciiUpper(word);
-      out.push(Token {
+      out.push({
         kind: T_IDENT,
         start: start,
         end: i,
@@ -135,7 +135,7 @@ export function tokenize(sql: string): Token[] {
       }
       const name = u.slice(start + 1, i);
       i++;
-      out.push(Token {
+      out.push({
         kind: T_QUOTED,
         start: start,
         end: i,
@@ -150,7 +150,7 @@ export function tokenize(sql: string): Token[] {
       while (i < n && isDigit(utf8ByteAt(sql, i as usize))) {
         i++;
       }
-      out.push(Token {
+      out.push({
         kind: T_PARAM,
         start: start,
         end: i,
@@ -168,7 +168,7 @@ export function tokenize(sql: string): Token[] {
       if (i == start + 1) {
         throw new SqlError(`unrecognized token: "${byteSlice(sql, start, i)}"`, start);
       }
-      out.push(Token {
+      out.push({
         kind: T_PARAM,
         start: start,
         end: i,
@@ -180,7 +180,7 @@ export function tokenize(sql: string): Token[] {
     }
     if (b == 59) {
       i++;
-      out.push(Token { kind: T_SEMI, start: start, end: i, text: ";", upper: ";", kw: K_ID });
+      out.push({ kind: T_SEMI, start: start, end: i, text: ";", upper: ";", kw: K_ID });
       continue;
     }
     // Operators: the two-byte ones first.
@@ -200,10 +200,10 @@ export function tokenize(sql: string): Token[] {
         i += 2;
         if (two == "->" && i < n && utf8ByteAt(sql, i as usize) == 62) {
           i++;
-          out.push(Token { kind: T_OP, start: start, end: i, text: "->>", upper: "->>", kw: K_ID });
+          out.push({ kind: T_OP, start: start, end: i, text: "->>", upper: "->>", kw: K_ID });
           continue;
         }
-        out.push(Token { kind: T_OP, start: start, end: i, text: two, upper: two, kw: K_ID });
+        out.push({ kind: T_OP, start: start, end: i, text: two, upper: two, kw: K_ID });
         continue;
       }
     }
@@ -226,12 +226,12 @@ export function tokenize(sql: string): Token[] {
     ) {
       i++;
       const op = u.slice(start, i);
-      out.push(Token { kind: T_OP, start: start, end: i, text: op, upper: op, kw: K_ID });
+      out.push({ kind: T_OP, start: start, end: i, text: op, upper: op, kw: K_ID });
       continue;
     }
     throw new SqlError(`unrecognized token: "${byteSlice(sql, start, start + 1)}"`, start);
   }
-  out.push(Token { kind: T_EOF, start: n, end: n, text: "", upper: "", kw: K_ID });
+  out.push({ kind: T_EOF, start: n, end: n, text: "", upper: "", kw: K_ID });
   return out;
 }
 
@@ -262,7 +262,7 @@ function quoted(u: Utf16Index, n: usize, start: usize, q: u8, kind: u8): Token {
     }
     i++;
   }
-  return Token {
+  return {
     kind: kind,
     start: start,
     end: i,
@@ -356,5 +356,5 @@ function finishNumber(
     }
     text = text.replaceAll("_", "");
   }
-  return Token { kind: kind, start: start, end: end, text: text, upper: text, kw: K_ID };
+  return { kind: kind, start: start, end: end, text: text, upper: text, kw: K_ID };
 }

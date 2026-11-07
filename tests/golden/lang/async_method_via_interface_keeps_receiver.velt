@@ -72,7 +72,7 @@ async function main() {
     }
   }
 
-  const xs: Act[] = [Rec { label: "in an array" }, new Live()];
+  const xs: Act[] = [{ label: "in an array" } as Rec, new Live()];
   for (let i = 0; i < 4; i++) {
     console.log(await xs[i % 2].invoke(i));
   }

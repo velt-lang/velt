@@ -46,7 +46,7 @@ export function specOf(
   clearEnv: bool,
   stdio: u32,
 ): CommandSpec {
-  return CommandSpec {
+  return {
     program: program.clone(),
     args: args.clone(),
     cwd: cwd ?? "",

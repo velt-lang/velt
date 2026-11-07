@@ -33,15 +33,15 @@ type AnyValue = [u64; 2];
 type DropFn = unsafe extern "C" fn(*mut u8);
 
 /// Byte offset of a table's drop entry (`SLOT_DROP`, the slot just in front of slot 0, of the
-/// seven hidden ones: velt_vir `glue/vtable.rs`).
-const TABLE_DROP: usize = 8 * 6;
+/// nine hidden ones: velt_vir `glue/vtable.rs` `HIDDEN`).
+const TABLE_DROP: usize = 8 * 8;
 
 /// Byte offset of a table's share entry (`SLOT_SHARE`): `(data) -> data` of another reference.
-const TABLE_SHARE: usize = 8 * 3;
+const TABLE_SHARE: usize = 8 * 5;
 
 /// Byte offset of a table's transfer entry (`SLOT_TRANSFER`): `(data) -> data` safe on another
 /// thread.
-const TABLE_TRANSFER: usize = 8;
+const TABLE_TRANSFER: usize = 8 * 3;
 
 /// An entry `(data) -> data` of an `any` value's table.
 type DataFn = unsafe extern "C" fn(*mut u8) -> *mut u8;

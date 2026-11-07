@@ -1,0 +1,2 @@
+struct_this_write.velt:6:10: error: cannot assign to `n`: struct fields are readonly
+  = note: a struct value never changes: return a new one (`return { ...this, n: v }`)

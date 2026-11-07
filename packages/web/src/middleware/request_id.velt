@@ -4,12 +4,12 @@ import { uuidv4 } from "velt/random/uuid";
 import { Handler, Middleware } from "../types";
 
 /** The options of `requestId`. */
-export struct RequestIdOptions {
+export type RequestIdOptions = {
   /** The header (default: `x-request-id`). */
   header?: string;
   /** Whether to keep an identifier the client sent (default: yes, if it is safe to log). */
   trustClient?: bool;
-}
+};
 
 /**
  * Sets a request header to an identifier, so the handler and what it calls can read it, and the

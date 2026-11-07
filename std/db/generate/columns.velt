@@ -277,17 +277,17 @@ function fits(repr: string, x: string): string {
  */
 function nativeCell(out: Output, model: Model, t: Type): string {
   if (t.kind == "number" && t.repr != "f64" && t.repr != "f32") {
-    out.line(`let si = RowsI64 { v: 0 };`);
+    out.line(`let si: RowsI64 = { v: 0 };`);
     out.line(`let code = velt_rt_rows_i64(st, c, si);`);
     return integer(out, t, "si.v");
   }
   if (t.kind == "number") {
-    out.line(`let sf = RowsF64 { v: 0 };`);
+    out.line(`let sf: RowsF64 = { v: 0 };`);
     out.line(`const code = velt_rt_rows_f64(st, c, sf);`);
     return t.repr == "f32" ? "sf.v as f32" : "sf.v";
   }
   if (t.kind == "boolean") {
-    out.line(`let sb = RowsU8 { v: 0 };`);
+    out.line(`let sb: RowsU8 = { v: 0 };`);
     out.line(`const code = velt_rt_rows_bool(st, c, sb);`);
     return "sb.v != 0";
   }
@@ -320,8 +320,8 @@ function sourceCell(out: Output, t: Type, s: string): string {
   out.line(`const k = ${s}.kind(c);`);
   out.line(`let code: u8 = k == CellKind.Null ? 2 : 0;`);
   if (t.kind == "number" && t.repr != "f64" && t.repr != "f32") {
-    out.line(`let si = RowsI64 { v: 0 };`);
-    out.line(`if (k == CellKind.Int) { si.v = ${s}.int(c); code = 1; }`);
+    out.line(`let si: RowsI64 = { v: 0 };`);
+    out.line(`if (k == CellKind.Int) { si = { v: ${s}.int(c) }; code = 1; }`);
     out.line(`else if (k == CellKind.Float) { code = velt_rt_rows_exact_i64(${s}.float(c), si); }`);
     return integer(out, t, "si.v");
   }

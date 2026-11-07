@@ -16,7 +16,7 @@ export struct CopyReader implements AsyncIterable<string, PgError> {
 
   /** The package's own: the reader of a handle its native library returned. */
   static fromHandle(handle: u64): CopyReader {
-    return CopyReader { handle: handle };
+    return { handle: handle };
   }
 
   /** The next rows as text, or null at the end (then the reader is released). */

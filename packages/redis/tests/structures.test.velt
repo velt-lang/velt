@@ -85,12 +85,12 @@ export async function test_sorted_sets() {
   const c = await connect(url);
   const z = `${p}scores`;
   const added = await c.zadd(z, [
-    ZMember { member: "carol", score: 3.5 },
-    ZMember { member: "alice", score: 1 },
-    ZMember { member: "bob", score: 2 },
+    { member: "carol", score: 3.5 } as ZMember,
+    { member: "alice", score: 1 } as ZMember,
+    { member: "bob", score: 2 } as ZMember,
   ]);
   assertEq(added, 3);
-  assertEq(await c.zadd(z, [ZMember { member: "bob", score: 2.25 }]), 0);
+  assertEq(await c.zadd(z, [{ member: "bob", score: 2.25 } as ZMember]), 0);
   assertEq(await c.zrange(z, 0, -1), ["alice", "bob", "carol"]);
   const scored: string[] = [];
   for (const m of await c.zrangeWithScores(z, 0, 1)) {
@@ -104,7 +104,7 @@ export async function test_sorted_sets() {
   assertEq(await c.zrange(z, 0, -1), ["dave", "bob", "carol", "alice"]);
   assertEq(await c.zrem(z, ["dave", "nobody"]), 1);
   assertEq(await c.zcard(z), 3);
-  await c.zadd(z, [ZMember { member: "top", score: 1.0 / 0.0 }]);
+  await c.zadd(z, [{ member: "top", score: 1.0 / 0.0 } as ZMember]);
   assertEq(`${await c.zscore(z, "top")}`, "Infinity");
   assertEq(await c.zrange(z, -1, -1), ["top"]);
   assertEq(await cleanup(c, p), 1);

@@ -18,7 +18,7 @@ export struct CopyWriter {
 
   /** The package's own: the writer of a handle its native library returned. */
   static fromHandle(handle: u64): CopyWriter {
-    return CopyWriter { handle: handle };
+    return { handle: handle };
   }
 
   /** Sends a chunk (any split: rows may span chunks). */

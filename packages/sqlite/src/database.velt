@@ -32,7 +32,7 @@ export struct Database {
       !(opts.fileMustExist ?? false),
       opts.timeout ?? 5000,
     );
-    const db = Database { handle: shared(state) };
+    const db: Database = { handle: shared(state) };
     if (opts.wal ?? false) {
       db.pragma("journal_mode = WAL");
     }

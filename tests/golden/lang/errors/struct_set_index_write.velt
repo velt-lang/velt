@@ -1,0 +1,22 @@
+// An index setter writing `this` of a struct is a field write too (#641, #2264): a struct value
+// never changes, so `s[0] = 3` cannot change `s`.
+struct S {
+  a: f64;
+  b: f64;
+  [Symbol.index](i: usize): f64 {
+    return i == 0 ? this.a : this.b;
+  }
+  [Symbol.setIndex](i: usize, v: f64): void {
+    if (i == 0) {
+      this.a = v;
+    } else {
+      this.b = v;
+    }
+  }
+}
+
+function main() {
+  const s: S = { a: 1, b: 2 };
+  s[0] = 3;
+  console.log(s.a);
+}

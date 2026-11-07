@@ -73,7 +73,7 @@ export function readerValueLimit(r: Reader): i64 {
   r.rowsValue = false;
   if (!readerValueStart(r, 0, 0)) {
     if (r.rows != 0 && r.failed == ROWS) {
-      let out = ReaderHandle { v: 0 };
+      let out: ReaderHandle = { v: 0 };
       r.rowsValue = velt_rt_json_reader_read_value(r.rows, out) == 1;
       if (r.rowsValue) {
         r.handle = out.v;
@@ -153,7 +153,7 @@ export function readerReset(r: Reader, mark: u64) {
 export function readerReadU64(r: Reader): bool {
   if (!readerNumberStart(r)) {
     if (r.rows != 0 && r.failed == ROWS) {
-      let out = ReaderI64 { v: 0 };
+      let out: ReaderI64 = { v: 0 };
       const ok = velt_rt_json_reader_read_i64(r.rows, out) == 1 && out.v >= 0;
       r.int = out.v;
       return ok;
@@ -173,7 +173,7 @@ export function readerReadU64(r: Reader): bool {
 export function readerReadI64(r: Reader): bool {
   if (!readerNumberStart(r)) {
     if (r.rows != 0 && r.failed == ROWS) {
-      let out = ReaderI64 { v: 0 };
+      let out: ReaderI64 = { v: 0 };
       const ok = velt_rt_json_reader_read_i64(r.rows, out) == 1;
       r.int = out.v;
       return ok;
@@ -234,7 +234,7 @@ export function shortPath(path: string): string {
 export function readerReadBool(r: Reader): bool {
   if (!readerValueStart(r, 116, 102)) {
     if (r.rows != 0 && r.failed == ROWS) {
-      let out = ReaderBool { v: 0 };
+      let out: ReaderBool = { v: 0 };
       const ok = velt_rt_json_reader_read_bool(r.rows, out) == 1;
       r.int = out.v as i64;
       return ok;

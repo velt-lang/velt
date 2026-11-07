@@ -1,0 +1,85 @@
+// A small struct argument reaches a method the same way through every kind of call (#641): a
+// vtable or an interface table calls it with its structs by pointer, so methods never take
+// them in registers.
+
+struct W {
+  a: i32;
+  b: i32;
+}
+
+struct V {
+  x: f64;
+  y: f64;
+}
+
+struct F5 {
+  a: u8;
+  b: u8;
+  c: u8;
+  d: u8;
+  e: u8;
+}
+
+interface I {
+  m(v: V): number;
+}
+
+interface J {
+  f(p: F5, q: W): number;
+}
+
+class CI implements I {
+  m(v: V): number {
+    return v.x + v.y;
+  }
+}
+
+struct SI implements I {
+  k: f64;
+  m(v: V): number {
+    return v.x + v.y + this.k;
+  }
+}
+
+class CJ implements J {
+  f(p: F5, q: W): number {
+    return (p.a + p.e) as number + q.a;
+  }
+}
+
+abstract class B {
+  abstract n(p: W): number;
+}
+
+class C1 extends B {
+  override n(p: W): number {
+    return p.a + p.b;
+  }
+}
+
+class D {
+  o(p: W): number {
+    return p.a;
+  }
+}
+
+class D2 extends D {
+  override o(p: W): number {
+    return p.a * 100 + p.b;
+  }
+}
+
+function main() {
+  const i: I = new CI();
+  console.log("class via interface:", i.m({ x: 7, y: 9 }));
+  const s: I = { k: 1 } as SI;
+  console.log("struct via interface:", s.m({ x: 7, y: 9 }));
+  const j: J = new CJ();
+  console.log("two structs via interface:", j.f({ a: 1, b: 0, c: 0, d: 0, e: 2 }, { a: 5, b: 0 }));
+  const b: B = new C1();
+  console.log("abstract:", b.n({ a: 5, b: 3 }));
+  const c1 = new C1();
+  console.log("concrete subclass:", c1.n({ a: 5, b: 3 }));
+  const d: D = new D2();
+  console.log("override:", d.o({ a: 2, b: 5 }));
+}

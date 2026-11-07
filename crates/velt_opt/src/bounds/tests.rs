@@ -4,7 +4,7 @@ use super::*;
 use crate::interp::{Interp, RecordingHost};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
-use velt_vir::vir::{BinOp, BlockId, Local, Place, Program};
+use velt_vir::vir::{BinOp, BlockId, Local, LocalDecl, Place, Program};
 
 /// The constant a block's branch was decided to, if it was.
 fn decided(f: &Function, b: BlockId) -> Option<bool> {
@@ -426,4 +426,50 @@ fn an_address_taken_local_proves_nothing() {
     assert_valid(&p);
     assert_eq!(decided(&p.funcs[0], BlockId(1)), None);
     assert_eq!(run_check(&p, 8, 0), run_check(&orig, 8, 0));
+}
+
+#[test]
+fn a_function_past_the_work_limit_is_not_analysed() {
+    // The same check, in a function padded with unreachable blocks and comparisons of fresh
+    // locals until blocks times tracked locals passes `MAX_WORK`: the analysis is skipped, so
+    // the check that it decides above stays.
+    let (mut p, b2) = check_program(126, false);
+    let f = &mut p.funcs[0];
+    let pad = 300;
+    let first = f.locals.len() as u32;
+    for _ in 0..pad {
+        f.locals.push(LocalDecl {
+            ty: Ty::U64,
+            name: None,
+            debug: None,
+        });
+        f.locals.push(LocalDecl {
+            ty: Ty::Bool,
+            name: None,
+            debug: None,
+        });
+    }
+    for i in 0..pad as u32 {
+        let (x, t) = (Local(first + 2 * i), Local(first + 2 * i + 1));
+        f.blocks[0].stmts.insert(
+            0,
+            Stmt::Assign(
+                Place::local(t),
+                bin(BinOp::Lt, copy_local(x), int(7, Ty::U64)),
+            ),
+        );
+        f.blocks[0].stmts.insert(
+            0,
+            Stmt::Assign(Place::local(x), Rvalue::Use(int(1, Ty::U64))),
+        );
+        f.blocks.push(velt_vir::vir::BasicBlock {
+            stmts: vec![],
+            term: Terminator::Return(int(0, Ty::U64)),
+        });
+    }
+    f.locs.clear();
+    let blocks = f.blocks.len();
+    assert!(blocks * pad > MAX_WORK, "the padding passes the limit");
+    run(&[], &mut p.funcs[0]);
+    assert_eq!(decided(&p.funcs[0], b2), None);
 }

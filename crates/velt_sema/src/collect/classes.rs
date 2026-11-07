@@ -597,12 +597,24 @@ fn own_generics(cx: &Ctx, def: DefId) -> usize {
 fn inherit_ctor(cx: &mut Ctx, d: DefId) {
     let a = cx.adt(d).expect("ICE: adt");
     let own = a.own_ctor;
-    if a.kind != AdtKind::Class {
+    let (kind, span) = (a.kind, a.span);
+    let value = kind == AdtKind::Struct && a.decl.is_some() && !cx.place_struct(d);
+    let dispose = a.has_dispose;
+    if kind != AdtKind::Class {
+        if value && dispose {
+            cx.error(
+                Diagnostic::error("a struct cannot have `[Symbol.dispose]`", span).with_note(
+                    "a struct is a value that is copied, with no lifetime of its own: make it a class",
+                ),
+            );
+        }
         if let Some(c) = own {
             let span = cx.fn_info(c).name_span;
-            cx.err(
-                "structs cannot have constructors; use a struct literal",
-                span,
+            cx.error(
+                Diagnostic::error("a struct has no constructor", span).with_note(
+                    "build it with an object literal where its type is known \
+                     (`const v: Vec2 = { x: 1, y: 2 }`), or a static factory method",
+                ),
             );
         }
         return;

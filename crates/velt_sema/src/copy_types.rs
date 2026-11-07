@@ -4,9 +4,32 @@ use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir::{TyId, TyKind};
+use crate::hir::{DefId, TyId, TyKind};
 
 impl Ctx<'_> {
+    /// `Mutex`, `RwLock`, `Atomic`, `ThreadLocal`: inline `struct`s that are places, not values.
+    pub fn place_struct(&self, d: DefId) -> bool {
+        [
+            self.mutex_ty(),
+            self.rwlock_ty(),
+            self.atomic_ty(),
+            self.thread_local_ty(),
+        ]
+        .contains(&Some(d))
+    }
+
+    /// Is `t` a type declared with `struct` (a value type, #641)?
+    pub(crate) fn declared_struct(&self, t: TyId) -> bool {
+        match self.ty.kind(t) {
+            TyKind::Adt(d, _) => {
+                matches!(&self.info[d.0 as usize],
+                DefInfo::Adt(a) if a.kind == crate::hir::AdtKind::Struct && a.decl.is_some())
+                    && !self.place_struct(*d)
+            }
+            _ => false,
+        }
+    }
+
     /// Ownership: can values of this type be duplicated bitwise?
     pub fn is_copy(&mut self, t: TyId) -> bool {
         self.is_copy_depth(t, 0, &mut None)
@@ -43,8 +66,9 @@ impl Ctx<'_> {
             // Copying a lock would duplicate its lock word.
             TyKind::Adt(d, _) if Some(d) == self.mutex_ty() || Some(d) == self.rwlock_ty() => false,
             TyKind::Adt(d, args) => {
-                // Objects (structs included, semantics stage 2) are references: never Copy. A
-                // C struct is a value (collect/c_struct.rs), whose fields all are Copy.
+                // Objects are references: never Copy. A declared `struct` is a value (#641):
+                // Copy when every field is (a struct with a `[Symbol.dispose]` is an error); a C
+                // struct (collect/c_struct.rs) always is, its fields all being Copy.
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
                     DefInfo::Adt(a) if a.decl.is_some_and(|t| t.c_struct) => {
                         a.fields.iter().map(|f| f.ty).collect()
@@ -54,6 +78,14 @@ impl Ctx<'_> {
                         .iter()
                         .flat_map(|v| v.payload.iter().copied())
                         .collect(),
+                    DefInfo::Adt(a)
+                        if a.kind == crate::hir::AdtKind::Struct
+                            && a.decl.is_some()
+                            && !a.has_dispose
+                            && !self.place_struct(d) =>
+                    {
+                        a.fields.iter().map(|f| f.ty).collect()
+                    }
                     _ => return false,
                 };
                 self.parts_copy(t, depth, &tys, Some(&args), seen)
