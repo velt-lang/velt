@@ -42,18 +42,46 @@ fn sum_by(t: &Tree, expected: Option<&str>, depth: TreeCheck) -> Result<String, 
     checksum(&t.loc, &t.dir, (expected, depth), mismatch, || Ok(()))
 }
 
+/// Wait until a change to `dir` can get a later time than it has: Windows's clock ticks about
+/// every 15 ms, so one made within the tick leaves the directory's time as it was. In use,
+/// [`is_racy`] leaves such a tree unstamped; these tests turn that off.
+fn past_the_clocks_tick(dir: &Path) {
+    let made = std::fs::metadata(dir.join("src"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let later = made + std::time::Duration::from_millis(50);
+    while std::time::SystemTime::now() < later {
+        std::thread::yield_now();
+    }
+}
+
+/// Stamp `t`, then have the stamp name another checksum, and see `depth` believe it: proof the
+/// stamp is read. Gives the tree's real checksum. Windows updates a directory's times a moment
+/// after an entry changes, so a stamp taken at once can stop matching, and then the tree is only
+/// read again (which [`is_racy`] leaves no time for in use). So this tries again until the times
+/// settle; a stamp that is never believed still fails.
+fn stamp_believed(t: &Tree, depth: TreeCheck) -> String {
+    let stamp = stamp_path(&t.loc, &t.dir);
+    for _ in 0..5_000 {
+        let real = sum(t, None).unwrap();
+        let text = std::fs::read_to_string(&stamp).unwrap();
+        std::fs::write(&stamp, text.replacen(&real, "sha256:stamped", 1)).unwrap();
+        if sum_by(t, None, depth).unwrap() == "sha256:stamped" {
+            return real;
+        }
+        std::thread::yield_now();
+    }
+    panic!("a stamp for an unchanged tree was never believed");
+}
+
 #[test]
 fn an_unchanged_tree_is_taken_from_its_stamp() {
     let t = tree();
-    let real = sum(&t, None).unwrap();
+    let real = stamp_believed(&t, TreeCheck::Files);
     assert_eq!(real, crate::git::tree_checksum(&t.dir).unwrap());
-    // Proof the stamp is read: a stamp naming another checksum for this very tree is believed.
-    let stamp = stamp_path(&t.loc, &t.dir);
-    let text = std::fs::read_to_string(&stamp).unwrap();
-    let forged = text.replacen(&real, "sha256:stamped", 1);
-    std::fs::write(&stamp, forged).unwrap();
-    assert_eq!(sum(&t, None).unwrap(), "sha256:stamped");
     // Without a stamp, the tree is read.
+    let stamp = stamp_path(&t.loc, &t.dir);
     std::fs::remove_file(&stamp).unwrap();
     assert_eq!(sum(&t, Some(&real)).unwrap(), real);
 }
@@ -62,6 +90,7 @@ fn an_unchanged_tree_is_taken_from_its_stamp() {
 fn an_edited_tree_is_hashed_again() {
     let t = tree();
     let real = sum(&t, None).unwrap();
+    past_the_clocks_tick(&t.dir);
     // Same size, another byte.
     std::fs::write(t.dir.join("src/lib.velt"), "export const v = 2;\n").unwrap();
     let e = sum(&t, Some(&real)).unwrap_err();
@@ -69,6 +98,7 @@ fn an_edited_tree_is_hashed_again() {
     // A file added, then one removed.
     let t = tree();
     let real = sum(&t, None).unwrap();
+    past_the_clocks_tick(&t.dir);
     std::fs::write(t.dir.join("src/new.velt"), "").unwrap();
     assert!(sum(&t, Some(&real)).is_err());
     std::fs::remove_file(t.dir.join("src/new.velt")).unwrap();
@@ -112,12 +142,9 @@ fn a_checksum_the_lock_disagrees_with_is_not_stamped() {
 #[test]
 fn a_build_looks_only_at_directories() {
     let t = tree();
-    let real = sum(&t, None).unwrap();
     // Proof only the directories are looked at: a forged stamp is believed while they are
     // unchanged, though a file's metadata changed.
-    let stamp = stamp_path(&t.loc, &t.dir);
-    let text = std::fs::read_to_string(&stamp).unwrap();
-    std::fs::write(&stamp, text.replacen(&real, "sha256:stamped", 1)).unwrap();
+    let real = stamp_believed(&t, TreeCheck::Directories);
     // A file's own times change (as an edit in place can leave its directory's alone).
     let file = t.dir.join("src/lib.velt");
     let earlier = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
@@ -137,15 +164,18 @@ fn a_build_looks_only_at_directories() {
     for change in ["add", "remove", "rename"] {
         let t = tree();
         let real = sum(&t, None).unwrap();
+        past_the_clocks_tick(&t.dir);
         match change {
             "add" => std::fs::write(t.dir.join("src/new.velt"), "").unwrap(),
             "remove" => std::fs::remove_file(t.dir.join("src/lib.velt")).unwrap(),
             _ => std::fs::rename(t.dir.join("src/lib.velt"), t.dir.join("src/moved.velt")).unwrap(),
         }
-        assert!(
-            sum_by(&t, Some(&real), TreeCheck::Directories).is_err(),
-            "{change}"
-        );
+        // Windows updates the directory's times a moment later (see `stamp_believed`).
+        let seen = (0..5_000).any(|_| {
+            std::thread::yield_now();
+            sum_by(&t, Some(&real), TreeCheck::Directories).is_err()
+        });
+        assert!(seen, "{change}");
     }
 }
 
