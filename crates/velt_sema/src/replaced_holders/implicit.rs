@@ -65,7 +65,7 @@ use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKin
 const GLUE_HOOKS: [&str; 4] = ["toString", "toJSON", crate::hooks::INSPECT, "clone"];
 
 /// What dropping, formatting or copying a value of some type may reach.
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub(super) struct Reach {
     /// Classes with hooks (and their relatives, which a value of the type may be).
     adts: BTreeSet<DefId>,
@@ -109,6 +109,13 @@ pub(crate) struct Implicit {
     /// way back to (`usize::MAX`: none): a type whose walk returned to no type above it is
     /// complete, and its [`Reach`] goes into `memo` (#859: types sharing parts are walked once).
     cut: std::cell::Cell<usize>,
+    /// The object types this walk has entered, each with what its type parameters stand for.
+    /// All of a walk's results reach its one [`Reach`], so a second visit adds nothing, and
+    /// without this a walk goes down every simple path through types that refer to each other.
+    /// A type's own [`Reach`] misses what the first visit found, so a second visit stops `memo`
+    /// from storing the types around it (`cut`). What a type's arguments reach goes elsewhere,
+    /// so that is a walk of its own (`adt_reach`).
+    visited: RefCell<FxHashSet<(TyId, Option<Vec<Reach>>)>>,
 }
 
 impl Implicit {
@@ -194,6 +201,7 @@ impl Implicit {
             captures_reach: false,
             memo: RefCell::new(FxHashMap::default()),
             cut: std::cell::Cell::new(usize::MAX),
+            visited: RefCell::default(),
         };
         im.captures_reach = im.captures.iter().any(|&t| {
             let r = im.reach(cx, t);
@@ -214,6 +222,7 @@ impl Implicit {
             return r.clone();
         }
         let mut r = Reach::default();
+        self.visited.borrow_mut().clear();
         self.reach_in(cx, t, None, &mut Vec::new(), &mut r);
         let r = std::rc::Rc::new(r);
         self.memo.borrow_mut().insert(t, r.clone());
@@ -290,6 +299,12 @@ impl Implicit {
                         return;
                     }
                 }
+                crate::check_work::add_type_search(1);
+                let key = (t, (!concrete).then(|| env.map(<[Reach]>::to_vec)).flatten());
+                if !self.visited.borrow_mut().insert(key) {
+                    self.cut.set(0);
+                    return;
+                }
                 let depth = stack.len();
                 let outer = self.cut.replace(usize::MAX);
                 let mut mine = Reach::default();
@@ -325,7 +340,9 @@ impl Implicit {
             .iter()
             .map(|&a| {
                 let mut r = Reach::default();
+                let walk = self.visited.take();
                 self.reach_in(cx, a, env, stack, &mut r);
+                self.visited.replace(walk);
                 r
             })
             .collect();

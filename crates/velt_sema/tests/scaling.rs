@@ -350,6 +350,38 @@ fn shared_type_graphs_are_walked_by_type() {
     assert_linear_work(&[100, 800], shared_type_graph, 1.5);
 }
 
+/// `n` classes that refer to each other, each holding the next two, and a write that makes the
+/// program's replaced-holder check run: its walk over the types has a number of simple paths that
+/// grows by about 1.6 times per class.
+fn connected_classes(n: usize) -> String {
+    let mut out = String::new();
+    for i in 0..n {
+        let (a, b) = ((i + 1) % n, (i + 2) % n);
+        out += &format!("class C{i} {{ a?: C{a}; b?: C{b}; }}\n");
+    }
+    out += "function main() {\n  const h = { i: { n: 1 } };\n  h.i.n = 2;\n";
+    for i in 0..n {
+        out += &format!("  const c{i} = new C{i}();\n");
+    }
+    out + "}\n"
+}
+
+#[test]
+fn connected_classes_are_walked_once_per_walk() {
+    let _serial = serial();
+    let work = |n: usize| {
+        let start = check_work().type_search;
+        let loaded = load_src(&connected_classes(n));
+        let (program, diags) = loaded.check();
+        assert!(program.is_some(), "{}", loaded.render(&diags));
+        check_work().type_search - start
+    };
+    let (small, large) = (work(12), work(24));
+    eprintln!("type_search: {small} at 12 classes, {large} at 24");
+    // One walk per class at most: 4 times the work is quadratic, and 1.6^12 is about 280 times.
+    assert!(large < small * 8, "{small} at 12 classes, {large} at 24");
+}
+
 /// `n` interfaces `T{i}` and a type holding one of each, then `last`: a type far wider than a
 /// walk over the type graph visits in a real program.
 fn wide_holder(n: usize, generic: &str, last: &str) -> String {
