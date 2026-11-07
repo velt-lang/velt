@@ -469,3 +469,192 @@ fn default_expressions_print_as_written() {
         "export default interface Foo {\n  a: number;\n}\n\nexport default function bar() {}\n",
     );
 }
+
+#[test]
+fn decorators() {
+    round_trips("declare decorator function name(key: string): FieldDecorator;\n");
+    round_trips("@a\n@ns.b(\"k\", 1)\nexport function f(@c x: number, @d() y: number) {}\n");
+    round_trips("@a\nexport class C {\n  @b\n  x = 1;\n\n  @c(1)\n  @d\n  m() {}\n\n  constructor(@e private readonly p: number) {}\n}\n");
+    round_trips("@(a.b)\nenum E {\n  A,\n}\n");
+    round_trips("// about f\n@a\nfunction f() {}\n");
+}
+
+#[test]
+fn decorators_go_on_their_own_lines_before_export() {
+    let got = format_source("export @a class C { @b x = 1; }").unwrap();
+    assert_eq!(got, "@a\nexport class C {\n  @b\n  x = 1;\n}\n");
+}
+
+/// Formats `src`, and the result again: both must parse and agree.
+fn formats_stably(src: &str) -> String {
+    let once = format_source(src).unwrap();
+    let twice = format_source(&once).unwrap_or_else(|e| panic!("{once}\ndoesn't parse: {e:?}"));
+    assert_eq!(once, twice, "not stable for {src}");
+    once
+}
+
+#[test]
+fn a_comment_after_a_parameter_decorator_stays_after_it() {
+    let got = formats_stably("function f(@c // why\n  d: i64) {}\n");
+    assert!(got.contains("  @c // why\n  d: i64,\n"), "{got}");
+    let got = formats_stably("function f(@c /* why */ d: i64) {}\n");
+    assert_eq!(got, "function f(@c /* why */ d: i64) {}\n");
+    let got = formats_stably("class C { constructor(@c // why\n  private readonly d: i64) {} }\n");
+    assert!(
+        got.contains("@c // why\n    private readonly d: i64"),
+        "{got}"
+    );
+    assert_eq!(got.matches("// why").count(), 1, "{got}");
+    // Between the decorators of two parameters, and before the second's decorator.
+    let src = "function f(@a /* KEEP1 */ b: i64, /* KEEP2 */ @a c: i64) {}\n";
+    assert_eq!(formats_stably(src), src);
+    let src = "function f(@a /* one */ @b /* two */ c: i64) {}\n";
+    assert_eq!(formats_stably(src), src);
+}
+
+/// A comment after a declaration's decorator stays between the decorators or before the
+/// declaration: never inside a class body or a parameter list, where a doc comment would stop
+/// documenting the class.
+#[test]
+fn a_comment_after_a_decorator_stays_before_the_declaration() {
+    for src in [
+        "@a\n// c\nclass C {}\n",
+        "@a\n/** doc */\nclass C {}\n",
+        "@a // c\nclass C {}\n",
+        "@a /* x */\n@a(1)\nclass C {}\n",
+        "@a\n// between\n@b\nfunction f() {}\n",
+        "@a /* y */\nexport class F {}\n",
+        "@a /* e */\nenum E {\n  A,\n}\n",
+        "class E {\n  @a /* c */\n  n() {}\n  @a // c\n  o() {}\n  @a\n  /** doc */\n  x: i64 = 1;\n}\n",
+    ] {
+        assert_eq!(formats_stably(src), src);
+    }
+    assert_eq!(
+        formats_stably("@a /* x */ @a(1) class C {}\n"),
+        "@a /* x */\n@a(1)\nclass C {}\n"
+    );
+    assert_eq!(
+        formats_stably("class E { @a /* c */ n() {} }\n"),
+        "class E {\n  @a /* c */\n  n() {}\n}\n"
+    );
+    assert_eq!(
+        formats_stably("class E { @a /* x */ @a(1) p() {} }\n"),
+        "class E {\n  @a /* x */\n  @a(1)\n  p() {}\n}\n"
+    );
+    // Between `export` and the decorator, which moves before `export`: before the decorator.
+    for (written, want) in [
+        (
+            "export /* c */ @a class C {}\n",
+            "/* c */\n@a\nexport class C {}\n",
+        ),
+        (
+            "export default /* c */ @a class C {}\n",
+            "/* c */\n@a\nexport default class C {}\n",
+        ),
+        (
+            "export // c\n@a class C {}\n",
+            "// c\n@a\nexport class C {}\n",
+        ),
+    ] {
+        assert_eq!(formats_stably(written), want, "{written}");
+    }
+    // On an overload signature's decorator, which moves to the implementation: with it.
+    let want = "class C {\n  m(a: i64): void;\n  @a // c\n  m(a: any) {}\n}\n";
+    assert_eq!(
+        formats_stably("class C {\n  @a // c\n  m(a: i64): void;\n  m(a: any) {}\n}\n"),
+        want
+    );
+    round_trips(want);
+    let want = "function f(a: i64): void;\n@a /* c */\nfunction f(a: any) {}\n";
+    assert_eq!(
+        formats_stably("@a /* c */ function f(a: i64): void;\nfunction f(a: any) {}\n"),
+        want
+    );
+    round_trips(want);
+}
+
+#[test]
+fn a_method_decorator_stays_on_the_implementation() {
+    let want =
+        "class D {\n  m(x: number): void;\n  m(x: string): void;\n  @logged\n  m(x: any) {}\n}\n";
+    round_trips(want);
+    let on_one_line =
+        "class D {\n  m(x: number): void;\n  m(x: string): void;\n  @logged m(x: any) {}\n}\n";
+    assert_eq!(formats_stably(on_one_line), want);
+    // Velt reads it from the first signature too, and TypeScript refuses it there (TS1249).
+    let on_the_first =
+        "class D {\n  @logged m(x: number): void;\n  m(x: string): void;\n  m(x: any) {}\n}\n";
+    assert_eq!(formats_stably(on_the_first), want);
+    // Modifiers stay after the decorator, and comments where they were.
+    round_trips("class D {\n  // a\n  static m(x: number): void;\n  // b\n  @logged\n  static m(x: any) {}\n}\n");
+    round_trips("abstract class D {\n  @logged\n  abstract m(x: number): void;\n}\n");
+    // A decorated abstract property keeps its setter: it is not `readonly`.
+    round_trips("abstract class D {\n  @f\n  abstract x: number;\n  @f\n  abstract readonly y: string;\n}\n");
+}
+
+#[test]
+fn a_decorator_keeps_its_type_arguments() {
+    round_trips("@fac<string>(\"a\")\nclass C {\n  @ns.fac<Array<i64>>()\n  m() {}\n}\n");
+}
+
+#[test]
+fn decorators_on_a_default_export() {
+    let class = "@a\nexport default class C {\n  @b\n  m() {}\n}\n";
+    round_trips(class);
+    assert_eq!(
+        formats_stably("export default @a class C { @b m() {} }"),
+        class
+    );
+    assert_eq!(
+        formats_stably("@a export default class C { @b m() {} }"),
+        class
+    );
+    for want in [
+        "@a\nexport default class {}\n",
+        "@a(1)\n@b\nexport default class extends B {}\n",
+        "@a\nexport default abstract class C {}\n",
+        "@a\nexport default struct S {}\n",
+        "@a\nexport default function f() {}\n",
+        "@a\nexport default function () {}\n",
+        "@a\nexport default async function f() {}\n",
+    ] {
+        round_trips(want);
+    }
+    assert_eq!(
+        formats_stably("export default @a class {}"),
+        "@a\nexport default class {}\n"
+    );
+    // A comment after the decorator is no reason to lose `export default`.
+    assert!(formats_stably("@a /* why */ export default class C {}\n")
+        .contains("export default class C {"));
+    assert!(formats_stably("@a // export\nclass C {}\n").starts_with("@a"));
+    // Without `export default`, a comment that says it changes nothing.
+    assert!(!formats_stably("@a /* export */ class C {}\n").contains("export default"));
+}
+
+#[test]
+fn a_functions_decorators_stay_on_the_implementation() {
+    let named = "export default function f(a: string): string;\n@d\nexport default function f(a: any): any {\n  return a;\n}\n";
+    round_trips(named);
+    for written in [
+        "@d export default function f(a: string): string;\nexport default function f(a: any): any {\n  return a;\n}\n",
+        "export default @d function f(a: string): string;\nexport default function f(a: any): any {\n  return a;\n}\n",
+        "export default function f(a: string): string;\nexport default @d function f(a: any): any {\n  return a;\n}\n",
+    ] {
+        assert_eq!(formats_stably(written), named);
+    }
+    round_trips("export default function (a: string): string;\n@d\nexport default function (a: any): any {}\n");
+    round_trips("export default async function f(a: string): Promise<string>;\n@d\nexport default async function f(a: any): Promise<any> {}\n");
+    // Not a default: the same place, and comments stay where they were.
+    round_trips("function f(a: string): string;\n@d\nfunction f(a: any): any {}\n");
+    round_trips("export function f(a: string): string;\n@d\nexport function f(a: any): any {}\n");
+    round_trips("// a\nfunction f(a: string): string;\n// b\n@d\nfunction f(a: any): any {}\n");
+    assert_eq!(
+        formats_stably(
+            "@d\nexport function f(a: string): string;\nexport function f(a: any): any {}\n"
+        ),
+        "export function f(a: string): string;\n@d\nexport function f(a: any): any {}\n"
+    );
+    // One without overloads keeps them before `export`.
+    round_trips("@d\nexport default function f(a: any): any {}\n");
+}

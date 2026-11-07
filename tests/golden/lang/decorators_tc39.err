@@ -1,0 +1,3 @@
+decorators_tc39.velt:6:1: error: TC39 run-time decorators are not supported yet (#2204)
+decorators_tc39.velt:8:3: error: TC39 run-time decorators are not supported yet (#2204)
+decorators_tc39.velt:9:3: error: TC39 run-time decorators are not supported yet (#2204)

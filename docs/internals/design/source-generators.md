@@ -374,6 +374,10 @@ at run time and the decorated program pays nothing. A generator validates what t
 cannot ("two fields with the same JSON name after `@json.naming`") and reports it with
 `Output.error` at the decorator's span.
 
+A generator is part of the build-speed budget: its output is cached per input type and its
+decorators' constant trees (§9), so an unrelated edit never re-runs it. The mechanism itself, its
+targets and its TC39 boundary are designed in https://github.com/velt-lang/velt/issues/2203.
+
 ### 9. Caching
 
 A generator is a pure function of its request (§5). So its output can be cached by content, in

@@ -1,0 +1,59 @@
+// A misspelled decorator is reported in every body that can hold a declaration.
+class K {
+  a: number = (() => {
+    @nosuch1
+    class H {}
+    return 1;
+  })();
+  static b: number = (() => {
+    @nosuch2
+    class H {}
+    return 1;
+  })();
+  f: () => void = function () {
+    @nosuch3
+    class H {}
+  };
+  static {
+    @nosuch4
+    class H {}
+  }
+  static {
+    const g = () => {
+      @nosuch5
+      class H {}
+    };
+  }
+  m(
+    p: number = (() => {
+      @nosuch6
+      class H {}
+      return 1;
+    })(),
+  ) {}
+  constructor(
+    p: number = (() => {
+      @nosuch7
+      class H {}
+      return 1;
+    })(),
+  ) {}
+}
+
+struct S {
+  a: number = (() => {
+    @nosuch8
+    class H {}
+    return 1;
+  })();
+}
+
+function f(
+  p: number = (() => {
+    @nosuch9
+    class H {}
+    return 1;
+  })(),
+) {}
+
+function main() {}

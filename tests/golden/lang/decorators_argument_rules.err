@@ -1,0 +1,10 @@
+decorators_argument_rules.velt:9:48: error: this is not a decorator's result type
+decorators_argument_rules.velt:10:46: error: this number is `i32`, where the decorator's parameter takes `i64`
+decorators_argument_rules.velt:23:10: error: this number is `i64`, where the decorator's parameter takes `i8`
+decorators_argument_rules.velt:25:10: error: this number is `i64`, where the decorator's parameter takes `i8`
+decorators_argument_rules.velt:27:11: error: this argument of the decorator doesn't fit its parameter's type `f32`
+decorators_argument_rules.velt:29:11: error: this argument of the decorator doesn't fit its parameter's type `f32`
+decorators_argument_rules.velt:31:9: error: this argument of the decorator doesn't fit its parameter's type `f16`
+decorators_argument_rules.velt:33:18: error: duplicate field `x` in object literal
+decorators_argument_rules.velt:35:11: error: this number is `i64`, where the decorator's parameter takes `i8`
+decorators_argument_rules.velt:44:3: error: the decorator `method` cannot be applied to a field

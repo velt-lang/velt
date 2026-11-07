@@ -226,6 +226,7 @@ fn methods(
                 is_setter: false,
                 is_override,
                 is_abstract: false,
+                is_property: false,
             });
         }
     }

@@ -90,7 +90,7 @@ pub struct DefRef {
     pub detail: String, // one line for hover/completion, e.g. `function f(a: i64): string`
 }
 impl DefRef { pub fn same_def(&self, other: &DefRef) -> bool } // identity: span + kind + name
-pub enum DefKind { Function, ExternFunction, Method, StaticMethod, Getter, Constructor, Field,
+pub enum DefKind { Function, ExternFunction, Decorator, Method, StaticMethod, Getter, Constructor, Field,
     StaticField, Constant, Struct, Class, Interface, Enum, Variant, TypeAlias, Local, Parameter }
 impl DefKind { pub fn is_type(self) -> bool } // struct, class, interface, enum, type alias
 ```

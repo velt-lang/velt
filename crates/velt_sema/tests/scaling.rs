@@ -471,6 +471,87 @@ fn imports_through_barrels_grow_linearly() {
     assert_linear_counted(&[100, 800], barrel_package, ["exports"], exports, 1.5);
 }
 
+/// `n` classes with 4 decorators each and a function each, between the two statements of `stmts`
+/// when that is given: then the generated `main` spans them all, and comes last among the items.
+fn decorated_classes(n: usize, stmts: Option<(&str, &str)>) -> String {
+    let (first, last) = stmts.unwrap_or_default();
+    let mut out = String::from(
+        "declare decorator function policy(p: string): TypeDecorator;\n\
+         declare decorator function name(k: string): FieldDecorator;\n\
+         declare decorator function tag(t: string): MethodDecorator;\n\
+         declare decorator function level(l: i64): ParamDecorator;\n",
+    );
+    out += first;
+    for i in 0..n {
+        out += &format!(
+            "@policy(\"a\") class C{i} {{\n  @name(\"k\") x: i64 = 0;\n  \
+             @tag(\"t\") m(@level(1) a: i64): i64 {{ return a + this.x; }}\n}}\n\
+             function f{i}(c: C{i}): i64 {{ return c.m(1); }}\n"
+        );
+    }
+    out += last;
+    if stmts.is_none() {
+        out += "function main() {}\n";
+    }
+    out
+}
+
+/// One class of `n` decorated methods and `n` decorated fields, whose decorators name a constant
+/// that each method's local of its name hides there (so each decorator's lookup searches).
+fn decorated_members(n: usize) -> String {
+    let mut out = String::from(
+        "declare decorator function name(k: string): FieldDecorator;\n\
+         declare decorator function tag(t: string): MethodDecorator;\n\
+         declare decorator function level(l: i64): ParamDecorator;\n\
+         const K = \"k\";\nclass C {\n",
+    );
+    for i in 0..n {
+        out += &format!(
+            "  @name(K) x{i}: i64 = {i};\n  \
+             @tag(K) m{i}(@level(1) a: i64): i64 {{ const K = a + 1; return K + this.x{i}; }}\n"
+        );
+    }
+    out += "}\nfunction main() {}\n";
+    out
+}
+
+/// A script of `n` decorated classes, a statement after each; each class's method has a parameter
+/// of the name of the decorator's constant.
+fn decorated_script(n: usize) -> String {
+    let mut out = String::from(
+        "declare decorator function policy(p: string): TypeDecorator;\nconst K = \"p\";\n",
+    );
+    for i in 0..n {
+        out += &format!(
+            "@policy(K) class C{i} {{ x: i64 = {i}; m(K: i64): i64 {{ return K; }} }}\n\
+             console.log(new C{i}().m({i}));\n"
+        );
+    }
+    out
+}
+
+/// A module's decorators cost one walk of its scopes and a lookup each: the steps per decorator
+/// don't grow with the module, nor with the one scope they are all in (a class of many members,
+/// a script's `main` around all its classes).
+#[test]
+fn decorated_classes_grow_linearly() {
+    let steps = || [check_work().decorator_scope_steps];
+    let names = ["decorator_scope_steps"];
+    let plain = |n| load_src(&decorated_classes(n, None));
+    assert_linear_counted(&[100, 800], plain, names, steps, 1.5);
+    let script = |n| {
+        load_src(&decorated_classes(
+            n,
+            Some(("console.log(1);\n", "console.log(2);\n")),
+        ))
+    };
+    assert_linear_counted(&[100, 800], script, names, steps, 1.5);
+    let members = |n| load_src(&decorated_members(n));
+    assert_linear_counted(&[100, 800], members, names, steps, 1.5);
+    let statements = |n| load_src(&decorated_script(n));
+    assert_linear_counted(&[100, 800], statements, names, steps, 1.5);
+}
+
 /// Choosing the member of a union of function types for nested arrows that each use the
 /// enclosing arrow's parameter grows polynomially with the nesting, not exponentially (#859).
 /// Each try of an arrow checks the arrows nested in it, so the arrows checked are quadratic in

@@ -1,0 +1,5 @@
+function logged(value: any, context: any): any {
+  return value;
+}
+
+@logged export default class C {}

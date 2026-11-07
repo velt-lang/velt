@@ -123,6 +123,49 @@ fn declare_function_is_reported() {
 }
 
 #[test]
+fn compile_time_decorators_are_not_typescript() {
+    let src = "export declare decorator function d(): TypeDecorator;\n\
+               @d function f(@d a: number) {}\n\
+               @d enum E { A }\n\
+               @d class C { @d m() {} }\n";
+    let findings = lint_syntax(Path::new("decorators.velt"), src);
+    let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+    // A class and its members are TypeScript's own places for a decorator.
+    assert_eq!(codes, ["declare-fn", "decorator", "decorator", "decorator"]);
+}
+
+/// The members where `tsc` refuses a decorator though it has them on members: an overload signature
+/// and an abstract method (TS1249), and an abstract property (TS1206). A decorator on the
+/// implementation after the overloads is TypeScript's own.
+#[test]
+fn decorators_on_members_tsc_refuses() {
+    let src = "export declare decorator function d(): MethodDecorator | FieldDecorator;\n\
+               export class C { @d m(a: number): void; m(a: any) {} }\n\
+               export class O { n(a: number): void; @d n(a: any) {} }\n\
+               export abstract class A { @d abstract m(): void; @d abstract x: number; }\n\
+               export abstract class R { @d abstract readonly y: string; }\n";
+    let findings = lint_syntax(Path::new("members.velt"), src);
+    let found: Vec<(&str, usize)> = findings
+        .iter()
+        .map(|f| (f.code, src[..f.span.lo as usize].lines().count()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("declare-fn", 1),
+            ("decorator", 2),
+            ("decorator", 4),
+            ("decorator", 4),
+            ("decorator", 5)
+        ],
+        "{findings:#?}"
+    );
+    let messages: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
+    assert!(messages[1].contains("TS1249") && messages[1].contains("overload"));
+    assert!(messages[2].contains("TS1249") && messages[3].contains("TS1206"));
+}
+
+#[test]
 fn a_host_function_is_not_typescript() {
     let src = "export declare host(\"env\") function now(): number;\n";
     let findings = lint_syntax(Path::new("host.velt"), src);

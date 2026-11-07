@@ -26,6 +26,21 @@ impl Printer<'_> {
         collapse(self.slice(span))
     }
 
+    /// `@x @ns.y(args) `: decorators as written (whitespace collapsed), each followed by a space.
+    /// They are part of the API (a reader of the declaration sees them), so every target shows its
+    /// own.
+    pub(crate) fn decorators(&self, ds: &[ast::Decorator]) -> String {
+        ds.iter()
+            .map(|d| format!("{} ", self.flat(d.span)))
+            .collect()
+    }
+
+    /// Where the modifiers of something decorated by `ds` and starting at `lo` start: after its
+    /// decorators.
+    pub(crate) fn after_decorators(ds: &[ast::Decorator], lo: u32) -> u32 {
+        ds.last().map_or(lo, |d| d.span.hi.max(lo))
+    }
+
     /// `name<T, U extends A & B>(params): R throws E` (no keyword or modifiers).
     pub(crate) fn fn_sig(&self, sig: &ast::FnSig) -> String {
         let params: Vec<String> = sig.params.iter().map(|p| self.param(p)).collect();
@@ -47,14 +62,16 @@ impl Printer<'_> {
     }
 
     fn param(&self, p: &ast::Param) -> String {
-        // Parameter property modifiers (`private readonly x`) precede the name.
+        // Decorators, then parameter property modifiers (`private readonly x`), precede the name.
+        let lo = Self::after_decorators(&p.decorators, p.span.lo);
         let mods: String = self
             .src
-            .get(p.span.lo as usize..p.name.span.lo.max(p.span.lo) as usize)
+            .get(lo as usize..p.name.span.lo.max(lo) as usize)
             .unwrap_or("")
             .split_whitespace()
             .map(|m| format!("{m} "))
             .collect();
+        let mods = format!("{}{mods}", self.decorators(&p.decorators));
         // A destructured parameter shows its pattern as written.
         let name = match &p.pattern {
             Some(q) => self.flat(q.span),
@@ -115,7 +132,7 @@ impl Printer<'_> {
 
     /// A field: `[static ][readonly ]name[?]: T[ = default]`.
     pub(crate) fn field(&self, f: &ast::Field) -> String {
-        let mut out = String::new();
+        let mut out = self.decorators(&f.decorators);
         if f.is_static {
             out.push_str("static ");
         }

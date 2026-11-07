@@ -69,6 +69,11 @@ fn golden_m1_files_parse() {
                 | "_global_this_declared_lib.velt"
                 | "abstract_class_syntax.velt"
                 | "operator_index_syntax.velt"
+                | "decorators_placement.velt"
+                | "decorators_tc39_forms.velt"
+                | "decorators_default_placement.velt"
+                | "decorators_default_expression.velt"
+                | "decorators_class_binding.velt"
         ) {
             continue;
         }

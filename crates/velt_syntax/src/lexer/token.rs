@@ -223,6 +223,7 @@ pub(crate) enum Tok {
     Caret,
     CaretEq,
     Tilde,
+    At,
     /// `<` opening a JSX tag (an operand was expected and a name or `>` follows).
     JsxLt,
     /// `</` starting a JSX closing tag.
@@ -263,6 +264,7 @@ impl Tok {
             DotDot => "..",
             DotDotEq => "..=",
             DotDotDot => "...",
+            At => "@",
             Question => "?",
             QuestionDot => "?.",
             QuestionQuestion => "??",

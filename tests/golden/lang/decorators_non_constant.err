@@ -1,0 +1,4 @@
+decorators_non_constant.velt:11:9: error: a decorator's argument must be a constant
+decorators_non_constant.velt:12:9: error: a decorator's argument must be a constant
+decorators_non_constant.velt:13:9: error: a decorator's argument must be a constant
+decorators_non_constant.velt:14:15: error: a decorator's argument must be a constant

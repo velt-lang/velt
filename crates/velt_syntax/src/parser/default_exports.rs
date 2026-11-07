@@ -29,7 +29,13 @@ pub(crate) const DEFAULT: &str = "default";
 
 impl Parser<'_> {
     /// At `default` after `export` (the item starts at `lo`).
-    pub(super) fn parse_export_default(&mut self, lo: u32, top: bool) -> PResult<Item> {
+    /// `decorators` were written before `export`.
+    pub(super) fn parse_export_default(
+        &mut self,
+        lo: u32,
+        top: bool,
+        mut decorators: Vec<Decorator>,
+    ) -> PResult<Item> {
         let kw = self.cur_span();
         if !top {
             self.error(
@@ -39,8 +45,16 @@ impl Parser<'_> {
             return Err(Fail);
         }
         self.bump(); // default
+        self.decorators_after_export(&mut decorators)?;
         if let Some(anonymous) = self.default_declaration_ahead() {
-            return self.default_declaration(lo, kw, anonymous);
+            return self.default_declaration(lo, kw, anonymous, decorators);
+        }
+        if let Some(first) = decorators.first() {
+            // TypeScript's TS1146 after `export default`, and `tsc` crashes on the form before it.
+            self.error(
+                "a decorator cannot be applied to an expression: `export default` needs a declaration after a decorator",
+                first.span,
+            );
         }
         let expr = self.parse_assign()?;
         self.expect_semi()?;
@@ -72,7 +86,13 @@ impl Parser<'_> {
     }
 
     /// `export default <declaration>` (see the module docs).
-    fn default_declaration(&mut self, lo: u32, kw: Span, anonymous: bool) -> PResult<Item> {
+    fn default_declaration(
+        &mut self,
+        lo: u32,
+        kw: Span,
+        anonymous: bool,
+        decorators: Vec<Decorator>,
+    ) -> PResult<Item> {
         if self.at_kw(Kw::Enum) && self.typescript {
             let span = self.cur_span();
             self.report(
@@ -95,7 +115,8 @@ impl Parser<'_> {
         let kind = self.parse_item_kind(lo, false);
         self.default_overloads = false;
         self.anonymous_default = None;
-        let kind = kind?;
+        let mut kind = kind?;
+        self.attach_item_decorators(&mut kind, decorators);
         let span = self.span_from(lo);
         let name = match declared_name(&kind) {
             Some(name) if !anonymous => name.clone(),

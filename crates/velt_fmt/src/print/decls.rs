@@ -59,7 +59,8 @@ impl<'a> Printer<'a> {
                 !decl
                     .methods
                     .iter()
-                    .any(|s| s.is_setter && s.decl.sig.span == g.decl.sig.span)
+                    // The two share the name; a decorator moves only the getter's start.
+                    .any(|s| s.is_setter && s.decl.sig.name.span == g.decl.sig.name.span)
             })
             .map(|g| g.decl.sig.name.span.lo)
             .collect();
@@ -178,6 +179,18 @@ impl<'a> Printer<'a> {
     }
 
     fn member(&mut self, member: &Member) -> Doc {
+        let decorators = match member {
+            Member::Field(f) => self.decorators(&f.decorators),
+            // Those of a method with overloads go after the signatures, on the implementation.
+            Member::Method(m) if m.decl.overloads.is_empty() || m.is_abstract => {
+                self.decorators(&m.decl.sig.decorators)
+            }
+            _ => nil(),
+        };
+        cat![decorators, self.undecorated_member(member)]
+    }
+
+    fn undecorated_member(&mut self, member: &Member) -> Doc {
         match member {
             Member::Field(f) => self.field(f),
             Member::Constructor(c, visibility) => {
@@ -227,7 +240,11 @@ impl<'a> Printer<'a> {
                     let sig = self.fn_sig(&m.decl.sig, "", m.decl.sig.span.hi);
                     return cat![mods, sig, ";"];
                 }
-                self.fn_decl_mods(&m.decl, "", &mods, false)
+                let decorators: &[_] = match m.decl.overloads.is_empty() {
+                    true => &[],
+                    false => &m.decl.sig.decorators,
+                };
+                self.fn_decl_mods(&m.decl, "", &mods, false, decorators)
             }
             Member::CallSig(s) => cat![self.call_sig(s), ";"],
             Member::InterfaceMethod(m) => {

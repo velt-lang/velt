@@ -21,8 +21,19 @@ fn round_trips(src: &str, ts: bool) {
 }
 
 const SAMPLE: &str = r#"
+@a @ns.b("k", 1) export class Decorated<T> {
+  @c field: T[] = [];
+  constructor(@d private p: i64) {}
+  @e() m(@f x: i64): i64 { return x; }
+}
+@g(1) enum DecoratedEnum { A }
+@h([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, -16]) function packed(@h({ xs: [0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }) a: i64) {}
+export declare decorator function g(a: i64 = 3): Repeatable<TypeDecorator | FieldDecorator>;
 import { a, type B as C } from "velt/x";
 import * as ns from "./y";
+import dflt, { other } from "./w";
+import dflt2, * as ns2 from "./w2";
+import type * as typesOnly from "./v";
 export * from "./z";
 export { q } from "./q";
 // @ts-ignore
@@ -69,6 +80,29 @@ function* gen(this: Foo, [a, b = 2]: [i32, i32], { c, d: { e } }: O, ...rest: st
 const el = <div class="a" {...p} on:click={() => 1}><a.b />text{x}{...ys}<></></div>;
 "#;
 
+/// The sample's decorators hold packed arrays of numbers, as an argument and in an object.
+#[test]
+fn the_sample_packs_arrays_in_decorators() {
+    let m = parse(FileId(1), SAMPLE, false);
+    let packed = |e: &ast::Expr| matches!(e.kind, ast::ExprKind::NumArray(_));
+    let func = m.items.iter().find_map(|i| match &i.kind {
+        ast::ItemKind::Function(f) if f.sig.name.name == "packed" => Some(f),
+        _ => None,
+    });
+    let func = func.expect("the sample has `packed`");
+    let ast::ExprKind::Call { args, .. } = &func.sig.decorators[0].expr.kind else {
+        panic!("a call");
+    };
+    assert!(packed(&args[0]));
+    let ast::ExprKind::Call { args, .. } = &func.sig.params[0].decorators[0].expr.kind else {
+        panic!("a call");
+    };
+    let ast::ExprKind::Object(props) = &args[0].kind else {
+        panic!("an object");
+    };
+    assert!(matches!(&props[0], ast::ObjectProp::KeyValue(_, v) if packed(v)));
+}
+
 #[test]
 fn every_kind_of_node_round_trips() {
     round_trips(SAMPLE, false);
@@ -77,6 +111,38 @@ fn every_kind_of_node_round_trips() {
         true,
     );
     round_trips("", false);
+    round_trips("export default @a class C { @b f = 1; }\n", false);
+    round_trips("@a export default class {}\n", false);
+    round_trips(
+        "export default function f(a: string): string;\n@a export default function f(a: any) {}\n",
+        false,
+    );
+}
+
+/// What the `Import` literals of the desugarings say, and that the encoding keeps what parsed
+/// ones say instead.
+#[test]
+fn an_import_keeps_how_it_was_written() {
+    let flags = |src: &str| -> Vec<(bool, bool)> {
+        let parsed = parse(FileId(3), src, false);
+        let decoded = decode_module(&encode_module(&parsed, FileId(3)), FileId(3)).unwrap();
+        let flags = |m: &ast::Module| -> Vec<(bool, bool)> {
+            (m.items.iter())
+                .filter_map(|item| match &item.kind {
+                    ast::ItemKind::Import(i) => Some((i.default_import, i.type_only)),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(flags(&parsed), flags(&decoded), "{src}");
+        flags(&parsed)
+    };
+    assert_eq!(flags("import d from \"./a\";"), [(true, false)]);
+    assert_eq!(flags("import type * as t from \"./a\";"), [(false, true)]);
+    assert_eq!(flags("import { a } from \"./a\";"), [(false, false)]);
+    // `export { C as default }`, after a decorated class on either side of `export`.
+    assert_eq!(flags("export default @d class C {}"), [(false, false)]);
+    assert_eq!(flags("@d export default class C {}"), [(false, false)]);
 }
 
 #[test]

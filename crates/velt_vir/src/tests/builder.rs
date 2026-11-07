@@ -105,6 +105,7 @@ impl PB {
             unchecked: Default::default(),
             hooks_demanded: Default::default(),
             live: None,
+            decorators: Default::default(),
             generated: Default::default(),
             cpu_targets: Default::default(),
             type_names: Default::default(),

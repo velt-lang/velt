@@ -1,0 +1,48 @@
+// A decorator's arguments are checked as a call's would be: a literal's suffix is its type, a
+// float type holds only numbers in its range, an object gives each property once, and a target
+// type is wrapped in `Repeatable<…>` once at most.
+declare decorator function small(a: i8): FieldDecorator;
+declare decorator function single(a: f32): FieldDecorator;
+declare decorator function half(a: f16): FieldDecorator;
+declare decorator function point(p: P): FieldDecorator;
+declare decorator function method(): MethodDecorator;
+declare decorator function twice(): Repeatable<Repeatable<TypeDecorator>>;
+declare decorator function suffixed(a: i64 = 1i32): FieldDecorator;
+
+interface P {
+  x: i64;
+}
+
+const WIDE = 1i64;
+const POINTS = [{ x: 1i64 }];
+
+declare decorator function points(ps: P[]): FieldDecorator;
+declare decorator function narrow(ps: { x: i8 }[]): FieldDecorator;
+
+class C {
+  @small(1i64)
+  a: i64 = 0;
+  @small(WIDE)
+  b: i64 = 0;
+  @single(1e300)
+  c: i64 = 0;
+  @single(-1e39)
+  d: i64 = 0;
+  @half(65536)
+  e: i64 = 0;
+  @point({ x: 1, x: 2 })
+  f: i64 = 0;
+  @narrow(POINTS)
+  g: i64 = 0;
+  @points(POINTS)
+  fine: i64 = 0;
+  @single(1.5f32)
+  alsoFine: i64 = 0;
+}
+
+abstract class A {
+  @method
+  abstract x: i64;
+}
+
+function main() {}

@@ -247,6 +247,9 @@ pub(crate) struct FnInfo<'m> {
     pub intrinsic: Option<crate::intrinsic_decls::DeclaredIntrinsic>,
     /// `declare unsafe intrinsic function`: a call needs unsafe code, as an unsafe function's.
     pub unsafe_intrinsic: bool,
+    /// A `declare` function's written signature (`crate::decorators` reads its decorators, and
+    /// whether it declares one); `None` for every other function.
+    pub extern_sig: Option<&'m ast::FnSig>,
     /// `function*` / `*name()`: a generator. `ret` is the declared result (`Generator<T>`,
     /// `Iterator<T>` or `Iterable<T>`, its `E` moved into `declared_throws`); a call returns it
     /// with the generator's final error type as `E` (`generators.rs`).

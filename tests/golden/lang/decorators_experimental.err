@@ -1,0 +1,1 @@
+decorators_experimental.velt:5:5: error: parameter decorators are TypeScript's `experimentalDecorators` form, which Velt does not support

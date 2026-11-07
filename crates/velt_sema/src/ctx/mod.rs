@@ -296,6 +296,8 @@ pub(crate) struct Ctx<'m> {
     pub nested: Vec<crate::collect::NestedItem>,
     /// Names bound in each nested definition's enclosing functions ("cannot capture" error).
     pub nested_locals: FxHashMap<DefId, Vec<String>>,
+    /// The compile-time decorators checked so far (`crate::decorators`).
+    pub decorator_uses: FxHashMap<crate::hir::DecoratorTarget, Vec<crate::hir::Decorator>>,
     /// For each item nested in a method (or constructor) of a class or struct: that type. Its
     /// body is inside the type's body, for `private` and `#x` (TypeScript).
     pub enclosing_class: FxHashMap<DefId, DefId>,
@@ -428,6 +430,9 @@ pub(crate) struct Ctx<'m> {
     pub js_api_modules: std::cell::OnceCell<FxHashMap<usize, Option<FxHashSet<String>>>>,
     /// Where the native libraries' modules are (`json::handles`): computed when first asked.
     pub native_libraries: std::cell::OnceCell<crate::json::handles::NativeLibraries>,
+    /// Each module's scopes below module level, for its decorators (`decorators::scope`):
+    /// found for a module when one of them first asks.
+    pub decorator_scopes: std::cell::RefCell<FxHashMap<usize, crate::decorators::Scopes>>,
     /// Integer types decided for locals declared from literals, by function and declaration
     /// span (`body::literal_locals`).
     pub literal_types: FxHashMap<DefId, FxHashMap<Span, TyId>>,
@@ -583,6 +588,7 @@ impl<'m> Ctx<'m> {
             promise_forwarders: vec![],
             nested: vec![],
             nested_locals: FxHashMap::default(),
+            decorator_uses: FxHashMap::default(),
             enclosing_class: FxHashMap::default(),
             static_this: FxHashMap::default(),
             static_copies: FxHashMap::default(),
@@ -642,6 +648,7 @@ impl<'m> Ctx<'m> {
             closure_defs: vec![],
             js_api_modules: std::cell::OnceCell::new(),
             native_libraries: std::cell::OnceCell::new(),
+            decorator_scopes: Default::default(),
             literal_types: FxHashMap::default(),
             literal_found: FxHashMap::default(),
         }

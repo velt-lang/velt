@@ -1,0 +1,16 @@
+declare decorator function noTarget();
+declare decorator function badTarget(): string;
+declare decorator function generic<T>(): TypeDecorator;
+declare decorator async function later(): TypeDecorator;
+function g(): string {
+  return "x";
+}
+declare decorator function badDefault(a: string = g()): TypeDecorator;
+declare decorator function wrongDefault(a: string = 1): TypeDecorator;
+declare decorator function outOfRange(a: u8 = 256): TypeDecorator;
+declare decorator function typeArgument(): TypeDecorator;
+
+@typeArgument<string>()
+class A {}
+
+function main() {}

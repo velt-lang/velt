@@ -1,0 +1,67 @@
+// A local hides a module-level decorator or constant of its name, as in TypeScript, so what is
+// named is a run-time decorator or no constant at all. A local out of scope hides nothing.
+import * as ns from "./_decorators_lib";
+import { mark } from "./_decorators_lib";
+
+declare decorator function t(): Repeatable<TypeDecorator | MethodDecorator>;
+declare decorator function any_(s: string): TypeDecorator;
+const K = "module";
+
+function parameter(t: any) {
+  @t
+  class C {}
+}
+function local() {
+  const t: any = 1;
+  @t
+  class C {}
+}
+function fromAMember(t: any) {
+  class C {
+    @t
+    m() {}
+  }
+}
+function caught() {
+  try {
+  } catch (t) {
+    @t
+    class C {}
+  }
+}
+function looped() {
+  for (const t of [1]) {
+    @t
+    class C {}
+  }
+}
+function namespaced(ns: any) {
+  @ns.mark
+  class C {}
+}
+function imported(mark: any) {
+  @mark
+  class C {}
+}
+function constantParameter(K: string) {
+  @any_(K)
+  class C {}
+}
+function constantLocal() {
+  const K = "local";
+  @any_(K)
+  class C {}
+}
+
+function outOfScope() {
+  {
+    const t: any = 1;
+    const K = "local";
+  }
+  [1].map((t: number) => t);
+  @t
+  @any_(K)
+  class C {}
+}
+
+function main() {}

@@ -278,6 +278,7 @@ pub(super) fn extern_fn(
         system: None,
         host: None,
         c: None,
+        is_decorator: false,
         span: SP,
     }))
 }

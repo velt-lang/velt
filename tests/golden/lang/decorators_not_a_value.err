@@ -1,0 +1,2 @@
+decorators_not_a_value.velt:4:3: error: `name` is a decorator: it can only be used as `@name`
+decorators_not_a_value.velt:5:13: error: `name` is a decorator: it can only be used as `@name`

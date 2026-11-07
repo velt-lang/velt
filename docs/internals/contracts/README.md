@@ -135,6 +135,15 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   (docs/internals/design/std-layout.md §10).
 
 ## Host functions (additive AST, HIR and VIR extension, #1735)
+- Decorators (`ast.rs`, https://github.com/velt-lang/velt/issues/2203): `Decorator { expr, span }`
+  on `FnSig`, `Param`, `Field`, `TypeDecl` and `EnumDecl` (`decorators`, empty without any), and
+  `FnSig::is_decorator` for `declare decorator function name(…): Target;`, where `Target` says
+  where it may be used (`FunctionDecorator`, `MethodDecorator`, `TypeDecorator`, `FieldDecorator`,
+  `ParamDecorator`, a union of them, `Repeatable<…>` around them). Those names mean this only
+  there. A function's decorators are on its implementation's `FnSig`, wherever they are written
+  among its overloads. `Method::is_property` marks the getter and setter of an abstract property
+  (`abstract x: T;`), whose decorators are a field's. `AST_FORMAT` 12. Sema records the uses in `Program::decorators` (hir_encodings.md
+  "Decorators") and `DefKind::Decorator` names the declarations for editors.
 - `FnSig::host: Option<HostModule { module, span }>` (`ast.rs`): `declare host("<module>")
   function name(…): R;`, an `ItemKind::ExternFn` like `declare system function` (`host` is a
   word only between `declare` and `(`). Any module may declare one

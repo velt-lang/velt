@@ -1,0 +1,23 @@
+declare decorator function field(): FieldDecorator;
+declare decorator function type_(): TypeDecorator;
+declare decorator function method(): MethodDecorator;
+declare decorator function param(): ParamDecorator;
+declare decorator function func(): FunctionDecorator;
+
+@field
+class A {
+  @type_ x: i64 = 1;
+  @func m() {}
+}
+
+@method
+function f(@func p: i64) {}
+
+function g(@param p: i64) {}
+
+@param
+enum E {
+  X,
+}
+
+function main() {}

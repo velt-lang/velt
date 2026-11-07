@@ -139,3 +139,26 @@ fn defaults_walk_with_the_public_helpers() {
         );
     }
 }
+
+#[test]
+fn decorators_are_visited() {
+    struct Names(Vec<String>);
+    impl<'a> Visit<'a> for Names {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if let ast::ExprKind::Ident(id) = &e.kind {
+                self.0.push(id.name.clone());
+            }
+        }
+    }
+    let src = "@a function f(@b(c) x: i64) {}
+               @d class C { @e f: i64 = 1; @g m(@h y: i64) {} constructor(@i z: i64) {} }
+               @j enum E { A }
+               @k declare function ext(@l p: i64): void;";
+    let (module, _) = crate::parse_file(velt_common::FileId(0), src);
+    let mut names = Names(vec![]);
+    walk_module(&module, &mut names);
+    let mut names = names.0;
+    names.sort();
+    let want: Vec<&str> = "a b c d e g h i j k l".split(' ').collect();
+    assert_eq!(names, want);
+}

@@ -316,7 +316,9 @@ the generated code: each element is decoded only once its bytes are complete.
 
 ### 9. Decorators (compile time only)
 
-Velt has no decorators today (https://veltlang.com/docs/book/ts-developers/). This step adds the TypeScript
+#2203 generalises what follows into `declare decorator function`, which replaces the `@decorator`
+doc tag below and lifts its std-only rule for decorators that are data. Before it, Velt had no
+decorators (https://veltlang.com/docs/book/ts-developers/). This step adds the TypeScript
 syntax for them, with the meaning of .NET attributes:
 
 ```ts ignore

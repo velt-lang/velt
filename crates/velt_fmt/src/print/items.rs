@@ -2,15 +2,16 @@
 //! policy between top-level items. Nominal type declarations are in `decls`.
 
 use velt_syntax::ast::{
-    Augment, FnDecl, FnSig, Import, Item, ItemKind, Namespace, PatternKind, TypeAlias,
+    Augment, Decorator, FnDecl, FnSig, Import, Item, ItemKind, Namespace, PatternKind, TypeAlias,
     TypeExprKind, VarDecl, VarKind,
 };
 
 use super::lists::delimited;
 use super::script::{blank_before, Top};
 use super::Printer;
-use crate::doc::{cat, group, hardline, if_break, indent, join, line, text, Doc};
+use crate::doc::{cat, concat, group, hardline, if_break, indent, join, line, nil, text, Doc};
 use crate::source::{slice, string_literal};
+use velt_common::Span;
 
 /// Items of these kinds may sit on consecutive lines (a run of imports, constants, ...);
 /// every other pair of top-level items is separated by a blank line.
@@ -40,16 +41,88 @@ pub(super) fn blank_between(prev: &Item, cur: &Item) -> bool {
     }
 }
 
-impl<'a> Printer<'a> {
-    pub(super) fn item(&mut self, item: &Item) -> Doc {
-        match self.default_export(item) {
-            Some(doc) => doc,
-            None => self.plain_item(item),
+/// The decorators written on item `kind`.
+fn decorators_of(kind: &ItemKind) -> &[Decorator] {
+    match kind {
+        ItemKind::Function(f) => &f.sig.decorators,
+        ItemKind::ExternFn(s) => &s.decorators,
+        ItemKind::Struct(t) | ItemKind::Class(t) => &t.decorators,
+        ItemKind::Enum(e) => &e.decorators,
+        _ => &[],
+    }
+}
+
+/// Where what follows decorator `i` of `ds` starts: the next decorator, or after the last one the
+/// first token of what it decorates (a modifier, a keyword or a name).
+pub(super) fn after_decorator(src: &str, ds: &[Decorator], i: usize) -> u32 {
+    match ds.get(i + 1) {
+        Some(next) => next.span.lo,
+        None => {
+            let hi = ds[i].span.hi;
+            let rest = src.get(hi as usize..).unwrap_or("");
+            hi + (rest.len() - skip_comments(rest).len()) as u32
         }
     }
+}
 
-    /// An item as the AST gives it.
-    fn plain_item(&mut self, item: &Item) -> Doc {
+/// `src` from its first token.
+fn skip_comments(mut src: &str) -> &str {
+    loop {
+        src = src.trim_start();
+        let (close, skip) = match src.get(..2) {
+            Some("//") => ("\n", 1),
+            Some("/*") => ("*/", 2),
+            _ => return src,
+        };
+        match src.find(close) {
+            Some(end) => src = &src[end + skip..],
+            None => return "",
+        }
+    }
+}
+
+impl<'a> Printer<'a> {
+    pub(super) fn item(&mut self, item: &Item) -> Doc {
+        let decorators = match &item.kind {
+            // Those of a function with overloads go after the signatures, on the implementation.
+            ItemKind::Function(f) if !f.overloads.is_empty() => nil(),
+            kind => self.decorators(decorators_of(kind)),
+        };
+        let body = match self.default_export(item) {
+            Some(doc) => doc,
+            None => self.undecorated_item(item),
+        };
+        cat![decorators, body]
+    }
+
+    /// `@x` / `@ns.x(args)`, each on its own line. Written after `export`, they move before it:
+    /// TC39 allows both places, and one form is enough. A comment after a decorator stays there:
+    /// on its line, or on lines of its own before the next decorator or the declaration. One
+    /// before a decorator that the item's start doesn't precede (`export /* c */ @a class C
+    /// {}`) stays before it, on lines of its own.
+    pub(super) fn decorators(&mut self, decorators: &[Decorator]) -> Doc {
+        let mut docs = vec![];
+        for (i, d) in decorators.iter().enumerate() {
+            for c in self.comments.take_before(d.span.lo) {
+                docs.push(text(c.text));
+                docs.push(hardline());
+            }
+            docs.push(cat!["@", self.expr(&d.expr)]);
+            let next = after_decorator(self.src, decorators, i);
+            for c in self.comments.take_trailing(self.src, d.span.hi, next, true) {
+                docs.push(text(format!(" {}", c.text)));
+            }
+            docs.push(hardline());
+            for c in self.comments.take_before(next) {
+                docs.push(text(c.text));
+                docs.push(hardline());
+            }
+        }
+        concat(docs)
+    }
+
+    /// An item as the AST gives it, but for its decorators.
+    fn undecorated_item(&mut self, item: &Item) -> Doc {
         let export = if item.exported { "export " } else { "" };
         let body = match &item.kind {
             ItemKind::Import(import) => self.import(import, item.exported),
@@ -72,6 +145,9 @@ impl<'a> Printer<'a> {
             ItemKind::ExternFn(sig) if sig.c.is_some() => self.c_fn(sig),
             ItemKind::ExternFn(sig) => {
                 let asyncness = match (sig.is_system, sig.is_intrinsic, sig.is_async) {
+                    // Not a decorator (the check says why), but written as it was.
+                    _ if sig.is_decorator && sig.is_async => "decorator async ",
+                    _ if sig.is_decorator => "decorator ",
                     // Not a system function (the check says why), but written as it was.
                     (true, _, true) => "async system ",
                     (true, _, false) => "system ",
@@ -104,14 +180,15 @@ impl<'a> Printer<'a> {
             return velt_syntax::written_default(i).then(|| cat![KW, n.name.name.clone(), ";"]);
         }
         if !item.exported {
-            let written = slice(self.src, item.span).starts_with("export");
-            return written.then(|| match &item.kind {
-                // Each overload signature says `export default` too.
-                ItemKind::Function(f) if f.sig.generator.is_none() => {
-                    self.fn_decl_with(f, "function ", KW)
-                }
-                _ => cat![KW, self.plain_item(item)],
-            });
+            return self
+                .written_after_decorators(item)
+                .then(|| match &item.kind {
+                    // Each overload signature says `export default` too.
+                    ItemKind::Function(f) if f.sig.generator.is_none() => {
+                        self.fn_decl_with(f, "function ", KW)
+                    }
+                    _ => cat![KW, self.undecorated_item(item)],
+                });
         }
         let mut anonymous = item.clone();
         anonymous.exported = false;
@@ -133,7 +210,17 @@ impl<'a> Printer<'a> {
             f.overloads.iter_mut().for_each(|o| o.name.name.clear());
             return Some(self.fn_decl_with(f, "function ", KW));
         }
-        Some(cat![KW, self.plain_item(&anonymous)])
+        Some(cat![KW, self.undecorated_item(&anonymous)])
+    }
+
+    /// Does the source of `item` start with `export`, after any decorators before that?
+    fn written_after_decorators(&self, item: &Item) -> bool {
+        let lo = decorators_of(&item.kind)
+            .last()
+            .map_or(item.span.lo, |d| d.span.hi.max(item.span.lo));
+        let rest = slice(self.src, Span::new(item.span.file, lo, item.span.hi));
+        slice(self.src, item.span).starts_with("export")
+            || skip_comments(rest).starts_with("export")
     }
 
     /// `declare c("<library>"[, { errno: true }]) [async] function f(…): R;`.

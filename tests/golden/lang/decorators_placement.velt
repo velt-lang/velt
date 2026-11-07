@@ -1,0 +1,37 @@
+declare decorator function t(): TypeDecorator | FunctionDecorator | ParamDecorator;
+
+@t
+const a = 1;
+
+@t
+interface I {}
+
+@t
+type A = i64;
+
+@t
+export @t
+class Twice {}
+
+class C {
+  @t
+  constructor() {}
+
+  @t
+  static {}
+}
+
+function f(a: (@t x: i64) => void) {}
+
+function g(@t a: i64): void;
+function g(a: i64) {}
+
+interface J {
+  m(@t a: i64): void;
+}
+
+const o = {
+  m(@t a: i64) {},
+};
+
+function main() {}

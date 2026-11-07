@@ -337,6 +337,8 @@ pub(crate) fn check(modules: &[SourceModule]) -> Vec<Diagnostic> {
                         self.bodiless(&m.decl.sig, true);
                     }
                 }
+                // A decorator is never called: its defaults are what its readers see.
+                ast::ItemKind::ExternFn(sig) if sig.is_decorator => {}
                 ast::ItemKind::ExternFn(sig) => self.bodiless(sig, false),
                 _ => {}
             }

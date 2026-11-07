@@ -34,6 +34,18 @@ pub fn scope_items(analysis: &Analysis, offset: u32) -> Vec<CompletionItem> {
         .collect()
 }
 
+/// Completion items for the compile-time decorators visible at `offset`.
+pub fn decorator_items(analysis: &Analysis, offset: u32) -> Vec<CompletionItem> {
+    let Some(ide) = analysis.ide.as_ref() else {
+        return vec![];
+    };
+    ide.scope_at(analysis.file(), offset)
+        .into_iter()
+        .filter(|(_, d)| d.kind == DefKind::Decorator)
+        .map(|(name, d)| def_item(analysis, &name, &d))
+        .collect()
+}
+
 /// Members of `receiver` (a name visible at `offset`, `this`, or a namespace import); `None` when
 /// sema does not know the name.
 pub fn member_items(
@@ -79,7 +91,9 @@ fn namespace_items(
 
 pub fn kind(k: DefKind) -> CompletionItemKind {
     match k {
-        DefKind::Function | DefKind::ExternFunction => CompletionItemKind::FUNCTION,
+        DefKind::Function | DefKind::ExternFunction | DefKind::Decorator => {
+            CompletionItemKind::FUNCTION
+        }
         DefKind::Method | DefKind::StaticMethod => CompletionItemKind::METHOD,
         DefKind::Getter | DefKind::Field => CompletionItemKind::FIELD,
         DefKind::Constructor => CompletionItemKind::CONSTRUCTOR,

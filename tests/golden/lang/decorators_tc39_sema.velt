@@ -1,0 +1,32 @@
+// The forms sema decides, with no error from the parser in the way.
+function logged(value: any, context: any): any {
+  return value;
+}
+function factory(n: i64): any {
+  return logged;
+}
+function generic<T>(n: string): any {
+  return logged;
+}
+const holder = { logged: 1 };
+
+@(logged)
+class A {}
+
+@factory(1)
+class B {}
+
+@holder.logged
+class D {}
+
+@logged
+function plainFunction() {}
+
+// TypeScript's type arguments on the call.
+@generic<string>("a")
+class E {
+  @generic<string>("b")
+  m() {}
+}
+
+function main() {}

@@ -1,0 +1,9 @@
+decorators_arguments.velt:15:9: error: this argument of the decorator doesn't fit its parameter's type `string`
+decorators_arguments.velt:16:3: error: the decorator `name` is missing the argument `key`
+decorators_arguments.velt:17:3: error: the decorator `name` is missing the argument `key`
+decorators_arguments.velt:18:14: error: the decorator `name` takes 1 argument(s), but 2 were given
+decorators_arguments.velt:19:11: error: this argument of the decorator doesn't fit its parameter's type
+decorators_arguments.velt:20:10: error: this argument of the decorator doesn't fit its parameter's type `u8`
+decorators_arguments.velt:21:10: error: this argument of the decorator doesn't fit its parameter's type `Level`
+decorators_arguments.velt:22:12: error: this argument of the decorator doesn't fit its parameter's type
+decorators_arguments.velt:23:12: error: this argument of the decorator doesn't fit its parameter's type

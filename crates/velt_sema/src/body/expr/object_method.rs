@@ -272,6 +272,7 @@ fn method_value(d: &ast::FnDecl) -> ast::Expr {
                 pattern: None,
                 ty,
                 default: None,
+                decorators: vec![],
                 optional: false,
                 rest: false,
                 span: at,

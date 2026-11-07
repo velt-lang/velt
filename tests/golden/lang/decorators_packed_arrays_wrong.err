@@ -1,0 +1,4 @@
+decorators_packed_arrays_wrong.velt:9:8: error: this argument of the decorator doesn't fit its parameter's type `string[]`
+decorators_packed_arrays_wrong.velt:12:8: error: this argument of the decorator doesn't fit its parameter's type `string[]`
+decorators_packed_arrays_wrong.velt:15:8: error: this argument of the decorator doesn't fit its parameter's type `u8[]`
+decorators_packed_arrays_wrong.velt:18:7: error: this argument of the decorator doesn't fit its parameter's type `i64[]`
