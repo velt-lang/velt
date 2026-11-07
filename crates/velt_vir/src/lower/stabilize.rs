@@ -448,10 +448,10 @@ impl FnLower<'_, '_> {
     }
 
     /// Does an argument beside `args[i]` hold something a part of `args[i]` could lie in: `r` in
-    /// `f(r, r.s)`, `xs` in `f(xs, xs[0])`, or a param that may be the same object as the one
-    /// `w.s` is read from? A callee that changes its params' insides then replaces what this
-    /// argument points at. Told apart by type: an object can be any object, an interface or `any`
-    /// value anything, and an array or tuple only one of its own type.
+    /// `f(r, r.s)`, `xs` in `f(xs, xs[0])`, `rs` in `g(rs, rs0.s)` with `rs0` an element of it, or a
+    /// param that may be the same object as the one `w.s` is read from? A callee that changes its
+    /// params' insides then replaces what this argument points at. Told apart by type
+    /// ([`can_hold`](Self::can_hold)).
     pub(super) fn sibling_container(&mut self, args: &[hir::Expr], i: usize) -> bool {
         use hir::ExprKind as K;
         let mut bases = vec![];
@@ -469,21 +469,46 @@ impl FnLower<'_, '_> {
             return false;
         }
         (args.iter().enumerate()).any(|(j, o)| {
-            if j == i {
-                return false;
-            }
-            let mut ty = self.sub(o.ty);
-            while let TyKind::Option(x, _) = self.cx.kind(ty) {
-                ty = self.sub(x);
-            }
-            match self.cx.kind(ty) {
-                TyKind::Dyn(..) => true,
-                TyKind::Adt(..) => {
-                    (bases.iter()).any(|&b| matches!(self.cx.kind(b), TyKind::Adt(..)))
-                }
-                _ => bases.contains(&ty),
-            }
+            let ty = self.sub(o.ty);
+            j != i && self.can_hold(ty, &bases, &mut Vec::new())
         })
+    }
+
+    /// Can a value of type `t` be one of `bases`, or hold one at any depth? An object can be any
+    /// object, an interface, `any` or type parameter anything, and an array or tuple one of its own
+    /// type or one its elements can.
+    fn can_hold(&mut self, t: TyId, bases: &[TyId], seen: &mut Vec<TyId>) -> bool {
+        if bases.contains(&t) {
+            return true;
+        }
+        if seen.contains(&t) {
+            return false;
+        }
+        seen.push(t);
+        match self.cx.kind(t) {
+            TyKind::Dyn(..) | TyKind::Param(_) => true,
+            TyKind::Option(x, _) | TyKind::Array(x) | TyKind::Shared(x) => {
+                let x = self.sub(x);
+                self.can_hold(x, bases, seen)
+            }
+            TyKind::Map(a, b) => {
+                let (a, b) = (self.sub(a), self.sub(b));
+                self.can_hold(a, bases, seen) || self.can_hold(b, bases, seen)
+            }
+            TyKind::Tuple(xs) => xs.into_iter().any(|x| {
+                let x = self.sub(x);
+                self.can_hold(x, bases, seen)
+            }),
+            TyKind::Adt(..) => {
+                (bases.iter()).any(|&b| matches!(self.cx.kind(b), TyKind::Adt(..)))
+                    || self
+                        .cx
+                        .adt_field_tys(t)
+                        .into_iter()
+                        .any(|f| self.can_hold(f, bases, seen))
+            }
+            _ => false,
+        }
     }
 
     /// Can the place `a` starts from get another value while a call through a function value runs,

@@ -115,6 +115,49 @@ function twoParts() {
   const f = (q: R, v: string, w: string | null) => { q.s = heap("new"); q.o = null; junk(); return v + String(w); };
   console.log("two parts", f(r, r.s, r.o), r.s, r.o);
 }
+class K1 { s: string = heap("old"); }
+function arrayHoldsContainer() {
+  const rs = [new K1()];
+  const r0 = rs[0];
+  const g = (q: K1[], v: string) => { q[0].s = heap("new"); junk(); return v; };
+  console.log("array of the container", g(rs, r0.s), rs[0].s);
+}
+function arrayHoldsArray() {
+  const outer = [[heap("old")]];
+  const inner = outer[0];
+  const h = (q: string[][], v: string) => { q[0] = []; junk(); return v; };
+  console.log("array replaced in an array", h(outer, inner[0]), outer[0].length);
+  const outer2 = [[heap("old")]];
+  const inner2 = outer2[0];
+  const j = (q: string[][], v: string) => { q[0][0] = heap("new"); junk(); return v; };
+  console.log("element of an element", j(outer2, inner2[0]), outer2[0][0]);
+  const outer3 = [[heap("old")]];
+  const inner3 = outer3[0];
+  const k = (q: string[][], v: string) => { q[0].pop(); junk(); return v; };
+  console.log("popped from an element", k(outer3, inner3[0]), outer3[0].length);
+}
+function arrayOfObjects() {
+  const os: { s: string }[] = [{ s: heap("old") }];
+  const o0 = os[0];
+  const f = (q: { s: string }[], v: string) => { q[0].s = heap("new"); junk(); return v; };
+  console.log("array of object types", f(os, o0.s), os[0].s);
+  const os2: { s: string }[] = [{ s: heap("old") }];
+  const o1 = os2[0];
+  const g = (q: { s: string }[], v: string) => { q[0] = { s: heap("new") }; junk(); return v; };
+  console.log("object type replaced", g(os2, o1.s), os2[0].s);
+}
+function tupleHolds() {
+  const k = new K1();
+  const t: [K1, number] = [k, 1];
+  const f = (q: [K1, number], v: string) => { q[0].s = heap("new"); junk(); return v; };
+  console.log("tuple of the container", f(t, k.s), k.s);
+}
+function objectHoldsArray() {
+  const xs = [heap("old")];
+  const o = { xs };
+  const f = (q: { xs: string[] }, v: string) => { q.xs[0] = heap("new"); junk(); return v; };
+  console.log("object holding the array", f(o, xs[0]), xs[0]);
+}
 function asyncAndGenerator() {
   const r = new R();
   const g = function* (q: R, v: string) { q.s = heap("new"); yield v; yield q.s; };
@@ -127,5 +170,6 @@ async function asyncClosure() {
 }
 string_(); optional(); union(); any_(); object_(); tuple(); copyAggregate(); classField();
 throughClass(); arrayPop(); arrayStore(); tupleStore(); objectType(); forwarded(); held();
-converted(); twoParts(); asyncAndGenerator();
+converted(); twoParts(); arrayHoldsContainer(); arrayHoldsArray(); arrayOfObjects(); tupleHolds();
+objectHoldsArray(); asyncAndGenerator();
 asyncClosure().then(() => console.log("done"));
