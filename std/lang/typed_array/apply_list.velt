@@ -26,3 +26,11 @@ function typedElements(list: any): any {
   }
   return out;
 }
+
+/** `list`, unless `target`, a proxy's innermost: a typed array's accessors stop on a proxy, as in Node. */
+export function typedProxyList(target: any, list: any): any {
+  if (target instanceof TypedArray) {
+    throw new TypeError("this is not a typed array.");
+  }
+  return list;
+}

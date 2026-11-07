@@ -80,6 +80,17 @@ impl FnCx<'_, '_> {
         // A typed array's elements (`any` reads none yet), in a program that has them.
         let typed = velt_common::std_hook!(typed_apply_list);
         let list = if self.cx.prelude_fn(typed).is_some() {
+            let list = if self.uses_proxy() {
+                self.with_temp("<list>", list, span, span, |lw, v| {
+                    let held = lw.expr(v, None, Want::Borrow);
+                    let inner = hooks::proxy_innermost(ty::Any::of(held)).emit(lw, any, span);
+                    let held = lw.expr(v, None, Want::Borrow);
+                    hooks::typed_proxy_list(ty::Any::of(inner), ty::Any::of(held))
+                        .emit(lw, any, span)
+                })
+            } else {
+                list
+            };
             hooks::typed_apply_list(ty::Any::of(list)).emit(self, any, span)
         } else {
             list
