@@ -1,0 +1,7 @@
+// A generic constructor given a typed object, in a program with no write through `any`.
+type W = { a: number; b: number };
+type N = { a: number };
+class Box<T> { v: T; constructor(x: T) { this.v = x; } get(): T { return this.v; } }
+const b = new Box<W>({ a: 1, b: 2 });
+const n: N = b.get();
+console.log(n.a);

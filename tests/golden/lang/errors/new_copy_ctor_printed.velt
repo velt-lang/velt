@@ -1,0 +1,10 @@
+// A generic constructor that prints its parameter shows the copy (Node prints `{ a: 1, b: 2 }`).
+type W = { a: number; b: number };
+type N = { a: number };
+class Box<T> { constructor(x: T) { console.log(x); } }
+function main() {
+  const w: W = { a: 1, b: 2 };
+  const q: N = w;
+  new Box<N>(q);
+}
+main();

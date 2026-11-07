@@ -127,7 +127,7 @@ fn collect_with(
         out.push((DefId(i as u32), u, news));
     }
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
-    for_each_init(cx, globals, &mut |tys, d, e| {
+    for_each_init(&cx.ty, &mut cx.info, globals, &mut |tys, d, e| {
         if (d.0 as usize) < from || !wanted(d) {
             return;
         }
@@ -307,7 +307,7 @@ fn site(tys: &Types, e: &Expr) -> Option<Site> {
 
 /// What constructing `def<targs>` instantiates: its constructor (with the arguments of the
 /// class that declares it), and the initializer unit of it and each base class.
-fn constructed(cx: &mut Ctx, def: DefId, targs: Vec<TyId>) -> Vec<(DefId, Vec<TyId>)> {
+pub(crate) fn constructed(cx: &mut Ctx, def: DefId, targs: Vec<TyId>) -> Vec<(DefId, Vec<TyId>)> {
     let Some(ctor) = cx
         .adt(def)
         .filter(|a| a.kind != AdtKind::Anon)
@@ -335,9 +335,13 @@ fn constructed(cx: &mut Ctx, def: DefId, targs: Vec<TyId>) -> Vec<(DefId, Vec<Ty
 
 /// Visits the field initializers of every struct and class (own fields and the inherited ones
 /// it gives an initializer), in terms of its type parameters, with the type's def.
-fn for_each_init(cx: &mut Ctx, globals: bool, f: &mut dyn FnMut(&Types, DefId, &mut Expr)) {
-    let tys = &cx.ty;
-    for (i, info) in cx.info.iter_mut().enumerate() {
+pub(crate) fn for_each_init(
+    tys: &Types,
+    infos: &mut [DefInfo],
+    globals: bool,
+    f: &mut dyn FnMut(&Types, DefId, &mut Expr),
+) {
+    for (i, info) in infos.iter_mut().enumerate() {
         let d = DefId(i as u32);
         if let DefInfo::Global(g) = info {
             if let Some(e) = g.init.as_mut().filter(|_| globals) {
