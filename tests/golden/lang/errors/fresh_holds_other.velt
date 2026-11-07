@@ -1,0 +1,10 @@
+// As `fresh_create_null`, of a literal of another shape.
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+function main() {
+  const holder = { n: 1 };
+  const p: any = { a: 1, b: 2, up: holder };
+  const q = seen(p);
+  p.a = 5;
+  console.log(q.a, p.a);
+}
+main();

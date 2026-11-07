@@ -514,6 +514,9 @@ pub enum Intrinsic {
     AnyTypeof,
     /// `(x: borrow any) -> bool`: JavaScript's truthiness of `x`.
     AnyTruthy,
+    /// `(x: borrow any) -> bool`: `x` holds a class's method read as a value through `any`
+    /// (velt_vir proxy_method.rs), which has no `this` and can't be called on its own. Additive.
+    AnyUnboundMethod,
     /// `(a: borrow any, b: borrow any) -> bool`: `a === b` (numbers by value, `NaN` unequal,
     /// strings by content, objects and functions by identity).
     AnyStrictEq,

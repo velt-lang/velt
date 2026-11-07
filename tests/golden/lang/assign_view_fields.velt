@@ -1,0 +1,14 @@
+// An object where a type with fewer or optional members is expected, in a program with proxies:
+// the one object, as in Node.
+const made = new Proxy({}, {});
+interface Ctx { name: string; parent?: Ctx | null; hello(): string; }
+function report(i: { parent?: unknown; provides?: Map<string, number> } | null): string {
+  return i == null ? "none" : String(i.provides?.get("k"));
+}
+const ctx: Ctx = { name: "n", hello() { return "h"; } };
+console.log(report(ctx), report(null));
+interface Handler<T, E> { name: string; serialize: (v: T) => E; }
+function handler<T, E>(h: { name: string; tag?: string; serialize: (v: T) => E }): Handler<T, E> {
+  return h;
+}
+console.log(handler({ name: "x", serialize: (v: number) => String(v) }).serialize(3));

@@ -1,0 +1,8 @@
+// Function members over the types being compared are not comparable here yet (tsc accepts this);
+// the comparison ends, with this error.
+const made = new Proxy({}, {});
+interface A { f: (a: A) => A; x: number; hello(): void; }
+interface B { f: (a: B) => B; }
+const a: A = { f: (q) => q, x: 1, hello() {} };
+const b = a as B;
+console.log(typeof b.f);

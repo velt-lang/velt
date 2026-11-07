@@ -1,0 +1,5 @@
+// A missing key where a `string` is expected stops: Velt checks what TypeScript trusts, as for `x!`.
+const attrs: Record<string, string> = { a: "x" };
+const key = "b";
+const s: string = attrs[key];
+console.log(s);

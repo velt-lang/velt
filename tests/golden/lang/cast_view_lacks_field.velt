@@ -1,0 +1,10 @@
+// A required member the object lacks stops at the read: Node reads `undefined` and goes on, which
+// a `number` here cannot hold. Up to the stop the output is Node's.
+const made = new Proxy({}, {});
+interface Cx { n: number; }
+function up(c: { n?: number; m?: string }): Cx { return c as Cx; }
+console.log(up({ n: 1 }).n);
+const absent = up({ m: "x" });
+console.log("before");
+console.log(absent.n);
+console.log("after");

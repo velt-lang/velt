@@ -1,0 +1,6 @@
+// A member of another type than the view says stops at the read: Node prints the string.
+const made = new Proxy({}, {});
+function disposer<T>(x: T) { return (x as { dispose?: number } | null)?.dispose; }
+console.log(disposer({ dispose: 3 }), disposer({ other: 3 }), disposer(null));
+console.log(disposer({ dispose: "s" }));
+console.log("after");

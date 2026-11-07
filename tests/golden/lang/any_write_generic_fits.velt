@@ -1,0 +1,4 @@
+// A number that fits, written through a view of a `T`.
+const made = new Proxy({}, {});
+function f<T>(o: T) { (o as { a: number; c?: string }).a = 7; return (o as { a: number; c?: string }).a; }
+console.log(f<{ a: i32; b: number }>({ a: 1, b: 2 }));

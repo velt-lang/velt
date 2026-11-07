@@ -1,0 +1,6 @@
+// What a numeric field can hold, written through `any`, is kept.
+class C { a: i32 = 1; b: u8 = 1; c: i64 = 1; d: f32 = 1; e: u64 = 1; f: number = 1; g: i8 = 1; }
+const c = new C();
+const x: any = c;
+x.a = -5; x.b = 255; x.c = 1234567890123; x.d = 1.5; x.e = 9007199254740992; x.f = 1.5; x.g = -128;
+console.log(c.a, c.b, c.c, c.d, c.e, c.f, c.g);

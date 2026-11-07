@@ -1,0 +1,20 @@
+// `f.call(o)` of a function value calls what was read, whatever `o.m` holds by then, as in Node.
+const made = new Proxy({}, {});
+class A {
+  m: () => string = () => "first";
+  replace() { this.m = () => "second"; }
+}
+function run<T>(o: T, change: (o: T) => void) {
+  const d = (o as { m?: unknown } | null)?.m;
+  change(o);
+  if (typeof d === "function") { console.log((d as () => string).call(o)); }
+}
+run(new A(), (o) => { o.m = () => "second"; });
+run(new A(), (o) => { o.replace(); });
+run(new A(), (o) => { ({ m: o.m } = { m: () => "second" }); });
+const keys = ["m"];
+run(new A(), (o) => { for (const k of keys) { (o as any)[k] = () => "second"; } });
+const h: any = { m: () => "second" };
+run(new A(), (o) => { for (const k of Object.keys(h)) { (o as any)[k] = h[k]; } });
+run(new A(), (o) => { Reflect.set(o as any, "m", () => "second"); });
+run(new A(), (o) => { const k = "m"; (o as any)[k] = () => "second"; });

@@ -1,0 +1,4 @@
+// A `number` field takes any number through a view of a `T`.
+const made = new Proxy({}, {});
+function f<T>(o: T) { const v = o as { a?: number } | null; if (v) { v.a = 1.5; } return v?.a; }
+console.log(f<{ a: number }>({ a: 1 }));

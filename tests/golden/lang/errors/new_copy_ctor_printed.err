@@ -1,0 +1,1 @@
+new_copy_ctor_printed.velt:7:16: error: a value of type `W` converts to `N` by copying its fields, and this program prints a `N`: Node would show the original object's fields, in its order

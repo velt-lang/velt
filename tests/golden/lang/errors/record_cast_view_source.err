@@ -1,0 +1,2 @@
+record_cast_view_source.velt:6:11: error: a value of type `{ a?: string }` converts to `Record<string, string | undefined>` by copying its fields, and this program assigns field `a`, which the other object would not see
+record_cast_view_source.velt:6:11: error: a value of type `{ a?: string }` converts to `Record<string, string | undefined>` by copying its fields, and a cast in this program makes a `{ a?: string }` a view of another object, whose writes the record would not see

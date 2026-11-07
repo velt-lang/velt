@@ -1367,7 +1367,9 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `Def::Adt`), which a write refuses. The `any` tables get slots 9 `AnySet (data, key, v) -> u8`
   and 10 `AnySetIndex (data, f64, v) -> u8` (velt_vir `lower/any_set.rs`; the slot owns `*v`),
   returning 0, 1 (not supported yet) or 3 (the fixed shape has no such member: Node would add
-  it). A program with a write makes `any` an identity interface in lowering, so an object type
+  it). A number stored in an integer type (a field, an element, a record value, a setter
+  parameter) is kept exactly or stops with a `TypeError`; a float narrowed rounds
+  (`lower/any_number.rs`). A program with a write makes `any` an identity interface in lowering, so an object type
   converted to `any` is one counted object, never a copy. A write through `any` counts as a
   write of the field it names (or, for a computed key, of every field) for `object_copies`.
 - `Intrinsic::AnyIsArray(x)` is `Array.isArray(x)` on a dynamic `x`: the class id word of an
@@ -1478,7 +1480,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   operands (`sequence.rs`). Without proxiable types nothing changes. Method calls through a proxy whose handler has a `get` trap
   (velt_vir `lower/proxy_method.rs`): in a program with proxiable types, `AnyGet` of a method
   name on a class object gives the method read as a value, a function value whose code is the
-  method's unbound thunk (env null; called on its own it throws a `TypeError`). A method call on
+  method's unbound thunk and whose env is one static object with null drop and clone entries, shared by all of them (called on its own it throws a `TypeError`). That env is what `Intrinsic::AnyUnboundMethod` tests: `(x: borrow any) -> bool`, whether `x` holds such a value, which no other function value does. `f.call(o)` of a value read as `o.m` uses it to call a function value as read and to read a method again (velt_sema `call_apply.rs`). A method with no value (generic, throwing, async, a generator) stops at the read. A method call on
   a proxiable class whose receiver holds such a proxy first runs `[RECORD_GET](name, receiver)` (after
   the receiver, before the other arguments) and checks that the answer is the method about to
   run read as a value (for a virtual call, the instance in the target's vtable entry); the call

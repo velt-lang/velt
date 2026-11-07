@@ -58,6 +58,12 @@ impl FnCx<'_, '_> {
         if self.cx.brand_base(h.ty).is_none() {
             return self.try_coerce_value(h, exp);
         }
+        // A brand as another of the same primitive whose object part it has.
+        if self.brand_assignable(h.ty, exp, h.span) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
         // A branded value converts as itself (`UserId` to `UserId | null`), else like its
         // primitive (a primitive never converts to a brand).
         match self.try_coerce_value(h, exp) {
@@ -127,6 +133,11 @@ impl FnCx<'_, '_> {
             Err(h) => h,
         };
         self.coerce_as_written(h, exp, false)
+            .or_else(|h| self.record_value_as(h, exp))
+            .or_else(|h| {
+                let span = h.span;
+                self.assignable_view(h, exp, span)
+            })
     }
 
     pub(super) fn try_coerce_typed(

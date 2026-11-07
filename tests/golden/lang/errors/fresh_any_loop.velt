@@ -1,0 +1,9 @@
+// A write in a loop that also hands the object on: the next round's write comes after it.
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+const p: any = { a: 1, b: 2 };
+const qs: { a: number }[] = [];
+for (const i of [1, 2]) {
+  p.a = i;
+  qs.push(seen(p));
+}
+console.log(qs[0].a);

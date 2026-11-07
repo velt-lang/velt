@@ -1,0 +1,6 @@
+// A brand where another of the same primitive is expected, when its object part has the other's
+// members: a token of one type where a token of any type is.
+type Token<T> = symbol & { __type?: T };
+const NAMES = Symbol("names") as Token<string[]>;
+function foreign(t: Token<unknown>): string | undefined { return t.description; }
+console.log(foreign(NAMES));

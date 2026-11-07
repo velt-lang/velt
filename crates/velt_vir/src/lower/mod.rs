@@ -593,6 +593,8 @@ struct FnLower<'c, 'h> {
     /// While an `AnyTo` with a text is lowered: the words its `TypeError` starts with
     /// (any_errors.rs).
     any_context: Option<String>,
+    /// Converting a value a write through `any` stores in an integer type (any_number.rs).
+    any_write: bool,
     /// The view bit tests and loops lowered, for versioning (view_unswitch.rs).
     view_loops: view_unswitch::ViewLoops,
     /// This function's read mode, once asked (rc.rs `lk_mode`).

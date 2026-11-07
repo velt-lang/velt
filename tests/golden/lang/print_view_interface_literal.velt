@@ -1,0 +1,7 @@
+// An interface's literal seen through a view prints as the plain object it is.
+const made = new Proxy({}, {});
+interface Cx { n: number; hello?(): string; }
+const m: Cx = { n: 1 };
+function viewed<T>(x: T) { return x as { n?: number } | null; }
+console.log(viewed(m));
+console.log(m as any);

@@ -1,0 +1,10 @@
+// A float narrowed rounds, as a typed write does; only an integer type stops.
+class C { d: f32 = 1; }
+const c = new C();
+const t = new C();
+const x: any = c;
+x.d = 0.1;
+t.d = 0.1;
+console.log(c.d, t.d);
+x.d = 1e40;
+console.log(c.d);

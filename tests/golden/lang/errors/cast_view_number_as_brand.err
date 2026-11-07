@@ -1,0 +1,1 @@
+cast_view_number_as_brand.velt:6:11: error: cannot cast `A` as `{ a: B; c?: string }`

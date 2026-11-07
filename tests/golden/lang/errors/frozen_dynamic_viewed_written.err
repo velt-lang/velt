@@ -1,0 +1,1 @@
+frozen_dynamic_viewed_written.velt:4:25: error: an `Object.freeze` result converted to a dynamic type, in a program that assigns field `n`, is not supported yet

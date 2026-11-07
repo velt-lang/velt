@@ -1,0 +1,1 @@
+TypeError: calling a method read through a proxy with another `this` is not supported yet (#823)

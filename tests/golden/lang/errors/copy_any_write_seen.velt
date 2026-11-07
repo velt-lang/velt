@@ -1,0 +1,10 @@
+// The receiver is no object made here: the write may reach the original, which the copy would not
+// see, and this program has no views.
+interface Options { mode: string; extra: number; }
+interface Part { mode: string; }
+function read(p: Part): string { return p.mode; }
+const opts: Options = { mode: "a", extra: 1 };
+const seen: any = opts;
+const k = "mode";
+seen[k] = "b";
+console.log(read(opts));

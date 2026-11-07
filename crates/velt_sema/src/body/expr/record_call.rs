@@ -94,6 +94,9 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
+        if method == velt_common::std_key!(record_extend) {
+            self.cx.object_copies.record_writes.push((obj.ty, span));
+        }
         let m = ast::Ident {
             name: method.to_string(),
             span,
@@ -144,6 +147,12 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         self.number_record_key(&obj, &key);
+        if method == velt_common::std_key!(record_set)
+            || method == velt_common::std_key!(record_delete)
+        {
+            let at = (obj.ty, span);
+            self.cx.object_copies.record_writes.push(at);
+        }
         let obj = self.unview(obj);
         let (mut def, mut slots, mut recv_ty, mut vslot) = self.record_method(obj.ty, method);
         let mut c = self.fn_callable(def, format!("method `{method}`"), span);

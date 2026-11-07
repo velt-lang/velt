@@ -1,0 +1,4 @@
+// A cast of a `T` is checked by no type: a number an `i32` field can't hold stops at the write.
+const made = new Proxy({}, {});
+function f<T>(o: T) { const v = o as { a?: number } | null; if (v) { v.a = 1.5; } return v?.a; }
+console.log(f<{ a: i32 }>({ a: 1 }));

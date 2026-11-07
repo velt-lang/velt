@@ -1,0 +1,1 @@
+record_cast_identity.velt:4:11: error: a value of type `{ a?: string }` converts to `Record<string, string | undefined>` by copying its fields, and this program compares `any` values with `===` or `!==`: two copies of one object are not `===`

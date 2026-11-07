@@ -1,0 +1,1 @@
+cast_view_brand_as_number.velt:6:11: error: cannot cast `A` as `{ a: f64; c?: string }`

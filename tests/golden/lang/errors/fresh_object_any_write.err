@@ -1,0 +1,1 @@
+fresh_object_any_write.velt:9:18: error: a value of type `Options` converts to `Part` by copying its fields, and this program assigns a field through `any`, which the other object would not see

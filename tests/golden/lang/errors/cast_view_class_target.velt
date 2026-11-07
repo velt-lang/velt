@@ -1,0 +1,6 @@
+// A class target has no view: its methods would run on another type's layout.
+const made = new Proxy({}, {});
+class K { name = "k"; hello() { return this.name; } }
+interface Cx { name: string; hello(): string; }
+const c: Cx = { name: "n", hello() { return "h"; } };
+console.log((c as K).name);

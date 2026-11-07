@@ -1,0 +1,8 @@
+// A view of a C struct never writes to a hidden copy: a read is right, and a write stops.
+const made = new Proxy({}, {});
+declare c struct P { x: f64; y: f64; }
+const p: P = { x: 1, y: 2 };
+const v = p as unknown as { x: number; z?: number };
+console.log(v.x);
+v.x = 5;
+console.log(p.x);

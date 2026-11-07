@@ -1,0 +1,7 @@
+// The same, an `i64` value held by the `any`.
+class C { a: u8 = 1; b: u64 = 1; }
+const c = new C();
+const x: any = c;
+const big: i64 = 300;
+x.a = big;
+console.log(c.a);

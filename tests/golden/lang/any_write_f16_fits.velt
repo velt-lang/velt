@@ -1,0 +1,6 @@
+// An `f16` written and read through `any`.
+class C { a: f16 = 1; }
+const c = new C();
+const x: any = c;
+x.a = 1.5;
+console.log(c.a, x.a);

@@ -1,0 +1,8 @@
+// An `i64` value that fits.
+class C { a: u8 = 1; b: u64 = 1; }
+const c = new C();
+const x: any = c;
+const big: i64 = 200;
+x.a = big;
+x.b = big;
+console.log(c.a, c.b);

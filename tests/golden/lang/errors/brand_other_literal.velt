@@ -1,0 +1,6 @@
+// Two brands of one primitive differ by the literal of their tag (TS2322).
+type A = string & { __brand: "A" };
+type B = string & { __brand: "B" };
+const a = "x" as A;
+const b: B = a;
+console.log(b);

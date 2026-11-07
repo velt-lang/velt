@@ -1,0 +1,12 @@
+// A copy of an object that came out of `any`, written after: refused whatever made the object
+// (Node prints 5 5).
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+function main() {
+  const p: any = Object.create(null);
+  p.a = 1;
+  p.b = 2;
+  const q = seen(p);
+  p.a = 5;
+  console.log(q.a, p.a);
+}
+main();

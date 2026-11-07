@@ -1,0 +1,9 @@
+// A conversion only printed, of a value no literal built, in a program with proxies: a proxy keeps
+// its identity through it, and a plain value stops (`Conversion::ProxyOnly`). Node prints the object.
+const made = new Proxy({}, {});
+type Sig = { a: number; b: number };
+type A = { a: number };
+const s = JSON.parse('{"a":1,"b":2}') as Sig;
+console.log("before");
+const v: A = s;
+console.log(v);

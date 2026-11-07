@@ -1,0 +1,5 @@
+// A record's value likewise.
+const r: Record<string, i32> = {};
+const x: any = r;
+x.k = 1.5;
+console.log(r["k"]);

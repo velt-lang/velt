@@ -10,6 +10,27 @@ use crate::body::FnCx;
 use crate::hir::{self, TyId};
 
 impl FnCx<'_, '_> {
+    /// `r[k]` of an open record (`record_reads`) where a type that holds no `undefined` is
+    /// expected and nothing else converts it. TypeScript types the read as `V` (without
+    /// `noUncheckedIndexedAccess`) and trusts that the key is there; Velt checks it, as it checks
+    /// `x!`: a missing key stops the program where Node would go on with `undefined`, which a `V`
+    /// here cannot hold. Tests and `||` take the read as it is, before any conversion.
+    pub(super) fn record_value_as(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let converts = self.cx.ty.nothing_of(h.ty) == Some(hir::Nothing::Undefined)
+            && self.cx.ty.opt_payload(h.ty) == Some(exp)
+            && self.f.record_reads.contains(&h.span);
+        if !converts {
+            return Err(h);
+        }
+        let span = h.span;
+        let msg = "TypeError: the record has no value at this key";
+        Ok(self.checked_present(h, msg, Some(exp), false, span))
+    }
+
     /// `obj.name` of a record (`obj` checked).
     pub(super) fn record_member_read(
         &mut self,

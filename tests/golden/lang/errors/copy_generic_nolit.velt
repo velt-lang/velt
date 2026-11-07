@@ -1,0 +1,9 @@
+// A conversion made per instance of a generic body has no literal to view, and a write shows it:
+// refused, also where no literal builds the source (Node prints 2).
+const made = new Proxy({}, {});
+type Tag = { tag: string };
+function f<T extends { a: number }>(x: T & Tag): T { return x; }
+const o = JSON.parse('{"a":1,"tag":"t"}') as { a: number; tag: string };
+const v = f<{ a: number }>(o);
+v.a = 2;
+console.log(o.a);

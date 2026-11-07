@@ -1,0 +1,7 @@
+// A view writes what its type holds, and an `i32` can't hold every `number`.
+const made = new Proxy({}, {});
+interface H { a: i32; f(): void; }
+const h: H = { a: 1, f() {} };
+const v = h as { a: number; c?: string };
+v.a = 1.5;
+console.log(v.a);

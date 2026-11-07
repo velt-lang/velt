@@ -1,0 +1,7 @@
+// The same, `-1` as an `i64` in a `u64` field, the same bits as its largest value.
+class C { b: u64 = 1; }
+const c = new C();
+const x: any = c;
+const big: i64 = -1;
+x.b = big;
+console.log(c.b);

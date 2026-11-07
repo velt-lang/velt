@@ -1,0 +1,8 @@
+// A record cast of a view: a write to the object its source views would not show.
+const made = new Proxy({}, {});
+interface W { a: string; hello(): string; }
+const w: W = { a: "x", hello() { return "h"; } };
+const v = w as { a?: string };
+const r = v as Record<string, string | undefined>;
+w.a = "changed";
+console.log(r["a"]);

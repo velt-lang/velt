@@ -1,0 +1,6 @@
+// The same, 2^63 in an `i64` field, which reads back as 2^63 once saturated.
+class C { a: i64 = 1; }
+const c = new C();
+const x: any = c;
+x.a = 9223372036854775808;
+console.log(c.a);

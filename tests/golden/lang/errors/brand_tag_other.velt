@@ -1,0 +1,6 @@
+// The object part does not fit (TS2322), nor does another primitive.
+type Id = string & { __id?: number };
+type Other = string & { __id?: string };
+function f(o: Other): void {}
+const i = "a" as Id;
+f(i);

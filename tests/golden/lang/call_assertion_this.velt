@@ -1,0 +1,20 @@
+// `(f as () => void).call(o)` of a method read from `o`: an assertion changes no value.
+class C {
+  n = 1;
+  dispose(): number { return this.n; }
+}
+function close(instance: C): number {
+  const dispose: unknown = instance.dispose;
+  return typeof dispose === "function" ? 1 : 0;
+}
+console.log(close(new C()));
+const made = new Proxy({}, {});
+function run<T>(instance: T): unknown[] {
+  const dispose = (instance as { dispose?: unknown } | null)?.dispose;
+  const out: unknown[] = [];
+  if (typeof dispose === "function") {
+    out.push((dispose as () => unknown).call(instance));
+  }
+  return out;
+}
+console.log(run(new C()), run({ a: 1 }));

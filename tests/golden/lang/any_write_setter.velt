@@ -1,0 +1,6 @@
+// A setter's parameter likewise.
+class C { #a: i32 = 1; get a(): i32 { return this.#a; } set a(v: i32) { this.#a = v; } }
+const c = new C();
+const x: any = c;
+x.a = 1.5;
+console.log(c.a);

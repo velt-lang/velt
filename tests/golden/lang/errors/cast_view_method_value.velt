@@ -1,0 +1,10 @@
+// A view whose member a class has as a method would call a method read as a value, which has no
+// `this` yet: refused where the source's type shows it.
+const made = new Proxy({}, {});
+class K { n = 1; inc() { return ++this.n; } }
+class S extends K {}
+const k = new K();
+const v = k as { inc(): number; q?: number };
+console.log(v.inc());
+const s = new S() as { inc?: () => number };
+console.log(s.inc?.());
