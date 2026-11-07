@@ -3,7 +3,7 @@
 //! checks whose breaks no other test saw.
 
 use super::*;
-use crate::url_source::{fetch, Verified};
+use crate::url_source::{fetch, UrlSpec, Verified};
 
 /// A URL nothing listens on: an `https` download from it fails at once.
 fn closed_https(path: &str) -> String {
@@ -464,4 +464,84 @@ fn a_build_that_is_no_longer_a_no_op_checks_fetched_files() {
     );
     std::fs::remove_dir_all(&raw).unwrap();
     e.install(&app).unwrap().graph.verify_fetched().unwrap();
+}
+
+#[test]
+fn concurrent_installs_of_one_archive_download_it_once() {
+    // The archive's lock: the first downloads and extracts, the others wait and find its tree.
+    let e = env();
+    let s = Serve::new();
+    let archive = vue();
+    s.put("/vue.tar.gz", Body::Bytes(archive.clone()));
+    let spec = UrlSpec {
+        url: s.url("/vue.tar.gz"),
+        sha256: hex(&archive),
+        strip: 1,
+        subdir: Some("packages/vue".into()),
+    };
+    let check = crate::tree_stamp::TreeCheck::Files;
+    let done: Vec<_> = std::thread::scope(|scope| {
+        let runs: Vec<_> = (0..8)
+            .map(|_| scope.spawn(|| super::super::super::checkout(&e.loc, &spec, (None, check))))
+            .collect();
+        runs.into_iter().map(|r| r.join().unwrap()).collect()
+    });
+    assert!(done.iter().all(Result::is_ok), "{done:?}");
+    assert_eq!(s.requests(), 1);
+    // A second URL of it recorded by several at once: each URL kept.
+    let other = (1..=4)
+        .map(|i| format!("{}?mirror={i}", spec.url))
+        .collect::<Vec<_>>();
+    let loc = &e.loc;
+    std::thread::scope(|scope| {
+        for url in &other {
+            let spec = UrlSpec {
+                url: url.clone(),
+                ..spec.clone()
+            };
+            scope.spawn(move || super::super::super::checkout(loc, &spec, (None, check)).unwrap());
+        }
+    });
+    let record = Verified::read(&raw(&e, &archive)).unwrap();
+    assert!(other.iter().all(|u| record.knows(u)), "{:?}", record.urls);
+}
+
+#[test]
+fn a_credential_in_the_query_is_warned_of_and_an_ordinary_query_is_not() {
+    let e = env();
+    let s = Serve::new();
+    let archive = vue();
+    s.put("/vue.tar.gz", Body::Bytes(archive.clone()));
+    let install = |query: &str| {
+        let url = format!("{}?{query}", s.url("/vue.tar.gz"));
+        let app = e.app(
+            &dep(&url, &archive, ", strip: 1, path: \"packages/vue\""),
+            "",
+        );
+        e.install(&app).unwrap().warnings
+    };
+    for query in [
+        "token=abc",
+        "v=1&X-Amz-Signature=f00",
+        "Private_Token=x",
+        "sig=y&sv=2020",
+    ] {
+        let warnings = install(query);
+        assert!(
+            (warnings.iter()).any(|w| w.contains("looks like a credential") && w.contains("`vue`")),
+            "{query}: {warnings:?}"
+        );
+    }
+    for query in ["v=1", "download=1&tokenized=yes", "keys=a"] {
+        let warnings = install(query);
+        assert!(
+            !(warnings.iter()).any(|w| w.contains("credential")),
+            "{query}: {warnings:?}"
+        );
+    }
+    // A fragment isn't the query.
+    assert_eq!(
+        crate::url_source::credential_warning("x", "https://h/a.tgz#token=1"),
+        None
+    );
 }
