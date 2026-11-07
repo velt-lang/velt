@@ -68,3 +68,28 @@ export function test_bad_strings() {
   }
   assertEq(rejected("postgres://u@h/d?sslmode=verify-ca&sslrootcert=/no/such.pem"), "ETLS");
 }
+
+function messageOf(s: string): string {
+  try {
+    parseConfig(s);
+  } catch (e) {
+    return e.message.clone();
+  }
+  return "accepted";
+}
+
+// Errors end up in logs: a string that looks like a URL with a password is never quoted in one.
+export function test_errors_never_quote_a_password() {
+  for (const s of [
+    "postgress://app:hunter2@db/app",
+    "postgresql+ssl://app:hunter2@db/app?sslmode=require",
+    "app:hunter2@db/app",
+    "postgres://app:hunter2@db/app?hunter2@x",
+  ]) {
+    const m = messageOf(s);
+    assert(m.startsWith("invalid connection string"), m);
+    assert(!m.includes("hunter2"), m);
+  }
+  // Keys that can't hold one are still named.
+  assert(messageOf("nonsense=1").includes("`nonsense`"), messageOf("nonsense=1"));
+}

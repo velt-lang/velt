@@ -1,7 +1,9 @@
 // A task that goes away while it holds or waits for something (a request whose client disconnected:
 // the runtime drops its task, and every value it held). The line must go on, and a pool must get back
 // what it lent. Each helper here ends the way a dropped task does: its local value is dropped.
-import { Waiting, finish, readWhole, simple, takeTurn } from "../src/connection";
+import { Waiting, finish, park, readWhole, simple, takeTurn } from "../src/connection";
+import { Lent } from "../src/lent";
+import { timeout } from "velt/task";
 import { parseConfig } from "../src/config";
 import { Conn } from "../src/line";
 import { Sent } from "../src/sent";
@@ -143,4 +145,55 @@ export async function test_a_task_gone_while_connecting_gives_its_leave_back() {
   giveUpOpening(pool);
   assertEq(pool.with((p) => p.take()).status, TAKE_OPEN);
   pool.with((p) => p.end());
+}
+
+// The first in line waits at home while the one before it is about to send the `Input` there, parked
+// as an idle line leaves it; then it goes away. The `Input` it is sent is dropped unparked, so it
+// reads what that request was owed, and the next one gets its own.
+export async function test_a_first_in_line_gone_before_its_turn_came_leaves_the_line_in_step() {
+  const conn = await connected([join([done("UPDATE 1"), done("UPDATE 2")])]);
+  const home = conn.with((l) => l.homeChannel);
+  const input = home.tryReceive();
+  assert(input != null, "the line is idle");
+  const s = conn.with((l) => l.sendSimple(1, "a"));
+  assert(s.first, "first in line");
+  waitAtHomeAndGo(home);
+  if (input != null) {
+    park(home, input);
+  }
+  // timing: a hang guard; the reply owed to "a" is read by the dropped `Input`
+  assertEq(await timeout(simple(conn, 1, "b"), 10000), 2);
+  conn.with((l) => l.shutDownWhenIdle());
+}
+
+function waitAtHomeAndGo(home: Channel<Input>) {
+  const waiting = new Waiting(home, true);
+  assert(!waiting.released, "it's waiting");
+}
+
+// A task inside `pool.transaction` goes away: the connection is closed, never reused (it may be in
+// a transaction, holding locks), and the pool may open another.
+export async function test_a_transaction_whose_task_went_away_closes_its_connection() {
+  const pool = poolOf(fakeUrl(await serve([])));
+  const conn = await borrow(pool);
+  leaveMidTransaction(pool, conn);
+  assert(conn.with((l) => l.isLost), "closed");
+  assertEq(pool.with((p) => p.idleCount), 0);
+  assertEq(pool.with((p) => p.take()).status, TAKE_OPEN);
+  pool.with((p) => p.end());
+}
+
+function leaveMidTransaction(pool: PoolHandle, conn: Conn) {
+  const lent = new Lent(pool, conn, conn.with((l) => l.lease()));
+  assert(!lent.released, "it's lent");
+}
+
+// A connection that comes back to a pool ended a moment before is closed, not left neither idle nor
+// closed.
+export async function test_a_connection_back_after_the_pool_ended_is_closed() {
+  const pool = poolOf(fakeUrl(await serve([])));
+  const conn = await borrow(pool);
+  pool.with((p) => p.end());
+  assert(pool.with((p) => p.arrived(conn)) == null, "nobody waits");
+  assert(conn.with((l) => l.isLost), "closed");
 }

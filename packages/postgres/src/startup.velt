@@ -25,9 +25,6 @@ import { Prepared } from "./prepared";
 import { addressOf, ioError, socket } from "./socket";
 import { Scram } from "./scram";
 
-// A server that doesn't get through the startup in this long is given up on.
-const STARTUP_TIMEOUT_MS: f64 = 30000;
-
 const AUTH_OK: i64 = 0;
 const AUTH_CLEARTEXT: i64 = 3;
 const AUTH_MD5: i64 = 5;
@@ -37,9 +34,14 @@ const AUTH_SASL_FINAL: i64 = 12;
 
 const SCRAM_SHA_256 = "SCRAM-SHA-256";
 
+/** The user to log in as: the connection string's, or as libpq has it, the system's. */
+export function userOf(c: PgConfig): string {
+  return c.user ?? process.env.USER ?? process.env.USERNAME ?? "";
+}
+
 // The `StartupMessage`'s parameters.
 function startupPairs(c: PgConfig): string[] {
-  const user = c.user ?? process.env.USER ?? process.env.USERNAME ?? "";
+  const user = userOf(c);
   const pairs = ["client_encoding", "UTF8", "user", user];
   const db = c.dbname;
   if (db != null) {
@@ -202,7 +204,7 @@ async function authenticate(c: PgConfig, input: Input, deadline: f64) {
     if (kind == AUTH_CLEARTEXT) {
       passwordMessage(o, password);
     } else if (kind == AUTH_MD5 && size >= 13) {
-      const user = c.user ?? process.env.USER ?? "";
+      const user = userOf(c);
       const inner = md5Hex(utf8Encode(`${password}${user}`));
       const salted = utf8Encode(inner).concat(b.slice(at + 9, at + 13));
       passwordMessage(o, `md5${md5Hex(salted)}`);
@@ -224,7 +226,7 @@ async function attempt(
   address: string,
   none: shared<Prepared>,
 ): Promise<Conn> throws PgError {
-  const deadline = performance.now() + STARTUP_TIMEOUT_MS;
+  const deadline = performance.now() + (c.startupTimeoutMs as f64);
   const stream = await socket(c, address, host, deadline);
   const input = new Input(stream, none);
   try {

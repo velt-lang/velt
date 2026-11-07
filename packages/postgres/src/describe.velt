@@ -1,7 +1,7 @@
 // postgres (internal): the server's description of a statement, and what `Prepared` needs of it: the
 // types by name and codec, from pg_type.velt, or from the catalog for one it doesn't know.
 
-import { cstrEnd, i16At, PARAMETER_DESCRIPTION, ROW_DESCRIPTION, u32At } from "./backend";
+import { cstrEnd, i16At, PARAMETER_DESCRIPTION, ROW_DESCRIPTION, u16At, u32At } from "./backend";
 import { PgError } from "./errors";
 import { invalid, protocol } from "./failure";
 import { catalogType, knownType, PgType } from "./pg_type";
@@ -34,11 +34,12 @@ function described(input: Input): Description {
     const size = u32At(b, p + 1) + 1;
     const end = p + size;
     if (tag == PARAMETER_DESCRIPTION) {
-      if (size < 7 || i16At(b, p + 5) * 4 > end - (p + 7) || i16At(b, p + 5) < 0) {
+      // The count is unsigned: a statement may have up to 65535 parameters.
+      if (size < 7 || u16At(b, p + 5) * 4 > end - (p + 7)) {
         d.problem = "a bad ParameterDescription";
         return d;
       }
-      const n = i16At(b, p + 5);
+      const n = u16At(b, p + 5);
       for (let i: i64 = 0; i < n; i++) {
         d.params.push(u32At(b, p + 7 + 4 * i));
       }

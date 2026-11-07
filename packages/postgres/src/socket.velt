@@ -1,34 +1,42 @@
 // postgres (internal): the socket under a connection.
 //
-// TLS: PostgreSQL 17's direct negotiation is what velt/net can do, a TLS connection from its first
-// byte with the ALPN protocol "postgresql". The older `SSLRequest` upgrade needs a plain socket to
-// turn into a TLS one, and velt/net has no such upgrade; nor can it accept a certificate unchecked.
-// So `require` and `verify-ca` are as strict as `verify-full` here. `prefer` asks with `SSLRequest`
-// whether the server has TLS at all and goes on in plain text only if it doesn't. A server that
-// offers TLS gets direct TLS, and a failure there is "ETLS", never plain text: libpq would use TLS
-// with the certificate unchecked, which velt/net can't do yet (README.md, "TLS").
+// TLS, as libpq has it:
+// - `disable`: plain text.
+// - `prefer` and `require`: `SSLRequest` on a plain socket. `S` upgrades that socket with velt/net's
+//   `startTls`, encrypted but with no certificate check (tls_relay.velt). `N` means the server has no
+//   TLS: plain text under `prefer`, a failure under `require`. Any other answer is a failure. Plain
+//   text comes only from an `N`, never from a failed handshake.
+// - `verify-ca` and `verify-full`: PostgreSQL 17's direct TLS (ALPN "postgresql") with the
+//   certificate checked, through velt/net's `connectTls`; `startTls` can't check one yet.
+//
+// The answer to `SSLRequest` is read one byte at a time, so nothing the server sent in plain text
+// after it is taken for part of the TLS stream (libpq's CVE-2021-23222). Every handshake ends by the
+// connection's deadline.
 
 import { IoError } from "velt/io";
-import { connect as tcpConnect, connectTls, TlsConnectOptions } from "velt/net";
+import { connect as tcpConnect, connectTls, TcpStream, TlsConnectOptions } from "velt/net";
 import { timeout, TimeoutError } from "velt/task";
-import { PgConfig, SSL_DISABLE, SSL_PREFER } from "./config";
+import { PgConfig, SSL_DISABLE, SSL_PREFER, SSL_REQUIRE } from "./config";
 import { errorOf, PgError } from "./errors";
 import { connectionClosed, Failure, failure } from "./failure";
 import { Out, sslRequest } from "./frontend";
+import { uncheckedTls } from "./tls_relay";
 import { PgStream } from "./transport";
 
 // The ALPN protocol direct TLS needs.
 const POSTGRES_ALPN = "postgresql";
 
-// What a timed out `SSLRequest` reports.
-const HANDSHAKE_MS: i64 = 30000;
+// What a server answers to `SSLRequest`.
+const TLS_YES: u8 = 83;
+const TLS_NO: u8 = 78;
 
 function tlsFailure(host: string, why: string): Failure {
-  return failure(
-    "ETLS",
-    `TLS to ${host} failed: ${why} (this driver has only direct TLS with the certificate checked, so a server needs PostgreSQL 17 or later and a certificate the name and sslrootcert verify; TLS without the check, as libpq's prefer and require use, and the SSLRequest upgrade aren't supported yet, and a server that offers TLS never gets plain text; sslmode=disable connects without TLS)`,
-  );
+  return failure("ETLS", `TLS to ${host} failed: ${why}`);
 }
+
+// What a checked TLS connection needs, in a failure's message.
+const CHECKED_NEEDS =
+  "verify-ca and verify-full use direct TLS, so the server needs PostgreSQL 17 or later and a certificate that sslrootcert or Mozilla's roots verify, name included under verify-full";
 
 /** `host:port`, an IPv6 host in brackets. */
 export function addressOf(host: string, port: i64): string {
@@ -49,30 +57,42 @@ export function ioError(e: Error): PgError {
   return new PgError("UNKNOWN", e.message);
 }
 
+// What is left of the deadline, at least 1 ms (a deadline already past fails at the next wait).
+function leftOf(deadline: f64): i64 {
+  const left = deadline - performance.now();
+  return left < 1 ? 1 : (left as i64);
+}
+
+function timedOut(): PgError {
+  return new PgError("ETIMEDOUT", "connection timed out");
+}
+
 // Connects without TLS.
-async function plainSocket(c: PgConfig, address: string): Promise<PgStream> throws PgError {
+async function plainSocket(address: string, deadline: f64): Promise<PgStream> throws PgError {
   try {
-    if (c.connectTimeoutMs > 0) {
-      return await timeout(tcpConnect(address), c.connectTimeoutMs);
-    }
-    return await tcpConnect(address);
+    return await timeout(tcpConnect(address), leftOf(deadline));
   } catch (e) {
     throw ioError(e);
   }
 }
 
-// Connects with direct TLS.
-async function tlsSocket(
+function closeNow(s: TcpStream) {
+  s.abort();
+  s.close();
+}
+
+// Connects with direct TLS and the certificate checked; the server must agree to ALPN "postgresql",
+// as libpq requires of a direct connection.
+async function checkedTls(
   c: PgConfig,
   address: string,
   name: string,
+  deadline: f64,
 ): Promise<PgStream> throws PgError {
   const opts: TlsConnectOptions = { serverName: name, ca: c.rootCert, alpn: [POSTGRES_ALPN] };
+  let s: TcpStream;
   try {
-    if (c.connectTimeoutMs > 0) {
-      return await timeout(connectTls(address, opts), c.connectTimeoutMs);
-    }
-    return await connectTls(address, opts);
+    s = await timeout(connectTls(address, opts), leftOf(deadline));
   } catch (e) {
     if (
       e instanceof IoError &&
@@ -81,14 +101,28 @@ async function tlsSocket(
       throw ioError(e);
     }
     if (e instanceof TimeoutError) {
-      throw ioError(e);
+      throw timedOut();
     }
-    throw errorOf(tlsFailure(name, e.message));
+    throw errorOf(tlsFailure(name, `${e.message} (${CHECKED_NEEDS})`));
   }
+  let agreed: string | null = null;
+  try {
+    agreed = await timeout(s.alpnProtocol(), leftOf(deadline));
+  } catch (e) {
+    closeNow(s);
+    throw ioError(e);
+  }
+  if (agreed != POSTGRES_ALPN) {
+    closeNow(s);
+    throw errorOf(
+      tlsFailure(name, `the server did not agree to ALPN "${POSTGRES_ALPN}" (${CHECKED_NEEDS})`),
+    );
+  }
+  return s;
 }
 
-// Asks a plain socket whether the server has TLS.
-async function serverOffersTls(s: PgStream, deadline: f64): Promise<bool> throws PgError {
+// Sends `SSLRequest` on a plain socket; the server's one-byte answer.
+async function sslAnswer(s: PgStream, deadline: f64): Promise<u8> throws PgError {
   const o = new Out(16);
   sslRequest(o);
   const buf: u8[] = Buffer.alloc(1);
@@ -97,18 +131,62 @@ async function serverOffersTls(s: PgStream, deadline: f64): Promise<bool> throws
     while (true) {
       const left = deadline - performance.now();
       if (left <= 0 || !(await s.readableWithin(left))) {
-        throw new TimeoutError(HANDSHAKE_MS);
+        throw timedOut();
       }
       const n = s.tryRead(buf, 0, 1);
       if (n == null) {
         throw errorOf(connectionClosed());
       }
       if (n > 0) {
-        return buf[0] == 83;
+        return buf[0];
       }
     }
   } catch (e) {
     throw ioError(e);
+  }
+}
+
+// What an answer to `SSLRequest` other than `S` or `N` is called in a message.
+function answerText(b: u8): string {
+  return b >= 32 && b < 127 ? `"${String.fromCharCode(b as number)}"` : `byte ${b}`;
+}
+
+// `SSLRequest`, then TLS without a certificate check after `S`, plain text after `N` under `prefer`.
+async function negotiated(
+  c: PgConfig,
+  plain: TcpStream,
+  name: string,
+  deadline: f64,
+): Promise<PgStream> throws PgError {
+  let answer: u8 = 0;
+  try {
+    answer = await sslAnswer(plain, deadline);
+  } catch (e) {
+    closeNow(plain);
+    throw e;
+  }
+  if (answer == TLS_NO) {
+    if (c.sslMode == SSL_PREFER) {
+      return plain;
+    }
+    closeNow(plain);
+    throw errorOf(
+      tlsFailure(name, "the server does not support TLS, and sslmode=require asks for it"),
+    );
+  }
+  if (answer != TLS_YES) {
+    closeNow(plain);
+    throw errorOf(
+      tlsFailure(name, `the server answered SSLRequest with ${answerText(answer)}, not "S" or "N"`),
+    );
+  }
+  try {
+    return await uncheckedTls(plain, name, POSTGRES_ALPN, leftOf(deadline));
+  } catch (e) {
+    if (e instanceof TimeoutError) {
+      throw timedOut();
+    }
+    throw errorOf(tlsFailure(name, e.message));
   }
 }
 
@@ -119,26 +197,12 @@ export async function socket(
   name: string,
   deadline: f64,
 ): Promise<PgStream> throws PgError {
-  if (c.sslMode > SSL_PREFER) {
-    return await tlsSocket(c, address, name);
+  if (c.sslMode > SSL_REQUIRE) {
+    return await checkedTls(c, address, name, deadline);
   }
-  const plain = await plainSocket(c, address);
+  const plain = await plainSocket(address, deadline);
   if (c.sslMode == SSL_DISABLE) {
     return plain;
   }
-  let offered = false;
-  try {
-    offered = await serverOffersTls(plain, deadline);
-  } catch (e) {
-    plain.abort();
-    plain.close();
-    throw e;
-  }
-  if (!offered) {
-    return plain;
-  }
-  // The server has TLS: never plain text from here on, even when TLS fails.
-  plain.abort();
-  plain.close();
-  return await tlsSocket(c, address, name);
+  return await negotiated(c, plain, name, deadline);
 }

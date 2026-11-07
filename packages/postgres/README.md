@@ -103,26 +103,26 @@ The full guide: https://veltlang.com/docs/packages/postgres/.
   `"ECLOSED"` (closed client or ended pool), `"EINVAL"` (connection string or parameters),
   `"ETLS"`, `"ENOTSUP"` (a column type that can't be decoded) and `"EMISMATCH"` (a row that
   doesn't fit `T`).
-- **TLS** goes through `velt/net`, which connects with TLS from the first byte: PostgreSQL 17's
-  direct negotiation (ALPN `postgresql`), with the certificate always checked against Mozilla's
-  roots and the PEM file named by `sslrootcert`, name included.
+- **TLS**, as libpq has it, through `velt/net`:
   - `disable` is plain text.
-  - `prefer` (the default) asks with `SSLRequest` whether the server has TLS. A server without TLS
-    goes on in plain text on that socket. A server with TLS is reopened with direct TLS, and if that
-    fails the connection fails with `"ETLS"`: a server that offers TLS never gets plain text.
-  - `require`, `verify-ca` and `verify-full` all connect with direct TLS and are equally strict: a
-    failure is `"ETLS"`, never plain text.
+  - `prefer` (the default) and `require` send `SSLRequest`. A server that answers `S` gets TLS on
+    that socket (velt/net's `startTls`), encrypted but **without a certificate check**, as libpq
+    does: it keeps out passive listeners, not someone who can intercept the connection. A server
+    that answers `N` has no TLS: `prefer` goes on in plain text, `require` fails with `"ETLS"`. Any
+    other answer, and any failed handshake, is `"ETLS"`: plain text comes only from an `N`. This
+    works with any server version, and with a self-signed certificate such as Debian and Ubuntu
+    install.
+  - `verify-ca` and `verify-full` use PostgreSQL 17's direct TLS (ALPN `postgresql`, which the
+    server must agree to) with the certificate checked against Mozilla's roots and the PEM file
+    named by `sslrootcert`, the name too under `verify-full`. They need PostgreSQL 17 or later.
+    `verify-full` is the mode that authenticates the server.
 
-  **Not yet like libpq.** libpq's `prefer` and `require` upgrade the socket after `SSLRequest` and
-  use TLS without checking the certificate, so a server with a self-signed certificate, or one older
-  than 17, still gets an encrypted connection. Here they fail with `"ETLS"` under every mode but
-  `disable`, until `velt/net` can upgrade a plain socket and connect without checking the
-  certificate. Plain text in their place is not an option: only a server without TLS gets it.
-  `sslnegotiation=postgres` is accepted and changes nothing, for that reason. `verify-full` is the
-  mode that authenticates the server. As in the Rust driver and unlike libpq, a server that refuses
-  a TLS connection (`hostnossl`) is not tried again in plain text. Under `prefer` a server with TLS
-  takes two connections to open one, and an older one logs "invalid length of startup packet" for
-  the direct attempt. SCRAM channel binding isn't offered.
+  The answer to `SSLRequest` is read one byte at a time, so nothing sent in plain text after it is
+  taken for part of the encrypted stream (libpq's CVE-2021-23222). The handshake ends by the
+  connection's deadline: `connect_timeout`, else 30 seconds for the whole opening of each host.
+  `sslnegotiation` is accepted and changes nothing: `prefer` and `require` always ask first, and the
+  checked modes always go direct. A server that refuses a TLS connection (`hostnossl`) is not tried
+  again in plain text. SCRAM channel binding isn't offered.
 - **SCRAM** has no SASLprep, since std has no Unicode normalization: a password goes as its own UTF-8
   bytes. ASCII passwords and those already in Unicode's compatibility normal form (NFKC) work. One
   that SASLprep would change (`Ⅸ` for `IX`, a no-break space, a soft hyphen) is refused by the
@@ -173,10 +173,24 @@ async function main() {
 ```
 
 Notes: after `close()` or `end()` through one copy of a `Client` or `Pool`, every copy throws
-`"ECLOSED"` (closing again does nothing). A pooled connection that is still in a transaction
-when its client is closed is dropped rather than reused. A connection idle over 100 ms has its socket
-looked at before a pool hands it out, so one the server closed is replaced; one closed within that
-time fails its next statement with `"ECONNRESET"`.
+`"ECLOSED"` (closing again does nothing). A pooled connection goes back to the pool only when nothing
+is in flight on it: one still in a transaction, with a statement still running (one given up on with
+`timeout`), or with a `COPY` still open when its client is closed is dropped rather than reused, and
+an open `COPY`'s reader or writer then fails with `"ECONNRESET"`.
+
+A task that stops waiting (`timeout`, a lost `Promise.race`) is not dropped in Velt: its statement,
+or `pool.transaction`'s body, runs on to its end, and the connection goes back then. A task that
+panics under `catchPanic` (what `http-server` does with a handler that panics) is abandoned with
+nothing it held dropped, so a connection it held, from `pool.connect()`, `pool.transaction` or a
+one-statement call, never goes back: the pool has one connection less until `end()`. Should the
+runtime drop a task (nothing does today), its values are dropped and neither its `catch` nor its
+`finally` runs: a `pool.transaction` connection is then closed, so the server rolls back, and the
+pool may open another; a one-statement call's connection goes back once its reply is read; but a
+`Client` from `pool.connect()` is a Copy handle with nothing to drop, so its connection never goes
+back.
+
+A connection idle over 100 ms has its socket looked at before a pool hands it out, so one the server
+closed is replaced; one closed within that time fails its next statement with `"ECONNRESET"`.
 
 ## How it works
 
@@ -184,9 +198,10 @@ A request takes no hop through another task, and a connection has no task of its
 lock the caller queues its bytes on the socket and takes its place in the line for replies; its own
 task sends them when it next waits. The reading end (`Input`) is held by the request whose replies come
 next: it reads in its own task, decodes the rows right out of the read buffer, and hands the `Input` to
-the next in line. Parameters are encoded in place for the types the server inferred. A task that goes
-away while waiting (a `timeout` around a query) drops what it held, and a task starts to read what the
-server still owes, so the next request finds the connection in step.
+the next in line. Parameters are encoded in place for the types the server inferred. A task dropped
+while it waits or reads drops what it held, and a task starts to read what the server still owes, so
+the next request finds the connection in step; a task given up on with `timeout` is not dropped, and
+reads its own reply.
 
 ## Layout and tests
 
@@ -196,18 +211,20 @@ server still owes, so the next request finds the connection in step.
   `connection.velt` (requests), `ops.velt` (what `Client` and `Pool` share), `builder.velt` and
   `encoder.velt` (a request's bytes), `input.velt`, `read_buffer.velt` and `reply.velt` (a reply, and
   rows through velt/db's `readRows`), `drain.velt` (after a task went away), `startup.velt`,
-  `socket.velt`, `transport.velt` (the stream under it), `config.velt`, `describe.velt`, `prepared.velt`
+  `socket.velt`, `tls_relay.velt` (TLS without a certificate check), `transport.velt` (the stream
+  under it), `config.velt`, `describe.velt`, `prepared.velt`
   and `statement_cache.velt` (statements), `copy_state.velt`.
 - The pool: `pool_state.velt` (the state behind its lock), `grant.velt`, `taken.velt`,
-  `waiting_for_pool.velt`, `opening.velt`, `pool_options.velt`.
+  `waiting_for_pool.velt`, `opening.velt`, `lent.velt`, `pool_options.velt`.
 - The protocol: `frontend.velt`, `backend.velt`, `scram.velt`, `md5.velt`, `placeholders.velt`,
   `pg_type.velt`, `values.velt`, `temporal.velt`, `network.velt`, `array_json.velt`, `json_params.velt`.
-- `tests/`: `velt test` in this directory. `values`, `auth`, `config`, `placeholders` and
-  `fake_server` need no server; the rest need one: set `VELT_TEST_PG_URL`
+- `tests/`: `velt test` in this directory. `values`, `auth`, `config`, `placeholders`,
+  `fake_server`, `negotiation`, `abandon`, `line`, `wire` and `encoder` need no server; the rest need one: set `VELT_TEST_PG_URL`
   (`postgres://user:password@host/db`), without which they do nothing. `VELT_TEST_PG_MD5_URL`,
   `VELT_TEST_PG_SCRAM_URL` and `VELT_TEST_PG_TLS_URL` add the password exchanges and TLS;
   `VELT_TEST_PG_TLS_UNTRUSTED_URL` (a server with TLS that nothing verifies) and
   `VELT_TEST_PG_PLAIN_URL` (one without TLS), both without `sslmode`, what each `sslmode` does. The
-  repository's `scripts/linux-check.sh --services` starts a server, as CI does.
+  repository's `scripts/linux-check.sh --services` starts a server, as the nightly CI does; it sets
+  only `VELT_TEST_PG_URL`.
 
 `src/` uses only public std APIs: velt/db (`readRows`, `writeParams`), velt/net, velt/crypto.

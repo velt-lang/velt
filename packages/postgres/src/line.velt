@@ -42,6 +42,11 @@ export class Line {
   pool: PoolHandle | null = null;
   /** A one-statement borrow is under way: when its task is gone, the connection goes back. */
   borrowed: bool = false;
+  /**
+   * A `COPY`'s reader or writer is open: its request stays first in line and the `Input` waits at
+   * home for its next call, so nothing else in line can go on until it ends.
+   */
+  copyOpen: bool = false;
   /** The server's transaction status after the last reply. */
   status: u8 = 73;
   /** What failed on this client. */
@@ -324,9 +329,18 @@ export class Line {
     return this.lostIt;
   }
 
-  /** It can go back in a pool: unbroken, and nothing open on the session. */
+  /**
+   * It can go back in a pool: unbroken, idle outside a transaction, and nothing in flight. A request
+   * still in line may leave a transaction open, and a `COPY` still open never lets the next one go.
+   */
   get reusable(): bool {
-    return !this.lostIt && this.depth == 0 && (this.status == 73 || this.head < this.slots.length);
+    return (
+      !this.lostIt &&
+      this.depth == 0 &&
+      this.status == 73 &&
+      this.head == this.slots.length &&
+      !this.copyOpen
+    );
   }
 
   /** A new user of a pooled connection: its number. */
@@ -344,9 +358,16 @@ export class Line {
     return true;
   }
 
-  /** Ends the connection, at once or when the line empties. */
+  /**
+   * Ends the connection, at once or when the line empties. An open `COPY` would keep the line from
+   * ever emptying, so then it ends at once: the reader's or writer's next call fails.
+   */
   shutDownWhenIdle() {
     if (this.lostIt) {
+      return;
+    }
+    if (this.copyOpen) {
+      this.lost();
       return;
     }
     if (this.head == this.slots.length) {

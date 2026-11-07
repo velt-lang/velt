@@ -25,8 +25,13 @@ export class PgConfig {
   hosts: string[] = [];
   hostaddrs: string[] = [];
   ports: i64[] = [];
-  /** Per host, in milliseconds; 0 for none. */
+  /** `connect_timeout`, in milliseconds; 0 for none. */
   connectTimeoutMs: i64 = 0;
+  /**
+   * How long one host gets to open: the TCP connection, TLS and the startup. `connect_timeout`
+   * when it is set, else 30 seconds.
+   */
+  startupTimeoutMs: i64 = 30000;
   sslMode: u8 = SSL_PREFER;
   /** The contents of the `sslrootcert` file, or "". */
   rootCert: string = "";
@@ -90,6 +95,15 @@ function bad(what: string): PgError {
   return errorOf(invalid(`invalid connection string: ${what}`));
 }
 
+// A key as an error quotes it. One that looks like a URL or user info (a misspelt scheme, say) may
+// hold a password, and errors end up in logs, so it isn't quoted.
+function quoted(key: string): string {
+  if (key.includes("://") || key.includes("@")) {
+    return "(not shown: it looks like a URL, which may hold a password; a URL starts with postgres:// or postgresql://)";
+  }
+  return `\`${key}\``;
+}
+
 // One option; throws for what isn't one.
 function option(c: PgConfig, key: string, value: string) {
   switch (key) {
@@ -136,6 +150,9 @@ function option(c: PgConfig, key: string, value: string) {
         throw bad("invalid value for option `connect_timeout`");
       }
       c.connectTimeoutMs = n * 1000;
+      if (n > 0) {
+        c.startupTimeoutMs = n * 1000;
+      }
       break;
     }
     case "sslmode":
@@ -168,7 +185,7 @@ function option(c: PgConfig, key: string, value: string) {
     case "load_balance_hosts":
       break;
     default:
-      throw bad(`unknown option \`${key}\``);
+      throw bad(`unknown option ${quoted(key)}`);
   }
 }
 
@@ -267,7 +284,7 @@ function parseUrl(c: PgConfig, url: string) {
     for (const pair of params.split("&")) {
       const eq = pair.indexOf("=");
       if (eq < 0) {
-        throw bad(`invalid value for option \`${pair}\``);
+        throw bad(`invalid value for option ${quoted(pair)}`);
       }
       option(c, percentDecode(pair.slice(0, eq)), percentDecode(pair.slice(eq + 1)));
     }
@@ -295,7 +312,7 @@ function parseKeywords(c: PgConfig, s: string) {
       i++;
     }
     if (i >= n || s.charAt(i) != "=") {
-      throw bad(`unexpected end of string after \`${key}\``);
+      throw bad(`unexpected end of string after ${quoted(key)}`);
     }
     i++;
     while (space(i)) {
