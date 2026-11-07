@@ -32,7 +32,8 @@ impl Parser<'_> {
         self.expect(Tok::RParen)?;
         let span = self.span_from(lo);
         let name = format!("import({from:?})");
-        if !self.import_types.iter().any(|(n, _, _)| *n == name) {
+        // A whole module (no `.` after it) is refused by the caller and loads nothing.
+        if self.at(Tok::Dot) && !self.import_types.iter().any(|(n, _, _)| *n == name) {
             self.import_types.push((name.clone(), from, from_span));
         }
         Ok(Ident { name, span })

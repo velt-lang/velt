@@ -102,7 +102,8 @@ impl<'a> Parser<'a> {
             && (Self::is_ident_like(self.nth(1))
                 || matches!(self.nth(1), Tok::LBracket | Tok::LParen | Tok::LBrace)
                 || self.nth(1) == Tok::Kw(Kw::Void)
-                || self.nth(1) == Tok::Kw(Kw::Null))
+                || self.nth(1) == Tok::Kw(Kw::Null)
+                || self.nth(1) == Tok::Kw(Kw::Import))
     }
 
     /// `readonly T[]` (TypeScript's `ReadonlyArray<T>`, which it is parsed as) or
@@ -263,13 +264,14 @@ impl<'a> Parser<'a> {
             && (Self::is_ident_like(self.nth(1))
                 || matches!(
                     self.nth(1),
-                    Tok::Kw(Kw::Typeof) | Tok::LBrace | Tok::LParen | Tok::LBracket
+                    Tok::Kw(Kw::Typeof | Kw::Import) | Tok::LBrace | Tok::LParen | Tok::LBracket
                 ))
     }
 
-    /// `typeof x` / `typeof ns.f` / `typeof obj.field` in a type (a type query). `typeof
-    /// import("m")` and type arguments after the name (`typeof f<string>`) are not supported yet:
-    /// they are reported here and parsed as an empty query, which sema skips.
+    /// `typeof x` / `typeof ns.f` / `typeof obj.field` / `typeof import("m").x` in a type (a type
+    /// query). `typeof import("m")` of a whole module and type arguments after the name
+    /// (`typeof f<string>`) are not supported yet: they are reported here and parsed as an empty
+    /// query, which sema skips.
     fn parse_type_query(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         self.bump(); // typeof
