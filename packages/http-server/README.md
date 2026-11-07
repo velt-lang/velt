@@ -220,7 +220,11 @@ request lazily: a handler pays only for what it reads.
   request with an `Upgrade` header isn't watched, as the handler may take the connection; and what
   a handler does while it reads a body from the socket isn't watched until the body's end.
 - A watched handler, or a streamed response, has the socket read while it waits (up to 64 KiB past
-  what it took), which costs a little more for that request.
+  what it took). That is the price of hearing the client, per request, in instructions with a debug
+  runtime: asking for `req.signal` takes a handler from about 23,800 to 42,600 (+79%) if it doesn't
+  wait and from 42,200 to 60,800 (+44%) if it does; a streamed response from about 43,000 to 53,000
+  (+23%), or 36,900 to 46,600 (+26%) from an async generator, which is also what `compress()` pays
+  on a response with no length. A handler with neither pays nothing.
 - `server.shutdown()` waits for an open stream as for any request, as Node's `close()` does, and
   aborts `req.signal`: a source that never ends should listen to it.
 - A `Request` is valid until its handler settles: what the handler read stays readable, but
