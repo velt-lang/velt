@@ -214,7 +214,18 @@ pub fn checkout(
     (checksum, depth): (Option<&str>, crate::tree_stamp::TreeCheck),
 ) -> Result<(PathBuf, String), String> {
     let raw = raw_dir(loc, &spec.sha256);
-    match (raw.is_dir(), Verified::read(&raw)) {
+    let mut state = (raw.is_dir(), Verified::read(&raw));
+    // Anything but a hit for this URL writes to the cache: under the archive's lock, with what
+    // another install finished meanwhile looked at again. A hit takes no lock.
+    let _lock = match state {
+        (true, Some(ref r)) if r.knows(&spec.url) => None,
+        _ => {
+            let lock = lock_raw(&raw)?;
+            state = (raw.is_dir(), Verified::read(&raw));
+            Some(lock)
+        }
+    };
+    match state {
         (true, Some(mut record)) if !record.knows(&spec.url) => {
             // Cached from another URL: this one must serve the same bytes before the hit counts.
             download_checked(spec)?;
@@ -250,6 +261,44 @@ pub fn checkout(
 /// machine send requests to a local service.
 pub fn is_plain_http(url: &str) -> bool {
     fetch::is_plain_http(url)
+}
+
+/// Query parameters whose names say they carry a credential (compared without case): a token, a
+/// key or a signature in a URL goes into package.velt and velt.lock.json, where everyone with
+/// the project reads it. Userinfo (`user:pass@`) is refused outright ([`check_url`]); a query
+/// isn't, as a release asset's URL may be signed on purpose.
+const CREDENTIAL_PARAMS: &[&str] = &[
+    "token",
+    "access_token",
+    "private_token",
+    "auth",
+    "key",
+    "api_key",
+    "apikey",
+    "secret",
+    "password",
+    "sig",
+    "signature",
+    "x-amz-signature",
+    "x-amz-credential",
+    "x-amz-security-token",
+    "x-goog-signature",
+    "x-goog-credential",
+];
+
+/// A warning when the URL of dependency `name` holds a query parameter named like a credential
+/// ([`CREDENTIAL_PARAMS`]).
+pub fn credential_warning(name: &str, url: &str) -> Option<String> {
+    let query = url.split('#').next()?.split_once('?')?.1;
+    let found = query.split('&').find_map(|pair| {
+        let key = pair.split('=').next().unwrap_or(pair);
+        (CREDENTIAL_PARAMS.iter())
+            .any(|c| key.eq_ignore_ascii_case(c))
+            .then_some(key)
+    })?;
+    Some(format!(
+        "the URL of `{name}` has `{found}` in its query, which looks like a credential: it is written to package.velt and velt.lock.json, where anyone with the project can read it"
+    ))
 }
 
 /// On Windows (`windows`), a note per symbolic link inside the package directory `dir` of
@@ -328,6 +377,7 @@ pub fn entry_for(
         subdir: path.map(String::from),
     };
     // A raw tree already there is used only if it is still what was extracted.
+    let _lock = lock_raw(&raw)?;
     match (raw.is_dir(), Verified::read(&raw)) {
         (true, Some(mut record)) => {
             record.check_tree(&raw, &spec)?;
@@ -350,6 +400,27 @@ pub fn entry_for(
     let dir = choose(&raw, &spec)?;
     let manifest = crate::manifest::Manifest::from_dir(&dir)?;
     Ok((manifest.package.name, spec))
+}
+
+/// An exclusive lock on the raw tree `raw` and its record (the file `<sha256>.lock` beside them),
+/// released when the result is dropped: installs that download, extract or record a URL for one
+/// archive take turns, so one waits for the other's tree instead of extracting its own, and no
+/// URL another recorded is lost.
+fn lock_raw(raw: &Path) -> Result<std::fs::File, String> {
+    let path = raw.with_extension("lock");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create `{}`: {e}", parent.display()))?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open `{}`: {e}", path.display()))?;
+    file.lock()
+        .map_err(|e| format!("cannot lock `{}`: {e}", path.display()))?;
+    Ok(file)
 }
 
 /// Extract `bytes` (from `url`) into `raw`, with its record written before the tree is renamed

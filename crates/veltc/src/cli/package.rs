@@ -149,8 +149,15 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             let spec = arg.ok_or(
                 "missing package (e.g. `velt add json@1.2` or `velt add util --path ../util`)",
             )?;
-            // A URL (it may hold an `@`): a release archive, whose hash `velt add` computes.
-            if spec.starts_with("https://") || spec.starts_with("http://") {
+            // A URL (it may hold an `@`): a release archive, whose hash `velt add` computes. Any
+            // scheme makes it one, so `HTTPS://` and `ftp://` get a URL's error, not "not in the
+            // registry".
+            if let Some(scheme) = url_scheme(&spec) {
+                if !(scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")) {
+                    return Err(format!(
+                        "`velt add` takes the https URL of a release archive, not a `{scheme}://` one (a git repository is a `git` dependency in package.velt)"
+                    ));
+                }
                 return Ok(Command::AddUrl {
                     url: spec,
                     path: flags.path,
@@ -211,6 +218,16 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
         }),
         _ => unreachable!("ICE: `{name}` is not a package subcommand"),
     }
+}
+
+/// The scheme of `spec` when it starts like a URL (`scheme://`, RFC 3986's scheme characters).
+fn url_scheme(spec: &str) -> Option<&str> {
+    let (scheme, _) = spec.split_once("://")?;
+    let mut chars = scheme.chars();
+    let first = chars.next()?;
+    (first.is_ascii_alphabetic()
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+    .then_some(scheme)
 }
 
 #[cfg(test)]
@@ -311,6 +328,30 @@ mod tests {
                 path: Some("pkg".into())
             }
         );
+        // Any scheme is a URL: http(s) in another case goes to the URL's checks (which want it
+        // in lowercase), another scheme is refused here, never looked up in the registry.
+        assert_eq!(
+            p(&["add", "HTTPS://h.example/x.tar.gz"]).unwrap(),
+            Command::AddUrl {
+                url: "HTTPS://h.example/x.tar.gz".into(),
+                path: None
+            }
+        );
+        for url in [
+            "ftp://h.example/x.tar.gz",
+            "git+ssh://h.example/x",
+            "file:///x.tgz",
+        ] {
+            let e = p(&["add", url]).unwrap_err();
+            assert!(
+                e.contains("takes the https URL of a release archive"),
+                "{url}: {e}"
+            );
+        }
+        assert!(matches!(
+            p(&["add", "json@1.2"]).unwrap(),
+            Command::Add { .. }
+        ));
         assert_eq!(
             p(&["install", "--locked"]).unwrap(),
             Command::Install { locked: true }

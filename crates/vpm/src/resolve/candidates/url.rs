@@ -41,6 +41,7 @@ impl Provider<'_> {
         (self.warnings).extend(crate::url_source::link_warnings(
             self.loc, spec, &dir, windows,
         ));
+        (self.warnings).extend(crate::url_source::credential_warning(&req.name, &spec.url));
         let root = crate::url_source::archive_root(&dir, spec);
         let version = manifest.version();
         let chain = [req.chain.clone(), vec![format!("{} {version}", req.name)]].concat();
