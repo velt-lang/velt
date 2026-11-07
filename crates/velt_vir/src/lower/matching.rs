@@ -195,7 +195,9 @@ impl FnLower<'_, '_> {
         }
         // A by-reference `const` only a function value could leave dangling (sema `let_borrow`).
         let hazard = match pat.kind {
-            hir::PatKind::Binding(_, UseMode::Borrow) => shared_place(init).filter(|p| local_place(p)),
+            hir::PatKind::Binding(_, UseMode::Borrow) => {
+                shared_place(init).filter(|p| local_place(p))
+            }
             _ => None,
         };
         let init = hazard.unwrap_or(init);

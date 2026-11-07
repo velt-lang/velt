@@ -43,14 +43,10 @@ fn a_value_read_out_of_the_object_and_used_after_a_freeing_call_keeps_the_count(
         }
         fb.assign(b, y, Rvalue::Use(copy_place(field_of(o, k.arr, 1))));
         let (exit, q2) = release(&mut fb, b, r, k.free);
-        let (exit, o2) = match shared {
-            true => {
-                let (e, q4) = release(&mut fb, exit, o, k.free);
-                (e, Some(q4))
-            }
-            false => (exit, None),
+        let exit = match shared {
+            true => release(&mut fb, exit, o, k.free).0,
+            false => exit,
         };
-        let _ = o2;
         fb.ret(exit, copy_local(y));
         let f = k.pb.add(fb.finish());
         let p = k.pb.finish();
@@ -73,7 +69,12 @@ fn a_string_word_read_out_of_the_object_and_used_after_a_freeing_call_keeps_the_
         (true, false, true),
     ] {
         let mut k = kit();
-        let name = k.pb.agg("string", 24, 8, &[(Ty::U64, 0), (Ty::U64, 8), (Ty::U64, 16)]);
+        let name = k.pb.agg(
+            "string",
+            24,
+            8,
+            &[(Ty::U64, 0), (Ty::U64, 8), (Ty::U64, 16)],
+        );
         let row = k.pb.agg("Row", 32, 8, &[(Ty::Agg(name), 0), (Ty::F64, 24)]);
         let mut fb = FuncBuilder::export("f", &[Ty::Ptr], Ty::U64);
         let this = fb.param(0);
