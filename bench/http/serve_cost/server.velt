@@ -1,0 +1,55 @@
+// The handlers measured per request: plain, a body read, a signal asked for, a streamed response.
+import { BodyStream } from "velt/net/http";
+import { utf8Encode } from "velt/encoding";
+import { serve } from "../src/lib";
+
+async function* rows(): AsyncGenerator<u8[], never> {
+  yield utf8Encode("Hello, World!");
+}
+
+async function main() {
+  const port = parseInt(process.argv[process.argv.length - 1]);
+  const server = await serve({ port: port }, async (req: Request): Promise<Response> => {
+    const path = new URL(req.url).pathname;
+    if (path == "/text") {
+      return new Response(await req.text());
+    }
+    if (path == "/signal") {
+      const signal = req.signal;
+      return new Response("Hello, World!");
+    }
+    if (path == "/signalwait") {
+      const signal = req.signal;
+      await new Promise<void>((resolve) => {
+        setImmediate(() => {
+          resolve();
+        });
+      });
+      return new Response("Hello, World!");
+    }
+    if (path == "/wait") {
+      await new Promise<void>((resolve) => {
+        setImmediate(() => {
+          resolve();
+        });
+      });
+      return new Response("Hello, World!");
+    }
+    if (path == "/stream") {
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start: (ctl) => {
+            ctl.enqueue(Uint8Array.fromBytes(utf8Encode("Hello, World!")));
+            ctl.close();
+          },
+        }),
+      );
+    }
+    if (path == "/generator") {
+      return new Response(BodyStream.from(rows()));
+    }
+    return new Response("Hello, World!");
+  });
+  await sleep(1000000000);
+  server.close();
+}
