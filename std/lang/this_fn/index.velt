@@ -52,15 +52,12 @@ export class ThisFn {
 
   /** `f.apply(thisArg, args)`: `null` or `undefined` passes no arguments. */
   apply(self: any, args?: any): any {
-    // One call of `[THIS_FN_APPLY]`, which then is inlined here, as this is on every `apply`.
-    let list: any[];
     if (args == null) {
-      list = [];
-    } else if (anyIsList(args) && !this.#ownsArguments) {
-      list = args;
-    } else {
-      list = this.#listOf(args);
+      return this[THIS_FN_APPLY](self, []);
     }
+    // One expression and one call: any other shape here keeps a slot's `_Ganyapply_` out of a
+    // caller in a function expression, or `[THIS_FN_APPLY]` out of this (bench/any_ops/apply).
+    const list: any[] = anyIsList(args) && !this.#ownsArguments ? args : this.#listOf(args);
     return this[THIS_FN_APPLY](self, list);
   }
 
