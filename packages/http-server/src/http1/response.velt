@@ -10,7 +10,7 @@
 // bytes are still to be sent, so a fast producer waits for a slow client (backpressure); a
 // client that went away makes it throw and aborts the request's signal (cancellation).
 
-import { BodyStream, statusText } from "velt/net/http";
+import { BodyStream } from "velt/net/http";
 import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { EventStream } from "../event_stream";
@@ -24,7 +24,7 @@ import { FieldBuf } from "./fields_buf";
 import { Head } from "./head";
 import { HeadParts, TYPE_BYTES, TYPE_HTML, TYPE_JSON, TYPE_SSE, TYPE_TEXT } from "./head_parts";
 import { Out } from "./out";
-import { writeStreamBody } from "./stream_body";
+import { endEarly, writeStreamBody } from "./stream_body";
 import { writeHead, writeSwitch } from "./write_head";
 
 /// How many bytes of a streamed body may wait to be sent before `write` waits.
@@ -75,9 +75,9 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
   private either: AbortSignal | null = null;
   /** Writing to the client failed, or its connection did. */
   private gone: bool = false;
-  private watch: ClientWatch;
+  watch: ClientWatch;
   /** Where this response's bytes start in `out`, and those that may be taken back. */
-  private outStart: i64 = 0;
+  outStart: i64 = 0;
   private dropFrom: i64 = -1;
   /** The source of a streamed body being written. */
   source: SourceHold | null = null;
@@ -254,31 +254,12 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
    */
   async closedEarly(cut: bool) {
     this.connectionFailed();
-    if (this.streaming) {
-      // A head waiting for its first chunk: nothing of this response is out.
-      this.out.length = this.outStart;
-    }
-    try {
-      if (cut && !this.done) {
-        this.keepAlive = false;
-        this.statusCode = 400;
-        this.send(statusText(400));
-      }
-      await this.flush();
-      this.conn.shutdown();
-    } catch (e) {
-      // Already gone.
-    }
+    await endEarly(this, this.conn, cut);
   }
 
   /** See `ClientEnd`. */
   stillAnswering(): bool {
     return !this.done || this.streaming || this.either != null;
-  }
-
-  /** A streamed body began: a client going away must reach its source. */
-  listenForClient() {
-    this.watch.listen();
   }
 
   /** See `ClientEnd`. */

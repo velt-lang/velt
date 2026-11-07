@@ -1,6 +1,8 @@
-// http-server (internal): `writeStreamBody`, a `BodyStream` as an `Http1Response`'s body.
+// http-server (internal): `writeStreamBody`, a `BodyStream` as an `Http1Response`'s body, and
+// `endEarly`, how a response ends when its client's input did.
 
-import { BodyStream } from "velt/net/http";
+import { BodyStream, statusText } from "velt/net/http";
+import { TcpStream } from "velt/net";
 import { sendBody, SourceHold } from "../source_hold";
 import { Http1Response } from "./response";
 import { writeHead } from "./write_head";
@@ -21,7 +23,8 @@ export async function writeStreamBody(
   } else {
     writeHead(r, -1, t, -1);
   }
-  r.listenForClient();
+  // A client going away must reach the source, also with nothing to write.
+  r.watch.listen();
   const source = body[Symbol.asyncIterator]();
   const hold = new SourceHold(source);
   r.source = hold;
@@ -43,5 +46,28 @@ export async function writeStreamBody(
     r.streaming = false;
     r.keepAlive = false;
     r.cut = r.left >= 0;
+  }
+}
+
+/**
+ * The client's input ended while `r` is pending (Node's rule): what is written stays written,
+ * nothing more is, and the connection ends now. A body cut off in the middle is answered 400 first,
+ * if nothing was.
+ */
+export async function endEarly(r: Http1Response, conn: TcpStream, cut: bool) {
+  if (r.streaming) {
+    // A head waiting for its first chunk: nothing of this response is out.
+    r.out.length = r.outStart;
+  }
+  try {
+    if (cut && !r.done) {
+      r.keepAlive = false;
+      r.statusCode = 400;
+      r.send(statusText(400));
+    }
+    await r.flush();
+    conn.shutdown();
+  } catch (e) {
+    // Already gone.
   }
 }
