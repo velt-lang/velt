@@ -384,10 +384,11 @@ impl FnCx<'_, '_> {
             .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
         // A list known to be an `any[]` has nothing to read: the call as it is, with no test.
         let read_list = user && prop.name == "apply" && args.len() == 2 && !spread && {
-            let t = self.trial_type(&args[1]);
-            !t.is_some_and(
-                |t| matches!(self.cx.ty.kind(t), TyKind::Array(e) if Some(*e) == self.any_ty()),
-            )
+            let list = self.any_ty();
+            let held = self
+                .trial_type(&args[1])
+                .map(|t| self.cx.ty.kind(t).clone());
+            !matches!(held, Some(TyKind::Array(e)) if Some(e) == list)
         };
         if read_list {
             // `f.apply(self, list)`: the list is read here, where an error can be caught, not in
