@@ -1,0 +1,7 @@
+3 p,p
+caught trap
+3 1
+caught trap
+bdac
+acbd
+RangeError no order [ 2, 1 ]

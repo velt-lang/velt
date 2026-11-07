@@ -1,0 +1,48 @@
+// A `Promise<void>`'s `resolve`, `(value: void) => void`, stored in a `() => void`, also one that
+// may hold a function that throws, or that is left `undefined` until it is set.
+async function plain() {
+  let done!: () => void;
+  const p = new Promise<void>((res) => {
+    done = res;
+  });
+  setTimeout(() => done(), 0);
+  await p;
+  console.log("plain");
+}
+
+async function mayThrow(fail: boolean) {
+  let finish!: () => void;
+  const p = new Promise<void>((res) => {
+    finish = res;
+  });
+  if (fail) {
+    finish = () => {
+      throw new Error("replaced");
+    };
+  }
+  try {
+    finish();
+    await p;
+    console.log("finished");
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+
+async function optional() {
+  let stop: (() => void) | undefined;
+  const p = new Promise<void>((res) => {
+    stop = res;
+  });
+  stop?.();
+  await p;
+  console.log("optional");
+}
+
+async function main() {
+  await plain();
+  await mayThrow(false);
+  await mayThrow(true);
+  await optional();
+}
+main();

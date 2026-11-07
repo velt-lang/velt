@@ -24,6 +24,26 @@ pub(super) struct Receiver {
 }
 
 impl FnCx<'_, '_> {
+    /// The method `sort(cmp)` or `toSorted(cmp)` of the array of `any` values of type `recv`
+    /// calls, whose comparator may throw (std/prelude/sort.velt).
+    pub(super) fn dynamic_sort_name(
+        &self,
+        recv: hir::TyId,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+    ) -> Option<ast::Ident> {
+        let name = match (prop.name.as_str(), args) {
+            ("sort", [_]) => "sortDynamic",
+            ("toSorted", [_]) => "toSortedDynamic",
+            _ => return None,
+        };
+        let elem = self.cx.ty.array_elem(recv)?;
+        (self.cx.dynamic(elem) == Some(crate::any::Dynamic::Any)).then(|| ast::Ident {
+            name: name.to_string(),
+            span: prop.span,
+        })
+    }
+
     /// `recv`, checked from `object`, as the receiver of a member access: when `object` is a
     /// call of `sort`, `reverse` or `fill` on an array, the call runs first and the receiver is
     /// the array it changed.
