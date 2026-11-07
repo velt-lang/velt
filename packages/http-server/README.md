@@ -203,22 +203,24 @@ request lazily: a handler pays only for what it reads.
   generator's `finally` runs at its next `yield`, as in JS. A slow client only holds the source
   back. An exception from `cancel` goes nowhere.
 - **The end of a client's input is the client gone**, Node's rule (its `httpAllowHalfOpen` is off by
-  default), on keep-alive, `Connection: close` and pipelined requests alike. If a response is
-  pending when an HTTP/1.1 client shuts its sending side, the signal aborts, the source stops,
-  what was written stays written, and the connection ends at once with nothing more: a client that
-  sends a request, shuts its sending side and goes on reading gets the answer only if the handler
-  made it without really waiting (awaiting promises that are ready doesn't count). A request behind
-  one in progress still runs, and its answer goes nowhere. A body cut off in the middle is answered
-  400 (one with `Transfer-Encoding: chunked` that came whole but wasn't read is too). Differing from
-  Node: a request with an `Upgrade` header isn't watched, as the handler may take the connection;
-  what a handler does while it reads a body from the socket isn't watched until the body's end;
-  a handler that asked for neither a signal nor a stream has the connection end with it, not at
-  once, and if it took under 100 ms its answer still goes out, as it can't be told from one that
-  didn't really wait; and when pipelined requests were read together, an `async` handler's answer
-  before one that took time is dropped with it.
-- A handler that answers before it waits costs nothing for this. One that waits pays one look at
-  the socket before its answer goes out. Only one that asked for `req.signal`, or a streamed
-  response, has the socket read while it waits (up to 64 KiB past what it took), which costs more.
+  default), on keep-alive, `Connection: close` and pipelined requests alike, for a handler that asked
+  for `req.signal` and for a streamed response. If its response is pending when an HTTP/1.1 client
+  shuts its sending side, the signal aborts, the source stops, what was written stays written, and
+  the connection ends at once with nothing more: a client that sends a request, shuts its sending
+  side and goes on reading gets the answer only if the handler made it without really waiting
+  (awaiting promises that are ready doesn't count). A request behind one in progress still runs, and
+  its answer goes nowhere. A body cut off in the middle that the handler reads is answered 400, and
+  one it ignores too if it is watched (one with `Transfer-Encoding: chunked` that came whole but
+  wasn't read is too).
+- **A handler with neither a signal nor a stream isn't watched, a decision for speed.** Nothing reads
+  the socket for it, so it costs nothing, and its answer goes out where Node would send nothing to a
+  client that shut its sending side; the connection ends after it. Telling otherwise would take a
+  read before the answers of every keep-alive request, about 3% of a plain one, and a client
+  getting its answer does no harm. Ask for `req.signal` to be told. Also differing from Node: a
+  request with an `Upgrade` header isn't watched, as the handler may take the connection; and what
+  a handler does while it reads a body from the socket isn't watched until the body's end.
+- A watched handler, or a streamed response, has the socket read while it waits (up to 64 KiB past
+  what it took), which costs a little more for that request.
 - `server.shutdown()` waits for an open stream as for any request, as Node's `close()` does, and
   aborts `req.signal`: a source that never ends should listen to it.
 - A `Request` is valid until its handler settles: what the handler read stays readable, but

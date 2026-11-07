@@ -65,14 +65,11 @@ export async function connection<E>(
   let headStart: i64 = -1;
   // Nothing was read yet: the connection may still turn out to be HTTP/2.
   let first = true;
-  let seen: i64 = -1;
   // One timer for the waits for the next request and for the rest of a head.
   const waits = new ReadDeadline();
   try {
     while (open) {
-      // What a look before the last answers went out found, or the next read.
-      const n = seen > 0 ? (seen as number) : parser.readFrom(conn);
-      seen = -1;
+      const n = parser.readFrom(conn);
       if (n == null) {
         break;
       }
@@ -177,12 +174,6 @@ export async function connection<E>(
           // The usual request has neither: no async step for them.
           if (finished && (res.streamOpen() || !req.bodyRead())) {
             try {
-              if (req.watch.lookDue()) {
-                seen = req.watch.look(now);
-                if (req.watch.lostDue(seen)) {
-                  await req.watch.lost(res, seen);
-                }
-              }
               // The response goes out before the rest of the body is waited for.
               await res.endStream(!req.bodyRead());
               // A body held back for a `100 Continue` the handler did not ask for is not waited
@@ -214,14 +205,7 @@ export async function connection<E>(
         }
         open = false;
       }
-      if (req.watch.lookDue()) {
-        seen = req.watch.look(now);
-        if (req.watch.lostDue(seen)) {
-          await req.watch.lost(res, seen);
-        }
-      }
       await res.flush();
-      res.answersSent();
     }
     if (rejected) {
       conn.shutdown();

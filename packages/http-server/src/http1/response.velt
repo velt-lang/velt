@@ -76,9 +76,8 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
   /** Writing to the client failed, or its connection did. */
   private gone: bool = false;
   watch: ClientWatch;
-  /** Where this response's bytes start in `out`, and those that may be taken back. */
+  /** Where this response's bytes start in `out`. */
   outStart: i64 = 0;
-  private dropFrom: i64 = -1;
   /** The source of a streamed body being written. */
   source: SourceHold | null = null;
 
@@ -265,27 +264,6 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
   /** See `ClientEnd`. */
   listens(): bool {
     return this.streaming || this.either != null;
-  }
-
-  /** See `ClientEnd`. */
-  answersFromHere() {
-    if (this.dropFrom < 0) {
-      this.dropFrom = this.outStart;
-    }
-  }
-
-  /** See `ClientEnd`. */
-  dropAnswers() {
-    if (this.dropFrom >= 0 && this.dropFrom < this.out.length) {
-      this.out.length = this.dropFrom;
-    }
-    this.dropFrom = -1;
-    this.done = false;
-  }
-
-  /** The batch's answers went out. */
-  answersSent() {
-    this.dropFrom = -1;
   }
 
   /** A new request: status 200, no headers. */

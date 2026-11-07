@@ -1,17 +1,16 @@
 // http-server (internal): `ClientWatch`, how an HTTP/1.1 connection notices a client that goes
 // away while its request is answered. A handler that asked for its signal, or a streamed response,
 // has a promise on the connection's task reading the socket while it waits, as Node's server always
-// does. Any other handler that waits pays one look at the socket before its answer goes out: if the
-// client's input ended and the handler took `TOOK_TIME`, the answer is dropped, so what the client
-// sees is the same, only the connection ends with the handler. One that answers before it waits
-// pays nothing.
+// does. Any other handler has nothing watching it, and pays nothing: a look at the socket for it
+// would cost every keep-alive request a read, so its answer goes out whatever the client did, and
+// the connection ends after it.
 //
-// Node's rule (`httpAllowHalfOpen` off): the end of the client's input while a response is pending
-// is the client gone, on any request. What was written stays written, nothing more is, and the
-// connection ends at once. A client that sends a request and shuts its sending side gets an answer
-// only if the handler made it before waiting. Input behind the request stays in the parser, where
-// the connection finds it. A request with an `Upgrade` header isn't watched: the handler may take
-// the connection, with what came after the head.
+// Node's rule (`httpAllowHalfOpen` off), for what is watched: the end of the client's input while a
+// response is pending is the client gone, on any request. What was written stays written, nothing
+// more is, and the connection ends at once. A client that sends a request and shuts its sending
+// side gets an answer only if the handler made it before really waiting. Input behind the request
+// stays in the parser, where the connection finds it. A request with an `Upgrade` header isn't
+// watched: the handler may take the connection, with what came after the head.
 
 import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
@@ -24,13 +23,6 @@ import { Parser } from "./parser";
 /// writes tell.
 const READ_AHEAD: i64 = 65536;
 
-/// How long a handler that waited unwatched takes for its answer to be dropped. The clock is read
-/// only when the input ended. Below this, the handler may not have really waited (awaiting only
-/// ready promises, on a loaded machine), and Node would send that answer.
-const TOOK_TIME: i64 = 100;
-/// What `look` says when the client's input ended and a handler took time.
-export const GONE: i64 = -2;
-
 /// What a watch reports to: the response of the request being answered.
 export interface ClientEnd {
   /// The connection failed.
@@ -41,10 +33,6 @@ export interface ClientEnd {
   stillAnswering(): bool;
   /// Whether it must hear at once: a streamed response, or a signal.
   listens(): bool;
-  /// This response on may have to be taken back (`dropAnswers`).
-  answersFromHere(): void;
-  /// Takes back the answers made from there on: they come too late.
-  dropAnswers(): void;
 }
 
 /// The watch of one connection, started at most once per wait of a request.
@@ -60,10 +48,6 @@ export class ClientWatch {
   private bodyBusy: bool = false;
   /// The handler waited once.
   private waited: bool = false;
-  /// One look at the socket is due before the answer goes out.
-  private lookAgain: bool = false;
-  /// `look` found the connection failed.
-  private failed: bool = false;
   /// The client's input ended, or its connection failed: nothing more to watch for.
   private over: bool = false;
   private stopper: AbortController | null = null;
@@ -85,17 +69,11 @@ export class ClientWatch {
 
   /// The handler ran up to its first wait, or to its end.
   handlerWaits() {
-    const t = this.target;
-    if (t == null || !t.stillAnswering()) {
-      return;
-    }
     this.waited = true;
-    if (t.listens()) {
+    const t = this.target;
+    if (t != null && t.listens()) {
       this.start();
-      return;
     }
-    this.lookAgain = true;
-    t.answersFromHere();
   }
 
   /// The handler asked for its signal, or started a streamed response: from its next wait on.
@@ -103,56 +81,6 @@ export class ClientWatch {
     if (this.waited) {
       this.start();
     }
-  }
-
-  /// Whether a handler of this batch of requests waited unwatched: `lookBack` is due.
-  lookDue(): bool {
-    return this.lookAgain;
-  }
-
-  /// Before the batch's answers go out, a look at the socket in place of the connection's next
-  /// read: what it found (as `readFrom` gives it, -1 for the connection to read itself, `GONE` if
-  /// the client's input ended and a handler took time, from `now`: `lost` then takes the answers
-  /// back). Not async: the usual look is one read.
-  look(now: i64): i64 {
-    this.lookAgain = false;
-    const p = this.parser;
-    let read: i64 = 0;
-    try {
-      while (p.available() < READ_AHEAD) {
-        const n = p.readFrom(this.conn);
-        if (n == null) {
-          const late = (Date.now() as i64) >= now + TOOK_TIME;
-          return late && !this.over && this.head.find("upgrade") < 0 ? GONE : -1;
-        }
-        if (n == 0) {
-          return read;
-        }
-        read += n as i64;
-      }
-      return read;
-    } catch (e) {
-      this.over = true;
-      this.failed = true;
-      return -1;
-    }
-  }
-
-  /// `look` found the client gone or its connection failed: tells `target`.
-  async lost(target: ClientEnd, found: i64) {
-    if (this.failed) {
-      this.failed = false;
-      target.connectionFailed();
-    } else if (found == GONE) {
-      this.over = true;
-      target.dropAnswers();
-      await target.closedEarly(!this.body.arrived());
-    }
-  }
-
-  /// Whether `look` found something for `lost`.
-  lostDue(found: i64): bool {
-    return found == GONE || this.failed;
   }
 
   /// The handler is about to read the body from the socket.

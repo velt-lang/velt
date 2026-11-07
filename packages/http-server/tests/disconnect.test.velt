@@ -324,6 +324,7 @@ describe("a client that shuts its sending side", () => {
 
   it("gets the answer of an async handler that didn't wait", async () => {
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
       await Promise.resolve();
       return new Response("answer");
     });
@@ -372,28 +373,31 @@ describe("a client that shuts its sending side", () => {
     );
   }
 
-  it("gets nothing from a handler that never asked for the signal", async () => {
-    const g = gate();
-    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
-      await hold(g);
-      // timing: the answer of a handler that took time
-      await sleep(300);
-      return new Response("late");
-    });
-    try {
-      const c = await connect(`127.0.0.1:${server.port}`);
-      await c.write(GET);
-      await timeout(arrivals(g), LIMIT);
-      c.shutdown();
-      open(g);
-      expect(await timeout(readAll(c), LIMIT)).toBe("");
-      c.close();
-    } finally {
-      open(g);
-      await server.shutdown();
-      shut(g);
-    }
-  });
+  it(
+    "gets the answer of a handler with neither a signal nor a stream, decided for its cost",
+    async () => {
+      // Node sends nothing here. Nothing watches such a handler, as a look at the socket would cost
+      // every keep-alive request a read, and its answer does no harm (README.md).
+      const g = gate();
+      const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+        await hold(g);
+        return new Response("late");
+      });
+      try {
+        const c = await connect(`127.0.0.1:${server.port}`);
+        await c.write(GET);
+        await timeout(arrivals(g), LIMIT);
+        c.shutdown();
+        open(g);
+        expect((await timeout(readAll(c), LIMIT)).endsWith("late")).toBe(true);
+        c.close();
+      } finally {
+        open(g);
+        await server.shutdown();
+        shut(g);
+      }
+    },
+  );
 
   it("cuts a stream off after what was written, and stops a quiet source", async () => {
     const g = gate();
@@ -478,19 +482,11 @@ describe("a client that shuts its sending side", () => {
   it("gets the answer before a handler that waits, not the one after", async () => {
     const g = gate();
     const ran = gate();
-    const slow = async (): Promise<Response> => {
-      await hold(g);
-      // timing: the answer of a handler that took time
-      await sleep(300);
-      arrive(ran);
-      return new Response("/slow");
-    };
-    // The one before answers without being async: an async handler before one that takes time
-    // loses its answer too, where Node would send it (README.md).
-    const server = await serve({ port: 0 }, (req: Request): Response | Promise<Response> => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
       const path = new URL(req.url).pathname;
       if (path == "/slow") {
-        return slow();
+        const signal = req.signal;
+        await hold(g);
       }
       arrive(ran);
       return new Response(path);
@@ -502,11 +498,12 @@ describe("a client that shuts its sending side", () => {
       );
       await timeout(arrivals(g), LIMIT);
       c.shutdown();
-      open(g);
+      // The end comes with the handler still held.
       const all = await timeout(readAll(c), LIMIT);
       expect(all.includes("/fast")).toBe(true);
       expect(all.includes("/slow")).toBe(false);
       // The request behind runs, as Node has started it, and its answer goes nowhere.
+      open(g);
       await timeout(arrivals(ran, 3), LIMIT);
       c.close();
     } finally {
@@ -522,9 +519,8 @@ describe("a client that shuts its sending side", () => {
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
       const path = new URL(req.url).pathname;
       if (path == "/slow") {
+        const signal = req.signal;
         await hold(g);
-        // timing: the answer of a handler that took time
-        await sleep(300);
       }
       return new Response(path);
     });
@@ -534,8 +530,8 @@ describe("a client that shuts its sending side", () => {
       await timeout(arrivals(g), LIMIT);
       await c.write("GET /fast HTTP/1.1\r\nHost: x\r\n\r\n");
       c.shutdown();
-      open(g);
       expect(await timeout(readAll(c), LIMIT)).toBe("");
+      open(g);
       c.close();
     } finally {
       open(g);
@@ -546,6 +542,7 @@ describe("a client that shuts its sending side", () => {
 
   it("gets an answer from a handler that read its whole body and didn't wait", async () => {
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
       return new Response(`read ${await req.text()}`);
     });
     try {
@@ -562,6 +559,7 @@ describe("a client that shuts its sending side", () => {
   it("gets an answer when its body ended with its input while the handler read", async () => {
     const g = gate();
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
       arrive(g);
       return new Response(`read ${await req.text()}`);
     });
@@ -581,9 +579,8 @@ describe("a client that shuts its sending side", () => {
   it("gets nothing when the whole body came and the handler waits without it", async () => {
     const g = gate();
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
       await hold(g);
-      // timing: the answer of a handler that took time
-      await sleep(300);
       return new Response("late");
     });
     try {
@@ -591,8 +588,8 @@ describe("a client that shuts its sending side", () => {
       await c.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello");
       await timeout(arrivals(g), LIMIT);
       c.shutdown();
-      open(g);
       expect(await timeout(readAll(c), LIMIT)).toBe("");
+      open(g);
       c.close();
     } finally {
       open(g);
@@ -657,8 +654,6 @@ describe("a client that shuts its sending side", () => {
               const signal = req.signal;
             }
             await hold(g);
-            // timing: the answer of a handler that took time
-            await sleep(300);
           }
           return new Response("answer");
         });
