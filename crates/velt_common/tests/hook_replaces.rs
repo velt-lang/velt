@@ -178,6 +178,25 @@ fn word_uses<'a>(src: &'a str, word: &'a str) -> impl Iterator<Item = usize> + '
     })
 }
 
+/// The warm-up stores what debug builds link (`velt cache warm`, std_cache/serve.rs), and prebuilt
+/// objects will be what it reaches: a port not on its list runs unoptimized in debug builds, as
+/// `localeCompare` did (+163% against the Rust). A port's benchmark exercises it, so it goes there.
+#[test]
+fn every_ported_hook_is_warmed() {
+    let list = crates().join("../share/velt/warm/programs.txt");
+    let list = std::fs::read_to_string(list).expect("the warm-up list");
+    for h in HOOKS {
+        let Some(row) = h.bench else { continue };
+        let line = format!("../../../bench/stdport/{row}.velt");
+        assert!(
+            list.lines().any(|l| l.trim() == line),
+            "{}: share/velt/warm/programs.txt has no `{line}`, so debug builds would compile \
+             this port unoptimized",
+            h.name
+        );
+    }
+}
+
 #[test]
 fn every_bench_row_exists() {
     let rows = crates().join("../bench/stdport");

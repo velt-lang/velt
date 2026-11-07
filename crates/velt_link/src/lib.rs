@@ -23,6 +23,7 @@
 //! Cross-linking (target OS != host OS) needs the bundled linker and a kit for the target, except
 //! for the WebAssembly targets (`wasm`: `wasm-ld`, the same on every host).
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -156,9 +157,8 @@ fn link_with_system(req: &LinkRequest, os: TargetOs) -> Result<(), String> {
     let shared = shared::is_shared(req.runtime_lib, os);
     match os {
         TargetOs::Windows => {
-            let mut cmd = msvc_linker(req.target)?;
-            cmd.args(msvc_args(req)?);
-            run_linker(cmd)?;
+            let cmd = msvc_linker(req.target)?;
+            run_coff_linker(cmd, msvc_args(req)?, req.output)?;
             if shared {
                 shared::place_dll(req.runtime_lib, req.output)?;
             }
@@ -223,8 +223,13 @@ pub fn link_bundled(req: &LinkRequest, b: &bundled::Bundled) -> Result<(), Strin
 
 fn link_with_bundled(req: &LinkRequest, b: &bundled::Bundled, os: TargetOs) -> Result<(), String> {
     let mut cmd = b.command(lld::flavor(b.kit.kind));
-    cmd.args(lld::args(req, &b.kit)?);
-    run_linker(cmd)?;
+    let args = lld::args(req, &b.kit)?;
+    if os == TargetOs::Windows {
+        run_coff_linker(cmd, args, req.output)?;
+    } else {
+        cmd.args(args);
+        run_linker(cmd)?;
+    }
     if os == TargetOs::Windows {
         if shared::is_shared(req.runtime_lib, os) {
             shared::place_dll(req.runtime_lib, req.output)?;
@@ -299,6 +304,58 @@ pub(crate) fn linker_override() -> Option<Command> {
         bundled::Request::Program(p) => Some(Command::new(p)),
         _ => None,
     }
+}
+
+/// A command line Windows starts safely (its limit is 32,767 characters): a link with more goes
+/// through a response file. A debug build linking std cache objects has one path per std function.
+const COMMAND_LINE_LIMIT: usize = 24_000;
+
+/// Run a linker taking Windows' arguments (`link.exe`, `lld-link`): when Windows runs it and they
+/// won't fit a command line, from a response file beside `output`.
+fn run_coff_linker(mut cmd: Command, args: Vec<OsString>, output: &Path) -> Result<(), String> {
+    let length: usize = args.iter().map(|a| a.len() + 3).sum();
+    if !cfg!(windows) || length < COMMAND_LINE_LIMIT {
+        cmd.args(args);
+        return run_linker(cmd);
+    }
+    let mut name = output.as_os_str().to_owned();
+    name.push(".link.rsp");
+    let file = PathBuf::from(name);
+    std::fs::write(&file, response_file(&args))
+        .map_err(|e| format!("cannot write {}: {e}", file.display()))?;
+    let mut at = OsString::from("@");
+    at.push(&file);
+    cmd.arg(at);
+    let linked = run_linker(cmd);
+    let _ = std::fs::remove_file(&file);
+    linked
+}
+
+/// `args` as a response file, one quoted argument per line, in the UTF-16 with a byte order mark
+/// that both `link.exe` and `lld-link` read. Backslashes are literal unless they come before a
+/// quote, as the closing one does after a directory's trailing `\`: doubled there.
+fn response_file(args: &[OsString]) -> Vec<u8> {
+    let mut text = String::new();
+    for a in args {
+        text.push('"');
+        let mut backslashes = 0;
+        for c in a.to_string_lossy().chars() {
+            match c {
+                '\\' => backslashes += 1,
+                '"' => {
+                    text.extend(std::iter::repeat_n('\\', backslashes + 1));
+                    backslashes = 0;
+                }
+                _ => backslashes = 0,
+            }
+            text.push(c);
+        }
+        text.extend(std::iter::repeat_n('\\', backslashes));
+        text.push_str("\"\r\n");
+    }
+    let mut bytes = vec![0xff, 0xfe];
+    bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+    bytes
 }
 
 pub(crate) fn run_linker(mut cmd: Command) -> Result<(), String> {
@@ -527,6 +584,35 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.contains("cross-OS linking"), "{err}");
+    }
+
+    #[test]
+    fn a_response_file_holds_each_argument_quoted_in_utf16() {
+        let args = [
+            OsString::from("/OUT:C:\\a b\\c.exe"),
+            OsString::from("x.obj"),
+        ];
+        let bytes = response_file(&args);
+        assert_eq!(bytes[..2], [0xff, 0xfe]);
+        let units: Vec<u16> = (bytes[2..].chunks(2))
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        let text = String::from_utf16(&units).unwrap();
+        assert_eq!(text, "\"/OUT:C:\\a b\\c.exe\"\r\n\"x.obj\"\r\n");
+    }
+
+    #[test]
+    fn a_response_file_keeps_a_closing_quote_after_backslashes() {
+        let text = |arg: &str| {
+            let bytes = response_file(&[OsString::from(arg)]);
+            let units: Vec<u16> = (bytes[2..].chunks(2))
+                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                .collect();
+            String::from_utf16(&units).unwrap()
+        };
+        assert_eq!(text("/LIBPATH:C:\\kit\\"), "\"/LIBPATH:C:\\kit\\\\\"\r\n");
+        assert_eq!(text("a\\\"b"), "\"a\\\\\\\"b\"\r\n");
+        assert_eq!(text("a\\b"), "\"a\\b\"\r\n");
     }
 
     #[test]

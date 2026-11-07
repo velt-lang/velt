@@ -58,6 +58,7 @@ pub use cpu::{
     X86_FEATURE_MACROS,
 };
 pub use dev::{DevSession, JitProgram, Reload};
+pub use isa::has_thread_local_data;
 
 /// Internal result type: errors are human-readable messages.
 pub(crate) type CodegenResult<T> = Result<T, String>;

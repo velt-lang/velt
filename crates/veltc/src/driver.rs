@@ -196,6 +196,8 @@ pub struct Session {
     pub cached: Option<(usize, usize, &'static str)>,
     /// Objects of std functions the program links instead of compiling (`std_cache`).
     pub std_objects: Vec<PathBuf>,
+    /// This build's turn at its output (`std_cache::Place::lock`), until the build returns.
+    pub turn: Option<std::fs::File>,
     /// What the program reaches outside itself (`outside::reaches`), when it was worked out
     /// before those functions became declarations.
     pub reaches: Option<String>,
@@ -381,6 +383,16 @@ fn sema_stage(
 
 /// Front half of the pipeline: source file → verified VIR. Stops after the first stage with errors.
 pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, BuildError> {
+    compile_to_vir_linking(sess, opts, false)
+}
+
+/// [`compile_to_vir`]; `link_std`: the program goes on to the link, so std functions may be left
+/// to the std cache's objects. Whatever else takes the VIR (the JIT host, a check) has no link.
+fn compile_to_vir_linking(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    link_std: bool,
+) -> Result<vir::Program, BuildError> {
     let scope = CheckScope {
         require_main: true,
         extra_roots: vec![],
@@ -447,17 +459,31 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     }
 
     // The std cache (#1728): std functions out of the program before it is optimized, their
-    // objects linked after. The program as lowered is kept to fall back on.
+    // objects linked after. The program as lowered is kept to fall back on. A generator host
+    // stays whole: `check_generator_host` looks through its code.
     let cg = velt_codegen_cl::CodegenOptions {
         target: opts.target(),
         optimize: opts.release,
         cpu: opts.cpu.clone(),
     };
-    let std_wanted = std_cache::wanted(opts);
+    let std_use = match link_std && !sess.generator_build {
+        true => std_cache::wanted(opts),
+        false => std_cache::Use::Off,
+    };
     // A declaration hides what its function reaches. Set either way: a build on this session that
     // stopped early must not leave its answer for this one.
-    sess.reaches = std_wanted.then(|| outside::reaches(&program));
-    let std_plan = std_wanted.then(|| {
+    sess.reaches = (std_use != std_cache::Use::Off).then(|| outside::reaches(&program));
+    let place =
+        OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
+    if std_use != std_cache::Use::Off && sess.turn.is_none() {
+        sess.turn = place.lock();
+    }
+    if std_use == std_cache::Use::Debug {
+        let t = Instant::now();
+        sess.std_objects = std_cache::serve::serve(&mut program, opts, &cg, &place);
+        sess.record("std cache", t);
+    }
+    let std_plan = (std_use == std_cache::Use::Release).then(|| {
         let t = Instant::now();
         let unsplit = program.clone();
         let plan = std_cache::split(&mut program, opts, &cg);
@@ -467,8 +493,6 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     optimize_stage(sess, opts, &mut program)?;
     if let Some((unsplit, plan)) = std_plan {
         let t = Instant::now();
-        let place =
-            OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
         match std_cache::link(plan, &program, &cg, &place) {
             Ok(linked) => {
                 if std_cache::stats() {
@@ -530,7 +554,12 @@ fn optimize_stage(
 
 /// Full build per `opts.emit`, run on a large-stack thread.
 pub fn build(sess: &mut Session, opts: &BuildOptions) -> Result<Artifact, BuildError> {
-    on_pipeline_thread(|| build_on_current_thread(sess, opts))
+    on_pipeline_thread(|| {
+        let built = build_on_current_thread(sess, opts);
+        // `velt run` goes on to the program, which holds up no build.
+        sess.turn = None;
+        built
+    })
 }
 
 /// Source → optimized VIR (no codegen), on a large-stack thread: for the JIT host, and for
@@ -585,6 +614,13 @@ fn build_on_current_thread(
     opts: &BuildOptions,
 ) -> Result<Artifact, BuildError> {
     let target = opts.target();
+    // From before the stamp, which names objects a build at the same time could remove, through
+    // the link. With no lock there yet, no build has placed any: its turn comes at placing them.
+    let place =
+        OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
+    if opts.emit == Emit::Exe && place.lock_exists() {
+        sess.turn = place.lock();
+    }
     // An executable whose inputs are those of its last build is up to date (`stamp`).
     // The hashes of the files the last build's stamp records, for this build to reuse.
     let mut known = Default::default();
@@ -633,9 +669,12 @@ fn build_on_current_thread(
     let (program, seen) = match &stamped {
         Some(_) => vpm::probe::record_reusing(known, || {
             stamp::note_project(opts);
-            compile_to_vir(sess, opts)
+            compile_to_vir_linking(sess, opts, true)
         }),
-        None => (compile_to_vir(sess, opts), vpm::probe::Seen::default()),
+        None => (
+            compile_to_vir_linking(sess, opts, true),
+            vpm::probe::Seen::default(),
+        ),
     };
     let mut program = memory::Noted::new(program?, "vir freed", &sess.lifetimes);
     check_generator_host(sess, &program)?;

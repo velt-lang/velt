@@ -4,7 +4,8 @@
 //! Where Cranelift has thread-local storage for the object format (`tls_model`: ELF, Mach-O, and
 //! COFF on x86_64), each constant gets a thread-local data object `velt_tls_data_<id>` that
 //! starts as the constant's starting value, and the calls are loads and stores through
-//! `tls_value` (function/tls.rs). Elsewhere (the `velt dev` JIT, which `cranelift-jit` gives no
+//! `tls_value` (function/tls.rs). Hidden, not local: LLVM-built objects the program links (the
+//! std cache's) use the same one, as LLVM's own units do. Elsewhere (the `velt dev` JIT, which `cranelift-jit` gives no
 //! thread-local storage, and arm64 Windows) the module defines the externs itself as functions
 //! on the operating system's thread keys: `pthread_getspecific` / `TlsGetValue` of a key made the
 //! first time it is needed (`velt_tls_key_<id>` holds it plus one, 0 before). A key's value is
@@ -38,7 +39,7 @@ pub(crate) fn data<M: Module>(
     }
     let sym = call.data_symbol();
     let id = module
-        .declare_data(&sym, Linkage::Local, true, true)
+        .declare_data(&sym, Linkage::Hidden, true, true)
         .map_err(|e| format!("codegen: declaring `{sym}`: {e}"))?;
     let n = (call.bits() / 8) as usize;
     let mut desc = DataDescription::new();

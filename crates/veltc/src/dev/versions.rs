@@ -74,7 +74,7 @@ impl Versions {
 }
 
 /// Delete every file of the version built to `output` (`<output>` and `<output>.*`, e.g. the
-/// `.exe` and `.pdb`); whether none is left.
+/// `.exe`, the `.pdb` and the std cache's `.std/` directory); whether none is left.
 fn remove_version(output: &Path) -> bool {
     let (Some(dir), Some(name)) = (output.parent(), output.file_name()) else {
         return true;
@@ -89,7 +89,12 @@ fn remove_version(output: &Path) -> bool {
         let file = entry.file_name();
         let file = file.to_string_lossy();
         if file == name || file.starts_with(&prefix) {
-            all_gone &= std::fs::remove_file(entry.path()).is_ok();
+            let path = entry.path();
+            all_gone &= match path.is_dir() {
+                true => std::fs::remove_dir_all(&path),
+                false => std::fs::remove_file(&path),
+            }
+            .is_ok();
         }
     }
     all_gone
@@ -98,6 +103,18 @@ fn remove_version(output: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_version_goes_with_its_std_objects() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("main-3");
+        std::fs::write(&output, "").unwrap();
+        std::fs::write(dir.path().join("main-3.std.lock"), "").unwrap();
+        std::fs::create_dir(dir.path().join("main-3.std")).unwrap();
+        std::fs::write(dir.path().join("main-3.std/0.o"), "").unwrap();
+        assert!(remove_version(&output));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 
     #[test]
     fn numbers_versions_and_deletes_retired_and_leftover_files() {
