@@ -22,10 +22,11 @@ impl FnCx<'_, '_> {
             true => self.any_ty(),
             false => None,
         };
-        // `{ value: null }` with nothing expected: as in TypeScript, the property's type is `null`
-        // (an unknown type, for which `null_lit` gives `null` alone).
+        // `{ value: null }` with nothing expected: TypeScript types the property `null`, and a
+        // later write of another value is its error. The same object converted to another type
+        // (`init as unknown as Ctx`, sigx's component context) is written through that type,
+        // which Node allows: so the field is an `any` holding `null`, which takes it.
         let null = value.is_some_and(|v| crate::body::narrow::nothing_word(v) == Some("null"));
-        let error = self.cx.ty.error;
         // `{ signal: signal }` of a generic function: function types have no type parameters, so
         // the field is an `any`, as for `typeof signal` (`Ctx::resolve_field_type`).
         let generic = match value.map(|v| &v.kind) {
@@ -37,7 +38,11 @@ impl FnCx<'_, '_> {
             true => self.any_ty(),
             false => any,
         };
-        self.prop_value(name, value, any.or(null.then_some(error)))
+        let any = match null && any.is_none() {
+            true => self.any_ty(),
+            false => any,
+        };
+        self.prop_value(name, value, any)
     }
 
     /// Does `id` name a generic function of this module's scope, not a local?

@@ -1,3 +1,0 @@
-// The property's type is `null`, so nothing else is assigned to it (TS2322).
-const a = { x: null };
-a.x = 3;

@@ -1,0 +1,12 @@
+// `null` in an object literal with nothing expected, the object then converted to an interface
+// through `unknown` and the field written there (sigx's component context): Node keeps one object.
+interface Ctx {
+  el: any;
+  renderFn: (() => string) | null;
+  n: number;
+}
+const init = { el: null as any, renderFn: null, n: 1 };
+const c: Ctx = init as unknown as Ctx;
+console.log(c.renderFn === null, c.n);
+c.renderFn = () => "r";
+console.log(c.renderFn());
