@@ -606,6 +606,13 @@ fn build_on_current_thread(
     opts: &BuildOptions,
 ) -> Result<Artifact, BuildError> {
     let target = opts.target();
+    // From before the stamp, which names objects a build at the same time could remove, through
+    // the link.
+    let _turn = (opts.emit == Emit::Exe).then(|| {
+        OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target)
+            .std_objects()
+            .lock()
+    });
     // An executable whose inputs are those of its last build is up to date (`stamp`).
     // The hashes of the files the last build's stamp records, for this build to reuse.
     let mut known = Default::default();

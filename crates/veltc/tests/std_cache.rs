@@ -554,6 +554,25 @@ fn a_debug_build_links_objects_only_when_its_cpu_can_run_them() {
     }
 }
 
+/// Builds of one output at once, against a cache holding its objects. Each removes the objects of
+/// the build before and places its own, so without turns one removes what another is linking.
+#[test]
+fn builds_of_one_output_take_turns() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    fill(dir, "a.velt", &cache);
+    for _ in 0..5 {
+        std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| debug_build(dir, "a.velt", "same", &cache, &[]));
+            }
+        });
+        assert_eq!(run(dir, "same"), OUTPUT);
+    }
+}
+
 /// What a served function does is what the compiled one does: its output, its panics and where
 /// they say they are, its exit code; integer overflow, bounds and throws, from std's code.
 #[test]

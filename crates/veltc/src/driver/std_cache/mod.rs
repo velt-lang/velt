@@ -120,6 +120,23 @@ pub(crate) struct Place {
 }
 
 impl Place {
+    /// Take this output's turn, held until the file is dropped: builds of one output at once
+    /// would remove the objects another is linking. `<dir>.lock`, beside the directory, since
+    /// the directory itself comes and goes. `None` where no lock can be had (a file system
+    /// without them), and the build goes on as it would alone.
+    pub fn lock(&self) -> Option<std::fs::File> {
+        let mut path = self.dir.clone().into_os_string();
+        path.push(".lock");
+        let path = PathBuf::from(path);
+        std::fs::create_dir_all(path.parent()?).ok()?;
+        let file = (std::fs::File::options().create(true).truncate(false))
+            .write(true)
+            .open(path)
+            .ok()?;
+        file.lock().ok()?;
+        Some(file)
+    }
+
     /// Remove what an earlier build put there.
     pub fn clear(&self) {
         let _ = std::fs::remove_dir_all(&self.dir);

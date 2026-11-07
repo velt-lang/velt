@@ -87,6 +87,8 @@ functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds
   reads them through hard links (or copies) named like object files, `<program>.std/<n>.o`, so
   MSVC's linker, which reads a name without an extension as `<name>.obj`, takes them too, and a
   build keeps linking what it was built with whatever the cache's garbage collection does.
+  Builds of one output take turns on `<program>.std.lock`, from before the stamp through the link:
+  each replaces that directory, and the linker reads it.
 
 The cache serves release executables built by LLVM without debug info (`-g`): an object or
 IR from `--emit` would name std functions it does not define, and the cached objects carry no
