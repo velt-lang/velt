@@ -150,7 +150,7 @@ impl FnLower<'_, '_> {
             || self.cx.quiet_for_borrows(def) && !args.iter().any(|a| self.in_array_buffer(a))
         {
             true => Stabilize::Facts,
-            false => Stabilize::Direct(def),
+            false => Stabilize::Direct(self.cx.callee_id(def, &targs)),
         };
         // An index's conversion (`xs[i]` with a number `i`) reads only the number it is given.
         if quiet || f.name == FLOAT_INDEX {
@@ -717,7 +717,7 @@ pub(super) enum Stabilize {
     Share,
     /// A direct call of a function: `Share`, with what the function can write known
     /// (replaceable.rs).
-    Direct(DefId),
+    Direct(super::replaceable::CalleeId),
     /// A quiet callee (quiet.rs): the same facts recorded, no shares.
     Facts,
     /// A runtime extern: plain borrows.

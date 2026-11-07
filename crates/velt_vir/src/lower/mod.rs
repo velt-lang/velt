@@ -449,7 +449,11 @@ struct Cx<'h> {
     /// Whether dropping a value of each type can run a `dispose` (replaceable.rs).
     dispose_types: FxHashMap<TyId, bool>,
     /// What direct callees write, once asked (replaceable.rs).
-    callee_stores: FxHashMap<DefId, Option<std::rc::Rc<replaceable::Stores>>>,
+    callee_stores: FxHashMap<u32, Option<std::rc::Rc<replaceable::Stores>>>,
+    /// Direct callees asked about, by `replaceable::CalleeId`.
+    callees: Vec<(DefId, Vec<TyId>)>,
+    /// Their ids, by definition and type arguments.
+    callee_ids: FxHashMap<DefId, Vec<(Vec<TyId>, replaceable::CalleeId)>>,
     /// Interned static `VeltStr` objects (`static_str_object`).
     str_objects: FxHashMap<String, StaticId>,
     /// The records of the compiler's symbols (`Intrinsic::SymbolStatic`, symbols.rs).

@@ -94,6 +94,8 @@ impl<'h> Cx<'h> {
             field_writes: None,
             dispose_types: FxHashMap::default(),
             callee_stores: FxHashMap::default(),
+            callees: vec![],
+            callee_ids: FxHashMap::default(),
             str_objects: FxHashMap::default(),
             symbol_records: Default::default(),
             boxing,

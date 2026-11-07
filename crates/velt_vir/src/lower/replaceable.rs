@@ -7,8 +7,8 @@
 //!   for assignments and for places used to modify or move. Fields are told apart by class and
 //!   name, and by name for object types, which are structural. A write through `any` or a proxy
 //!   can reach any field, so a program with one has no such fields.
-//! - a direct callee writes only the fields its body names, in itself and in what it calls
-//!   directly. One that runs code it can't see (a function value, a virtual or interface method,
+//! - a direct callee, with the type arguments of the call, writes only the fields its body names,
+//!   in itself and in what it calls directly. One that runs code it can't see (a function value, a virtual or interface method,
 //!   a `new`, an intrinsic not known to run none) may write anything, and so may one with a value
 //!   whose drop can run a `dispose`, which no body names.
 
@@ -44,6 +44,10 @@ pub(super) struct Stores {
     tuples: bool,
 }
 
+/// A direct callee with the type arguments of a call (`Cx::callee_id`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CalleeId(u32);
+
 /// What one body does.
 #[derive(Default)]
 struct Scan {
@@ -54,7 +58,9 @@ struct Scan {
     keyed: bool,
     /// It runs code the scan can't see.
     opaque: bool,
-    calls: Vec<DefId>,
+    calls: Vec<(DefId, Vec<TyId>)>,
+    /// The type arguments the body is asked about with.
+    targs: Vec<TyId>,
     /// Asked of a callee: is a value it may drop one whose drop can run a `dispose`?
     drops: bool,
     /// `this` in a constructor: a write of a field of it is the field's first value.
@@ -98,8 +104,13 @@ impl<'h> Cx<'h> {
 
     /// Can a call of direct callee `def` write field `index` of a value of type `base`? `None`
     /// for a function value or a method chosen at run time.
-    pub(super) fn callee_may_write(&mut self, def: Option<DefId>, base: TyId, index: u32) -> bool {
-        let Some(s) = def.and_then(|d| self.stores_of(d)) else {
+    pub(super) fn callee_may_write(
+        &mut self,
+        callee: Option<CalleeId>,
+        base: TyId,
+        index: u32,
+    ) -> bool {
+        let Some(s) = callee.and_then(|c| self.stores_of(c)) else {
             return true;
         };
         match self.kind(base) {
@@ -114,8 +125,20 @@ impl<'h> Cx<'h> {
 
     /// Can a call of direct callee `def` run a closure? `None` as for
     /// [`callee_may_write`](Self::callee_may_write).
-    pub(super) fn callee_runs_closures(&mut self, def: Option<DefId>) -> bool {
-        def.and_then(|d| self.stores_of(d)).is_none()
+    pub(super) fn callee_runs_closures(&mut self, callee: Option<CalleeId>) -> bool {
+        callee.and_then(|c| self.stores_of(c)).is_none()
+    }
+
+    /// The id of direct callee `def` with type arguments `targs`.
+    pub(super) fn callee_id(&mut self, def: DefId, targs: &[TyId]) -> CalleeId {
+        let known = self.callee_ids.entry(def).or_default();
+        if let Some((_, id)) = known.iter().find(|(t, _)| t == targs) {
+            return *id;
+        }
+        let id = CalleeId(self.callees.len() as u32);
+        known.push((targs.to_vec(), id));
+        self.callees.push((def, targs.to_vec()));
+        id
     }
 
     /// The class or object type declaring field `index` of `d`, and its name.
@@ -172,17 +195,18 @@ impl<'h> Cx<'h> {
 
     /// Memoized; a function reached again while it is being decided (recursion) counts as one
     /// that runs code the scan can't see, as in quiet.rs.
-    fn stores_of(&mut self, def: DefId) -> Option<Rc<Stores>> {
-        if let Some(s) = self.callee_stores.get(&def) {
+    fn stores_of(&mut self, callee: CalleeId) -> Option<Rc<Stores>> {
+        if let Some(s) = self.callee_stores.get(&callee.0) {
             return s.clone();
         }
-        self.callee_stores.insert(def, None);
-        let s = self.compute_stores(def).map(Rc::new);
-        self.callee_stores.insert(def, s.clone());
+        self.callee_stores.insert(callee.0, None);
+        let s = self.compute_stores(callee).map(Rc::new);
+        self.callee_stores.insert(callee.0, s.clone());
         s
     }
 
-    fn compute_stores(&mut self, def: DefId) -> Option<Stores> {
+    fn compute_stores(&mut self, callee: CalleeId) -> Option<Stores> {
+        let (def, targs) = self.callees[callee.0 as usize].clone();
         if self.field_writes.is_none() {
             self.field_writes = Some(Rc::new(self.scan_field_writes()));
         }
@@ -201,9 +225,13 @@ impl<'h> Cx<'h> {
         };
         let mut s = Scan {
             drops: true,
+            targs,
             ..Scan::default()
         };
-        s.opaque = f.body.locals.iter().any(|l| self.drops_dispose(l.ty));
+        for l in &f.body.locals {
+            let t = self.subst(l.ty, &s.targs);
+            s.opaque |= self.drops_dispose(t);
+        }
         self.scan_block(&f.body.block, &mut s);
         if s.opaque || s.keyed {
             return None;
@@ -212,7 +240,8 @@ impl<'h> Cx<'h> {
             names: s.names.into_iter().collect(),
             tuples: s.tuples,
         };
-        for c in s.calls {
+        for (d, t) in s.calls {
+            let c = self.callee_id(d, &t);
             let inner = self.stores_of(c)?;
             out.names.extend(inner.names.iter().cloned());
             out.tuples |= inner.tuples;
@@ -228,7 +257,9 @@ impl<'h> Cx<'h> {
         if let Some(&d) = self.dispose_types.get(&t) {
             return d;
         }
-        let d = self.drops_dispose_in(t, false, &mut Vec::new());
+        // A type shared by several instances answers for all of them, through its representative.
+        let rep = self.ph_rep(t);
+        let d = self.mentions_ph(rep) || self.drops_dispose_in(rep, false, &mut Vec::new());
         self.dispose_types.insert(t, d);
         d
     }
@@ -334,7 +365,8 @@ impl<'h> Cx<'h> {
 
     fn scan_expr(&mut self, e: &hir::Expr, s: &mut Scan) {
         if s.drops && !s.opaque {
-            s.opaque = self.drops_dispose(e.ty);
+            let t = self.subst(e.ty, &s.targs);
+            s.opaque = self.drops_dispose(t);
         }
         match &e.kind {
             K::Assign { place, value } | K::CompoundAssign { place, value, .. } => {
@@ -355,15 +387,41 @@ impl<'h> Cx<'h> {
                 ..
             } => self.scan_place(base, s),
             K::New { .. } | K::Await(_) => s.opaque = true,
-            K::Call { callee, .. } => match callee {
-                Callee::Def(d, _) => s.calls.push(*d),
+            K::Call { callee, args } => match callee {
+                Callee::Def(d, t) => {
+                    let t = t.iter().map(|&x| self.subst(x, &s.targs)).collect();
+                    s.calls.push((*d, t));
+                }
                 Callee::Intrinsic(hir::Intrinsic::KeyWrite) => s.keyed = true,
+                // On strings and numbers these only compare or format.
+                Callee::Intrinsic(
+                    hir::Intrinsic::Hash
+                    | hir::Intrinsic::KeyEq
+                    | hir::Intrinsic::IncludesEq
+                    | hir::Intrinsic::Same
+                    | hir::Intrinsic::ToString,
+                ) if s.drops
+                    && args
+                        .iter()
+                        .all(|a| self.holds_text_or_number(a.ty, &s.targs)) => {}
                 Callee::Intrinsic(i) => s.opaque |= !runs_nothing(*i),
                 _ => s.opaque = true,
             },
             _ => {}
         }
         children(e, &mut |x| self.scan_expr(x, s));
+    }
+
+    /// Is a value of type `t` a string, a number or a boolean, or one of them or nothing?
+    fn holds_text_or_number(&mut self, t: TyId, targs: &[TyId]) -> bool {
+        let t = self.subst(t, targs);
+        match self.kind(t) {
+            TyKind::Str | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Literal(_) => {
+                true
+            }
+            TyKind::Option(x, _) => self.holds_text_or_number(x, &[]),
+            _ => false,
+        }
     }
 
     /// An assignment's target: every field on the way changes (a part stored inline), except
@@ -429,6 +487,9 @@ fn runs_nothing(i: hir::Intrinsic) -> bool {
         || matches!(
             i,
             I::Share
+                | I::HoldsNull
+                | I::NullAs
+                | I::Panic
                 | I::StrConcat
                 | I::ArrayWithCapacity
                 | I::ArrayPush

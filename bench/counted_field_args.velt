@@ -163,6 +163,26 @@ function writtenNew() {
   for (let i = 0; i < N; i++) { c += makes(o.written); }
   return c;
 }
+const MAP_ROW = new Map<string, number>([["written-string-on-the-heap-", 1]]);
+const STRINGS_ROW: string[] = ["a", "b", "c"];
+function mapGet(v: string): number { const x = MAP_ROW.get(v); return x === undefined ? 0 : x; }
+function arrayIncludes(v: string): boolean { return STRINGS_ROW.includes(v); }
+function boolText(k: Kept, v: string): number { return v.startsWith("z").toString().length + k.n; }
+function writtenMapGet() {
+  const o = kept(); let c = 0;
+  for (let i = 0; i < N; i++) { c += mapGet(o.written) + 1; }
+  return c;
+}
+function writtenIncludes() {
+  const o = kept(); let c = 0;
+  for (let i = 0; i < N; i++) { if (!arrayIncludes(o.written)) c++; }
+  return c;
+}
+function writtenToString() {
+  const o = kept(); let c = 0;
+  for (let i = 0; i < N; i++) { c += boolText(o, o.written); }
+  return c;
+}
 function all() {
   console.log(thisPlain());
   console.log(recvStartsWithField());
@@ -186,5 +206,8 @@ function all() {
   console.log(writtenConcat());
   console.log(writtenFnValue());
   console.log(writtenNew());
+  console.log(writtenMapGet());
+  console.log(writtenIncludes());
+  console.log(writtenToString());
 }
 all();
