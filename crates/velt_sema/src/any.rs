@@ -184,6 +184,12 @@ impl Ctx<'_> {
         self.ty.error
     }
 
+    /// The type `any`, with the prelude.
+    pub(crate) fn any_type(&mut self) -> Option<TyId> {
+        let any = self.any?.any;
+        Some(self.ty.intern(TyKind::Dyn(any, vec![])))
+    }
+
     /// Is `t` `any` or `unknown`?
     pub(crate) fn dynamic(&self, t: TyId) -> Option<Dynamic> {
         let defs = self.any?;

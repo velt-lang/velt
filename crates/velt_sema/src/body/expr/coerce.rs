@@ -84,6 +84,18 @@ impl FnCx<'_, '_> {
             },
             false => h,
         };
+        let h = match self.string_bound_value(h, exp) {
+            Ok(s) => return Ok(s),
+            Err(h) => h,
+        };
+        let fixed = matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. });
+        let h = match fixed && self.cx.is_generic_fn(exp) {
+            true => match self.fn_value_as_generic(h, exp) {
+                Ok(g) => return Ok(g),
+                Err(h) => h,
+            },
+            false => h,
+        };
         let h = match self.fn_bound_value(h) {
             Ok(f) if f.ty == exp || matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) => {
                 return self.try_coerce_value(f, exp)
@@ -467,8 +479,10 @@ impl FnCx<'_, '_> {
             // An interface value where an interface whose members it has is expected (a part
             // of an intersection, a `Pick` of it, an interface it extends): the same object
             // (`crate::synth_ifaces`).
+            // (Not a generic function type's: a generic closure's table holds no other tables.)
             if self.cx.dynamic(h.ty).is_none()
                 && self.cx.dynamic(exp).is_none()
+                && !self.cx.is_generic_fn(exp)
                 && self.cx.iface_upcast((have, &from), (iface, args))
             {
                 let mut h = h;

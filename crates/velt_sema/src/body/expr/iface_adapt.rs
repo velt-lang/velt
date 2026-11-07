@@ -415,6 +415,9 @@ impl FnCx<'_, '_> {
         to: &[TyId],
     ) -> Result<hir::Expr, hir::Expr> {
         let span = h.span;
+        if self.cx.generic_fn_free_of_args(iface) && self.generic_fn_opens(iface, from, to) {
+            return Ok(self.same_generic_fn(h, exp));
+        }
         // Inside a generic adapter, a value over its type parameters: an instance of the
         // generic adapter to `to` (`iface_adapt_dynamic`).
         let (a, type_args) = match from.iter().any(|t| has_params(self.cx, *t)) {

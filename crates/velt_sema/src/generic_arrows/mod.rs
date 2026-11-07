@@ -18,6 +18,8 @@ mod local;
 mod recursive;
 mod typed;
 
+pub(crate) use typed::subst as subst_names;
+
 use rustc_hash::FxHashSet;
 
 use velt_common::Span;

@@ -230,6 +230,16 @@ impl FnCx<'_, '_> {
         if let Some(def) = self.plain_enum(h.ty) {
             return Ok(self.enum_to_dynamic(h, def, exp));
         }
+        // The literal `null` / `undefined` of a nullable type (`[T | null]`'s element): JavaScript's.
+        if let (H::Lit(hir::Lit::Null), Some(n)) = (&h.kind, self.cx.ty.nothing_of(h.ty)) {
+            let n = match n {
+                Nothing::Both => Nothing::Undefined,
+                n => n,
+            };
+            if self.cx.dynamic_nothing_ty(n) != h.ty {
+                return Ok(self.dynamic_nothing(n, exp, span));
+            }
+        }
         if let Some(payload) = self.cx.ty.opt_payload(h.ty) {
             if !matches!(h.kind, H::Lit(hir::Lit::Null)) {
                 // A `T | null | undefined`'s own nothing is `undefined` (its payload is the

@@ -62,6 +62,43 @@ impl Ctx<'_> {
         )
     }
 
+    /// The alias a deferred application of alias `a` is known by: two aliases with as many
+    /// parameters and one body, by position, naming only those and built-in types are one type
+    /// while deferred (a helper type declared in two modules), as TypeScript relates generic
+    /// mapped and conditional types by what they are, not by their alias.
+    pub(crate) fn canonical_alias(&mut self, a: u32) -> u32 {
+        if let Some(&c) = self.type_level.alias_canon.get(&a) {
+            return c;
+        }
+        let info = &self.aliases[a as usize];
+        let decl = info.decl;
+        let mut bound: Vec<&str> = decl.generics.iter().map(|g| g.name.name.as_str()).collect();
+        let c = match info.outer.is_empty() && closed(&decl.ty, &mut bound) {
+            true => {
+                // By position: `type A<T>` and `type B<U>` with one body are one.
+                let named: Vec<(String, ast::TypeExpr)> = (decl.generics.iter().enumerate())
+                    .map(|(i, g)| {
+                        let kind = ast::TypeExprKind::Named {
+                            path: vec![ast::Ident {
+                                name: format!("#{i}"),
+                                span: g.name.span,
+                            }],
+                            args: vec![],
+                        };
+                        let span = g.name.span;
+                        (g.name.name.clone(), ast::TypeExpr { kind, span })
+                    })
+                    .collect();
+                let body = crate::generic_arrows::subst_names(&decl.ty, &named);
+                let key = (decl.generics.len(), shape_key(&body));
+                *self.type_level.alias_shapes.entry(key).or_insert(a)
+            }
+            false => a,
+        };
+        self.type_level.alias_canon.insert(a, c);
+        c
+    }
+
     /// Does `t` hold a deferred type (`TyKind::Op`)?
     pub(crate) fn mentions_op(&self, t: TyId) -> bool {
         let mut found = false;
@@ -263,8 +300,65 @@ impl Ctx<'_> {
     }
 }
 
+/// Does `t` name only what `bound` holds and built-in types, in forms that mean the same in every
+/// module? `bound` is scoped: a mapped type's key in its value and `as` clause, an `infer` name in
+/// its pattern and true branch. A binder that shadows a name makes it `false`.
+fn closed<'t>(t: &'t ast::TypeExpr, bound: &mut Vec<&'t str>) -> bool {
+    use ast::TypeExprKind as K;
+    match &t.kind {
+        K::Named { path, args } => {
+            let [one] = &path[..] else { return false };
+            let name = one.name.as_str();
+            let known = bound.contains(&name)
+                || matches!(
+                    name,
+                    "string"
+                        | "number"
+                        | "boolean"
+                        | "bigint"
+                        | "symbol"
+                        | "any"
+                        | "unknown"
+                        | "never"
+                        | "object"
+                );
+            known && args.iter().all(|a| closed(a, bound))
+        }
+        K::Array(e) | K::KeyOf(e) => closed(e, bound),
+        K::Tuple(ts) | K::Union(ts) | K::Intersection(ts) => ts.iter().all(|x| closed(x, bound)),
+        K::TemplateLiteral { types, .. } => types.iter().all(|x| closed(x, bound)),
+        K::Indexed { object, key } => closed(object, bound) && closed(key, bound),
+        K::Object(fs) => fs.iter().all(|f| closed(&f.ty, bound)),
+        K::Literal(_) | K::Null | K::Undefined | K::Void | K::Infer(_) => true,
+        K::Mapped(m) => {
+            if !closed(&m.source, bound) || bound.contains(&m.param.name.as_str()) {
+                return false;
+            }
+            bound.push(&m.param.name);
+            let ok = closed(&m.value, bound) && m.name.as_ref().is_none_or(|n| closed(n, bound));
+            bound.pop();
+            ok
+        }
+        K::Conditional(c) => {
+            if !closed(&c.check, bound) || !closed(&c.else_, bound) {
+                return false;
+            }
+            let names = super::infer_names_ref(&c.extends);
+            if names.iter().any(|n| bound.contains(n)) {
+                return false;
+            }
+            let at = bound.len();
+            bound.extend(names);
+            let ok = closed(&c.extends, bound) && closed(&c.then, bound);
+            bound.truncate(at);
+            ok
+        }
+        _ => false,
+    }
+}
+
 /// The single names `t` mentions (type parameters among them, perhaps shadowed).
-fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
+pub(crate) fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
     let mut add = |x: &'t ast::TypeExpr| names_in(x, out);
     use ast::TypeExprKind as K;
     match &t.kind {

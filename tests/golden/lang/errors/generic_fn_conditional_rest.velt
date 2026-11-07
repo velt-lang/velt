@@ -1,0 +1,13 @@
+// A rest parameter that a call's type arguments decide: `tsc --strict` rejects the same lines (TS2554, TS2345).
+type Def<T> = { __d: T };
+type Names<E> = { [K in keyof E]: E[K] extends Def<any> | undefined ? K : never }[keyof E] & string;
+type Detail<E, N extends Names<E>> = E extends { [K in N]?: Def<infer D> } ? D : never;
+type Emit<E extends Record<string, any>> = <N extends Names<E>>(name: N, ...args: Detail<E, N> extends void ? [] : [detail: Detail<E, N>]) => void;
+type Ev = { change: Def<number>; close: Def<void>; other: string };
+const z: Emit<Ev> = (n, ...x) => {};
+z("change");
+z("change", "s");
+z("close", 1);
+z("nope");
+z("other");
+z("change", 1, 2);

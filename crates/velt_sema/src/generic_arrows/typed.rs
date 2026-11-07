@@ -40,6 +40,21 @@ pub(crate) struct GenericFnTypes<'m> {
     names: FxHashSet<&'m str>,
 }
 
+/// Is the last of `params`, a rest parameter, a form over `type_params` other than an array?
+fn decided_rest(params: &[ast::TypeExpr], type_params: &[ast::GenericParam]) -> bool {
+    let Some(last) = params.last() else {
+        return false;
+    };
+    let mut names = vec![];
+    crate::type_level::inline::names_in(last, &mut names);
+    let array = match &last.kind {
+        K::Array(_) => true,
+        K::Named { path, .. } => path.len() == 1 && path[0].name == "Array",
+        _ => false,
+    };
+    !array && (type_params.iter()).any(|g| names.iter().any(|n| *n == "*" || *n == g.name.name))
+}
+
 /// A generic function type: its type parameters and its function type.
 pub(crate) struct GenericFn {
     pub type_params: Vec<ast::GenericParam>,
@@ -132,6 +147,11 @@ impl<'m> GenericFnTypes<'m> {
     fn lookup(&self, module: usize, t: &ast::TypeExpr, depth: u32) -> Option<GenericFn> {
         match &t.kind {
             K::GenericFunction { type_params, ty } => match &ty.kind {
+                // A rest parameter that its type parameters decide (`...a: N extends X ? [] : [Y]`)
+                // has no function to be: a closure of the type (`GenericFns::rest_forms`).
+                K::Function { params, rest, .. } if *rest && decided_rest(params, type_params) => {
+                    None
+                }
                 K::Function {
                     params,
                     ret,
@@ -566,7 +586,7 @@ fn is_path(e: &ast::Expr) -> bool {
 }
 
 /// `t` with each name in `map` (a type parameter of an alias) replaced by its type.
-fn subst(t: &ast::TypeExpr, map: &[(String, ast::TypeExpr)]) -> ast::TypeExpr {
+pub(crate) fn subst(t: &ast::TypeExpr, map: &[(String, ast::TypeExpr)]) -> ast::TypeExpr {
     let mut t = t.clone();
     if !map.is_empty() {
         Subst { map }.ty(&mut t);

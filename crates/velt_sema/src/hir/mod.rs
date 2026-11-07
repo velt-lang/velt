@@ -39,6 +39,7 @@ mod modes;
 mod module_state;
 mod nothing;
 mod numeric;
+mod pattern;
 mod table;
 mod ty_op;
 
@@ -57,6 +58,7 @@ pub use modes::{Conversion, PassMode, UseMode};
 pub use module_state::{CConst, CValue, GlobalDef, ModuleState};
 pub use nothing::Nothing;
 pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
+pub use pattern::{Pat, PatKind};
 pub use table::TyTable;
 pub use ty_op::TyOp;
 
@@ -214,6 +216,12 @@ pub struct Program {
     /// The generic interface methods called with type arguments of their own through tables:
     /// only their vtable slots hold instantiation tables (hir_encodings.md). Additive.
     pub generic_dyn_methods: HashSet<String>,
+    /// The generic function types' interfaces whose method doesn't mention the interface's type
+    /// parameters and whose own type parameters are bounded only by string types: all their
+    /// instances share one list of a call's type arguments, and an instance converts to another
+    /// as the same value where sema opens it (hir_encodings.md "Generic function values").
+    /// Additive.
+    pub arg_free_generic_fns: HashSet<DefId>,
     /// Closures each evaluation of which is a new function value where JavaScript has one
     /// function, and the conversions of function values to other function types (#943,
     /// [`FreshClosure`], hir_encodings.md "Generic function values"). Additive.
@@ -754,43 +762,4 @@ pub enum ExprKind {
     },
     /// `throw e` (type Never).
     Throw(Box<Expr>),
-}
-
-// ───────────────────────────── Patterns (M2+ draft) ─────────────────────────────
-
-#[derive(Clone, Debug)]
-pub struct Pat {
-    pub kind: PatKind,
-    pub ty: TyId,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug)]
-pub enum PatKind {
-    Wildcard,
-    Binding(LocalId, UseMode),
-    Lit(Lit),
-    Variant {
-        def: DefId,
-        variant: u32,
-        args: Vec<Pat>,
-    },
-    /// Field index → sub-pattern.
-    Adt {
-        fields: Vec<(u32, Pat)>,
-    },
-    Tuple(Vec<Pat>),
-    Array {
-        elems: Vec<Pat>,
-        rest: Option<LocalId>,
-    },
-    Or(Vec<Pat>),
-    /// `null` pattern on Option.
-    None,
-    /// Non-null pattern on Option.
-    Some(Box<Pat>),
-    /// `instanceof C`: the class object (or the interface value holding one) is an instance of
-    /// class `C` or of one of its subclasses; it tests the dynamic class and binds nothing. Only
-    /// on a class whose subclasses include `C`, or on an interface value.
-    InstanceOf(DefId),
 }

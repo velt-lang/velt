@@ -1,0 +1,10 @@
+// Valid TypeScript Velt says it doesn't support yet: a spread of a form the enclosing function's type
+// parameters still decide, and a rest parameter typed by a type parameter.
+type Def<T> = { __d: T };
+type Names<E> = { [K in keyof E]: E[K] extends Def<any> ? K : never }[keyof E] & string;
+type Detail<E, N extends Names<E>> = E extends { [K in N]?: Def<infer D> } ? D : never;
+type Form<E, N extends Names<E>> = Detail<E, N> extends void ? [] : [Detail<E, N>];
+type Emit<E extends Record<string, any>> = <N extends Names<E>>(n: N, ...a: Form<E, N>) => void;
+function fw<E extends Record<string, any>, N extends Names<E>>(e: Emit<E>, n: N, a: Form<E, N>): void { e(n, ...a); }
+const r: <A extends any[]>(...args: A) => A = (...args) => args;
+console.log(typeof fw, typeof r);

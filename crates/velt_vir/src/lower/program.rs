@@ -43,6 +43,7 @@ impl<'h> Cx<'h> {
             target: String::new(),
             cpu_checks: Default::default(),
             unavailable: vec![],
+            unreduced: vec![],
             c_clashes: vec![],
             c_symbols: Default::default(),
             c_clashes_reported: Default::default(),

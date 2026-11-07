@@ -1,0 +1,2 @@
+type K = number;
+export type B<T> = { p: T extends string ? K : never };

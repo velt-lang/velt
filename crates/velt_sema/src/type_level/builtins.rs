@@ -62,6 +62,13 @@ impl Ctx<'_> {
                 let mut kept = vec![];
                 let mut nothing: Option<Nothing> = None;
                 for s in self.subjects_of(a) {
+                    // `any extends X ? any : never`, or the other way round, is `any`.
+                    if let Subject::Ty(m) = s {
+                        if self.dynamic(m) == Some(crate::any::Dynamic::Any) {
+                            kept.push(m);
+                            continue;
+                        }
+                    }
                     let Ok(found) = self.match_pattern(s, &args[1], env) else {
                         return Some(self.ty.error);
                     };

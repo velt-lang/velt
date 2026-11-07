@@ -134,10 +134,14 @@ impl Ctx<'_> {
         // one (`Record<string, V>`) gives `V` for any string key.
         let fields = match self.record_type_args(t) {
             Some((rk, rv)) if self.record_key_names(rk).is_none() => {
-                let any_key = matches!(
-                    self.ty.kind(k),
-                    TyKind::Str | TyKind::Int(_) | TyKind::Float(_)
-                ) || self.literal_strings(k).is_some_and(|ks| !ks.is_empty());
+                // `keyof Record<string, V>` is `string | number`.
+                let members = self.union_members(k).unwrap_or_else(|| vec![k]);
+                let any_key = members.iter().all(|m| {
+                    matches!(
+                        self.ty.kind(*m),
+                        TyKind::Str | TyKind::Int(_) | TyKind::Float(_)
+                    )
+                }) || self.literal_strings(k).is_some_and(|ks| !ks.is_empty());
                 if any_key && *self.ty.kind(rk) == TyKind::Str {
                     return rv;
                 }

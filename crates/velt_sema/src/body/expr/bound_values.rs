@@ -2,7 +2,7 @@
 //! as that function, an array-type bound through an `any`, checked at run time.
 
 use crate::body::FnCx;
-use crate::hir::{self, ExprKind as H, TyKind};
+use crate::hir::{self, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// A value of a type parameter bounded by a function type (`f: F`, `F extends (x: number)
@@ -20,6 +20,27 @@ impl FnCx<'_, '_> {
         }
         let span = h.span;
         Ok(self.mk(H::Upcast(Box::new(h)), b, span))
+    }
+
+    /// A value of a type parameter bounded by a string type (`k: K`, with `K extends string`,
+    /// `K extends "a" | "b"` or `K extends Names<E>`, `type Names<E> = … & string`), where a
+    /// `string` is expected: the same value, every instantiation being a string.
+    pub(super) fn string_bound_value(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let TyKind::Param(p) = *self.cx.ty.kind(h.ty) else {
+            return Err(h);
+        };
+        if *self.cx.ty.kind(exp) != TyKind::Str
+            || !(self.cx.constraint_of(p)).is_some_and(|b| self.cx.string_bound(b))
+        {
+            return Err(h);
+        }
+        let span = h.span;
+        let boxed = self.generic_as_any(h)?;
+        Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![boxed], exp, span))
     }
 
     /// A value of a type parameter bounded by an array type (`xs: T`, `T extends readonly

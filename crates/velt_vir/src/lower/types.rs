@@ -346,8 +346,8 @@ impl<'h> Cx<'h> {
 
     /// The type deferred type `op` (concrete arguments) reduces to: sema's entry for it
     /// (`hir::Program::type_ops`), looked up as written or with canonical arguments. Sema
-    /// reduces every one an instantiation reaches, so a missing one is an internal error, never
-    /// a guessed layout.
+    /// reduces every one an instantiation reaches, except for a generic function value at other
+    /// type arguments than its function's: an error, never a guessed layout.
     fn reduce_op(&mut self, op: TyId) -> TyId {
         if let Some(&r) = self.hir.type_ops.get(&op) {
             return r;
@@ -372,10 +372,12 @@ impl<'h> Cx<'h> {
         let ck = self.intern(TyKind::Op(o, args));
         match self.anon.ops.as_ref().and_then(|m| m.get(&ck)) {
             Some(&r) => r,
-            None => ice(format_args!(
-                "deferred type {op:?} ({:?}) was not reduced by sema",
-                self.kind(op)
-            )),
+            // A value of a generic function type called at type arguments its function wasn't
+            // checked for: reported when lowering ends (`unreduced_diagnostics`).
+            None => {
+                self.unreduced.push(op);
+                self.intern(TyKind::Unit)
+            }
         }
     }
 
