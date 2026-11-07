@@ -479,15 +479,18 @@ otherwise `_dot_add_bf16x8`. The start-up check ("CPU check") does not know FEAT
 AVX512-BF16: code built for a `--cpu` that has them stops with an illegal instruction on a CPU that
 has not. Cranelift always widens and uses `fma`.
 
-`velt_simd_f16x8_<op>` [additive] for `add`, `sub`, `mul`, `div`, `min`, `max`, `neg`, `abs`, `sqrt`
-and the comparisons `eq`, `ne`, `lt`, `le`, `gt`, `ge` (giving a `mask16x8`) read the lanes as
+`velt_simd_f16x8_<op>` [additive] for `add`, `sub`, `mul`, `div`, `mul_add`, `mul_add_fast`, `min`,
+`max`, `neg`, `abs`, `sqrt` and the comparisons `eq`, `ne`, `lt`, `le`, `gt`, `ge` (giving a `mask16x8`) read the lanes as
 binary16, rounded to nearest even with subnormals kept, and `_select` moves their bits. They are
-the same bits on every target but for which NaN a NaN is. LLVM uses `<8 x half>` where the target
+the same bits on every target but for which NaN a NaN is, `_mul_add_fast` excepted. LLVM uses
+`<8 x half>` where the target
 has the instructions (Apple arm64 with no `--cpu` or `baseline`, a `--cpu` for which clang defines
 `__ARM_FEATURE_FP16_VECTOR_ARITHMETIC`, or `__AVX512FP16__` with `__AVX512VL__`); elsewhere, and
 always under Cranelift, each half is widened, computed in `f32` and narrowed, which rounds the
-same (f32 has at least 2p + 2 bits), and `neg` and `abs` change the sign bits. The start-up check
-does not know these extensions either. `bf16x8` has none of them.
+same (f32 has at least 2p + 2 bits), and `neg` and `abs` change the sign bits. `_mul_add` there
+multiplies and adds in `f64` and narrows once, which gives the fused result (the argument is at
+`half_arith::fused`; in `f32` it would round twice), with no FMA and no library call;
+`_mul_add_fast` there computes in `f32` and narrows. The start-up check does not know these extensions either. `bf16x8` has none of them.
 
 **CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
 `sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on
