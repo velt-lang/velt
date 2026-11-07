@@ -1,0 +1,94 @@
+//! `f.apply(self, list)` through `any` in the program's own code: the list is read at the call,
+//! where an error can be caught, not in the slot, which ends the process on one (`anyApplyList`).
+//! A list known to be an `any[]` has nothing to read and takes the plain call, with no test.
+
+use velt_common::Span;
+use velt_syntax::ast;
+
+use crate::body::places::{is_path, set_place_mode};
+use crate::body::{FnCx, Want};
+use crate::hir::{self, Intrinsic, TyId, TyKind};
+use crate::hook_calls::{self as hooks, ty, HookTy};
+
+impl FnCx<'_, '_> {
+    /// Must the list of `apply(args)` be read at the call?
+    pub(super) fn apply_reads_list(&mut self, args: &[ast::Expr]) -> bool {
+        let spread = args
+            .iter()
+            .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
+        if args.len() != 2 || spread {
+            return false;
+        }
+        let list = self.any_ty();
+        let held = self
+            .trial_type(&args[1])
+            .map(|t| self.cx.ty.kind(t).clone());
+        !matches!(held, Some(TyKind::Array(e)) if Some(e) == list)
+    }
+
+    /// `recv.apply(args)` with the list read first.
+    pub(super) fn any_apply_method(
+        &mut self,
+        recv: hir::Expr,
+        key: hir::Expr,
+        text: hir::Expr,
+        args: &[ast::Expr],
+        any: TyId,
+        span: Span,
+    ) -> hir::Expr {
+        // A receiver that nothing here can change is read twice, not held: that share and
+        // its drop are most of the cost of an `apply` in a function.
+        let simple = |a: &ast::Expr| {
+            matches!(
+                a.kind,
+                ast::ExprKind::Ident(_) | ast::ExprKind::This | ast::ExprKind::Lit(_)
+            )
+        };
+        if is_path(&recv) && args.iter().all(simple) {
+            let Some(mut boxed) = self.dynamic_args(args, any, false) else {
+                return self.error_expr(span);
+            };
+            let (Some(list), Some(first)) = (boxed.pop(), boxed.pop()) else {
+                return self.error_expr(span);
+            };
+            let mut recv = recv;
+            set_place_mode(&mut recv, hir::UseMode::Borrow);
+            let list = self.apply_list(recv.clone(), list, any, span);
+            self.note_any_call();
+            let all = vec![recv, key, text, first, list];
+            return self.intrinsic(Intrinsic::AnyCall, all, any, span);
+        }
+        let recv = self.share_if_place(recv);
+        self.with_temp("<apply>", recv, span, span, |lw, f| {
+            let Some(mut boxed) = lw.dynamic_args(args, any, false) else {
+                return lw.error_expr(span);
+            };
+            let (Some(list), Some(first)) = (boxed.pop(), boxed.pop()) else {
+                return lw.error_expr(span);
+            };
+            let held = lw.expr(f, None, Want::Borrow);
+            let list = lw.apply_list(held, list, any, span);
+            lw.note_any_call();
+            let recv = lw.expr(f, None, Want::Borrow);
+            let all = vec![recv, key, text, first, list];
+            lw.intrinsic(Intrinsic::AnyCall, all, any, span)
+        })
+    }
+
+    /// The list of `f.apply(self, list)`, read at the call (`anyApplyList`).
+    fn apply_list(&mut self, f: hir::Expr, list: hir::Expr, any: TyId, span: Span) -> hir::Expr {
+        // A typed array's elements (`any` reads none yet), in a program that has them.
+        let typed = velt_common::std_hook!(typed_apply_list);
+        let list = if self.cx.prelude_fn(typed).is_some() {
+            hooks::typed_apply_list(ty::Any::of(list)).emit(self, any, span)
+        } else {
+            list
+        };
+        let call = if self.uses_proxy() {
+            hooks::proxy_apply_list(ty::Any::of(f), ty::Any::of(list))
+        } else {
+            hooks::any_apply_list(ty::Any::of(f), ty::Any::of(list))
+        };
+        call.emit(self, any, span)
+    }
+}

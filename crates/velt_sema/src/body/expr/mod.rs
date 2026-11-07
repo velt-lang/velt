@@ -4,6 +4,7 @@
 mod abstract_ctor;
 mod access;
 mod accessor_rmw;
+mod any_apply;
 mod any_prim;
 mod any_record_cast;
 mod any_text;
