@@ -1,4 +1,5 @@
-//! Completion. In JSX: tags and attributes ([`jsx_completion`]). After `receiver.`: the members
+//! Completion. In JSX: tags and attributes ([`jsx_completion`]). After `@`: the compile-time
+//! decorators in scope. After `receiver.`: the members
 //! of the receiver's type (`this` → the enclosing class). Elsewhere: locals in scope, the module's items, imported names, prelude items, built-in
 //! globals and keywords, which auto-import extends ([`crate::imports`]). The receiver is read from the text (while typing `x.` the statement usually
 //! does not parse) and looked up among the names sema sees at the cursor; the AST index answers
@@ -93,6 +94,9 @@ pub fn complete(analysis: &Analysis, offset: u32, jsx_only: bool) -> Completion 
             }
         };
         return other(quoted_members(analysis, items, &text[..word_start], offset));
+    }
+    if text[..word_start].ends_with('@') {
+        return other(sema_query::decorator_items(analysis, at));
     }
     let mut from_sema = sema_query::scope_items(analysis, at);
     let items = if from_sema.is_empty() {

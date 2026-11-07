@@ -196,6 +196,9 @@ pub struct Session {
     pub cached: Option<(usize, usize, &'static str)>,
     /// Objects of std functions the program links instead of compiling (`std_cache`).
     pub std_objects: Vec<PathBuf>,
+    /// What the program reaches outside itself (`outside::reaches`), when it was worked out
+    /// before those functions became declarations.
+    pub reaches: Option<String>,
     /// What the source generators the build ran read, as build-stamp `file` entries
     /// (`crate::generate`): a changed generator rebuilds the program. The C headers of its
     /// constants and C functions too (`native::read_c_constants`, `native::c_stamp_inputs`).
@@ -450,7 +453,11 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         optimize: opts.release,
         cpu: opts.cpu.clone(),
     };
-    let std_plan = std_cache::wanted(opts).then(|| {
+    let std_wanted = std_cache::wanted(opts);
+    // A declaration hides what its function reaches. Set either way: a build on this session that
+    // stopped early must not leave its answer for this one.
+    sess.reaches = std_wanted.then(|| outside::reaches(&program));
+    let std_plan = std_wanted.then(|| {
         let t = Instant::now();
         let unsplit = program.clone();
         let plan = std_cache::split(&mut program, opts, &cg);
@@ -634,7 +641,10 @@ fn build_on_current_thread(
     check_generator_host(sess, &program)?;
     // For the stamp: what the program reaches outside itself (`velt test` keeps a result only
     // for a program that reaches nothing).
-    let reaches = outside::reaches(&program);
+    let reaches = match sess.reaches.take() {
+        Some(reaches) => reaches,
+        None => outside::reaches(&program),
+    };
     if opts.emit == Emit::Vir {
         return Ok(Artifact::Vir(program.to_string()));
     }

@@ -27,7 +27,7 @@ pub struct NodeId(pub u32);
 pub use crate::ast_names::{
     is_method_this, COMPUTED_KEY_FN, IMPORT_META, IMPORT_META_CLASS, IMPORT_META_FIELDS,
     IMPORT_META_MODULE, METHOD_THIS, OBJECT_GET_FN, OBJECT_SET_FN, SYMBOL_ASYNC_DISPOSE,
-    SYMBOL_ASYNC_ITERATOR, SYMBOL_DISPOSE, SYMBOL_ITERATOR,
+    SYMBOL_ASYNC_ITERATOR, SYMBOL_DISPOSE, SYMBOL_ITERATOR, TC39_NOT_SUPPORTED,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,7 +89,8 @@ pub enum ItemKind {
     /// `declare system function pread(...)` (`FnSig::is_system`) binds the platform's C library;
     /// `declare intrinsic function f(...)` (`FnSig::is_intrinsic`) declares a compiler intrinsic;
     /// `declare host("m") function f(...)` (`FnSig::host`) declares a function the JS host
-    /// provides.
+    /// provides; `declare decorator function f(...)` (`FnSig::is_decorator`) declares a
+    /// compile-time decorator.
     ExternFn(FnSig),
     /// `declare global { … }` / `declare module "spec" { … }`: declarations that augment the
     /// global scope or another module (TypeScript's augmentation; interfaces merge into the
@@ -151,6 +152,8 @@ pub struct Param {
     pub ty: TypeExpr,
     /// For an optional parameter, `null`.
     pub default: Option<Expr>,
+    /// `@x name: T`: a Velt extension, for compile-time decorators only. Additive.
+    pub decorators: Vec<Decorator>,
     /// `name?: T` — parsed as `name: T | null = null` (the flag only keeps the spelling).
     pub optional: bool,
     /// `...name: T[]` (the last parameter): a call's remaining arguments, spreads included,
@@ -181,6 +184,13 @@ pub struct FnSig {
     /// calls are checked against this signature (docs/internals/design/std-layout.md §10).
     /// Always `false` for anything but a `declare` item. Additive.
     pub is_intrinsic: bool,
+    /// `declare decorator function name(key: string): FieldDecorator;`: a compile-time decorator,
+    /// data that is never called (https://github.com/velt-lang/velt/issues/2203). Always `false`
+    /// for anything but a `declare` item. Additive.
+    pub is_decorator: bool,
+    /// The decorators written before the function or method (for overloads, on the
+    /// implementation's signature). Additive.
+    pub decorators: Vec<Decorator>,
     /// `declare generated("./gen") function f<T>(…): R;`: a function whose body a source
     /// generator writes per instance (docs/internals/design/source-generators.md). Parsed as a
     /// [`FnDecl`] with an empty body; `None` for every other function. Additive.
@@ -198,6 +208,18 @@ pub struct FnSig {
     /// `function f(this: T, ...)`: the type of `this` in the body, when it is not `void` (a
     /// `this` parameter is no parameter: callers pass the receiver). `None` without one.
     pub this_param: Option<Box<TypeExpr>>,
+    pub span: Span,
+}
+
+/// `@x`, `@ns.x`, `@x(args)`, `@ns.x(args)` or `@(expr)` before a declaration. Both kinds share
+/// this node: name resolution decides whether it is a compile-time decorator (`x` names a
+/// `declare decorator function`) or a TC39 run-time decorator (anything else).
+#[derive(Clone, Debug)]
+pub struct Decorator {
+    /// What follows the `@`: an identifier or member chain, a call of one, or a parenthesized
+    /// expression ([`ExprKind::Paren`]).
+    pub expr: Expr,
+    /// From the `@` to the end of `expr`.
     pub span: Span,
 }
 

@@ -1,0 +1,77 @@
+// sqlite (internal): `Book`, a connection's bookkeeping behind its `Mutex`: the statements it keeps
+// compiled, and its last failure.
+
+import { Info } from "./info";
+import { sqlite3_finalize } from "./sqlite3";
+
+// The SQL texts a connection keeps compiled, beyond those a statement handle uses.
+const STATEMENT_CACHE: number = 256;
+
+// A statement kept compiled, and how many handles use it.
+class Kept {
+  info: shared<Info>;
+  handles: i64 = 1;
+
+  constructor(info: shared<Info>) {
+    this.info = info;
+  }
+}
+
+// The statements kept compiled, by their SQL as given (trimmed), and the last failure.
+export class Book {
+  kept: Map<string, Kept> = new Map<string, Kept>();
+  lastCode: string = "";
+  lastMessage: string = "";
+
+  // The statement of `sql` if it is kept, with one handle more.
+  find(sql: string): shared<Info> | null {
+    const k = this.kept.get(sql);
+    if (k == null) {
+      return null;
+    }
+    k.handles++;
+    return k.info;
+  }
+
+  // Keeps a newly compiled statement; what no handle uses is forgotten when there are many.
+  keep(sql: string, info: shared<Info>) {
+    if (this.kept.size >= STATEMENT_CACHE) {
+      for (const [text, k] of this.kept.entries()) {
+        if (k.handles == 0) {
+          // SAFETY: no handle uses it, and the caller is inside the gate.
+          unsafe {
+            sqlite3_finalize(k.info.stmt);
+          }
+          this.kept.delete(text);
+        }
+      }
+    }
+    this.kept.set(sql, new Kept(info));
+  }
+
+  // SQLite compiled the statement of `sql` anew, and this is what it is like now.
+  update(sql: string, info: shared<Info>) {
+    const k = this.kept.get(sql);
+    if (k != null) {
+      k.info = info;
+    }
+  }
+
+  release(sql: string) {
+    const k = this.kept.get(sql);
+    if (k != null) {
+      k.handles--;
+    }
+  }
+
+  // Finalizes every statement; the caller is inside the gate.
+  finalizeAll() {
+    for (const k of this.kept.values()) {
+      // SAFETY: the connection is closing, and handles check that first.
+      unsafe {
+        sqlite3_finalize(k.info.stmt);
+      }
+    }
+    this.kept.clear();
+  }
+}

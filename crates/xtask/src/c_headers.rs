@@ -1,13 +1,16 @@
 //! What the check of `declare c` against C headers depends on ([`crate::plan::Plan::c_headers`]):
 //! a change to these runs it through zig, on one Linux job. Anything else doesn't, not even a
 //! change that selects everything (a lockfile, CI, a script), so that no other pull request or
-//! queue entry downloads zig. The nightly runs it whatever changed, which catches what this list
+//! queue entry runs it. (Jobs whose tests build a package's C `sources` get zig for that alone:
+//! crates/xtask/src/zig.rs.) The nightly runs it whatever changed, which catches what this list
 //! misses.
 
 /// The veltc test files that check through zig (`crates/veltc/tests/<name>.rs`). A change to one
-/// runs the `c-headers` job, which runs them; every other test run leaves them out unless
-/// `VELT_ZIG` is set ([`without_zig_tests`]), since in CI they fail without zig rather than skip.
-/// The job's `cargo test` in `.github/workflows/ci.yml` and `nightly.yml` names the same files.
+/// runs the `c-headers` job, which runs them with `VELT_ZIG_TESTS=1`; every other test run leaves
+/// them out ([`without_zig_tests`]), also the jobs that have zig to build C sources (`VELT_ZIG`,
+/// crates/xtask/src/zig.rs). With `VELT_ZIG_TESTS` set they fail without zig rather than skip
+/// (crates/veltc/tests/zig_env). The job's `cargo test` in `.github/workflows/ci.yml` and
+/// `nightly.yml` names the same files.
 pub const TESTS: &[&str] = &["c_headers", "c_constants", "c_sources"];
 
 const PATHS: &[&str] = &[
@@ -42,7 +45,20 @@ pub fn depends_on(path: &str) -> bool {
         .any(|p| path == *p || (p.ends_with('/') && path.starts_with(p)))
 }
 
-/// `filterset` (nextest's) without the [`TESTS`]: what a test run without `VELT_ZIG` runs.
+/// The variable that turns the [`TESTS`] on, set only in the `c-headers` job.
+pub const TESTS_VAR: &str = "VELT_ZIG_TESTS";
+
+/// Whether this run includes the [`TESTS`]: [`TESTS_VAR`] is set to anything but empty or `0`,
+/// the rule crates/veltc/tests/zig_env follows too.
+pub fn zig_tests_on() -> bool {
+    on(std::env::var_os(TESTS_VAR).as_deref())
+}
+
+fn on(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// `filterset` (nextest's) without the [`TESTS`]: what a test run without [`TESTS_VAR`] runs.
 pub fn without_zig_tests(filterset: &str) -> String {
     let tests: Vec<String> = TESTS
         .iter()
@@ -54,6 +70,16 @@ pub fn without_zig_tests(filterset: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_set_variable_turns_the_tests_on() {
+        use std::ffi::OsStr;
+        assert!(on(Some(OsStr::new("1"))));
+        assert!(on(Some(OsStr::new("yes"))));
+        assert!(!on(Some(OsStr::new("0"))));
+        assert!(!on(Some(OsStr::new(""))));
+        assert!(!on(None));
+    }
 
     #[test]
     fn a_test_run_without_zig_leaves_out_the_tests_that_need_it() {

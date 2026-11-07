@@ -1,0 +1,16 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "counter",
+  version: "0.2.0",
+  description: "A package with a Rust library, for the end-to-end test native_packages.rs",
+  native: {
+    targets: [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+    ],
+  },
+};

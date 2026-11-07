@@ -98,6 +98,7 @@ impl<'a> Parser<'a> {
             is_abstract: false,
             c_type: true,
             c_struct: false,
+            decorators: vec![],
         })
     }
 

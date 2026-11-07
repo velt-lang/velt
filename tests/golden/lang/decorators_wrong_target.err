@@ -1,0 +1,6 @@
+decorators_wrong_target.velt:7:1: error: the decorator `field` cannot be applied to a class, struct or enum
+decorators_wrong_target.velt:9:3: error: the decorator `type_` cannot be applied to a field
+decorators_wrong_target.velt:10:3: error: the decorator `func` cannot be applied to a method
+decorators_wrong_target.velt:13:1: error: the decorator `method` cannot be applied to a function
+decorators_wrong_target.velt:14:12: error: the decorator `func` cannot be applied to a parameter
+decorators_wrong_target.velt:18:1: error: the decorator `param` cannot be applied to a class, struct or enum

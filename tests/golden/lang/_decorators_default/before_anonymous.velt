@@ -1,0 +1,5 @@
+import { mark } from "./marks";
+
+@mark export default class {
+  who = "before, anonymous";
+}

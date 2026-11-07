@@ -79,6 +79,7 @@ impl<'a> Parser<'a> {
             // `abstract override m()`: makes an inherited method abstract again.
             is_override: mods.is_override,
             is_abstract: true,
+            is_property: false,
         }))
     }
 
@@ -173,6 +174,8 @@ impl<'a> Parser<'a> {
             is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
+            is_decorator: false,
+            decorators: vec![],
             generator: None,
             host: None,
             c: None,
@@ -192,6 +195,7 @@ impl<'a> Parser<'a> {
             is_setter: setter,
             is_override: mods.is_override,
             is_abstract: true,
+            is_property: true,
         };
         if !mods.readonly {
             let param = Param {
@@ -202,6 +206,7 @@ impl<'a> Parser<'a> {
                 pattern: None,
                 ty: ty.clone(),
                 default: None,
+                decorators: vec![],
                 optional: false,
                 rest: false,
                 span: name.span,

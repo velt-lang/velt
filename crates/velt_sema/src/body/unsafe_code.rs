@@ -50,8 +50,21 @@ impl FnCx<'_, '_> {
             })
     }
 
+    /// A decorator named as a value or called: it is data, which only `@` may name.
+    pub(crate) fn reject_decorator_value(&mut self, name: &str, span: Span) {
+        self.cx.error(
+            Diagnostic::error(format!("`{name}` is a decorator: it can only be used as `@{name}`"), span)
+                .with_note("a `declare decorator function` is data read at compile time: nothing runs, so there is nothing to call"),
+        );
+    }
+
     /// A call of `d` at `span`: an unsafe function needs an unsafe context.
     pub(crate) fn check_unsafe_call(&mut self, d: DefId, what: &str, span: Span) {
+        if crate::decorators::decl_of(self.cx.fn_info(d)).is_some() {
+            let name = self.cx.fn_info(d).name.clone();
+            self.reject_decorator_value(&name, span);
+            return;
+        }
         if self.in_unsafe_code() || !unsafe_fn(self.cx, d) {
             return;
         }

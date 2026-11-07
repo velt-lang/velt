@@ -541,6 +541,10 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
+        if crate::decorators::decl_of(f).is_some() {
+            self.reject_decorator_value(&id.name, span);
+            return self.error_expr(span);
+        }
         if f.kind == FnKind::Extern {
             self.cx.err(
                 format!("external function `{}` cannot be used as a value", id.name),

@@ -10,6 +10,12 @@ use crate::Fix;
 /// Check one item (its members and nested items are visited separately).
 pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
     match &item.kind {
+        I::Function(ast::FnDecl { sig, .. }) | I::ExternFn(sig) => decorated(&sig.decorators, cx),
+        I::Enum(e) => decorated(&e.decorators, cx),
+        I::Class(t) => member_decorators(t, cx),
+        _ => {}
+    }
+    match &item.kind {
         I::Struct(s) if s.c_struct => cx.error(
             "declare-fn",
             cx.keyword(item.span, "declare"),
@@ -74,6 +80,18 @@ pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
                  functions that use them from shared code",
             ],
         ),
+        I::ExternFn(sig) if sig.is_decorator => cx.error(
+            "declare-fn",
+            cx.keyword(item.span, "declare"),
+            format!(
+                "`declare decorator function {}` is read at compile time, which TypeScript doesn't have",
+                sig.name.name
+            ),
+            &[
+                "`decorator` is not TypeScript syntax",
+                "keep compile-time decorators in modules only Velt compiles",
+            ],
+        ),
         I::ExternFn(sig) if sig.host.is_some() => cx.error(
             "declare-fn",
             cx.keyword(item.span, "declare"),
@@ -108,6 +126,55 @@ pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
             ],
         ),
         _ => {}
+    }
+}
+
+/// Decorators where TypeScript allows none: it has them only on classes and their members.
+pub(super) fn decorated(decorators: &[ast::Decorator], cx: &mut Cx) {
+    for d in decorators {
+        cx.error(
+            "decorator",
+            d.span,
+            "TypeScript allows decorators only on classes and their members".into(),
+            &[
+                "on functions, enums and parameters they are a Velt extension for compile-time \
+                 decorators, and the file doesn't parse in `tsc`",
+                "keep such declarations in modules only Velt compiles",
+            ],
+        );
+    }
+}
+
+/// Decorators on a class's members where TypeScript refuses them, though it has them on members:
+/// on an overload signature or an abstract method (TS1249), and on an abstract property (TS1206).
+/// Velt reads an overload's as its implementation's.
+fn member_decorators(t: &ast::TypeDecl, cx: &mut Cx) {
+    for m in &t.methods {
+        let sig = &m.decl.sig;
+        let (message, notes): (&str, &[&str]) = if m.is_abstract && m.is_property {
+            (
+                "TypeScript allows no decorator on an abstract property (TS1206)",
+                &["it has no field to decorate: keep the decorator on the subclass's field"],
+            )
+        } else if m.is_abstract {
+            (
+                "TypeScript allows no decorator on an abstract method, which has no implementation (TS1249)",
+                &["keep the decorator on the subclass's implementation"],
+            )
+        } else {
+            (
+                "TypeScript allows a decorator only on a method's implementation, not on an overload signature (TS1249)",
+                &["Velt reads it as the implementation's: move it there, after the last overload"],
+            )
+        };
+        // A decorator before an overload signature starts before the implementation's own
+        // signature, which starts at its first decorator when it has one.
+        let on_overload = |d: &&ast::Decorator| d.span.lo < sig.span.lo;
+        for d in sig.decorators.iter() {
+            if m.is_abstract || (!m.decl.overloads.is_empty() && on_overload(&d)) {
+                cx.error("decorator", d.span, message.into(), notes);
+            }
+        }
     }
 }
 

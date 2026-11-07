@@ -1,0 +1,14 @@
+// A variable holding a class is a variable: a decorator on it is refused, as on any variable
+// (TypeScript's TS1206), at module level, exported, or in a function.
+declare decorator function d(): TypeDecorator;
+
+@d const K = class {};
+export @d const M = class {};
+@d
+let L = class L {};
+
+function f() {
+  @d const N = class {};
+}
+
+function main() {}

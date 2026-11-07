@@ -1,5 +1,5 @@
 //! A package with native code end to end (docs/internals/design/native-packages.md), with the
-//! SQLite driver `packages/sqlite`:
+//! small package `tests/native_package/`:
 //!
 //! 1. the author builds the library (`velt native build`, cargo) and publishes the package with
 //!    it to a `velt registry serve`;
@@ -7,11 +7,9 @@
 //!    and listed as native code;
 //! 3. `velt run` (debug: the shared library), `velt build --release` (static: the executable
 //!    still runs after the cache is deleted) and `velt dev` (loaded into the JIT host; a Velt
-//!    edit still hot-swaps, and the database opened before the swap is still there).
+//!    edit still hot-swaps, and what the library held before the swap is still there).
 //!
-//! The first run builds SQLite from source for the library (about a minute); later runs reuse
-//! cargo's output under `packages/sqlite/target/`. Without cargo it fails, unless
-//! `VELT_SKIP_NATIVE_E2E=1`.
+//! Without cargo it fails, unless `VELT_SKIP_NATIVE_E2E=1`.
 
 mod no_window;
 #[allow(dead_code)]
@@ -79,60 +77,32 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-const PROGRAM: &str = r#"import { open, SqliteError } from "sqlite";
-
-struct User {
-  id: i64;
-  name: string;
-}
-
-struct Version {
-  v: string;
-}
+const PROGRAM: &str = r#"import { add } from "counter";
+import { IoError } from "velt/io";
 
 function main() {
-  const db = open(":memory:");
-  const version: Version | null = db.prepare("SELECT sqlite_version() AS v").get();
-  console.log("sqlite", (version?.v ?? "").length > 0);
-  db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT UNIQUE)");
-  const insert = db.prepare("INSERT INTO users (name) VALUES (?)");
-  insert.runWith(["ada"]);
-  insert.runWith(["grace"]);
-  const users: User[] = db.prepare("SELECT id, name FROM users ORDER BY id").all();
-  for (const u of users) {
-    console.log(u.id, u.name);
-  }
-  const found: User | null = db.prepare("SELECT id, name FROM users WHERE id = :id").getWith({ id: 2 });
-  console.log("get", found?.name);
+  console.log("count", add(2));
+  console.log("count", add(3));
   try {
-    insert.runWith(["ada"]);
+    add(-1);
   } catch (e) {
-    if (e instanceof SqliteError) {
+    if (e instanceof IoError) {
       console.log("error", e.code);
     }
   }
-  db.close();
 }
 "#;
 
-const EXPECTED: &str = "sqlite true\n1 ada\n2 grace\nget grace\nerror SQLITE_CONSTRAINT_UNIQUE\n";
+const EXPECTED: &str = "count 2\ncount 5\nerror EINVAL\n";
 
 fn server(version: &str) -> String {
     format!(
         r#"import {{ serve }} from "http-server";
-import {{ open }} from "sqlite";
-
-struct Count {{
-  n: i64;
-}}
+import {{ add }} from "counter";
 
 async function main() {{
-  const db = open(":memory:");
-  db.exec("CREATE TABLE hits (at INTEGER)");
   const server = await serve({{ port: 0 }}, async (req: Request): Promise<Response> => {{
-    db.prepare("INSERT INTO hits (at) VALUES (1)").run();
-    const count: Count | null = db.prepare("SELECT count(*) AS n FROM hits").get();
-    return new Response(`{version} ${{count?.n ?? 0}}`);
+    return new Response(`{version} ${{add(1)}}`);
   }});
   console.log(`listening on ${{server.port}}`);
   await sleep(1000000000);
@@ -142,7 +112,7 @@ async function main() {{
 }
 
 #[test]
-fn sqlite_package_with_native_code() {
+fn package_with_native_code() {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     if crate::no_window::command(&cargo)
         .arg("--version")
@@ -163,7 +133,7 @@ fn sqlite_package_with_native_code() {
     let host = velt_codegen_cl::host_triple();
 
     // The author's machine: build the library from the repository's package (incremental).
-    let source = repo().join("packages/sqlite");
+    let source = repo().join("crates/veltc/tests/native_package");
     let built = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["native", "build"])
         .current_dir(&source)
@@ -194,7 +164,7 @@ fn sqlite_package_with_native_code() {
         .to_string();
 
     // Publish a copy that names the server and lists only this machine's target.
-    let lib = tmp.path().join("sqlite");
+    let lib = tmp.path().join("counter");
     copy_dir(&source, &lib);
     let mut manifest = vpm::Manifest::from_dir(&lib).unwrap();
     manifest.registry = Some(url.clone());
@@ -222,21 +192,21 @@ fn sqlite_package_with_native_code() {
     manifest.registry = Some(url.clone());
     std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).unwrap();
     // Not allowed yet: `velt add` names the line, and adds once it's there.
-    let refused = velt(&app, &home, &["add", "sqlite"]);
+    let refused = velt(&app, &home, &["add", "counter"]);
     let text = String::from_utf8_lossy(&refused.stderr);
     assert!(!refused.status.success(), "{text}");
     assert!(
-        text.contains("package `sqlite` has native code")
-            && text.contains("allowNative: [\"sqlite\"]"),
+        text.contains("package `counter` has native code")
+            && text.contains("allowNative: [\"counter\"]"),
         "{text}"
     );
     let mut manifest = vpm::Manifest::from_dir(&app).unwrap();
-    manifest.allow_native = vec!["sqlite".into()];
+    manifest.allow_native = vec!["counter".into()];
     std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).unwrap();
-    let added = ok(velt(&app, &home, &["add", "sqlite"]), "velt add");
+    let added = ok(velt(&app, &home, &["add", "counter"]), "velt add");
     let text = String::from_utf8_lossy(&added.stderr);
     assert!(
-        text.contains("`sqlite` 0.2.0 runs native code (prebuilt, checksum verified"),
+        text.contains("`counter` 0.2.0 runs native code (prebuilt, checksum verified"),
         "{text}"
     );
     let lock = std::fs::read_to_string(app.join("velt.lock.json")).unwrap();
@@ -285,8 +255,8 @@ fn sqlite_package_with_native_code() {
         "velt add http-server",
     );
 
-    // `velt dev`: the JIT host loads the library; a Velt edit hot-swaps and the database the
-    // program opened before the swap is still there.
+    // `velt dev`: the JIT host loads the library; a Velt edit hot-swaps and what the library
+    // held before the swap is still there.
     std::fs::write(app.join("main.velt"), server("v1")).unwrap();
     let dev = DevIn::start(&app, &home);
     dev.0

@@ -1,0 +1,9 @@
+// Where a default export can't have a decorator.
+declare decorator function t(): TypeDecorator | FunctionDecorator;
+
+@t
+export default @t
+class Twice {}
+
+@t
+export default interface I {}

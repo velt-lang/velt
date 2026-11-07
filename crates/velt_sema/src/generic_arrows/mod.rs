@@ -209,6 +209,7 @@ fn lifted_arrow(v: &ast::VarDecl, rest: bool) -> Option<ast::FnDecl> {
                 pattern: p.pattern.clone(),
                 ty,
                 default,
+                decorators: vec![],
                 optional: rest && p.optional,
                 rest: p.rest,
             })
@@ -234,6 +235,8 @@ fn lifted_arrow(v: &ast::VarDecl, rest: bool) -> Option<ast::FnDecl> {
         is_unsafe: false,
         is_system: false,
         is_intrinsic: false,
+        is_decorator: false,
+        decorators: vec![],
         generator: None,
         host: None,
         c: None,

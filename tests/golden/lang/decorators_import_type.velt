@@ -1,0 +1,16 @@
+// `import type` brings in no value, so neither a decorator nor a constant argument.
+import type { mark } from "./_decorators_lib";
+import { type mark as alias } from "./_decorators_lib";
+import type { LIB_KEY } from "./_decorators_lib";
+import { arg } from "./_decorators_lib";
+
+@mark
+class A {}
+
+@alias
+class B {}
+
+@arg(LIB_KEY)
+class C {}
+
+function main() {}

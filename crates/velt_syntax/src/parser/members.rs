@@ -149,6 +149,9 @@ impl<'a> Parser<'a> {
     /// One `struct`/`class`/`extend` member.
     pub(super) fn parse_member(&mut self) -> PResult<Member> {
         let lo = self.cur_lo();
+        if self.at(Tok::At) {
+            return self.parse_decorated_member(lo);
+        }
         if self.at_static_block() {
             return Ok(Member::Field(self.parse_static_block(lo)?));
         }
@@ -190,6 +193,7 @@ impl<'a> Parser<'a> {
                 name.span,
             );
         }
+        self.decorated_params = true;
         let mut sig = self.parse_sig_rest(lo, name, mods.is_async, star.is_some())?;
         sig.is_unsafe = mods.is_unsafe;
         self.unsafe_implicit_method(&sig);
@@ -213,6 +217,7 @@ impl<'a> Parser<'a> {
             is_setter: mods.is_setter,
             is_override: mods.is_override,
             is_abstract: false,
+            is_property: false,
         }))
     }
 
@@ -360,6 +365,7 @@ impl<'a> Parser<'a> {
             optional,
             is_private: mods.is_private,
             is_static: mods.is_static,
+            decorators: vec![],
             span,
         })
     }
@@ -379,6 +385,7 @@ impl<'a> Parser<'a> {
             optional: false,
             is_private: mods.is_private,
             is_static: mods.is_static,
+            decorators: vec![],
             span,
         })
     }
@@ -430,6 +437,8 @@ impl<'a> Parser<'a> {
             is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
+            is_decorator: false,
+            decorators: vec![],
             generator: None,
             host: None,
             c: None,
@@ -492,6 +501,7 @@ impl<'a> Parser<'a> {
                 optional: true,
                 is_private: false,
                 is_static: false,
+                decorators: vec![],
                 span,
             });
             return Ok(());

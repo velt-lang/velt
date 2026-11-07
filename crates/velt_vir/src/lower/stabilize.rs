@@ -2,19 +2,23 @@
 //! code the exclusivity rule guarantees that a value borrowed by a call stays put while the
 //! call runs. A place reached through a *counted* object has other owners, and the callee may
 //! reach the same object through one of them and replace or free what the borrow points to.
-//! Such borrows are kept alive for the statement: a counted value is shared into a temporary;
-//! anything else is read through containers that are retained ([`FnLower::retained_hop`]).
+//! Such borrows are kept alive for the statement: where the callee, or code it can reach, can assign
+//! the place (replaceable.rs), the value is shared into a temporary the callee gets instead of a
+//! pointer into the place; a counted value always is. Anything else is read through containers that
+//! are retained ([`FnLower::retained_hop`]).
 //! Every borrow examined here is recorded (`Cx::note_projection`), so a container that becomes
 //! counted makes the values borrowed through it counted too. A variable held in a shared cell
 //! (a closure assigns it) is like a counted container: the value borrowed from it is counted
 //! and shared for the statement, so a closure the callee runs cannot free it. A module `let`'s
 //! slot is such a cell too: every function reaches it, so the callee may replace its value.
 
-use velt_sema::hir::{self, TyId};
+use velt_sema::hir::{self, TyId, TyKind};
 
 use super::boxing::ShareKind;
+use super::call::Stabilize;
 use super::cint;
 use super::operand::proj;
+use super::sequence::root_local;
 use super::FnLower;
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
@@ -35,6 +39,18 @@ impl FnLower<'_, '_> {
         later: &[hir::Expr],
         share: bool,
     ) -> Operand {
+        self.stable_borrow_in(a, later, share, ArgReach::default())
+    }
+
+    /// [`stable_borrow_as`](Self::stable_borrow_as) of an argument of a call `reach` says more
+    /// about.
+    pub(super) fn stable_borrow_in(
+        &mut self,
+        a: &hir::Expr,
+        later: &[hir::Expr],
+        share: bool,
+        reach: ArgReach,
+    ) -> Operand {
         // A frozen value (frozen.rs): nothing changes it, its box is retained where something
         // could replace its handle (async_fn/sync.rs `shared_value`), and its counts must not
         // change.
@@ -43,7 +59,11 @@ impl FnLower<'_, '_> {
         }
         let ty = self.sub(a.ty);
         let by_value = self.cx.ty(ty).is_scalar() && self.cx.share_kind(ty) == ShareKind::Plain;
-        if by_value || !(self.through_counted(a, ty) || self.in_shared_cell(a)) {
+        if by_value
+            || !(self.through_counted(a, ty)
+                || self.in_shared_cell(a)
+                || reach.sibling && is_part(a))
+        {
             return self.borrowed_arg(a);
         }
         // An `any` holds a counted box (or a plain value its share copies): the callee may
@@ -57,10 +77,17 @@ impl FnLower<'_, '_> {
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
         }
-        // A value held in a module state slot, or inside what one holds, is like an element:
-        // any callee may replace it there and drop it.
-        let movable = self.in_array_buffer(a) || self.in_module_slot(a);
-        if movable && self.cx.share_kind(ty) != ShareKind::Promise {
+        // Retaining the containers keeps them, not what they hold. A value in an array's buffer
+        // or a module state slot may be replaced by any callee and dropped, one in a variable's
+        // cell by a closure the callee runs, one in a field by a callee that may write the field
+        // (replaceable.rs), and one read beside its possible container by a callee that writes
+        // through that param, which may replace any object on the way to it, `x` in `g(a, x.s)` too.
+        // The callee may read its parameter after that. JavaScript's callee keeps what it was passed.
+        if reach.sibling && is_part(a)
+            || self.in_array_buffer(a)
+            || self.in_module_slot(a)
+            || self.may_replace(a, reach)
+        {
             // Retaining the containers does not keep an element in place: a push through
             // another reference to the array moves its buffer, and `pop`, `truncate` or a store
             // drops the element. The callee gets a share of it instead (a copy for elements
@@ -79,7 +106,7 @@ impl FnLower<'_, '_> {
                 if !share {
                     return self.borrowed_arg(a);
                 }
-                if later.iter().all(|x| self.runs_no_code(x)) {
+                if !reach.sibling && later.iter().all(|x| self.runs_no_code(x)) {
                     if let Some(v) = self.unique_array_elem(a, ty) {
                         return v;
                     }
@@ -93,6 +120,27 @@ impl FnLower<'_, '_> {
         let v = self.borrowed_arg(a);
         self.retain_hops = prev;
         v
+    }
+
+    /// Can the call assign the place `e`, or a part stored inline on the way to it? A counted
+    /// object on the way is retained, so what lies outside it no longer matters.
+    fn may_replace(&mut self, e: &hir::Expr, reach: ArgReach) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Local(l, _) => {
+                self.info[l.0 as usize].in_cell && self.cx.callee_runs_closures(reach.callee)
+            }
+            K::Field { base, index, .. } => {
+                let bty = self.sub(base.ty);
+                let written = self.cx.field_written(bty, *index)
+                    && self.cx.callee_may_write(reach.callee, bty, *index);
+                written || !self.cx.counted(bty) && self.may_replace(base, reach)
+            }
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.may_replace(base, reach)
+            }
+            _ => false,
+        }
     }
 
     /// Does the place `e` (of final type `value`) go through a counted object? Records every
@@ -320,6 +368,29 @@ impl FnLower<'_, '_> {
     }
 }
 
+/// What is known about the call an argument is passed to.
+#[derive(Clone, Copy, Default)]
+pub(super) struct ArgReach {
+    /// The function called, when it is a direct call (replaceable.rs).
+    pub(super) callee: Option<super::replaceable::CalleeId>,
+    /// Another argument may hold the container of this one, and the callee may write through
+    /// that param: `f(r, r.s)` with `(q, v) => { q.s = "x"; return v; }`.
+    pub(super) sibling: bool,
+}
+
+/// Is `e` a part of a place, not the place itself?
+fn is_part(e: &hir::Expr) -> bool {
+    use hir::ExprKind as K;
+    matches!(
+        e.kind,
+        K::Field { .. }
+            | K::Index { .. }
+            | K::UnwrapSome(..)
+            | K::UnwrapVariant { .. }
+            | K::Downcast(_)
+    )
+}
+
 /// An element borrowed by an argument whose borrow-or-share choice waits for the call
 /// ([`FnLower::finish_borrows`]).
 pub(super) struct PendingBorrow {
@@ -357,6 +428,102 @@ impl FnLower<'_, '_> {
                 !self.cx.array_view(bty) && self.runs_no_code(base) && self.runs_no_code(index)
             }
             _ => false,
+        }
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// What argument `i` of a direct call may have changed under it (stabilize.rs): `changed`
+    /// says which params the callee modifies though they are `Borrow` (call_def).
+    pub(super) fn arg_reach(
+        &mut self,
+        how: Stabilize,
+        args: &[hir::Expr],
+        i: usize,
+        changed: u64,
+    ) -> ArgReach {
+        let others = if i < 64 { changed & !(1 << i) } else { changed };
+        ArgReach {
+            callee: match how {
+                Stabilize::Direct(d) => Some(d),
+                _ => None,
+            },
+            sibling: others != 0 && self.sibling_container(args, i),
+        }
+    }
+
+    /// Does an argument beside `args[i]` hold something a part of `args[i]` could lie in: `r` in
+    /// `f(r, r.s)`, `xs` in `f(xs, xs[0])`, `rs` in `g(rs, rs0.s)` with `rs0` an element of it, or a
+    /// param that may be the same object as the one `w.s` is read from? A callee that changes its
+    /// params' insides then replaces what this argument points at. Told apart by type
+    /// ([`can_hold`](Self::can_hold)).
+    pub(super) fn sibling_container(&mut self, args: &[hir::Expr], i: usize) -> bool {
+        use hir::ExprKind as K;
+        let mut bases = vec![];
+        let mut e = &args[i];
+        while let K::Field { base, .. }
+        | K::Index { base, .. }
+        | K::UnwrapSome(base, _)
+        | K::UnwrapVariant { expr: base, .. }
+        | K::Downcast(base) = &e.kind
+        {
+            bases.push(self.sub(base.ty));
+            e = base;
+        }
+        if bases.is_empty() {
+            return false;
+        }
+        (args.iter().enumerate()).any(|(j, o)| {
+            let ty = self.sub(o.ty);
+            j != i && self.can_hold(ty, &bases, &mut Vec::new())
+        })
+    }
+
+    /// Can a value of type `t` be one of `bases`, or hold one at any depth? An object can be any
+    /// object, an interface, `any` or type parameter anything, and an array or tuple one of its own
+    /// type or one its elements can.
+    fn can_hold(&mut self, t: TyId, bases: &[TyId], seen: &mut Vec<TyId>) -> bool {
+        if bases.contains(&t) {
+            return true;
+        }
+        if seen.contains(&t) {
+            return false;
+        }
+        seen.push(t);
+        match self.cx.kind(t) {
+            TyKind::Dyn(..) | TyKind::Param(_) => true,
+            TyKind::Option(x, _) | TyKind::Array(x) | TyKind::Shared(x) => {
+                let x = self.sub(x);
+                self.can_hold(x, bases, seen)
+            }
+            TyKind::Map(a, b) => {
+                let (a, b) = (self.sub(a), self.sub(b));
+                self.can_hold(a, bases, seen) || self.can_hold(b, bases, seen)
+            }
+            TyKind::Tuple(xs) => xs.into_iter().any(|x| {
+                let x = self.sub(x);
+                self.can_hold(x, bases, seen)
+            }),
+            TyKind::Adt(..) => {
+                (bases.iter()).any(|&b| matches!(self.cx.kind(b), TyKind::Adt(..)))
+                    || self
+                        .cx
+                        .part_types(t)
+                        .into_iter()
+                        .any(|f| self.can_hold(f, bases, seen))
+            }
+            _ => false,
+        }
+    }
+
+    /// Can the place `a` starts from get another value while a call through a function value runs,
+    /// so an argument passed by pointer must not still point at it? A variable a closure assigns
+    /// by reference (in a cell it is shared, stabilize.rs), or anything this function only reaches
+    /// by reference.
+    pub(super) fn changes_during_call(&mut self, a: &hir::Expr) -> bool {
+        match root_local(a) {
+            Some(l) => self.info[l.0 as usize].indirect || self.body_changes(l),
+            None => true,
         }
     }
 }

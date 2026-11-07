@@ -446,6 +446,7 @@ impl<'a> Lexer<'a> {
             (b',', ..) => (Comma, 1),
             (b':', ..) => (Colon, 1),
             (b'~', ..) => (Tilde, 1),
+            (b'@', ..) => (At, 1),
             (b'.', b'.', b'.') => (DotDotDot, 3),
             (b'.', b'.', b'=') => (DotDotEq, 3),
             (b'.', b'.', _) => (DotDot, 2),

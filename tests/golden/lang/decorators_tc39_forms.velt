@@ -1,0 +1,17 @@
+// The other TC39 forms: a parenthesized expression, a call of a function, and a class expression.
+function logged(value: any, context: any): any {
+  return value;
+}
+function factory(n: i64): any {
+  return logged;
+}
+
+@(logged)
+class A {}
+
+@factory(1)
+class B {}
+
+const C = @logged class {};
+
+function main() {}

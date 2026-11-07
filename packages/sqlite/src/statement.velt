@@ -1,21 +1,18 @@
-// sqlite (internal): `Statement`, a prepared statement: parameters handed to the library
-// through velt/db's `bindParams` (as JSON text for the types it cannot hand over), rows read
-// from the library's row cursor with velt/db's `decodeRows`.
+// sqlite (internal): `Statement`, a prepared statement. It owns what it knows of its compiled
+// statement (compiled.velt) and its binder, and uses them inside the connection's gate. Parameters
+// go through velt/db's `writeParams` (or as JSON text, for the types that can't go value by value),
+// rows through velt/db's `readRows`. Everything between `enter` and `leave` returns what went wrong
+// instead of throwing, so that the gate always opens again.
 
-import { bindParams, decodeRow, decodeRows } from "velt/db";
-import {
-  velt_sqlite__bind_abort,
-  velt_sqlite__bind_begin,
-  velt_sqlite__close_rows,
-  velt_sqlite__note_error,
-  velt_sqlite__open_rows,
-  velt_sqlite__open_rows_bound,
-  velt_sqlite__run,
-  velt_sqlite__run_bound,
-  velt_sqlite__stmt_free,
-} from "./native";
-import { check, SQLITE_MISMATCH, SqliteError, sqliteError, unwrap } from "./errors";
+import { readRow, readRows, writeParams } from "velt/db";
+import { Binder } from "./binder";
+import { Compiled } from "./compiled";
+import { State } from "./connection";
+import { codeName, SQLITE_MISMATCH, SQLITE_MISUSE, SQLITE_RANGE, SqliteError } from "./errors";
+import { Info } from "./info";
+import { bindJson } from "./json_params";
 import { RunResult } from "./run_result";
+import { sqlite3_changes64, sqlite3_last_insert_rowid } from "./sqlite3";
 
 /**
  * A prepared statement (compiled once per connection and cached, so preparing the same SQL
@@ -23,114 +20,263 @@ import { RunResult } from "./run_result";
  * parameters (see the header); the variants without them are for statements without any.
  */
 export class Statement {
-  #handle: u64;
+  #state: shared<State>;
+  #sql: string;
+  #compiled: Compiled;
+  #binder: Binder;
+  #released: bool = false;
 
-  constructor(handle: u64) {
-    this.#handle = handle;
+  /** Use `db.prepare(sql)`. */
+  constructor(state: shared<State>, sql: string, info: shared<Info>) {
+    this.#state = state;
+    this.#sql = sql;
+    this.#compiled = new Compiled(info);
+    this.#binder = new Binder(info);
   }
 
-  /** Executes the statement (rows it returns are discarded). */
-  run(): RunResult {
-    return this.runJson("");
-  }
-
-  runWith<P>(params: P): RunResult {
-    const sink = unwrap(velt_sqlite__bind_begin(this.#handle));
-    if (bindParams<P>(sink, params)) {
-      const r = unwrap(velt_sqlite__run_bound(sink));
-      return new RunResult(r.changes, r.lastInsertRowid);
+  // Enters the gate of an open statement on an open connection; what's wrong otherwise, outside it.
+  private enter(): SqliteError | null {
+    if (this.#released) {
+      return new SqliteError(codeName(SQLITE_MISUSE), "The statement is not open");
     }
-    velt_sqlite__bind_abort(sink);
-    return this.runJson(JSON.stringify(params));
-  }
-
-  /** The first row, or null if there is none. */
-  get<T>(): T | null {
-    return this.first(unwrap(velt_sqlite__open_rows(this.#handle, "", true)));
-  }
-
-  getWith<T, P>(params: P): T | null {
-    return this.first(this.openWith(params, true));
-  }
-
-  /** Every row. */
-  all<T>(): T[] {
-    return this.rows(unwrap(velt_sqlite__open_rows(this.#handle, "", false)));
-  }
-
-  allWith<T, P>(params: P): T[] {
-    return this.rows(this.openWith(params, false));
-  }
-
-  /** Releases the statement now (later calls throw "SQLITE_MISUSE"). */
-  close() {
-    velt_sqlite__stmt_free(this.#handle);
-    this.#handle = 0;
-  }
-
-  /** Drop hook: releases the statement. */
-  [Symbol.dispose]() {
-    velt_sqlite__stmt_free(this.#handle);
-    this.#handle = 0;
-  }
-
-  // A cursor over the rows with `params` bound: handed to the driver value by value when the
-  // type allows (the same binding as their JSON text), else as JSON text.
-  private openWith<P>(params: P, firstOnly: bool): u64 {
-    const sink = unwrap(velt_sqlite__bind_begin(this.#handle));
-    if (bindParams<P>(sink, params)) {
-      return unwrap(velt_sqlite__open_rows_bound(sink, firstOnly));
+    const s = this.#state;
+    s.enter();
+    if (!s.open) {
+      const e = s.closedError();
+      s.leave();
+      return e;
     }
-    velt_sqlite__bind_abort(sink);
-    const text = JSON.stringify(params);
-    return unwrap(velt_sqlite__open_rows(this.#handle, text, firstOnly));
+    return null;
   }
 
-  private runJson(params: string): RunResult {
-    const r = unwrap(velt_sqlite__run(this.#handle, params));
-    return new RunResult(r.changes, r.lastInsertRowid);
+  // Binds `params` to the statement, value by value when their type allows. Their JSON text runs
+  // the program's `toJSON`, which may use this connection, so it is made outside the gate; what that
+  // throws, or a connection closed meanwhile, leaves here with the gate open.
+  private bind<P>(params: P): SqliteError | null {
+    const s = this.#state;
+    const to = this.#binder;
+    to.begin();
+    let wrong: string | null = null;
+    let written = true;
+    try {
+      written = writeParams<P, Binder>(to, params);
+    } catch (e) {
+      wrong = e.message;
+    }
+    if (!written) {
+      s.leave();
+      const text = JSON.stringify(params);
+      s.enter();
+      if (!s.open) {
+        const closed = s.closedError();
+        s.leave();
+        throw closed;
+      }
+      to.begin();
+      try {
+        wrong = bindJson(text, to);
+      } catch (e) {
+        wrong = e.message;
+      }
+    }
+    if (to.failed != 0) {
+      return s.note(to.failure());
+    }
+    wrong = wrong ?? to.problem();
+    return wrong == null ? null : s.note(new SqliteError(codeName(SQLITE_RANGE), wrong));
   }
 
-  // The decoder reads the rows from the cursor, which is given back once, whatever happens: a
-  // failure SQLite met while stepping comes first, then one of decoding.
-  private first<T>(cursor: u64): T | null {
-    if (cursor == 0) {
+  // A statement without parameter values may not have parameters.
+  private noParameters(): SqliteError | null {
+    const count = this.#compiled.info.parameters.length;
+    if (count == 0) {
       return null;
     }
-    let row: T | null = null;
-    let failure: string | null = null;
-    try {
-      row = decodeRow<T>(cursor);
-    } catch (e) {
-      failure = e.message;
-    }
-    check(velt_sqlite__close_rows(cursor));
-    if (failure != null) {
-      throw this.decodeError(failure);
-    }
-    return row;
+    return this.#state.note(
+      new SqliteError(
+        codeName(SQLITE_RANGE),
+        `the statement has ${count} parameter(s) but none were given (use runWith / getWith / allWith)`,
+      ),
+    );
   }
 
-  private rows<T>(cursor: u64): T[] {
-    let rows: T[] = [];
-    let failure: string | null = null;
-    try {
-      rows = decodeRows<T>(cursor);
-    } catch (e) {
-      failure = e.message;
+  // Ends the run: nothing stays locked in the database, and nothing large stays bound.
+  private finish() {
+    this.#compiled.finish(this.#binder.large);
+  }
+
+  // Steps the bound statement to the end, and leaves the gate.
+  private drain(): RunResult {
+    const c = this.#compiled;
+    const s = this.#state;
+    c.failed = 0;
+    while (c.step()) {}
+    if (c.failed != 0) {
+      const e = s.failure();
+      this.finish();
+      s.leave();
+      throw e;
     }
-    check(velt_sqlite__close_rows(cursor));
-    if (failure != null) {
-      throw this.decodeError(failure);
+    this.finish();
+    // SAFETY: inside the gate, on an open connection.
+    const changes = unsafe { sqlite3_changes64(s.db) };
+    // SAFETY: inside the gate, on an open connection.
+    const rowid = unsafe { sqlite3_last_insert_rowid(s.db) };
+    s.leave();
+    return new RunResult(changes, rowid);
+  }
+
+  // Ends a read of rows and leaves the gate; a failure SQLite met while stepping comes first, then
+  // one of decoding.
+  private afterRows(decode: string | null): SqliteError | null {
+    const c = this.#compiled;
+    const s = this.#state;
+    let error: SqliteError | null = null;
+    if (c.failed != 0) {
+      error = s.failure();
+    } else if (decode != null) {
+      error = s.note(
+        new SqliteError(
+          codeName(SQLITE_MISMATCH),
+          `row does not match the requested type: ${decode}`,
+        ),
+      );
+    }
+    this.finish();
+    if (c.changed) {
+      c.changed = false;
+      s.update(this.#sql, c.info);
+    }
+    s.leave();
+    return error;
+  }
+
+  // Leaves the gate after something went wrong before the statement ran.
+  private giveUp(e: SqliteError): SqliteError {
+    this.finish();
+    this.#state.leave();
+    return e;
+  }
+
+  private readAll<T>(): T[] {
+    const c = this.#compiled;
+    c.failed = 0;
+    let rows: T[] = [];
+    let decode: string | null = null;
+    try {
+      rows = readRows<T, Compiled>(c);
+    } catch (e) {
+      decode = e.message;
+    }
+    const error = this.afterRows(decode);
+    if (error != null) {
+      throw error;
     }
     return rows;
   }
 
-  // A row did not fit the requested type; counted against the connection so an enclosing
-  // `transaction` rolls back.
-  private decodeError(detail: string): SqliteError {
-    const message = `row does not match the requested type: ${detail}`;
-    velt_sqlite__note_error(this.#handle, SQLITE_MISMATCH, message);
-    return sqliteError(SQLITE_MISMATCH, message);
+  private readFirst<T>(): T | null {
+    const c = this.#compiled;
+    c.failed = 0;
+    let row: T | null = null;
+    let decode: string | null = null;
+    try {
+      row = readRow<T, Compiled>(c);
+    } catch (e) {
+      decode = e.message;
+    }
+    const error = this.afterRows(decode);
+    if (error != null) {
+      throw error;
+    }
+    return row;
+  }
+
+  /** Executes the statement (rows it returns are discarded). */
+  run(): RunResult {
+    const closed = this.enter();
+    if (closed != null) {
+      throw closed;
+    }
+    const none = this.noParameters();
+    if (none != null) {
+      throw this.giveUp(none);
+    }
+    return this.drain();
+  }
+
+  runWith<P>(params: P): RunResult {
+    const closed = this.enter();
+    if (closed != null) {
+      throw closed;
+    }
+    const wrong = this.bind<P>(params);
+    if (wrong != null) {
+      throw this.giveUp(wrong);
+    }
+    return this.drain();
+  }
+
+  /** The first row, or null if there is none. */
+  get<T>(): T | null {
+    const closed = this.enter();
+    if (closed != null) {
+      throw closed;
+    }
+    const none = this.noParameters();
+    if (none != null) {
+      throw this.giveUp(none);
+    }
+    return this.readFirst<T>();
+  }
+
+  getWith<T, P>(params: P): T | null {
+    const closed = this.enter();
+    if (closed != null) {
+      throw closed;
+    }
+    const wrong = this.bind<P>(params);
+    if (wrong != null) {
+      throw this.giveUp(wrong);
+    }
+    return this.readFirst<T>();
+  }
+
+  /** Every row. */
+  all<T>(): T[] {
+    const closed = this.enter();
+    if (closed != null) {
+      throw closed;
+    }
+    const none = this.noParameters();
+    if (none != null) {
+      throw this.giveUp(none);
+    }
+    return this.readAll<T>();
+  }
+
+  allWith<T, P>(params: P): T[] {
+    const closed = this.enter();
+    if (closed != null) {
+      throw closed;
+    }
+    const wrong = this.bind<P>(params);
+    if (wrong != null) {
+      throw this.giveUp(wrong);
+    }
+    return this.readAll<T>();
+  }
+
+  /** Releases the statement now (later calls throw "SQLITE_MISUSE"). */
+  close() {
+    if (!this.#released) {
+      this.#released = true;
+      this.#state.release(this.#sql);
+    }
+  }
+
+  /** Drop hook: releases the statement. */
+  [Symbol.dispose]() {
+    this.close();
   }
 }

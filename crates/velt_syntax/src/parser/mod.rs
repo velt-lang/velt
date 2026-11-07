@@ -12,6 +12,8 @@ mod asi;
 mod augment;
 mod c_decls;
 mod cast_types;
+mod declare_forms;
+mod decorators;
 mod default_exports;
 mod expr;
 mod field_types;
@@ -136,6 +138,10 @@ pub(crate) struct Parser<'a> {
     pub(crate) define_at: Option<&'a FxHashMap<u32, Lit>>,
     /// An `import` or `export` was seen at the top level (`crate::Parsed::is_module`).
     pub(crate) saw_module_syntax: bool,
+    /// The next signature parsed belongs to a declaration, so its parameters may have decorators.
+    decorated_params: bool,
+    /// Where the item being parsed starts after its decorators: before an `export` it may have.
+    after_decorators: u32,
     /// Where the module first mentions `import.meta` (`import_meta`).
     import_meta: Option<Span>,
     /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
@@ -226,6 +232,8 @@ impl<'a> Parser<'a> {
             ambient: None,
             define_at: None,
             saw_module_syntax: false,
+            decorated_params: false,
+            after_decorators: 0,
             import_meta: None,
         }
     }

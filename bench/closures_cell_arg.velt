@@ -1,0 +1,17 @@
+// A closure called with a string it captures and assigns, held in a shared cell (#2480): the
+// parameter holds one more reference around each call, so assigning the variable cannot free it.
+function main() {
+  let label = "label-".repeat(8);
+  let total = 0;
+  const note = (v: string) => {
+    total += v.length;
+    if (total % 1024 === 0) {
+      label = label.slice(1) + "x";
+    }
+    return v.length;
+  };
+  for (let i = 0; i < 3000000; i++) {
+    note(label);
+  }
+  console.log(total, label.length);
+}

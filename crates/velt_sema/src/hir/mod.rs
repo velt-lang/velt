@@ -29,6 +29,7 @@
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
 
 mod const_array;
+mod decorators;
 mod extern_fn;
 mod fields;
 mod fresh;
@@ -46,6 +47,7 @@ use std::collections::{HashMap, HashSet};
 use velt_common::Span;
 
 pub use const_array::{ConstArray, ConstElem};
+pub use decorators::{ConstTree, Decorator, DecoratorTarget};
 pub use extern_fn::{CImport, CTy, ExternFnDef, HostImport, HostTy};
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use fresh::FreshClosure;
@@ -254,6 +256,9 @@ pub struct Program {
     /// the generated, non-generic definition lowering builds for that instance instead of the
     /// function's own body (which it never builds). Additive.
     pub generated: HashMap<(DefId, Vec<TyId>), DefId>,
+    /// Every use of a compile-time decorator, by what it is written on, in source order
+    /// (hir_encodings.md "Decorators"). Empty in a program without decorators. Additive.
+    pub decorators: HashMap<DecoratorTarget, Vec<Decorator>>,
 }
 
 impl Program {

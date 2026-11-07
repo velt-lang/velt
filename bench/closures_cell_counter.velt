@@ -1,0 +1,13 @@
+// A closure called with the counter it captures and assigns, held in a shared cell (#2480): a number
+// is read before the call, at no cost.
+function main() {
+  let counter = 0;
+  const bump = (d: number) => {
+    counter = (counter + d + 1) % 1000003;
+    return d;
+  };
+  for (let i = 0; i < 5000000; i++) {
+    bump(counter);
+  }
+  console.log(counter);
+}

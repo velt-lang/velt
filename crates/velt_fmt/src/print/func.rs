@@ -2,8 +2,8 @@
 //! lists, generic parameter lists and arrow functions.
 
 use velt_syntax::ast::{
-    is_method_this, ArrowBody, ArrowParam, Expr, FnDecl, FnSig, GenericParam, Ident, Param,
-    Pattern, TypeExpr,
+    is_method_this, ArrowBody, ArrowParam, Decorator, Expr, FnDecl, FnSig, GenericParam, Ident,
+    Param, Pattern, TypeExpr,
 };
 
 use super::lists::delimited;
@@ -20,19 +20,32 @@ impl<'a> Printer<'a> {
     /// [`fn_decl`](Self::fn_decl) after `mods` (`export `, `static `, ...), which its overload
     /// signatures (`FnDecl::overloads`, each on a line of its own before it) repeat.
     pub(super) fn fn_decl_with(&mut self, f: &FnDecl, keyword: &str, mods: &str) -> Doc {
-        self.fn_decl_mods(f, keyword, mods, true)
+        // Those of a function without overloads are printed by `item`, before its `export`.
+        let decorators: &[Decorator] = match f.overloads.is_empty() {
+            true => &[],
+            false => &f.sig.decorators,
+        };
+        self.fn_decl_mods(f, keyword, mods, true, decorators)
     }
 
     /// [`fn_decl_with`](Self::fn_decl_with), printing `unsafe` itself (`own_unsafe`) or not (a
-    /// method's `mods` hold it, before `get` / `set`).
+    /// method's `mods` hold it, before `get` / `set`). `decorators` go on the implementation:
+    /// TypeScript refuses a decorator on a method's overload signature (TS1249), and a function's
+    /// go the same way.
     pub(super) fn fn_decl_mods(
         &mut self,
         f: &FnDecl,
         keyword: &str,
         mods: &str,
         own_unsafe: bool,
+        decorators: &[Decorator],
     ) -> Doc {
         let mut out = vec![];
+        // Written on the first signature, they take the comments after them along (`@a // c`),
+        // which would otherwise go to that signature.
+        let on_first = (decorators.last().zip(f.overloads.first()))
+            .is_some_and(|(d, o)| d.span.hi <= o.name.span.lo);
+        let mut early = on_first.then(|| self.decorators(decorators));
         for (k, o) in f.overloads.iter().enumerate() {
             let sig = self.fn_sig(o, keyword, o.span.hi);
             let asyncness = fn_mods(o, own_unsafe);
@@ -48,9 +61,14 @@ impl<'a> Printer<'a> {
                 out.push(hardline());
             }
         }
+        let decorators = match early.take() {
+            Some(doc) => doc,
+            None => self.decorators(decorators),
+        };
         let asyncness = fn_mods(&f.sig, own_unsafe);
         let sig = self.fn_sig(&f.sig, keyword, f.body.span.lo);
         out.push(cat![
+            decorators,
             mods.to_string(),
             asyncness,
             sig,
@@ -113,15 +131,31 @@ impl<'a> Printer<'a> {
             end,
             |p| (p.span.lo, p.span.hi),
             |p, param| {
-                // Parameter property modifiers (`private readonly x`) precede the name.
+                // Decorators come first, then parameter property modifiers
+                // (`private readonly x`), which precede the name. A comment after a decorator
+                // stays after it.
+                let mut decorators = vec![];
+                for (i, d) in param.decorators.iter().enumerate() {
+                    decorators.push(cat!["@", p.expr(&d.expr), " "]);
+                    let next = super::items::after_decorator(p.src, &param.decorators, i);
+                    for c in p.comments.take_before(next) {
+                        decorators.push(match c.needs_newline() {
+                            true => cat![c.text, hardline()],
+                            false => cat![c.text, " "],
+                        });
+                    }
+                }
+                let decorators = concat(decorators);
                 let mods = crate::source::slice(p.src, param.span);
-                let mods = mods
-                    .get(..(param.name.span.lo - param.span.lo) as usize)
-                    .unwrap_or("")
-                    .split_whitespace()
-                    .filter(|m| *m != "...")
-                    .map(|m| format!("{m} "))
-                    .collect::<String>();
+                let mods_lo = param.decorators.last().map_or(param.span.lo, |d| d.span.hi);
+                let mods = modifiers(
+                    mods.get(
+                        (mods_lo - param.span.lo) as usize
+                            ..(param.name.span.lo - param.span.lo) as usize,
+                    )
+                    .unwrap_or(""),
+                );
+                let mods = cat![decorators, mods];
                 let name = p.param_binding(&param.name, param.pattern.as_ref());
                 if param.optional {
                     return cat![mods, name, "?: ", p.ty_optional(&param.ty)];
@@ -292,6 +326,34 @@ pub(super) fn breaks_itself(e: &Expr) -> bool {
             matches!(inner.kind, Call { .. }) && breaks_itself(inner)
         }
         _ => false,
+    }
+}
+
+/// The modifiers in `src`, the source between a parameter's decorators and its name, each followed
+/// by a space. Comments there stay out: the parameter list prints them itself.
+fn modifiers(mut src: &str) -> String {
+    let mut out = String::new();
+    loop {
+        src = src.trim_start();
+        if let Some(rest) = src.strip_prefix("//") {
+            src = rest.split_once('\n').map_or("", |(_, after)| after);
+        } else if let Some(rest) = src.strip_prefix("/*") {
+            src = rest.split_once("*/").map_or("", |(_, after)| after);
+        } else if src.is_empty() {
+            return out;
+        } else {
+            let end = src
+                .find(|c: char| c.is_whitespace() || c == '/')
+                .unwrap_or(src.len());
+            // At least one character, whatever comes first, so this always ends.
+            let end = end.max(src.chars().next().map_or(1, char::len_utf8));
+            let (word, rest) = src.split_at(end);
+            src = rest;
+            if word != "..." {
+                out.push_str(word);
+                out.push(' ');
+            }
+        }
     }
 }
 

@@ -1,0 +1,105 @@
+// Arguments converted on the way to the parameter, conditionals, destructured params, generics,
+// loops and own fields, with the variable overwritten in the call (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function opt<T>(x: T): T | null { return x; }
+type O = { a: string; n: number };
+interface Speaker { say(v: string): string; }
+function conversions() {
+  let s = heap("wrap");
+  const f = (v: string | null) => { s = heap("over"); const j = heap("jjjjjj"); return String(v) + j.length; };
+  console.log("to optional", f(s), s);
+  let t = heap("wrap");
+  const g = (v: string | number) => { t = heap("over"); const j = heap("jjjjjj"); return String(v) + j.length; };
+  console.log("to union", g(t), t);
+  let u = heap("wrap");
+  const h = (v: any) => { u = heap("over"); const j = heap("jjjjjj"); return String(v) + j.length; };
+  console.log("to any", h(u), u);
+  let w: O = { a: heap("o"), n: 1 };
+  const i = (v: O | null) => { w = { a: heap("p"), n: 2 }; const j = heap("jjjjjj"); return v === null ? "null" : v.a + v.n + j.length; };
+  console.log("object to optional", i(w), w.a);
+  let x = { a: heap("o"), n: 1 };
+  const k = (v: any) => { x = { a: heap("p"), n: 2 }; const j = heap("jjjjjj"); return String(v.a) + j.length; };
+  console.log("object to any", k(x), x.a);
+  let y: string | null = opt(heap("y"));
+  const l = (v: string) => { y = null; const j = heap("jjjjjj"); return v + j.length; };
+  console.log("non-null", l(y!), y);
+  let z: any = heap("z");
+  const m = (v: string) => { z = 9; const j = heap("jjjjjj"); return v + j.length; };
+  console.log("as string", m(z as string), z);
+}
+function conditionals() {
+  let s = heap("left");
+  let t = heap("right");
+  const f = (v: string) => { s = heap("x"); t = heap("y"); const j = heap("jjjjjj"); return v + j.length; };
+  const c = s.length > 0;
+  console.log("if", f(c ? s : t), s, t);
+  let n: string | null = opt(heap("n"));
+  const g = (v: string) => { n = heap("set"); const j = heap("jjjjjj"); return v + j.length; };
+  console.log("nullish", g(n ?? "dflt"), n);
+  let a = heap("a");
+  let b = heap("b");
+  const h = (v: string) => { a = ""; b = ""; const j = heap("jjjjjj"); return v + j.length; };
+  console.log("or", h(a || b), a.length, b.length);
+}
+function destructured() {
+  let o: O = { a: heap("o"), n: 1 };
+  const f = ({ a, n }: O) => { o = { a: heap("p"), n: 2 }; const j = heap("jjjjjj"); return a + n + j.length; };
+  console.log("object pattern", f(o), o.a);
+  let t: [string, number] = [heap("t"), 1];
+  const g = ([a, n]: [string, number]) => { t = [heap("u"), 2]; const j = heap("jjjjjj"); return a + n + j.length; };
+  console.log("tuple pattern", g(t), t[0]);
+}
+function gen<T>(v: T, c: () => void): T { c(); const j = heap("jjjjjj"); if (j.length === 0) throw new Error("no"); return v; }
+function generics() {
+  let s = heap("g");
+  const r = gen(s, () => { s = heap("h"); });
+  console.log("generic", r, s);
+  let o: O = { a: heap("o"), n: 1 };
+  const r2 = gen(o, () => { o = { a: heap("p"), n: 2 }; });
+  console.log("generic object", r2.a, r2.n, o.a);
+  let cell = heap("cell");
+  const id = <T>(v: T, c: () => void): T => { c(); return v; };
+  const w = () => { cell = heap("celled"); };
+  const r3 = id(cell, w);
+  console.log("generic closure", r3, cell);
+}
+function loops() {
+  let xs = [heap("a"), heap("b")];
+  const f = (v: string) => { xs = []; const j = heap("jjjjjj"); return v + j.length; };
+  for (const x of xs) console.log("for of replaced", f(x), xs.length);
+  let ys = [heap("a"), heap("b")];
+  const g = (v: string) => { ys.length = 0; const j = heap("jjjjjj"); return v + j.length; };
+  for (const y of ys) console.log("for of emptied", g(y), ys.length);
+}
+class Reg {
+  s: string = heap("reg");
+  o: O = { a: heap("rego"), n: 1 };
+  t: [string, number] = [heap("regt"), 1];
+  u: string | null = heap("regu");
+  run(v: string, c: () => void) { c(); const j = heap("jjjjjj"); return v + j.length; }
+  runO(v: O, c: () => void) { c(); const j = heap("jjjjjj"); return v.a + v.n + j.length; }
+  setS(v: string) { this.s = heap("sets"); const j = heap("jjjjjj"); return v + j.length; }
+  setT(v: [string, number]) { this.t = [heap("sett"), 2]; const j = heap("jjjjjj"); return v[0] + v[1] + j.length; }
+  setU(v: string | null) { this.u = null; const j = heap("jjjjjj"); return String(v) + j.length; }
+}
+function classes() {
+  const r = new Reg();
+  console.log("own field", r.setS(r.s), r.s);
+  console.log("own tuple", r.setT(r.t), r.t[0]);
+  console.log("own optional", r.setU(r.u), r.u);
+  const other = r;
+  console.log("other ref", other.setS(r.s), r.s);
+}
+function speakers() {
+  let s = heap("spoken");
+  const a: Speaker = { say(v: string) { s = heap("said"); const j = heap("jjjjjj"); return v + j.length; } };
+  console.log("interface", a.say(s), s);
+}
+function evaluatedLater() {
+  let s = heap("s");
+  const f = (v: string, w: string) => { s = heap("t"); const j = heap("jjjjjj"); return v + "/" + w + j.length; };
+  const g = () => { s = heap("g"); return heap("from g"); };
+  console.log("later call", f(s, g()), s);
+  console.log("earlier call", f(g(), s), s);
+}
+conversions(); conditionals(); destructured(); generics(); loops(); classes(); speakers(); evaluatedLater();

@@ -58,6 +58,9 @@ fn item_named(analysis: &Analysis, item: &ast::Item, name: &str) -> String {
             let module = sig.host.as_ref().map_or("", |h| analysis.snippet(h.span));
             format!("declare host({module}) {}", function(analysis, sig))
         }
+        ast::ItemKind::ExternFn(sig) if sig.is_decorator => {
+            format!("declare decorator {}", function(analysis, sig))
+        }
         ast::ItemKind::ExternFn(sig) if sig.is_intrinsic => {
             format!("declare intrinsic {}", function(analysis, sig))
         }

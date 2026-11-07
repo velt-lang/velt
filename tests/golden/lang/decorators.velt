@@ -1,0 +1,61 @@
+// Compile-time decorators on every target (#2203): nothing runs and nothing changes at run time,
+// so the program prints what it prints without them. Decorators on plain functions, structs,
+// enums and parameters are a Velt extension: this file doesn't parse in `tsc`.
+import * as lib from "./_decorators_lib";
+
+declare decorator function plain(): TypeDecorator | MethodDecorator | FunctionDecorator;
+declare decorator function name(key: string): FieldDecorator;
+declare decorator function naming(policy: "camelCase" | "snake_case"): TypeDecorator;
+declare decorator function tag(t: string): Repeatable<TypeDecorator | FunctionDecorator>;
+declare decorator function opts(o: { a: i64; b?: string }, n: i32 = 3): MethodDecorator;
+declare decorator function level(l: Level): ParamDecorator;
+
+const POLICY = "snake_case";
+enum Level {
+  Low,
+  High,
+}
+
+@plain
+@tag("a")
+@tag("b")
+function f(@level(Level.High) a: i64): i64 {
+  return a + 1;
+}
+
+@naming(POLICY)
+@lib.mark
+export class C {
+  @name("id") id: i64 = 1;
+
+  constructor(@level(Level.Low) private v: i64) {}
+
+  @opts({ a: 1 }) m(): i64 {
+    return this.v + this.id;
+  }
+
+  @plain get g(): i64 {
+    return 2;
+  }
+}
+
+export @plain class D {}
+
+@plain
+struct S {
+  @name("x") x: i64;
+}
+
+@lib.mark
+enum E {
+  One,
+}
+
+function main() {
+  @plain
+  class Local {
+    x: i64 = 3;
+  }
+  const s = S { x: 4 };
+  console.log(f(1), new C(5).m(), new C(1).g, new Local().x, s.x, E.One);
+}

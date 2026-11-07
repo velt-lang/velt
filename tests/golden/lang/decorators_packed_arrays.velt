@@ -1,0 +1,33 @@
+// A decorator's argument may be an array of sixteen numbers or more, which the parser packs
+// (`NumArray::MIN_LEN`): as written, through a `const`, as a declaration's default, of floats,
+// and inside an object. Fifteen is the last length the parser leaves unpacked.
+declare decorator function ints(a: i64[]): TypeDecorator;
+declare decorator function floats(a: f64[]): TypeDecorator;
+declare decorator function table(t: { name: string; xs: i64[] }): TypeDecorator;
+declare decorator function filled(
+  a: i64[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+): TypeDecorator;
+
+const SIXTEEN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+
+@ints([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+class C15 {}
+
+@ints([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, -16])
+class C16 {}
+
+@ints(SIXTEEN)
+class Const16 {}
+
+@filled
+class Default16 {}
+
+@floats([0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15.5])
+class Floats16 {}
+
+@table({ name: "t", xs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] })
+class Nested16 {}
+
+function main() {
+  console.log(SIXTEEN.length);
+}

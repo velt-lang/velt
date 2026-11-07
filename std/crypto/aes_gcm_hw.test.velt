@@ -1,0 +1,295 @@
+// velt/crypto (tests): AES-GCM on the CPU's instructions (std/crypto/aes_gcm_arm.velt,
+// aes_gcm_x86.velt; #2401) against the bitsliced AES and GHASH's integer products, on random keys,
+// nonces, additional data and every length up to 300 bytes (past two eight-block batches), in
+// place at every start from 0 to 16 between guard bytes, and the hash powers against repeated
+// multiplication. Run by `velt test std/`. Where the CPU has no AES instructions (debug builds,
+// WebAssembly, `VELT_SIMD_DISABLE=aes`) `AesGcm` takes the bitsliced path too, and both sides agree
+// trivially.
+import { u8x16 } from "velt/simd";
+import { describe, expect, it } from "velt/test";
+import { AesGcm } from "velt/crypto/aes_gcm";
+import { aesCtrInPlace, aesExpandKey } from "velt/crypto/aes_ctr";
+import {
+  aesRoundKeys,
+  counterBase,
+  counterBlock,
+  hashPowers,
+  partial,
+} from "velt/crypto/aes_gcm_hw";
+import { Ghash } from "velt/crypto/ghash";
+
+let seed: u64 = 0x2545f4914f6cdd1d;
+
+function bytes(n: usize): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    out.push((seed & 0xff) as u8);
+  }
+  return out;
+}
+
+// AES-GCM's seal on the bitsliced AES and the integer GHASH only.
+function reference(key: u8[], nonce: u8[], text: u8[], aad: u8[]): u8[] {
+  const skey = aesExpandKey(key);
+  const q: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  const ks = Buffer.alloc(64);
+  const h = Buffer.alloc(16);
+  aesCtrInPlace(skey, q, ks, Buffer.alloc(12), 0, h, 0, 16);
+  const n = text.length;
+  const out = Buffer.alloc(n + 16);
+  for (let i: usize = 0; i < n; i++) {
+    out[i] = text[i];
+  }
+  aesCtrInPlace(skey, q, ks, nonce, 2, out, 0, n);
+  const g = new Ghash(h, false);
+  g.update(aad, 0, aad.length);
+  g.update(out, 0, n);
+  const lens = Buffer.alloc(16);
+  const abits = (aad.length as u64) * 8;
+  const cbits = (n as u64) * 8;
+  for (let i: usize = 0; i < 8; i++) {
+    lens[i] = ((abits >> (56 - 8 * (i as u64))) & 0xff) as u8;
+    lens[8 + i] = ((cbits >> (56 - 8 * (i as u64))) & 0xff) as u8;
+  }
+  g.update(lens, 0, 16);
+  const tag = Buffer.alloc(16);
+  g.digestInto(tag, 0);
+  aesCtrInPlace(skey, q, ks, nonce, 1, tag, 0, 16);
+  for (let i: usize = 0; i < 16; i++) {
+    out[n + i] = tag[i];
+  }
+  return out;
+}
+
+function same(a: u8[], b: u8[]): bool {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+describe("AesGcm on the AES instructions", () => {
+  it("agrees with the bitsliced AES and integer GHASH at every length", () => {
+    let mismatches = 0;
+    for (let n: usize = 0; n <= 300; n++) {
+      const key = bytes(n % 3 == 0 ? 32 : 16);
+      const nonce = bytes(12);
+      const text = bytes(n);
+      const aad = bytes(n % 37);
+      const aead = new AesGcm(key);
+      const sealed = aead.seal(nonce, text, aad);
+      if (!same(sealed, reference(key, nonce, text, aad))) {
+        mismatches++;
+      }
+      const opened = aead.open(nonce, sealed, aad);
+      if (opened == null || !same(opened, text)) {
+        mismatches++;
+      }
+    }
+    expect(mismatches).toBe(0);
+  });
+
+  it("carries the counter past 255 and past 65,535 blocks", () => {
+    // 257 and 65,537 blocks: the last counters are 258 and 65,538.
+    const lengths: usize[] = [4112, 1048592];
+    for (const n of lengths) {
+      const key = bytes(16);
+      const nonce = bytes(12);
+      const text = bytes(n);
+      const aad = bytes(13);
+      const aead = new AesGcm(key);
+      const sealed = aead.seal(nonce, text, aad);
+      expect(same(sealed, reference(key, nonce, text, aad))).toBe(true);
+      const opened = aead.open(nonce, sealed, aad);
+      expect(opened != null && same(opened, text)).toBe(true);
+    }
+  });
+
+  it("writes the counter big-endian after the nonce, all four bytes of it", () => {
+    const nonce = bytes(12);
+    const block = counterBlock(counterBase(nonce), 0x01020304);
+    let wrong = 0;
+    for (let i: usize = 0; i < 12; i++) {
+      if (block.lane(i) != nonce[i]) {
+        wrong++;
+      }
+    }
+    expect(wrong).toBe(0);
+    expect(block.lane(12)).toBe(0x01);
+    expect(block.lane(13)).toBe(0x02);
+    expect(block.lane(14)).toBe(0x03);
+    expect(block.lane(15)).toBe(0x04);
+  });
+
+  it("hashes long additional data as the integer GHASH does", () => {
+    let mismatches = 0;
+    const lengths: usize[] = [127, 128, 129, 143, 144, 255, 256, 257, 400];
+    for (const a of lengths) {
+      const key = bytes(16);
+      const nonce = bytes(12);
+      const text = bytes(a % 40);
+      const aad = bytes(a);
+      if (!same(new AesGcm(key).seal(nonce, text, aad), reference(key, nonce, text, aad))) {
+        mismatches++;
+      }
+    }
+    expect(mismatches).toBe(0);
+  });
+
+  it("seals and opens in place at every start from 0 to 16, inside the guard bytes", () => {
+    const lengths: usize[] = [0, 1, 15, 16, 17, 31, 127, 128, 129, 143, 144, 145, 255, 256, 300];
+    let wrong = 0;
+    for (let start: usize = 0; start <= 16; start++) {
+      for (const n of lengths) {
+        const key = bytes(start % 2 == 0 ? 16 : 32);
+        const nonce = bytes(12);
+        const text = bytes(n);
+        const aad = bytes(n % 19);
+        const want = reference(key, nonce, text, aad);
+        const aead = new AesGcm(key);
+        const buf = bytes(start + n + 16 + 16);
+        for (let i: usize = 0; i < n; i++) {
+          buf[start + i] = text[i];
+        }
+        const before = buf.slice();
+        aead.sealInPlace(nonce, aad, buf, start, start + n);
+        for (let i: usize = 0; i < buf.length; i++) {
+          const inside = i >= start && i < start + n + 16;
+          if (buf[i] != (inside ? want[i - start] : before[i])) {
+            wrong++;
+          }
+        }
+        const sealed = buf.slice();
+        if (!aead.openInPlace(nonce, aad, buf, start, start + n + 16)) {
+          wrong++;
+        }
+        for (let i: usize = 0; i < buf.length; i++) {
+          // The tag stays where it was: only the ciphertext is written.
+          const text2 = i >= start && i < start + n;
+          if (buf[i] != (text2 ? text[i - start] : sealed[i])) {
+            wrong++;
+          }
+        }
+      }
+    }
+    expect(wrong).toBe(0);
+  });
+
+  it("leaves the buffer as it was when a tag does not match, byte for byte", () => {
+    const lengths: usize[] = [0, 1, 16, 17, 127, 128, 129, 200, 300];
+    let wrong = 0;
+    for (let start: usize = 0; start <= 16; start += 4) {
+      for (const n of lengths) {
+        const aead = new AesGcm(bytes(16));
+        const nonce = bytes(12);
+        const aad = bytes(5);
+        const buf = bytes(start + n + 16 + 16);
+        aead.sealInPlace(nonce, aad, buf, start, start + n);
+        const good = buf.slice();
+        // A flipped bit in the ciphertext (where there is one) and in the tag; a wrong nonce, and
+        // wrong additional data.
+        const flips: usize[] = n > 0 ? [start, start + n - 1, start + n, start + n + 15] : [start];
+        for (const at of flips) {
+          buf[at] ^= 0x40;
+          const tampered = buf.slice();
+          if (aead.openInPlace(nonce, aad, buf, start, start + n + 16) || !same(buf, tampered)) {
+            wrong++;
+          }
+          buf[at] ^= 0x40;
+        }
+        const nonce2 = nonce.slice();
+        nonce2[11] ^= 1;
+        if (aead.openInPlace(nonce2, aad, buf, start, start + n + 16) || !same(buf, good)) {
+          wrong++;
+        }
+        const aad2 = aad.slice();
+        aad2[0] ^= 1;
+        if (aead.openInPlace(nonce, aad2, buf, start, start + n + 16) || !same(buf, good)) {
+          wrong++;
+        }
+        // The object still opens the original after all that.
+        if (!aead.openInPlace(nonce, aad, buf, start, start + n + 16)) {
+          wrong++;
+        }
+      }
+    }
+    expect(wrong).toBe(0);
+  });
+
+  it("reads a short block as zero-padded", () => {
+    const b = bytes(40);
+    let wrong = 0;
+    for (let n: usize = 0; n < 16; n++) {
+      const v = partial(b, 7, 7 + n);
+      for (let i: usize = 0; i < 16; i++) {
+        const want: u64 = i < n ? (b[7 + i] as u64) : 0;
+        // Byte i of a block is byte 7 - i of lane 1, and byte 15 - i of lane 0.
+        const lane = i < 8 ? v.lane(1) : v.lane(0);
+        const shift = i < 8 ? 56 - 8 * (i as u64) : 120 - 8 * (i as u64);
+        if (((lane >> shift) & 0xff) != want) {
+          wrong++;
+        }
+      }
+    }
+    expect(wrong).toBe(0);
+  });
+
+  it("makes the round keys and hash powers that the instructions need", () => {
+    // FIPS 197 Appendix A.1: the AES-128 key 2b7e1516…, whose last round key is d014f9a8….
+    const key: u8[] = [
+      0x2b,
+      0x7e,
+      0x15,
+      0x16,
+      0x28,
+      0xae,
+      0xd2,
+      0xa6,
+      0xab,
+      0xf7,
+      0x15,
+      0x88,
+      0x09,
+      0xcf,
+      0x4f,
+      0x3c,
+    ];
+    const keys = aesRoundKeys(key);
+    expect(keys.length).toBe(11);
+    expect(keys[10].lane(0)).toBe(0xd0);
+    expect(keys[10].lane(15)).toBe(0xa6);
+    // H^k is the integer GHASH of the block 1 (x^0 in GCM's bit order: 0x80 first) followed by
+    // k - 1 zero blocks.
+    const h = bytes(16);
+    const powers = hashPowers(h);
+    expect(powers.length).toBe(16);
+    for (let k: usize = 1; k <= 8; k++) {
+      const g = new Ghash(h, false);
+      const one = Buffer.alloc(16);
+      one[0] = 0x80;
+      g.update(one, 0, 16);
+      g.update(Buffer.alloc(16 * (k - 1)), 0, 16 * (k - 1));
+      const d = Buffer.alloc(16);
+      g.digestInto(d, 0);
+      const p = powers[k - 1];
+      let ok = true;
+      for (let i: usize = 0; i < 8; i++) {
+        const hiByte = ((p.lane(1) >> (56 - 8 * (i as u64))) & 0xff) as u8;
+        const loByte = ((p.lane(0) >> (56 - 8 * (i as u64))) & 0xff) as u8;
+        ok = ok && d[i] == hiByte && d[8 + i] == loByte;
+      }
+      expect(ok).toBe(true);
+      const s = powers[8 + k - 1];
+      expect(s.lane(0) == p.lane(1) && s.lane(1) == p.lane(0)).toBe(true);
+    }
+    expect(typeof u8x16.hasAes()).toBe("boolean");
+  });
+});

@@ -1,5 +1,10 @@
 // The driver's handles have no JSON form: decoding would forge a native handle, and encoding
-// would hand one out.
+// would hand one out. Here the package is the program itself, and a program's own `declare c`
+// leaves its classes' JSON alone (tests/golden/std/json_private_fields_declare_c), so this checks
+// what holds even then: decoding fails for every type with a private field, and encoding for the
+// types that hold a `Ptr` (std's, whose address is private). To a program that depends on the
+// package, every class of it with a private field has no JSON form
+// (tests/golden/lang/errors/json_handles_declare_c).
 import { Database, Statement, Transaction } from "../../src/lib";
 
 function main() {
@@ -8,20 +13,7 @@ function main() {
   const t = JSON.parse<Transaction>('{"handle":1}');
 }
 
-// Encoding: the handles are private fields of types that bind the native library.
-function encode(d: Database, s: Statement, t: Transaction) {
+function encode(d: Database, t: Transaction) {
   console.log(JSON.stringify(d));
-  console.log(JSON.stringify(s));
   console.log(JSON.stringify(t));
-}
-
-// Every type of a package with a native library, also one in a file that declares none of its
-// functions (a wrapper of another file's).
-class Wrapped {
-  private handle: u64 = 0;
-}
-
-function wrapped(w: Wrapped) {
-  console.log(JSON.stringify(w));
-  const back = JSON.parse<Wrapped>('{"handle":1}');
 }

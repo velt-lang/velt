@@ -118,6 +118,7 @@ impl<'a> Parser<'a> {
                     self.bump();
                     Ok(StmtKind::Empty)
                 }
+                Tok::At => Ok(StmtKind::Item(Box::new(self.parse_item(false)?))),
                 _ if self.at_abstract_class() || self.at_unsafe_fn() => {
                     Ok(StmtKind::Item(Box::new(self.parse_item(false)?)))
                 }

@@ -1,0 +1,26 @@
+declare decorator function name(key: string): FieldDecorator;
+declare decorator function policy(p: "a" | "b"): FieldDecorator;
+declare decorator function small(n: u8): FieldDecorator;
+declare decorator function level(l: Level): FieldDecorator;
+declare decorator function options(o: { a: i64; b?: string }): FieldDecorator;
+
+enum Level {
+  Low,
+}
+enum Other {
+  Low,
+}
+
+class C {
+  @name(1) a: i64 = 0;
+  @name a2: i64 = 0;
+  @name() b: i64 = 0;
+  @name("a", "b") c: i64 = 0;
+  @policy("c") d: i64 = 0;
+  @small(256) e: i64 = 0;
+  @level(Other.Low) f: i64 = 0;
+  @options({ b: "x" }) g: i64 = 0;
+  @options({ a: 1, c: 2 }) h: i64 = 0;
+}
+
+function main() {}

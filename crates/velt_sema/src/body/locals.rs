@@ -396,38 +396,10 @@ impl FnCx<'_, '_> {
             // The value meaning of a name that is a type too, if any, after the error
             // (`crate::type_meanings`): no second error for the same use.
             let value = (scope.items.get(&crate::type_meanings::type_only_key(name))).copied();
-            self.type_only_value(name, at);
+            self.cx.type_only_value(self.module, name, at);
             return value.or(item);
         }
         item
-    }
-
-    /// "`T` is imported with `import type`", once per use.
-    fn type_only_value(&mut self, name: &str, at: Span) {
-        let msg = match self.cx.scopes[self.module].via_export_type.contains(name) {
-            true => format!(
-                "`{name}` is exported only as a type by the module it is imported from and cannot \
-                 be used as a value"
-            ),
-            false => {
-                format!("`{name}` is imported with `import type` and cannot be used as a value")
-            }
-        };
-        let reported = self
-            .cx
-            .diags
-            .iter()
-            .any(|d| d.message == msg && d.labels.first().is_some_and(|l| l.span == at));
-        if !reported {
-            let note = match self.cx.scopes[self.module].via_export_type.contains(name) {
-                true => "that module exports it with `export type`, or exports again a name it \
-                         imports with `import type`"
-                    .to_string(),
-                false => format!("import it as a value: `import {{ {name} }} from …`"),
-            };
-            self.cx
-                .error(velt_common::Diagnostic::error(msg, at).with_note(note));
-        }
     }
 
     /// A scope for narrowing only (it ends where the enclosing one does).

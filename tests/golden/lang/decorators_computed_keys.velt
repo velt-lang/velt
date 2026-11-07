@@ -1,0 +1,38 @@
+// A decorator on a field named by a computed key (`[k]`) is checked like any other field's:
+// `k` holds the field's name, which is how the use is recorded.
+declare decorator function t(s: string): FieldDecorator;
+declare decorator function m(): MethodDecorator;
+
+const k = "x";
+
+class C {
+  @nosuch
+  [k] = 1;
+}
+
+class D {
+  @t(1)
+  [k] = 1;
+}
+
+class E {
+  @t(2)
+  readonly [k]: i64 = 1;
+}
+
+struct S {
+  @t(3)
+  [k]: i64 = 1;
+}
+
+class F {
+  @m
+  [k]: i64 = 1;
+}
+
+class Fine {
+  @t("ok")
+  [k]: i64 = 1;
+}
+
+function main() {}

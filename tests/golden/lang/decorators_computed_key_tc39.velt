@@ -1,0 +1,7 @@
+// A TC39 decorator on a field named by a computed key, in a `.ts` module, is reported (#2204),
+// never dropped.
+import { C, R } from "./_decorators_computed_key_tc39";
+
+function main() {
+  console.log(new C(), new R());
+}

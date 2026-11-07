@@ -1,0 +1,21 @@
+// A packed array of numbers (sixteen or more) that doesn't fit its parameter gets the type error,
+// on either side of `NumArray::MIN_LEN`.
+declare decorator function names(a: string[]): TypeDecorator;
+declare decorator function small(a: u8[]): TypeDecorator;
+declare decorator function ints(a: i64[]): TypeDecorator;
+
+const FLOATS = [0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+@names([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+class Names15 {}
+
+@names([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+class Names16 {}
+
+@small([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 256])
+class Small16 {}
+
+@ints(FLOATS)
+class Floats16 {}
+
+function main() {}

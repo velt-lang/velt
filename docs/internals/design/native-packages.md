@@ -32,9 +32,9 @@ How a program uses the binary depends on the mode:
   - `velt_link::LinkRequest` takes only objects plus one runtime library.
   - The dev JIT resolves only `velt_rt_host::abi_symbols::symbol_table()` and `c_symbols`.
 - This is why the sqlite, postgres and redis drivers were built into `velt_rt`
-  (`rt_abi_async.md` §14). They are packages now (`packages/sqlite`, `packages/postgres`,
-  `packages/redis`; see [As built](#as-built)), and `packages/redis` has since become plain Velt
-  (c-ffi.md "Follow-up track").
+  (`rt_abi_async.md` §14). They are packages now (`packages/postgres` with a crate; see
+  [As built](#as-built)), `packages/redis` is plain Velt (c-ffi.md "Follow-up track") and
+  `packages/sqlite` calls SQLite through `declare c`.
 
 ## Package layout
 

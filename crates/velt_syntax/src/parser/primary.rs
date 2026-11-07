@@ -96,6 +96,7 @@ impl<'a> Parser<'a> {
                 self.bump();
                 return Err(Fail);
             }
+            Tok::At => return self.decorated_expression(),
             _ => {
                 self.error_expected("expression");
                 return Err(Fail);
@@ -561,6 +562,7 @@ impl<'a> Parser<'a> {
                 pattern: None,
                 ty,
                 default: None,
+                decorators: vec![],
                 optional: false,
                 rest: false,
                 span: at,

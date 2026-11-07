@@ -59,6 +59,7 @@ impl Parser<'_> {
             optional: false,
             is_private: false,
             is_static: true,
+            decorators: vec![],
             span,
         })
     }

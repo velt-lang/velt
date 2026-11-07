@@ -23,8 +23,11 @@ impl<'a> Parser<'a> {
         let (mut params, mut fields) = (vec![], vec![]);
         while !self.at(Tok::RParen) {
             let lo = self.cur_lo();
+            // TC39 placement: decorators come before the property modifiers.
+            let decorators = self.parse_decorators()?;
             let mods = self.parse_prop_mods();
             let mut p = self.parse_param(params.len())?;
+            p.decorators.splice(0..0, decorators);
             // The span covers the modifiers, so `velt fmt` keeps them.
             p.span.lo = lo;
             if mods.any && p.pattern.is_some() {
@@ -42,6 +45,7 @@ impl<'a> Parser<'a> {
                     optional: false,
                     is_private: mods.is_private,
                     is_static: false,
+                    decorators: vec![],
                     span: p.span,
                 });
             }

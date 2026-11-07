@@ -61,6 +61,10 @@ pub fn walk_module<'a>(module: &'a ast::Module, v: &mut dyn Visit<'a>) {
     }
 }
 
+fn decorators<'a>(ds: &'a [ast::Decorator], v: &mut dyn Visit<'a>) {
+    ds.iter().for_each(|d| walk_expr(&d.expr, v));
+}
+
 pub(crate) fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
     v.item(item);
     match &item.kind {
@@ -74,6 +78,7 @@ pub(crate) fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
             ext.methods.iter().for_each(|m| walk_fn(&m.decl, v));
         }
         ast::ItemKind::Enum(e) => {
+            decorators(&e.decorators, v);
             for variant in &e.variants {
                 opt_expr(variant.discriminant.as_ref(), v);
             }
@@ -83,7 +88,10 @@ pub(crate) fn walk_item<'a>(item: &'a ast::Item, v: &mut dyn Visit<'a>) {
             walk_generics(&alias.generics, v);
             walk_type(&alias.ty, v);
         }
-        ast::ItemKind::ExternFn(sig) => walk_sig_types(sig, v),
+        ast::ItemKind::ExternFn(sig) => {
+            walk_sig_types(sig, v);
+            params(sig, v);
+        }
         ast::ItemKind::Augment(a) => a.items.iter().for_each(|i| walk_item(i, v)),
         ast::ItemKind::Namespace(n) => n.items.iter().for_each(|i| walk_item(i, v)),
         ast::ItemKind::Import(_) => {}
@@ -107,10 +115,12 @@ pub fn walk_pattern<'a>(p: &'a ast::Pattern, v: &mut dyn Visit<'a>) {
 }
 
 fn walk_type_decl<'a>(t: &'a ast::TypeDecl, v: &mut dyn Visit<'a>) {
+    decorators(&t.decorators, v);
     walk_generics(&t.generics, v);
     opt_type(t.extends.as_ref(), v);
     t.implements.iter().for_each(|i| walk_type(i, v));
     for field in &t.fields {
+        decorators(&field.decorators, v);
         walk_type(&field.ty, v);
         opt_expr(field.default.as_ref(), v);
     }
@@ -147,7 +157,9 @@ pub fn walk_fn<'a>(f: &'a ast::FnDecl, v: &mut dyn Visit<'a>) {
 }
 
 fn params<'a>(sig: &'a ast::FnSig, v: &mut dyn Visit<'a>) {
+    decorators(&sig.decorators, v);
     for p in &sig.params {
+        decorators(&p.decorators, v);
         opt_expr(p.default.as_ref(), v);
     }
 }

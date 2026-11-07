@@ -63,6 +63,7 @@ pub(super) fn recursive_arrow(v: &ast::VarDecl) -> Option<ast::FnDecl> {
                 pattern: p.pattern.clone(),
                 ty,
                 default: p.default.clone(),
+                decorators: vec![],
                 optional: p.optional,
                 rest: false,
             })
@@ -96,6 +97,8 @@ pub(super) fn recursive_arrow(v: &ast::VarDecl) -> Option<ast::FnDecl> {
             is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
+            is_decorator: false,
+            decorators: vec![],
             generator: None,
             host: None,
             c: None,

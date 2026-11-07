@@ -1,0 +1,6 @@
+declare decorator function name(key: string): FieldDecorator;
+
+function main() {
+  name("x");
+  const f = name;
+}

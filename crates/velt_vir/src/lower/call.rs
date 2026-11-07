@@ -8,6 +8,7 @@ use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 use super::foreign::ForeignBuf;
 use super::operand::proj;
 use super::sequence::Later;
+use super::stabilize::ArgReach;
 use super::view_unswitch_plain::FLOAT_INDEX;
 use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
@@ -149,7 +150,7 @@ impl FnLower<'_, '_> {
             || self.cx.quiet_for_borrows(def) && !args.iter().any(|a| self.in_array_buffer(a))
         {
             true => Stabilize::Facts,
-            false => Stabilize::Share,
+            false => Stabilize::Direct(self.cx.callee_id(def, &targs)),
         };
         // An index's conversion (`xs[i]` with a number `i`) reads only the number it is given.
         if quiet || f.name == FLOAT_INDEX {
@@ -394,7 +395,10 @@ impl FnLower<'_, '_> {
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match how {
-                        Stabilize::Share => self.stable_borrow(a, &args[i + 1..]),
+                        Stabilize::Share | Stabilize::Direct(_) => {
+                            let reach = self.arg_reach(how, args, i, changed);
+                            self.stable_borrow_in(a, &args[i + 1..], true, reach)
+                        }
                         Stabilize::Facts => self.stable_borrow_as(a, &args[i + 1..], false),
                         Stabilize::No => self.borrowed_arg(a),
                     };
@@ -432,8 +436,9 @@ impl FnLower<'_, '_> {
                 (_, m) => {
                     let v = match m {
                         PassMode::Borrow | PassMode::BorrowMut if how != Stabilize::No => {
-                            let share = how == Stabilize::Share;
-                            let v = self.stable_borrow_as(a, &args[i + 1..], share);
+                            let share = how != Stabilize::Facts;
+                            let reach = self.arg_reach(how, args, i, changed);
+                            let v = self.stable_borrow_in(a, &args[i + 1..], share, reach);
                             // A frozen one changes for nobody, and is not counted (frozen.rs);
                             // a number read out of one is still read now, before a later
                             // argument may free its box (a copy counts nothing).
@@ -534,7 +539,12 @@ impl FnLower<'_, '_> {
             } else {
                 // A spawned call's borrows are settled right away, before the later arguments.
                 let rest = if transfer { &[][..] } else { &args[i + 1..] };
-                let v = self.stable_borrow(a, rest);
+                let sibling = args.len() > 1 && self.sibling_container(args, i);
+                let reach = ArgReach {
+                    callee: None,
+                    sibling,
+                };
+                let v = self.stable_borrow_in(a, rest, true, reach);
                 if transfer {
                     // The copy for the task reads the argument now.
                     self.finish_borrows(Vec::new());
@@ -562,7 +572,11 @@ impl FnLower<'_, '_> {
             match t {
                 Ty::Unit => {}
                 Ty::Agg(_) => {
-                    let v = if any_mut && mode != Some(PassMode::BorrowMut) && is_copy_read(a) {
+                    // A closure the callee runs may also give the place another value.
+                    let copy = any_mut
+                        || self.changes_during_call(a)
+                        || args.len() > 1 && self.sibling_container(args, i);
+                    let v = if copy && mode != Some(PassMode::BorrowMut) && is_copy_read(a) {
                         let tmp = self.copy_to_temp(v, t);
                         Operand::Copy(Place::local(tmp))
                     } else {
@@ -698,8 +712,12 @@ fn is_copy_read(a: &hir::Expr) -> bool {
 /// How a direct call's borrowed arguments are kept alive (stabilize.rs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Stabilize {
-    /// The callee may run user code: borrows through counted objects are shared or retained.
+    /// A function value or a method chosen at run time, which may run any user code: borrows
+    /// through counted objects are shared or retained.
     Share,
+    /// A direct call of a function: `Share`, with what the function can write known
+    /// (replaceable.rs).
+    Direct(super::replaceable::CalleeId),
     /// A quiet callee (quiet.rs): the same facts recorded, no shares.
     Facts,
     /// A runtime extern: plain borrows.

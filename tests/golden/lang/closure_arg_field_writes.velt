@@ -1,0 +1,121 @@
+// Every way a field read as an argument can be replaced during the call, each on a field nothing
+// else writes: the callee keeps what it was passed. Calls whose callee cannot write the field
+// share nothing (replaceable.rs), so each write here has to be seen (#2480). Output checked
+// against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxx").length; }
+
+class Direct { d: string = heap("old"); }
+const directHeld = new Direct();
+function setsDirect() { directHeld.d = heap("new"); }
+function direct(v: string) { setsDirect(); junk(); return v; }
+
+class Compound { c: string = heap("old"); }
+class Destructured { e: string = heap("old"); g: string = heap("old"); }
+class Base { b: string = heap("old"); }
+class Sub extends Base { rewrite() { this.b = heap("new"); } }
+class Lazy {
+  l: string;
+  set: () => void;
+  constructor() { this.l = heap("old"); this.set = () => { this.l = heap("new"); }; }
+}
+class Other {
+  o: string = heap("old");
+  constructor(from: Other | null) { if (from !== null) { from.o = heap("new"); } }
+}
+class Inner { i: string = heap("old"); }
+class Outer { inner: Inner = new Inner(); }
+class InlineOuter { part: { p: string } = { p: heap("old") }; }
+class Opt { v: { w: string } | null = { w: heap("old") }; }
+class ViaAny { y: string = heap("old"); }
+class ViaKey { k: string = heap("old"); }
+class Accessor {
+  _a: string = heap("old");
+  get a() { return this._a; }
+  set a(v: string) { this._a = v; }
+}
+interface Named { n: string; m(): string; }
+class Implements implements Named { n: string = heap("old"); m() { return this.n; } }
+class Virtual { m(v: string) { junk(); return v; } }
+class Over extends Virtual {
+  z: string = heap("old");
+  override m(v: string) { this.z = heap("new"); junk(); return v; }
+}
+class Tupled { t: [string, number] = [heap("old"), 1]; }
+
+function compound() {
+  const o = new Compound(); const alias = o;
+  const f = (v: string) => { alias.c += "more"; junk(); return v; };
+  console.log("compound", f(o.c), o.c);
+}
+function destructured() {
+  const o = new Destructured(); const alias = o;
+  const f = (v: string) => { [alias.e] = [heap("new")]; junk(); return v; };
+  console.log("array pattern", f(o.e), o.e);
+  const g = (v: string) => { ({ g: alias.g } = { g: heap("new") }); junk(); return v; };
+  console.log("object pattern", g(o.g), o.g);
+}
+function inherited() {
+  const o = new Sub(); const alias = o;
+  const f = (v: string) => { alias.rewrite(); junk(); return v; };
+  console.log("in a subclass", f(o.b), o.b);
+}
+function closureInConstructor() {
+  const o = new Lazy();
+  const f = (v: string) => { o.set(); junk(); return v; };
+  console.log("closure from a constructor", f(o.l), o.l);
+}
+function anotherObjectInConstructor() {
+  const o = new Other(null); const alias = o;
+  const f = (v: string) => { const n = new Other(alias); junk(); return v + n.o.length; };
+  console.log("another object in a constructor", f(o.o), o.o);
+}
+function replacedInner() {
+  const o = new Outer(); const alias = o;
+  const f = (v: string) => { alias.inner = new Inner(); alias.inner.i = heap("new"); junk(); return v; };
+  console.log("inner object", f(o.inner.i), o.inner.i);
+}
+function replacedInline() {
+  const o = new InlineOuter(); const alias = o;
+  const f = (v: string) => { alias.part = { p: heap("new") }; junk(); return v; };
+  console.log("inline part", f(o.part.p), o.part.p);
+}
+function replacedOptional() {
+  const o = new Opt(); const alias = o;
+  const f = (v: string) => { alias.v = null; junk(); return v; };
+  console.log("behind an optional", f(o.v!.w), o.v === null);
+}
+function throughAny() {
+  const o = new ViaAny();
+  const a: any = o;
+  const f = (v: string) => { a.y = heap("new"); junk(); return v; };
+  console.log("through any", f(o.y), o.y);
+}
+function setter() {
+  const o = new Accessor(); const alias = o;
+  const f = (v: string) => { alias.a = heap("new"); junk(); return v; };
+  console.log("setter", f(o.a), o.a);
+  console.log("setter field", f(o._a), o._a);
+}
+function throughInterface() {
+  const o = new Implements();
+  const n: Named = o;
+  const f = (v: string) => { n.n = heap("new"); junk(); return v; };
+  console.log("through an interface", f(o.n), o.n);
+}
+function virtual_() {
+  const o = new Over();
+  const b: Virtual = o;
+  console.log("virtual", b.m(o.z), o.z);
+}
+function tupleElement() {
+  const o = new Tupled(); const alias = o;
+  const f = (v: string) => { alias.t[0] = heap("new"); junk(); return v; };
+  console.log("tuple element", f(o.t[0]), o.t[0]);
+}
+function callee() {
+  console.log("direct callee, transitive", direct(directHeld.d), directHeld.d);
+}
+compound(); destructured(); inherited(); closureInConstructor(); anotherObjectInConstructor();
+replacedInner(); replacedInline(); replacedOptional(); throughAny(); setter(); throughInterface();
+virtual_(); tupleElement(); callee();

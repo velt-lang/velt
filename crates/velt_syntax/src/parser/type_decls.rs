@@ -105,6 +105,7 @@ impl<'a> Parser<'a> {
             is_abstract,
             c_type: false,
             c_struct: false,
+            decorators: vec![],
         };
         self.parse_members(|p| {
             let member = p.parse_member()?;
@@ -373,7 +374,11 @@ impl<'a> Parser<'a> {
             variants.push(p.parse_variant()?);
             Ok(())
         })?;
-        Ok(EnumDecl { name, variants })
+        Ok(EnumDecl {
+            name,
+            variants,
+            decorators: vec![],
+        })
     }
 
     fn parse_variant(&mut self) -> PResult<Variant> {

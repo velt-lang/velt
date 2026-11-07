@@ -337,3 +337,59 @@ fn named_statics_are_defined_in_a_build_of_several_units() {
     );
     assert_eq!(run(dir, "a2"), "2 5 a\n");
 }
+
+/// The stamp's `outside` line of `velt build a.velt -o <out>` in `dir`: what `velt test` keeps a
+/// result by.
+fn outside_line(
+    dir: &Path,
+    out: &str,
+    cache: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> String {
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    cmd.args(["build", "a.velt", "-o", out])
+        .args(args)
+        .current_dir(dir)
+        .env("VELT_BUILD_CACHE", cache)
+        .env_remove("VELT_BUILD_STAMP")
+        .env_remove("VELT_STD_OBJECT");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let o = cmd.output().unwrap();
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    let stem = format!("{out}{}.build-stamp", std::env::consts::EXE_SUFFIX);
+    let stamp = std::fs::read_to_string(dir.join(stem)).unwrap();
+    let line = stamp.lines().find(|l| l.starts_with("outside "));
+    line.unwrap().to_string()
+}
+
+/// What a served function reaches still counts: a declaration hides it, and the stamp's `outside`
+/// line must not say a program that reads files reaches nothing.
+#[test]
+fn what_a_served_function_reaches_counts_as_reached_in_a_release_build() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), READS_A_FILE).unwrap();
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let release = ["--release"];
+    let compiled = outside_line(dir, "compiled", &cache, &release, &[]);
+    let on = [
+        ("VELT_STD_OBJECT", "1"),
+        ("VELT_STD_OBJECT_MIN_MISSES", "1"),
+    ];
+    let served = outside_line(dir, "served", &cache, &release, &on);
+    assert!(!entries(&cache).is_empty(), "nothing was served");
+    assert!(served.contains("the file system"), "{served}");
+    assert_eq!(served, compiled);
+}
+
+/// A program whose reach is all in std's code: `readFile`'s polling function is served.
+const READS_A_FILE: &str = "import { readFile } from \"velt/fs\";
+async function main() {
+  const text = await readFile(\"a.velt\");
+  console.log(text.length > 0);
+}
+";

@@ -1,0 +1,47 @@
+str one nine
+str heap one---------------------------------------- nine----------------------------------------
+num 1 9
+bool true false
+obj 1 9
+obj str a----------------------------------------1 z----------------------------------------
+obj mut 5 9 5
+union one 9
+union obj x
+opt one null
+opt param one undefined
+opt num 1 null
+opt obj 1 null
+any one 9
+any obj 1 9
+unknown [ 1 ] 9
+arr 2 1
+class 1 9
+tuple 1a 9
+fn 1 9
+nested one nine
+nested obj 1 9
+field one nine
+elem one nine
+ret one nine
+cb one nine
+default onedflt nine
+rest one,one nine
+spread a z
+loop s0 next
+loop s1 next
+loop s2 next
+loop var a c
+loop var cb c
+for of p r
+for of q r
+module one nine
+module obj 1 9
+module num 1 9
+module opt one null
+module any one 9
+both one|nine|one nine
+both obj 1|1|9 9
+rec aababbabbbabbaba abbbb
+rec nested x,y2,y1,y2,x y0
+param one nine
+param obj 1 9

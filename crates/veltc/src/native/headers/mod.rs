@@ -483,9 +483,10 @@ fn parse_in(
 
 /// zig, run in `dir` with its caches there.
 fn zig_command(zig: &Path, dir: &Path) -> std::process::Command {
+    let dir = vpm::relpath::plain(dir);
     let cache = dir.join("zig-cache");
     let mut c = std::process::Command::new(zig);
-    c.current_dir(dir)
+    c.current_dir(&dir)
         .env("ZIG_GLOBAL_CACHE_DIR", &cache)
         .env("ZIG_LOCAL_CACHE_DIR", &cache);
     c
@@ -504,7 +505,7 @@ fn cc1_command(
     // `zig cc -###` prints the clang command it would run; that command with the AST dump in
     // place of the object is what clang parses the headers with (zig's own `-fsyntax-only`
     // still renames an object it never made).
-    let include = format!("-I{}", root.display());
+    let include = include_arg(root);
     let defines = vpm::native::c_build::defines_args(defines);
     let mut plan_args = vec!["cc", "-target", zig_target, &include];
     plan_args.extend(defines.iter().map(String::as_str));
@@ -531,6 +532,13 @@ fn cc1_command(
     let mut full = vec!["clang".to_string(), "-cc1".to_string()];
     full.extend(cc1);
     Ok(full)
+}
+
+/// clang's `-I` for the package at `root`, without the verbatim prefix a canonical path has on
+/// Windows: clang appends a `#include "native/x.h"` to `\\?\E:\pkg` as it is written, and Windows
+/// reads no `/` in a verbatim path as a separator, so the header isn't found (#2347).
+fn include_arg(root: &Path) -> String {
+    format!("-I{}", vpm::relpath::plain(root).display())
 }
 
 /// Where clang writes the files it read, in the parse's directory.
@@ -581,6 +589,17 @@ mod tests {
             split_quoted(r#" "/z/zig" "-cc1" "-I/a b" "-DX=\"y\"""#),
             ["/z/zig", "-cc1", "-I/a b", "-DX=\"y\""]
         );
+    }
+
+    #[test]
+    fn the_include_directory_reaches_clang_without_the_verbatim_prefix() {
+        assert_eq!(include_arg(Path::new(r"\\?\C:\x")), r"-IC:\x");
+        assert_eq!(
+            include_arg(Path::new(r"\\?\UNC\server\share")),
+            r"-I\\server\share"
+        );
+        assert_eq!(include_arg(Path::new("/pkg/sqlite")), "-I/pkg/sqlite");
+        assert_eq!(include_arg(Path::new(r"E:\velt\x")), r"-IE:\velt\x");
     }
 
     #[test]

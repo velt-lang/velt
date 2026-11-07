@@ -1,0 +1,7 @@
+// `tsc` gives TS1146 after `export default`; there is no declaration for a decorator to go on.
+declare decorator function t(): TypeDecorator;
+
+const x = 1;
+
+@t
+export default x;

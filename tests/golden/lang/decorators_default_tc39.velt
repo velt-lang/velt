@@ -1,0 +1,17 @@
+// TC39 decorators on default exports, valid TypeScript in both places (`tsc` 5.9.3, then Node,
+// runs them): `logged` is an ordinary function (#2204). Only one default may stand in a module,
+// so the second is in `_decorators_default/tc39_before.velt`.
+import Before from "./_decorators_default/tc39_before";
+
+function logged(value: any, context: any): any {
+  return value;
+}
+
+export default @logged class C {
+  @logged m() {}
+}
+
+function main() {
+  new C();
+  new Before();
+}

@@ -210,7 +210,7 @@ fn extract_with(name: &str, source: &str, widened: &Widened) -> (DocModule, Vec<
                     let local = module
                         .items
                         .iter()
-                        .find(|d| declared_name(d) == Some(&n.name.name));
+                        .find(|d| crate::declared::declared_name(d) == Some(&n.name.name));
                     if let Some(mut doc) = local.and_then(|d| text.item(d, true)) {
                         doc.name = exported;
                         items.push(doc);
@@ -288,27 +288,6 @@ fn imported_names(i: &ast::Import) -> Vec<Import> {
         name: Some(n.name.name.clone()),
     });
     namespace.chain(names).collect()
-}
-
-/// The name a top-level declaration binds.
-fn declared_name(item: &Item) -> Option<&String> {
-    Some(match &item.kind {
-        ItemKind::Function(f) => &f.sig.name.name,
-        ItemKind::ExternFn(s) if s.is_intrinsic || s.host.is_some() => &s.name.name,
-        ItemKind::Struct(t) | ItemKind::Class(t) => &t.name.name,
-        ItemKind::Interface(i) => &i.name.name,
-        ItemKind::Enum(e) => &e.name.name,
-        ItemKind::TypeAlias(t) => &t.name.name,
-        ItemKind::Var(v) => match &v.pattern.kind {
-            ast::PatternKind::Ident(name) => &name.name,
-            _ => return None,
-        },
-        ItemKind::Extend(_)
-        | ItemKind::Import(_)
-        | ItemKind::ExternFn(_)
-        | ItemKind::Augment(_)
-        | ItemKind::Namespace(_) => return None,
-    })
 }
 
 fn generic_names(generics: &[ast::GenericParam]) -> Vec<String> {
@@ -396,7 +375,7 @@ impl Source<'_> {
         };
         doc.ts = ts.decl(
             item,
-            declared_name(item).map_or(doc.name.as_str(), |n| n.as_str()),
+            crate::declared::declared_name(item).map_or(doc.name.as_str(), |n| n.as_str()),
         );
         Some(doc)
     }
@@ -414,6 +393,14 @@ impl Source<'_> {
                 signature: format!("declare intrinsic function {}", p.fn_sig(s)),
                 ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
             },
+            ItemKind::ExternFn(s) if s.is_decorator => DocItem {
+                signature: format!(
+                    "{}declare decorator function {}",
+                    p.decorators(&s.decorators),
+                    p.fn_sig(s)
+                ),
+                ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
+            },
             ItemKind::ExternFn(s @ ast::FnSig { host: Some(h), .. }) => DocItem {
                 signature: format!("declare host({:?}) function {}", h.module, p.fn_sig(s)),
                 ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
@@ -425,6 +412,7 @@ impl Source<'_> {
                     true => std::slice::from_ref(&f.sig),
                     false => &f.overloads[..],
                 };
+                // Its decorators, the implementation's, lead the first signature.
                 let signature = sigs
                     .iter()
                     .map(|s| {
@@ -433,6 +421,7 @@ impl Source<'_> {
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
+                let signature = format!("{}{signature}", p.decorators(&f.sig.decorators));
                 DocItem {
                     signature,
                     ..self.leaf(
@@ -505,14 +494,15 @@ impl Source<'_> {
         } else {
             "class"
         };
+        let header = self.printer.type_header(
+            keyword,
+            &t.name.name,
+            &t.generics,
+            t.extends.as_slice(),
+            &t.implements,
+        );
         DocItem {
-            signature: self.printer.type_header(
-                keyword,
-                &t.name.name,
-                &t.generics,
-                t.extends.as_slice(),
-                &t.implements,
-            ),
+            signature: format!("{}{header}", self.printer.decorators(&t.decorators)),
             members,
             ..self.leaf(kind, &t.name.name, &t.generics, doc, lo)
         }
@@ -524,9 +514,12 @@ impl Source<'_> {
             .filter(|m| !m.is_private)
             .map(|m| match m.decl.overloads.split_first() {
                 None => self.member_fn(Kind::Method, &m.decl.sig),
-                // Overloads: the signatures, one per line, with the first one's doc comment.
+                // Overloads: the signatures, one per line, with the first one's doc comment, and
+                // the implementation's decorators before them.
                 Some((first, rest)) => {
                     let mut item = self.member_fn(Kind::Method, first);
+                    let decorators = self.printer.decorators(&m.decl.sig.decorators);
+                    item.signature.insert_str(0, &decorators);
                     for s in rest {
                         item.signature.push('\n');
                         item.signature += &self.member_fn(Kind::Method, s).signature;
@@ -579,7 +572,11 @@ impl Source<'_> {
             })
             .collect();
         DocItem {
-            signature: format!("enum {}", e.name.name),
+            signature: format!(
+                "{}enum {}",
+                self.printer.decorators(&e.decorators),
+                e.name.name
+            ),
             members,
             ..self.leaf(Kind::Enum, &e.name.name, &[], doc, lo)
         }
@@ -624,17 +621,22 @@ impl Source<'_> {
     /// A method, accessor or constructor: its modifiers as written (`static`, `async`, `get`,
     /// `mut`, …), then the signature.
     fn member_fn(&self, kind: Kind, sig: &ast::FnSig) -> DocItem {
+        let lo = crate::sig::Printer::after_decorators(&sig.decorators, sig.span.lo);
         let mods: String = self
             .printer
             .src
-            .get(sig.span.lo as usize..sig.name.span.lo.max(sig.span.lo) as usize)
+            .get(lo as usize..sig.name.span.lo.max(lo) as usize)
             .unwrap_or("")
             .split_whitespace()
             .filter(|w| !matches!(*w, "export" | "function" | "override"))
             .map(|w| format!("{w} "))
             .collect();
         DocItem {
-            signature: format!("{mods}{}", self.printer.fn_sig(sig)),
+            signature: format!(
+                "{}{mods}{}",
+                self.printer.decorators(&sig.decorators),
+                self.printer.fn_sig(sig)
+            ),
             ..self.leaf(
                 kind,
                 &sig.name.name,
@@ -647,149 +649,5 @@ impl Source<'_> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SRC: &str = "// Module docs.\n// Second line.\n\nimport { x } from \"velt/io\";\n\n/// Adds.\n/// Twice.\nexport function add(a: i64, b: i64): i64 {\n  return a + b;\n}\n\nfunction hidden() {}\n\n/** A point. */\nexport class Point {\n  /** X coordinate. */\n  x: f64;\n  private secret: i64 = 0;\n\n  constructor(x: f64) {\n    this.x = x;\n  }\n\n  /**\n   * Length.\n   */\n  len(): f64 {\n    return this.x;\n  }\n}\n\nexport enum Color {\n  Red,\n  Green = 5,\n}\n\nexport const LIMIT: i64 = 10;\n\nexport async function wait(ms: i64) {}\n";
-
-    #[test]
-    fn exported_items_with_docs() {
-        let m = extract("demo", SRC);
-        assert_eq!(m.doc, "Module docs.\nSecond line.");
-        let names: Vec<&str> = m.items.iter().map(|i| i.name.as_str()).collect();
-        assert_eq!(names, ["add", "Point", "Color", "LIMIT", "wait"]);
-        let add = &m.items[0];
-        assert_eq!(add.signature, "function add(a: i64, b: i64): i64");
-        assert_eq!(add.doc, "Adds.\nTwice.");
-        let point = &m.items[1];
-        assert_eq!(
-            (point.kind, point.signature.as_str()),
-            (Kind::Class, "class Point")
-        );
-        let members: Vec<(&str, &str, &str)> = point
-            .members
-            .iter()
-            .map(|m| (m.name.as_str(), m.signature.as_str(), m.doc.as_str()))
-            .collect();
-        assert_eq!(
-            members,
-            [
-                ("x", "x: f64", "X coordinate."),
-                ("constructor", "constructor(x: f64)", ""),
-                ("len", "len(): f64", "Length.")
-            ]
-        );
-        assert_eq!(m.items[2].members.len(), 2);
-        assert_eq!(m.items[3].signature, "const LIMIT: i64 = 10");
-        assert_eq!(m.items[4].signature, "async function wait(ms: i64)");
-    }
-
-    #[test]
-    fn tags_and_deprecation() {
-        let src = "/**\n * Old.\n * @param a - the value\n * @deprecated Use `g`.\n */\nexport function f(a: i64) {}\n\nexport enum E {\n  /** @deprecated */\n  A,\n  // Plain.\n  B,\n}\n";
-        let m = extract("demo", src);
-        let f = &m.items[0];
-        assert_eq!(
-            f.doc,
-            "Old.\n\n**Parameters**\n\n- `a`: the value\n\n**Deprecated:** Use `g`."
-        );
-        assert_eq!(f.deprecated.as_deref(), Some("Use `g`."));
-        let e = &m.items[1].members;
-        assert_eq!(e[0].deprecated.as_deref(), Some(""));
-        assert_eq!((e[1].doc.as_str(), e[1].deprecated.as_ref()), ("", None));
-    }
-
-    #[test]
-    fn overloads_show_their_signatures() {
-        let src = "/** Twice. */\nexport function f(x: string): string;\nexport async function f(x: number): Promise<number>;\nexport async function f(x: string | number): Promise<string | number> {\n  return x;\n}\n\nexport class C {\n  /** Scales. */\n  m(a: f64): f64;\n  m(a: f64, b: f64): f64;\n  m(a: f64, b?: f64): f64 {\n    return a;\n  }\n  static m2(): C;\n  static m2(): C {\n    return new C();\n  }\n}\n";
-        let m = extract("demo", src);
-        let f = &m.items[0];
-        assert_eq!(
-            f.signature,
-            "function f(x: string): string\nasync function f(x: number): Promise<number>"
-        );
-        assert_eq!(f.doc, "Twice.");
-        let members: Vec<&str> = m.items[1]
-            .members
-            .iter()
-            .map(|m| m.signature.as_str())
-            .collect();
-        assert_eq!(
-            members,
-            ["m(a: f64): f64\nm(a: f64, b: f64): f64", "static m2(): C"]
-        );
-        assert_eq!(m.items[1].members[0].doc, "Scales.");
-    }
-
-    /// std's intrinsics and host functions are documented as functions; other `declare`s are not.
-    #[test]
-    fn intrinsic_declarations_are_documented() {
-        let src = "/** Swaps two elements. */\nexport declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n\n/** Hidden. */\nexport declare function velt_rt_x(): void;\nexport declare host(\"env\") function now(): f64;\n";
-        let m = extract("std/lang/intrinsics/array", src);
-        let names: Vec<&str> = m.items.iter().map(|i| i.name.as_str()).collect();
-        assert_eq!(names, ["arraySwap", "now"]);
-        assert_eq!(
-            m.items[1].signature,
-            "declare host(\"env\") function now(): f64"
-        );
-        let f = &m.items[0];
-        assert_eq!(f.kind, Kind::Function);
-        assert_eq!(
-            f.signature,
-            "declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void"
-        );
-        assert_eq!(f.doc, "Swaps two elements.");
-    }
-
-    #[test]
-    fn plain_comments_and_template_text_are_not_docs() {
-        let src = "// Module.\n\n// Not a doc.\nexport function f() {}\n\nconst t = `\n/// inside a template\n`;\nexport function g() {}\n";
-        let m = extract("demo", src);
-        assert_eq!(m.doc, "Module.");
-        assert_eq!((m.items[0].doc.as_str(), m.items[1].doc.as_str()), ("", ""));
-    }
-
-    #[test]
-    fn plain_comments_above_documented_declarations() {
-        let src = "// Module.
-
-// Was a doc.
-export function f() {}
-
-/** Doc. */
-export function g() {}
-
-// Section.
-
-export function h() {}
-
-export class A {
-  // Was a doc.
-  x: i64;
-  // Private.
-  private y: i64;
-}
-
-// Not exported.
-function k() {}
-";
-        let at = |needle: &str| src.find(needle).unwrap() as u32;
-        assert_eq!(
-            plain_comments_above_docs(src),
-            [at("export function f"), at("x: i64")]
-        );
-    }
-
-    #[test]
-    fn private_constructors_are_hidden() {
-        let src = "export class A {\n  private constructor() {}\n}\n\nexport class B {\n  protected constructor(x: i64) {}\n}\n";
-        let m = extract("demo", src);
-        assert!(m.items[0].members.is_empty());
-        let b: Vec<&str> = m.items[1]
-            .members
-            .iter()
-            .map(|m| m.signature.as_str())
-            .collect();
-        assert_eq!(b, ["protected constructor(x: i64)"]);
-    }
-}
+#[path = "extract_tests.rs"]
+mod tests;
