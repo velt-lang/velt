@@ -176,7 +176,8 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   `call`, `apply` or `bind`, which run a method read as a value, or when the program can hold a method under
   another name (`Program::array_methods_open`, velt_sema's `proxy_method_values.rs`). An `AnyCall`
   slot likewise compares only the names the program calls; lowering starts from
-  `Program::any_call_names`, those in its own code. `Call { Intrinsic(StdUsed), [Lit(Str(name))] }`, std only, is the
+  `Program::any_call_names`, those in its own code. `Call { Intrinsic(AnyIsList), [x] }`, std only,
+  is not a constant: a comparison of the descriptor of the `any` `x` with the table of `any[]`. `Call { Intrinsic(StdUsed), [Lit(Str(name))] }`, std only, is the
   same kind of constant: is a `Call { Intrinsic(NoteStdUse), [Lit(Str(name))] }` in code the program
   reaches?
 - Type predicates on a type parameter (issue #1251): `if (g(x)) A else B`, where `g` is a type
