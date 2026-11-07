@@ -30,7 +30,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::literal_this::takes_this;
-use crate::body::assigned::{assigned_in_expr, assigned_in_stmt, Assigned};
+use crate::body::assigned::{assigned_in_expr, assigned_in_stmt, pattern_defaults, Assigned};
 use crate::body::frame::Frame;
 use crate::body::FnCx;
 use crate::ctx::{Ctx, Item};
@@ -214,7 +214,12 @@ impl FnCx<'_, '_> {
             }
         }
         let mut written = Assigned::default();
-        for d in params.iter().filter_map(|p| p.default.as_ref()) {
+        let mut defaults: Vec<&ast::Expr> =
+            params.iter().filter_map(|p| p.default.as_ref()).collect();
+        for p in params.iter().filter_map(|p| p.pattern.as_ref()) {
+            pattern_defaults(p, &mut defaults);
+        }
+        for d in defaults {
             assigned_in_expr(d, &mut written);
         }
         match body {

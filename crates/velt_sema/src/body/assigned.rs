@@ -218,12 +218,16 @@ impl<'a> Walk<'a, '_> {
                 for p in params {
                     param_names(&p.name, p.pattern.as_ref(), &mut names);
                 }
-                let defaults = params.iter().filter_map(|p| p.default.as_ref());
+                let mut defaults: Vec<&'a ast::Expr> =
+                    params.iter().filter_map(|p| p.default.as_ref()).collect();
+                for p in params.iter().filter_map(|p| p.pattern.as_ref()) {
+                    pattern_defaults(p, &mut defaults);
+                }
                 let body = match body {
                     ast::ArrowBody::Block(b) => Body::Block(b),
                     ast::ArrowBody::Expr(x) => Body::Expr(x),
                 };
-                return self.closure(names, defaults.collect(), body);
+                return self.closure(names, defaults, body);
             }
             E::Function(f) => return self.function(f),
             E::Object(props) if !self.fields => {
@@ -244,7 +248,11 @@ impl<'a> Walk<'a, '_> {
         for p in params {
             param_names(&p.name, p.pattern.as_ref(), &mut names);
         }
-        let defaults = params.iter().filter_map(|p| p.default.as_ref()).collect();
+        let mut defaults: Vec<&'a ast::Expr> =
+            params.iter().filter_map(|p| p.default.as_ref()).collect();
+        for p in params.iter().filter_map(|p| p.pattern.as_ref()) {
+            pattern_defaults(p, &mut defaults);
+        }
         self.closure(names, defaults, Body::Block(&f.body));
     }
 
@@ -276,6 +284,20 @@ impl<'a> Walk<'a, '_> {
             if !own.contains(name) {
                 self.out.entry(name).or_insert(span);
             }
+        }
+    }
+}
+
+/// The default values in a destructuring pattern (`{ a = (x = 1) }`).
+pub(crate) fn pattern_defaults<'a>(p: &'a ast::Pattern, out: &mut Vec<&'a ast::Expr>) {
+    use ast::PatternKind as P;
+    match &p.kind {
+        P::Ident(_) | P::Wildcard => {}
+        P::Object { fields, .. } => fields.iter().for_each(|(_, p)| pattern_defaults(p, out)),
+        P::Array { elems, .. } => elems.iter().for_each(|p| pattern_defaults(p, out)),
+        P::Default { pattern, value } => {
+            pattern_defaults(pattern, out);
+            out.push(value);
         }
     }
 }
