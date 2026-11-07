@@ -20,6 +20,7 @@ fn program() -> velt_sema::hir::Program {
             system: None,
             host: None,
             c: None,
+            is_decorator: false,
             span: SP,
         }))
     };
