@@ -1,7 +1,7 @@
-//! The registry's Worker (packages/registry-cloudflare) under workerd, with workerd's local R2, D1
-//! and Durable Objects: packages/registry-conformance over HTTP, and the publish lock's Durable
-//! Object directly (#1740 step 4). This file only builds and starts them; the cases are in the
-//! package and in registry_worker/lock.mjs.
+//! The registry's Worker (packages/registry-cloudflare) under workerd, with workerd's local R2 and
+//! D1: packages/registry-conformance over HTTP, the upload limit, and signing in with GitHub
+//! (#1740 step 4). This file only builds and starts them; the cases are in the package and in
+//! registry_worker/login.mjs.
 //!
 //! Needs what tests/workerd.rs needs, and is skipped or required the same way.
 
@@ -322,25 +322,4 @@ fn signing_in_gives_tokens_that_publish(base: &Path, url: &str) {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-}
-
-#[test]
-fn the_publish_lock_serializes_and_recovers() {
-    let Some((base, modules, worker)) = build("lock") else {
-        return;
-    };
-    let out = no_window::command("node")
-        .current_dir(&base)
-        .arg(script(&base, "lock.mjs"))
-        .arg(for_node(&modules))
-        .arg(for_node(&worker))
-        .output()
-        .expect("run node");
-    assert!(
-        out.status.success(),
-        "{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&base);
 }

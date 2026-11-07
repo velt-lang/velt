@@ -1,9 +1,11 @@
 // registry-core (internal): the public reads: the listing at `/`, a package's index, and a
 // version's archive (crates/velt_registry/src/lib.rs and packages.rs).
 
+import { utf8Decode } from "velt/encoding";
 import { NATIVE_TARGETS } from "../manifest/checks";
 import { isValidPackageName } from "../names";
 import { Version } from "../semver/version";
+import { archiveKey, indexKey } from "../stores/static_files";
 import { archive, json, text } from "./answer";
 import { compareUtf8 } from "./json_text";
 import { RegistryStores } from "./registry_stores";
@@ -19,16 +21,16 @@ export async function listing(stores: RegistryStores): Promise<Response> {
   return text(200, out);
 }
 
-/** `GET /api/v1/<name>/index`: the package's `index.json`. */
+/** `GET /api/v1/<name>/index`: the package's `index.json`, its static file as a static host has it. */
 export async function index(stores: RegistryStores, name: string): Promise<Response> {
   if (!isValidPackageName(name)) {
     return text(400, "invalid package name");
   }
-  const found = await stores.db.index(name);
+  const found = await stores.blobs.get(indexKey(name));
   if (found == null) {
     return text(404, `no package \`${name}\``);
   }
-  return json(found.toJson());
+  return json(utf8Decode(found));
 }
 
 /** `GET /api/v1/<name>/<version>`: the version's archive (yanked ones too). */
@@ -40,11 +42,12 @@ export async function download(
   if (!isValidPackageName(name) || !Version.isValid(version)) {
     return text(400, "invalid package name or version");
   }
-  const entry = (await stores.db.index(name))?.entry(Version.parse(version).toString()) ?? null;
+  const record = await stores.db.record(name);
+  const entry = record?.index.entry(Version.parse(version).toString()) ?? null;
   if (entry == null) {
     return text(404, `no \`${name}\` ${version}`);
   }
-  const bytes = await stores.blobs.get(entry.checksum);
+  const bytes = await stores.blobs.get(archiveKey(entry.checksum));
   if (bytes == null) {
     return text(
       500,

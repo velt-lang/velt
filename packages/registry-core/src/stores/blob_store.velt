@@ -1,13 +1,17 @@
-// registry-core: where package archives are kept (#1325's `BlobStore`): a folder natively, R2 on
-// Cloudflare. Blobs are addressed by their content checksum, so a stored blob never changes.
+// registry-core: where the registry's static files are kept (#1325's `BlobStore`): a folder
+// natively, R2 on Cloudflare. They are what clients read, served as they are by any static host:
+// archives at `archiveKey`, addressed by their content checksum so they never change, and each
+// package's index at `indexKey`, rewritten after each write (`static_files.velt`).
 
-/** Package archives by key (`sha256:<hex>`, the archive's content checksum). */
+/** Static files by key (a relative path). */
 export interface BlobStore {
   /**
-   * Stores `bytes` under `key` unless a blob is stored there already (whose bytes are then
-   * the same, since the key is their checksum). Resolves to whether it stored them.
+   * Stores `bytes` under `key` unless a file is stored there already (an archive, whose bytes
+   * are then the same, since the key holds their checksum). Resolves to whether it stored them.
    */
   putIfAbsent(key: string, bytes: u8[]): Promise<bool>;
-  /** The blob stored under `key`, or null. */
+  /** Stores `bytes` under `key`, replacing what was there. */
+  put(key: string, bytes: u8[]): Promise<void>;
+  /** The file stored under `key`, or null. */
   get(key: string): Promise<u8[] | null>;
 }

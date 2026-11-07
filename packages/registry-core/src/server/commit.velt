@@ -1,0 +1,79 @@
+// registry-core (internal): how a write commits. It reads the package's record, checks the write
+// against it and commits the change made from that revision; when another write committed first,
+// it reads again and tries again. Then it rewrites the package's index file, the static file
+// clients read, and tells the cache.
+
+import { utf8Encode } from "velt/encoding";
+import { PackageChange } from "../stores/package_change";
+import { PackageRecord } from "../stores/package_record";
+import { indexKey } from "../stores/static_files";
+import { purgeAfterWrite } from "./purge_after_write";
+import { Refusal } from "./refusal";
+import { RegistryStores } from "./registry_stores";
+
+/** How many times a write is tried, and its index file written, before giving up. */
+export const MAX_ATTEMPTS: i64 = 32;
+
+/** The longest pause between two tries of a write, in milliseconds. */
+const MAX_BACKOFF_MS: f64 = 50;
+
+// Waits a random while before try `i` + 1 of a write, longer after each (up to 50 ms), so writes
+// that keep colliding spread out.
+async function backoff(i: i64): Promise<void> {
+  const ceiling = Math.min(MAX_BACKOFF_MS, Math.pow(2, i as f64));
+  await sleep(Math.floor(Math.random() * ceiling) as i64);
+}
+
+/** The paths whose cached answers show package `name`'s index: the API's and the static file's. */
+export function indexPaths(name: string): string[] {
+  return [`/api/v1/${name}/index`, `/${indexKey(name)}`];
+}
+
+/**
+ * Writes package `name`'s index file from its record, and again while the record has moved on
+ * meanwhile: of two writes whose files land out of order, the one that lands last sees the newer
+ * revision and writes again, so an older index never stays.
+ */
+export async function writeIndexFile(stores: RegistryStores, name: string): Promise<void> {
+  for (let i: i64 = 0; i < MAX_ATTEMPTS; i++) {
+    const record = await stores.db.record(name);
+    if (record == null) {
+      return;
+    }
+    await stores.blobs.put(indexKey(name), utf8Encode(record.index.toJson()));
+    if ((await stores.db.revision(name)) == record.revision) {
+      return;
+    }
+  }
+}
+
+/**
+ * Commits the change `attempt` makes from package `name`'s record (null for a name never
+ * published), reading the record again and calling `attempt` again when another write committed
+ * first. `attempt` throws a `Refusal` to answer without writing, or returns null when there is
+ * nothing to change. Resolves to whether a change was committed; either way the index file is
+ * written afterwards (so a write whose file failed is mended by trying it again), and the cache
+ * forgets `paths` (what the write changed) after a commit. Tries wait a random while between
+ * them, so writes that collide spread out; answers 503 when the package keeps changing.
+ */
+export async function commitChange(
+  stores: RegistryStores,
+  name: string,
+  paths: string[],
+  attempt: (record: PackageRecord | null) => Promise<PackageChange | null>,
+): Promise<bool> {
+  for (let i: i64 = 0; i < MAX_ATTEMPTS; i++) {
+    const change = await attempt(await stores.db.record(name));
+    if (change == null) {
+      await writeIndexFile(stores, name);
+      return false;
+    }
+    if (await stores.db.commit(change)) {
+      await writeIndexFile(stores, name);
+      await purgeAfterWrite(stores, paths);
+      return true;
+    }
+    await backoff(i);
+  }
+  throw new Refusal(503, `\`${name}\` is changing too often right now; try again`);
+}

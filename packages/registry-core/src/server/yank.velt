@@ -2,20 +2,45 @@
 // `yank_local`, behind the Rust server's checks). A yanked version stays downloadable, so
 // lockfiles that pin it keep installing; only its index entry's `yanked` changes.
 
-import { isValidPackageName, normalizedName } from "../names";
+import { isValidPackageName } from "../names";
 import { Version } from "../semver/version";
+import { PackageChange } from "../stores/package_change";
+import { PackageRecord } from "../stores/package_record";
 import { authorize, isPublished, ownerOf } from "./access";
 import { text } from "./answer";
-import { purgeAfterWrite } from "./purge_after_write";
+import { Caller } from "./caller";
+import { commitChange, indexPaths } from "./commit";
+import { Refusal } from "./refusal";
 import { RegistryStores } from "./registry_stores";
-
-/** The path whose cached answers show package `name`'s index. */
-export function indexPath(name: string): string {
-  return `/api/v1/${name}/index`;
-}
 
 function notInRegistry(name: string): string {
   return `\`${name}\` is not in the registry`;
+}
+
+// The change setting `version`'s `yanked`, from package `name`'s record; null when it is set.
+function yankChange(
+  record: PackageRecord | null,
+  caller: Caller,
+  name: string,
+  version: string,
+  yanked: bool,
+): PackageChange | null {
+  if (record == null) {
+    throw new Refusal(404, notInRegistry(name));
+  }
+  authorize(record, name, caller);
+  const index = record.index.copy();
+  const entry = index.entry(version);
+  if (entry == null) {
+    throw new Refusal(404, `\`${name}\` ${version} is not published`);
+  }
+  if (entry.yanked == yanked) {
+    return null;
+  }
+  entry.yanked = yanked;
+  const change = new PackageChange(name, record.revision, index);
+  change.changed = [entry];
+  return change;
 }
 
 /** Yanks (`yanked`) or unyanks package `name`'s `version`. */
@@ -29,42 +54,22 @@ export async function yank(
   if (!isValidPackageName(name) || !Version.isValid(version)) {
     return text(400, "invalid package name or version");
   }
-  // Only a caller who may write gets to hold the lock; by its normalized name, so `my-pkg` and
-  // `my_pkg` wait for each other.
   const caller = await ownerOf(stores, req, name);
-  // An unpublished name has nothing to change, and a caller who may "write" to `my_pkg` mustn't
-  // get the lock it shares with a published `my-pkg`.
   if (!(await isPublished(stores, name))) {
     return text(404, notInRegistry(name));
   }
-  const held = await stores.lock.acquire(normalizedName(name));
-  try {
-    await authorize(stores, name, caller);
-    return await setYanked(stores, name, version, yanked);
-  } finally {
-    await held.release();
-  }
-}
-
-async function setYanked(
-  stores: RegistryStores,
-  name: string,
-  version: string,
-  yanked: bool,
-): Promise<Response> {
-  const index = await stores.db.index(name);
-  if (index == null) {
-    return text(404, notInRegistry(name));
-  }
   const normal = Version.parse(version).toString();
-  const entry = index.entry(normal);
-  if (entry == null) {
-    return text(404, `\`${name}\` ${normal} is not published`);
-  }
-  if (entry.yanked != yanked) {
-    entry.yanked = yanked;
-    await stores.db.putIndex(name, index);
-    await purgeAfterWrite(stores, [indexPath(name)]);
-  }
+  await commitChange(
+    stores,
+    name,
+    indexPaths(name),
+    async (record: PackageRecord | null): Promise<PackageChange | null> => yankChange(
+      record,
+      caller,
+      name,
+      normal,
+      yanked,
+    ),
+  );
   return text(200, `${yanked ? "yanked" : "unyanked"} \`${name}\` ${version}\n`);
 }

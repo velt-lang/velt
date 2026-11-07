@@ -4,7 +4,6 @@ import { describe, expect, it } from "velt/test";
 import {
   MemoryBlobStore,
   MemoryMetadataDb,
-  MemoryPublishLock,
   RecordingCachePurge,
   Registry,
   TokenAuth,
@@ -16,7 +15,6 @@ function target(auth: TokenAuth): Target {
   const registry = new Registry({
     blobs: new MemoryBlobStore(),
     db: new MemoryMetadataDb(),
-    lock: new MemoryPublishLock(),
     purge: new RecordingCachePurge(),
     auth,
   });

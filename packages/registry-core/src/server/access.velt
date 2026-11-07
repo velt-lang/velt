@@ -5,6 +5,7 @@
 // registry was open, or whose owners an administrator removed) can't be changed until an
 // administrator assigns one.
 
+import { PackageRecord } from "../stores/package_record";
 import { Caller } from "./caller";
 import { Refusal } from "./refusal";
 import { RegistryStores } from "./registry_stores";
@@ -23,27 +24,23 @@ export async function writer(stores: RegistryStores, req: Request): Promise<Call
 
 /** Whether `name` is a published package. */
 export async function isPublished(stores: RegistryStores, name: string): Promise<bool> {
-  return (await stores.db.index(name)) != null;
+  return (await stores.db.revision(name)) > 0;
 }
 
-/** Returns when `caller` may change package `name`; else throws the 403. */
-export async function authorize(
-  stores: RegistryStores,
-  name: string,
-  caller: Caller,
-): Promise<void> {
+/**
+ * Returns when `caller` may change package `name`, whose record is `record` (null when it was
+ * never published); else throws the 403.
+ */
+export function authorize(record: PackageRecord | null, name: string, caller: Caller): void {
   const user = caller.user;
-  if (user == null) {
+  if (user == null || record == null) {
     return;
   }
-  const owners = await stores.db.owners(name);
+  const owners = record.owners;
   if (owners.includes(user)) {
     return;
   }
   if (owners.length == 0) {
-    if (!(await isPublished(stores, name))) {
-      return;
-    }
     throw new Refusal(
       403,
       `\`${name}\` has no owners; an administrator assigns one with \`velt registry owner add\``,
@@ -58,6 +55,6 @@ export async function authorize(
 /** The caller of a write to package `name`, once it is known to be allowed. */
 export async function ownerOf(stores: RegistryStores, req: Request, name: string): Promise<Caller> {
   const caller = await writer(stores, req);
-  await authorize(stores, name, caller);
+  authorize(await stores.db.record(name), name, caller);
   return caller;
 }

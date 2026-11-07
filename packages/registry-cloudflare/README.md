@@ -2,23 +2,28 @@
 
 The Velt package registry on [Cloudflare Workers](https://developers.cloudflare.com/workers/)
 ([#1740](https://github.com/velt-lang/velt/issues/1740), step 4): registry-core's `/api/v1` handling
-over R2, D1 and a Durable Object, with users signing in with GitHub. It is for staging only: #1740
+over R2 and D1, with users signing in with GitHub. It is for staging only: #1740
 lists what must change before it goes public. It takes archives up to 10 MiB (`MAX_ARCHIVE_BYTES`
 in `src/main.velt`, from measurements under workerd: a publish takes about three times the archive
 in memory) and refuses packages with native code, as it serves no native libraries.
 It needs a paid Workers plan: the Free plan's 10 ms of CPU can't hash an archive.
 
+It is built to cost as little as Cloudflare allows ([#1740](https://github.com/velt-lang/velt/issues/1740#issuecomment-6712612196)):
+everything stays within what Workers Paid ($5 a month) and R2's free tier include. Clients'
+reads are static files in R2 (archives cached for good, indexes briefly), which a public bucket
+can serve without running the Worker at all once `velt` reads them there. D1 holds only small
+rows, and there is no Durable Object: a write commits only from the revision it read.
+
 | registry-core's interface | Here | Binding |
 |---|---|---|
-| `BlobStore` | `R2BlobStore`: archives by checksum, written only if absent | `BLOBS` |
-| `MetadataDb` | `D1MetadataDb`: each package's `index.json` text, and its owners | `DB` |
+| `BlobStore` | `R2BlobStore`: the static files, archives at `blobs/sha256/<hex>` and indexes at `index/<name>.json`, with their HTTP headers | `BLOBS` |
+| `MetadataDb` | `D1MetadataDb`: a row per package (its revision), per version, per owner, and a search row | `DB` |
 | `AuthProvider` | `D1TokenAuth`: users and token hashes. Never open: no users, no writes | `DB` |
 | (signing in) | `GitHubLogin`: `GET /login` with GitHub, a new token per sign-in | `DB` |
-| `PublishLock` | `DurableObjectPublishLock`: one object per package, class `RegistryLock` | `LOCKS` |
 | `CachePurge` | `CloudflareCachePurge`: Cloudflare's purge API, when a zone is set | see below |
 
-The package is its own host package, because a Durable Object's class has to be exported by the
-Worker's entry: `src/worker.mjs` is host-cloudflare's entry and the lock's class.
+The package is its own host package, for the files a deployment needs: `wrangler.toml` with these
+bindings, and the database's schema (`src/migrations`).
 
 ## Deploying to staging
 
@@ -78,10 +83,9 @@ until a cache rule says otherwise.
 | `GITHUB_CLIENT_SECRET` | The app's client secret: a secret (`wrangler secret put`) |
 | `CACHE_ZONE_ID` | The Cloudflare zone |
 | `CACHE_PURGE_TOKEN` | An API token that may purge the zone: a secret (`wrangler secret put`) |
-| `LOCK_LEASE_MS` | How long a holder that never releases keeps a lock (default 60000) |
 
 ## Testing
 
 `crates/veltc/tests/registry_worker.rs` runs the conformance suite against the Worker under workerd,
-with workerd's local R2, D1 and Durable Objects, and tests the lock's object directly. It hasn't
-run on real Cloudflare yet.
+with workerd's local R2 and D1 (nine publishes of one package at the same time among its cases),
+the upload limit, and signing in against a stub of GitHub. It hasn't run on real Cloudflare yet.

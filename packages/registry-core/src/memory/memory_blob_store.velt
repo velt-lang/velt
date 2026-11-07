@@ -2,7 +2,7 @@
 
 import { BlobStore } from "../stores/blob_store";
 
-/** Blobs in a map; lost when the program ends. */
+/** Static files in a map; lost when the program ends. */
 export class MemoryBlobStore implements BlobStore {
   private blobs: Map<string, u8[]> = new Map();
 
@@ -14,12 +14,16 @@ export class MemoryBlobStore implements BlobStore {
     return true;
   }
 
+  async put(key: string, bytes: u8[]): Promise<void> {
+    this.blobs.set(key, [...bytes]);
+  }
+
   async get(key: string): Promise<u8[] | null> {
     const found = this.blobs.get(key);
     return found == null ? null : [...found];
   }
 
-  /** How many blobs it holds. */
+  /** How many files it holds. */
   get size(): i64 {
     return this.blobs.size;
   }

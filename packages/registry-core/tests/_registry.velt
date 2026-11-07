@@ -1,11 +1,12 @@
 // The registry over in-memory stores, and requests to it, for the registry tests.
 import { utf8Decode, utf8Encode } from "velt/encoding";
+import { expect } from "velt/test";
 import {
   ArchiveEntry,
   contentChecksum,
   MemoryBlobStore,
   MemoryMetadataDb,
-  MemoryPublishLock,
+  PackageChange,
   packArchive,
   RecordingCachePurge,
   Registry,
@@ -27,7 +28,6 @@ export class TestRegistry {
     limits: RegistryLimits = new RegistryLimits(),
     db: MemoryMetadataDb = new MemoryMetadataDb(),
     blobs: MemoryBlobStore = new MemoryBlobStore(),
-    lock: MemoryPublishLock = new MemoryPublishLock(),
     purge: RecordingCachePurge = new RecordingCachePurge(),
   ) {
     this.db = db;
@@ -36,11 +36,26 @@ export class TestRegistry {
     const stores: RegistryStores = {
       blobs: this.blobs,
       db: this.db,
-      lock,
       purge: this.purge,
       auth: this.auth,
     };
     this.registry = new Registry(stores, limits);
+  }
+
+  /** Package `name`'s owners ([] when it was never published). */
+  async owners(name: string): Promise<string[]> {
+    return (await this.db.record(name))?.owners ?? [];
+  }
+
+  /** Makes `owners` package `name`'s owners, as an administrator does. */
+  async setOwners(name: string, owners: string[]): Promise<void> {
+    const record = await this.db.record(name);
+    if (record == null) {
+      throw new Error(`no package ${name}`);
+    }
+    const change = new PackageChange(name, record.revision, record.index);
+    change.owners = owners;
+    expect(await this.db.commit(change)).toBe(true);
   }
 
   /** Adds user `name`; returns the user's token. */

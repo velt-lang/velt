@@ -138,12 +138,8 @@ export async function search(stores: RegistryStores, query: string): Promise<Res
   const q = queryParam(query).trim().toLowerCase();
   const terms = words(q);
   const hits: Hit[] = [];
-  for (const index of await stores.db.searchCandidates(terms)) {
-    const shown = index.newest();
-    if (shown == null) {
-      continue;
-    }
-    const hit = rank(index.name, shown, q, terms);
+  for (const candidate of await stores.db.searchCandidates(terms)) {
+    const hit = rank(candidate.name, candidate.entry, q, terms);
     if (hit != null) {
       hits.push(hit);
     }

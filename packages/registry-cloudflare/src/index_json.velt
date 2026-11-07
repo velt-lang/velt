@@ -1,4 +1,5 @@
-// registry-cloudflare (internal): a package's index from the JSON `PackageIndex.toJson` writes.
+// registry-cloudflare (internal): a package's index, or one entry of it, from the JSON
+// `PackageIndex.toJson` and `IndexEntry.toJson` write.
 
 import { IndexEntry, PackageIndex } from "registry-core";
 
@@ -28,18 +29,28 @@ function toMap(record: Record<string, string> | undefined): Map<string, string> 
   return out;
 }
 
+// The entry `v` holds.
+function entryOf(v: EntryJson): IndexEntry {
+  const e = new IndexEntry(v.version, v.checksum);
+  e.description = v.description ?? null;
+  e.keywords = v.keywords ?? [];
+  e.dependencies = toMap(v.dependencies);
+  e.nativeAbi = v.native_abi ?? null;
+  e.native = toMap(v.native);
+  e.yanked = v.yanked ?? false;
+  return e;
+}
+
 /** The index of package `name` from `index.json`'s text. */
 export function indexFromJson(name: string, text: string): PackageIndex {
   const index = new PackageIndex(name);
   for (const v of JSON.parse<IndexJson>(text).versions) {
-    const e = new IndexEntry(v.version, v.checksum);
-    e.description = v.description ?? null;
-    e.keywords = v.keywords ?? [];
-    e.dependencies = toMap(v.dependencies);
-    e.nativeAbi = v.native_abi ?? null;
-    e.native = toMap(v.native);
-    e.yanked = v.yanked ?? false;
-    index.versions.push(e);
+    index.versions.push(entryOf(v));
   }
   return index;
+}
+
+/** One version's entry from its JSON (`IndexEntry.toJson`). */
+export function entryFromJson(text: string): IndexEntry {
+  return entryOf(JSON.parse<EntryJson>(text));
 }

@@ -1,0 +1,12 @@
+// registry-core: where each static file is kept, as #1325's protocol names them (relative to the
+// registry's `dl` URL).
+
+/** The key of the archive whose content checksum is `checksum` (`sha256:<hex>`). */
+export function archiveKey(checksum: string): string {
+  return `blobs/${checksum.replace(":", "/")}`;
+}
+
+/** The key of package `name`'s index. */
+export function indexKey(name: string): string {
+  return `index/${name}.json`;
+}

@@ -42,7 +42,6 @@ export async function start(modules, dir, vars = {}, outbound = undefined) {
       outboundService: outbound,
       r2Buckets: ["BLOBS"],
       d1Databases: ["DB"],
-      durableObjects: { LOCKS: { className: "RegistryLock", useSQLite: true } },
     }],
   }));
   const url = await mf.ready;

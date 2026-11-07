@@ -1,0 +1,19 @@
+// registry-core: what a registry knows about one package.
+
+import { PackageIndex } from "../server/package_index";
+
+/**
+ * One published package: its index, its owners in the order they were added, and its revision,
+ * which each committed change raises by one (`MetadataDb.commit`).
+ */
+export class PackageRecord {
+  index: PackageIndex;
+  owners: string[];
+  revision: i64;
+
+  constructor(index: PackageIndex, owners: string[], revision: i64) {
+    this.index = index;
+    this.owners = owners;
+    this.revision = revision;
+  }
+}

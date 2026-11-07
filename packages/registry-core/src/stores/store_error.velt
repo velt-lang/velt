@@ -1,7 +1,7 @@
 // registry-core: a store that failed (a disk, a database, a bucket).
 
 /**
- * Thrown by an adapter (`BlobStore`, `MetadataDb`, `PublishLock`, `CachePurge`,
+ * Thrown by an adapter (`BlobStore`, `MetadataDb`, `CachePurge`,
  * `AuthProvider`) when its store fails: the handler answers 500 with its message, so the message
  * must not show what only the server may know (paths, credentials).
  */

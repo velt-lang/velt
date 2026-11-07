@@ -1,10 +1,26 @@
-// registry-cloudflare: package archives in an R2 bucket.
+// registry-cloudflare: the registry's static files in an R2 bucket, with the HTTP headers a public
+// bucket serves them with: archives cached for good (their key is their checksum), each index
+// briefly (it changes, and a write purges it).
 
-import { R2Bucket, r2Bucket } from "cloudflare";
+import { R2Bucket, R2HTTPMetadata, r2Bucket } from "cloudflare";
 import { BlobStore } from "registry-core";
 import { storeFailure } from "./stored";
 
-/** Package archives in the R2 bucket bound as `binding`, under their keys as they are. */
+/** How long a cache may keep a package's index, in seconds. */
+const INDEX_MAX_AGE = 60;
+
+// The headers file `key` is served with.
+function headersOf(key: string): R2HTTPMetadata {
+  if (key.startsWith("index/")) {
+    return { contentType: "application/json", cacheControl: `public, max-age=${INDEX_MAX_AGE}` };
+  }
+  return {
+    contentType: "application/octet-stream",
+    cacheControl: "public, max-age=31536000, immutable",
+  };
+}
+
+/** Static files in the R2 bucket bound as `binding`, under their keys as they are. */
 export class R2BlobStore implements BlobStore {
   private bucket: R2Bucket;
 
@@ -14,9 +30,20 @@ export class R2BlobStore implements BlobStore {
 
   async putIfAbsent(key: string, bytes: u8[]): Promise<bool> {
     try {
-      // Null when a blob is there already.
-      const put = await this.bucket.put(key, bytes, { onlyIf: { etagDoesNotMatch: "*" } });
+      // Null when a file is there already.
+      const put = await this.bucket.put(key, bytes, {
+        onlyIf: { etagDoesNotMatch: "*" },
+        httpMetadata: headersOf(key),
+      });
       return put != null;
+    } catch (e) {
+      throw storeFailure("the blob store", e);
+    }
+  }
+
+  async put(key: string, bytes: u8[]): Promise<void> {
+    try {
+      await this.bucket.put(key, bytes, { httpMetadata: headersOf(key) });
     } catch (e) {
       throw storeFailure("the blob store", e);
     }

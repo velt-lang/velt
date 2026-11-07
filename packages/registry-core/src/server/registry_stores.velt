@@ -4,13 +4,11 @@ import { AuthProvider } from "../stores/auth_provider";
 import { BlobStore } from "../stores/blob_store";
 import { CachePurge } from "../stores/cache_purge";
 import { MetadataDb } from "../stores/metadata_db";
-import { PublishLock } from "../stores/publish_lock";
 
 /** A host's adapters: in memory (`registry-core`'s own), a folder and SQLite, R2 and D1, … */
 export struct RegistryStores {
   blobs: BlobStore;
   db: MetadataDb;
-  lock: PublishLock;
   purge: CachePurge;
   auth: AuthProvider;
 }

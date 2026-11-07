@@ -2,11 +2,13 @@
 // /api/v1/<name>/owners/<user>` (crates/velt_registry/src/owners.rs). Only an owner changes
 // the owners, only to users that exist, and the last owner stays.
 
-import { checkUserName, isValidPackageName, normalizedName } from "../names";
+import { checkUserName, isValidPackageName } from "../names";
+import { PackageChange } from "../stores/package_change";
+import { PackageRecord } from "../stores/package_record";
 import { authorize, isPublished, ownerOf } from "./access";
 import { text } from "./answer";
 import { Caller } from "./caller";
-import { purgeAfterWrite } from "./purge_after_write";
+import { commitChange } from "./commit";
 import { Refusal } from "./refusal";
 import { RegistryStores } from "./registry_stores";
 
@@ -15,11 +17,54 @@ export async function listOwners(stores: RegistryStores, name: string): Promise<
   if (!isValidPackageName(name)) {
     return text(400, "invalid package name");
   }
-  if (!(await isPublished(stores, name))) {
+  const record = await stores.db.record(name);
+  if (record == null) {
     return text(404, `no package \`${name}\``);
   }
-  const owners = await stores.db.owners(name);
-  return text(200, owners.map((o: string): string => `${o}\n`).join(""));
+  return text(200, record.owners.map((o: string): string => `${o}\n`).join(""));
+}
+
+// The change adding (`add`) or removing `user` as an owner of package `name`, from its record;
+// null when there is nothing to change.
+async function ownersChange(
+  stores: RegistryStores,
+  record: PackageRecord | null,
+  caller: Caller,
+  name: string,
+  user: string,
+  add: bool,
+): Promise<PackageChange | null> {
+  if (record == null) {
+    throw new Refusal(404, `no package \`${name}\``);
+  }
+  if (caller.isAnyone()) {
+    throw new Refusal(400, "this registry has no users, so packages have no owners");
+  }
+  authorize(record, name, caller);
+  const owners = [...record.owners];
+  if (add) {
+    if (!(await stores.auth.isUser(user))) {
+      throw new Refusal(404, `no user \`${user}\``);
+    }
+    if (owners.includes(user)) {
+      return null;
+    }
+    owners.push(user);
+  } else {
+    if (!owners.includes(user)) {
+      throw new Refusal(404, `\`${user}\` is not an owner of \`${name}\``);
+    }
+    if (owners.length == 1) {
+      throw new Refusal(
+        409,
+        `\`${user}\` is the last owner of \`${name}\`; add another owner first`,
+      );
+    }
+    owners.splice(owners.indexOf(user), 1);
+  }
+  const change = new PackageChange(name, record.revision, record.index);
+  change.owners = owners;
+  return change;
 }
 
 /** `PUT` (`add`) or `DELETE /api/v1/<name>/owners/<user>`. */
@@ -37,57 +82,17 @@ export async function changeOwners(
   if (bad != null) {
     return text(400, bad);
   }
-  // Only a caller who may write gets to hold the lock; by its normalized name, so `my-pkg` and
-  // `my_pkg` wait for each other.
   const caller = await ownerOf(stores, req, name);
-  // An unpublished name has nothing to change, and a caller who may "write" to `my_pkg` mustn't
-  // get the lock it shares with a published `my-pkg`.
   if (!(await isPublished(stores, name))) {
     return text(404, `no package \`${name}\``);
   }
-  const held = await stores.lock.acquire(normalizedName(name));
-  try {
-    return await change(stores, caller, name, user, add);
-  } finally {
-    await held.release();
-  }
-}
-
-async function change(
-  stores: RegistryStores,
-  caller: Caller,
-  name: string,
-  user: string,
-  add: bool,
-): Promise<Response> {
-  if (!(await isPublished(stores, name))) {
-    return text(404, `no package \`${name}\``);
-  }
-  if (caller.isAnyone()) {
-    return text(400, "this registry has no users, so packages have no owners");
-  }
-  await authorize(stores, name, caller);
-  const owners = await stores.db.owners(name);
-  if (add) {
-    if (!(await stores.auth.isUser(user))) {
-      throw new Refusal(404, `no user \`${user}\``);
-    }
-    if (!owners.includes(user)) {
-      owners.push(user);
-    }
-  } else {
-    if (!owners.includes(user)) {
-      throw new Refusal(404, `\`${user}\` is not an owner of \`${name}\``);
-    }
-    if (owners.length == 1) {
-      throw new Refusal(
-        409,
-        `\`${user}\` is the last owner of \`${name}\`; add another owner first`,
-      );
-    }
-    owners.splice(owners.indexOf(user), 1);
-  }
-  await stores.db.putOwners(name, owners);
-  await purgeAfterWrite(stores, [`/api/v1/${name}/owners`]);
+  let owners: string[] = [];
+  await commitChange(stores, name, [`/api/v1/${name}/owners`], async (
+    record: PackageRecord | null,
+  ): Promise<PackageChange | null> => {
+    const change = await ownersChange(stores, record, caller, name, user, add);
+    owners = change?.owners ?? record?.owners ?? [];
+    return change;
+  });
   return text(200, `owners of \`${name}\`: ${owners.join(", ")}\n`);
 }
