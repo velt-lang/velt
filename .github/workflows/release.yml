@@ -374,7 +374,11 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    # The scheduled gate took 107 minutes on Windows, and the same gate with the WebAssembly
+    # goldens ran past 120 on Windows and macOS. The nightly runs those on both OSes.
+    timeout-minutes: 180
+    env:
+      VELT_WASM_GOLDENS: skip
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
