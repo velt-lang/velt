@@ -1,0 +1,26 @@
+// A method named `apply` that isn't `Function.prototype.apply` takes a typed array, or a proxy of one, as a value.
+class C {
+  apply(a: any, b: any): any {
+    return b === list ? "same" : "other";
+  }
+}
+const list: any = new Proxy(new Float64Array(2) as any, {});
+const plain: any = new Uint8Array(2);
+const o: any = new C();
+console.log(o.apply(1, list), o.apply(1, plain));
+const lit: any = {
+  apply(a: any, b: any) {
+    return typeof b;
+  },
+};
+console.log(lit.apply(1, list), lit.apply(1, plain), lit.apply(1, null), lit.apply(1, 3));
+function h(this: any, a: any, b: any): any {
+  return `${this.tag}:${a},${b}`;
+}
+const f: any = h;
+console.log(f.apply({ tag: "y" }, plain));
+try {
+  console.log(f.apply({ tag: "y" }, list));
+} catch (e: any) {
+  console.log(e instanceof TypeError);
+}

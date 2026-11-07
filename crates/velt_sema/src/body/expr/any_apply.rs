@@ -81,17 +81,19 @@ impl FnCx<'_, '_> {
         let typed = velt_common::std_hook!(typed_apply_list);
         let list = if self.cx.prelude_fn(typed).is_some() {
             let list = if self.uses_proxy() {
+                let callee = f.clone();
                 self.with_temp("<list>", list, span, span, |lw, v| {
                     let held = lw.expr(v, None, Want::Borrow);
                     let inner = hooks::proxy_innermost(ty::Any::of(held)).emit(lw, any, span);
                     let held = lw.expr(v, None, Want::Move);
-                    hooks::typed_proxy_list(ty::Any::of(inner), ty::Any::of(held))
-                        .emit(lw, any, span)
+                    let (f, inner, held) =
+                        (ty::Any::of(callee), ty::Any::of(inner), ty::Any::of(held));
+                    hooks::typed_proxy_list(f, inner, held).emit(lw, any, span)
                 })
             } else {
                 list
             };
-            hooks::typed_apply_list(ty::Any::of(list)).emit(self, any, span)
+            hooks::typed_apply_list(ty::Any::of(f.clone()), ty::Any::of(list)).emit(self, any, span)
         } else {
             list
         };

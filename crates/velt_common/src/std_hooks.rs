@@ -293,9 +293,9 @@ hooks! {
     /// The list of `f.apply(self, list)` read at the call (`velt_sema` `dynamic_member.rs`).
     any_apply_list => lang_hooks_any_ops, "anyApplyList", sig((&any, move any) -> any throws union(TypeError, RangeError));
     /// A typed array as that list, in a program that has them.
-    typed_apply_list => lang_typed_array_apply_list, "typedApplyList", sig((move any) -> any);
+    typed_apply_list => lang_typed_array_apply_list, "typedApplyList", sig((&any, move any) -> any);
     /// A typed array behind a proxy as that list, in a program that has both.
-    typed_proxy_list => lang_typed_array_apply_list, "typedProxyList", sig((&any, move any) -> any throws TypeError);
+    typed_proxy_list => lang_typed_array_apply_list, "typedProxyList", sig((&any, &any, move any) -> any throws TypeError);
     proxy_innermost => lang_proxy_traps, "proxyInnermost", sig((&any) -> any);
     /// The same in a program with `Proxy`, where reading the list can run traps.
     proxy_apply_list => lang_proxy_traps, "proxyApplyList", sig((&any, move any) -> any throws union(TypeError, RangeError));

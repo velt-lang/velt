@@ -10,10 +10,10 @@
 //! - calls a member `get` through `any`, which may be `Reflect.get` held as a value;
 //! - reads a property descriptor, whose `value` is such a read;
 //! - makes a proxy whose handler isn't an object literal written directly as the second argument of
-//!   `new Proxy(...)`, or whose literal has an `ownKeys` member, a computed key or a spread. Std reads the keys such
-//!   a trap lists (`Object.values`, `entries`, a spread) with its own key, so a program can choose
-//!   them; without one, std reads only the real own keys of a target, whose values are what the
-//!   program stored there.
+//!   `new Proxy(...)`, or whose literal has an `ownKeys` member, a computed key or a spread. Std
+//!   reads the keys such a trap lists (`Object.values`, `entries`, a spread) with its own key, so a
+//!   program can choose them; without one, std reads only the real own keys of a target, whose
+//!   values are what the program stored there.
 //!
 //! The one exception is a forwarding `get` trap in such a literal: nothing else can reach it, so it
 //! runs only with the key that was read, which the rules above account for. In a `get` that doesn't
