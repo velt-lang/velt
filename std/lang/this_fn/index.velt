@@ -52,20 +52,22 @@ export class ThisFn {
 
   /** `f.apply(thisArg, args)`: `null` or `undefined` passes no arguments. */
   apply(self: any, args?: any): any {
+    // One call of `[THIS_FN_APPLY]`, which then is inlined here, as this is on every `apply`.
+    let list: any[];
     if (args == null) {
-      return this[THIS_FN_APPLY](self, []);
+      list = [];
+    } else if (anyIsList(args) && !this.#ownsArguments) {
+      list = args;
+    } else {
+      list = this.#listOf(args);
     }
-    if (anyIsList(args) && !this.#ownsArguments) {
-      const held: any[] = args;
-      return this[THIS_FN_APPLY](self, held);
-    }
-    return this.#applyRead(self, args);
+    return this[THIS_FN_APPLY](self, list);
   }
 
-  // `apply` of a list to read, or to copy for a body that uses `arguments`.
-  #applyRead(self: any, args: any): any {
+  // A list to read, or to copy for a body that uses `arguments`.
+  #listOf(args: any): any[] {
     const list = anyArgList(args);
-    return this[THIS_FN_APPLY](self, this.#ownsArguments ? list.slice() : list);
+    return this.#ownsArguments ? list.slice() : list;
   }
 
   /**
