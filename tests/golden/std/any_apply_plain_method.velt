@@ -1,7 +1,7 @@
 // A method named `apply` that isn't `Function.prototype.apply` takes a typed array, or a proxy of one, as a value.
 class C {
   apply(a: any, b: any): any {
-    return b === list ? "same" : "other";
+    return b === list || b === plain ? "same" : "other";
   }
 }
 const list: any = new Proxy(new Float64Array(2) as any, {});

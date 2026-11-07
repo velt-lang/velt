@@ -42,3 +42,11 @@ export function typedProxyList(f: any, target: any, list: any): any {
   }
   return list;
 }
+
+/** `typedProxyList` where nothing can catch it: the error ends the program. */
+export function typedProxyStop(f: any, target: any, list: any): any {
+  if (typeof f === "function" && target instanceof TypedArray) {
+    panic("TypeError: this is not a typed array.");
+  }
+  return list;
+}

@@ -1,0 +1,3 @@
+any_apply_list_error.velt:4:24: error: cannot find `nope` in this scope
+any_apply_list_error.velt:8:18: error: `this` is only available inside methods and constructors
+any_apply_list_error.velt:8:24: error: cannot find `arguments` in this scope

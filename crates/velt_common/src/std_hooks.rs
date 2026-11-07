@@ -296,6 +296,8 @@ hooks! {
     typed_apply_list => lang_typed_array_apply_list, "typedApplyList", sig((&any, move any) -> any);
     /// A typed array behind a proxy as that list, in a program that has both.
     typed_proxy_list => lang_typed_array_apply_list, "typedProxyList", sig((&any, &any, move any) -> any throws TypeError);
+    /// The same outside a `try`: the error ends the program, with no `throws` for the caller.
+    typed_proxy_stop => lang_typed_array_apply_list, "typedProxyStop", sig((&any, &any, move any) -> any);
     proxy_innermost => lang_proxy_traps, "proxyInnermost", sig((&any) -> any);
     /// The same in a program with `Proxy`, where reading the list can run traps.
     proxy_apply_list => lang_proxy_traps, "proxyApplyList", sig((&any, move any) -> any throws union(TypeError, RangeError));

@@ -1,6 +1,10 @@
-//! `f.apply(self, list)` through `any` in the program's own code: the list is read at the call,
-//! where an error can be caught, not in the slot, which ends the process on one (`anyApplyList`).
-//! A list known to be an `any[]` has nothing to read and takes the plain call, with no test.
+//! `f.apply(self, list)` through `any` in the program's own code. Inside a `try` with a `catch` in
+//! the same function the list is read at the call, where an error can be caught (`anyApplyList`).
+//! Anywhere else it is read in the slot, where an error ends the program (#1174): a read at the
+//! call would give the enclosing function a `throws`, which a comparator or a `toString` can't
+//! have, and a type of its own, whose call through `any` isn't inlined. A typed array is read at
+//! the call in both cases (`any` reads none of its elements yet, #1540). A list known to be an
+//! `any[]`, `null` or `undefined` has nothing to read and takes the plain call, with no test.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -27,11 +31,16 @@ impl FnCx<'_, '_> {
         ) {
             return false;
         }
+        // No type: an error in the list, which the plain path reports.
+        let Some(held) = self.trial_type(&args[1]) else {
+            return false;
+        };
         let list = self.any_ty();
-        let held = self
-            .trial_type(&args[1])
-            .map(|t| self.cx.ty.kind(t).clone());
-        !matches!(held, Some(TyKind::Array(e)) if Some(e) == list)
+        if matches!(self.cx.ty.kind(held), TyKind::Array(e) if Some(*e) == list) {
+            return false;
+        }
+        let typed = velt_common::std_hook!(typed_apply_list);
+        self.f.catch_depth > 0 || self.cx.prelude_fn(typed).is_some()
     }
 
     /// `recv.apply(args)` with the list read first.
@@ -83,8 +92,9 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// The list of `f.apply(self, list)`, read at the call (`anyApplyList`).
+    /// The list of `f.apply(self, list)` at the call (module docs).
     fn apply_list(&mut self, f: hir::Expr, list: hir::Expr, any: TyId, span: Span) -> hir::Expr {
+        let caught = self.f.catch_depth > 0;
         // A typed array's elements (`any` reads none yet), in a program that has them.
         let typed = velt_common::std_hook!(typed_apply_list);
         let list = if self.cx.prelude_fn(typed).is_some() {
@@ -96,7 +106,11 @@ impl FnCx<'_, '_> {
                     let held = lw.expr(v, None, Want::Move);
                     let (f, inner, held) =
                         (ty::Any::of(callee), ty::Any::of(inner), ty::Any::of(held));
-                    hooks::typed_proxy_list(f, inner, held).emit(lw, any, span)
+                    if caught {
+                        hooks::typed_proxy_list(f, inner, held).emit(lw, any, span)
+                    } else {
+                        hooks::typed_proxy_stop(f, inner, held).emit(lw, any, span)
+                    }
                 })
             } else {
                 list
@@ -105,6 +119,9 @@ impl FnCx<'_, '_> {
         } else {
             list
         };
+        if !caught {
+            return list;
+        }
         let call = if self.uses_proxy() {
             hooks::proxy_apply_list(ty::Any::of(f), ty::Any::of(list))
         } else {
