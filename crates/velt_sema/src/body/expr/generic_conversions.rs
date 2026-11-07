@@ -299,10 +299,25 @@ impl FnCx<'_, '_> {
         Err(h)
     }
 
-    /// May an instance of `iface` at `from` be seen as one at `to`: at each position one is `any`
-    /// or `unknown`, or `to` has no members, or the target's bound lies within the source's? A
-    /// call then can't name what the function wasn't checked for.
+    /// Are the instances of generic function type `t` one value at any type arguments? Its
+    /// bounds are string types, so a function sees a string at every name, and it has no rest
+    /// form, so a call passes the same arguments; a form it can't evaluate at a name is an error
+    /// when lowering meets it. The bounds only say what a call may name.
+    pub(super) fn instances_one_value(&self, t: TyId) -> bool {
+        self.cx.generic_sig(t).is_some_and(|g| {
+            self.cx.generic_fn_free_of_args(g.iface)
+                && self.cx.generic_fn_rest_form(g.iface).is_none()
+        })
+    }
+
+    /// May an instance of `iface` (`Ctx::generic_fn_free_of_args`) at `from` be seen as one at
+    /// `to`? Without a rest form, always (`instances_one_value`). With one, what a call passes
+    /// depends on the arguments: at each position one is `any` or `unknown`, or `to` has no
+    /// members, or the target's bound lies within the source's.
     pub(super) fn generic_fn_opens(&mut self, iface: DefId, from: &[TyId], to: &[TyId]) -> bool {
+        let Some(form) = self.cx.generic_fn_rest_form(iface) else {
+            return true;
+        };
         let open = from.iter().zip(to).all(|(f, t)| {
             f == t
                 || self.cx.dynamic(*f).is_some()
@@ -310,13 +325,13 @@ impl FnCx<'_, '_> {
                 || (matches!(self.cx.ty.kind(*t), TyKind::Adt(..))
                     && self.cx.public_fields(*t).is_empty())
         });
-        open || self.bound_within(iface, from, to)
+        open || self.bound_within(iface, form, from, to)
     }
 
     /// Does the bound of `iface`'s one own type parameter at `to`, string literals, lie within
-    /// its bound at `from`, its rest form being one type at each of them? A function checked at
-    /// the wider bound runs at the narrower one.
-    fn bound_within(&mut self, iface: DefId, from: &[TyId], to: &[TyId]) -> bool {
+    /// its bound at `from`, its rest form `form` being one type at each of them? A function
+    /// checked at the wider bound runs at the narrower one.
+    fn bound_within(&mut self, iface: DefId, form: TyId, from: &[TyId], to: &[TyId]) -> bool {
         let Some(m) = self
             .cx
             .iface(iface)
@@ -338,9 +353,6 @@ impl FnCx<'_, '_> {
         if !whole && !names.iter().all(|n| held.contains(n)) {
             return false;
         }
-        let Some(form) = self.cx.generic_fn_rest_form(iface) else {
-            return true;
-        };
         for n in names {
             let lit = self.cx.lit_type(hir::LitValue::Str(n));
             let unit = self.cx.ty.unit;

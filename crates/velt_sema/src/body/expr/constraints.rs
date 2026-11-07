@@ -247,6 +247,11 @@ impl FnCx<'_, '_> {
         name: &str,
         span: Span,
     ) -> bool {
+        // A forwarding closure's call passes the target's type parameters on: the two types'
+        // bounds were related where the closure was made.
+        if self.forward_unbounded.get() {
+            return true;
+        }
         let Some(bound) = c.constraints.get(k).copied().flatten() else {
             return true;
         };

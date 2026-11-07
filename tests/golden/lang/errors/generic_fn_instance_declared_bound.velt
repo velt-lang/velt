@@ -1,0 +1,14 @@
+// A declared function's bounds still decide its conversion to a generic function type (`tsc`:
+// TS2322), where a constant of that type is one value at each of its instances.
+type Def<T> = { __d: T };
+type Names<E> = { [K in keyof E]: E[K] extends Def<any> ? K : never }[keyof E] & string;
+type Emit<E extends Record<string, any>> = <N extends Names<E>>(n: N) => void;
+function gen<N extends "s">(n: N) { console.log("gen", n); }
+function truth<N extends boolean>(n: N) { console.log(n ? "yes" : "no"); }
+const g: Emit<{ t: Def<1> }> = gen;
+function f() {
+  const h: Emit<{ t: Def<1> }> = truth;
+  h("t");
+}
+g("t");
+f();

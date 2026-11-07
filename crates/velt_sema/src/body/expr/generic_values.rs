@@ -305,9 +305,24 @@ impl FnCx<'_, '_> {
         }
         // At a type over the caller's type parameters: a new function at each evaluation.
         let arrow = self.generic_fn_arrow(d, id, exp);
+        let unbounded = self.lifted_at_one_value(d, exp);
+        self.forward_unbounded.set(unbounded);
         let mut value = self.generic_closure(&arrow, Some(exp));
+        self.forward_unbounded.set(false);
         self.mark_fresh(&mut value, exp);
         value
+    }
+
+    /// Is `d` a constant lifted to a function (`generic_arrows`), with string bounds, seen as a
+    /// value of a type whose instances are one value? It is the value of one of them, as it is
+    /// where a local holds it, so its bounds don't decide the conversion. A declared function's
+    /// do.
+    fn lifted_at_one_value(&mut self, d: DefId, exp: TyId) -> bool {
+        let f = self.cx.fn_info(d);
+        let (name, bounds) = (f.name_span, f.generics.constraints.clone());
+        self.cx.generic_arrow_all.contains(&name)
+            && bounds.iter().flatten().all(|b| self.cx.string_bound(*b))
+            && self.instances_one_value(exp)
     }
 
     /// Function `d` needs more arguments than a call of generic function type `exp` passes (as
@@ -400,6 +415,8 @@ impl FnCx<'_, '_> {
             let mut fcx = crate::body::driver::detached(self.cx, module, &[]);
             fcx.fn_name = format!("{qual}#value");
             let arrow = fcx.generic_fn_arrow(d, &id, exp);
+            let unbounded = fcx.lifted_at_one_value(d, exp);
+            fcx.forward_unbounded.set(unbounded);
             fcx.generic_closure(&arrow, Some(exp))
         };
         if let DefInfo::Global(info) = &mut self.cx.info[g.0 as usize] {

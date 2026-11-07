@@ -1,0 +1,75 @@
+// Instances of a generic function type with string bounds and no rest form, one value wherever the
+// conversion is: an element, a field, an argument, a result, a union, in a function's body. Expected
+// output from `node`; `tsc --strict` accepts it.
+type Def<T> = { __d: T };
+type Names<E> = { [K in keyof E]: E[K] extends Def<any> ? K : never }[keyof E] & string;
+type Emit<E extends Record<string, any>> = <N extends Names<E>>(n: N) => void;
+type S = { s: Def<1> };
+type T1 = { t: Def<1> };
+const a: Emit<S> = (n) => { console.log("a", n); };
+
+// Places a value converts in.
+const xs: Emit<T1>[] = [a];
+xs[0]("t");
+const u: Emit<T1> | null = a;
+if (u) u("t");
+let w: Emit<S> | null = a;
+const w2: Emit<T1> | null = w;
+if (w2) w2("t");
+const v: Emit<T1> | undefined = a;
+v?.("t");
+class C {
+  e: Emit<T1>;
+  constructor(e: Emit<S>) { this.e = e; }
+  go() { this.e("t"); }
+}
+new C(a).go();
+function id<T>(x: T): T { return x; }
+const r: Emit<T1> = id(a);
+r("t");
+const b: Emit<T1> = (n) => { console.log("b", n); };
+const q: Emit<T1> = xs.length > 0 ? a : b;
+q("t");
+let l: Emit<T1> = b;
+l("t");
+l = a;
+l("t");
+const c1 = a as unknown as Emit<T1>;
+c1("t");
+
+// A module constant read in a function's body.
+function take(e: Emit<T1>) { e("t"); }
+take(a);
+function inBody() { take(a); const here: Emit<T1> = a; here("t"); }
+inBody();
+function mk(): Emit<T1> { return a; }
+mk()("t");
+const held: Emit<T1> = a;
+function readsHeld() { held("t"); }
+readsHeld();
+function conv<A extends Record<string, any>, B extends Record<string, any>>(e: Emit<A>): Emit<B> { return e; }
+conv<S, T1>(a)("t");
+
+// Other signatures.
+type P<E extends Record<string, any>> = <A extends Names<E>, B extends Names<E>>(x: A, y: B) => [A, B];
+const p: P<S> = (x, y) => [x, y];
+const p2: P<T1> = p;
+console.log(p2("t", "t"));
+type R<E extends Record<string, any>> = <N extends Names<E>>(n: N) => { name: N; all: N[] };
+const f: R<S> = (n) => ({ name: n, all: [n, n] });
+const f2: R<T1> = f;
+console.log(f2("t").name, f2("t").all);
+type Q<E extends Record<string, any>> = <N extends Names<E>>(n: N) => Promise<N>;
+const g: Q<S> = async (n) => n;
+const g2: Q<T1> = g;
+g2("t").then((x) => console.log(x));
+
+// A body leaning on its bound runs at the other name, as in JavaScript.
+function takesS<M extends "s">(m: M): string { return "got " + m; }
+const h: Emit<S> = (n) => { console.log(takesS(n)); };
+const h2: Emit<T1> = h;
+h2("t");
+function gen<N extends "s">(n: N) { console.log("gen", n); }
+const k: Emit<S> = gen;
+const k2: Emit<T1> = k;
+k2("t");
