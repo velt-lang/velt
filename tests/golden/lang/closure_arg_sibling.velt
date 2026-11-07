@@ -163,6 +163,9 @@ function unionBeside() {
   const u: string | number = heap("u");
   const f = (a: string | number, v: string) => { r.s = heap("new"); junk(); return String(a).length + v; };
   console.log("a union beside a part", f(u, r.s), r.s);
+  const xs = [heap("old")];
+  const g = (a: string | number, v: string) => { xs[0] = heap("new"); junk(); return String(a).length + v; };
+  console.log("a union beside an element", g(u, xs[0]), xs[0]);
 }
 function asyncAndGenerator() {
   const r = new R();
