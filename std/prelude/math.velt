@@ -5,6 +5,7 @@
 // -0 < +0 (`Math.max(-0, 0)` is +0, `Math.min(0, -0)` is -0).
 
 import { abs, ceil, floor, round, sqrt, trunc } from "velt/lang/intrinsics";
+import { nextF64 } from "velt/lang/random/wyrand";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -109,7 +110,7 @@ export class Math {
    * `velt/crypto`).
    */
   static random(): f64 {
-    return velt_rt_prng_f64();
+    return nextF64();
   }
 
   /**
@@ -172,7 +173,6 @@ export class Math {
 }
 
 declare function velt_rt_math_umulh(a: u64, b: u64): u64;
-declare function velt_rt_prng_f64(): f64;
 
 function max2(a: f64, b: f64): f64 {
   if (a > b) {

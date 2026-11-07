@@ -1,0 +1,8 @@
+// velt/lang/random (internal): a generator's seed from the operating system's random numbers.
+
+declare function velt_rt_random_u64(): u64;
+
+/** 64 bits to seed a generator with. */
+export function seedWord(): u64 {
+  return velt_rt_random_u64();
+}

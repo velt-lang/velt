@@ -443,21 +443,33 @@ fn c_libraries_need_an_entry_for_the_target() {
     assert!(out.contains("a framework is macOS-only"), "{out}");
 }
 
+/// A package can't call C on WebAssembly: on wasm32-wasip1 only std calls wasi-libc (a
+/// package's declarations can't be checked against WASI's headers yet,
+/// docs/internals/design/wasi-libc.md), and the JS host has no C library at all.
 #[test]
-fn webassembly_can_t_call_c_functions() {
+fn a_package_can_t_call_c_functions_on_webassembly() {
     let dir = test_dir::TestDir::new();
     project(dir.path(), LIB, MAIN);
-    let o = velt(dir.path(), &["build", "--target", "wasm32-wasip1"]);
-    let out = format!(
-        "{}{}",
-        String::from_utf8_lossy(&o.stdout),
-        String::from_utf8_lossy(&o.stderr)
-    );
-    assert!(!o.status.success(), "{out}");
-    assert!(
-        out.contains("C function `llabs` is not available on wasm32-wasip1"),
-        "{out}"
-    );
+    for (target, note) in [
+        (
+            "wasm32-wasip1",
+            "C functions in packages need a native target on wasm32-wasip1 until their headers can be checked",
+        ),
+        ("wasm32-unknown-unknown", "the JS host has no C library"),
+    ] {
+        let o = velt(dir.path(), &["build", "--target", target]);
+        let out = format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert!(!o.status.success(), "{target}: {out}");
+        assert!(
+            out.contains(&format!("C function `llabs` is not available on {target}")),
+            "{target}: {out}"
+        );
+        assert!(out.contains(note), "{target}: {out}");
+    }
 }
 
 /// `velt dev` (the JIT) calls C functions, and a C function no loaded library has is an error

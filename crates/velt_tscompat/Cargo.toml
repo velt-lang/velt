@@ -10,3 +10,4 @@ velt_sema.workspace = true
 
 [dev-dependencies]
 velt_doc = { path = "../velt_doc" }
+vpm.workspace = true

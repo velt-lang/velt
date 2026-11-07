@@ -1427,12 +1427,12 @@ batches (§14.18), are documented there (`packages/postgres/docs/native_abi.md`)
 
 ### 14.15 PostgreSQL `COPY` (moved to `packages/postgres/docs/native_abi.md`)
 
-### 14.16 Fast random numbers (`velt/random`; stream linux-servers, additive)
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_prng_f64` | `() -> f64` | uniform `[0, 1)`, 53 bits; per-thread wyrand seeded from §14.1 |
-| `velt_rt_prng_range` | `(i64 min, i64 max) -> i64` | uniform `[min, max)` (unbiased); `min` if `max <= min` |
+### 14.16 Fast random numbers
 
+`Math.random()` and `velt/random` are Velt code (`std/lang/random/wyrand.velt`, #2196), seeded with
+`velt_rt_random_u64` (§14.1) natively. Under WASI, std calls wasi-libc's `getentropy`
+(docs/internals/design/wasi-libc.md); under a JS host, the glue's `velt:random`.`fill`
+(`crypto.getRandomValues`). No runtime function is involved on WebAssembly. Not for secrets.
 
 ### 14.17 (removed: the hyper HTTP server's runtime functions; the HTTP server is Velt code, §7)
 

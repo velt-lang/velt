@@ -158,7 +158,11 @@ export async function loadVelt(source, host = {}) {
   };
   const module = await compile(await source);
   const contexts = { context: host.context, within: host.within };
-  const provided = { "velt:fetch": fetchHost(undefined, contexts), ...host.imports };
+  const provided = {
+    "velt:fetch": fetchHost(undefined, contexts),
+    "velt:random": randomHost(),
+    ...host.imports,
+  };
   Object.assign(imports, hostImports(module, provided, rt));
   const instance = await WebAssembly.instantiate(module, imports);
   rt.exports = instance.exports;
@@ -489,6 +493,18 @@ const byteString = (text) => String.fromCharCode(...utf8.encoder.encode(text));
 /** A byte string's bytes as UTF-8 (a header value as native `fetch` reads it). */
 const fromByteString = (bytes) =>
   utf8.decoder.decode(Uint8Array.from(bytes, (c) => c.charCodeAt(0)));
+
+/**
+ * The `velt:random` host module: the seed of `Math.random()`'s generator
+ * (std/lang/random/seed_js.velt). `buf` is a view of the program's memory.
+ */
+export function randomHost() {
+  return {
+    fill(buf) {
+      globalThis.crypto.getRandomValues(buf);
+    },
+  };
+}
 
 /**
  * The import module `velt:fetch`: std's `fetch` on JS hosts over `hostFetch`

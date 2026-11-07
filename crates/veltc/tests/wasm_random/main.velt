@@ -1,0 +1,10 @@
+// The seed of Math.random() on WebAssembly (wasm_goldens.rs): each run prints numbers of its
+// own, so a constant seed shows as two runs printing the same.
+import { randomInt } from "velt/random";
+
+const LOW: i64 = -9223372036854775808;
+const HIGH: i64 = 9223372036854775807;
+
+function main() {
+  console.log(Math.random(), randomInt(LOW, HIGH));
+}

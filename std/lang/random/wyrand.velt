@@ -1,0 +1,45 @@
+// velt/lang/random (internal): the fast per-thread generator behind `Math.random()` and
+// velt/random: wyrand, 64 bits of state and one multiply per number (passes PractRand and
+// BigCrush). Each thread seeds its own on first use, so concurrent tasks never contend, and every
+// run gives a different sequence. Not for secrets: that is velt/crypto.
+
+import { seedWord } from "#random-seed";
+
+const WY_ADD: u64 = 0xa0761d6478bd642f;
+const WY_XOR: u64 = 0xe7037ed1a0b428db;
+const TWO_POW_MINUS_53: f64 = 1.1102230246251565e-16;
+
+// 0: not seeded yet. A seed has its low bit set.
+const STATE = new ThreadLocal<u64>(0);
+
+/** The number wyrand makes of the state `s`: both halves of `s * (s ^ WY_XOR)`, combined. */
+export function wyMix(s: u64): u64 {
+  const t = s ^ WY_XOR;
+  return Math.umulh(s, t) ^ (s * t);
+}
+
+/** The state after `s`. */
+export function wyStep(s: u64): u64 {
+  return s + WY_ADD;
+}
+
+/** The next 64 bits of this thread's generator. */
+export function nextU64(): u64 {
+  let s = STATE.get();
+  if (s == 0) {
+    s = seedWord() | 1;
+  }
+  s = wyStep(s);
+  STATE.set(s);
+  return wyMix(s);
+}
+
+/** The number in [0, 1) that 64 random bits make: their top 53, over 2^53. */
+export function unitF64(word: u64): f64 {
+  return ((word >> 11) as f64) * TWO_POW_MINUS_53;
+}
+
+/** A number in [0, 1), with 53 random bits. */
+export function nextF64(): f64 {
+  return unitF64(nextU64());
+}
