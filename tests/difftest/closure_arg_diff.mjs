@@ -275,6 +275,23 @@ function w_${id}() { held_${id}.v = ${k.b}; }
 function g_${id}(v: ${k.t}) { w_${id}(); ${junk}return ${k.show("v")}; }`,
     body: (k, id) => `console.log("${id}", g_${id}(held_${id}.v), ${k.show(`held_${id}.v`)});`,
   },
+  {
+    name: "container-in-array",
+    top: (k, id) => `class H_${id} { v: ${k.t} = ${k.a}; }`,
+    body: (k, id) => `const h = new H_${id}();
+  const rs = [h];
+  const f = (q: H_${id}[], v: ${k.t}) => { q[0].v = ${k.b}; ${junk}return ${k.show("v")}; };
+  console.log("${id}", f(rs, h.v), ${k.show("h.v")});`,
+  },
+  {
+    name: "written-field-direct",
+    top: (k, id) => `class H_${id} { v: ${k.t} = ${k.a}; }
+function g_${id}(q: H_${id}, v: ${k.t}) { w_${id}(q); ${junk}return ${k.show("v")}; }
+function w_${id}(q: H_${id}) { q.v = ${k.b}; }`,
+    body: (k, id) => `const h = new H_${id}();
+  const alias = h;
+  console.log("${id}", g_${id}(alias, h.v), ${k.show("h.v")});`,
+  },
 ];
 
 const wanted = (name, opt) => !opt || name.includes(opt);

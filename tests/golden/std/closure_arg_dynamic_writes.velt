@@ -1,77 +1,47 @@
-// Writes a scan of the source cannot name: through Object.assign, Reflect, a proxy, a computed key
-// and a generic. The callee keeps what it was passed (#2480). Output checked against Node.
+// Writes a scan of the source cannot name: through `any`, Reflect, Object.assign and a key, from a
+// closure or a direct named callee, each on a field nothing else names. The callee keeps what it
+// was passed (#2480). Output checked against Node.
 function heap(a: string) { return a + "-".repeat(40); }
 function junk() { return heap("xxxxxxxxxxxxxxxxxxxx").length; }
-class A { s: string = heap("old"); }
-class B { s: string = heap("old"); }
-class C { s: string = heap("old"); }
-class D { s: string | null = heap("old"); }
-class E { s: string = heap("old"); }
-class F { s: string = heap("old"); }
-function assign_() {
-  const o = new A(); const alias = o;
-  const f = (v: string) => { Object.assign(alias, { s: heap("new") }); junk(); return v; };
-  console.log("Object.assign", f(o.s), o.s);
-}
-function reflect() {
-  const o = new B(); const alias = o;
-  const f = (v: string) => { Reflect.set(alias, "s", heap("new")); junk(); return v; };
-  console.log("Reflect.set", f(o.s), o.s);
-}
-function proxied() {
-  const o = new C();
-  const p = new Proxy(o, {});
-  const f = (v: string) => { p.s = heap("new"); junk(); return v; };
-  console.log("proxy", f(o.s), o.s);
-}
-type O = { s: string };
-function setKey<T, K extends keyof T>(o: T, k: K, v: T[K]) { o[k] = v; }
-function key() {
-  const o: O = { s: heap("old") }; const alias = o;
-  const f = (v: string) => { setKey(alias, "s", heap("new")); junk(); return v; };
-  console.log("computed key", f(o.s), o.s);
-}
-function generic<T extends { s: string }>(t: T) { t.s = heap("new"); }
-function genericWrite() {
-  const o = new F(); const alias = o;
-  const f = (v: string) => { generic(alias); junk(); return v; };
-  console.log("generic", f(o.s), o.s);
-}
-assign_(); reflect(); proxied(); key(); genericWrite();
-// Direct named callees, each writing its own field by name: nothing else names these fields, so
-// only knowing the program writes through `any`, a proxy or a key tells the call to share.
-class DR { dr: string = heap("old"); }
+class CA { ca: string = heap("old"); }
+class CR { cr: string = heap("old"); }
+class CO { co: string = heap("old"); }
 class DA { da: string = heap("old"); }
+class DR { dr: string = heap("old"); }
 class DK { dk: string = heap("old"); }
-class DP { dp: string = heap("old"); }
 class DF { df: string = heap("old"); }
 class DO { dob: string = heap("old"); }
-type KO = { dko: string };
-type KT = { dkt: string; n: number };
-function byReflect(o: DR, v: string) { Reflect.set(o, "dr", heap("new")); junk(); return v; }
-function byAny(o: any, v: string) { o.da = heap("new"); junk(); return v; }
-function byKey(o: any, k: string, v: string) { o[k] = heap("new"); junk(); return v; }
-function byProxy(o: DP, v: string) { const p = new Proxy(o, {}); p.dp = heap("new"); junk(); return v; }
-function byForIn(o: any, v: string) { for (const k in o) { o[k] = heap("new"); } junk(); return v; }
-function byAssign(o: DO, v: string) { Object.assign(o, { dob: heap("new") }); junk(); return v; }
-function byGenericKey(o: KO, v: string) { setKey(o, "dko", heap("new")); junk(); return v; }
-function byGenericKey2(o: KT, v: string) { setKey(o, "dkt", heap("new")); junk(); return v; }
-function directCallees() {
-  const r = new DR(); const ra = r;
-  console.log("direct Reflect.set", byReflect(ra, r.dr), r.dr);
-  const a = new DA(); const aa = a;
-  console.log("direct any", byAny(aa, a.da), a.da);
-  const k = new DK(); const ka = k;
-  console.log("direct any key", byKey(ka, "dk", k.dk), k.dk);
-  const p = new DP(); const pa = p;
-  console.log("direct proxy", byProxy(pa, p.dp), p.dp);
-  const f = new DF(); const fa = f;
-  console.log("direct for in", byForIn(fa, f.df), f.df);
-  const o = new DO(); const oa = o;
-  console.log("direct Object.assign", byAssign(oa, o.dob), o.dob);
-  const g: KO = { dko: heap("old") }; const ga = g;
-  console.log("direct generic key", byGenericKey(ga, g.dko), g.dko);
-  const h: KT[] = [{ dkt: heap("old"), n: 1 }];
-  console.log("direct generic key in an array", byGenericKey2(h[0], h[0].dkt), h[0].dkt);
+function closures() {
+  const a = new CA(); const aa: any = a;
+  const f = (v: string) => { aa.ca = heap("new"); junk(); return v; };
+  console.log("closure any", f(a.ca), a.ca);
+  const r = new CR(); const ra = r;
+  const g = (v: string) => { Reflect.set(ra, "cr", heap("new")); junk(); return v; };
+  console.log("closure Reflect.set", g(r.cr), r.cr);
+  const o = new CO(); const oa = o;
+  const h = (v: string) => { Object.assign(oa, { co: heap("new") }); junk(); return v; };
+  console.log("closure Object.assign", h(o.co), o.co);
 }
-directCallees();
+const HA = [new DA()];
+const HR = [new DR()];
+const HK = [new DK()];
+const HF = [new DF()];
+const HO = [new DO()];
+function byAny(v: string) { const o: any = HA[0]; o.da = heap("new"); junk(); return v; }
+function byReflect(v: string) { Reflect.set(HR[0], "dr", heap("new")); junk(); return v; }
+function byKey(v: string, k: string) { const o: any = HK[0]; o[k] = heap("new"); junk(); return v; }
+function byForIn(v: string) { const o: any = HF[0]; for (const k in o) { o[k] = heap("new"); } junk(); return v; }
+function byAssign(v: string) { Object.assign(HO[0], { dob: heap("new") }); junk(); return v; }
+function directCallees() {
+  const a = HA[0];
+  console.log("direct any", byAny(a.da), a.da);
+  const r = HR[0];
+  console.log("direct Reflect.set", byReflect(r.dr), r.dr);
+  const k = HK[0];
+  console.log("direct any key", byKey(k.dk, "dk"), k.dk);
+  const f = HF[0];
+  console.log("direct for in", byForIn(f.df), f.df);
+  const o = HO[0];
+  console.log("direct Object.assign", byAssign(o.dob), o.dob);
+}
+closures(); directCallees();

@@ -1,33 +1,75 @@
-// A `dispose` writes a field while a direct callee borrows it: the callee's body names no such
-// write and calls nothing, it only ends a `using` (replaceable.rs). The parameter keeps what it was
-// passed (#2480). Output checked against Node.
+// A drop hook writes a field while a direct callee borrows it: the callee's body names no such write
+// and calls nothing, it only lets go of a value (replaceable.rs). The parameter keeps what it was
+// passed (#2480). Node has no drop hooks, except at `using`, so only what the parameter held is
+// printed, which is the same in both.
 function heap(a: string) { return a + "-".repeat(40); }
 function junk() { return heap("xxxxxxxxxxxxxxxxxxxx").length; }
-class Target { s: string = heap("old"); u: string = heap("old"); }
-class Closer {
+class Target { s: string = heap("old"); u: string = heap("old"); w: string = heap("old"); x: string = heap("old"); }
+class Base { n: number = 1; }
+class Closer extends Base {
+  t: Target;
+  constructor(t: Target) { super(); this.t = t; }
+  [Symbol.dispose]() { this.t.s = heap("a longer new value"); junk(); }
+}
+class SubCloser extends Base {
+  t: Target;
+  constructor(t: Target) { super(); this.t = t; }
+  [Symbol.dispose]() { this.t.u = heap("a longer new value"); junk(); }
+}
+class ListCloser {
   t: Target;
   constructor(t: Target) { this.t = t; }
-  [Symbol.dispose]() { this.t.s = heap("new"); junk(); }
+  [Symbol.dispose]() { this.t.w = heap("a longer new value"); junk(); }
 }
-class SubCloser extends Closer {
-  override [Symbol.dispose]() { this.t.u = heap("new"); junk(); }
+class Holder { c: Closer | null = null; b: Base | null = null; list: ListCloser[] = []; }
+function letGo(h: Holder, v: string): number {
+  h.c = null;
+  return v.length;
 }
-function scoped(c: Closer, v: string) {
+function letGoBase(h: Holder, v: string): number {
+  h.b = null;
+  return v.length;
+}
+function popIt(h: Holder, v: string): number {
+  h.list.pop();
+  return v.length;
+}
+function scoped(c: UsingCloser, v: string): number {
   {
     using d = c;
   }
-  return v.length > 0 ? v : "";
+  return v.length;
 }
-function direct() {
+class UsingCloser {
+  t: Target;
+  constructor(t: Target) { this.t = t; }
+  [Symbol.dispose]() { this.t.x = heap("a longer new value"); junk(); }
+}
+function holderForm() {
   const t = new Target();
   const alias = t;
-  const c = new Closer(alias);
-  console.log("using in a direct callee", scoped(c, t.s), t.s);
+  const h = new Holder();
+  h.c = new Closer(alias);
+  console.log("field set to null", letGo(h, t.s));
 }
-function subclass() {
+function baseForm() {
   const t = new Target();
   const alias = t;
-  const c = new SubCloser(alias);
-  console.log("through a subclass", scoped(c, t.u), t.u);
+  const h = new Holder();
+  h.b = new SubCloser(alias);
+  console.log("through a base type", letGoBase(h, t.u));
 }
-direct(); subclass();
+function popForm() {
+  const t = new Target();
+  const alias = t;
+  const h = new Holder();
+  h.list.push(new ListCloser(alias));
+  console.log("popped", popIt(h, t.w));
+}
+function usingForm() {
+  const t = new Target();
+  const alias = t;
+  const c = new UsingCloser(alias);
+  console.log("using", scoped(c, t.x));
+}
+holderForm(); baseForm(); popForm(); usingForm();

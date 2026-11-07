@@ -1,0 +1,19 @@
+// A write through a proxy of the object, from a closure or a direct named callee, on a field
+// nothing else names (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxx").length; }
+class C { pc: string = heap("old"); }
+class D { pd: string = heap("old"); }
+const HP = [new D()];
+function byProxy(v: string) { const p = new Proxy(HP[0], {}); p.pd = heap("new"); junk(); return v; }
+function closure_() {
+  const o = new C();
+  const p = new Proxy(o, {});
+  const f = (v: string) => { p.pc = heap("new"); junk(); return v; };
+  console.log("closure", f(o.pc), o.pc);
+}
+function direct() {
+  const o = HP[0];
+  console.log("direct", byProxy(o.pd), o.pd);
+}
+closure_(); direct();
