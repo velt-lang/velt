@@ -37,7 +37,7 @@ pub(super) use velt_common::std_hooks::Construct;
 use velt_common::std_hooks::Mode;
 use velt_sema::hir::{DefId, PassMode, TyId};
 
-use super::{ice, unit, FnLower};
+use super::{ice, unit, Cx, FnLower};
 use crate::vir::{Callee, Const, FuncId, Operand, Place, Proj, StaticId, Ty};
 
 /// The marker types of the hooks' type language (velt_common `hook_sig.rs`): what a builder's
@@ -142,6 +142,19 @@ pub(super) enum How {
 
 /// One argument, with the mode the table gives its parameter.
 pub(super) struct Passed(How, Mode);
+
+impl Cx<'_> {
+    /// Did sema demand every hook formatting glue may call? Only then can a class's table hold
+    /// that glue: lowering builds it with the table, before it knows that a slot is read
+    /// (`glue/slot_uses.rs`). A program where this is false formats no object: live code that does
+    /// has `Construct::Format`.
+    pub(super) fn format_demanded(&self) -> bool {
+        use velt_common::std_hooks::hook_index::{int_push, uint_push};
+        // The hooks that list `Format` (velt_common `the_integer_hooks_are_demanded_by_their_constructs`).
+        let demanded = &self.hir.hooks_demanded;
+        demanded.contains(int_push) && demanded.contains(uint_push)
+    }
+}
 
 impl<T> Arg<T> {
     #[inline]

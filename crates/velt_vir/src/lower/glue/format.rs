@@ -264,6 +264,13 @@ impl FnLower<'_, '_> {
                 let obj = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
                 let args = vec![buf.clone(), obj.clone(), depth.clone()];
                 if self.cx.has_header(d) {
+                    assert!(
+                        self.cx.format_demanded(),
+                        "ICE: formatting {} reached by lowering but not demanded by sema \
+                         (construct {}): its table has no format slot",
+                        self.cx.type_name(ty),
+                        velt_common::std_hooks::Construct::Format.name(),
+                    );
                     let vt = self.obj_vtable(obj, ty);
                     let f = self.dispatch_class_glue(vt, SLOT_FORMAT, ty);
                     self.call_entry(f, args, vec![Ty::Ptr, Ty::Ptr, Ty::U32], Ty::Unit);

@@ -44,7 +44,10 @@ mod record_conversions;
 
 use record_conversions::{holds_string_record, note_user_conversions};
 
-pub(crate) use live::{demanded as hooks_demanded, finish as finish_live, live_defs};
+pub(crate) use live::{
+    assume_constructs, demanded as hooks_demanded, finish as finish_live, live_defs,
+    thrown_needs_format,
+};
 
 /// Std modules (path prefixes) checked whole: lowering looks up their definitions by name
 /// (`velt_vir` `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`,

@@ -54,6 +54,23 @@ fn a_program_that_prints_no_integer_demands_no_integer_hook() {
     }
 }
 
+/// #2513: the type alone brings none of the integer hooks' code into the program.
+#[test]
+fn a_struct_or_class_nothing_prints_demands_no_integer_hook() {
+    for src in [
+        "struct P { v: u32; }\n\
+         function main() {\n  const p: P = { v: 1 };\n  console.log(p.v > 0);\n}\n",
+        "class P { v: u32 = 1; }\n\
+         function main() {\n  const p = new P();\n  console.log(p.v > 0);\n}\n",
+    ] {
+        let p = ok_src(src);
+        assert_eq!(demanded(&p), Vec::<&str>::new(), "{src}");
+        for i in INT {
+            assert!(!checked(&p, i), "{} is checked:\n{src}", HOOKS[i].name);
+        }
+    }
+}
+
 #[test]
 fn each_construct_demands_its_hooks() {
     for (body, want) in [
@@ -120,8 +137,8 @@ fn an_integer_thrown_and_not_caught_demands_its_printing() {
 }
 
 #[test]
-fn a_class_with_a_number_in_it_demands_its_format_slot() {
-    let p = ok_src("class P {\n  x = 1;\n}\nfunction main() {\n  const p = new P();\n  if (p.x == 2) {\n    return;\n  }\n}\n");
+fn a_class_converted_to_any_demands_its_format_slot() {
+    let p = ok_src("class P {\n  x = 1;\n}\nfunction main() {\n  const a: any = new P();\n  if (a == 2) {\n    return;\n  }\n}\n");
     let got = demanded(&p);
     for w in ["int_push", "uint_push"] {
         assert!(got.contains(&w), "{w} not demanded: {got:?}");
@@ -142,8 +159,8 @@ fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
         "function main() {\n  const n: i32 = 7;\n  console.log(n);\n}\n",
         // IndexCheck: the out-of-bounds message of an index.
         "function main() {\n  const xs = [\"a\"];\n  const s = xs[0];\n}\n",
-        // Format: the table of a class with a number in it (its `format` slot).
-        "class P {\n  x = 1;\n}\nfunction main() {\n  const p = new P();\n}\n",
+        // Format: printing a class with a number in it.
+        "class P {\n  x = 1;\n}\nfunction main() {\n  console.log(new P());\n}\n",
         // Dynamic: the numeric keys of an `any`.
         "function main() {\n  const a: any = \"s\";\n}\n",
     ] {
