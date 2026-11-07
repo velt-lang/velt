@@ -196,7 +196,8 @@ type Need = (TyId, DefId, u64);
 /// and its guard bits.
 type Req = (TyId, Span, DefId, u64);
 
-pub(crate) fn check_instantiations(cx: &mut Ctx) {
+/// Returns the instantiation sites it collected, which `struct_tuples` reads too.
+pub(crate) fn check_instantiations(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let mut uses = inst_sites::collect(cx, false);
     let mut memo: FxHashMap<TyId, Vec<TyId>> = FxHashMap::default();
     let mut dispatch = Dispatch::default();
@@ -257,6 +258,7 @@ pub(crate) fn check_instantiations(cx: &mut Ctx) {
     }
     add_work(Pass::RecordKeys, work);
     report(cx, &concrete);
+    uses
 }
 
 /// The key types function `f` needs: those its own types mention, and those of the generic
