@@ -19,8 +19,8 @@ export declare intrinsic function anyToPrimitive(value: any, hint: string, at: s
 /**
  * A constant, and an `if` lowers only the branch it takes: can the program call the array method
  * `name`, a string literal, through `any`? True when it is called by name, when a method is called
- * by a computed name, or when `call`, `apply` or `bind` is called, which run a method read as a
- * value. A program pays for an algorithm of velt/lang/proxy/array only if it can run.
+ * by a computed name, or when the program can hold a method under another name. A program pays for
+ * an algorithm of velt/lang/proxy/array only if it can run.
  */
 export declare intrinsic function anyMethodCalled(name: string): bool;
 

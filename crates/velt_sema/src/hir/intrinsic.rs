@@ -561,9 +561,9 @@ pub enum Intrinsic {
     /// std only: `(name: string literal) -> bool`, a constant: can the program call the array
     /// method `name` through `any`, so that its generic algorithm on a proxy can run
     /// (velt/lang/proxy/array)? True when `name` is called by name, when a method is called by a
-    /// computed name, when `call`, `apply` or `bind` is called, which run a method read as a value,
-    /// or when the program can hold a method under another name (`Program::array_methods_open`;
-    /// hir_encodings.md "any and unknown").
+    /// computed name, or when the program can hold a method under another name, which is also what
+    /// a `call`, `apply` or `bind` of one needs (`Program::array_methods_open`; hir_encodings.md
+    /// "any and unknown").
     AnyMethodCalled,
     /// std only: `(x: borrow any) -> bool`: does `x` hold an `any[]` itself (not a view, a proxy or
     /// another array)? A comparison of its descriptor.

@@ -172,9 +172,9 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   code without it (std/prelude/map.velt: a `Map` whose `V` excludes null keeps its VIR).
 - Array methods on a proxy (issue #2424): `Call { Intrinsic(AnyMethodCalled), [Lit(Str(name))] }`,
   std only, is a constant of the program, taken like the tests above: can the array method `name`
-  be called through `any`? True when a call through `any` names it, names a computed key, or names
-  `call`, `apply` or `bind`, which run a method read as a value, or when the program can hold a method under
-  another name (`Program::array_methods_open`, velt_sema's `proxy_method_values.rs`). An `AnyCall`
+  be called through `any`? True when a call through `any` names it or a computed key, or when the
+  program can hold a method under another name, which a `call`, `apply` or `bind` of one needs
+  (`Program::array_methods_open`, velt_sema's `proxy_method_values.rs`). An `AnyCall`
   slot likewise compares only the names the program calls; lowering starts from
   `Program::any_call_names`, those in its own code. `Call { Intrinsic(AnyIsList), [x] }`, std only,
   is not a constant: a comparison of the descriptor of the `any` `x` with the table of `any[]`. `Call { Intrinsic(StdUsed), [Lit(Str(name))] }`, std only, is the

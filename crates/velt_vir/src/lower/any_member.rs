@@ -59,12 +59,10 @@ impl Cx<'_> {
     }
 
     /// `Intrinsic::AnyMethodCalled`: can the array method `name` run on a proxy? Called by name,
-    /// or read as a value and run by `call`, `apply` or `bind` (velt/lang/proxy/array's
-    /// `ArrayMethod`). A plain call of one read as a value runs nothing unless `bind` made it.
+    /// or held as a value (velt/lang/proxy/array's `ArrayMethod`), which only a read can make, so
+    /// a `call`, `apply` or `bind` of one comes with `array_methods_open`.
     pub(super) fn any_method_called(&self, name: &str) -> bool {
-        self.hir.array_methods_open
-            || self.any_called(name)
-            || ["call", "apply", "bind"].iter().any(|k| self.any_called(k))
+        self.hir.array_methods_open || self.any_called(name)
     }
 
     /// `e`, when it is a call of `Intrinsic::AnyMethodCalled` or `StdUsed`: its value.
