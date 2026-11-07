@@ -74,7 +74,6 @@ fn golden_m1_files_parse() {
                 | "decorators_default_placement.velt"
                 | "decorators_default_expression.velt"
                 | "decorators_class_binding.velt"
-                | "jsx_table_module_namespace.velt"
         ) {
             continue;
         }

@@ -770,3 +770,7 @@ mod tests {
         assert_eq!(written("N.#x"), "N.#x");
     }
 }
+
+#[cfg(test)]
+#[path = "namespaces_tests.rs"]
+mod global_tests;

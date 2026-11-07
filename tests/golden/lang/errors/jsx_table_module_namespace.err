@@ -1,1 +1,0 @@
-a namespace (only `declare global` may hold one) cannot be declared in `declare global` or `declare module` yet
