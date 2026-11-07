@@ -203,9 +203,12 @@ impl Tool<'_> {
     /// and `__TIME__`, a DLL's timestamp). `Err` holds what it printed.
     fn run(&self, dir: &Path, args: &[String]) -> Result<(), String> {
         // `CPATH` and `C_INCLUDE_PATH` would add this machine's directories to every include.
+        // No verbatim directory (`\\?\E:\pkg`, a canonical path on Windows): a relative path
+        // under it, `-I.`'s `./native/x.h` too, would keep its `/`, which a verbatim path doesn't
+        // read as a separator.
         let out = Command::new(self.zig)
             .args(args)
-            .current_dir(dir)
+            .current_dir(crate::relpath::plain(dir))
             .env_remove("CPATH")
             .env_remove("C_INCLUDE_PATH")
             .env("ZIG_GLOBAL_CACHE_DIR", self.cache)
@@ -269,8 +272,9 @@ fn object_name(n: usize) -> String {
     format!("{n}.o")
 }
 
+/// `path` as zig's argument: absolute, without a verbatim prefix ([`crate::relpath::plain`]).
 fn absolute(path: &Path) -> Result<String, String> {
-    let path = crate::relpath::absolute(path);
+    let path = crate::relpath::plain(&crate::relpath::absolute(path));
     path.to_str()
         .map(str::to_string)
         .ok_or_else(|| format!("`{}` is not valid UTF-8", path.display()))

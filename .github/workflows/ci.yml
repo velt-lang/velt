@@ -115,6 +115,9 @@ jobs:
       repeat: ${{ steps.plan.outputs.repeat }}
       # The packages whose tests run on Windows (`all`, names, or empty; os.rs).
       windows_packages: ${{ steps.plan.outputs.windows_packages }}
+      # The goldens (`VELT_GOLDEN`) of the apps that build a package's C `sources`, run on Windows
+      # with the apps' `velt test` when the change touches such a package or its build (zig.rs).
+      windows_apps: ${{ steps.plan.outputs.windows_apps }}
       # `true` when those tests or the repeated files build C `sources` (crates/xtask/src/zig.rs).
       windows_zig: ${{ steps.plan.outputs.windows_zig }}
       # `true` when the change touches what the header check checks (`c-headers`).
@@ -161,10 +164,14 @@ jobs:
   # changes where that matters, before the merge queue: the changed test files repeated under
   # load (`cargo xtask repeat`, as the `test` job does on Linux), and the package tests when the
   # change touches a package, networking, timers or the test runner (`windows_packages` in
-  # crates/xtask/src/os.rs). Any other change starts no Windows runner.
+  # crates/xtask/src/os.rs), and the apps that build a package's C `sources` when the change
+  # touches such a package or its build (`windows_apps` in crates/xtask/src/zig.rs: there the
+  # package is a dependency, at a canonical path). Any other change starts no Windows runner.
   pr-windows:
     needs: pr-plan
-    if: needs.pr-plan.outputs.repeat == 'true' || needs.pr-plan.outputs.windows_packages != ''
+    if: >-
+      needs.pr-plan.outputs.repeat == 'true' || needs.pr-plan.outputs.windows_packages != ''
+      || needs.pr-plan.outputs.windows_apps != ''
     name: windows (changed tests under load, packages)
     runs-on: windows-latest
     timeout-minutes: 90
@@ -184,7 +191,9 @@ jobs:
       - name: build
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: cargo build --workspace --exclude xtask --lib --bins --test golden --test packages
+        run: >-
+          cargo build --workspace --exclude xtask --lib --bins --test golden --test packages
+          --test example_apps
       - name: package tests (${{ needs.pr-plan.outputs.windows_packages }})
         if: needs.pr-plan.outputs.windows_packages != ''
         shell: bash
@@ -195,6 +204,16 @@ jobs:
         run: |
           [ "$PACKAGES" = all ] || export VELT_PACKAGES="$PACKAGES"
           cargo test --workspace --test packages -- --nocapture
+      - name: apps with C sources (${{ needs.pr-plan.outputs.windows_apps }})
+        if: needs.pr-plan.outputs.windows_apps != ''
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        env:
+          VELT_RT_PREBUILT: "1"
+          VELT_GOLDEN: ${{ needs.pr-plan.outputs.windows_apps }}
+        run: |
+          cargo test --workspace --test golden -- --nocapture
+          cargo test --workspace --test example_apps -- --nocapture
       - name: cargo xtask repeat (the changed tests, under load)
         if: needs.pr-plan.outputs.repeat == 'true'
         shell: bash

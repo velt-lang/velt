@@ -307,6 +307,9 @@ struct FlakeGuards {
     repeat: Vec<String>,
     /// `VELT_PACKAGES` for Windows: `""` none, `"all"`, or names ([`os::windows_packages`]).
     windows_packages: String,
+    /// `VELT_GOLDEN` of the apps that build C `sources`, for Windows with their `velt test`:
+    /// `""` none ([`zig::windows_apps`]).
+    windows_apps: String,
 }
 
 impl FlakeGuards {
@@ -319,9 +322,14 @@ impl FlakeGuards {
             "" => "none",
             other => other,
         };
+        let apps = match self.windows_apps.as_str() {
+            "" => "none",
+            other => other,
+        };
         format!(
             "  repeated under load (cargo xtask repeat): {repeat}\n  \
-             package tests on Windows (pull request): {packages}\n"
+             package tests on Windows (pull request): {packages}\n  \
+             apps with C sources on Windows (pull request): {apps}\n"
         )
     }
 }
@@ -332,6 +340,7 @@ fn flake_guards(root: &Path, args: &Args) -> FlakeGuards {
     let none = FlakeGuards {
         repeat: vec![],
         windows_packages: String::new(),
+        windows_apps: String::new(),
     };
     if args.full {
         return none;
@@ -355,6 +364,7 @@ fn flake_guards(root: &Path, args: &Args) -> FlakeGuards {
     FlakeGuards {
         repeat,
         windows_packages: os::windows_packages(&paths, &skip),
+        windows_apps: zig::windows_apps(&paths, &skip),
     }
 }
 
@@ -474,9 +484,10 @@ fn github_outputs(plan: &Plan, flake: &FlakeGuards) -> Result<(), String> {
     append(
         "GITHUB_OUTPUT",
         &format!(
-            "repeat={repeat}\nwindows_packages={}\nwindows_zig={}\n",
+            "repeat={repeat}\nwindows_packages={}\nwindows_apps={}\nwindows_zig={}\n",
             flake.windows_packages,
-            zig::windows(&flake.windows_packages, &flake.repeat)
+            flake.windows_apps,
+            zig::windows(&flake.windows_packages, &flake.repeat) || !flake.windows_apps.is_empty()
         ),
     )?;
     append(

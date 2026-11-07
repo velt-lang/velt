@@ -65,6 +65,33 @@ pub fn windows(packages: &str, repeat: &[String]) -> bool {
     tested || repeat.iter().any(|p| builds(p))
 }
 
+/// The code besides [`PACKAGES`] and [`DEPENDENTS`] that a build of a dependent goes through
+/// differently on Windows: the check of a package's `declare c` against its headers, the
+/// constants read from them, and the build of its C `sources`, which hand zig the package's
+/// path (a verbatim `\\?\` path reached clang there and only the merge queue saw it, #2347).
+pub const WINDOWS_APP_CODE: &[&str] = &[
+    "crates/veltc/src/native/headers/",
+    "crates/vpm/src/native/c_build.rs",
+    "crates/vpm/src/install/c_sources.rs",
+];
+
+/// The `VELT_GOLDEN` filter of the [`DEPENDENTS`]' goldens that a pull request's Windows job runs,
+/// with their `velt test` (`example_apps`): all of them, separated by `,`, when the change touches
+/// one of [`PACKAGES`], a dependent, or [`WINDOWS_APP_CODE`]; `""` otherwise. There a package is
+/// a dependency of the program, at a path the program's build canonicalized, which its own
+/// tests (`packages`) never are. `skip` are files where only comments changed; documentation
+/// alone changes nothing either.
+pub fn windows_apps(paths: &[String], skip: &std::collections::BTreeSet<String>) -> String {
+    let touched = paths
+        .iter()
+        .filter(|p| !skip.contains(*p) && !p.ends_with(".md"))
+        .any(|p| builds(p) || WINDOWS_APP_CODE.iter().any(|c| p.starts_with(c)));
+    match touched {
+        true => DEPENDENTS.join(","),
+        false => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +237,30 @@ mod tests {
         for dir in DEPENDENTS {
             assert!(root.join(dir).join("package.velt").is_file(), "{dir}");
         }
+    }
+
+    #[test]
+    fn a_change_to_a_c_package_or_its_build_runs_the_dependents_on_windows() {
+        let none = std::collections::BTreeSet::new();
+        let apps = |paths: &[&str]| {
+            let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
+            windows_apps(&paths, &none)
+        };
+        let all = DEPENDENTS.join(",");
+        assert_eq!(apps(&["packages/sqlite/src/sqlite3.velt"]), all);
+        assert_eq!(apps(&["packages/sqlite/native/sqlite3.h"]), all);
+        assert_eq!(apps(&["examples/apps/todo-api/src/store.velt"]), all);
+        assert_eq!(apps(&["crates/veltc/src/native/headers/mod.rs"]), all);
+        assert_eq!(apps(&["crates/vpm/src/native/c_build.rs"]), all);
+        assert_eq!(apps(&["packages/sqlite/README.md"]), "");
+        assert_eq!(apps(&["packages/redis/src/client.velt"]), "");
+        assert_eq!(apps(&["crates/veltc/src/native/report.rs"]), "");
+        assert_eq!(apps(&[]), "");
+        let skip = std::collections::BTreeSet::from(["packages/sqlite/src/a.velt".to_string()]);
+        assert_eq!(
+            windows_apps(&["packages/sqlite/src/a.velt".to_string()], &skip),
+            ""
+        );
     }
 
     #[test]
