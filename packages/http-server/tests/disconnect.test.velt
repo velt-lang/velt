@@ -275,8 +275,8 @@ describe("a slow client", () => {
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
       return new Response(endless(size, cancelled, pulls));
     });
+    const c = await connect(`127.0.0.1:${server.port}`);
     try {
-      const c = await connect(`127.0.0.1:${server.port}`);
       await c.write(GET);
       let last: i64 = -1;
       while (pulls.get() != last && last < 2000) {
@@ -298,6 +298,8 @@ describe("a slow client", () => {
       c.close();
       await timeout(arrivals(cancelled), LIMIT);
     } finally {
+      // A failed check leaves a source that only a client going away stops.
+      c.close();
       await server.shutdown();
       shut(cancelled);
     }
