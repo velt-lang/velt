@@ -11,7 +11,6 @@ import {
   PROXY_KEYS,
   PROXY_OWN_KEYS,
   PROXY_TARGET,
-  TYPED_ARRAY_KIND,
 } from "velt/lang/hooks/keys";
 import { PropertyDescriptor, proxyCompatible, proxyComplete } from "velt/lang/proxy/descriptor";
 import { proxyKey, proxyKeyText, proxyNameText } from "velt/lang/proxy/keys";
@@ -265,12 +264,18 @@ function proxyApplyOther(f: any, list: any): any {
     return anyArgList(list);
   }
   const p: any = list;
-  // A typed array's accessors stop on a proxy of one, as in Node.
+  // A typed array's accessors stop on a proxy of one, as in Node. This module can't name the class
+  // (a program with a proxy needn't load typed arrays), so the test is by its accessors, on a
+  // proxy's target only.
   let target = list[PROXY_TARGET]();
   while (target instanceof Proxy) {
     target = target[PROXY_TARGET]();
   }
-  if (TYPED_ARRAY_KIND in target) {
+  if (
+    typeof target.byteLength === "number" &&
+    typeof target.byteOffset === "number" &&
+    typeof target.buffer === "object"
+  ) {
     throw new TypeError("this is not a typed array.");
   }
   const len = anyListLength(p.length);
