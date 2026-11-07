@@ -16,6 +16,7 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
+use super::dom_values::DOM_VALUES;
 use super::setters::synth;
 use crate::body::FnCx;
 use crate::ctx::Item;
@@ -221,7 +222,7 @@ impl FnCx<'_, '_> {
     /// Whether `name`, found as `item`, is a global the prelude has only as a type (`HTMLElement`,
     /// `Iterable`): no name of this module, so there is no variable behind it but Node's. A type
     /// the module declares or imports is its own: `typeof` of that is refused, as under `tsc`.
-    fn prelude_type_only(&self, name: &str, item: Item) -> bool {
+    pub(super) fn prelude_type_only(&self, name: &str, item: Item) -> bool {
         let only_a_type = match item {
             // A struct has no value in Velt (`RequestInit`, an interface under `tsc`).
             Item::Def(d) if self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Struct) => true,
@@ -232,16 +233,35 @@ impl FnCx<'_, '_> {
             && !self.cx.scopes[self.module].items.contains_key(name)
     }
 
+    /// Is `name` another environment's global the program doesn't declare: one of [`ABSENT`],
+    /// or a value of `lib.dom` that Node doesn't have and whose type the prelude has
+    /// (`HTMLElement`, `Node`: `DOM_VALUES`)?
+    pub(crate) fn browser_global(&mut self, name: &str, span: Span) -> bool {
+        if self.is_local_name(name) {
+            return false;
+        }
+        let dom = DOM_VALUES.binary_search(&name).is_ok()
+            && !NODE_GLOBALS.iter().any(|(n, _)| *n == name);
+        if !dom && !ABSENT.contains(&name) {
+            return false;
+        }
+        match self.lookup_item(name, span) {
+            None => true,
+            Some(it) => self.prelude_type_only(name, it),
+        }
+    }
+
     /// Reading such a global the program doesn't declare: Node's `ReferenceError` (`None`:
     /// `id` is not one).
     pub(crate) fn browser_global_read(&mut self, id: &ast::Ident) -> Option<hir::Expr> {
-        if !ABSENT.contains(&id.name.as_str()) || self.is_local_name(&id.name) {
+        if !self.browser_global(&id.name, id.span) {
             return None;
         }
-        if self.lookup_item(&id.name, id.span).is_some() {
-            return None;
-        }
-        let span = id.span;
+        Some(self.not_defined(&id.name, id.span))
+    }
+
+    /// `throw new ReferenceError("<name> is not defined")`, as Node reads an undeclared name.
+    pub(crate) fn not_defined(&mut self, name: &str, span: Span) -> hir::Expr {
         let error = synth(
             ast::ExprKind::New {
                 class: ast::TypeExpr {
@@ -255,13 +275,13 @@ impl FnCx<'_, '_> {
                     span,
                 },
                 args: vec![synth(
-                    ast::ExprKind::Lit(ast::Lit::Str(format!("{} is not defined", id.name))),
+                    ast::ExprKind::Lit(ast::Lit::Str(format!("{name} is not defined"))),
                     span,
                 )],
             },
             span,
         );
-        Some(self.throw_expr(&error, span))
+        self.throw_expr(&error, span)
     }
 
     /// `typeof name` as the constant [`Self::global_typeof`] gives, as a string (`None`: not

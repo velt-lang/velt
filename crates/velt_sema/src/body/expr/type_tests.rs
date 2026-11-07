@@ -318,6 +318,7 @@ impl FnCx<'_, '_> {
         if let Some(h) = self
             .instanceof_value(e, ty, span)
             .or_else(|| self.shared_buffer_test(e, ty, span))
+            .or_else(|| self.dom_instance_test(e, ty, span))
         {
             return h;
         }

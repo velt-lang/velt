@@ -311,6 +311,9 @@ impl FnCx<'_, '_> {
         match op {
             B::And | B::Or => return self.logical(op, lhs, rhs, exp, span),
             B::In => {
+                if let Some(h) = self.browser_global_in(lhs, rhs, span) {
+                    return h;
+                }
                 return match &lhs.kind {
                     ast::ExprKind::Ident(x) if x.is_private_name() => {
                         self.private_in(lhs, rhs, span)

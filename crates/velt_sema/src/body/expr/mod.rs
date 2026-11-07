@@ -71,6 +71,8 @@ mod dynamic_relational;
 mod dynamic_rmw;
 mod dynamic_whole;
 mod dynamic_write;
+mod dom_globals;
+mod dom_values;
 mod env_globals;
 mod generic_dynamic;
 mod proxy_getters;

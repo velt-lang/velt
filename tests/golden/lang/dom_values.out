@@ -1,0 +1,10 @@
+function function function
+Node.ELEMENT_NODE true Node is not defined
+in Node.prototype true Node is not defined
+function
+document.title true document is not defined
+location.hash true window is not defined
+instanceof HTMLElement true HTMLElement is not defined
+instanceof Element true Element is not defined
+no detail
+server

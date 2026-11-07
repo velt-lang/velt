@@ -330,6 +330,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.pattern_assign(op, target, value, span) {
             return (h, false);
         }
+        if let Some(h) = self.browser_global_write(target, value) {
+            return (h, false);
+        }
         if let Some(h) = self.keyed_assign(op, target, value, span) {
             return (h, false);
         }
