@@ -1,0 +1,47 @@
+// http-server (internal): `writeStreamBody`, a `BodyStream` as an `Http1Response`'s body.
+
+import { BodyStream } from "velt/net/http";
+import { sendBody, SourceHold } from "../source_hold";
+import { Http1Response } from "./response";
+import { writeHead } from "./write_head";
+
+/** See `HttpResponse.sendStream`. */
+export async function writeStreamBody(
+  r: Http1Response,
+  body: BodyStream,
+  type?: string,
+  length?: number,
+): Promise<void> {
+  // The head goes out with the first chunk: one write less per response. Trailers need
+  // chunks, so a length is only used without them.
+  const t = type ?? "text/html; charset=utf-8";
+  if (length != undefined && length >= 0 && r.trailers.length == 0) {
+    writeHead(r, -1, t, length as i64, true);
+    r.left = r.noBody ? -1 : length as i64;
+  } else {
+    writeHead(r, -1, t, -1);
+  }
+  r.listenForClient();
+  const source = body[Symbol.asyncIterator]();
+  const hold = new SourceHold(source);
+  r.source = hold;
+  try {
+    await sendBody(source, hold, r);
+    if (r.clientGone()) {
+      throw new Error("the client went away");
+    }
+    if (r.left > 0) {
+      throw new Error(`the body ended ${r.left} bytes short of its Content-Length`);
+    }
+    await r.finishStream();
+  } catch (e) {
+    // The client went away, or the source failed: nothing more can be sent, and the
+    // connection closes without the body's end (the client sees it cut off).
+    if (!r.clientGone()) {
+      console.error("request handler failed: the response body failed:", e);
+    }
+    r.streaming = false;
+    r.keepAlive = false;
+    r.cut = r.left >= 0;
+  }
+}

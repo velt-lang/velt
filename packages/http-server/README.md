@@ -193,25 +193,32 @@ request lazily: a handler pays only for what it reads.
   [`BodyStream`](https://veltlang.com/docs/std/net/http/#bodystream), `null` for a request without a body), so an
   upload need not be held in memory. A body is read once; a read that fails (the client went away)
   throws `IoError`.
-- `req.signal` is aborted when the client can no longer be answered, as in Deno and Bun: over
-  HTTP/2 when it resets its stream or its connection ends; over HTTP/1.1 when its connection fails,
-  when writing the response to it fails, or when it closes before a response started (see below);
-  and when the server closes. Pass it to the work done for the request
-  (`fetch(url, { signal: req.signal })`) so that work stops with the client. Take it before the
-  handler returns if a streamed body or a spawned task uses it. A request that never asks for it
-  pays nothing for this.
+- `req.signal` is aborted when the client goes away, as in Node, Deno and Bun: over HTTP/2 when it
+  resets its stream or its connection ends; over HTTP/1.1 when its input ends (below), its
+  connection fails, or a write to it fails; and when the server closes. Pass it to the work done for
+  the request (`fetch(url, { signal: req.signal })`) so that work stops with the client. Take it
+  before the handler returns if a streamed body or a spawned task uses it.
 - A client that goes away ends a streamed response's source, as in Node: a `ReadableStream`'s
-  `cancel` runs and `pull` stops, an async generator's `finally` runs (at its next `yield`, as in
-  JS), through `compress()` too. A slow client only holds the source back. An exception from
-  `cancel` goes nowhere.
-- Over HTTP/1.1 a client that closed and one that only shut its sending side and goes on reading
-  look the same until something is written to them. So once a response started, only a failed write
-  or a failed connection counts as gone: such a client gets its whole body, and one that closed
-  while a source has nothing to write is noticed by the writes after its next chunks. Before a
-  response started, the end of its input aborts `req.signal` on a keep-alive request with nothing
-  pipelined behind it (a client that means to go on reading says `Connection: close`); a response
-  written anyway still goes out. `server.shutdown()` waits for an open stream as for any request:
-  a source that never ends should listen to `req.signal`, which the shutdown aborts.
+  `cancel` runs and `pull` stops, also with nothing to write and through `compress()`; an async
+  generator's `finally` runs at its next `yield`, as in JS. A slow client only holds the source
+  back. An exception from `cancel` goes nowhere.
+- **The end of a client's input is the client gone**, Node's rule (its `httpAllowHalfOpen` is off by
+  default), on keep-alive, `Connection: close` and pipelined requests alike. If a response is
+  pending when an HTTP/1.1 client shuts its sending side, the signal aborts, the source stops,
+  what was written stays written, and the connection ends at once with nothing more: a client that
+  sends a request, shuts its sending side and goes on reading gets the answer only if the handler
+  made it without really waiting (awaiting promises that are ready doesn't count). A request behind
+  one in progress still runs, and its answer goes nowhere. A body cut off in the middle is answered
+  400 (one with `Transfer-Encoding: chunked` that came whole but wasn't read is too). Differing from
+  Node: a request with an `Upgrade` header isn't watched, as the handler may take the connection;
+  and what a handler does while it reads a body from the socket isn't watched until the body's end.
+- A handler that answers before it waits costs nothing for this. One that waits pays a look at the
+  socket when it first waits and another before its answer goes out, and for it the connection
+  ends with the handler, not at once, though the client gets the same bytes. Only one that asked for
+  `req.signal`, or a streamed response, has the socket read while it waits (up to 64 KiB past what
+  it took), which costs more.
+- `server.shutdown()` waits for an open stream as for any request, as Node's `close()` does, and
+  aborts `req.signal`: a source that never ends should listen to it.
 - A `Request` is valid until its handler settles: what the handler read stays readable, but
   reading something new afterwards (in a streamed body or a spawned task) stops the program
   with a clear error. Read what outlives the handler first (`const url = req.url`).

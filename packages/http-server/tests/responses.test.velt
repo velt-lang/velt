@@ -8,10 +8,13 @@ import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import "velt/test/http";
 
 // What the server answers `raw`, sent on a connection of its own, as one string.
-async function exchange(port: number, raw: string): Promise<string> {
+async function exchange(port: number, raw: string, halfClose: bool = true): Promise<string> {
   const c = await connect(`127.0.0.1:${port}`);
   await c.write(raw);
-  c.shutdown();
+  // A handler that waits has a client gone once its input ends, as in Node.
+  if (halfClose) {
+    c.shutdown();
+  }
   let all = "";
   while (true) {
     const chunk = await c.readString();
@@ -83,6 +86,7 @@ describe("a response without a body", () => {
       port,
       // The handler fetches `/none` from the request's own origin.
       `GET /proxied HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
+      false,
     );
     const head = text.toLowerCase();
     expect(text.split("\r\n")[0]).toBe("HTTP/1.1 204 No Content");

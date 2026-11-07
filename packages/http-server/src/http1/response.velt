@@ -10,20 +10,21 @@
 // bytes are still to be sent, so a fast producer waits for a slow client (backpressure); a
 // client that went away makes it throw and aborts the request's signal (cancellation).
 
-import { BodyStream } from "velt/net/http";
+import { BodyStream, statusText } from "velt/net/http";
 import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { EventStream } from "../event_stream";
 import { lengthValue } from "../fields";
 import { BodySink, HttpStream } from "../http_stream";
 import { HttpResponse } from "../response";
-import { sendBody, SourceHold } from "../source_hold";
+import { SourceHold } from "../source_hold";
 import { lastChunk, oneChunk, pieceLength, writePiece } from "./chunks";
 import { ClientEnd, ClientWatch } from "./client_watch";
 import { FieldBuf } from "./fields_buf";
 import { Head } from "./head";
 import { HeadParts, TYPE_BYTES, TYPE_HTML, TYPE_JSON, TYPE_SSE, TYPE_TEXT } from "./head_parts";
 import { Out } from "./out";
+import { writeStreamBody } from "./stream_body";
 import { writeHead, writeSwitch } from "./write_head";
 
 /// How many bytes of a streamed body may wait to be sent before `write` waits.
@@ -51,12 +52,12 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
   /// A response was started.
   done: bool = false;
   /// The handler's response was cut off (`fail`): the connection closes without its end.
-  private cut: bool = false;
+  cut: bool = false;
   /** A streamed body is being written, chunked (HTTP/1.1) or until the connection closes. */
   streaming: bool = false;
   chunked: bool = false;
   /// The bytes a streamed body of known length still has to send (-1: not such a body).
-  private left: i64 = -1;
+  left: i64 = -1;
   /// The request was `HEAD`: the response has the head a `GET` would get, and no body.
   headOnly: bool = false;
   /// The response has no body (a `HEAD` request, or status 1xx, 204 or 304): what the handler
@@ -75,8 +76,10 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
   /** Writing to the client failed, or its connection did. */
   private gone: bool = false;
   private watch: ClientWatch;
+  /** Where this response's bytes start in `out`. */
+  private outStart: i64 = 0;
   /** The source of a streamed body being written. */
-  private source: SourceHold | null = null;
+  source: SourceHold | null = null;
 
   constructor(conn: TcpStream, stopped: AbortSignal, request: Head, watch: ClientWatch) {
     super();
@@ -147,39 +150,7 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
   }
 
   async sendStream(body: BodyStream, type?: string, length?: number): Promise<void> {
-    // The head goes out with the first chunk: one write less per response. Trailers need
-    // chunks, so a length is only used without them.
-    const t = type ?? "text/html; charset=utf-8";
-    if (length != undefined && length >= 0 && this.trailers.length == 0) {
-      writeHead(this, -1, t, length as i64, true);
-      this.left = this.noBody ? -1 : length as i64;
-    } else {
-      writeHead(this, -1, t, -1);
-    }
-    // A source with nothing to write hears of a client that goes away too.
-    this.watch.want(this);
-    const source = body[Symbol.asyncIterator]();
-    const hold = new SourceHold(source);
-    this.source = hold;
-    try {
-      await sendBody(source, hold, this);
-      if (this.gone) {
-        throw new Error("the client went away");
-      }
-      if (this.left > 0) {
-        throw new Error(`the body ended ${this.left} bytes short of its Content-Length`);
-      }
-      await this.finishStream();
-    } catch (e) {
-      // The client went away, or the source failed: nothing more can be sent, and the
-      // connection closes without the body's end (the client sees it cut off).
-      if (!this.clientGone()) {
-        console.error("request handler failed: the response body failed:", e);
-      }
-      this.streaming = false;
-      this.keepAlive = false;
-      this.cut = this.left >= 0;
-    }
+    await writeStreamBody(this, body, type, length);
   }
 
   async sse(): Promise<EventStream> {
@@ -199,7 +170,7 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
     if (this.gone) {
       this.failed.abort();
     }
-    this.watch.want(this);
+    this.watch.listen();
     return made;
   }
 
@@ -275,9 +246,49 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
     }
   }
 
-  /** See `ClientEnd`: a response written later still goes out. */
-  closedEarly() {
-    this.failed.abort();
+  /**
+   * The client's input ended while this response is pending (`ClientEnd`, Node's rule): what is
+   * written stays written, nothing more is, and the connection ends now. A body cut off in the
+   * middle is answered 400 first, if nothing was.
+   */
+  async closedEarly(cut: bool) {
+    this.connectionFailed();
+    if (this.streaming) {
+      // A head waiting for its first chunk: nothing of this response is out.
+      this.out.length = this.outStart;
+    }
+    try {
+      if (cut && !this.done) {
+        this.keepAlive = false;
+        this.statusCode = 400;
+        this.send(statusText(400));
+      }
+      await this.flush();
+      this.conn.shutdown();
+    } catch (e) {
+      // Already gone.
+    }
+  }
+
+  /** See `ClientEnd`. */
+  stillAnswering(): bool {
+    return !this.done || this.streaming || this.either != null;
+  }
+
+  /** A streamed body began: a client going away must reach its source. */
+  listenForClient() {
+    this.watch.listen();
+  }
+
+  /** See `ClientEnd`. */
+  listens(): bool {
+    return this.streaming || this.either != null;
+  }
+
+  /** See `ClientEnd`. */
+  dropAnswer() {
+    this.out.length = this.outStart;
+    this.done = false;
   }
 
   /** A new request: status 200, no headers. */
@@ -287,6 +298,7 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
       this.either = null;
       this.failed = new AbortController();
     }
+    this.outStart = this.out.length;
     this.headOnly = headOnly;
     this.headLength = -1;
     this.switched = false;
@@ -373,8 +385,8 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
 
   /** One piece of a streamed body (`HttpStream.write`). */
   async piece(data: string | u8[] | Uint8Array) {
-    if (!this.streaming) {
-      throw new Error("the streamed response has ended");
+    if (!this.streaming || this.gone) {
+      throw new Error(this.gone ? "the client went away" : "the streamed response has ended");
     }
     if (this.noBody) {
       return;

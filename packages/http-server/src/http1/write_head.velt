@@ -20,7 +20,7 @@ export function writeHead(
   length: i64,
   streamed: bool = false,
 ) {
-  if (r.done) {
+  if (r.done && !r.clientGone()) {
     throw new Error("the response was already sent");
   }
   r.done = true;

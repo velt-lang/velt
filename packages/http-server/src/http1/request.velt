@@ -30,13 +30,12 @@ export class Http1Request extends HttpRequest {
     this.parser = parser;
     this.conn = conn;
     this.reader = new BodyReader(this.head, parser, conn, idle, requestMs);
-    this.watch = new ClientWatch(conn, parser, this.head);
+    this.watch = new ClientWatch(conn, parser, this.head, this.reader);
   }
 
   /// A new request's head was parsed into `head`.
   begin(now: i64) {
     this.reader.begin(now);
-    this.watch.begin();
   }
 
   get keepAlive(): bool {
@@ -118,24 +117,26 @@ export class Http1Request extends HttpRequest {
 
   async read(): Promise<u8[] | null, IoError | RangeError> {
     try {
+      await this.watch.bodyRead();
       const piece = await this.reader.read();
       if (this.reader.ended) {
         this.watch.bodyEnded();
       }
       return piece;
     } catch (e) {
-      this.bodyFailed(e);
+      await this.bodyFailed(e);
       throw e;
     }
   }
 
   async body(): Promise<u8[], IoError | BodyTooLarge | RangeError> {
     try {
+      await this.watch.bodyRead();
       const all = await this.reader.all();
       this.watch.bodyEnded();
       return all;
     } catch (e) {
-      this.bodyFailed(e);
+      await this.bodyFailed(e);
       throw e;
     }
   }
@@ -170,9 +171,9 @@ export class Http1Request extends HttpRequest {
   }
 
   /// A body cut off by the client tells the response, as `ClientWatch` would.
-  private bodyFailed(e: IoError | BodyTooLarge | RangeError) {
+  private async bodyFailed(e: IoError | BodyTooLarge | RangeError) {
     if (e instanceof IoError && e.code == "ECONNRESET") {
-      this.watch.clientLeft();
+      await this.watch.cutOff();
     }
   }
 

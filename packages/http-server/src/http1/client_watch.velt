@@ -1,89 +1,176 @@
-// http-server (internal): `ClientWatch`, how an HTTP/1.1 connection notices a client that went
-// away while nothing is being written to it: a promise on the connection's task reads the socket
-// while a request is being answered. Only a request that needs to know pays for it (one that
-// asked for its signal, or a streamed response); the others never start it.
+// http-server (internal): `ClientWatch`, how an HTTP/1.1 connection notices a client that goes
+// away while its request is answered. A handler that asked for its signal, or a streamed response,
+// has a promise on the connection's task reading the socket while it waits, as Node's server always
+// does. Any other handler pays one look at the socket when it first waits and, if it took time,
+// another before its answer goes out: what it answers then is dropped if the client's input ended,
+// so what the client sees is the same, only the connection ends with the handler. One that answers
+// before it waits starts nothing.
 //
-// What a read can tell: an error means the connection is gone. The end of the stream means the
-// client sent all it will send, which is what a client that closed and one that only shut its
-// sending side and goes on reading both look like (a write tells them apart). So it ends a
-// request only when the client can't be waiting for an answer that way: before the response
-// began, on a keep-alive request with nothing pipelined behind it, and then only the request's
-// signal. What the client pipelined is read into the parser, where the connection finds it.
+// Node's rule (`httpAllowHalfOpen` off): the end of the client's input while a response is pending
+// is the client gone, on any request. What was written stays written, nothing more is, and the
+// connection ends at once. A client that sends a request and shuts its sending side gets an answer
+// only if the handler made it before waiting. Input behind the request stays in the parser, where
+// the connection finds it. A request with an `Upgrade` header isn't watched: the handler may take
+// the connection, with what came after the head.
 
 import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
+import { BodyReader } from "./body_reader";
 import { BODY_CHUNKED, BODY_LENGTH, Head } from "./head";
 import { Parser } from "./parser";
 
-/// The most of the next requests read ahead; past it, only writes tell.
+/// The most read ahead of the handler (the rest of a body, the next requests); past it, only
+/// writes tell.
 const READ_AHEAD: i64 = 65536;
+
+/// The milliseconds after which a handler that waited unwatched has its answer checked.
+const TOOK_TIME: i64 = 5;
 
 /// What a watch reports to: the response of the request being answered.
 export interface ClientEnd {
   /// The connection failed.
   connectionFailed(): void;
-  /// The client closed, or shut its sending side, while the request has no response yet.
-  closedEarly(): void;
-  /// A response was started.
-  sent(): bool;
+  /// The client's input ended; `cut`: in the middle of the request's body.
+  closedEarly(cut: bool): Promise<void>;
+  /// Whether a handler that waits has something to lose: a response not done, or a signal.
+  stillAnswering(): bool;
+  /// Whether it must hear at once: a streamed response, or a signal.
+  listens(): bool;
+  /// Takes back the answer the handler made: it comes too late.
+  dropAnswer(): void;
 }
 
-/// The watch of one connection, started at most once per request.
+/// The watch of one connection, started at most once per wait of a request.
 export class ClientWatch {
   private conn: TcpStream;
   private parser: Parser;
   private head: Head;
-  /// Who hears what it finds, while the request wants it (held no longer, or the two would keep
-  /// each other alive past the connection).
+  private body: BodyReader;
+  /// The response being answered; held only until then, or the two would keep each other alive
+  /// past the connection.
   private target: ClientEnd | null = null;
-  /// The request wants it, and its body is not on the socket any more.
-  private wanted: bool = false;
-  /// The request is answered: the connection has the socket again.
-  private closed: bool = true;
-  private bodyDone: bool = false;
+  /// The handler reads the body from the socket: the socket is its until the body's end.
+  private bodyBusy: bool = false;
+  /// The handler waited once.
+  private waited: bool = false;
+  /// One look at the socket is due before the answer goes out.
+  private lookAgain: bool = false;
+  /// The client's input ended, or its connection failed: nothing more to watch for.
+  private over: bool = false;
   private stopper: AbortController | null = null;
   private running: Promise<void> | null = null;
 
-  constructor(conn: TcpStream, parser: Parser, head: Head) {
+  constructor(conn: TcpStream, parser: Parser, head: Head, body: BodyReader) {
     this.conn = conn;
     this.parser = parser;
     this.head = head;
+    this.body = body;
   }
 
   /// A new request.
-  begin() {
-    this.wanted = false;
-    this.bodyDone = false;
-    this.closed = false;
+  begin(target: ClientEnd) {
+    this.target = target;
+    this.bodyBusy = false;
+    this.waited = false;
+    this.lookAgain = false;
   }
 
-  /// Watches from now on, or from the end of a body still being read from the socket: the
-  /// body's reader has the socket until then.
-  want(target: ClientEnd) {
-    this.wanted = true;
-    this.target = target;
-    this.start();
+  /// The handler ran up to its first wait, or to its end.
+  handlerWaits() {
+    const t = this.target;
+    if (t == null || !t.stillAnswering()) {
+      return;
+    }
+    this.waited = true;
+    if (t.listens()) {
+      this.start();
+      return;
+    }
+    this.lookAgain = true;
+    if (this.parser.available() > 0) {
+      return;
+    }
+    try {
+      // Input that ended with the request: only real waiting (`run`) loses the answer.
+      if (this.parser.readFrom(this.conn) == null) {
+        this.start();
+      }
+    } catch (e) {
+      this.over = true;
+      t.connectionFailed();
+    }
+  }
+
+  /// The handler asked for its signal, or started a streamed response: from its next wait on.
+  listen() {
+    if (this.waited) {
+      this.start();
+    }
+  }
+
+  /// Whether `lookBack` has something to do, for a handler that began at `now`: one that took
+  /// less than `TOOK_TIME` answers before the client's input could be seen to end.
+  lookDue(now: i64): bool {
+    return this.lookAgain && !this.over && (Date.now() as i64) >= now + TOOK_TIME;
+  }
+
+  /// The handler took time, unwatched: if the client's input ended meanwhile, its answer goes
+  /// nowhere.
+  async lookBack() {
+    const t = this.target;
+    const p = this.parser;
+    if (t == null || this.bodyBusy || this.head.find("upgrade") >= 0) {
+      return;
+    }
+    try {
+      while (p.available() < READ_AHEAD) {
+        const n = p.readFrom(this.conn);
+        if (n == null) {
+          this.over = true;
+          t.dropAnswer();
+          await t.closedEarly(!this.body.arrived());
+          return;
+        }
+        if (n == 0) {
+          return;
+        }
+      }
+    } catch (e) {
+      this.over = true;
+      t.connectionFailed();
+    }
+  }
+
+  /// The handler is about to read the body from the socket.
+  async bodyRead() {
+    const mode = this.head.bodyMode;
+    if (mode == BODY_LENGTH || mode == BODY_CHUNKED) {
+      this.bodyBusy = true;
+      if (this.running != null) {
+        await this.stop();
+      }
+    }
   }
 
   /// The request's body was read to its end.
   bodyEnded() {
-    this.bodyDone = true;
-    if (this.wanted) {
+    this.bodyBusy = false;
+    if (this.waited) {
       this.start();
     }
   }
 
   /// The client ended the request's body early.
-  clientLeft() {
+  async cutOff() {
     const t = this.target;
-    if (t != null) {
-      t.closedEarly();
+    if (t != null && !this.over) {
+      this.over = true;
+      await t.closedEarly(true);
     }
   }
 
   /// The handler is done: from here on nothing starts a watch.
   close() {
-    this.closed = true;
     this.target = null;
   }
 
@@ -108,13 +195,11 @@ export class ClientWatch {
 
   private start() {
     const t = this.target;
-    const mode = this.head.bodyMode;
     if (
       t == null ||
-      this.closed ||
+      this.over ||
+      this.bodyBusy ||
       this.running != null ||
-      ((mode == BODY_LENGTH || mode == BODY_CHUNKED) && !this.bodyDone) ||
-      // The handler may take the connection, with what came after the head (`upgrade`).
       this.head.find("upgrade") >= 0
     ) {
       return;
@@ -130,8 +215,16 @@ export class ClientWatch {
       while (!stop.aborted && p.available() < READ_AHEAD) {
         const n = p.readFrom(this.conn);
         if (n == null) {
-          if (!target.sent() && this.head.keepAlive && !p.pending()) {
-            target.closedEarly();
+          // In Node the end of the input is an event of its own, after the promises that were
+          // ready: what the handler does without really waiting comes first.
+          await new Promise<void>((resolve) => {
+            setImmediate(() => {
+              resolve();
+            });
+          });
+          if (target.stillAnswering()) {
+            this.over = true;
+            await target.closedEarly(!this.body.arrived());
           }
           return;
         }
@@ -140,6 +233,7 @@ export class ClientWatch {
         }
       }
     } catch (e) {
+      this.over = true;
       target.connectionFailed();
     }
   }
