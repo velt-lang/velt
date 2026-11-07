@@ -12,7 +12,7 @@
 //! and shared for the statement, so a closure the callee runs cannot free it. A module `let`'s
 //! slot is such a cell too: every function reaches it, so the callee may replace its value.
 
-use velt_sema::hir::{self, TyId, TyKind};
+use velt_sema::hir::{self, PassMode, TyId, TyKind};
 
 use super::boxing::ShareKind;
 use super::call::Stabilize;
@@ -62,7 +62,7 @@ impl FnLower<'_, '_> {
         if by_value
             || !(self.through_counted(a, ty)
                 || self.in_shared_cell(a)
-                || reach.sibling && is_part(a))
+                || (reach.sibling || reach.moved) && is_part(a))
         {
             return self.borrowed_arg(a);
         }
@@ -83,7 +83,8 @@ impl FnLower<'_, '_> {
         // (replaceable.rs), and one read beside its possible container by a callee that writes
         // through that param, which may replace any object on the way to it, `x` in `g(a, x.s)` too.
         // The callee may read its parameter after that. JavaScript's callee keeps what it was passed.
-        if reach.sibling && is_part(a) && !self.stays_put(a)
+        if reach.moved && is_part(a)
+            || reach.sibling && is_part(a) && !self.stays_put(a)
             || self.in_array_buffer(a)
             || self.in_module_slot(a)
             || self.may_replace(a, reach)
@@ -106,7 +107,7 @@ impl FnLower<'_, '_> {
                 if !share {
                     return self.borrowed_arg(a);
                 }
-                if !reach.sibling && later.iter().all(|x| self.runs_no_code(x)) {
+                if !reach.sibling && !reach.moved && later.iter().all(|x| self.runs_no_code(x)) {
                     if let Some(v) = self.unique_array_elem(a, ty) {
                         return v;
                     }
@@ -398,6 +399,9 @@ pub(super) struct ArgReach {
     /// Another argument may hold the container of this one, and the callee may write through
     /// that param: `f(r, r.s)` with `(q, v) => { q.s = "x"; return v; }`.
     pub(super) sibling: bool,
+    /// Another argument may hand the callee what this one is a part of, and the callee drops it
+    /// when it likes: `take(o, o.name)`. No field needs writing for the part to go.
+    pub(super) moved: bool,
 }
 
 /// Is `e` a part of a place, not the place itself?
@@ -467,11 +471,14 @@ impl FnLower<'_, '_> {
 
 impl FnLower<'_, '_> {
     /// What argument `i` of a direct call may have changed under it (stabilize.rs): `changed`
-    /// says which params the callee modifies though they are `Borrow` (call_def).
+    /// says which params the callee modifies though they are `Borrow` (call_def), `modes` how each
+    /// argument is passed. A param passed `BorrowMut` counts when the callee writes a field on the
+    /// way to argument `i`: `appendJsonString(out, x.name)` writes `out.buf`, which isn't.
     pub(super) fn arg_reach(
         &mut self,
         how: Stabilize,
         args: &[hir::Expr],
+        modes: &[PassMode],
         i: usize,
         changed: u64,
     ) -> ArgReach {
@@ -481,12 +488,57 @@ impl FnLower<'_, '_> {
         };
         let others = changed | reach;
         let others = if i < 64 { others & !(1 << i) } else { others };
+        let callee = match how {
+            Stabilize::Direct(d) => Some(d),
+            _ => None,
+        };
+        if !is_part(&args[i]) {
+            return ArgReach {
+                callee,
+                ..ArgReach::default()
+            };
+        }
+        let moved = self.beside(args, modes, i, PassMode::Owned);
+        let sibling = match others != 0 {
+            true => self.sibling_container(args, i),
+            false => {
+                self.beside(args, modes, i, PassMode::BorrowMut)
+                    && self.callee_writes_path(&args[i], callee)
+            }
+        };
         ArgReach {
-            callee: match how {
-                Stabilize::Direct(d) => Some(d),
-                _ => None,
-            },
-            sibling: others != 0 && self.sibling_container(args, i),
+            callee,
+            sibling,
+            moved,
+        }
+    }
+
+    /// Is an argument other than `args[i]` passed as `mode`, and may it hold what `args[i]` is a
+    /// part of?
+    fn beside(&mut self, args: &[hir::Expr], modes: &[PassMode], i: usize, mode: PassMode) -> bool {
+        modes.iter().enumerate().any(|(j, m)| *m == mode && j != i)
+            && self.holder_beside(args, i, |j| modes[j] == mode)
+    }
+
+    /// Can a call of `callee` write a field on the way to the place `e`? An element counts always:
+    /// what changes an array in place (`const ys = q.xs; ys.length = 0`) names no field.
+    fn callee_writes_path(
+        &mut self,
+        e: &hir::Expr,
+        callee: Option<super::replaceable::CalleeId>,
+    ) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Field { base, index, .. } => {
+                let bty = self.sub(base.ty);
+                self.cx.callee_may_write(callee, bty, *index)
+                    || self.callee_writes_path(base, callee)
+            }
+            K::Index { .. } => true,
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.callee_writes_path(base, callee)
+            }
+            _ => false,
         }
     }
 
@@ -496,6 +548,16 @@ impl FnLower<'_, '_> {
     /// params' insides then replaces what this argument points at. Told apart by type
     /// ([`can_hold`](Self::can_hold)).
     pub(super) fn sibling_container(&mut self, args: &[hir::Expr], i: usize) -> bool {
+        self.holder_beside(args, i, |_| true)
+    }
+
+    /// [`sibling_container`](Self::sibling_container), of the arguments `which` picks.
+    fn holder_beside(
+        &mut self,
+        args: &[hir::Expr],
+        i: usize,
+        which: impl Fn(usize) -> bool,
+    ) -> bool {
         use hir::ExprKind as K;
         let mut bases = vec![];
         let mut e = &args[i];
@@ -513,7 +575,7 @@ impl FnLower<'_, '_> {
         }
         (args.iter().enumerate()).any(|(j, o)| {
             let ty = self.sub(o.ty);
-            j != i && self.can_hold(ty, &bases, &mut Vec::new())
+            j != i && which(j) && self.can_hold(ty, &bases, &mut Vec::new())
         })
     }
 
