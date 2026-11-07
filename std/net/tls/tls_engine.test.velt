@@ -7,11 +7,12 @@ import { x25519PublicKey } from "velt/crypto/x25519";
 import { hexDecode, hexEncode } from "velt/encoding/hex";
 import { IoError } from "velt/io/error";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
-import { ByteStream } from "velt/net/byte_stream";
+import { TryStream } from "velt/net/byte_stream";
 import { RecordCipher } from "velt/net/tls/record_cipher";
 import { startTls } from "velt/net/tls/start_tls";
 import { TlsEngine } from "velt/net/tls/tls_engine";
 import { TlsStream } from "velt/net/tls/tls_stream";
+import { Channel, channel } from "velt/sync";
 import { describe, expect, it } from "velt/test";
 
 // 32 bytes.
@@ -104,9 +105,17 @@ const RETRY_CHS = "813a6ba81f995ebc6206e8d56b107c16037ecbe485e86ca87356de88d1966
 const RETRY_SHS = "2ddcf4b38d30f6e8399055eb7739ad55aa16c5954059c308f1c381e8aba273f4";
 
 // A transport that plays back `input` and records what is written.
-class Playback implements ByteStream {
+class Playback implements TryStream {
   private input: u8[];
   private pos: usize;
+  /** How much of `input` has arrived, for what doesn't wait. */
+  arrived: usize;
+  /** A read waits for a message here first, if set. */
+  gate: Channel<i64> | null;
+  /** Whether it can read and write without waiting. */
+  direct: bool;
+  /** How many bytes `tryWrite` takes. */
+  takes: usize;
   /** The most one read hands back. */
   chunk: usize;
   written: u8[];
@@ -119,6 +128,10 @@ class Playback implements ByteStream {
   constructor(input: u8[]) {
     this.input = input;
     this.pos = 0;
+    this.arrived = input.length;
+    this.gate = null;
+    this.direct = true;
+    this.takes = 1000000;
     this.chunk = 1000000;
     this.written = [];
     this.closed = false;
@@ -128,10 +141,14 @@ class Playback implements ByteStream {
   }
 
   async readInto(buf: Uint8Array): Promise<number | null> {
+    const gate = this.gate;
+    if (gate != null) {
+      await gate.receive();
+    }
     if (this.pos == this.input.length) {
       return null;
     }
-    let n = this.input.length - this.pos;
+    let n = (this.arrived > this.pos ? this.arrived : this.input.length) - this.pos;
     if (n > buf.len) {
       n = buf.len;
     }
@@ -168,6 +185,46 @@ class Playback implements ByteStream {
 
   async halfClose(): Promise<void> {
     this.shutdowns++;
+  }
+
+  tryStream(): TryStream | null {
+    return this.direct ? this : null;
+  }
+
+  tryRead(buf: u8[] | Uint8Array, start: number, end?: number): number | null {
+    if (this.pos == this.input.length) {
+      return null;
+    }
+    if (buf instanceof Uint8Array) {
+      throw new Error("a test reads into arrays");
+    }
+    const to = end ?? (buf.length as number);
+    const here = this.arrived < this.input.length ? this.arrived : this.input.length;
+    let n = here > this.pos ? here - this.pos : 0;
+    const room = (to - start) as usize;
+    n = n < room ? n : room;
+    for (let i: usize = 0; i < n; i++) {
+      buf[(start as usize) + i] = this.input[this.pos + i];
+    }
+    this.pos += n;
+    return n as number;
+  }
+
+  tryWrite(data: u8[] | Uint8Array, start: number, end?: number): i64 {
+    if (data instanceof Uint8Array) {
+      throw new Error("a test writes arrays");
+    }
+    const to = end ?? (data.length as number);
+    let n = (to - start) as usize;
+    n = n < this.takes ? n : this.takes;
+    for (let i: usize = 0; i < n; i++) {
+      this.written.push(data[(start as usize) + i]);
+    }
+    return n as i64;
+  }
+
+  writeBytesLater(data: u8[] | Uint8Array, start: number, end?: number): i64 {
+    return this.tryWrite(data, start, end);
   }
 }
 
@@ -549,6 +606,199 @@ describe("failures, shutdown and reads", () => {
     // Each opens at the next sequence number: a repeat would fail its tag.
     expect(sent).toBe("6117" + "6217" + "6317");
     expect(c.seq).toBe(3);
+  });
+});
+
+describe("reads and writes that don't wait", () => {
+  // The stream after the handshake, with `after` following in `t`, none of it arrived yet.
+  async function ready(after: string): Promise<[Playback, TlsStream]> {
+    const t = new Playback(hexDecode(flight() + after));
+    t.arrived = hexDecode(flight()).length;
+    const s = new TlsStream(await handshaken(t));
+    return [t, s];
+  }
+
+  it("finds nothing until a record is whole, then its bytes", async () => {
+    const data = sealedAfter(SERVER_AP_SECRET, 1, [1, 2, 3, 23]);
+    const [t, s] = await ready(data);
+    const buf: u8[] = Buffer.alloc(16);
+    expect(s.tryRead(buf)).toBe(0);
+    expect(s.hasBuffered()).toBe(false);
+    t.arrived += 6;
+    expect(s.tryRead(buf)).toBe(0);
+    expect(s.hasBuffered()).toBe(false);
+    t.arrived = 1000000;
+    expect(s.tryRead(buf, 4, 16)).toBe(3);
+    expect(hexEncode(buf.slice(4, 7))).toBe("010203");
+    expect(s.hasBuffered()).toBe(false);
+  });
+
+  it("says what is held back from a short read, and a second record read with the first", async () => {
+    const c = new RecordCipher(0x1301, hexDecode(SERVER_AP_SECRET));
+    seal(c, [0]);
+    const [t, s] = await ready(seal(c, [1, 2, 3, 23]) + seal(c, [4, 5, 23]));
+    t.arrived = 1000000;
+    const one: u8[] = Buffer.alloc(1);
+    expect(s.tryRead(one)).toBe(1);
+    expect(s.hasBuffered()).toBe(true);
+    const two: u8[] = Buffer.alloc(2);
+    expect(s.tryRead(two)).toBe(2);
+    expect(hexEncode(two)).toBe("0203");
+    expect(s.hasBuffered()).toBe(true);
+    expect(s.tryRead(two)).toBe(2);
+    expect(hexEncode(two)).toBe("0405");
+    expect(s.hasBuffered()).toBe(false);
+  });
+
+  it("reads close_notify as the end, and a cut without it as a failure", async () => {
+    const [t, s] = await ready(sealedAfter(SERVER_AP_SECRET, 1, [1, 0, 21]));
+    t.arrived = 1000000;
+    const buf: u8[] = Buffer.alloc(8);
+    expect(s.tryRead(buf)).toBe(null);
+    expect(s.hasBuffered()).toBe(true);
+    expect(s.tryRead(buf)).toBe(null);
+    const [u, cut] = await ready("");
+    u.arrived = 1000000;
+    expect(() => cut.tryRead(buf)).toThrow("TLS: the connection closed without close_notify");
+    expect(u.closed).toBe(true);
+    expect(cut.hasBuffered()).toBe(true);
+    expect(() => cut.tryRead(buf)).toThrow("TLS: the connection closed without close_notify");
+  });
+
+  it("sends a refused record's alert if the socket takes it, and keeps the failure", async () => {
+    const [t, s] = await ready("630303000100");
+    t.arrived = 1000000;
+    const buf: u8[] = Buffer.alloc(8);
+    const want = "TLS: an unprotected record of type 99 after encryption started";
+    expect(() => s.tryRead(buf)).toThrow(want);
+    expect(t.closed).toBe(true);
+    const [alert, _] = openAt(
+      new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET)),
+      t.written,
+      259,
+    );
+    expect(alert).toBe("020a15");
+    expect(() => s.writeBytesLater(payload(1))).toThrow(want);
+  });
+
+  it("seals what it queues, in order with a write's records", async () => {
+    const [t, s] = await ready("");
+    expect(s.writeBytesLater(payload(3))).toBe(3 + 22);
+    await s.writeBytes([9]);
+    expect(s.writeBytesLater(payload(2), 1, 2)).toBe(1 + 22);
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    const [a, b] = openAt(c, t.written, 259);
+    expect(a).toBe("00010217");
+    const [d, e] = openAt(c, t.written, b);
+    expect(d).toBe("0917");
+    const [f, g] = openAt(c, t.written, e);
+    expect(f).toBe("0117");
+    expect(g).toBe(t.written.length);
+  });
+
+  it("answers a KeyUpdate that asks for one before the next data, once, and reads on", async () => {
+    const ku = sealedAfter(SERVER_AP_SECRET, 1, [24, 0, 0, 1, 1, 22]);
+    const next = hexEncode(updated(SERVER_AP_SECRET));
+    const [t, s] = await ready(ku + sealedAfter(next, 0, [7, 23]));
+    t.arrived = 1000000;
+    const buf: u8[] = Buffer.alloc(4);
+    expect(s.tryRead(buf)).toBe(1);
+    expect(buf[0]).toBe(7);
+    expect(t.written.length).toBe(259);
+    s.writeBytesLater([1]);
+    s.writeBytesLater([2]);
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    const [update, at] = openAt(c, t.written, 259);
+    expect(update).toBe("180000010016");
+    const n = new RecordCipher(0x1301, updated(CLIENT_AP_SECRET));
+    const [one, then] = openAt(n, t.written, at);
+    expect(one).toBe("0117");
+    expect(openAt(n, t.written, then)[0]).toBe("0217");
+  });
+
+  it("answers a KeyUpdate read here before the data of a write that waits", async () => {
+    const ku = sealedAfter(SERVER_AP_SECRET, 1, [24, 0, 0, 1, 1, 22]);
+    const [t, s] = await ready(ku + "17");
+    t.arrived += hexDecode(ku).length;
+    const buf: u8[] = Buffer.alloc(4);
+    expect(s.tryRead(buf)).toBe(0);
+    await s.writeBytes([1]);
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    const [update, at] = openAt(c, t.written, 259);
+    expect(update).toBe("180000010016");
+    const n = new RecordCipher(0x1301, updated(CLIENT_AP_SECRET));
+    expect(openAt(n, t.written, at)[0]).toBe("0117");
+  });
+
+  it("starts a KeyUpdate at the limit while queueing", async () => {
+    const t = new Playback(hexDecode(flight()));
+    const e = await handshaken(t);
+    e.out.writeLimit = 1;
+    e.out.writeLater(payload(2), 0, 2);
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    const [first, at] = openAt(c, t.written, 259);
+    expect(first).toBe("000117");
+    expect(at).toBe(t.written.length);
+    e.out.writeLater(payload(1), 0, 1);
+    const [update, then] = openAt(c, t.written, at);
+    expect(update).toBe("180000010016");
+    const n = new RecordCipher(0x1301, updated(CLIENT_AP_SECRET));
+    expect(openAt(n, t.written, then)[0]).toBe("0017");
+  });
+
+  it("writes a last message whole, and fails the connection on a short write", async () => {
+    const [t, s] = await ready("");
+    expect(s.tryWrite([1, 2])).toBe(2);
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    expect(openAt(c, t.written, 259)[0]).toBe("010217");
+    t.takes = 3;
+    expect(s.tryWrite([3])).toBe(0);
+    expect(t.closed).toBe(true);
+    expect(() => s.writeBytesLater([4])).toThrow("the socket took part of a record");
+  });
+
+  it("refuses a transport that must wait", async () => {
+    const t = new Playback(hexDecode(flight()));
+    t.direct = false;
+    const s = new TlsStream(await handshaken(t));
+    const buf: u8[] = Buffer.alloc(4);
+    const want = "this transport can't read or write without waiting";
+    expect(() => s.tryRead(buf)).toThrow(want);
+    expect(() => s.writeBytesLater([1])).toThrow(want);
+    expect(() => s.tryWrite([1])).toThrow(want);
+  });
+
+  it("refuses to run during a read that waits, or a write", async () => {
+    const t = new Playback(hexDecode(flight() + sealedAfter(SERVER_AP_SECRET, 1, [1, 23])));
+    t.arrived = hexDecode(flight()).length;
+    const e = await handshaken(t);
+    const s = new TlsStream(e);
+    const buf: u8[] = Buffer.alloc(4);
+    const gate = channel<i64>(1);
+    t.gate = gate;
+    const reading = async (): Promise<string> => {
+      try {
+        await s.read();
+      } catch (e) {
+        return `${e}`;
+      }
+      return "";
+    };
+    const during = async (): Promise<string> => {
+      let message = "";
+      try {
+        s.tryRead(buf);
+      } catch (e) {
+        message = e.message;
+      }
+      gate.trySend(1);
+      return message;
+    };
+    const said = await Promise.all([reading(), during()]);
+    expect(said).toEqual(["", "TLS stream: a read is in progress"]);
+    e.out.turns.busy = true;
+    expect(() => s.writeBytesLater([1])).toThrow("a write is in progress");
+    expect(() => s.tryWrite([1])).toThrow("a write is in progress");
   });
 });
 
