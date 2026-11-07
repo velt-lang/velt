@@ -1,6 +1,7 @@
 // check: no leaks
-// `narrow_write_order` with a struct (#1280): the writes land in the object the field held.
-struct P { x: number; y: number }
+// `narrow_write_order` with an object type held inline (#1280; a struct before #641, whose
+// fields are now readonly): the writes land in the object the field held.
+type P = { x: number; y: number };
 class Box {
   ts: [number, number][] = [[1, 2]];
   p: P = { x: 1, y: 2 };

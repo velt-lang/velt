@@ -1,0 +1,6 @@
+class via interface: 16
+struct via interface: 17
+two structs via interface: 8
+abstract: 8
+concrete subclass: 8
+override: 205

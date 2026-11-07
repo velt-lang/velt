@@ -133,8 +133,9 @@ fn spawned_closures_may_throw() {
         main.throws.is_some(),
         "main awaits `listen`/`connect` directly"
     );
-    // `TcpListener` is an object (semantics stage 2): the escaping task owns its capture.
-    assert_eq!(task.captures[0].mode, PassMode::Owned);
+    // `TcpListener` is a struct of a runtime handle, a Copy value (#641): the task captures a
+    // copy.
+    assert_eq!(task.captures[0].mode, PassMode::Copy);
 }
 
 #[test]

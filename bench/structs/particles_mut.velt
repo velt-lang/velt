@@ -1,17 +1,14 @@
-// A particle update over `Vec2[]` arrays with today's `struct` written in place: the same
-// values as particles_struct.velt, but each position and velocity is updated field by field
-// (`vel[i].y = …`), as a mutable struct allows today and the value-type design forbids.
-struct Vec2 {
-  x: number;
-  y: number;
+// A particle update over `Vec2[]` arrays of a mutable record written in place: the same values
+// as particles_struct.velt, but `Vec2` is an object type and each position and velocity is
+// updated field by field (`v.y = …`), which an immutable `struct` does not allow.
+type Vec2 = { x: number; y: number };
 
-  add(o: Vec2): Vec2 {
-    return { x: this.x + o.x, y: this.y + o.y };
-  }
+function add(a: Vec2, o: Vec2): Vec2 {
+  return { x: a.x + o.x, y: a.y + o.y };
+}
 
-  scale(k: number): Vec2 {
-    return { x: this.x * k, y: this.y * k };
-  }
+function scale(a: Vec2, k: number): Vec2 {
+  return { x: a.x * k, y: a.y * k };
 }
 
 function main() {

@@ -93,7 +93,7 @@ function windowCallIn(
     for (const p of r.w.partition) {
       const pc = c.expr(p, base);
       sp.partition.push(pc.ev);
-      sp.terms.push(OrderTerm { expr: p, desc: false, nulls: 0 });
+      sp.terms.push({ expr: p, desc: false, nulls: 0 });
       sp.sk.push(new SortKey(-1, null, false, 0, pc.coll >= 0 ? pc.coll as u8 : BINARY));
     }
     for (const t of r.w.orderBy) {

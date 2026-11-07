@@ -136,7 +136,7 @@ function fixture(): Fixture {
   }
   const base = readFileBytesSync(path);
   removeSync(path);
-  return Fixture {
+  return {
     base: base,
     s: s,
     t: t,
@@ -144,7 +144,7 @@ function fixture(): Fixture {
     uv: uv,
     roots: [s, t, sv, uv],
     pages: readU32(base, 28),
-  };
+  } as Fixture;
 }
 
 export function test_intact_file_reads() {

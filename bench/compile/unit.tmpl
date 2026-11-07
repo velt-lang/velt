@@ -50,7 +50,7 @@ function f@I@(b: Base@I@, xs: i64[], s: string): i64 {
   for (const x of xs) {
     total += x;
   }
-  const scorers: Scorer[] = [P@I@ { k: @I@ }];
+  const scorers: Scorer[] = [{ k: @I@ } as P@I@];
   for (const sc of scorers) {
     total += sc.score(total);
   }

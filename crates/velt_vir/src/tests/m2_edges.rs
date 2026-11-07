@@ -47,7 +47,7 @@ fn structured_hash_print(kind: &str) -> String {
     };
     let make = |v: &str| match kind {
         "class" => format!("new Box<string>({v})"),
-        _ => format!("Box {{ v: {v} }}"),
+        _ => format!("({{ v: {v} }} as Box<string>)"),
     };
     let src = format!(
         "interface Sized {{\n  size(): i64;\n}}\n\n{kind} Box<T> implements Sized {{\n  v: T;{ctor}\n  \

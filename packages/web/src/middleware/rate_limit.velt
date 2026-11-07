@@ -6,7 +6,7 @@ import { sha256Hex } from "velt/crypto";
 import { Handler, Middleware } from "../types";
 
 /** The options of `rateLimit`. */
-export struct RateLimitOptions {
+export type RateLimitOptions = {
   /** The requests a key may make per window. */
   limit: number;
   /** The window's length, in milliseconds. */
@@ -33,13 +33,10 @@ export struct RateLimitOptions {
    * will: the address, and for an IPv6 address its /64, not the whole address.
    */
   maxKeys?: number;
-}
+};
 
 /** A key's count in its window. */
-struct Window {
-  start: number;
-  count: number;
-}
+type Window = { start: number; count: number };
 
 /** The table, and the time from which a sweep of it can free room. */
 class Counts {

@@ -32,10 +32,10 @@ class Derived extends Base {
   }
 }
 
-struct Vec2 {
+type Vec2 = {
   x: f64;
   y: f64;
-}
+};
 
 function tag(log: Log) {
   log.lines.push("tagged");
@@ -73,7 +73,7 @@ function main() {
   applyAll(log, fs);
   console.log(log.lines.length, log.lines[3]);
 
-  const v = Vec2 { x: 1.0, y: 2.0 };
+  const v: Vec2 = { x: 1.0, y: 2.0 };
   const f: (v: Vec2) => f64 = stretch;
   console.log(f(v), stretch(v), v.x);
 

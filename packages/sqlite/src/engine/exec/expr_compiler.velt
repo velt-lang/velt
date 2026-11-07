@@ -202,7 +202,7 @@ export abstract class ExprCompiler {
       const x = this.expr(e.a!, sc);
       const a = affinityOf(e.name);
       const xe = x.ev;
-      return C { ev: () => castTo(xe(), a), aff: a, coll: x.coll, explicit: x.explicit };
+      return { ev: () => castTo(xe(), a), aff: a, coll: x.coll, explicit: x.explicit };
     }
     if (k == E_COLLATE) {
       const x = this.expr(e.a!, sc);
@@ -210,7 +210,7 @@ export abstract class ExprCompiler {
       if (coll < 0) {
         prepareError(`no such collation sequence: ${e.name}`);
       }
-      return C { ev: x.ev, aff: x.aff, coll: coll, explicit: true };
+      return { ev: x.ev, aff: x.aff, coll: coll, explicit: true };
     }
     if (k == E_LIKE) {
       if (e.op == "REGEXP" || e.op == "MATCH") {
@@ -311,7 +311,7 @@ export abstract class ExprCompiler {
     const x = this.expr(e, sc.winBase!);
     w.captures.push(x.ev);
     const k: usize = w.captures.length - 1;
-    return C { ev: () => w.capture(k), aff: x.aff, coll: x.coll, explicit: x.explicit };
+    return { ev: () => w.capture(k), aff: x.aff, coll: x.coll, explicit: x.explicit };
   }
 
   call(e: Expr, sc: Scope): C {

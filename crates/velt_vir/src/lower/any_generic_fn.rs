@@ -40,7 +40,7 @@ impl FnLower<'_, '_> {
         self.branch(is_fn, check, no);
         self.switch_to(check);
         let word = |lw: &mut Self, slot: i128, t: Ty| {
-            let off = cint(8 * (slot + 7), Ty::U64);
+            let off = cint(8 * (slot + super::glue::vtable::HIDDEN), Ty::U64);
             let at = lw.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, desc.clone(), off));
             let pp = lw.operand_place(at, Ty::Ptr);
             Place {

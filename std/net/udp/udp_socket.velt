@@ -53,5 +53,5 @@ export struct UdpSocket {
 /** Binds a UDP socket to "host:port" (port 0 picks a free port; read it from `.port`). */
 export async function bindUdp(addr: string): Promise<UdpSocket> {
   const handle = unwrapIo(await velt_rt_udp_bind(addr));
-  return UdpSocket { port: velt_rt_udp_port(handle), handle: handle };
+  return { port: velt_rt_udp_port(handle), handle: handle };
 }

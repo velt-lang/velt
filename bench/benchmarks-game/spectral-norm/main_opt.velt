@@ -17,23 +17,23 @@ struct F64x2 {
   b: f64;
 
   add(o: F64x2): F64x2 {
-    return F64x2 { a: this.a + o.a, b: this.b + o.b };
+    return { a: this.a + o.a, b: this.b + o.b };
   }
 
   div(o: F64x2): F64x2 {
-    return F64x2 { a: this.a / o.a, b: this.b / o.b };
+    return { a: this.a / o.a, b: this.b / o.b };
   }
 }
 
 // v = A * u, two rows at a time with two partial sums per row (the Rust program's shape).
 function multiplyAv(n: i64, u: f64[], v: f64[]) {
   for (let i = 0; i < n; i += 2) {
-    let s0 = F64x2 { a: 0.0, b: 0.0 };
-    let s1 = F64x2 { a: 0.0, b: 0.0 };
+    let s0: F64x2 = { a: 0.0, b: 0.0 };
+    let s1: F64x2 = { a: 0.0, b: 0.0 };
     for (let j = 0; j < n; j += 2) {
-      const x = F64x2 { a: u[j], b: u[j + 1] };
-      s0 = s0.add(x.div(F64x2 { a: a(i, j), b: a(i, j + 1) }));
-      s1 = s1.add(x.div(F64x2 { a: a(i + 1, j), b: a(i + 1, j + 1) }));
+      const x: F64x2 = { a: u[j], b: u[j + 1] };
+      s0 = s0.add(x.div({ a: a(i, j), b: a(i, j + 1) }));
+      s1 = s1.add(x.div({ a: a(i + 1, j), b: a(i + 1, j + 1) }));
     }
     v[i] = s0.a + s0.b;
     v[i + 1] = s1.a + s1.b;
@@ -42,12 +42,12 @@ function multiplyAv(n: i64, u: f64[], v: f64[]) {
 
 function multiplyAtv(n: i64, u: f64[], v: f64[]) {
   for (let i = 0; i < n; i += 2) {
-    let s0 = F64x2 { a: 0.0, b: 0.0 };
-    let s1 = F64x2 { a: 0.0, b: 0.0 };
+    let s0: F64x2 = { a: 0.0, b: 0.0 };
+    let s1: F64x2 = { a: 0.0, b: 0.0 };
     for (let j = 0; j < n; j += 2) {
-      const x = F64x2 { a: u[j], b: u[j + 1] };
-      s0 = s0.add(x.div(F64x2 { a: a(j, i), b: a(j + 1, i) }));
-      s1 = s1.add(x.div(F64x2 { a: a(j, i + 1), b: a(j + 1, i + 1) }));
+      const x: F64x2 = { a: u[j], b: u[j + 1] };
+      s0 = s0.add(x.div({ a: a(j, i), b: a(j + 1, i) }));
+      s1 = s1.add(x.div({ a: a(j, i + 1), b: a(j + 1, i + 1) }));
     }
     v[i] = s0.a + s0.b;
     v[i + 1] = s1.a + s1.b;

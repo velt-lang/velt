@@ -1,0 +1,13 @@
+started without await: 7
+generator: 1
+generator: 2
+function value 9
+spawned closure 7
+spawned block closure 8
+{"id":1,"n":2}
+[{"id":3,"n":4}]
+generic: 11
+generic twice: 1 2
+fields: 5.5
+bytes: 10 7 -1
+generic calling generic: 1

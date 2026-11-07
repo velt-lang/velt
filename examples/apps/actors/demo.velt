@@ -5,6 +5,7 @@ import {
   ActorStorage,
   ActorType,
   HostConfig,
+  HostOptions,
   MemoryStorage,
   defaultHostOptions,
   startHost,
@@ -32,9 +33,7 @@ async function post(port: number, route: string, body: string) {
 }
 
 async function main() {
-  const opts = defaultHostOptions();
-  opts.shards = 4;
-  opts.sweepIntervalMs = 0;
+  const opts: HostOptions = { ...defaultHostOptions(), shards: 4, sweepIntervalMs: 0 };
   const host = startHost<DemoConfig>(opts, 4, {});
   const server = await serveActors(host.router, 0, "127.0.0.1");
   const port = server.port;

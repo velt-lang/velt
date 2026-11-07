@@ -18,7 +18,7 @@ fn print_objects_and_arrays() {
                const ints: i64[] = [1, 2, 3];\n  console.log(ints);\n  const none: i64[] = [];\n  \
                console.log(none, [\"a\", \"b\"]);\n  const nested: i64[][] = [[1], []];\n  \
                console.log(nested);\n  const n: i64 = 7;\n  \
-               console.log(Point { x: 1.5, name: \"p\" }, { n: n });\n  const no: string | null = null;\n  \
+               console.log(({ x: 1.5, name: \"p\" } as Point), { n: n });\n  const no: string | null = null;\n  \
                const yes: string | null = \"x\";\n  console.log(no, yes);\n}\n";
     let out = run_src(src);
     assert_eq!(

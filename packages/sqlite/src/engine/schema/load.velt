@@ -43,13 +43,14 @@ export function loadSchema(db: DbFile): Schema {
   const c = new Cursor(db, 1);
   let more = c.first();
   while (more) {
-    const row = SchemaRow {
-      type: c.text(0),
-      name: c.text(1),
-      tableName: c.text(2),
-      root: c.int(3) as u32,
-      sql: c.text(4),
-    };
+    const row =
+      ({
+        type: c.text(0),
+        name: c.text(1),
+        tableName: c.text(2),
+        root: c.int(3) as u32,
+        sql: c.text(4),
+      } as SchemaRow);
     schema.rows.push(row);
     if (row.type == "table") {
       schema.tables.push(table(row));

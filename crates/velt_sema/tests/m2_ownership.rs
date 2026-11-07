@@ -115,25 +115,25 @@ fn class_fields_are_shared() {
 fn struct_fields_move_separately() {
     ok_src(
         "struct P { a: i64[]; b: i64[]; }
-         function main() { const p = P { a: [1], b: [2] }; const a = p.a; const b = p.b; console.log(a, b); }",
+         function main() { const p = ({ a: [1], b: [2] } as P); const a = p.a; const b = p.b; console.log(a, b); }",
     );
     for src in [
         "struct P { a: i64[]; b: i64[]; }
-         function main() { const p = P { a: [1], b: [2] }; const a = p.a; console.log(p.a, a); }",
+         function main() { const p = ({ a: [1], b: [2] } as P); const a = p.a; console.log(p.a, a); }",
         "struct P { a: i64[]; b: i64[]; }
-         function main() { const p = P { a: [1], b: [2] }; const a = p.a; console.log(p, a); }",
+         function main() { const p = ({ a: [1], b: [2] } as P); const a = p.a; console.log(p, a); }",
     ] {
         assert_eq!(shares(func(&ok_src(src), "main")), 1);
     }
     ok_src(
         "struct P { a: string; b: string; }
-         function main() { const p = P { a: \"x\", b: \"y\" }; const a = p.a; console.log(p, p.a, a); }",
+         function main() { const p = ({ a: \"x\", b: \"y\" } as P); const a = p.a; console.log(p, p.a, a); }",
     );
 }
 
 #[test]
 fn copy_structs_copy_and_classes_move() {
-    ok_src("struct P { x: f64; } function main() { const p = P { x: 1.0 }; const q = p; console.log(p.x, q.x); }");
+    ok_src("struct P { x: f64; } function main() { const p = ({ x: 1.0 } as P); const q = p; console.log(p.x, q.x); }");
     let p = ok_src("class C { x: f64 = 1.0; } function main() { const p = new C(); const q = p; console.log(p.x, q.x); }");
     assert_eq!(shares(func(&p, "main")), 1);
 }
@@ -305,7 +305,7 @@ fn global_constants_taken_over_are_module_state() {
     // Node evaluates a module constant once: one whose value is taken over is kept in the
     // module state (#1383), and the move shares it. Only reading it keeps it a constant.
     let slots = |src: &str| ok_src(src).module_state.map_or(0, |m| m.slots.len());
-    let decl = "struct P { s: string; } const K: P = P { s: \"k\" };";
+    let decl = "struct P { s: string; } const K: P = ({ s: \"k\" } as P);";
     assert_eq!(
         slots(&format!(
             "{decl} function main() {{ const p = K; console.log(p.s); }}"
@@ -358,6 +358,6 @@ fn object_types_are_not_copy() {
     assert_eq!(shares(func(&p, "main")), 1);
     ok_src(
         "struct S { x: i64; }
-         function main() { const a = S { x: 1 }; const b = a; console.log(a.x, b.x); }",
+         function main() { const a = ({ x: 1 } as S); const b = a; console.log(a.x, b.x); }",
     );
 }

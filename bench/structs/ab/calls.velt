@@ -1,0 +1,26 @@
+// Calls that are never inlined (recursion, not a tail call) passing and returning `Vec2`
+// values: the calling convention of small structs.
+struct Vec2 {
+  x: f64;
+  y: f64;
+}
+
+// Recursive and not a tail call: every call passes and returns a `Vec2`.
+function walk(p: Vec2, d: Vec2, n: i64): Vec2 {
+  if (n == 0) {
+    return p;
+  }
+  const q: Vec2 = { x: p.x + d.x * 0.5, y: p.y - d.y * 0.25 };
+  const e: Vec2 = { x: d.y, y: -d.x };
+  const r = walk(q, e, n - 1);
+  return { x: r.x * 0.999, y: r.y + 1.0 };
+}
+
+function main() {
+  let acc: Vec2 = { x: 0, y: 0 };
+  for (let i: i64 = 0; i < 20000; i++) {
+    const r = walk({ x: i as f64, y: 1 }, { x: 0.5, y: 0.25 }, 500);
+    acc = { x: acc.x + r.x, y: acc.y + r.y };
+  }
+  console.log(acc.x.toFixed(3), acc.y.toFixed(3));
+}

@@ -15,7 +15,18 @@
 //!     - `Owned`: pointer to a caller-made bitwise copy in a caller stack temporary. Ownership moves
 //!       to the callee, which drops it through the pointer at its scope exit (unless moved on); the
 //!       caller never touches that temporary again.
-//!     - `Copy` (M2 Copy structs): pointer to a caller-made copy; nobody drops it.
+//!     - `Copy` (Copy structs and tuples): pointer to a caller-made copy; nobody drops it. An
+//!       argument that nothing can change while the function runs (a variable never assigned,
+//!       closures and nested functions included, that is not a cell or an alias of an element,
+//!       or such a `Copy` param) is passed by its own address instead (lower/call.rs). The callee
+//!       never writes through a `Copy` param's pointer (one it assigns is copied on entry), so
+//!       the param is `readonly`. A `struct` value (#641) of at most 16 bytes, without padding
+//!       between its numbers, passed to a named function (not a method, which a vtable or an
+//!       interface table may call; not a closure; not a generated body) travels in registers
+//!       instead: as its scalar fields, each its own param, when it has at most four and all
+//!       are numbers or booleans (through nested structs), else as the `V128` of its bytes. Not
+//!       on WebAssembly. The callee writes them to a slot of its frame and reads the param
+//!       through a pointer to it (lower/reg_args.rs).
 //!   - Inside the callee, an aggregate param local has VIR type `Ptr`; the value is accessed through
 //!     `Place { local, proj: [Proj::Deref(Agg(..))] }`.
 //!   - Class instances (`Ptr`) are scalars: `Borrow`/`BorrowMut` pass the object pointer; `Owned`
@@ -23,6 +34,10 @@
 //! * **Return value**:
 //!   - scalar → the VIR return type;
 //!   - `void`/`never` → `Ty::Unit`;
+//!   - a `struct` value of at most 16 bytes without padding between its numbers (not on
+//!     WebAssembly, not from a throwing function) → the `V128` of its bytes, through a 16-byte
+//!     slot on each side (lower/abi.rs `RegRet`); a padded one (`{ ok: boolean; v: f64 }`) is an
+//!     aggregate, below: once inlined, LLVM splits its slot into fields only that way;
 //!   - aggregate → an extra **trailing** `Ptr` param ("out pointer") to uninitialized caller memory;
 //!     the callee writes the (owned) result there and returns `Unit`. The caller then owns it.
 //!   - throwing function (`FnDef::throws`) → always an out-pointer to a `Result<ret, E>` aggregate
@@ -71,8 +86,9 @@
 //!   closures; stack-allocated with null drop/clone when the closure only borrows);
 //! * interface values → `{ data: ptr, vtable: ptr }` (data = the object for classes, else a heap box).
 //! * Vtables are read-only tables of function addresses (static data with relocations): slot `k`
-//!   at byte `8 * (k + 7)`; slots -1 to -6 are drop/clone/format/share/class name/transfer of
-//!   the concrete value, and the first word (-7) is its class id for `instanceof`
+//!   at byte `8 * (k + 9)`; slots -1 to -6 are drop/clone/format/share/class name/transfer of
+//!   the concrete value, -7 and -8 a `struct` value's content hash and equality (its interface
+//!   tables only), and the first word (-9) is its class id for `instanceof`
 //!   (`lower/glue/vtable.rs`, `lower/class_test.rs`).
 //! * Every type's all-zero bit pattern is a valid "owns nothing" value for its drop glue. A
 //!   struct/class with a `dispose()` hook runs it before its fields are dropped.

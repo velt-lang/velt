@@ -5,9 +5,7 @@
 import { serve } from "http-server";
 import { App, cors, logger, requestId, serveStatic } from "../src/lib";
 
-struct Vars {
-  user: string;
-}
+type Vars = { user: string };
 
 struct Note {
   id: number;
@@ -25,7 +23,8 @@ async function main() {
 
   const api = new App<Vars>(vars);
   api.around(async (c, next) => {
-    c.vars.user = c.req.headers.get("x-user") ?? c.vars.user;
+    const user = c.req.headers.get("x-user") ?? c.vars.user;
+    c.vars.user = user;
     return await next(c);
   });
   api.get("/notes", async (c) => c.json(notes.with((all) => structuredClone(all))));

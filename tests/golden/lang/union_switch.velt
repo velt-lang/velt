@@ -55,7 +55,7 @@ function onlyTypes(v: i64 | string): string {
 }
 
 function main() {
-  const shapes: Shape[] = [Point { x: 2, y: 3 }, 1.0, "abcd"];
+  const shapes: Shape[] = [{ x: 2, y: 3 } as Point, 1.0, "abcd"];
   for (const s of shapes) {
     console.log(area(s));
   }

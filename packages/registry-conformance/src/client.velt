@@ -48,10 +48,7 @@ export class Client {
     headers: [string, string][],
     body: u8[] | null,
   ): Promise<Reply> {
-    const init: RequestInit = { method, headers };
-    if (body != null) {
-      init.body = body;
-    }
+    const init: RequestInit = body != null ? { method, headers, body } : { method, headers };
     const res = await this.target.send(new Request(`${this.target.url}${path}`, init));
     const bytes = (await res.bytes()).toBytes();
     return new Reply(res.status as i64, res.headers.get("content-type") ?? "", bytes);

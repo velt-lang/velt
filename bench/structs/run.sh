@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Struct benchmarks for the value-type design (#641): the same algorithm written with today's
-# `struct` (<name>_struct.velt), a `class` (<name>_class.velt), by hand without objects
-# (<name>_flat.velt: parallel `number[]` arrays or packed keys, the code a guaranteed-inline
-# value type should reach), where present today's `struct` updated field by field
-# (<name>_mut.velt: what a mutable struct allows today and the value type forbids) and the same
-# with one shared value (<name>_shared.velt: the struct type becomes a counted object), in Rust
+# Struct benchmarks for the value type (#641): the same algorithm written with a `struct`
+# (<name>_struct.velt, an immutable value), a `class` (<name>_class.velt), by hand without objects
+# (<name>_flat.velt: parallel `number[]` arrays or packed keys, the code an inline value type
+# should reach), where present an object type updated field by field (<name>_mut.velt: what a
+# `struct` does not allow) and the same with one shared value (<name>_shared.velt: the object
+# type becomes a counted object), in Rust
 # with a `#[derive(Clone, Copy)]` struct (rust/<name>.rs) and, for reference, the class and
 # flat versions in Node (they are TypeScript as written; the harness appends `main();`).
 #

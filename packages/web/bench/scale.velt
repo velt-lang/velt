@@ -3,9 +3,7 @@
 import { serve } from "http-server";
 import { App } from "../src/lib";
 
-struct Vars {
-  user: string;
-}
+type Vars = { user: string };
 
 async function main() {
   const routes = parseInt(process.argv[2] ?? "3");

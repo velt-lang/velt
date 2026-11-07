@@ -254,7 +254,7 @@ export abstract class ExprParser extends TokenCursor {
         this.expectOp(")");
       }
       core.from.push(item);
-      core.columns.push(ResultColumn { expr: new Expr(E_STAR, at), alias: "", span: "*" });
+      core.columns.push({ expr: new Expr(E_STAR, at), alias: "", span: "*" });
       s.cores.push(core);
       const e = new Expr(E_IN_SELECT, at);
       e.a = left;

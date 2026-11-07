@@ -68,7 +68,7 @@ function significand(src: string, start: usize, end: usize): Significand {
     if (w != 0 || b != ZERO) {
       digits++;
       if (digits > 19) {
-        return Significand { ok: false, w: 0, q: 0 };
+        return { ok: false, w: 0, q: 0 };
       }
       w = w * 10 + ((b - ZERO) as u64);
     }
@@ -87,7 +87,7 @@ function significand(src: string, start: usize, end: usize): Significand {
       i++;
     }
     if (end - i > 5) {
-      return Significand { ok: false, w: 0, q: 0 };
+      return { ok: false, w: 0, q: 0 };
     }
     let e: i64 = 0;
     while (i < end) {
@@ -96,7 +96,7 @@ function significand(src: string, start: usize, end: usize): Significand {
     }
     q += eneg ? -e : e;
   }
-  return Significand { ok: true, w, q };
+  return { ok: true, w, q };
 }
 
 /** The number token as an exact `u64`, or null if it is not an integer in `[0, 2^64)`. */
@@ -138,7 +138,7 @@ struct ExactInteger {
 // doesn't fit means more significant digits than 2^64 holds), the exponent applied, trailing
 // zeros dropped, then an overflow-checked scale by the power of ten left.
 function exactInteger(src: string, start: usize, end: usize): ExactInteger {
-  const none = ExactInteger { ok: false, neg: false, mag: 0 };
+  const none: ExactInteger = { ok: false, neg: false, mag: 0 };
   const max: u64 = 18446744073709551615;
   let i = start;
   const neg = strByteAt(src, i as u64) == MINUS;
@@ -195,7 +195,7 @@ function exactInteger(src: string, start: usize, end: usize): ExactInteger {
     q += eneg ? -e : e;
   }
   if (w == 0) {
-    return ExactInteger { ok: true, neg: neg, mag: 0 };
+    return { ok: true, neg: neg, mag: 0 };
   }
   while (q < 0 && w % 10 == 0) {
     w = w / 10;
@@ -211,7 +211,7 @@ function exactInteger(src: string, start: usize, end: usize): ExactInteger {
     w = w * 10;
     q--;
   }
-  return ExactInteger { ok: true, neg: neg, mag: w };
+  return { ok: true, neg: neg, mag: w };
 }
 
 /** The number token as an exact `i64`, or null if it is not an integer in range. */

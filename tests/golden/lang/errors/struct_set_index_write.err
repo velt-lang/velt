@@ -1,0 +1,2 @@
+struct_set_index_write.velt:11:12: error: cannot assign to `a`: struct fields are readonly
+  = note: a struct value never changes: return a new one (`return { ...this, a: v }`)

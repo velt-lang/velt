@@ -11,9 +11,9 @@ function forge(s: HttpServer, f: Response, t: TcpStream) {
   const c = new Request(4096);
   const d = Request.adopt(4096);
   const e = Response.built(4096, 101);
-  const n = TcpStream { handle: 4096 };
-  const r = FileReader { handle: 4096 };
-  const ws = WebSocket { handle: 4096 };
+  const n: TcpStream = { handle: 4096 };
+  const r: FileReader = { handle: 4096 };
+  const ws: WebSocket = { handle: 4096 };
   s.handle = 4096;
   console.log(t.handle, f.handle);
   const raw = new Response("x").toServer();

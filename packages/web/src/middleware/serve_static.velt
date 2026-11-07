@@ -7,7 +7,7 @@ import { Handler, Middleware } from "../types";
 import { pathOf } from "../path";
 
 /** The options of `serveStatic`. */
-export struct ServeStaticOptions {
+export type ServeStaticOptions = {
   /** The file a directory answers with (default: `index.html`; empty for none). */
   index?: string;
   /** Whether a path with a segment starting with `.` may be served (default: no). */
@@ -16,7 +16,7 @@ export struct ServeStaticOptions {
   precompressed?: bool;
   /** Headers for a file's response, such as `Cache-Control`. */
   headers?: [string, string][];
-}
+};
 
 /**
  * Serves GET and HEAD requests from the files under `root`, with what `serveFile` does (validators,

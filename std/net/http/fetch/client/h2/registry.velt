@@ -28,7 +28,7 @@ type Origins = Mutex<Map<string, Origin>>;
 /// The process's map, made on first use: taken out of the slot and a reference put back.
 function origins(): shared<Origins> {
   velt_rt_global_lock(SLOT);
-  const ch: Channel<shared<Origins>> = Channel { handle: velt_rt_global_chan(SLOT) };
+  const ch: Channel<shared<Origins>> = { handle: velt_rt_global_chan(SLOT) };
   const found = ch.tryReceive();
   const value =
     found == null ? shared(new Mutex<Map<string, Origin>>(new Map<string, Origin>())) : found;
@@ -49,7 +49,7 @@ export function sessionOf(key: string): Channel<H2Call> | null {
   if (h == 0) {
     return null;
   }
-  const c: Channel<H2Call> = Channel { handle: h };
+  const c: Channel<H2Call> = { handle: h };
   return c;
 }
 

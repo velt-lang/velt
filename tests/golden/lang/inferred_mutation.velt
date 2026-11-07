@@ -101,10 +101,10 @@ function shout(s: string): i64 {
   return s.length as i64;
 }
 
-struct Point {
+type Point = {
   x: i64;
   y: i64;
-}
+};
 
 // Objects are shared with the callee (JS): the caller sees `p.x` change; numbers are copies.
 function moved(p: Point, n: i64): i64 {
@@ -150,7 +150,7 @@ function main() {
   const name = "hey";
   console.log(shout(name), name);
 
-  const p = Point { x: 1, y: 2 };
+  const p: Point = { x: 1, y: 2 };
   let n = 5;
   console.log(moved(p, n), p.x, n);
 

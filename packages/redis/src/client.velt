@@ -46,7 +46,7 @@ export struct RedisClient {
   /** Connects to `url`: what `connect(url, opts)` does. */
   static async connect(url: string, opts: RedisConnectOptions = {}): Promise<RedisClient> {
     const ca = opts.ca ?? "";
-    return RedisClient { handle: await openClient({ url: url, ca: ca, target: parseUrl(url) }) };
+    return { handle: await openClient({ url: url, ca: ca, target: parseUrl(url) }) };
   }
 
   /** Runs any command (`args[0]` is its name) and returns the decoded reply. */
@@ -250,7 +250,7 @@ export struct RedisClient {
     const out: ZMember[] = [];
     out.reserve((xs.length as usize) / 2);
     for (let i: usize = 0; i + 1 < xs.length; i += 2) {
-      out.push(ZMember { member: xs[i], score: parseScore(xs[i + 1]) });
+      out.push({ member: xs[i], score: parseScore(xs[i + 1]) });
     }
     return out;
   }
@@ -308,7 +308,7 @@ export struct RedisClient {
   /** A new, separate connection to the same server (for blocking commands). */
   async duplicate(): Promise<RedisClient> {
     const ep = endpointOf(this.handle);
-    return RedisClient { handle: await openClient(ep) };
+    return { handle: await openClient(ep) };
   }
 
   /**

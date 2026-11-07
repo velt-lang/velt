@@ -20,12 +20,12 @@ export struct Val {
 
 /** NULL. */
 export function nullVal(): Val {
-  return Val { t: NULL, i: 0, r: 0, s: "", o: null };
+  return { t: NULL, i: 0, r: 0, s: "", o: null };
 }
 
 /** An INTEGER. */
 export function intVal(i: i64): Val {
-  return Val { t: INTEGER, i: i, r: 0, s: "", o: null };
+  return { t: INTEGER, i: i, r: 0, s: "", o: null };
 }
 
 /** A REAL (NaN becomes NULL, as in SQLite). */
@@ -34,17 +34,17 @@ export function realVal(r: f64): Val {
   if (r != r) {
     return nullVal();
   }
-  return Val { t: REAL, i: 0, r: r, s: "", o: null };
+  return { t: REAL, i: 0, r: r, s: "", o: null };
 }
 
 /** A TEXT value. */
 export function textVal(s: string): Val {
-  return Val { t: TEXT, i: 0, r: 0, s: s, o: null };
+  return { t: TEXT, i: 0, r: 0, s: s, o: null };
 }
 
 /** A BLOB value. */
 export function blobVal(b: u8[]): Val {
-  return Val { t: BLOB, i: 0, r: 0, s: "", o: new Blob(b) };
+  return { t: BLOB, i: 0, r: 0, s: "", o: new Blob(b) };
 }
 
 /** A boolean as SQLite has them: the INTEGER 1 or 0. */

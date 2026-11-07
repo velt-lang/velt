@@ -9,7 +9,7 @@ import { HeadersInit } from "velt/net/http/fetch/headers";
 export type RequestRedirect = "follow" | "error" | "manual";
 
 /** The options of `fetch(input, init)` and `new Request(input, init)`. */
-export struct RequestInit {
+export type RequestInit = {
   /** Default "GET"; `get`, `post`, `put`, `delete`, `head` and `options` are uppercased. */
   method?: string;
   headers?: HeadersInit;
@@ -22,7 +22,7 @@ export struct RequestInit {
   signal?: AbortSignal;
   /** Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA. */
   ca?: string;
-}
+};
 
 /** The method as the Fetch standard normalizes it (std only: `fetch` uses it too). */
 export function normalizeMethod(m: string): string {

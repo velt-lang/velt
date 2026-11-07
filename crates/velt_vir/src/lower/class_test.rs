@@ -19,6 +19,11 @@ use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 /// id from the object's own table.
 pub(super) const ASK_OBJECT: u64 = u64::MAX;
 
+/// Class id words of the interface tables of `struct` values (#641) start here, one per type
+/// (`VALUE_IDS + TyId`): above every class id, below the marker words. `===` on interface values
+/// compares two values of one struct type by content through it (same.rs `dyn_values_same`).
+pub(in crate::lower) const VALUE_IDS: u64 = 1 << 48;
+
 impl Cx<'_> {
     /// The id range of class `d` and its subclasses (`d` itself has the first id).
     pub(super) fn class_range(&mut self, d: DefId) -> (u64, u64) {
@@ -35,6 +40,9 @@ impl Cx<'_> {
     /// carry a vtable pointer says `ASK_OBJECT`: the interface value may hold a subclass object
     /// (`ToDyn` of a subclass through the base's `implements` uses the base's table).
     pub(super) fn class_id_word(&mut self, ty: TyId, interface_table: bool) -> u64 {
+        if interface_table && self.value_struct(ty) {
+            return VALUE_IDS + ty.0 as u64;
+        }
         match self.kind(ty) {
             TyKind::Adt(d, _) if self.adt_def(d).kind == AdtKind::Class => {
                 if interface_table && self.has_header(d) {

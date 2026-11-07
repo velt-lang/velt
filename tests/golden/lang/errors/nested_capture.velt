@@ -9,5 +9,5 @@ function main() {
       a: i64;
     }
   }
-  const x = Local { a: 1 };
+  const x: Local = { a: 1 };
 }

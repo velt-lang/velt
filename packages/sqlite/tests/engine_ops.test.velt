@@ -94,28 +94,28 @@ function likeBoth(db: Database, s: Operand, p: Operand, e: Operand | null): stri
 }
 
 const OPERANDS: Operand[] = [
-  Operand { sql: "NULL", v: nullVal() },
-  Operand { sql: "0", v: intVal(0) },
-  Operand { sql: "1", v: intVal(1) },
-  Operand { sql: "-1", v: intVal(-1) },
-  Operand { sql: "7", v: intVal(7) },
-  Operand { sql: "-3", v: intVal(-3) },
-  Operand { sql: "64", v: intVal(64) },
-  Operand { sql: "9223372036854775807", v: intVal(9223372036854775807) },
-  Operand { sql: "(-9223372036854775807 - 1)", v: intVal(-9223372036854775807 - 1) },
-  Operand { sql: "2.5", v: realVal(2.5) },
-  Operand { sql: "-0.0", v: realVal(-0.0) },
-  Operand { sql: "1e308", v: realVal(1e308) },
-  Operand { sql: "-7.75", v: realVal(-7.75) },
-  Operand { sql: "'12abc'", v: textVal("12abc") },
-  Operand { sql: "' 7 '", v: textVal(" 7 ") },
-  Operand { sql: "'-0'", v: textVal("-0") },
-  Operand { sql: "'0.0'", v: textVal("0.0") },
-  Operand { sql: "'3.0e2'", v: textVal("3.0e2") },
-  Operand { sql: "'abc'", v: textVal("abc") },
-  Operand { sql: "'ABC'", v: textVal("ABC") },
-  Operand { sql: "x'3132'", v: blobVal([49, 50]) },
-  Operand { sql: "x''", v: blobVal([]) },
+  { sql: "NULL", v: nullVal() } as Operand,
+  { sql: "0", v: intVal(0) } as Operand,
+  { sql: "1", v: intVal(1) } as Operand,
+  { sql: "-1", v: intVal(-1) } as Operand,
+  { sql: "7", v: intVal(7) } as Operand,
+  { sql: "-3", v: intVal(-3) } as Operand,
+  { sql: "64", v: intVal(64) } as Operand,
+  { sql: "9223372036854775807", v: intVal(9223372036854775807) } as Operand,
+  { sql: "(-9223372036854775807 - 1)", v: intVal(-9223372036854775807 - 1) } as Operand,
+  { sql: "2.5", v: realVal(2.5) } as Operand,
+  { sql: "-0.0", v: realVal(-0.0) } as Operand,
+  { sql: "1e308", v: realVal(1e308) } as Operand,
+  { sql: "-7.75", v: realVal(-7.75) } as Operand,
+  { sql: "'12abc'", v: textVal("12abc") } as Operand,
+  { sql: "' 7 '", v: textVal(" 7 ") } as Operand,
+  { sql: "'-0'", v: textVal("-0") } as Operand,
+  { sql: "'0.0'", v: textVal("0.0") } as Operand,
+  { sql: "'3.0e2'", v: textVal("3.0e2") } as Operand,
+  { sql: "'abc'", v: textVal("abc") } as Operand,
+  { sql: "'ABC'", v: textVal("ABC") } as Operand,
+  { sql: "x'3132'", v: blobVal([49, 50]) } as Operand,
+  { sql: "x''", v: blobVal([]) } as Operand,
 ];
 
 struct Op {
@@ -124,28 +124,28 @@ struct Op {
 }
 
 const ARITH: Op[] = [
-  Op { sql: "+", code: OP_ADD },
-  Op { sql: "-", code: OP_SUB },
-  Op { sql: "*", code: OP_MUL },
-  Op { sql: "/", code: OP_DIV },
-  Op { sql: "%", code: OP_REM },
+  { sql: "+", code: OP_ADD } as Op,
+  { sql: "-", code: OP_SUB } as Op,
+  { sql: "*", code: OP_MUL } as Op,
+  { sql: "/", code: OP_DIV } as Op,
+  { sql: "%", code: OP_REM } as Op,
 ];
 
 export function test_binary_operators_match_c_sqlite() {
   const db = open(":memory:");
   const cmp: Op[] = [
-    Op { sql: "=", code: OP_EQ },
-    Op { sql: "<>", code: OP_NE },
-    Op { sql: "<", code: OP_LT },
-    Op { sql: "<=", code: OP_LE },
-    Op { sql: ">", code: OP_GT },
-    Op { sql: ">=", code: OP_GE },
+    { sql: "=", code: OP_EQ } as Op,
+    { sql: "<>", code: OP_NE } as Op,
+    { sql: "<", code: OP_LT } as Op,
+    { sql: "<=", code: OP_LE } as Op,
+    { sql: ">", code: OP_GT } as Op,
+    { sql: ">=", code: OP_GE } as Op,
   ];
   const bits: Op[] = [
-    Op { sql: "&", code: BIT_AND },
-    Op { sql: "|", code: BIT_OR },
-    Op { sql: "<<", code: BIT_SHL },
-    Op { sql: ">>", code: BIT_SHR },
+    { sql: "&", code: BIT_AND } as Op,
+    { sql: "|", code: BIT_OR } as Op,
+    { sql: "<<", code: BIT_SHL } as Op,
+    { sql: ">>", code: BIT_SHR } as Op,
   ];
   let cases = 0;
   const differ: string[] = [];
@@ -295,19 +295,19 @@ export function test_like_checks_in_sqlite_order() {
   const tooLong = "a".repeat(50001);
   const afterNul = "a\u0000" + "b".repeat(50000);
   const sqlNul = `'a' || char(0) || '${"b".repeat(50000)}'`;
-  const one = Operand { sql: "1", v: intVal(1) };
-  const twelve = Operand { sql: "12", v: intVal(12) };
-  const nothing = Operand { sql: "NULL", v: nullVal() };
+  const one = { sql: "1", v: intVal(1) } as Operand;
+  const twelve = { sql: "12", v: intVal(12) } as Operand;
+  const nothing = { sql: "NULL", v: nullVal() } as Operand;
   assertEq(
-    likeBoth(db, nothing, Operand { sql: `'${tooLong}'`, v: textVal(tooLong) }, null),
+    likeBoth(db, nothing, { sql: `'${tooLong}'`, v: textVal(tooLong) } as Operand, null),
     `NULL LIKE <50003 chars of SQL>: velt error "LIKE or GLOB pattern too complex", C error "LIKE or GLOB pattern too complex"`,
   );
-  const ab = Operand { sql: "'ab'", v: textVal("ab") };
+  const ab = { sql: "'ab'", v: textVal("ab") } as Operand;
   assertEq(
     likeBoth(
       db,
-      Operand { sql: "'a'", v: textVal("a") },
-      Operand { sql: `'${tooLong}'`, v: textVal(tooLong) },
+      { sql: "'a'", v: textVal("a") } as Operand,
+      { sql: `'${tooLong}'`, v: textVal(tooLong) } as Operand,
       ab,
     ),
     `'a' LIKE <50003 chars of SQL> ESCAPE 'ab': velt error "LIKE or GLOB pattern too complex", C error "LIKE or GLOB pattern too complex"`,
@@ -315,8 +315,8 @@ export function test_like_checks_in_sqlite_order() {
   assertEq(
     likeBoth(
       db,
-      Operand { sql: "'a'", v: textVal("a") },
-      Operand { sql: sqlNul, v: textVal(afterNul) },
+      { sql: "'a'", v: textVal("a") } as Operand,
+      { sql: sqlNul, v: textVal(afterNul) } as Operand,
       null,
     ),
     `'a' LIKE <50020 chars of SQL>: velt error "LIKE or GLOB pattern too complex", C error "LIKE or GLOB pattern too complex"`,
@@ -330,15 +330,15 @@ export function test_like_checks_in_sqlite_order() {
     `1 LIKE NULL ESCAPE 12: velt error "ESCAPE expression must be a single character", C error "ESCAPE expression must be a single character"`,
   );
   // A NULL ESCAPE gives NULL, and the ESCAPE's length is counted up to its first NUL.
-  const a = Operand { sql: "'a'", v: textVal("a") };
-  const x = Operand { sql: "'x'", v: textVal("x") };
+  const a = { sql: "'a'", v: textVal("a") } as Operand;
+  const x = { sql: "'x'", v: textVal("x") } as Operand;
   assertEq(likeBoth(db, a, a, nothing), `'a' LIKE 'a' ESCAPE NULL: velt null:, C null:`);
   assertEq(
-    likeBoth(db, x, x, Operand { sql: "'a' || char(0) || 'b'", v: textVal("a\u0000b") }),
+    likeBoth(db, x, x, { sql: "'a' || char(0) || 'b'", v: textVal("a\u0000b") } as Operand),
     `'x' LIKE 'x' ESCAPE 'a' || char(0) || 'b': velt integer:1, C integer:1`,
   );
   assertEq(
-    likeBoth(db, a, a, Operand { sql: "char(0)", v: textVal("\u0000") }),
+    likeBoth(db, a, a, { sql: "char(0)", v: textVal("\u0000") } as Operand),
     `'a' LIKE 'a' ESCAPE char(0): velt error "ESCAPE expression must be a single character", C error "ESCAPE expression must be a single character"`,
   );
 }

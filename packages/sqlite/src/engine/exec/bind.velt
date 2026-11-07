@@ -144,7 +144,7 @@ function exactInt(b: u8[], from: usize, to: usize): Exact {
     i++;
   }
   if (i == to) {
-    return Exact { ok: false, v: 0 };
+    return { ok: false, v: 0 };
   }
   // Accumulated as a negative number, which reaches i64's minimum.
   let v: i64 = 0;
@@ -152,19 +152,19 @@ function exactInt(b: u8[], from: usize, to: usize): Exact {
   while (i < to) {
     const c = b[i];
     if (c < 48 || c > 57) {
-      return Exact { ok: false, v: 0 };
+      return { ok: false, v: 0 };
     }
     const d = (c - 48) as i64;
     if (v < (min + d) / 10) {
-      return Exact { ok: false, v: 0 };
+      return { ok: false, v: 0 };
     }
     v = v * 10 - d;
     i++;
   }
   if (!neg && v == min) {
-    return Exact { ok: false, v: 0 };
+    return { ok: false, v: 0 };
   }
-  return Exact { ok: true, v: neg ? v : -v };
+  return { ok: true, v: neg ? v : -v };
 }
 
 /**

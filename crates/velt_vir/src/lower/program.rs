@@ -50,6 +50,7 @@ impl<'h> Cx<'h> {
             ffi_hooks: Default::default(),
             std_calls: FxHashMap::default(),
             system_aggs: FxHashMap::default(),
+            reg_slot_agg: None,
             no_await_steps: false,
             facts_only: false,
             deferred: FxHashMap::default(),

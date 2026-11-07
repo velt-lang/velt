@@ -1,0 +1,2 @@
+struct_dispose.velt:2:8: error: a struct cannot have `[Symbol.dispose]`
+  = note: a struct is a value that is copied, with no lifetime of its own: make it a class

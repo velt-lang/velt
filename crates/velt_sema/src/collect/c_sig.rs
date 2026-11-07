@@ -8,7 +8,7 @@ use velt_syntax::ast;
 
 use crate::ctx::Ctx;
 use crate::defs::{FnKind, ParamSig};
-use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, TyId, TyKind};
+use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, PassMode, TyId, TyKind};
 
 /// What may cross, for the errors.
 const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, \
@@ -367,4 +367,23 @@ fn is_ptr(cx: &Ctx, ty: TyId) -> bool {
 /// Is `ty` the type `null` (an option of nothing)?
 fn is_null(cx: &Ctx, ty: TyId) -> bool {
     matches!(cx.ty.kind(ty), TyKind::Option(inner, Nothing::Null) if *inner == cx.ty.never)
+}
+
+/// A `struct` an extern takes is the caller's storage, never a copy of it (#641): the runtime or
+/// the C function fills a runtime layout through it (a system function writes one not written
+/// `readonly`, in `fill_sig`; a runtime function one it names `out` or `slot`).
+pub(super) fn extern_struct_params(cx: &Ctx, kind: FnKind, sig: &ast::FnSig, ps: &mut [ParamSig]) {
+    if kind != FnKind::Extern || sig.is_intrinsic {
+        return;
+    }
+    for p in ps {
+        if p.mode == PassMode::Copy && cx.declared_struct(p.ty) {
+            let written = !sig.is_system && (p.name == "out" || p.name == "slot");
+            p.mode = if written {
+                PassMode::BorrowMut
+            } else {
+                PassMode::Borrow
+            };
+        }
+    }
 }

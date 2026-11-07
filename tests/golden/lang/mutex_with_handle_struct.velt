@@ -21,7 +21,7 @@ struct Handle {
 
 function main() {
   const room = shared(new Mutex<Map<u64, Handle>>(new Map<u64, Handle>()));
-  const h = Handle { id: 7, name: "seven", hits: shared(new Mutex<Counter>(new Counter())) };
+  const h: Handle = { id: 7, name: "seven", hits: shared(new Mutex<Counter>(new Counter())) };
   room.with((r) => {
     r.set(h.id, h);
   });
@@ -30,7 +30,7 @@ function main() {
   const stored = room.with((r) => r.get(7));
   console.log(stored?.hit() ?? -1, stored?.name ?? "none", h.hit());
   const extra = shared(40);
-  const g = Handle { id: 8, name: "eight", hits: h.hits, extra: extra };
+  const g: Handle = { id: 8, name: "eight", hits: h.hits, extra: extra };
   room.with((r) => {
     r.set(g.id, g);
   });

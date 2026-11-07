@@ -1,0 +1,53 @@
+// Breadth-first search over a 300×300 grid with walls, 20 times: `Cell` values compared with
+// `==` (the goal test), kept in a queue array and a `Set`, and replaced as the search moves.
+// Before #641 comparing structs by identity made `Cell` a counted object once shared (one heap
+// block per value); as a value type it stays inline.
+struct Cell {
+  x: i32;
+  y: i32;
+}
+
+const N: i32 = 300;
+
+function wall(c: Cell): boolean {
+  return (c.x * 7 + c.y * 13) % 11 == 0 && c != { x: 0, y: 0 };
+}
+
+function search(start: Cell, goal: Cell): i32 {
+  const seen = new Set<Cell>();
+  let queue: Cell[] = [start];
+  seen.add(start);
+  let steps: i32 = 0;
+  while (queue.length > 0) {
+    const next: Cell[] = [];
+    for (const c of queue) {
+      if (c == goal) {
+        return steps;
+      }
+      const around: Cell[] = [
+        { x: c.x + 1, y: c.y },
+        { x: c.x - 1, y: c.y },
+        { x: c.x, y: c.y + 1 },
+        { x: c.x, y: c.y - 1 },
+      ];
+      for (const d of around) {
+        if (d.x < 0 || d.y < 0 || d.x >= N || d.y >= N || wall(d) || seen.has(d)) {
+          continue;
+        }
+        seen.add(d);
+        next.push(d);
+      }
+    }
+    queue = next;
+    steps++;
+  }
+  return -1;
+}
+
+function main() {
+  let total: i32 = 0;
+  for (let i: i32 = 0; i < 20; i++) {
+    total += search({ x: 0, y: i }, { x: N - 1, y: N - 1 - i });
+  }
+  console.log(total);
+}

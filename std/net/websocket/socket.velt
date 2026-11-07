@@ -243,7 +243,7 @@ export struct WebSocket implements AsyncIterable<WsMessage, IoError> {
  */
 export function webSocketOver(stream: TcpStream, server: bool, head: u8[] = []): WebSocket {
   const client = !server;
-  return WebSocket {
+  return {
     handle: stream,
     tx: shared(new Mutex<SendQueue>(new SendQueue(client, new Reader(!client, head)))),
   };

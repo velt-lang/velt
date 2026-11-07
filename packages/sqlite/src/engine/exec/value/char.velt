@@ -42,7 +42,7 @@ export struct Char {
 export function charAt(b: u8[], at: usize): Char {
   const b0 = b[at] as i64;
   if (b0 < 0xc0) {
-    return Char { c: b0, len: 1 };
+    return { c: b0, len: 1 };
   }
   let n: usize = b0 >= 0xf0 ? 4 : b0 >= 0xe0 ? 3 : 2;
   let c = b0 & (n == 4 ? 0x07 : n == 3 ? 0x0f : 0x1f);
@@ -51,7 +51,7 @@ export function charAt(b: u8[], at: usize): Char {
     c = (c << 6) | ((b[at + k] & 0x3f) as i64);
     k++;
   }
-  return Char { c: c, len: k };
+  return { c: c, len: k };
 }
 
 export function lowerC(c: i64): i64 {

@@ -47,7 +47,8 @@
 //! program without module state, or whose module state holds only numbers and strings, keeps
 //! them all.
 //!
-//! `Owned` / `Copy` aggregates get no `noalias`: calls through the borrow ABI (thunks, vtables)
+//! A `Copy` aggregate the body does not modify is `readonly` too (a modified one is copied on
+//! entry). `Owned` / `Copy` aggregates get no `noalias`: calls through the borrow ABI (thunks, vtables)
 //! may hand the callee the caller's own value instead of a copy.
 
 use velt_sema::hir::{self, AdtKind, PassMode, TyId, TyKind};
@@ -111,6 +112,11 @@ impl Cx<'_> {
                 let unchanged = !written && self.unique_refs(ty);
                 attrs.readonly = unchanged && !self.holds_mutex(ty, 0, true);
                 attrs.frozen = unchanged && !self.holds_mutex(ty, 0, false);
+            }
+            // The callee never writes a `Copy` aggregate through its pointer: one the body
+            // modifies is copied first (abi.rs `copy_modified_param`).
+            Some(PassMode::Copy) => {
+                attrs.readonly = !written && !self.holds_mutex(ty, 0, true);
             }
             _ => {}
         }

@@ -5,10 +5,10 @@ struct Opaque {}
 struct Ticket {
   id: i64;
   private secret: u64;
-  private opaque: Opaque = Opaque {};
+  private opaque: Opaque = {};
 
   static make(id: i64): Ticket {
-    return Ticket { id: id, secret: 7 };
+    return { id: id, secret: 7 };
   }
 }
 

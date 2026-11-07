@@ -524,16 +524,24 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
-        let Some((d, slots)) = self.struct_name(name) else {
+        let found = self.struct_name(name);
+        // `struct_name` reported why the name is no struct: the literal form is not the problem.
+        let Some((d, slots)) = found else {
             self.props(props).iter().for_each(|(n, v)| {
                 self.prop_value(n, *v, None);
             });
             return self.error_expr(span);
         };
-        if super::spread::has_spread(props) {
-            return self.spread_object(props, Some((d, slots)), self.hint(exp), span);
-        }
-        self.fill_struct(d, slots, &[], props, self.hint(exp), span)
+        // A generic struct written without type arguments: the fix names the ones inferred.
+        let inferred = !slots.is_empty() && slots.iter().all(|s| s.is_none());
+        let e = if super::spread::has_spread(props) {
+            self.spread_object(props, Some((d, slots)), self.hint(exp), span)
+        } else {
+            self.fill_struct(d, slots, &[], props, self.hint(exp), span)
+        };
+        let shown = inferred.then(|| self.cx.display(e.ty));
+        self.removed_struct_lit(name, Some(d), shown, exp, span);
+        e
     }
 
     /// `P` / `P<T>` in `P { .. }`: the struct def and its (possibly unknown) type args.

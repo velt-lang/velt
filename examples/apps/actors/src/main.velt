@@ -10,6 +10,7 @@ import {
   ActorStorage,
   ActorType,
   HostConfig,
+  HostOptions,
   MemoryStorage,
   defaultHostOptions,
   startHost,
@@ -43,8 +44,10 @@ export async function cli(argv: string[]) {
     console.log(`unknown command ${command}: serve | bench | calls`);
     return;
   }
-  const opts = defaultHostOptions();
-  opts.shards = parseInt(flag(argv, "shards", "0")) as i64;
+  const opts: HostOptions = {
+    ...defaultHostOptions(),
+    shards: parseInt(flag(argv, "shards", "0")) as i64,
+  };
   const host = startHost<AppConfig>(opts, availableParallelism(), {});
   if (command == "serve") {
     const port = parseInt(flag(argv, "port", "5199")) as i64;

@@ -277,8 +277,8 @@ exactly like vtables. So no VIR type, verifier rule or backend changes.
 
 A **type table** (`_Gtype` *T*) is one per concrete type that reaches shared code as a type
 argument. It uses the vtable layout (`lower/glue/vtable.rs`):
-- the seven hidden slots, with the same constants: class id, transfer, name, share, format,
-  clone, drop;
+- the nine hidden slots, with the same constants: class id, a `struct` value's content
+  equality and hash (interface tables only), transfer, name, share, format, clone, drop;
 - then the dictionary slots:
 
 | slot | entry | signature (as the glue's) |

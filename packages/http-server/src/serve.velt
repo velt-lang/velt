@@ -55,11 +55,12 @@ export async function serveHttp<E>(
   }
   const maxHeaders = (opts.maxHeaders ?? MAX_HEADERS) as i64;
   const idle = (opts.idleTimeout ?? IDLE_MS) as i64;
-  const limits = Limits {
-    headMs: (opts.headersTimeout ?? HEADERS_MS) as i64,
-    requestMs: (opts.requestTimeout ?? REQUEST_MS) as i64,
-    maxHeaders: maxHeaders,
-  };
+  const limits =
+    ({
+      headMs: (opts.headersTimeout ?? HEADERS_MS) as i64,
+      requestMs: (opts.requestTimeout ?? REQUEST_MS) as i64,
+      maxHeaders: maxHeaders,
+    } as Limits);
   const stop = new AbortController();
   // Under `velt dev` the server also stops when the next version is about to start (velt/dev).
   const dev = joinStop();
