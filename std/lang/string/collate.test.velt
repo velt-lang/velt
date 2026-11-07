@@ -4,6 +4,11 @@
 // velt_rt had, whose lossy view of a string held one U+FFFD per lone surrogate. Node orders lone
 // surrogates by code unit instead (U+D800 before U+DBFF), so these expected values are the old
 // Rust's, which the port follows.
+//
+// Combining marks (U+0300..U+036F) weigh nothing at the first level, where `orderAt` skips a run
+// of them in one loop; the characters just past the block (U+0370..U+037F, Greek) share their
+// first UTF-8 byte with the last marks and must not be skipped. Expected values are the old
+// Rust's.
 import { describe, expect, it } from "velt/test";
 import { localeOrder } from "velt/lang/string/collate";
 
@@ -33,5 +38,22 @@ describe("localeOrder on lone surrogates", () => {
   it("joins a pair built from its two halves", () => {
     expect(localeOrder(unit(0xd83d) + unit(0xde00), "\u{1F600}")).toBe(0);
     expect(localeOrder(unit(0xd83d) + unit(0xde00), "�")).toBe(1);
+  });
+});
+
+describe("localeOrder on combining marks", () => {
+  it("skips marks at the first level, and only marks", () => {
+    expect(localeOrder("\u0300\u0370b", "\u0370a")).toBe(1);
+    expect(localeOrder("\u036f\u0370b", "\u0370a")).toBe(1);
+    expect(localeOrder("\u0345\u036e\u036f\u0370", "\u0370")).toBe(1);
+    expect(localeOrder("\u0340\u0341\u036fb", "a")).toBe(1);
+    expect(localeOrder("a\u0301\u0301\u0301b", "a\u0323a")).toBe(1);
+    expect(localeOrder("\u0301".repeat(1000) + "b", "\u0323".repeat(999) + "a")).toBe(1);
+  });
+
+  it("weighs the marks it skipped at the second level", () => {
+    expect(localeOrder("x\u0301\u0302", "x\u0302\u0301")).toBe(-1);
+    expect(localeOrder("\u0301\u0370", "\u0370\u0301")).toBe(1);
+    expect(localeOrder("\u0301\u0323".repeat(1000), "\u0323\u0301".repeat(1000))).toBe(-1);
   });
 });
