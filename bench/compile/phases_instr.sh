@@ -29,7 +29,8 @@ count() {
 
 for program in "$@"; do
   name=$(basename "$program" .velt)
-  exe=$WORK/$name
+  # A directory of its own: a build skips its link when the output and its stamp are there.
+  exe=$(mktemp -d "$WORK/$name.XXXXXX")/$name
   c=$(count check "$program")
   d=$(count build "$program" -o "$exe.debug")
   r=$(count build --release "$program" -o "$exe.release")
