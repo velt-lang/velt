@@ -16,6 +16,10 @@
 // - a method a base already declares is left to the base (`lib.dom` narrows `addEventListener`'s
 //   event map per interface; Velt takes the base's string form);
 // - an interface of index signatures only (`DOMStringMap`) is a `Record`;
+// - a collection (`NodeList`, `HTMLCollection`, their generic forms, `HTMLOptionsCollection`) is a
+//   `ReadonlyArray`: Velt has no index signature or iterator for an interface yet (#937), and code
+//   indexes, iterates and `Array.from`s them;
+// - a function type may throw (`throws unknown`), as a JavaScript function may;
 // - an index signature next to members, a `this` parameter, conditional, mapped and template
 //   literal types are left out, and a type outside the subset that Velt has no global for is
 //   `any`.
@@ -34,6 +38,15 @@ const here = path.join(repo, "scripts/dom-subset");
 const check = process.argv.includes("--check");
 
 // Types Velt has in every program, or as std globals of their own: kept as written.
+// The collections, as the arrays Velt can index and iterate.
+const COLLECTIONS = new Map([
+  ["NodeList", "= ReadonlyArray<Node>"],
+  ["NodeListOf", "<TNode extends Node> = ReadonlyArray<TNode>"],
+  ["HTMLCollectionBase", "= ReadonlyArray<Element>"],
+  ["HTMLCollection", "= ReadonlyArray<Element>"],
+  ["HTMLCollectionOf", "<T extends Element> = ReadonlyArray<T>"],
+  ["HTMLOptionsCollection", "= ReadonlyArray<HTMLOptionElement>"],
+]);
 const KEEP = new Set([
   "Array", "ReadonlyArray", "Promise", "PromiseLike", "Record", "Partial", "Readonly", "Map", "Set",
   "Error", "Date", "RegExp", "Iterable", "IterableIterator", "Function", "Object",
@@ -142,7 +155,7 @@ function ty(n, scope) {
     case ts.SyntaxKind.TypeOperator:
       return n.operator === ts.SyntaxKind.ReadonlyKeyword ? `readonly ${ty(n.type, scope)}` : (note("keyof"), "any");
     case ts.SyntaxKind.FunctionType:
-      return `(${params(n.parameters, scope)}) => ${ty(n.type, scope)}`;
+      return `(${params(n.parameters, scope)}) => ${ty(n.type, scope)} throws unknown`;
     case ts.SyntaxKind.TypeLiteral:
       return `{ ${n.members.map((m) => member(m, scope, "")).filter(Boolean).join(" ")} }`;
     case ts.SyntaxKind.TypeReference: {
@@ -319,7 +332,12 @@ function emit(t) {
     const c = all.filter((m) => m.kind === ts.SyntaxKind.CallSignature).at(-1);
     const scope = new Set();
     note("function interface as a function type");
-    return `export type ${t} = (${params(c.parameters, scope)}) => ${ty(c.type, scope)};`;
+    return `export type ${t} = (${params(c.parameters, scope)}) => ${ty(c.type, scope)} throws unknown;`;
+  }
+  if (COLLECTIONS.has(t)) {
+    note("collection as a ReadonlyArray");
+    reach("HTMLOptionElement");
+    return `export type ${t} ${COLLECTIONS.get(t)};`;
   }
   if (all.length && all.every((m) => m.kind === ts.SyntaxKind.IndexSignature)) {
     const s = all[0];

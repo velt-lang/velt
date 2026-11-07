@@ -60,6 +60,8 @@ export interface ElementCreationOptions {
 
 export interface FontFaceSource {}
 
+export type HTMLCollectionBase = ReadonlyArray<Element>;
+
 export interface History {
   pushState(data: any, unused: string, url?: any): void;
 }
@@ -95,7 +97,8 @@ export interface NavigatorLanguage {
   readonly language: string;
 }
 
-export type NodeFilter = (node: Node) => number;
+export type NodeFilter = (node: Node) => number throws unknown;
+export type NodeList = ReadonlyArray<Node>;
 
 export interface Range extends AbstractRange {
   createContextualFragment(string: string): DocumentFragment;

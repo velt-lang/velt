@@ -421,6 +421,10 @@ impl FnCx<'_, '_> {
         if matches!(op, B::Eq | B::NotEq) && self.two_promise_types(l.ty, r.ty) {
             return self.structural_eq(l, r, op == B::NotEq, span);
         }
+        // Two interfaces, one extending the other (`Node` and `Element`): by identity (`identity_eq`).
+        if matches!(op, B::Eq | B::NotEq) && self.related_ifaces(l.ty, r.ty) {
+            return self.dynamic_eq(l, r, strict, op == B::NotEq, span);
+        }
         // `a == b` on `T | null | undefined` values: `null == undefined`, as in JavaScript.
         if !strict && matches!(op, B::Eq | B::NotEq) {
             let (l, r) = match self.loose_three_state_eq(l, r, op == B::NotEq, span) {
@@ -607,40 +611,6 @@ impl FnCx<'_, '_> {
             return (l, r);
         }
         (l, r)
-    }
-
-    /// `a === b` between an interface value and a class or struct value (or a base and a
-    /// subclass value) whose types overlap, as TypeScript allows (#365): the side that converts to the other's type
-    /// does (an interface value points at the object itself), so the two compare by identity.
-    pub(super) fn identity_operands(
-        &mut self,
-        l: hir::Expr,
-        r: hir::Expr,
-    ) -> (hir::Expr, hir::Expr) {
-        let object = |s: &Self, t: TyId| {
-            let t = s.cx.ty.core(t).unwrap_or(t);
-            s.cx.union_def(t).is_none()
-                && matches!(s.cx.ty.kind(t), TyKind::Adt(..) | TyKind::Dyn(..))
-        };
-        // `xs === ys` of an `unknown[]` and an `any[]`: one type (`Ctx::same_but_any_unknown`).
-        if self.cx.same_but_any_unknown(r.ty, l.ty) {
-            let to = l.ty;
-            return match self.try_coerce(r, to) {
-                Ok(r) | Err(r) => (l, r),
-            };
-        }
-        if l.ty == r.ty || !object(self, l.ty) || !object(self, r.ty) {
-            return (l, r);
-        }
-        let to = l.ty;
-        match self.try_coerce(r, to) {
-            Ok(r) => (l, r),
-            Err(r) => {
-                let to = r.ty;
-                let l = self.try_coerce(l, to).unwrap_or_else(|l| l);
-                (l, r)
-            }
-        }
     }
 
     /// Are `a` and `b` two different promise types, compared by identity (#1682)?

@@ -80,7 +80,7 @@ export interface Event {
   cancelBubble: boolean;
 }
 
-export type EventListener = (evt: Event) => void;
+export type EventListener = (evt: Event) => void throws unknown;
 
 export interface EventListenerOptions {
   capture?: boolean;
@@ -108,13 +108,8 @@ export interface FocusOptions {
 
 export interface GlobalEventHandlers {}
 
-export interface HTMLCollection extends HTMLCollectionBase {}
-
-export interface HTMLCollectionBase {
-  readonly length: number;
-}
-
-export interface HTMLCollectionOf<T extends Element> extends HTMLCollectionBase {}
+export type HTMLCollection = ReadonlyArray<Element>;
+export type HTMLCollectionOf<T extends Element> = ReadonlyArray<T>;
 
 export interface HTMLDivElement extends HTMLElement {}
 
@@ -136,9 +131,7 @@ export interface HTMLOptionElement extends HTMLElement {
   value: string;
 }
 
-export interface HTMLOptionsCollection extends HTMLCollectionOf<HTMLOptionElement> {
-  length: number;
-}
+export type HTMLOptionsCollection = ReadonlyArray<HTMLOptionElement>;
 
 export interface HTMLOrSVGElement {
   focus(options?: FocusOptions): void;
@@ -179,16 +172,7 @@ export interface Node extends EventTarget {
   readonly parentElement: HTMLElement | null;
 }
 
-export interface NodeList {
-  readonly length: number;
-}
-
-export interface NodeListOf<TNode extends Node> extends NodeList {
-  forEach(
-    callbackfn: (value: TNode, key: number, parent: NodeListOf<TNode>) => void,
-    thisArg?: any,
-  ): void;
-}
+export type NodeListOf<TNode extends Node> = ReadonlyArray<TNode>;
 
 export interface NonDocumentTypeChildNode {}
 

@@ -317,6 +317,8 @@ impl FnCx<'_, '_> {
         sites: &[ArgSite],
     ) -> Vec<TyId> {
         let mut out = vec![];
+        let met = self.never_slots(slots, sites);
+        let slots = met.as_deref().unwrap_or(slots);
         if !quiet {
             self.report_uninferred(c, slots, span);
         }
@@ -334,6 +336,10 @@ impl FnCx<'_, '_> {
                 out.push(self.cx.ty.error);
                 continue;
             };
+            if t == self.cx.ty.never {
+                out.push(t); // `never` meets every bound
+                continue;
+            }
             let bounds = c.bounds.get(k).cloned().unwrap_or_default();
             let mut ok = true;
             for b in bounds {
@@ -402,6 +408,21 @@ impl FnCx<'_, '_> {
                     let error = self.cx.ty.error;
                     let first = broken.is_none().then(|| slots.to_vec());
                     broken.get_or_insert_with(|| first.unwrap_or_default())[k] = Some(error);
+                }
+            }
+        }
+        out
+    }
+
+    /// The slots no argument fixed whose argument is a `never` (a browser global's member, a
+    /// `throw`): `never`, as `tsc` infers it (`parent.appendChild(document.createComment(""))`).
+    fn never_slots(&self, slots: &[Option<TyId>], sites: &[ArgSite]) -> Option<Vec<Option<TyId>>> {
+        let never = self.cx.ty.never;
+        let mut out: Option<Vec<Option<TyId>>> = None;
+        for &(p, a, _) in sites {
+            if let (true, Some(k)) = (a == never, self.slot_param(p)) {
+                if slots.get(k) == Some(&None) {
+                    out.get_or_insert_with(|| slots.to_vec())[k] = Some(never);
                 }
             }
         }
