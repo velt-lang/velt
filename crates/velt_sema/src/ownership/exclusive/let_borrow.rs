@@ -241,6 +241,10 @@ impl<'c> crate::value_params::Calls<'c> for Checking<'c, '_> {
         method_name(self.0, callee, args)
     }
 
+    fn plain(&self, t: crate::hir::TyId) -> bool {
+        crate::value_params::is_plain(self.0.ty.kind(t))
+    }
+
     fn ctor(&self, class: crate::hir::DefId) -> Option<crate::hir::DefId> {
         self.0.adt(class)?.ctor
     }

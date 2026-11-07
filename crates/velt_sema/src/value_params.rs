@@ -1,7 +1,11 @@
 //! Which params of each function may reach a function value (#2527): `run(q)` calling `KK(q)`, or
 //! `r2(q)` that does, directly or through a closure it makes. Such a param reads as a borrow in
 //! `run`'s signature, but what it holds can be replaced under whoever lent it: a `const x = a.c`
-//! before `run(a)`, an element a loop is bound to, or an argument `run(a, a.c.s)` beside it.
+//! before `run(a)`, an element a loop is bound to, or an argument `run(a, a.c.s)` beside it. So can
+//! a param the function changes: `Owned` or `BorrowMut`, or `Borrow` and modified as it is used as a
+//! value too (`finish::demote_fn_values`), as a `let r = q` hides that from `q`'s caller.
+//! A param reaches what any expression naming it reaches, whatever the expression does: `c ? q : o`,
+//! `id(q)`, `[q]`, and a variable assigned it anywhere in the function.
 //! A method chosen at run time (virtual, interface, bounded type param) counts as every method of
 //! its name, as its modes are fixed like a function value's: an override that calls `KK(q)` hides
 //! it from `go`'s callers just the same.
@@ -14,8 +18,8 @@ use rustc_hash::FxHashMap;
 use crate::replaced_holders::member;
 
 use crate::hir::{
-    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, LocalId, Pat, PatKind, Program, Stmt,
-    StmtKind as S, TyKind,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode, Pat, PatKind,
+    Program, Stmt, StmtKind as S, TyId, TyKind,
 };
 
 /// For each function, the params (bit `i`: `params[i]`, the first 64) that may reach a function
@@ -71,6 +75,8 @@ pub trait Calls<'n> {
     /// The name of the method `callee` chooses at run time, when `callee` is such a call and the
     /// receiver's type says.
     fn method_name(&self, callee: &Callee, args: &[Expr]) -> Option<&'n str>;
+    /// Can a value of type `t` hold nothing that a call could replace: a number or a string?
+    fn plain(&self, t: TyId) -> bool;
     /// The constructor `new` of `class` runs (a subclass with none written has one that calls the
     /// base's).
     fn ctor(&self, class: DefId) -> Option<DefId>;
@@ -98,6 +104,8 @@ struct Scan<'s, 'n> {
     /// Per local: the params its value comes from.
     roots: FxHashMap<LocalId, u64>,
     direct: u64,
+    /// An assignment added to `roots`: scan again.
+    grew: bool,
     edges: Vec<(DefId, Edge)>,
     /// Edges to every method of a name.
     methods: Vec<(&'n str, Edge)>,
@@ -110,6 +118,19 @@ pub fn of_program(hir: &Program) -> ValueParams {
         _ => None,
     });
     compute(fns, &Lowered(hir))
+}
+
+/// Does a value of this kind hold nothing that a call could replace?
+pub(crate) fn is_plain(k: &TyKind) -> bool {
+    matches!(
+        k,
+        TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Bool
+            | TyKind::Str
+            | TyKind::Unit
+            | TyKind::Never
+    )
 }
 
 /// [`Calls`] of a finished program.
@@ -149,12 +170,26 @@ impl<'h> Calls<'h> for Lowered<'h> {
         }
     }
 
+    fn plain(&self, t: TyId) -> bool {
+        is_plain(self.0.types.kind(t))
+    }
+
     fn ctor(&self, class: DefId) -> Option<DefId> {
         match self.0.def(class) {
             Def::Adt(a) => a.ctor,
             _ => None,
         }
     }
+}
+
+/// Can the function replace what param `p` holds, itself?
+fn changes(p: &crate::hir::Param, f: &FnDef, calls: &dyn Calls<'_>) -> bool {
+    let modified = match p.mode {
+        PassMode::Borrow => f.body.locals[p.local.0 as usize].mutable,
+        PassMode::Copy => false,
+        PassMode::BorrowMut | PassMode::Owned => true,
+    };
+    modified && !calls.plain(p.ty)
 }
 
 /// Every function's params that may reach a function value.
@@ -184,13 +219,25 @@ pub fn compute<'a>(
             captures: &captures,
             roots: FxHashMap::default(),
             direct: 0,
+            grew: false,
             edges: vec![],
             methods: vec![],
         };
         for (i, p) in f.params.iter().enumerate().take(64) {
             s.roots.insert(p.local, 1 << i);
+            if changes(p, f, calls) {
+                s.direct |= 1 << i;
+            }
         }
+        let direct = s.direct;
         s.block(&f.body.block);
+        // An assignment reaches uses before it in a loop, and ones scanned before it was.
+        while std::mem::take(&mut s.grew) {
+            s.direct = direct;
+            s.edges.clear();
+            s.methods.clear();
+            s.block(&f.body.block);
+        }
         ctors.extend(s.ctors.drain());
         for (callee, e) in s.edges {
             callers.entry(callee).or_default().push(e);
@@ -271,8 +318,27 @@ fn root(e: &Expr) -> Option<LocalId> {
 }
 
 impl Scan<'_, '_> {
+    /// The params whose value `e` may hold: any named inside it, whatever it does with them
+    /// (`c ? q : o`, `id(q)`, `{ q }.q`, `[q]`), but for a value that holds nothing.
     fn bits_of(&self, e: &Expr) -> u64 {
-        root(e).map_or(0, |l| self.roots.get(&l).copied().unwrap_or(0))
+        let mut bits = 0;
+        self.holds(e, &mut bits);
+        bits
+    }
+
+    fn holds(&self, e: &Expr, bits: &mut u64) {
+        if self.calls.plain(e.ty) {
+            return;
+        }
+        match &e.kind {
+            E::Local(l, _) => *bits |= self.roots.get(l).copied().unwrap_or(0),
+            E::Block(b) => {
+                if let Some(v) = &b.value {
+                    self.holds(v, bits);
+                }
+            }
+            _ => children(e, &mut |x| self.holds(x, bits)),
+        }
     }
 
     fn block(&mut self, b: &Block) {
@@ -284,9 +350,12 @@ impl Scan<'_, '_> {
 
     fn stmt(&mut self, s: &Stmt) {
         match &s.kind {
-            // A `let` of a param or a part of it is a share, which counts what `const`s rely on.
-            S::Let { init, .. } => {
+            S::Let { local, init } => {
                 if let Some(e) = init {
+                    let bits = self.bits_of(e);
+                    if bits != 0 {
+                        *self.roots.entry(*local).or_insert(0) |= bits;
+                    }
                     self.expr(e);
                 }
             }
@@ -296,7 +365,7 @@ impl Scan<'_, '_> {
                     let mut ls = vec![];
                     pat_locals(pat, &mut ls);
                     for l in ls {
-                        self.roots.insert(l, bits);
+                        *self.roots.entry(l).or_insert(0) |= bits;
                     }
                 }
                 self.expr(init);
@@ -326,7 +395,7 @@ impl Scan<'_, '_> {
                     let mut ls = vec![];
                     pat_locals(binding, &mut ls);
                     for l in ls {
-                        self.roots.insert(l, bits);
+                        *self.roots.entry(l).or_insert(0) |= bits;
                     }
                 }
                 self.expr(iter);
@@ -390,6 +459,14 @@ impl Scan<'_, '_> {
                 }
                 _ => {}
             },
+            E::Assign { place, value } => {
+                let bits = self.bits_of(value);
+                if let Some(l) = root(place).filter(|_| bits != 0) {
+                    let was = self.roots.entry(l).or_insert(0);
+                    self.grew |= *was | bits != *was;
+                    *was |= bits;
+                }
+            }
             E::New { def, args, .. } => {
                 if let Some(ctor) = self.calls.ctor(*def) {
                     self.ctors.insert(*def, ctor);
