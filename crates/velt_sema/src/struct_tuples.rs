@@ -14,6 +14,8 @@
 //! refuses and says what to write instead: a value reaches the methods of an `extend` that
 //! implements an interface through `any` too, with no site at all, so such a method can't store
 //! its type parameter ([`refused_extends`]), and a walk that reaches a limit reports it.
+//! [`check_field_writes`] carries a write to a field of a type parameter the same way: a struct
+//! given for that parameter would change, which its fields don't.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
@@ -267,8 +269,15 @@ fn reached(cx: &mut Ctx, u: &Uses, s: &Found) -> (Vec<Reached>, Vec<(ParamCall, 
 }
 
 /// Carries what `s` holds through `uses` until nothing changes (`refused`: methods not to read
-/// through a param call, already reported).
-fn carry(cx: &mut Ctx, uses: &[(DefId, Uses)], refused: &FxHashSet<DefId>, s: &mut Found) {
+/// through a param call, already reported; `bad`: is this type, given for what's carried, an
+/// error).
+fn carry(
+    cx: &mut Ctx,
+    uses: &[(DefId, Uses)],
+    refused: &FxHashSet<DefId>,
+    s: &mut Found,
+    bad: fn(&mut Ctx, TyId) -> bool,
+) {
     let reads = uses
         .iter()
         .enumerate()
@@ -304,7 +313,7 @@ fn carry(cx: &mut Ctx, uses: &[(DefId, Uses)], refused: &FxHashSet<DefId>, s: &m
             }
         }
         for ((t, guard), span, site) in types {
-            if holds_tuple(cx, t, 0) {
+            if bad(cx, t) {
                 s.bad.push((span, t, site));
                 continue;
             }
@@ -350,8 +359,9 @@ fn extended_impls(cx: &Ctx) -> Vec<u32> {
 /// Which of `needs`, the types method `m` of the `extend` at `index` stores in struct fields
 /// (in the method's own terms), can't be shown not to be a tuple: it is one for this `extend`,
 /// or depends on the `extend`'s parameters. One that depends only on the method's own type
-/// parameters is given at the call, and what the type the `extend` is on stores is checked
-/// wherever that type is: `this` in `extend<A> Pair<A, i64>` holds an `A` that is no tuple.
+/// parameters is given at the call, and what the type the `extend` is on stores is what this
+/// check follows for that type anyway: `this` in `extend<A> Pair<A, i64>` isn't a new way to
+/// hold an `A`.
 fn unprovable(cx: &mut Ctx, index: u32, m: DefId, needs: &[TyId]) -> Option<TyId> {
     let imp = &cx.impls[index as usize];
     let (ty, iface, generics, iface_args) =
@@ -449,7 +459,7 @@ pub(crate) fn check_generic_bodies(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
     }
     let (own, limits) = (s.needs.clone(), s.limits.clone());
     let none = FxHashSet::default();
-    carry(cx, uses, &none, &mut s);
+    carry(cx, uses, &none, &mut s, is_tuple);
     let refused = refused_extends(cx, &s);
     if !refused.is_empty() {
         // Without them: what reached them through an interface value came from every instance
@@ -463,10 +473,48 @@ pub(crate) fn check_generic_bodies(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
             work,
             ..Found::default()
         };
-        carry(cx, uses, &refused, &mut s);
+        carry(cx, uses, &refused, &mut s, is_tuple);
     }
     add_work(Pass::StructTuples, s.work);
     report(cx, s.bad, s.limits);
+}
+
+fn is_tuple(cx: &mut Ctx, t: TyId) -> bool {
+    holds_tuple(cx, t, 0)
+}
+
+/// A struct given for a type parameter a generic body writes a field of (`v.x = 1`, `v: T`, `T
+/// extends { x: number }`): the write would change a struct, whose fields are readonly, and
+/// reach the caller's value, as a struct argument may be passed by address.
+pub(crate) fn check_field_writes(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
+    let writes = std::mem::take(&mut cx.param_field_writes);
+    if writes.is_empty() {
+        return;
+    }
+    let mut s = Found::default();
+    for (f, t) in writes {
+        let n = s.needs.entry(f).or_default();
+        if !n.contains(&(t, 0)) {
+            n.push((t, 0));
+        }
+    }
+    let struct_given = |cx: &mut Ctx, t: TyId| cx.declared_struct(cx.ty.core(t).unwrap_or(t));
+    carry(cx, uses, &FxHashSet::default(), &mut s, struct_given);
+    add_work(Pass::StructTuples, s.work);
+    s.bad.sort_by_key(|(s, _, _)| (s.file, s.lo));
+    let mut reported: FxHashSet<Span> = FxHashSet::default();
+    for (span, t, _) in s.bad {
+        if reported.insert(span) {
+            let shown = cx.display(t);
+            cx.error(
+                Diagnostic::error(
+                    format!("the function called here writes a field of a struct (`{shown}`), and struct fields are readonly"),
+                    span,
+                )
+                .with_note("a struct value never changes: return a new value from the function, or make the type a class"),
+            );
+        }
+    }
 }
 
 /// Reports each place a tuple was given once, in source order.

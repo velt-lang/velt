@@ -668,7 +668,8 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     });
     timings::pass("struct_tuples::check_instantiations", || {
         struct_tuples::check_instantiations(cx);
-        struct_tuples::check_generic_bodies(cx, &uses)
+        struct_tuples::check_generic_bodies(cx, &uses);
+        struct_tuples::check_field_writes(cx, &uses)
     });
     timings::pass("undefined_args::check_instantiations", || {
         undefined_args::check_instantiations(cx)
