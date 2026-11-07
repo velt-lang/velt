@@ -65,6 +65,35 @@ fn nothing_is_written_through_what_is_already_on_disk() {
 }
 
 #[test]
+fn nothing_is_written_over_what_is_already_on_disk_on_every_os() {
+    // Without links (Windows needs a privilege to make one): a file and a directory already where
+    // the tree writes, and on the filesystems that fold case, one in another case. Each is an
+    // error, and what was there is unchanged.
+    let dir = tempfile::tempdir().unwrap();
+    let mut cases = vec![("f", "f"), ("d", "d/x")];
+    if cfg!(any(windows, target_os = "macos")) {
+        cases.extend([("F", "f"), ("D", "d/x")]);
+    }
+    for (i, (there, written)) in cases.into_iter().enumerate() {
+        let root = dir.path().join(format!("root{i}"));
+        std::fs::create_dir(&root).unwrap();
+        let is_dir = written.contains('/');
+        match is_dir {
+            true => std::fs::create_dir(root.join(there)).unwrap(),
+            false => std::fs::write(root.join(there), b"before").unwrap(),
+        }
+        let tar = TarBuilder::default().file(written, b"x").gz();
+        let tree = read(&tar, Limits::DEFAULT).unwrap();
+        let e = write_into(&tree, &root, Links::NATIVE).unwrap_err();
+        assert!(e.contains("cannot write"), "{there} then {written}: {e}");
+        match is_dir {
+            true => assert_eq!(std::fs::read_dir(root.join(there)).unwrap().count(), 0),
+            false => assert_eq!(std::fs::read(root.join(there)).unwrap(), b"before"),
+        }
+    }
+}
+
+#[test]
 fn entries_under_one_deep_directory_cost_linear_work() {
     // 300 files under one 128-deep directory: each walk of its parents again would be 128 claims
     // and keys per file.

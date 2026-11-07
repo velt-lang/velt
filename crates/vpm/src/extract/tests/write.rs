@@ -140,3 +140,32 @@ fn what_is_ready_is_recorded_before_the_tree_is_seen_and_a_replaced_tree_stays_u
     // Nothing is left beside it.
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 }
+
+#[test]
+fn staging_left_by_a_killed_extraction_is_removed_once_it_is_old() {
+    let dir = tempfile::tempdir().unwrap();
+    let left = [
+        ".abc.partial-1-0",
+        ".abc.partial-1-0.old",
+        ".def.partial-9-3",
+    ];
+    for name in left {
+        std::fs::create_dir(dir.path().join(name)).unwrap();
+        std::fs::write(dir.path().join(name).join("f"), "x").unwrap();
+    }
+    // Other names stay, whatever their age: a tree, its record, a lock.
+    let kept = ["abc", "abc.verified", "abc.lock", ".hidden"];
+    std::fs::create_dir(dir.path().join("abc")).unwrap();
+    for name in &kept[1..] {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    // Just made: a running extraction's, kept.
+    let now = std::time::SystemTime::now();
+    super::super::remove_stale_staging(dir.path(), now);
+    assert!(left.iter().all(|n| dir.path().join(n).exists()));
+    // Two hours later: removed.
+    let later = now + std::time::Duration::from_secs(7200);
+    super::super::remove_stale_staging(dir.path(), later);
+    assert!(left.iter().all(|n| !dir.path().join(n).exists()));
+    assert!(kept.iter().all(|n| dir.path().join(n).exists()));
+}

@@ -1,6 +1,7 @@
-//! `.tar.gz`: a gzip stream (several members, as `cat a.gz b.gz` gives, read as one) holding a
-//! ustar, pax or GNU tar archive. Read as a stream, so the limits hold while decompressing:
-//! no file is allocated before its size is checked against what is left.
+//! `.tar.gz`: a gzip stream (several members, as `cat a.gz b.gz` gives, read as one; [`Members`]
+//! bounds their count) holding a ustar, pax or GNU tar archive. Read as a stream, so the limits
+//! hold while decompressing: no file is allocated before its size is checked against what is
+//! left.
 //!
 //! Accepted: files, directories, symbolic and hard links; pax headers (`path` and `linkpath`
 //! taken, `size` and sparse keys refused, the rest ignored, global ones too: `git archive` writes
@@ -9,7 +10,7 @@
 
 use std::io::Read;
 
-use flate2::read::MultiGzDecoder;
+use flate2::bufread::GzDecoder;
 
 use super::tree::{Entry, Tree};
 use super::Limits;
@@ -21,7 +22,11 @@ const MAX_META: u64 = 1 << 20;
 /// Add the entries of the `.tar.gz` `archive` to `tree`.
 pub(super) fn read(archive: &[u8], limits: Limits, tree: &mut Tree) -> Result<(), String> {
     let mut stream = Stream {
-        gz: MultiGzDecoder::new(archive),
+        gz: Members {
+            gz: Some(GzDecoder::new(archive)),
+            members: 1,
+            out: 0,
+        },
         read: 0,
         packed: archive.len(),
         limits,
@@ -172,9 +177,58 @@ fn nul_terminated(b: &[u8]) -> Result<String, String> {
     utf8(field(b))
 }
 
+/// Members of a gzip stream read before their count is checked against their output.
+const FREE_MEMBERS: u64 = 1024;
+/// What each member must hold on average past [`FREE_MEMBERS`]: `bgzip`'s blocks hold 64 KiB.
+const MEMBER_BYTES: u64 = 4096;
+
+/// A gzip stream of one or more members read as one (`cat a.gz b.gz`), counting its members:
+/// each costs fixed work to start, whatever it holds, and millions of empty members took over a
+/// minute per 100 MB with nothing to show for it. Past [`FREE_MEMBERS`] members, they must hold
+/// [`MEMBER_BYTES`] of output each on average.
+struct Members<'a> {
+    gz: Option<GzDecoder<&'a [u8]>>,
+    members: u64,
+    /// Decompressed bytes so far.
+    out: u64,
+}
+
+impl Read for Members<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let Some(gz) = &mut self.gz else {
+                return Ok(0);
+            };
+            let n = gz.read(buf)?;
+            if n > 0 || buf.is_empty() {
+                self.out += n as u64;
+                return Ok(n);
+            }
+            // This member is done: the next starts where it ended, if anything is left.
+            let Some(done) = self.gz.take() else {
+                return Ok(0);
+            };
+            let rest = done.into_inner();
+            if rest.is_empty() {
+                return Ok(0);
+            }
+            self.members += 1;
+            if self.members > FREE_MEMBERS && self.members * MEMBER_BYTES > self.out {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "more than {FREE_MEMBERS} gzip members, holding less than {MEMBER_BYTES} bytes each"
+                    ),
+                ));
+            }
+            self.gz = Some(GzDecoder::new(rest));
+        }
+    }
+}
+
 /// The decompressed archive, read block by block.
 struct Stream<'a> {
-    gz: MultiGzDecoder<&'a [u8]>,
+    gz: Members<'a>,
     /// Decompressed bytes read so far.
     read: u64,
     packed: usize,

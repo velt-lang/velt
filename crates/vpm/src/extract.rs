@@ -208,6 +208,7 @@ fn staging(dest: &Path) -> Result<PathBuf, String> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    remove_stale_staging(parent, std::time::SystemTime::now());
     // Unique within the process (a counter) and between processes (the pid); one left behind by
     // a process that died with the same pid is skipped.
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -224,6 +225,32 @@ fn staging(dest: &Path) -> Result<PathBuf, String> {
         "cannot find a free staging name beside `{}`",
         dest.display()
     ))
+}
+
+/// How old a staging directory beside a destination must be to count as left behind: no
+/// extraction runs that long (downloads have their own time limits).
+const STALE_STAGING: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Remove what extractions into `parent` left behind when they were killed: staging directories
+/// (`.<name>.partial-<pid>-<n>`, and `….old` from a replacement) not changed for
+/// [`STALE_STAGING`] before `now`. Best effort: one that can't be removed stays for the next
+/// time.
+fn remove_stale_staging(parent: &Path, now: std::time::SystemTime) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !(name.starts_with('.') && name.contains(".partial-")) {
+            continue;
+        }
+        let old = (entry.metadata().and_then(|m| m.modified()))
+            .is_ok_and(|t| now.duration_since(t).is_ok_and(|age| age > STALE_STAGING));
+        if old {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 fn write_into(tree: &Tree, root: &Path, links: Links) -> Result<(), String> {
