@@ -221,6 +221,11 @@ pub enum Intrinsic {
     /// variable of its caller. Lowered to `f.env == null`, which velt_opt folds to a constant
     /// where the function value is known (const_fields after specialization).
     FnCapturesNothing,
+    /// `f.length` of a function value: an `f64`, looked up by its code
+    /// (`hir::Program::fn_shapes`, hir_encodings.md "Function values"). Additive.
+    FnLength,
+    /// `f.name` of a function value: a `string`, as [`Intrinsic::FnLength`]. Additive.
+    FnName,
     /// Inside a member of a recursive closure group (sema `nested_closures`): the closure
     /// value of member `def` of the same group, made from the running closure's own
     /// environment (`{ code of def, env }`, sharing it). The members capture the same

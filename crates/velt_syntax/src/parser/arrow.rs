@@ -232,6 +232,9 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        if let Some(d) = &default {
+            self.name_fn(&name.name, d);
+        }
         if rest {
             if let Some(d) = &default {
                 self.param_error("a rest parameter cannot have a default value", d.span);

@@ -94,6 +94,7 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
                     .collect(),
                 span: m.ast.span,
                 jsx_import_source: m.ast.jsx_import_source.clone(),
+                fn_names: m.ast.fn_names.clone(),
             },
             imports: m.imports.clone(),
             jsx_runtime: m.jsx_runtime.clone(),

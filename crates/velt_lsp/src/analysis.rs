@@ -219,6 +219,7 @@ fn parse(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
             items: vec![],
             span: Span::new(file, 0, 0),
             jsx_import_source: None,
+            fn_names: vec![],
         };
         let d = Diagnostic::error("internal error in the parser", Span::new(file, 0, 0));
         (empty, vec![d])

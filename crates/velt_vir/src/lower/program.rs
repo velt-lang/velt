@@ -81,6 +81,7 @@ impl<'h> Cx<'h> {
             work_map: FxHashMap::default(),
             queue: VecDeque::new(),
             iface_glues: vec![],
+            fn_tables: vec![],
             unique_params: vec![],
             declared_unique: vec![],
             building: FxHashSet::default(),

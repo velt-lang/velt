@@ -96,6 +96,7 @@ mod frame_envs;
 mod lower_profile;
 mod state;
 use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
+mod fn_shapes;
 mod fresh_fns;
 mod frozen;
 mod glue;
@@ -266,6 +267,7 @@ pub(crate) fn lower_program(
             cx.build_now(fid, &work);
         }
         cx.build_iface_glues();
+        cx.build_fn_tables();
         lower_profile::end_pass(pass, pass_start.elapsed());
         cx.shapes_close();
         let next = cx.close_boxing();
@@ -440,6 +442,8 @@ struct Cx<'h> {
     /// The glues that depend on the types `any` values hold (`AnyIface`, any_iface.rs, and
     /// `AnyNumeric`, any_number.rs), built last, each with the number of such types then.
     iface_glues: Vec<(FuncId, Work, Option<usize>)>,
+    /// The glues `length` and `name` of function values go through (fn_shapes.rs).
+    fn_tables: Vec<(FuncId, Work)>,
     /// Params given `noalias` or `frozen`, with their types, for `unfreeze_module_reach`
     /// (boxing/module_reach.rs); those of the function being declared until it is built.
     unique_params: Vec<(FuncId, u32, TyId)>,

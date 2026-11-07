@@ -758,6 +758,9 @@ impl FnCx<'_, '_> {
             span,
         );
         let arrow = undefined_after(arrow, undefined, span);
+        if let H::Closure(d) | H::FnRef(d, _) = &h.kind {
+            self.note_wraps(arrow.span, *d);
+        }
         let mut w = self.closure(&arrow, Some(exp), true);
         self.mark_converts(&mut w, h.ty, exp);
         self.pop_scope();

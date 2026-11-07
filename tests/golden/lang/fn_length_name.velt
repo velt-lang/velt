@@ -1,0 +1,137 @@
+// `length` and `name` of function values (#1588): a value of a function type may hold any
+// function of that type, so both come from the function it holds, as in Node.
+function none() {}
+function two(a: number, b: string) {
+  return a + b;
+}
+function optional(a: number, b?: string) {
+  return b ?? a;
+}
+function defaulted(a: number, b = 2, c: number = 3) {
+  return a + b + c;
+}
+function rest(a: number, ...more: number[]) {
+  return a + more.length;
+}
+function destructured({ x }: { x: number }, [y]: number[]) {
+  return x + y;
+}
+
+console.log(none.length, none.name);
+console.log(two.length, two.name);
+console.log(optional.length, optional.name);
+console.log(defaulted.length, defaulted.name);
+console.log(rest.length, rest.name);
+console.log(destructured.length, destructured.name);
+
+// Literals take the name of where they stand.
+const arrow = (a: number) => a;
+const fnExpr = function (a: number, b: number) {
+  return a + b;
+};
+const named = function inner(a: number) {
+  return a;
+};
+const typed: (x: number) => number = (x) => x + 1;
+const cast = ((x: number) => x) as (x: number) => number;
+const parenthesized = ((x: number, y: number) => x + y);
+let assigned: (x: number) => number;
+assigned = (x) => x;
+console.log(arrow.length, arrow.name);
+console.log(fnExpr.length, fnExpr.name);
+console.log(named.length, named.name);
+console.log(typed.length, typed.name);
+console.log(cast.length, cast.name);
+console.log(parenthesized.length, parenthesized.name);
+console.log(assigned.length, assigned.name);
+
+const table = {
+  plain: (a: number) => a,
+  long: function (a: number, b: number) {
+    return a + b;
+  },
+  given: function own() {
+    return 1;
+  },
+};
+console.log(table.plain.length, table.plain.name);
+console.log(table.long.length, table.long.name);
+console.log(table.given.length, table.given.name);
+
+class Holder {
+  field: (a: number, b: number) => number = (a, b) => a + b;
+  typedField: (a: number) => number = (a) => a;
+}
+const holder = new Holder();
+console.log(holder.field.length, holder.field.name);
+console.log(holder.typedField.length, holder.typedField.name);
+
+function withDefault(cb: (a: number) => number = (a) => a) {
+  return cb.name + cb.length;
+}
+console.log(withDefault());
+
+// An anonymous literal has no name.
+console.log(((a: number) => a).name === "", ((a: number) => a).length);
+
+// Through a function type: what the value holds, not what the type says.
+function describe(f: (a: any, b: any) => any): string {
+  return `${f.name || "(anonymous)"}/${f.length}`;
+}
+console.log(describe(two));
+console.log(describe(arrow));
+console.log(describe(() => 1));
+console.log(describe((a) => a));
+console.log(describe(function local(a, b) {
+  return a + b;
+}));
+
+// A closure with captures, and the same literal made twice.
+function counter(start: number) {
+  const next = (by: number, again: boolean) => {
+    start += by;
+    return again ? start + by : start;
+  };
+  return next;
+}
+const c1 = counter(1);
+const c2 = counter(2);
+console.log(c1.length, c1.name, c2.length, c2.name, c1(1, false), c2(1, true));
+function take(f: (n: number, b: boolean) => number): string {
+  return f.name + ":" + f.length;
+}
+console.log(take(c1));
+
+// Generic code, and a slot left out of a call.
+function nameOf<T>(f: () => T, fallback?: string): string {
+  return fallback || f.name || "anon";
+}
+function makeOne() {
+  return 1;
+}
+console.log(nameOf(makeOne), nameOf(() => "x"), nameOf(makeOne, "given"));
+
+// async functions and generators are functions too.
+async function later(a: number) {
+  return a;
+}
+function* gen(a: number, b: number): Generator<number> {
+  yield a + b;
+}
+const lateArrow = async (a: string, b: string) => a + b;
+console.log(later.length, later.name, gen.length, gen.name, lateArrow.length, lateArrow.name);
+
+// Through `any`, and in a condition as sigx writes it.
+const held: any = two;
+const heldArrow: any = (a: number, b: number, c: number) => a + b + c;
+console.log(held.length, held.name, heldArrow.length, heldArrow.name === "heldArrow");
+function invoke(fn: (props: any) => any, props?: any): any {
+  if (props !== undefined) return fn(props);
+  if (fn.length > 0) return "needs props";
+  return fn(undefined);
+}
+console.log(invoke(() => "no props"), invoke((p) => p), invoke((p) => p, 1));
+
+// A property named `name` or `length` of an object is the object's.
+const obj = { name: "n", length: 3 };
+console.log(obj.name, obj.length);

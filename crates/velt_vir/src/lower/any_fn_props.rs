@@ -8,9 +8,9 @@
 //! properties; a function value without one (a declared function's) has the identity the
 //! runtime keeps for its code, made at the first property write to any reference to it.
 //!
-//! A property read or call that finds nothing goes on as before: the built-in members of
-//! functions (`name`, `call`, ...) are not supported yet, and another key is `undefined`, as in
-//! Node. Writing `name` or `length` (read-only in JavaScript) is not supported either. In a
+//! A property read or call that finds nothing goes on as before: `name` and `length` are the
+//! function's own (fn_shapes.rs), the other built-in members of functions (`call`, ...) are not
+//! supported yet, and another key is `undefined`, as in Node. Writing `name` or `length` (read-only in JavaScript) is not supported either. In a
 //! program without writes through `any` no function has properties, and the slots are the ones
 //! they were before.
 
@@ -99,6 +99,7 @@ impl FnLower<'_, '_> {
         self.store(out.clone(), v);
         self.ret_status(ST_OK);
         self.switch_to(absent);
+        self.fn_own_get(data, key, out, ty);
         // What every function has from JavaScript itself or `Function.prototype`, not
         // supported through `any` yet.
         self.has_names(key, FN_PROTO_NAMES, ST_UNSUPPORTED);

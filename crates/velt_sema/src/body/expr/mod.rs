@@ -87,6 +87,7 @@ mod errors;
 mod eval_effects;
 mod fn_bind;
 mod fn_casts;
+mod fn_shape;
 mod fn_union_call;
 mod fn_widen;
 mod frameless_fn;

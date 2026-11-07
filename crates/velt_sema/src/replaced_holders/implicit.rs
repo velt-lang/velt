@@ -658,6 +658,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::HoldsDynamic
         | I::HoldsDynamicOrClass
         | I::FnCapturesNothing
+        | I::FnLength
+        | I::FnName
         | I::ClosureSibling(_)
         | I::InitSlots(..)
         | I::SimdShuffle(..)

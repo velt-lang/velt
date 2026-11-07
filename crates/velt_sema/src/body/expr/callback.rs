@@ -244,11 +244,13 @@ impl FnCx<'_, '_> {
             }
             (local, v)
         });
+        let named_call = call.clone();
         let arrow = wrapper(call, want, plan, wrap == Wrap::Discard, span);
         match wrap {
             Wrap::Task => self.void_task = Some(arrow.span),
             Wrap::Call | Wrap::Discard => {}
         }
+        self.note_wrapper_shape(arrow.span, closure, &named_call);
         let mut w = self.closure(&arrow, exp, true);
         // A function value converted to another function type (#943, `FreshClosure`).
         if let (Some((_, v)), Some(to)) = (&bound, exp) {

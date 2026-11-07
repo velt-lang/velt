@@ -506,6 +506,9 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         _ => Some(super::returns::ret_of(cx, def, cx.fn_info(def).name_span)),
     };
     let f = cx.fn_info(def).clone();
+    if let FnSource::Decl(d) = src {
+        cx.note_fn_length(d.sig.span, &d.sig.params);
+    }
     let mut env = TyEnv::new(f.module, &f.generics.names);
     env.this_ty = f.this_type();
     // An async body returns the promise's payload, which is also the HIR `ret` (the signature,

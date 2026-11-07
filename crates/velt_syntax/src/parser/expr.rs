@@ -63,6 +63,9 @@ impl<'a> Parser<'a> {
             self.bump();
         }
         let value = self.guarded(|p| p.parse_assign())?;
+        if let (None, ExprKind::Ident(name)) = (op, &lhs.kind) {
+            self.name_fn(&name.name, &value);
+        }
         let span = self.span_from(lo);
         Ok(self.mk_expr(
             ExprKind::Assign {

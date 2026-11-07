@@ -56,7 +56,7 @@ macro_rules! enums {
 
 structs! {
     Ident { name, span }
-    Module { items, span, jsx_import_source }
+    Module { items, span, jsx_import_source, fn_names }
     Item { kind, exported, span }
     Import { names, from, from_span, namespace, all, default_import, type_only }
     ImportName { name, alias, type_only }

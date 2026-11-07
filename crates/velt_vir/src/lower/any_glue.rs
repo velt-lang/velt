@@ -455,6 +455,9 @@ impl FnLower<'_, '_> {
         if self.fn_props(ty) {
             return self.fn_prop_get(data, key, &outp, ty);
         }
+        if matches!(self.cx.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_)) {
+            self.fn_own_get(data, key, &outp, ty);
+        }
         if let Some((d, _)) = self.plain_adt(ty) {
             self.any_subclass_dispatch(Glue::AnyGet, ty, d, &[data, key, out]);
             let vp = self.any_value_place(data, ty);

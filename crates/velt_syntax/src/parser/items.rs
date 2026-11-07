@@ -63,10 +63,15 @@ impl<'a> Parser<'a> {
             items.push(self.import_meta_import());
             items.push(self.import_meta_item(span));
         }
+        let mut fn_names = std::mem::take(&mut self.fn_names);
+        // By span; the literal's own name, noted first, goes before what surrounds it.
+        fn_names.sort_by_key(|(s, _)| (s.lo, s.hi));
+        fn_names.dedup_by_key(|(s, _)| *s);
         Module {
             items,
             span: Span::new(self.file, 0, self.src.len() as u32),
             jsx_import_source: self.lx.jsx_import_source.take(),
+            fn_names,
         }
     }
 
@@ -614,6 +619,9 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        if let Some(d) = &default {
+            self.name_fn(&name.name, d);
+        }
         let mut ty = match (written, &default) {
             (Some(t), _) => t,
             (None, Some(d)) if !optional && !rest => self.param_type_of(&name, d)?,
@@ -758,6 +766,9 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        if let (PatternKind::Ident(name), Some(init)) = (&pattern.kind, &init) {
+            self.name_fn(&name.name, init);
+        }
         Ok(VarDecl {
             kind,
             pattern,

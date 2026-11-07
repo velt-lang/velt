@@ -654,6 +654,8 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::HoldsDynamic
         | I::HoldsDynamicOrClass
         | I::FnCapturesNothing
+        | I::FnLength
+        | I::FnName
         | I::Sqrt
         | I::Floor
         | I::Ceil

@@ -79,6 +79,9 @@ impl FnCx<'_, '_> {
         let renamed = self.ctor_member(obj.ty, prop); // `C.name` of a class value
         let prop = renamed.as_ref().unwrap_or(prop);
         let Some((index, fty)) = self.field_of(obj.ty, &prop.name) else {
+            if let Some(h) = self.fn_own_member(&obj, prop, want, span) {
+                return Some(h);
+            }
             self.no_field(obj.ty, obj.span, prop);
             return None;
         };
