@@ -494,7 +494,7 @@ jobs:
         run: |
           gh run download "$RUN" --repo "$GITHUB_REPOSITORY" --pattern 'clang-objects-*' \
             --dir "$RUNNER_TEMP/clang-objects"
-          find "$RUNNER_TEMP/clang-objects" -name '*.tar' -exec tar -xf {} \;
+          bash .github/actions/setup/clang-objects.sh unpack "$RUNNER_TEMP/clang-objects"
       - uses: actions/cache/save@v4
         if: steps.objects.outcome == 'success'
         with:
