@@ -27,12 +27,22 @@ pub(super) struct CpuChecks {
     known: FxHashMap<DefId, Option<bool>>,
 }
 
-/// The architecture of a target triple, as `Ext::on_arch` names it; `None` for one this code does
-/// not know, whose checks stay at run time (`native`, `host`).
-fn arch_of(triple: &str) -> Option<&str> {
+/// The architecture of a target, as `Ext::on_arch` names it. An empty target, `native` and `host`
+/// are the machine the compiler runs on, as in the backends' `target::normalize`. `None` for an
+/// architecture this code does not know, whose checks stay at run time.
+fn arch_of(target: &str) -> Option<&'static str> {
+    let host;
+    let triple = match target.trim() {
+        "" | "native" | "host" => {
+            host = crate::system::host_triple();
+            host.as_str()
+        }
+        triple => triple,
+    };
     match triple.split('-').next()? {
-        arch @ ("x86_64" | "aarch64" | "wasm32") => Some(arch),
-        "arm64" => Some("aarch64"),
+        "x86_64" => Some("x86_64"),
+        "aarch64" | "arm64" => Some("aarch64"),
+        "wasm32" => Some("wasm32"),
         _ => None,
     }
 }

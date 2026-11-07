@@ -64,13 +64,18 @@ fn has(funcs: &[String], name: &str) -> bool {
 
 #[test]
 fn each_target_builds_its_own_architectures_branch() {
+    let on_arm = cfg!(target_arch = "aarch64");
     for (target, arm, x86) in [
         ("x86_64-unknown-linux-gnu", false, true),
         ("aarch64-unknown-linux-gnu", true, false),
         ("arm64-apple-darwin", true, false),
         ("wasm32-wasip1", false, false),
+        // The machine the compiler runs on.
+        ("native", on_arm, !on_arm),
+        ("host", on_arm, !on_arm),
+        ("", on_arm, !on_arm),
         // Not an architecture this knows: left to run time.
-        ("native", true, true),
+        ("riscv64gc-unknown-linux-gnu", true, true),
     ] {
         let funcs = lowered(target, false);
         assert_eq!(has(&funcs, "arm"), arm, "{target}: {funcs:?}");
