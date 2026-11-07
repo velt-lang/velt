@@ -1,0 +1,146 @@
+// `f16x8.mulAdd` (#2049): one rounding on every path. Without FP16 it is computed in `f64`, as a
+// multiply-add in `f32` rounds twice, and comes out wrong in the last bit (thousands of 200M).
+// `rounds` rounds of eight triples, from three xorshift32 streams, the lanes of three kinds:
+//   lanes 0-2: `a`, `b` and `c` random patterns;
+//   lanes 3-5: `c` next to `-(a * b)`, in its last four bits, where a sum cancels;
+//   lanes 6-7: `c` a random subnormal or zero, where a product that is a midpoint breaks a tie.
+// Then every triple of 41 edge values in each sign (overflow, the largest values, subnormals), and
+// products that are midpoints with a tiny `c`, which is where `f32` goes wrong. The argument gives
+// `rounds`: `f16_fma_triples` in crates/veltc/tests/cpu_levels.rs runs 200M triples. The hash is
+// `simd_half_sweep`'s. The expected output is Node's, each result computed exactly with BigInt and
+// rounded once; the 200M from C with FEAT_FP16's `vfmaq_f16`, which agrees with Node on this one.
+import { f16x8, u16x8, u32x4 } from "velt/simd";
+
+function nanOne(r: f16x8): u16x8 {
+  const bits = r.asU16x8();
+  const nan = (bits & u16x8.splat(0x7fff)).gt(u16x8.splat(0x7c00));
+  return u16x8.select(nan, u16x8.splat(0x7e00), bits);
+}
+
+function mix(h: u16x8, r: f16x8): u16x8 {
+  const m = (h ^ nanOne(r)) * 40503;
+  return m ^ (m >>> 7);
+}
+
+function show(name: string, h: u16x8) {
+  const lanes: string[] = [];
+  for (let k: usize = 0; k < 8; k++) {
+    lanes.push(`${h[k]}`);
+  }
+  console.log(name, lanes.join(" "));
+}
+
+function next(x: u32x4): u32x4 {
+  const a = x ^ (x << 13);
+  const b = a ^ (a >>> 17);
+  return b ^ (b << 5);
+}
+
+function seed(s: u32): u32x4 {
+  return (u32x4.index() + u32x4.splat(s)) * 2654435761;
+}
+
+/** One bit pattern per lane of `c`, chosen by the kinds of lane above. */
+function shaped(a: f16x8, b: f16x8, c: u16x8): f16x8 {
+  const near = (-(a * b)).asU16x8() ^ (c & u16x8.splat(15));
+  const tiny = c & u16x8.splat(0x83ff);
+  const kind = u16x8.index();
+  const out = u16x8.select(kind.lt(u16x8.splat(6)), near, tiny);
+  return f16x8.fromU16x8(u16x8.select(kind.lt(u16x8.splat(3)), c, out));
+}
+
+const EDGES: u16[] = [
+  0x0000,
+  0x0001,
+  0x0002,
+  0x0003,
+  0x0200,
+  0x03ff,
+  0x0400,
+  0x0401,
+  0x0801,
+  0x1000,
+  0x1801,
+  0x2001,
+  0x3000,
+  0x33ff,
+  0x3400,
+  0x37ff,
+  0x3800,
+  0x3bff,
+  0x3c00,
+  0x3c01,
+  0x3c02,
+  0x3dff,
+  0x3e00,
+  0x3e01,
+  0x3fff,
+  0x4000,
+  0x4001,
+  0x53ff,
+  0x5400,
+  0x5401,
+  0x5bff,
+  0x5c00,
+  0x5c01,
+  0x6000,
+  0x63ff,
+  0x6400,
+  0x7bfe,
+  0x7bff,
+  0x7c00,
+  0x7e00,
+  0x7c01,
+];
+
+const TINY: u16[] = [0x0001, 0x0003, 0x8001, 0x8003, 0x0400, 0x8400];
+
+function main() {
+  const rounds: u32 = process.argv.length > 2 ? parseInt(process.argv[2]) as u32 : 50000;
+  let x = seed(1);
+  let y = seed(5);
+  let z = seed(9);
+  let exact = u16x8.splat(0);
+  for (let i: u32 = 0; i < rounds; i++) {
+    x = next(x);
+    y = next(y);
+    z = next(z);
+    const a = f16x8.fromU16x8(x.asU8x16().asU16x8());
+    const b = f16x8.fromU16x8(y.asU8x16().asU16x8());
+    exact = mix(exact, a.mulAdd(b, shaped(a, b, z.asU8x16().asU16x8())));
+  }
+  show("random", exact);
+  // Every triple of edges, each sign of each.
+  let edges = u16x8.splat(0);
+  const n = EDGES.length;
+  const signs = u16x8.index() << 13;
+  for (let i: usize = 0; i < n; i++) {
+    for (let j: usize = 0; j < n; j++) {
+      for (let k: usize = 0; k < n; k++) {
+        const a = u16x8.splat(EDGES[i]) ^ (signs & u16x8.splat(0x8000));
+        const b = u16x8.splat(EDGES[j]) ^ ((signs << 1) & u16x8.splat(0x8000));
+        const c = u16x8.splat(EDGES[k]) ^ ((signs << 2) & u16x8.splat(0x8000));
+        const r = f16x8.fromU16x8(a).mulAdd(f16x8.fromU16x8(b), f16x8.fromU16x8(c));
+        edges = mix(edges, r);
+      }
+    }
+  }
+  show("edges", edges);
+  // A product that is a midpoint with a very small `c`: the double rounding f32 gets wrong.
+  let ties = u16x8.splat(0);
+  for (let m: u32 = 0; m < 2048; m += 8) {
+    for (let e: u32 = 0; e < 2048; e += 16) {
+      const a = f16x8.fromU16x8(u16x8.splat(0x3c00) + u16x8.index() + u16x8.splat(m as u16));
+      const b = f16x8.fromU16x8(u16x8.splat(0x3c00 + (e as u16)));
+      for (let t: usize = 0; t < TINY.length; t++) {
+        ties = mix(ties, a.mulAdd(b, f16x8.fromU16x8(u16x8.splat(TINY[t]))));
+      }
+    }
+  }
+  show("ties", ties);
+  // `mulAddFast` may differ in the last bit: here nothing rounds, and each lane differs.
+  const a = f16x8.load([1, 2, 3, 4, 5, 6, 7, 8]);
+  const b = f16x8.load([0.5, 2, 0.25, 4, 1.5, 3, 0.75, 8]);
+  const c = f16x8.load([-1, 10, 100, 1000, -1, -10, -100, -1000]);
+  show("fast", a.mulAddFast(b, c).asU16x8());
+}

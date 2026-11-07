@@ -146,7 +146,7 @@ pub(crate) const F32_TO_F16_SOFT: &str =
 /// order of the bits is the order of the magnitudes; an overflow to infinity becomes the largest
 /// finite f32), then the last bit set. No select, so no branch, and it vectorizes. A NaN is
 /// never inexact (`one`), so it stays the quiet NaN `fptrunc` gives, with the payload's top bits.
-const F64_TO_F32_ODD: &str =
+pub(crate) const F64_TO_F32_ODD: &str =
     "define internal float @velt.f64_to_f32.odd(double %x) alwaysinline nounwind {
   %t = fptrunc double %x to float
   %back = fpext float %t to double

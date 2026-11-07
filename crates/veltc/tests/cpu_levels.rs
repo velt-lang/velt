@@ -280,7 +280,7 @@ fn built_golden(root: &Path, name: &str, flags: &[&str], at: usize) -> std::path
 fn f16_arithmetic_on_every_path_prints_the_goldens() {
     let dir = test_dir::TestDir::new();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
-    for name in ["simd_half_arith", "simd_half_sweep"] {
+    for name in ["simd_half_arith", "simd_half_sweep", "simd_half_fma"] {
         let want = std::fs::read_to_string(golden.join(format!("{name}.out"))).unwrap();
         for (at, flags) in f16_paths().iter().enumerate() {
             let exe = built_golden(dir.path(), name, flags, at);
@@ -307,11 +307,18 @@ neg 21906 52337 45105 17308 34548 27764 12475 15965
 abs 30586 47474 10500 59872 42431 36468 10527 12984
 ";
 
-/// Every pair of patterns on each path: under a minute on LLVM's, about a quarter of an hour under
-/// Cranelift.
-#[test]
-#[ignore = "every pair of the 2^32 on each path: about a quarter of an hour"]
-fn f16_every_pair() {
+/// What `simd_half_fma` prints for 25M rounds, 200M triples, from FEAT_FP16's own `vfmaq_f16`: the
+/// same program in C (`clang -O2 -mcpu=apple-m1 -ffp-contract=off`), which agrees with Node's exact
+/// BigInt results on the golden's sample.
+const F16_FMA_TRIPLES: &str = "\
+random 30102 12179 16149 5876 28655 55336 4875 48198
+edges 37941 30205 50573 61862 50573 61862 37941 30205
+ties 44137 60087 5809 7558 60602 31225 27778 63189
+fast 47104 19200 22092 25584 18048 18432 54764 58192
+";
+
+/// `golden` run with `argument` prints `want` on each path, in parallel.
+fn f16_golden_with_argument(golden: &str, argument: &str, want: &str) {
     let dir = test_dir::TestDir::new();
     let root = dir.path();
     let paths = f16_paths();
@@ -321,17 +328,13 @@ fn f16_every_pair() {
             .enumerate()
             .map(|(at, flags)| {
                 s.spawn(move || {
-                    let exe = built_golden(root, "simd_half_sweep", flags, at);
+                    let exe = built_golden(root, golden, flags, at);
                     let o = no_window::command(exe.to_str().unwrap())
-                        .arg("1")
+                        .arg(argument)
                         .output()
                         .unwrap();
                     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-                    assert_eq!(
-                        String::from_utf8_lossy(&o.stdout),
-                        F16_EVERY_PAIR,
-                        "{flags:?}"
-                    );
+                    assert_eq!(String::from_utf8_lossy(&o.stdout), want, "{flags:?}");
                 })
             })
             .collect();
@@ -339,6 +342,21 @@ fn f16_every_pair() {
             run.join().expect("a path");
         }
     });
+}
+
+/// Every pair of patterns on each path: under a minute on LLVM's, about a quarter of an hour under
+/// Cranelift.
+#[test]
+#[ignore = "every pair of the 2^32 on each path: about a quarter of an hour"]
+fn f16_every_pair() {
+    f16_golden_with_argument("simd_half_sweep", "1", F16_EVERY_PAIR);
+}
+
+/// 200M triples through `mulAdd` on each path.
+#[test]
+#[ignore = "200M triples on each path: a few minutes"]
+fn f16_fma_triples() {
+    f16_golden_with_argument("simd_half_fma", "25000000", F16_FMA_TRIPLES);
 }
 
 /// `f16x8.dotAdd` and `bf16x8.dotAdd` give the golden's bits with `--cpu native`, where the CPU's

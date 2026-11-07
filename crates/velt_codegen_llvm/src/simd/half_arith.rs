@@ -1,12 +1,13 @@
 //! The arithmetic of `f16x8` (`Op::is_f16_arithmetic`): `<8 x half>` instructions where the target
 //! has them (`Caps::fp16`), and elsewhere each half of the vector widened to `<4 x float>`,
 //! computed there and narrowed, explicitly. LLVM could promote `half` itself, but where the
-//! target has no conversion instruction that means compiler-rt calls lane by lane. The two paths
-//! give the same bits but for which NaN a NaN is: see `Op::is_f16_arithmetic`.
+//! target has no conversion instruction that means compiler-rt calls lane by lane, and for `fma`
+//! it would widen to `f32`, which rounds twice ([`fused`]). The two paths give the same bits but
+//! for which NaN a NaN is: see `Op::is_f16_arithmetic`.
 
 use velt_vir::simd::{Lanes, Op};
 
-use super::half::{narrowed, widened};
+use super::half::{narrowed, narrowed_to_odd, widened};
 use super::{comparison, min_max, Arch, Body, Caps};
 use crate::half::HalfNative;
 
@@ -46,6 +47,8 @@ pub(super) fn arithmetic(b: &mut Body, op: Op, arch: Arch, caps: Caps) -> String
     match op {
         Op::Neg | Op::Abs => sign_bits(b, op),
         Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => compared(b, op, caps.half),
+        Op::MulAdd => fused(b, caps.half),
+        Op::MulAddFast => fused_fast(b, caps.half),
         _ => computed(b, op, arch, caps.half),
     }
 }
@@ -56,6 +59,11 @@ fn native(b: &mut Body, op: Op, arch: Arch) -> String {
         Op::Neg => b.inst(format!("fneg {} {x}", HALVES.ty)),
         Op::Abs => b.intrinsic("fabs", HALVES.suffix, HALVES.ty, &[&x], ""),
         Op::Sqrt => b.intrinsic("sqrt", HALVES.suffix, HALVES.ty, &[&x], ""),
+        Op::MulAdd | Op::MulAddFast => {
+            let (y, z) = (b.arg(1, HALVES.ty), b.arg(2, HALVES.ty));
+            let name = if op == Op::MulAdd { "fma" } else { "fmuladd" };
+            b.intrinsic(name, HALVES.suffix, HALVES.ty, &[&x, &y, &z], "")
+        }
         Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => {
             let y = b.arg(1, HALVES.ty);
             let holds = b.inst(format!(
@@ -129,6 +137,73 @@ fn computed(b: &mut Body, op: Op, arch: Arch, half: HalfNative) -> String {
     b.bytes(&all, BITS)
 }
 
+/// `Op::MulAdd`, `%a0 * %a1 + %a2` with one rounding, without FP16: multiplied and added in `f64`
+/// and narrowed. `f32` is too short, and so is LLVM's own promotion of `fma` on `half`, which uses
+/// it: thousands of 200M triples come out wrong. `f64` gives what one rounding gives, always.
+///
+/// The multiplication is exact: `a` and `b` have 11 significant bits, so `p = a * b` has 22. Only
+/// the addition and the narrowing round. Let `x = p + c`, `r` the `f64` nearest `x`, and `round`
+/// the rounding to `f16`, including to infinity. A boundary of `round` is a number halfway
+/// between neighbours in `f16`, or 65520, halfway from the largest to the next power of two.
+/// `round` is monotonic, and a boundary fits `f64`, so `r` can't have gone past one: if
+/// `round(r) != round(x)` then `r` is a boundary `M` and `r != x`. We show that can't happen.
+/// Zero is the other place `round` jumps, between `-0` and `+0`, but a nonzero `x` is at least
+/// `2^-48` in magnitude, so `r` keeps its sign. Infinities and NaNs behave the same in `f64`, and
+/// so does an exact zero's sign; `|p| < 2^32`, so `f64` overflows nowhere.
+///
+/// Let `2^E <= |M| < 2^(E + 1)` and `d = x - M`, so `d != 0` and `|d| <= 2^(E - 53)`, half an
+/// `f64` ulp. `E <= 15`, as `|M| <= 65520`. `a`, `b` and `c` are multiples of `2^-24` and `M` of
+/// `2^-25`, so `d` is a multiple of `2^-48`, and `|d| >= 2^-48` gives `E >= 5`. So `M` is normal,
+/// an odd multiple of `2^(E - 11)`. And `N * 2^s` with `|N| < 2^n`, if at least `2^t` in
+/// magnitude, is a multiple of `2^(t - n + 1)`; so `|c| >= 2^t` makes `c` a multiple of
+/// `2^(t - 10)`, and `|p| >= 2^t` makes `p` a multiple of `2^(t - 21)`. Now three cases:
+///
+/// - `|c| < 2^(E - 23)`. Then `|p| >= 2^(E - 1)`, so `p` and `M` are multiples of `2^(E - 22)`,
+///   and `|p - M| = |d - c| < 2^(E - 22)`, so `p = M` and `d = c`. `d != 0` then gives
+///   `2^-24 <= |c| <= 2^(E - 53)`, so `E >= 29`, against `E <= 15`.
+/// - `2^(E - 23) <= |c| < 2^(E - 1)`. Then `|p| >= 2^(E - 2)`, so `p` is a multiple of
+///   `2^(E - 23)`, `c` of `2^(E - 33)` and `M` of `2^(E - 11)`. So `d` is a multiple of
+///   `2^(E - 33)`, and `0 < |d| <= 2^(E - 53)` can't hold.
+/// - `|c| >= 2^(E - 1)`. `c` is a multiple of `2^(E - 11)`. It isn't `M`: at `|c| >= 2^E` it is
+///   a multiple of `2^(E - 10)`, and below that it is too small. So `w = M - c` is at least
+///   `2^(E - 11)` in magnitude, and `p = w + d` is at least `2^(E - 12)`, a multiple of
+///   `2^(E - 33)`. `w` is too, so `d = p - w` is, and again `0 < |d| <= 2^(E - 53)` can't hold.
+///
+/// So plain `fmul` and `fadd` do, no FMA and no library call on any CPU. The result narrows
+/// through `f32` rounded to odd: most CPUs have no vector `f64` to `f16`, and that step is a
+/// single rounding (`crate::half`).
+fn fused(b: &mut Body, half: HalfNative) -> String {
+    const DOUBLES: &str = "<4 x double>";
+    let args = [b.arg(0, BITS), b.arg(1, BITS), b.arg(2, BITS)];
+    let mut parts = vec![];
+    for high in [false, true] {
+        let [p, q, r] = [0, 1, 2].map(|i| {
+            let wide = widened(b, &args[i], Lanes::F16, high, half);
+            b.inst(format!("fpext {} {wide} to {DOUBLES}", WIDE.ty))
+        });
+        let product = b.inst(format!("fmul {DOUBLES} {p}, {q}"));
+        let sum = b.inst(format!("fadd {DOUBLES} {product}, {r}"));
+        let odd = narrowed_to_odd(b, &sum);
+        parts.push(narrowed(b, &odd, Lanes::F16, half));
+    }
+    let all = joined(b, "i16", &parts);
+    b.bytes(&all, BITS)
+}
+
+/// `Op::MulAddFast` without FP16: in `f32`, where the product is exact and the sum rounds, then
+/// the narrowing rounds again, so the last bit may differ from `Op::MulAdd`'s.
+fn fused_fast(b: &mut Body, half: HalfNative) -> String {
+    let args = [b.arg(0, BITS), b.arg(1, BITS), b.arg(2, BITS)];
+    let mut parts = vec![];
+    for high in [false, true] {
+        let [p, q, r] = [0, 1, 2].map(|i| widened(b, &args[i], Lanes::F16, high, half));
+        let sum = b.intrinsic("fmuladd", WIDE.suffix, WIDE.ty, &[&p, &q, &r], "");
+        parts.push(narrowed(b, &sum, Lanes::F16, half));
+    }
+    let all = joined(b, "i16", &parts);
+    b.bytes(&all, BITS)
+}
+
 /// The comparison `op`: widening is exact, so it holds in `f32` exactly where it does in `f16`.
 fn compared(b: &mut Body, op: Op, half: HalfNative) -> String {
     let (x, y) = (b.arg(0, BITS), b.arg(1, BITS));
@@ -191,6 +266,8 @@ mod tests {
             ("sub", "fsub <8 x half>"),
             ("mul", "fmul <8 x half>"),
             ("div", "fdiv <8 x half>"),
+            ("mul_add", "@llvm.fma.v8f16"),
+            ("mul_add_fast", "@llvm.fmuladd.v8f16"),
             ("neg", "fneg <8 x half>"),
             ("abs", "@llvm.fabs.v8f16"),
             ("sqrt", "@llvm.sqrt.v8f16"),
@@ -274,6 +351,26 @@ mod tests {
                 "{text}"
             );
             assert!(!text.contains("float"), "{text}");
+        }
+    }
+
+    /// `mulAdd` multiplies and adds in `f64`, never an FMA (in `f32` it would round twice, and in
+    /// `f64` a CPU without FMA would call a library), and narrows through `f32` rounded to odd.
+    #[test]
+    fn mul_add_is_in_f64() {
+        for (arch, caps) in [
+            (Arch::Neon, ARM),
+            (Arch::Sse2, F16C),
+            (Arch::Sse2, Caps::NONE),
+        ] {
+            let ir = body("mul_add", arch, caps);
+            assert!(ir.contains("fmul <4 x double>"), "{ir}");
+            assert!(ir.contains("fadd <4 x double>"), "{ir}");
+            assert!(ir.contains("@velt.f64_to_f32.odd.v4(<4 x double>"), "{ir}");
+            assert!(!ir.contains("fma") && !ir.contains("half> @llvm"), "{ir}");
+            let fast = body("mul_add_fast", arch, caps);
+            assert!(fast.contains("@llvm.fmuladd.v4f32"), "{fast}");
+            assert!(!fast.contains("double"), "{fast}");
         }
     }
 
