@@ -1,0 +1,9 @@
+// A tuple holding it, and a part beside its owner (#2527). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
+const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; junk(); };
+function run(q: A2, v: string) { const h: [A2, number] = [q, 1]; KK(h[0]); junk(); return v + "!"; }
+function t() { const a = new A2(); console.log(run(a, a.c.s)); }
+t();
