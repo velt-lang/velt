@@ -279,7 +279,7 @@ describe("a slow client", () => {
       const c = await connect(`127.0.0.1:${server.port}`);
       await c.write(GET);
       let last: i64 = -1;
-      while (pulls.get() != last) {
+      while (pulls.get() != last && last < 2000) {
         last = pulls.get();
         // timing: long enough for a pull to show, were pulls going on
         await sleep(300);
