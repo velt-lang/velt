@@ -226,6 +226,10 @@ pub struct LowerOptions<'a> {
     /// Share generic instances by shape (docs/internals/design/shape-sharing.md): debug builds.
     /// `VELT_SHAPES=off` / `all` overrides it.
     pub shapes: bool,
+    /// The code generator has no CPU extension's instructions (Cranelift): every
+    /// `velt_simd_has_<ext>` is false in this build, so what only such a check reaches is not
+    /// lowered (lower/cpu_checks.rs). `false` leaves only the target's architecture to decide.
+    pub no_cpu_extensions: bool,
 }
 
 /// One native library to initialize before `main` runs.

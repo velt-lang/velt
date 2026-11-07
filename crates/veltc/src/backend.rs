@@ -46,6 +46,15 @@ impl Backend {
         }
     }
 
+    /// The backend that compiles `opts`' build: `--emit llvm` prints what the LLVM backend
+    /// compiles.
+    pub fn of_build(opts: &crate::driver::BuildOptions) -> Backend {
+        match opts.emit {
+            crate::cli::Emit::Llvm => Backend::Llvm,
+            _ => Backend::resolve(opts.backend, opts.release).0,
+        }
+    }
+
     /// The x86 features this backend's code for `cpu` on `target` uses (the start-up check's
     /// mask, `driver/cpu_check.rs`): for a CPU name, Cranelift's preset of it or what clang
     /// enables for it.

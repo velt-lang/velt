@@ -66,7 +66,9 @@ edge values and pseudo-random inputs.
   backend must implement it.
 - *CPU-specific* (arch.x86, arch.arm): one architecture's instruction, only behind a check of
   its extension or in a function gated on it (`targetFeature`, rt_abi.md "SIMD"); a backend
-  without it never reaches it.
+  without it never reaches it. A check this build answers false (the other architecture's, or
+  any under Cranelift, `LowerOptions::no_cpu_extensions`) is known in lowering, so what only it
+  reaches is never lowered.
 - *Language runtime* (generators, channels, `any`, reflection, weak references, ownership
   facts): operations of the language, not of the hardware. They stay `hir::Intrinsic`s that
   lowering expands; this design does not change them.
