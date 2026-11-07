@@ -36,18 +36,24 @@ pub(crate) const VIR_IDENTITY_CODE: &[&str] = &[
     "crates/velt_loader/",
     "crates/velt_sema/src/body/lazy_std/",
     "crates/velt_common/src/std_hooks.rs",
+    "crates/veltc/src/driver.rs",
+    "crates/veltc/src/driver/recover.rs",
+    "crates/veltc/src/driver/std_load.rs",
     "crates/veltc/tests/eager_std_identity.rs",
     "std/lang/hooks/",
 ];
 
 /// Crates whose change can make a program's VIR depend on when std was loaded: they read the
-/// sources, number what sema makes, or lower it.
+/// sources, number what sema makes, or lower it. `vpm` does the loader's file reads and reads
+/// std's import map, and `velt_build_cache` holds std's parsed files and index.
 pub(crate) const VIR_IDENTITY_CRATES: &[&str] = &[
+    "velt_build_cache",
     "velt_common",
     "velt_syntax",
     "velt_sema",
     "velt_loader",
     "velt_vir",
+    "vpm",
 ];
 
 /// Crates that don't change compiled programs, with the `veltc` integration test binaries
