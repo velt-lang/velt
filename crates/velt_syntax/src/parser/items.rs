@@ -63,6 +63,7 @@ impl<'a> Parser<'a> {
             items.push(self.import_meta_import());
             items.push(self.import_meta_item(span));
         }
+        items.extend(self.import_type_items());
         let mut fn_names = std::mem::take(&mut self.fn_names);
         // By span; the literal's own name, noted first, goes before what surrounds it.
         fn_names.sort_by_key(|(s, _)| (s.lo, s.hi));

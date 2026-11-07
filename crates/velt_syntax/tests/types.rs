@@ -121,7 +121,7 @@ fn type_queries_and_keyof() {
     // Not supported yet: reported, parsed as an empty query.
     assert_eq!(
         errors("type T = typeof import(\"./m\");"),
-        ["`typeof import(...)` types are not supported yet (#936)"]
+        ["`typeof import(...)` of a whole module is not supported yet (#936)"]
     );
     assert_eq!(
         errors("type T = typeof f<string>;"),

@@ -1,0 +1,23 @@
+/** @jsxImportSource ./_jsx_patterns */
+// Template-literal index signatures: names that fit take the signature's type and contextual
+// type; a declared name keeps its own; they are inherited, also through a generic base. As in
+// `tsc`, a name with a hyphen is not held to a signature (`aria-label` below is a number).
+console.log(<div onFoo={1} aria-label="x" data-a={1} use:a={1} xQyRz={true} />);
+console.log(<div use:b={(v) => { console.log(v.length); }} onClick={(e) => { console.log(e.length); }} />);
+console.log(<div xyz={false} data-={2} aria-label={1} />);
+console.log(<input value="x" model:v={() => 1} onInput={1} data-b="s" />);
+console.log(<input model:w={[{}, "k"]} aria-hidden="true" />);
+console.log(<span prop:n={1} ref={(n) => { console.log(n + 1); }} use:c={2} />);
+console.log(<my-tag id="1" onBar={2} />);
+
+// A value of such a type has no member for the signature: it isn't listed, printed or serialized.
+interface V { id?: string; n: number; [k: `data-${string}`]: string }
+const v: V = { n: 1 };
+console.log(v, Object.keys(v), JSON.stringify(v));
+type K = keyof V;
+const k: K = "n";
+const r: Required<V> = { id: "i", n: 2 };
+console.log(k, r.id);
+type O = { a: number; [k: `b${string}`]: number };
+const o: O = { a: 1 };
+console.log(o.a);

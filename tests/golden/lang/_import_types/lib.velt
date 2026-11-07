@@ -1,0 +1,9 @@
+// Only reached through `import("…")` types: `tsc` drops those, so this never runs.
+console.log("lib evaluated");
+export interface Box<T> { v: T }
+export type Id = string;
+export namespace Inner {
+  export interface P { x: number }
+}
+export const answer = 42;
+export function twice(x: number): number { return x * 2; }

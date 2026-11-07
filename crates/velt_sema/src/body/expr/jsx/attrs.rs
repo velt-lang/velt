@@ -194,6 +194,11 @@ impl FnCx<'_, '_> {
             self.cx.rec_ref(span, Target::Field(tag.def, i as u32));
             return Ok(Some(tag.fields[i].1));
         }
+        let pattern =
+            |(n, _): &&(String, TyId)| ast::key_pattern(n).is_some_and(|k| k.matches(name));
+        if let Some((_, ty)) = tag.fields.iter().find(pattern) {
+            return Ok(Some(*ty));
+        }
         let names: Vec<String> = tag.fields.iter().map(|(n, _)| n.clone()).collect();
         let note = is_event_handler(name).then(|| {
             format!(

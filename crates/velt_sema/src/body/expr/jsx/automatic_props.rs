@@ -80,7 +80,7 @@ impl FnCx<'_, '_> {
         p: &Provider,
         f: &Factory,
         el: &ast::JsxElement,
-        decl: Declared,
+        mut decl: Declared,
         slot_names: &[String],
         tag: &str,
         key: Option<(usize, Vec<hir::Stmt>)>,
@@ -119,6 +119,11 @@ impl FnCx<'_, '_> {
                         }
                         written.push(n.clone());
                         let i = decl.fields.iter().position(|d| d.name == n);
+                        // As in `tsc`, a name with a hyphen is not held to an index signature.
+                        let i = i.or_else(|| match n.contains('-') {
+                            true => None,
+                            false => decl.pattern_field(&n),
+                        });
                         let exp = match i {
                             Some(i) => {
                                 if let Some((d, index)) = decl.fields[i].at {

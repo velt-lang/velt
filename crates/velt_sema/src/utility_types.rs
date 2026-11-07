@@ -79,7 +79,9 @@ impl Ctx<'_> {
             // keeping a written `| null`, as in TypeScript (`Required<{ a?: string | null }>` is
             // `{ a: string | null }`).
             "Partial" => fields.iter_mut().for_each(|f| f.optional = true),
-            "Required" => fields.iter_mut().for_each(|f| f.optional = false),
+            "Required" => (fields.iter_mut())
+                .filter(|f| ast::key_pattern(&f.name).is_none())
+                .for_each(|f| f.optional = false),
             "Readonly" => fields.iter_mut().for_each(|f| f.readonly = true),
             _ => {
                 let Some(keys) = self.utility_keys(name, tys[0], &fields, tys[1], args[1].span)

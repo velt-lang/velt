@@ -1,0 +1,10 @@
+div(onFoo=number,aria-label=string,data-a=number,use:a=number,xQyRz=boolean)
+div(use:b=function,onClick=function)
+div(xyz=boolean,data-=number,aria-label=number)
+input(value=string,model:v=function,onInput=number,data-b=string)
+input(model:w=object,aria-hidden=string)
+span(prop:n=number,ref=function,use:c=number)
+my-tag(id=string,onBar=number)
+{ n: 1 } [ 'n' ] {"n":1}
+n i
+1

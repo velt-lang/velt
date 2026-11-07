@@ -658,3 +658,22 @@ fn a_functions_decorators_stay_on_the_implementation() {
     // One without overloads keeps them before `export`.
     round_trips("@d\nexport default function f(a: any): any {}\n");
 }
+
+#[test]
+fn template_literal_index_signatures_and_import_types() {
+    let src = "interface A extends B {
+  id?: string;
+  [key: `on${string}`]: any;
+  readonly [k: `a${string}b${string}`]: string;
+}
+
+type C = { [key: `x${string}`]: number };
+
+type D = import(\"./m\").T<string> | typeof import(\"./m\").v;
+";
+    let got = format_source(src).unwrap_or_else(|d| panic!("refused: {d:?}"));
+    assert_eq!(got, src);
+    if let Err(msg) = common::check(src) {
+        panic!("{msg}");
+    }
+}
