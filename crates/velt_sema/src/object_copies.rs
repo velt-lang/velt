@@ -192,7 +192,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         proxies,
         dyn_sources,
         record_writes,
-        view_casts,
+        mut view_casts,
         ..
     } = std::mem::take(&mut cx.object_copies);
     let spans: Vec<(Span, TyId)> = copies.iter().map(|c| (c.span, c.to)).collect();
@@ -256,6 +256,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     }
     if !viewed.is_empty() {
         let done = crate::object_views::convert_to_views(cx, &viewed);
+        view_casts.extend(done.iter().copied());
         // A conversion left a copy (no literal found for it) stays the error it was.
         for (c, why) in viewed
             .iter()

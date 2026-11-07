@@ -1,0 +1,9 @@
+// As `spread_copy_view`, for a rest pattern.
+const made = new Proxy({}, {});
+type W = { a: number; b: string; c: boolean };
+type N = { a: number; c: boolean };
+const w: W = { a: 1, b: "x", c: true };
+const v: N = w;
+v.a = 2;
+const { a, ...r } = v;
+console.log(a, r);

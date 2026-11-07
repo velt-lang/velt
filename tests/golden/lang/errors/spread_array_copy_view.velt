@@ -1,0 +1,8 @@
+// As `spread_copy_view`, of an element.
+const made = new Proxy({}, {});
+type W = { a: number; b: string };
+type N = { a: number };
+const w: W = { a: 1, b: "x" };
+const arr: N[] = [w];
+arr[0].a = 3;
+console.log({ ...arr[0] });

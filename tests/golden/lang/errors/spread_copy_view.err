@@ -1,0 +1,1 @@
+spread_copy_view.velt:9:18: error: a spread of a `N`, which a cast in this program makes a view of another object, is not supported yet
