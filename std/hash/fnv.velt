@@ -1,13 +1,26 @@
-// velt/hash (internal): 64-bit FNV-1a of strings and bytes.
+// velt/hash (internal): 64-bit FNV-1a of strings and bytes. The algorithm and its constants are
+// part of std's contract: the same input gives the same hash on every platform, run and version.
 
-import { velt_rt_fnv1a64_bytes, velt_rt_fnv1a64_str } from "velt/hash/rt";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+const PRIME: u64 = 0x100000001b3;
 
 /** The 64-bit FNV-1a hash of the UTF-8 bytes of `s`. */
 export function fnv1a64(s: string): u64 {
-  return velt_rt_fnv1a64_str(s);
+  const n = strByteLen(s) as u64;
+  let h = OFFSET_BASIS;
+  for (let i: u64 = 0; i < n; i++) {
+    h = (h ^ (strByteAt(s, i) as u64)) * PRIME;
+  }
+  return h;
 }
 
 /** The 64-bit FNV-1a hash of `data`. */
 export function fnv1a64Bytes(data: u8[]): u64 {
-  return velt_rt_fnv1a64_bytes(data);
+  let h = OFFSET_BASIS;
+  for (const b of data) {
+    h = (h ^ (b as u64)) * PRIME;
+  }
+  return h;
 }
