@@ -9,7 +9,8 @@ set -euo pipefail
 
 before="${RUNNER_TEMP:?}/clang-objects.before"
 objects() {
-  find target/velt-build-cache -path '*/llvm/large/*' -type f 2>/dev/null | LC_ALL=C sort
+  # A restore that found nothing leaves no such directory: that must not fail the job.
+  { find target/velt-build-cache -path '*/llvm/large/*' -type f 2>/dev/null || true; } | LC_ALL=C sort
 }
 
 case "${1:-}" in
