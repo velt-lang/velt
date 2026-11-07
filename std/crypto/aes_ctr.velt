@@ -11,6 +11,7 @@ import {
   shiftRows,
 } from "velt/crypto/aes_bitslice";
 import { load32le, store32le } from "velt/crypto/chacha20";
+import { noInline } from "velt/lang/intrinsics";
 
 const RCON: u32[] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
 
@@ -24,10 +25,11 @@ function subWord(x: u32): u32 {
 }
 
 /**
- * The round keys of a 16- or 32-byte AES `key` (10 or 14 rounds), bitsliced: eight words per
- * round key, each round key repeated for the four blocks.
+ * FIPS 197's key schedule of a 16- or 32-byte AES `key`: the words w[0..4 * (rounds + 1)], each
+ * four key bytes read little-endian (so four of them stored little-endian are a round key's
+ * bytes). Constant time.
  */
-export function aesExpandKey(key: u8[]): u64[] {
+export function aesKeyWords(key: u8[]): u32[] {
   const nk = key.length / 4;
   const rounds = nk + 6;
   const total = (rounds + 1) * 4;
@@ -52,6 +54,16 @@ export function aesExpandKey(key: u8[]): u64[] {
       k++;
     }
   }
+  return w;
+}
+
+/**
+ * The round keys of a 16- or 32-byte AES `key` (10 or 14 rounds), bitsliced: eight words per
+ * round key, each round key repeated for the four blocks.
+ */
+export function aesExpandKey(key: u8[]): u64[] {
+  const w = aesKeyWords(key);
+  const total = w.length;
   const out: u64[] = [];
   const q: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
   for (let i: usize = 0; i < total; i += 4) {
@@ -76,8 +88,12 @@ function addRoundKey(q: u64[], skey: u64[], round: usize) {
   }
 }
 
-/** Encrypts the four bitsliced blocks in `q` under the expanded key `skey`. */
+/**
+ * Encrypts the four bitsliced blocks in `q` under the expanded key `skey`. Out of line: a call per
+ * 64 bytes costs nothing beside its work, and inlined it makes `aesCtrInPlace` slow to compile.
+ */
 export function aesEncrypt4(skey: u64[], q: u64[]) {
+  noInline();
   const rounds = skey.length / 8 - 1;
   addRoundKey(q, skey, 0);
   for (let r: usize = 1; r < rounds; r++) {

@@ -1,0 +1,234 @@
+// velt/crypto (internal): what AES-GCM's instruction paths share (std/crypto/aes_gcm_arm.velt,
+// aes_gcm_x86.velt; #2401): round keys as vectors, the powers of the hash key, and GHASH on the
+// carry-less multiply instruction with eight blocks per reduction.
+//
+// A GHASH field element is a `u64x2` holding the 128-bit integer whose big-endian bytes are the
+// block (lane 0 the low half): a block reversed byte for byte. Products are computed unreflected
+// and shifted left by one before the reduction, as std/crypto/ghash.velt does; both are linear, so
+// eight products summed are reduced once (with H^8 … H^1 as the factors).
+// Only called where `u8x16.hasAes()` holds, which includes the carry-less multiplication: the
+// methods are instructions, constant time, never the emulation.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import { u8x16, u32x4, u64x2 } from "velt/simd";
+import { aesKeyWords } from "velt/crypto/aes_ctr";
+import { load32le } from "velt/crypto/chacha20";
+
+/** The round keys of `key` (16 or 32 bytes) as vectors, 11 or 15 of them. */
+export function aesRoundKeys(key: u8[]): u8x16[] {
+  const w = aesKeyWords(key);
+  const keys: u8x16[] = [];
+  for (let i: usize = 0; i < w.length; i += 4) {
+    keys.push(
+      u32x4
+        .splat(w[i])
+        .withLane(1, w[i + 1])
+        .withLane(2, w[i + 2])
+        .withLane(3, w[i + 3])
+        .asU8x16(),
+    );
+  }
+  return keys;
+}
+
+/** The block `v` reversed byte for byte: a block as a field element, and back. */
+export function rev(v: u8x16): u8x16 {
+  inline();
+  return u8x16.shuffle(v, v, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+}
+
+// Without a check each: `sealInPlace` and `openInPlace` checked the whole range before anything
+// here runs, and a check per block costs at run time, and more in the optimizer (its work on a
+// function grows with its branches times its locals).
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+
+/** The 16 bytes of `b` from `at`, which the caller knows are there. */
+export function load16(b: u8[], at: usize): u8x16 {
+  inline();
+  return velt_simd_u8x16_load(b, at as u64);
+}
+
+/** `v` into the 16 bytes of `b` from `at`, which the caller knows are there. */
+export function store16(v: u8x16, b: u8[], at: usize) {
+  inline();
+  velt_simd_u8x16_store(v, b, at as u64);
+}
+
+/** The field element of the 16 bytes of `b` from `at`, which the caller knows are there. */
+export function element(b: u8[], at: usize): u64x2 {
+  inline();
+  return rev(load16(b, at)).asU64x2();
+}
+
+/** `v` with its two halves swapped. */
+export function swapHalves(v: u64x2): u64x2 {
+  inline();
+  return u64x2.shuffle(v, v, 1, 0);
+}
+
+/**
+ * The product `lo` + `mid` · 2^64 + `hi` · 2^128 (unreflected, 256 bits) shifted left by one and
+ * reduced by x^128 + x^7 + x^2 + x + 1 in GCM's reflected representation (std/crypto/ghash.velt).
+ */
+export function reduce(lo: u64x2, mid: u64x2, hi: u64x2): u64x2 {
+  inline();
+  let v0 = lo.lane(0);
+  let v1 = lo.lane(1) ^ mid.lane(0);
+  let v2 = hi.lane(0) ^ mid.lane(1);
+  let v3 = hi.lane(1);
+  v3 = (v3 << 1) | (v2 >> 63);
+  v2 = (v2 << 1) | (v1 >> 63);
+  v1 = (v1 << 1) | (v0 >> 63);
+  v0 = v0 << 1;
+  v2 ^= v0 ^ (v0 >> 1) ^ (v0 >> 2) ^ (v0 >> 7);
+  v1 ^= (v0 << 63) ^ (v0 << 62) ^ (v0 << 57);
+  v3 ^= v1 ^ (v1 >> 1) ^ (v1 >> 2) ^ (v1 >> 7);
+  v2 ^= (v1 << 63) ^ (v1 << 62) ^ (v1 << 57);
+  return u64x2.splat(v2).withLane(1, v3);
+}
+
+/** `a` · `b` in GF(2^128); `bs` is `b` with its halves swapped. */
+export function gfmul(a: u64x2, b: u64x2, bs: u64x2): u64x2 {
+  inline();
+  const mid = a.clmulLow(bs).xor(a.clmulHigh(bs));
+  return reduce(a.clmulLow(b), mid, a.clmulHigh(b));
+}
+
+/**
+ * H^1 … H^8 (indices 0 to 7) and the same with their halves swapped (8 to 15), for the hash key
+ * `h` (16 bytes, E(K, 0^128)).
+ */
+export function hashPowers(h: u8[]): u64x2[] {
+  const h1 = element(h, 0);
+  const h1s = swapHalves(h1);
+  const powers: u64x2[] = [h1];
+  let p = h1;
+  for (let i = 1; i < 8; i++) {
+    p = gfmul(p, h1, h1s);
+    powers.push(p);
+  }
+  for (let i: usize = 0; i < 8; i++) {
+    powers.push(swapHalves(powers[i]));
+  }
+  return powers;
+}
+
+/**
+ * The GHASH state `y` after the eight blocks `b[off..off + 128]`: (((y + c0) H + c1) H … + c7) H, as
+ * (y + c0) H^8 + c1 H^7 + … + c7 H with one reduction. Out of line: a call per 128 bytes costs
+ * little, and the optimizer's work on a function grows faster than its length.
+ */
+function ghash8(y: u64x2, hp: u64x2[], b: u8[], off: usize): u64x2 {
+  noInline();
+  const c0 = element(b, off);
+  const c1 = element(b, off + 16);
+  const c2 = element(b, off + 32);
+  const c3 = element(b, off + 48);
+  const c4 = element(b, off + 64);
+  const c5 = element(b, off + 80);
+  const c6 = element(b, off + 96);
+  const c7 = element(b, off + 112);
+  const x0 = c0.xor(y);
+  const h7 = hp[7];
+  const s7 = hp[15];
+  let lo = x0.clmulLow(h7);
+  let hi = x0.clmulHigh(h7);
+  let mid = x0.clmulLow(s7).xor(x0.clmulHigh(s7));
+  const h6 = hp[6];
+  const s6 = hp[14];
+  lo = lo.xor(c1.clmulLow(h6));
+  hi = hi.xor(c1.clmulHigh(h6));
+  mid = mid.xor(c1.clmulLow(s6)).xor(c1.clmulHigh(s6));
+  const h5 = hp[5];
+  const s5 = hp[13];
+  lo = lo.xor(c2.clmulLow(h5));
+  hi = hi.xor(c2.clmulHigh(h5));
+  mid = mid.xor(c2.clmulLow(s5)).xor(c2.clmulHigh(s5));
+  const h4 = hp[4];
+  const s4 = hp[12];
+  lo = lo.xor(c3.clmulLow(h4));
+  hi = hi.xor(c3.clmulHigh(h4));
+  mid = mid.xor(c3.clmulLow(s4)).xor(c3.clmulHigh(s4));
+  const h3 = hp[3];
+  const s3 = hp[11];
+  lo = lo.xor(c4.clmulLow(h3));
+  hi = hi.xor(c4.clmulHigh(h3));
+  mid = mid.xor(c4.clmulLow(s3)).xor(c4.clmulHigh(s3));
+  const h2 = hp[2];
+  const s2 = hp[10];
+  lo = lo.xor(c5.clmulLow(h2));
+  hi = hi.xor(c5.clmulHigh(h2));
+  mid = mid.xor(c5.clmulLow(s2)).xor(c5.clmulHigh(s2));
+  const h1 = hp[1];
+  const s1 = hp[9];
+  lo = lo.xor(c6.clmulLow(h1));
+  hi = hi.xor(c6.clmulHigh(h1));
+  mid = mid.xor(c6.clmulLow(s1)).xor(c6.clmulHigh(s1));
+  const h0 = hp[0];
+  const s0 = hp[8];
+  lo = lo.xor(c7.clmulLow(h0));
+  hi = hi.xor(c7.clmulHigh(h0));
+  mid = mid.xor(c7.clmulLow(s0)).xor(c7.clmulHigh(s0));
+  return reduce(lo, mid, hi);
+}
+
+/** The GHASH state `y` after `b[start..end]`, its last block zero-padded. */
+export function ghashBytes(y: u64x2, hp: u64x2[], b: u8[], start: usize, end: usize): u64x2 {
+  let s = y;
+  let off = start;
+  while (end - off >= 128) {
+    s = ghash8(s, hp, b, off);
+    off += 128;
+  }
+  while (end - off >= 16) {
+    s = gfmul(s.xor(element(b, off)), hp[0], hp[8]);
+    off += 16;
+  }
+  if (off < end) {
+    s = gfmul(s.xor(partial(b, off, end)), hp[0], hp[8]);
+  }
+  return s;
+}
+
+/** The field element of `b[start..end]` (under 16 bytes) zero-padded. */
+export function partial(b: u8[], start: usize, end: usize): u64x2 {
+  let hi: u64 = 0;
+  let lo: u64 = 0;
+  for (let i = start; i < end; i++) {
+    const at = (i - start) as u64;
+    if (at < 8) {
+      hi |= (b[i] as u64) << (56 - 8 * at);
+    } else {
+      lo |= (b[i] as u64) << (120 - 8 * at);
+    }
+  }
+  return u64x2.splat(lo).withLane(1, hi);
+}
+
+/** The lengths block of GCM: the bits of the additional data and of the text. */
+export function lengths(aadBytes: usize, textBytes: usize): u64x2 {
+  return u64x2.splat((textBytes as u64) * 8).withLane(1, (aadBytes as u64) * 8);
+}
+
+/** The counter block of `base` (the nonce, the last word 0) with the 32-bit counter `ctr`. */
+export function counterBlock(base: u32x4, ctr: u32): u8x16 {
+  inline();
+  return base.withLane(3, ctr.swapBytes()).asU8x16();
+}
+
+/** The nonce (12 bytes) as a counter block with the counter 0. */
+export function counterBase(nonce: u8[]): u32x4 {
+  return u32x4
+    .splat(0)
+    .withLane(0, load32le(nonce, 0))
+    .withLane(1, load32le(nonce, 4))
+    .withLane(2, load32le(nonce, 8));
+}
+
+/** XORs the bytes `buf[start..end]` (under 16) with the keystream block `ks`. */
+export function xorTail(buf: u8[], start: usize, end: usize, ks: u8x16) {
+  for (let i = start; i < end; i++) {
+    buf[i] ^= ks.lane(i - start);
+  }
+}

@@ -1,0 +1,151 @@
+// velt/crypto (internal): AES-GCM on the x86 AES-NI and PCLMULQDQ instructions (#2401): functions
+// gated on `aes-x86`, so the `u8x16`/`u64x2` methods are the bare instructions. Eight counter blocks
+// go through the rounds together, and GHASH takes eight blocks with one reduction
+// (std/crypto/aes_gcm_hw.velt). In place, allocating nothing. Constant time.
+
+import { targetFeature } from "velt/lang/intrinsics";
+import { u8x16, u32x4, u64x2 } from "velt/simd";
+import { tagMatches } from "velt/crypto/aead_tag";
+import {
+  counterBase,
+  counterBlock,
+  ghashBytes,
+  gfmul,
+  lengths,
+  load16,
+  rev,
+  store16,
+  xorTail,
+} from "velt/crypto/aes_gcm_hw";
+
+// The instructions themselves: the `u8x16` methods would bring their emulation into every program
+// that uses `AesGcm`, for a CPU these functions never run on.
+declare function velt_simd_u8x16_aesenc(state: u8x16, rk: u8x16): u8x16;
+declare function velt_simd_u8x16_aesenclast(state: u8x16, rk: u8x16): u8x16;
+
+// E(K, block) with the round keys `keys`.
+function encryptBlock(keys: u8x16[], block: u8x16): u8x16 {
+  const last = keys.length - 1;
+  let s = block.xor(keys[0]);
+  for (let r: usize = 1; r < last; r++) {
+    s = velt_simd_u8x16_aesenc(s, keys[r]);
+  }
+  return velt_simd_u8x16_aesenclast(s, keys[last]);
+}
+
+// XORs `buf[start..end]` in place with the keystream from counter 2.
+function ctrX86(keys: u8x16[], base: u32x4, buf: u8[], start: usize, end: usize) {
+  targetFeature("aes-x86");
+  const last = keys.length - 1;
+  let ctr: u32 = 2;
+  let off = start;
+  while (end - off >= 128) {
+    let b0 = counterBlock(base, ctr);
+    let b1 = counterBlock(base, ctr + 1);
+    let b2 = counterBlock(base, ctr + 2);
+    let b3 = counterBlock(base, ctr + 3);
+    let b4 = counterBlock(base, ctr + 4);
+    let b5 = counterBlock(base, ctr + 5);
+    let b6 = counterBlock(base, ctr + 6);
+    let b7 = counterBlock(base, ctr + 7);
+    ctr = ctr + 8;
+    const k0 = keys[0];
+    b0 = b0.xor(k0);
+    b1 = b1.xor(k0);
+    b2 = b2.xor(k0);
+    b3 = b3.xor(k0);
+    b4 = b4.xor(k0);
+    b5 = b5.xor(k0);
+    b6 = b6.xor(k0);
+    b7 = b7.xor(k0);
+    for (let r: usize = 1; r < last; r++) {
+      const k = keys[r];
+      b0 = velt_simd_u8x16_aesenc(b0, k);
+      b1 = velt_simd_u8x16_aesenc(b1, k);
+      b2 = velt_simd_u8x16_aesenc(b2, k);
+      b3 = velt_simd_u8x16_aesenc(b3, k);
+      b4 = velt_simd_u8x16_aesenc(b4, k);
+      b5 = velt_simd_u8x16_aesenc(b5, k);
+      b6 = velt_simd_u8x16_aesenc(b6, k);
+      b7 = velt_simd_u8x16_aesenc(b7, k);
+    }
+    const kf = keys[last];
+    store16(velt_simd_u8x16_aesenclast(b0, kf).xor(load16(buf, off)), buf, off);
+    store16(velt_simd_u8x16_aesenclast(b1, kf).xor(load16(buf, off + 16)), buf, off + 16);
+    store16(velt_simd_u8x16_aesenclast(b2, kf).xor(load16(buf, off + 32)), buf, off + 32);
+    store16(velt_simd_u8x16_aesenclast(b3, kf).xor(load16(buf, off + 48)), buf, off + 48);
+    store16(velt_simd_u8x16_aesenclast(b4, kf).xor(load16(buf, off + 64)), buf, off + 64);
+    store16(velt_simd_u8x16_aesenclast(b5, kf).xor(load16(buf, off + 80)), buf, off + 80);
+    store16(velt_simd_u8x16_aesenclast(b6, kf).xor(load16(buf, off + 96)), buf, off + 96);
+    store16(velt_simd_u8x16_aesenclast(b7, kf).xor(load16(buf, off + 112)), buf, off + 112);
+    off += 128;
+  }
+  while (end - off >= 16) {
+    store16(encryptBlock(keys, counterBlock(base, ctr)).xor(load16(buf, off)), buf, off);
+    ctr = ctr + 1;
+    off += 16;
+  }
+  if (off < end) {
+    xorTail(buf, off, end, encryptBlock(keys, counterBlock(base, ctr)));
+  }
+}
+
+// The tag over `aad` and the ciphertext `buf[start..end]`.
+function tagX86(
+  keys: u8x16[],
+  hp: u64x2[],
+  base: u32x4,
+  aad: u8[],
+  buf: u8[],
+  start: usize,
+  end: usize,
+): u8x16 {
+  let y = ghashBytes(u64x2.splat(0), hp, aad, 0, aad.length);
+  y = ghashBytes(y, hp, buf, start, end);
+  y = gfmul(y.xor(lengths(aad.length, end - start)), hp[0], hp[8]);
+  return encryptBlock(keys, counterBlock(base, 1)).xor(rev(y.asU8x16()));
+}
+
+/**
+ * Encrypts `buf[start..end]` in place under the round keys `keys`, the hash powers `hp`
+ * (`hashPowers`), `nonce` and the additional data `aad`; returns the tag.
+ */
+export function gcmSealX86(
+  keys: u8x16[],
+  hp: u64x2[],
+  nonce: u8[],
+  aad: u8[],
+  buf: u8[],
+  start: usize,
+  end: usize,
+): u8x16 {
+  targetFeature("aes-x86");
+  const base = counterBase(nonce);
+  ctrX86(keys, base, buf, start, end);
+  return tagX86(keys, hp, base, aad, buf, start, end);
+}
+
+/**
+ * Checks the tag `buf[end..end + 16]` over `aad` and the ciphertext `buf[start..end]`, then decrypts
+ * that in place: true. False with `buf` not written to when it does not match. `scratch` holds 16
+ * bytes.
+ */
+export function gcmOpenX86(
+  keys: u8x16[],
+  hp: u64x2[],
+  nonce: u8[],
+  aad: u8[],
+  buf: u8[],
+  start: usize,
+  end: usize,
+  scratch: u8[],
+): bool {
+  targetFeature("aes-x86");
+  const base = counterBase(nonce);
+  tagX86(keys, hp, base, aad, buf, start, end).store(scratch, 0);
+  if (!tagMatches(scratch, buf, end)) {
+    return false;
+  }
+  ctrX86(keys, base, buf, start, end);
+  return true;
+}
