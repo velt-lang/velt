@@ -1,0 +1,46 @@
+// A constructor hands its param on to a function value, and what owns a borrowed place is replaced
+// behind `new`: `new R(a)` is a call of `R`'s constructor, or of the nearest base class's (#2527).
+// Each line prints what was read, so a read of freed memory can't pass for it. Output checked
+// against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; names: string[] = [heap("n"), heap("m")]; }
+const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; q.names = []; junk(); };
+
+class R { constructor(q: A2) { KK(q); } }
+class Sub extends R { constructor(q: A2) { super(q); junk(); } }
+class Bare extends R {}
+class ViaMethod { constructor(q: A2) { this.go(q); } go(q: A2) { KK(q); } }
+class ViaClosure { constructor(q: A2) { const f = () => { KK(q); }; f(); } }
+class Factory { private constructor(q: A2) { KK(q); } static of(q: A2): Factory { return new Factory(q); } }
+class Part { v: string; constructor(q: A2, v: string) { KK(q); junk(); this.v = v + "!"; } }
+function viaNew(q: A2): void { new R(q); }
+
+function constForms() {
+  const a1 = new A2(); const x1 = a1.c; new R(a1); junk(); console.log("new", x1.s);
+  const a2 = new A2(); const x2 = a2.c; new Sub(a2); junk(); console.log("super", x2.s);
+  const a3 = new A2(); const x3 = a3.c; new Bare(a3); junk(); console.log("the base's constructor", x3.s);
+  const a4 = new A2(); const x4 = a4.c; new ViaMethod(a4); junk(); console.log("a method in it", x4.s);
+  const a5 = new A2(); const x5 = a5.c; new ViaClosure(a5); junk(); console.log("a closure in it", x5.s);
+  const a6 = new A2(); const x6 = a6.c; Factory.of(a6); junk(); console.log("a static factory", x6.s);
+  const a7 = new A2(); const x7 = a7.c; viaNew(a7); junk(); console.log("a function calling new", x7.s);
+  enclosing(new A2());
+}
+function enclosing(a: A2) { const x = a.c; new R(a); junk(); console.log("a param of the function", x.s); }
+
+function partForms() {
+  const a = new A2(); console.log("part", new Part(a, a.c.s).v);
+  const b = new A2(); const x = b.c; console.log("part through a local", new Part(b, x.s).v);
+}
+
+function loopForms() {
+  const a = new A2();
+  for (const e of a.xs) { new R(a); junk(); console.log("loop", e.s, a.xs.length); }
+  const b = new A2();
+  for (const n of b.names) { new R(b); junk(); console.log("loop over strings", n, b.names.length); }
+  const c = new A2();
+  for (const e of c.xs) { new Bare(c); junk(); console.log("loop, the base's constructor", e.s); }
+}
+
+constForms(); partForms(); loopForms();

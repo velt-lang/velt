@@ -6,6 +6,7 @@
 //! A method chosen at run time (virtual, interface, bounded type param) counts as every method of
 //! its name, as its modes are fixed like a function value's: an override that calls `KK(q)` hides
 //! it from `go`'s callers just the same.
+//! `new C(q)` is a call of `C`'s constructor, or of the nearest base class's.
 //! Asked by the exclusivity check (`const`s, loops) and by lowering (`stable_borrow`); one scan of
 //! every body, then a walk up the callers from what changed.
 
@@ -27,6 +28,8 @@ pub struct ValueParams {
     /// Per method name, the params that may reach one in any method of that name, counted from
     /// the end (bit `k`: the `k`th from the last), as a closure's captures and `this` come first.
     methods: FxHashMap<String, u64>,
+    /// The constructor `new` of each class called in a body runs.
+    ctors: FxHashMap<DefId, DefId>,
 }
 
 impl ValueParams {
@@ -39,6 +42,13 @@ impl ValueParams {
             true => bits >> skip,
             false => 0,
         }
+    }
+
+    /// Of `new` of `class` with `args` arguments, the arguments that may reach a function value.
+    pub fn of_new(&self, class: DefId, args: usize) -> u64 {
+        self.ctors
+            .get(&class)
+            .map_or(0, |ctor| self.of_args(*ctor, args))
     }
 
     /// Of a call with `args` arguments of the method named `name` (its full name or not), chosen
@@ -57,9 +67,14 @@ impl ValueParams {
     }
 }
 
-/// The name of the method `callee` chooses at run time, when `callee` is such a call and the
-/// receiver's type says.
-pub type MethodName<'n> = dyn for<'e> Fn(&'e Callee, &'e [Expr]) -> Option<&'n str> + 'n;
+/// What a call needs of the program, which the checker and lowering hold differently.
+pub trait Calls<'n> {
+    /// The name of the method `callee` chooses at run time, when `callee` is such a call and the
+    /// receiver's type says.
+    fn method_name(&self, callee: &Callee, args: &[Expr]) -> Option<&'n str>;
+    /// The constructor `new` of `class` runs: its own, or the nearest base class's.
+    fn ctor(&self, class: DefId) -> Option<DefId>;
+}
 
 /// A param's reach passed on: to `param` of a callee, or argument `from_end` from its end.
 struct Edge {
@@ -76,7 +91,8 @@ enum Param {
 /// What one body does with its params.
 struct Scan<'s, 'n> {
     def: DefId,
-    method_name: &'s MethodName<'n>,
+    calls: &'s dyn Calls<'n>,
+    ctors: FxHashMap<DefId, DefId>,
     /// Each closure's captures, in the order of the params that hold them.
     captures: &'s FxHashMap<DefId, Vec<LocalId>>,
     /// Per local: the params its value comes from.
@@ -93,43 +109,74 @@ pub fn of_program(hir: &Program) -> ValueParams {
         Def::Fn(f) => Some((DefId(i as u32), f)),
         _ => None,
     });
-    let iface_method = |d: DefId, slot: u32| match hir.def(d) {
-        Def::Interface(i) => i.methods.get(slot as usize).map(|m| m.name.as_str()),
-        _ => None,
-    };
-    compute(fns, &|callee, args| match callee {
-        Callee::Virtual { slot } => {
-            let TyKind::Adt(class, _) = hir.types.kind(args.first()?.ty) else {
-                return None;
-            };
-            let Def::Adt(a) = hir.def(*class) else {
-                return None;
-            };
-            match hir.def(*a.vtable.get(*slot as usize)?) {
-                Def::Fn(f) => Some(f.name.as_str()),
-                _ => None,
-            }
-        }
-        Callee::Dyn { slot, .. } => match hir.types.kind(args.first()?.ty) {
-            TyKind::Dyn(iface, _) => iface_method(*iface, *slot),
-            _ => None,
-        },
-        Callee::ParamMethod { iface, slot, .. } => iface_method(*iface, *slot),
-        _ => None,
-    })
+    compute(fns, &Lowered(hir))
 }
 
-/// Every function's params that may reach a function value. `method_name` names the methods calls
-/// choose at run time.
+/// [`Calls`] of a finished program.
+struct Lowered<'h>(&'h Program);
+
+impl<'h> Lowered<'h> {
+    fn iface_method(&self, d: DefId, slot: u32) -> Option<&'h str> {
+        match self.0.def(d) {
+            Def::Interface(i) => i.methods.get(slot as usize).map(|m| m.name.as_str()),
+            _ => None,
+        }
+    }
+}
+
+impl<'h> Calls<'h> for Lowered<'h> {
+    fn method_name(&self, callee: &Callee, args: &[Expr]) -> Option<&'h str> {
+        let hir = self.0;
+        match callee {
+            Callee::Virtual { slot } => {
+                let TyKind::Adt(class, _) = hir.types.kind(args.first()?.ty) else {
+                    return None;
+                };
+                let Def::Adt(a) = hir.def(*class) else {
+                    return None;
+                };
+                match hir.def(*a.vtable.get(*slot as usize)?) {
+                    Def::Fn(f) => Some(f.name.as_str()),
+                    _ => None,
+                }
+            }
+            Callee::Dyn { slot, .. } => match hir.types.kind(args.first()?.ty) {
+                TyKind::Dyn(iface, _) => self.iface_method(*iface, *slot),
+                _ => None,
+            },
+            Callee::ParamMethod { iface, slot, .. } => self.iface_method(*iface, *slot),
+            _ => None,
+        }
+    }
+
+    fn ctor(&self, class: DefId) -> Option<DefId> {
+        let mut c = class;
+        loop {
+            let Def::Adt(a) = self.0.def(c) else {
+                return None;
+            };
+            if a.ctor.is_some() {
+                return a.ctor;
+            }
+            let TyKind::Adt(base, _) = self.0.types.kind(a.base?) else {
+                return None;
+            };
+            c = *base;
+        }
+    }
+}
+
+/// Every function's params that may reach a function value.
 pub fn compute<'a>(
     fns: impl Iterator<Item = (DefId, &'a FnDef)>,
-    method_name: &MethodName<'a>,
+    calls: &dyn Calls<'a>,
 ) -> ValueParams {
     let mut out: FxHashMap<DefId, u64> = FxHashMap::default();
     let mut params: FxHashMap<DefId, usize> = FxHashMap::default();
     let mut names: FxHashMap<DefId, &str> = FxHashMap::default();
     let mut callers: FxHashMap<DefId, Vec<Edge>> = FxHashMap::default();
     let mut method_callers: FxHashMap<&str, Vec<Edge>> = FxHashMap::default();
+    let mut ctors: FxHashMap<DefId, DefId> = FxHashMap::default();
     let mut work = vec![];
     let fns: Vec<(DefId, &FnDef)> = fns.collect();
     let captures: FxHashMap<DefId, Vec<LocalId>> = (fns.iter())
@@ -141,7 +188,8 @@ pub fn compute<'a>(
         names.insert(def, member(&f.name));
         let mut s = Scan {
             def,
-            method_name,
+            calls,
+            ctors: FxHashMap::default(),
             captures: &captures,
             roots: FxHashMap::default(),
             direct: 0,
@@ -155,6 +203,7 @@ pub fn compute<'a>(
             }
         }
         s.block(&f.body.block);
+        ctors.extend(s.ctors.drain());
         for (callee, e) in s.edges {
             callers.entry(callee).or_default().push(e);
         }
@@ -205,6 +254,7 @@ pub fn compute<'a>(
         bits: out,
         params,
         methods,
+        ctors,
     }
 }
 
@@ -334,7 +384,7 @@ impl Scan<'_, '_> {
                     }
                 }
                 Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
-                    let name = (self.method_name)(callee, args);
+                    let name = self.calls.method_name(callee, args);
                     for (i, a) in args.iter().enumerate() {
                         let bits = self.bits_of(a);
                         match name {
@@ -355,6 +405,24 @@ impl Scan<'_, '_> {
                 }
                 _ => {}
             },
+            E::New { def, args, .. } => {
+                if let Some(ctor) = self.calls.ctor(*def) {
+                    self.ctors.insert(*def, ctor);
+                    for (i, a) in args.iter().enumerate() {
+                        let bits = self.bits_of(a);
+                        if bits != 0 {
+                            let param = Param::FromEnd(args.len() - 1 - i);
+                            let caller = self.def;
+                            let edge = Edge {
+                                caller,
+                                bits,
+                                param,
+                            };
+                            self.edges.push((ctor, edge));
+                        }
+                    }
+                }
+            }
             E::Closure(d) => {
                 let outers = self.captures.get(d).cloned().unwrap_or_default();
                 for (k, outer) in outers.into_iter().enumerate() {

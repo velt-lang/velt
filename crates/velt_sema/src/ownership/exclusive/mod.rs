@@ -70,9 +70,7 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
             Some(Def::Fn(f)) => Some((DefId(i as u32), f)),
             _ => None,
         });
-        crate::value_params::compute(fns, &|callee, args| {
-            let_borrow::method_name(cx, callee, args)
-        })
+        crate::value_params::compute(fns, &let_borrow::Checking(cx))
     };
     for d in fns {
         if closures.is_none() && !cx.modules[cx.fn_info(d).module].is_std && as_value(cx, d) {
