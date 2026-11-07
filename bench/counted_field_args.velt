@@ -193,6 +193,22 @@ function ctxOwned() {
   for (let i = 0; i < N; i++) { if (k(ctx, o.name)) c++; }
   return c;
 }
+// Where the share applies, the count update a sound program needs: a `const` of a part before a
+// named function that hands its param on to a function value, and a loop over what it is given.
+class Leaf { v: number = 1; }
+class Tree { c: Leaf = new Leaf(); xs: Leaf[] = [new Leaf(), new Leaf(), new Leaf()]; n: number = 0; }
+let bump: (t: Tree) => void = (t) => { t.n++; };
+function touch(t: Tree): void { bump(t); }
+function ownerConst() {
+  const t = new Tree(); let c = 0;
+  for (let i = 0; i < N; i++) { const x = t.c; touch(t); c += x.v; }
+  return c;
+}
+function ownerLoop() {
+  const t = new Tree(); let c = 0;
+  for (let i = 0; i < N / 3; i++) { for (const e of t.xs) { touch(t); c += e.v; } }
+  return c;
+}
 function all() {
   console.log(thisPlain());
   console.log(recvStartsWithField());
@@ -220,5 +236,7 @@ function all() {
   console.log(writtenIncludes());
   console.log(writtenToString());
   console.log(ctxOwned());
+  console.log(ownerConst());
+  console.log(ownerLoop());
 }
 all();
