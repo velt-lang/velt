@@ -4,15 +4,19 @@
 // distance costs bits, a distance the decoder remembers costs almost none), with one step of lazy
 // matching.
 //
-// A bucket holds positions as the stream's offset modulo 2^32, so the window can slide without
-// touching the table. The table is bytes, four to a position, made zeroed (`Buffer.alloc`, which
-// costs nothing for a large one) and read 16 bytes, four positions, at a time. An empty slot reads
-// as position 0, a real candidate whose bytes are compared like any other, so the output depends
-// only on the input. Up to four positions a bucket, a position's slot is picked from the position
-// itself, as the reference encoder's fast hashers do; above that, a counter per bucket turns.
+// The table of positions is `PositionTable`; a search reads a bucket 16 bytes, four positions,
+// at a time.
 
+import { inline } from "velt/lang/intrinsics";
 import { common, word } from "velt/compress/brotli/match_bytes";
-import { MetaBlock } from "velt/compress/brotli/meta_block";
+import {
+  CACHE_CHECKS,
+  CACHE_MIN,
+  FIRST_LAZY,
+  FIRST_SPLIT,
+  MAX_DELAY,
+} from "velt/compress/brotli/match_settings";
+import { HASH_BYTES, MASK32, PositionTable } from "velt/compress/brotli/position_table";
 import { distanceCode, SHORT_CODES } from "velt/compress/brotli/encode_codes";
 import { u32x4, u8x16 } from "velt/simd";
 
@@ -20,10 +24,6 @@ import { u32x4, u8x16 } from "velt/simd";
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_as_u32x4(v: u8x16): u32x4;
 declare function velt_simd_u32x4_lane(v: u32x4, index: u64): u32;
-// Checked by the runtime: the four bytes it writes must be inside the array.
-declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64): void;
-declare function velt_simd_u32x4_splat(x: u32): u32x4;
-declare function velt_simd_u32x4_as_u8x16(v: u32x4): u8x16;
 
 const SCORE_BASE: i64 = 1920;
 const LITERAL_SCORE: i64 = 135;
@@ -32,12 +32,6 @@ const DISTANCE_BIT_PENALTY: i64 = 30;
 const MIN_SCORE: i64 = SCORE_BASE + 100;
 /** How much better a match one byte later must score to be taken instead. */
 const LAZY_COST: i64 = 175;
-/** Per quality: the most bytes a lazy match moves on before it takes what it has. */
-const MAX_DELAY: i64[] = [0, 0, 0, 1, 1, 4, 4, 4, 4, 4, 4, 4];
-const HASH_MUL: u64 = 0x1e35a7bd1e35a7bd;
-const MASK32: u64 = 0xffffffff;
-/** The bytes from a position a match needs, and a search reads. */
-const HASH_BYTES: i64 = 4;
 /** The longest match taken, so a meta-block stays far below its 2^24 bytes. */
 const MAX_MATCH: i64 = 1 << 20;
 /** Literals in a row after which positions are skipped, faster further on. */
@@ -46,65 +40,25 @@ const RANDOM_WINDOW: i64 = 64;
 const CACHE_INDEX: i64[] = [0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1];
 const CACHE_OFFSET: i64[] = [0, 0, 0, 0, -1, 1, -2, 2, -3, 3, -1, 1, -2, 2, -3, 3];
 
-/** Per quality 0 to 11: log2 of the positions a bucket holds. */
-const WAY_BITS: i64[] = [0, 0, 1, 2, 2, 4, 5, 6, 7, 8, 8, 8];
-/** Per quality: log2 of the number of buckets. */
-const BUCKET_BITS: i64[] = [14, 16, 16, 17, 18, 15, 15, 15, 15, 14, 14, 14];
-/** Per quality: how many of the 16 short distance codes are tried. */
-const CACHE_CHECKS: i64[] = [1, 2, 4, 4, 4, 10, 10, 16, 16, 16, 16, 16];
-/** Per quality: the shortest match a short distance code is taken for. */
-const CACHE_MIN: i64[] = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3];
-/** Per quality: the bytes the hash covers. */
-const HASHED: i64[] = [5, 5, 5, 5, 6, 4, 4, 4, 4, 4, 4, 4];
-/** Per quality: the positions entered at each end of a match. */
-const INSERT_KEPT: i64[] = [8, 8, 8, 8, 5, 32, 32, 32, 32, 32, 32, 32];
-/** From this quality on, literals are split into block types. */
-const FIRST_SPLIT: i64 = 4;
-/** From this quality on, matches are lazy. */
-const FIRST_LAZY: i64 = 3;
 /** No byte: past where an unchecked load can reach. */
 const NONE: u64 = 256;
-
-/** Writes a little-endian `u32`, which must be inside `table`. */
-function put32(table: u8[], at: u64, value: u64) {
-  const v = velt_simd_u32x4_as_u8x16(velt_simd_u32x4_splat(value as u32));
-  velt_simd_u8x16_store_partial(v, table, at, 4);
-}
 
 function log2Floor(x: u64): i64 {
   return 63 - (x.leadingZeros() as i64);
 }
 
 /** Finds the matches of a window of input and adds them as commands of the meta-block. */
-export class Matcher extends MetaBlock {
-  /** `data[0..fill]` is the stream from its offset `base`. */
-  base: i64 = 0;
-  fill: i64 = 0;
+export class Matcher extends PositionTable {
   /** Commands were chosen up to `pos`; the current meta-block starts at `blockStart`. */
   pos: i64 = 0;
   blockStart: i64 = 0;
   /** Where the literals not yet in a command start. */
   private literalStart: i64 = 0;
-  /** Positions below this are in the hash table. */
-  private hashed: i64 = 0;
-  /** The most bytes back a distance can reach: the window less 16 (section 9.1). */
-  maxBackward: i64;
   /** The last four distances, `cache[0]` the last (section 4). */
   private cache: i64[] = [4, 11, 15, 16];
   /** The last distances when the current meta-block started. */
   private blockCache: i64[] = [4, 11, 15, 16];
-  /** Bucket `h`'s slots are the `u32`s (little-endian) at byte `(h << wayBits) * 4`. */
-  private table: u8[];
-  /** Per bucket, above four slots: where the next position goes. */
-  private num: u8[];
-  private bucketBits: u64;
-  /** `HASH_MUL` in a field, which a loop keeps in a register; a constant is built at each use. */
-  private multiplier: u64 = HASH_MUL;
-  /** The hash's input is the low `hashed` bytes of a 64-bit load, shifted up by this. */
-  private hashShift: u64;
-  private wayBits: i64;
   private cacheChecks: i64;
-  private insertKept: i64;
   private maxDelay: i64;
   private cacheMin: i64;
   private lazyMode: bool;
@@ -115,32 +69,14 @@ export class Matcher extends MetaBlock {
 
   /** `sizeHint`: the whole input's length when known (one-shot), for a smaller table. */
   constructor(quality: i64, lgwin: i64, sizeHint: i64) {
-    super();
-    this.maxBackward = (1 << lgwin) - 16;
-    let bits = BUCKET_BITS[quality];
-    if (sizeHint >= 0) {
-      let need: i64 = 8;
-      while (need < 24 && (1 << need) < sizeHint) {
-        need++;
-      }
-      if (need < bits) {
-        bits = need;
-      }
-    }
-    this.bucketBits = bits as u64;
-    this.wayBits = WAY_BITS[quality];
+    super(quality, lgwin, sizeHint);
     this.cacheChecks = CACHE_CHECKS[quality];
-    this.insertKept = INSERT_KEPT[quality];
     this.maxDelay = MAX_DELAY[quality];
     this.cacheMin = CACHE_MIN[quality];
     this.lazyMode = quality >= FIRST_LAZY;
-    this.hashShift = (64 - 8 * HASHED[quality]) as u64;
     if (quality >= FIRST_SPLIT) {
       this.splitLiterals();
     }
-    // 16 bytes past the last slot, for the last bucket's 16-byte load.
-    this.table = Buffer.alloc(((1 << (bits + this.wayBits)) * 4 + 16) as usize);
-    this.num = Buffer.alloc((this.wayBits > 2 ? 1 << bits : 1) as usize);
   }
 
   /** The literals since the last command. */
@@ -150,10 +86,10 @@ export class Matcher extends MetaBlock {
 
   /** Moves every position `by` bytes down, after the window slid that much (`base` grew). */
   shift(by: i64) {
+    super.shift(by);
     this.pos -= by;
     this.blockStart -= by;
     this.literalStart -= by;
-    this.hashed -= by;
   }
 
   /**
@@ -161,6 +97,22 @@ export class Matcher extends MetaBlock {
    * meta-block reaches `blockLimit` bytes.
    */
   choose(stop: i64, blockLimit: i64) {
+    // The table grows at the first command past `growAt`, however the input arrives.
+    while (true) {
+      while (this.base + this.pos >= this.growAt) {
+        this.grow();
+      }
+      const edge = this.growAt - this.base;
+      const to = stop < edge ? stop : edge;
+      this.chooseTo(to, blockLimit);
+      if (to == stop || this.base + this.pos < this.growAt) {
+        return;
+      }
+    }
+  }
+
+  private chooseTo(stop: i64, blockLimit: i64) {
+    inline();
     const end = this.fill;
     let pos = this.pos;
     while (pos < stop && pos + HASH_BYTES <= end && pos - this.blockStart < blockLimit) {
@@ -237,88 +189,6 @@ export class Matcher extends MetaBlock {
     }
     const step = run < 4 * RANDOM_WINDOW ? 2 : 4;
     return pos + step < stop ? pos + step : stop;
-  }
-
-  // Adds positions `from` to `to` (exclusive) to the table, up to where four bytes are left.
-  private insertRange(from: i64, to: i64) {
-    let a = from > this.hashed ? from : this.hashed;
-    const last = this.fill - HASH_BYTES;
-    const b = to - 1 < last ? to : last + 1;
-    // A long match adds its first and last positions only: the middle of a run rarely helps, and
-    // in a small table it pushes out what does.
-    const keep = this.insertKept;
-    if (b - a > 2 * keep) {
-      this.insertRun(a, a + keep);
-      a = b - keep;
-    }
-    this.insertRun(a, b);
-    if (b > this.hashed) {
-      this.hashed = b;
-    }
-  }
-
-  // The eight bytes at `pos`, read one by one, zeros past what came in: a streamed buffer has old
-  // memory there, and the array may end first.
-  private key(pos: i64): u64 {
-    const d = this.data;
-    const left = this.fill - pos;
-    const n = left < 8 ? left : 8;
-    let x: u64 = 0;
-    for (let k: i64 = 0; k < n; k++) {
-      x |= (d[pos + k] as u64) << ((8 * k) as u64);
-    }
-    return x;
-  }
-
-  // Adds the positions `from` to `to` (exclusive), which have four bytes each, to the table.
-  private insertRun(from: i64, to: i64) {
-    const d = this.data;
-    const wide = (d.length as i64) - 15;
-    const inside = wide < this.fill - 7 ? wide : this.fill - 7;
-    const fast = to < inside ? to : inside;
-    const table = this.table;
-    const shift = this.hashShift;
-    const multiplier = this.multiplier;
-    const drop = 64 - this.bucketBits;
-    const wayBits = this.wayBits as u64;
-    const mask = ((1 as u64) << wayBits) - 1;
-    const base = this.base;
-    let p = from;
-    if (wayBits <= 2) {
-      while (p < fast) {
-        const h = (word(d, p) << shift).wrappingMul(multiplier) >> drop;
-        const abs = (base + p) as u64;
-        put32(table, ((h << wayBits) + ((abs >> 3) & mask)) * 4, abs & MASK32);
-        p++;
-      }
-    } else {
-      const num = this.num;
-      while (p < fast) {
-        const h = (word(d, p) << shift).wrappingMul(multiplier) >> drop;
-        const n = num[h as i64] as u64;
-        num[h as i64] = ((n + 1) & 255) as u8;
-        put32(table, ((h << wayBits) + (n & mask)) * 4, ((base + p) as u64) & MASK32);
-        p++;
-      }
-    }
-    while (p < to) {
-      this.enter(p, (this.key(p) << shift).wrappingMul(multiplier) >> drop);
-      p++;
-    }
-  }
-
-  // Adds `pos`, whose hash is `h`, to the table.
-  private enter(pos: i64, h: u64) {
-    const abs = (this.base + pos) as u64;
-    const wayBits = this.wayBits as u64;
-    const mask = ((1 as u64) << wayBits) - 1;
-    let slot = (abs >> 3) & mask;
-    if (wayBits > 2) {
-      const n = this.num[h as i64] as u64;
-      slot = n & mask;
-      this.num[h as i64] = ((n + 1) & 255) as u8;
-    }
-    put32(this.table, ((h << wayBits) + slot) * 4, abs & MASK32);
   }
 
   /**

@@ -60,8 +60,6 @@ export class MetaBlock extends BlockTypeWriter {
   /** Lets meta-blocks split their literals, a quality's choice. */
   splitLiterals() {
     this.splitting = true;
-    this.litCodes = new Array<u32>((MAX_TYPES * LITERALS) as usize).fill(0);
-    this.prepareTypes();
   }
 
   /** The commands so far. */
@@ -233,6 +231,12 @@ export class MetaBlock extends BlockTypeWriter {
     }
     const split = this.splitting && this.blocks.start(literals);
     this.split = split;
+    // The state of the block types, made by the first meta-block that splits: a short input never
+    // needs it.
+    if (split && (this.litCodes.length as i64) < MAX_TYPES * LITERALS) {
+      this.litCodes = new Array<u32>((MAX_TYPES * LITERALS) as usize).fill(0);
+      this.prepareTypes();
+    }
     for (let i: usize = 0; i < n; i++) {
       const ins = this.inserts[i] as u64;
       const copy = this.copies[i] as u64;

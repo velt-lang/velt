@@ -1,13 +1,18 @@
-// velt/compress (internal): unchecked reads of the Brotli encoder's input, for the match finder.
+// velt/compress (internal): unchecked reads of the Brotli encoder's input, and the 4-byte write
+// of its table, for the match finder.
 
 import { inline } from "velt/lang/intrinsics";
-import { u64x2, u8x16 } from "velt/simd";
+import { u32x4, u64x2, u8x16 } from "velt/simd";
 
 // Unchecked: each caller keeps the 16 bytes inside the array.
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
 declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
 declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+// Checked by the runtime: the four bytes it writes must be inside the array.
+declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64): void;
+declare function velt_simd_u32x4_splat(x: u32): u32x4;
+declare function velt_simd_u32x4_as_u8x16(v: u32x4): u8x16;
 
 /** The eight bytes at `at`, little-endian; 16 from it must be inside `d`. */
 export function word(d: u8[], at: i64): u64 {
@@ -47,4 +52,11 @@ export function common(d: u8[], a: i64, b: i64, max: i64): i64 {
     n++;
   }
   return n < max ? n : max;
+}
+
+/** Writes `value` as a little-endian `u32` at `at`, which must be inside `table`. */
+export function put32(table: u8[], at: u64, value: u64) {
+  inline();
+  const v = velt_simd_u32x4_as_u8x16(velt_simd_u32x4_splat(value as u32));
+  velt_simd_u8x16_store_partial(v, table, at, 4);
 }

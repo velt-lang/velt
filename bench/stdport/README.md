@@ -154,12 +154,13 @@ runtime had no encoder, so these rows measure a new component, not a port. Instr
 compression (cachegrind, arm64 Linux): Velt is (3 runs − 1 run) / 2 of one program that links both
 encoders, so start-up and the file read drop out; Rust is the port's total for 20 compressions,
 less its one decode, ÷ 20. The size of one stream against stock zlib 1.3.2 and Node's bundled
-zlib:
+zlib. These are arm64 counts: on x86-64, measured the same way for both sides, `gzip_fast` is 1.04
+of Rust (19.2 M against 18.4 M).
 
 | benchmark | Velt | Rust | Velt / Rust | Velt bytes | flate2 bytes | stock zlib bytes | Node bytes |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | gzip_fast | 14.6 M | 15.3 M | 0.95 | 140,903 | 134,091 | 148,818 | 141,166 |
-| gzip_default | 76.1 M | 107 M | 0.71 | 127,698 | 126,411 | 127,698 | 127,619 |
+| gzip_default | 74.3 M | 107 M | 0.69 | 127,698 | 126,411 | 127,698 | 127,619 |
 
 Levels 2 to 9 follow zlib (hash chains, lazy matching from level 4, zlib's parameters per level, a
 candidate tried only when the two bytes at the end of the best match so far agree), so their sizes
@@ -175,12 +176,26 @@ this JSON (145,470 bytes), though smaller over the real files (5.11 MB against 5
 (`"fastest"` and `"optimal"`) against the `brotli` crate at the same qualities (window 2^22): the
 1 MB JSON of `gen_inputs.rs`. A new component, not a port. Instructions per compression, measured
 as for gzip above, and the size of one stream against Node's encoder (the reference encoder, as the
-crate is):
+crate is). On x86-64 `brotli_default` is about 5 % further from Rust than here: 1.06 before quality
+4 checked three cached distances instead of four, which cut its arm64 count by 4 %.
 
 | benchmark | Velt | Rust | Velt / Rust | Velt bytes | Node bytes |
 |---|---:|---:|---:|---:|---:|
-| brotli_fast | 43.7 M | 59.3 M | 0.74 | 76,379 | 96,467 |
-| brotli_default | 61.5 M | 61.7 M | 1.00 | 46,327 | 47,346 |
+| brotli_fast | 43.9 M | 59.3 M | 0.74 | 76,379 | 96,467 |
+| brotli_default | 59.0 M | 61.7 M | 0.96 | 47,575 | 47,346 |
+
+`brotli_stream_small` is what `compress()` in packages/web does for each short response: 1,000
+streams of 1 KB from the same JSON at quality 4, one encoder each (`BrotliEncoding`'s `encoder()`
+against the crate's `CompressorWriter`). It measures setting an encoder up. Instructions of the
+whole program (cachegrind, arm64 Linux, `VELT_THREADS=1`) and the best of 7 wall-clock runs:
+
+| benchmark | Velt | Rust | Velt / Rust | Velt ms | Rust ms |
+|---|---:|---:|---:|---:|---:|
+| brotli_stream_small | 250 M | 248 M | 1.01 | 13 | 16 |
+
+A stream has no size hint, so its table starts at 64 KiB and grows fourfold, taking the positions
+in the window along, each time the stream has as many positions as the table has slots. A one-shot
+input gets a table for its length at once.
 
 From quality 4 the encoder splits literals into block types, each with its own prefix code, with
 the reference's greedy splitter; it has no context modeling or static dictionary yet. Over the

@@ -261,6 +261,29 @@ describe("BrotliEncoding", () => {
     expect(ok).toBe(true);
   });
 
+  it("grows a stream's table and keeps the positions in the window", () => {
+    // A stream starts with a small table, and bytes from 16 symbols at random fill every bucket
+    // (random bytes of all 256 values would be stored as they are). The block's second copy, 330 KB
+    // on, is found only if the table grew and took along the positions already in the window:
+    // without that, the stream is 9 % larger. Written whole, it must still grow before its
+    // meta-block ends.
+    const block = noise(30000, 16, 11);
+    const input = block.concat(noise(300000, 16, 12)).concat(block);
+    const end = input.length as i64;
+    const whole = brotliCompress(input, 4).length;
+    const steps: i64[] = [1000, end];
+    for (const step of steps) {
+      const e = new BrotliEncoding(4).encoder();
+      let out: u8[] = [];
+      for (let at: i64 = 0; at < end; at += step) {
+        out = out.concat(e.write(input, at, at + step < end ? at + step : end));
+      }
+      out = out.concat(e.finish());
+      const ok = same(brotliDecompress(out), input) && out.length < whole + whole / 100;
+      expect(ok ? "" : `pieces of ${step}: ${out.length} bytes, one-shot ${whole}`).toBe("");
+    }
+  });
+
   it("gives nothing for a flush with nothing new, and nothing after finish", () => {
     const e = new BrotliEncoding().encoder();
     e.write([1, 2, 3], 0, 3);
