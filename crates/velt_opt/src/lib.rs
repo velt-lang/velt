@@ -257,7 +257,6 @@ pub fn optimize_served(
 fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTimings, served: Served) {
     match level {
         OptLevel::None => {
-            numrep::declare_formatters(&mut program.externs);
             let helpers = debug_inlined(&program.funcs);
             if helpers.contains(&true) {
                 t.time("inline", || inline::run_helpers(program, &helpers));
