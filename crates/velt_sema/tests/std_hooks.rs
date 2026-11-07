@@ -4,7 +4,7 @@
 //!
 //! The signatures are compared on a program checked with every std body (`velt check --std`,
 //! `CheckOptions::eager_std`): what a hook throws and how it takes each parameter are inferred
-//! from its body, which lazy std leaves unchecked for a hook no code reaches.
+//! from its body, which lazy std leaves unchecked for a hook no live code reaches.
 
 mod common;
 
@@ -330,24 +330,21 @@ fn every_hook_resolves_with_its_signature() {
     );
 }
 
-/// Lazy std checks every lowered hook (lowering calls it; velt_common `hook_sig.rs`).
+/// Lazy std checks the lowered hooks of the values a program has: lowering calls them
+/// (`velt_common` `hook_sig.rs`). This program holds an `any`, arrays and functions, and has no
+/// class object and no reference to a host value, which the two unchecked hooks wait for.
 #[test]
-fn lazy_std_checks_every_lowered_hook() {
+fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
     let p = ok_src(LOADS_ALL);
-    for h in HOOKS.iter().filter(|h| h.lowered) {
-        let q = h.qualified();
-        let i = p
-            .defs
-            .iter()
-            .position(|d| matches!(d, Def::Fn(f) if f.name == q));
-        if let Some(i) = i {
-            assert!(
-                !p.unchecked.contains(&DefId(i as u32)),
-                "{}: lowered, but left unchecked",
-                h.name
-            );
-        }
-    }
+    let unchecked: Vec<&str> = (HOOKS.iter().filter(|h| h.lowered))
+        .filter(|h| {
+            let q = h.qualified();
+            let i = (p.defs.iter()).position(|d| matches!(d, Def::Fn(f) if f.name == q));
+            i.is_some_and(|i| p.unchecked.contains(&DefId(i as u32)))
+        })
+        .map(|h| h.name)
+        .collect();
+    assert_eq!(unchecked, ["class_object", "host_ref_handle"]);
 }
 
 /// A hook no code reaches is compared by its body too: lazy std leaves `processWrite` unchecked,

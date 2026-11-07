@@ -915,8 +915,8 @@ program without `any`.
 
 ## Unchecked definitions (#1658; additive)
 
-Sema checks standard-library definitions that only std code refers to when checked code
-reaches them (docs/internals/design/lazy-std.md), and may have loaded their modules only then
+Sema checks a standard-library definition once it is *live*, or a checked call asks for its result
+(docs/internals/design/lazy-std.md), and may have loaded its module only then
 (#2161 step 3): a hook whose module no live construct demanded has no definition at all, which
 lowering treats as it treats an unchecked one. What lowering may rely on is what
 `Program::hooks_demanded` lists. `Program::unchecked` lists the ones nothing
@@ -927,17 +927,17 @@ reached. Each still has a definition, so every `DefId` has one:
   empty body (no statements, no value);
 - a module constant: a `Def::Global` of type `void` whose `init` is `Lit(Unit)`.
 
-Checked code never refers to one: no `Callee::Def`, `FnRef` or `Global` names it, no checked
-expression has a type whose methods it is, and no value of such a type exists, so no
-`vtable`, `impls` entry or `dyn_members` table of a type the program uses holds one. Lowering
-never builds or reads one: building a function in `unchecked` (any `Work` of its `DefId`) or
-reading such a global is an ICE, as it would mean a reference sema did not see. Lowering may
-look up by name only what sema keeps checked: the prelude helpers (`velt_sema` `body/lazy_std.rs`
-`HELPER_NAMES`, which a test keeps in step with the `"__…"` names in lowering's code), the
-methods of the prelude's types (not those of its `extend` blocks on number types, `bool` and
-`string`, which are deferred like its free functions) and the modules in `EAGER`. (The JSON intrinsics, and the
-`JSON_GLUE` modules their glue called by name, are gone: `JSON.parse`, velt/db's row readers and
-its parameter binder are generated code, source-generators.md.)
+Live code never refers to one: no `Callee::Def`, `FnRef` or `Global` of it names it, no live
+expression has a type whose methods it is, and no value of such a type exists, so no `vtable`,
+`impls` entry or `dyn_members` table of a type the program uses holds one. Checked code that isn't
+live may refer to one: a std module checked whole, or a body a checked call asked for, which
+lowering doesn't build. Lowering never builds or reads one: building a function in `unchecked` (any
+`Work` of its `DefId`) or reading such a global is an ICE, as it would mean a reference sema did not
+see. Lowering may look up by name only what is live with it: the prelude helpers (`velt_sema`
+`body/lazy_std/mod.rs` `HELPER_NAMES`, which a test keeps in step with the `"__…"` names in lowering's
+code), the free functions of the modules in `BY_NAME`, and the methods of a type where it has a
+value of that type. Lowering's only other use of `unchecked` is to do without a hook that waits for
+the program to need it: `any_to_record`'s, and the `fallback` float hooks.
 
 A hook whose `velt_common` `std_hooks.rs` entry lists `constructs(…)` (the integer hooks
 `intText`, `uintText`, `intPush`, `uintPush`, #2161) is the exception: lazy std checks it only
@@ -955,9 +955,8 @@ compilers too (`ICE: hook <name> called for a construct its table entry doesn't 
 <name> reached by lowering but not demanded by sema (construct <c>)`), so a construct missing from
 the table is reported as such. A program checked with laziness off demands every hook.
 
-`Program::live` (additive) is the live set in full, in a debug compiler or with
-`VELT_LIVE_CHECK=1`; otherwise `None`, as the walk stops once every hook is demanded. Lowering
-treats it as a check only: with it, building a function or reading a constant or module slot that
+`Program::live` (additive) is the live set, in a debug compiler or with `VELT_LIVE_CHECK=1`;
+otherwise `None`. Lowering treats it as a check only: with it, building a function or reading a constant or module slot that
 isn't in it is an `ICE: … built by lowering but not live`, and the VIR doesn't depend on it. The
 one thing a release compiler's walk doesn't see is the forwarders `Ctx::upcast_tables` makes after
 ownership: each reads a field or getter of a live implementation and calls what it holds, so it has

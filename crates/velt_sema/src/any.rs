@@ -403,14 +403,11 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
     Some(out)
 }
 
-/// Does the program convert values to `any` and make object literals with accessors in its own
-/// modules (the standard library's are not printed or serialized through `any`)? Then
-/// printing, `JSON.stringify` and `Object.keys` of an `any` that holds one (also inside
-/// another object) need its accessors listed, even where no member is read through `any`.
+/// Does the program make object literals with accessors in its own modules (the standard
+/// library's are not printed or serialized)? Then printing, `JSON.stringify` and `Object.keys` of
+/// one, in an `any` or not (also inside another object), need its accessors listed, even where no
+/// member is read through `any`, and whether or not the program has an `any` at all.
 fn accessor_literals_dynamic(cx: &Ctx) -> bool {
-    if !cx.any.is_some_and(|a| a.imp.is_some()) {
-        return false;
-    }
     cx.literal_structs.iter().any(|&d| {
         cx.adt(d).is_some_and(|a| {
             !cx.scopes[a.module].is_std
