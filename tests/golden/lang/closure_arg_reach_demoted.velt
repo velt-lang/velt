@@ -1,0 +1,11 @@
+// A named function that writes its param, used as a value too, keeps the param `Borrow`: its direct callers read a borrow (#2527). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
+const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; junk(); };
+function w(q: A2) { q.c = new I2(); q.c.s = heap("zzzzzzzz"); junk(); }
+const keep: (q: A2) => void = w;
+function t() { const a = new A2(); const x = a.c; w(a); junk(); console.log(x.s); }
+t();
+console.log(typeof keep);

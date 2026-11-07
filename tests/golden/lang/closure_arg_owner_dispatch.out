@@ -1,26 +1,26 @@
-override 41
-override, named caller 41
-interface 41
-interface, named caller 41
-bounded type param 41
-interface in a field 41
-abstract method 41
-object literal 41
-object literal, named caller 41
-class field holding a function 41
-interface field holding a function 41
-receiver, override 41
-receiver, bounded type param 41
-interface on this 41
-part, override 42
-part, interface 42
-part through a local, override 42
-part through a local, interface 42
-part, override, named caller 42
-part, interface, named caller 42
-loop, override 41 0
-loop, override 41 0
-loop, interface 41 0
-loop, interface 41 0
-loop, named caller 41 0
-loop, named caller 41 0
+override a----------------------------------------
+override, named caller a----------------------------------------
+interface a----------------------------------------
+interface, named caller a----------------------------------------
+bounded type param a----------------------------------------
+interface in a field a----------------------------------------
+abstract method a----------------------------------------
+object literal a----------------------------------------
+object literal, named caller a----------------------------------------
+class field holding a function a----------------------------------------
+interface field holding a function a----------------------------------------
+receiver, override a----------------------------------------
+receiver, bounded type param a----------------------------------------
+interface on this a----------------------------------------
+part, override a----------------------------------------!
+part, interface a----------------------------------------!
+part through a local, override a----------------------------------------!
+part through a local, interface a----------------------------------------!
+part, override, named caller a----------------------------------------!
+part, interface, named caller a----------------------------------------!
+loop, override a---------------------------------------- 0
+loop, override a---------------------------------------- 0
+loop, interface a---------------------------------------- 0
+loop, interface a---------------------------------------- 0
+loop, named caller a---------------------------------------- 0
+loop, named caller a---------------------------------------- 0

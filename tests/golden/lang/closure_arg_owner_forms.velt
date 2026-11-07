@@ -31,32 +31,32 @@ function viaRec(q: A2, n: number) { if (n > 0) viaRec(q, n - 1); else KK(q); }
 function m1(q: A2, n: number) { if (n > 0) m2(q, n - 1); }
 function m2(q: A2, n: number) { KK(q); m1(q, n); }
 function t(name: string, f: (a: A2) => void) {
-  const a = new A2(); const x = a.c; f(a); junk(); console.log(name, x.s.length);
+  const a = new A2(); const x = a.c; f(a); junk(); console.log(name, x.s);
 }
 function main_() {
-  const a1 = new A2(); const x1 = a1.c; new ByCtor(a1); junk(); console.log("constructor", x1.s.length);
-  const a2 = new A2(); const x2 = a2.c; new ByMethod().run(a2); junk(); console.log("method", x2.s.length);
-  const a3 = new A2(); const x3 = a3.c; new ByMethod().self(a3); junk(); console.log("method to method", x3.s.length);
-  const a4 = new A2(); const x4 = a4.c; ByStatic.run(a4); junk(); console.log("static", x4.s.length);
-  const o = new Own(); const x5 = o.c; o.go(); junk(); console.log("this forwarded", x5.s.length);
-  const a6 = new A2(); const x6 = a6.c; viaGeneric(a6); junk(); console.log("generic", x6.s.length);
-  const a7 = new A2(); const x7 = a7.c; callbackRun(a7, KK); junk(); console.log("callback param", x7.s.length);
-  const o8: O2 = { c: new I2() }; const x8 = o8.c; objRun(o8); junk(); console.log("object type", x8.s.length);
-  const a9 = new A2(); const x9 = a9.c; viaAny(a9); junk(); console.log("any", x9.s.length);
-  const a10 = new A2(); const x10 = a10.c; viaOpt(a10); junk(); console.log("optional param", x10.s.length);
-  const a11 = new A2(); const x11 = a11.c; const h11 = { a: a11 }; viaField(h11); junk(); console.log("object holding it", x11.s.length);
-  const a12 = new A2(); const x12 = a12.c; const h12 = [a12]; viaArr(h12); junk(); console.log("array holding it", x12.s.length);
-  const a13 = new A2(); const x13 = a13.c; viaFor([a13]); junk(); console.log("loop in the callee", x13.s.length);
-  const a14 = new A2(); const x14 = a14.c; viaDefault(a14); junk(); console.log("default function", x14.s.length);
-  const a15 = new A2(); const x15 = a15.c; viaTry(a15); junk(); console.log("try", x15.s.length);
-  const a16 = new A2(); const x16 = a16.c; viaIf(a16, true); junk(); console.log("if", x16.s.length);
-  const a17 = new A2(); const x17 = a17.c; viaRec(a17, 3); junk(); console.log("recursion", x17.s.length);
-  const a18 = new A2(); const x18 = a18.c; m1(a18, 2); junk(); console.log("mutual recursion", x18.s.length);
-  const a19 = new A2(); const x19 = a19.c; [...genRun(a19)]; junk(); console.log("generator", x19.s.length);
+  const a1 = new A2(); const x1 = a1.c; new ByCtor(a1); junk(); console.log("constructor", x1.s);
+  const a2 = new A2(); const x2 = a2.c; new ByMethod().run(a2); junk(); console.log("method", x2.s);
+  const a3 = new A2(); const x3 = a3.c; new ByMethod().self(a3); junk(); console.log("method to method", x3.s);
+  const a4 = new A2(); const x4 = a4.c; ByStatic.run(a4); junk(); console.log("static", x4.s);
+  const o = new Own(); const x5 = o.c; o.go(); junk(); console.log("this forwarded", x5.s);
+  const a6 = new A2(); const x6 = a6.c; viaGeneric(a6); junk(); console.log("generic", x6.s);
+  const a7 = new A2(); const x7 = a7.c; callbackRun(a7, KK); junk(); console.log("callback param", x7.s);
+  const o8: O2 = { c: new I2() }; const x8 = o8.c; objRun(o8); junk(); console.log("object type", x8.s);
+  const a9 = new A2(); const x9 = a9.c; viaAny(a9); junk(); console.log("any", x9.s);
+  const a10 = new A2(); const x10 = a10.c; viaOpt(a10); junk(); console.log("optional param", x10.s);
+  const a11 = new A2(); const x11 = a11.c; const h11 = { a: a11 }; viaField(h11); junk(); console.log("object holding it", x11.s);
+  const a12 = new A2(); const x12 = a12.c; const h12 = [a12]; viaArr(h12); junk(); console.log("array holding it", x12.s);
+  const a13 = new A2(); const x13 = a13.c; viaFor([a13]); junk(); console.log("loop in the callee", x13.s);
+  const a14 = new A2(); const x14 = a14.c; viaDefault(a14); junk(); console.log("default function", x14.s);
+  const a15 = new A2(); const x15 = a15.c; viaTry(a15); junk(); console.log("try", x15.s);
+  const a16 = new A2(); const x16 = a16.c; viaIf(a16, true); junk(); console.log("if", x16.s);
+  const a17 = new A2(); const x17 = a17.c; viaRec(a17, 3); junk(); console.log("recursion", x17.s);
+  const a18 = new A2(); const x18 = a18.c; m1(a18, 2); junk(); console.log("mutual recursion", x18.s);
+  const a19 = new A2(); const x19 = a19.c; [...genRun(a19)]; junk(); console.log("generator", x19.s);
   t("through a function value", (a) => { KK(a); });
 }
 async function asyncForm() {
-  const a = new A2(); const x = a.c; await asyncRun(a); junk(); console.log("async", x.s.length);
+  const a = new A2(); const x = a.c; await asyncRun(a); junk(); console.log("async", x.s);
 }
 main_();
 asyncForm();
