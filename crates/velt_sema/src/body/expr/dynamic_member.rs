@@ -249,6 +249,7 @@ impl FnCx<'_, '_> {
             }
             _ => index,
         };
+        self.note_index_forward(&obj, index, span);
         let key = match &index.kind {
             ast::ExprKind::Lit(ast::Lit::Str(k)) => Some(k.as_str()),
             _ => None,
@@ -273,7 +274,6 @@ impl FnCx<'_, '_> {
             return Ok(call.emit(self, any, span));
         }
         let k = self.expr(index, None, Want::Borrow);
-        self.note_forward_key(index, span);
         let Some(any) = any else {
             return Ok(self.error_expr(span));
         };

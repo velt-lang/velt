@@ -57,8 +57,8 @@ pub(crate) struct Frame {
     /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
     /// none).
     pub next_ty: Option<TyId>,
-    /// A forwarding `get` trap: its key parameter (`proxy_method_values.rs`), and its reads by it.
-    pub trap_key: Option<Span>,
+    /// A forwarding `get` trap: its target and key parameters (`proxy_method_values.rs`), and its reads by it.
+    pub trap_key: Option<(Span, Span)>,
     pub forward_reads: Vec<Span>,
     /// Nesting depth of the `try` blocks with a `catch` being checked: in a program that calls
     /// a generator's `throw()`, a `yield` in one may throw (`generators.rs`).

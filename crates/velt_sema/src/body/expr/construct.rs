@@ -20,6 +20,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         self.note_direct_handler(class, args);
         if let Some(h) = self.new_through_value(class, args, span) {
+            self.note_new_through_value();
             return h;
         }
         if let Some(c) = self.proxy_class_name(class) {

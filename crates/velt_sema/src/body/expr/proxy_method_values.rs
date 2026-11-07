@@ -8,13 +8,18 @@
 //! - reads a member through `any` or `Reflect.get` by a computed key, or by a literal key naming an
 //!   array method or `get`;
 //! - calls a member `get` through `any`, which may be `Reflect.get` held as a value;
-//! - reads a property descriptor, whose `value` is such a read.
+//! - reads a property descriptor, whose `value` is such a read;
+//! - makes a proxy whose handler isn't an object literal written directly as the second argument of
+//!   `new Proxy(...)`, or whose literal has an `ownKeys` member or a spread. Std reads the keys such
+//!   a trap lists (`Object.values`, `entries`, a spread) with its own key, so a program can choose
+//!   them; without one, std reads only the real own keys of a target, whose values are what the
+//!   program stored there.
 //!
-//! The one exception is a forwarding `get` trap: an object literal written directly as the second
-//! argument of `new Proxy(...)`, nothing else can reach it, so its `get` runs only with the key that
-//! was read, which the rules above account for. In such a `get`, which doesn't use `this` and whose
-//! key parameter has no default, a read by that parameter doesn't count, if nothing assigns the
-//! name (`body::assigned`: destructuring targets, closures and their defaults included).
+//! The one exception is a forwarding `get` trap in such a literal: nothing else can reach it, so it
+//! runs only with the key that was read, which the rules above account for. In a `get` that doesn't
+//! use `this`, and whose key parameter has no default, `Reflect.get(t, k, ...)` and `t[k]` don't
+//! count, with `t` and `k` its first two parameters, if nothing assigns either name
+//! (`body::assigned`: destructuring targets, closures and their defaults included).
 //!
 //! Any other program has every algorithm compiled.
 
@@ -90,16 +95,39 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The computed key `key` of the read at `span`: a forwarding read, when it is the key
-    /// parameter of the trap being checked (`note_computed_read` counts the read itself).
-    pub(crate) fn note_forward_key(&mut self, key: &ast::Expr, span: Span) {
-        let (Some(param), ast::ExprKind::Ident(id)) = (self.f.trap_key, &key.kind) else {
+    /// The read at `span` of `target[key]`: a forwarding read, when they are the first two
+    /// parameters of the trap being checked (`note_computed_read` counts the read itself).
+    pub(crate) fn note_forward_key(&mut self, target: &ast::Expr, key: &ast::Expr, span: Span) {
+        let Some((t, k)) = self.f.trap_key else {
             return;
         };
-        let local = self.declared_local(&id.name);
-        if local.is_some_and(|l| self.f.locals[l.0 as usize].span == param) {
+        if self.names_param(target, t) && self.names_param(key, k) {
             self.f.forward_reads.push(span);
         }
+    }
+
+    /// The read at `span` of `target[key]`, as `note_forward_key` with a checked `target`.
+    pub(crate) fn note_index_forward(
+        &mut self,
+        target: &crate::hir::Expr,
+        key: &ast::Expr,
+        span: Span,
+    ) {
+        let (Some((t, k)), crate::hir::ExprKind::Local(l, ..)) = (self.f.trap_key, &target.kind)
+        else {
+            return;
+        };
+        if self.f.locals[l.0 as usize].span == t && self.names_param(key, k) {
+            self.f.forward_reads.push(span);
+        }
+    }
+
+    fn names_param(&self, e: &ast::Expr, param: Span) -> bool {
+        let ast::ExprKind::Ident(id) = &e.kind else {
+            return false;
+        };
+        let local = self.declared_local(&id.name);
+        local.is_some_and(|l| self.f.locals[l.0 as usize].span == param)
     }
 
     /// `Reflect.get(args)` at `span`.
@@ -111,8 +139,8 @@ impl FnCx<'_, '_> {
             Some(ast::ExprKind::Lit(ast::Lit::Str(k))) if !spread => self.note_named_read(k),
             _ => {
                 self.note_computed_read(span);
-                if let (Some(k), false) = (args.get(1), spread) {
-                    self.note_forward_key(k, span);
+                if let (Some(t), Some(k), false) = (args.first(), args.get(1), spread) {
+                    self.note_forward_key(t, k, span);
                 }
             }
         }
@@ -138,29 +166,52 @@ impl FnCx<'_, '_> {
             return;
         }
         let Some(ast::ExprKind::Object(props)) = args.get(1).map(|h| &h.kind) else {
+            self.cx.method_facts.named = true;
             return;
         };
         for p in props {
-            if let ast::ObjectProp::KeyValue(name, value) = p {
-                if name.name == "get" && matches!(value.kind, ast::ExprKind::Arrow { .. }) {
-                    self.cx.method_facts.traps.insert(value.span);
+            match p {
+                ast::ObjectProp::KeyValue(name, value) if name.name == "ownKeys" => {
+                    let _ = value;
+                    self.cx.method_facts.named = true;
+                }
+                ast::ObjectProp::KeyValue(name, value) => {
+                    if name.name == "get" && matches!(value.kind, ast::ExprKind::Arrow { .. }) {
+                        self.cx.method_facts.traps.insert(value.span);
+                    }
+                }
+                ast::ObjectProp::Shorthand(name) => {
+                    self.cx.method_facts.named |= name.name == "ownKeys";
+                }
+                ast::ObjectProp::Spread(_) => self.cx.method_facts.named = true,
+                ast::ObjectProp::Method(m) => {
+                    self.cx.method_facts.named |= m.sig.name.name == "ownKeys";
                 }
             }
         }
     }
 
-    /// The closure `e` is being checked: the span of its key parameter when it is a `get` trap
-    /// that can only be called with the key that was read (module docs).
-    pub(crate) fn trap_key_of(&self, e: &ast::Expr) -> Option<Span> {
+    /// A class made through a value (`new P(...)`), which may be `Proxy` with any handler.
+    pub(crate) fn note_new_through_value(&mut self) {
+        if self.in_user_module() {
+            self.cx.method_facts.named = true;
+        }
+    }
+
+    /// The closure `e` is being checked: the spans of its target and key parameters when it is a
+    /// `get` trap that can only be called with the key that was read (module docs).
+    pub(crate) fn trap_key_of(&self, e: &ast::Expr) -> Option<(Span, Span)> {
         let ast::ExprKind::Arrow { params, body, .. } = &e.kind else {
             return None;
         };
         if !self.cx.method_facts.traps.contains(&e.span) || takes_this(e) {
             return None;
         }
-        let k = params.get(1)?;
-        if k.pattern.is_some() || k.default.is_some() || k.optional || k.rest {
-            return None;
+        let (t, k) = (params.first()?, params.get(1)?);
+        for p in [t, k] {
+            if p.pattern.is_some() || p.default.is_some() || p.optional || p.rest {
+                return None;
+            }
         }
         let mut written = Assigned::default();
         for d in params.iter().filter_map(|p| p.default.as_ref()) {
@@ -174,7 +225,8 @@ impl FnCx<'_, '_> {
                 }
             }
         }
-        (!written.contains_key(k.name.name.as_str())).then_some(k.name.span)
+        let free = |p: &ast::ArrowParam| !written.contains_key(p.name.name.as_str());
+        (free(t) && free(k)).then_some((t.name.span, k.name.span))
     }
 
     /// The closure with `frame` has been checked: its forwarding reads count.

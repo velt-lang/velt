@@ -201,7 +201,9 @@ impl FnCx<'_, '_> {
         if Some(d) == self.cx.prelude_adt("Reflect") && !self.cx.scopes[self.module].is_std {
             match name {
                 "get" => self.note_reflect_get(args, span),
-                "getOwnPropertyDescriptor" => self.note_descriptor_read(),
+                "getOwnPropertyDescriptor" | "getOwnPropertyDescriptors" => {
+                    self.note_descriptor_read()
+                }
                 _ => {}
             }
             self.cx.any_impl();
