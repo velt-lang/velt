@@ -226,9 +226,11 @@ export class H2Response extends HttpResponse implements BodySink {
         throw new Error(`the body ended ${this.left} bytes short of its Content-Length`);
       }
     } catch (e) {
-      // The client reset the stream: nothing more can be sent. The source failed: the stream
-      // is reset, not ended, so the client doesn't take the body so far for the whole one.
-      if (!this.s.reset) {
+      // The client reset the stream, or a write found its connection gone before the connection
+      // read that: nothing more can be sent. The source failed: the stream is reset, not ended, so
+      // the client doesn't take the body so far for the whole one.
+      const gone = e instanceof IoError && (e.code == "ECONNRESET" || e.code == "EPIPE");
+      if (!this.s.reset && !gone) {
         console.error("request handler failed: the response body failed:", e);
         this.fail();
       }
