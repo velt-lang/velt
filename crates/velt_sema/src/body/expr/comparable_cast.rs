@@ -351,6 +351,11 @@ impl FnCx<'_, '_> {
 
     /// Does a value of one of the non-object types `a` and `b` convert to the other?
     fn member_converts(&mut self, a: TyId, b: TyId, span: Span) -> bool {
+        // A view writes what its type holds: an `i32` seen as a `number` would lose a value.
+        let (x, y) = (self.cx.widened(a), self.cx.widened(b));
+        if x != y && self.cx.ty.is_numeric(x) && self.cx.ty.is_numeric(y) {
+            return false;
+        }
         let mark = self.cx.object_copies.mark();
         let same = self.view_member_comparable(a, b, span);
         self.cx.object_copies.rollback(mark);

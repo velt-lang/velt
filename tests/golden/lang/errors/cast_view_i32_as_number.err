@@ -1,0 +1,1 @@
+cast_view_i32_as_number.velt:5:11: error: cannot cast `H` as `{ a: f64; c?: string }`
