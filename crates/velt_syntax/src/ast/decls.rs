@@ -39,6 +39,9 @@ pub struct Method {
     /// every concrete subclass. `decl.body` is a placeholder the parser writes (a `panic`
     /// call), which is never run: the class cannot be instantiated.
     pub is_abstract: bool,
+    /// `abstract [readonly] name: T;`: this abstract getter (and its setter) is a property as
+    /// written, so its decorators are a field's. Additive.
+    pub is_property: bool,
 }
 
 /// Shared by `struct` and `class`.

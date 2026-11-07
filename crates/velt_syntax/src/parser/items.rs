@@ -104,8 +104,14 @@ impl<'a> Parser<'a> {
             }
             self.decorators_after_export(&mut decorators)?;
         }
+        let class_binding = !decorators.is_empty()
+            && matches!(self.cur_kw(), Some(Kw::Const | Kw::Let))
+            && self.at_class_binding();
         let mut kind = self.parse_item_kind(lo, top && !exported)?;
-        self.attach_item_decorators(&mut kind, decorators);
+        match class_binding {
+            true => self.reject_class_binding_decorators(&decorators),
+            false => self.attach_item_decorators(&mut kind, decorators),
+        }
         if exported && matches!(kind, ItemKind::Extend(_)) {
             let span = Span::new(self.file, lo, lo + "export".len() as u32);
             self.error(

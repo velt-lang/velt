@@ -157,6 +157,11 @@ fn refused_places() {
     refuses("@a export { x };", declaration);
     refuses("@a namespace N {}", declaration);
     refuses("@a extend i64 {}", declaration);
+    // A variable holding a class is still a variable (TypeScript's TS1206).
+    let binding = "a decorator cannot be applied to a variable, even one holding a class";
+    refuses("@a const K = class {};", binding);
+    refuses("export @a let K = class K {};", binding);
+    refuses("function f() { @a const K = class {}; }", binding);
     refuses("@a export @b class C {}", "before `export` or after it");
     refuses("class C { @a constructor() {} }", "to a constructor");
     refuses("class C { @a static {} }", "to a static block");

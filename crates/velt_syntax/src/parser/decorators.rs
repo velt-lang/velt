@@ -84,6 +84,20 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    /// `@x const K = class {}`: a variable's decorators, though it holds a class (TypeScript's
+    /// TS1206, as for any variable), report.
+    pub(super) fn reject_class_binding_decorators(&mut self, ds: &[Decorator]) {
+        if let Some(first) = ds.first() {
+            self.report(
+                velt_common::Diagnostic::error(
+                    "a decorator cannot be applied to a variable, even one holding a class (TypeScript's TS1206)",
+                    first.span,
+                )
+                .with_note("decorate a class declaration instead: `@x class K {}`"),
+            );
+        }
+    }
+
     /// Give `kind` the decorators written before it; a declaration that can't have any reports.
     pub(super) fn attach_item_decorators(&mut self, kind: &mut ItemKind, ds: Vec<Decorator>) {
         let Some(first) = ds.first() else { return };

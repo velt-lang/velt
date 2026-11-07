@@ -27,6 +27,7 @@ const SAMPLE: &str = r#"
   @e() m(@f x: i64): i64 { return x; }
 }
 @g(1) enum DecoratedEnum { A }
+@h([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, -16]) function packed(@h({ xs: [0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }) a: i64) {}
 export declare decorator function g(a: i64 = 3): Repeatable<TypeDecorator | FieldDecorator>;
 import { a, type B as C } from "velt/x";
 import * as ns from "./y";
@@ -78,6 +79,29 @@ function* gen(this: Foo, [a, b = 2]: [i32, i32], { c, d: { e } }: O, ...rest: st
 }
 const el = <div class="a" {...p} on:click={() => 1}><a.b />text{x}{...ys}<></></div>;
 "#;
+
+/// The sample's decorators hold packed arrays of numbers, as an argument and in an object.
+#[test]
+fn the_sample_packs_arrays_in_decorators() {
+    let m = parse(FileId(1), SAMPLE, false);
+    let packed = |e: &ast::Expr| matches!(e.kind, ast::ExprKind::NumArray(_));
+    let func = m.items.iter().find_map(|i| match &i.kind {
+        ast::ItemKind::Function(f) if f.sig.name.name == "packed" => Some(f),
+        _ => None,
+    });
+    let func = func.expect("the sample has `packed`");
+    let ast::ExprKind::Call { args, .. } = &func.sig.decorators[0].expr.kind else {
+        panic!("a call");
+    };
+    assert!(packed(&args[0]));
+    let ast::ExprKind::Call { args, .. } = &func.sig.params[0].decorators[0].expr.kind else {
+        panic!("a call");
+    };
+    let ast::ExprKind::Object(props) = &args[0].kind else {
+        panic!("an object");
+    };
+    assert!(matches!(&props[0], ast::ObjectProp::KeyValue(_, v) if packed(v)));
+}
 
 #[test]
 fn every_kind_of_node_round_trips() {

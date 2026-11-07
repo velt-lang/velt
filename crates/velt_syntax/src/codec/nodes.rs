@@ -88,7 +88,7 @@ structs! {
     Augment { module, items }
     // decls
     Field { name, ty, default, readonly, optional, is_private, is_static, decorators, span }
-    Method { decl, is_static, is_private, is_getter, is_setter, is_override, is_abstract }
+    Method { decl, is_static, is_private, is_getter, is_setter, is_override, is_abstract, is_property }
     TypeDecl {
         name, generics, extends, implements, fields, constructor, ctor_visibility, methods,
         is_abstract, c_type, c_struct, decorators,

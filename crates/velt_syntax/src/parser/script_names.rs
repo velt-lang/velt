@@ -208,6 +208,7 @@ impl Names {
 
     /// A declaration: its name is declared where it stands ([`declared`]); its code runs later.
     fn item(&mut self, item: &Item) {
+        self.decorators_of(item);
         match &item.kind {
             ItemKind::Function(f) => self.fn_decl(f),
             ItemKind::Class(d) | ItemKind::Struct(d) => {
@@ -233,6 +234,28 @@ impl Names {
             | ItemKind::TypeAlias(_)
             | ItemKind::ExternFn(_) => {}
         }
+    }
+
+    /// The names `item`'s decorators and its members' decorators name (`@json.naming(POLICY)`): constants
+    /// the compiler reads, so not when the code runs.
+    fn decorators_of(&mut self, item: &Item) {
+        fn sig_decorators(sig: &FnSig) -> impl Iterator<Item = &Decorator> {
+            (sig.decorators.iter()).chain(sig.params.iter().flat_map(|p| &p.decorators))
+        }
+        let all: Vec<&Decorator> = match &item.kind {
+            ItemKind::Function(f) => sig_decorators(&f.sig).collect(),
+            ItemKind::ExternFn(sig) => sig_decorators(sig).collect(),
+            ItemKind::Class(d) | ItemKind::Struct(d) => (d.decorators.iter())
+                .chain(d.fields.iter().flat_map(|f| &f.decorators))
+                .chain(d.methods.iter().flat_map(|m| sig_decorators(&m.decl.sig)))
+                .chain(d.constructor.iter().flat_map(|c| sig_decorators(&c.sig)))
+                .collect(),
+            ItemKind::Enum(e) => e.decorators.iter().collect(),
+            _ => return,
+        };
+        self.depth += 1;
+        all.into_iter().for_each(|d| self.expr(&d.expr));
+        self.depth -= 1;
     }
 
     fn stmt(&mut self, s: &Stmt) {

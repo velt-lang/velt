@@ -217,6 +217,7 @@ impl<'a> Parser<'a> {
             is_setter: mods.is_setter,
             is_override: mods.is_override,
             is_abstract: false,
+            is_property: false,
         }))
     }
 
