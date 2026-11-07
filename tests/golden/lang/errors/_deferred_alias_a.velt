@@ -1,0 +1,2 @@
+type K = string;
+export type A<T> = { p: T extends string ? K : never };

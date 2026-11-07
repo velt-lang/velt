@@ -586,7 +586,7 @@ fn is_path(e: &ast::Expr) -> bool {
 }
 
 /// `t` with each name in `map` (a type parameter of an alias) replaced by its type.
-fn subst(t: &ast::TypeExpr, map: &[(String, ast::TypeExpr)]) -> ast::TypeExpr {
+pub(crate) fn subst(t: &ast::TypeExpr, map: &[(String, ast::TypeExpr)]) -> ast::TypeExpr {
     let mut t = t.clone();
     if !map.is_empty() {
         Subst { map }.ty(&mut t);

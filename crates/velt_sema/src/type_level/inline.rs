@@ -62,8 +62,8 @@ impl Ctx<'_> {
         )
     }
 
-    /// The alias a deferred application of alias `a` is known by: two aliases with one parameter
-    /// list and one body that names only its own parameters and built-in types are one type
+    /// The alias a deferred application of alias `a` is known by: two aliases with as many
+    /// parameters and one body, by position, naming only those and built-in types are one type
     /// while deferred (a helper type declared in two modules), as TypeScript relates generic
     /// mapped and conditional types by what they are, not by their alias.
     pub(crate) fn canonical_alias(&mut self, a: u32) -> u32 {
@@ -72,10 +72,25 @@ impl Ctx<'_> {
         }
         let info = &self.aliases[a as usize];
         let decl = info.decl;
-        let c = match info.outer.is_empty() && self_contained(decl) {
+        let mut bound: Vec<&str> = decl.generics.iter().map(|g| g.name.name.as_str()).collect();
+        let c = match info.outer.is_empty() && closed(&decl.ty, &mut bound) {
             true => {
-                let names = decl.generics.iter().map(|g| g.name.name.clone()).collect();
-                let key = (names, shape_key(&decl.ty));
+                // By position: `type A<T>` and `type B<U>` with one body are one.
+                let named: Vec<(String, ast::TypeExpr)> = (decl.generics.iter().enumerate())
+                    .map(|(i, g)| {
+                        let kind = ast::TypeExprKind::Named {
+                            path: vec![ast::Ident {
+                                name: format!("#{i}"),
+                                span: g.name.span,
+                            }],
+                            args: vec![],
+                        };
+                        let span = g.name.span;
+                        (g.name.name.clone(), ast::TypeExpr { kind, span })
+                    })
+                    .collect();
+                let body = crate::generic_arrows::subst_names(&decl.ty, &named);
+                let key = (decl.generics.len(), shape_key(&body));
                 *self.type_level.alias_shapes.entry(key).or_insert(a)
             }
             false => a,
@@ -285,42 +300,18 @@ impl Ctx<'_> {
     }
 }
 
-/// Does alias `decl`'s body name only its parameters, what it binds itself (a mapped type's key,
-/// `infer`) and built-in types, so that it means the same in every module?
-fn self_contained(decl: &ast::TypeAlias) -> bool {
-    use velt_syntax::visit::{walk_type_expr, Visit};
-    struct Names<'t> {
-        bound: Vec<&'t str>,
-        used: Vec<&'t str>,
-        qualified: bool,
-    }
-    impl<'a> Visit<'a> for Names<'a> {
-        fn ty(&mut self, t: &'a ast::TypeExpr) {
-            match &t.kind {
-                ast::TypeExprKind::Named { path, .. } => match &path[..] {
-                    [one] => self.used.push(&one.name),
-                    _ => self.qualified = true,
-                },
-                ast::TypeExprKind::Mapped(m) => self.bound.push(&m.param.name),
-                ast::TypeExprKind::Infer(n) => self.bound.push(&n.name),
-                ast::TypeExprKind::Query(_) | ast::TypeExprKind::Callable { .. } => {
-                    self.qualified = true
-                }
-                _ => {}
-            }
-        }
-    }
-    let mut n = Names {
-        bound: decl.generics.iter().map(|g| g.name.name.as_str()).collect(),
-        used: vec![],
-        qualified: false,
-    };
-    walk_type_expr(&decl.ty, &mut n);
-    !n.qualified
-        && n.used.iter().all(|u| {
-            n.bound.contains(u)
+/// Does `t` name only what `bound` holds and built-in types, in forms that mean the same in every
+/// module? `bound` is scoped: a mapped type's key in its value and `as` clause, an `infer` name in
+/// its pattern and true branch. A binder that shadows a name makes it `false`.
+fn closed<'t>(t: &'t ast::TypeExpr, bound: &mut Vec<&'t str>) -> bool {
+    use ast::TypeExprKind as K;
+    match &t.kind {
+        K::Named { path, args } => {
+            let [one] = &path[..] else { return false };
+            let name = one.name.as_str();
+            let known = bound.contains(&name)
                 || matches!(
-                    *u,
+                    name,
                     "string"
                         | "number"
                         | "boolean"
@@ -330,8 +321,40 @@ fn self_contained(decl: &ast::TypeAlias) -> bool {
                         | "unknown"
                         | "never"
                         | "object"
-                )
-        })
+                );
+            known && args.iter().all(|a| closed(a, bound))
+        }
+        K::Array(e) | K::KeyOf(e) => closed(e, bound),
+        K::Tuple(ts) | K::Union(ts) | K::Intersection(ts) => ts.iter().all(|x| closed(x, bound)),
+        K::TemplateLiteral { types, .. } => types.iter().all(|x| closed(x, bound)),
+        K::Indexed { object, key } => closed(object, bound) && closed(key, bound),
+        K::Object(fs) => fs.iter().all(|f| closed(&f.ty, bound)),
+        K::Literal(_) | K::Null | K::Undefined | K::Void | K::Infer(_) => true,
+        K::Mapped(m) => {
+            if !closed(&m.source, bound) || bound.contains(&m.param.name.as_str()) {
+                return false;
+            }
+            bound.push(&m.param.name);
+            let ok = closed(&m.value, bound) && m.name.as_ref().is_none_or(|n| closed(n, bound));
+            bound.pop();
+            ok
+        }
+        K::Conditional(c) => {
+            if !closed(&c.check, bound) || !closed(&c.else_, bound) {
+                return false;
+            }
+            let names = super::infer_names_ref(&c.extends);
+            if names.iter().any(|n| bound.contains(n)) {
+                return false;
+            }
+            let at = bound.len();
+            bound.extend(names);
+            let ok = closed(&c.extends, bound) && closed(&c.then, bound);
+            bound.truncate(at);
+            ok
+        }
+        _ => false,
+    }
 }
 
 /// The single names `t` mentions (type parameters among them, perhaps shadowed).

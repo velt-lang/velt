@@ -93,7 +93,7 @@ pub(crate) struct State {
     /// The alias each deferred alias is known by (`Ctx::canonical_alias`).
     pub(crate) alias_canon: rustc_hash::FxHashMap<u32, u32>,
     /// Per alias body that means the same in every module: the first alias with it.
-    pub(crate) alias_shapes: rustc_hash::FxHashMap<(Vec<String>, String), u32>,
+    pub(crate) alias_shapes: rustc_hash::FxHashMap<(usize, String), u32>,
 }
 
 /// The deferred types lowering may meet, with what they reduce to (`hir::Program::type_ops`):
@@ -738,6 +738,25 @@ fn infer_names(t: &ast::TypeExpr) -> Vec<String> {
             | K::Void
             | K::Query(_) => {}
         }
+    }
+    let mut out = vec![];
+    go(t, &mut out);
+    out
+}
+
+/// [`infer_names`], for scoping names.
+pub(super) fn infer_names_ref(t: &ast::TypeExpr) -> Vec<&str> {
+    fn go<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
+        use velt_syntax::visit::{walk_type_expr, Visit};
+        struct F<'o, 't>(&'o mut Vec<&'t str>);
+        impl<'t> Visit<'t> for F<'_, 't> {
+            fn ty(&mut self, t: &'t ast::TypeExpr) {
+                if let ast::TypeExprKind::Infer(n) = &t.kind {
+                    self.0.push(&n.name);
+                }
+            }
+        }
+        walk_type_expr(t, &mut F(out));
     }
     let mut out = vec![];
     go(t, &mut out);

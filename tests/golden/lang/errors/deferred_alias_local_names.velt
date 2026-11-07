@@ -1,0 +1,5 @@
+// Two aliases written alike whose bodies name different local types stay two types (TS2322).
+import type { A } from "./_deferred_alias_a";
+import type { B } from "./_deferred_alias_b";
+function bridge<T>(a: A<T>): B<T> { return a; }
+console.log(typeof bridge);
