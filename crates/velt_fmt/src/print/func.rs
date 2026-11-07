@@ -124,14 +124,20 @@ impl<'a> Printer<'a> {
             |p| (p.span.lo, p.span.hi),
             |p, param| {
                 // Decorators come first, then parameter property modifiers
-                // (`private readonly x`), which precede the name.
-                let decorators = concat(
-                    param
-                        .decorators
-                        .iter()
-                        .map(|d| cat!["@", p.expr(&d.expr), " "])
-                        .collect(),
-                );
+                // (`private readonly x`), which precede the name. A comment after a decorator
+                // stays after it.
+                let mut decorators = vec![];
+                for (i, d) in param.decorators.iter().enumerate() {
+                    decorators.push(cat!["@", p.expr(&d.expr), " "]);
+                    let next = super::items::after_decorator(p.src, &param.decorators, i);
+                    for c in p.comments.take_before(next) {
+                        decorators.push(match c.needs_newline() {
+                            true => cat![c.text, hardline()],
+                            false => cat![c.text, " "],
+                        });
+                    }
+                }
+                let decorators = concat(decorators);
                 let mods = crate::source::slice(p.src, param.span);
                 let mods_lo = param.decorators.last().map_or(param.span.lo, |d| d.span.hi);
                 let mods = modifiers(
@@ -315,8 +321,6 @@ pub(super) fn breaks_itself(e: &Expr) -> bool {
     }
 }
 
-/// The modifiers a function's signature puts before its keyword: `unsafe ` (when `own_unsafe`),
-/// `async `, both (`unsafe async `) or none.
 /// The modifiers in `src`, the source between a parameter's decorators and its name, each followed
 /// by a space. Comments there stay out: the parameter list prints them itself.
 fn modifiers(mut src: &str) -> String {
@@ -345,6 +349,8 @@ fn modifiers(mut src: &str) -> String {
     }
 }
 
+/// The modifiers a function's signature puts before its keyword: `unsafe ` (when `own_unsafe`),
+/// `async `, both (`unsafe async `) or none.
 fn fn_mods(sig: &FnSig, own_unsafe: bool) -> &'static str {
     match (sig.is_unsafe && own_unsafe, sig.is_async) {
         (true, true) => "unsafe async ",

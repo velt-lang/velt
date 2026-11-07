@@ -494,19 +494,53 @@ fn formats_stably(src: &str) -> String {
 }
 
 #[test]
-fn a_comment_after_a_parameter_decorator_leaves_the_parameter_alone() {
+fn a_comment_after_a_parameter_decorator_stays_after_it() {
     let got = formats_stably("function f(@c // why\n  d: i64) {}\n");
+    assert!(got.contains("  @c // why\n  d: i64,\n"), "{got}");
+    let got = formats_stably("function f(@c /* why */ d: i64) {}\n");
+    assert_eq!(got, "function f(@c /* why */ d: i64) {}\n");
+    let got = formats_stably("class C { constructor(@c // why\n  private readonly d: i64) {} }\n");
     assert!(
-        got.contains("@c d: i64, // why\n") || got.contains("@c d: i64 // why\n"),
+        got.contains("@c // why\n    private readonly d: i64"),
         "{got}"
     );
     assert_eq!(got.matches("// why").count(), 1, "{got}");
-    let got = formats_stably("function f(@c /* why */ d: i64) {}\n");
-    assert!(got.contains("@c d: i64"), "{got}");
-    assert_eq!(got.matches("/* why */").count(), 1, "{got}");
-    let got = formats_stably("class C { constructor(@c // why\n  private readonly d: i64) {} }\n");
-    assert!(got.contains("@c private readonly d: i64"), "{got}");
-    assert_eq!(got.matches("// why").count(), 1, "{got}");
+    // Between the decorators of two parameters, and before the second's decorator.
+    let src = "function f(@a /* KEEP1 */ b: i64, /* KEEP2 */ @a c: i64) {}\n";
+    assert_eq!(formats_stably(src), src);
+    let src = "function f(@a /* one */ @b /* two */ c: i64) {}\n";
+    assert_eq!(formats_stably(src), src);
+}
+
+/// A comment after a declaration's decorator stays between the decorators or before the
+/// declaration: never inside a class body or a parameter list, where a doc comment would stop
+/// documenting the class.
+#[test]
+fn a_comment_after_a_decorator_stays_before_the_declaration() {
+    for src in [
+        "@a\n// c\nclass C {}\n",
+        "@a\n/** doc */\nclass C {}\n",
+        "@a // c\nclass C {}\n",
+        "@a /* x */\n@a(1)\nclass C {}\n",
+        "@a\n// between\n@b\nfunction f() {}\n",
+        "@a /* y */\nexport class F {}\n",
+        "@a /* e */\nenum E {\n  A,\n}\n",
+        "class E {\n  @a /* c */\n  n() {}\n  @a // c\n  o() {}\n  @a\n  /** doc */\n  x: i64 = 1;\n}\n",
+    ] {
+        assert_eq!(formats_stably(src), src);
+    }
+    assert_eq!(
+        formats_stably("@a /* x */ @a(1) class C {}\n"),
+        "@a /* x */\n@a(1)\nclass C {}\n"
+    );
+    assert_eq!(
+        formats_stably("class E { @a /* c */ n() {} }\n"),
+        "class E {\n  @a /* c */\n  n() {}\n}\n"
+    );
+    assert_eq!(
+        formats_stably("class E { @a /* x */ @a(1) p() {} }\n"),
+        "class E {\n  @a /* x */\n  @a(1)\n  p() {}\n}\n"
+    );
 }
 
 #[test]

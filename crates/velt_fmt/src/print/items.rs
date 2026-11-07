@@ -52,6 +52,19 @@ fn decorators_of(kind: &ItemKind) -> &[Decorator] {
     }
 }
 
+/// Where what follows decorator `i` of `ds` starts: the next decorator, or after the last one the
+/// first token of what it decorates (a modifier, a keyword or a name).
+pub(super) fn after_decorator(src: &str, ds: &[Decorator], i: usize) -> u32 {
+    match ds.get(i + 1) {
+        Some(next) => next.span.lo,
+        None => {
+            let hi = ds[i].span.hi;
+            let rest = src.get(hi as usize..).unwrap_or("");
+            hi + (rest.len() - skip_comments(rest).len()) as u32
+        }
+    }
+}
+
 /// `src` from its first token.
 fn skip_comments(mut src: &str) -> &str {
     loop {
@@ -83,12 +96,22 @@ impl<'a> Printer<'a> {
     }
 
     /// `@x` / `@ns.x(args)`, each on its own line. Written after `export`, they move before it:
-    /// TC39 allows both places, and one form is enough.
+    /// TC39 allows both places, and one form is enough. A comment after a decorator stays there:
+    /// on its line, or on lines of its own before the next decorator or the declaration.
     pub(super) fn decorators(&mut self, decorators: &[Decorator]) -> Doc {
-        let docs = decorators
-            .iter()
-            .map(|d| cat!["@", self.expr(&d.expr), hardline()])
-            .collect();
+        let mut docs = vec![];
+        for (i, d) in decorators.iter().enumerate() {
+            docs.push(cat!["@", self.expr(&d.expr)]);
+            let next = after_decorator(self.src, decorators, i);
+            for c in self.comments.take_trailing(self.src, d.span.hi, next, true) {
+                docs.push(text(format!(" {}", c.text)));
+            }
+            docs.push(hardline());
+            for c in self.comments.take_before(next) {
+                docs.push(text(c.text));
+                docs.push(hardline());
+            }
+        }
         concat(docs)
     }
 
