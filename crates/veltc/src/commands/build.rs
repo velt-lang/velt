@@ -123,6 +123,7 @@ fn build_with_input(
     }
     let mut sess = Session::new();
     sess.show_details = args.timings;
+    sess.verbose = args.verbose;
     let result = driver::build(&mut sess, &opts);
     report(&sess, args.verbose);
     let artifact = result.map_err(|e| failure_code(&e))?;

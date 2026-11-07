@@ -25,6 +25,7 @@ mod key;
 mod select;
 pub(super) mod serve;
 mod statics;
+mod turn;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -136,26 +137,21 @@ impl Place {
 
     /// Take this output's turn, held until the file is dropped: builds of one output at once
     /// would remove the objects another is linking. `None` where no lock can be had (a file
-    /// system without them), and the build goes on as it would alone.
-    pub fn lock(&self) -> Option<std::fs::File> {
+    /// system without them), and the build goes on as it would alone. A wait is said on stderr
+    /// once it has lasted [`turn::QUIET_WAIT`], or at once with `verbose` (`-v`): a short one is
+    /// no news.
+    pub fn lock(&self, verbose: bool) -> Option<std::fs::File> {
         let path = self.lock_path();
-        std::fs::create_dir_all(path.parent()?).ok()?;
-        let file = (std::fs::File::options().create(true).truncate(false))
-            .write(true)
-            .open(&path)
-            .ok()?;
-        match file.try_lock() {
-            Ok(()) => {}
-            Err(std::fs::TryLockError::WouldBlock) => {
-                eprintln!(
-                    "velt: waiting for another build of this output (`{}`)",
-                    path.display()
-                );
-                file.lock().ok()?;
-            }
-            Err(_) => return None,
-        }
-        Some(file)
+        let after = match verbose {
+            true => std::time::Duration::ZERO,
+            false => turn::QUIET_WAIT,
+        };
+        turn::take(&path, after, || {
+            eprintln!(
+                "velt: waiting for another build of this output (`{}`)",
+                path.display()
+            );
+        })
     }
 
     /// Remove what an earlier build put there.

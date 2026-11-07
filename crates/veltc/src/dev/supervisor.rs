@@ -314,6 +314,7 @@ impl Supervisor {
     /// `--exe` mode: build an executable, then swap the processes.
     fn rebuild_exe(&mut self) -> Outcome {
         let mut sess = Session::new();
+        sess.verbose = self.args.build.verbose;
         let launch = self.build_exe(&mut sess);
         report(&sess, self.args.build.verbose);
         let files: Vec<PathBuf> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
