@@ -40,7 +40,8 @@ function cookieValue(header: string | null, name: string): string | null {
   return null;
 }
 
-// Whether `a` and `b` are the same text, taking as long whatever their first difference.
+// Whether `a` and `b` are the same text. Texts of one length take as long whatever their first
+// difference; a length that differs answers at once, as a state's length (32) is no secret.
 function sameText(a: string, b: string): bool {
   if (a.length != b.length) {
     return false;
