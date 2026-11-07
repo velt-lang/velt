@@ -196,6 +196,8 @@ pub struct Session {
     pub cached: Option<(usize, usize, &'static str)>,
     /// Objects of std functions the program links instead of compiling (`std_cache`).
     pub std_objects: Vec<PathBuf>,
+    /// This build's turn at its output (`std_cache::Place::lock`), until the build returns.
+    pub turn: Option<std::fs::File>,
     /// What the program reaches outside itself (`outside::reaches`), when it was worked out
     /// before those functions became declarations.
     pub reaches: Option<String>,
@@ -471,10 +473,13 @@ fn compile_to_vir_linking(
     // A declaration hides what its function reaches. Set either way: a build on this session that
     // stopped early must not leave its answer for this one.
     sess.reaches = (std_use != std_cache::Use::Off).then(|| outside::reaches(&program));
+    let place =
+        OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
+    if std_use != std_cache::Use::Off && sess.turn.is_none() {
+        sess.turn = place.lock();
+    }
     if std_use == std_cache::Use::Debug {
         let t = Instant::now();
-        let place =
-            OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
         sess.std_objects = std_cache::serve::serve(&mut program, opts, &cg, &place);
         sess.record("std cache", t);
     }
@@ -488,8 +493,6 @@ fn compile_to_vir_linking(
     optimize_stage(sess, opts, &mut program)?;
     if let Some((unsplit, plan)) = std_plan {
         let t = Instant::now();
-        let place =
-            OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
         match std_cache::link(plan, &program, &cg, &place) {
             Ok(linked) => {
                 if std_cache::stats() {
@@ -551,7 +554,12 @@ fn optimize_stage(
 
 /// Full build per `opts.emit`, run on a large-stack thread.
 pub fn build(sess: &mut Session, opts: &BuildOptions) -> Result<Artifact, BuildError> {
-    on_pipeline_thread(|| build_on_current_thread(sess, opts))
+    on_pipeline_thread(|| {
+        let built = build_on_current_thread(sess, opts);
+        // `velt run` goes on to the program, which holds up no build.
+        sess.turn = None;
+        built
+    })
 }
 
 /// Source → optimized VIR (no codegen), on a large-stack thread: for the JIT host, and for
@@ -607,12 +615,12 @@ fn build_on_current_thread(
 ) -> Result<Artifact, BuildError> {
     let target = opts.target();
     // From before the stamp, which names objects a build at the same time could remove, through
-    // the link.
-    let _turn = (opts.emit == Emit::Exe).then(|| {
-        OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target)
-            .std_objects()
-            .lock()
-    });
+    // the link. With no lock there yet, no build has placed any: its turn comes at placing them.
+    let place =
+        OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
+    if opts.emit == Emit::Exe && place.lock_exists() {
+        sess.turn = place.lock();
+    }
     // An executable whose inputs are those of its last build is up to date (`stamp`).
     // The hashes of the files the last build's stamp records, for this build to reuse.
     let mut known = Default::default();

@@ -61,14 +61,16 @@ pub(super) enum Use {
 }
 
 /// How `opts` uses the std cache. Only executables do: an object, VIR or LLVM IR (`--emit`) would
-/// name std functions it does not define, and `--report numbers` reads their code.
+/// name std functions it does not define, and `--report numbers` reads their code. Nor does a
+/// `--host` build, whose directory holds what the build writes and nothing else
+/// (`commands::host`).
 ///
 /// Release builds: `VELT_STD_OBJECT=1`, by LLVM without debug info (the cached objects carry no
 /// line info, and the cache holds LLVM's code). Debug builds: unless `VELT_STD_OBJECT=0`, with
 /// either backend and with `-g`: stepping stays in the program's own code, as the objects have no
 /// lines to step through. WebAssembly has no objects to find: its programs compile everything.
 pub(super) fn wanted(opts: &BuildOptions) -> Use {
-    if opts.emit != super::Emit::Exe || opts.report_numbers {
+    if opts.emit != super::Emit::Exe || opts.report_numbers || opts.host.is_some() {
         return Use::Off;
     }
     let setting = std::env::var("VELT_STD_OBJECT");
@@ -120,20 +122,39 @@ pub(crate) struct Place {
 }
 
 impl Place {
-    /// Take this output's turn, held until the file is dropped: builds of one output at once
-    /// would remove the objects another is linking. `<dir>.lock`, beside the directory, since
-    /// the directory itself comes and goes. `None` where no lock can be had (a file system
-    /// without them), and the build goes on as it would alone.
-    pub fn lock(&self) -> Option<std::fs::File> {
+    /// `<dir>.lock`: beside the directory, since the directory itself comes and goes.
+    fn lock_path(&self) -> PathBuf {
         let mut path = self.dir.clone().into_os_string();
         path.push(".lock");
-        let path = PathBuf::from(path);
+        PathBuf::from(path)
+    }
+
+    /// Whether a build has got as far as taking this output's turn.
+    pub fn lock_exists(&self) -> bool {
+        self.lock_path().is_file()
+    }
+
+    /// Take this output's turn, held until the file is dropped: builds of one output at once
+    /// would remove the objects another is linking. `None` where no lock can be had (a file
+    /// system without them), and the build goes on as it would alone.
+    pub fn lock(&self) -> Option<std::fs::File> {
+        let path = self.lock_path();
         std::fs::create_dir_all(path.parent()?).ok()?;
         let file = (std::fs::File::options().create(true).truncate(false))
             .write(true)
-            .open(path)
+            .open(&path)
             .ok()?;
-        file.lock().ok()?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                eprintln!(
+                    "velt: waiting for another build of this output (`{}`)",
+                    path.display()
+                );
+                file.lock().ok()?;
+            }
+            Err(_) => return None,
+        }
         Some(file)
     }
 

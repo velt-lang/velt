@@ -424,8 +424,9 @@ fn assert_first_line_of_dev(dir: &Path, cache: &Path, args: &[&str]) {
     assert_eq!(first, OUTPUT.lines().next().unwrap());
 }
 
-/// A debug build of `file` to `out`, with its objects in `cache`, without a build stamp.
-fn debug_build(dir: &Path, file: &str, out: &str, cache: &Path, extra: &[(&str, &str)]) -> Output {
+/// The command of a debug build of `file` to `out`, with its objects in `cache`, without a build
+/// stamp.
+fn debug_command(dir: &Path, file: &str, out: &str, cache: &Path) -> std::process::Command {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     cmd.args(["build", file, "-o", out])
@@ -435,6 +436,12 @@ fn debug_build(dir: &Path, file: &str, out: &str, cache: &Path, extra: &[(&str, 
         .env("VELT_BUILD_STAMP", "off")
         .env_remove("VELT_STD_OBJECT")
         .env_remove("VELT_RT_LINK");
+    cmd
+}
+
+/// A debug build of `file` to `out`, with its objects in `cache`, without a build stamp.
+fn debug_build(dir: &Path, file: &str, out: &str, cache: &Path, extra: &[(&str, &str)]) -> Output {
+    let mut cmd = debug_command(dir, file, out, cache);
     for (k, v) in extra {
         cmd.env(k, v);
     }
@@ -571,6 +578,44 @@ fn builds_of_one_output_take_turns() {
         });
         assert_eq!(run(dir, "same"), OUTPUT);
     }
+}
+
+/// A build that finds its output taken says what it waits for, and goes on when it is free.
+#[test]
+fn a_build_says_what_it_waits_for() {
+    use std::io::BufRead;
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    let lock = std::fs::File::create(dir.join("taken.std.lock")).unwrap();
+    lock.lock().unwrap();
+    let mut child = debug_command(dir, "a.velt", "taken", &cache)
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = std::io::BufReader::new(child.stderr.take().unwrap());
+    let mut lines = stderr.lines().map_while(Result::ok);
+    let line = (lines.by_ref()).find(|l| l.contains("waiting for another build"));
+    assert!(line.is_some_and(|l| l.contains("taken.std.lock")));
+    drop(lock);
+    lines.for_each(drop);
+    assert!(child.wait().unwrap().success());
+    assert_eq!(run(dir, "taken"), OUTPUT);
+}
+
+/// A program that doesn't compile leaves no lock beside the output it never had.
+#[test]
+fn a_failed_compile_takes_no_turn() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), "function main() {\n  nope();\n}\n").unwrap();
+    let o = debug_command(dir, "a.velt", "bad", &cache)
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    assert!(!dir.join("bad.std.lock").exists());
 }
 
 /// What a served function does is what the compiled one does: its output, its panics and where

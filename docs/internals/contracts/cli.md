@@ -445,7 +445,8 @@ break makes a stamp that never matches). The objects it names
   `Speed`; LLVM, one unit; the entry declared, vir.rs invariant 5) and stored (`Cache::put_file`).
   If one fails, the build optimizes the program as lowered, without the cache. Each object is
   placed as soon as it is looked up again or stored, before codegen (builds of one output wait for
-  each other on `<object stem>.std.lock`), in `<object stem>.std/<n>.<o|obj>`
+  each other on `<object stem>.std.lock`, saying `velt: waiting for another build of this output`
+  on stderr; not `--host` builds, which use no objects), in `<object stem>.std/<n>.<o|obj>`
   beside the program's objects (hard links to the cache's files, copies where the file system has
   none, replaced by each build; MSVC's linker reads an input without an extension as
   `<name>.obj`); one gone from the cache by then makes the build fall back as above. The link
