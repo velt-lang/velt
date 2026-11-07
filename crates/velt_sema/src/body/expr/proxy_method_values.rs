@@ -10,7 +10,7 @@
 //! - calls a member `get` through `any`, which may be `Reflect.get` held as a value;
 //! - reads a property descriptor, whose `value` is such a read;
 //! - makes a proxy whose handler isn't an object literal written directly as the second argument of
-//!   `new Proxy(...)`, or whose literal has an `ownKeys` member or a spread. Std reads the keys such
+//!   `new Proxy(...)`, or whose literal has an `ownKeys` member, a computed key or a spread. Std reads the keys such
 //!   a trap lists (`Object.values`, `entries`, a spread) with its own key, so a program can choose
 //!   them; without one, std reads only the real own keys of a target, whose values are what the
 //!   program stored there.
@@ -171,8 +171,10 @@ impl FnCx<'_, '_> {
         };
         for p in props {
             match p {
-                ast::ObjectProp::KeyValue(name, value) if name.name == "ownKeys" => {
-                    let _ = value;
+                // `[K]: ...` may be `ownKeys`, under a name not known here.
+                ast::ObjectProp::KeyValue(name, _)
+                    if name.name == "ownKeys" || name.name.starts_with('[') =>
+                {
                     self.cx.method_facts.named = true;
                 }
                 ast::ObjectProp::KeyValue(name, value) => {
