@@ -381,6 +381,16 @@ fn sema_stage(
 
 /// Front half of the pipeline: source file → verified VIR. Stops after the first stage with errors.
 pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, BuildError> {
+    compile_to_vir_linking(sess, opts, false)
+}
+
+/// [`compile_to_vir`]; `link_std`: the program goes on to the link, so std functions may be left
+/// to the std cache's objects. Whatever else takes the VIR (the JIT host, a check) has no link.
+fn compile_to_vir_linking(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    link_std: bool,
+) -> Result<vir::Program, BuildError> {
     let scope = CheckScope {
         require_main: true,
         extra_roots: vec![],
@@ -447,17 +457,28 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     }
 
     // The std cache (#1728): std functions out of the program before it is optimized, their
-    // objects linked after. The program as lowered is kept to fall back on.
+    // objects linked after. The program as lowered is kept to fall back on. A generator host
+    // stays whole: `check_generator_host` looks through its code.
     let cg = velt_codegen_cl::CodegenOptions {
         target: opts.target(),
         optimize: opts.release,
         cpu: opts.cpu.clone(),
     };
-    let std_wanted = std_cache::wanted(opts);
+    let std_use = match link_std && !sess.generator_build {
+        true => std_cache::wanted(opts),
+        false => std_cache::Use::Off,
+    };
     // A declaration hides what its function reaches. Set either way: a build on this session that
     // stopped early must not leave its answer for this one.
-    sess.reaches = std_wanted.then(|| outside::reaches(&program));
-    let std_plan = std_wanted.then(|| {
+    sess.reaches = (std_use != std_cache::Use::Off).then(|| outside::reaches(&program));
+    if std_use == std_cache::Use::Debug {
+        let t = Instant::now();
+        let place =
+            OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
+        sess.std_objects = std_cache::serve::serve(&mut program, opts, &cg, &place);
+        sess.record("std cache", t);
+    }
+    let std_plan = (std_use == std_cache::Use::Release).then(|| {
         let t = Instant::now();
         let unsplit = program.clone();
         let plan = std_cache::split(&mut program, opts, &cg);
@@ -633,9 +654,12 @@ fn build_on_current_thread(
     let (program, seen) = match &stamped {
         Some(_) => vpm::probe::record_reusing(known, || {
             stamp::note_project(opts);
-            compile_to_vir(sess, opts)
+            compile_to_vir_linking(sess, opts, true)
         }),
-        None => (compile_to_vir(sess, opts), vpm::probe::Seen::default()),
+        None => (
+            compile_to_vir_linking(sess, opts, true),
+            vpm::probe::Seen::default(),
+        ),
     };
     let mut program = memory::Noted::new(program?, "vir freed", &sess.lifetimes);
     check_generator_host(sess, &program)?;

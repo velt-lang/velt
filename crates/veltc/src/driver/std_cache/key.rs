@@ -12,6 +12,9 @@
 //! Whole-program facts that change a function's code (counted types, atomic counts in a program
 //! with threads, frozen and caller-tracking instances, error sets) show in its lowered code, so
 //! the canonical code covers them.
+//!
+//! A debug build's lookups ([`Inputs::debug`]) name no clang and always the target's default CPU:
+//! a reader has no use for either, and may have no clang at all.
 
 use velt_build_cache::{Key, KeyHasher};
 use velt_vir::fingerprint::Canon;
@@ -87,22 +90,49 @@ impl Inputs {
         }
     }
 
+    /// Who compiled what a debug build links: objects that `velt cache warm` or a prebuilt
+    /// toolchain stored, whichever clang did it, for the target's default CPU.
+    pub fn debug(target: &str) -> Inputs {
+        Inputs {
+            compiler: crate::build_cache::compiler_identity(),
+            backend: "llvm".into(),
+            opt: velt_codegen_llvm::opt_flag().to_string(),
+            target: target.to_string(),
+            cpu: None,
+            optimize: true,
+        }
+    }
+
     /// The key of a function whose code is `code`: itself, then what it may inline.
     pub fn key(&self, code: impl IntoIterator<Item = Code>) -> Key {
-        let mut h = KeyHasher::new();
-        h.part(b"velt std function 1");
-        h.part(&self.compiler.0);
-        h.part(self.backend.as_bytes());
-        h.part(self.opt.as_bytes());
-        h.part(self.target.as_bytes());
-        h.part(self.cpu.as_deref().unwrap_or("").as_bytes());
-        h.part(&[u8::from(self.cpu.is_some()), u8::from(self.optimize)]);
+        let mut h = self.hasher(b"velt std function 1");
         for c in code {
             h.part(c.symbol.as_bytes());
             h.part(c.text.as_bytes());
             h.part(c.attrs.as_bytes());
         }
         h.finish()
+    }
+
+    /// The key of a function from what each function of its code adds (`serve`'s digests).
+    pub fn key_of_digests(&self, digests: &[Key]) -> Key {
+        let mut h = self.hasher(b"velt std function digests 1");
+        for d in digests {
+            h.part(&d.0);
+        }
+        h.finish()
+    }
+
+    fn hasher(&self, what: &[u8]) -> KeyHasher {
+        let mut h = KeyHasher::new();
+        h.part(what);
+        h.part(&self.compiler.0);
+        h.part(self.backend.as_bytes());
+        h.part(self.opt.as_bytes());
+        h.part(self.target.as_bytes());
+        h.part(self.cpu.as_deref().unwrap_or("").as_bytes());
+        h.part(&[u8::from(self.cpu.is_some()), u8::from(self.optimize)]);
+        h
     }
 }
 
@@ -135,6 +165,37 @@ mod tests {
 
     const F: (&str, &str, &str) = ("_V3stdN1f", "fn() body", "[]");
     const G: (&str, &str, &str) = ("_V3stdN1g", "fn() small", "[]");
+
+    /// A debug build's key: the inputs, and each function's digest in order.
+    #[test]
+    fn digests_and_inputs_are_in_a_debug_key() {
+        let (a, b) = (Key([1; 32]), Key([2; 32]));
+        let key = base().key_of_digests(&[a, b]);
+        assert_eq!(key, base().key_of_digests(&[a, b]));
+        assert_ne!(key, base().key_of_digests(&[b, a]));
+        assert_ne!(key, base().key_of_digests(&[a]));
+        for other in [
+            Inputs {
+                target: "x86_64-unknown-linux-gnu".into(),
+                ..base()
+            },
+            Inputs {
+                compiler: Key([2; 32]),
+                ..base()
+            },
+            Inputs {
+                opt: "-O1".into(),
+                ..base()
+            },
+        ] {
+            assert_ne!(key, other.key_of_digests(&[a, b]));
+        }
+        assert_eq!(
+            Inputs::debug("t").cpu,
+            None,
+            "always the default CPU's objects"
+        );
+    }
 
     /// Each input, changed alone, gives another key.
     #[test]

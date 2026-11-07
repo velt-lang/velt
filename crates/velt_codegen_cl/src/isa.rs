@@ -14,7 +14,7 @@
 //!   one is asked for.
 
 use cranelift_codegen::isa::{self, OwnedTargetIsa};
-use cranelift_codegen::settings::{self, Configurable};
+use cranelift_codegen::settings::{self, Configurable, TlsModel};
 use target_lexicon::{Architecture, BinaryFormat, DeploymentTarget, OperatingSystem, Triple};
 
 use crate::{cpu, CodegenResult};
@@ -87,6 +87,12 @@ pub(crate) fn make_isa(
     isa_builder
         .finish(settings::Flags::new(flags))
         .map_err(|e| format!("codegen: cannot build ISA for `{triple}`: {e}"))
+}
+
+/// Whether a program for `target` has thread-local storage that LLVM-built objects can share
+/// (`velt_tls_data_<id>`), not the operating system's thread keys (tls.rs).
+pub fn has_thread_local_data(target: &str) -> bool {
+    make_isa(target, None, false, false).is_ok_and(|isa| isa.flags().tls_model() != TlsModel::None)
 }
 
 /// `*-apple-darwin` → `*-apple-macosx<min>`. `cranelift-object` writes the Mach-O

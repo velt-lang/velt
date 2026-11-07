@@ -453,6 +453,22 @@ break makes a stamp that never matches). The objects it names
   statements by reason (`served`, `small`, `$dup`, `statics with identity`, `callbacks`), each
   linked symbol (`velt: std cache: links <symbol> (<n> statements)`) and `velt: std cache: <n>
   found, <m> compiled, <k> no longer called`.
+- Std cache in debug builds (additive, #2460; `VELT_STD_OBJECT=0` turns it off). Debug executables
+  (`--emit exe`, not `--report`, not WebAssembly, with either backend and with `-g`, for a CPU with
+  everything the target's default CPU requires) look up every std function that is not one
+  `velt_opt::debug_inlined` names, not a `$dup` rename, and reaches only statics that can be named
+  (and, where Cranelift keeps thread-local values on thread keys, none of those),
+  when the cache has held any `stdfn` entry. The key is as above with `velt std function digests
+  1`, no clang (`llvm`), `cpu` unset, and BLAKE3 digests of each function's symbol, code and
+  attributes in place of the texts. A found entry makes the function an `Import` declaration and
+  its object is placed as above, before optimization; one that can't be placed, or isn't found,
+  stays in the program. A debug build never starts clang or stores an entry, except with
+  `VELT_STD_OBJECT_FILL` set (`velt cache warm`) and clang found: misses are then compiled alone
+  (at `Speed`, for the default CPU) and stored, and one that fails stays in the program.
+  `VELT_STD_OBJECT_STATS=1` ends with `velt: std cache: <n> found, <m> compiled, <k> left in the
+  program`. Marked `inline()` counts as small in the release path too: such a function stays in
+  the program and goes into its callers' objects. The JIT host and generator hosts never use the
+  cache. The stamp's `outside` line is worked out before functions become declarations.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
   A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);
@@ -629,7 +645,7 @@ break makes a stamp that never matches). The objects it names
 - `cache warm [--background]` (additive, #1612): with the build cache on, builds each
   `*.velt` of the warm-up directory (`$VELT_SHARE/warm`, else `share/velt/warm` beside the std
   root's directory: `<prefix>/share/velt/warm`, or the checkout's) with a child `velt build
-  <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, no `VELT_CPU`), once with `--cpu native` and once without, then
+  <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, `VELT_STD_OBJECT_FILL=1`, no `VELT_CPU`), once with `--cpu native` and once without, then
   writes the marker `<cache>/warm/<hex>` (BLAKE3 of the version line and the executable's size
   and time) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
   present it prints that the cache is warm and does nothing; one run per marker at a time

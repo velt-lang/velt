@@ -140,6 +140,14 @@ pub use inline::{CALLER_LIMIT as INLINE_CALLER_LIMIT, SMALL_COST as INLINE_SMALL
 pub use numrep::{Unnarrowed, Why as UnnarrowedWhy};
 pub use timings::PassTimings;
 
+/// Per function of `funcs`: is it one a debug build inlines into its callers ([`OptLevel::None`]):
+/// the compiler's small helpers and std's trivial functions, whose calls never reach the backend.
+pub fn debug_inlined(funcs: &[vir::Function]) -> Vec<bool> {
+    let mut helpers = numrep::int32_helpers(funcs);
+    inline::std_forwarders(funcs, &mut helpers);
+    helpers
+}
+
 /// The `number` variables inside loops of the (optimized) `program` that stay doubles, with
 /// why, per function symbol (`velt build --report numbers`).
 pub fn number_report(program: &vir::Program) -> Vec<(String, Vec<Unnarrowed>)> {
@@ -197,8 +205,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
     match level {
         OptLevel::None => {
             numrep::declare_formatters(&mut program.externs);
-            let mut helpers = numrep::int32_helpers(&program.funcs);
-            inline::std_forwarders(&program.funcs, &mut helpers);
+            let helpers = debug_inlined(&program.funcs);
             if helpers.contains(&true) {
                 t.time("inline", || inline::run_helpers(program, &helpers));
             }

@@ -194,7 +194,8 @@ pub(crate) fn std_forwarders(funcs: &[Function], helpers: &mut [bool]) {
                 (f.symbol.starts_with("_V3std") && !lang) || f.symbol.starts_with(GENERATED_STD);
             std && !helpers[i]
                 && !f.blocks.is_empty()
-                && f.linkage == velt_vir::vir::Linkage::Internal
+                // Exported too: the std cache's objects may call it (its body stays).
+                && f.linkage != velt_vir::vir::Linkage::Import
                 && !never_returns(f)
                 && f.target.is_none()
                 && f.inline != Inline::Never

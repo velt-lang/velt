@@ -45,7 +45,8 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
     ),
     (
         "VELT_STD_OBJECT",
-        "`1`: release builds link std functions compiled once in the build cache (experimental)",
+        "`0`: debug builds compile all of std; `1`: release builds link std functions compiled \
+         once in the build cache (experimental)",
     ),
     (
         "VELT_BUILD_STAMP",

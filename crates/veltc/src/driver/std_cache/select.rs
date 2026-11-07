@@ -2,19 +2,22 @@
 //!
 //! Served: every function defined in std (generic, caller-tracking and frozen instances too)
 //! except
-//! - small ones ([`SMALL`]), which stay where callers can inline them;
+//! - in a release build, small ones ([`SMALL`]) and those std marks `inline()`, which stay where
+//!   callers can inline them; a debug build inlines neither, so it links them too, and keeps only
+//!   the helpers its optimizer level inlines ([`Rule::Debug`]);
 //! - renamed duplicates (`$dup`), which are not the same function in every program;
 //! - those whose inlinable set ([`inlinable`]) reaches a static with identity (relocations, or
 //!   written: vtables, type descriptors, module state) that can't be named: such statics are
 //!   named and used by address from the program (`statics`), unless another static has the same
 //!   contents;
-//! - those whose inlinable set calls through a function pointer: in the program `const_fields`
-//!   specializes them for the closure their caller passes and inlines it (`Array.map`,
-//!   `Map.upsert` ran 3-6% slower compiled on their own).
+//! - in a release build, those whose inlinable set calls through a function pointer: in the
+//!   program `const_fields` specializes them for the closure their caller passes and inlines it
+//!   (`Array.map`, `Map.upsert` ran 3-6% slower compiled on their own). A debug build specializes
+//!   nothing.
 
 use std::collections::{BTreeMap, HashSet};
 
-use velt_vir::vir::{self, Callee, Const, Linkage, Operand, Rvalue, Stmt, Terminator};
+use velt_vir::vir::{self, Callee, Const, Inline, Linkage, Operand, Rvalue, Stmt, Terminator};
 
 use super::statics::{self, Names};
 
@@ -22,9 +25,25 @@ use super::statics::{self, Names};
 /// they can be inlined (velt_opt's `SMALL_COST` is 40).
 pub(super) const SMALL: usize = 40;
 
-/// Whether `f` is small enough to stay where its callers can inline it.
-pub(super) fn small(f: &vir::Function) -> bool {
-    size(f) < SMALL
+/// Which std functions stay in the program for its callers' sake.
+#[derive(Clone, Copy)]
+pub(super) enum Rule<'a> {
+    /// Those its optimizer may inline ([`inlines`]).
+    Release,
+    /// A debug build: those `velt_opt::debug_inlined` marks. Calls of the others stay calls in
+    /// its code, so what serves them can only make it faster. `thread_data`: the program's
+    /// thread-local values are data that an object can share
+    /// (`velt_codegen_cl::has_thread_local_data`); else code reaching one stays in the program too.
+    Debug {
+        helpers: &'a [bool],
+        thread_data: bool,
+    },
+}
+
+/// Whether the optimizer inlines `f` into a function compiled with it: it is small, or std marks
+/// it `inline()`. Its body goes into what calls it, so it is in their keys.
+pub(super) fn inlines(f: &vir::Function) -> bool {
+    size(f) < SMALL || f.inline == Inline::Always
 }
 
 /// `f`'s statements, terminators included.
@@ -45,31 +64,44 @@ fn is_std(f: &vir::Function) -> bool {
 }
 
 /// The functions of `program` the cache serves (`names`: its statics' names).
-pub(super) fn candidates(program: &vir::Program, names: &Names) -> Vec<usize> {
+pub(super) fn candidates(program: &vir::Program, names: &Names, rule: Rule) -> Vec<usize> {
     (0..program.funcs.len())
-        .filter(|&i| reason(program, names, i).is_none())
+        .filter(|&i| reason(program, names, rule, i).is_none())
         .collect()
 }
 
 /// Why std function `i` stays in the program; `None` when the cache serves it.
-fn reason(program: &vir::Program, names: &Names, i: usize) -> Option<&'static str> {
+fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option<&'static str> {
     let f = &program.funcs[i];
     if !is_std(f) || f.linkage != Linkage::Internal || f.blocks.is_empty() {
         return Some("not internal");
     }
-    if small(f) {
-        return Some("small");
+    match rule {
+        Rule::Release if inlines(f) => return Some("small"),
+        Rule::Debug { helpers, .. } if helpers.get(i) == Some(&true) => return Some("small"),
+        _ => {}
     }
     if f.symbol.contains("$dup") {
         return Some("$dup");
     }
     let set = inlinable(program, i);
+    if matches!(
+        rule,
+        Rule::Debug {
+            thread_data: false,
+            ..
+        }
+    ) && set.iter().any(|&j| reaches_thread_local(program, j))
+    {
+        return Some("thread-local values");
+    }
     if !statics::nameable(names, &statics::reached(program, &set)) {
         return Some("statics with identity");
     }
-    if set
-        .iter()
-        .any(|&j| calls_through_pointer(&program.funcs[j]))
+    if matches!(rule, Rule::Release)
+        && set
+            .iter()
+            .any(|&j| calls_through_pointer(&program.funcs[j]))
     {
         return Some("callbacks");
     }
@@ -78,19 +110,24 @@ fn reason(program: &vir::Program, names: &Names, i: usize) -> Option<&'static st
 
 /// The std code of `program` by why it stays in the program (statements), and how much the
 /// cache serves (`VELT_STD_OBJECT_STATS`).
-pub(super) fn reasons(program: &vir::Program, names: &Names) -> BTreeMap<&'static str, usize> {
+pub(super) fn reasons(
+    program: &vir::Program,
+    names: &Names,
+    rule: Rule,
+) -> BTreeMap<&'static str, usize> {
     let mut by = BTreeMap::new();
     for (i, f) in program.funcs.iter().enumerate() {
         if is_std(f) {
-            *by.entry(reason(program, names, i).unwrap_or("served"))
+            *by.entry(reason(program, names, rule, i).unwrap_or("served"))
                 .or_default() += size(f);
         }
     }
     by
 }
 
-/// Function `i` and every small function it reaches through small ones: what its code compiled
-/// on its own may inline. In a deterministic order, `i` first.
+/// Function `i` and every function the optimizer inlines ([`inlines`]) that it reaches through
+/// such functions: what its code compiled on its own may inline. In a deterministic order, `i`
+/// first.
 pub(super) fn inlinable(program: &vir::Program, i: usize) -> Vec<usize> {
     let mut seen = HashSet::from([i]);
     let mut order = vec![i];
@@ -99,7 +136,7 @@ pub(super) fn inlinable(program: &vir::Program, i: usize) -> Vec<usize> {
         n += 1;
         for c in referenced(&program.funcs[j]) {
             let f = &program.funcs[c];
-            if f.linkage == Linkage::Internal && small(f) && seen.insert(c) {
+            if f.linkage == Linkage::Internal && inlines(f) && seen.insert(c) {
                 order.push(c);
             }
         }
@@ -121,6 +158,17 @@ pub(super) fn declared(program: &vir::Program, set: &[usize]) -> Vec<usize> {
         }
     }
     out
+}
+
+/// Whether function `j` reads or writes a thread-local value.
+fn reaches_thread_local(program: &vir::Program, j: usize) -> bool {
+    (program.funcs[j].blocks.iter()).any(|b| match &b.term {
+        Terminator::Call {
+            callee: Callee::Extern(e),
+            ..
+        } => velt_vir::tls::TlsCall::of_symbol(&program.ext(*e).symbol).is_some(),
+        _ => false,
+    })
 }
 
 /// Whether `f` calls through a function pointer.

@@ -51,11 +51,11 @@ fn names(p: &Program) -> Names {
 }
 
 fn cands(p: &Program) -> Vec<usize> {
-    candidates(p, &names(p))
+    candidates(p, &names(p), Rule::Release)
 }
 
 fn reasons_of(p: &Program) -> BTreeMap<&'static str, usize> {
-    reasons(p, &names(p))
+    reasons(p, &names(p), Rule::Release)
 }
 
 fn program(funcs: Vec<Function>, statics: Vec<StaticData>) -> Program {
@@ -170,4 +170,80 @@ fn callback_callers_stay_in_the_program() {
     let p = program(vec![f], vec![]);
     assert!(cands(&p).is_empty());
     assert!(reasons_of(&p).contains_key("callbacks"));
+}
+
+/// `inline()` makes a function of any size part of what its callers' objects inline, and in a
+/// release build keeps it in the program, as a small one is.
+#[test]
+fn a_function_marked_inline_counts_as_small_whatever_its_size() {
+    let mut marked = func("marked", 200, &[], None);
+    marked.inline = Inline::Always;
+    let caller = func("caller", 60, &[1], None);
+    let plain = func("plain", 200, &[], None);
+    let caller_of_plain = func("caller_of_plain", 60, &[2], None);
+    let p = program(vec![caller, marked, plain, caller_of_plain], vec![]);
+    assert_eq!(inlinable(&p, 0), [0, 1], "followed");
+    assert_eq!(inlinable(&p, 3), [3], "a large unmarked function is not");
+    assert_eq!(declared(&p, &inlinable(&p, 3)), [2]);
+    assert_eq!(cands(&p), [0, 2, 3], "stays where callers can inline it");
+}
+
+/// A debug build inlines only its helpers, so it serves small and marked functions too.
+#[test]
+fn a_debug_build_serves_small_functions_but_not_what_it_inlines() {
+    let small = func("small", 3, &[], None);
+    let helper = func("helper", 3, &[], None);
+    let mut marked = func("marked", 3, &[], None);
+    marked.inline = Inline::Always;
+    let p = program(vec![small, helper, marked], vec![]);
+    let helpers = [false, true, false];
+    let rule = Rule::Debug {
+        helpers: &helpers,
+        thread_data: true,
+    };
+    assert_eq!(candidates(&p, &names(&p), rule), [0, 2]);
+    assert_eq!(cands(&p), Vec::<usize>::new(), "release keeps all three");
+}
+
+/// Where a program's thread-local values are on thread keys, an object has no way to reach them:
+/// what reads one stays in the program, and so does what would inline that.
+#[test]
+fn code_reaching_a_thread_local_stays_where_it_has_no_data_to_share() {
+    let symbol = velt_vir::tls::TlsCall::Get {
+        id: 1,
+        bits: 64,
+        init: 0,
+    }
+    .symbol();
+    let mut reader = func("reader", 3, &[], None);
+    reader.blocks.insert(
+        0,
+        BasicBlock {
+            stmts: vec![],
+            term: Terminator::Call {
+                callee: Callee::Extern(vir::ExternId(0)),
+                args: vec![],
+                dest: Some(Place::local(Local(0))),
+                next: vir::BlockId(1),
+            },
+        },
+    );
+    let caller = func("caller", 3, &[0], None);
+    let other = func("other", 3, &[], None);
+    let mut p = program(vec![reader, caller, other], vec![]);
+    p.externs.push(vir::ExternFn {
+        symbol,
+        params: vec![],
+        ret: Ty::I64,
+        noreturn: false,
+        host: None,
+        c_decl: None,
+    });
+    let helpers = [false; 3];
+    let rule = |thread_data| Rule::Debug {
+        helpers: &helpers,
+        thread_data,
+    };
+    assert_eq!(candidates(&p, &names(&p), rule(true)), [0, 1, 2]);
+    assert_eq!(candidates(&p, &names(&p), rule(false)), [2]);
 }

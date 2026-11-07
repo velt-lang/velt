@@ -246,6 +246,12 @@ impl Cache {
         stored
     }
 
+    /// Whether `kind` has held file entries in this cache: a build that can only read them need
+    /// look for none when it has not.
+    pub fn has_files(&self, kind: &str) -> bool {
+        self.files_dir(kind).is_dir()
+    }
+
     /// The path of `key`'s file entry of `kind`, once it passes its check (one that fails is
     /// removed), marking it used. The file stays until garbage collection finds it unused for
     /// longest; a link that uses it for long should [`Self::touch`] it. Its size and time do

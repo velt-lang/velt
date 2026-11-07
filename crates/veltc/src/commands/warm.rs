@@ -5,7 +5,9 @@
 //! instances. Each is built in debug, as an executable (what `velt build`, `velt run` and `velt
 //! test` build: an object alone compiles some code differently), for this machine's CPU (what `velt run` and `velt test` build for) and for the
 //! target's default CPU (what `velt build` builds for). The build cache then holds std's
-//! functions, so a project's first build compiles little more than its own code. A marker per
+//! functions, so a project's first build compiles little more than its own code; with clang, as
+//! objects optimized by LLVM (`VELT_STD_OBJECT_FILL`, `std_cache::serve`), so its debug builds
+//! run them too. A marker per
 //! toolchain (`<cache>/warm/<key>`) makes later runs return at once; the toolchain installers
 //! start `velt cache warm --background` after installing a version, except in CI (`$CI` set),
 //! whose cache goes with the runner, and when `$VELT_CACHE_WARM` is `off`.
@@ -97,6 +99,7 @@ fn compile(program: &Path, cpu: Option<&str>, out: &Path) -> bool {
         .arg("-o")
         .arg(out.join(if cfg!(windows) { "warm.exe" } else { "warm" }))
         .env("VELT_BUILD_STAMP", "off")
+        .env("VELT_STD_OBJECT_FILL", "1")
         .env_remove(super::cpu::CPU_VAR)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
