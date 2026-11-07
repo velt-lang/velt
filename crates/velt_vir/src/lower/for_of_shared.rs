@@ -14,6 +14,17 @@ use super::operand::proj;
 use super::{cint, FnLower, ScopeKind};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
+/// How a shared-array loop holds its array.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum ArrayHeld {
+    /// A reference of its own.
+    Shared,
+    /// It consumes the array; the binding is owned.
+    Consumed,
+    /// Where it is: the frame keeps it, and nothing can replace it.
+    Frame,
+}
+
 impl FnLower<'_, '_> {
     /// Does `for…of` over `iter` need the shared-array loop?
     pub(super) fn iterates_shared(&mut self, iter: &hir::Expr) -> bool {
@@ -21,27 +32,36 @@ impl FnLower<'_, '_> {
         self.cx.boxed(aty) || self.through_counted(iter, aty) || self.in_shared_cell(iter)
     }
 
-    /// The loop of the module docs (`consume`: the binding is owned, as in a consuming loop).
+    /// The loop of the module docs.
     pub(super) fn for_of_shared(
         &mut self,
         label: &Option<String>,
         binding: &Pat,
         iter: &hir::Expr,
         body: &hir::Block,
-        consume: bool,
+        held: ArrayHeld,
     ) {
+        let consume = held == ArrayHeld::Consumed;
         self.push_scope(ScopeKind::Temps);
         let aty = self.sub(iter.ty);
         let elem = self.elem_ty(aty);
-        let v = if consume {
-            self.consume(iter)
-        } else {
-            let v = self.expr(iter);
-            self.share_value(v, aty)
-        };
-        let own = self.own_value(v, aty);
         let avt = self.cx.ty(aty);
-        let arr = self.operand_place(own, avt);
+        let arr = match held {
+            ArrayHeld::Frame => {
+                let v = self.expr(iter);
+                self.place_of(v, aty)
+            }
+            ArrayHeld::Consumed | ArrayHeld::Shared => {
+                let v = if consume {
+                    self.consume(iter)
+                } else {
+                    let v = self.expr(iter);
+                    self.share_value(v, aty)
+                };
+                let own = self.own_value(v, aty);
+                self.operand_place(own, avt)
+            }
+        };
         let k = self.temp(Ty::U64);
         self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
         // Whether the array is a view, tested once: the loop holds a reference to it.

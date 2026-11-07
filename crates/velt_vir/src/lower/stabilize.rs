@@ -123,10 +123,11 @@ impl FnLower<'_, '_> {
     }
 
     /// Is the place `e` in a value this frame holds a reference of its own to (`const o = new C()`,
-    /// not a param or a by-reference `const`, which may lie inside what another argument reaches),
+    /// not a borrowed param or a by-reference `const`, which may lie inside what another argument
+    /// reaches, and neither of which is droppable),
     /// with no field on the way written anywhere? Then nothing can replace or free it, whatever
     /// the callee is given (`k(ctx, o.name)`).
-    fn frame_owns_unwritten(&mut self, e: &hir::Expr) -> bool {
+    pub(super) fn frame_owns_unwritten(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         match &e.kind {
             K::Local(l, _) => {
@@ -134,8 +135,6 @@ impl FnLower<'_, '_> {
                 info.droppable
                     && !info.indirect
                     && !info.in_cell
-                    && !self.ref_bindings.contains(l)
-                    && !self.is_param(*l)
             }
             K::Field { base, index, .. } => {
                 let bty = self.sub(base.ty);
@@ -145,14 +144,6 @@ impl FnLower<'_, '_> {
                 self.frame_owns_unwritten(base)
             }
             _ => false,
-        }
-    }
-
-    /// Is `l` a param of the function being lowered?
-    fn is_param(&self, l: hir::LocalId) -> bool {
-        match self.cx.cur_def.map(|d| self.cx.hir.def(d)) {
-            Some(hir::Def::Fn(f)) => f.params.iter().any(|p| p.local == l),
-            _ => true,
         }
     }
 
@@ -443,6 +434,17 @@ pub(super) struct PendingBorrow {
 
 fn cbool(b: bool) -> Operand {
     Operand::Const(Const::Bool(b), Ty::Bool)
+}
+
+/// The place a share reads: `x.c` of `Share(x.c)`.
+pub(super) fn shared_place(e: &hir::Expr) -> Option<&hir::Expr> {
+    match &e.kind {
+        hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::Share),
+            args,
+        } => args.first(),
+        _ => None,
+    }
 }
 
 impl FnLower<'_, '_> {

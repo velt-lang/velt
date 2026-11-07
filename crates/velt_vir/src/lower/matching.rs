@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use velt_sema::hir::{self, Pat, TyId, UseMode};
 
+use super::stabilize::shared_place;
 use super::{FnLower, ScopeKind};
 use crate::vir::{BlockId, Local, Operand, Place, Terminator, Ty};
 
@@ -192,6 +193,12 @@ impl FnLower<'_, '_> {
             }
             return;
         }
+        // A by-reference `const` only a function value could leave dangling (sema `let_borrow`).
+        let hazard = match pat.kind {
+            hir::PatKind::Binding(_, UseMode::Borrow) => shared_place(init).filter(|p| local_place(p)),
+            _ => None,
+        };
+        let init = hazard.unwrap_or(init);
         if matches!(pat.kind, hir::PatKind::Binding(_, UseMode::Borrow)) && local_place(init) {
             // `const x = node.left` bound by reference (sema `const_borrow`): no copy, and the
             // place keeps ownership.
@@ -204,6 +211,7 @@ impl FnLower<'_, '_> {
                 self.freeze_bindings(pat);
             }
             let shared = !frozen && (self.through_counted(init, ty) || self.in_shared_cell(init));
+            let shared = shared || !frozen && hazard.is_some() && !self.frame_owns_unwritten(init);
             let v = self.expr(init);
             if !self.dead() {
                 let p = match shared {
