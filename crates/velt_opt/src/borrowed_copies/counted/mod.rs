@@ -25,7 +25,9 @@
 //! - every path from the increment to a return passes a release (a member's null test that
 //!   finds it null counts): so no call took the reference over, and no member was overwritten
 //!   while holding it;
-//! - no call that may free a counted object runs while a member is still used after it. Only
+//! - no call that may free a counted object runs while a member, or something read out of the
+//!   object with no reference of its own, is still used after it (`for (const [o, n] of pairs)`
+//!   reads `o` from the pair once, and `o` is the pair's to keep alive). Only
 //!   calls free: a release that drops the last reference frees the object (a runtime call), and
 //!   so does drop glue. Calls that cannot: runtime functions that only read, allocation and
 //!   buffer reallocation (a buffer is never a counted object), the string functions (they free

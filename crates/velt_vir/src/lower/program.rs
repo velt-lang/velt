@@ -94,6 +94,7 @@ impl<'h> Cx<'h> {
             tracked_size: FxHashMap::default(),
             quiet: FxHashMap::default(),
             field_writes: None,
+            value_params: None,
             dispose_types: FxHashMap::default(),
             callee_stores: FxHashMap::default(),
             callees: vec![],

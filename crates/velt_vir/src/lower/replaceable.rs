@@ -21,6 +21,10 @@ use super::frame_envs::children;
 use super::quiet::pure_intrinsic;
 use super::Cx;
 
+/// A callee that writes more field names than this counts as writing anything: it can hardly help,
+/// and each caller on a long chain would copy the names of those below it.
+const MAX_STORES: usize = 64;
+
 /// The fields the program writes outside constructors (module docs).
 #[derive(Default)]
 pub(super) struct FieldWrites {
@@ -127,6 +131,18 @@ impl<'h> Cx<'h> {
     /// [`callee_may_write`](Self::callee_may_write).
     pub(super) fn callee_runs_closures(&mut self, callee: Option<CalleeId>) -> bool {
         callee.and_then(|c| self.stores_of(c)).is_none()
+    }
+
+    /// Of a call of `callee` with `args` arguments, those that may reach a function value
+    /// (`velt_sema::value_params`).
+    pub(super) fn value_param_bits(&mut self, callee: CalleeId, args: usize) -> u64 {
+        if self.value_params.is_none() {
+            self.value_params = Some(Rc::new(velt_sema::value_params::of_program(self.hir)));
+        }
+        let def = self.callees[callee.0 as usize].0;
+        self.value_params
+            .as_ref()
+            .map_or(0, |v| v.of_args(def, args))
     }
 
     /// The id of direct callee `def` with type arguments `targs`.
@@ -245,6 +261,9 @@ impl<'h> Cx<'h> {
             let inner = self.stores_of(c)?;
             out.names.extend(inner.names.iter().cloned());
             out.tuples |= inner.tuples;
+            if out.names.len() > MAX_STORES {
+                return None;
+            }
         }
         Some(out)
     }

@@ -14,7 +14,9 @@ use std::rc::Rc;
 
 use velt_sema::hir::{self, Pat, TyId};
 
+use super::for_of_shared::ArrayHeld;
 use super::operand::proj;
+use super::stabilize::shared_place;
 use super::{cint, ice, DropEntry, FnLower, ScopeKind};
 use crate::vir::{BinOp, Local, Operand, Place, Proj, Rvalue, Ty};
 
@@ -41,8 +43,21 @@ impl FnLower<'_, '_> {
         if frozen {
             self.freeze_bindings(binding);
         }
+        // Handed to a function value (sema `exclusive`), but on fields written nowhere: the array
+        // stays, however its contents change, so the loop needs no reference of its own, which
+        // would count every array of the type.
+        if let Some(place) = shared_place(iter).filter(|_| table.is_none() && !frozen && !consume) {
+            let aty = self.sub(iter.ty);
+            if !self.cx.boxed(aty) && self.stays_put(place) {
+                return self.for_of_shared(label, binding, place, body, ArrayHeld::Frame);
+            }
+        }
         if table.is_none() && !frozen && self.iterates_shared(iter) {
-            return self.for_of_shared(label, binding, iter, body, consume);
+            let held = match consume {
+                true => ArrayHeld::Consumed,
+                false => ArrayHeld::Shared,
+            };
+            return self.for_of_shared(label, binding, iter, body, held);
         }
         self.push_scope(ScopeKind::Temps);
         let aty = self.sub(iter.ty);

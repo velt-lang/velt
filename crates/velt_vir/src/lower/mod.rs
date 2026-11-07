@@ -219,6 +219,7 @@ pub(crate) fn lower_program(
     let mut types = hir.types.clone();
     let mut counted = boxing::Boxing::initial(hir);
     let mut no_await_steps = false;
+    let mut value_params = None;
     // `VELT_LOWER_WHOLE`: every pass whole, as before facts-only passes (tests compare both).
     let facts_only = std::env::var_os("VELT_LOWER_WHOLE").is_none();
     let profile = std::env::var_os("VELT_LOWER_PROFILE").is_some();
@@ -227,6 +228,7 @@ pub(crate) fn lower_program(
         lower_profile::start_pass();
         let pass_start = std::time::Instant::now();
         let mut cx = Cx::new(hir, types, counted.clone());
+        cx.value_params = value_params.take();
         cx.native_inits = opts.native_inits.to_vec();
         cx.cell_checks = opts.cell_checks;
         cx.target = opts
@@ -312,6 +314,7 @@ pub(crate) fn lower_program(
             }
             return (program, diags);
         }
+        value_params = cx.value_params.take();
         types = cx.types;
         counted = next;
     }
@@ -453,6 +456,9 @@ struct Cx<'h> {
     quiet: FxHashMap<(DefId, quiet::Quiet), bool>,
     /// The fields written after their object was made, once asked (replaceable.rs).
     field_writes: Option<std::rc::Rc<replaceable::FieldWrites>>,
+    /// The params that may reach a function value, once asked: the HIR doesn't change between
+    /// passes, so a pass hands them on.
+    value_params: Option<std::rc::Rc<velt_sema::value_params::ValueParams>>,
     /// Whether dropping a value of each type can run a `dispose` (replaceable.rs).
     dispose_types: FxHashMap<TyId, bool>,
     /// What direct callees write, once asked (replaceable.rs).

@@ -1,0 +1,13 @@
+// The same with an object type (#2527). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
+const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; junk(); };
+type P = { s: string; n: number };
+const w = (q: P[]) => { q[0] = { s: heap("zzzzzzzz"), n: 2 }; junk(); };
+function t() {
+  const ps: P[] = [{ s: heap("a"), n: 1 }];
+  for (const { s, n } of ps) { w(ps); junk(); console.log(s, n); }
+}
+t();
