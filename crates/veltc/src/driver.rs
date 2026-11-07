@@ -189,6 +189,8 @@ pub struct Session {
     pub details: Vec<(&'static str, &'static str, Duration)>,
     /// Print [`Session::details`] under their stage (`--timings`).
     pub show_details: bool,
+    /// `-v`: say at once that the build waits for another of its output (`std_cache::Place::lock`).
+    pub verbose: bool,
     /// Reports the build was asked for (`--report`), printed after the diagnostics.
     pub reports: Vec<String>,
     /// What codegen took from the build cache: `(found, of, what)` ("functions", "codegen
@@ -476,7 +478,7 @@ fn compile_to_vir_linking(
     let place =
         OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
     if std_use != std_cache::Use::Off && sess.turn.is_none() {
-        sess.turn = place.lock();
+        sess.turn = place.lock(sess.verbose);
     }
     if std_use == std_cache::Use::Debug {
         let t = Instant::now();
@@ -619,7 +621,7 @@ fn build_on_current_thread(
     let place =
         OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
     if opts.emit == Emit::Exe && place.lock_exists() {
-        sess.turn = place.lock();
+        sess.turn = place.lock(sess.verbose);
     }
     // An executable whose inputs are those of its last build is up to date (`stamp`).
     // The hashes of the files the last build's stamp records, for this build to reuse.

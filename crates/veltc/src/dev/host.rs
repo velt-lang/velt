@@ -39,6 +39,7 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
     };
     let mut sess = Session::new();
     sess.show_details = args.build.timings;
+    sess.verbose = args.build.verbose;
     let natives = match super::native::jit_symbols(opts.packages.as_ref()) {
         Ok(natives) => natives,
         Err(msg) => {

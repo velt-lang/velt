@@ -437,6 +437,7 @@ fn async_host_functions_under_node() {
     let native = velt()
         .arg("run")
         .arg(work.join("order.velt"))
+        .current_dir(&work)
         .output()
         .expect("run velt");
     let order = String::from_utf8_lossy(&native.stdout).replace("\r\n", "\n");

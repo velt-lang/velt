@@ -341,6 +341,7 @@ fn a_module_with_every_kind_of_item_collects_in_the_check_as_up_front() {
     let run = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .arg("run")
         .arg(&main)
+        .current_dir(tmp.path())
         .env("VELT_STD", &std)
         .env("VELT_HOME", tmp.path().join("home"))
         .env("VELT_BUILD_CACHE", "off")
@@ -420,10 +421,13 @@ const NODE_FLOATS: &[&str] = &[
 ];
 
 /// A std root and a compiler run over it, for the tests of a std without its on-demand modules.
-fn velt_with_std(std: &Path, home: &Path) -> std::process::Command {
+/// Run in the test's directory `dir`: a program outside a package is built into `target/velt` of
+/// the current directory, and tests run at once must not build one output (#2568).
+fn velt_with_std(std: &Path, dir: &Path) -> std::process::Command {
     let mut c = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
-    c.env("VELT_STD", std)
-        .env("VELT_HOME", home)
+    c.current_dir(dir)
+        .env("VELT_STD", std)
+        .env("VELT_HOME", dir.join("home"))
         .env("VELT_BUILD_CACHE", "off")
         .env("VELT_BUILD_STAMP", "off")
         .env_remove("VELT_EAGER_STD");
@@ -435,7 +439,7 @@ fn a_missing_std_checks_as_it_did() {
     let tmp = test_dir::TestDir::new();
     let main = tmp.path().join("main.velt");
     std::fs::write(&main, "const n: number = 3;\nconsole.log(`x ${n}`);\n").unwrap();
-    let out = velt_with_std(&tmp.path().join("nonexistent"), &tmp.path().join("home"))
+    let out = velt_with_std(&tmp.path().join("nonexistent"), tmp.path())
         .arg("check")
         .arg(&main)
         .output()
@@ -459,9 +463,8 @@ fn a_std_without_the_float_module_prints_the_same_through_the_runtime() {
     );
     let main = tmp.path().join("main.velt");
     std::fs::write(&main, FLOATS).unwrap();
-    let home = tmp.path().join("home");
     let vir = |std: &Path| {
-        let out = velt_with_std(std, &home)
+        let out = velt_with_std(std, tmp.path())
             .arg("build")
             .arg(&main)
             .args(["--emit", "vir"])
@@ -472,7 +475,7 @@ fn a_std_without_the_float_module_prints_the_same_through_the_runtime() {
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     let run = |std: &Path| {
-        let out = velt_with_std(std, &home)
+        let out = velt_with_std(std, tmp.path())
             .arg("run")
             .arg(&main)
             .output()

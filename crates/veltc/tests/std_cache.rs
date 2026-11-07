@@ -580,7 +580,9 @@ fn builds_of_one_output_take_turns() {
     }
 }
 
-/// A build that finds its output taken says what it waits for, and goes on when it is free.
+/// A build that finds its output taken says what it waits for once the wait is long (held here
+/// until it is said, past `QUIET_WAIT`; a short wait says nothing: `std_cache::turn`), and goes on
+/// when it is free.
 #[test]
 fn a_build_says_what_it_waits_for() {
     use std::io::BufRead;
