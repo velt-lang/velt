@@ -1,0 +1,12 @@
+// A struct is an immutable value (#641): its fields are readonly, with or without the
+// modifier. A new value replaces it: `p = { ...p, x: 5 }`.
+struct Vec2 {
+  x: number;
+  y: number;
+}
+
+function main() {
+  let p: Vec2 = { x: 1, y: 2 };
+  p.x = 5;
+  console.log(p.x);
+}

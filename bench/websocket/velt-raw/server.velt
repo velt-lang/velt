@@ -179,7 +179,7 @@ class Reader {
       payload.xorMask(mask);
     }
     this.consume(at + len);
-    return Frame { fin: (b0 & 0x80) != 0, opcode: b0 & 0x0f, payload: payload };
+    return { fin: (b0 & 0x80) != 0, opcode: b0 & 0x0f, payload: payload };
   }
 }
 
@@ -259,7 +259,7 @@ async function message(r: Reader, s: TcpStream): Promise<Frame | null> {
         await s.writeBytes(closeFrame(1007));
         return null;
       }
-      return Frame { fin: true, opcode: opcode, payload: parts };
+      return { fin: true, opcode: opcode, payload: parts };
     }
   }
 }

@@ -47,11 +47,11 @@ export function frameOf(
 ): Frame {
   const last = (n as i64) - 1;
   if (f.frame == FRAME_DEFAULT) {
-    return Frame { lo: 0, hi: ordered ? ge[g] as i64 : last };
+    return { lo: 0, hi: ordered ? ge[g] as i64 : last };
   }
   const lo = bound(f, true, i, g, gs, ge, last);
   const hi = bound(f, false, i, g, gs, ge, last);
-  return Frame { lo: lo < 0 ? 0 : lo, hi: hi > last ? last : hi };
+  return { lo: lo < 0 ? 0 : lo, hi: hi > last ? last : hi };
 }
 
 /** Whether row `j` is at least `lag` rows (or groups) behind row `at`. */

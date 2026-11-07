@@ -223,6 +223,14 @@ impl FnLower<'_, '_> {
     ) {
         let r = if self.cx.c_struct(ty) {
             self.any_c_struct_same(a, b, mode, ty)
+        } else if self.cx.value_struct(ty) {
+            // A `struct` value has no identity (#641): each conversion boxes a copy, compared
+            // by content.
+            let (x, y) = (
+                Operand::Copy(Place::local(a)),
+                Operand::Copy(Place::local(b)),
+            );
+            self.call_glue(Glue::BitsEq, ty, vec![x, y])
         } else if self.cx.is_class(ty) || self.cx.boxed(ty) {
             let (x, y) = (
                 Operand::Copy(Place::local(a)),
@@ -366,7 +374,7 @@ impl FnLower<'_, '_> {
 
     /// The tag word of descriptor `desc`.
     pub(super) fn any_tag_of(&mut self, desc: Operand) -> Operand {
-        let off = cint(8 * (SLOT_TAG + 7), Ty::U64);
+        let off = cint(8 * (SLOT_TAG + super::glue::vtable::HIDDEN), Ty::U64);
         let p = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, desc, off));
         let pp = self.operand_place(p, Ty::Ptr);
         self.rvalue_temp(

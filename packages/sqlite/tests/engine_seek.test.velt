@@ -70,7 +70,7 @@ function seeded(): Seeded {
   db.exec("COMMIT");
   const roots: Root[] = db.prepare("SELECT name, rootpage FROM sqlite_schema").all();
   const file = new DbFile(readFileBytesSync(path));
-  return Seeded { path: path, db: db, file: file, roots: roots };
+  return { path: path, db: db, file: file, roots: roots } as Seeded;
 }
 
 function rootOf(roots: Root[], name: string): u32 {

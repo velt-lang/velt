@@ -1,7 +1,7 @@
 //! Assignment targets (`assign.rs`): those that can be read again without an effect, and
 //! writes to readonly fields.
 
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use crate::body::places::{is_place, set_place_mode};
@@ -42,6 +42,25 @@ impl FnCx<'_, '_> {
         let generated_build =
             matches!(base.kind, H::Local(l, _) if self.f.built_locals.contains(&l));
         if readonly && !in_ctor && !generated_build {
+            if self.cx.declared_struct(base.ty) && !self.cx.is_c_struct(d) {
+                let this =
+                    matches!(base.kind, H::Local(l, _) if self.local_kind(l) == LocalKind::This);
+                let note = match this {
+                    true => format!("a struct value never changes: return a new one (`return {{ ...this, {}: v }}`)", prop.name),
+                    false => format!("a struct value never changes: replace it with a new one (`p = {{ ...p, {}: v }}`), or make the type a class", prop.name),
+                };
+                self.cx.error(
+                    velt_common::Diagnostic::error(
+                        format!(
+                            "cannot assign to `{}`: struct fields are readonly",
+                            prop.name
+                        ),
+                        prop.span,
+                    )
+                    .with_note(note),
+                );
+                return;
+            }
             let mut diag = velt_common::Diagnostic::error(
                 format!("cannot assign to `{}`: it is a readonly field", prop.name),
                 prop.span,

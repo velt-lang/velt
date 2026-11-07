@@ -1,0 +1,65 @@
+// A struct value has no identity (#641): in `any`, `object`, `unknown` and interface values,
+// generic structs included, two copies compare and hash by content, as the struct itself does.
+
+struct Big {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+}
+
+interface Named {
+  name(): string;
+}
+
+struct NG<T> implements Named {
+  v: T;
+  name(): string {
+    return "ng";
+  }
+}
+
+struct NP implements Named {
+  v: number;
+  name(): string {
+    return "np";
+  }
+}
+
+function main() {
+  const big: Big = { a: 1, b: 2, c: 3, d: 4 };
+  const a1: any = big;
+  const a2 = a1;
+  console.log("any copy:", a1 === a2);
+  const ar: any[] = [big, big];
+  console.log("any[]:", ar[0] === ar[1], ar.includes(big), ar.indexOf(big));
+  const ms = new Map<string, any>();
+  ms.set("k", big);
+  console.log("map value:", ms.get("k") === ms.get("k"));
+  const o1: object = big;
+  const o2: object = big;
+  const u1: unknown = big;
+  const u2: unknown = big;
+  console.log("object, unknown:", o1 === o2, u1 === u2);
+  const ma = new Map<any, number>();
+  ma.set(big, 1);
+  ma.set(big, 2);
+  console.log("Map<any>:", ma.size, ma.get(big));
+  const sa = new Set<any>();
+  sa.add(big);
+  console.log("Set<any>:", sa.has(big));
+  const other: any = { a: 9, b: 2, c: 3, d: 4 } as Big;
+  console.log("different content:", a1 === other);
+  const ig1: Named = { v: 5 } as NG<number>;
+  const ig2: Named = ig1;
+  const ig3: Named = { v: 5 } as NG<number>;
+  const ig4: Named = { v: 6 } as NG<number>;
+  const np1: Named = { v: 5 } as NP;
+  console.log("generic struct:", ig1 === ig2, ig1 === ig3, ig1 === ig4, np1 === ig1);
+  const sn = new Set<Named>();
+  sn.add(ig1);
+  sn.add(ig3);
+  sn.add(ig4);
+  sn.add(np1);
+  console.log("Set<Named>:", sn.size);
+}

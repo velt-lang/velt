@@ -51,7 +51,7 @@ function main() {
   if (which != "post") {
     for (let i: i64 = 0; i < rounds; i++) {
       const posts: Post[] = db.prepare(SELECT_FEED).all();
-      bytes += JSON.stringify(Feed { posts: posts }).length as i64;
+      bytes += JSON.stringify({ posts: posts } as Feed).length as i64;
     }
   }
   if (which != "feed") {

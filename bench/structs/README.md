@@ -1,13 +1,13 @@
 # Struct benchmarks (#641)
 
-Measures what a guaranteed-inline, immutable `struct` value type would win. Each workload is
-written several ways, all printing the same output:
+Measures what the immutable `struct` value type wins. Each workload is written several ways,
+all printing the same output (`ab/` holds more programs, each against Rust alone: see below):
 
 | file | what it is |
 |---|---|
-| `<name>_struct.velt` | today's `struct`, used as a value: new values from small methods, whole elements replaced |
-| `<name>_mut.velt` | today's `struct` updated field by field (`bs[i].vel = …`, `p.y = -p.y`): allowed today, an error under the value-type design |
-| `particles_shared.velt` | `particles_mut.velt` plus one second reference to an element: the struct type becomes a counted heap object |
+| `<name>_struct.velt` | a `struct`: new values from small methods, whole elements replaced |
+| `<name>_mut.velt` | an object type updated field by field (`bs[i].vel = …`, `p.y = -p.y`), which an immutable `struct` does not allow |
+| `particles_shared.velt` | `particles_mut.velt` plus one second reference to an element: the object type becomes a counted heap object |
 | `<name>_class.velt` | a `class` with `new` for every value, the usual TypeScript style (valid TypeScript) |
 | `<name>_flat.velt` | the objects flattened by hand into parallel `number[]` arrays or a packed number key: the code a guaranteed-inline value type should reach (valid TypeScript) |
 | `rust/<name>.rs` | Rust with a `#[derive(Clone, Copy)]` struct |
@@ -36,50 +36,63 @@ optimized program, `VELT_RC_STATS=1`; Rust: valgrind DHAT).
 
 ## Results
 
-Measured on 2026-10-07 at `main` 4992a14f (LLVM release, `VELT_THREADS=1`), WSL2 Ubuntu 20.04,
-valgrind 3.15, rustc 1.99 `-O`, Node 24.16. Instruction counts are the measure; the
-wall-clock table is from a shared machine under load and only indicative.
+Measured on 2026-11-05 (LLVM release, `VELT_THREADS=1`) in an Ubuntu 24.04 arm64 VM, valgrind
+3.22, rustc 1.99 `-C opt-level=3`. Instruction counts are the measure (they repeat to within
+0.1%); the wall-clock table is from a shared machine and only indicative.
 
 Instructions executed (millions):
 
 | workload | struct | mut | shared | class | flat | Rust | struct / flat | class / flat | flat / Rust | struct / Rust |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| vecmath | 635 | 645 | – | 11,760 | 718 | 665 | 0.88 | 16.39 | 1.08 | 0.95 |
-| particles | 102 | 77 | 89 | 1,069 | 71 | 102 | 1.43 | 15.01 | 0.70 | 1.00 |
-| points | 150 | – | – | 689 | 174 | 152 | 0.86 | 3.96 | 1.14 | 0.99 |
-| mapkey | 242 | – | – | 2,747 | 151 | 342 | 1.60 | 18.21 | 0.44 | 0.71 |
+| mapkey | 160 | – | – | 467 | 139 | 274 | 1.15 | 3.37 | 0.51 | 0.58 |
+| particles | 49 | 91 | 93 | 1,063 | 54 | 48 | 0.91 | 19.83 | 1.11 | 1.00 |
+| points | 106 | – | – | 641 | 131 | 112 | 0.81 | 4.88 | 1.18 | 0.95 |
+| vecmath | 424 | 452 | – | 10,840 | 684 | 484 | 0.62 | 15.84 | 1.41 | 0.88 |
 
 Heap blocks allocated:
 
 | workload | struct | mut | shared | class | flat | Rust |
 |---|---:|---:|---:|---:|---:|---:|
-| vecmath | 1 | 1 | – | 95,000,036 | 7 | 9 |
-| particles | 2 | 2 | 20,002 | 10,020,152 | 4 | 34 |
-| points | 5 | – | – | 5,000,005 | 5 | 103 |
-| mapkey | 21 | – | – | 1,000,021 | 21 | 25 |
+| mapkey | 22 | – | – | 22 | 22 | 27 |
+| particles | 2 | 2 | 20,002 | 10,020,152 | 4 | 36 |
+| points | 5 | – | – | 5,000,005 | 5 | 105 |
+| vecmath | 1 | 1 | – | 95,000,016 | 7 | 11 |
 
-Best wall-clock time of 3 interleaved runs (ms, including process start; Node runs the class
-and flat files as TypeScript):
+Best wall-clock time of 3 interleaved runs (ms, including process start):
 
-| workload | struct | mut | shared | class | flat | Rust | Node class | Node flat |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| vecmath | 128 | 160 | – | 1,366 | 137 | 94 | 773 | 238 |
-| particles | 271 | 41 | 35 | 232 | 29 | 28 | 955 | 455 |
-| points | 84 | – | – | 112 | 66 | 63 | 1,598 | 533 |
-| mapkey | 330 | – | – | 893 | 321 | 295 | 959 | 399 |
+| workload | struct | mut | shared | class | flat | Rust |
+|---|---:|---:|---:|---:|---:|---:|
+| mapkey | 288 | – | – | 438 | 209 | 234 |
+| particles | 7 | 6 | 27 | 191 | 5 | 9 |
+| points | 21 | – | – | 59 | 21 | 17 |
+| vecmath | 184 | 251 | – | 2,990 | 468 | 260 |
 
 What it shows:
-- **Today's `struct`, used as a value** (no field writes, nothing shared) is already stored
-  inline: no allocation, and within 0.71–1.00× of Rust's instructions. The value-type design
-  turns this from a whole-program inference into a guarantee.
-- **Classes**, the TypeScript way of writing the same values, execute 4–18× the instructions
-  of the flat code and allocate one block per value (1M to 95M blocks; in mapkey, the string
-  keys): `heap_sroa` removes allocations only where inlining puts an object's whole life in one
-  function, never for objects stored in arrays or maps.
-- **One shared value** (`particles_shared`) makes a struct type whose fields are assigned a
-  counted object everywhere: every element becomes its own heap block (20,002 blocks) and the
-  arrays hold pointers. Immutable structs cannot reach this state.
-- Two gaps remain against the hand-flattened code, both work items for the implementation:
-  replacing a whole element (`pos[i] = p`, 1.43× flat; the field-by-field `mut` version is
-  1.08×), and hashing and comparing a struct `Map` key (1.60× a packed number key, though
-  below Rust's SipHash).
+- **A `struct`** is stored inline (no allocation) and executes 0.58–1.00× Rust's instructions.
+  Before #641 these programs got the same code, because the compiler proved each struct
+  unshared; the value type makes that a guarantee that one second reference can no longer break
+  (`particles_shared`: 20,002 heap blocks and pointer arrays).
+- **Classes**, the TypeScript way of writing the same values, execute 3–20× the instructions of
+  the flat code and allocate one block per value.
+- **mapkey**: struct keys hash and compare by their bytes (a NaN key finds itself, `-0` and `0`
+  are two keys), 1.15× a packed number key and well below Rust's SipHash.
+
+### `ab/`: struct calls and arrays against Rust
+
+`ab/` holds programs whose structs cross calls that are not inlined (`calls`: a recursive walk
+passing and returning `Vec2`), are compared with `==` and kept in an array and a `Set` (`bfs`:
+a grid search; before #641, comparing by identity made each `Cell` a counted heap object), or
+are replaced whole in an array (`nbody`, the Benchmarks Game algorithm). `bench/structs/ab/run.sh` checks that each prints the same as its
+Rust version and counts instructions (cachegrind on Linux, `/usr/bin/time -l` on macOS).
+
+Instructions executed, same VM and date; base is `main` before #641:
+
+| program | base | struct value type | Rust | value / base | value / Rust |
+|---|---:|---:|---:|---:|---:|
+| bfs | 1,825.6M | 930.7M | 1,189.9M | 0.51 | 0.78 |
+| calls | 320.9M | 210.7M | 210.5M | 0.66 | 1.00 |
+| nbody | 1,110.4M | 1,115.4M | 1,855.3M | 1.00 | 0.60 |
+
+A struct of at most 16 bytes travels in registers: as its scalar fields when it has at most
+four numbers or booleans (a `Vec2` in two float registers, as Rust passes it), otherwise as one
+128-bit vector; results come back as one 128-bit vector.

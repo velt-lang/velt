@@ -556,8 +556,8 @@ hooks! {
     // ffi/ptr.velt: a `Ptr` from and to a C function (velt_vir's lower/c_call.rs).
     ffi_ptr_of => ffi_ptr, "ptrOf", sig(<A>(usize) -> Ptr(A)), lowered;
     ffi_ptr_or_null => ffi_ptr, "ptrOrNull", sig(<A>(usize) -> or_null(Ptr(A))), lowered;
-    ffi_ptr_address => ffi_ptr, "ptrAddress", sig(<A>(&Ptr(A)) -> usize), lowered;
-    ffi_ptr_address_or_zero => ffi_ptr, "ptrAddressOrZero", sig(<A>(&or_null(Ptr(A))) -> usize), lowered;
+    ffi_ptr_address => ffi_ptr, "ptrAddress", sig(<A>(Ptr(A)) -> usize), lowered;
+    ffi_ptr_address_or_zero => ffi_ptr, "ptrAddressOrZero", sig(<A>(or_null(Ptr(A))) -> usize), lowered;
     // ffi/str_bytes.velt: the string whose bytes a `StrBytes` argument passes.
     ffi_str_bytes_of => ffi_str_bytes, "strBytesOf", sig((move string) -> string), lowered;
     // ffi/c_string.velt: the bytes a `CString` argument passes.

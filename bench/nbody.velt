@@ -1,5 +1,5 @@
-// N-body simulation (the Benchmarks Game algorithm): Copy structs (`Vec3`, `Body`) in an array,
-// small struct methods, f64 arithmetic and `Math.sqrt`.
+// N-body simulation (the Benchmarks Game algorithm): a value struct `Vec3` with small methods,
+// an object type `Body` updated field by field in an array, f64 arithmetic and `Math.sqrt`.
 const PI: f64 = 3.141592653589793;
 const SOLAR_MASS: f64 = 4.0 * PI * PI;
 const DAYS_PER_YEAR: f64 = 365.24;
@@ -10,15 +10,15 @@ struct Vec3 {
   z: f64;
 
   add(o: Vec3): Vec3 {
-    return Vec3 { x: this.x + o.x, y: this.y + o.y, z: this.z + o.z };
+    return { x: this.x + o.x, y: this.y + o.y, z: this.z + o.z };
   }
 
   sub(o: Vec3): Vec3 {
-    return Vec3 { x: this.x - o.x, y: this.y - o.y, z: this.z - o.z };
+    return { x: this.x - o.x, y: this.y - o.y, z: this.z - o.z };
   }
 
   scale(k: f64): Vec3 {
-    return Vec3 { x: this.x * k, y: this.y * k, z: this.z * k };
+    return { x: this.x * k, y: this.y * k, z: this.z * k };
   }
 
   dot(o: Vec3): f64 {
@@ -26,16 +26,12 @@ struct Vec3 {
   }
 }
 
-struct Body {
-  pos: Vec3;
-  vel: Vec3;
-  mass: f64;
-}
+type Body = { pos: Vec3; vel: Vec3; mass: f64 };
 
 function body(x: f64, y: f64, z: f64, vx: f64, vy: f64, vz: f64, mass: f64): Body {
-  return Body {
-    pos: Vec3 { x: x, y: y, z: z },
-    vel: Vec3 { x: vx * DAYS_PER_YEAR, y: vy * DAYS_PER_YEAR, z: vz * DAYS_PER_YEAR },
+  return {
+    pos: { x: x, y: y, z: z },
+    vel: { x: vx * DAYS_PER_YEAR, y: vy * DAYS_PER_YEAR, z: vz * DAYS_PER_YEAR },
     mass: mass * SOLAR_MASS,
   };
 }
@@ -83,7 +79,7 @@ function makeBodies(): Body[] {
 }
 
 function offsetMomentum(bodies: Body[]) {
-  let p = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+  let p: Vec3 = { x: 0.0, y: 0.0, z: 0.0 };
   for (const b of bodies) {
     p = p.add(b.vel.scale(b.mass));
   }

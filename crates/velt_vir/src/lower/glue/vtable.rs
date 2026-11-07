@@ -1,6 +1,8 @@
 //! Vtables as read-only tables of function addresses (static data with relocations). Slot `k`
-//! lives at byte offset `8 * (k + 7)`: the seven negative slots are the class id of the concrete
-//! type (a `u64`, not an address: 0 for types that are not classes; class_test.rs), the transfer
+//! lives at byte offset `8 * (k + 9)`: the nine negative slots are the class id of the concrete
+//! type (a `u64`, not an address: 0 for types that are not classes; class_test.rs), a `struct`
+//! value's content equality and hash in its interface tables (`BitsEq` / `BitsHash`, #641: two
+//! interface values of one struct type compare by content, generic structs included), the transfer
 //! to another thread, the class name (a static string, class tables only; in the table of an interface whose
 //! values are converted to `any`, the `any` table of the concrete type: lower/any.rs) and share / format /
 //! clone / drop of the concrete value (glue/mod.rs `SLOT_*`; share only in interface tables),
@@ -16,10 +18,15 @@ use crate::lower::{cint, ice, Cx, FnLower, Work};
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
 
 /// Number of negative slots in front of slot 0.
-const HIDDEN: i128 = 7;
+pub(in crate::lower) const HIDDEN: i128 = 9;
 
 /// The class id of the concrete type, at byte 0 (an integer, so not a relocation).
-const SLOT_CLASS_ID: i128 = -7;
+const SLOT_CLASS_ID: i128 = -9;
+
+/// A `struct` value's `Glue::BitsEq` and `Glue::BitsHash`, in its interface tables (#641; 0 in
+/// every other table): same.rs `dyn_values_same`, glue/eq.rs `dyn_value_hash`.
+pub(in crate::lower) const SLOT_VALUE_EQ: i128 = -8;
+pub(in crate::lower) const SLOT_VALUE_HASH: i128 = -7;
 
 /// Memo key of a vtable: the class itself, or `Program::impls[i]` for a concrete type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -90,6 +97,12 @@ impl Cx<'_> {
                     }
                 }
                 let mut id = self.class_id_word(ty, true);
+                if self.value_struct(ty) {
+                    let eq = self.func(Work::Glue(Glue::BitsEq, ty));
+                    let hash = self.func(Work::Glue(Glue::BitsHash, ty));
+                    entries.push((SLOT_VALUE_EQ, Const::Func(eq)));
+                    entries.push((SLOT_VALUE_HASH, Const::Func(hash)));
+                }
                 if self.is_adapter(ty) {
                     id = crate::lower::adapters::ASK_INNER;
                 }

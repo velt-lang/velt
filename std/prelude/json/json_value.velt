@@ -27,6 +27,13 @@ import { JSON } from "velt/prelude/json/json";
 import { JsonError, JsonParseOptions } from "velt/prelude/json/json_error";
 import { JsonReplacer } from "velt/prelude/json/layout";
 import { tapeStringify, writeTape } from "velt/encoding/json/tape_write";
+import {
+  JsonHandleSlot,
+  treeDelete,
+  treePush,
+  treeSet,
+  treeSetAt,
+} from "velt/encoding/json/tree_edits";
 
 declare function velt_rt_strbuf_push_json_value(buf: string, h: u64);
 declare function velt_rt_json_parse_value_with(
@@ -48,10 +55,6 @@ declare function velt_rt_json_value_clone(v: u64): u64;
 declare function velt_rt_json_value_free(v: u64);
 declare function velt_rt_json_value_new_array(): u64;
 declare function velt_rt_json_value_new_object(): u64;
-declare function velt_rt_json_value_set(slot: JsonHandleSlot, key: string, v: u64): bool;
-declare function velt_rt_json_value_delete(slot: JsonHandleSlot, key: string): bool;
-declare function velt_rt_json_value_push(slot: JsonHandleSlot, v: u64): bool;
-declare function velt_rt_json_value_set_at(slot: JsonHandleSlot, i: u64, v: u64): bool;
 
 // `velt_rt_json_value_kind` results.
 const KIND_NULL: u32 = 1;
@@ -65,11 +68,6 @@ const KIND_STRING: u32 = 4;
 const KIND_ARRAY: u32 = 5;
 
 const KIND_OBJECT: u32 = 6;
-
-// The `const VeltJson** out` of `velt_rt_json_parse_value`: a struct so it is passed by pointer.
-struct JsonHandleSlot {
-  handle: u64;
-}
 
 /**
  * A JSON value of any shape, as `JSON.parseValue` returns it (`velt/encoding/json` calls it `Value`). It
@@ -202,9 +200,8 @@ export class JsonValue {
   set(key: string, value: JsonValue): bool {
     this.toTree();
     const h = value[JSON_RUNTIME_HANDLE]();
-    let slot = JsonHandleSlot { handle: this.#handle };
-    const ok = velt_rt_json_value_set(slot, key, h);
-    this.#handle = slot.handle;
+    const [ok, handle] = treeSet(this.#handle, key, h);
+    this.#handle = handle;
     velt_rt_json_value_free(h);
     return ok;
   }
@@ -212,9 +209,8 @@ export class JsonValue {
   /** Removes object member `key`; false if absent or not an object. */
   delete(key: string): bool {
     this.toTree();
-    let slot = JsonHandleSlot { handle: this.#handle };
-    const ok = velt_rt_json_value_delete(slot, key);
-    this.#handle = slot.handle;
+    const [ok, handle] = treeDelete(this.#handle, key);
+    this.#handle = handle;
     return ok;
   }
 
@@ -222,9 +218,8 @@ export class JsonValue {
   push(value: JsonValue): bool {
     this.toTree();
     const h = value[JSON_RUNTIME_HANDLE]();
-    let slot = JsonHandleSlot { handle: this.#handle };
-    const ok = velt_rt_json_value_push(slot, h);
-    this.#handle = slot.handle;
+    const [ok, handle] = treePush(this.#handle, h);
+    this.#handle = handle;
     velt_rt_json_value_free(h);
     return ok;
   }
@@ -236,9 +231,8 @@ export class JsonValue {
     }
     this.toTree();
     const h = value[JSON_RUNTIME_HANDLE]();
-    let slot = JsonHandleSlot { handle: this.#handle };
-    const ok = velt_rt_json_value_set_at(slot, i as u64, h);
-    this.#handle = slot.handle;
+    const [ok, handle] = treeSetAt(this.#handle, i as u64, h);
+    this.#handle = handle;
     velt_rt_json_value_free(h);
     return ok;
   }
@@ -457,7 +451,7 @@ export class JsonValue {
 // A runtime tree made from value `node` of tape `t` (its JSON text, parsed by the runtime).
 function treeOf(t: Tape, node: u32): u64 {
   const text = tapeStringify(t, node);
-  let slot = JsonHandleSlot { handle: 0 };
+  let slot: JsonHandleSlot = { handle: 0 };
   let err = "";
   if (!velt_rt_json_parse_value_with(text, 0, slot, err)) {
     panic(`ICE: a tape's JSON text did not parse: ${err}`);

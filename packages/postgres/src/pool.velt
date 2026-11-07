@@ -33,7 +33,7 @@ export struct Pool {
   /** A pool for `opts.url`: what `createPool(opts)` does. */
   static create(opts: PoolOptions): Pool {
     const max = opts.max ?? 10;
-    return Pool { handle: unwrap(velt_postgres__pool_new(opts.url, max as u32)) };
+    return { handle: unwrap(velt_postgres__pool_new(opts.url, max as u32)) };
   }
 
   async query<T, P>(sql: string, params: P): Promise<T[]> {
@@ -126,8 +126,8 @@ export struct Pool {
    * client) finishes; later operations throw "ECLOSED".
    */
   end() {
+    // The handle is generational: once ended, this and every copy of it throw "ECLOSED".
     velt_postgres__pool_end(this.handle);
-    this.handle = 0;
   }
 }
 

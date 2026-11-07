@@ -339,8 +339,9 @@ impl Cx<'_> {
 
     /// Record that values of the object type `t` are compared by identity.
     pub(super) fn note_identity(&mut self, t: TyId) {
-        // A C struct has no identity (same.rs compares its content) and keeps C's layout.
-        if self.c_struct(t) {
+        // A C struct and a `struct` value (#641) have no identity (same.rs compares their
+        // content); a C struct keeps C's layout.
+        if self.c_struct(t) || self.value_struct(t) {
             return;
         }
         self.facts.identity.insert(t);
@@ -349,7 +350,7 @@ impl Cx<'_> {
     /// Record that a value of type `t` (one of `in_place_parts`) may be changed in place by a
     /// callee while it is borrowed out of an array other references reach.
     pub(super) fn note_identity_borrow(&mut self, t: TyId) {
-        if self.c_struct(t) {
+        if self.c_struct(t) || self.value_struct(t) {
             return;
         }
         self.facts.identity_borrows.insert(t);
@@ -420,8 +421,9 @@ impl Cx<'_> {
     /// The interface value type `dyn_ty` is compared by identity, and its implementor `t` is an
     /// object type that a conversion would copy: record that `t` must be counted.
     pub(super) fn note_dyn_identity(&mut self, dyn_ty: TyId, t: TyId) {
-        // A C struct has no identity: an `object`, `any` or interface value holds a copy.
-        if self.c_struct(t) {
+        // A C struct and a `struct` value (#641) have no identity: an `object`, `any` or
+        // interface value holds a copy.
+        if self.c_struct(t) || self.value_struct(t) {
             return;
         }
         // Once values convert to `object` / `Function` (issue #926), which key collections by

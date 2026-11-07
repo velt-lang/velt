@@ -372,8 +372,9 @@ pub struct AdtDef {
     pub is_copy: bool,
     /// Declared with `struct` (kind `Struct`, but not a field-only interface or a struct sema
     /// made for an interface literal or a brand): a Velt value type, so its `Map` and `Set`
-    /// keys compare and hash by content, field by field (`Intrinsic::KeyEq`, `Intrinsic::Hash`),
-    /// while `===` still compares it by identity.
+    /// keys, `==` and `===` compare and hash it by content, numbers by their bits: a struct is
+    /// an immutable value with no identity (#641). False for the prelude's `Mutex`, `RwLock`,
+    /// `Atomic` and `ThreadLocal`, which are places.
     pub declared_struct: bool,
     /// `declare c struct` (c-ffi.md "C structs"): a Copy value with C's layout and no identity,
     /// never counted or boxed, compared by content. Additive.

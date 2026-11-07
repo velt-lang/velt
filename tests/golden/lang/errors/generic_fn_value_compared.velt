@@ -71,11 +71,11 @@ function wider(g: G): void {
 
 function inKey(g: G): void {
   const keys = new Set<Key>();
-  keys.add(Key { f: g, n: 1 });
-  keys.add(Key { f: g, n: 1 });
+  keys.add({ f: g, n: 1 });
+  keys.add({ f: g, n: 1 });
   const byKey = new Map<KeyOr, number>();
-  byKey.set(KeyOr { f: g }, 1);
-  console.log(keys.size, byKey.get(KeyOr { f: g }));
+  byKey.set({ f: g }, 1);
+  console.log(keys.size, byKey.get({ f: g }));
 }
 
 function main(): void {

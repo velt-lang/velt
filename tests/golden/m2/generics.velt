@@ -5,7 +5,7 @@ struct Pair<A, B> {
 
 // `p` is moved into swap (its fields are moved out), so the caller gives up `p`.
 function swap<A, B>(p: Pair<A, B>): Pair<B, A> {
-  return Pair { first: p.second, second: p.first };
+  return { first: p.second, second: p.first };
 }
 
 function mapAll<T, U>(xs: T[], f: (x: T) => U): U[] {
@@ -67,7 +67,7 @@ function biggest<T extends Shape>(xs: T[]): f64 {
 }
 
 function main() {
-  const p = Pair { first: 1, second: "one" };
+  const p: Pair<number, string> = { first: 1, second: "one" };
   const s = swap(p);
   console.log(s.first, s.second);
 
@@ -81,8 +81,8 @@ function main() {
   st.push("b");
   console.log(st.size(), st.pop() ?? "none", st.pop() ?? "none", st.pop() ?? "none");
 
-  console.log(biggest([Square { side: 2.0 }, Square { side: 3.0 }]));
-  const shapes: Shape[] = [Square { side: 1.0 }, Circle { r: 1.0 }];
+  console.log(biggest([{ side: 2.0 } as Square, { side: 3.0 }]));
+  const shapes: Shape[] = [{ side: 1.0 } as Square, { r: 1.0 } as Circle];
   for (const sh of shapes) {
     console.log(sh.describe());
   }

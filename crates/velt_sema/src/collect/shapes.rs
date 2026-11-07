@@ -302,10 +302,13 @@ fn adt_shape(cx: &mut Ctx, d: DefId) {
     let env = TyEnv::new(info.module, &info.generics.names);
     let bounds = resolve_bounds(cx, &decl.generics, &env);
     let mut fields = vec![];
+    // A declared `struct` is an immutable value (#641): every field is readonly, with or
+    // without the modifier.
+    let value = kind == AdtKind::Struct && !cx.place_struct(d);
     for f in decl.fields.iter().filter(|f| !f.is_static) {
         let mut fi = field_info(cx, d, f, &env);
-        // A C struct is a value: changing one makes a new one (c_struct.rs).
-        fi.readonly |= decl.c_struct;
+        // A C struct is a value too: changing one makes a new one (c_struct.rs).
+        fi.readonly |= value || decl.c_struct;
         push_field(cx, &mut fields, fi);
     }
     let base = decl

@@ -76,18 +76,18 @@ function toDecimal(q: i64, c: u64): Shortest {
     const upin = vbl + out <= sp10 << 2;
     const wpin = (tp10 << 2) + out <= vbr;
     if (upin != wpin) {
-      return Shortest { f: upin ? sp10 : tp10, e: k };
+      return { f: upin ? sp10 : tp10, e: k };
     }
   }
   const t = s + 1;
   const uin = vbl + out <= s << 2;
   const win = (t << 2) + out <= vbr;
   if (uin != win) {
-    return Shortest { f: uin ? s : t, e: k };
+    return { f: uin ? s : t, e: k };
   }
   // Both inside: the closer one, the even one on a tie.
   const cmp = (vb as i64) - (((s + t) << 1) as i64);
-  return Shortest { f: cmp < 0 || (cmp == 0 && (s & 1) == 0) ? s : t, e: k };
+  return { f: cmp < 0 || (cmp == 0 && (s & 1) == 0) ? s : t, e: k };
 }
 
 /** The shortest digits of `x`, finite and above 0. */

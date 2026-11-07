@@ -73,8 +73,8 @@ fn interface_extends_generic_and_errors() {
 fn nested_declarations_are_hoisted_and_scoped() {
     let p = ok_src(
         "function main() { console.log(twice(2)); function twice(n: i64): i64 { return n * 2; }
-           { struct P { a: i64; } const p = P { a: 1 }; console.log(p.a); }
-           { struct P { b: string; } const q = P { b: \"x\" }; console.log(q.b); } }",
+           { struct P { a: i64; } const p = ({ a: 1 } as P); console.log(p.a); }
+           { struct P { b: string; } const q = ({ b: \"x\" } as P); console.log(q.b); } }",
     );
     func(&p, "main::twice");
     assert!(matches!(p.def(def_id(&p, "main::P")), Def::Adt(_)));

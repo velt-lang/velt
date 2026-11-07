@@ -42,10 +42,7 @@ export function upgradeWebSocket(req: Request): WebSocketUpgrade {
   try {
     const accept: HeadersInit = extended ? {} : { "sec-websocket-accept": webSocketAccept(key) };
     const up = upgradeConnection(req, "websocket", accept);
-    return WebSocketUpgrade {
-      socket: webSocketOver(up.stream, true, up.head),
-      response: up.response,
-    };
+    return { socket: webSocketOver(up.stream, true, up.head), response: up.response };
   } catch (e) {
     throw new IoError("EINVAL", "not a WebSocket upgrade request");
   }

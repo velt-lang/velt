@@ -11,7 +11,7 @@ export struct Transaction {
 
   /** The package's own: the transaction `begin()` opened on connection `handle`. */
   static fromHandle(handle: u64, depth: u32): Transaction {
-    return Transaction { handle: handle, depth: depth };
+    return { handle: handle, depth: depth };
   }
 
   async commit(): Promise<void> {

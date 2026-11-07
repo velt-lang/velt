@@ -1,0 +1,2 @@
+struct_literal_removed.velt:9:13: error: `Vec2 { … }` is not Velt: write an object literal where the type is known
+  = note: drop `Vec2` and annotate the target (`const v: Vec2 = { … }`), or write `{ … } as Vec2`

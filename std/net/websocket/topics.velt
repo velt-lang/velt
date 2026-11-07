@@ -69,7 +69,7 @@ const SLOT: u32 = 0;
 // The process's registry, made on first use: taken out of the slot and a reference put back.
 function registry(): shared<Registry> {
   velt_rt_global_lock(SLOT);
-  const ch: Channel<shared<Registry>> = Channel { handle: velt_rt_global_chan(SLOT) };
+  const ch: Channel<shared<Registry>> = { handle: velt_rt_global_chan(SLOT) };
   const found = ch.tryReceive();
   const value =
     found == null ? shared(new Mutex<Map<string, TopicRef>>(new Map<string, TopicRef>())) : found;

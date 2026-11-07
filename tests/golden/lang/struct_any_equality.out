@@ -1,0 +1,9 @@
+any copy: true
+any[]: true true 0
+map value: true
+object, unknown: true true
+Map<any>: 1 2
+Set<any>: true
+different content: false
+generic struct: true true false false
+Set<Named>: 3

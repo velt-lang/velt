@@ -1,0 +1,11 @@
+// The `Name { … }` literal is not Velt any more (#641): an object literal builds a struct where
+// its type is known.
+struct Vec2 {
+  x: number;
+  y: number;
+}
+
+function main() {
+  const v = Vec2 { x: 1, y: 2 };
+  console.log(v.x);
+}

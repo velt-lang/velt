@@ -74,7 +74,7 @@ class HttpError extends Error {
 }
 
 function fail(status: number, message: string): Response {
-  return Response.json(Failure { error: message }, { status: status });
+  return Response.json({ error: message } as Failure, { status: status });
 }
 
 // The path of `url`, an absolute URL (`http://host/path?query`).
@@ -134,7 +134,7 @@ function authenticate(req: Request, secret: u8[]): User throws HttpError {
   if (id == 0 || name == null) {
     throw new HttpError(401, "invalid token payload");
   }
-  return User { id: id, name: name };
+  return { id: id, name: name };
 }
 
 function postId(raw: string): i64 throws HttpError {
@@ -150,7 +150,7 @@ function getPost(db: Database, id: i64): Response throws HttpError | SqliteError
   if (post == null) {
     throw new HttpError(404, "post not found");
   }
-  return Response.json(OnePost { post: post });
+  return Response.json({ post: post } as OnePost);
 }
 
 async function createPost(req: Request, db: Database, user: User): Promise<Response, HttpError | SqliteError> {
@@ -171,8 +171,8 @@ async function createPost(req: Request, db: Database, user: User): Promise<Respo
   if (row == null) {
     throw new HttpError(500, "internal server error");
   }
-  const post = Post { id: row.id, body: body, created_at: row.created_at, author: user.name, like_count: 0 };
-  return Response.json(OnePost { post: post }, { status: 201 });
+  const post: Post = { id: row.id, body: body, created_at: row.created_at, author: user.name, like_count: 0 };
+  return Response.json({ post: post } as OnePost, { status: 201 });
 }
 
 function like(db: Database, user: User, id: i64): Response throws HttpError | SqliteError {
@@ -181,7 +181,7 @@ function like(db: Database, user: User, id: i64): Response throws HttpError | Sq
     throw new HttpError(404, "post not found");
   }
   const added = db.prepare(INSERT_LIKE).runWith([user.id, id]).changes == 1;
-  return Response.json(Liked { liked: true, already_liked: !added, post_id: id }, { status: added ? 201 : 200 });
+  return Response.json({ liked: true, already_liked: !added, post_id: id } as Liked, { status: added ? 201 : 200 });
 }
 
 async function route(req: Request, db: Database, writes: Database, secret: u8[], started: number): Promise<Response, HttpError | SqliteError> {
@@ -190,14 +190,14 @@ async function route(req: Request, db: Database, writes: Database, secret: u8[],
   if (method == "GET") {
     if (path == "/feed") {
       const posts: Post[] = db.prepare(SELECT_FEED).all();
-      return Response.json(Feed { posts: posts });
+      return Response.json({ posts: posts } as Feed);
     }
     if (path.startsWith("/posts/")) {
       return getPost(db, postId(path.slice(7)));
     }
     if (path == "/health") {
       db.prepare("SELECT 1").run();
-      return Response.json(Health { status: "ok", db: "ok", uptime_s: Math.floor((Date.now() - started) / 1000.0) as i64 });
+      return Response.json({ status: "ok", db: "ok", uptime_s: Math.floor((Date.now() - started) / 1000.0) as i64 } as Health);
     }
   }
   if (method == "POST") {

@@ -4,12 +4,12 @@ import { delimiterUnit } from "velt/encoding/csv/delimiter";
 import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** Options for `stringifyCsv`. */
-export struct CsvWriteOptions {
+export type CsvWriteOptions = {
   /** One ASCII character (default `,`). */
   delimiter?: string;
   /** End records with `\r\n` as RFC 4180 says (default false: `\n`). */
   crlf?: bool;
-}
+};
 
 // Whether `field` must be quoted: it contains the delimiter, a quote or a line break.
 function needsQuotes(field: string, delim: string): bool {

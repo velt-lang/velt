@@ -154,7 +154,7 @@ class RawClient {
     while (true) {
       const s = parse(this.buf, 0, false, 268435456, f);
       if (s == WHOLE) {
-        const frame = RawFrame { op: f.op, fin: f.fin, payload: this.buf.slice(f.start, f.end) };
+        const frame: RawFrame = { op: f.op, fin: f.fin, payload: this.buf.slice(f.start, f.end) };
         this.buf = this.buf.slice(f.end);
         return frame;
       }

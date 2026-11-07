@@ -48,7 +48,7 @@ struct Temperature {
   }
 
   static fromCelsius(c: f64): Temperature {
-    return Temperature { kelvin: c + Temperature.ZERO_C };
+    return { kelvin: c + Temperature.ZERO_C };
   }
 }
 

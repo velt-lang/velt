@@ -3,7 +3,7 @@
 import { Handler, Middleware } from "../types";
 
 /** The options of `cors`. */
-export struct CorsOptions {
+export type CorsOptions = {
   /** The origins allowed (default: any, answered with `*`). */
   origins?: string[];
   /** The methods a preflight allows (default: GET, HEAD, PUT, POST, PATCH, DELETE). */
@@ -16,7 +16,7 @@ export struct CorsOptions {
   credentials?: bool;
   /** How many seconds a browser may keep a preflight's answer. */
   maxAge?: number;
-}
+};
 
 /**
  * Answers CORS preflights (204) and marks other responses for the origins allowed. A request from

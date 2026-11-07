@@ -68,7 +68,7 @@ export function options(): Options {
     console.error(`invalid port: ${port}`);
     exit(2);
   }
-  return Options { host: host, port: port, template: template, staticDir: staticDir, dev: dev };
+  return { host: host, port: port, template: template, staticDir: staticDir, dev: dev };
 }
 
 const OUTLET = "<!--ssr-outlet-->";

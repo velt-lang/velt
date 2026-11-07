@@ -148,6 +148,12 @@ impl FnLower<'_, '_> {
                 self.call_rt(Rt::StrHash, vec![a], Some(Place::local(r)));
                 Operand::Copy(Place::local(r))
             }
+            // A `struct` value: its content, agreeing with `AnySame` (#641). A C struct's is
+            // below, by its number rules.
+            _ if self.cx.value_struct(ty) && !self.cx.c_struct(ty) => {
+                let a = Operand::Copy(Place::local(data));
+                self.call_glue(crate::lower::Glue::BitsHash, ty, vec![a])
+            }
             // A function or interface value: its identity.
             _ if self.cx.is_fn_or_dyn(ty) => {
                 let p = self.deref_param(data, ty);

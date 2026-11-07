@@ -198,6 +198,7 @@ mod spread_array;
 mod spread_cond;
 mod spread_optional;
 pub(crate) mod static_copy;
+mod struct_lit_removed;
 mod structured_clone;
 mod supers;
 mod symbol_keys;

@@ -102,7 +102,7 @@ async function main() {
   arr.push(3);
   console.log(nested[0].length);
   const pf: (p: P, m: Map<string, i64>) => [P, Map<string, i64>] = pair;
-  const p = P { label: "a struct label long enough to live on the heap" };
+  const p: P = { label: "a struct label long enough to live on the heap" };
   const m2 = new Map<string, i64>();
   const kept = pf(p, m2);
   m2.set("a", 1);

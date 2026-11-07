@@ -12,7 +12,7 @@ export struct Transaction {
   static begin(db: Database): Transaction {
     const nested = db.inTransaction;
     db.exec(nested ? "SAVEPOINT velt_tx" : "BEGIN");
-    return Transaction { db: db, nested: nested };
+    return { db: db, nested: nested };
   }
 
   commit() {

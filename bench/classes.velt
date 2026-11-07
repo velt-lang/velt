@@ -108,11 +108,11 @@ function main() {
   const scorers: Scorer[] = [];
   for (let i = 0; i < 1000000; i++) {
     if (i % 3 == 0) {
-      scorers.push(AddScorer { k: i % 11 });
+      scorers.push({ k: i % 11 } as AddScorer);
     } else if (i % 3 == 1) {
-      scorers.push(MulScorer { k: i % 13 + 1 });
+      scorers.push({ k: i % 13 + 1 } as MulScorer);
     } else {
-      scorers.push(XorScorer { k: i % 7 });
+      scorers.push({ k: i % 7 } as XorScorer);
     }
   }
   let acc = 1;

@@ -264,6 +264,7 @@ pub(super) fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generic
             }
         }
     }
+    super::c_sig::extern_struct_params(cx, kind, sig, &mut ps);
     super::c_sig::foreign_imports(cx, (d, kind, module), sig, &ps, &mut ret);
     let f = cx.fn_info_mut(d);
     if kind == FnKind::Extern && sig.is_system {

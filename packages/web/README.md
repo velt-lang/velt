@@ -12,16 +12,17 @@ This is a reference package, held to full quality: read it as the guide to build
 import { serve } from "http-server";
 import { App, cors, logger } from "web";
 
-struct Vars {
+type Vars = {
   user: string;
-}
+};
 
 async function main() {
   const app = new App<Vars>(() => ({ user: "anonymous" }));
   app.use(logger());
   app.use(cors());
   app.around(async (c, next) => {
-    c.vars.user = c.req.headers.get("x-user") ?? c.vars.user;
+    const user = c.req.headers.get("x-user") ?? c.vars.user;
+    c.vars.user = user;
     return await next(c);
   });
   app.get("/users/:id", async (c) => c.json({ id: c.param("id"), by: c.vars.user }));

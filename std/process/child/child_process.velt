@@ -107,5 +107,5 @@ export function spawn(program: string, args: string[] = [], opts: SpawnOptions =
   const stdio = stdioBits(opts.stdin, 0) | stdioBits(opts.stdout, 2) | stdioBits(opts.stderr, 4);
   const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, stdio);
   const handle = unwrapIo(velt_rt_child_spawn(spec));
-  return ChildProcess { pid: velt_rt_child_pid(handle), handle: handle };
+  return { pid: velt_rt_child_pid(handle), handle: handle };
 }

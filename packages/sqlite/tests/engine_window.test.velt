@@ -48,7 +48,7 @@ struct Case {
 
 const W_WINDOW_FUNCTIONS: Case[] = [
   // Window functions: ranking, values, aggregates over frames, named windows.
-  Case {
+  {
     sql:
       "SELECT id, age, row_number() OVER (ORDER BY age, id), rank() OVER w, dense_rank() OVER w FROM users WINDOW w AS (ORDER BY age) ORDER BY id",
     params: [],
@@ -62,8 +62,8 @@ const W_WINDOW_FUNCTIONS: Case[] = [
       "7,30,6,5,4",
       "8,28,4,4,3",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, user_id, row_number() OVER (PARTITION BY user_id ORDER BY created DESC) AS n FROM posts ORDER BY user_id, n",
     params: [],
@@ -79,8 +79,8 @@ const W_WINDOW_FUNCTIONS: Case[] = [
       "9,7,1",
       "7,9,1",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, percent_rank() OVER (ORDER BY created), cume_dist() OVER (ORDER BY created), ntile(3) OVER (ORDER BY id) FROM posts ORDER BY id",
     params: [],
@@ -96,8 +96,8 @@ const W_WINDOW_FUNCTIONS: Case[] = [
       "9,0.1111111111111111,0.3,3",
       "10,1.0,1.0,3",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, lag(title) OVER (ORDER BY id), lead(title, 2, '-') OVER (ORDER BY id) FROM posts ORDER BY id",
     params: [],
@@ -113,8 +113,8 @@ const W_WINDOW_FUNCTIONS: Case[] = [
       "9,'Eve','-'",
       "10,'Grace','-'",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, first_value(id) OVER w, last_value(id) OVER w, nth_value(id, 2) OVER w FROM posts WINDOW w AS (PARTITION BY user_id ORDER BY id) ORDER BY id",
     params: [],
@@ -130,8 +130,8 @@ const W_WINDOW_FUNCTIONS: Case[] = [
       "9,9,9,NULL",
       "10,3,10,10",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, sum(stars) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING), avg(stars) OVER (ORDER BY id ROWS 2 PRECEDING) FROM posts ORDER BY id",
     params: [],
@@ -147,8 +147,8 @@ const W_WINDOW_FUNCTIONS: Case[] = [
       "9,104.0,33.666666666666664",
       "10,4.0,34.666666666666664",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY created GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW EXCLUDE TIES), group_concat(id, '+') OVER (ORDER BY created RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM posts ORDER BY id",
     params: [],
@@ -164,20 +164,20 @@ const W_WINDOW_FUNCTIONS: Case[] = [
       "9,2,'3+9+2+5+6+4+7+8+10'",
       "10,2,'10'",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT user_id, count(*), sum(count(*)) OVER (ORDER BY user_id) FROM posts GROUP BY user_id ORDER BY user_id",
     params: [],
     rows: ["1,2,2", "2,2,4", "3,3,7", "5,1,8", "7,1,9", "9,1,10"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT name FROM (SELECT name, rank() OVER (ORDER BY score DESC) AS r FROM users) WHERE r <= 3 ORDER BY r",
     params: [],
     rows: ["'grace'", "'eve'", "'alice'"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, total(score) FILTER (WHERE age > 26) OVER (ORDER BY id) FROM users ORDER BY id",
     params: [],
@@ -191,8 +191,8 @@ const W_WINDOW_FUNCTIONS: Case[] = [
       "7,10000000003.5",
       "8,10000000003.6",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, user_id, row_number() OVER (PARTITION BY user_id) FROM posts",
     params: [],
     rows: [
@@ -207,18 +207,18 @@ const W_WINDOW_FUNCTIONS: Case[] = [
       "8,5,1",
       "9,7,1",
     ],
-  },
+  } as Case,
 ];
 
 const W_MIN_MAX_AND_SUMS_OVER_MOVING_FRAMES: Case[] = [
   // min() and max() over a moving frame give the latest of equal values; sums taking out a row that overflows go approximate as SQLite 3.54's.
-  Case {
+  {
     sql:
       "SELECT x, min(y) OVER (ORDER BY x ROWS BETWEEN CURRENT ROW AND 2 FOLLOWING), max(y) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM (SELECT 1 x, 5 y UNION ALL SELECT 2, 3.0 UNION ALL SELECT 3, 3 UNION ALL SELECT 4, 7 UNION ALL SELECT 5, 3 UNION ALL SELECT 6, 3.0 UNION ALL SELECT 7, 9 UNION ALL SELECT 8, 9.0) ORDER BY x",
     params: [],
     rows: ["1,3,5", "2,3,5", "3,3,7", "4,3.0,7", "5,3.0,7", "6,3.0,9", "7,9.0,9.0", "8,9.0,9.0"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT k, total(v) OVER w, avg(v) OVER w FROM kv WINDOW w AS (ORDER BY k ROWS BETWEEN 1 PRECEDING AND 2 FOLLOWING) ORDER BY k",
     params: [],
@@ -234,8 +234,8 @@ const W_MIN_MAX_AND_SUMS_OVER_MOVING_FRAMES: Case[] = [
       "'i',1.0e+300,3.3333333333333335e+299",
       "'j',1.0e+300,5.0e+299",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT x, total(y) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING AND 3 FOLLOWING) FROM (SELECT 1 x, -9223372036854775807 - 1 y UNION ALL SELECT 2, 5 UNION ALL SELECT 3, 9223372036854775807 UNION ALL SELECT 4, -1 UNION ALL SELECT 5, 1 UNION ALL SELECT 6, 4 UNION ALL SELECT 7, 6 UNION ALL SELECT 8, 6) ORDER BY x",
     params: [],
@@ -249,48 +249,52 @@ const W_MIN_MAX_AND_SUMS_OVER_MOVING_FRAMES: Case[] = [
       "7,-9.2233720368547758e+18",
       "8,-9.2233720368547758e+18",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT row_number() FROM users",
     params: [],
     rows: ["error: misuse of window function row_number()"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id FROM users WHERE rank() OVER () > 1",
     params: [],
     rows: ["error: misuse of window function rank()"],
-  },
-  Case { sql: "SELECT sum(id) OVER w FROM users", params: [], rows: ["error: no such window: w"] },
+  } as Case,
+  {
+    sql: "SELECT sum(id) OVER w FROM users",
+    params: [],
+    rows: ["error: no such window: w"],
+  } as Case,
 ];
 
 const W_FRAME_BOUNDS: Case[] = [
   // Bounds SQLite's grammar does not have, and a frame it rejects after parsing.
-  Case {
+  {
     sql: "SELECT sum(id) OVER (ROWS BETWEEN UNBOUNDED FOLLOWING AND CURRENT ROW) FROM users",
     params: [],
     rows: ["error: near \"FOLLOWING\": syntax error"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT sum(id) OVER (ROWS BETWEEN CURRENT ROW AND UNBOUNDED PRECEDING) FROM users",
     params: [],
     rows: ["error: near \"PRECEDING\": syntax error"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT sum(id) OVER (ROWS UNBOUNDED FOLLOWING) FROM users",
     params: [],
     rows: ["error: near \"FOLLOWING\": syntax error"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT sum(id) OVER (ROWS BETWEEN 1 FOLLOWING AND CURRENT ROW) FROM users",
     params: [],
     rows: ["error: unsupported frame specification"],
-  },
+  } as Case,
 ];
 
 const W_GROWING_FRAMES_AND_POSITIONS: Case[] = [
   // min()/max() from the partition's first row, and first/last/nth_value, read as the frame
   // grows or at a position in it: ties under NOCASE, FILTER, frames empty at first or past N.
-  Case {
+  {
     sql:
       "SELECT id, max(nick) OVER (ORDER BY age), min(age) FILTER (WHERE id > 2) OVER (ORDER BY id) FROM users ORDER BY id",
     params: [],
@@ -304,8 +308,8 @@ const W_GROWING_FRAMES_AND_POSITIONS: Case[] = [
       "7,'h',25",
       "8,'h',25",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, max(note) OVER (ORDER BY age ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), min(score) OVER (PARTITION BY age IS NULL ORDER BY name GROUPS BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING) FROM users ORDER BY id",
     params: [],
@@ -319,8 +323,8 @@ const W_GROWING_FRAMES_AND_POSITIONS: Case[] = [
       "7,x'00ff',-1.0",
       "8,x'00ff',-1.0",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, last_value(nick) OVER (ORDER BY age), nth_value(name, 2) OVER (ORDER BY age ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING), nth_value(score, 5) OVER (ORDER BY age), first_value(age) OVER (ORDER BY age ROWS BETWEEN 2 FOLLOWING AND UNBOUNDED FOLLOWING) FROM users ORDER BY id",
     params: [],
@@ -334,14 +338,14 @@ const W_GROWING_FRAMES_AND_POSITIONS: Case[] = [
       "7,'GRACE','grace',4.5,41",
       "8,'h','héloïse',NULL,30",
     ],
-  },
+  } as Case,
 ];
 
 const W_FRAMES_THAT_LOSE_ROWS: Case[] = [
   // min()/max() over frames that lose rows: equal values under NOCASE in sliding frames (the
   // latest equal one is the result), and 20,000 rows in a frame that shrinks and in a wide
   // sliding one (stepping each row in and out once, not scanning the frame for each row).
-  Case {
+  {
     sql:
       "SELECT id, max(nick) OVER (ORDER BY id ROWS BETWEEN 4 PRECEDING AND CURRENT ROW), min(nick) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 4 FOLLOWING), max(nick) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 5 FOLLOWING) FROM users ORDER BY id",
     params: [],
@@ -355,304 +359,304 @@ const W_FRAMES_THAT_LOSE_ROWS: Case[] = [
       "7,'GRACE','GRACE','h'",
       "8,'h','h',NULL",
     ],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "WITH RECURSIVE c(p) AS (SELECT 1 UNION ALL SELECT p + 1 FROM c WHERE p < 20000) SELECT count(*), sum(w), sum(x) FROM (SELECT min((p * 7919) % 10007) OVER (ORDER BY p ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS w, max((p * 7919) % 10007) OVER (ORDER BY p ROWS BETWEEN 2000 PRECEDING AND 2000 FOLLOWING) AS x FROM c)",
     params: [],
     rows: ["20000,52567,200072733"],
-  },
+  } as Case,
 ];
 
 const W_SUBQUERY_AGGREGATES_IN_WINDOWS: Case[] = [
   // A subquery's aggregate of a query with window functions makes it an aggregate query only in
   // the windows SQLite computes last (their terms, arguments and FILTER): the last group of
   // equal windows in the result columns, after ORDER BY's (a term naming a column copies it).
-  Case {
+  {
     sql: "SELECT (SELECT count(users.id) FROM posts), row_number() OVER () FROM users",
     params: [],
     rows: ["error: misuse of aggregate: count()"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (PARTITION BY (SELECT count(users.id) FROM posts)) FROM users",
     params: [],
     rows: ["1,1"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY (SELECT count(users.id) FROM posts)) FROM users",
     params: [],
     rows: ["1,1"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (PARTITION BY (SELECT max(users.id))) FROM users",
     params: [],
     rows: ["8,1"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER w FROM users WINDOW w AS (PARTITION BY (SELECT count(users.id) FROM posts))",
     params: [],
     rows: ["1,1"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, sum((SELECT count(users.id) FROM posts)) OVER (), count(*) FILTER (WHERE (SELECT max(users.id)) > 0) OVER () FROM users",
     params: [],
     rows: ["8,8,1"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, sum(1) OVER (), count(*) OVER (PARTITION BY (SELECT max(users.id))) FROM users",
     params: [],
     rows: ["8,1,1"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (PARTITION BY (SELECT max(users.id))), sum(1) OVER () FROM users",
     params: [],
     rows: ["error: misuse of aggregate: max()"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (PARTITION BY (SELECT max(users.id))), count(*) OVER (PARTITION BY (SELECT max(users.id))) FROM users",
     params: [],
     rows: ["error: misuse of aggregate: max()"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id), sum(1) OVER (), max((SELECT max(users.id))) OVER (ORDER BY  ID) FROM users",
     params: [],
     rows: ["error: misuse of aggregate: max()"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER w, sum(1) OVER (ORDER BY id), max((SELECT max(users.id))) OVER w FROM users WINDOW w AS (ORDER BY id)",
     params: [],
     rows: ["8,1,1,8"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (PARTITION BY (SELECT max(users.id))) FROM users ORDER BY 2",
     params: [],
     rows: ["error: misuse of aggregate: max()"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id FROM users ORDER BY count(*) OVER (PARTITION BY (SELECT max(users.id)))",
     params: [],
     rows: ["error: misuse of aggregate: max()"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT count(*), (SELECT count(users.id) FROM posts), count(*) OVER () FROM users",
     params: [],
     rows: ["error: misuse of aggregate: count()"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT age, count(*) OVER (), (SELECT count(users.id) FROM posts) FROM users GROUP BY age",
     params: [],
     rows: ["error: misuse of aggregate: count()"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT age, count(*) OVER (ORDER BY (SELECT count(users.id) FROM posts)) FROM users GROUP BY age",
     params: [],
     rows: ["NULL,4", "28,4", "35,4", "41,4", "25,6", "30,6"],
-  },
+  } as Case,
 ];
 
 const W_OFFSETS_THAT_ARE_NOT_CONSTANT: Case[] = [
   // A ROWS or GROUPS offset that is not a constant (a column or name, a function call, a
   // subquery, a window) is NULL to SQLite's parser: a frame error when rows come, before its names
   // resolve. Constant offsets are computed.
-  Case {
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id ROWS (SELECT count(users.id) FROM posts) PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER w FROM users WINDOW w AS (ORDER BY id ROWS (SELECT max(users.id)) PRECEDING)",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND (SELECT count(users.id) FROM posts) FOLLOWING) FROM users",
     params: [],
     rows: ["error: frame ending offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id GROUPS (SELECT 1) PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND id FOLLOWING) FROM users",
     params: [],
     rows: ["error: frame ending offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id ROWS abs(-1) PRECEDING), count(*) OVER (ORDER BY id ROWS ('a' LIKE 'a') PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS max(1) PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS nosuch PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS row_number() OVER () PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT age, count(*) OVER (ORDER BY age ROWS EXISTS (SELECT 1) PRECEDING) FROM users GROUP BY age",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS (SELECT 1) PRECEDING) FROM users WHERE 0",
     params: [],
     rows: [],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS -1 PRECEDING) FROM users WHERE 0",
     params: [],
     rows: [],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id ROWS BETWEEN 1 + 1 PRECEDING AND CAST('1' AS INTEGER) FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN (1) PRECEDING AND CASE WHEN 1 THEN 2 END FOLLOWING) FROM users",
     params: [],
     rows: ["1,2,3", "2,3,4", "3,4,4", "4,4,4", "5,4,4", "6,4,4", "7,4,3", "8,3,2"],
-  },
+  } as Case,
 ];
 
 const W_NON_CONSTANT_PARTS: Case[] = [
   // A non-constant part under a constant node (a cast, a minus, IS NULL) makes the offset NULL too.
-  Case {
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS CAST(id AS INTEGER) PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS -id PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND -id FOLLOWING) FROM users",
     params: [],
     rows: ["error: frame ending offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND id IS NULL FOLLOWING) FROM users",
     params: [],
     rows: ["error: frame ending offset must be a non-negative integer"],
-  },
+  } as Case,
 ];
 
 const W_OFFSET_AFFINITY: Case[] = [
   // An offset gets numeric affinity first (OP_MustBeInt): TEXT that reads as an integer is one;
   // a REAL counts only if it is an integer strictly inside i64's range.
-  Case {
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id ROWS '1' PRECEDING), count(*) OVER (ORDER BY id ROWS ' 1' PRECEDING), count(*) OVER (ORDER BY id ROWS '1 ' PRECEDING), count(*) OVER (ORDER BY id ROWS '1.0' PRECEDING), count(*) OVER (ORDER BY id ROWS '1e0' PRECEDING), count(*) OVER (ORDER BY id ROWS CAST(1 AS TEXT) PRECEDING), count(*) OVER (ORDER BY id ROWS '2' PRECEDING) FROM users WHERE id <= 4 ORDER BY id",
     params: [],
     rows: ["1,1,1,1,1,1,1,1", "2,2,2,2,2,2,2,2", "3,2,2,2,2,2,2,3", "4,2,2,2,2,2,2,3"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND '1' FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND ' 1' FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND '1.0' FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND '1e0 ' FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND CAST(1 AS TEXT) FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND '2' FOLLOWING), count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND 9.2233720368547748e18 FOLLOWING) FROM users WHERE id <= 4 ORDER BY id",
     params: [],
     rows: ["1,2,2,2,2,2,3,4", "2,2,2,2,2,2,3,3", "3,2,2,2,2,2,2,2", "4,1,1,1,1,1,1,1"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS 9223372036854775808 PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS 9223372036854775807.0 PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND 9223372036854775808 FOLLOWING) FROM users",
     params: [],
     rows: ["error: frame ending offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND 9223372036854775807.0 FOLLOWING) FROM users",
     params: [],
     rows: ["error: frame ending offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS 99999999999999999999 PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS -9223372036854775808 PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS '1.5' PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS 'abc' PRECEDING) FROM users",
     params: [],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND '' FOLLOWING) FROM users",
     params: [],
     rows: ["error: frame ending offset must be a non-negative integer"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND x'31' FOLLOWING) FROM users",
     params: [],
     rows: ["error: frame ending offset must be a non-negative integer"],
-  },
+  } as Case,
 ];
 
 // Offsets bound as parameters (TEXT here): numeric affinity applies to them as well.
 const W_BOUND_OFFSETS: Case[] = [
-  Case {
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id ROWS ? PRECEDING) FROM users WHERE id <= 4 ORDER BY id",
     params: ["1"],
     rows: ["1,1", "2,2", "3,2", "4,2"],
-  },
-  Case {
+  } as Case,
+  {
     sql:
       "SELECT id, count(*) OVER (ORDER BY id GROUPS BETWEEN CURRENT ROW AND ?1 FOLLOWING) FROM users WHERE id <= 4 ORDER BY id",
     params: [" 2"],
     rows: ["1,3", "2,3", "3,2", "4,1"],
-  },
-  Case {
+  } as Case,
+  {
     sql: "SELECT id, count(*) OVER (ORDER BY id ROWS ? PRECEDING) FROM users",
     params: ["1.5"],
     rows: ["error: frame starting offset must be a non-negative integer"],
-  },
+  } as Case,
 ];
 
 /** A value as the shell's quote mode prints it: quote(), but blobs as x'…' and Inf. */

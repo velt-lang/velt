@@ -8,13 +8,13 @@ std_handle_forge.velt:11:25: error: mismatched types
   = note: expected string | Request | URL, found f64
 std_handle_forge.velt:12:21: error: `Request.adopt` is not a static method
 std_handle_forge.velt:13:22: error: `Response.built` is not a static method
-std_handle_forge.velt:14:25: error: `handle` is private
+std_handle_forge.velt:14:26: error: `handle` is private
   = note: it can only be used inside the body of `TcpStream`
-std_handle_forge.velt:15:26: error: `handle` is private
+std_handle_forge.velt:15:27: error: `handle` is private
   = note: it can only be used inside the body of `FileReader`
-std_handle_forge.velt:16:26: error: `handle` is private
+std_handle_forge.velt:16:27: error: `handle` is private
   = note: it can only be used inside the body of `WebSocket`
-std_handle_forge.velt:16:34: error: mismatched types
+std_handle_forge.velt:16:35: error: mismatched types
   = note: expected TcpStream, found f64
 std_handle_forge.velt:17:5: error: no field `handle` on type `HttpServer`
   = note: objects have a fixed shape: fields cannot be added at runtime; use a `Map<string, V>` for dynamic keys

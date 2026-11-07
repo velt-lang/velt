@@ -28,8 +28,8 @@ value". `Intrinsic::Clone` stays and means **deep copy**: `x.clone()`, and async
 captures (§6).
 
 - **Shared values** (`Ctx::is_shared_value`): everything that is not Copy (strings, objects,
-  arrays, maps, closures, interface values, promises). Structs and object literals are
-  objects and never Copy (checkpoint D). A share of a promise is another holder of the same
+  arrays, maps, closures, interface values, promises). Object literals are objects and never
+  Copy (checkpoint D); a `struct` is a value, Copy when its fields are (§7, #641). A share of a promise is another holder of the same
   future (`velt_rt_fut_share`, rt_abi_async.md §1.2, #212).
 - **Soft moves for every shared value** (`ownership/shares.rs`, generalizing stage 1's strings):
   a move stays a move where the place is dead and becomes a share where it is used again
@@ -68,12 +68,12 @@ shares lower once. `ShareKind` (boxing/kinds.rs):
 
 | type | share | when shared |
 |---|---|---|
-| numbers, bool, literal and C-like enum types | bitwise copy | — |
+| numbers, bool, literal and C-like enum types, structs of such fields (#641) | bitwise copy | — |
 | `string` | `velt_rt_str_clone` (stage 1) | — |
 | class instance | count + 1 | the class hierarchy (by root class) gets a count in front of every object |
 | `T[]` | count + 1 | **boxed**: values become a `Ptr` to the `{ data, len, cap }` header in a counted heap block |
-| struct / object literal that is assigned somewhere (`AdtDef::assigned`), has `[Symbol.dispose]` or holds a `Mutex` | count + 1 | boxed like arrays (`Ptr` to the fields) |
-| other struct / object literal, `T \| null`, unions, tuples | field-wise share (`Glue::Share`) | parts as needed; an object type compared by identity is boxed instead |
+| object literal that is assigned somewhere (`AdtDef::assigned`), has `[Symbol.dispose]` or holds a `Mutex` | count + 1 | boxed like arrays (`Ptr` to the fields) |
+| other struct / object literal, `T \| null`, unions, tuples | field-wise share (`Glue::Share`) | parts as needed; an object type compared by identity is boxed instead (never a struct, §7) |
 | function value | env count + 1 (heap envs are always counted; a frame env is copied to the heap) | — |
 | interface value | the data's share entry in the vtable (`SLOT_SHARE`: retain counted data; data never changed in place, such as an object literal of methods, is shared part by part in a new box, so its methods keep the variables they captured) | — |
 | `shared<T>` | its own atomic count | — |
@@ -290,9 +290,9 @@ A deep copy that reaches a resource without `clone()` elsewhere (a generic `T`, 
 value's captures, an interface value's implementor) panics (glue/clone.rs). Strings keep their atomic counts (stage 1); `shared<T>` stays atomic.
 
 ## 7. Identity and the `struct` keyword
-- `==` / `!=` on objects (classes, arrays, structs, object literals, interface and function
-  values) compare **identity** (`Intrinsic::Same`, same.rs): a counted value by pointer, an
-  uncounted one by the address of its single home (a unique value lives in exactly one place).
+- `==` / `!=` on objects (classes, arrays, object literals, interface and function values)
+  compare **identity** (`Intrinsic::Same`, same.rs): a counted value by pointer, an uncounted
+  one by the address of its single home (a unique value lives in exactly one place).
   `T | null`, unions and tuples compare part by part (`Glue::Same`). An object type copied when
   shared would lose its identity, so comparing one makes it counted once it is shared.
 - Interface values compare their data pointer; comparing an interface type makes the object
@@ -301,11 +301,25 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
   (`Boxing::fn_identity`), a closure without captures gets an empty env per evaluation (a frame
   env when only borrowed by a call), so each evaluation is a new function as in JS (#365).
 - `deepEqual(a, b)` (prelude) is the structural comparison; `assertEq` uses it.
-- **Not done:** removing the `struct` keyword and migrating its ~95 declarations (std handles to
-  classes with `[Symbol.dispose]`, data structs to `type X = { … }` + `extend X`). Structs
-  already behave as objects (references, identity, never Copy), so the remaining step is syntax
-  and std API shape; it overlaps the std streams and the Velt rename, so it is left to a
-  coordinated follow-up.
+- **`struct` is an immutable value type (#641)**, the one exception to the above, replacing the
+  earlier plan to remove the keyword:
+  - Sema: every field is readonly (`collect/shapes.rs`; `p.x = …` and `this.x = …` are errors
+    with the spread fix in the note), no constructor, no `[Symbol.dispose]`, no `Name { … }`
+    literal (an object literal where the type is known, or `{ … } as Name`). A struct whose
+    fields are all Copy is Copy (`copy_types.rs`); a struct an extern takes is the caller's
+    storage (`collect/sigs.rs`: Borrow, or BorrowMut for a runtime `out`/`slot` and a system
+    function's non-`readonly` struct), never a copy.
+  - No identity: `==`, `===`, `includes` and `Map`/`Set` keys compare the content
+    (`Glue::BitsEq`): numbers by their bits (a `NaN` equals itself when its bits match, `-0` is
+    not `0`), strings by text, arrays, class objects and closures inside by identity; the hash
+    agrees (`Glue::BitsHash`). Nothing records an identity fact for a struct
+    (`note_identity`, `note_dyn_identity`), so a struct is never counted for it: stored inline
+    in locals, fields, arrays and `Map` entries.
+  - An interface value holding a struct boxes a copy (`value_to_dyn`). Its table's class id
+    word is `VALUE_IDS + TyId` (class_test.rs), so `===` on interface values compares two
+    values of one struct type by content (same.rs `dyn_values_same`), and the hash agrees.
+  - The prelude's `Mutex`, `RwLock`, `Atomic` and `ThreadLocal` are declared with `struct` to
+    be stored inline but are places, not values (`Ctx::place_struct`): none of the above applies.
 
 ## 8. Gates and accounting
 - Benchmarks: `bench/compare.ps1` (bench/, bench/async) and `bench/benchmarks-game/compare.ps1`,

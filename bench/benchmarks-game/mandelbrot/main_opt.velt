@@ -19,7 +19,7 @@ struct F64x8 {
   l7: f64;
 
   add(o: F64x8): F64x8 {
-    return F64x8 {
+    return {
       l0: this.l0 + o.l0,
       l1: this.l1 + o.l1,
       l2: this.l2 + o.l2,
@@ -32,7 +32,7 @@ struct F64x8 {
   }
 
   sub(o: F64x8): F64x8 {
-    return F64x8 {
+    return {
       l0: this.l0 - o.l0,
       l1: this.l1 - o.l1,
       l2: this.l2 - o.l2,
@@ -45,7 +45,7 @@ struct F64x8 {
   }
 
   mul(o: F64x8): F64x8 {
-    return F64x8 {
+    return {
       l0: this.l0 * o.l0,
       l1: this.l1 * o.l1,
       l2: this.l2 * o.l2,
@@ -58,7 +58,7 @@ struct F64x8 {
   }
 
   addScalar(k: f64): F64x8 {
-    return F64x8 {
+    return {
       l0: this.l0 + k,
       l1: this.l1 + k,
       l2: this.l2 + k,
@@ -71,7 +71,7 @@ struct F64x8 {
   }
 
   mulScalar(k: f64): F64x8 {
-    return F64x8 {
+    return {
       l0: this.l0 * k,
       l1: this.l1 * k,
       l2: this.l2 * k,
@@ -111,7 +111,7 @@ struct F64x8 {
 }
 
 function splat(x: f64): F64x8 {
-  return F64x8 { l0: x, l1: x, l2: x, l3: x, l4: x, l5: x, l6: x, l7: x };
+  return { l0: x, l1: x, l2: x, l3: x, l4: x, l5: x, l6: x, l7: x };
 }
 
 // The byte for 8 points c = cr + ci·i after 50 iterations; `lastByte` 0 allows the early exit.
@@ -146,7 +146,7 @@ function main() {
   for (let i = 0; i < size / 8; i++) {
     const x = (i * 8) as f64;
     xs.push(
-      F64x8 {
+      ({
         l0: x,
         l1: x + 1.0,
         l2: x + 2.0,
@@ -155,7 +155,7 @@ function main() {
         l5: x + 5.0,
         l6: x + 6.0,
         l7: x + 7.0,
-      }
+      } as F64x8)
         .mulScalar(inv)
         .addScalar(-1.5),
     );

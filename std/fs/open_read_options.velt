@@ -6,9 +6,9 @@
  * `bytes=0-9`). Reading stops at the end of the file, so an `end` past it reads to the end and
  * a `start` past it reads nothing; so does an `end` before `start`.
  */
-export struct OpenReadOptions {
+export type OpenReadOptions = {
   /** The first byte to read (default 0). */
   start?: u64;
   /** The last byte to read, included (default: the last byte of the file). */
   end?: u64;
-}
+};

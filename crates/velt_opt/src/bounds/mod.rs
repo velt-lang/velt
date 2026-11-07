@@ -174,9 +174,17 @@ fn thread_bool_copies(func: &mut Function) -> bool {
 }
 
 /// The branches whose comparison is decided, and to what.
+/// Most blocks times tracked locals the analysis takes on.
+const MAX_WORK: usize = 50_000;
+
 fn analyse(aggs: &[AggLayout], func: &Function) -> Vec<(usize, bool)> {
     let n = func.blocks.len();
     let tracked = tracked_locals(func);
+    // Each visit meets states of up to one value per tracked local: past this size the
+    // analysis costs more compile time than its decisions are worth.
+    if n * tracked.iter().filter(|t| **t).count() > MAX_WORK {
+        return vec![];
+    }
     let cx = Cx {
         func,
         frozen: frozen_fields(aggs, func),

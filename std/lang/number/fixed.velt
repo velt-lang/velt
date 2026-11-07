@@ -127,7 +127,7 @@ export struct DecimalText {
 export function decimalText(neg: bool, n: u64, digits: i64): DecimalText {
   const d = intWords(n, false);
   const k = d.len as i64;
-  let t = Text { w0: d.w0, w1: d.w1, w2: d.w2, w3: 0 };
+  let t: Text = { w0: d.w0, w1: d.w1, w2: d.w2, w3: 0 };
   let len = k;
   if (digits > 0) {
     if (k > digits) {
@@ -136,16 +136,16 @@ export function decimalText(neg: bool, n: u64, digits: i64): DecimalText {
     } else {
       // `0.`, zeros, then the digits.
       const p = 2 + digits - k;
-      const zeros = between(Text { w0: 0, w1: 0, w2: 0, w3: 0 }, 0, p, ZEROS);
+      const zeros = between({ w0: 0, w1: 0, w2: 0, w3: 0 }, 0, p, ZEROS);
       // Byte 1 of the zeros becomes the point.
-      const head = Text { w0: zeros.w0 ^ ((0x30 ^ DOT) << 8), w1: zeros.w1, w2: zeros.w2, w3: 0 };
+      const head: Text = { w0: zeros.w0 ^ ((0x30 ^ DOT) << 8), w1: zeros.w1, w2: zeros.w2, w3: 0 };
       t = or(moved(t, p), head);
       len = k + p;
     }
   }
   if (neg) {
-    t = or(shift(t, 1), Text { w0: MINUS, w1: 0, w2: 0, w3: 0 });
+    t = or(shift(t, 1), { w0: MINUS, w1: 0, w2: 0, w3: 0 });
     len++;
   }
-  return DecimalText { t, len };
+  return { t, len };
 }

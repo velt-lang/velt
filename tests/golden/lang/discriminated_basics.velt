@@ -155,7 +155,7 @@ function main() {
   console.log(JSON.stringify(shapes));
 
   const outcomes: Outcome[] = [
-    Ok { kind: "ok", value: 7 },
+    ({ kind: "ok", value: 7 } as Ok),
     { kind: "fail", code: 404, reason: "missing" },
   ];
   for (const o of outcomes) {

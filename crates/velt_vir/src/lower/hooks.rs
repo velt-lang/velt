@@ -86,6 +86,12 @@ impl FnLower<'_, '_> {
         }
         let f = self.cx.func_for_direct(m, targs, self.mode);
         let abi = self.cx.ret_abi(ret, None);
+        if let Some(reg) = abi.reg {
+            let d = self.temp(Ty::V128);
+            self.call(vir::Callee::Func(f), args, Some(Place::local(d)), false);
+            let v = self.reg_value(d, reg);
+            return (Place::local(v), ret);
+        }
         if let Some(out) = abi.out {
             let tmp = self.temp(out);
             let a = self.addr(Place::local(tmp));

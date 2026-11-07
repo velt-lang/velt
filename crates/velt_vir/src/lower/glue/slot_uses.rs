@@ -26,8 +26,7 @@ use crate::vir::{
     Callee, Const, FuncId, Function, Linkage, Operand, Rvalue, StaticId, Stmt, Terminator,
 };
 
-/// Number of hidden slots in front of slot 0 (glue/vtable.rs `HIDDEN`).
-const HIDDEN: i128 = 7;
+use super::vtable::HIDDEN;
 
 /// The slots whose entries are pruned when unused.
 const PRUNED: [i128; 3] = [SLOT_CLONE, SLOT_FORMAT, SLOT_TRANSFER];

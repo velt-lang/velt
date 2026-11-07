@@ -36,7 +36,7 @@ export function between(t: Text, lo: i64, hi: i64, fill: u64): Text {
   const m1 = lowBytes(hi - 8) & ~lowBytes(lo - 8);
   const m2 = lowBytes(hi - 16) & ~lowBytes(lo - 16);
   const m3 = lowBytes(hi - 24) & ~lowBytes(lo - 24);
-  return Text {
+  return {
     w0: (t.w0 | fill) & m0,
     w1: (t.w1 | fill) & m1,
     w2: (t.w2 | fill) & m2,
@@ -48,7 +48,7 @@ export function between(t: Text, lo: i64, hi: i64, fill: u64): Text {
 export function shift(t: Text, p: i64): Text {
   const s = (p * 8) as u64;
   const r = 63 - s;
-  return Text {
+  return {
     w0: t.w0 << s,
     w1: (t.w1 << s) | ((t.w0 >> 1) >> r),
     w2: (t.w2 << s) | ((t.w1 >> 1) >> r),
@@ -62,7 +62,7 @@ export function placed(word: u64, at: i64): Text {
   const lo = word << s;
   const hi = (word >> 1) >> (63 - s);
   const j = at >> 3;
-  return Text {
+  return {
     w0: j == 0 ? lo : 0,
     w1: j == 1 ? lo : j == 0 ? hi : 0,
     w2: j == 2 ? lo : j == 1 ? hi : 0,
@@ -72,21 +72,27 @@ export function placed(word: u64, at: i64): Text {
 
 /** The bytes of `a` and of `b` together (each byte set in at most one of them). */
 export function or(a: Text, b: Text): Text {
-  return Text { w0: a.w0 | b.w0, w1: a.w1 | b.w1, w2: a.w2 | b.w2, w3: a.w3 | b.w3 };
+  return { w0: a.w0 | b.w0, w1: a.w1 | b.w1, w2: a.w2 | b.w2, w3: a.w3 | b.w3 };
 }
 
 /** `t` with byte `b` inserted at `at`: the bytes from `at` on move one place. */
 export function insert(t: Text, at: i64, b: u64): Text {
+  // The bytes before `at`, and the others (`t` without them), moved one place.
   const head = between(t, 0, at, 0);
-  const tail = shift(between(t, at, 32, 0), 1);
-  return or(or(head, tail), placed(b, at));
+  const rest: Text = {
+    w0: t.w0 ^ head.w0,
+    w1: t.w1 ^ head.w1,
+    w2: t.w2 ^ head.w2,
+    w3: t.w3 ^ head.w3,
+  };
+  return or(or(head, shift(rest, 1)), placed(b, at));
 }
 
 /** `t`'s bytes `p` (0 to 31) places later; those past byte 31 are dropped. */
 export function moved(t: Text, p: i64): Text {
   let u = t;
   for (let w = p >> 3; w > 0; w--) {
-    u = Text { w0: 0, w1: u.w0, w2: u.w1, w3: u.w2 };
+    u = { w0: 0, w1: u.w0, w2: u.w1, w3: u.w2 };
   }
   return shift(u, p & 7);
 }

@@ -24,10 +24,10 @@ const MAX_EXPONENT_ROUND_TO_EVEN: i64 = 23;
 /** The double nearest `w * 10^q` (`w` nonzero, at most 19 digits). */
 export function decide(w: u64, q: i64): Lemire {
   if (w == 0 || q < POW5_SMALLEST) {
-    return Lemire { ok: true, value: 0 };
+    return { ok: true, value: 0 };
   }
   if (q > POW5_LARGEST) {
-    return Lemire { ok: true, value: Infinity };
+    return { ok: true, value: Infinity };
   }
   // Normalize the mantissa so its top bit is set.
   const lz = velt_rt_math_clz64(w);
@@ -48,7 +48,7 @@ export function decide(w: u64, q: i64): Lemire {
   }
   if (lo == 0xffffffffffffffff && (q < -27 || q > 55)) {
     // Ambiguous: the exact product may be just past a rounding boundary.
-    return Lemire { ok: false, value: 0 };
+    return { ok: false, value: 0 };
   }
   const upper = hi >> 63;
   let mantissa = hi >> (upper + 64 - (MANTISSA_BITS as u64) - 3);
@@ -56,13 +56,13 @@ export function decide(w: u64, q: i64): Lemire {
   if (power2 <= 0) {
     // Subnormal (or zero).
     if (-power2 + 1 >= 64) {
-      return Lemire { ok: true, value: 0 };
+      return { ok: true, value: 0 };
     }
     mantissa = mantissa >> ((-power2 + 1) as u64);
     mantissa += mantissa & 1;
     mantissa = mantissa >> 1;
     power2 = mantissa < ((1 as u64) << (MANTISSA_BITS as u64)) ? 0 : 1;
-    return Lemire { ok: true, value: f64.fromBits(mantissa | ((power2 as u64) << 52)) };
+    return { ok: true, value: f64.fromBits(mantissa | ((power2 as u64) << 52)) };
   }
   // A product exactly halfway: round to even.
   if (
@@ -82,9 +82,9 @@ export function decide(w: u64, q: i64): Lemire {
   }
   mantissa = mantissa & ~((1 as u64) << (MANTISSA_BITS as u64));
   if (power2 >= INFINITE_POWER) {
-    return Lemire { ok: true, value: Infinity };
+    return { ok: true, value: Infinity };
   }
-  return Lemire { ok: true, value: f64.fromBits(mantissa | ((power2 as u64) << 52)) };
+  return { ok: true, value: f64.fromBits(mantissa | ((power2 as u64) << 52)) };
 }
 
 // floor(log2(10^q)) + 63, exact for q in the table's range.
