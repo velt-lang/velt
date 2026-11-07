@@ -7,6 +7,7 @@
 // `callOn`, and `call` (`[THIS_FN_APPLY]`), `apply` and `bind` (`[THIS_FN_BIND]`) below; a plain call `f(x)`
 // passes `undefined`. `typeof` is `"function"`.
 
+import { anyIsList } from "velt/lang/intrinsics";
 import { anyArgList } from "velt/lang/hooks/any_ops";
 import { THIS_FN_APPLY, THIS_FN_BIND } from "velt/lang/hooks/keys";
 
@@ -54,6 +55,15 @@ export class ThisFn {
     if (args == null) {
       return this[THIS_FN_APPLY](self, []);
     }
+    if (anyIsList(args) && !this.#ownsArguments) {
+      const held: any[] = args;
+      return this[THIS_FN_APPLY](self, held);
+    }
+    return this.#applyRead(self, args);
+  }
+
+  // `apply` of a list to read, or to copy for a body that uses `arguments`.
+  #applyRead(self: any, args: any): any {
     const list = anyArgList(args);
     return this[THIS_FN_APPLY](self, this.#ownsArguments ? list.slice() : list);
   }
