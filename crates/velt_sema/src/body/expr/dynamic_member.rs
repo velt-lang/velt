@@ -25,6 +25,23 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// The list of `f.apply(self, list)`, read at the call (`anyApplyList`).
+    fn apply_list(&mut self, f: hir::Expr, list: hir::Expr, any: TyId, span: Span) -> hir::Expr {
+        // A typed array's elements (`any` reads none yet), in a program that has them.
+        let typed = velt_common::std_hook!(typed_apply_list);
+        let list = if self.cx.prelude_fn(typed).is_some() {
+            hooks::typed_apply_list(ty::Any::of(list)).emit(self, any, span)
+        } else {
+            list
+        };
+        let call = if self.uses_proxy() {
+            hooks::proxy_apply_list(ty::Any::of(f), ty::Any::of(list))
+        } else {
+            hooks::any_apply_list(ty::Any::of(f), ty::Any::of(list))
+        };
+        call.emit(self, any, span)
+    }
+
     /// The receiver `obj` of a dynamic member access (`member`: the member read or called,
     /// `Some(None)` for a computed key, `None` for a call of `obj` itself): `Ok(any type)` for an `any` (and a `Function`
     /// called), `Err(obj)` for anything else. An `unknown`, an `object` and a member of a
@@ -368,6 +385,28 @@ impl FnCx<'_, '_> {
         if user && prop.name == "apply" && args.len() == 2 && !spread {
             // `f.apply(self, list)`: the list is read here, where an error can be caught, not in
             // the slot, which ends the process on one (`anyApplyList`).
+            // A receiver that nothing here can change is read twice, not held: that share and
+            // its drop are most of the cost of an `apply` in a function.
+            let simple = |a: &ast::Expr| {
+                matches!(
+                    a.kind,
+                    ast::ExprKind::Ident(_) | ast::ExprKind::This | ast::ExprKind::Lit(_)
+                )
+            };
+            if crate::body::places::is_path(&recv) && args.iter().all(simple) {
+                let Some(mut boxed) = self.dynamic_args(args, any, false) else {
+                    return Ok(self.error_expr(span));
+                };
+                let (Some(list), Some(first)) = (boxed.pop(), boxed.pop()) else {
+                    return Ok(self.error_expr(span));
+                };
+                let mut recv = recv;
+                set_place_mode(&mut recv, hir::UseMode::Borrow);
+                let list = self.apply_list(recv.clone(), list, any, span);
+                self.note_any_call();
+                let all = vec![recv, key, text, first, list];
+                return Ok(self.intrinsic(Intrinsic::AnyCall, all, any, span));
+            }
             let recv = self.share_if_place(recv);
             return Ok(self.with_temp("<apply>", recv, span, span, |lw, f| {
                 let Some(mut boxed) = lw.dynamic_args(args, any, false) else {
@@ -376,23 +415,8 @@ impl FnCx<'_, '_> {
                 let (Some(list), Some(first)) = (boxed.pop(), boxed.pop()) else {
                     return lw.error_expr(span);
                 };
-                // A typed array's elements (`any` reads none yet), in a program that has them.
-                let list = if lw
-                    .cx
-                    .prelude_fn(velt_common::std_hook!(typed_apply_list))
-                    .is_some()
-                {
-                    hooks::typed_apply_list(ty::Any::of(list)).emit(lw, any, span)
-                } else {
-                    list
-                };
                 let held = lw.expr(f, None, Want::Borrow);
-                let call = if lw.uses_proxy() {
-                    hooks::proxy_apply_list(ty::Any::of(held), ty::Any::of(list))
-                } else {
-                    hooks::any_apply_list(ty::Any::of(held), ty::Any::of(list))
-                };
-                let list = call.emit(lw, any, span);
+                let list = lw.apply_list(held, list, any, span);
                 lw.note_any_call();
                 let recv = lw.expr(f, None, Want::Borrow);
                 let all = vec![recv, key, text, first, list];

@@ -51,7 +51,14 @@ export function anyArgList(args: any): any[] {
 
 /** The list of `f.apply(self, list)`, read before the call. Another `apply` keeps its argument. */
 export function anyApplyList(f: any, list: any): any {
-  if (anyIsList(list) || typeof f !== "function" || list == null) {
+  if (anyIsList(list)) {
+    return list;
+  }
+  return anyApplyOther(f, list);
+}
+
+function anyApplyOther(f: any, list: any): any {
+  if (typeof f !== "function" || list == null) {
     return list;
   }
   return anyArgList(list);
