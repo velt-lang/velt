@@ -221,16 +221,26 @@ path checked as the first URL, not its query, which is the server's, such as a s
 signed one; plain `http` only after `http`; a `Location` absolute only when it starts with a
 scheme, otherwise resolved; no fragment sent; at most `MAX_ARCHIVE` = 512 MiB read) unless
 `<cache>/url/<sha256>/` holds it for this URL, checks the SHA-256 of the bytes, extracts it there
-with `vpm::extract` (`extract::write_then`; a concurrent install's equal tree is taken), and
+with `vpm::extract` (`extract::write_then`), and
 records in `<sha256>.verified` the raw tree's checksum, each URL whose bytes hashed to it, and its
 links, before the tree is renamed into place, so a raw tree never lacks its record. One found
 without (from before records, or the record removed) is replaced only once this URL's bytes are
 downloaded, checked and extracted (`extract::Place::Replace`: the old tree moved aside in one
 rename). A cache hit from a URL not recorded downloads and checks once (the raw tree is keyed by
 hash alone, and `allowNative` matches the URL as written); without a lock, a cached raw tree is
-read in full against the recorded checksum, so a changed tree never reaches a new lock. The
-extractor refuses `.git` in any spelling, and a directory git would take for a repository by its
-contents (`HEAD` with `objects` and `refs`, or with `commondir`) under any name. Then it goes
+read in full against the recorded checksum, so a changed tree never reaches a new lock. All but a
+hit for this URL run under the archive's lock (`<sha256>.lock`, `url_source::lock_raw`) and look
+at the cache again once they hold it: a concurrent install waits for the first one's tree, and no
+recorded URL is lost. Staging directories a killed extraction left beside the tree
+(`.<name>.partial-…`) are removed by the next extraction there once a week old. The extractor
+refuses `.git` in any spelling, a directory git would take for a repository by its contents
+(`HEAD` with `objects` and `refs`, or with `commondir`) under any name, a name over 255 bytes,
+Windows short names (`A~B~CD~1` too) and device names (`CLOCK$` too), names that differ only by
+case, normalisation or a code point HFS+ ignores (`extract::names::clash_key`), and a gzip stream
+of more than 1,024 members holding under 4 KiB each on average (`extract::tar::Members`). A query
+parameter named like a credential (`token`, `sig`, `X-Amz-Signature`, …) gets a warning
+(`url_source::credential_warning`), once, when the lock first records the URL: it is written to
+the manifest and the lock. Then it goes
 `strip` levels down (each the only entry at its level) and into `path`, which must stay inside;
 `git::check_links` checks that directory's links again from it. The lock's `source` is
 `url+<url>[?strip=n][&path=…]#sha256:<hex>` (`UrlSpec::source`/`parse_source`, `&=#?%` escaped),
@@ -242,7 +252,9 @@ never outside it. Native code builds only with `VELT_NATIVE_FROM_SOURCE=1`, from
 with only `url`. A tree without `package.velt` is an error (no npm sources from archives yet).
 `velt add <url> [--path <dir>]` (`url_source::entry_for`) downloads once and writes `{ url, sha256,
 strip?, path? }` under the package's own name, refusing to replace an entry of that name from
-another source or hash (`url_source::check_replace`).
+another source or hash (`url_source::check_replace`), and prints the install's warnings. Any
+`<scheme>://` argument is a URL: `http`/`https` in another case reaches `check_url`'s "lowercase"
+error, another scheme is refused by the CLI, never looked up in the registry.
 
 **Fetched trees** (git checkouts, archives' package directories) are checked against the lock's
 checksum through a stamp in `<cache>/stamps/` (`vpm::tree_stamp`): the checksum with fingerprints
@@ -251,8 +263,9 @@ of now. `InstallOptions::tree_check` says how much is looked at:
 - `TreeCheck::Files` (`velt install`, `update`, `add`, the default): every entry's name, type,
   size, mtime and, on Unix, ctime; the tree is read in full when they differ.
 - `TreeCheck::Directories` (a build, `Project::open`): only the directories' times, so a file
-  added, removed or renamed is seen but an edit in place is not. When the build is no longer a
-  no-op, the driver runs `PackageGraph::verify_fetched` (every file) before compiling.
+  added, removed or renamed is seen but an edit in place is not. Whenever the program is loaded
+  again (a build that is no longer a no-op, `velt check`), the driver runs
+  `PackageGraph::verify_fetched` (every file) first.
 - `TreeCheck::Bytes` (`velt install --locked`): every byte, whatever a stamp says.
 
 A changed tree's error names what to delete to fetch it again: the git checkout, or for an

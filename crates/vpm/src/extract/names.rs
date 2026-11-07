@@ -10,6 +10,9 @@ use icu_normalizer::ComposingNormalizerBorrowed;
 const MAX_PATH: usize = 4096;
 /// The most segments a path may have.
 const MAX_DEPTH: usize = 128;
+/// The longest name (one segment) accepted, in bytes: what ext4 and APFS hold (in UTF-8), and
+/// within NTFS's 255 UTF-16 units. A longer one would fail only when written.
+const MAX_NAME: usize = 255;
 
 /// `raw` as a `/`-separated relative path: `None` for the archive's root (`./`), `Err` with the
 /// reason it is refused. `.` segments and a trailing `/` (a directory) are dropped.
@@ -42,6 +45,11 @@ pub(super) fn clean(raw: &str) -> Result<Option<String>, String> {
 
 /// `Err` unless `name` is a file name every OS holds the same way.
 fn check_segment(name: &str) -> Result<(), String> {
+    if name.len() > MAX_NAME {
+        return Err(format!(
+            "a name longer than {MAX_NAME} bytes (no common filesystem holds one)"
+        ));
+    }
     if let Some(c) = name.chars().find(|c| c.is_control()) {
         return Err(match c {
             '\0' => "a NUL in a name".to_string(),
@@ -62,6 +70,11 @@ fn check_segment(name: &str) -> Result<(), String> {
         return Err(
             "a name ending in a dot or a space (Windows drops them, so it is another file there)"
                 .to_string(),
+        );
+    }
+    if name.chars().all(is_hfs_ignorable) {
+        return Err(
+            "a name of only code points macOS ignores (it is an empty name there)".to_string(),
         );
     }
     if is_dot_git(name) {
@@ -92,11 +105,10 @@ fn is_dot_git(name: &str) -> bool {
     git_key(name) == ".git"
 }
 
-/// `name` as git compares it on HFS+, NTFS and APFS: the code points HFS+ ignores removed, then
-/// [`clash_key`].
+/// `name` as git compares it on HFS+, NTFS and APFS: [`clash_key`], which drops the code points
+/// HFS+ ignores.
 fn git_key(name: &str) -> String {
-    let kept: String = name.chars().filter(|c| !is_hfs_ignorable(*c)).collect();
-    clash_key(&kept)
+    clash_key(name)
 }
 
 /// `Err` if a directory among `paths` (and the archive's root) would be a git repository by its
@@ -151,11 +163,12 @@ fn is_hfs_ignorable(c: char) -> bool {
         '\u{200c}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{206a}'..='\u{206f}' | '\u{feff}')
 }
 
-/// A name in the form Windows gives long names as their second, short name: up to six characters,
-/// `~`, digits, and an extension of up to three (`PROGRA~1`, `ABCDEF~1.TXT`).
+/// A name in the form Windows gives long names as their second, short name: up to six characters
+/// (which may hold `~` themselves: `A~B~CD~1`), `~`, digits, and an extension of up to three
+/// (`PROGRA~1`, `ABCDEF~1.TXT`).
 fn is_short_name(name: &str) -> bool {
     let (base, ext) = name.split_once('.').unwrap_or((name, ""));
-    let Some((stem, digits)) = base.split_once('~') else {
+    let Some((stem, digits)) = base.rsplit_once('~') else {
         return false;
     };
     (1..=6).contains(&stem.chars().count())
@@ -170,7 +183,7 @@ fn is_device_name(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
     let upper = stem.to_ascii_uppercase();
     match upper.as_str() {
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" => true,
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" | "CLOCK$" => true,
         _ => {
             let (Some(prefix), Some(digit)) = (upper.get(..3), upper.get(3..)) else {
                 return false;
@@ -203,15 +216,20 @@ pub(super) fn check_link_target(target: &str) -> Result<(), String> {
     Err(why.to_string())
 }
 
-/// The same string for two paths that macOS or Windows would take for one file: the path in
-/// Unicode normalisation form C, case-folded. Uppercasing before lowercasing folds what
+/// The same string for two paths that macOS or Windows would take for one file: the path with the
+/// code points HFS+ ignores removed (`a\u{200c}b` is `ab` there, so a link through one spelling
+/// reaches the other), in Unicode normalisation form C, case-folded. Uppercasing before lowercasing folds what
 /// lowercasing alone keeps apart (`ſ` and `s`, `ς` and `σ`, which APFS takes for one name), and
 /// a second round folds what one round leaves apart (`ẞ` lowercases to `ß`, which uppercases to
 /// `SS`). Writing never goes through what is on disk (`write_into`), so a fold this misses is
 /// an error, not an escape.
 pub(super) fn clash_key(path: &str) -> String {
     const NFC: ComposingNormalizerBorrowed<'static> = ComposingNormalizerBorrowed::new_nfc();
-    let once = NFC.normalize(path).to_uppercase().to_lowercase();
+    let kept: std::borrow::Cow<str> = match path.chars().any(is_hfs_ignorable) {
+        true => path.chars().filter(|c| !is_hfs_ignorable(*c)).collect(),
+        false => path.into(),
+    };
+    let once = NFC.normalize(&kept).to_uppercase().to_lowercase();
     let twice = once.to_uppercase().to_lowercase();
     NFC.normalize(&twice).into_owned()
 }

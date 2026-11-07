@@ -55,6 +55,8 @@ pub fn add_url(url: &str, path: Option<String>) -> Result<(), String> {
         ..Default::default()
     };
     let installed = edit_and_install(&project_root, &loc, &name, &spec)?;
+    // The resolution's warnings: a credential in the URL's query, links on Windows.
+    warn_yanked(&installed);
     style::status("Adding", &format!("`{name}` from {}", found.url));
     let strip = match found.strip {
         0 => String::new(),

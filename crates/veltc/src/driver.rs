@@ -295,12 +295,15 @@ fn load_stage(
     Ok(loaded)
 }
 
-/// Load and parse the program, recovering from syntax errors (they are in the session).
+/// Load and parse the program, recovering from syntax errors (they are in the session). The
+/// fetched packages are checked first ([`stamp::check_fetched`]): every build that compiles and
+/// every `velt check` comes here.
 fn load_modules(
     sess: &mut Session,
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<loader::Loaded, BuildError> {
+    stamp::check_fetched(opts).map_err(BuildError::Failed)?;
     let t = Instant::now();
     let load = load_options(sess.generator_build, opts, scope);
     let loaded = loader::load_program(&mut sess.sm, &opts.input, load, &mut sess.diagnostics)
@@ -628,7 +631,6 @@ fn build_on_current_thread(
         link_stage(sess, opts, &target, objects, paths)?;
         return Ok(Artifact::Executable(paths.executable.clone()));
     }
-    stamp::check_fetched(opts).map_err(BuildError::Failed)?;
     // What module resolution looked at, for the stamp.
     let (program, seen) = match &stamped {
         Some(_) => vpm::probe::record_reusing(known, || {

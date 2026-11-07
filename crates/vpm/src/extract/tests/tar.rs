@@ -119,6 +119,42 @@ fn concatenated_gzip_members_are_one_stream() {
 }
 
 #[test]
+fn a_flood_of_small_gzip_members_is_refused_and_many_large_ones_are_not() {
+    let tar = TarBuilder::default().file("a", b"1").tar();
+    // Thousands of empty members after the archive: each costs fixed work and gives nothing.
+    let mut flood = gz(&tar);
+    let empty = gz(b"");
+    for _ in 0..3000 {
+        flood.extend(&empty);
+    }
+    refused(&flood, "gzip members, holding less than 4096 bytes each");
+    // A member per 512-byte block, past the free count: too little each.
+    let blocks = TarBuilder::default()
+        .file("big", &vec![7; 1100 * 512])
+        .tar();
+    let per_block: Vec<u8> = blocks.chunks(512).flat_map(gz).collect();
+    refused(&per_block, "gzip members");
+    // `bgzip`-sized members (64 KiB of output each) pass, however many there are. The bytes
+    // vary, so no member compresses past the ratio limit.
+    let mut x: u32 = 1;
+    let noise: Vec<u8> = (0..1100 * 65536)
+        .map(|_| {
+            x = x.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            (x >> 24) as u8
+        })
+        .collect();
+    let big = TarBuilder::default().file("big", &noise).tar();
+    let bgzf: Vec<u8> = big.chunks(65536).flat_map(gz).collect();
+    assert_eq!(nodes(&bgzf).len(), 1);
+    // Exactly the 4 KiB each that the limit allows: the bound isn't "under or equal".
+    let at_limit = TarBuilder::default()
+        .file("big", &noise[..1100 * 4096])
+        .tar();
+    let at_limit: Vec<u8> = at_limit.chunks(4096).flat_map(gz).collect();
+    assert_eq!(nodes(&at_limit).len(), 1);
+}
+
+#[test]
 fn archives_from_the_tar_crate_read_back() {
     // What GNU tar, bsdtar and git archive write is built by `tar` here: ustar and GNU headers,
     // long names, links.

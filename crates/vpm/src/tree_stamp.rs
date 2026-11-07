@@ -15,8 +15,9 @@
 //! A build looks only at the tree's directories ([`TreeCheck::Directories`]): their times change
 //! when a file is added, removed or renamed, and checking them costs a few `stat` calls where
 //! every file's costs one per file (+39% on a no-op build with a Vue-sized dependency, against a
-//! ±3% budget). An edit in place is then caught once the build is no longer a no-op, before it
-//! compiles anything ([`crate::PackageGraph::verify_fetched`], every file), and by `velt install`,
+//! ±3% budget). An edit in place is then caught whenever the program is loaded again, by a build
+//! that is no longer a no-op and by `velt check`, before anything is read
+//! ([`crate::PackageGraph::verify_fetched`], every file), and by `velt install`,
 //! `update` and `add`, which look at every file; `velt install --locked` reads every byte
 //! ([`TreeCheck::Bytes`]). An edit to a file the program never reads leaves a no-op build a
 //! no-op. Stamps live outside the trees (`<cache>/stamps/`), so they are never part of what they
@@ -193,9 +194,9 @@ fn stamp_path_in(cache: &Path, dir: &Path) -> PathBuf {
 }
 
 /// A fetched tree (a git checkout, an archive's package directory) with the checksum its lock
-/// holds, which a build checks file by file once it is no longer a no-op ([`Fetched::verify`]):
-/// a build that isn't one reads files again anyway, and then an edit in place must not reach
-/// it. A no-op build looks only at directories ([`TreeCheck::Directories`]).
+/// holds, checked file by file whenever the program is loaded again ([`Fetched::verify`]): that
+/// reads files anyway, and an edit in place must not reach it. A no-op build looks only at
+/// directories ([`TreeCheck::Directories`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Fetched {
     pub dir: PathBuf,

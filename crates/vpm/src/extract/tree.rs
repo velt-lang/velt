@@ -249,8 +249,10 @@ struct Walk {
 
 impl Walk {
     fn push(&mut self, segment: &str) {
+        // By the segments so far, not the key: a segment's key can be empty.
+        let first = self.starts.is_empty();
         self.starts.push(self.key.len());
-        if !self.key.is_empty() {
+        if !first {
             self.key.push('/');
         }
         if segment.is_ascii() {
@@ -321,6 +323,7 @@ mod walk_tests {
     #[test]
     fn a_walks_key_is_the_paths_key() {
         let segments = [
+            "\u{200c}",
             "Src",
             "caf\u{e9}",
             "Cafe\u{301}",
@@ -334,7 +337,7 @@ mod walk_tests {
             assert_eq!(walk.key, clash_key(&segments[..=i].join("/")));
         }
         assert!(walk.pop() && walk.pop());
-        assert_eq!(walk.key, clash_key(&segments[..4].join("/")));
+        assert_eq!(walk.key, clash_key(&segments[..5].join("/")));
         while walk.pop() {}
         assert_eq!(walk.key, "");
     }
