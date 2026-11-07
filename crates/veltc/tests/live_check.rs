@@ -45,6 +45,10 @@ fn the_check_changes_no_vir() {
         "tests/golden/lang/iface_any_args_optional_array_field.velt",
         "tests/golden/lang/hook_shapes.velt",
         "tests/golden/lang/interface_upcast_write.velt",
+        // The record hooks, found needed with no `Record` value in live code: without them live,
+        // what they call stays a stub. A unit test can't show it: its loader loads their module
+        // up front.
+        "tests/golden/lang/string_of_object_union.velt",
     ] {
         assert!(vir(golden, "0") == vir(golden, "1"), "{golden}");
     }

@@ -154,6 +154,13 @@ fn each_construct_is_found_where_live_code_has_it() {
             &[TextInt, TextUint, Format],
         ),
         (
+            "text of a type parameter's member type: an operation on it, which only the \
+             conversion marks (a `T` itself is also converted to an `any`, which formats)",
+            "function t<T extends { x: i64 }>(v: T[\"x\"]): string { return `${v}`; }\n\
+             function main() { const s = t<{ x: i64 }>(1); if (s == \"\") { return; } }",
+            &[TextInt, TextUint, Format],
+        ),
+        (
             "a promise that may reject with an integer, with no `throws` written on a function",
             "function f(p: Promise<string, i32>) { }\nfunction main() { }",
             &[Format],
