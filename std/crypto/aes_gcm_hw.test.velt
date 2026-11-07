@@ -9,7 +9,13 @@ import { u8x16 } from "velt/simd";
 import { describe, expect, it } from "velt/test";
 import { AesGcm } from "velt/crypto/aes_gcm";
 import { aesCtrInPlace, aesExpandKey } from "velt/crypto/aes_ctr";
-import { aesRoundKeys, hashPowers, partial } from "velt/crypto/aes_gcm_hw";
+import {
+  aesRoundKeys,
+  counterBase,
+  counterBlock,
+  hashPowers,
+  partial,
+} from "velt/crypto/aes_gcm_hw";
 import { Ghash } from "velt/crypto/ghash";
 
 let seed: u64 = 0x2545f4914f6cdd1d;
@@ -89,6 +95,38 @@ describe("AesGcm on the AES instructions", () => {
       }
     }
     expect(mismatches).toBe(0);
+  });
+
+  it("carries the counter past 255 and past 65,535 blocks", () => {
+    // 257 and 65,537 blocks: the last counters are 258 and 65,538.
+    const lengths: usize[] = [4112, 1048592];
+    for (const n of lengths) {
+      const key = bytes(16);
+      const nonce = bytes(12);
+      const text = bytes(n);
+      const aad = bytes(13);
+      const aead = new AesGcm(key);
+      const sealed = aead.seal(nonce, text, aad);
+      expect(same(sealed, reference(key, nonce, text, aad))).toBe(true);
+      const opened = aead.open(nonce, sealed, aad);
+      expect(opened != null && same(opened, text)).toBe(true);
+    }
+  });
+
+  it("writes the counter big-endian after the nonce, all four bytes of it", () => {
+    const nonce = bytes(12);
+    const block = counterBlock(counterBase(nonce), 0x01020304);
+    let wrong = 0;
+    for (let i: usize = 0; i < 12; i++) {
+      if (block.lane(i) != nonce[i]) {
+        wrong++;
+      }
+    }
+    expect(wrong).toBe(0);
+    expect(block.lane(12)).toBe(0x01);
+    expect(block.lane(13)).toBe(0x02);
+    expect(block.lane(14)).toBe(0x03);
+    expect(block.lane(15)).toBe(0x04);
   });
 
   it("hashes long additional data as the integer GHASH does", () => {
