@@ -332,11 +332,11 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
       try {
         await this.conn.writeBytes(out.buf, 0, out.length as number);
       } catch (e) {
-        out.length = 0;
+        this.emptied();
         this.connectionFailed();
         throw e;
       }
-      out.length = 0;
+      this.emptied();
     }
   }
 
@@ -350,10 +350,10 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
     if (out.length > 0) {
       try {
         this.conn.writeBytesLater(out.buf, 0, out.length as number);
-        out.length = 0;
+        this.emptied();
         await this.conn.drained(QUEUED);
       } catch (e) {
-        out.length = 0;
+        this.emptied();
         this.connectionFailed();
         throw e;
       }
@@ -388,6 +388,12 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
     this.endChunks();
     // Otherwise (HTTP/1.0) the body ends with the connection: the head set `keepAlive` false.
     await this.queue();
+  }
+
+  /// What was buffered is written, this response's too.
+  private emptied() {
+    this.out.length = 0;
+    this.outStart = 0;
   }
 
   /// A body written at once: `send`, `json`, `html`.
