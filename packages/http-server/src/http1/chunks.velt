@@ -55,3 +55,13 @@ export function lastChunk(out: Out, trailers: FieldBuf) {
   }
   out.crlf();
 }
+
+/// The bytes `data` adds to a body.
+export function pieceLength(data: string | u8[] | Uint8Array): i64 {
+  if (typeof data == "string") {
+    return Buffer.byteLength(data) as i64;
+  } else if (data instanceof Uint8Array) {
+    return data.length as i64;
+  }
+  return data.length as i64;
+}

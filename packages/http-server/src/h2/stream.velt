@@ -10,7 +10,7 @@
 import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { FieldList } from "velt/net/http/h2";
-import { SourceHold } from "../http_stream";
+import { SourceHold } from "../source_hold";
 import { RequestFields } from "./validate";
 import { copyBytes } from "../bytes";
 

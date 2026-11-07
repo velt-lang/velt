@@ -15,15 +15,16 @@ import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { EventStream } from "../event_stream";
 import { lengthValue } from "../fields";
-import { BodySink, HttpStream, sendBody, SourceHold } from "../http_stream";
+import { BodySink, HttpStream } from "../http_stream";
 import { HttpResponse } from "../response";
-import { lastChunk, oneChunk, writePiece } from "./chunks";
+import { sendBody, SourceHold } from "../source_hold";
+import { lastChunk, oneChunk, pieceLength, writePiece } from "./chunks";
 import { ClientEnd, ClientWatch } from "./client_watch";
 import { FieldBuf } from "./fields_buf";
 import { Head } from "./head";
 import { HeadParts, TYPE_BYTES, TYPE_HTML, TYPE_JSON, TYPE_SSE, TYPE_TEXT } from "./head_parts";
 import { Out } from "./out";
-import { writeHead } from "./write_head";
+import { writeHead, writeSwitch } from "./write_head";
 
 /// How many bytes of a streamed body may wait to be sent before `write` waits.
 const QUEUED: number = 65536;
@@ -64,15 +65,17 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
   /// The connection was switched to another protocol (`upgrade`): the server lets it go.
   private switched: bool = false;
   private conn: TcpStream;
-  // The request's signal (made when first asked for): aborted when the client goes away
-  // (`ClientWatch`), a write to it fails or the server closes.
+  /**
+   * What the request's signal (made when first asked for) follows: the client going away
+   * (`ClientWatch`), a write to it failing, and the server closing.
+   */
   private stopped: AbortSignal;
   private failed: AbortController = new AbortController();
   private either: AbortSignal | null = null;
-  /// Writing to the client failed, or its connection did.
+  /** Writing to the client failed, or its connection did. */
   private gone: bool = false;
   private watch: ClientWatch;
-  /// The source of a streamed body being written.
+  /** The source of a streamed body being written. */
   private source: SourceHold | null = null;
 
   constructor(conn: TcpStream, stopped: AbortSignal, request: Head, watch: ClientWatch) {
@@ -160,7 +163,6 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
     this.source = hold;
     try {
       await sendBody(source, hold, this);
-      this.source = null;
       if (this.gone) {
         throw new Error("the client went away");
       }
@@ -225,13 +227,7 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
     this.done = true;
     this.switched = true;
     this.keepAlive = false;
-    out.text("HTTP/1.1 101 Switching Protocols\r\nUpgrade: ");
-    out.text(protocol);
-    out.text("\r\nConnection: Upgrade\r\n");
-    for (const h of fields) {
-      out.field(h[0], h[1]);
-    }
-    out.text("\r\n");
+    writeSwitch(out, protocol, fields);
     this.conn.writeBytesLater(out.buf, 0, out.length as number);
     out.length = 0;
     return this.conn;
@@ -274,7 +270,6 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
     this.failed.abort();
     const hold = this.source;
     if (hold != null) {
-      this.source = null;
       // Runs beside the wait for the source's next chunk, which it may end.
       const ending = hold.end();
     }
@@ -435,14 +430,4 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
     }
     this.endChunks();
   }
-}
-
-/// The bytes `data` adds to a body.
-function pieceLength(data: string | u8[] | Uint8Array): i64 {
-  if (typeof data == "string") {
-    return Buffer.byteLength(data) as i64;
-  } else if (data instanceof Uint8Array) {
-    return data.length as i64;
-  }
-  return data.length as i64;
 }
