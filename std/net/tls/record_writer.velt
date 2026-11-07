@@ -173,7 +173,10 @@ export class RecordWriter {
   tryTransport(): TryStream {
     const t = this.direct;
     if (t == null) {
-      throw new IoError("ENOTSUP", "TLS stream: this transport can't read or write without waiting");
+      throw new IoError(
+        "ENOTSUP",
+        "TLS stream: this transport can't read or write without waiting",
+      );
     }
     return t;
   }
@@ -334,7 +337,9 @@ export class RecordWriter {
     if (this.failure == null) {
       this.failure = err;
       const t = this.direct;
-      if (t != null && e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.turns.busy) {
+      if (
+        t != null && e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.turns.busy
+      ) {
         try {
           t.tryWrite(this.protect(ALERT, [2, e.alert]), 0);
         } catch (ignored) {

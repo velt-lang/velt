@@ -633,22 +633,25 @@ describe("reads and writes that don't wait", () => {
     expect(s.hasBuffered()).toBe(false);
   });
 
-  it("says what is held back from a short read, and a second record read with the first", async () => {
-    const c = new RecordCipher(0x1301, hexDecode(SERVER_AP_SECRET));
-    seal(c, [0]);
-    const [t, s] = await ready(seal(c, [1, 2, 3, 23]) + seal(c, [4, 5, 23]));
-    t.arrived = 1000000;
-    const one: u8[] = Buffer.alloc(1);
-    expect(s.tryRead(one)).toBe(1);
-    expect(s.hasBuffered()).toBe(true);
-    const two: u8[] = Buffer.alloc(2);
-    expect(s.tryRead(two)).toBe(2);
-    expect(hexEncode(two)).toBe("0203");
-    expect(s.hasBuffered()).toBe(true);
-    expect(s.tryRead(two)).toBe(2);
-    expect(hexEncode(two)).toBe("0405");
-    expect(s.hasBuffered()).toBe(false);
-  });
+  it(
+    "says what is held back from a short read, and a second record read with the first",
+    async () => {
+      const c = new RecordCipher(0x1301, hexDecode(SERVER_AP_SECRET));
+      seal(c, [0]);
+      const [t, s] = await ready(seal(c, [1, 2, 3, 23]) + seal(c, [4, 5, 23]));
+      t.arrived = 1000000;
+      const one: u8[] = Buffer.alloc(1);
+      expect(s.tryRead(one)).toBe(1);
+      expect(s.hasBuffered()).toBe(true);
+      const two: u8[] = Buffer.alloc(2);
+      expect(s.tryRead(two)).toBe(2);
+      expect(hexEncode(two)).toBe("0203");
+      expect(s.hasBuffered()).toBe(true);
+      expect(s.tryRead(two)).toBe(2);
+      expect(hexEncode(two)).toBe("0405");
+      expect(s.hasBuffered()).toBe(false);
+    },
+  );
 
   it("reads close_notify as the end, and a cut without it as a failure", async () => {
     const [t, s] = await ready(sealedAfter(SERVER_AP_SECRET, 1, [1, 0, 21]));
