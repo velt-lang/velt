@@ -491,7 +491,7 @@ hooks! {
     /// `{ ...o }` of an `any` that may be a proxy: its enumerable own entries.
     spread_any_proxy => lang_hooks_proxy, "spreadAnyProxy", sig((&mut Record(string, any), move any) -> void);
     /// `rest_any` in a program that loads `Proxy`.
-    rest_any_proxy => lang_hooks_proxy, "restAnyProxy", sig((&any, &any) -> any);
+    rest_any_proxy => lang_hooks_proxy, "restAnyProxy", sig((move any, &any) -> any);
 
     // Outside lang/hooks, defined where what they need is (none is exported to programs):
     // lang/proxy/array.velt: an array method read through a proxy.
