@@ -187,4 +187,21 @@ describe("the publish policy", () => {
     expect(await publishWith(r, big)).toBe("413 the upload is larger than 400 bytes");
     expect(await publishWith(r, [])).toBe("201 published `p` 1.0.0\n");
   });
+
+  it("takes native code only when the host does", async () => {
+    const fields = 'native: { targets: ["x86_64-unknown-linux-gnu"] }';
+    const files = packageFiles("p", "1.0.0", fields);
+    const upload = async (r: TestRegistry): Promise<string> => {
+      const answer = await r.upload("p", "1.0.0", packArchive(files), contentChecksum(files));
+      return `${answer.status} ${answer.text}`;
+    };
+    expect(await upload(new TestRegistry())).toBe("201 published `p` 1.0.0\n");
+    const limits = new RegistryLimits();
+    limits.nativePackages = false;
+    const r = new TestRegistry(limits);
+    expect(await upload(r)).toBe(
+      "400 cannot publish `p`: this registry doesn't accept packages with native code (`native` in package.velt)",
+    );
+    expect(await publishWith(r, [])).toBe("201 published `p` 1.0.0\n");
+  });
 });

@@ -6,8 +6,8 @@ import { HeldLock } from "./held_lock";
 /**
  * Serializes the writes to a package. The handler takes the lock of a package's
  * `normalizedName` for every write to it, so `my-pkg` and `my_pkg` (one name, as the registry
- * counts them) are never published side by side. An upload's body is read before its lock is
- * taken, so a holder waits only for the stores.
+ * counts them) are never published side by side. An upload's body is read and checked before its
+ * lock is taken, so a holder waits only for the stores.
  */
 export interface PublishLock {
   /** Waits until no other holder has `key`'s lock, then holds it. */

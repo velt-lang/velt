@@ -2,8 +2,10 @@
 
 The Velt package registry on [Cloudflare Workers](https://developers.cloudflare.com/workers/)
 ([#1740](https://github.com/velt-lang/velt/issues/1740), step 4): registry-core's `/api/v1` handling
-over R2, D1 and a Durable Object. It is for staging only: it has no GitHub login, no limits of its
-own and no refusal of native uploads yet, and #1740 lists what must change before it goes public.
+over R2, D1 and a Durable Object. It is for staging only: it has no GitHub login yet, and #1740
+lists what must change before it goes public. It takes archives up to 10 MiB (`MAX_ARCHIVE_BYTES`
+in `src/main.velt`, from measurements under workerd: a publish takes about three times the archive
+in memory) and refuses packages with native code, as it serves no native libraries.
 It needs a paid Workers plan: the Free plan's 10 ms of CPU can't hash an archive.
 
 | registry-core's interface | Here | Binding |

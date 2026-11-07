@@ -70,9 +70,10 @@ const manifest = readManifest(text); // ManifestError when vpm would refuse it
   checks, a publish is refused for paths a client couldn't unpack faithfully on Windows or
   macOS (twice, out of order, differing only in case, control characters, device names,
   characters Windows refuses, a trailing dot or space), for `target` directories and `.git`
-  under any spelling, and above a size and file-count limit (`RegistryLimits`). Native
-  libraries answer 501 for now. A publish reads its body before it takes the package's lock, so
-  a stalled upload holds up no other write. A cache purge that fails after a write is logged and
+  under any spelling, above a size and file-count limit, and for native code where the host
+  takes none (`RegistryLimits`). Native libraries answer 501 for now. A publish reads its body
+  and checks the archive before it takes the package's lock, so a stalled or large upload holds
+  up no other write. A cache purge that fails after a write is logged and
   fails nothing: the write stands, and the cache shows old answers until they expire.
 - **Stores** (`src/stores/`): the interfaces a host implements, and in-memory adapters
   (`src/memory/`) for tests and for trying a registry out.

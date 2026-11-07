@@ -98,14 +98,11 @@ class SlowUpload {
 
 describe("the lock", () => {
   // A package of alice's, a user who owns nothing, and a lock that starts counting after that.
-  async function published(): Promise<[TestRegistry, RecordingLock]> {
+  async function published(
+    limits: RegistryLimits = new RegistryLimits(),
+  ): Promise<[TestRegistry, RecordingLock]> {
     const lock = new RecordingLock();
-    const r = new TestRegistry(
-      new RegistryLimits(),
-      new MemoryMetadataDb(),
-      new MemoryBlobStore(),
-      lock,
-    );
+    const r = new TestRegistry(limits, new MemoryMetadataDb(), new MemoryBlobStore(), lock);
     r.user("bob");
     await r.publish("my-lib", "1.0.0", r.user("alice"));
     lock.keys = [];
@@ -151,6 +148,39 @@ describe("the lock", () => {
       // A publish to that spelling is refused for the name, before its lock.
       expect((await r.publish("my_lib", "1.0.0", token)).status).toBe(400);
     }
+    expect(lock.keys).toEqual([]);
+  });
+
+  it("isn't taken for an archive the registry refuses", async () => {
+    const limits = new RegistryLimits();
+    limits.nativePackages = false;
+    const [r, lock] = await published(limits);
+    const alice = r.user("alice");
+    const files = packageFiles("my-lib", "2.0.0");
+    const bad = await r.upload("my-lib", "2.0.0", packArchive(files), "sha256:00", alice);
+    expect(bad.status).toBe(400);
+    const other = await r.upload(
+      "my-lib",
+      "3.0.0",
+      packArchive(files),
+      contentChecksum(files),
+      alice,
+    );
+    expect(other.status).toBe(400);
+    expect(other.text).toBe("the archive is `my-lib` 2.0.0, not `my-lib` 3.0.0");
+    const native = packageFiles(
+      "my-lib",
+      "2.0.0",
+      'native: { targets: ["x86_64-unknown-linux-gnu"] }',
+    );
+    const refused = await r.upload(
+      "my-lib",
+      "2.0.0",
+      packArchive(native),
+      contentChecksum(native),
+      alice,
+    );
+    expect(refused.status).toBe(400);
     expect(lock.keys).toEqual([]);
   });
 
