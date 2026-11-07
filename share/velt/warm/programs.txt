@@ -12,6 +12,7 @@
 # list reaches.
 ../../../bench/stdport/int_to_string.velt
 ../../../bench/stdport/float_to_string.velt
+../../../bench/stdport/prng.velt
 #
 # The rest, greedily:
 ../../../tests/std/fetch/server_api.test.velt
