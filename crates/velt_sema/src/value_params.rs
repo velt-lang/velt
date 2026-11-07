@@ -1,12 +1,11 @@
 //! Which params of each function may reach a function value (#2527): `run(q)` calling `KK(q)`, or
 //! `r2(q)` that does, directly or through a closure it makes. Such a param reads as a borrow in
 //! `run`'s signature, but what it holds can be replaced under whoever lent it: a `const x = a.c`
-//! before `run(a)`, an element a loop is bound to, or an argument `run(a, a.c.s)` beside it. So can
-//! a param a function modifies though it is `Borrow` (used as a value too: `finish::demote_fn_values`).
+//! before `run(a)`, an element a loop is bound to, or an argument `run(a, a.c.s)` beside it.
 //! A method chosen at run time (virtual, interface, bounded type param) counts as every method of
 //! its name, as its modes are fixed like a function value's: an override that calls `KK(q)` hides
 //! it from `go`'s callers just the same.
-//! `new C(q)` is a call of `C`'s constructor, or of the nearest base class's.
+//! `new C(q)` is a call of `C`'s constructor.
 //! Asked by the exclusivity check (`const`s, loops) and by lowering (`stable_borrow`); one scan of
 //! every body, then a walk up the callers from what changed.
 
@@ -15,8 +14,8 @@ use rustc_hash::FxHashMap;
 use crate::replaced_holders::member;
 
 use crate::hir::{
-    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode, Pat, PatKind,
-    Program, Stmt, StmtKind as S, TyKind,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, LocalId, Pat, PatKind, Program, Stmt,
+    StmtKind as S, TyKind,
 };
 
 /// For each function, the params (bit `i`: `params[i]`, the first 64) that may reach a function
@@ -72,7 +71,8 @@ pub trait Calls<'n> {
     /// The name of the method `callee` chooses at run time, when `callee` is such a call and the
     /// receiver's type says.
     fn method_name(&self, callee: &Callee, args: &[Expr]) -> Option<&'n str>;
-    /// The constructor `new` of `class` runs: its own, or the nearest base class's.
+    /// The constructor `new` of `class` runs (a subclass with none written has one that calls the
+    /// base's).
     fn ctor(&self, class: DefId) -> Option<DefId>;
 }
 
@@ -150,18 +150,9 @@ impl<'h> Calls<'h> for Lowered<'h> {
     }
 
     fn ctor(&self, class: DefId) -> Option<DefId> {
-        let mut c = class;
-        loop {
-            let Def::Adt(a) = self.0.def(c) else {
-                return None;
-            };
-            if a.ctor.is_some() {
-                return a.ctor;
-            }
-            let TyKind::Adt(base, _) = self.0.types.kind(a.base?) else {
-                return None;
-            };
-            c = *base;
+        match self.0.def(class) {
+            Def::Adt(a) => a.ctor,
+            _ => None,
         }
     }
 }
@@ -198,9 +189,6 @@ pub fn compute<'a>(
         };
         for (i, p) in f.params.iter().enumerate().take(64) {
             s.roots.insert(p.local, 1 << i);
-            if p.mode == PassMode::Borrow && f.body.locals[p.local.0 as usize].mutable {
-                s.direct |= 1 << i;
-            }
         }
         s.block(&f.body.block);
         ctors.extend(s.ctors.drain());
@@ -296,12 +284,9 @@ impl Scan<'_, '_> {
 
     fn stmt(&mut self, s: &Stmt) {
         match &s.kind {
-            S::Let { local, init } => {
+            // A `let` of a param or a part of it is a share, which counts what `const`s rely on.
+            S::Let { init, .. } => {
                 if let Some(e) = init {
-                    let bits = self.bits_of(e);
-                    if bits != 0 {
-                        self.roots.insert(*local, bits);
-                    }
                     self.expr(e);
                 }
             }

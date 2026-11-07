@@ -242,17 +242,7 @@ impl<'c> crate::value_params::Calls<'c> for Checking<'c, '_> {
     }
 
     fn ctor(&self, class: crate::hir::DefId) -> Option<crate::hir::DefId> {
-        let mut c = class;
-        loop {
-            let a = self.0.adt(c)?;
-            if a.ctor.is_some() {
-                return a.ctor;
-            }
-            let TyKind::Adt(base, _) = self.0.ty.kind(a.base?) else {
-                return None;
-            };
-            c = *base;
-        }
+        self.0.adt(class)?.ctor
     }
 }
 
