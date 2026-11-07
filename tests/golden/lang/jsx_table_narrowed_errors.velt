@@ -1,0 +1,6 @@
+/** @jsxImportSource ./_jsx_narrowed */
+// The narrowed type is the one checked: a value only the base takes, and a field the narrowing
+// makes required.
+console.log(<a type="text" />);
+console.log(<a value={1} />);
+console.log(<b type="number" />);

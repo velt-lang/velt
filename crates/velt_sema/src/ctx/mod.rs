@@ -141,6 +141,9 @@ pub(crate) struct Ctx<'m> {
     /// Field-only interface → its object type's def (`collect::field_only`).
     pub field_only: FxHashMap<DefId, DefId>,
     pub field_only_of: FxHashMap<DefId, DefId>, // the reverse of `field_only`
+    /// Fields that narrow an inherited one, checked once every interface has its fields
+    /// (`collect::iface_extends`).
+    pub narrowed_fields: Vec<crate::collect::iface_extends::NarrowedField>,
     /// Every declared type's fields are resolved (`collect::shapes`); before that, a utility
     /// type (`crate::utility_types`) may only read the fields of types already shaped.
     pub shapes_done: bool,
@@ -531,6 +534,7 @@ impl<'m> Ctx<'m> {
             record_views: FxHashMap::default(),
             field_only: FxHashMap::default(),
             field_only_of: FxHashMap::default(),
+            narrowed_fields: vec![],
             shapes_done: false,
             query_locals: vec![],
             bodies_ok: false,

@@ -116,6 +116,7 @@ fn collect_items(cx: &mut Ctx, items: &ItemDefs, from: Added) {
     iface_extends::flatten_from(cx, from.defs);
     cx.fill_synth_ifaces();
     field_only::fill(cx, from.defs);
+    iface_extends::check_narrowed(cx);
     classes::check_classes(cx, from.defs);
     extend_shadow::check(cx, from);
     static_this::copy_statics(cx, from.defs);

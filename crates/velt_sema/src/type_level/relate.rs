@@ -19,6 +19,8 @@ pub(super) struct Slots {
     contra: Vec<Vec<TyId>>,
     /// Relating inside a function parameter (an odd number of them).
     flipped: bool,
+    /// The object types being related: a recursive type meets its pair again, and holds there.
+    relating: Vec<(TyId, TyId)>,
 }
 
 impl Slots {
@@ -27,6 +29,7 @@ impl Slots {
             co: vec![None; n],
             contra: vec![vec![]; n],
             flipped: false,
+            relating: vec![],
         }
     }
 }
@@ -385,6 +388,22 @@ impl Ctx<'_> {
         {
             return false;
         }
+        if slots.relating.contains(&(s, p)) {
+            return true;
+        }
+        slots.relating.push((s, p));
+        let ok = self.relate_field_types(&pf, &sf, slots);
+        slots.relating.pop();
+        ok
+    }
+
+    /// Each of `p`'s fields `pf` against the source's `sf` ([`Self::relate_fields`]).
+    fn relate_field_types(
+        &mut self,
+        pf: &[ShapeField],
+        sf: &[ShapeField],
+        slots: &mut Slots,
+    ) -> bool {
         for f in pf {
             match sf.iter().find(|g| g.name == f.name) {
                 // An optional field does not fill a required one, even one that takes

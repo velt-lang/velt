@@ -1,0 +1,36 @@
+/** @jsxImportSource ./_jsx_narrowed */
+// Fields that narrow an inherited one: the entry's own type counts for attributes and for reads.
+console.log(<a type="number" value={1} />);
+console.log(<a type="number" value="2" onUpdate={(v) => { console.log(v); }} />);
+console.log(<b type="radio" checked={true} onUpdate={(c) => { console.log(!c); }} />);
+console.log(<c value="v" extra="e" />);
+
+interface Base { type?: string; value?: string | number; tag: string }
+interface Num extends Base { type: "number"; value?: number }
+interface Str<T = string> extends Base { value: string; extra?: T }
+const n: Num = { type: "number", value: 1, tag: "t" };
+console.log(n.type.length, (n.value ?? 0) + 1);
+const s: Str = { value: "v", tag: "x" };
+console.log(s.value.length, s.tag);
+
+// Types that refer to themselves, object types and classes narrow too.
+interface A { next?: A; v: string }
+interface B extends A { next?: B; w?: number }
+const b: B = { v: "b", next: { v: "c", w: 1 } };
+console.log(b.next?.w);
+interface X { a: string }
+interface Y extends X { b?: number }
+interface Base2 { child?: X; list?: X[]; f?: (x: Y) => X }
+interface Der extends Base2 { child?: Y; list?: Y[]; f?: (x: X) => Y }
+const d: Der = { child: { a: "1", b: 2 }, list: [{ a: "2" }] };
+console.log(d.child?.b, d.list?.length);
+interface G<T> { v?: T; o?: G<T> }
+interface H extends G<string> { v?: "x" | "y"; o?: H }
+const h: H = { v: "x", o: { v: "y" } };
+console.log(h.o?.v);
+class K1 { a = 1 }
+class K2 extends K1 { b = 2 }
+interface C1 { k: K1 }
+interface C2 extends C1 { k: K2 }
+const c: C2 = { k: new K2() };
+console.log(c.k.b);

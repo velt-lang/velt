@@ -1,0 +1,11 @@
+// What `tsc` refuses stays refused: a field that isn't a narrowing (TS2430) and two bases that
+// disagree (TS2320).
+interface A { x: string }
+interface B { x: number }
+interface C extends A, B {}
+interface D extends A { x: number }
+interface E { a?: string }
+interface F extends E { a: string | null }
+interface G extends A { x?: string }
+interface R { next?: R; v: string }
+interface S extends R { next?: S; v: number }

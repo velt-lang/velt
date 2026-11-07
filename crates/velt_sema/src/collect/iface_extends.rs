@@ -112,13 +112,25 @@ pub(crate) fn inherit_from(cx: &mut Ctx, d: DefId, p: &Bound, keep: &dyn Fn(&str
 fn inherit_field(cx: &mut Ctx, d: DefId, f: FieldInfo, pname: &str) {
     let i = cx.iface(d).expect("ICE: iface");
     let synthesized = i.decl.is_none();
-    match i.fields.iter().find(|g| g.name == f.name) {
-        Some(g) if g.ty == f.ty => {}
+    let own = i.decl.map_or(0, |decl| decl.fields.len());
+    let at = i.fields.iter().position(|g| g.name == f.name);
+    let found = at.map(|k| (k < own, i.fields[k].ty, i.fields[k].span));
+    match found {
+        Some((_, ty, _)) if ty == f.ty => {}
         // An intersection's field (`crate::synth_ifaces`) is the meet of its parts' types,
         // checked where the intersection was made.
         Some(_) if synthesized => {}
-        Some(g) => {
-            let span = g.span;
+        // A field of its own may narrow the inherited one, as in TypeScript: the interface keeps
+        // its own type, checked by `check_narrowed`. Two bases that disagree are still an error
+        // (TS2320).
+        Some((true, ty, span)) => cx.narrowed_fields.push(NarrowedField {
+            name: f.name,
+            own: ty,
+            inherited: f.ty,
+            span,
+            parent: pname.to_string(),
+        }),
+        Some((_, _, span)) => {
             cx.err(
                 format!(
                     "field `{}` conflicts with the field inherited from `{pname}`",
@@ -128,6 +140,29 @@ fn inherit_field(cx: &mut Ctx, d: DefId, f: FieldInfo, pname: &str) {
             );
         }
         None => iface_mut(cx, d).fields.push(f),
+    }
+}
+
+/// A field an interface declares over an inherited one of another type.
+pub(crate) struct NarrowedField {
+    name: String,
+    own: TyId,
+    inherited: TyId,
+    span: Span,
+    parent: String,
+}
+
+/// TS2430 for a field that isn't assignable to the one it replaces. Object types are compared by
+/// their fields, so this waits until `field_only::fill` has given them theirs.
+pub(super) fn check_narrowed(cx: &mut Ctx) {
+    for f in std::mem::take(&mut cx.narrowed_fields) {
+        if !cx.form_assignable(f.own, f.inherited) {
+            let message = format!(
+                "field `{}` conflicts with the field inherited from `{}`",
+                f.name, f.parent
+            );
+            cx.err(message, f.span);
+        }
     }
 }
 

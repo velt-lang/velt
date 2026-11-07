@@ -1,0 +1,3 @@
+field `x` conflicts with the field inherited from `B`
+field `x` conflicts with the field inherited from `A`
+field `a` conflicts with the field inherited from `E`
