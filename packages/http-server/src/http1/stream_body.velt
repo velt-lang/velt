@@ -28,6 +28,13 @@ export async function writeStreamBody(
   const source = body[Symbol.asyncIterator]();
   const hold = new SourceHold(source);
   r.source = hold;
+  if (r.clientGone()) {
+    // It left before this began, so nothing else would end the source.
+    await hold.end();
+    r.streaming = false;
+    r.keepAlive = false;
+    return;
+  }
   try {
     await sendBody(source, hold, r);
     if (r.clientGone()) {
