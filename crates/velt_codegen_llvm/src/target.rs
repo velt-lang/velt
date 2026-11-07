@@ -35,10 +35,10 @@ pub(crate) struct Target {
     /// `--cpu`'s, a mask over `velt_codegen_cl::X86_FEATURES` on x86-64 and `ARM_FEATURES` on
     /// arm64.
     pub cpu_features: u32,
-    /// The half-precision dot products `--cpu` has. They are not `cpu_features`: the start-up
+    /// The half-precision instructions `--cpu` has. They are not `cpu_features`: the start-up
     /// check knows nothing of them, so a program built for them stops with an illegal
     /// instruction on a CPU without them.
-    pub half_dot: crate::clang::HalfDot,
+    pub half_ops: crate::clang::HalfOps,
 }
 
 /// Validate `target` (empty / `native` / `host` = the host triple).
@@ -55,7 +55,7 @@ pub(crate) fn normalize(target: &str) -> CodegenResult<Target> {
             os,
             cpu: None,
             cpu_features: 0,
-            half_dot: crate::clang::HalfDot::default(),
+            half_ops: crate::clang::HalfOps::default(),
         });
     }
     let mut parts = triple.split('-');
@@ -78,7 +78,7 @@ pub(crate) fn normalize(target: &str) -> CodegenResult<Target> {
     match os {
         Some(os) if arch_ok && msvc_ok && !rest.is_empty() => Ok(Target {
             cpu_features: velt_codegen_cl::required_features(&triple, None)?,
-            half_dot: default_half_dot(os, arch),
+            half_ops: default_half_ops(os, arch),
             triple,
             os,
             cpu: None,
@@ -90,12 +90,14 @@ pub(crate) fn normalize(target: &str) -> CodegenResult<Target> {
     }
 }
 
-/// The half-precision dot products of every CPU of a target with no `--cpu`: Apple arm64's have
-/// `fmlal` (FEAT_FHM, M1 and later) and not all have `bfdot` (FEAT_BF16, M2 and later).
-fn default_half_dot(os: Os, arch: &str) -> crate::clang::HalfDot {
-    crate::clang::HalfDot {
+/// The half-precision instructions of every CPU of a target with no `--cpu`: Apple arm64's have
+/// `fmlal` (FEAT_FHM, M1 and later) and lane arithmetic (FEAT_FP16), and not all have `bfdot`
+/// (FEAT_BF16, M2 and later).
+fn default_half_ops(os: Os, arch: &str) -> crate::clang::HalfOps {
+    crate::clang::HalfOps {
         fhm: os == Os::Darwin && arch != "x86_64",
         bf16: false,
+        fp16: os == Os::Darwin && arch != "x86_64",
     }
 }
 
@@ -163,14 +165,14 @@ impl Target {
             return Ok(self);
         }
         self.cpu_features = crate::required_features(&self.triple, cpu)?;
-        self.half_dot = match cpu {
+        self.half_ops = match cpu {
             None | Some("baseline") => {
                 let arch = self.triple.split('-').next().unwrap_or_default();
-                default_half_dot(self.os, arch)
+                default_half_ops(self.os, arch)
             }
             // An x86 level names no CPU with these, so there is no need to ask clang.
-            Some(c) if c.starts_with("x86-64") => crate::clang::HalfDot::default(),
-            Some(c) => crate::clang::half_dot(&self.triple, c)?,
+            Some(c) if c.starts_with("x86-64") => crate::clang::HalfOps::default(),
+            Some(c) => crate::clang::half_ops(&self.triple, c)?,
         };
         self.cpu = cpu.map(str::to_string);
         Ok(self)
@@ -230,8 +232,9 @@ impl Target {
     pub(crate) fn simd_caps(&self) -> crate::simd::Caps {
         crate::simd::Caps {
             dotprod: self.has_dotprod(),
-            fhm: self.has_neon() && self.half_dot.fhm,
-            bf16_dot: self.half_dot.bf16,
+            fhm: self.has_neon() && self.half_ops.fhm,
+            bf16_dot: self.half_ops.bf16,
+            fp16: self.half_ops.fp16,
             half: self.half_native(),
         }
     }

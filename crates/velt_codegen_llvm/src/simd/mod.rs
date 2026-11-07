@@ -12,6 +12,7 @@ use reshape::{convert, narrow, widen, zip};
 
 mod aes;
 mod half;
+mod half_arith;
 mod masks;
 mod partial;
 mod reshape;
@@ -32,6 +33,9 @@ pub(crate) struct Caps {
     pub bf16_dot: bool,
     /// The f16 conversions the target has instructions for (`Target::half_native`).
     pub half: crate::half::HalfNative,
+    /// Lane arithmetic on `<8 x half>`: Arm's FEAT_FP16 or x86's AVX512-FP16 with AVX512VL, as
+    /// `Arch` says.
+    pub fp16: bool,
 }
 
 impl Caps {
@@ -42,6 +46,7 @@ impl Caps {
         fhm: false,
         bf16_dot: false,
         half: crate::half::HalfNative::None,
+        fp16: false,
     };
 }
 
@@ -227,6 +232,9 @@ fn mask_type(bits: u32) -> String {
 
 /// The body of a vector operation; the value to return, if any.
 fn vector(b: &mut Body, lanes: Lanes, op: Op, arch: Arch, caps: Caps) -> Option<String> {
+    if lanes == Lanes::F16 && op.is_f16_arithmetic() {
+        return Some(half_arith::arithmetic(b, op, arch, caps));
+    }
     let (lane, ty, _) = spell(lanes);
     let value = match op {
         Op::Store => {
@@ -587,11 +595,17 @@ fn binary(b: &mut Body, lanes: Lanes, op: Op, x: &str, y: &str) -> String {
 /// same, but x86-64 has no instruction for it and older LLVM cannot expand it for vectors.
 fn float_min_max(b: &mut Body, lanes: Lanes, call: SimdCall) -> String {
     let (_, ty, _) = spell(lanes);
-    let n = lanes.count();
     let ints = mask_type(lanes.bits());
     let min = call == SimdCall::Vector(lanes, Op::Min);
     let (x, y) = (b.arg(0, &ty), b.arg(1, &ty));
-    let (xi, yi) = (b.arg(0, &ints), b.arg(1, &ints));
+    let result = min_max(b, &ty, &ints, lanes.count(), min, &x, &y);
+    b.bytes(&result, &ty)
+}
+
+/// [`float_min_max`] of `x` and `y`, `n` lanes of `ty`, whose bits are the lanes of `ints`.
+fn min_max(b: &mut Body, ty: &str, ints: &str, n: u32, min: bool, x: &str, y: &str) -> String {
+    let xi = b.inst(format!("bitcast {ty} {x} to {ints}"));
+    let yi = b.inst(format!("bitcast {ty} {y} to {ints}"));
     let first = b.inst(format!(
         "fcmp {} {ty} {x}, {y}",
         if min { "olt" } else { "ogt" }
@@ -608,10 +622,9 @@ fn float_min_max(b: &mut Body, lanes: Lanes, call: SimdCall) -> String {
     ));
     let nan = b.inst(format!("fcmp uno {ty} {x}, {y}"));
     let sum = b.inst(format!("fadd {ty} {x}, {y}"));
-    let result = b.inst(format!(
+    b.inst(format!(
         "select <{n} x i1> {nan}, {ty} {sum}, {ty} {ordered}"
-    ));
-    b.bytes(&result, &ty)
+    ))
 }
 
 #[cfg(test)]

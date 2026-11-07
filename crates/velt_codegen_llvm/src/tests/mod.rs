@@ -544,20 +544,15 @@ fn the_dot_product_is_sdot_where_every_cpu_has_it() {
     }
 }
 
-/// `velt_main` returning 0 after calling the SIMD extern `symbol`, of three vectors.
-fn half_dot_sample(symbol: &str) -> Program {
+/// `velt_main` returning 0 after calling the SIMD extern `symbol`, of `count` vectors.
+fn vector_call_sample(symbol: &str, count: usize) -> Program {
     let mut pb = ProgramBuilder::new();
-    let dot = pb.ext(symbol, &[V128, V128, V128], V128, false);
+    let callee = pb.ext(symbol, &vec![V128; count], V128, false);
     let mut fb = FuncBuilder::export("velt_main", &[], I32);
     let v = fb.local(V128);
     let b = fb.block();
     let zero = Operand::Const(Const::Int(0), V128);
-    let b = fb.call(
-        b,
-        Callee::Extern(dot),
-        vec![zero.clone(), zero.clone(), zero],
-        Some(v),
-    );
+    let b = fb.call(b, Callee::Extern(callee), vec![zero; count], Some(v));
     fb.ret(b, int(0, I32));
     pb.add(fb.finish());
     pb.finish()
@@ -575,7 +570,7 @@ fn half_dot_products_follow_the_cpu() {
             .unwrap()
             .with_cpu(cpu)
             .unwrap();
-        crate::checked_ir(&half_dot_sample(symbol), &t, false).unwrap()
+        crate::checked_ir(&vector_call_sample(symbol, 3), &t, false).unwrap()
     };
     let f16 = "velt_simd_f32x4_dot_add_f16x8";
     let fast = "velt_simd_f32x4_dot_add_fast_bf16x8";
@@ -613,6 +608,52 @@ fn half_dot_products_follow_the_cpu() {
     }
     assert!(ir(fast, x86, Some("sapphirerapids")).contains("avx512bf16.dpbf16ps.128"));
     assert!(ir(fast, x86, Some("cooperlake")).contains("avx512bf16.dpbf16ps.128"));
+}
+
+/// `<8 x half>` where the CPU has the lane arithmetic, by `--cpu` as for the dot products, and
+/// `<4 x float>` elsewhere.
+#[test]
+fn f16_arithmetic_follows_the_cpu() {
+    if !crate::available() {
+        return;
+    }
+    let ir = |triple: &str, cpu: Option<&str>| {
+        let t = crate::target::normalize(triple)
+            .unwrap()
+            .with_cpu(cpu)
+            .unwrap();
+        let sample = vector_call_sample("velt_simd_f16x8_add", 2);
+        crate::checked_ir(&sample, &t, false).unwrap()
+    };
+    let (apple, linux) = ("aarch64-apple-darwin", "aarch64-unknown-linux-gnu");
+    let x86 = "x86_64-unknown-linux-gnu";
+    for (triple, cpu) in [
+        (apple, None),
+        (apple, Some("baseline")),
+        (linux, Some("neoverse-v1")),
+        (x86, Some("sapphirerapids")),
+    ] {
+        assert!(
+            ir(triple, cpu).contains("fadd <8 x half>"),
+            "{triple} {cpu:?}"
+        );
+    }
+    for (triple, cpu) in [
+        (apple, Some("cortex-a53")),
+        (linux, None),
+        (linux, Some("baseline")),
+        (x86, None),
+        (x86, Some("x86-64-v3")),
+        (x86, Some("x86-64-v4")),
+        (x86, Some("skylake-avx512")),
+        ("wasm32-wasip1", None),
+    ] {
+        let text = ir(triple, cpu);
+        assert!(
+            text.contains("fadd <4 x float>") && !text.contains("<8 x half>"),
+            "{triple} {cpu:?}"
+        );
+    }
 }
 
 #[test]

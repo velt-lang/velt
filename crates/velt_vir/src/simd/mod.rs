@@ -34,7 +34,8 @@ pub enum Lanes {
     F32,
     /// `f64x2`
     F64,
-    /// `f16x8`: a lane is an `f16`'s 16 bits, as `f16` is in VIR (a `U16`, never a float here).
+    /// `f16x8`: a lane is an `f16`'s 16 bits, as `f16` is in VIR (a `U16`, never a float here). The
+    /// operations that read them as numbers are [`Op::is_f16_arithmetic`]'s.
     F16,
     /// `bf16x8`, likewise.
     BF16,
@@ -273,6 +274,35 @@ pub enum Op {
     /// by `b` (a constant: the symbol spells it in lanes, `velt_simd_u32x4_shuffle_1_0_7_6`,
     /// which `of_symbol` turns into bytes). Every type.
     Shuffle([u8; 16]),
+}
+
+impl Op {
+    /// Whether this operation reads the lanes of `f16x8` as IEEE binary16 numbers, each rounded
+    /// to nearest even with subnormals kept: `Add` to `Sqrt` and the comparisons, which a backend
+    /// must not take for what they mean on the `U16` that [`Lanes::scalar`] gives (`bf16x8` has
+    /// none of them). Every result is the same bits on every target but for which NaN a NaN is:
+    /// an operation computed in `f32` and narrowed rounds as the native one does (f32 has at
+    /// least 2p + 2 bits, Figueroa 1995), and `Min` and `Max` pick an operand.
+    pub fn is_f16_arithmetic(self) -> bool {
+        matches!(
+            self,
+            Op::Add
+                | Op::Sub
+                | Op::Mul
+                | Op::Div
+                | Op::Neg
+                | Op::Abs
+                | Op::Sqrt
+                | Op::Min
+                | Op::Max
+                | Op::Eq
+                | Op::Ne
+                | Op::Lt
+                | Op::Le
+                | Op::Gt
+                | Op::Ge
+        )
+    }
 }
 
 /// An operation on a mask: one lane per vector lane, all bits set or none.
@@ -560,7 +590,7 @@ fn supported(lanes: Lanes, op: Op) -> bool {
     let float = lanes.is_float();
     let bits = lanes.bits();
     if lanes.is_half() {
-        return half_supported(op);
+        return half_supported(lanes, op);
     }
     match op {
         Op::DotAdd => lanes == Lanes::I32,
@@ -586,23 +616,19 @@ fn supported(lanes: Lanes, op: Op) -> bool {
     }
 }
 
-/// Whether `f16x8` and `bf16x8` have `op`: no arithmetic and nothing that reads a lane as a number.
-/// As in [`supported`], what isn't excluded exists: an operation on the bits and the array, such
-/// as one `velt_opt` writes in place of `Fits`, holds for these lane types as for any other.
-fn half_supported(op: Op) -> bool {
+/// Whether `f16x8` and `bf16x8` have `op`: `f16x8` has the arithmetic of
+/// [`Op::is_f16_arithmetic`] and `Select`, and `bf16x8` nothing that reads a lane as a number,
+/// widening being its fast path. As in [`supported`], what isn't excluded exists: an operation on
+/// the bits and the array, such as one `velt_opt` writes in place of `Fits`, holds for these lane
+/// types as for any other.
+fn half_supported(lanes: Lanes, op: Op) -> bool {
+    if op.is_f16_arithmetic() || op == Op::Select {
+        return lanes == Lanes::F16;
+    }
     !matches!(
         op,
         Op::Index
             | Op::LoadOptimistic
-            | Op::Add
-            | Op::Sub
-            | Op::Mul
-            | Op::Div
-            | Op::Neg
-            | Op::Abs
-            | Op::Sqrt
-            | Op::Min
-            | Op::Max
             | Op::AddSat
             | Op::SubSat
             | Op::And
@@ -611,13 +637,6 @@ fn half_supported(op: Op) -> bool {
             | Op::Not
             | Op::Shl
             | Op::Shr
-            | Op::Eq
-            | Op::Ne
-            | Op::Lt
-            | Op::Le
-            | Op::Gt
-            | Op::Ge
-            | Op::Select
             | Op::Sum
             | Op::SumWide
             | Op::DotAdd

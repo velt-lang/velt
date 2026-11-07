@@ -20,6 +20,12 @@ declare function velt_simd_f64x2_mul(a: f64x2, b: f64x2): f64x2;
 declare function velt_simd_f64x2_div(a: f64x2, b: f64x2): f64x2;
 declare function velt_simd_f64x2_neg(v: f64x2): f64x2;
 declare function velt_simd_f64x2_lane(v: f64x2, index: u64): f64;
+declare function velt_simd_f16x8_add(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_sub(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_mul(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_div(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_neg(v: f16x8): f16x8;
+declare function velt_simd_f16x8_lane(v: f16x8, index: u64): f16;
 
 extend f32x4 {
   /** `this + other`: the lane-wise sum. */
@@ -88,5 +94,40 @@ extend f64x2 {
       panic("RangeError: f64x2[index]: index is out of range");
     }
     return velt_simd_f64x2_lane(this, index as u64);
+  }
+}
+
+extend f16x8 {
+  /** `this + other`: the lane-wise sum. */
+  [Symbol.add](other: f16x8): f16x8 {
+    return velt_simd_f16x8_add(this, other);
+  }
+
+  /** `this - other`: the lane-wise difference. */
+  [Symbol.sub](other: f16x8): f16x8 {
+    return velt_simd_f16x8_sub(this, other);
+  }
+
+  /** `this * other`: the lane-wise product. */
+  [Symbol.mul](other: f16x8): f16x8 {
+    return velt_simd_f16x8_mul(this, other);
+  }
+
+  /** `this / other`: the lane-wise quotient. */
+  [Symbol.div](other: f16x8): f16x8 {
+    return velt_simd_f16x8_div(this, other);
+  }
+
+  /** `-this`: each lane negated. */
+  [Symbol.neg](): f16x8 {
+    return velt_simd_f16x8_neg(this);
+  }
+
+  /** `this[index]`: lane `index` (0 to 7; panics with a RangeError otherwise). */
+  [Symbol.index](index: usize): f16 {
+    if (index >= 8) {
+      panic("RangeError: f16x8[index]: index is out of range");
+    }
+    return velt_simd_f16x8_lane(this, index as u64);
   }
 }

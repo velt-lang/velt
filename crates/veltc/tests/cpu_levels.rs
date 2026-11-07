@@ -243,6 +243,104 @@ fn a_cpu_without_a_feature_gets_a_message_not_a_crash() {
     assert_eq!(String::from_utf8_lossy(&o.stdout), "started\n");
 }
 
+/// The arguments that build a program for each path `f16x8`'s arithmetic has on this host,
+/// Cranelift's first: the CPU's own instructions and, on arm64, the same in `f32x4` (x86's default
+/// is that, so the goldens run it). `--cpu native` has FP16 on Apple's CPUs and recent Arm servers.
+fn f16_paths() -> Vec<Vec<&'static str>> {
+    let mut paths = vec![vec![]];
+    if velt_codegen_llvm::available() {
+        let llvm = ["--release", "--backend", "llvm", "--cpu"];
+        paths.push([&llvm[..], &["native"]].concat());
+        if cfg!(target_arch = "aarch64") {
+            paths.push([&llvm[..], &["cortex-a53"]].concat());
+        }
+        if cfg!(target_arch = "x86_64") {
+            // The default level has no F16C, and the fast goldens run debug builds only.
+            paths.push([&llvm[..], &["x86-64-v2"]].concat());
+        }
+    }
+    paths
+}
+
+/// The golden `name` built with `flags`, as a program in `root`.
+fn built_golden(root: &Path, name: &str, flags: &[&str], at: usize) -> std::path::PathBuf {
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
+    let source = golden.join(format!("{name}.velt"));
+    let exe = root.join(format!("app{at}{}", std::env::consts::EXE_SUFFIX));
+    let mut args = vec!["build"];
+    args.extend(flags);
+    args.extend([source.to_str().unwrap(), "-o", exe.to_str().unwrap()]);
+    let o = velt(root, &args, &[]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    exe
+}
+
+/// `f16x8`'s arithmetic gives the goldens' bits on each path (`--cpu` is not a golden's mode).
+#[test]
+fn f16_arithmetic_on_every_path_prints_the_goldens() {
+    let dir = test_dir::TestDir::new();
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
+    for name in ["simd_half_arith", "simd_half_sweep"] {
+        let want = std::fs::read_to_string(golden.join(format!("{name}.out"))).unwrap();
+        for (at, flags) in f16_paths().iter().enumerate() {
+            let exe = built_golden(dir.path(), name, flags, at);
+            let o = no_window::command(exe.to_str().unwrap()).output().unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+            assert_eq!(String::from_utf8_lossy(&o.stdout), want, "{flags:?}");
+        }
+    }
+}
+
+/// What `simd_half_sweep` prints for every pair of the 2^32, from FEAT_FP16's own instructions: the
+/// same sweep in C with `arm_neon.h` (`clang -O2 -mcpu=apple-m1 -ffp-contract=off`), which agrees
+/// with Node on the golden's sample.
+const F16_EVERY_PAIR: &str = "\
+add 6691 60078 14932 52373 17398 6313 45340 17661
+sub 61413 9001 30597 47456 46560 48152 21932 39857
+mul 3717 58994 20928 61334 8632 6273 14481 33192
+div 13385 12245 24729 37292 11577 40563 57992 12845
+min 26271 46567 53330 62277 3469 59280 43966 53799
+max 2459 43491 17605 45940 37224 50709 35644 63782
+eq 124320705 ne 3203141158 lt 3586748204 le 4158566134 gt 4176928514 ge 2841051895
+sqrt 8851 3179 39004 27337 60597 50405 13888 9415
+neg 21906 52337 45105 17308 34548 27764 12475 15965
+abs 30586 47474 10500 59872 42431 36468 10527 12984
+";
+
+/// Every pair of patterns on each path: under a minute on LLVM's, about a quarter of an hour under
+/// Cranelift.
+#[test]
+#[ignore = "every pair of the 2^32 on each path: about a quarter of an hour"]
+fn f16_every_pair() {
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let paths = f16_paths();
+    std::thread::scope(|s| {
+        let runs: Vec<_> = paths
+            .iter()
+            .enumerate()
+            .map(|(at, flags)| {
+                s.spawn(move || {
+                    let exe = built_golden(root, "simd_half_sweep", flags, at);
+                    let o = no_window::command(exe.to_str().unwrap())
+                        .arg("1")
+                        .output()
+                        .unwrap();
+                    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+                    assert_eq!(
+                        String::from_utf8_lossy(&o.stdout),
+                        F16_EVERY_PAIR,
+                        "{flags:?}"
+                    );
+                })
+            })
+            .collect();
+        for run in runs {
+            run.join().expect("a path");
+        }
+    });
+}
+
 /// `f16x8.dotAdd` and `bf16x8.dotAdd` give the golden's bits with `--cpu native`, where the CPU's
 /// own instructions come in (on Apple arm64, `fmlal` always and `bfdot` for `dotAddFast` from the
 /// M2), and `dotAddFast`'s lanes still add up to the dot product.

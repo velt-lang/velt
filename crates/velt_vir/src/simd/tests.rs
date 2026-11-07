@@ -70,15 +70,6 @@ fn half_lanes() {
         for op in [
             "index",
             "load_optimistic",
-            "add",
-            "sub",
-            "mul",
-            "div",
-            "neg",
-            "abs",
-            "sqrt",
-            "min",
-            "max",
             "add_sat",
             "sub_sat",
             "and",
@@ -87,13 +78,6 @@ fn half_lanes() {
             "not",
             "shl",
             "shr",
-            "eq",
-            "ne",
-            "lt",
-            "le",
-            "gt",
-            "ge",
-            "select",
             "sum",
             "sum_wide",
             "dot_add",
@@ -111,6 +95,39 @@ fn half_lanes() {
             assert_eq!(of(&format!("velt_simd_{lanes}_{op}")), None, "{op}");
         }
     }
+    // `f16x8` computes on its lanes; `bf16x8` has no such instruction to reach, and widens.
+    for (name, op) in [
+        ("add", Op::Add),
+        ("sub", Op::Sub),
+        ("mul", Op::Mul),
+        ("div", Op::Div),
+        ("neg", Op::Neg),
+        ("abs", Op::Abs),
+        ("sqrt", Op::Sqrt),
+        ("min", Op::Min),
+        ("max", Op::Max),
+        ("eq", Op::Eq),
+        ("ne", Op::Ne),
+        ("lt", Op::Lt),
+        ("le", Op::Le),
+        ("gt", Op::Gt),
+        ("ge", Op::Ge),
+        ("select", Op::Select),
+    ] {
+        let symbol = format!("velt_simd_f16x8_{name}");
+        assert_eq!(
+            of(&symbol),
+            Some(SimdCall::Vector(Lanes::F16, op)),
+            "{name}"
+        );
+        assert_eq!(op.is_f16_arithmetic(), op != Op::Select, "{name}");
+        assert_eq!(of(&format!("velt_simd_bf16x8_{name}")), None, "{name}");
+    }
+    assert_eq!(sig("velt_simd_f16x8_lt"), Some((vec![V128, V128], V128)));
+    assert_eq!(
+        sig("velt_simd_f16x8_select"),
+        Some((vec![V128, V128, V128], V128))
+    );
     for missing in [
         // `f32x4` only, of storage floats only; no fast f16 form, `fmlal` is exact.
         "velt_simd_f64x2_narrow_f16x8",
