@@ -307,6 +307,8 @@ hooks! {
     // any_object.velt: `Object.*`, spreads, prototypes and `delete` of an `any`.
     /// `{ ...o }` of an `any` in an object literal (`velt_sema` `record_literal.rs`).
     spread_any => lang_hooks_any_object, "spreadAny", sig((&mut Record(string, any), &any) -> void);
+    /// `const { a, ...rest } = o` of an `any` (`velt_sema` `literal_patterns.rs`).
+    rest_any => lang_hooks_any_object, "restAny", sig((&any, &any) -> any);
     /// `Object.hasOwn(o, k)` of an `any` (`velt_sema` `object_own.rs`).
     any_has_own => lang_hooks_any_object, "anyHasOwn", sig((&any, &union(string, symbol)) -> bool);
     /// Member `k` (one of `Object.keys(o)`) of an `any`: std's `spreadAny` & co. call it, not the compiler.
@@ -488,6 +490,8 @@ hooks! {
     proxy_spread_check => lang_hooks_proxy, "proxySpreadCheck", sig((&any) -> void);
     /// `{ ...o }` of an `any` that may be a proxy: its enumerable own entries.
     spread_any_proxy => lang_hooks_proxy, "spreadAnyProxy", sig((&mut Record(string, any), move any) -> void);
+    /// `rest_any` in a program that loads `Proxy`.
+    rest_any_proxy => lang_hooks_proxy, "restAnyProxy", sig((&any, &any) -> any);
 
     // Outside lang/hooks, defined where what they need is (none is exported to programs):
     // lang/proxy/array.velt: an array method read through a proxy.

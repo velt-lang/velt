@@ -22,6 +22,30 @@ export function spreadAny(r: Record<string, any>, o: any): void {
   }
 }
 
+/** Is own key `k` among the keys a rest pattern took (`taken`, each as a pattern gave it)? */
+export function restTaken(taken: any, k: string): boolean {
+  for (const t of taken as any[]) {
+    if (typeof t !== "symbol" && String(t) === k) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * `const { a, ...rest } = o` of an `any` `o`, the keys before the rest in `taken`: a new object of
+ * the other own enumerable keys, in their order; the values taken are not read again.
+ */
+export function restAny(o: any, taken: any): any {
+  const r: Record<string, any> = {};
+  for (const k of Object.keys(o)) {
+    if (!restTaken(taken, k)) {
+      r[RECORD_SET](k, anyMember(o, k));
+    }
+  }
+  return r;
+}
+
 /**
  * `Object.hasOwn(o, k)` of an `any` (or `object`) `o`: one of its own enumerable keys, or an
  * array's or string's `length` (a proxy's `getOwnPropertyDescriptor` trap: velt/lang/hooks/proxy).

@@ -27,7 +27,9 @@ use velt_syntax::ast::{self, Expr, ExprKind as E, PatternKind as P, VarDecl, Var
 
 use super::pattern_defaults::{ident, mk, pat};
 use super::FnCx;
+use crate::any::Dynamic;
 use crate::hir;
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// The elements of the array literal `e` (in parentheses, or `as const`), if it has neither a
 /// spread nor a hole.
@@ -205,11 +207,8 @@ impl FnCx<'_, '_> {
                     .collect()
             }
             P::Object { fields, rest } => {
-                if let Some(r) = rest {
-                    let msg = match dynamic {
-                        true => "`...rest` of an `any` value is not supported yet; give the value an object type first",
-                        false => "`...rest` next to a computed key is not supported yet",
-                    };
+                if let Some(r) = rest.as_ref().filter(|_| !dynamic) {
+                    let msg = "`...rest` next to a computed key is not supported yet";
                     self.unsupported_rest(kind, r, msg, out);
                 }
                 let mut reads = vec![];
@@ -296,6 +295,76 @@ impl FnCx<'_, '_> {
             };
             self.decl_with_defaults(kind, p, value, out);
         }
+        if let (
+            true,
+            P::Object {
+                fields,
+                rest: Some(r),
+            },
+        ) = (dynamic, &pattern.kind)
+        {
+            self.any_object_rest(kind, fields, r, tmp, out);
+        }
+    }
+
+    /// `kind rest = …` of a pattern taking apart the `any` in `tmp`, after its properties are
+    /// read: as in JavaScript, a new object of the own enumerable properties without the keys
+    /// of `fields`, whose values are not read again (the hook `restAny`), an `any` as TypeScript
+    /// types it. A value with no properties (`null`, `undefined`) stops with the `TypeError` of
+    /// a read first, as a pattern with keys does.
+    fn any_object_rest(
+        &mut self,
+        kind: VarKind,
+        fields: &[(ast::Ident, ast::Pattern)],
+        r: &ast::Ident,
+        tmp: &Expr,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        let span = r.span;
+        let any = |expr: Expr, array: bool| {
+            let named = ast::TypeExpr {
+                kind: ast::TypeExprKind::Named {
+                    path: vec![ident("any", span)],
+                    args: vec![],
+                },
+                span,
+            };
+            let ty = match array {
+                true => ast::TypeExpr {
+                    kind: ast::TypeExprKind::Array(Box::new(named)),
+                    span,
+                },
+                false => named,
+            };
+            let expr = Box::new(expr);
+            mk(E::Cast { expr, ty }, span)
+        };
+        if fields.is_empty() {
+            let read = E::Member {
+                object: Box::new(tmp.clone()),
+                prop: ident("#rest", span),
+                optional: false,
+            };
+            let kind = ast::StmtKind::Expr(mk(read, span));
+            self.stmt(&ast::Stmt { kind, span }, out);
+        }
+        let mut taken = vec![];
+        for (key, _) in fields {
+            taken.push(match self.key_read(key) {
+                KeyRead::Index(k) => any(mk(E::Ident(k), key.span), false),
+                KeyRead::Member(k) => any(mk(E::Lit(ast::Lit::Str(k.name)), key.span), false),
+                KeyRead::Reported => continue,
+            });
+        }
+        let taken = ty::Any::of(any(mk(E::Array(taken), span), true));
+        let call = match self.uses_proxy() {
+            true => hooks::rest_any_proxy(ty::Any::of(tmp.clone()), taken),
+            false => hooks::rest_any(ty::Any::of(tmp.clone()), taken),
+        };
+        let call = call.ast(span);
+        // The keys and values are read through the value's descriptor.
+        self.note_dyn_members();
+        self.decl_with_defaults(kind, &pat(P::Ident(r.clone()), span), call, out);
     }
 }
 
@@ -453,7 +522,8 @@ impl FnCx<'_, '_> {
         };
         self.var_decl(&d, span, out);
         let tmp = mk(E::Ident(name), span);
-        self.read_pattern_decls(v.kind, &v.pattern, &tmp, false, out);
+        let dynamic = self.temp_ty(&tmp).and_then(|t| self.cx.dynamic(t)) == Some(Dynamic::Any);
+        self.read_pattern_decls(v.kind, &v.pattern, &tmp, dynamic, out);
         true
     }
 }

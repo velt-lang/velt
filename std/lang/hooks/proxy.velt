@@ -15,6 +15,8 @@ import {
   anyEntries,
   anyHasOwn,
   anyValues,
+  restAny,
+  restTaken,
   spreadAny,
 } from "velt/lang/hooks/any_object";
 import { arrayIndex } from "velt/lang/hooks/record";
@@ -49,6 +51,20 @@ export function spreadAnyProxy(r: Record<string, any>, o: any): void {
     return;
   }
   spreadAny(r, o);
+}
+
+/** `const { a, ...rest } = o` of an `any` `o`: a proxy's other enumerable own entries, else `restAny`. */
+export function restAnyProxy(o: any, taken: any): any {
+  if (o instanceof Proxy) {
+    const r: Record<string, any> = {};
+    for (const [k, v] of proxyEntries(o)) {
+      if (!restTaken(taken, k)) {
+        r[RECORD_SET](k, v);
+      }
+    }
+    return r;
+  }
+  return restAny(o, taken);
 }
 
 /** `Object.hasOwn(o, k)` of an `any` `o`: a proxy's `getOwnPropertyDescriptor` trap. */
