@@ -18,7 +18,7 @@
 //   conn.write(...)` would not compile. The runtime keeps a socket alive while an operation is
 //   in flight, so `close()` may be called at any time.
 
-export { ByteStream } from "velt/net/byte_stream";
+export { ByteStream, TryStream } from "velt/net/byte_stream";
 export { connect, connectTls, TlsConnectOptions } from "velt/net/connect";
 export { listen, listenTls, TlsListenOptions } from "velt/net/listen";
 export { streamPair } from "velt/net/pair";
