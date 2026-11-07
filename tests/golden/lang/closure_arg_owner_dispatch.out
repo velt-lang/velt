@@ -1,0 +1,26 @@
+override a----------------------------------------
+override, named caller a----------------------------------------
+interface a----------------------------------------
+interface, named caller a----------------------------------------
+bounded type param a----------------------------------------
+interface in a field a----------------------------------------
+abstract method a----------------------------------------
+object literal a----------------------------------------
+object literal, named caller a----------------------------------------
+class field holding a function a----------------------------------------
+interface field holding a function a----------------------------------------
+receiver, override a----------------------------------------
+receiver, bounded type param a----------------------------------------
+interface on this a----------------------------------------
+part, override a----------------------------------------!
+part, interface a----------------------------------------!
+part through a local, override a----------------------------------------!
+part through a local, interface a----------------------------------------!
+part, override, named caller a----------------------------------------!
+part, interface, named caller a----------------------------------------!
+loop, override a---------------------------------------- 0
+loop, override a---------------------------------------- 0
+loop, interface a---------------------------------------- 0
+loop, interface a---------------------------------------- 0
+loop, named caller a---------------------------------------- 0
+loop, named caller a---------------------------------------- 0

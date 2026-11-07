@@ -1,0 +1,104 @@
+// What owns a borrowed place is replaced out of sight: through a named function that passes its
+// param on to a function value, or under a `for...of` binding. A `const` of the part, an argument
+// beside it and a loop binding keep what they held, as in JavaScript (#2527). Each read here was a
+// read from a freed block. Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; names: string[] = [heap("n"), heap("m")]; }
+
+const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); junk(); };
+let KL: (q: A2) => void = (q) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); junk(); };
+const HOLD = { k: (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); junk(); } };
+const KS = [(q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); junk(); }];
+function getK(): (q: A2) => void { return KK; }
+function replaceIt(q: A2): void { q.c = new I2(); q.c.s = heap("zzzzzzzz"); junk(); }
+const KF: (q: A2) => void = replaceIt;
+class St { static go(q: A2): void { q.c = new I2(); q.c.s = heap("zzzzzzzz"); junk(); } }
+const KT: (q: A2) => void = St.go;
+class HC { k: (q: A2) => void = KK; go(q: A2): void { this.k(q); } }
+const HCO = new HC();
+
+function run(q: A2): void { KK(q); }
+function runLet(q: A2): void { KL(q); }
+function runField(q: A2): void { HOLD.k(q); }
+function runElement(q: A2): void { KS[0](q); }
+function runReturned(q: A2): void { getK()(q); }
+function runNamedValue(q: A2): void { KF(q); }
+function runStaticValue(q: A2): void { KT(q); }
+function runMethodField(q: A2): void { HCO.go(q); }
+function r2(q: A2): void { KK(q); }
+function runTwo(q: A2): void { r2(q); }
+function runClosure(q: A2): void { const inner = () => { KK(q); }; inner(); }
+function runAlias(q: A2): void { const z = q; KK(z); }
+
+function constForms() {
+  const check = (name: string, f: (q: A2) => void) => {
+    const a = new A2();
+    const x = a.c;
+    f(a);
+    junk();
+    console.log(name, x.s, a.c.s);
+  };
+  check("function value", KK);
+  const a1 = new A2(); const x1 = a1.c; run(a1); junk(); console.log("const", x1.s, a1.c.s);
+  const a2 = new A2(); const x2 = a2.c; runLet(a2); junk(); console.log("module let", x2.s);
+  const a3 = new A2(); const x3 = a3.c; runField(a3); junk(); console.log("field of a module object", x3.s);
+  const a4 = new A2(); const x4 = a4.c; runElement(a4); junk(); console.log("array element", x4.s);
+  const a5 = new A2(); const x5 = a5.c; runReturned(a5); junk(); console.log("returned", x5.s);
+  const a6 = new A2(); const x6 = a6.c; runNamedValue(a6); junk(); console.log("named function as a value", x6.s);
+  const a7 = new A2(); const x7 = a7.c; runStaticValue(a7); junk(); console.log("static method as a value", x7.s);
+  const a8 = new A2(); const x8 = a8.c; runMethodField(a8); junk(); console.log("class field through a method", x8.s);
+  const a9 = new A2(); const x9 = a9.c; runTwo(a9); junk(); console.log("two levels", x9.s);
+  const a10 = new A2(); const x10 = a10.c; runClosure(a10); junk(); console.log("through a closure it makes", x10.s);
+  const a11 = new A2(); const x11 = a11.c; runAlias(a11); junk(); console.log("through a local", x11.s);
+}
+
+function p1(q: A2, v: string): string { KK(q); junk(); return v + "!"; }
+function p2(q: A2, v: string): string { r2(q); junk(); return v + "!"; }
+function p3(q: A2, v: string): string { HCO.go(q); junk(); return v + "!"; }
+function partForms() {
+  const a = new A2();
+  console.log("part, one level", p1(a, a.c.s));
+  const b = new A2();
+  console.log("part, two levels", p2(b, b.c.s));
+  const c = new A2();
+  const x = c.c;
+  console.log("part through a local", p2(c, x.s));
+  const d = new A2();
+  console.log("part, class field through a method", p3(d, d.c.s));
+}
+
+function loopForms() {
+  const g = (q: A2) => { q.xs[0] = new I2(); q.xs[0].s = heap("zzzzzzzz"); junk(); };
+  const a = new A2();
+  for (const e of a.xs) { g(a); junk(); console.log("element replaced", e.s); }
+  const h = (q: A2) => { q.xs = []; junk(); };
+  const b = new A2();
+  for (const e of b.xs) { h(b); junk(); console.log("array replaced", e.s, b.xs.length); }
+  const k = (q: I2[]) => { q[0] = new I2(); q[0].s = heap("zzzzzzzz"); q.length = 1; junk(); };
+  const c = [new I2(), new I2()];
+  for (const e of c) { k(c); junk(); console.log("array passed directly", e.s, c.length); }
+  const m = (q: A2) => { q.names = []; junk(); };
+  const d = new A2();
+  for (const n of d.names) { m(d); junk(); console.log("strings", n, d.names.length); }
+  const ps: [I2, number][] = [[new I2(), 1]];
+  const w = (q: [I2, number][]) => { q[0] = [new I2(), 2]; q[0][0].s = heap("zzzzzzzz"); junk(); };
+  for (const [i2, n] of ps) { w(ps); junk(); console.log("destructured", i2.s, n); }
+  const e2 = new A2();
+  const fw = (q: A2) => { g(q); };
+  for (const e of e2.xs) { fw(e2); junk(); console.log("through a closure", e.s); }
+  const e3 = new A2();
+  for (const e of e3.xs) { forward(e3); junk(); console.log("named function forwarding", e.s); }
+}
+function forward(q: A2): void { LOOP_G(q); }
+const LOOP_G = (q: A2) => { q.xs = []; junk(); };
+
+class Rc2 { name: string = heap("name"); }
+function ownedField() {
+  const o = new Rc2();
+  const ctx = new A2();
+  const k = (c: A2, v: string) => { c.c = new I2(); junk(); return v; };
+  console.log("own object beside another", k(ctx, o.name));
+}
+constForms(); partForms(); loopForms(); ownedField();

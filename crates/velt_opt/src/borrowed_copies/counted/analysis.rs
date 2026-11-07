@@ -2,7 +2,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use velt_vir::vir::{BinOp, BlockId, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator};
+use velt_vir::vir::{BinOp, BlockId, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty};
 
 use super::{count_word, is_int, local_of, Cx, Family, Point, Release};
 use crate::visit::{rvalue_operands, stmt_operands, successors, term_operands};
@@ -230,18 +230,73 @@ impl Cx<'_> {
         let cut = cut_of(std::iter::once(fam));
         let reach = self.reachable(&cut);
         let mut w = Walk::default();
+        let held = self.held(fam);
+        let reads = |op: &Operand| matches!(op, Operand::Copy(p) if held.contains(&p.local));
         for (b, block) in self.func.blocks.iter().enumerate() {
             if !reach[b] {
                 continue;
             }
             for (si, s) in block.stmts.iter().enumerate() {
                 self.stmt(fam, &mut w, (b, si), s);
+                let mut used = false;
+                stmt_operands(s, &mut |op| used |= reads(op));
+                if used {
+                    w.uses.insert((b, si));
+                }
             }
             if fam.release_at(b).is_none() {
                 self.term(fam, &mut w, (b, block.stmts.len()), &block.term);
+                let mut used = false;
+                term_operands(&block.term, &mut |op| used |= reads(op));
+                if used {
+                    w.uses.insert((b, block.stmts.len()));
+                }
             }
         }
         (!w.bail && self.balanced(fam, &reach)).then_some(w.uses)
+    }
+
+    /// The locals holding what the object holds, read out of it with no reference of their own
+    /// (a loop's `const [o, n] of pairs`): the object keeps that alive, so using one uses the
+    /// object. A value with an increment of its own needs nothing from it, borrowed or not.
+    fn held(&self, fam: &Family) -> FxHashSet<Local> {
+        let stmts = || self.func.blocks.iter().flat_map(|b| &b.stmts);
+        let counted: FxHashSet<Local> = stmts().filter_map(|s| self.increment_root(s)).collect();
+        let mut held: FxHashSet<Local> = FxHashSet::default();
+        let through = |held: &FxHashSet<Local>, p: &Place| {
+            held.contains(&p.local)
+                || matches!(p.proj.first(), Some(Proj::Deref(_)))
+                    && (fam.members.contains(&p.local) || fam.derived.contains(&p.local))
+        };
+        loop {
+            let before = held.len();
+            for s in stmts() {
+                let Stmt::Assign(d, rv) = s else { continue };
+                if fam.members.contains(&d.local)
+                    || fam.counts.contains(&d.local)
+                    || counted.contains(&d.local)
+                {
+                    continue;
+                }
+                let ty = self.func.locals[d.local.0 as usize].ty;
+                let words = matches!(ty, Ty::Ptr | Ty::Agg(_));
+                let found = match rv {
+                    // Past two steps, a word of a value stored inline: a string's.
+                    Rvalue::Use(Operand::Copy(p)) => {
+                        through(&held, p) && (words || p.proj.len() > 2 && ty == Ty::U64)
+                    }
+                    Rvalue::Binary(BinOp::PtrAdd, Operand::Copy(p), _) => through(&held, p),
+                    Rvalue::AddrOf(p) => held.contains(&p.local),
+                    _ => false,
+                };
+                if found {
+                    held.insert(d.local);
+                }
+            }
+            if held.len() == before {
+                return held;
+            }
+        }
     }
 
     /// The blocks reachable once each release of `cut` goes straight to its decrement.

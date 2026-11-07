@@ -11,7 +11,7 @@
 use velt_common::{Diagnostic, Span};
 
 use crate::hir::{
-    Block, Callee, Expr, ExprKind as E, LocalDef, PatKind, Stmt, StmtKind as S, UseMode,
+    Block, Callee, Expr, ExprKind as E, LocalDef, PatKind, Stmt, StmtKind as S, TyKind, UseMode,
 };
 use crate::visit::{self, VisitMut};
 
@@ -51,8 +51,9 @@ impl Lets<'_, '_, '_> {
         for i in 0..b.stmts.len() {
             let (head, rest) = b.stmts.split_at_mut(i + 1);
             let value = b.value.as_deref_mut();
-            if let Some(d) = check_let(self.col, self.locals, &mut head[i], rest, value) {
-                match share_binding(&mut head[i], self.shared) {
+            if let Some((d, by_value)) = check_let(self.col, self.locals, &mut head[i], rest, value)
+            {
+                match share_binding(&mut head[i], self.shared, by_value) {
                     true => {}
                     false => self.out.push(d),
                 }
@@ -95,14 +96,15 @@ impl VisitMut for Lets<'_, '_, '_> {
     }
 }
 
-/// The first change of the place `s` (a by-reference `const`) borrows, in the statements after it.
+/// The first change of the place `s` (a by-reference `const`) borrows, in the statements after it,
+/// and whether only a function value can make it (`changed_by_function_value`).
 fn check_let(
     col: &Collector,
     locals: &[LocalDef],
     s: &mut Stmt,
     rest: &mut [Stmt],
     value: Option<&mut Expr>,
-) -> Option<Diagnostic> {
+) -> Option<(Diagnostic, bool)> {
     let S::LetPat { pat, init } = &s.kind else {
         return None;
     };
@@ -120,21 +122,21 @@ fn check_let(
     if let Some(this) = this_local(col, init) {
         return this_alias::conflict(col, l, this, rest, value).map(|span| {
             let name = &col.locals[l.0 as usize].name;
-            changed_while_borrowed("this", Access::Unique, span, name, "this", at)
+            let d = changed_while_borrowed("this", Access::Unique, span, name, "this", at);
+            (d, false)
         });
     }
     let mut value = value;
     col.nested_stmts(rest, value.as_deref_mut(), &mut uses);
+    let changes = |u: &Use| u.access != Access::Shared && contains(&u.place, &place);
+    let by_value = !uses.iter().any(changes);
     if let Some(u) = changed_by_function_value(col, rest, value, &place) {
         uses.push(u);
     }
-    let hit = uses
-        .into_iter()
-        .find(|u| u.access != Access::Shared && contains(&u.place, &place))?;
+    let hit = uses.into_iter().find(changes)?;
     let name = &locals[l.0 as usize].name;
-    Some(changed_while_borrowed(
-        &hit.text, hit.access, hit.span, name, &text, at,
-    ))
+    let d = changed_while_borrowed(&hit.text, hit.access, hit.span, name, &text, at);
+    Some((d, by_value))
 }
 
 /// The receiver of `init` when it is an `Atomic`'s `load` (bound by reference only for an
@@ -159,8 +161,9 @@ fn this_local(col: &Collector, init: &Expr) -> Option<crate::hir::LocalId> {
 }
 
 /// Turn the by-reference `const` `s` into an owned share of the place it referred to; false
-/// when its value cannot be shared.
-fn share_binding(s: &mut Stmt, shared: &[bool]) -> bool {
+/// when its value cannot be shared. Changed only `by_value`, it stays bound by reference to a share
+/// of the place, and lowering, which knows what is written, may keep the plain reference.
+fn share_binding(s: &mut Stmt, shared: &[bool], by_value: bool) -> bool {
     let S::LetPat { pat, init } = &mut s.kind else {
         return false;
     };
@@ -169,6 +172,10 @@ fn share_binding(s: &mut Stmt, shared: &[bool]) -> bool {
     };
     if !shared[l.0 as usize] {
         return false;
+    }
+    if by_value {
+        super::super::soft::make_share(init);
+        return true;
     }
     let mut init = init.clone();
     super::super::soft::make_share(&mut init);
@@ -202,8 +209,9 @@ fn changed_while_borrowed(
     ))
 }
 
-/// A call through a function value given what owns `place` (`const x = a.b; g(a)`): its params read
-/// as borrows however the function value changes them, as it may replace `a.b`.
+/// A call through a function value, or to a function, constructor or method chosen at run time
+/// that passes the param on to one (`crate::value_params`), given what owns `place` (`const x = a.b; g(a)`): its params read as
+/// borrows however the function value changes them, as it may replace `a.b`.
 fn changed_by_function_value(
     col: &Collector,
     rest: &mut [Stmt],
@@ -213,6 +221,7 @@ fn changed_by_function_value(
     let mut v = ValueCalls {
         col,
         place,
+        equal: false,
         hit: None,
     };
     for s in rest {
@@ -224,38 +233,123 @@ fn changed_by_function_value(
     v.hit
 }
 
+/// `crate::value_params::Calls` while the program is being checked.
+pub(super) struct Checking<'c, 'm>(pub &'c crate::ctx::Ctx<'m>);
+
+impl<'c> crate::value_params::Calls<'c> for Checking<'c, '_> {
+    fn method_name(&self, callee: &Callee, args: &[Expr]) -> Option<&'c str> {
+        method_name(self.0, callee, args)
+    }
+
+    fn ctor(&self, class: crate::hir::DefId) -> Option<crate::hir::DefId> {
+        self.0.adt(class)?.ctor
+    }
+}
+
+/// The name of the method a call chooses at run time (`crate::value_params`), when the receiver's
+/// type says.
+fn method_name<'c>(cx: &'c crate::ctx::Ctx, callee: &Callee, args: &[Expr]) -> Option<&'c str> {
+    let iface = |d, slot: &u32| {
+        let m = cx.iface(d)?.methods.get(*slot as usize)?;
+        Some(m.name.as_str())
+    };
+    match callee {
+        Callee::Virtual { slot } => {
+            let (class, _) = cx.class_of(args.first()?.ty)?;
+            let m = *cx.adt(class)?.vtable.get(*slot as usize)?;
+            Some(cx.try_fn(m)?.name.as_str())
+        }
+        Callee::Dyn { slot, .. } => match cx.ty.kind(args.first()?.ty) {
+            TyKind::Dyn(d, _) => iface(*d, slot),
+            _ => None,
+        },
+        Callee::ParamMethod { iface: d, slot, .. } => iface(*d, slot),
+        _ => None,
+    }
+}
+
+/// The same for the body of a loop over `place`, or (`equal`) given `place` itself too: a function
+/// value given the array may empty it.
+pub(super) fn handed_to_function_value(
+    col: &Collector,
+    body: &mut Block,
+    place: &Place,
+    equal: bool,
+) -> Option<Use> {
+    let mut v = ValueCalls {
+        col,
+        place,
+        equal,
+        hit: None,
+    };
+    visit::block(body, &mut v);
+    v.hit
+}
+
 struct ValueCalls<'c, 'a, 'm> {
     col: &'c Collector<'a, 'm>,
     place: &'c Place,
+    equal: bool,
     hit: Option<Use>,
+}
+
+impl ValueCalls<'_, '_, '_> {
+    /// The arguments `bits` says.
+    fn arguments(&mut self, args: &[Expr], bits: u64) {
+        for (i, a) in args.iter().enumerate().take(64) {
+            if bits >> i & 1 == 1 {
+                self.argument(a);
+            }
+        }
+    }
+
+    /// Argument `a` of such a call, when it is what owns the place.
+    fn argument(&mut self, a: &Expr) {
+        let mut x = a;
+        while let E::Upcast(y) | E::WrapSome(y) | E::ToDyn { expr: y, .. } | E::Cast(y) = &x.kind {
+            x = y;
+        }
+        let Some((p, _)) = self.col.place_of(x) else {
+            return;
+        };
+        let owner =
+            (self.equal || p.proj.len() < self.place.proj.len()) && contains(&p, self.place);
+        if owner && self.hit.is_none() {
+            self.hit = Some(Use {
+                place: p,
+                access: Access::Unique,
+                span: a.span,
+                text: self.col.text(x),
+                captured: false,
+                capture: None,
+                identity: false,
+                inside: false,
+            });
+        }
+    }
 }
 
 impl VisitMut for ValueCalls<'_, '_, '_> {
     fn expr(&mut self, e: &mut Expr) {
-        let E::Call {
-            callee: Callee::Indirect(_),
-            args,
-        } = &e.kind
-        else {
+        if let E::New { def, args, .. } = &e.kind {
+            let bits = self.col.value_params.of_new(*def, args.len());
+            return self.arguments(args, bits);
+        }
+        let E::Call { callee, args } = &e.kind else {
             return;
         };
-        for a in args {
-            let Some((p, _)) = self.col.place_of(a) else {
-                continue;
-            };
-            let owner = p.proj.len() < self.place.proj.len() && contains(&p, self.place);
-            if owner && self.hit.is_none() {
-                self.hit = Some(Use {
-                    place: p,
-                    access: Access::Unique,
-                    span: a.span,
-                    text: self.col.text(a),
-                    captured: false,
-                    capture: None,
-                    identity: false,
-                    inside: false,
-                });
+        match callee {
+            Callee::Indirect(_) => args.iter().for_each(|a| self.argument(a)),
+            Callee::Def(d, _) => {
+                let bits = self.col.value_params.of_args(*d, args.len());
+                self.arguments(args, bits);
             }
+            Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
+                let name = method_name(self.col.cx, callee, args);
+                let bits = self.col.value_params.of_method(name, args.len());
+                self.arguments(args, bits);
+            }
+            _ => {}
         }
     }
 }

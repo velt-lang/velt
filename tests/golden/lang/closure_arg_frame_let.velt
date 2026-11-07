@@ -1,0 +1,15 @@
+// A variable a closure assigns: what it holds doesn't stay put, however its fields are written (#2527). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class N { name: string = heap("n"); }
+function t() {
+  let o = new N();
+  const k = (q: N, v: string) => { o = new N(); o.name = heap("zzzzzzzz"); junk(); console.log(v); return v.length; };
+  console.log(k(new N(), o.name));
+}
+function u() {
+  let a = [new N(), new N()];
+  const g = (q: N[]) => { a = []; junk(); };
+  for (const e of a) { g(a); junk(); console.log(e.name, a.length); }
+}
+t(); u();

@@ -83,7 +83,7 @@ impl FnLower<'_, '_> {
         // (replaceable.rs), and one read beside its possible container by a callee that writes
         // through that param, which may replace any object on the way to it, `x` in `g(a, x.s)` too.
         // The callee may read its parameter after that. JavaScript's callee keeps what it was passed.
-        if reach.sibling && is_part(a)
+        if reach.sibling && is_part(a) && !self.stays_put(a)
             || self.in_array_buffer(a)
             || self.in_module_slot(a)
             || self.may_replace(a, reach)
@@ -120,6 +120,28 @@ impl FnLower<'_, '_> {
         let v = self.borrowed_arg(a);
         self.retain_hops = prev;
         v
+    }
+
+    /// Does the place `e` stay where it is whatever a call does: a path from a variable no closure
+    /// can assign, with no field on the way written anywhere? Then nothing can replace or free it
+    /// (`k(ctx, o.name)`): what the path starts from lives on, as this frame owns it, its caller keeps
+    /// a param's for the call, and a by-reference `const` is shared when its owner goes to a call.
+    pub(super) fn stays_put(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Local(l, _) => {
+                let info = &self.info[l.0 as usize];
+                !info.indirect && !info.in_cell
+            }
+            K::Field { base, index, .. } => {
+                let bty = self.sub(base.ty);
+                !self.cx.field_written(bty, *index) && self.stays_put(base)
+            }
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.stays_put(base)
+            }
+            _ => false,
+        }
     }
 
     /// Can the call assign the place `e`, or a part stored inline on the way to it? A counted
@@ -411,6 +433,17 @@ fn cbool(b: bool) -> Operand {
     Operand::Const(Const::Bool(b), Ty::Bool)
 }
 
+/// The place a share reads: `x.c` of `Share(x.c)`.
+pub(super) fn shared_place(e: &hir::Expr) -> Option<&hir::Expr> {
+    match &e.kind {
+        hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::Share),
+            args,
+        } => args.first(),
+        _ => None,
+    }
+}
+
 impl FnLower<'_, '_> {
     /// Does evaluating `e` run no code that could reach an array: a local, a literal, a closure
     /// literal (which only captures), or a plain field, element or numeric cast of one of those?
@@ -442,7 +475,12 @@ impl FnLower<'_, '_> {
         i: usize,
         changed: u64,
     ) -> ArgReach {
-        let others = if i < 64 { changed & !(1 << i) } else { changed };
+        let reach = match how {
+            Stabilize::Direct(d) => self.cx.value_param_bits(d, args.len()),
+            _ => 0,
+        };
+        let others = changed | reach;
+        let others = if i < 64 { others & !(1 << i) } else { others };
         ArgReach {
             callee: match how {
                 Stabilize::Direct(d) => Some(d),

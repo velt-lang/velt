@@ -1,0 +1,86 @@
+// What owns a borrowed place is replaced through a method chosen at run time: an override or an
+// interface method that passes its param on to a function value. Its modes are fixed, so its
+// callers see a borrow, as with the function value itself (#2527). Each read here was a read from a
+// freed block. Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
+const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; junk(); };
+
+class B { go(q: A2): void {} }
+class S extends B { override go(q: A2): void { KK(q); } }
+class BP { go(q: A2, v: string): string { return v; } }
+class SP extends BP { override go(q: A2, v: string): string { KK(q); junk(); return v + "!"; } }
+abstract class D { abstract k(q: A2): void; go(q: A2) { this.k(q); } }
+class DS extends D { override k(q: A2): void { KK(q); } }
+interface R { go(q: A2): void }
+class T implements R { go(q: A2): void { KK(q); } }
+interface RP { go(q: A2, v: string): string }
+class TP implements RP { go(q: A2, v: string): string { KK(q); junk(); return v + "!"; } }
+class H { r: R = new T(); run(q: A2) { this.r.go(q); } }
+class HF { go: (q: A2) => void = (q) => { KK(q); }; }
+interface RF { go: (q: A2) => void }
+
+const KC = (q: C) => { q.c = new I2(); junk(); };
+class C { c: I2 = new I2(); go(): void {} }
+class E extends C { override go(): void { KC(this); } }
+const KW = (q: W) => { q.c = new I2(); junk(); };
+class W implements Rn { c: I2 = new I2(); go(): void { KW(this); } m() { const x = this.c; const r: Rn = this; r.go(); junk(); console.log("interface on this", x.s); } }
+interface Rn { go(): void }
+interface Rc { c: I2; go(): void }
+
+function runB(b: B, q: A2) { b.go(q); }
+function runR(b: R, q: A2) { b.go(q); }
+function runBound<X extends R>(t: X, q: A2) { t.go(q); }
+function runThis<X extends Rn>(t: X) { t.go(); }
+function runHF(s: HF, q: A2) { s.go(q); }
+function runRF(b: RF, q: A2) { b.go(q); }
+function partB(b: B, q: A2, v: string): string { b.go(q); junk(); return v + "!"; }
+function partR(b: R, q: A2, v: string): string { b.go(q); junk(); return v + "!"; }
+
+function constForms() {
+  const b: B = new S(); const r: R = new T();
+  const a1 = new A2(); const x1 = a1.c; b.go(a1); junk(); console.log("override", x1.s);
+  const a2 = new A2(); const x2 = a2.c; runB(b, a2); junk(); console.log("override, named caller", x2.s);
+  const a3 = new A2(); const x3 = a3.c; r.go(a3); junk(); console.log("interface", x3.s);
+  const a4 = new A2(); const x4 = a4.c; runR(r, a4); junk(); console.log("interface, named caller", x4.s);
+  const a5 = new A2(); const x5 = a5.c; runBound(new T(), a5); junk(); console.log("bounded type param", x5.s);
+  const a6 = new A2(); const h = new H(); const x6 = a6.c; h.run(a6); junk(); console.log("interface in a field", x6.s);
+  const d: D = new DS();
+  const a7 = new A2(); const x7 = a7.c; d.go(a7); junk(); console.log("abstract method", x7.s);
+  const lit: R = { go: (q: A2) => { KK(q); } };
+  const a8 = new A2(); const x8 = a8.c; lit.go(a8); junk(); console.log("object literal", x8.s);
+  const lit2: R = { go(q: A2) { KK(q); } };
+  const a9 = new A2(); const x9 = a9.c; runR(lit2, a9); junk(); console.log("object literal, named caller", x9.s);
+  const a10 = new A2(); const x10 = a10.c; runHF(new HF(), a10); junk(); console.log("class field holding a function", x10.s);
+  const a11 = new A2(); const x11 = a11.c; const rf: RF = { go: KK }; runRF(rf, a11); junk(); console.log("interface field holding a function", x11.s);
+}
+
+function receiverForms() {
+  const a: C = new E(); const x = a.c; a.go(); junk(); console.log("receiver, override", x.s);
+  const w = new W(); const y = w.c; runThis(w); junk(); console.log("receiver, bounded type param", y.s);
+  new W().m();
+}
+
+function partForms() {
+  const bp: BP = new SP(); const rp: RP = new TP(); const b: B = new S(); const r: R = new T();
+  const a1 = new A2(); console.log("part, override", bp.go(a1, a1.c.s));
+  const a2 = new A2(); console.log("part, interface", rp.go(a2, a2.c.s));
+  const a3 = new A2(); const x3 = a3.c; console.log("part through a local, override", bp.go(a3, x3.s));
+  const a4 = new A2(); const x4 = a4.c; console.log("part through a local, interface", rp.go(a4, x4.s));
+  const a5 = new A2(); console.log("part, override, named caller", partB(b, a5, a5.c.s));
+  const a6 = new A2(); console.log("part, interface, named caller", partR(r, a6, a6.c.s));
+}
+
+function loopForms() {
+  const b: B = new S(); const r: R = new T();
+  const a1 = new A2();
+  for (const e of a1.xs) { b.go(a1); junk(); console.log("loop, override", e.s, a1.xs.length); }
+  const a2 = new A2();
+  for (const e of a2.xs) { r.go(a2); junk(); console.log("loop, interface", e.s, a2.xs.length); }
+  const a3 = new A2();
+  for (const e of a3.xs) { runR(r, a3); junk(); console.log("loop, named caller", e.s, a3.xs.length); }
+}
+
+constForms(); receiverForms(); partForms(); loopForms();

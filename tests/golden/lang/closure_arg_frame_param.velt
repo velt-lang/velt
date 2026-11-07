@@ -1,0 +1,13 @@
+// A `const` of a part of a param, whose object the function value frees: a param isn't the frame's, whatever is written (#2527). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
+class H { a: A2 = new A2(); }
+function t() {
+  const h = new H();
+  const k = (q: A2) => { h.a = new A2(); junk(); };
+  function g(o: A2) { const x = o.c; k(o); junk(); console.log(x.s); }
+  g(h.a);
+}
+t();

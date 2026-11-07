@@ -1,0 +1,12 @@
+// A nested function called by name: its captures come before the params its arguments fill (#2527). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
+const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; junk(); };
+function t() {
+  const n = heap("c");
+  function inner(k: string, q: A2) { junk(); if (n.length > 0 && k.length > 0) { KK(q); } }
+  const a = new A2(); const x = a.c; inner(heap("k"), a); junk(); console.log(x.s);
+}
+t();
