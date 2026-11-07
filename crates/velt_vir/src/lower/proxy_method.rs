@@ -7,8 +7,10 @@
 //!
 //! So, in a program with proxiable types:
 //! - a method read as a value through `any` (`AnyGet` of a method name) is a function value
-//!   whose code is the method's *unbound* thunk (`ThunkKind::Unbound`, env null). Called on its
-//!   own it throws a `TypeError` (it has no `this`), but it identifies the method;
+//!   whose code is the method's *unbound* thunk (`ThunkKind::Unbound`) and whose env is one
+//!   static object with null drop and clone entries (`unbound_env`), the mark
+//!   `Intrinsic::AnyUnboundMethod` reads. Called on its own it throws a `TypeError` (it has no
+//!   `this`), but it identifies the method;
 //! - a method call on a proxiable class tests the receiver's tag. A proxy whose handler has a
 //!   `get` trap runs it for the method's name, and the answer must be that method read as a
 //!   value (the instance the call would run: one candidate for a direct call; for a virtual
