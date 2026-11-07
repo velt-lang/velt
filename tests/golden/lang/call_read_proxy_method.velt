@@ -1,0 +1,14 @@
+// A class's method read through a proxy with another call of it to make: a stop, where a `get` trap
+// would run twice. Node logs one read and goes on.
+const log: string[] = [];
+class A { n = 1; m() { return this.n; } }
+const p = new Proxy(new A(), {
+  get(t: any, k: any) { log.push(String(k)); return t[k]; },
+});
+function run<T>(o: T) {
+  const d = (o as { m?: unknown } | null)?.m;
+  console.log("read");
+  console.log((d as () => number).call(o));
+}
+run(p);
+console.log(log);

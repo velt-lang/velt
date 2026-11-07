@@ -1,0 +1,10 @@
+// A call kept for later runs what was read, as in Node.
+const made = new Proxy({}, {});
+class A { m: () => string = () => "first"; }
+function keep<T>(o: T) {
+  const d = (o as { m?: unknown } | null)?.m;
+  const later = () => (d as () => string).call(o);
+  (o as any).m = () => "second";
+  return later();
+}
+console.log(keep(new A()));

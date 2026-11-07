@@ -1,0 +1,23 @@
+// A class's method read through `any` runs on the object it was read from, its arguments evaluated
+// once, in order; so does a field holding a function.
+const made = new Proxy({}, {});
+class A {
+  n = 1;
+  m(a: number, b: number) { return this.n + a * 10 + b; }
+  dispose() { console.log("disposed", this.n); }
+  f: (a: number) => number = (a) => a + 1;
+}
+function run<T>(o: T) {
+  const d = (o as { m?: unknown } | null)?.m;
+  (o as any).n = 2;
+  let i = 0;
+  console.log((d as (a: number, b: number) => number).call(o, ++i, ++i), i);
+  const f = (o as { f?: unknown } | null)?.f;
+  console.log((f as (a: number) => number).call(o, 4));
+  const e = (o as { dispose?: unknown } | null)?.dispose;
+  if (typeof e === "function") {
+    const later = () => (e as () => void).call(o);
+    later();
+  }
+}
+run(new A());

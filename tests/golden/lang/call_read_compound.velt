@@ -1,0 +1,10 @@
+// A compound write between the read and the call compiles, and the call runs what was read.
+const made = new Proxy({}, {});
+class A { m: (() => string) | null = () => "first"; }
+function run(o: A) {
+  const d = (o as { m?: unknown }).m;
+  o.m ??= () => "second";
+  (o as any).m ||= () => "third";
+  if (typeof d === "function") { console.log((d as () => string).call(o)); }
+}
+run(new A());

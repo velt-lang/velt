@@ -143,6 +143,7 @@ fn keeps_nothing(i: Intrinsic) -> bool {
             | Intrinsic::AnyTypeof
             | Intrinsic::AnyTruthy
             | Intrinsic::AnyTag
+            | Intrinsic::AnyUnboundMethod
             | Intrinsic::AnyToNumber
             | Intrinsic::Identity
             | Intrinsic::ToAny

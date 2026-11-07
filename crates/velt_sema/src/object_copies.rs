@@ -130,8 +130,6 @@ pub(crate) struct Copies {
     /// The pairs of object types being compared as a view (`FnCx::comparable_cast`): recursive
     /// types compare as TypeScript's assume-true does.
     pub view_pairs: Vec<(TyId, TyId)>,
-    /// `f.call(o)` that reads the member `f` was read from again (`FnCx::read_method_call`).
-    pub method_rereads: Vec<(String, Span)>,
     /// The program's own code constructs a `Proxy` (#823): views and `Conversion::ProxyOnly`
     /// (module docs).
     pub proxies: bool,
@@ -144,7 +142,7 @@ pub(crate) struct Copies {
 
 impl Copies {
     /// How many of each there are now (`body::recheck::Lens`).
-    pub(crate) fn mark(&self) -> [usize; 8] {
+    pub(crate) fn mark(&self) -> [usize; 7] {
         [
             self.copies.len(),
             self.writes.len(),
@@ -152,21 +150,19 @@ impl Copies {
             self.in_optional.len(),
             self.null_literals.len(),
             self.record_writes.len(),
-            self.method_rereads.len(),
             self.view_casts.len(),
         ]
     }
 
     /// Drop what was added since `mark`.
-    pub(crate) fn rollback(&mut self, mark: [usize; 8]) {
+    pub(crate) fn rollback(&mut self, mark: [usize; 7]) {
         self.copies.truncate(mark[0]);
         self.writes.truncate(mark[1]);
         self.seen.truncate(mark[2]);
         self.in_optional.truncate(mark[3]);
         self.null_literals.truncate(mark[4]);
         self.record_writes.truncate(mark[5]);
-        self.method_rereads.truncate(mark[6]);
-        self.view_casts.truncate(mark[7]);
+        self.view_casts.truncate(mark[6]);
     }
 
     /// The index of key `k` in `in_keys` (for `Seen::In`).
@@ -196,7 +192,6 @@ pub(crate) fn check(cx: &mut Ctx) {
         proxies,
         dyn_sources,
         record_writes,
-        method_rereads,
         view_casts,
         ..
     } = std::mem::take(&mut cx.object_copies);
@@ -274,18 +269,6 @@ pub(crate) fn check(cx: &mut Ctx) {
     }
     crate::object_views::check_frozen_dynamic(cx, &seen, &writes);
     crate::object_views::check_view_spreads(cx, &seen, &view_casts);
-    for (name, at) in &method_rereads {
-        if let Some(w) = writes.iter().find(|w| w.name == *name) {
-            let shown = cx.shown_name(name);
-            cx.error(
-                Diagnostic::error(
-                    format!("this `call` reads member `{shown}` again when it runs (a method read through `any` is no function value yet, #823), and this program assigns `{shown}`"),
-                    *at,
-                )
-                .with_label(w.span, "assigned here"),
-            );
-        }
-    }
     if !strict.is_empty() {
         mark_proxy_only(cx, &strict);
     }

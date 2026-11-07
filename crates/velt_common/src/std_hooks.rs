@@ -470,6 +470,9 @@ hooks! {
     proxy_keys_of => lang_hooks_proxy, "proxyKeysOf", sig((&any) -> [string]);
     /// `new Proxy(target, handler)` with a handler typed `any` (`velt_sema` `proxy.rs`).
     proxy_new_any => lang_hooks_proxy, "proxyNewAny", sig((move any, move any) -> any);
+    /// `f.call(o)` of a class's method read through `any`, which reads the member again: a
+    /// proxy `o` is not supported, whose `get` trap would run twice.
+    proxy_call_check => lang_hooks_proxy, "proxyCallCheck", sig((&any) -> void);
     /// `{ ...x }` of an object in a program that makes proxies: a typed proxy is not supported.
     proxy_spread_check => lang_hooks_proxy, "proxySpreadCheck", sig((&any) -> void);
     /// `{ ...o }` of an `any` that may be a proxy: its enumerable own entries.

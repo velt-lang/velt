@@ -320,6 +320,18 @@ export function proxySpreadCheck(o: any): void {
   }
 }
 
+/**
+ * `f.call(o)` of a class's method read through `any`: a method read as a value has no `this` yet,
+ * so the call reads the member from `o` again, and a proxy's `get` trap would run twice.
+ */
+export function proxyCallCheck(o: any): void {
+  if (o instanceof Proxy) {
+    panic(
+      "TypeError: calling a method read through a proxy with another `this` is not supported yet (#823)",
+    );
+  }
+}
+
 /** `Array.isArray(o)` of an `any` `o` in a program that has loaded `Proxy`: a proxy of an array is one. */
 export function anyIsArrayProxy(o: any): boolean {
   if (o instanceof Proxy) {

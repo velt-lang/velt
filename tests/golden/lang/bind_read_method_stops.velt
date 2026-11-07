@@ -1,0 +1,11 @@
+// `bind` of a class's method read through `any` keeps no `this` yet: the bound function stops when
+// called, with that reason. Node prints 3.
+const made = new Proxy({}, {});
+class A { n = 1; m(x: number) { return this.n + x; } }
+function run<T>(o: T) {
+  const d = (o as { m?: unknown } | null)?.m;
+  const bd = (d as (x: number) => number).bind(o);
+  console.log("bound");
+  console.log(bd(2));
+}
+run(new A());

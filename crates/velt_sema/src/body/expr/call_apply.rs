@@ -26,6 +26,7 @@ use crate::collect::static_this::uses_this;
 use crate::ctx::Item;
 use crate::defs::DefInfo;
 use crate::hir::{self, DefId, TyId, TyKind};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// `f.call(...)` / `f.apply(...)` where `f` is a function (`None`: another call).
@@ -98,8 +99,10 @@ impl FnCx<'_, '_> {
                 }
             }
         }
-        if let Some(h) = this_arg.and_then(|t| self.read_method_call(f, t, &call_args, exp)) {
-            return Some(h);
+        if !bind {
+            if let Some(h) = this_arg.and_then(|t| self.read_method_call(f, t, &call_args, exp)) {
+                return Some(h);
+            }
         }
         if let Some(t) = this_arg {
             if let Some(why) = self.this_not_ignored(f, t) {
@@ -349,12 +352,11 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Does the visible local `name` hold a method read as a value (`const f = o.m`)?
-    /// `f.call(o, …)` where `f`, a dynamic value, was read as `o.m` (`const d = (o as T)?.m`): a
-    /// method read through `any` is no function value yet (#823), and this is the call
-    /// `(o as any).m(…)`, on the object it was read from, as in JavaScript. That reads the member
-    /// again: a program that assigns a member of that name is an error (`crate::object_copies`).
-    /// Limit: a write through `any` with a key known only at run time is not counted.
+    /// `f.call(o, …)` where `f`, a dynamic value, was read as `o.m` (`const d = (o as T)?.m`). A
+    /// function value is called as it was read, as in JavaScript, whatever `o.m` holds by now. A
+    /// class's method read through `any` is no function value yet (#823): that one, which can't
+    /// be replaced through `any`, is the call `(o as any).m(…)`, which reads the member again, and
+    /// a proxy `o` stops instead (`proxyCallCheck`).
     fn read_method_call(
         &mut self,
         f: &ast::Expr,
@@ -365,16 +367,29 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Ident(id) = &strip(f).kind else {
             return None;
         };
-        if !self.read_from(&id.name, this_arg) {
+        if !self.read_from(&id.name, this_arg) || !self.uses_proxy() {
             return None;
         }
         let (ty, prop) = self.member_read_of(&id.name)?;
         self.cx.dynamic(ty)?;
         let span = f.span;
-        self.cx
-            .object_copies
-            .method_rereads
-            .push((prop.clone(), span));
+        let held = self.expr(strip(f), None, Want::Borrow);
+        self.cx.dynamic(held.ty)?;
+        let diags = self.cx.diags.len();
+        let call = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(f.clone()),
+                type_args: vec![],
+                args: args.to_vec(),
+                optional: false,
+            },
+            span,
+        );
+        let value_call = self.expr(&call, exp, Want::Move);
+        let result = value_call.ty;
+        if self.cx.diags.len() > diags || self.cx.ty.is_bottom(result) {
+            return Some(value_call);
+        }
         let any = ast::TypeExpr {
             kind: ast::TypeExprKind::Named {
                 path: vec![ast::Ident {
@@ -392,6 +407,7 @@ impl FnCx<'_, '_> {
             },
             span,
         );
+        let check = hooks::proxy_call_check(ty::Any::of(object.clone())).check(self, span);
         let member = synth(
             ast::ExprKind::Member {
                 object: Box::new(object),
@@ -409,7 +425,37 @@ impl FnCx<'_, '_> {
             },
             span,
         );
-        Some(self.expr(&call, exp, Want::Move))
+        let method_call = self.expr(&call, None, Want::Move);
+        let unit = self.cx.ty.unit;
+        let mut stmts = vec![hir::Stmt {
+            kind: hir::StmtKind::Expr(check),
+            span,
+        }];
+        let value = if result == unit {
+            stmts.push(hir::Stmt {
+                kind: hir::StmtKind::Expr(method_call),
+                span,
+            });
+            self.unit_expr(span)
+        } else {
+            match self.assert_value(method_call, result, span) {
+                Ok(h) => h,
+                Err(h) => self.cast_error(h, result, span),
+            }
+        };
+        let method_call = self.with_lets(stmts, value);
+        let cond = self.intrinsic(
+            hir::Intrinsic::AnyUnboundMethod,
+            vec![held],
+            self.cx.ty.bool_,
+            span,
+        );
+        let kind = hir::ExprKind::If {
+            cond: Box::new(cond),
+            then: Box::new(method_call),
+            els: Box::new(value_call),
+        };
+        Some(self.mk(kind, result, span))
     }
 
     /// The declared type and the member read of local `name`, here or in a function around this
