@@ -1,0 +1,69 @@
+// Overloaded interface methods that return `void`, and a signature that only leaves out optional
+// parameters of another (the shape of `lib.dom`'s `addEventListener`).
+interface Log {
+  write(a: string): void;
+  write(a: string, b?: number): void;
+}
+
+class Lines implements Log {
+  out: string[] = [];
+  write(a: string, b?: number): void {
+    this.out.push(b === undefined ? a : `${a}:${b}`);
+  }
+}
+const lines = new Lines();
+const log: Log = lines;
+log.write("x");
+log.write("y", 2);
+console.log(lines.out);
+
+const seen: string[] = [];
+const literal: Log = {
+  write(a: string, b?: number): void {
+    seen.push(a + (b ?? "-"));
+  },
+};
+literal.write("p");
+literal.write("q", 1);
+console.log(seen);
+
+// The other order, and a result.
+interface Sized {
+  size(a: string, scale?: number): number;
+  size(a: string): number;
+}
+class Measure implements Sized {
+  size(a: string, scale?: number): number {
+    return a.length * (scale ?? 1);
+  }
+}
+const m: Sized = new Measure();
+console.log(m.size("abc"), m.size("abc", 2));
+
+// `void` signatures that take different forms, implemented with one method that takes every form.
+interface Emitter {
+  on(ev: "a", f: (x: number) => void): void;
+  on(ev: "b", f: (x: string) => void): void;
+}
+const handlers: any[] = [];
+const emitter: Emitter = {
+  on(ev: string, f: any): void {
+    handlers.push(f);
+  },
+};
+emitter.on("a", (x) => console.log("a", x + 1));
+emitter.on("b", (x) => console.log("b", x.length));
+handlers[0](1);
+handlers[1]("four");
+
+class Bus implements Emitter {
+  count = 0;
+  on(ev: any, f: any): void {
+    this.count += ev.length;
+  }
+}
+const bus = new Bus();
+const e2: Emitter = bus;
+e2.on("a", (x) => {});
+e2.on("b", (x) => {});
+console.log(bus.count);

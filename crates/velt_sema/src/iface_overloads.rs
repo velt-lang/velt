@@ -24,7 +24,8 @@ pub(crate) fn has_overloads(d: &ast::InterfaceDecl) -> bool {
 
 /// Interface `d` with each overloaded method made one method that takes every form plus its
 /// signatures as default methods `m#k` (module docs). A set this can't merge (generic or rest
-/// signatures, getters, a `void` result) is left as it is: collection reports it.
+/// signatures, getters, a `void` result next to another) is left as it is: collection reports
+/// it.
 pub(crate) fn rewrite(d: &mut ast::InterfaceDecl, out: &mut Rewritten) {
     let mut names: Vec<String> = vec![];
     for (i, m) in d.methods.iter().enumerate() {
@@ -86,7 +87,8 @@ fn same_name(a: &ast::InterfaceMethod, b: &ast::InterfaceMethod) -> bool {
 }
 
 /// One signature taking every form of `sigs` (module docs), or `None` when they have type
-/// parameters, rest parameters, `this` parameters or a `void` result, or differ in `async`.
+/// parameters, rest parameters or `this` parameters, differ in `async`, or have a `void` result
+/// next to another (`m#k` converts the result to its own; a `void` has none).
 fn merge(sigs: &[ast::FnSig]) -> Option<ast::FnSig> {
     let first = sigs.first()?;
     let simple = |s: &ast::FnSig| {
@@ -95,7 +97,7 @@ fn merge(sigs: &[ast::FnSig]) -> Option<ast::FnSig> {
             && !s.is_generator
             && s.is_async == first.is_async
             && s.throws.is_none()
-            && s.ret.as_ref().is_some_and(|t| !is_void(t))
+            && s.ret.is_some()
             && s.params.iter().all(|p| !p.rest && p.pattern.is_none())
     };
     if !sigs.iter().all(simple) {
@@ -107,10 +109,12 @@ fn merge(sigs: &[ast::FnSig]) -> Option<ast::FnSig> {
         let mut tys: Vec<ast::TypeExpr> = vec![];
         let mut optional = false;
         let mut missing = false;
+        let mut always_optional = true;
         for s in sigs {
             match s.params.get(i) {
                 Some(q) => {
                     optional |= q.optional;
+                    always_optional &= q.optional;
                     let t = match q.optional {
                         true => strip_undefined(&q.ty),
                         false => q.ty.clone(),
@@ -123,9 +127,12 @@ fn merge(sigs: &[ast::FnSig]) -> Option<ast::FnSig> {
             }
         }
         // The signatures' type when they agree, else `any`: an implementation takes every form
-        // (TypeScript's usual `definition?: any`), and each signature passes its own.
+        // (TypeScript's usual `definition?: any`), and each signature passes its own. A
+        // parameter optional wherever it is written is that type too: the longest signature
+        // already takes every form (`f(a: string): void; f(a: string, b?: number): void;`).
         let ty = match (tys.len(), missing) {
             (1, false) => tys.remove(0),
+            (1, true) if always_optional => tys.remove(0),
             _ => named("any", p.span),
         };
         let mut param = p.clone();
@@ -155,7 +162,8 @@ fn merge(sigs: &[ast::FnSig]) -> Option<ast::FnSig> {
     // signature's method converts the result to its own type.
     let ret = first.ret.clone()?;
     let same = (sigs.iter()).all(|s| s.ret.as_ref().is_some_and(|r| same_type(r, &ret)));
-    if !same && first.is_async {
+    let any_void = sigs.iter().flat_map(|s| &s.ret).any(is_void);
+    if !same && (first.is_async || any_void) {
         return None;
     }
     let mut sig = first.clone();

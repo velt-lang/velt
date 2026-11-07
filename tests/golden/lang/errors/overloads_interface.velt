@@ -1,8 +1,8 @@
-// Overloaded interface methods that return `void` (an event emitter's `on`) are not supported
+// An overloaded interface method with a `void` result next to another result is not supported
 // yet; other overloaded interface methods are (overloads_interface_methods.velt).
 interface Emitter {
   on(ev: "a", f: (x: number) => void): void;
-  on(ev: "b", f: (x: string) => void): void;
+  on(ev: "b", f: (x: string) => void): number;
 }
 
 function main() {}
