@@ -130,12 +130,8 @@ fn search(cx: &Ctx, m: usize, e: &ast::Expr, ty: TyId, depth: u32) -> Found {
                     }
                     _ => continue,
                 };
-                match found {
-                    None => return None,
-                    Some(f) => {
-                        first.get_or_insert(f);
-                    }
-                }
+                // All fit this alternative: nothing to report.
+                first.get_or_insert(found?);
             }
             first
         }
@@ -157,12 +153,8 @@ fn search(cx: &Ctx, m: usize, e: &ast::Expr, ty: TyId, depth: u32) -> Found {
                     }
                     _ => None,
                 });
-                match found {
-                    None => return None,
-                    Some(f) => {
-                        first.get_or_insert(f);
-                    }
-                }
+                // All fit this alternative: nothing to report.
+                first.get_or_insert(found?);
             }
             first
         }

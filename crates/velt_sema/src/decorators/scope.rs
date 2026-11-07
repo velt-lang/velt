@@ -491,8 +491,11 @@ mod tests {
         }
     }
 
-    /// Scopes by hand: `(lo, hi, names)` each, in the walk's order.
-    fn scopes(regions: &[(u32, u32, &[(&str, Shadow)])]) -> Scopes {
+    /// A region by hand: its `lo`, its `hi` and the names it binds.
+    type Hand<'a> = (u32, u32, &'a [(&'a str, Shadow)]);
+
+    /// Scopes by hand, each region in the walk's order.
+    fn scopes(regions: &[Hand]) -> Scopes {
         let mut w = Walk::new(FILE);
         for &(lo, hi, names) in regions {
             let s = w.scope();

@@ -325,16 +325,14 @@ pub(super) fn fits(cx: &Ctx, v: &ConstTree, ty: TyId) -> bool {
         // `any` and `unknown` hold every value.
         return true;
     }
-    match (cx.ty.kind(ty), v) {
-        // A member of a numeric or string enum is its number or its string (TypeScript's
-        // `E.A` where a `number` or a `string` is expected).
-        (
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Str | TyKind::Literal(_),
-            C::EnumMember(..),
-        ) => {
-            return enum_value(cx, v).is_some_and(|plain| fits(cx, &plain, ty));
-        }
-        _ => {}
+    // A member of a numeric or string enum is its number or its string (TypeScript's `E.A` where
+    // a `number` or a `string` is expected).
+    let plain = matches!(
+        cx.ty.kind(ty),
+        TyKind::Int(_) | TyKind::Float(_) | TyKind::Str | TyKind::Literal(_)
+    );
+    if plain && matches!(v, C::EnumMember(..)) {
+        return enum_value(cx, v).is_some_and(|plain| fits(cx, &plain, ty));
     }
     match cx.ty.kind(ty) {
         TyKind::Error => true,
