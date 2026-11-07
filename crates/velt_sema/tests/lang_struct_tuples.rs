@@ -320,3 +320,56 @@ fn a_growing_guarded_recursion_ends() {
     ok(&body(""));
     ok(&body("const g: G<T> = { v: x, n: 1 };"));
 }
+
+/// A write through a type parameter would change a struct, and the caller's value with it. A
+/// bound alone is fine: the struct has the field, and reading it changes nothing.
+#[test]
+fn a_struct_cant_be_given_to_a_function_that_writes_its_field() {
+    let set = "struct P {
+                 x: number;
+                 y: number;
+               }
+               function set<T extends { x: number }>(v: T): number {
+                 v.x = 9;
+                 return v.x;
+               }
+               function via<U extends { x: number }>(v: U): number {
+                 return set(v);
+               }
+               class C {
+                 x = 1;
+               }";
+    let e = err_src(&format!(
+        "{set}
+         function main() {{
+           const p: P = {{ x: 1, y: 2 }};
+           console.log(set(p), via(p));
+         }}"
+    ));
+    assert!(e.contains("writes a field of a struct (`P`)"), "{e}");
+    assert_eq!(e.matches("error:").count(), 2, "{e}");
+    ok_src(&format!(
+        "{set}
+         function read<T extends {{ x: number }}>(v: T): number {{
+           return v.x;
+         }}
+         function main() {{
+           const p: P = {{ x: 1, y: 2 }};
+           console.log(read(p), set(new C()), via(new C()));
+         }}"
+    ));
+}
+
+/// `as Record` makes a record of a copy of the fields, not a view: a struct is fine.
+#[test]
+fn a_struct_can_be_cast_to_a_record() {
+    ok("struct P {
+          x: number;
+          y: number;
+        }
+        function main() {
+          const p: P = { x: 1, y: 2 };
+          const r = p as Record<string, number>;
+          console.log(r[\"x\"]);
+        }");
+}

@@ -412,6 +412,9 @@ pub(crate) struct Ctx<'m> {
     pub fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
     /// Objects converted by copying their fields, and telling writes (`crate::object_copies`).
     pub object_copies: crate::object_copies::Copies,
+    /// The functions that write a field of a type parameter, and that parameter
+    /// (`struct_tuples::check_field_writes`).
+    pub param_field_writes: Vec<(DefId, TyId)>,
     /// The spans of the `super.m(args)` calls (`hir::Program::super_calls`).
     pub super_calls: rustc_hash::FxHashSet<velt_common::Span>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
@@ -640,6 +643,7 @@ impl<'m> Ctx<'m> {
             borrow_pass_errors: false,
             fresh_checks: vec![],
             object_copies: Default::default(),
+            param_field_writes: vec![],
             super_calls: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],

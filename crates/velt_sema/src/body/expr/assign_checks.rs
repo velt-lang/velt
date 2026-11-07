@@ -103,10 +103,16 @@ impl FnCx<'_, '_> {
     }
 
     /// Remember an assignment to field `prop` of an object type (or of a type parameter, which
-    /// may be one) for the copies of `crate::object_copies`.
+    /// may be one) for the copies of `crate::object_copies`, and of a type parameter, which may
+    /// be a struct, for `struct_tuples::check_field_writes`.
     pub(super) fn note_field_write(&mut self, ty: TyId, prop: &ast::Ident) {
         let ty = match self.cx.ty.kind(ty) {
-            TyKind::Param(_) => None,
+            TyKind::Param(_) => {
+                if let Some(f) = self.body_def {
+                    self.cx.param_field_writes.push((f, ty));
+                }
+                None
+            }
             _ if self.cx.is_object_type(ty) => Some(ty),
             _ => return,
         };
