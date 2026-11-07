@@ -621,7 +621,10 @@ impl FnLower<'_, '_> {
                     let copy = any_mut
                         || self.changes_during_call(a)
                         || args.len() > 1 && self.sibling_container(args, i);
-                    let v = if copy && mode != Some(PassMode::BorrowMut) && is_copy_read(a) {
+                    let v = if copy
+                        && mode != Some(PassMode::BorrowMut)
+                        && super::reg_args::is_copy_read(a)
+                    {
                         let tmp = self.copy_to_temp(v, t);
                         Operand::Copy(Place::local(tmp))
                     } else {
@@ -734,30 +737,6 @@ pub(super) fn is_moved(a: &hir::Expr) -> bool {
             | hir::ExprKind::UnwrapSome(_, UseMode::Move)
             | hir::ExprKind::UnwrapVariant {
                 mode: UseMode::Move,
-                ..
-            }
-    )
-}
-
-/// A Copy value read out of a place (passed by pointer, it would still point into the place).
-fn is_copy_read(a: &hir::Expr) -> bool {
-    if let hir::ExprKind::Downcast(x) = &a.kind {
-        return is_copy_read(x);
-    }
-    matches!(
-        a.kind,
-        hir::ExprKind::Local(_, UseMode::Copy)
-            | hir::ExprKind::Field {
-                mode: UseMode::Copy,
-                ..
-            }
-            | hir::ExprKind::Index {
-                mode: UseMode::Copy,
-                ..
-            }
-            | hir::ExprKind::UnwrapSome(_, UseMode::Copy)
-            | hir::ExprKind::UnwrapVariant {
-                mode: UseMode::Copy,
                 ..
             }
     )

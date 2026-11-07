@@ -1,6 +1,7 @@
 //! Small `struct` values passed and returned in registers (abi.rs `reg_param`, `reg_ret`): as
 //! their scalar fields or as the `V128` of their bytes, on both sides of a call.
 
+use velt_sema::hir::{self, UseMode};
 use velt_sema::hir::{DefId, PassMode, TyId};
 
 use super::abi::RegRet;
@@ -143,4 +144,28 @@ impl FnLower<'_, '_> {
         }
         p
     }
+}
+
+/// A Copy value read out of a place (passed by pointer, it would still point into the place).
+pub(super) fn is_copy_read(a: &hir::Expr) -> bool {
+    if let hir::ExprKind::Downcast(x) = &a.kind {
+        return is_copy_read(x);
+    }
+    matches!(
+        a.kind,
+        hir::ExprKind::Local(_, UseMode::Copy)
+            | hir::ExprKind::Field {
+                mode: UseMode::Copy,
+                ..
+            }
+            | hir::ExprKind::Index {
+                mode: UseMode::Copy,
+                ..
+            }
+            | hir::ExprKind::UnwrapSome(_, UseMode::Copy)
+            | hir::ExprKind::UnwrapVariant {
+                mode: UseMode::Copy,
+                ..
+            }
+    )
 }
