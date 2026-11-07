@@ -23,8 +23,8 @@ impl FnLower<'_, '_> {
             return self.any_same_places(a, b, self.any_cmp());
         }
         // A C struct has no identity: every comparison compares its content (its fields as
-        // the mode compares numbers).
-        if self.cx.c_struct(ty) {
+        // the mode compares numbers). Inside a `struct`, by the struct's rule: its bits.
+        if self.cx.c_struct(ty) && !self.bits_mode {
             return self.same_glue(a, b, ty);
         }
         // A `struct` is a value (#641): `==`, `===` and keys compare its content, floats by bits.
