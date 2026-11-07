@@ -1,0 +1,108 @@
+// `f16x8`'s arithmetic on three kernels (#2049), against half_arith_rust/ and half_arith.c: `axpy`,
+// `y = a * x + y`; `act`, `z = max(x * s + b, 0)`; `dot`, a dot product with four `f16` accumulators
+// (these lose precision; `dotAdd` into `f32x4` is the dot product to use). `*_fast` take
+// `mulAddFast`. One kernel a run, called through a table as Rust's are `#[inline(never)]`;
+// half_arith.sh runs each with 0 and with `passes` passes and subtracts. It prints a checksum.
+//   velt run half_arith.velt <kernel> <passes>
+import { f16x8, u16x8 } from "velt/simd";
+
+const N: usize = 1048576;
+
+function axpy(x: f16[], y: f16[], z: f16[]): u64 {
+  const a = f16x8.splat(f16.fromBits(0x1400));
+  for (let i: usize = 0; f16x8.fits(x, i) && f16x8.fits(y, i); i += 8) {
+    a.mulAdd(f16x8.load(x, i), f16x8.load(y, i)).store(y, i);
+  }
+  return 0;
+}
+
+function axpyFast(x: f16[], y: f16[], z: f16[]): u64 {
+  const a = f16x8.splat(f16.fromBits(0x1400));
+  for (let i: usize = 0; f16x8.fits(x, i) && f16x8.fits(y, i); i += 8) {
+    a.mulAddFast(f16x8.load(x, i), f16x8.load(y, i)).store(y, i);
+  }
+  return 0;
+}
+
+function act(x: f16[], y: f16[], z: f16[]): u64 {
+  const s = f16x8.splat(f16.fromBits(0x3e00));
+  const b = f16x8.splat(f16.fromBits(0x3000));
+  const zero = f16x8.splat(0);
+  for (let i: usize = 0; f16x8.fits(x, i) && f16x8.fits(z, i); i += 8) {
+    f16x8.load(x, i).mulAdd(s, b).max(zero).store(z, i);
+  }
+  return 0;
+}
+
+function actFast(x: f16[], y: f16[], z: f16[]): u64 {
+  const s = f16x8.splat(f16.fromBits(0x3e00));
+  const b = f16x8.splat(f16.fromBits(0x3000));
+  const zero = f16x8.splat(0);
+  for (let i: usize = 0; f16x8.fits(x, i) && f16x8.fits(z, i); i += 8) {
+    f16x8.load(x, i).mulAddFast(s, b).max(zero).store(z, i);
+  }
+  return 0;
+}
+
+function lanes(s: f16x8): u64 {
+  const bits = s.asU16x8();
+  let sum: u64 = 0;
+  for (let k: usize = 0; k < 8; k++) {
+    sum += bits[k] as u64;
+  }
+  return sum;
+}
+
+function dot(x: f16[], y: f16[], z: f16[]): u64 {
+  let s0 = f16x8.splat(0);
+  let s1 = s0;
+  let s2 = s0;
+  let s3 = s0;
+  for (let i: usize = 0; f16x8.fits(x, i + 24) && f16x8.fits(y, i + 24); i += 32) {
+    s0 = f16x8.load(x, i).mulAdd(f16x8.load(y, i), s0);
+    s1 = f16x8.load(x, i + 8).mulAdd(f16x8.load(y, i + 8), s1);
+    s2 = f16x8.load(x, i + 16).mulAdd(f16x8.load(y, i + 16), s2);
+    s3 = f16x8.load(x, i + 24).mulAdd(f16x8.load(y, i + 24), s3);
+  }
+  return lanes(s0 + s1 + (s2 + s3));
+}
+
+function dotFast(x: f16[], y: f16[], z: f16[]): u64 {
+  let s0 = f16x8.splat(0);
+  let s1 = s0;
+  let s2 = s0;
+  let s3 = s0;
+  for (let i: usize = 0; f16x8.fits(x, i + 24) && f16x8.fits(y, i + 24); i += 32) {
+    s0 = f16x8.load(x, i).mulAddFast(f16x8.load(y, i), s0);
+    s1 = f16x8.load(x, i + 8).mulAddFast(f16x8.load(y, i + 8), s1);
+    s2 = f16x8.load(x, i + 16).mulAddFast(f16x8.load(y, i + 16), s2);
+    s3 = f16x8.load(x, i + 24).mulAddFast(f16x8.load(y, i + 24), s3);
+  }
+  return lanes(s0 + s1 + (s2 + s3));
+}
+
+function main() {
+  const names = ["axpy", "axpy_fast", "act", "act_fast", "dot", "dot_fast"];
+  const kernels = [axpy, axpyFast, act, actFast, dot, dotFast];
+  const at = names.indexOf(process.argv[2]) as usize;
+  const passes = Number(process.argv[3]) as usize;
+  const x: f16[] = [];
+  const y: f16[] = [];
+  const z: f16[] = [];
+  for (let i: usize = 0; i < N; i++) {
+    const sign: u16 = i % 5 == 0 ? 0x8000 : 0;
+    const a = (i % 97) as u16;
+    const b = (i % 89) as u16;
+    x.push(f16.fromBits((0x3000 + a * 31) | sign));
+    y.push(f16.fromBits(0x2c00 + b * 37));
+    z.push(0);
+  }
+  let sum: u64 = 0;
+  for (let p: usize = 0; p < passes; p++) {
+    sum += kernels[at](x, y, z);
+  }
+  for (let i: usize = 0; i < N; i++) {
+    sum += (y[i].toBits() as u64) + (z[i].toBits() as u64);
+  }
+  console.log(sum);
+}

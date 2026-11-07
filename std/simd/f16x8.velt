@@ -149,8 +149,8 @@ extend f16x8 {
   /**
    * `this * b + c` lane-wise with one rounding (fused multiply-add), the same bits on every CPU:
    * one instruction where the CPU has FP16, and elsewhere a multiply and an add in `f64`, which
-   * round as one operation does, with no library call on any CPU. `mulAddFast` may be faster
-   * where the last bit may vary.
+   * round as one operation does, with no library call on any CPU, at about five times the
+   * instructions of `mulAddFast`, which is the one to take there where the last bit may vary.
    */
   mulAdd(b: f16x8, c: f16x8): f16x8 {
     return velt_simd_f16x8_mul_add(this, b, c);
