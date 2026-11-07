@@ -1,0 +1,301 @@
+// postgres (internal): the statements a `Client` and a `Pool` run, on a connection they hold. Number
+// `generation` is the client's (connection.velt, line.velt); 0 is a pool's own borrow.
+
+import { readRow, readRows } from "velt/db";
+import { errorOf, PgError } from "./errors";
+import { Failure, failure } from "./failure";
+import { finish, noted, refused, replyTo } from "./connection";
+import { prepare } from "./describe";
+import { Input } from "./input";
+import { counts } from "./reply";
+import { NEEDS_JSON, NOT_PREPARED, SENT } from "./builder";
+import { Conn } from "./line";
+import { Sent } from "./sent";
+
+// Sends `sql` with `params`, preparing it first if it must be, and reads the whole reply.
+async function send<P>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  params: P,
+  rows: bool,
+): Promise<Input> throws PgError {
+  const s = conn.with((l) => l.run<P>(generation, sql, params, null, rows));
+  if (s.status == SENT) {
+    return await replyTo(conn, s, sql);
+  }
+  return await sendSlowly<P>(conn, generation, sql, params, rows, s);
+}
+
+// A statement not prepared yet, or values only their JSON text can carry.
+async function sendSlowly<P>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  params: P,
+  rows: bool,
+  first: Sent,
+): Promise<Input> throws PgError {
+  let s = first;
+  let text: string | null = null;
+  while (true) {
+    if (s.status == NEEDS_JSON) {
+      text = JSON.stringify(params);
+    } else if (s.status == NOT_PREPARED) {
+      await prepare(conn, generation, sql, s.named);
+    } else if (s.status == SENT) {
+      return await replyTo(conn, s, sql);
+    } else {
+      throw refused(conn, s);
+    }
+    const carried = text;
+    s = conn.with((l) => l.run<P>(generation, sql, params, carried, rows));
+  }
+}
+
+// `send` of a statement without values.
+async function sendBare(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  rows: bool,
+): Promise<Input> throws PgError {
+  let s = conn.with((l) => l.runBare(generation, sql, rows));
+  if (s.status == NOT_PREPARED) {
+    await prepare(conn, generation, sql, false);
+    s = conn.with((l) => l.runBare(generation, sql, rows));
+  }
+  if (s.status != SENT) {
+    throw refused(conn, s);
+  }
+  return await replyTo(conn, s, sql);
+}
+
+/** A row that did not fit the requested type. */
+function mismatch(message: string): Failure {
+  return failure("EMISMATCH", `row does not match the requested type: ${message}`);
+}
+
+// Every row of the whole reply `input` holds: the first thing wrong, of a value that could not be
+// read and a row that does not fit, is what's thrown.
+function allRows<T>(conn: Conn, input: Input): T[] {
+  let out: T[] = [];
+  let wrong: string | null = null;
+  try {
+    out = readRows<T, Input>(input);
+  } catch (e) {
+    wrong = e.message;
+  }
+  const f = input.failure;
+  finish(conn, input);
+  if (f != null) {
+    throw noted(conn, f);
+  }
+  if (wrong != null) {
+    throw noted(conn, mismatch(wrong));
+  }
+  return out;
+}
+
+function firstRow<T>(conn: Conn, input: Input): T | null {
+  let out: T | null = null;
+  let wrong: string | null = null;
+  try {
+    out = readRow<T, Input>(input);
+  } catch (e) {
+    wrong = e.message;
+  }
+  const f = input.failure;
+  finish(conn, input);
+  if (f != null) {
+    throw noted(conn, f);
+  }
+  if (wrong != null) {
+    throw noted(conn, mismatch(wrong));
+  }
+  return out;
+}
+
+export async function queryAll<T, P>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  params: P,
+): Promise<T[]> throws PgError {
+  const input = await send<P>(conn, generation, sql, params, true);
+  return allRows<T>(conn, input);
+}
+
+export async function queryFirst<T, P>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  params: P,
+): Promise<T | null> throws PgError {
+  const input = await send<P>(conn, generation, sql, params, true);
+  return firstRow<T>(conn, input);
+}
+
+export async function selectAll<T>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+): Promise<T[]> throws PgError {
+  const input = await sendBare(conn, generation, sql, true);
+  return allRows<T>(conn, input);
+}
+
+export async function selectFirst<T>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+): Promise<T | null> throws PgError {
+  const input = await sendBare(conn, generation, sql, true);
+  return firstRow<T>(conn, input);
+}
+
+export async function executeOne<P>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  params: P,
+): Promise<i64> throws PgError {
+  const input = await send<P>(conn, generation, sql, params, false);
+  const n = input.affected();
+  finish(conn, input);
+  return n;
+}
+
+export async function runBare(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+): Promise<i64> throws PgError {
+  const input = await sendBare(conn, generation, sql, false);
+  const n = input.affected();
+  finish(conn, input);
+  return n;
+}
+
+// Sends `sql` once per set of `sets` in one group, and reads the whole reply.
+async function sendBatch<P>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  sets: P[],
+  rows: bool,
+): Promise<Input> throws PgError {
+  let texts: string[] | null = null;
+  while (true) {
+    const carried = texts;
+    const s = conn.with((l) => l.runBatch<P>(generation, sql, sets, carried, rows));
+    if (s.status == SENT) {
+      return await replyTo(conn, s, sql);
+    }
+    if (s.status == NEEDS_JSON) {
+      texts = sets.map((set) => JSON.stringify(set));
+    } else if (s.status == NOT_PREPARED) {
+      await prepare(conn, generation, sql, s.named);
+    } else {
+      throw refused(conn, s);
+    }
+  }
+}
+
+// A batch with no sets asks the server nothing, but a closed client still says so.
+function checkOpen(conn: Conn, generation: i64) {
+  const f = conn.with((l) => l.whyUnusable(generation));
+  if (f != null) {
+    throw errorOf(f);
+  }
+}
+
+/** Every execution's rows, in order. */
+export async function batchAll<T, P>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  sets: P[],
+): Promise<T[][]> throws PgError {
+  const out: T[][] = [];
+  if (sets.length == 0) {
+    checkOpen(conn, generation);
+    return out;
+  }
+  const input = await sendBatch<P>(conn, generation, sql, sets, true);
+  let wrong: string | null = null;
+  try {
+    for (let i: usize = 0; i < sets.length; i++) {
+      out.push(readRows<T, Input>(input));
+    }
+  } catch (e) {
+    wrong = e.message;
+  }
+  const f = input.failure;
+  finish(conn, input);
+  if (f != null) {
+    throw noted(conn, f);
+  }
+  if (wrong != null) {
+    throw noted(conn, mismatch(wrong));
+  }
+  return out;
+}
+
+/** Every execution's first row, or null. */
+export async function batchFirst<T, P>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  sets: P[],
+): Promise<(T | null)[]> throws PgError {
+  const out: (T | null)[] = [];
+  if (sets.length == 0) {
+    checkOpen(conn, generation);
+    return out;
+  }
+  const input = await sendBatch<P>(conn, generation, sql, sets, true);
+  let wrong: string | null = null;
+  try {
+    for (let i: usize = 0; i < sets.length; i++) {
+      const row: T | null = readRow<T, Input>(input);
+      out.push(row);
+      // `readRow` stops at the execution's first row, unless it had none.
+      if (row != null) {
+        input.skipRows();
+      }
+    }
+  } catch (e) {
+    wrong = e.message;
+  }
+  const f = input.failure;
+  finish(conn, input);
+  if (f != null) {
+    throw noted(conn, f);
+  }
+  if (wrong != null) {
+    throw noted(conn, mismatch(wrong));
+  }
+  return out;
+}
+
+/** Every execution's rows affected. */
+export async function batchCounts<P>(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  sets: P[],
+): Promise<i64[]> throws PgError {
+  if (sets.length == 0) {
+    checkOpen(conn, generation);
+    return [];
+  }
+  const input = await sendBatch<P>(conn, generation, sql, sets, false);
+  const out = counts(input, sets.length as i64);
+  const f = input.failure;
+  finish(conn, input);
+  if (f != null) {
+    throw noted(conn, f);
+  }
+  return out;
+}

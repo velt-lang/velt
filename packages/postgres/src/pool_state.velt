@@ -1,0 +1,293 @@
+// postgres (internal): `PoolState`, the state behind a pool's lock: up to `max` connections, opened on
+// demand and reused. Idle connections wait in a stack (the most recently used is reused first, so a
+// quiet pool's extra connections are the ones left idle); a task that finds none and can't open one
+// waits in line. Broken connections, and ones left inside a transaction, are never reused.
+
+import { closed } from "./failure";
+import { errorOf, PgError } from "./errors";
+import { PgConfig } from "./config";
+import { Channel, channel } from "velt/sync";
+import { currentWorker } from "velt/task";
+import { Conn } from "./line";
+import { Grant } from "./grant";
+import { Taken } from "./taken";
+
+/** A pool shared by every copy of its handle. */
+export type PoolHandle = shared<Mutex<PoolState>>;
+
+// Past this many answered places at the front of the line for connections, it's cut down.
+const COMPACT_FROM: usize = 32;
+
+// A connection going back looks this far along the line for a task on its worker, and the first in
+// line lets others go ahead at most this many times.
+const LOOK_AHEAD: usize = 64;
+const MAX_SKIPS: i64 = 64;
+
+// What a task finds.
+export const TAKE_IDLE: u8 = 0;
+export const TAKE_OPEN: u8 = 1;
+export const TAKE_WAIT: u8 = 2;
+export const TAKE_ENDED: u8 = 3;
+
+// A connection, when it went idle, and the worker that last read it.
+struct Idle {
+  conn: Conn;
+  since: f64;
+  worker: i64;
+}
+
+// A task in line for a connection, and its worker.
+struct Waiter {
+  ch: Channel<Grant>;
+  worker: i64;
+}
+
+/** The state behind a pool's lock. */
+export class PoolState {
+  config: PgConfig;
+  private max: i64;
+  // Connections open or being opened.
+  private open: i64 = 0;
+  private idle: Idle[] = [];
+  private waiters: Waiter[] = [];
+  private firstWaiter: usize = 0;
+  private skips: i64 = 0;
+  // How many connections each worker holds, roughly: tasks can move. Grows as workers are seen:
+  // `workerCount()` doesn't bound `currentWorker()`, which helper threads go past.
+  private connsOn: i64[] = [];
+  private ended: bool = false;
+
+  constructor(config: PgConfig, max: i64) {
+    this.config = config;
+    this.max = max;
+  }
+
+  private heldOn(worker: i64): i64 {
+    return worker < (this.connsOn.length as i64) ? this.connsOn[worker] : 0;
+  }
+
+  private addTo(worker: i64, n: i64) {
+    while ((this.connsOn.length as i64) <= worker) {
+      this.connsOn.push(0);
+    }
+    this.connsOn[worker] += n;
+  }
+
+  /** What a task may have now. */
+  take(): Taken {
+    if (this.ended) {
+      return { status: TAKE_ENDED, conn: null, idleMs: 0.0, wait: null };
+    }
+    const n = this.idle.length as usize;
+    if (n > 0) {
+      const i = this.takeIdle(n);
+      return { status: TAKE_IDLE, conn: i.conn, idleMs: performance.now() - i.since, wait: null };
+    }
+    if (this.open < this.max) {
+      this.open++;
+      this.addTo(currentWorker(), 1);
+      return { status: TAKE_OPEN, conn: null, idleMs: 0.0, wait: null };
+    }
+    const ch = channel<Grant>(1);
+    this.waiters.push({ ch: ch, worker: currentWorker() });
+    return { status: TAKE_WAIT, conn: null, idleMs: 0.0, wait: ch };
+  }
+
+  // A socket follows the task that reads it, which costs system calls and wakes other threads, so a
+  // connection goes to a task on the worker that used it last, when there is one.
+  private takeIdle(n: usize): Idle {
+    if (n > 1) {
+      const here = currentWorker();
+      for (let k = n; k > 0; k--) {
+        if (this.idle[k - 1].worker == here) {
+          const found = this.idle[k - 1];
+          this.idle[k - 1] = this.idle[n - 1];
+          this.idle.length = (n - 1) as number;
+          return found;
+        }
+      }
+    }
+    const last = this.idle[n - 1];
+    this.idle.length = (n - 1) as number;
+    return last;
+  }
+
+  // The waiter to serve, and its place in line ends here; null if there is none. One on this worker
+  // goes ahead, as far as that keeps the line fair.
+  private nextWaiter(): Channel<Grant> | null {
+    const first = this.firstWaiter;
+    const n = this.waiters.length as usize;
+    if (first >= n) {
+      return null;
+    }
+    let chosen = first;
+    const here = currentWorker();
+    if (this.skips < MAX_SKIPS) {
+      const stop = first + LOOK_AHEAD < n ? first + LOOK_AHEAD : n;
+      const crowded = this.heldOn(here) > 1;
+      let local = -1;
+      let spreads = -1;
+      for (let k = first; k < stop; k++) {
+        const worker = this.waiters[k].worker;
+        if (local < 0 && worker == here) {
+          local = k as i64;
+        }
+        if (spreads < 0 && this.heldOn(worker) == 0) {
+          spreads = k as i64;
+        }
+      }
+      if (crowded && spreads >= 0) {
+        chosen = spreads as usize;
+      } else if (local >= 0) {
+        chosen = local as usize;
+      }
+    }
+    const w = this.waiters[chosen];
+    if (w.worker != here) {
+      this.addTo(here, -1);
+      this.addTo(w.worker, 1);
+    }
+    if (chosen == first) {
+      this.skips = 0;
+    } else {
+      this.skips++;
+      for (let k = chosen; k > first; k--) {
+        this.waiters[k] = this.waiters[k - 1];
+      }
+    }
+    this.firstWaiter = first + 1;
+    if (this.firstWaiter >= COMPACT_FROM && this.firstWaiter * 2 >= n) {
+      this.waiters = this.waiters.slice(this.firstWaiter as i64);
+      this.firstWaiter = 0;
+    }
+    return w.ch;
+  }
+
+  /**
+   * A connection comes back: to the waiter returned, or to the idle stack if that's null. If the pool
+   * has ended, it is closed here, under the same lock as `end()`, so it can't be left neither idle
+   * nor closed.
+   */
+  arrived(conn: Conn): Channel<Grant> | null {
+    if (this.ended) {
+      this.open--;
+      conn.with((l) => l.shutDownWhenIdle());
+      return null;
+    }
+    const w = this.nextWaiter();
+    if (w == null) {
+      this.idle.push({ conn: conn, since: performance.now(), worker: currentWorker() });
+    }
+    return w;
+  }
+
+  /** A connection is gone, or was never opened: the waiter returned may open another. */
+  lostOne(): Channel<Grant> | null {
+    this.open--;
+    if (this.ended) {
+      return null;
+    }
+    this.addTo(currentWorker(), -1);
+    const w = this.nextWaiter();
+    if (w != null) {
+      this.open++;
+      this.addTo(currentWorker(), 1);
+    }
+    return w;
+  }
+
+  /** Connections waiting idle. */
+  get idleCount(): i64 {
+    return this.idle.length as i64;
+  }
+
+  /** `end()`: idle connections close now, later operations fail, whoever waits gets the error. */
+  end() {
+    if (this.ended) {
+      return;
+    }
+    this.ended = true;
+    for (const i of this.idle) {
+      i.conn.with((l) => l.shutDownWhenIdle());
+    }
+    this.idle = [];
+    for (let k = this.firstWaiter; k < this.waiters.length; k++) {
+      this.waiters[k].ch.close();
+    }
+    this.waiters.length = 0;
+    this.firstWaiter = 0;
+  }
+
+  get isEnded(): bool {
+    return this.ended;
+  }
+}
+
+// Tells waiters outside the lock, each until one takes it: one that went away has closed its channel.
+function grantLost(pool: PoolHandle) {
+  let w = pool.with((p) => p.lostOne());
+  while (w != null) {
+    if (w.trySend({ conn: null })) {
+      return;
+    }
+    w = pool.with((p) => p.lostOne());
+  }
+}
+
+/** A connection is gone, or leave to open one wasn't used. */
+export function connectionGone(pool: PoolHandle) {
+  grantLost(pool);
+}
+
+/** A connection comes back; with `reusable` false, it's closed. */
+export function putBack(pool: PoolHandle, conn: Conn, reusable: bool) {
+  if (reusable && !pool.with((p) => p.isEnded)) {
+    while (true) {
+      const w = pool.with((p) => p.arrived(conn));
+      if (w == null || w.trySend({ conn: conn })) {
+        return;
+      }
+    }
+  }
+  conn.with((l) => l.shutDownWhenIdle());
+  grantLost(pool);
+}
+
+/** The error of an ended pool. */
+export function poolClosed(): PgError {
+  return errorOf(closed("pool"));
+}
+
+/** A one-statement borrow is over; the connection goes back. */
+export function release(pool: PoolHandle, conn: Conn) {
+  const reusable = conn.with((l) => {
+    l.borrowed = false;
+    return l.reusable;
+  });
+  putBack(pool, conn, reusable);
+}
+
+/** A task that borrowed the connection for one statement is gone: it goes back now. */
+export function giveBackBorrowed(conn: Conn) {
+  const pool = conn.with((l) => (l.borrowed ? l.pool : null));
+  if (pool != null) {
+    release(pool, conn);
+  }
+}
+
+/**
+ * `close()` of the client numbered `generation`: a pooled connection goes back to its pool (dropped
+ * if it's broken or inside a transaction), any other closes.
+ */
+export function closeClient(conn: Conn, generation: i64) {
+  if (!conn.with((l) => l.endClient(generation))) {
+    return;
+  }
+  const pool = conn.with((l) => l.pool);
+  if (pool != null) {
+    const reusable = conn.with((l) => l.reusable);
+    putBack(pool, conn, reusable);
+  } else {
+    conn.with((l) => l.shutDownWhenIdle());
+  }
+}

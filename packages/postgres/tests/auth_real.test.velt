@@ -1,0 +1,172 @@
+// The password exchanges and TLS against a real server, when a URL for each is set:
+// VELT_TEST_PG_MD5_URL, VELT_TEST_PG_SCRAM_URL, VELT_TEST_PG_PASSWORD_URL (cleartext),
+// VELT_TEST_PG_TLS_URL (direct TLS, with `sslmode` and `sslrootcert` in it),
+// VELT_TEST_PG_TLS_UNTRUSTED_URL (a server with TLS whose certificate nothing verifies, without
+// `sslmode`), VELT_TEST_PG_PLAIN_URL (a server without TLS, without `sslmode`).
+import { connect, createPool } from "../src/lib";
+
+class One {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+function urlFrom(value: string | undefined): string | null {
+  const url = value ?? "";
+  return url.length == 0 ? null : url;
+}
+
+async function worksWith(url: string) {
+  const db = await connect(url);
+  const r: One | null = await db.selectOne("SELECT 1::int8 AS n");
+  assertEq(r?.n, 1);
+  db.close();
+}
+
+// The URL with its password changed: the server says no.
+async function refusesBadPassword(url: string) {
+  const at = url.indexOf("@");
+  const colon = url.lastIndexOf(":", at);
+  let code = "connected";
+  try {
+    const db = await connect(`${url.slice(0, colon)}:wrong${url.slice(at)}`);
+    db.close();
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "28P01");
+}
+
+export async function test_md5() {
+  const url = urlFrom(process.env.VELT_TEST_PG_MD5_URL);
+  if (url != null) {
+    await worksWith(url);
+    await refusesBadPassword(url);
+  }
+}
+
+export async function test_scram_sha_256() {
+  const url = urlFrom(process.env.VELT_TEST_PG_SCRAM_URL);
+  if (url != null) {
+    await worksWith(url);
+    await refusesBadPassword(url);
+  }
+}
+
+export async function test_cleartext() {
+  const url = urlFrom(process.env.VELT_TEST_PG_PASSWORD_URL);
+  if (url != null) {
+    await worksWith(url);
+    await refusesBadPassword(url);
+  }
+}
+
+export async function test_direct_tls() {
+  const url = urlFrom(process.env.VELT_TEST_PG_TLS_URL);
+  if (url != null) {
+    await worksWith(url);
+    class Ssl {
+      ssl: bool;
+      constructor(ssl: bool) {
+        this.ssl = ssl;
+      }
+    }
+    const db = await connect(url);
+    const s: Ssl | null = await db.selectOne(
+      "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
+    );
+    assertEq(s?.ssl, true);
+    db.close();
+  }
+}
+
+class Ssl {
+  ssl: bool;
+
+  constructor(ssl: bool) {
+    this.ssl = ssl;
+  }
+}
+
+function withMode(url: string, mode: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}sslmode=${mode}`;
+}
+
+// What connecting says: "plain", "tls", or the failure's code.
+async function outcome(url: string): Promise<string> {
+  try {
+    const db = await connect(url);
+    const s: Ssl | null = await db.selectOne(
+      "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
+    );
+    db.close();
+    return s?.ssl == true ? "tls" : "plain";
+  } catch (e) {
+    return e.code.clone();
+  }
+}
+
+// A server whose certificate nothing verifies (a self-signed one, as Debian and Ubuntu install, or
+// a server before PostgreSQL 17): `prefer` and `require` upgrade the socket after `SSLRequest` and
+// encrypt without checking the certificate, as libpq does; the checked modes refuse it.
+export async function test_a_certificate_nothing_verifies() {
+  const url = urlFrom(process.env.VELT_TEST_PG_TLS_UNTRUSTED_URL);
+  if (url != null) {
+    assertEq(await outcome(url), "tls");
+    assertEq(await outcome(withMode(url, "prefer")), "tls");
+    assertEq(await outcome(withMode(url, "disable")), "plain");
+    assertEq(await outcome(withMode(url, "require")), "tls");
+    assertEq(await outcome(withMode(url, "verify-ca")), "ETLS");
+    assertEq(await outcome(withMode(url, "verify-full")), "ETLS");
+  }
+}
+
+// A server without TLS: `prefer` goes on in plain text; the stricter modes refuse.
+export async function test_a_server_without_tls() {
+  const url = urlFrom(process.env.VELT_TEST_PG_PLAIN_URL);
+  if (url != null) {
+    assertEq(await outcome(url), "plain");
+    assertEq(await outcome(withMode(url, "prefer")), "plain");
+    assertEq(await outcome(withMode(url, "disable")), "plain");
+    assertEq(await outcome(withMode(url, "require")), "ETLS");
+    assertEq(await outcome(withMode(url, "verify-ca")), "ETLS");
+    assertEq(await outcome(withMode(url, "verify-full")), "ETLS");
+  }
+}
+
+// `prefer` and `require` use TLS on a server with a certificate that verifies too.
+export async function test_prefer_uses_tls_when_it_can() {
+  const url = urlFrom(process.env.VELT_TEST_PG_TLS_URL);
+  if (url != null) {
+    assertEq(await outcome(url.replace("sslmode=verify-full", "sslmode=prefer")), "tls");
+    assertEq(await outcome(url.replace("sslmode=verify-full", "sslmode=require")), "tls");
+  }
+}
+
+// A whole session over the unchecked TLS: replies larger than a TLS record, a pool, and close.
+export async function test_a_session_over_tls_without_the_check() {
+  const url = urlFrom(process.env.VELT_TEST_PG_TLS_UNTRUSTED_URL);
+  if (url != null) {
+    const pool = createPool({ url: withMode(url, "require"), max: 2 });
+    class Long {
+      s: string;
+      constructor(s: string) {
+        this.s = s;
+      }
+    }
+    const big: Long | null = await pool.selectOne("SELECT repeat('x', 200000) AS s");
+    assertEq(big?.s.length, 200000);
+    const echoed: Long | null = await pool.queryOne("SELECT $1::text AS s", ["y".repeat(100000)]);
+    assertEq(echoed?.s.length, 100000);
+    const tasks: Promise<i64>[] = [];
+    for (let i: i64 = 0; i < 8; i++) {
+      tasks.push(spawn(pool.run("SELECT pg_sleep(0.01)")));
+    }
+    for (const t of tasks) {
+      assertEq(await t, 1);
+    }
+    pool.end();
+  }
+}

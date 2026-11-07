@@ -1,7 +1,6 @@
-// postgres (internal): `PgError`, the package's error, and the checks that turn a failed native
-// result into one.
+// postgres (internal): `PgError`, the package's error.
 
-import { IoResult, IoStatus } from "velt/native";
+import { Failure } from "./failure";
 
 /**
  * A failed PostgreSQL operation. `code` is the server's SQLSTATE ("23505" unique violation,
@@ -31,35 +30,7 @@ export class PgError extends Error {
   }
 }
 
-// The library's error JSON (docs/native_abi.md).
-struct ErrorFields {
-  code: string;
-  message: string;
-  detail: string | null;
-  constraint: string | null;
-}
-
-/** The `PgError` of a failure the library reported (its error JSON). */
-export function pgError(json: string): PgError {
-  try {
-    const f = JSON.parse<ErrorFields>(json);
-    return new PgError(f.code, f.message, f.detail, f.constraint);
-  } catch (e) {
-    return new PgError("UNKNOWN", json);
-  }
-}
-
-/** Throws the error of a failed status. */
-export function check(s: IoStatus) {
-  if (s.code != 0) {
-    throw pgError(s.message);
-  }
-}
-
-/** The value of a successful result; throws its error otherwise. */
-export function unwrap<T>(r: IoResult<T>): T {
-  if (r.code != 0) {
-    throw pgError(r.message);
-  }
-  return r.value;
+/** `f` as an error to throw. */
+export function errorOf(f: Failure): PgError {
+  return new PgError(f.code, f.message, f.detail, f.constraint);
 }

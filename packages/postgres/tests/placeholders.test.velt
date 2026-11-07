@@ -1,0 +1,48 @@
+// Named placeholders on their own, no server: ported from the Rust crate's unit tests.
+import { rewriteNamed } from "../src/placeholders";
+
+export function test_named_placeholders_become_positional() {
+  const a = rewriteNamed("SELECT * FROM t WHERE a = :a AND b = $b OR a = :a");
+  assertEq(a.sql, "SELECT * FROM t WHERE a = $1 AND b = $2 OR a = $1");
+  assertEq(a.names, ["a", "b"]);
+  const b = rewriteNamed("INSERT INTO t VALUES (:id,:user_name2)");
+  assertEq(b.sql, "INSERT INTO t VALUES ($1,$2)");
+  assertEq(b.names, ["id", "user_name2"]);
+}
+
+export function test_look_alikes_are_left_alone() {
+  for (const sql of [
+    "SELECT x::int, y::text[] FROM t",
+    "SELECT ':a', 'it''s :b', E'\\' :c', \"col:d\" FROM t",
+    "SELECT $$ :a $b $$, $tag$ :c $tag$ FROM t",
+    "SELECT 1 -- :a\n, 2 /* :b /* nested :c */ :d */",
+    "SELECT a$b, arr[1:2], arr[lo : hi] FROM t",
+  ]) {
+    const r = rewriteNamed(sql);
+    assertEq(r.sql, sql);
+    assertEq(r.names.length, 0);
+  }
+  const v = rewriteNamed("SELECT :v::int + 1, ':v'");
+  assertEq(v.sql, "SELECT $1::int + 1, ':v'");
+  assertEq(v.names, ["v"]);
+}
+
+export function test_positional_and_named_do_not_mix() {
+  assert(rewriteNamed("SELECT :a, $1").problem.includes("cannot be mixed"), "mixed");
+}
+
+export function test_scripts_that_end_early_are_copied_whole() {
+  // Unterminated strings, comments and dollar quotes run to the end, and nothing reads past it.
+  for (const sql of [
+    "SELECT 'open",
+    "SELECT \"open",
+    "SELECT /* open",
+    "SELECT $$ open",
+    "SELECT $x$ open",
+    "SELECT E'\\",
+    ":",
+    "$",
+  ]) {
+    assertEq(rewriteNamed(sql).sql, sql);
+  }
+}

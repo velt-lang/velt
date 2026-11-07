@@ -1,0 +1,19 @@
+// postgres (internal): `Opening`, leave to open a pool's connection (pool.velt).
+
+import { connectionGone, PoolHandle } from "./pool_state";
+
+/** Leave to open a connection, given back when its task goes away while connecting. */
+export class Opening {
+  private pool: PoolHandle;
+  released: bool = false;
+
+  constructor(pool: PoolHandle) {
+    this.pool = pool;
+  }
+
+  [Symbol.dispose]() {
+    if (!this.released) {
+      connectionGone(this.pool);
+    }
+  }
+}

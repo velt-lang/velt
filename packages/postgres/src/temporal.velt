@@ -1,0 +1,245 @@
+// postgres (internal): binary `numeric`, `money`, `date`, `time`, `timestamp`, `timestamptz` and
+// `interval` values as text.
+//
+// - `numeric` becomes its exact decimal digits ("12.50", scale kept), "NaN", "Infinity" or
+//   "-Infinity": a string, since an `f64` would round it. `money` (an `i64` of cents) becomes its
+//   exact amount the same way ("-1234.50"), without the locale's currency symbol and grouping.
+// - `interval` becomes PostgreSQL's default output, what a `::text` cast gives:
+//   "1 year 2 mons 3 days 04:05:06.5", "-00:00:01", "00:00:00".
+// - Dates and times become ISO 8601: `date` "2024-02-29", `time` "13:45:00", `timestamp`
+//   "2024-02-29T13:45:00.5", `timestamptz` (sent in UTC) with a trailing "Z". Fractions use 3 digits
+//   when whole milliseconds, else 6, and are left out when zero. Years outside 0000-9999 use the
+//   extended form ("+012345-01-01", "-000044-03-15"), as JavaScript's `toISOString`. `infinity` and
+//   `-infinity` stay those words.
+//
+// Each function reads `b[from..from + len]`, and returns "" with `problem` set when the bytes can't
+// be that type: a server's bytes are not trusted.
+
+import { i16At, i32At, i64At, u16At } from "./backend";
+
+const MICROS_PER_DAY: i64 = 86400000000;
+// Days from 1970-01-01 to PostgreSQL's epoch 2000-01-01.
+const PG_EPOCH_DAYS: i64 = 10957;
+const I64_MAX: i64 = 9223372036854775807;
+const I64_MIN: i64 = -9223372036854775807 - 1;
+
+/** A conversion's result: the text, or why there is none. */
+export struct Rendered {
+  text: string;
+  problem: string;
+}
+
+function ok(text: string): Rendered {
+  return { text: text, problem: "" };
+}
+
+function bad(problem: string): Rendered {
+  return { text: "", problem: problem };
+}
+
+/** `n` with at least `width` digits. */
+export function pad(n: i64, width: i64): string {
+  return `${n}`.padStart(width as number, "0");
+}
+
+function fdiv(a: i64, b: i64): i64 {
+  const q = a / b;
+  return a % b != 0 && (a < 0) != (b < 0) ? q - 1 : q;
+}
+
+function fmod(a: i64, b: i64): i64 {
+  const m = a % b;
+  return m != 0 && (m < 0) != (b < 0) ? m + b : m;
+}
+
+/** `numeric`'s binary form (base-10000 digit groups) as a decimal string. */
+export function numeric(b: u8[], from: i64, len: i64): Rendered {
+  if (len < 8) {
+    return bad("truncated value");
+  }
+  const ndigits = i16At(b, from) < 0 ? 0 : i16At(b, from);
+  const weight = i16At(b, from + 2);
+  const sign = u16At(b, from + 4);
+  const dscale = i16At(b, from + 6) < 0 ? 0 : i16At(b, from + 6);
+  if (sign == 0xc000) {
+    return ok("NaN");
+  }
+  if (sign == 0xd000) {
+    return ok("Infinity");
+  }
+  if (sign == 0xf000) {
+    return ok("-Infinity");
+  }
+  if (len < 8 + 2 * ndigits) {
+    return bad("truncated value");
+  }
+  const s = new StringBuilder();
+  if (sign == 0x4000) {
+    s.append("-");
+  }
+  const group = (i: i64): i64 => (i >= 0 && i < ndigits ? i16At(b, from + 8 + 2 * i) : 0);
+  if (weight < 0) {
+    s.append("0");
+  } else {
+    for (let i: i64 = 0; i <= weight; i++) {
+      s.append(i == 0 ? `${group(i)}` : pad(group(i), 4));
+    }
+  }
+  if (dscale == 0) {
+    return ok(s.toString());
+  }
+  s.append(".");
+  const frac = new StringBuilder();
+  let i = weight + 1;
+  let have: i64 = 0;
+  while (have < dscale) {
+    frac.append(pad(group(i), 4));
+    have += 4;
+    i++;
+  }
+  s.append(frac.toString().slice(0, dscale as number));
+  return ok(s.toString());
+}
+
+// The date of a day count since 1970-01-01 in the proleptic Gregorian calendar (H. Hinnant's
+// `civil_from_days`).
+function dateText(pgDays: i64): string {
+  const z = pgDays + PG_EPOCH_DAYS + 719468;
+  const era = fdiv(z, 146097);
+  const doe = fmod(z, 146097);
+  const yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  const doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  const mp = (5 * doy + 2) / 153;
+  const d = doy - (153 * mp + 2) / 5 + 1;
+  const m = mp < 10 ? mp + 3 : mp - 9;
+  const y = yoe + era * 400 + (m <= 2 ? 1 : 0);
+  if (y >= 0 && y <= 9999) {
+    return `${pad(y, 4)}-${pad(m, 2)}-${pad(d, 2)}`;
+  }
+  return `${y < 0 ? "-" : "+"}${pad(y < 0 ? -y : y, 6)}-${pad(m, 2)}-${pad(d, 2)}`;
+}
+
+function timeText(micros: i64): string {
+  const secs = micros / 1000000;
+  const frac = micros % 1000000;
+  const clock = `${pad(secs / 3600, 2)}:${pad((secs / 60) % 60, 2)}:${pad(secs % 60, 2)}`;
+  if (frac == 0) {
+    return clock;
+  }
+  return frac % 1000 == 0 ? `${clock}.${pad(frac / 1000, 3)}` : `${clock}.${pad(frac, 6)}`;
+}
+
+/** `date` (days since 2000-01-01, 4 bytes). */
+export function date(b: u8[], from: i64, len: i64): Rendered {
+  if (len != 4) {
+    return bad("bad date");
+  }
+  const days = i32At(b, from);
+  if (days == 2147483647) {
+    return ok("infinity");
+  }
+  if (days == -2147483648) {
+    return ok("-infinity");
+  }
+  return ok(dateText(days));
+}
+
+/** `time` (microseconds since midnight). */
+export function time(b: u8[], from: i64, len: i64): Rendered {
+  if (len != 8) {
+    return bad("bad 8-byte value");
+  }
+  return ok(timeText(i64At(b, from)));
+}
+
+/** `timestamp` and `timestamptz` (microseconds since 2000-01-01 00:00, UTC for `timestamptz`). */
+export function timestamp(b: u8[], from: i64, len: i64, utc: bool): Rendered {
+  if (len != 8) {
+    return bad("bad 8-byte value");
+  }
+  const m = i64At(b, from);
+  if (m == I64_MAX) {
+    return ok("infinity");
+  }
+  if (m == I64_MIN) {
+    return ok("-infinity");
+  }
+  const day = dateText(fdiv(m, MICROS_PER_DAY));
+  const clock = timeText(fmod(m, MICROS_PER_DAY));
+  return ok(utc ? `${day}T${clock}Z` : `${day}T${clock}`);
+}
+
+/** `money`: cents as an `i64`. */
+export function money(b: u8[], from: i64, len: i64): Rendered {
+  if (len != 8) {
+    return bad("bad 8-byte value");
+  }
+  const cents = i64At(b, from);
+  // i64's minimum has no positive twin: its digits come by parts.
+  const whole = cents / 100;
+  const part = cents % 100;
+  const sign = cents < 0 ? "-" : "";
+  const absWhole = `${whole}`.replace("-", "");
+  return ok(`${sign}${absWhole}.${pad(part < 0 ? -part : part, 2)}`);
+}
+
+// One field of an interval: "1 year", "-2 mons", "+3 days".
+function unit(s: StringBuilder, value: i64, name: string, negativeBefore: bool) {
+  if (s.length > 0) {
+    s.append(" ");
+  }
+  if (negativeBefore && value > 0) {
+    s.append("+");
+  }
+  s.append(`${value} ${name}${value == 1 ? "" : "s"}`);
+}
+
+/**
+ * `interval`: microseconds (`i64`), days (`i32`), months (`i32`), in PostgreSQL's default text style:
+ * each non-zero year, month and day field, a "+" on a positive field after a negative one, then
+ * the time unless it is zero and something was printed.
+ */
+export function interval(b: u8[], from: i64, len: i64): Rendered {
+  if (len != 16) {
+    return bad("bad interval");
+  }
+  const micros = i64At(b, from);
+  const days = i32At(b, from + 8);
+  const months = i32At(b, from + 12);
+  const s = new StringBuilder();
+  let negative = false;
+  if (months / 12 != 0) {
+    unit(s, months / 12, "year", negative);
+    negative = negative || months / 12 < 0;
+  }
+  if (months % 12 != 0) {
+    unit(s, months % 12, "mon", negative);
+    negative = negative || months % 12 < 0;
+  }
+  if (days != 0) {
+    unit(s, days, "day", negative);
+    negative = negative || days < 0;
+  }
+  if (s.length == 0 || micros != 0) {
+    if (s.length > 0) {
+      s.append(" ");
+    }
+    if (micros < 0) {
+      s.append("-");
+    } else if (negative) {
+      s.append("+");
+    }
+    // i64's minimum has no positive twin: it is taken by parts.
+    const secs = (micros / 1000000 < 0 ? -(micros / 1000000) : micros / 1000000);
+    const frac = micros % 1000000 < 0 ? -(micros % 1000000) : micros % 1000000;
+    s.append(`${pad(secs / 3600, 2)}:${pad((secs / 60) % 60, 2)}:${pad(secs % 60, 2)}`);
+    if (frac != 0) {
+      let digits = pad(frac, 6);
+      while (digits.endsWith("0")) {
+        digits = digits.slice(0, digits.length - 1);
+      }
+      s.append(`.${digits}`);
+    }
+  }
+  return ok(s.toString());
+}

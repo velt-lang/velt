@@ -19,4 +19,24 @@ export interface ByteStream {
   halfClose(): Promise<void>;
   /** Closes the stream at once, both ways. */
   close(): void;
+  /** This stream as a `TryStream`, or null if it can't read and write without waiting. */
+  tryStream(): TryStream | null {
+    return null;
+  }
+}
+
+/**
+ * A `ByteStream` that also reads and writes without waiting, as a `TcpStream` does. A `TlsStream`
+ * over one has `tryRead`, `writeBytesLater` and `tryWrite`.
+ */
+export interface TryStream extends ByteStream {
+  /**
+   * Reads what has arrived into `buf[start..end]`: the number of bytes, 0 when nothing has yet, or
+   * null at the end of the stream.
+   */
+  tryRead(buf: u8[] | Uint8Array, start: number, end?: number): number | null;
+  /** Writes what can go now of `data[start..end]`, and returns how many bytes that was. */
+  tryWrite(data: u8[] | Uint8Array, start: number, end?: number): i64;
+  /** Queues `data[start..end]`, copied, for the task's next wait: the bytes left to send. */
+  writeBytesLater(data: u8[] | Uint8Array, start: number, end?: number): i64;
 }

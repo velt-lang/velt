@@ -1,0 +1,58 @@
+// postgres (internal): `Prepared`, a statement the server has prepared, read in place by whichever
+// task runs it.
+
+import { C_OTHER, CHAIN, decodable, PgType } from "./pg_type";
+
+/** The statements kept prepared per connection. */
+export const CAPACITY: usize = 256;
+
+/** A prepared statement, immutable once made. */
+export class Prepared {
+  /** Its name on the server. */
+  name: string;
+  /** Placeholder names in `$n` order when the SQL used named parameters. */
+  names: string[];
+  /** Whether it was prepared for named parameters. */
+  named: bool;
+  paramCodecs: u8[];
+  paramNames: string[];
+  columnNames: string[];
+  /** Per column, `CHAIN` codecs: how its values decode, then its elements' (pg_type.velt). */
+  chains: u8[];
+  /** The `ENOTSUP` message of the first column that can't be decoded, or "". */
+  undecodable: string;
+
+  constructor(
+    name: string,
+    names: string[],
+    named: bool,
+    params: PgType[],
+    columns: string[],
+    types: PgType[],
+  ) {
+    this.name = name;
+    this.names = names;
+    this.named = named;
+    this.paramCodecs = params.map((p) => p.param);
+    this.paramNames = params.map((p) => p.name);
+    this.columnNames = columns;
+    const chains: u8[] = [];
+    let wrong = "";
+    for (let c: usize = 0; c < types.length; c++) {
+      const chain = types[c].chain;
+      if (wrong.length == 0 && !decodable(chain)) {
+        wrong = unsupported(columns[c], `type ${types[c].name}`);
+      }
+      for (let k: i64 = 0; k < CHAIN; k++) {
+        chains.push(k < (chain.length as i64) ? chain[k] : C_OTHER);
+      }
+    }
+    this.chains = chains;
+    this.undecodable = wrong;
+  }
+}
+
+/** The `ENOTSUP` message for a column holding `what`. */
+export function unsupported(column: string, what: string): string {
+  return `column "${column}" has ${what}, which the postgres package cannot decode; cast it, e.g. "${column}"::text`;
+}

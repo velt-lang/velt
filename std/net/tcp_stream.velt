@@ -2,7 +2,7 @@
 // `close()` (std/net/index.velt).
 
 import { unwrapIo } from "velt/native/result";
-import { ByteStream } from "velt/net/byte_stream";
+import { TryStream } from "velt/net/byte_stream";
 import { checkIo } from "velt/native/status";
 import { tryWriteTo, writeBytesTo } from "velt/net/bytes";
 import { clampTo, toIndex } from "velt/net/offsets";
@@ -30,7 +30,7 @@ import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { AbortSignal } from "velt/task";
 
 /** A connected TCP stream. */
-export struct TcpStream implements ByteStream {
+export struct TcpStream implements TryStream {
   private handle: u64;
 
   /** The next 1..max bytes (`max == 0`: up to 64 KiB); an empty array means end of stream. */
@@ -225,6 +225,11 @@ export struct TcpStream implements ByteStream {
   /** `shutdown()`, as `ByteStream` has it: a transport that must send something first can wait. */
   async halfClose(): Promise<void> {
     this.shutdown();
+  }
+
+  /** This stream, which reads and writes without waiting. */
+  tryStream(): TryStream | null {
+    return this;
   }
 
   /** The peer's "ip:port" ("" once the handle is closed). */

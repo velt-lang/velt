@@ -1,0 +1,148 @@
+// postgres (internal): SCRAM-SHA-256 (RFC 5802, RFC 7677), the client's side of the exchange, without
+// channel binding: `Scram` takes the server's messages and makes the replies.
+
+import { base64Decode, base64Encode, utf8Encode } from "velt/encoding";
+import { copyBytes } from "./frontend";
+import { hmacSha256, randomBytes, sha256, timingSafeEqual } from "velt/crypto";
+
+// A server can't make a client spend more than this on the password; PostgreSQL's default is 4096.
+const MAX_ITERATIONS: i64 = 10000000;
+
+const NONCE_BYTES: usize = 18;
+
+/** PBKDF2-HMAC-SHA256 (RFC 8018) with one block of output, which is what SCRAM's `Hi` is. */
+export function pbkdf2(password: u8[], salt: u8[], iterations: i64): u8[] {
+  const first: u8[] = Buffer.alloc((salt.length + 4) as usize);
+  copyBytes(salt, first, 0, 0, salt.length as i64);
+  first[salt.length] = 0;
+  first[salt.length + 1] = 0;
+  first[salt.length + 2] = 0;
+  first[salt.length + 3] = 1;
+  let u = hmacSha256(password, first);
+  const out = u.slice();
+  for (let i: i64 = 1; i < iterations; i++) {
+    u = hmacSha256(password, u);
+    for (let k: usize = 0; k < out.length; k++) {
+      out[k] ^= u[k];
+    }
+  }
+  return out;
+}
+
+/** One password exchange (see the module header). */
+export class Scram {
+  /** Why the exchange can't go on; "" while it can. */
+  problem: string = "";
+  private password: u8[];
+  private nonce: string;
+  private auth: string = "";
+  private salted: u8[] = [];
+  private user: string;
+
+  /** `nonce` and `user` are for tests, which use the RFC's. */
+  constructor(password: string, nonce: string | null = null, user: string = "") {
+    // No SASLprep: std has no Unicode normalization to do it with. The password's own bytes are used,
+    // which is the same for ASCII and for what's already in its normal form; the server refuses a
+    // password SASLprep would change (README.md, "SCRAM").
+    this.password = utf8Encode(password);
+    this.nonce = nonce ?? base64Encode(randomBytes(NONCE_BYTES));
+    this.user = user;
+  }
+
+  /** The `client-first-message`. The name is empty: the server uses the startup message's. */
+  first(): string {
+    return `n,,${this.bare()}`;
+  }
+
+  private bare(): string {
+    return `n=${this.user},r=${this.nonce}`;
+  }
+
+  /** The `client-final-message` for the `server-first-message`; "" with `problem` set if it's bad. */
+  final(serverFirst: string): string {
+    let nonce: string | null = null;
+    let salt: string | null = null;
+    let iterations: i64 = -1;
+    for (const part of serverFirst.split(",")) {
+      if (part.startsWith("r=")) {
+        nonce = part.slice(2);
+      } else if (part.startsWith("s=")) {
+        salt = part.slice(2);
+      } else if (part.startsWith("i=")) {
+        iterations = digits(part.slice(2));
+      }
+    }
+    if (nonce == null || salt == null || iterations < 1) {
+      return this.fail("invalid SCRAM server-first message");
+    }
+    if (iterations > MAX_ITERATIONS) {
+      return this.fail(`the server asks for ${iterations} SCRAM iterations`);
+    }
+    if (!nonce.startsWith(this.nonce) || nonce.length <= this.nonce.length) {
+      return this.fail("the SCRAM nonce from the server does not extend ours");
+    }
+    let saltBytes: u8[];
+    try {
+      saltBytes = base64Decode(salt);
+    } catch (e) {
+      return this.fail("invalid SCRAM salt");
+    }
+    this.salted = pbkdf2(this.password, saltBytes, iterations);
+    const withoutProof = `c=biws,r=${nonce}`;
+    this.auth = `${this.bare()},${serverFirst},${withoutProof}`;
+    const clientKey = hmacSha256(this.salted, utf8Encode("Client Key"));
+    const signature = hmacSha256(sha256(clientKey), utf8Encode(this.auth));
+    const proof = clientKey.slice();
+    for (let i: usize = 0; i < proof.length; i++) {
+      proof[i] ^= signature[i];
+    }
+    return `${withoutProof},p=${base64Encode(proof)}`;
+  }
+
+  /** Checks the `server-final-message`: true when the server knows the password too. */
+  verify(serverFinal: string): bool {
+    if (serverFinal.startsWith("e=")) {
+      this.problem = `SCRAM failed: ${serverFinal.slice(2)}`;
+      return false;
+    }
+    if (!serverFinal.startsWith("v=") || this.salted.length == 0) {
+      this.problem = "invalid SCRAM server-final message";
+      return false;
+    }
+    let got: u8[];
+    try {
+      got = base64Decode(serverFinal.slice(2));
+    } catch (e) {
+      this.problem = "invalid SCRAM server-final message";
+      return false;
+    }
+    const serverKey = hmacSha256(this.salted, utf8Encode("Server Key"));
+    const want = hmacSha256(serverKey, utf8Encode(this.auth));
+    if (got.length != want.length || !timingSafeEqual(got, want)) {
+      this.problem = "the SCRAM server signature does not match";
+      return false;
+    }
+    return true;
+  }
+
+  private fail(why: string): string {
+    this.problem = why;
+    return "";
+  }
+}
+
+// The decimal `s`, or -1.
+function digits(s: string): i64 {
+  if (s.length == 0 || s.length > 18) {
+    return -1;
+  }
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const d = (s.charCodeAt(i) as i64) - 48;
+    if (d < 0 || d > 9) {
+      return -1;
+    }
+    n = n * 10 + d;
+  }
+  return n;
+}

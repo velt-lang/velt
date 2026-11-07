@@ -1,0 +1,376 @@
+// postgres (internal): connection strings: a `postgres://` or `postgresql://` URL or a libpq
+// `key=value` string, read as tokio-postgres (the driver before this one) and libpq read them: host,
+// port, user, password, dbname, `connect_timeout`, `application_name`, `options`, several hosts, plus
+// the TLS settings. Unknown options are errors.
+
+import { closed, Failure, failure, invalid } from "./failure";
+import { errorOf, PgError } from "./errors";
+import { utf8Encode } from "velt/encoding";
+import { readFileSync } from "velt/fs";
+
+/** How TLS is used. */
+export const SSL_DISABLE: u8 = 0;
+export const SSL_PREFER: u8 = 1;
+export const SSL_REQUIRE: u8 = 2;
+export const SSL_VERIFY_CA: u8 = 3;
+export const SSL_VERIFY_FULL: u8 = 4;
+
+/** A parsed connection string. */
+export class PgConfig {
+  user: string | null = null;
+  password: string | null = null;
+  dbname: string | null = null;
+  options: string | null = null;
+  applicationName: string | null = null;
+  hosts: string[] = [];
+  hostaddrs: string[] = [];
+  ports: i64[] = [];
+  /** `connect_timeout`, in milliseconds; 0 for none. */
+  connectTimeoutMs: i64 = 0;
+  /**
+   * How long one host gets to open: the TCP connection, TLS and the startup. `connect_timeout`
+   * when it is set, else 30 seconds.
+   */
+  startupTimeoutMs: i64 = 30000;
+  sslMode: u8 = SSL_PREFER;
+  /** The contents of the `sslrootcert` file, or "". */
+  rootCert: string = "";
+  rootCertPath: string | null = null;
+  /** `channel_binding=require`, which this driver can't honor: connecting fails. */
+  requireBinding: bool = false;
+  /** `sslnegotiation=postgres`, which velt/net can't do: see README.md. */
+  negotiate: string = "";
+}
+
+function percentDecode(s: string): string {
+  if (!s.includes("%")) {
+    return s;
+  }
+  const b = utf8Encode(s);
+  const out: u8[] = [];
+  let i: i64 = 0;
+  const n = b.length as i64;
+  while (i < n) {
+    if (b[i] == 37 && i + 2 < n) {
+      const hi = hexDigit(b[i + 1] as i64);
+      const lo = hexDigit(b[i + 2] as i64);
+      if (hi >= 0 && lo >= 0) {
+        out.push((hi * 16 + lo) as u8);
+        i += 3;
+        continue;
+      }
+    }
+    out.push(b[i]);
+    i++;
+  }
+  return out.utf8Slice();
+}
+
+function hexDigit(c: i64): i64 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  return c >= 65 && c <= 70 ? c - 55 : -1;
+}
+
+function decimal(s: string): i64 {
+  if (s.length == 0 || s.length > 18) {
+    return -1;
+  }
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const d = (s.charCodeAt(i) as i64) - 48;
+    if (d < 0 || d > 9) {
+      return -1;
+    }
+    n = n * 10 + d;
+  }
+  return n;
+}
+
+function bad(what: string): PgError {
+  return errorOf(invalid(`invalid connection string: ${what}`));
+}
+
+// A key as an error quotes it. One that looks like a URL or user info (a misspelt scheme, say) may
+// hold a password, and errors end up in logs, so it isn't quoted.
+function quoted(key: string): string {
+  if (key.includes("://") || key.includes("@")) {
+    return "(not shown: it looks like a URL, which may hold a password; a URL starts with postgres:// or postgresql://)";
+  }
+  return `\`${key}\``;
+}
+
+// One option; throws for what isn't one.
+function option(c: PgConfig, key: string, value: string) {
+  switch (key) {
+    case "user":
+      c.user = value;
+      break;
+    case "password":
+      c.password = value;
+      break;
+    case "dbname":
+      c.dbname = value;
+      break;
+    case "options":
+      c.options = value;
+      break;
+    case "application_name":
+      c.applicationName = value;
+      break;
+    case "host":
+      for (const h of value.split(",")) {
+        if (h.length == 0) {
+          throw bad("invalid value for option `host`");
+        }
+        c.hosts.push(h);
+      }
+      break;
+    case "hostaddr":
+      for (const h of value.split(",")) {
+        c.hostaddrs.push(h);
+      }
+      break;
+    case "port":
+      for (const p of value.split(",")) {
+        const n = p.length == 0 ? 5432 : decimal(p);
+        if (n < 0 || n > 65535) {
+          throw bad("invalid value for option `port`");
+        }
+        c.ports.push(n);
+      }
+      break;
+    case "connect_timeout": {
+      const n = decimal(value);
+      if (n < 0) {
+        throw bad("invalid value for option `connect_timeout`");
+      }
+      c.connectTimeoutMs = n * 1000;
+      if (n > 0) {
+        c.startupTimeoutMs = n * 1000;
+      }
+      break;
+    }
+    case "sslmode":
+      sslMode(c, value);
+      break;
+    case "sslrootcert":
+      c.rootCertPath = value;
+      break;
+    case "sslnegotiation":
+      if (value != "postgres" && value != "direct") {
+        throw bad("invalid value for option `sslnegotiation`");
+      }
+      c.negotiate = value;
+      break;
+    case "channel_binding":
+      if (value != "disable" && value != "prefer" && value != "require") {
+        throw bad("invalid value for option `channel_binding`");
+      }
+      c.requireBinding = value == "require";
+      break;
+    // Options that are read and do nothing: velt/net sets no socket option but TCP_NODELAY and hands
+    // out no descriptor to set one on, so there's no keepalive (README.md); and the first host that
+    // accepts is used.
+    case "tcp_user_timeout":
+    case "keepalives":
+    case "keepalives_idle":
+    case "keepalives_interval":
+    case "keepalives_retries":
+    case "target_session_attrs":
+    case "load_balance_hosts":
+      break;
+    default:
+      throw bad(`unknown option ${quoted(key)}`);
+  }
+}
+
+function sslMode(c: PgConfig, value: string) {
+  switch (value) {
+    case "disable":
+      c.sslMode = SSL_DISABLE;
+      break;
+    case "prefer":
+      c.sslMode = SSL_PREFER;
+      break;
+    case "require":
+      c.sslMode = SSL_REQUIRE;
+      break;
+    case "verify-ca":
+      c.sslMode = SSL_VERIFY_CA;
+      break;
+    case "verify-full":
+      c.sslMode = SSL_VERIFY_FULL;
+      break;
+    default:
+      throw errorOf(
+        invalid(
+          `unsupported sslmode "${value}" (use disable, prefer, require, verify-ca or verify-full)`,
+        ),
+      );
+  }
+}
+
+// `host:port,host:port`, with IPv6 hosts in brackets.
+function urlHosts(c: PgConfig, part: string) {
+  if (part.length == 0) {
+    return;
+  }
+  for (const piece of part.split(",")) {
+    let host = piece;
+    let port = "";
+    if (piece.startsWith("[")) {
+      const close = piece.indexOf("]");
+      if (close < 0) {
+        throw bad("invalid value for option `host`");
+      }
+      host = piece.slice(1, close);
+      const rest = piece.slice(close + 1);
+      if (rest.length > 0) {
+        if (!rest.startsWith(":")) {
+          throw bad("invalid value for option `host`");
+        }
+        port = rest.slice(1);
+      }
+    } else {
+      const colon = piece.lastIndexOf(":");
+      if (colon >= 0) {
+        host = piece.slice(0, colon);
+        port = piece.slice(colon + 1);
+      }
+    }
+    c.hosts.push(percentDecode(host));
+    if (port.length > 0 || part.includes(",") || part.includes(":")) {
+      option(c, "port", port);
+    }
+  }
+}
+
+function parseUrl(c: PgConfig, url: string) {
+  const scheme = url.indexOf("://");
+  let rest = url.slice(scheme + 3);
+  const question = rest.indexOf("?");
+  let params = "";
+  if (question >= 0) {
+    params = rest.slice(question + 1);
+    rest = rest.slice(0, question);
+  }
+  const slash = rest.indexOf("/");
+  if (slash >= 0) {
+    const db = rest.slice(slash + 1);
+    if (db.length > 0) {
+      c.dbname = percentDecode(db);
+    }
+    rest = rest.slice(0, slash);
+  }
+  const at = rest.lastIndexOf("@");
+  if (at >= 0) {
+    const info = rest.slice(0, at);
+    rest = rest.slice(at + 1);
+    const colon = info.indexOf(":");
+    if (colon >= 0) {
+      c.user = percentDecode(info.slice(0, colon));
+      c.password = percentDecode(info.slice(colon + 1));
+    } else {
+      c.user = percentDecode(info);
+    }
+  }
+  urlHosts(c, rest);
+  if (params.length > 0) {
+    for (const pair of params.split("&")) {
+      const eq = pair.indexOf("=");
+      if (eq < 0) {
+        throw bad(`invalid value for option ${quoted(pair)}`);
+      }
+      option(c, percentDecode(pair.slice(0, eq)), percentDecode(pair.slice(eq + 1)));
+    }
+  }
+}
+
+// libpq's `key=value key='quoted value'`, with backslash escapes.
+function parseKeywords(c: PgConfig, s: string) {
+  const n = s.length as i64;
+  let i: i64 = 0;
+  const space = (k: i64): bool => k < n && " \t\n\r\f\v".includes(s.charAt(k));
+  while (true) {
+    while (space(i)) {
+      i++;
+    }
+    if (i >= n) {
+      return;
+    }
+    const start = i;
+    while (i < n && s.charAt(i) != "=" && !space(i)) {
+      i++;
+    }
+    const key = s.slice(start, i);
+    while (space(i)) {
+      i++;
+    }
+    if (i >= n || s.charAt(i) != "=") {
+      throw bad(`unexpected end of string after ${quoted(key)}`);
+    }
+    i++;
+    while (space(i)) {
+      i++;
+    }
+    const value = new StringBuilder();
+    if (i < n && s.charAt(i) == "'") {
+      i++;
+      let closedQuote = false;
+      while (i < n) {
+        const ch = s.charAt(i);
+        if (ch == "'") {
+          i++;
+          closedQuote = true;
+          break;
+        }
+        if (ch == "\\" && i + 1 < n) {
+          i++;
+        }
+        value.append(s.charAt(i));
+        i++;
+      }
+      if (!closedQuote) {
+        throw bad("unterminated quoted connection parameter value");
+      }
+    } else {
+      while (i < n && !space(i)) {
+        if (s.charAt(i) == "\\" && i + 1 < n) {
+          i++;
+        }
+        value.append(s.charAt(i));
+        i++;
+      }
+    }
+    option(c, key, value.toString());
+  }
+}
+
+/** Parses a connection string; throws `PgError` "EINVAL" for a bad one, "ETLS" for an unreadable root. */
+export function parseConfig(text: string): PgConfig {
+  const s = text.trim();
+  const c = new PgConfig();
+  if (s.startsWith("postgres://") || s.startsWith("postgresql://")) {
+    parseUrl(c, s);
+  } else {
+    parseKeywords(c, s);
+  }
+  const path = c.rootCertPath;
+  if (path != null) {
+    try {
+      c.rootCert = readFileSync(path);
+    } catch (e) {
+      throw errorOf(failure("ETLS", `cannot read sslrootcert "${path}": ${e.message}`));
+    }
+    // As in libpq, a root certificate asks for the chain to be checked.
+    if (c.sslMode == SSL_REQUIRE) {
+      c.sslMode = SSL_VERIFY_CA;
+    }
+  }
+  return c;
+}

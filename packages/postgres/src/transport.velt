@@ -1,0 +1,104 @@
+// postgres (internal): `PgStream`, the byte stream under a connection.
+//
+// `tcp` is velt/net's `TcpStream`: a plain socket, or one with direct TLS (`connectTls`). After
+// `SSLRequest` it carries TLS without a certificate check, and `tls` holds that connection.
+//
+// Reads happen in whichever task holds the connection's `Input`, writes under the connection's lock,
+// so a `TlsStream`, which belongs to one holder, stays behind a lock of its own. Only what doesn't
+// wait happens under that lock: decrypting what has arrived and sealing what goes out. The waiting is
+// on `tcp`, a handle any task can use, so a task dropped while it waits leaves nothing half done in
+// the TLS state. `tls` is null on every other connection, one branch on each call and no other cost.
+
+import { TcpStream, TlsStream } from "velt/net";
+
+/** The byte stream under a connection. */
+export struct PgStream {
+  /** The socket. What waits, waits on this. */
+  tcp: TcpStream;
+  tls: shared<Mutex<TlsStream>> | null;
+
+  /** Whether a `tryRead` may find bytes that waiting on `tcp` wouldn't announce. */
+  buffered(): bool {
+    const t = this.tls;
+    return t != null && t.with((s) => s.hasBuffered());
+  }
+
+  /** `TcpStream.tryRead`, of the plain bytes. */
+  tryRead(buf: u8[], start: number, end: number): number | null {
+    const t = this.tls;
+    if (t == null) {
+      return this.tcp.tryRead(buf, start, end);
+    }
+    const n = t.with((s): number | null | Error => {
+      try {
+        return s.tryRead(buf, start, end);
+      } catch (e) {
+        return e;
+      }
+    });
+    if (n instanceof Error) {
+      throw n;
+    }
+    return n;
+  }
+
+  /** `TcpStream.writeBytesLater`: the bytes left to send. */
+  writeBytesLater(data: u8[], start: number, end: number): i64 {
+    const t = this.tls;
+    if (t == null) {
+      return this.tcp.writeBytesLater(data, start, end);
+    }
+    const left = t.with((s): i64 | Error => {
+      try {
+        return s.writeBytesLater(data, start, end);
+      } catch (e) {
+        return e;
+      }
+    });
+    if (left instanceof Error) {
+      throw left;
+    }
+    return left;
+  }
+
+  /** Resolves once the bytes are written. */
+  async writeBytes(data: u8[], start: number, end: number): Promise<void> {
+    if (this.tls == null) {
+      await this.tcp.writeBytes(data, start, end);
+      return;
+    }
+    this.writeBytesLater(data, start, end);
+    await this.tcp.drained();
+  }
+
+  /** Writes a last small message if the socket takes it now; nothing fails. */
+  tryWrite(data: u8[], start: number, end: number) {
+    const t = this.tls;
+    if (t == null) {
+      this.tcp.tryWrite(data, start, end);
+      return;
+    }
+    t.with((s) => {
+      try {
+        s.tryWrite(data, start, end);
+      } catch (e) {
+        // The connection ends either way.
+      }
+    });
+  }
+
+  /** Fails what is in flight and everything after. */
+  abort() {
+    this.tcp.abort();
+  }
+
+  /** Releases the socket. */
+  close() {
+    this.tcp.close();
+  }
+}
+
+/** The stream of a socket that needs nothing more. */
+export function plainStream(tcp: TcpStream): PgStream {
+  return { tcp: tcp, tls: null };
+}

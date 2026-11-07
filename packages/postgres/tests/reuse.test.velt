@@ -1,0 +1,283 @@
+// What a connection carries back when it's closed or given up on, against a real server: a pool
+// reuses one only when nothing is in flight on it, a `COPY` left open doesn't stop anything, and a
+// copy the wrong way round leaves the next statement alone. Needs VELT_TEST_PG_URL
+// (tests/support/pg.velt).
+import { Client, connect, createPool, Pool } from "../src/lib";
+import { uuidv4 } from "velt/random/uuid";
+import { timeout } from "velt/task";
+import { pgUrl } from "./support/pg";
+
+class Pid {
+  pid: i64;
+
+  constructor(pid: i64) {
+    this.pid = pid;
+  }
+}
+
+class Count {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+async function backend(c: Client): Promise<i64> {
+  const p: Pid | null = await c.selectOne("SELECT pg_backend_pid()::int8 AS pid");
+  return p?.pid ?? -1;
+}
+
+async function poolBackend(pool: Pool): Promise<i64> {
+  // timing: a hang guard; the pool must not wait for a connection left mid-COPY
+  const p: Pid | null = await timeout(
+    pool.selectOne("SELECT pg_backend_pid()::int8 AS pid"),
+    10000,
+  );
+  return p?.pid ?? -1;
+}
+
+// Whether the server still has a session `pid`, waiting up to 5 s for it to end.
+async function sessionEnds(url: string, pid: i64): Promise<bool> {
+  const db = await connect(url);
+  let left: i64 = -1;
+  for (let i: i64 = 0; i < 500 && left != 0; i++) {
+    const c: Count | null = await db.queryOne(
+      "SELECT count(*)::int8 AS n FROM pg_stat_activity WHERE pid = $1::int4",
+      [pid],
+    );
+    left = c?.n ?? -1;
+    if (left != 0) {
+      // timing: the server notices the closed socket by itself
+      await sleep(10);
+    }
+  }
+  db.close();
+  return left == 0;
+}
+
+// A client closed with a `COPY … TO STDOUT` still open: its connection is closed, not handed to the
+// next borrower, who would wait forever behind the copy.
+export async function test_a_client_closed_mid_copy_out_is_not_reused() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 1 });
+  const c = await pool.connect();
+  const pid = await backend(c);
+  const r = await c.copyTo("COPY (SELECT g FROM generate_series(1, 100000) g) TO STDOUT");
+  assert((await r.read()) != null, "the copy started");
+  c.close();
+  const next = await poolBackend(pool);
+  assert(next != pid, "a new connection");
+  assert(await sessionEnds(url, pid), "the old one is closed");
+  let after = "";
+  try {
+    await r.read();
+    after = "read";
+  } catch (e) {
+    after = e.code.clone();
+  }
+  assertEq(after, "ECONNRESET");
+  pool.end();
+}
+
+// The same with `COPY … FROM STDIN`, whose data never ended.
+export async function test_a_client_closed_mid_copy_in_is_not_reused() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 1 });
+  const c = await pool.connect();
+  const pid = await backend(c);
+  await c.batch("CREATE TEMP TABLE reuse_in (v int)");
+  const w = await c.copyFrom("COPY reuse_in FROM STDIN");
+  await w.write("1\n2\n");
+  c.close();
+  assert((await poolBackend(pool)) != pid, "a new connection");
+  assert(await sessionEnds(url, pid), "the old one is closed");
+  pool.end();
+}
+
+// A connection whose statement is still running when its client closes may leave a transaction
+// open: the next borrower gets another connection, whose writes aren't lost with that transaction.
+export async function test_a_client_closed_with_a_statement_in_flight_is_not_reused() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 1 });
+  const t = `reuse_${uuidv4().replaceAll("-", "")}`;
+  await pool.run(`CREATE TABLE ${t} (v int)`);
+  const c = await pool.connect();
+  const pid = await backend(c);
+  await c.run("BEGIN");
+  try {
+    await timeout(c.run("SELECT 1 FROM pg_sleep(0.3)"), 20);
+  } catch (e) {
+    // Given up on while it runs, inside the transaction.
+  }
+  c.close();
+  assert((await poolBackend(pool)) != pid, "a new connection");
+  assertEq(await pool.run(`INSERT INTO ${t} VALUES (1)`), 1);
+  const other = await connect(url);
+  const n: Count | null = await other.selectOne(`SELECT count(*)::int8 AS n FROM ${t}`);
+  assertEq(n?.n, 1);
+  await other.run(`DROP TABLE ${t}`);
+  other.close();
+  pool.end();
+}
+
+// A client of its own closed mid-copy closes its socket too.
+export async function test_close_ends_an_open_copy() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const c = await connect(url);
+  const pid = await backend(c);
+  const r = await c.copyTo("COPY (SELECT g FROM generate_series(1, 100000) g) TO STDOUT");
+  assert((await r.read()) != null, "the copy started");
+  c.close();
+  assert(await sessionEnds(url, pid), "closed");
+}
+
+// A pool ended while a client of it is mid-copy closes that connection once the client closes.
+export async function test_an_ended_pool_closes_a_connection_left_mid_copy() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 2 });
+  const c = await pool.connect();
+  const pid = await backend(c);
+  const r = await c.copyTo("COPY (SELECT g FROM generate_series(1, 100000) g) TO STDOUT");
+  assert((await r.read()) != null, "the copy started");
+  pool.end();
+  c.close();
+  assert(await sessionEnds(url, pid), "closed");
+}
+
+// `copyTo` of a statement that copies in: the server is told no data will come, and the next
+// statement gets its own reply.
+export async function test_copy_to_of_a_copy_in_leaves_the_next_statement_alone() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const c = await connect(url);
+  await c.batch("CREATE TEMP TABLE wrong_way (v int)");
+  let first = "";
+  try {
+    await c.copyTo("COPY wrong_way FROM STDIN");
+    first = "copying";
+  } catch (e) {
+    first = e.code.clone();
+  }
+  assertEq(first, "UNKNOWN");
+  // timing: a hang guard; the server must not still wait for COPY data
+  const n: Count | null = await timeout(c.selectOne("SELECT 5::int8 AS n"), 10000);
+  assertEq(n?.n, 5);
+  const rows: Count | null = await c.selectOne("SELECT count(*)::int8 AS n FROM wrong_way");
+  assertEq(rows?.n, 0);
+  c.close();
+}
+
+// And `copyFrom` of one that copies out: its rows are read and dropped, and the next goes on.
+export async function test_copy_from_of_a_copy_out_leaves_the_next_statement_alone() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const c = await connect(url);
+  let first = "";
+  try {
+    await c.copyFrom("COPY (SELECT 1) TO STDOUT");
+    first = "copying";
+  } catch (e) {
+    first = e.code.clone();
+  }
+  assertEq(first, "UNKNOWN");
+  // timing: a hang guard
+  const n: Count | null = await timeout(c.selectOne("SELECT 6::int8 AS n"), 10000);
+  assertEq(n?.n, 6);
+  c.close();
+}
+
+// 32768 to 65535 parameters are a statement the server takes; past that it refuses, and the
+// connection goes on.
+export async function test_up_to_65535_parameters() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const c = await connect(url);
+  await c.batch("CREATE TEMP TABLE many (v int)");
+  assertEq(await c.execute(insertOf(40000), valuesOf(40000)), 40000);
+  assertEq(await c.execute(insertOf(65535), valuesOf(65535)), 65535);
+  let past = "";
+  try {
+    await c.execute(insertOf(65536), valuesOf(65536));
+    past = "ran";
+  } catch (e) {
+    past = e.code.clone();
+  }
+  assert(past != "ran" && past != "ECONNRESET", past);
+  const n: Count | null = await c.selectOne("SELECT count(*)::int8 AS n FROM many");
+  assertEq(n?.n, 105535);
+  c.close();
+}
+
+function insertOf(n: i64): string {
+  const marks: string[] = [];
+  for (let i: i64 = 1; i <= n; i++) {
+    marks.push(`($${i}::int4)`);
+  }
+  return `INSERT INTO many (v) VALUES ${marks.join(",")}`;
+}
+
+function valuesOf(n: i64): i64[] {
+  const out: i64[] = [];
+  for (let i: i64 = 1; i <= n; i++) {
+    out.push(i);
+  }
+  return out;
+}
+
+// `timeout` around `pool.transaction` doesn't drop its task: the body runs on to its end, the
+// transaction commits, and the connection goes back to the pool. (Velt drops a task's values only
+// when the runtime drops the task; README.md, "Pool".)
+export async function test_a_transaction_given_up_on_still_finishes() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 1 });
+  const t = `reuse_${uuidv4().replaceAll("-", "")}`;
+  await pool.run(`CREATE TABLE ${t} (v int)`);
+  let what = "";
+  try {
+    await timeout(
+      pool.transaction(async (tx) => {
+        await tx.run("SELECT pg_sleep(0.2)");
+        await tx.run(`INSERT INTO ${t} VALUES (1)`);
+        return 0;
+      }),
+      20,
+    );
+    what = "done";
+  } catch (e) {
+    what = "timed out";
+  }
+  assertEq(what, "timed out");
+  // timing: a hang guard; the body still runs and gives the connection back
+  const n: Count | null = await timeout(
+    pool.selectOne(`SELECT count(*)::int8 AS n FROM ${t}`),
+    10000,
+  );
+  assertEq(n?.n, 1);
+  await pool.run(`DROP TABLE ${t}`);
+  pool.end();
+}

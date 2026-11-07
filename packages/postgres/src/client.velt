@@ -1,93 +1,68 @@
 // postgres (internal): `Client`, one connection, and `connect`, which opens one.
 //
-// `Client` is a Copy handle like velt/net's sockets: pass and capture it freely (also into
-// spawned tasks: a client pipelines concurrent queries) and release it once with `close()`.
+// `Client` is a Copy handle like velt/net's sockets: pass and capture it freely (also into spawned
+// tasks: a client pipelines concurrent queries) and release it once with `close()`.
 
-import {
-  velt_postgres__batch,
-  velt_postgres__begin,
-  velt_postgres__bind_abort,
-  velt_postgres__bind_begin,
-  velt_postgres__close,
-  velt_postgres__connect,
-  velt_postgres__copy_from,
-  velt_postgres__copy_to,
-  velt_postgres__depth,
-  velt_postgres__error_after,
-  velt_postgres__error_count,
-  velt_postgres__execute,
-  velt_postgres__execute_bound,
-  velt_postgres__query_batch,
-  velt_postgres__query_bound,
-  velt_postgres__query_rows,
-  velt_postgres__reset_error_count,
-} from "./native";
-import { bindParams } from "velt/db";
-import { check, PgError, pgError, unwrap } from "./errors";
-import { counts, cursorRow, cursorRows, firstRows, rowSets } from "./rows";
 import { CopyReader } from "./copy_reader";
 import { CopyWriter } from "./copy_writer";
+import { startCopyFrom, startCopyTo } from "./copy_state";
+import { errorOf, PgError } from "./errors";
+import { Conn } from "./line";
+import { simple } from "./connection";
+import {
+  batchAll,
+  batchCounts,
+  batchFirst,
+  executeOne,
+  queryAll,
+  queryFirst,
+  runBare,
+  selectAll,
+  selectFirst,
+} from "./ops";
+import { parseConfig } from "./config";
+import { openConnection } from "./startup";
+import { closeClient } from "./pool_state";
 import { Transaction } from "./transaction";
 
 /** One connection (from `connect`, or dedicated from `pool.connect()`). */
 export struct Client {
-  private handle: u64;
+  private handle: Conn;
+  private generation: i64;
 
-  /**
-   * The package's own: the `Client` of a handle its native library returned (a handle that is
-   * not a live connection's fails with "ECLOSED").
-   */
-  static fromHandle(handle: u64): Client {
-    return Client { handle: handle };
+  /** The package's own: the `Client` numbered `generation` of a connection. */
+  static of(handle: Conn, generation: i64): Client {
+    return Client { handle: handle, generation: generation };
   }
 
   /** Every row of `sql` (any statement that returns rows). */
   async query<T, P>(sql: string, params: P): Promise<T[]> {
-    return cursorRows<T>(this.handle, await this.open(sql, params, false));
+    return await queryAll<T, P>(this.handle, this.generation, sql, params);
   }
 
   /** The first row, or null if there is none. */
   async queryOne<T, P>(sql: string, params: P): Promise<T | null> {
-    return cursorRow<T>(this.handle, await this.open(sql, params, true));
+    return await queryFirst<T, P>(this.handle, this.generation, sql, params);
   }
 
   /** Runs `sql`; the number of rows it inserted, updated, deleted or returned. */
   async execute<P>(sql: string, params: P): Promise<i64> {
-    const sink = velt_postgres__bind_begin();
-    if (bindParams<P>(sink, params)) {
-      return unwrap(await velt_postgres__execute_bound(this.handle, sql, sink));
-    }
-    velt_postgres__bind_abort(sink);
-    return unwrap(await velt_postgres__execute(this.handle, sql, JSON.stringify(params)));
+    return await executeOne<P>(this.handle, this.generation, sql, params);
   }
 
   /** `query` without parameters. */
   async select<T>(sql: string): Promise<T[]> {
-    const cursor = unwrap(await velt_postgres__query_rows(this.handle, sql, "", false));
-    return cursorRows<T>(this.handle, cursor);
+    return await selectAll<T>(this.handle, this.generation, sql);
   }
 
   /** `queryOne` without parameters. */
   async selectOne<T>(sql: string): Promise<T | null> {
-    const cursor = unwrap(await velt_postgres__query_rows(this.handle, sql, "", true));
-    return cursorRow<T>(this.handle, cursor);
-  }
-
-  // A cursor over the rows of `sql` with `params`, handed to the driver value by value when
-  // the type allows (the same binding as their JSON text), else as JSON text.
-  private async open<P>(sql: string, params: P, firstOnly: bool): Promise<u64> {
-    const sink = velt_postgres__bind_begin();
-    if (bindParams<P>(sink, params)) {
-      return unwrap(await velt_postgres__query_bound(this.handle, sql, sink, firstOnly));
-    }
-    velt_postgres__bind_abort(sink);
-    const text = JSON.stringify(params);
-    return unwrap(await velt_postgres__query_rows(this.handle, sql, text, firstOnly));
+    return await selectFirst<T>(this.handle, this.generation, sql);
   }
 
   /** `execute` without parameters. */
   async run(sql: string): Promise<i64> {
-    return unwrap(await velt_postgres__execute(this.handle, sql, ""));
+    return await runBare(this.handle, this.generation, sql);
   }
 
   /**
@@ -95,36 +70,34 @@ export struct Client {
    * prepared or cached.
    */
   async batch(sql: string): Promise<void> {
-    check(await velt_postgres__batch(this.handle, sql));
+    await simple(this.handle, this.generation, sql);
   }
 
   /** Runs `sql` once per parameter set in one round trip; each execution's rows, in order. */
   async batchQuery<T, P>(sql: string, paramSets: P[]): Promise<T[][]> {
-    const sets = JSON.stringify(paramSets);
-    return rowSets<T>(
-      this.handle,
-      unwrap(await velt_postgres__query_batch(this.handle, sql, sets, 0)),
-    );
+    return await batchAll<T, P>(this.handle, this.generation, sql, paramSets);
   }
 
   /** `batchQuery`, keeping each execution's first row (null if it had none). */
   async batchQueryOne<T, P>(sql: string, paramSets: P[]): Promise<(T | null)[]> {
-    const sets = JSON.stringify(paramSets);
-    return firstRows<T>(
-      this.handle,
-      unwrap(await velt_postgres__query_batch(this.handle, sql, sets, 1)),
-    );
+    return await batchFirst<T, P>(this.handle, this.generation, sql, paramSets);
   }
 
   /** Runs `sql` once per parameter set in one round trip; each execution's rows affected. */
   async batchExecute<P>(sql: string, paramSets: P[]): Promise<i64[]> {
-    const sets = JSON.stringify(paramSets);
-    return counts(this.handle, unwrap(await velt_postgres__query_batch(this.handle, sql, sets, 2)));
+    return await batchCounts<P>(this.handle, this.generation, sql, paramSets);
   }
 
   /** Whether a transaction started with `begin` / `transaction` is open. */
   get inTransaction(): bool {
-    return velt_postgres__depth(this.handle) > 0;
+    const generation = this.generation;
+    return this.handle.with((l) => l.generation == generation && l.depth > 0);
+  }
+
+  // The open transaction levels; 0 when closed.
+  private depth(): u32 {
+    const generation = this.generation;
+    return this.handle.with((l) => (l.generation == generation ? l.depth : 0));
   }
 
   /**
@@ -132,8 +105,12 @@ export struct Client {
    * `rollback()`.
    */
   async begin(): Promise<Transaction> {
-    const depth = unwrap(await velt_postgres__begin(this.handle));
-    return Transaction.fromHandle(this.handle, depth);
+    const depth = this.depth() + 1;
+    await simple(this.handle, this.generation, depth == 1 ? "BEGIN" : `SAVEPOINT velt_tx_${depth}`);
+    this.handle.with((l) => {
+      l.depth = depth;
+    });
+    return Transaction.of(this.handle, this.generation, depth);
   }
 
   /**
@@ -145,20 +122,22 @@ export struct Client {
    * yourself.
    */
   async transaction<T, E>(fn: (tx: Client) => Promise<T, E>): Promise<T> throws PgError | E {
+    const conn = this.handle;
     const tx = await this.begin();
-    const failures = velt_postgres__error_count(this.handle);
+    const failures = conn.with((l) => l.failures.count);
     try {
       const result = await fn(this);
-      if (velt_postgres__error_count(this.handle) != failures) {
-        throw pgError(velt_postgres__error_after(this.handle, failures).message);
+      const first = conn.with((l) => l.failures.after(failures));
+      if (first != null) {
+        throw errorOf(first);
       }
       await tx.commit();
       return result;
     } catch (e) {
-      if (velt_postgres__depth(this.handle) == tx.depth) {
+      if (this.depth() == tx.depth) {
         await tx.rollback();
       }
-      velt_postgres__reset_error_count(this.handle, failures);
+      conn.with((l) => l.failures.reset(failures));
       throw e;
     }
   }
@@ -169,7 +148,7 @@ export struct Client {
    * connection is busy until then.
    */
   async copyFrom(sql: string): Promise<CopyWriter> {
-    return CopyWriter.fromHandle(unwrap(await velt_postgres__copy_from(this.handle, sql)));
+    return CopyWriter.of(await startCopyFrom(this.handle, this.generation, sql));
   }
 
   /**
@@ -177,7 +156,7 @@ export struct Client {
    * data with the returned reader as it arrives.
    */
   async copyTo(sql: string): Promise<CopyReader> {
-    return CopyReader.fromHandle(unwrap(await velt_postgres__copy_to(this.handle, sql)));
+    return CopyReader.of(await startCopyTo(this.handle, this.generation, sql));
   }
 
   /**
@@ -185,17 +164,16 @@ export struct Client {
    * releases the handle (later calls throw "ECLOSED").
    */
   close() {
-    velt_postgres__close(this.handle);
-    this.handle = 0;
+    closeClient(this.handle, this.generation);
   }
 }
 
 /**
  * Connects to the server at `url`: "postgres://user:password@host:port/database?options"
  * or a libpq "host=… user=… dbname=…" string. `sslmode` is disable, prefer (default),
- * require (encrypted, certificate not checked), verify-ca or verify-full (Mozilla's roots
- * plus the PEM file named by `sslrootcert`). Throws `PgError`.
+ * require, verify-ca or verify-full (README.md, "TLS"). Throws `PgError`.
  */
 export async function connect(url: string): Promise<Client> {
-  return Client.fromHandle(unwrap(await velt_postgres__connect(url)));
+  const config = parseConfig(url);
+  return Client.of(await openConnection(config), 1);
 }

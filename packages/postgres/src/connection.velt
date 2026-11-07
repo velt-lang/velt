@@ -1,0 +1,223 @@
+// postgres (internal): requests on a connection, which any number of tasks may share.
+//
+// A request takes no hop through another task, and the connection has no task of its own. Under a
+// short lock the caller writes its bytes to the socket's queue and takes its place in the line for
+// replies, in the same order; its own task sends them when it next waits. The `Input`, the reading
+// end, is held by the request whose replies come next: it reads in its own task, decodes the rows out
+// of the read buffer, and hands the `Input` to the next in line through that request's own channel.
+// With nobody else in line, a query so waits for its socket and nothing else, no channel, no wake-up
+// of another task.
+//
+// A task dropped while waiting does not leave the line stuck: what it held is dropped, and `Input`'s
+// `[Symbol.dispose]` starts a task that reads what it was owed (drain.velt). A task given up on with
+// `timeout` isn't dropped, and reads its own reply.
+//
+// When the connection fails the request reading sees it; the others in line fail too (their requests
+// may have run), and later ones throw "ECONNRESET".
+
+import { IoError } from "velt/io";
+import { Channel } from "velt/sync";
+import { errorOf, PgError } from "./errors";
+import { connectionClosed, Failure, ioFailure } from "./failure";
+import { Input } from "./input";
+import { quiet, readReply } from "./reply";
+import { FAILED } from "./builder";
+import { Conn } from "./line";
+import { Sent } from "./sent";
+
+// SQLSTATEs after which a cached statement must be prepared again: its plan no longer matches the
+// schema ("cached plan must not change result type"), or it is gone.
+const STALE_PLAN = "0A000";
+const STALE_NAME = "26000";
+
+/** A request waiting for the `Input`; when its task goes away, the `Input` must not wait for it. */
+export class Waiting {
+  private turn: Channel<Input>;
+  private atHome: bool;
+  released: bool = false;
+
+  constructor(turn: Channel<Input>, atHome: bool) {
+    this.turn = turn;
+    this.atHome = atHome;
+  }
+
+  [Symbol.dispose]() {
+    if (this.released) {
+      return;
+    }
+    if (this.atHome) {
+      // The one before this just gave it up, and is about to send it. Nobody else takes it from
+      // here, since this request is first in line.
+      spawn(dropNext(this.turn));
+    } else {
+      this.turn.close();
+      // Dropped if it had come: it reads what this request was owed.
+      this.turn.tryReceive();
+    }
+  }
+}
+
+async function dropNext(home: Channel<Input>) {
+  const input = await home.receive();
+  if (input != null) {
+    // `finish` parked it on its way here; dropped unparked, it reads what this request was owed.
+    input.parked = false;
+  }
+}
+
+// `first`: the one before this request has given the line up, and hasn't sent the `Input` yet.
+async function waitInLine(
+  conn: Conn,
+  turn: Channel<Input>,
+  first: bool,
+): Promise<Input> throws PgError {
+  const waiting = new Waiting(turn, first);
+  const input = await turn.receive();
+  waiting.released = true;
+  if (!first) {
+    conn.with((l) => l.giveBack(turn));
+  }
+  if (input == null) {
+    throw errorOf(connectionClosed());
+  }
+  return input;
+}
+
+/** The `Input`, when `s`'s replies come next. */
+export async function takeTurn(conn: Conn, s: Sent): Promise<Input> throws PgError {
+  if (s.first) {
+    const ready = s.turn.tryReceive();
+    if (ready != null) {
+      ready.parked = false;
+      ready.begin(s.statement);
+      return ready;
+    }
+  }
+  const input = await waitInLine(conn, s.turn, s.first);
+  input.parked = false;
+  input.begin(s.statement);
+  return input;
+}
+
+/** Counts a failure against the client, for an enclosing `transaction`. */
+export function noted(conn: Conn, f: Failure): PgError {
+  conn.with((l) => l.failures.note(f));
+  return errorOf(f);
+}
+
+/** The error of a request that wasn't sent. */
+export function refused(conn: Conn, s: Sent): PgError {
+  const f = s.problem ?? connectionClosed();
+  // A closed client is past counting.
+  if (f.code == "ECLOSED") {
+    return errorOf(f);
+  }
+  return noted(conn, f);
+}
+
+/** The connection is gone, for the reason `f`. */
+export function lose(conn: Conn, input: Input, f: Failure): PgError {
+  input.parked = true;
+  conn.with((l) => {
+    l.failures.note(f);
+    l.lost();
+  });
+  return errorOf(f);
+}
+
+/** The reply is dealt with: the next in line goes on. */
+export function finish(conn: Conn, input: Input) {
+  input.takeReply();
+  const status = input.status;
+  const n = conn.with((l) => l.next(status));
+  if (n.idle) {
+    input.parked = true;
+    if (n.closes) {
+      return;
+    }
+  }
+  // A closed channel means that request is gone: `input` is dropped, and reads what it was owed.
+  n.turn.trySend(input);
+}
+
+/** Home while the line stands still: its own `COPY` goes on, or nothing is in line. */
+export function park(home: Channel<Input>, input: Input) {
+  input.parked = true;
+  home.trySend(input);
+}
+
+/**
+ * The `Input`, with the whole reply of `s` in its buffer. If the server reported an error it's
+ * thrown here, and the `Input` is passed on. `sql` is what to forget if the statement went stale.
+ */
+export async function replyTo(conn: Conn, s: Sent, sql: string): Promise<Input> throws PgError {
+  const input = await takeTurn(conn, s);
+  await readWhole(conn, input);
+  if (input.errorAt >= 0) {
+    const f = input.serverError();
+    if (f.code == STALE_PLAN || f.code == STALE_NAME) {
+      const named = s.named;
+      conn.with((l) => l.forget(sql, named));
+    }
+    finish(conn, input);
+    throw noted(conn, f);
+  }
+  return input;
+}
+
+/** Reads until the reply is whole; if the connection ends first, that's what is thrown. */
+export async function readWhole(conn: Conn, input: Input): Promise<void> throws PgError {
+  let whole = false;
+  try {
+    whole = await readReply(input);
+  } catch (e) {
+    const why = e instanceof IoError ? ioFailure(e.code, e.message) : connectionClosed();
+    throw lose(conn, input, why);
+  }
+  const broken = input.broken;
+  if (broken != null) {
+    throw lose(conn, input, broken);
+  }
+  if (!whole) {
+    // A session ending says why, and a connection cut off doesn't.
+    const why = input.errorAt >= 0 ? input.serverError() : connectionClosed();
+    throw lose(conn, input, why);
+  }
+}
+
+/** Runs one request of the simple protocol to its end. */
+export async function simple(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+): Promise<i64> throws PgError {
+  const s = conn.with((l) => l.sendSimple(generation, sql));
+  if (s.status == FAILED) {
+    throw refused(conn, s);
+  }
+  const input = await replyTo(conn, s, "");
+  const n = input.affected();
+  finish(conn, input);
+  return n;
+}
+
+/**
+ * Whether an idle connection's socket looks usable: nothing but what a server may send unasked has
+ * come. A connection found dead is ended.
+ */
+export function stillAlive(conn: Conn): bool {
+  const home = conn.with((l) => l.homeChannel);
+  const input = home.tryReceive();
+  if (input == null) {
+    // Something holds the reading end of a connection that should be idle: it can't be trusted.
+    conn.with((l) => l.lost());
+    return false;
+  }
+  if (!quiet(input)) {
+    input.parked = true;
+    conn.with((l) => l.lost());
+    return false;
+  }
+  park(home, input);
+  return true;
+}

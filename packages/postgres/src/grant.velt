@@ -1,0 +1,8 @@
+// postgres (internal): `Grant`, what a task waiting for a pool's connection is handed.
+
+import { Conn } from "./line";
+
+/** What a waiting task is handed: a connection, or leave to open one. */
+export struct Grant {
+  conn: Conn | null;
+}
