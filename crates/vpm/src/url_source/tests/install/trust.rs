@@ -215,12 +215,15 @@ fn the_download_limit_is_the_one_given() {
 }
 
 #[test]
-fn extracting_where_an_equal_tree_already_is_takes_it() {
+fn a_failed_extraction_is_reported_even_beside_a_tree_with_a_record() {
+    // Extracting where a tree already is fails (the lock makes it no concurrent install's), and
+    // the tree that's there isn't taken for the one asked for.
     let tmp = tempfile::tempdir().unwrap();
     let raw = tmp.path().join("raw");
     let archive = tar_gz(&[("a/x", "1"), ("a/l", "-> x")]);
     super::super::super::unpack(&archive, &raw, "u", false).unwrap();
-    super::super::super::unpack(&archive, &raw, "u", false).unwrap();
+    let e = super::super::super::unpack(&archive, &raw, "u", false).unwrap_err();
+    assert!(e.contains("can't be used"), "{e}");
     assert_eq!(Verified::read(&raw).unwrap().links, vec!["a/l".to_string()]);
 }
 
@@ -507,6 +510,27 @@ fn concurrent_installs_of_one_archive_download_it_once() {
 }
 
 #[test]
+fn concurrent_velt_adds_of_one_archive_take_turns() {
+    // `entry_for` extracts under the same lock: the first one's tree is the others' too.
+    let e = env();
+    let s = Serve::new();
+    let archive = vue();
+    s.put("/vue.tar.gz", Body::Bytes(archive.clone()));
+    let url = s.url("/vue.tar.gz");
+    let loc = &e.loc;
+    let found: Vec<_> = std::thread::scope(|scope| {
+        let runs: Vec<_> = (0..8)
+            .map(|_| {
+                let url = &url;
+                scope.spawn(move || crate::url_source::entry_for(loc, url, Some("packages/vue")))
+            })
+            .collect();
+        runs.into_iter().map(|r| r.join().unwrap()).collect()
+    });
+    assert!(found.iter().all(Result::is_ok), "{found:?}");
+}
+
+#[test]
 fn a_credential_in_the_query_is_warned_of_and_an_ordinary_query_is_not() {
     let e = env();
     let s = Serve::new();
@@ -518,13 +542,25 @@ fn a_credential_in_the_query_is_warned_of_and_an_ordinary_query_is_not() {
             &dep(&url, &archive, ", strip: 1, path: \"packages/vue\""),
             "",
         );
-        e.install(&app).unwrap().warnings
+        let warnings = e.install(&app).unwrap().warnings;
+        // Once, when the lock first records the URL, not at each command after it.
+        let again = e.install(&app).unwrap().warnings;
+        assert!(
+            !(again.iter()).any(|w| w.contains("credential")),
+            "{again:?}"
+        );
+        warnings
     };
     for query in [
         "token=abc",
         "v=1&X-Amz-Signature=f00",
         "Private_Token=x",
         "sig=y&sv=2020",
+        "api-key=x",
+        "deploy_token=x",
+        "client_secret=x",
+        "v=1;jwt=x",
+        "%74oken=x",
     ] {
         let warnings = install(query);
         assert!(

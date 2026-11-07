@@ -115,7 +115,7 @@ pub fn install(
         lockfile,
         lock_changed,
         yanked: resolution.yanked.clone(),
-        warnings: resolution.warnings.clone(),
+        warnings: super::warnings::of(&resolution, existing.as_ref()),
         notes,
     })
 }

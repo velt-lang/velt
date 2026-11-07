@@ -212,8 +212,8 @@ impl Read for Members<'_> {
             if rest.is_empty() {
                 return Ok(0);
             }
-            self.members += 1;
-            if self.members > FREE_MEMBERS && self.members * MEMBER_BYTES > self.out {
+            // `members` counts this one, which has given nothing yet.
+            if self.members >= FREE_MEMBERS && self.members * MEMBER_BYTES > self.out {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!(
@@ -221,6 +221,7 @@ impl Read for Members<'_> {
                     ),
                 ));
             }
+            self.members += 1;
             self.gz = Some(GzDecoder::new(rest));
         }
     }

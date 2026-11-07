@@ -146,6 +146,12 @@ fn a_flood_of_small_gzip_members_is_refused_and_many_large_ones_are_not() {
     let big = TarBuilder::default().file("big", &noise).tar();
     let bgzf: Vec<u8> = big.chunks(65536).flat_map(gz).collect();
     assert_eq!(nodes(&bgzf).len(), 1);
+    // Exactly the 4 KiB each that the limit allows: the bound isn't "under or equal".
+    let at_limit = TarBuilder::default()
+        .file("big", &noise[..1100 * 4096])
+        .tar();
+    let at_limit: Vec<u8> = at_limit.chunks(4096).flat_map(gz).collect();
+    assert_eq!(nodes(&at_limit).len(), 1);
 }
 
 #[test]

@@ -227,9 +227,10 @@ fn staging(dest: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-/// How old a staging directory beside a destination must be to count as left behind: no
-/// extraction runs that long (downloads have their own time limits).
-const STALE_STAGING: std::time::Duration = std::time::Duration::from_secs(3600);
+/// How old a staging directory beside a destination must be to count as left behind. It may be
+/// another archive's, which that archive's lock doesn't guard, so this is well past any
+/// extraction, a process suspended with its laptop overnight or a clock a few hours off.
+const STALE_STAGING: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
 
 /// Remove what extractions into `parent` left behind when they were killed: staging directories
 /// (`.<name>.partial-<pid>-<n>`, and `….old` from a replacement) not changed for

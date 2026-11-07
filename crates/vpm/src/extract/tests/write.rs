@@ -163,9 +163,32 @@ fn staging_left_by_a_killed_extraction_is_removed_once_it_is_old() {
     let now = std::time::SystemTime::now();
     super::super::remove_stale_staging(dir.path(), now);
     assert!(left.iter().all(|n| dir.path().join(n).exists()));
-    // Two hours later: removed.
-    let later = now + std::time::Duration::from_secs(7200);
+    // A day later, as a suspended extraction could be: kept.
+    let day = now + std::time::Duration::from_secs(24 * 3600);
+    super::super::remove_stale_staging(dir.path(), day);
+    assert!(left.iter().all(|n| dir.path().join(n).exists()));
+    // Eight days later: removed.
+    let later = now + std::time::Duration::from_secs(8 * 24 * 3600);
     super::super::remove_stale_staging(dir.path(), later);
     assert!(left.iter().all(|n| !dir.path().join(n).exists()));
     assert!(kept.iter().all(|n| dir.path().join(n).exists()));
+}
+
+// Opening a directory to set its time needs another flag on Windows; the sweep itself is tested
+// above on every OS.
+#[cfg(unix)]
+#[test]
+fn an_extraction_removes_staging_left_beside_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let left = dir.path().join(".other.partial-1-0");
+    std::fs::create_dir(&left).unwrap();
+    let eight_days = std::time::Duration::from_secs(8 * 24 * 3600);
+    let long_ago = std::time::SystemTime::now() - eight_days;
+    (std::fs::File::open(&left).unwrap())
+        .set_modified(long_ago)
+        .unwrap();
+    let tar = TarBuilder::default().file("f", b"x").gz();
+    let tree = read(&tar, Limits::DEFAULT).unwrap();
+    super::super::write(&tree, &dir.path().join("dest"), Links::NATIVE).unwrap();
+    assert!(!left.exists());
 }
