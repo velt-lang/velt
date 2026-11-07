@@ -21,8 +21,9 @@ pub(super) const ASK_OBJECT: u64 = u64::MAX;
 
 /// Class id words of the interface tables of `struct` values (#641) start here, one per type,
 /// numbered as their first table is made (`Cx::value_ids`: the same order whether std is read up
-/// front or on demand, where a `TyId` is not): above every class id, below the marker words. `===` on interface values
-/// compares two values of one struct type by content through it (same.rs `dyn_values_same`).
+/// front or on demand, where a `TyId` is not): above every class id, below the marker words.
+/// `===` on interface values compares two values of one struct type by content through it
+/// (same.rs `dyn_values_same`).
 pub(in crate::lower) const VALUE_IDS: u64 = 1 << 48;
 
 impl Cx<'_> {

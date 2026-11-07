@@ -4,6 +4,24 @@ struct_tuple_fields_generic.velt:6:3: error: field `m` of struct `U1` holds a tu
 struct_tuple_fields_generic.velt:10:3: error: field `m` of struct `U2` holds a tuple (`boolean | [f64, f64, f64]`), which a struct can't hold yet
   = note: a struct is a value copied inline with read-only fields, and a tuple's storage and elements are neither; until fixed-size arrays (`T[N]`) declare the elements as fields of their own, or make the type a class
 
+struct_tuple_fields_generic.velt:159:3: error: this method of an `extend` stores `T` in a struct's field, and it implements an interface, so nothing shows that this isn't a tuple, which a struct can't hold yet
+  = note: a value of any type reaches the method through the interface or `any`; take the interface off the `extend` and call the method directly, or make the struct a class, or give the field a type of its own
+
+struct_tuple_fields_generic.velt:185:3: error: this method of an `extend` stores `T` in a struct's field, and it implements an interface, so nothing shows that this isn't a tuple, which a struct can't hold yet
+  = note: a value of any type reaches the method through the interface or `any`; take the interface off the `extend` and call the method directly, or make the struct a class, or give the field a type of its own
+
+struct_tuple_fields_generic.velt:201:3: error: this method of an `extend` stores `X` in a struct's field, and it implements an interface, so nothing shows that this isn't a tuple, which a struct can't hold yet
+  = note: a value of any type reaches the method through the interface or `any`; take the interface off the `extend` and call the method directly, or make the struct a class, or give the field a type of its own
+
+struct_tuple_fields_generic.velt:219:3: error: this method of an `extend` stores `T` in a struct's field, and it implements an interface, so nothing shows that this isn't a tuple, which a struct can't hold yet
+  = note: a value of any type reaches the method through the interface or `any`; take the interface off the `extend` and call the method directly, or make the struct a class, or give the field a type of its own
+
+struct_tuple_fields_generic.velt:264:3: error: this method of an `extend` stores `T` in a struct's field, and it implements an interface, so nothing shows that this isn't a tuple, which a struct can't hold yet
+  = note: a value of any type reaches the method through the interface or `any`; take the interface off the `extend` and call the method directly, or make the struct a class, or give the field a type of its own
+
+struct_tuple_fields_generic.velt:292:10: error: this type is nested too deeply to tell whether a struct's field holds a tuple, which a struct can't hold yet
+  = note: write the type with fewer layers of aliases or generics, or make the struct a class
+
 struct_tuple_fields_generic.velt:49:13: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
   = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
 
@@ -16,44 +34,26 @@ struct_tuple_fields_generic.velt:52:30: error: this call stores a tuple (`[f64, 
 struct_tuple_fields_generic.velt:52:39: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
   = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
 
-struct_tuple_fields_generic.velt:73:10: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
+struct_tuple_fields_generic.velt:74:10: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
   = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
 
-struct_tuple_fields_generic.velt:88:24: error: a method of this type stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
+struct_tuple_fields_generic.velt:89:24: error: a method of this type stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
   = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
 
-struct_tuple_fields_generic.velt:106:23: error: a method of this type stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
+struct_tuple_fields_generic.velt:107:23: error: a method of this type stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
   = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
 
-struct_tuple_fields_generic.velt:122:27: error: a method of this type stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
+struct_tuple_fields_generic.velt:123:27: error: a method of this type stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
   = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
 
-struct_tuple_fields_generic.velt:131:10: error: a method of this type stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
+struct_tuple_fields_generic.velt:132:10: error: a method of this type stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
   = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
 
-struct_tuple_fields_generic.velt:142:10: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
+struct_tuple_fields_generic.velt:143:10: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
   = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
 
-struct_tuple_fields_generic.velt:150:10: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
+struct_tuple_fields_generic.velt:151:10: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
   = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
 
-struct_tuple_fields_generic.velt:166:27: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
-  = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
-
-struct_tuple_fields_generic.velt:176:10: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
-  = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
-
-struct_tuple_fields_generic.velt:191:27: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
-  = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
-
-struct_tuple_fields_generic.velt:196:10: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
-  = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
-
-struct_tuple_fields_generic.velt:209:28: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
-  = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
-
-struct_tuple_fields_generic.velt:225:25: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
-  = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
-
-struct_tuple_fields_generic.velt:255:10: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
+struct_tuple_fields_generic.velt:256:10: error: this call stores a tuple (`[f64, f64, f64]`) in a struct's field, which a struct can't hold yet
   = note: the function builds a struct whose field has this type argument's type; until fixed-size arrays (`T[N]`) pass the elements as fields of a struct of their own, or use a class
