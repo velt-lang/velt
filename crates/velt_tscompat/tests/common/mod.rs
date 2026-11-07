@@ -159,6 +159,18 @@ impl Loader {
 
     /// The module `spec` names from module `from`, loaded if new.
     fn import(&mut self, from: usize, spec: &str) -> Option<usize> {
+        // A std file's conditional import (`#random-seed`): the file std/imports.velt selects
+        // for a native build, as veltc's loader picks it (velt_loader conditional.rs).
+        if vpm::imports::is_specifier(spec) && self.modules[from].is_std {
+            let file = std_conditional(spec)?;
+            let rel = file.strip_prefix(std_dir()).ok()?.with_extension("");
+            let path = format!("std/{}", rel.to_string_lossy().replace('\\', "/"));
+            if let Some(i) = self.modules.iter().position(|m| m.path == path) {
+                return Some(i);
+            }
+            let src = std::fs::read_to_string(&file).ok()?;
+            return Some(self.add(path, true, &file, src));
+        }
         let (path, is_std, file) = match spec.strip_prefix("velt/") {
             Some(rest) => {
                 let file = std_dir().join(format!("{rest}.velt"));
@@ -227,6 +239,15 @@ impl Loader {
             queue.extend(before..self.modules.len());
         }
     }
+}
+
+/// The file std/imports.velt maps `spec` to on a native target.
+fn std_conditional(spec: &str) -> Option<PathBuf> {
+    let src = std::fs::read_to_string(std_dir().join("imports.velt")).ok()?;
+    let map = vpm::manifest::read::read_std_imports(FileId(0), &src).ok()?;
+    let conditions = vpm::imports::conditions("x86_64-unknown-linux-gnu", None);
+    let variant = vpm::imports::select(map.get(spec)?, &conditions)?;
+    Some(std_dir().join(variant.target.trim_start_matches("./")))
 }
 
 fn has_jsx(module: &ast::Module) -> bool {

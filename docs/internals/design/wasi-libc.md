@@ -45,7 +45,7 @@ export function seedWord(): u64 {
   // SAFETY: `b` holds the 8 bytes getentropy writes.
   const rc = unsafe { getentropy(b, 8) };
   // random_get is a host call and may fail. Going on would seed every run with zeros.
-  if (rc != 0) throw new Error("WASI random_get failed: no seed for Math.random()");
+  if (rc != 0) panic("WASI random_get failed: no seed for Math.random()");
   let w: u64 = 0;
   for (let i = 0; i < 8; i++) w = (w << 8) | (b[i] as u64);
   return w;
