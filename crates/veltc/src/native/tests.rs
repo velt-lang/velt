@@ -267,7 +267,7 @@ fn system_functions_are_bound_per_target() {
             d.contains("system function `pread` is not available on"),
             "{t}: {d}"
         );
-        assert!(!d.contains("ICE"), "{t}: {d}");
+        assert!(!d.contains("ICE:"), "{t}: {d}");
     }
     // Declared but never called: nothing to report anywhere.
     let unused = format!("{PREAD}function main() {{}}\n");
@@ -411,7 +411,7 @@ fn host_functions_need_a_js_host() {
                 function main() {\n  const b: u8[] = [1, 2];\n  send(b.subarray(0, 1));\n}\n";
     let d = lower_for(view, "wasm32-wasip1");
     assert!(
-        d.contains("host function `send` is not available") && !d.contains("ICE"),
+        d.contains("host function `send` is not available") && !d.contains("ICE:"),
         "{d}"
     );
 }

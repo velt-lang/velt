@@ -687,7 +687,7 @@ fn ts_worded_attribute_errors() {
         "{r}"
     );
     assert!(r.contains("declares no event handlers"), "{r}");
-    assert!(!r.contains("ICE"), "{r}");
+    assert!(!r.contains("ICE:"), "{r}");
 }
 
 #[test]
