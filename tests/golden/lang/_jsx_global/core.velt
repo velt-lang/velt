@@ -1,0 +1,10 @@
+// The base of the `JSX` namespace, in `declare global` as a framework's core package has it.
+declare global {
+  namespace JSX {
+    type Element = string;
+    interface IntrinsicAttributes { key?: string }
+  }
+}
+export function render(t: any, p: Record<string, any>, k?: string): string {
+  return String(t) + "(" + Object.keys(p).sort().join(",") + ")";
+}

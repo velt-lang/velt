@@ -1,0 +1,4 @@
+/** @jsxImportSource ./_jsx_global */
+// The table in `declare global`, its entries extending interfaces of two modules.
+console.log(<div id="a" ref={(n) => { console.log(n + 1); }} />);
+console.log(<input ref={(b) => { console.log(!b); }} onUpdate:value={(v) => { console.log(v.length); }} />);

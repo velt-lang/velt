@@ -1,0 +1,19 @@
+// What a renderer adds: the element table, in another module's `declare global`, whose attributes
+// extend the core's `IntrinsicAttributes` and an empty interface other packages merge into.
+import "./core";
+declare global {
+  namespace JSX {
+    interface Extensions {}
+    interface HTMLAttributes<T = string> extends IntrinsicAttributes, Extensions {
+      ref?: (el: T) => void;
+      id?: string;
+    }
+    interface Form<T = string, V = any> extends HTMLAttributes<T> {
+      "onUpdate:value"?: (v: V) => void;
+    }
+    interface IntrinsicElements {
+      div: HTMLAttributes<number>;
+      input: Form<boolean, string>;
+    }
+  }
+}

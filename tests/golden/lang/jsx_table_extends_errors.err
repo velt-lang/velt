@@ -1,0 +1,4 @@
+Property 'nope' does not exist on type 'JSX.IntrinsicElements["a"]'.
+Property 'need' is missing
+Property 'go' is missing
+Property 'id' does not exist on type 'JSX.IntrinsicElements["n"]'.

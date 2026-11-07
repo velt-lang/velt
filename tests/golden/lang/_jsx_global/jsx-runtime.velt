@@ -1,0 +1,5 @@
+import "./dom";
+import { render } from "./core";
+export const jsx = render;
+export const jsxs = render;
+export const Fragment = "F";

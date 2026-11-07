@@ -1,0 +1,11 @@
+/** @jsxImportSource ./_jsx_table */
+// What `tsc` reports on entries that extend other interfaces: a name no base declares, a value of
+// the wrong type for an inherited attribute, an inherited attribute left out, and any attribute
+// on an empty interface.
+console.log(<a nope="1" />);
+console.log(<c w="x" />);
+console.log(<d on={1} />);
+console.log(<e value="s" />);
+console.log(<g more="m" />);
+console.log(<i other="o" />);
+console.log(<n id="1" />);

@@ -7,7 +7,8 @@
 //!   members are rewritten, so `T` inside `N` is `N.T` (the innermost enclosing namespace that
 //!   declares the name wins, unless a type parameter of the same name hides it).
 //! - Blocks of the same namespace merge, and a namespace may share its name with a type or an
-//!   interface (`interface N` and `N.T` are different items), as in TypeScript.
+//!   interface (`interface N` and `N.T` are different items), as in TypeScript. A block in
+//!   `declare global { … }` also sees the members other modules declare there.
 //! - A member is exported from the module when it and every enclosing namespace are; a member
 //!   declared without `export` is visible only inside its namespace ([`Private`]), except in a
 //!   `declare namespace`, where every member is exported.
@@ -71,6 +72,7 @@ pub(crate) fn flatten(
     if !modules.iter().any(has) {
         return (None, vec![], vec![]);
     }
+    let globals = global_members(modules);
     let mut private = vec![];
     let mut diags = vec![];
     let out = modules
@@ -80,7 +82,7 @@ pub(crate) fn flatten(
             let mut ast = m.ast.clone();
             if has(m) {
                 import_conflicts(&m.ast.items, &mut diags);
-                ast.items = flatten_items(std::mem::take(&mut ast.items), &mut p);
+                ast.items = flatten_items(std::mem::take(&mut ast.items), &globals, &mut p);
             }
             private.push(p);
             SourceModule {
@@ -228,7 +230,44 @@ pub(crate) fn path_key(cx: &Ctx, module: usize, path: &[ast::Ident]) -> String {
     key
 }
 
-fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::Item> {
+/// The members of every namespace in a `declare global { … }`, of all modules, by path. In such
+/// a namespace a name means them without its path, wherever they are declared (TypeScript's
+/// global scope has one `JSX`): a renderer's `interface H extends IntrinsicAttributes` names
+/// the one of the core's block.
+fn global_members(modules: &[SourceModule]) -> FxHashMap<Vec<String>, Members> {
+    fn add(ns: &ast::Namespace, path: &mut Vec<String>, out: &mut FxHashMap<Vec<String>, Members>) {
+        path.push(ns.name.name.clone());
+        for item in &ns.items {
+            if let ast::ItemKind::Namespace(inner) = &item.kind {
+                add(inner, path, out);
+            }
+            if let Some((name, _)) = member_name(item) {
+                out.entry(path.clone())
+                    .or_default()
+                    .add(item, name.to_string());
+            }
+        }
+        path.pop();
+    }
+    let mut out = FxHashMap::default();
+    for item in modules.iter().flat_map(|m| &m.ast.items) {
+        let ast::ItemKind::Augment(a) = &item.kind else {
+            continue;
+        };
+        for i in a.items.iter().filter(|_| a.module.is_none()) {
+            if let ast::ItemKind::Namespace(ns) = &i.kind {
+                add(ns, &mut vec![], &mut out);
+            }
+        }
+    }
+    out
+}
+
+fn flatten_items(
+    mut items: Vec<ast::Item>,
+    globals: &FxHashMap<Vec<String>, Members>,
+    private: &mut Private,
+) -> Vec<ast::Item> {
     // A namespace in `declare global { … }` is declared in its module, as `declare namespace`.
     let mut hoisted = vec![];
     for item in &mut items {
@@ -248,6 +287,12 @@ fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::I
             }));
         }
     }
+    let global: Vec<String> = (hoisted.iter())
+        .filter_map(|i: &ast::Item| match &i.kind {
+            ast::ItemKind::Namespace(n) => Some(n.name.name.clone()),
+            _ => None,
+        })
+        .collect();
     items.extend(hoisted);
     let mut blocks = Blocks::default();
     for item in &items {
@@ -262,6 +307,9 @@ fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::I
             let paths = Paths::default().push(&ns.name.name, ns.name.name.clone());
             collect_members(ns, item.span, &paths, ns.declare, &blocks, &mut members);
         }
+    }
+    for (path, m) in globals.iter().filter(|(p, _)| global.contains(&p[0])) {
+        members.entry(path.clone()).or_default().also(m);
     }
     let mut out = Vec::with_capacity(items.len());
     for item in items {
@@ -306,6 +354,18 @@ impl Members {
         match namespace {
             true => self.namespaces.get(name),
             false => self.types.get(name),
+        }
+    }
+
+    /// Adds the names of `other` this doesn't have.
+    fn also(&mut self, other: &Members) {
+        for (k, v) in &other.types {
+            self.types.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+        for (k, v) in &other.namespaces {
+            self.namespaces
+                .entry(k.clone())
+                .or_insert_with(|| v.clone());
         }
     }
 

@@ -167,17 +167,8 @@ impl FnCx<'_, '_> {
                 });
             }
         }
-        let (d, fields) = self.object_fields(core)?;
-        let defs: Vec<(bool, bool, bool)> = (self.cx.adt(d))
-            .map(|a| {
-                let info = a.fields.iter();
-                info.map(|f| {
-                    let hidden = f.name.starts_with(ast::PRIVATE_NAME_PREFIX);
-                    (f.optional, f.default.is_some(), hidden)
-                })
-                .collect()
-            })
-            .unwrap_or_default();
+        let (d, fields) = self.attr_fields(core)?;
+        let defs = self.attr_flags(d);
         let mut out = vec![];
         for (i, (name, ty)) in fields.into_iter().enumerate() {
             let (optional, has_default, hidden) = defs.get(i).copied().unwrap_or_default();
@@ -189,7 +180,8 @@ impl FnCx<'_, '_> {
                 name,
                 ty,
                 required,
-                at: Some((d, i as u32)),
+                // An interface's methods come after its fields and have no field to go to.
+                at: (i < defs.len()).then_some((d, i as u32)),
                 also: None,
             });
         }
@@ -198,5 +190,65 @@ impl FnCx<'_, '_> {
             rest: None,
             shown,
         })
+    }
+
+    /// What each field of object type or interface `d` is: (optional, has a default, hidden).
+    fn attr_flags(&self, d: DefId) -> Vec<(bool, bool, bool)> {
+        if let Some(i) = self.cx.iface(d) {
+            return i
+                .fields
+                .iter()
+                .map(|f| (f.optional, false, false))
+                .collect();
+        }
+        (self.cx.adt(d))
+            .map(|a| {
+                let info = a.fields.iter();
+                info.map(|f| {
+                    let hidden = f.name.starts_with(ast::PRIVATE_NAME_PREFIX);
+                    (f.optional, f.default.is_some(), hidden)
+                })
+                .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The members (name, type) of attributes type `t`: the fields of an object type, or those
+    /// of an interface that is not one (it extends an empty interface or has methods), own and
+    /// inherited, then its methods. The props object is built for the runtime's `props`
+    /// parameter, so nothing here depends on how a value of `t` would be laid out.
+    pub(super) fn attr_fields(&mut self, t: TyId) -> Option<(DefId, Vec<(String, TyId)>)> {
+        let TyKind::Dyn(d, args) = self.cx.ty.kind(t).clone() else {
+            return self.object_fields(t);
+        };
+        let i = self.cx.iface(d)?;
+        let fields: Vec<(String, TyId)> = i.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
+        let methods = i.methods.clone();
+        let mut out: Vec<(String, TyId)> = fields
+            .into_iter()
+            .map(|(n, ty)| (n, self.cx.subst(ty, &args)))
+            .collect();
+        for m in methods {
+            let ty = match (m.is_getter, m.generics.names.is_empty()) {
+                (true, _) => m.ret,
+                (false, true) => {
+                    let params = m.params.iter().map(|p| p.ty).collect();
+                    let throws = self.cx.ty.error;
+                    self.cx.ty.intern(TyKind::FnPtr {
+                        params,
+                        ret: m.ret,
+                        throws,
+                        rest: false,
+                    })
+                }
+                // A generic method has no function type to check a value against.
+                (false, false) => match self.any_ty() {
+                    Some(t) => t,
+                    None => continue,
+                },
+            };
+            out.push((m.name, self.cx.subst(ty, &args)));
+        }
+        Some((d, out))
     }
 }

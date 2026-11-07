@@ -1,0 +1,26 @@
+/** @jsxImportSource ./_jsx_table */
+// `JSX.IntrinsicElements` entries that extend other interfaces: inherited attributes count, with
+// their contextual types, through generics, several bases and an empty base.
+console.log(<a h="x" onClick={(e) => { console.log(e.length); }} />);
+console.log(<b onClick={(e) => { console.log(e.length); }} />);
+console.log(<c id="1" w={2} onClick={(e) => { console.log(e.toUpperCase()); }} />);
+console.log(<d value="s" tag="t" on={(v) => { console.log(v.length); }} />);
+console.log(<e value={1} tag={2} on={(v) => { console.log(v + 1); }} />);
+console.log(<f value={1} tag={2} last={true} key="k1" />);
+console.log(<g need="n" more="m" id="i" />);
+console.log(<h go={(x) => String(x)} />);
+console.log(<i go={(x) => String(x + 1)} other="o" opt={(s) => { console.log(s.length); }} />);
+console.log(<j id="j" w={1} />);
+console.log(<k id="j" extra="e" />);
+console.log(<l />);
+console.log(<m id="m" />);
+console.log(<n />);
+console.log(<o value={["a"]} on={(v) => { console.log(v.length); }} />);
+console.log(<base id="b" />);
+const sp = { id: "s", w: 3 };
+console.log(<c {...sp} />);
+
+interface HB { h: string }
+interface Holder extends HB { n?: number }
+function Comp(p: Holder): any { return <a h={p.h} />; }
+console.log(<Comp h="q" n={1} />);
