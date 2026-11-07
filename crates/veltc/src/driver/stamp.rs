@@ -169,10 +169,10 @@ pub(super) fn note_project(opts: &BuildOptions) {
     }
 }
 
-/// Before a build that is no longer a no-op compiles anything: the fetched dependencies (git,
-/// url) of `opts`'s package graph checked file by file against their locks. A no-op build only
-/// looked at their directories (`vpm::tree_stamp`), and an edit in place must not reach a build
-/// that compiles again.
+/// Before a program is loaded (a build that is no longer a no-op, `velt check`): the fetched
+/// dependencies (git, url) of `opts`'s package graph checked file by file against their locks. A
+/// no-op build only looked at their directories (`vpm::tree_stamp`), and an edit in place must
+/// not reach what reads them again. The language server, which loads on every edit, doesn't.
 pub(super) fn check_fetched(opts: &BuildOptions) -> Result<(), String> {
     opts.packages
         .as_ref()
