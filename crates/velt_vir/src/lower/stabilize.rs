@@ -80,9 +80,14 @@ impl FnLower<'_, '_> {
         // Retaining the containers keeps them, not what they hold. A value in an array's buffer
         // or a module state slot may be replaced by any callee and dropped, one in a variable's
         // cell by a closure the callee runs, one in a field by a callee that may write the field
-        // (replaceable.rs), and the callee may read its parameter after that. JavaScript's callee
-        // keeps what it was passed.
-        if self.in_array_buffer(a) || self.in_module_slot(a) || self.may_replace(a, reach) {
+        // (replaceable.rs), and one read beside its possible container by a callee that writes
+        // through that param, which may replace any object on the way to it, `x` in `g(a, x.s)` too.
+        // The callee may read its parameter after that. JavaScript's callee keeps what it was passed.
+        if reach.sibling && is_part(a)
+            || self.in_array_buffer(a)
+            || self.in_module_slot(a)
+            || self.may_replace(a, reach)
+        {
             // Retaining the containers does not keep an element in place: a push through
             // another reference to the array moves its buffer, and `pop`, `truncate` or a store
             // drops the element. The callee gets a share of it instead (a copy for elements
@@ -367,7 +372,7 @@ impl FnLower<'_, '_> {
 #[derive(Clone, Copy, Default)]
 pub(super) struct ArgReach {
     /// The function called, when it is a direct call (replaceable.rs).
-    pub(super) callee: Option<hir::DefId>,
+    pub(super) callee: Option<super::replaceable::CalleeId>,
     /// Another argument may hold the container of this one, and the callee may write through
     /// that param: `f(r, r.s)` with `(q, v) => { q.s = "x"; return v; }`.
     pub(super) sibling: bool,

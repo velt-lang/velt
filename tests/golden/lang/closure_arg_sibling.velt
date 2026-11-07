@@ -158,6 +158,53 @@ function objectHoldsArray() {
   const f = (q: { xs: string[] }, v: string) => { q.xs[0] = heap("new"); junk(); return v; };
   console.log("object holding the array", f(o, xs[0]), xs[0]);
 }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); b: I2 | null = new I2(); }
+class Ln { s: string = heap("a"); next: Ln | null = null; }
+function throughLocal() {
+  const a = new A2();
+  const x = a.c;
+  const g = (q: A2, v: string) => { q.c = new I2(); const j = junk(); return v + j; };
+  console.log("part read through a local", g(a, x.s));
+  const a2 = new A2();
+  const y = a2.b;
+  const h = (q: A2, v: string) => { q.b = null; const j = junk(); return v + j; };
+  if (y !== null) console.log("through an optional local", h(a2, y.s));
+  const xs: (I2 | null)[] = [new I2()];
+  const z = xs[0];
+  const k = (q: (I2 | null)[], v: string) => { q[0] = null; const j = junk(); return v + j; };
+  if (z !== null) console.log("through an element", k(xs, z.s));
+  const a3 = new A2();
+  const w = a3.c;
+  const inner = (q: A2, v: string) => { q.c = new I2(); const j = junk(); return v + j; };
+  function named(q: A2, v: string) { return inner(q, v); }
+  console.log("a named function passing it on", named(a3, w.s));
+  const head = new Ln();
+  head.next = new Ln();
+  const n = head.next;
+  const m = (q: Ln, v: string) => { q.next = null; const j = junk(); return v + j; };
+  console.log("recursive", m(head, n.s));
+}
+function localNoPart() {
+  const a = new A2();
+  const x = a.b;
+  const g = (q: A2) => { q.b = null; junk(); };
+  g(a);
+  junk();
+  console.log("the local after the call", x === null ? -1 : x.s.length);
+  const a2 = new A2();
+  const y = a2.c;
+  const h = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzzzz"); junk(); };
+  h(a2);
+  junk();
+  console.log("the local after a replacement", y.s.length, a2.c.s.length);
+  const o: { p: { s: string } } = { p: { s: heap("a") } };
+  const z = o.p;
+  const k = (q: { p: { s: string } }) => { q.p = { s: heap("zzzzzzzzzz") }; junk(); };
+  k(o);
+  junk();
+  console.log("an object type", z.s.length, o.p.s.length);
+}
 function unionBeside() {
   const r = new R();
   const u: string | number = heap("u");
@@ -180,5 +227,5 @@ async function asyncClosure() {
 string_(); optional(); union(); any_(); object_(); tuple(); copyAggregate(); classField();
 throughClass(); arrayPop(); arrayStore(); tupleStore(); objectType(); forwarded(); held();
 converted(); twoParts(); arrayHoldsContainer(); arrayHoldsArray(); arrayOfObjects(); tupleHolds();
-objectHoldsArray(); unionBeside(); asyncAndGenerator();
+objectHoldsArray(); unionBeside(); throughLocal(); localNoPart(); asyncAndGenerator();
 asyncClosure().then(() => console.log("done"));
