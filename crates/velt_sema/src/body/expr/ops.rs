@@ -319,7 +319,7 @@ impl FnCx<'_, '_> {
                         self.private_in(lhs, rhs, span)
                     }
                     _ => self.key_in(lhs, rhs, span),
-                }
+                };
             }
             B::Nullish => return self.nullish(lhs, rhs, exp, span),
             B::Eq | B::NotEq if is_null(rhs) || is_null(lhs) => {

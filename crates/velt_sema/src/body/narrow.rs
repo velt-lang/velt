@@ -493,20 +493,9 @@ impl FnCx<'_, '_> {
             let pred = |cx: &crate::ctx::Ctx, t: TyId| cx.ty.promise_payload(t).is_some();
             return self.split_facts(l, nullable, u, &pred, false);
         }
-        if let Some(target) = self.dom_narrow_target(ty) {
-            // `x instanceof HTMLElement`: where it holds, `x` is one (`dom_globals`).
-            let Some((l, nullable, _)) = self.local_with_members(e) else {
-                return (vec![], vec![]);
-            };
-            let mut t = vec![Fact::Class(l, target)];
-            if nullable {
-                t.push(Fact::NonNull(l));
-            }
-            return (t, vec![]);
-        }
         match self.instanceof_class_quiet(ty) {
             Some(class) => self.class_facts(e, class),
-            None => self.ctor_value_facts(e, ty),
+            None => self.dom_or_ctor_facts(e, ty),
         }
     }
 

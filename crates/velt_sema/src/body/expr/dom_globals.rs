@@ -16,6 +16,7 @@ use velt_syntax::ast;
 
 use super::dom_values::DOM_VALUES;
 use super::env_globals::NODE_GLOBALS;
+use crate::body::narrow::Fact;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, TyId, TyKind};
 
@@ -191,5 +192,37 @@ impl FnCx<'_, '_> {
             };
             self.expr(a, expected, Want::Borrow);
         }
+    }
+
+    /// [`Self::pattern_assign`], or a write through a browser global.
+    pub(crate) fn pattern_or_global_assign(
+        &mut self,
+        op: Option<ast::BinaryOp>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        self.browser_global_write(target, value)
+            .or_else(|| self.pattern_assign(op, target, value, span))
+    }
+
+    /// The facts of `e instanceof C` for a class `C` that isn't one of the program's: where a
+    /// `lib.dom` class's test holds, `e` is one; otherwise those of a constructor value.
+    pub(crate) fn dom_or_ctor_facts(
+        &mut self,
+        e: &ast::Expr,
+        ty: &ast::TypeExpr,
+    ) -> (Vec<Fact>, Vec<Fact>) {
+        let Some(target) = self.dom_narrow_target(ty) else {
+            return self.ctor_value_facts(e, ty);
+        };
+        let Some((l, nullable, _)) = self.local_with_members(e) else {
+            return (vec![], vec![]);
+        };
+        let mut t = vec![Fact::Class(l, target)];
+        if nullable {
+            t.push(Fact::NonNull(l));
+        }
+        (t, vec![])
     }
 }
