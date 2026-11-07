@@ -69,6 +69,15 @@ impl FnCx<'_, '_> {
             return self.negated(e, !is_eq, span);
         }
         if self.never_nullish(s.ty) {
+            if self.may_hold_nothing(s.ty) {
+                let b = self.cx.ty.bool_;
+                let e = match (strict, word) {
+                    (true, "null") => self.intrinsic(hir::Intrinsic::IsNull, vec![s], b, span),
+                    (true, _) => self.undefined_test(s, span),
+                    _ => self.intrinsic(hir::Intrinsic::IsNullish, vec![s], b, span),
+                };
+                return self.negated(e, !is_eq, span);
+            }
             // TS accepts a test of a value that is never nullish (a defensive check).
             return self.never_null_compare(other, s, is_eq, span);
         }
@@ -349,6 +358,9 @@ impl FnCx<'_, '_> {
         keep: bool,
         span: Span,
     ) -> hir::Expr {
+        if nothing_lit(inner).is_some() {
+            return self.asserted_nothing(inner, exp, span);
+        }
         let mut h = self.expr(inner, None, Want::Borrow);
         let payload = self.cx.ty.opt_payload(h.ty);
         if let (Want::Move, H::Global(d)) = (want, &h.kind) {
@@ -421,6 +433,9 @@ impl FnCx<'_, '_> {
             return self.param_nullish(s, rhs, span);
         }
         if self.never_nullish(s.ty) {
+            if self.may_hold_nothing(s.ty) {
+                return self.param_nullish(s, rhs, span);
+            }
             // TS accepts `??` on a value that is never nullish: the value itself.
             return self.never_null_nullish(lhs, s, rhs, span);
         }
@@ -771,7 +786,7 @@ fn nothing_branch(e: &ast::Expr) -> Option<Nothing> {
     }
 }
 
-fn nothing_lit(e: &ast::Expr) -> Option<Nothing> {
+pub(super) fn nothing_lit(e: &ast::Expr) -> Option<Nothing> {
     match &e.kind {
         ast::ExprKind::Lit(ast::Lit::Null) => Some(Nothing::Null),
         ast::ExprKind::Lit(ast::Lit::Undefined) => Some(Nothing::Undefined),

@@ -147,6 +147,7 @@ mod names;
 mod namespaces;
 mod narrowing_casts;
 mod never_null;
+mod nothing_slot;
 mod num_array;
 mod number_records;
 mod numbers;

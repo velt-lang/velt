@@ -7,6 +7,50 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, TyId};
 
 impl FnCx<'_, '_> {
+    /// The value of field `name` of an object literal of its own type. Converted to an `any`
+    /// or `unknown` (`dynamic`: `const u: unknown = { a: null }`), a `null` field (TypeScript's
+    /// type `null`) is an `any` holding `null`, and so is one in a nested object or array
+    /// literal (`{ b: { c: null } }`, `{ a: [null, 1] }`). A conditional, `&&`, `||` or `??`
+    /// with an `any` value is an `any` there too (`{ q: c ? 1 : a.q }`, `any_join`).
+    pub(super) fn anon_prop_value(
+        &mut self,
+        name: &ast::Ident,
+        value: Option<&ast::Expr>,
+        dynamic: bool,
+    ) -> hir::Expr {
+        let any = match value.is_some_and(|v| dynamic && super::lit::dynamic_hinted(v)) {
+            true => self.any_ty(),
+            false => None,
+        };
+        // `{ value: null }` with nothing expected: as in TypeScript, the property's type is `null`
+        // (an unknown type, for which `null_lit` gives `null` alone).
+        let null = value.is_some_and(|v| crate::body::narrow::nothing_word(v) == Some("null"));
+        let error = self.cx.ty.error;
+        // `{ signal: signal }` of a generic function: function types have no type parameters, so
+        // the field is an `any`, as for `typeof signal` (`Ctx::resolve_field_type`).
+        let generic = match value.map(|v| &v.kind) {
+            Some(ast::ExprKind::Ident(id)) => self.names_generic_fn(id),
+            None => self.names_generic_fn(name),
+            _ => false,
+        };
+        let any = match generic {
+            true => self.any_ty(),
+            false => any,
+        };
+        self.prop_value(name, value, any.or(null.then_some(error)))
+    }
+
+    /// Does `id` name a generic function of this module's scope, not a local?
+    fn names_generic_fn(&mut self, id: &ast::Ident) -> bool {
+        if !self.is_fn_item(id) {
+            return false;
+        }
+        match self.lookup_item(&id.name, id.span) {
+            Some(crate::ctx::Item::Def(d)) => !self.cx.fn_info(d).generics.names.is_empty(),
+            _ => false,
+        }
+    }
+
     /// The value of property `name`: `value`, or the variable `name` for `{ name }`. A function
     /// named there is adapted to an expected function type as an initializer is
     /// (`adapted_prop_fn`).

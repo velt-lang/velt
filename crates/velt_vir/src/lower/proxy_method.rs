@@ -255,6 +255,7 @@ impl FnLower<'_, '_> {
         cands: &[(DefId, Vec<TyId>)],
         entry: Option<&Operand>,
     ) {
+        self.view_member_error(&u, name, false);
         let pty = self.cx.proxy_class_ty();
         let TyKind::Adt(pd, _) = self.cx.kind(pty) else {
             super::ice("the `Proxy` class")

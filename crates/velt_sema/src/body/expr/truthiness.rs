@@ -89,6 +89,7 @@ impl FnCx<'_, '_> {
                 .expect("ICE: truthiness of a union value"),
             Test::Enum(d) => self.enum_truthy(h, d),
             Test::Const(c) => self.then_const(h, c),
+            Test::Object if self.may_hold_nothing(h.ty) => self.generic_truthy(h),
             Test::Object => self.then_const(h, true),
             Test::Generic => self.generic_truthy(h),
             Test::Dynamic => self.intrinsic(Intrinsic::AnyTruthy, vec![h], b, span),

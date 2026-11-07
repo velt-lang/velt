@@ -572,7 +572,8 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         let target = self.resolve(ty);
-        if let Some(h) = self.callable_cast(expr, target, span) {
+        let nothing = self.nothing_cast(expr, target, span);
+        if let Some(h) = nothing.or_else(|| self.callable_cast(expr, target, span)) {
             return h;
         }
         if let Some(h) = self.fn_as_generic(expr, (target, ty), want, span) {

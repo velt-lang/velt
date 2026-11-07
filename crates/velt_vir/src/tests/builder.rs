@@ -95,6 +95,7 @@ impl PB {
             any_call_names: vec![],
             dyn_members: None,
             generator_throw: false,
+            nothing_slots: false,
             object: None,
             function: None,
             unknown: None,

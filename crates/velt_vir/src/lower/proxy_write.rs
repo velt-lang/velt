@@ -69,6 +69,7 @@ impl FnLower<'_, '_> {
                 if name.starts_with('#') {
                     return lw.proxy_private(&name);
                 }
+                lw.view_member_error(&u, &name, true);
                 let key = lw.proxy_key_addr(&name);
                 let vp = lw.addr(Place::local(val));
                 let f = lw.cx.func(Work::Glue(Glue::ProxySet, fty));
@@ -124,6 +125,7 @@ impl FnLower<'_, '_> {
                 if name.starts_with('#') {
                     return lw.proxy_private(&name);
                 }
+                lw.view_member_error(&u, &name, true);
                 let key = lw.proxy_key_addr(&name);
                 let vp = lw.addr(held.clone());
                 let f = lw.cx.func(Work::Glue(Glue::ProxySet, xt));

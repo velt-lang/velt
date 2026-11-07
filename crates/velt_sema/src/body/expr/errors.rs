@@ -41,7 +41,9 @@ impl FnCx<'_, '_> {
         let any_calls = self.f.any_calls;
         let (outer, before) = (self.f.locals.len(), self.narrow_state());
         let b = self.block(body);
-        let calls_any = self.f.any_calls != any_calls;
+        // A member read may meet a view of a nothing (`null!` in a `Foo` slot), whose
+        // `TypeError` lowering throws to this `catch` as it does for a call through `any`.
+        let calls_any = self.f.any_calls != any_calls || super::catch_any::reads_member(body);
         let calls_any = match calls_any {
             false => super::catch_any::AnyTry::No,
             true if before == self.narrow_state()

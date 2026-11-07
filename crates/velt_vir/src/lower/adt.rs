@@ -206,7 +206,9 @@ impl FnLower<'_, '_> {
             }
             return self.own_value(v, ty);
         }
+        let it = self.sub(inner.ty);
         match self.cx.ty(ty) {
+            Ty::Ptr if self.cx.proxiable(it) && !self.dead() => self.wrap_some_view(v, it, ty),
             Ty::Ptr => self.own_value(v, ty),
             Ty::Bool => Operand::Const(Const::Bool(true), Ty::Bool),
             _ => self.build_agg(ty, vec![Operand::Const(Const::Bool(true), Ty::Bool), v]),

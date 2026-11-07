@@ -18,17 +18,23 @@
 //! object type. Weak collections, which must not hold a view alive, key a view by its object
 //! (weak_view.rs).
 //!
-//! A primitive, `null` or `undefined` stays a `TypeError`, as does an object converted to a
-//! class (whose methods would run on another type's layout). A program without typed proxies
-//! has no views: there `P` holds only its own layout, and the conversion stays checked by type.
+//! `null` or `undefined` converted to any proxiable type, a class too, is a view of that nothing
+//! (hir_encodings.md "A nothing in a slot"): `Proxy[PROXY_VIEW]` gives one view per nothing, whose
+//! `get` and `set` traps throw Node's `TypeError`, so a member read fails where JavaScript's does
+//! and nothing before it does. It has no entry in the table of views. `=== null`, truthiness and
+//! a conversion to a `T | null` ask `view_nothing`.
+//!
+//! A primitive stays a `TypeError`, as does an object converted to a class (whose methods would
+//! run on another type's layout). A program without typed proxies has no views: there `P` holds
+//! only its own layout, and the conversion stays checked by type.
 
 use velt_sema::hir::{self, DefId, TyId, TyKind};
 
-use super::any::{TAG_FUNCTION, TAG_OBJECT};
+use super::any::{TAG_FUNCTION, TAG_NULL, TAG_OBJECT};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, FnLower};
-use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{self, BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Ty};
 
 /// The qualified name of the prelude function that makes a view.
 const PROXY_VIEW: &str = concat!(
@@ -86,6 +92,106 @@ impl FnLower<'_, '_> {
         self.assign(out.clone(), Rvalue::Use(tagged));
         self.goto(done);
         self.switch_to(no);
+    }
+
+    /// In `AnyTo` to a proxiable type: when the `any` at `p` (owned) holds `null` or `undefined`,
+    /// the view of that nothing (module docs) into `out` and on to `done`; anything else goes on
+    /// in the current block.
+    pub(super) fn any_nothing_view(&mut self, p: &Place, out: &Place, done: vir::BlockId) {
+        let Some(view) = self.cx.view_fn() else {
+            return;
+        };
+        let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        let tag = self.any_tag_of(desc);
+        let nil = cint(TAG_NULL as i128, Ty::U64);
+        let nil = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, tag, nil));
+        let (yes, no) = (self.new_block(), self.new_block());
+        self.branch(nil, yes, no);
+        self.switch_to(yes);
+        let f = self.cx.func_for_direct(view, vec![], self.mode);
+        let arg = self.addr(p.clone());
+        let r = self.temp(Ty::Ptr);
+        self.call(Callee::Func(f), vec![arg], Some(Place::local(r)), false);
+        let tagged = self.proxy_tag(Operand::Copy(Place::local(r)));
+        self.assign(out.clone(), Rvalue::Use(tagged));
+        self.goto(done);
+        self.switch_to(no);
+    }
+
+    /// Is the value `v` (a pointer, of a proxiable type) a view of `null` (`loose`: or of
+    /// `undefined`)? Tagged, it is a `Proxy`, and only a view of a nothing has a nothing as its
+    /// target.
+    pub(super) fn view_nothing(&mut self, v: Operand, loose: bool) -> Operand {
+        let out = Place::local(self.temp(Ty::Bool));
+        let v = self.rvalue_temp(Ty::Ptr, Rvalue::Use(v));
+        self.proxy_split(
+            &v,
+            |lw, u| {
+                let (pd, pty) = lw.proxy_def();
+                let i = lw.proxy_field_index(pd, "#target");
+                let target = lw.proxy_hot_place(&u, pty, i);
+                let tag = lw.any_tag_of(Operand::Copy(proj(&target, Proj::Field(1))));
+                let null = cint(TAG_NULL as i128, Ty::U64);
+                let op = if loose { BinOp::Le } else { BinOp::Eq };
+                let is = lw.rvalue_temp(Ty::Bool, Rvalue::Binary(op, tag, null));
+                lw.assign(out.clone(), Rvalue::Use(is));
+            },
+            |lw| {
+                lw.assign(
+                    out.clone(),
+                    Rvalue::Use(Operand::Const(Const::Bool(false), Ty::Bool)),
+                );
+            },
+        );
+        Operand::Copy(out)
+    }
+
+    /// Before reading (`setting`: writing) member `key` of the `Proxy` at `u` (untagged) where a
+    /// `catch` of this function takes a `TypeError`: on a view of a nothing, Node's `TypeError`
+    /// thrown to it (the trap would end the program: an error never leaves a trap).
+    pub(super) fn view_member_error(&mut self, u: &Operand, key: &str, setting: bool) {
+        if self.dead() || self.cx.view_fn().is_none() || !self.routes_type_error() {
+            return;
+        }
+        let (pd, pty) = self.proxy_def();
+        let i = self.proxy_field_index(pd, "#target");
+        let target = self.proxy_hot_place(u, pty, i);
+        let tag = self.any_tag_of(Operand::Copy(proj(&target, Proj::Field(1))));
+        for (t, word) in [(TAG_NULL, "null"), (super::any::TAG_UNDEFINED, "undefined")] {
+            let want = cint(t as i128, Ty::U64);
+            let is = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag.clone(), want));
+            let (yes, no) = (self.new_block(), self.new_block());
+            self.branch(is, yes, no);
+            self.switch_to(yes);
+            let msg = match setting {
+                true => format!("Cannot set properties of {word} (setting '{key}')"),
+                false => format!("Cannot read properties of {word} (reading '{key}')"),
+            };
+            self.throw_type_error(&msg);
+            self.switch_to(no);
+        }
+    }
+
+    /// `WrapSome` of the owned pointer `v` of the proxiable type `inner` into the pointer-sized
+    /// option `ty`: a view of a nothing becomes the option's own nothing, so what a `T | null`
+    /// holds is tested and matched as ever.
+    pub(super) fn wrap_some_view(&mut self, v: Operand, inner: TyId, ty: TyId) -> Operand {
+        let vp = Place::local(self.temp(Ty::Ptr));
+        self.assign(vp.clone(), Rvalue::Use(v));
+        let nil = self.view_nothing(Operand::Copy(vp.clone()), true);
+        let out = Place::local(self.temp(Ty::Ptr));
+        let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(nil, yes, no);
+        self.switch_to(yes);
+        self.drop_glue(vp.clone(), inner);
+        let none = self.none_value(ty);
+        self.assign(out.clone(), Rvalue::Use(none));
+        self.goto(join);
+        self.switch_to(no);
+        self.assign(out.clone(), Rvalue::Use(Operand::Copy(vp)));
+        self.goto(join);
+        self.switch_to(join);
+        self.own_value(Operand::Copy(out), ty)
     }
 
     /// In `AnyTo` to the union `ty` (`n` variants) of the `any` at `p` (owned) that holds none

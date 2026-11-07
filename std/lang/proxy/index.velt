@@ -57,6 +57,10 @@ export { PropertyDescriptor, ProxyHandler } from "velt/lang/proxy/descriptor";
 export { symbolKeyName } from "velt/lang/proxy/keys";
 export { Reflect } from "velt/lang/proxy/reflect";
 
+// The views of the two nothings (`Proxy.#nothing`), made once, so that two `null`s are the same.
+let nullView: Proxy | null = null;
+let undefinedView: Proxy | null = null;
+
 /**
  * A proxy for another object: the operations on it run the handler's traps. Create one with
  * `new Proxy(target, handler)`; the result is an `any`.
@@ -118,7 +122,34 @@ export class Proxy {
    * object without a live view: it asks the runtime's table of views first (`any_view.rs`).
    */
   static [PROXY_VIEW](target: any): Proxy {
+    if (target === null) {
+      nullView ??= Proxy.#nothing(null);
+      return nullView;
+    }
+    if (target === undefined) {
+      undefinedView ??= Proxy.#nothing(undefined);
+      return undefinedView;
+    }
     const p = new Proxy(target, {});
+    p.#view = true;
+    return p;
+  }
+
+  /**
+   * The one view of `null` or of `undefined` (`target`), what a `Foo` slot holds after `null!`
+   * or `null as any` (velt_vir `lower/any_view.rs`). As in Node, nothing stops until a member is
+   * read or written, and that is a `TypeError`.
+   */
+  static #nothing(target: any): Proxy {
+    const word = target === null ? "null" : "undefined";
+    const p = new Proxy(target, {
+      get(_t: any, key: string | symbol, _r: any): any {
+        throw new TypeError(`Cannot read properties of ${word} (reading '${proxyKeyText(key)}')`);
+      },
+      set(_t: any, key: string | symbol, _v: any, _r: any): boolean {
+        throw new TypeError(`Cannot set properties of ${word} (setting '${proxyKeyText(key)}')`);
+      },
+    });
     p.#view = true;
     return p;
   }

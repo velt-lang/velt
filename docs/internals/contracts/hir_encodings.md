@@ -1427,6 +1427,17 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `lower/json/any.rs`; present only when the program writes one), after testing the tag for
   `undefined`, a function or a symbol (left out as a member, `null` as an element, a
   `TypeError` at the top).
+- A nothing in a slot (#2350): `null!` / `undefined!` where a type without that nothing is
+  expected, and `null as T` of such a `T`, are `AnyTo<T>` of the dynamic nothing; `null as any`
+  is the plain cast. Either in a program's own code sets `Program::nothing_slots` (additive),
+  and the loader then loads `Proxy`. Lowering treats such a program as one with `new Proxy`
+  (proxiable types, velt_vir `lower/proxy_typed.rs`), and `AnyTo` of a nothing to a proxiable
+  type is a view of that nothing (`lower/any_view.rs`): a tagged `Proxy` whose `get` / `set`
+  traps throw Node's `TypeError`, one per nothing. `IsNull`, `IsNullish` and `Truthy` of a class
+  or object type, which sema makes where it would otherwise give a constant (`x === null`,
+  `x ?? d`, `if (x)`, `typeof x`), test for one; `WrapSome` into a pointer-sized option makes
+  one the option's nothing, and `String(x)` writes `null`. Elsewhere `AnyTo` of a nothing to a
+  type that can't hold one (`string`, numbers, a `struct`) stays the `TypeError`.
 - Proxy and Reflect (#823): the `Proxy` class (std/lang/proxy/index.velt; `#target: any`, `#handler:
   ProxyHandler<any>`) and `Reflect` (static methods), globals that a program loads when a module
   names one of them (std/prelude/global/proxy.velt); a program that doesn't has no proxies, and

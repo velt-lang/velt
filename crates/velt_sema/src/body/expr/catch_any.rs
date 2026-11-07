@@ -371,6 +371,21 @@ fn used(blk: &ast::Block, name: &str) -> bool {
     u.1
 }
 
+/// Does `blk` read or write a member (`a.b`, `a.m()`), outside nested functions too?
+pub(crate) fn reads_member(blk: &ast::Block) -> bool {
+    struct Reads(bool);
+    impl<'a> velt_syntax::visit::Visit<'a> for Reads {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            if matches!(e.kind, ast::ExprKind::Member { .. }) {
+                self.0 = true;
+            }
+        }
+    }
+    let mut r = Reads(false);
+    velt_syntax::visit::walk_expr(&wrap(blk), &mut r);
+    r.0
+}
+
 /// How many shorthand properties of an object literal (`{ e }`) name `name`.
 fn shorthand_uses(props: &[ast::ObjectProp], name: &str) -> usize {
     props

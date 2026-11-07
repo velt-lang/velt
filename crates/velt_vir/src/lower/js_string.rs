@@ -57,8 +57,35 @@ impl FnLower<'_, '_> {
         if !self.js_object(ty) {
             return false;
         }
-        if self.push_to_string(buf, place, ty) {
+        if self.holds_view(ty) {
+            // A view of a nothing (any_view.rs) is written as that nothing.
+            let p = Operand::Copy(place.clone());
+            let nil = self.view_nothing(p.clone(), true);
+            let (yes, no, done) = (self.new_block(), self.new_block(), self.new_block());
+            self.branch(nil, yes, no);
+            self.switch_to(yes);
+            let null = self.view_nothing(p, false);
+            let (n, u) = (self.new_block(), self.new_block());
+            self.branch(null, n, u);
+            for (b, word) in [(n, "null"), (u, "undefined")] {
+                self.switch_to(b);
+                self.push_text(buf, word);
+                self.goto(done);
+            }
+            self.switch_to(no);
+            self.push_object_text(buf, place, ty);
+            self.goto(done);
+            self.switch_to(done);
             return true;
+        }
+        self.push_object_text(buf, place, ty);
+        true
+    }
+
+    /// `push_js_object` of the object (no nothing) at `place` of the type `ty`.
+    fn push_object_text(&mut self, buf: &Operand, place: &Place, ty: TyId) {
+        if self.push_to_string(buf, place, ty) {
+            return;
         }
         let std = match self.cx.kind(ty) {
             TyKind::Adt(d, _) => self
@@ -90,7 +117,6 @@ impl FnLower<'_, '_> {
             false => self.cx.type_name(ty),
         };
         self.push_text(buf, &format!("[object {tag}]"));
-        true
     }
 
     /// Append the class object at `place` (of type `ty`) through its `toString()` (the

@@ -209,6 +209,10 @@ pub struct Program {
     /// generator's resume function then also handles an error thrown in at each `yield`;
     /// otherwise it has no code for that.
     pub generator_throw: bool,
+    /// The program's own code converts a literal `null` or `undefined` to a type that may not
+    /// hold it (`null!`, `null as any`; hir_encodings.md "A nothing in a slot"): the targets of
+    /// `AnyTo` then hold it as a view of it, as in a program with `new Proxy`. Additive.
+    pub nothing_slots: bool,
     /// Interface upcasts (hir_encodings.md "Interface upcasts"): per interface whose values
     /// convert to other interfaces (`Upcast` of a `Dyn(A)` to a `Dyn(B)`), the targets, in
     /// table order. Additive.

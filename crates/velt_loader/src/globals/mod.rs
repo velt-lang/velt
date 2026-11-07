@@ -144,10 +144,15 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
 }
 
 /// Whether module `module` (source `src`) names global `name`: as a whole word of its source,
-/// or for `RegExp` also by a regular expression literal.
+/// for `RegExp` also by a regular expression literal, and for `Proxy` by a literal nothing put
+/// where its type may have none (`null!`, `null as any`), which a view of the nothing holds
+/// (velt_vir `lower/any_view.rs`).
 pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool {
     mentions(src, name)
         || (name == "RegExp" && src.contains('/') && has_regex(module))
+        || (name == "Proxy"
+            && (mentions(src, "null") || mentions(src, "undefined"))
+            && has_nothing_slot(module))
         || (name == THIS_FN && mentions(src, "this") && has_this_fn(module))
         || (name == ASYNC_HOST && mentions(src, "host") && has_async_host(module))
 }
@@ -191,6 +196,40 @@ fn has_this_fn(module: &ast::Module) -> bool {
                 && sig.generics.is_empty()
                 && !sig.is_async
                 && !sig.is_generator;
+        }
+    }
+    let mut find = Find(false);
+    visit::walk_module(module, &mut find);
+    find.0
+}
+
+/// Whether `module` asserts a literal `null` or `undefined` non-null (`null!`) or casts one to a
+/// type written without a nothing (`null as any`, `null as Foo`; not `null as Foo | null`).
+fn has_nothing_slot(module: &ast::Module) -> bool {
+    fn nothing(e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::Paren(inner) => nothing(inner),
+            ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined) => true,
+            _ => false,
+        }
+    }
+    fn names_nothing(t: &ast::TypeExpr) -> bool {
+        match &t.kind {
+            ast::TypeExprKind::Union(parts) => parts.iter().any(names_nothing),
+            ast::TypeExprKind::Named { path, .. } => {
+                matches!(path.as_slice(), [id] if id.name == "null" || id.name == "undefined")
+            }
+            _ => false,
+        }
+    }
+    struct Find(bool);
+    impl<'a> Visit<'a> for Find {
+        fn expr(&mut self, e: &'a ast::Expr) {
+            match &e.kind {
+                ast::ExprKind::NonNull(inner) => self.0 |= nothing(inner),
+                ast::ExprKind::Cast { expr, ty } => self.0 |= nothing(expr) && !names_nothing(ty),
+                _ => {}
+            }
         }
     }
     let mut find = Find(false);
@@ -346,6 +385,21 @@ mod tests {
         assert!(!uses("const b = res[\"bodyUsed\"];", ".body"));
         assert!(!uses("// res.body\nconst s = \"res.body\";", ".body"));
         assert!(uses("const body = 1;", "body"));
+    }
+
+    #[test]
+    fn a_nothing_in_a_slot_names_proxy() {
+        let names = |src: &str| {
+            let mut sm = SourceMap::new();
+            let file = sm.add(Path::new("m.velt"), src.to_string());
+            let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
+            names_global(src, &module, "Proxy")
+        };
+        assert!(names("class A {}\nconst a: A = null!;\n"));
+        assert!(names("const a: { x: number } = null as any;\n"));
+        assert!(names("const a = (undefined) as unknown as number[];\n"));
+        assert!(!names("const a = null as string | null;\n"));
+        assert!(!names("let a: string | null = null;\nconsole.log(a!);\n"));
     }
 
     #[test]

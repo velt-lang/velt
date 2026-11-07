@@ -64,6 +64,9 @@ impl FnCx<'_, '_> {
             }
         }
         let inner = self.cx.ty.core(sty).unwrap_or(sty);
+        if self.may_hold_nothing(sty) {
+            return self.nothing_typeof(s, span);
+        }
         if inner == sty && self.cx.union_def(sty).is_none() {
             let tag = self.str_lit(self.cx.typeof_tag(sty), span);
             if is_place(&s) && !self.read_through_view(&s) {

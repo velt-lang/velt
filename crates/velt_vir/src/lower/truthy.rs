@@ -121,6 +121,11 @@ impl FnLower<'_, '_> {
             self.assign(out.clone(), Rvalue::Use(v));
             return;
         }
+        if self.holds_view(t) {
+            let v = self.view_nothing(Operand::Copy(p.clone()), loose);
+            self.assign(out.clone(), Rvalue::Use(v));
+            return;
+        }
         let TyKind::Option(e, n) = self.cx.kind(t) else {
             // A union with a member that may be a nothing.
             self.assign(out.clone(), Rvalue::Use(bool_const(false)));
@@ -182,8 +187,16 @@ impl FnLower<'_, '_> {
                     tys.into_iter().any(|m| self.may_be_null(m, loose))
                 })
             }
-            _ => false,
+            _ => self.holds_view(t),
         }
+    }
+
+    /// Is `t` a pointer that may be a view of a nothing (any_view.rs)?
+    pub(super) fn holds_view(&mut self, t: TyId) -> bool {
+        !matches!(self.cx.kind(t), TyKind::Option(..))
+            && self.cx.proxiable(t)
+            && self.cx.ty(t) == Ty::Ptr
+            && self.cx.view_fn().is_some()
     }
 
     /// Assign whether the value at `p` (of the concrete type `t`) is truthy to `out`.
@@ -193,6 +206,11 @@ impl FnLower<'_, '_> {
             let (data, desc) = self.any_parts(Operand::Copy(p.clone()), t);
             let v = self.any_slot_call(desc, SLOT_TRUTHY, vec![data], Ty::Bool);
             self.assign(out.clone(), Rvalue::Use(v));
+            return;
+        }
+        if self.holds_view(t) {
+            let nil = self.view_nothing(Operand::Copy(p.clone()), true);
+            self.assign(out.clone(), Rvalue::Unary(crate::vir::UnOp::Not, nil));
             return;
         }
         let v = match self.cx.kind(t) {

@@ -1,0 +1,18 @@
+// `null` in an object literal with no expected type: the property's type is `null`, as in
+// TypeScript under `--strict`.
+const o = { state: "x" as const, value: null, error: null, n: 1 };
+console.log(o.value, o.error, o.n, JSON.stringify(o));
+function id<T>(x: T): T { return x; }
+const p = id({ a: null, b: 2 });
+console.log(p.a, p.b);
+const q = Object.freeze({ on: null, z: 1 });
+console.log(q.on, q.z);
+interface S { value: number | null; error: Error | null; n: number }
+const wide: S = o;
+console.log(wide.value, wide.error, wide.n);
+const nested = { inner: { v: null, w: { x: null } } };
+console.log(nested.inner.v === null, nested.inner.w.x === null, JSON.stringify(nested));
+function show(x: { v: null }): string { return String(x.v); }
+console.log(show({ v: null }));
+const list = [{ k: null }, { k: null }];
+console.log(list.length, list[0].k);

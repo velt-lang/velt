@@ -166,6 +166,9 @@ pub(crate) struct Ctx<'m> {
     /// The program (not std) writes `undefined`: else the checks only it needs (`undefined_args`,
     /// a `toJSON()` returning `undefined`) are skipped (the prelude uses `T | undefined` itself).
     pub writes_undefined: bool,
+    /// The program (not std) converts a literal nothing to a type that may not hold it
+    /// (`hir::Program::nothing_slots`).
+    pub nothing_slots: bool,
     /// Type definitions whose shape (`collect::shapes`) is resolved, and those being resolved now:
     /// a utility type in a field type shapes the type it reads first, whatever the order.
     pub shaped: FxHashSet<DefId>,
@@ -543,6 +546,7 @@ impl<'m> Ctx<'m> {
             primitive_guards: false,
             type_level: Default::default(),
             writes_undefined: false,
+            nothing_slots: false,
             shaped: FxHashSet::default(),
             shaping: vec![],
             laid_out: FxHashSet::default(),

@@ -515,6 +515,7 @@ fn check_timed(
         array_methods_open,
         any_call_names,
         generator_throw: gen_throw,
+        nothing_slots: cx.nothing_slots,
         super_calls: super_calls.into_iter().collect(),
         upcasts,
         upcast_impls,
