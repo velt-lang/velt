@@ -1,4 +1,4 @@
-// registry-core: how large an upload a `Registry` accepts.
+// registry-core: how large an upload a `Registry` accepts, and which packages.
 
 /** The limits of an upload; the defaults are the Rust server's (`MAX_ARCHIVE`) and #2225's. */
 export class RegistryLimits {
@@ -6,4 +6,9 @@ export class RegistryLimits {
   maxArchiveBytes: i64 = 64 * 1024 * 1024;
   /** The most files an archive may hold. */
   maxEntries: i64 = 10000;
+  /**
+   * Whether a package with native code (`native` in its `package.velt`) may be published. A host
+   * that serves no native libraries turns this off, so nothing is published that can't be built.
+   */
+  nativePackages: bool = true;
 }

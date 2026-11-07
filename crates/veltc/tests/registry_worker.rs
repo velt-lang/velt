@@ -174,8 +174,39 @@ fn the_conformance_suite_passes() {
         file.starts_with("https://registry.test/api/v1/conf-") && file.ends_with("/index"),
         "purged `{file}`"
     );
+    uploads_are_limited_to_10_mib(&base, &url, alice);
     drop(server);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The Worker takes archives up to its 10 MiB, past http-server's default body limit (8 MiB),
+/// and refuses a larger one. Publishes with `velt publish`, as `token`'s user.
+fn uploads_are_limited_to_10_mib(base: &Path, url: &str, token: &str) {
+    const MIB: usize = 1024 * 1024;
+    for (name, size, ok) in [("big-9", 9 * MIB, true), ("big-11", 11 * MIB, false)] {
+        let dir = base.join(name);
+        std::fs::create_dir_all(dir.join("src")).expect("package dir");
+        let manifest = format!(
+            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"{name}\",\n  version: \"1.0.0\",\n  entry: \"src/lib.velt\",\n}};\n"
+        );
+        std::fs::write(dir.join("package.velt"), manifest).expect("package.velt");
+        std::fs::write(dir.join("src/lib.velt"), "export const V: i64 = 1;\n").expect("lib");
+        std::fs::write(dir.join("src/data.bin"), vec![b'x'; size]).expect("data");
+        let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .arg("publish")
+            .env("VELT_HOME", base.join("velt-home"))
+            .env("VELT_REGISTRY", url)
+            .env("VELT_REGISTRY_TOKEN", token)
+            .current_dir(&dir)
+            .output()
+            .expect("run velt");
+        assert_eq!(
+            out.status.success(),
+            ok,
+            "velt publish of {name}:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
 
 #[test]

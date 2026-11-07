@@ -1,19 +1,40 @@
 // The registry's Worker (`velt build --release --host registry-cloudflare`, README.md).
 
-import { serve } from "http-server";
-import { Registry } from "registry-core";
+import { HttpServeOptions, serve } from "http-server";
+import { Registry, RegistryLimits } from "registry-core";
 import { CloudflareCachePurge } from "./cloudflare_cache_purge";
 import { D1MetadataDb } from "./d1_metadata_db";
 import { D1TokenAuth } from "./d1_token_auth";
 import { DurableObjectPublishLock } from "./durable_object_publish_lock";
 import { R2BlobStore } from "./r2_blob_store";
 
-const registry = new Registry({
-  blobs: new R2BlobStore("BLOBS"),
-  db: new D1MetadataDb("DB"),
-  lock: new DurableObjectPublishLock("LOCKS"),
-  purge: new CloudflareCachePurge(),
-  auth: new D1TokenAuth("DB"),
-});
+/**
+ * The largest archive this host accepts: 10 MiB. Measured under workerd (#1740), a publish
+ * takes about 3 bytes of the program's memory per archive byte, plus 9 MB: some 40 MB for 10 MiB
+ * of an isolate's 128 MB, which also holds JS's copies of the body and the requests served at the
+ * same time. 25 MB took 84 MB. CPU is some 60 ms per MB, within a paid plan's 30 s.
+ */
+const MAX_ARCHIVE_BYTES: i64 = 10 * 1024 * 1024;
 
-await serve({ port: 8080 }, (req: Request): Promise<Response> => registry.handle(req));
+// What this host accepts (#1740): archives up to MAX_ARCHIVE_BYTES, and no native code, as it
+// serves no native libraries.
+const limits = new RegistryLimits();
+limits.maxArchiveBytes = MAX_ARCHIVE_BYTES;
+limits.nativePackages = false;
+
+const registry = new Registry(
+  {
+    blobs: new R2BlobStore("BLOBS"),
+    db: new D1MetadataDb("DB"),
+    lock: new DurableObjectPublishLock("LOCKS"),
+    purge: new CloudflareCachePurge(),
+    auth: new D1TokenAuth("DB"),
+  },
+  limits,
+);
+
+// http-server's own body limit (8 MiB by default) is lifted: registry-core refuses a body over
+// MAX_ARCHIVE_BYTES itself, by its declared length before reading it and while it streams, with
+// a message saying the limit. Cloudflare caps a request's body before it gets here.
+const opts: HttpServeOptions = { port: 8080, maxBodySize: Number.MAX_SAFE_INTEGER };
+await serve(opts, (req: Request): Promise<Response> => registry.handle(req));

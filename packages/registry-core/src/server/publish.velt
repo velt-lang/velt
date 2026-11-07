@@ -3,10 +3,11 @@
 // the caller and the package's owners, the archive and its checksum (`X-Velt-Checksum`), the
 // publish policy (#2225), `package.velt` (read as data, never run) naming the package and
 // version of the URL, the dependencies (registry packages only), and the name and version being
-// free. Then the archive is stored by its checksum, the first publisher of a new package becomes
-// its owner, and the version joins the index; versions are immutable. The body is read before the
-// package's lock is taken, as the Rust server has it whole before its lock, so a stalled upload
-// holds up nothing but itself.
+// free, and native code only where the host accepts it. Then the archive is stored by its
+// checksum, the first publisher of a new package becomes its owner, and the version joins the
+// index; versions are immutable. The body is read and the archive checked before the package's
+// lock is taken (the Rust server has the body whole before its lock), so a stalled or large
+// upload holds up nothing but itself.
 
 import { EncodingError, utf8Decode } from "velt/encoding";
 import { ArchiveEntry, contentChecksum, MANIFEST_FILE, packArchive } from "../archive";
@@ -18,7 +19,7 @@ import { isValidPackageName, normalizedName } from "../names";
 import { readPackageArchive } from "../package_archive";
 import { Version } from "../semver/version";
 import { ownerOf } from "./access";
-import { refused, text } from "./answer";
+import { text } from "./answer";
 import { Caller } from "./caller";
 import { IndexEntry } from "./index_entry";
 import { PackageIndex } from "./package_index";
@@ -174,22 +175,40 @@ async function store(
   await purgeAfterWrite(stores, [indexPath(name), `/api/v1/${name}/${entry.version}`, "/"]);
 }
 
-// Publishes the upload `body`, holding the package's lock. The caller is checked again: the
-// owners may have changed while the body arrived.
-async function publishUpload(
-  stores: RegistryStores,
+// The upload `body`'s entries, checksum and manifest, once the archive, the publish policy, the
+// manifest and the host's limits accept it. Nothing here reads a store, so it runs before the
+// package's lock: a large archive is hashed without holding up the package's other publishers.
+function checkedUpload(
   limits: RegistryLimits,
   req: Request,
   name: string,
   version: string,
   body: u8[],
-): Promise<Response> {
-  const caller = await ownerOf(stores, req, name);
+): [ArchiveEntry[], string, Manifest] {
   const [entries, sum] = checkedEntries(body, req.headers.get("x-velt-checksum"), limits);
   const m = manifestOf(entries);
   if (m.name != name || Version.parse(m.version).toString() != version) {
-    return refused(`the archive is \`${m.name}\` ${m.version}, not \`${name}\` ${version}`);
+    throw new Refusal(400, `the archive is \`${m.name}\` ${m.version}, not \`${name}\` ${version}`);
   }
+  if (m.native != null && !limits.nativePackages) {
+    throw new Refusal(
+      400,
+      `cannot publish \`${name}\`: this registry doesn't accept packages with native code (\`native\` in ${MANIFEST_FILE})`,
+    );
+  }
+  return [entries, sum, m];
+}
+
+// Publishes the checked upload, holding the package's lock. The caller is checked again: the
+// owners may have changed while the body arrived.
+async function publishUpload(
+  stores: RegistryStores,
+  req: Request,
+  name: string,
+  upload: [ArchiveEntry[], string, Manifest],
+): Promise<Response> {
+  const [entries, sum, m] = upload;
+  const caller = await ownerOf(stores, req, name);
   const [index, entry] = await newEntry(stores, m, sum);
   await store(stores, caller, index, entry, entries);
   return text(201, `published \`${name}\` ${entry.version}\n`);
@@ -220,9 +239,10 @@ export async function publish(
     await checkNameIsFree(stores, name);
   }
   const body = await uploadBody(req, limits.maxArchiveBytes);
+  const upload = checkedUpload(limits, req, name, version, body);
   const held = await stores.lock.acquire(normalizedName(name));
   try {
-    return await publishUpload(stores, limits, req, name, version, body);
+    return await publishUpload(stores, req, name, upload);
   } finally {
     await held.release();
   }
