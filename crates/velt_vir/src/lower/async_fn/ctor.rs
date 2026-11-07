@@ -79,6 +79,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .map(|(k, c)| (c.inner, k))
             .collect();
         let mut incoming = vec![];
+        let mut regs = vec![];
         for p in &f.params {
             if caps.contains_key(&p.local) {
                 incoming.push(None);
@@ -86,6 +87,20 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             let ty = lw.sub(p.ty);
             let vt = lw.cx.ty(ty);
+            if let Some(reg) = lw.cx.reg_param(def, ty, p.mode) {
+                // A small struct in registers (abi.rs `reg_param`), read from a slot.
+                let vs: Vec<_> = reg
+                    .tys()
+                    .into_iter()
+                    .map(|t| {
+                        params.push(t);
+                        lw.new_local(t, None)
+                    })
+                    .collect();
+                incoming.push(Some((vs[0], vt, ty, p.mode)));
+                regs.push((vs, reg));
+                continue;
+            }
             let pt = if let Ty::Agg(_) = vt { Ty::Ptr } else { vt };
             let l = (vt != Ty::Unit).then(|| {
                 params.push(pt);
@@ -94,6 +109,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
             incoming.push(l.map(|l| (l, vt, ty, p.mode)));
         }
         let out = out.then(|| lw.new_local(Ty::Ptr, Some("ret.out".into())));
+        for (vs, reg) in regs {
+            let p = lw.reg_incoming(&vs, &reg);
+            for inc in incoming.iter_mut().flatten() {
+                if inc.0 == vs[0] {
+                    inc.0 = p;
+                }
+            }
+        }
         let mut vals = vec![];
         for (p, inc) in f.params.iter().zip(incoming) {
             vals.push(match (caps.get(&p.local), inc, env) {

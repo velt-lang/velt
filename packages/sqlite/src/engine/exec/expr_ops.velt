@@ -36,7 +36,7 @@ export function compileUnary(c: ExprCompiler, e: Expr, sc: Scope): C {
   }
   if (e.op == "+") {
     // +x has no affinity but keeps x's collation.
-    return C { ev: xe, aff: AFF_NONE, coll: x.coll, explicit: x.explicit };
+    return { ev: xe, aff: AFF_NONE, coll: x.coll, explicit: x.explicit };
   }
   if (e.op == "~") {
     return plain(() => bitOp(BIT_NOT, xe(), xe()));
@@ -260,7 +260,7 @@ export function compileCase(c: ExprCompiler, e: Expr, sc: Scope): C {
     return other == null ? nullVal() : other!();
   };
   if (coll >= 0) {
-    return C { ev: ev, aff: AFF_NONE, coll: coll, explicit: true };
+    return { ev: ev, aff: AFF_NONE, coll: coll, explicit: true };
   }
   return plain(ev);
 }

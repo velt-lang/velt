@@ -135,6 +135,7 @@ mod proxy_write;
 mod quiet;
 mod rc;
 mod receiver;
+mod reg_args;
 mod replaceable;
 mod rt;
 mod same;
@@ -390,6 +391,8 @@ struct Cx<'h> {
     std_calls: FxHashMap<velt_common::Span, DefId>,
     /// The aggregates of C structs (system.rs), by the table's struct.
     system_aggs: FxHashMap<usize, vir::AggId>,
+    /// The 16-byte slot a `struct` returned in a register passes through (abi.rs `RegRet`).
+    reg_slot_agg: Option<vir::AggId>,
     /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and
     /// nothing in it can make a task's await word non-0.
     no_await_steps: bool,
@@ -433,6 +436,9 @@ struct Cx<'h> {
     /// The data of each static atomic used so far, `None` for a global that is not one
     /// (static_atomic.rs).
     static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
+    /// The class id number of each `struct` type with an interface table (class_test.rs
+    /// `VALUE_IDS`), in the order the tables are made.
+    value_ids: FxHashMap<TyId, u64>,
     /// Slots are filled as the worklist is processed.
     funcs: Vec<Option<Function>>,
     work_map: FxHashMap<Work, FuncId>,
@@ -571,6 +577,9 @@ struct FnLower<'c, 'h> {
     info: Vec<LInfo>,
     scopes: Vec<Scope>,
     out_ptr: Option<Local>,
+    /// A `struct` result returned in a register (abi.rs `RegRet`): the slot `out_ptr` points
+    /// into, whose `V128` the `return` hands back.
+    reg_slot: Option<Local>,
     /// Concrete return type and thrown type of the function being lowered.
     ret_ty: Option<TyId>,
     throws: Option<TyId>,
@@ -692,6 +701,10 @@ struct FnLower<'c, 'h> {
     /// Comparing as keys (`Intrinsic::KeyEq`: `Map` keys, `Glue::KeySame`): floats compare with
     /// JS's SameValueZero, as `Intrinsic::Hash` hashes them (glue/eq.rs).
     key_mode: bool,
+    /// Building `Glue::BitsEq` / `Glue::BitsHash`: inside a `struct` value (#641), floats compare
+    /// and hash by their bits, so `==`, `Map` keys and the hash all agree with a byte compare
+    /// (a `NaN` equals itself when its bits match, `-0` is not `0`).
+    bits_mode: bool,
     /// Lowering an expression checked outside any body (module_state.rs): the module state's
     /// initializer (`Some(0)`), or a class field's initializer, whose locals are renumbered
     /// from this index on (`consume_detached`). Those locals (the temporaries of a `Record`

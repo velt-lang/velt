@@ -1,18 +1,15 @@
 // particles_mut.velt plus one shared `Vec2` (`const start = [pos[0]]` keeps a second reference
-// to an element): a struct type whose fields are assigned and that is shared anywhere in the
+// to an element): an object type whose fields are assigned and that is shared anywhere in the
 // program becomes a counted heap object everywhere (semantics-stage2 §3.1), so every element of
-// `pos` and `vel` is a pointer to its own block. The value-type design rules this case out.
-struct Vec2 {
-  x: number;
-  y: number;
+// `pos` and `vel` is a pointer to its own block. An immutable `struct` cannot reach this state.
+type Vec2 = { x: number; y: number };
 
-  add(o: Vec2): Vec2 {
-    return { x: this.x + o.x, y: this.y + o.y };
-  }
+function add(a: Vec2, o: Vec2): Vec2 {
+  return { x: a.x + o.x, y: a.y + o.y };
+}
 
-  scale(k: number): Vec2 {
-    return { x: this.x * k, y: this.y * k };
-  }
+function scale(a: Vec2, k: number): Vec2 {
+  return { x: a.x * k, y: a.y * k };
 }
 
 function main() {

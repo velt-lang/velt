@@ -1,4 +1,4 @@
-// `struct` declarations and named object literals are Velt-only.
+// `struct` declarations are Velt-only; an object literal builds a struct (#641).
 
 export struct Point {
   //~^ struct
@@ -7,7 +7,7 @@ export struct Point {
 }
 
 export function origin(): Point {
-  return Point { x: 0, y: 0 }; //~ struct
+  return { x: 0, y: 0 };
 }
 
 export type Size = { w: number; h: number };

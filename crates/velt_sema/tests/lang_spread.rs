@@ -10,7 +10,7 @@ use velt_sema::hir::{ExprKind as E, Intrinsic, UseMode};
 fn object_spread_of_a_local_moves_its_fields() {
     let p = ok_src(
         "struct S { a: string; b: i64; }
-         function main() { const s = S { a: \"x\", b: 1 }; const t = { ...s, b: 2 }; console.log(t.a, t.b); }",
+         function main() { const s = ({ a: \"x\", b: 1 } as S); const t = { ...s, b: 2 }; console.log(t.a, t.b); }",
     );
     let moved = exprs(func(&p, "main"))
         .iter()
@@ -28,12 +28,12 @@ fn object_spread_of_a_local_moves_its_fields() {
     // A string field is copied when the source is still used (strings are values)...
     ok_src(
         "struct S { a: string; b: i64; }
-         function main() { const s = S { a: \"x\", b: 1 }; const t = { ...s }; console.log(s.a, t.b); }",
+         function main() { const s = ({ a: \"x\", b: 1 } as S); const t = { ...s }; console.log(s.a, t.b); }",
     );
     // ... and so is an array field (semantics stage 2: shared).
     ok_src(
         "struct S { a: i64[]; b: i64; }
-         function main() { const s = S { a: [1], b: 1 }; const t = { ...s }; console.log(s.a, t.b); }",
+         function main() { const s = ({ a: [1], b: 1 } as S); const t = { ...s }; console.log(s.a, t.b); }",
     );
 }
 
@@ -62,8 +62,8 @@ fn object_spread_of_a_class_clones() {
 fn object_spread_typed_and_errors() {
     ok_src(
         "struct P { x: i64; y: i64; } struct Q { x: i64; y: i64; z: i64; }
-         function main() { const q = Q { x: 1, y: 2, z: 3 }; const p: P = { ...q, y: 0 };
-           const r = P { ...p, x: 9 }; console.log(p.x, r.x); }",
+         function main() { const q = ({ x: 1, y: 2, z: 3 } as Q); const p: P = { ...q, y: 0 };
+           const r = ({ ...p, x: 9 } as P); console.log(p.x, r.x); }",
     );
     let r = err_src("function main() { const xs = [1]; const o = { ...xs }; }");
     assert!(

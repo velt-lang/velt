@@ -62,11 +62,13 @@ class Capped extends Clamped {
   }
 }
 
-struct Temp {
+class Temp {
   celsius: f64;
-}
 
-extend Temp {
+  constructor(celsius: f64) {
+    this.celsius = celsius;
+  }
+
   get fahrenheit(): f64 {
     return this.celsius * 9.0 / 5.0 + 32.0;
   }
@@ -106,7 +108,7 @@ function main() {
   levels[1].level = -5;
   console.log(levels[1].level);
 
-  let t = Temp { celsius: 100.0 };
+  let t = new Temp(100.0);
   console.log(t.fahrenheit);
   t.fahrenheit = 32.0;
   console.log(t.celsius);

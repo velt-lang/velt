@@ -1,0 +1,170 @@
+import { Channel, channel } from "velt/sync";
+
+// Structs of up to 16 bytes are passed to named functions in a register (#641). Every way of
+// reaching such a function has to agree with it on how the value arrives.
+
+struct H {
+  fd: i32;
+  k: i32;
+}
+
+struct T {
+  private h: u64;
+  static of(n: u64): T {
+    return { h: n };
+  }
+  async read(): Promise<u64> {
+    await Promise.resolve(0);
+    return this.h;
+  }
+}
+
+struct Liked {
+  id: i32;
+  n: i32;
+}
+
+// Passed as its scalar fields: an i32 and an f64, a nested struct, a boolean.
+struct Mixed {
+  id: i32;
+  w: f64;
+}
+
+struct Inner {
+  a: f32;
+  b: f32;
+}
+
+struct Nested {
+  inner: Inner;
+  on: boolean;
+}
+
+// Passed as its bytes: more than four fields, or one that is not a number or a boolean.
+struct Five {
+  a: u8;
+  b: u8;
+  c: u8;
+  d: u8;
+  e: u8;
+}
+
+struct Maybe {
+  v: i32 | null;
+}
+
+function mixed(m: Mixed, n: Nested, scale: f64): f64 {
+  const on = n.on ? 1 : 0;
+  return (m.id as f64) * m.w * scale + (n.inner.a as f64) - (n.inner.b as f64) + on;
+}
+
+function five(x: Five, y: Five): i32 {
+  return (x.a + x.b + x.c + x.d + x.e) as i32 - (y.e as i32);
+}
+
+function maybe(m: Maybe): i32 {
+  return m.v ?? -1;
+}
+
+class Counter {
+  n: number = 0;
+}
+
+// An async function started without `await`: its state is built from the register.
+async function outward(c: Counter, h: H): Promise<void> {
+  await Promise.resolve(0);
+  c.n += h.fd + h.k;
+}
+
+function start(c: Counter, h: H): void {
+  const pending = outward(c, h);
+}
+
+function* fields(h: H): Generator<number> {
+  yield h.fd;
+  yield h.k;
+}
+
+async function serve(t: T, tag: string, done: Channel<string>) {
+  done.trySend(`${tag} ${await t.read()}`);
+}
+
+// A closure reached through a function value takes its struct by pointer.
+function acceptAll(serveOne: (t: T) => Promise<void, unknown>, n: u64) {
+  spawn(async () => {
+    let conn: T;
+    conn = T.of(n);
+    spawn(serveOne(conn));
+  });
+}
+
+// A generic function's call to a function taking its type parameter's struct.
+function sum(h: H): i32 {
+  return h.fd + h.k;
+}
+
+function viaGeneric<V>(v: V, f: (v: V) => i32): i32 {
+  return f(v);
+}
+
+function twice<V>(v: V, g: (v: V) => V): V {
+  return g(g(v));
+}
+
+function same<V>(a: V, b: V): boolean {
+  return a == b;
+}
+
+function find<V>(xs: V[], v: V): i32 {
+  for (let i = 0; i < xs.length; i++) {
+    if (same(xs[i], v)) {
+      return i as i32;
+    }
+  }
+  return -1;
+}
+
+function swap(h: H): H {
+  return { fd: h.k, k: h.fd };
+}
+
+async function main() {
+  const c = new Counter();
+  start(c, { fd: 3, k: 4 });
+  await Promise.resolve(0);
+  await Promise.resolve(0);
+  console.log("started without await:", c.n);
+
+  for (const n of fields({ fd: 1, k: 2 })) {
+    console.log("generator:", n);
+  }
+
+  const done = channel<string>(4);
+  const f: (t: T) => Promise<void, unknown> = (t) => serve(t, "function value", done);
+  await f(T.of(9));
+  console.log(await done.receive());
+  acceptAll(async (t: T) => await serve(t, "spawned closure", done), 7);
+  console.log(await done.receive());
+  acceptAll(
+    async (t) => {
+      await serve(t, "spawned block closure", done);
+    },
+    8,
+  );
+  console.log(await done.receive());
+
+  console.log(JSON.stringify<Liked>({ id: 1, n: 2 }));
+  console.log(JSON.stringify([{ id: 3, n: 4 } as Liked]));
+
+  console.log("generic:", viaGeneric({ fd: 5, k: 6 } as H, sum));
+  const h = twice({ fd: 1, k: 2 } as H, swap);
+  console.log("generic twice:", h.fd, h.k);
+  console.log("fields:", mixed({ id: 3, w: 0.5 }, { inner: { a: 2, b: 0.5 }, on: true }, 2));
+  const f5: Five = { a: 1, b: 2, c: 3, d: 4, e: 5 };
+  console.log("bytes:", five(f5, f5), maybe({ v: 7 }), maybe({ v: null }));
+  const hs: H[] = [
+    { fd: 1, k: 1 },
+    { fd: 2, k: 2 },
+  ];
+  console.log("generic calling generic:", find(hs, { fd: 2, k: 2 }));
+}

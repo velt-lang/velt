@@ -6,7 +6,7 @@ struct User {
 }
 
 function main() {
-  const u = User { name: "ann", age: 30, tags: ["a", "b"] };
+  const u: User = { name: "ann", age: 30, tags: ["a", "b"] };
   console.log(JSON.stringify(u));
 
   const back = JSON.parse<User>(`{"name":"bob","age":41,"tags":[],"email":"b@x.io"}`);

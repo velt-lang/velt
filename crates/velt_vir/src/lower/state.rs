@@ -39,6 +39,11 @@ pub(super) struct LInfo {
     /// The local holds a generator's state inline (async_fn/generator.rs): `vir` is the state;
     /// dropping the local closes the generator.
     pub(super) gen: Option<async_fn::GenLocal>,
+    /// Nothing changes the value while the function runs: a variable of its own (not a cell,
+    /// not an alias of an element) or a `Copy` param that nothing assigns (`LocalDef::mutable`
+    /// false: no assignment anywhere, closures and nested functions included). A call passes
+    /// its address to a `Copy` aggregate param instead of a copy (call.rs).
+    pub(super) fixed: bool,
 }
 
 /// A pending drop obligation.
@@ -95,4 +100,14 @@ pub(super) enum ScopeKind {
 pub(super) struct Scope {
     pub(super) kind: ScopeKind,
     pub(super) drops: Vec<DropEntry>,
+}
+
+impl FnLower<'_, '_> {
+    /// Is `a` a local that nothing changes while this function runs (`LInfo::fixed`)?
+    pub(super) fn fixed_local(&self, a: &hir::Expr) -> bool {
+        match &a.kind {
+            hir::ExprKind::Local(id, _) => self.info[id.0 as usize].fixed,
+            _ => false,
+        }
+    }
 }

@@ -4,8 +4,4 @@
 import { HeadersInit } from "velt/net/http/fetch/headers";
 
 /** `new Response(body, init)` and `Response.json(data, init)`: default status 200. */
-export struct ResponseInit {
-  status?: number;
-  statusText?: string;
-  headers?: HeadersInit;
-}
+export type ResponseInit = { status?: number; statusText?: string; headers?: HeadersInit };

@@ -68,7 +68,7 @@ function outer(): Point {
     function double(v: i64): i64 {
       return v * 2;
     }
-    return Point { x: double(x), y: 0 };
+    return { x: double(x), y: 0 };
   }
   return make(21);
 }

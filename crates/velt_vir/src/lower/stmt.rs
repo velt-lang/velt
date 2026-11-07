@@ -229,6 +229,18 @@ impl FnLower<'_, '_> {
     pub(super) fn exit_return(&mut self, op: Operand) {
         if self.asyncx.is_some() {
             self.finish_poll();
+        } else if self.reg_slot.is_some() {
+            // A `struct` returned in a register: the `V128` of the slot it was written to, read
+            // through the pointer it was written through (a place of another layout).
+            let out = self
+                .out_ptr
+                .unwrap_or_else(|| ice("register result without its slot"));
+            let p = Place {
+                local: out,
+                proj: vec![Proj::Deref(crate::vir::Ty::V128)],
+            };
+            let v = self.rvalue_temp(crate::vir::Ty::V128, Rvalue::Use(Operand::Copy(p)));
+            self.terminate(Terminator::Return(v));
         } else {
             self.terminate(Terminator::Return(op));
         }

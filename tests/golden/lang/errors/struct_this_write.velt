@@ -1,0 +1,14 @@
+// A struct method cannot change `this` (#641): it returns a new value instead.
+struct Counter {
+  n: i64;
+
+  bump(): void {
+    this.n += 1;
+  }
+}
+
+function main() {
+  const c: Counter = { n: 0 };
+  c.bump();
+  console.log(c.n);
+}

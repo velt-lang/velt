@@ -85,10 +85,10 @@ function main() {
   console.log(vs.map((v) => v.toString()).join(" "));
   console.log(vs[maxIndex(vs)].toString(), isSorted(vs));
 
-  const ps = [Point { x: 3, y: 4 }, Point { x: 1, y: 1 }, Point { x: 0, y: 2 }];
+  const ps = [{ x: 3, y: 4 } as Point, { x: 1, y: 1 }, { x: 0, y: 2 }];
   sortAll(ps);
   console.log(ps.map((p) => `(${p.x},${p.y})`).join(" "));
-  console.log(clamp(Point { x: 9, y: 9 }, Point { x: 0, y: 0 }, Point { x: 2, y: 2 }).x);
+  console.log(clamp({ x: 9, y: 9 } as Point, { x: 0, y: 0 }, { x: 2, y: 2 }).x);
 
   const words = ["b", "c", "a"];
   sortAll(words);

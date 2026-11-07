@@ -742,7 +742,7 @@ export struct Host {
   // Sums the shards' counters; `op` "sweep" runs an idle sweep first, "clear" drops every
   // activation (a benchmark reset).
   async stats(op: string = "stats"): Promise<ShardStats> {
-    const total: ShardStats = { activations: 0, deactivations: 0, turns: 0, saves: 0, live: 0 };
+    let total: ShardStats = { activations: 0, deactivations: 0, turns: 0, saves: 0, live: 0 };
     for (let i: usize = 0; i < this.controls.length; i++) {
       const { promise, resolve } = Promise.withResolvers<ShardStats>();
       try {
@@ -751,11 +751,13 @@ export struct Host {
         continue;
       }
       const s = await promise;
-      total.activations += s.activations;
-      total.deactivations += s.deactivations;
-      total.turns += s.turns;
-      total.saves += s.saves;
-      total.live += s.live;
+      total = {
+        activations: total.activations + s.activations,
+        deactivations: total.deactivations + s.deactivations,
+        turns: total.turns + s.turns,
+        saves: total.saves + s.saves,
+        live: total.live + s.live,
+      };
     }
     return total;
   }

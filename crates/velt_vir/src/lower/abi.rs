@@ -7,10 +7,16 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
+pub(super) use super::reg_args::RegParam;
+use super::reg_args::MAX_FIELD_PARAMS;
+
 use super::flags::FlagScan;
+use super::operand::proj;
 use super::param_attrs::PtrParam;
 use super::{ice, Cx, FnLower, LInfo, LState, LkMode, ScopeKind, Work};
-use crate::vir::{BlockId, Const, Function, Operand, ParamAttrs, Place, Proj, Rvalue, SrcLoc, Ty};
+use crate::vir::{
+    BlockId, Const, Function, Local, Operand, ParamAttrs, Place, Proj, Rvalue, SrcLoc, Ty,
+};
 
 /// ABI shape of a function's result.
 #[derive(Clone, Copy, Debug)]
@@ -19,6 +25,20 @@ pub(super) struct RetAbi {
     pub out: Option<Ty>,
     /// VIR return type (`Unit` when there is an out-pointer).
     pub ret: Ty,
+    /// A small `struct` value returned in a register (#641): `ret` is `V128`, holding the
+    /// struct's bytes (`RegRet`).
+    pub reg: Option<RegRet>,
+}
+
+/// A `struct` value of at most 16 bytes that is Copy, returned as the `V128` of its bytes
+/// (#641): the callee writes the result into a 16-byte slot (`slot`, whose first field is the
+/// `V128`) viewed as the struct (`value`) and returns the slot's `V128`; the caller does the
+/// reverse. Backends keep both slots in registers, so a `Vec2` comes back in one vector
+/// register instead of through memory.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RegRet {
+    pub value: crate::vir::AggId,
+    pub slot: crate::vir::AggId,
 }
 
 impl Cx<'_> {
@@ -31,13 +51,154 @@ impl Cx<'_> {
             }
             None => self.ty(ret),
         };
+        if throws.is_none() {
+            if let Some(reg) = self.reg_ret(ret, vt) {
+                return RetAbi {
+                    out: None,
+                    ret: Ty::V128,
+                    reg: Some(reg),
+                };
+            }
+        }
         match vt {
             Ty::Agg(_) => RetAbi {
                 out: Some(vt),
                 ret: Ty::Unit,
+                reg: None,
             },
-            t => RetAbi { out: None, ret: t },
+            t => RetAbi {
+                out: None,
+                ret: t,
+                reg: None,
+            },
         }
+    }
+
+    /// The result ABI of an extern: an aggregate always through the out-pointer (C's and the
+    /// runtime's layout), never in a register.
+    pub(super) fn extern_ret_abi(&mut self, ret: TyId) -> RetAbi {
+        match self.ty(ret) {
+            vt @ Ty::Agg(_) => RetAbi {
+                out: Some(vt),
+                ret: Ty::Unit,
+                reg: None,
+            },
+            t => RetAbi {
+                out: None,
+                ret: t,
+                reg: None,
+            },
+        }
+    }
+
+    /// Is a parameter of type `ty` passed with `mode` a `struct` passed in a register: a Copy
+    /// one of at most 16 bytes, passed by value (`PassMode::Copy`), as the `V128` of its bytes
+    /// (#641)? The callee writes it into a slot of its frame and reads it from there, as from
+    /// the pointer it would get otherwise.
+    /// A closure's params never are: its code is also the code of its function value, which
+    /// callers that do not know it call with every aggregate by pointer. Nor a generated body's
+    /// (`generated_instance`): it is called as the generic function it stands in for, whose
+    /// param may be a `T` passed by pointer. Nor a method's (`self_ty`): a vtable or an
+    /// interface table may call it (`dispatch.rs`), with every aggregate by pointer.
+    pub(super) fn reg_param(&mut self, def: DefId, ty: TyId, mode: PassMode) -> Option<RegParam> {
+        let f = self.fn_def(def);
+        let name = &f.name;
+        if mode != PassMode::Copy
+            || f.self_ty.is_some()
+            || name.contains("{closure")
+            || name.starts_with("<generated>")
+        {
+            return None;
+        }
+        let vt = self.ty(ty);
+        let reg = self.reg_ret(ty, vt)?;
+        let mut leaves = vec![];
+        match self.scalar_leaves(ty, &mut vec![], &mut leaves) {
+            true => Some(RegParam::Fields {
+                value: reg.value,
+                leaves,
+            }),
+            false => Some(RegParam::Bytes(reg)),
+        }
+    }
+
+    /// The scalar fields of the `struct` type `ty`, through nested structs, into `out` with
+    /// their paths (`RegParam::Fields`): false when a field is anything else (an option, a
+    /// union: their layout's fields need not hold every variant's bytes) or there are more
+    /// than `MAX_FIELD_PARAMS`.
+    fn scalar_leaves(
+        &mut self,
+        ty: TyId,
+        path: &mut Vec<u32>,
+        out: &mut Vec<(Vec<u32>, Ty)>,
+    ) -> bool {
+        let (Ty::Agg(a), true) = (self.ty(ty), self.value_struct(ty)) else {
+            return false;
+        };
+        let fields: Vec<TyId> = self
+            .adt_field_tys(ty)
+            .into_iter()
+            .filter(|&f| !self.is_unit(f))
+            .collect();
+        let layout: Vec<Ty> = self.aggs[a.0 as usize].fields.iter().map(|f| f.0).collect();
+        if fields.len() != layout.len() {
+            return false;
+        }
+        for (i, (f, lt)) in fields.into_iter().zip(layout).enumerate() {
+            path.push(i as u32);
+            let ok = match lt {
+                Ty::Agg(_) => self.scalar_leaves(f, path, out),
+                Ty::Unit | Ty::V128 | Ty::Ptr => false,
+                t if self.ty(f) == t => {
+                    out.push((path.clone(), t));
+                    true
+                }
+                _ => false,
+            };
+            path.pop();
+            if !ok || out.len() > MAX_FIELD_PARAMS {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Is `ret` (VIR type `vt`) a `struct` returned in a register (`RegRet`): Copy, at most 16
+    /// bytes, on a target whose functions take `V128` without asking for a feature (not
+    /// WebAssembly, whose vectors need `simd128`)?
+    fn reg_ret(&mut self, ret: TyId, vt: Ty) -> Option<RegRet> {
+        let Ty::Agg(value) = vt else {
+            return None;
+        };
+        if self.target.starts_with("wasm") || !self.value_struct(ret) || self.needs_drop(ret) {
+            return None;
+        }
+        let size = self.aggs[value.0 as usize].size;
+        if size > 16 {
+            return None;
+        }
+        // A struct of numbers with padding between them (`{ ok: boolean; v: f64 }`) stays in
+        // memory: read as one `V128`, its slot keeps LLVM from splitting it into its fields
+        // once the callee is inlined, which costs more than the register saves.
+        let mut leaves = vec![];
+        if self.scalar_leaves(ret, &mut vec![], &mut leaves)
+            && leaves
+                .iter()
+                .map(|(_, t)| self.size_align(*t).0)
+                .sum::<u32>()
+                != size
+        {
+            return None;
+        }
+        let slot = match self.reg_slot_agg {
+            Some(s) => s,
+            None => {
+                let s = self.new_agg("v128 slot".into(), &[Ty::V128]);
+                self.reg_slot_agg = Some(s);
+                s
+            }
+        };
+        Some(RegRet { value, slot })
     }
 }
 
@@ -62,6 +223,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             info: vec![],
             scopes: vec![],
             out_ptr: None,
+            reg_slot: None,
             ret_ty: None,
             throws: None,
             div_zero_bbs: vec![],
@@ -108,6 +270,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             same_mode: false,
             value_mode: false,
             key_mode: false,
+            bits_mode: false,
             init_locals: None,
             ctor_self: None,
             init_stack: vec![],
@@ -327,6 +490,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         });
         let captured: FxHashSet<_> = f.captures.iter().map(|c| c.inner).collect();
         let by_ref = self.cx.by_ref_params.contains(&(def, self.targs.clone()));
+        // Params passed in a register (`reg_param`): (HIR local, VIR param, its slot layout).
+        let mut in_regs: Vec<(usize, Vec<Local>, RegParam)> = vec![];
         for p in &f.params {
             if captured.contains(&p.local) {
                 continue;
@@ -334,6 +499,22 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let decl = &f.body.locals[p.local.0 as usize];
             let ty = self.sub(p.ty);
             let vt = self.cx.ty(ty);
+            if let Some(reg) = (!by_ref)
+                .then(|| self.cx.reg_param(def, ty, p.mode))
+                .flatten()
+            {
+                let mut vs = vec![];
+                for t in reg.tys() {
+                    params.push(t);
+                    attrs.push(ParamAttrs::default());
+                    vs.push(self.new_local(t, Some(decl.name.clone())));
+                }
+                let mut li = LInfo::new(Some(vs[0]), ty, true, false, LState::Init);
+                li.fixed = !decl.mutable;
+                info[p.local.0 as usize] = Some(li);
+                in_regs.push((p.local.0 as usize, vs, reg));
+                continue;
+            }
             let indirect = match vt {
                 Ty::Unit => false,
                 Ty::Agg(_) => true,
@@ -355,7 +536,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     true => None,
                     false => Some(p.mode),
                 };
-                let a = self.cx.param_attrs(mode, ty, shape, decl.mutable);
+                let a = self.cx.param_attrs(mode, ty, shape, decl.mutable || by_ref);
                 if a.noalias || a.frozen {
                     self.cx.note_unique_param(attrs.len(), ty);
                 }
@@ -363,7 +544,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 self.new_local(pt, Some(decl.name.clone()))
             });
             let droppable = p.mode == PassMode::Owned && self.cx.needs_drop(ty);
-            info[p.local.0 as usize] = Some(LInfo::new(vir, ty, indirect, droppable, LState::Init));
+            let mut li = LInfo::new(vir, ty, indirect, droppable, LState::Init);
+            li.fixed = p.mode == PassMode::Copy && !by_ref && !decl.mutable;
+            info[p.local.0 as usize] = Some(li);
         }
         // A shared instance: its dictionary, after the user's params (shape/).
         if let Some(inst) = self.cx.shared_being_built(def, &self.targs) {
@@ -390,6 +573,24 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.out_ptr = Some(self.new_local(Ty::Ptr, Some("ret.out".into())));
             params.push(Ty::Ptr);
             attrs.push(self.cx.out_ptr_attrs(out));
+        }
+        if let Some(reg) = abi.reg {
+            // The result is written through `ret.out` as through an out-pointer, into a slot
+            // of this frame; `return` hands back the slot's `V128` (`exit_return`).
+            let slot = self.new_local(Ty::Agg(reg.slot), Some("ret.slot".into()));
+            let out = self.new_local(Ty::Ptr, Some("ret.out".into()));
+            let a = self.addr(proj(&Place::local(slot), Proj::Cast(reg.value)));
+            self.assign(Place::local(out), Rvalue::Use(a));
+            self.out_ptr = Some(out);
+            self.reg_slot = Some(slot);
+        }
+        // A param passed in a register is written to a slot of the frame, and read through a
+        // pointer to it as a param passed by pointer is.
+        for (l, vs, reg) in in_regs {
+            let p = self.reg_incoming(&vs, &reg);
+            if let Some(i) = info[l].as_mut() {
+                i.vir = Some(p);
+            }
         }
         if let Some(env) = env {
             self.self_env = Some(env);
@@ -418,6 +619,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 let mut li = LInfo::new(vir, ty, indirect, droppable, LState::Uninit);
                 li.cell = cell;
                 li.in_cell = cell;
+                li.fixed = !ld.mutable && !cell && !by_ref;
                 info[i] = Some(li);
             }
         }
@@ -584,6 +786,7 @@ impl LInfo {
             cell: false,
             in_cell: false,
             gen: None,
+            fixed: false,
         }
     }
 }

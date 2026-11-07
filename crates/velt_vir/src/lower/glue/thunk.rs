@@ -20,6 +20,8 @@ enum Incoming {
     Pass,
     /// The target takes ownership: pass a share.
     Owned,
+    /// The target takes the `struct` in a register (abi.rs `reg_param`).
+    Reg(crate::lower::abi::RegParam),
 }
 
 impl Cx<'_> {
@@ -117,9 +119,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 .unwrap_or_else(|| crate::lower::ice("method without this"));
             let tt = lw.sub(this);
             let owned = f.params[0].mode == PassMode::Owned && lw.cx.needs_drop(tt);
+            let reg = match by_ref_this(lw.cx, def, targs) {
+                true => None,
+                false => lw.cx.reg_param(def, tt, f.params[0].mode),
+            };
             match lw.cx.ty(tt) {
                 Ty::Unit => {}
                 vt if owned => owned_this = Some((vt, tt)),
+                Ty::Agg(_) if reg.is_some() => {
+                    // A `struct` receiver passed in a register (abi.rs `reg_param`).
+                    let reg = reg.unwrap_or_else(|| crate::lower::ice("reg"));
+                    let v = Operand::Copy(Place {
+                        local: first,
+                        proj: vec![Proj::Deref(lw.cx.ty(tt))],
+                    });
+                    let ops = lw.reg_arg(v, &reg);
+                    args.extend(ops);
+                }
                 Ty::Agg(_) | Ty::Ptr => args.push(Operand::Copy(Place::local(first))),
                 s => args.push(Operand::Copy(Place {
                     local: first,
@@ -140,7 +156,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let pt = if by_ptr { Ty::Ptr } else { vt };
             let l = lw.new_local(pt, None);
             params.push(pt);
-            let adapt = if p.mode == PassMode::Owned && lw.cx.needs_drop(pty) {
+            let reg = match by_ref {
+                true => None,
+                false => lw.cx.reg_param(def, pty, p.mode),
+            };
+            let adapt = if let Some(reg) = reg {
+                Incoming::Reg(reg)
+            } else if p.mode == PassMode::Owned && lw.cx.needs_drop(pty) {
                 Incoming::Owned
             } else {
                 Incoming::Pass
@@ -165,10 +187,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
             args.push(this);
         }
         for (l, vt, pty, adapt) in incoming {
-            args.push(match adapt {
-                Incoming::Owned => lw.owned_copy(l, vt, pty),
-                Incoming::Pass => Operand::Copy(Place::local(l)),
-            });
+            match adapt {
+                Incoming::Owned => args.push(lw.owned_copy(l, vt, pty)),
+                Incoming::Pass => args.push(Operand::Copy(Place::local(l))),
+                Incoming::Reg(reg) => {
+                    let v = Operand::Copy(Place {
+                        local: l,
+                        proj: vec![Proj::Deref(vt)],
+                    });
+                    let ops = lw.reg_arg(v, &reg);
+                    args.extend(ops);
+                }
+            }
         }
         if kind == ThunkKind::Unbound {
             let sym = format!("_Gthunk_unbound_{}", lw.cx.instance_symbol(&f.name, targs));
@@ -243,4 +273,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.emit_return(v);
         self.scopes.clear();
     }
+}
+
+/// Is the receiver of `def`'s instance `targs` passed by reference (`Cx::by_ref_params`)?
+fn by_ref_this(cx: &Cx<'_>, def: DefId, targs: &[TyId]) -> bool {
+    cx.by_ref_params.contains(&(def, targs.to_vec()))
 }

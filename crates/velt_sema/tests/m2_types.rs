@@ -13,7 +13,7 @@ use velt_sema::hir::{AdtKind, Callee, Def, ExprKind as E, Intrinsic, PassMode, T
 fn struct_literals_fields_and_defaults() {
     let p = ok_src(
         "struct P { x: f64; y: f64 = 2.0; tag?: string; }
-         function main() { const p = P { x: 1.0 }; const q: P = { y: 3.0, x: 4.0 }; console.log(p.x, q.y, p.tag ?? \"-\"); }",
+         function main() { const p = ({ x: 1.0 } as P); const q: P = { y: 3.0, x: 4.0 }; console.log(p.x, q.y, p.tag ?? \"-\"); }",
     );
     let lits: Vec<usize> = exprs(func(&p, "main"))
         .iter()
@@ -35,12 +35,20 @@ fn struct_literals_fields_and_defaults() {
 
 #[test]
 fn struct_literal_errors() {
-    let r = err_src("struct P { x: f64; } function main() { const p = P { }; }");
+    let r = err_src("struct P { x: f64; } function main() { const p = ({ } as P); }");
     assert!(r.contains("missing field `x` in `P` literal"), "{r}");
-    let r = err_src("struct P { x: f64; } function main() { const p = P { x: 1.0, z: 2 }; }");
+    let r = err_src("struct P { x: f64; } function main() { const p = ({ x: 1.0, z: 2 } as P); }");
     assert!(r.contains("no field `z` on type `P`"), "{r}");
     let r = err_src("class C { } function main() { const c = C { }; }");
     assert!(r.contains("`C` is a class"), "{r}");
+    // A name that is no struct gets its own error only, not also the removed-literal one.
+    for src in [
+        "class C { } function main() { const c = C { }; }",
+        "function main() { const n = Nope { x: 1 }; }",
+    ] {
+        let r = err_src(src);
+        assert!(!r.contains("is not Velt"), "{r}");
+    }
 }
 
 #[test]
@@ -71,17 +79,17 @@ fn adding_a_property_is_an_error_suggesting_map() {
 #[test]
 fn modifying_methods_and_receivers_are_inferred() {
     let p = ok_src(
-        "struct C { n: i64; inc() { this.n += 1; } get(): i64 { return this.n; } }
+        "class C { n: i64 = 0; inc() { this.n += 1; } get(): i64 { return this.n; } }
          function f(c: C) { c.inc(); }
-         class K { c: C = C { n: 0 }; }
+         class K { c: C = new C(); }
          function g(k: K) { k.c.inc(); }
          function h(k: K): i64 { return k.c.get(); }
-         function main() { const c = C { n: 0 }; c.inc(); console.log(c.get()); f(c);
+         function main() { const c = new C(); c.inc(); console.log(c.get()); f(c);
            const k = new K(); g(k); console.log(h(k)); }",
     );
     assert_eq!(func(&p, "C.inc").params[0].mode, PassMode::BorrowMut);
     assert_eq!(func(&p, "C.get").params[0].mode, PassMode::Borrow);
-    // Structs are objects (semantics stage 2): the caller sees the change.
+    // Class instances are objects (semantics stage 2): the caller sees the change.
     assert_eq!(func(&p, "f").params[0].mode, PassMode::BorrowMut);
     assert_eq!(func(&p, "g").params[0].mode, PassMode::BorrowMut);
     assert_eq!(func(&p, "h").params[0].mode, PassMode::Borrow);
@@ -431,8 +439,9 @@ fn implements_is_checked() {
     assert!(r.contains("different signature"), "{r}");
     let r = err_src("interface I { name: string; } class C implements I { } function main() {}");
     assert!(r.contains("must have a field `name: string`"), "{r}");
-    let r =
-        err_src("interface I { f(): i64; } struct S { } function main() { const x: I = S { }; }");
+    let r = err_src(
+        "interface I { f(): i64; } struct S { } function main() { const x: I = ({ } as S); }",
+    );
     assert!(r.contains("mismatched types"), "{r}");
 }
 
@@ -527,7 +536,7 @@ fn imports_exports_and_intrinsics() {
     ok_src("const X: i64[] = [1, -2, 3 as i64]; function main() { console.log(X[0], X.length); }");
     ok_src("const X: string[] = [\"a\"]; function main() { X.push(\"b\"); }");
     ok_src(
-        "struct P { xs: i64[]; } const X: P = P { xs: [1] }; function main() { console.log(X.xs.length); }",
+        "struct P { xs: i64[]; } const X: P = ({ xs: [1] } as P); function main() { console.log(X.xs.length); }",
     );
     ok_src("const X: i64[] = [1 + 1]; function main() { console.log(X.length); }");
     // An initializer that may throw makes the constant module state; one whose type is an
@@ -619,7 +628,7 @@ fn recursive_value_types_and_generic_overrides() {
 
 #[test]
 fn printing_rejects_nested_function_values() {
-    let r = err_src("struct H { f: (x: i64) => i64; } function main() { const h = H { f: (x: i64) => x }; console.log(h); }");
+    let r = err_src("struct H { f: (x: i64) => i64; } function main() { const h = ({ f: (x: i64) => x } as H); console.log(h); }");
     assert!(r.contains("cannot print a value of type `H`"), "{r}");
 }
 
@@ -692,10 +701,10 @@ fn literal_cases_on_nullable_values_match_the_payload() {
 #[test]
 fn dispose_is_a_drop_hook() {
     let p = ok_src(
-        "struct Handle { fd: i64; [Symbol.dispose]() { console.log(\"close\", this.fd); } }
-         class Conn { h: Handle = Handle { fd: 1 }; [Symbol.dispose]() {} }
+        "class Handle { fd: i64; constructor(fd: i64) { this.fd = fd; } [Symbol.dispose]() { console.log(\"close\", this.fd); } }
+         class Conn { h: Handle = new Handle(1); [Symbol.dispose]() {} }
          class Tls extends Conn {}
-         function main() { const h = Handle { fd: 3 }; const c = new Tls(); }",
+         function main() { const h = new Handle(3); const c = new Tls(); }",
     );
     let h = adt(&p, "Handle");
     assert!(!h.is_copy, "types with dispose are never Copy");
@@ -710,19 +719,22 @@ fn dispose_is_a_drop_hook() {
         "inherited"
     );
     // An explicit call drops the value there: it is moved, so a later use is an error.
-    ok_src("struct H { fd: i64; [Symbol.dispose]() {} } function main() { let h = H { fd: 1 }; h[Symbol.dispose](); }");
-    let r = err_src("struct H { fd: i64; [Symbol.dispose]() {} } function main() { const h = H { fd: 1 }; h[Symbol.dispose](); console.log(h.fd); }");
+    ok_src("class H { fd: i64 = 1; [Symbol.dispose]() {} } function main() { let h = new H(); h[Symbol.dispose](); }");
+    let r = err_src("class H { fd: i64 = 1; [Symbol.dispose]() {} } function main() { const h = new H(); h[Symbol.dispose](); console.log(h.fd); }");
     assert!(r.contains("use of moved value `h`"), "{r}");
     // A method merely named `dispose` is an ordinary method, not a drop hook.
     let p = ok_src("class D { dispose() {} } function main() { const d = new D(); d.dispose(); }");
     assert_eq!(adt(&p, "D").dispose, None);
-    let r = err_src("struct H { fd: i64; [Symbol.dispose](x: i64) {} } function main() {}");
+    let r = err_src("class H { fd: i64 = 0; [Symbol.dispose](x: i64) {} } function main() {}");
     assert!(
         r.contains("`[Symbol.dispose]` must not be `async`, take no parameters and return `void`"),
         "{r}"
     );
     // Semantics stage 2: a value with `dispose` is shared (disposed at the last reference).
-    ok_src("struct H { fd: i64; [Symbol.dispose]() {} } function main() { const a = H { fd: 1 }; const b = a; console.log(a.fd, b.fd); }");
+    ok_src("class H { fd: i64 = 1; [Symbol.dispose]() {} } function main() { const a = new H(); const b = a; console.log(a.fd, b.fd); }");
+    // A struct is a value with no lifetime of its own (#641).
+    let r = err_src("struct H { fd: i64; [Symbol.dispose]() {} } function main() {}");
+    assert!(r.contains("a struct cannot have `[Symbol.dispose]`"), "{r}");
 }
 
 #[test]

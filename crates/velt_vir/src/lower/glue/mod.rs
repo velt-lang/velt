@@ -55,7 +55,7 @@ mod thunk;
 mod trace;
 mod transfer;
 mod transfer_env;
-mod vtable;
+pub(in crate::lower) mod vtable;
 
 pub(super) use generic_slots::{GenericSlot, SlotKey};
 #[cfg(test)]
@@ -85,6 +85,10 @@ pub(crate) enum Glue {
     SameValue,
     KeySame,
     Hash,
+    /// `(a, b) -> bool`: a `struct` value's `==`, its fields by content, floats by bits (#641).
+    BitsEq,
+    /// `(p) -> u64`: a `struct` value's hash, agreeing with `BitsEq`.
+    BitsHash,
     ObjDrop,
     QueuedDrop,
     ObjClone,
@@ -175,6 +179,8 @@ impl Glue {
             Glue::SameValue => "samevalue",
             Glue::KeySame => "keysame",
             Glue::Hash => "hash",
+            Glue::BitsEq => "bitseq",
+            Glue::BitsHash => "bitshash",
             Glue::ObjDrop => "objdrop",
             Glue::QueuedDrop => "queueddrop",
             Glue::ObjClone => "objclone",
@@ -247,8 +253,10 @@ impl Glue {
             | Glue::ObjTransfer
             | Glue::DynTransfer => (vec![Ptr], Ptr),
             Glue::Format | Glue::ObjFormat | Glue::DynFormat => (vec![Ptr, Ptr, U32], Unit),
-            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeySame => (vec![Ptr, Ptr], Bool),
-            Glue::Hash => (vec![Ptr], U64),
+            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeySame | Glue::BitsEq => {
+                (vec![Ptr, Ptr], Bool)
+            }
+            Glue::Hash | Glue::BitsHash => (vec![Ptr], U64),
             Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
             Glue::AnyTruthy => (vec![Ptr], Bool),
@@ -292,6 +300,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::SameValue => lw.same_value_body(args[0], args[1], ty),
             Glue::KeySame => lw.key_same_body(args[0], args[1], ty),
             Glue::Hash => lw.hash_body(args[0], ty),
+            Glue::BitsEq => lw.bits_eq_body(args[0], args[1], ty),
+            Glue::BitsHash => lw.bits_hash_body(args[0], ty),
             Glue::ObjDrop => lw.obj_drop_body(args[0], ty),
             Glue::QueuedDrop => lw.queued_drop_body(args[0], ty),
             Glue::ObjClone => lw.obj_clone_body(args[0], ty),
@@ -382,7 +392,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn call_glue(&mut self, g: Glue, ty: TyId, args: Vec<Operand>) -> Operand {
         if matches!(
             g,
-            Glue::Eq | Glue::Same | Glue::SameValue | Glue::KeySame | Glue::Hash
+            Glue::Eq
+                | Glue::Same
+                | Glue::SameValue
+                | Glue::KeySame
+                | Glue::Hash
+                | Glue::BitsEq
+                | Glue::BitsHash
         ) {
             self.note_fn_compared_in(ty);
         }

@@ -61,7 +61,7 @@ function main() {
   both(Mood.Up);
   both<Opt>({ b: null, c: undefined, "2": 2, "1": true });
   both<Opt>({ a: 4, b: "q", c: 2.5, "2": 2, "1": false });
-  both(P { x: NaN, y: 3 });
+  both({ x: NaN, y: 3 } as P);
   const t: [i32, string] = [1, "z"];
   both(t);
   both<"lit">("lit");

@@ -1,0 +1,15 @@
+// A struct has no constructor (#641): an object literal or a static factory builds it.
+struct Vec2 {
+  x: number;
+  y: number;
+
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+function main() {
+  const v: Vec2 = { x: 1, y: 2 };
+  console.log(v.x);
+}

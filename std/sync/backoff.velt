@@ -9,12 +9,12 @@ import { velt_rt_thread_yield } from "velt/sync/rt";
  * It waits for another thread, never for a task: whatever it waits for must be taken and let go
  * between two `await`s (use a `Mutex` or a channel to wait for a task).
  */
-export struct Backoff {
-  private round: u32;
+export class Backoff {
+  private round: u32 = 0;
 
   /** A backoff that has not waited yet. */
   static create(): Backoff {
-    return { round: 0 };
+    return new Backoff();
   }
 
   /** Spins for this round, and makes the next one twice as long, up to `2^SPIN_ROUNDS`. */

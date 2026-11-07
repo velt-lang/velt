@@ -24,7 +24,7 @@ export function mul128(a: u64, b: u64): Wide {
   const a0b1 = a0 * b1;
   const a1b0 = a1 * b0;
   const t = (a0b0 >> 32) + (a0b1 & M32) + (a1b0 & M32);
-  return Wide {
+  return {
     hi: a1 * b1 + (a0b1 >> 32) + (a1b0 >> 32) + (t >> 32),
     lo: (a0b0 & M32) | ((t & M32) << 32),
   };
@@ -47,7 +47,7 @@ function mul160(a: u64, aLo: u64, b: u64): Wide {
   const r1 = (x1y0 & M32) + (x0y1 & M32) + (x0y0 >> 32);
   r2 += r1 >> 32;
   r3 += r2 >> 32;
-  return Wide { hi: ((x2y1 >> 32) << 32) + r3, lo: r2 & M32 };
+  return { hi: ((x2y1 >> 32) << 32) + r3, lo: r2 & M32 };
 }
 
 /** The top 64 bits of pow(10, p) (and the next 32 in `lo`), p in -348..347. */
@@ -56,7 +56,7 @@ export function powerOfTen(p: i64): Wide {
   let n: i64 = 0;
   if (p < 0) {
     if (p == -1) {
-      return Wide { hi: SCALE[13], lo: SCALE_LO[13] };
+      return { hi: SCALE[13], lo: SCALE_LO[13] };
     }
     // C's truncating division and remainder, then n brought into 0..26.
     g = -(-p / 27);
@@ -66,7 +66,7 @@ export function powerOfTen(p: i64): Wide {
       n += 27;
     }
   } else if (p < 27) {
-    return Wide { hi: BASE[p as usize], lo: 0 };
+    return { hi: BASE[p as usize], lo: 0 };
   } else {
     g = p / 27;
     n = p % 27;
@@ -74,11 +74,11 @@ export function powerOfTen(p: i64): Wide {
   const s = SCALE[(g + 13) as usize];
   const sLo = SCALE_LO[(g + 13) as usize];
   if (n == 0) {
-    return Wide { hi: s, lo: sLo };
+    return { hi: s, lo: sLo };
   }
   const w = mul160(s, sLo, BASE[n as usize]);
   if ((w.hi & BIT63) == 0) {
-    return Wide { hi: (w.hi << 1) | ((w.lo >> 31) & 1), lo: ((w.lo << 1) | 1) & M32 };
+    return { hi: (w.hi << 1) | ((w.lo >> 31) & 1), lo: ((w.lo << 1) | 1) & M32 };
   }
   return w;
 }

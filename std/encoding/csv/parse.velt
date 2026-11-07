@@ -5,14 +5,14 @@ import { delimiterUnit } from "velt/encoding/csv/delimiter";
 import { CsvError } from "velt/encoding/csv/errors";
 
 /** Options for `parseCsv` / `parseCsvRecords`. */
-export struct CsvOptions {
+export type CsvOptions = {
   /** One ASCII character (default `,`; e.g. `;` or `\t`). */
   delimiter?: string;
   /** Strip spaces and tabs around every field, quoted or not (default false). */
   trim?: bool;
   /** Drop records that are one empty field, i.e. blank lines (default false). */
   skipEmptyLines?: bool;
-}
+};
 
 // Code units the scanner looks for.
 const QUOTE: i64 = 34;

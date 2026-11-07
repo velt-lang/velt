@@ -88,9 +88,9 @@ export function columnRefOf(ec: ExprCompiler, src: Source, col: i64, s: Scope): 
   if (s.agg != null) {
     const agg = s.agg!;
     const slot = agg.bareSlot(src, col);
-    return C { ev: () => agg.cur.bare[slot], aff: aff, coll: coll, explicit: false };
+    return { ev: () => agg.cur.bare[slot], aff: aff, coll: coll, explicit: false };
   }
-  return C { ev: () => src.col(col), aff: aff, coll: coll, explicit: false };
+  return { ev: () => src.col(col), aff: aff, coll: coll, explicit: false };
 }
 
 /** A result column's alias used as a name in the same SELECT. */

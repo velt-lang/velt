@@ -15,7 +15,7 @@ export struct TcpListener {
    * handshake runs with the stream's first read or write, which throws if it fails (10 s limit).
    */
   async accept(): Promise<TcpStream> {
-    return TcpStream { handle: unwrapIo(await velt_rt_tcp_accept(this.handle)) };
+    return { handle: unwrapIo(await velt_rt_tcp_accept(this.handle)) };
   }
 
   /**

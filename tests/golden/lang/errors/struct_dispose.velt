@@ -1,0 +1,13 @@
+// A struct is copied and has no lifetime of its own (#641): `[Symbol.dispose]` needs a class.
+struct Handle {
+  fd: i32;
+
+  [Symbol.dispose](): void {
+    console.log("closed", this.fd);
+  }
+}
+
+function main() {
+  const h: Handle = { fd: 3 };
+  console.log(h.fd);
+}

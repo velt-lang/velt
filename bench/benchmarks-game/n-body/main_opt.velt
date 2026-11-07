@@ -3,8 +3,9 @@
 //
 // The loop structure of the Rust #3 program (Ilia Schelokov): each step first computes the 10
 // pair distance vectors, then the 10 magnitudes (independent sqrt/div, which pipeline and
-// vectorize), then applies them. Bodies are Copy structs (`Vec3`, `Body`) stored inline in the
-// array instead of class instances. Compare with main.velt (Node #6 loop shape, classes).
+// vectorize), then applies them. Positions and velocities are value structs (`Vec3`); `Body` is
+// an object type updated field by field, not a class. Compare with main.velt (Node #6 loop shape,
+// classes).
 import { argv } from "velt/process";
 
 const SOLAR_MASS: f64 = 4.0 * Math.PI * Math.PI;
@@ -18,15 +19,15 @@ struct Vec3 {
   z: f64;
 
   add(o: Vec3): Vec3 {
-    return Vec3 { x: this.x + o.x, y: this.y + o.y, z: this.z + o.z };
+    return { x: this.x + o.x, y: this.y + o.y, z: this.z + o.z };
   }
 
   sub(o: Vec3): Vec3 {
-    return Vec3 { x: this.x - o.x, y: this.y - o.y, z: this.z - o.z };
+    return { x: this.x - o.x, y: this.y - o.y, z: this.z - o.z };
   }
 
   scale(k: f64): Vec3 {
-    return Vec3 { x: this.x * k, y: this.y * k, z: this.z * k };
+    return { x: this.x * k, y: this.y * k, z: this.z * k };
   }
 
   sumSquares(): f64 {
@@ -34,16 +35,12 @@ struct Vec3 {
   }
 }
 
-struct Body {
-  pos: Vec3;
-  vel: Vec3;
-  mass: f64;
-}
+type Body = { pos: Vec3; vel: Vec3; mass: f64 };
 
 function body(x: f64, y: f64, z: f64, vx: f64, vy: f64, vz: f64, mass: f64): Body {
-  return Body {
-    pos: Vec3 { x: x, y: y, z: z },
-    vel: Vec3 { x: vx * DAYS_PER_YEAR, y: vy * DAYS_PER_YEAR, z: vz * DAYS_PER_YEAR },
+  return {
+    pos: { x: x, y: y, z: z },
+    vel: { x: vx * DAYS_PER_YEAR, y: vy * DAYS_PER_YEAR, z: vz * DAYS_PER_YEAR },
     mass: mass * SOLAR_MASS,
   };
 }
@@ -96,7 +93,7 @@ function createBodies(): Body[] {
 }
 
 function offsetMomentum(bodies: Body[]) {
-  let p = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+  let p: Vec3 = { x: 0.0, y: 0.0, z: 0.0 };
   for (const b of bodies) {
     p = p.add(b.vel.scale(b.mass / SOLAR_MASS));
   }
@@ -108,7 +105,7 @@ function advance(bodies: Body[], dt: f64, steps: i64) {
   const dPos: Vec3[] = [];
   const mags: f64[] = [];
   for (let k = 0; k < PAIRS; k++) {
-    dPos.push(Vec3 { x: 0.0, y: 0.0, z: 0.0 });
+    dPos.push({ x: 0.0, y: 0.0, z: 0.0 });
     mags.push(0.0);
   }
   for (let step = 0; step < steps; step++) {

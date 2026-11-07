@@ -75,7 +75,7 @@ export function test_positional_values_keep_their_json_types() {
 export function test_named_values_keep_their_json_types() {
   const db = setup();
   const named = db.prepare("INSERT INTO t (v) VALUES (:a), (@b), ($c), (:d), (:e), (:f)");
-  named.runWith(Named { a: 2.0, b: 3, c: false, d: "é", e: null, f: [9] });
+  named.runWith({ a: 2.0, b: 3, c: false, d: "é", e: null, f: [9] } as Named);
   assertEq(stored(db), [
     "integer 2",
     "integer 3",

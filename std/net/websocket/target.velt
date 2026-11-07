@@ -35,5 +35,5 @@ export function target(url: string): Target {
     throw invalid("WebSocket URL without a host");
   }
   const port: i64 = u.port == "" ? (secure ? 443 : 80) : (parseInt(u.port, 10) as i64);
-  return Target { secure: secure, host: host, port: port, path: u.pathname + u.search };
+  return { secure: secure, host: host, port: port, path: u.pathname + u.search };
 }

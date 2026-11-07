@@ -340,7 +340,7 @@ export class Map<K, V> {
 
   /** A cursor before the first entry, for `[MAP_ADVANCE]`. */
   [MAP_CURSOR](): MapCursor {
-    return MapCursor { pos: 0, at: 0, next: 0, renumbers: this.renumbers, off: 0, segEnd: 0 };
+    return { pos: 0, at: 0, next: 0, renumbers: this.renumbers, off: 0, segEnd: 0 };
   }
 
   /**
@@ -454,8 +454,11 @@ export class Map<K, V> {
   }
 }
 
-/** A live `for...of` loop's place in a map (`Map.[MAP_ADVANCE]`). */
-struct MapCursor {
+/**
+ * A live `for...of` loop's place in a map (`Map.[MAP_ADVANCE]`), which `[MAP_ADVANCE]` moves in
+ * place: an object type, not a `struct` (a struct value is never changed).
+ */
+type MapCursor = {
   // The next position to look at.
   pos: usize;
   // The position of the entry the loop is at.
@@ -467,4 +470,4 @@ struct MapCursor {
   // The current segment's offset and end (`Map.segmentOf`).
   off: usize;
   segEnd: usize;
-}
+};

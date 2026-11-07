@@ -200,7 +200,8 @@ impl Interp<'_> {
         let n = self.size(t);
         let b = self.read_bytes(a, n);
         match t {
-            Ty::Agg(_) => V::A(b),
+            // A small struct's bytes in a register (#641) move as an aggregate's do.
+            Ty::Agg(_) | Ty::V128 => V::A(b),
             _ => {
                 let mut buf = [0u8; 8];
                 buf[..n].copy_from_slice(&b);

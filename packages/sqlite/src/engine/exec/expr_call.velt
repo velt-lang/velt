@@ -130,7 +130,7 @@ export function compileCall(ec: ExprCompiler, e: Expr, sc: Scope): C {
   // An explicit COLLATE in an argument carries to the result (SQLite's EP_Collate).
   for (const a of args) {
     if (a.explicit) {
-      return C { ev: f!, aff: AFF_NONE, coll: a.coll, explicit: true };
+      return { ev: f!, aff: AFF_NONE, coll: a.coll, explicit: true };
     }
   }
   return plain(f!);

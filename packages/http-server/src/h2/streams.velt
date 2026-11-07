@@ -26,7 +26,7 @@ import { endBody, pumpAll, pumpStream, writeHead } from "./outbound";
 import { H2Request } from "./request";
 import { H2Response } from "./response";
 import { CLOSED, H2Stream } from "./stream";
-import { checkRequest, checkTrailers } from "./validate";
+import { checkRequest, checkTrailers, MALFORMED } from "./validate";
 
 /// Resets stream `id` with `code` (a stream error, RFC 9113 §5.4.2).
 export function streamError(c: H2Connection, id: i64, code: i64) {
@@ -266,7 +266,8 @@ export function onHeaderBlock(
   }
   c.inUse++;
   c.streams.set(id, s);
-  if ((flags & 0x100) != 0 || !checkRequest(s.fields, s.info)) {
+  s.info = (flags & 0x100) != 0 ? MALFORMED : checkRequest(s.fields);
+  if (s.info.method < 0) {
     streamError(c, id, PROTOCOL_ERROR);
     return;
   }

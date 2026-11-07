@@ -38,7 +38,7 @@ export struct Client {
    * not a live connection's fails with "ECLOSED").
    */
   static fromHandle(handle: u64): Client {
-    return Client { handle: handle };
+    return { handle: handle };
   }
 
   /** Every row of `sql` (any statement that returns rows). */
@@ -185,8 +185,8 @@ export struct Client {
    * releases the handle (later calls throw "ECLOSED").
    */
   close() {
+    // The handle is generational: once closed, this and every copy of it throw "ECLOSED".
     velt_postgres__close(this.handle);
-    this.handle = 0;
   }
 }
 

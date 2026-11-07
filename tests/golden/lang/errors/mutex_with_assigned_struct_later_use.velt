@@ -8,7 +8,7 @@ struct Counter {
 
 function main() {
   const all = shared(new Mutex<Counter[]>([]));
-  let t = Counter { n: 1, hits: shared(0) };
+  let t: Counter = { n: 1, hits: shared(0) };
   all.with((a) => {
     a.push(t);
   });

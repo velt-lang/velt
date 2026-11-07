@@ -12,7 +12,7 @@ use velt_sema::hir::{self, TyId, TyKind};
 
 use super::operand::proj;
 use super::rt::Rt;
-use super::{FnLower, Glue};
+use super::{cint, FnLower, Glue};
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
@@ -22,14 +22,15 @@ impl FnLower<'_, '_> {
         if self.cx.is_dynamic(ty) {
             return self.any_same_places(a, b, self.any_cmp());
         }
-        // A `struct` key (`KeyEq`, not `===`) compares by content, field by field.
-        if self.key_mode && !self.value_mode && self.cx.content_key(ty) {
+        // A C struct has no identity: every comparison compares its content (its fields as
+        // the mode compares numbers). Inside a `struct`, by the struct's rule: its bits.
+        if self.cx.c_struct(ty) && !self.bits_mode {
             return self.same_glue(a, b, ty);
         }
-        // A C struct has no identity: every comparison compares its content (its fields as
-        // the mode compares numbers).
-        if self.cx.c_struct(ty) {
-            return self.same_glue(a, b, ty);
+        // A `struct` is a value (#641): `==`, `===` and keys compare its content, floats by bits.
+        if self.cx.value_struct(ty) {
+            let (pa, pb) = (self.addr(a.clone()), self.addr(b.clone()));
+            return self.call_glue(Glue::BitsEq, ty, vec![pa, pb]);
         }
         if let TyKind::Promise(..) = self.cx.kind(ty) {
             return self.promise_identity(a, b);
@@ -190,12 +191,53 @@ impl FnLower<'_, '_> {
         if matches!(self.cx.kind(ty), TyKind::Dyn(..)) {
             self.cx.note_identity(ty);
             let (a, b) = (self.through_adapters(a, ty), self.through_adapters(b, ty));
-            return self.word_eq(&a, &b, 0);
+            let same = self.word_eq(&a, &b, 0);
+            return self.dyn_values_same(&a, &b, ty, same);
         }
         self.note_fn_compared(ty);
         let code = self.word_eq(a, b, 0);
         let env = self.word_eq(a, b, 1);
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env))
+    }
+
+    /// `===` of two interface values of type `ty` that hold `struct` values (#641): the same
+    /// object (`same`), or two values of one struct type equal by content. A struct value has
+    /// no identity: each conversion boxes a copy, so its table's class id word names its type
+    /// (class_test.rs `VALUE_IDS`) and its `SLOT_VALUE_EQ` compares the content as `BitsEq`
+    /// does, for every instance of a generic struct too.
+    fn dyn_values_same(&mut self, a: &Place, b: &Place, ty: TyId, same: Operand) -> Operand {
+        if !self.cx.holds_values(ty) {
+            return same;
+        }
+        let r = self.temp(Ty::Bool);
+        self.assign(Place::local(r), Rvalue::Use(same.clone()));
+        let (done, differ) = (self.new_block(), self.new_block());
+        self.branch(same, done, differ);
+        self.switch_to(differ);
+        let ida = self.vtable_class_id(Operand::Copy(proj(a, Proj::Field(1))));
+        let idb = self.vtable_class_id(Operand::Copy(proj(b, Proj::Field(1))));
+        let one = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, ida.clone(), idb));
+        self.when(one, done);
+        let (da, db) = (
+            Operand::Copy(proj(a, Proj::Field(0))),
+            Operand::Copy(proj(b, Proj::Field(0))),
+        );
+        // A class id at or above `VALUE_IDS` and below the marker words names a struct type.
+        let lo = cint(super::class_test::VALUE_IDS as i128, Ty::U64);
+        let hi = cint((super::class_test::VALUE_IDS << 1) as i128, Ty::U64);
+        let ge = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ge, ida.clone(), lo));
+        let lt = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, ida, hi));
+        let is = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, ge, lt));
+        let then = self.new_block();
+        self.branch(is, then, done);
+        self.switch_to(then);
+        let vt = Operand::Copy(proj(a, Proj::Field(1)));
+        let slot = super::glue::vtable::SLOT_VALUE_EQ;
+        let eq = self.any_slot_call(vt, slot, vec![da, db], Ty::Bool);
+        self.assign(Place::local(r), Rvalue::Use(eq));
+        self.goto(done);
+        self.switch_to(done);
+        Operand::Copy(Place::local(r))
     }
 
     /// Identity of the promises at `a` and `b`: each holder of a shared promise is a pointer
@@ -238,6 +280,19 @@ impl FnLower<'_, '_> {
         self.eq_body(pa, pb, ty);
     }
 
+    /// `Glue::BitsEq`: a `struct` value's fields by content (strings by text, objects inside by
+    /// identity), floats by their bits.
+    pub(super) fn bits_eq_body(&mut self, pa: crate::vir::Local, pb: crate::vir::Local, ty: TyId) {
+        self.bits_mode = true;
+        self.same_body(pa, pb, ty);
+    }
+
+    /// `Glue::BitsHash`: the hash agreeing with `Glue::BitsEq`.
+    pub(super) fn bits_hash_body(&mut self, p: crate::vir::Local, ty: TyId) {
+        self.bits_mode = true;
+        self.hash_body(p, ty);
+    }
+
     /// `Glue::KeySame`: `same_body` with floats compared by SameValueZero.
     pub(super) fn key_same_body(&mut self, pa: crate::vir::Local, pb: crate::vir::Local, ty: TyId) {
         self.key_mode = true;
@@ -274,6 +329,24 @@ impl super::Cx<'_> {
             TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(_)),
             _ => false,
         }
+    }
+
+    /// May a value of the interface value type `t` be a `struct` value (#641), compared and
+    /// hashed by content? True when a `struct` type, generic or not, implements its interface.
+    pub(in crate::lower) fn holds_values(&self, t: TyId) -> bool {
+        let TyKind::Dyn(iface, _) = self.raw_kind(t) else {
+            return false;
+        };
+        self.hir
+            .impls
+            .iter()
+            .any(|imp| imp.iface == *iface && self.value_struct(imp.ty))
+    }
+
+    /// Is `t` a value type declared with `struct` (#641): no identity, compared and hashed by
+    /// content (`hir::AdtDef::declared_struct`)?
+    pub(in crate::lower) fn value_struct(&self, t: TyId) -> bool {
+        self.content_key(t)
     }
 
     /// Is `t` a type declared with `struct`, whose `Map` and `Set` keys compare and hash by

@@ -34,17 +34,17 @@ export struct RowidKey {
 export function rowidKey(v0: Val, aff: u8, up: bool): RowidKey {
   const v = forCompare(v0, aff == AFF_NONE ? A_NUMERIC : aff);
   if (v.t == INTEGER) {
-    return RowidKey { ok: true, value: v.i, frac: false };
+    return { ok: true, value: v.i, frac: false };
   }
   if (v.t == REAL) {
     const r = v.r;
     if (r != r || r >= 9223372036854775808.0 || r < -9223372036854775808.0) {
-      return RowidKey { ok: false, value: 0, frac: false };
+      return { ok: false, value: 0, frac: false };
     }
     const t = up ? Math.ceil(r) : Math.floor(r);
-    return RowidKey { ok: true, value: t as i64, frac: t != r };
+    return { ok: true, value: t as i64, frac: t != r };
   }
-  return RowidKey { ok: false, value: 0, frac: false };
+  return { ok: false, value: 0, frac: false };
 }
 
 /**

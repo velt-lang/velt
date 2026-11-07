@@ -14,7 +14,7 @@ Official description: https://benchmarksgame-team.pages.debian.net/benchmarksgam
 | `main.go` | Go #3, The Go Authors / Christoph Bauer / Isaac Gouy / Antonio Petri (fastest Go) |
 | `main.js` | Node.js #6, Isaac Gouy / Andrey Filatkin (fastest Node); Bun runs the same file |
 | `main.velt` | idiomatic Velt: a `Body` class, `Body[]`, the Node #6 loop shape |
-| `main_opt.velt` | the Rust #3 loop shape with Copy structs (`Vec3`, `Body`) stored inline, see "Gaps" |
+| `main_opt.velt` | the Rust #3 loop shape with value structs (`Vec3`) in an object type (`Body`), see "Gaps" |
 
 All published n-body programs are single-threaded, so there is no `_mt` variant. The reference
 files are unchanged apart from a first `// Source:` line.

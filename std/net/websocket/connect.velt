@@ -4,10 +4,10 @@
 import { open } from "velt/net/websocket/opened";
 import { WebSocket, webSocketOver } from "velt/net/websocket/socket";
 
-export struct WsConnectOptions {
+export type WsConnectOptions = {
   /** Extra trusted CA certificates (PEM) for `wss://`, e.g. a private or test CA. */
   ca?: string;
-}
+};
 
 /** Opens a client connection to a `ws://` or `wss://` URL. */
 export async function connectWebSocket(

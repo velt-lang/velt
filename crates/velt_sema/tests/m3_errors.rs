@@ -123,7 +123,7 @@ fn awaiting_any_promise_rethrows_its_typed_error() {
 fn json_types() {
     ok_src(
         "struct P { a: i64; b: string[]; c?: f64; }
-         function main() { console.log(JSON.stringify(P { a: 1, b: [] })); const q = JSON.parse<P>(\"{}\"); console.log(q.a); }",
+         function main() { console.log(JSON.stringify(({ a: 1, b: [] } as P))); const q = JSON.parse<P>(\"{}\"); console.log(q.a); }",
     );
     // Maps with string keys are objects; tuples are fixed-length arrays.
     ok_src(
@@ -155,7 +155,7 @@ fn moves_into_call_arguments_happen_at_the_call() {
     );
     ok_src(
         "struct P { s: string; n: number; }
-         function main() { const s = \"ab\"; const p = P { s: s, n: s.length }; console.log(p.n); }",
+         function main() { const s = \"ab\"; const p = ({ s: s, n: s.length } as P); console.log(p.n); }",
     );
     // Semantics stage 2: the first argument shares the array.
     ok_src(
@@ -179,7 +179,7 @@ fn generic_structs_cannot_hold_void() {
     let r = err_src(
         "struct B<T> { v: T; }
          function f() {}
-         function main() { const b = B { v: f() }; }",
+         function main() { const b: B<void> = { v: f() }; }",
     );
     assert!(r.contains("would have a field `v` of type `void`"), "{r}");
 }

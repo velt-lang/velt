@@ -55,7 +55,7 @@ export function parseNumeric(s: string): Numeric {
     }
   }
   if (intDigits == 0 && fracDigits == 0) {
-    return Numeric { v: intVal(0), whole: false };
+    return { v: intVal(0), whole: false };
   }
   if (i < n && (s.charCodeAt(i) == 101 || s.charCodeAt(i) == 69)) {
     let j = i + 1;
@@ -79,9 +79,9 @@ export function parseNumeric(s: string): Numeric {
   const whole = end == n;
   if (!real) {
     // Exact in i64, else (only then) a REAL.
-    return Numeric { v: exactInt(text), whole: whole };
+    return { v: exactInt(text), whole: whole };
   }
-  return Numeric { v: realVal(sqliteAtof(text)), whole: whole };
+  return { v: realVal(sqliteAtof(text)), whole: whole };
 }
 
 // Decimal text to a double as SQLite converts it (not always the nearest double).

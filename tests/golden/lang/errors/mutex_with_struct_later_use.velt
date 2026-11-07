@@ -10,7 +10,7 @@ struct Tagged {
 
 function main() {
   const all = shared(new Mutex<Tagged[]>([]));
-  const t = Tagged { id: 1, tags: ["a"], hits: shared(0) };
+  const t: Tagged = { id: 1, tags: ["a"], hits: shared(0) };
   all.with((a) => {
     a.push(t);
   });

@@ -253,7 +253,7 @@ interface Doubler {
 
 
 function touched(): string {
-  const p: Spot = Point { x: 1, y: 2 };
+  const p: Spot = { x: 1, y: 2 };
   const named: Named[] = [new Base(), new Derived()];
   const pair: Space.Pair = { left: 1, right: 2 };
   const k = Kind.Large;

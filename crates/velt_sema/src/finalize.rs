@@ -265,7 +265,7 @@ fn adt_def(
             hidden: hidden.contains(&f.name),
         })
         .collect();
-    let declared_struct = a.kind == AdtKind::Struct && a.decl.is_some();
+    let declared_struct = a.kind == AdtKind::Struct && a.decl.is_some() && !cx.place_struct(d);
     let c_struct = a.decl.is_some_and(|t| t.c_struct);
     let (name, kind, base, ctor, vtable, span) = (
         a.qual_name.clone(),

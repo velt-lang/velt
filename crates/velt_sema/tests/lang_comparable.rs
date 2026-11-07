@@ -63,7 +63,7 @@ fn unbounded_params_and_non_comparable_types_are_rejected() {
     let r = err_src(
         "struct P { x: i64; }
          function lt<T extends Comparable<T>>(a: T, b: T): bool { return a < b; }
-         function main() { console.log(lt(P { x: 1 }, P { x: 2 })); }",
+         function main() { console.log(lt(({ x: 1 } as P), ({ x: 2 } as P))); }",
     );
     assert!(r.contains("does not implement `Comparable<P>`"), "{r}");
     assert!(r.contains("required by `T extends Comparable<T>`"), "{r}");
@@ -76,7 +76,7 @@ fn user_types_implement_comparable() {
          struct P { x: i64; }
          extend P { compareTo(o: P): i64 { return this.x.compareTo(o.x); } }
          function lt<T extends Comparable<T>>(a: T, b: T): bool { return a < b && !(a >= b); }
-         function main() { console.log(lt(new V(), new V()), lt(P { x: 1 }, P { x: 2 })); }",
+         function main() { console.log(lt(new V(), new V()), lt(({ x: 1 } as P), ({ x: 2 } as P))); }",
     );
 }
 

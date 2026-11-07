@@ -164,7 +164,7 @@ export struct RedisSubscriber implements AsyncIterable<RedisMessage, RedisError>
     };
     h.turn.trySend(true);
     spawn(readLoop(h));
-    const sub = RedisSubscriber { handle: h };
+    const sub: RedisSubscriber = { handle: h };
     try {
       await change(h, commandName(patterns, true), names);
     } catch (e) {
