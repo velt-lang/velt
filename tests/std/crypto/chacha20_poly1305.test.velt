@@ -113,6 +113,88 @@ describe("ChaCha20Poly1305", () => {
     expect(aead.openInPlace(nonce, aad, Buffer.alloc(15), 0, 15)).toBe(false);
   });
 
+  it("seals and opens in place at every start from 0 to 16, leaving the bytes around alone", () => {
+    const aead = new ChaCha20Poly1305(hexDecode(RFC_KEY));
+    const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const aad: u8[] = [23, 3, 3, 0, 99];
+    const lengths: usize[] = [
+      0,
+      1,
+      15,
+      16,
+      17,
+      63,
+      64,
+      65,
+      127,
+      128,
+      129,
+      191,
+      192,
+      193,
+      255,
+      256,
+      257,
+      319,
+      320,
+      321,
+      512,
+      513,
+    ];
+    let failures = 0;
+    for (const n of lengths) {
+      const text = patterned(n);
+      const sealed = hexEncode(aead.seal(nonce, text, aad));
+      for (let start: usize = 0; start <= 16; start++) {
+        for (let room: usize = 0; room <= 3; room += 3) {
+          const end = start + n;
+          const around = patterned(end + 16 + room);
+          for (let i: usize = 0; i < around.length; i++) {
+            around[i] ^= 0xa5;
+          }
+          const buf = around.slice();
+          for (let i: usize = 0; i < n; i++) {
+            buf[start + i] = text[i];
+          }
+          aead.sealInPlace(nonce, aad, buf, start, end);
+          const inPlace = hexEncode(buf.slice(start as i64, (end + 16) as i64));
+          if (inPlace != sealed) {
+            failures++;
+          }
+          // A failed open changes nothing: a flipped tag bit, and the wrong additional data.
+          const good = hexEncode(buf);
+          buf[end + 15] ^= 1;
+          const flipped = hexEncode(buf);
+          if (aead.openInPlace(nonce, aad, buf, start, end + 16) || hexEncode(buf) != flipped) {
+            failures++;
+          }
+          buf[end + 15] ^= 1;
+          if (aead.openInPlace(nonce, [], buf, start, end + 16) || hexEncode(buf) != good) {
+            failures++;
+          }
+          if (!aead.openInPlace(nonce, aad, buf, start, end + 16)) {
+            failures++;
+          }
+          // Open wrote the plaintext and nothing else; the tag stays where it was.
+          for (let i: usize = 0; i < n; i++) {
+            if (buf[start + i] != text[i]) {
+              failures++;
+              break;
+            }
+            buf[start + i] = around[start + i];
+          }
+          for (let i: usize = 0; i < 16; i++) {
+            buf[end + i] = around[end + i];
+          }
+          if (hexEncode(buf) != hexEncode(around)) {
+            failures++;
+          }
+        }
+      }
+    }
+    expect(failures).toBe(0);
+  });
+
   it("opens nothing shorter than a tag at a non-zero start", () => {
     const aead = new ChaCha20Poly1305(hexDecode(RFC_KEY));
     const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
