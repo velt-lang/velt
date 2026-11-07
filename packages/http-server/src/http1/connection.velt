@@ -58,7 +58,7 @@ export async function connection<E>(
   }
   const parser = new Parser(maxHead, maxBody, limits.maxHeaders);
   const req = new Http1Request(parser, conn, idle, limits.requestMs);
-  const res = new Http1Response(conn, stopped, req.head);
+  const res = new Http1Response(conn, stopped, req.head, req.watch);
   let open = true;
   let rejected = false;
   // When the head being read began to arrive (`Date.now()`), or -1 between requests.
@@ -111,6 +111,7 @@ export async function connection<E>(
           headStart = -1;
           req.begin(now);
           res.begin(req.head.keepAlive, req.head.http11, req.isMethod("HEAD"));
+          req.watch.begin(res);
           // A body still to come: the responses before it go out first, so a client waiting
           // for them (or for `100 Continue` after them) sends it.
           if (
@@ -122,7 +123,12 @@ export async function connection<E>(
           let failed = false;
           try {
             // A panic in the handler is this request's failure, not the server's (#2008).
-            await catchPanic(() => handler(req, res));
+            await catchPanic(() => {
+              // Storing the promise runs the handler up to its first wait.
+              const answer = handler(req, res);
+              req.watch.handlerWaits();
+              return answer;
+            });
           } catch (e) {
             failed = true;
             if (req.bodyTooLarge() || req.timedOut() || req.bodyMalformed()) {
@@ -147,6 +153,11 @@ export async function connection<E>(
             // Otherwise the client went away while the response was being written (a streamed
             // one): nothing can be sent, and it is not the handler's failure.
           }
+          // The connection reads the socket again from here.
+          if (req.watch.active()) {
+            await req.watch.stop();
+          }
+          req.watch.close();
           if (res.cutOff()) {
             // Its response failed after the head (`fail`): it can't be finished.
             failed = true;
@@ -175,7 +186,12 @@ export async function connection<E>(
           }
           // A body too large to skip, or held back for `100 Continue`: the client may still send it.
           rejected = rejected || !finished;
-          open = finished && res.reusable() && !stopped.aborted;
+          // A client gone leaves the requests it sent behind this one: they run, as Node has
+          // started them, and their answers go nowhere. Not behind a `Connection: close`, where
+          // Node's parser stops.
+          const next =
+            res.clientGone() ? req.bodyRead() && req.keepAlive : finished && res.reusable();
+          open = next && !stopped.aborted;
           parser.release();
         }
         // Part of the next head is here already: its time runs from now.

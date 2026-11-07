@@ -43,31 +43,29 @@ function bodyStream(
   chunks: AsyncIterator<u8[], IoError | AbortError>,
   used: bool,
 ): ReadableStream<Uint8Array> {
-  return ReadableStream.body<Uint8Array>(byteChunks(chunks), used);
+  return ReadableStream.body<Uint8Array>(new ByteChunks(chunks), used);
 }
 
-// Leaving early (the stream cancelled, or a `for await` left) ends `chunks` too, so the body's
-// source hears it: a generator's `finally`, a server's `ReadableStream` `cancel`.
-async function* byteChunks(
-  chunks: AsyncIterator<u8[], IoError | AbortError>,
-): AsyncGenerator<Uint8Array, Error> {
-  let ended = false;
-  try {
-    for (;;) {
-      const r = await chunks.next();
-      if (r.done) {
-        ended = true;
-        return;
-      }
-      yield Uint8Array.wrap(r.value);
+// Leaving early (the stream cancelled, or a `for await` left) ends `chunks` too, also while a
+// `next` waits, so the body's source hears it: a server's `ReadableStream` `cancel` at once, a
+// generator's `finally` at its next `yield`.
+class ByteChunks implements AsyncIterator<Uint8Array, Error> {
+  private chunks: AsyncIterator<u8[], IoError | AbortError>;
+
+  constructor(chunks: AsyncIterator<u8[], IoError | AbortError>) {
+    this.chunks = chunks;
+  }
+
+  async next(): Promise<IteratorResult<Uint8Array>, Error> {
+    const r = await this.chunks.next();
+    if (r.done) {
+      return { done: true };
     }
-  } finally {
-    if (!ended) {
-      try {
-        await chunks.return();
-      } catch (e) {
-        // The stream was cancelled: there is no one to tell.
-      }
-    }
+    return { value: Uint8Array.wrap(r.value), done: false };
+  }
+
+  async return(): Promise<IteratorResult<Uint8Array>> {
+    await this.chunks.return();
+    return { done: true };
   }
 }

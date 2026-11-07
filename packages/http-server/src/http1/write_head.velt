@@ -3,6 +3,7 @@
 // or none) and `Connection`, then the handler's headers, into the connection's `Out`.
 
 import { statusText } from "velt/net/http";
+import { Out } from "./out";
 import { Http1Response } from "./response";
 
 const SP: u8 = 32;
@@ -19,7 +20,7 @@ export function writeHead(
   length: i64,
   streamed: bool = false,
 ) {
-  if (r.done) {
+  if (r.done && !r.clientGone()) {
     throw new Error("the response was already sent");
   }
   r.done = true;
@@ -108,4 +109,15 @@ export function writeHead(
   const e = extra.buf;
   out.bytesOf(e, extra.length);
   out.crlf();
+}
+
+/// The head of a `101 Switching Protocols` response.
+export function writeSwitch(out: Out, protocol: string, fields: [string, string][]) {
+  out.text("HTTP/1.1 101 Switching Protocols\r\nUpgrade: ");
+  out.text(protocol);
+  out.text("\r\nConnection: Upgrade\r\n");
+  for (const h of fields) {
+    out.field(h[0], h[1]);
+  }
+  out.text("\r\n");
 }

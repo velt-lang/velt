@@ -193,14 +193,44 @@ request lazily: a handler pays only for what it reads.
   [`BodyStream`](https://veltlang.com/docs/std/net/http/#bodystream), `null` for a request without a body), so an
   upload need not be held in memory. A body is read once; a read that fails (the client went away)
   throws `IoError`.
-- `req.signal` is aborted when the client can no longer be answered, as in Deno and Bun: over
-  HTTP/2 when it resets its stream, over HTTP/1.1 when writing the response to it fails, and when
-  the server closes. Pass it to the work done for the request (`fetch(url, { signal: req.signal })`)
-  so that work stops with the client. Take it before the handler returns if a streamed body or a
-  spawned task uses it.
+- `req.signal` is aborted when the client goes away, as in Node, Deno and Bun: over HTTP/2 when it
+  resets its stream or its connection ends; over HTTP/1.1 when its input ends (below), its
+  connection fails, or a write to it fails; and when the server closes. Pass it to the work done for
+  the request (`fetch(url, { signal: req.signal })`) so that work stops with the client. Take it
+  before the handler returns if a streamed body or a spawned task uses it.
+- A client that goes away ends a streamed response's source, as in Node: a `ReadableStream`'s
+  `cancel` runs and `pull` stops, also with nothing to write and through `compress()`; an async
+  generator's `finally` runs at its next `yield`, as in JS. A slow client only holds the source
+  back. An exception from `cancel` goes nowhere.
+- **The end of a client's input is the client gone**, Node's rule (its `httpAllowHalfOpen` is off by
+  default), on keep-alive, `Connection: close` and pipelined requests alike, for a handler that asked
+  for `req.signal` and for a streamed response. If its response is pending when an HTTP/1.1 client
+  shuts its sending side, the signal aborts, the source stops, what was written stays written, and
+  the connection ends at once with nothing more: a client that sends a request, shuts its sending
+  side and goes on reading gets the answer only if the handler made it without really waiting
+  (awaiting promises that are ready doesn't count). A request behind one in progress still runs, and
+  its answer goes nowhere. A body cut off in the middle that the handler reads is answered 400, and
+  one it ignores too if it is watched (one with `Transfer-Encoding: chunked` that came whole but
+  wasn't read is too).
+- **A handler with neither a signal nor a stream isn't watched, a decision for speed.** Nothing reads
+  the socket for it, so it costs nothing, and its answer goes out where Node would send nothing to a
+  client that shut its sending side; the connection ends after it. Telling otherwise would take a
+  read before the answers of every keep-alive request, about 3% of a plain one, and a client
+  getting its answer does no harm. Ask for `req.signal` to be told. Also differing from Node: a
+  request with an `Upgrade` header isn't watched, as the handler may take the connection; and what
+  a handler does while it reads a body from the socket isn't watched until the body's end.
+- A watched handler, or a streamed response, has the socket read while it waits (up to 64 KiB past
+  what it took). That is the price of hearing the client, per request, in instructions with a debug
+  runtime: asking for `req.signal` takes a handler from about 23,800 to 42,600 (+79%) if it doesn't
+  wait and from 42,200 to 60,800 (+44%) if it does; a streamed response from about 43,000 to 53,000
+  (+23%), or 36,900 to 46,600 (+26%) from an async generator, which is also what `compress()` pays
+  on a response with no length. A handler with neither pays nothing.
+- `server.shutdown()` waits for an open stream as for any request, as Node's `close()` does, and
+  aborts `req.signal`: a source that never ends should listen to it.
 - A `Request` is valid until its handler settles: what the handler read stays readable, but
   reading something new afterwards (in a streamed body or a spawned task) stops the program
-  with a clear error. Read what outlives the handler first (`const url = req.url`).
+  with a clear error. Read what outlives the handler first (`const url = req.url`). Its body stays
+  readable until the response was written, so `new Response(req.body)` echoes it.
 
 `info: ServeInfo` holds what the server knows beyond the request (Deno's `ServeHandlerInfo`):
 `info.remoteAddr` is the client's `NetAddr { transport: "tcp", hostname, port: number }`.
