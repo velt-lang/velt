@@ -19,9 +19,12 @@
 //! function it builds was live (`hir::Program::live`), and the goldens run such a compiler; the
 //! exception a release compiler doesn't walk is in `live.rs`'s `live_defs`. Glue is lowered per
 //! type, not per function: its call site's construct must be listed in the table and found on
-//! the type, which the builder's assertion above checks. Today's table doesn't exercise this:
-//! once one integer hook is live its std code has arrays, integers and so on, which demand the
-//! other three, so a program demands none of them or all four (`velt_sema`'s `live_hooks` test).
+//! the type, which the builder's assertion above checks. The integer hooks exercise it: std's
+//! integer printer reads no table, so it has no index check, and `console.log` of an integer
+//! demands the writers and the builder hooks but not `int_text` or `uint_text`, which an index's
+//! message prints with (`velt_sema`'s `live_hooks` test). `console.log`'s number writers
+//! (`int_write`, `uint_write`, `number_write`) list `Format` alone; a float printed alone sets
+//! `Format` too, since `number_write`'s code holds the integer writer.
 //!
 //! ```
 //! use velt_common::std_hooks::{hook_index, Construct, HookSet, HOOKS};
@@ -53,7 +56,8 @@ pub enum Construct {
     /// parameter or held as `any`): `console.log` and `console.error` of it, `inspect`,
     /// `errorText`, `String()` and `${}` of a value that is no scalar, the report of it thrown
     /// and not caught, and the `format` slot of a class's or an interface value's table, which
-    /// every class value in live code has.
+    /// every class value in live code has. Also `console.log` of a float, whose writer's code
+    /// holds the integer's.
     Format,
     /// A bounds-checked index of an array (`xs[i]`, an array pattern, the array intrinsics): the
     /// out-of-bounds message prints the length and the index.
@@ -160,17 +164,25 @@ mod tests {
 
     #[test]
     fn the_integer_hooks_are_demanded_by_their_constructs() {
-        use crate::std_hooks::hook_index::{int_push, int_text, uint_push, uint_text};
+        use crate::std_hooks::hook_index::{int_push, int_text, int_write, number_write};
+        use crate::std_hooks::hook_index::{uint_push, uint_text, uint_write};
+        const WRITE: [usize; 3] = [int_write, uint_write, number_write];
         // Every entry of the table, and that nothing else demands these hooks.
         for (c, hooks) in [
             (Construct::TextInt, &[int_text, int_push][..]),
             (Construct::TextUint, &[uint_text, uint_push]),
-            (Construct::Format, &[int_push, uint_push]),
+            (
+                Construct::Format,
+                &[int_push, uint_push, WRITE[0], WRITE[1], WRITE[2]],
+            ),
             (Construct::IndexCheck, &[int_text, uint_text]),
             (Construct::Dynamic, &[uint_text, int_push, uint_push]),
         ] {
             let by = HookSet::demanded_by(c.bit());
-            for hook in [int_text, uint_text, int_push, uint_push] {
+            for hook in [int_text, uint_text, int_push, uint_push]
+                .into_iter()
+                .chain(WRITE)
+            {
                 assert_eq!(by.contains(hook), hooks.contains(&hook), "{}", c.name());
             }
         }

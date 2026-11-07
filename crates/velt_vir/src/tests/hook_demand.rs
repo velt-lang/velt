@@ -5,6 +5,7 @@
 use velt_sema::hir;
 
 use super::{lower_ok, lower_src, std_src};
+use crate::vir::{Callee, Terminator};
 
 const PRINTS_AN_INTEGER: &str =
     "function main() {\n  const n: i64 = 7;\n  console.log(`n=${n}`);\n}\n";
@@ -76,4 +77,63 @@ fn a_signed_index_is_in_the_table() {
         v.funcs.iter().any(|f| f.symbol == "_Goob_i64"),
         "no signed out-of-bounds helper:\n{v}"
     );
+}
+
+/// What `main` of `src` calls, in block order: the callee's symbol, or an extern's.
+fn main_calls(src: &str) -> Vec<String> {
+    let v = lower_src(src);
+    let main = (v.funcs.iter())
+        .find(|f| f.symbol.contains("main"))
+        .expect("main");
+    (main.blocks.iter())
+        .filter_map(|b| match &b.term {
+            Terminator::Call {
+                callee: Callee::Func(id),
+                ..
+            } => Some(v.funcs[id.0 as usize].symbol.clone()),
+            Terminator::Call {
+                callee: Callee::Extern(id),
+                ..
+            } => Some(v.externs[id.0 as usize].symbol.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A number in `console.log`'s line is written with the byte after it, in one call: that one
+/// write fewer is what brings the writer in Velt under the runtime's (#2197).
+#[test]
+fn a_number_is_written_with_the_byte_after_it() {
+    let writes_byte = |calls: &[String]| calls.iter().any(|s| s.contains("write_byte"));
+    for (ty, write) in [
+        ("i64", "intWrite"),
+        ("u64", "uintWrite"),
+        ("f64", "numberWrite"),
+    ] {
+        let main = |args: &str| {
+            main_calls(&format!(
+                "function main() {{\n  const n: {ty} = 7;\n  console.log({args});\n}}\n"
+            ))
+        };
+        let writes = |calls: &[String]| calls.iter().filter(|s| s.contains(write)).count();
+        let one = main("n");
+        assert_eq!(
+            (writes(&one), writes_byte(&one)),
+            (1, false),
+            "{ty}: {one:?}"
+        );
+        let two = main("n, n");
+        assert_eq!(
+            (writes(&two), writes_byte(&two)),
+            (2, false),
+            "{ty}: {two:?}"
+        );
+        // A string doesn't take the byte after it.
+        let then = main("n, \"s\"");
+        assert_eq!(
+            (writes(&then), writes_byte(&then)),
+            (1, true),
+            "{ty}: {then:?}"
+        );
+    }
 }

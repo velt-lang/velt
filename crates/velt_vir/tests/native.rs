@@ -1,23 +1,8 @@
-//! Native runs of lowered M3/M4 programs: HIR (the same programs the interpreter tests use:
-//! hand-built, or golden sources loaded with the real std) → `velt_vir::lower` → Cranelift object → linked with the real `velt_rt` (tokio
-//! executor, timers, TCP, JSON reader) → executed; stdout is compared with the goldens.
+//! Native runs of lowered M3/M4 programs: HIR (golden sources loaded with the real std, which
+//! prints numbers: #2197) → `velt_vir::lower` → Cranelift object → linked with the real
+//! `velt_rt` (tokio executor, timers, TCP, JSON reader) → executed; stdout is compared with the
+//! goldens.
 
-// The shared builders are written for the unit-test tree; each test crate uses a subset.
-#[allow(dead_code)]
-#[path = "../src/tests/builder.rs"]
-mod builder;
-#[allow(dead_code)]
-#[path = "../src/tests/builder_m2.rs"]
-mod builder_m2;
-#[allow(dead_code)]
-#[path = "../src/tests/builder_m3.rs"]
-mod builder_m3;
-#[allow(dead_code)]
-#[path = "../src/tests/builder_prelude.rs"]
-mod builder_prelude;
-#[allow(dead_code)]
-#[path = "../src/tests/programs_m3.rs"]
-mod programs_m3;
 #[path = "../src/tests/std_src.rs"]
 mod std_src;
 
@@ -118,7 +103,7 @@ fn async_basic() {
 
 #[test]
 fn tasks() {
-    let (out, code) = run_native("tasks", &programs_m3::tasks());
+    let (out, code) = run_native("tasks", &golden_program("m3", "tasks"));
     assert_eq!(out, golden("m3", "tasks"));
     assert_eq!(code, 0);
 }

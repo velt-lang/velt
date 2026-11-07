@@ -19,8 +19,8 @@ unsafe fn bytes<'a>(s: *const VeltStr) -> &'a [u8] {
 }
 fn out(b: &[u8]) { std::io::stdout().write_all(b).unwrap(); }
 #[no_mangle] pub extern "C" fn velt_rt_write_str(_s: u32, v: *const VeltStr) { out(unsafe { bytes(v) }) }
-#[no_mangle] pub extern "C" fn velt_rt_write_i64(_s: u32, v: i64) { out(v.to_string().as_bytes()) }
-#[no_mangle] pub extern "C" fn velt_rt_write_u64(_s: u32, v: u64) { out(v.to_string().as_bytes()) }
+#[no_mangle] pub extern "C" fn velt_test_write_i64(_s: u32, v: i64) { out(v.to_string().as_bytes()) }
+#[no_mangle] pub extern "C" fn velt_test_write_u64(_s: u32, v: u64) { out(v.to_string().as_bytes()) }
 #[no_mangle] pub extern "C" fn velt_rt_write_f64(_s: u32, v: f64) { out(v.to_string().as_bytes()) }
 #[no_mangle] pub extern "C" fn velt_rt_write_bool(_s: u32, v: u8) { out(if v == 1 { b"true" } else { b"false" }) }
 #[no_mangle] pub extern "C" fn velt_rt_write_byte(_s: u32, v: u8) { out(&[v]) }
