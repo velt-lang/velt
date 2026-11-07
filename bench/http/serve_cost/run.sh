@@ -13,11 +13,14 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 trap 'exit 143' INT TERM
 
-build() { # side checkout
-  mkdir -p "$WORK/$1"
-  tar -C "$2/packages/http-server" --exclude=./target -cf - . | tar -C "$WORK/$1" -xf -
-  cp "$HERE/server.velt" "$WORK/$1/tests/_cost.velt"
-  (cd "$WORK/$1" && VELT_STD="$2/std" "$VELT" build --release tests/_cost.velt -o "$WORK/srv-$1") \
+build() { # side checkout: this folder, against that checkout's http-server and std (a base has
+  # neither this folder nor its lock), laid out as in the repository
+  local dir="$WORK/$1/bench/http/serve_cost"
+  mkdir -p "$dir" "$WORK/$1/packages/http-server"
+  tar -C "$2/packages/http-server" --exclude=./target -cf - . |
+    tar -C "$WORK/$1/packages/http-server" -xf -
+  cp "$HERE/package.velt" "$HERE/server.velt" "$dir/"
+  (cd "$dir" && VELT_STD="$2/std" "$VELT" build --release server.velt -o "$WORK/srv-$1") \
     >/dev/null 2>"$WORK/build-$1" || { cat "$WORK/build-$1"; exit 1; }
 }
 

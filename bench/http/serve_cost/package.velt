@@ -1,0 +1,8 @@
+import type { Package } from "velt/package";
+
+// What a `serve` handler's shape costs per request (run.sh), on the repository's HTTP server package.
+export const pkg: Package = {
+  name: "serve-cost-bench",
+  version: "0.1.0",
+  dependencies: { "http-server": { path: "../../../packages/http-server" } },
+};

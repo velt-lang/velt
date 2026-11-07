@@ -1,7 +1,7 @@
 // The handlers measured per request: plain, a body read, a signal asked for, a streamed response.
 import { BodyStream } from "velt/net/http";
 import { utf8Encode } from "velt/encoding";
-import { serve } from "../src/lib";
+import { serve } from "http-server";
 
 async function* rows(): AsyncGenerator<u8[], never> {
   yield utf8Encode("Hello, World!");
