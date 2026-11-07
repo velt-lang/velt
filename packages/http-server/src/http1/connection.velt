@@ -178,7 +178,10 @@ export async function connection<E>(
           if (finished && (res.streamOpen() || !req.bodyRead())) {
             try {
               if (req.watch.lookDue()) {
-                seen = await req.watch.lookBack(res, now);
+                seen = req.watch.look(now);
+                if (req.watch.lostDue(seen)) {
+                  await req.watch.lost(res, seen);
+                }
               }
               // The response goes out before the rest of the body is waited for.
               await res.endStream(!req.bodyRead());
@@ -212,7 +215,10 @@ export async function connection<E>(
         open = false;
       }
       if (req.watch.lookDue()) {
-        seen = await req.watch.lookBack(res, now);
+        seen = req.watch.look(now);
+        if (req.watch.lostDue(seen)) {
+          await req.watch.lost(res, seen);
+        }
       }
       await res.flush();
       res.answersSent();

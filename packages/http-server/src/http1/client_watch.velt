@@ -25,6 +25,8 @@ const READ_AHEAD: i64 = 65536;
 
 /// The milliseconds after which a handler that waited unwatched has its answer checked.
 const TOOK_TIME: i64 = 5;
+/// What `look` says when the client's input ended and a handler took time.
+export const GONE: i64 = -2;
 
 /// What a watch reports to: the response of the request being answered.
 export interface ClientEnd {
@@ -57,6 +59,8 @@ export class ClientWatch {
   private waited: bool = false;
   /// One look at the socket is due before the answer goes out.
   private lookAgain: bool = false;
+  /// `look` found the connection failed.
+  private failed: bool = false;
   /// The client's input ended, or its connection failed: nothing more to watch for.
   private over: bool = false;
   private stopper: AbortController | null = null;
@@ -117,10 +121,10 @@ export class ClientWatch {
   }
 
   /// Before the batch's answers go out, a look at the socket in place of the connection's next
-  /// read: what it found (`n` as `readFrom` gives it, -1 for the connection to read itself). If
-  /// the client's input ended and a handler took time (from `now`), what that handler and those
-  /// behind it answered goes nowhere.
-  async lookBack(target: ClientEnd, now: i64): Promise<i64> {
+  /// read: what it found (as `readFrom` gives it, -1 for the connection to read itself, `GONE` if
+  /// the client's input ended and a handler took time, from `now`: `lost` then takes the answers
+  /// back). Not async: the usual look is one read.
+  look(now: i64): i64 {
     this.lookAgain = false;
     const p = this.parser;
     let read: i64 = 0;
@@ -128,14 +132,8 @@ export class ClientWatch {
       while (p.available() < READ_AHEAD) {
         const n = p.readFrom(this.conn);
         if (n == null) {
-          if (
-            !this.over && (Date.now() as i64) >= now + TOOK_TIME && this.head.find("upgrade") < 0
-          ) {
-            this.over = true;
-            target.dropAnswers();
-            await target.closedEarly(!this.body.arrived());
-          }
-          return -1;
+          const late = (Date.now() as i64) >= now + TOOK_TIME;
+          return late && !this.over && this.head.find("upgrade") < 0 ? GONE : -1;
         }
         if (n == 0) {
           return read;
@@ -145,9 +143,26 @@ export class ClientWatch {
       return read;
     } catch (e) {
       this.over = true;
-      target.connectionFailed();
+      this.failed = true;
       return -1;
     }
+  }
+
+  /// `look` found the client gone or its connection failed: tells `target`.
+  async lost(target: ClientEnd, found: i64) {
+    if (this.failed) {
+      this.failed = false;
+      target.connectionFailed();
+    } else if (found == GONE) {
+      this.over = true;
+      target.dropAnswers();
+      await target.closedEarly(!this.body.arrived());
+    }
+  }
+
+  /// Whether `look` found something for `lost`.
+  lostDue(found: i64): bool {
+    return found == GONE || this.failed;
   }
 
   /// The handler is about to read the body from the socket.
@@ -220,6 +235,7 @@ export class ClientWatch {
 
   private async run(stop: AbortSignal, target: ClientEnd): Promise<void> {
     const p = this.parser;
+    let woken = false;
     try {
       while (!stop.aborted && p.available() < READ_AHEAD) {
         const n = p.readFrom(this.conn);
@@ -237,8 +253,22 @@ export class ClientWatch {
           }
           return;
         }
-        if (n == 0 && !(await this.conn.readableWithin(-1, stop))) {
-          return;
+        if (n == 0) {
+          // A wake with nothing to read, again: the poll ends, or what the handler wrote in it
+          // would never be sent while this goes round.
+          if (woken) {
+            await new Promise<void>((resolve) => {
+              setImmediate(() => {
+                resolve();
+              });
+            });
+          }
+          if (!(await this.conn.readableWithin(-1, stop))) {
+            return;
+          }
+          woken = true;
+        } else {
+          woken = false;
         }
       }
     } catch (e) {
