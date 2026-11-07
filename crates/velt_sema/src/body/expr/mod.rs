@@ -183,6 +183,7 @@ mod record_logical;
 mod record_props;
 mod record_view;
 mod regex_args;
+mod rest_forms;
 mod rest_shapes;
 mod setters;
 mod simd_call;

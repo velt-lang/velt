@@ -300,6 +300,7 @@ pub(crate) fn lower_program(
             diags.extend(cx.counted_lock_diagnostics());
             diags.extend(cx.atomic_copy_diagnostics());
             diags.extend(cx.unavailable_diagnostics());
+            diags.extend(cx.unreduced_diagnostics());
             cx.unfreeze_module_reach();
             let types_now = cx.types.clone();
             let program = cx.finish();
@@ -360,6 +361,8 @@ struct Cx<'h> {
     /// Calls of system and host functions the target lacks: (the declaration, the calling function, the
     /// user code being lowered then, `user_site`).
     unavailable: Vec<(DefId, Option<DefId>, velt_common::Span)>,
+    /// Deferred types an instantiation met that sema didn't reduce (`types.rs` `reduce_op`).
+    unreduced: Vec<TyId>,
     /// C functions called with a signature their symbol already has another one of (c_call.rs).
     c_clashes: Vec<velt_common::Diagnostic>,
     /// The symbols C functions declared (c_call.rs): a later extern of the same symbol with

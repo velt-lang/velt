@@ -1,0 +1,7 @@
+// A generic function value at other type arguments, whose bound differs: `tsc --strict` accepts it,
+// and Velt says it isn't supported yet, since its function was checked at its own bound.
+interface Has<E> { get(): E }
+type H<E> = <N extends Has<E>>(n: N) => string;
+const hs: H<string> = (n) => n.get().toUpperCase();
+const hn: H<number> = hs;
+console.log(typeof hn);

@@ -1,0 +1,14 @@
+// A rest parameter's form that reduces to a union: the member with as many elements as the call
+// has arguments. Expected output from `node`; `tsc --strict` accepts it.
+type Z = <N extends "x">(n: N, ...a: N extends "x" ? [] | [any] : []) => number;
+const z: Z = (n, ...a) => a.length;
+console.log(z("x"), z("x", 1));
+type M = <N extends "a" | "b">(n: N, ...r: N extends "a" ? [number] : []) => number;
+const m: M = (n, ...r) => r.length;
+const nm = "a" as "a" | "b";
+console.log(m(nm, 1), m(nm));
+const na: any = "b";
+console.log(m(na), m(na, 1));
+type K = <T>(...a: [T]) => T;
+const k: K = (...a) => a[0];
+console.log(k("q"));

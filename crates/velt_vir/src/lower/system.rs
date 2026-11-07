@@ -605,6 +605,25 @@ impl FnLower<'_, '_> {
 }
 
 impl super::Cx<'_> {
+    /// The error for each deferred type sema didn't reduce (`reduce_op`).
+    pub(super) fn unreduced_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
+        if self.unreduced.is_empty() {
+            return vec![];
+        }
+        // Where the types whose instances are one value are written.
+        let span = (self.hir.arg_free_generic_fns.iter())
+            .filter_map(|d| match self.hir.def(*d) {
+                hir::Def::Interface(i) => Some(i.span),
+                _ => None,
+            })
+            .min_by_key(|s| (s.file, s.lo))
+            .unwrap_or(velt_common::Span::DUMMY);
+        vec![velt_common::Diagnostic::error(
+            "a function of this generic function type names a type-level form its call's type arguments don't evaluate: a value of the type at other type arguments is not supported yet (#943)",
+            span,
+        )]
+    }
+
     /// The errors for calls of system and host functions the target lacks. One the standard library
     /// calls is reported at the user's call that reached it, as that call of std's function.
     pub(super) fn unavailable_diagnostics(&self) -> Vec<velt_common::Diagnostic> {

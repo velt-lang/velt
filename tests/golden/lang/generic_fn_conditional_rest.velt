@@ -70,9 +70,6 @@ console.log(sel("a", 1), sel("b", "x"));
 // An instance at `any`: the same function, through a value and through an interface with methods.
 const wide: Emit<any> = a;
 wide("change", 9);
-type Opening = { open: Def<string> };
-const other: Emit<Opening> = a;
-other("open", "door");
 interface Live<E extends Record<string, any>> { emit: Emit<E>; label(): string }
 class Item<E extends Record<string, any>> implements Live<E> {
     emit: Emit<E> = rec;

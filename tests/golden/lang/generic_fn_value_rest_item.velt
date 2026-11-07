@@ -1,0 +1,7 @@
+// A function value with a parameter at the position of a rest parameter's form. Expected output
+// from `node`; `tsc --strict` accepts it.
+type M = <N extends "a" | "b">(n: N, ...r: N extends "a" ? [number] : []) => void;
+const f1 = (name: string, x?: number): void => { console.log(name, x); };
+const a1: M = f1;
+a1("a", 1);
+a1("b");

@@ -1,0 +1,24 @@
+// A parameter written at the position of a rest parameter a call's type arguments decide is the
+// argument there, as JavaScript binds it, `undefined` past the end. Expected output from `node`;
+// `tsc --strict` accepts it.
+type M = <N extends "a" | "b">(n: N, ...r: N extends "a" ? [number] : []) => void;
+const o: M = (n, d?) => { console.log(n, d); };
+o("a", 1);
+o("b");
+const dflt: M = (n, d = 7) => { console.log(n, d); };
+dflt("a", 1);
+dflt("b");
+const z: M = (n, d?: number, e?: number) => { console.log(n, d, e); };
+z("a", 2);
+const fx: M = function (n, d?) { console.log(n, typeof d, d); };
+fx("a", 3);
+fx("b");
+function named(name: string, x?: number): void { console.log(name, x); }
+const nm: M = named;
+nm("a", 4);
+nm("b");
+interface Holder { emit: M }
+const h: Holder = { emit: (n, d?) => { console.log("field", n, d); } };
+h.emit("a", 5);
+function take(f: M): void { f("a", 6); }
+take((n, d?) => { console.log("cb", n, d); });

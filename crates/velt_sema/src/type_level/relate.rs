@@ -39,6 +39,8 @@ impl Ctx<'_> {
         }
         match *self.ty.kind(p) {
             TyKind::Param(WILDCARD | UNKNOWN) => true,
+            // `undefined extends void`.
+            TyKind::Unit => n == Nothing::Undefined,
             TyKind::Option(_, m) => n.within(m),
             _ => false,
         }
@@ -76,6 +78,10 @@ impl Ctx<'_> {
         }
         // `any` and `unknown` written in a type bound (patterns have placeholders for them).
         if matches!(self.dynamic(p), Some(Dynamic::Any | Dynamic::Unknown)) {
+            return true;
+        }
+        // `[any] extends [string]`: `any` is assignable to everything.
+        if self.dynamic(s) == Some(Dynamic::Any) {
             return true;
         }
         let sk = self.ty.kind(s).clone();

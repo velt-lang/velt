@@ -20,6 +20,5 @@ gen
 3 1 0
 s1 2
 change 1 [9]
-open 1 ["door"]
 change 1 [10]
 item

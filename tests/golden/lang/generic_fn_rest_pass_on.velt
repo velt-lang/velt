@@ -1,0 +1,7 @@
+// A rest parameter passed on to a function of the same form, still decided by type parameters.
+// Expected output from `node`; `tsc --strict` accepts it.
+type M = <N extends "a" | "b">(n: N, ...r: N extends "a" ? [number] : []) => void;
+const inner: M = (n, ...r) => { console.log(n, r); };
+const outer: M = (n, ...r) => inner(n, ...r);
+outer("a", 1);
+outer("b");

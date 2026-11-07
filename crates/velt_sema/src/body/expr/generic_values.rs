@@ -49,6 +49,9 @@ impl FnCx<'_, '_> {
         };
         let exp = self.hint(exp);
         let g = exp.and_then(|t| self.cx.generic_sig(t));
+        if let Some(arrow) = g.as_ref().and_then(|g| self.rest_items_arrow(e, g)) {
+            return self.generic_closure(&arrow, exp);
+        }
         if g.is_none() && (type_params.is_empty() || params.iter().any(|p| p.ty.is_none())) {
             return self.generic_arrow_without_type(e.span);
         }

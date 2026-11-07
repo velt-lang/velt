@@ -261,7 +261,7 @@ impl FnCx<'_, '_> {
         h: hir::Expr,
         exp: TyId,
     ) -> Result<hir::Expr, hir::Expr> {
-        let (TyKind::FnPtr { params, .. }, Some(to)) =
+        let (TyKind::FnPtr { params, rest, .. }, Some(to)) =
             (self.cx.ty.kind(h.ty).clone(), self.cx.generic_sig(exp))
         else {
             return Err(h);
@@ -269,12 +269,19 @@ impl FnCx<'_, '_> {
         let n = to.method.params.len();
         // A function value may take fewer parameters than its type gives.
         let shape = (n.min(params.len()), to.rest && params.len() >= n);
+        // One with parameters at a form's rest position takes the arguments there.
+        let items = match self.cx.generic_fn_rest_form(to.iface).is_some() && !rest {
+            true => (params.len() + 1).saturating_sub(n),
+            false => 0,
+        };
+        let held = self.forwarding_items.replace(items);
         let mark = crate::body::recheck::Mark::here(self.cx);
         let frames = self.trial_frames();
         let diags = self.cx.diags.len();
         let mut g = self.forwarding(h.clone(), exp, shape, |s, arrow, exp| {
             s.generic_closure(arrow, Some(exp))
         });
+        self.forwarding_items.set(held);
         if self.cx.diags.len() == diags {
             self.mark_fresh(&mut g, exp);
             return Ok(g);
@@ -283,6 +290,19 @@ impl FnCx<'_, '_> {
         mark.rollback(self.cx);
         self.restore_trial_frames(frames);
         Err(h)
+    }
+
+    /// May an instance at `from` be seen as one at `to`: at each position one is `any` or
+    /// `unknown`, or `to` has no members, so a call can't name what the function wasn't checked
+    /// for?
+    pub(super) fn generic_fn_opens(&mut self, from: &[TyId], to: &[TyId]) -> bool {
+        from.iter().zip(to).all(|(f, t)| {
+            f == t
+                || self.cx.dynamic(*f).is_some()
+                || self.cx.dynamic(*t).is_some()
+                || (matches!(self.cx.ty.kind(*t), TyKind::Adt(..))
+                    && self.cx.public_fields(*t).is_empty())
+        })
     }
 
     /// `h`, an instance of a generic function type whose call doesn't depend on its arguments
@@ -371,12 +391,16 @@ impl FnCx<'_, '_> {
                 rest: rest && k + 1 == n,
             })
             .collect();
+        let items = self.forwarding_items.take();
         let args = (0..n)
-            .map(|k| match rest && k + 1 == n {
-                true => mk(ast::ExprKind::Spread(Box::new(mk(ast::ExprKind::Ident(
-                    name(k),
-                ))))),
-                false => mk(ast::ExprKind::Ident(name(k))),
+            .flat_map(|k| match (rest && k + 1 == n, items) {
+                (true, 0) => vec![mk(ast::ExprKind::Spread(Box::new(mk(
+                    ast::ExprKind::Ident(name(k)),
+                ))))],
+                (true, _) => (0..items)
+                    .map(|j| super::rest_forms::rest_item(&name(k), j))
+                    .collect(),
+                (false, _) => vec![mk(ast::ExprKind::Ident(name(k)))],
             })
             .collect();
         let held = ast::Ident {

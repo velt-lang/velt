@@ -57,10 +57,12 @@ pub(crate) struct GenericFns {
     /// against this type at its type arguments (`FnCx::rest_form_args`).
     rest_forms: FxHashMap<DefId, TyId>,
     /// The interfaces with type parameters that their method's parameters and result don't
-    /// mention: they are only in what a call is checked against (`rest_forms`, the type
-    /// parameters' bounds), so its instances are one value with one table
-    /// (`hir::Program::arg_free_generic_fns`).
+    /// mention, whose own type parameters are strings in a body at every bound: the arguments
+    /// are only in what a call is checked against (`rest_forms`, the bounds), so its instances
+    /// can be one value with one table (`hir::Program::arg_free_generic_fns`).
     pub free_of_args: FxHashSet<DefId>,
+    /// The values of `rest_forms`.
+    form_tys: FxHashSet<TyId>,
     /// The type parameter names each was first written with, for showing it.
     names: FxHashMap<DefId, Vec<String>>,
     /// The site of each one's error type: its first spelling, when in a user module.
@@ -130,7 +132,9 @@ impl Ctx<'_> {
             .collect();
         let ret = self.generic_fn_form(ret, &inner_env);
         let rest_form = match (*rest, pts.last().copied()) {
-            (true, Some(t)) if matches!(self.ty.kind(t), TyKind::Op(..)) => Some(t),
+            (true, Some(t)) if !matches!(self.ty.kind(t), TyKind::Array(_) | TyKind::Error) => {
+                Some(t)
+            }
             _ => None,
         };
         if let (Some(_), Some(any)) = (rest_form, self.any_type()) {
@@ -436,11 +440,14 @@ impl Ctx<'_> {
         for t in s.params.iter().chain([&s.ret]) {
             crate::types::collect_params(&self.ty, *t, &mut used);
         }
-        if s.outer > 0 && used.iter().all(|p| *p as usize >= s.outer) {
+        let one_representation = s.bounds.iter().all(Vec::is_empty)
+            && (s.constraints.iter().flatten()).all(|b| self.string_bound(*b));
+        if s.outer > 0 && used.iter().all(|p| *p as usize >= s.outer) && one_representation {
             self.generic_fns.free_of_args.insert(d);
         }
         if let Some(form) = s.rest_form {
             self.generic_fns.rest_forms.insert(d, form);
+            self.generic_fns.form_tys.insert(form);
         }
         self.generic_fns.names.insert(d, own_names);
         d
@@ -558,6 +565,11 @@ impl Ctx<'_> {
     /// call's type arguments decide it (`GenericFns::rest_forms`).
     pub(crate) fn generic_fn_rest_form(&self, d: DefId) -> Option<TyId> {
         self.generic_fns.rest_forms.get(&d).copied()
+    }
+
+    /// Is parameter type `t` a rest parameter's form (`GenericFns::rest_forms`)?
+    pub(crate) fn is_rest_form(&self, t: TyId) -> bool {
+        self.generic_fns.form_tys.contains(&t)
     }
 
     /// Is `d` a generic function type's interface whose method's parameters and result don't
