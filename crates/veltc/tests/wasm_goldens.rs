@@ -192,6 +192,7 @@ const WASI_STD: &[&str] = &[
     "simd_half_load_range",
     "simd_half_narrow_nan",
     "simd_half_sweep",
+    "simd_half_fma",
     "simd_half_types",
     "simd_ints",
     "simd_lane_range",
