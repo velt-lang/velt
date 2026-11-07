@@ -1,0 +1,89 @@
+// `f16x8`'s lane arithmetic (#2049) over pairs of patterns from all of binary16: `a` and `b` each
+// run in steps of 61 by default, 1,075 patterns each, and the argument 1 gives every pair of the
+// 2^32 (`f16_every_pair` in crates/veltc/tests/cpu_levels.rs). Each operation hashes the bits of
+// its results, one hash per lane; each step of a hash is a bijection in the hash and in the
+// result, so one result that differs always shows (a sum of multiples would not do: with 2^32
+// steps of a period below 2^16, whole rows cancel). A NaN hashes as one pattern, as which NaN it
+// is isn't the same everywhere. A comparison hashes its mask. The
+// expected output is Node's: each pair as `Math.f16round(a op b)` on numbers (f64 computes each
+// of these exactly enough), `Math.min`, `Math.max`, and the comparisons.
+import { f16x8, mask16x8, u16x8 } from "velt/simd";
+
+function nanOne(r: f16x8): u16x8 {
+  const bits = r.asU16x8();
+  const nan = (bits & u16x8.splat(0x7fff)).gt(u16x8.splat(0x7c00));
+  return u16x8.select(nan, u16x8.splat(0x7e00), bits);
+}
+
+function mix(h: u16x8, r: f16x8): u16x8 {
+  const m = (h ^ nanOne(r)) * 40503;
+  return m ^ (m >>> 7);
+}
+
+function mixMask(h: u32, m: mask16x8): u32 {
+  const x = (h ^ (m.bitmask() as u32)) * 16777619;
+  return x ^ (x >>> 15);
+}
+
+function show(name: string, h: u16x8) {
+  const lanes: string[] = [];
+  for (let k: usize = 0; k < 8; k++) {
+    lanes.push(`${h[k]}`);
+  }
+  console.log(name, lanes.join(" "));
+}
+
+function main() {
+  const step: u32 = process.argv.length > 2 ? 1 : 61;
+  let add = u16x8.splat(0);
+  let sub = add;
+  let mul = add;
+  let div = add;
+  let min = add;
+  let max = add;
+  let eq: u32 = 0;
+  let ne: u32 = 0;
+  let lt: u32 = 0;
+  let le: u32 = 0;
+  let gt: u32 = 0;
+  let ge: u32 = 0;
+  const offsets = u16x8.index() * (step as u16);
+  for (let i: u32 = 0; i < 65536; i += step) {
+    const x = f16x8.fromU16x8(u16x8.splat(i as u16));
+    for (let j: u32 = 0; j < 65536; j += step * 8) {
+      const y = f16x8.fromU16x8(offsets + u16x8.splat(j as u16));
+      add = mix(add, x + y);
+      sub = mix(sub, x - y);
+      mul = mix(mul, x * y);
+      div = mix(div, x / y);
+      min = mix(min, x.min(y));
+      max = mix(max, x.max(y));
+      eq = mixMask(eq, x.eq(y));
+      ne = mixMask(ne, x.ne(y));
+      lt = mixMask(lt, x.lt(y));
+      le = mixMask(le, x.le(y));
+      gt = mixMask(gt, x.gt(y));
+      ge = mixMask(ge, x.ge(y));
+    }
+  }
+  show("add", add);
+  show("sub", sub);
+  show("mul", mul);
+  show("div", div);
+  show("min", min);
+  show("max", max);
+  console.log("eq", eq, "ne", ne, "lt", lt, "le", le, "gt", gt, "ge", ge);
+  // One operand: every pattern.
+  let sqrt = u16x8.splat(0);
+  let neg = sqrt;
+  let abs = sqrt;
+  for (let i: u32 = 0; i < 65536; i += 8) {
+    const x = f16x8.fromU16x8(u16x8.index() + u16x8.splat(i as u16));
+    sqrt = mix(sqrt, x.sqrt());
+    neg = mix(neg, -x);
+    abs = mix(abs, x.abs());
+  }
+  show("sqrt", sqrt);
+  show("neg", neg);
+  show("abs", abs);
+}

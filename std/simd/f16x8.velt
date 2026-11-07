@@ -1,8 +1,10 @@
-// velt/simd (internal): `f16x8`, eight `f16` lanes: a storage type like `f16`, for moving 16-bit weights
-// into and out of `f32x4` arithmetic. It has no arithmetic of its own: `widenLow` and `widenHigh`
-// give `f32x4`, `f16x8.narrow` takes them back, and `dotAdd` multiply two of them into an
-// `f32x4` accumulator. The `velt_simd_*` functions below have no runtime implementation, the
-// compiler emits them inline (rt_abi.md "SIMD").
+// velt/simd (internal): `f16x8`, eight `f16` lanes. `widenLow` and `widenHigh` give `f32x4`,
+// `f16x8.narrow` takes them back, and `dotAdd` multiplies two of them into an `f32x4` accumulator.
+// Its lane arithmetic rounds to `f16` as `f32x4`'s rounds to `f32`, to the same bits on every CPU
+// but for which NaN a NaN is: one instruction where the CPU has FP16 (every Apple arm64 CPU, and
+// `--cpu` where the CPU has it), and otherwise computed in `f32`, which rounds the same. Its
+// operators are in ops_floats.velt. The `velt_simd_*` functions below have no runtime
+// implementation, the compiler emits them inline (rt_abi.md "SIMD").
 
 export type f16x8 = f16x8;
 
@@ -20,6 +22,22 @@ declare function velt_simd_f16x8_widen_low(v: f16x8): f32x4;
 declare function velt_simd_f16x8_widen_high(v: f16x8): f32x4;
 declare function velt_simd_f32x4_narrow_f16x8(lo: f32x4, hi: f32x4): f16x8;
 declare function velt_simd_f32x4_dot_add_f16x8(acc: f32x4, a: f16x8, b: f16x8): f32x4;
+declare function velt_simd_f16x8_select(m: mask16x8, a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_add(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_sub(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_mul(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_div(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_min(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_max(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_neg(v: f16x8): f16x8;
+declare function velt_simd_f16x8_abs(v: f16x8): f16x8;
+declare function velt_simd_f16x8_sqrt(v: f16x8): f16x8;
+declare function velt_simd_f16x8_eq(a: f16x8, b: f16x8): mask16x8;
+declare function velt_simd_f16x8_ne(a: f16x8, b: f16x8): mask16x8;
+declare function velt_simd_f16x8_lt(a: f16x8, b: f16x8): mask16x8;
+declare function velt_simd_f16x8_le(a: f16x8, b: f16x8): mask16x8;
+declare function velt_simd_f16x8_gt(a: f16x8, b: f16x8): mask16x8;
+declare function velt_simd_f16x8_ge(a: f16x8, b: f16x8): mask16x8;
 
 extend f16x8 {
   /** A vector with every lane `x`. */
@@ -103,6 +121,99 @@ extend f16x8 {
       panic("RangeError: f16x8.withLane: index is out of range");
     }
     return velt_simd_f16x8_with_lane(this, index as u64, x);
+  }
+
+  /** Lane-wise sum. */
+  add(other: f16x8): f16x8 {
+    return velt_simd_f16x8_add(this, other);
+  }
+
+  /** Lane-wise difference. */
+  sub(other: f16x8): f16x8 {
+    return velt_simd_f16x8_sub(this, other);
+  }
+
+  /** Lane-wise product. */
+  mul(other: f16x8): f16x8 {
+    return velt_simd_f16x8_mul(this, other);
+  }
+
+  /** Lane-wise quotient. */
+  div(other: f16x8): f16x8 {
+    return velt_simd_f16x8_div(this, other);
+  }
+
+  /** The smaller of each pair of lanes (as `Math.min` and `Math.max`: NaN if either is). */
+  min(other: f16x8): f16x8 {
+    return velt_simd_f16x8_min(this, other);
+  }
+
+  /** The larger of each pair of lanes (as `Math.min` and `Math.max`: NaN if either is). */
+  max(other: f16x8): f16x8 {
+    return velt_simd_f16x8_max(this, other);
+  }
+
+  /** Each lane negated. */
+  neg(): f16x8 {
+    return velt_simd_f16x8_neg(this);
+  }
+
+  /** The absolute value of each lane. */
+  abs(): f16x8 {
+    return velt_simd_f16x8_abs(this);
+  }
+
+  /** The square root of each lane. */
+  sqrt(): f16x8 {
+    return velt_simd_f16x8_sqrt(this);
+  }
+
+  /** The lanes where this vector equals `other` (a NaN lane equals nothing). */
+  eq(other: f16x8): mask16x8 {
+    return velt_simd_f16x8_eq(this, other);
+  }
+
+  /** The lanes where this vector differs from `other` (a NaN lane differs from everything). */
+  ne(other: f16x8): mask16x8 {
+    return velt_simd_f16x8_ne(this, other);
+  }
+
+  /** The lanes where this vector is less than `other`. */
+  lt(other: f16x8): mask16x8 {
+    return velt_simd_f16x8_lt(this, other);
+  }
+
+  /** The lanes where this vector is at most `other`. */
+  le(other: f16x8): mask16x8 {
+    return velt_simd_f16x8_le(this, other);
+  }
+
+  /** The lanes where this vector is greater than `other`. */
+  gt(other: f16x8): mask16x8 {
+    return velt_simd_f16x8_gt(this, other);
+  }
+
+  /** The lanes where this vector is at least `other`. */
+  ge(other: f16x8): mask16x8 {
+    return velt_simd_f16x8_ge(this, other);
+  }
+
+  /** `a` in the lanes where `m` is set, `b` in the others. */
+  static select(m: mask16x8, a: f16x8, b: f16x8): f16x8 {
+    return velt_simd_f16x8_select(m, a, b);
+  }
+
+  /** The sum of the lanes, added in lane order, each addition rounded to `f16`. */
+  sum(): f16 {
+    let total = velt_simd_f16x8_lane(this, 0);
+    total += velt_simd_f16x8_lane(this, 1);
+    total += velt_simd_f16x8_lane(this, 2);
+    total += velt_simd_f16x8_lane(this, 3);
+    total += velt_simd_f16x8_lane(this, 4);
+    total += velt_simd_f16x8_lane(this, 5);
+    total += velt_simd_f16x8_lane(this, 6);
+    total += velt_simd_f16x8_lane(this, 7);
+    return total;
   }
 
   /** The same bits as a `u16x8`: no conversion. */

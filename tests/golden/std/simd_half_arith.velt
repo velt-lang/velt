@@ -1,0 +1,90 @@
+// `f16x8`'s lane methods and operators (#2049), and that lanes round to `f16`: each line prints
+// the bits of the eight lanes. The expected output is Node's (`Float16Array`). A NaN prints as one
+// pattern, as which NaN it is isn't the same everywhere. `simd_half_sweep` runs the patterns.
+import { f16x8, mask16x8 } from "velt/simd";
+
+function show(name: string, v: f16x8) {
+  const lanes: string[] = [];
+  for (let k: usize = 0; k < 8; k++) {
+    const x = v.lane(k);
+    lanes.push(x != x ? "7e00" : x.toBits().toString(16));
+  }
+  console.log(name, lanes.join(" "));
+}
+
+function vector(xs: number[]): f16x8 {
+  const lanes: f16[] = [];
+  for (const x of xs) {
+    lanes.push(x as f16);
+  }
+  return f16x8.load(lanes);
+}
+
+function main() {
+  const inf = 1 / 0;
+  const a = vector([1.5, -2.25, 0, -0, inf, 0 / 0, 0.000000059604644775390625, 65504]);
+  const b = vector([0.1, 3, -0, -0, -inf, 1, 0.000000059604644775390625, 16]);
+  show("add", a.add(b));
+  show("sub", a.sub(b));
+  show("mul", a.mul(b));
+  show("div", a.div(b));
+  show("min", a.min(b));
+  show("max", a.max(b));
+  show("neg", a.neg());
+  show("abs", a.abs());
+  show("sqrt", a.sqrt());
+  show("+", a + b);
+  show("-", a - b);
+  show("*", a * b);
+  show("/", a / b);
+  show("unary -", -a);
+  show("v * 2", a * 2);
+  show("2 * v", 2 * a);
+  show("v + 0.5", a + 0.5);
+  const k: f16 = 3;
+  show("v / k", a / k);
+  let c = a;
+  c += b;
+  c *= 0.5;
+  show("compound", c);
+  console.log("index", a[1], b[0]);
+
+  // Ties to even, at f16's precision and not f32's, and past the largest finite value.
+  const one = vector([1, 1, 1, 1, 65504, 65504, -65504, 0.00006103515625]);
+  const tiny = vector([
+    0.00048828125,
+    0.00146484375,
+    0.000488758087158203125,
+    0.0004880428314208984375,
+    8,
+    16,
+    -16,
+    0.00006103515625,
+  ]);
+  show("ties", one + tiny);
+  show("underflow", tiny * tiny);
+
+  // Equal lanes of opposite sign, and infinities: the default sweep's steps don't reach these.
+  const z = vector([0, -0, 0, -0, inf, -inf, inf, -inf]);
+  const y = vector([-0, 0, 0, -0, 1, 1, -inf, inf]);
+  show("zeros min", z.min(y));
+  show("zeros max", z.max(y));
+  show("zeros add", z + y);
+  show("zeros sub", z - y);
+  show("zeros mul", z * y);
+  show("zeros div", z / y);
+
+  const m = a.lt(b);
+  console.log("lt", m.bitmask(), "le", a.le(b).bitmask(), "gt", a.gt(b).bitmask());
+  console.log("ge", a.ge(b).bitmask(), "eq", a.eq(b).bitmask(), "ne", a.ne(b).bitmask());
+  show("select", f16x8.select(m, a, b));
+  const mask: mask16x8 = a.ne(a);
+  console.log("nan", mask.bitmask());
+
+  // Each addition rounds to f16: in f32 this sum would be 1025.
+  console.log("sum", vector([1024, 0.5, 0.5, 0, 0, 0, 0, 0]).sum());
+  console.log("order", vector([0.5, 0.5, 1024, 0, 0, 0, 0, 0]).sum());
+  console.log("zero", vector([-0, -0, -0, -0, -0, -0, -0, -0]).sum());
+  console.log("overflow", vector([65504, 65504, -65504, -65504, 0, 0, 0, 0]).sum());
+  console.log("lanes", a.sum());
+}

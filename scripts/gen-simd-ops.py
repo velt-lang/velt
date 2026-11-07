@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Generates the operators of `velt/simd` (std/simd/ops_*.velt): the operator methods (design
-# docs/internals/design/operators.md) of the ten vector types and four mask types, each the
+# docs/internals/design/operators.md) of the eleven vector types and four mask types, each the
 # lane operation its named method is (`a + b` is `a.add(b)`), calling the same `velt_simd_*`
 # operation directly so a debug build inlines it too. A scalar operand (`v * 2`) is splatted by
 # the compiler (velt_sema `operator_simd.rs`). To change them, change this script and run it
@@ -11,7 +11,7 @@ import os
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "std", "simd")
 TYPES = [("i8", 16), ("u8", 16), ("i16", 8), ("u16", 8), ("i32", 4), ("u32", 4), ("i64", 2),
-         ("u64", 2), ("f32", 4), ("f64", 2)]
+         ("u64", 2), ("f32", 4), ("f64", 2), ("f16", 8)]
 
 
 def name(l, n):
@@ -158,7 +158,7 @@ def mask(b, n):
 
 
 FILES = {
-    "ops_bytes": ("vectors of 8- and 16-bit lanes", [t for t in TYPES if bits(t[0]) <= 16]),
+    "ops_bytes": ("vectors of 8- and 16-bit lanes", [t for t in TYPES if bits(t[0]) <= 16 and not isf(t[0])]),
     "ops_words": ("vectors of 32- and 64-bit integer lanes",
                   [t for t in TYPES if bits(t[0]) >= 32 and not isf(t[0])]),
     "ops_floats": ("vectors of float lanes", [t for t in TYPES if isf(t[0])]),
