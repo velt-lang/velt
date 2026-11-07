@@ -1,0 +1,44 @@
+// Arguments a decorator's parameter accepts as a call's would: any constant for `any` and
+// `unknown`, a numeric or string enum member where its number or string is expected, a suffix
+// of the parameter's type, and a field decorator on an abstract property, which is a field.
+declare decorator function anything(a: any, b: unknown): Repeatable<TypeDecorator>;
+declare decorator function count(n: i64): FieldDecorator;
+declare decorator function ratio(r: f64): FieldDecorator;
+declare decorator function label(s: string): FieldDecorator;
+declare decorator function labels(xs: string[]): FieldDecorator;
+declare decorator function sized(n: i8): FieldDecorator;
+declare decorator function field(): FieldDecorator;
+
+enum Num {
+  A = 1,
+  B = 20,
+}
+enum Word {
+  Up = "UP",
+}
+const UP = Word.Up;
+
+@anything(1, "two")
+@anything({ a: [1, 2] }, Num.A)
+class C {
+  @count(Num.B) a: i64 = 0;
+  @ratio(Num.A) b: i64 = 0;
+  @label(Word.Up) c: i64 = 0;
+  @labels([Word.Up, UP, "down"]) d: i64 = 0;
+  @sized(1i8) e: i64 = 0;
+}
+
+abstract class A {
+  @field abstract x: i64;
+  @field abstract readonly y: string;
+}
+
+class B extends A {
+  x: i64 = 2;
+  y = "y";
+}
+
+function main() {
+  const b = new B();
+  console.log(new C().a, b.x, b.y);
+}

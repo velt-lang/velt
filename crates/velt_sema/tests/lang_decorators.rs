@@ -66,6 +66,22 @@ fn a_field_by_its_index_with_the_base_class_first() {
     assert_eq!(p.decorators.len(), 1);
 }
 
+/// A field named by a computed key is recorded under the name the key resolves to.
+#[test]
+fn a_computed_key_field_by_its_resolved_name() {
+    let p = program(
+        r#"const K = "x"; const L = "y";
+           class C { plain: i64 = 0; @name("a") [K] = 1; @name("b") readonly [L]: i64 = 2; }
+           struct S { @name("c") [K]: i64 = 1; }"#,
+    );
+    let c = def_named(&p, "C");
+    assert_eq!(on(&p, T::Field(c, 1))[0].args, [C::Str("a".into())]);
+    assert_eq!(on(&p, T::Field(c, 2))[0].args, [C::Str("b".into())]);
+    let s = def_named(&p, "S");
+    assert_eq!(on(&p, T::Field(s, 0))[0].args, [C::Str("c".into())]);
+    assert_eq!(p.decorators.len(), 3);
+}
+
 #[test]
 fn a_parameter_by_its_written_position() {
     let p = program("class C { m(a: i64, @level(Level.High) b: i64) {} }");
@@ -90,6 +106,58 @@ fn repeated_decorators_stay_in_source_order() {
             [C::Str("k".into())]
         ]
     );
+}
+
+/// An enum member where a number or a string is expected is recorded as that number or string, as
+/// the parameter's type says; for `any` it stays the member. A packed array (sixteen numbers or
+/// more) is recorded element by element.
+#[test]
+fn enum_members_packed_arrays_and_any() {
+    let p = ok_src(
+        r#"declare decorator function n(a: i64, b: f64, c: string, d: string[]): TypeDecorator;
+           declare decorator function anything(a: any, b: unknown): FunctionDecorator;
+           declare decorator function many(xs: i64[]): MethodDecorator;
+           enum E { A = 3 }
+           enum W { Up = "UP" }
+           @n(E.A, E.A, W.Up, [W.Up, "x"]) class C {
+             @many([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, -16]) m() {}
+           }
+           @anything(E.A, { k: [1] }) function f() {}
+           function main() {}"#,
+    );
+    let up = || C::Str("UP".into());
+    assert_eq!(
+        on(&p, T::Def(def_named(&p, "C")))[0].args,
+        [
+            C::Int(3),
+            C::Int(3),
+            up(),
+            C::Array(vec![up(), C::Str("x".into())])
+        ]
+    );
+    let sixteen: Vec<C> = (1..=15).map(C::Int).chain([C::Int(-16)]).collect();
+    assert_eq!(
+        on(&p, T::Def(def_named(&p, "C.m")))[0].args,
+        [C::Array(sixteen)]
+    );
+    let args = &on(&p, T::Def(def_named(&p, "f")))[0].args;
+    assert!(matches!(args[0], C::EnumMember(_, 0)), "{args:?}");
+    assert_eq!(
+        args[1],
+        C::Object(vec![("k".into(), C::Array(vec![C::Int(1)]))])
+    );
+}
+
+/// An abstract property's decorators are a field's, recorded on its getter.
+#[test]
+fn an_abstract_property_is_decorated_as_a_field() {
+    let p = program(r#"abstract class A { @name("x") abstract x: i64; }"#);
+    let (target, uses) = p.decorators.iter().next().expect("one use");
+    let T::Def(getter) = *target else {
+        panic!("{target:?}");
+    };
+    assert!(matches!(&p.defs[getter.0 as usize], Def::Fn(f) if f.name.contains('x')));
+    assert_eq!(uses[0].args, [C::Str("x".into())]);
 }
 
 #[test]
@@ -336,7 +404,7 @@ fn a_local_is_found_in_any_item_of_a_big_module() {
     assert_eq!(p.decorators.len(), 1);
 }
 
-/// The items aren't in source order when sema walks them (`decorators::item_spans`). A script's
+/// The items aren't in source order when sema walks them (`decorators::scope`). A script's
 /// generated `main` comes last and spans the declarations between its statements, and a
 /// function's overload signatures repeat its span.
 #[test]
@@ -345,8 +413,6 @@ fn a_local_is_found_when_the_items_are_rewritten() {
         // An item inside the span of the script's `main`.
         "console.log(1); function f(t: any) { @t class C {} } console.log(2);",
         "console.log(1); function e(a: any) {} function f(t: any) { @t class C {} } console.log(2);",
-        // A variable that moved into `main`, whose span holds the class outside its statements.
-        "const t: any = 1; console.log(t); @t class C {} console.log(2);",
         // In `main` itself, where a statement's variable is declared.
         "console.log(1); { const t: any = 1; @t class C {} } console.log(2);",
         // Flattened out of a namespace.
@@ -372,6 +438,30 @@ fn a_local_is_found_when_the_items_are_rewritten() {
         let p = ok_src(&src);
         assert_eq!(p.decorators.len(), 1, "{src}");
     }
+}
+
+/// A script's top-level variable that a decorator names stays at module level, as the constant
+/// the decorator reads (it would move into the generated `main` otherwise, and be a local there).
+/// So a decorator of its name is a second definition, as in TypeScript.
+#[test]
+fn a_script_variable_a_decorator_names_stays_at_module_level() {
+    let decl = "declare decorator function p(k: string): TypeDecorator;\n";
+    for src in [
+        "const K = \"a\"; console.log(K); @p(K) class C {} console.log(2);",
+        "console.log(1); const K = \"a\"; class C { @q(K) m() {} } console.log(K);",
+        "console.log(1); const K = \"a\"; function f(@r(K) a: i64) {} console.log(K);",
+    ] {
+        let src = format!(
+            "{decl}declare decorator function q(k: string): MethodDecorator;\n\
+             declare decorator function r(k: string): ParamDecorator;\n{src}"
+        );
+        let p = ok_src(&src);
+        assert_eq!(p.decorators.len(), 1, "{src}");
+    }
+    let src =
+        format!("{decl}const p: any = 1; console.log(p); @p(\"a\") class C {{}} console.log(2);");
+    let e = err_src(&src);
+    assert!(e.contains("the name `p` is defined multiple times"), "{e}");
 }
 
 /// An imported module's statements become chunks, which come last among its items, with its

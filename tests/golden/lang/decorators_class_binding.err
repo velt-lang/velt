@@ -1,0 +1,4 @@
+decorators_class_binding.velt:5:1: error: a decorator cannot be applied to a variable, even one holding a class (TypeScript's TS1206)
+decorators_class_binding.velt:6:8: error: a decorator cannot be applied to a variable, even one holding a class (TypeScript's TS1206)
+decorators_class_binding.velt:7:1: error: a decorator cannot be applied to a variable, even one holding a class (TypeScript's TS1206)
+decorators_class_binding.velt:11:3: error: a decorator cannot be applied to a variable, even one holding a class (TypeScript's TS1206)

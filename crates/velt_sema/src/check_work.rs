@@ -2,8 +2,8 @@
 //! breadth-first type searches (`type_reach`, #859), the checks of arrow functions
 //! (`body::expr::closure`, #859), of expressions (`FnCx::expr`, spread operands checked again
 //! per operator), the resolution of exports (`collect::exports`, barrels walked again per
-//! imported name), the check of stores by key (`ownership::local_async::keyed`) and the search for
-//! the item a decorator is in (`decorators::item_spans`). The scaling tests compare these counts
+//! imported name), the check of stores by key (`ownership::local_async::keyed`) and the walk of a
+//! module's scopes for its decorators (`decorators::scope`). The scaling tests compare these counts
 //! between program sizes, which unlike CPU time doesn't depend on the load of the machine (#1502).
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,7 +17,7 @@ static EXPR_CHECKS: AtomicU64 = AtomicU64::new(0);
 static EXPORTS: AtomicU64 = AtomicU64::new(0);
 static KEYED: AtomicU64 = AtomicU64::new(0);
 static MEMO_TRIALS: AtomicU64 = AtomicU64::new(0);
-static DECORATOR_SCOPE_ITEMS: AtomicU64 = AtomicU64::new(0);
+static DECORATOR_SCOPE_STEPS: AtomicU64 = AtomicU64::new(0);
 
 /// Adds `n` to `counter`.
 fn add(counter: &AtomicU64, n: u64) {
@@ -56,9 +56,9 @@ pub(crate) fn add_keyed_work(n: u64) {
     add(&KEYED, n);
 }
 
-/// Adds `n` module items the search for the items holding a decorator's name looked at.
-pub(crate) fn add_decorator_scope_items(n: u64) {
-    add(&DECORATOR_SCOPE_ITEMS, n);
+/// Adds `n` steps of the walk of a module's scopes for its decorators, or of a lookup in them.
+pub(crate) fn add_decorator_scope_steps(n: u64) {
+    add(&DECORATOR_SCOPE_STEPS, n);
 }
 
 /// The work of these kinds done in this process so far (checks run at the same time may lose
@@ -80,8 +80,9 @@ pub struct CheckWork {
     pub keyed: u64,
     /// Remembered trials run, not counting those answered from memory (`trial_memo`).
     pub memo_trials: u64,
-    /// Module items the search for the items holding a decorator's name looked at.
-    pub decorator_scope_items: u64,
+    /// Nodes the walk of a module's scopes for its decorators looked at, and regions its lookups
+    /// looked at.
+    pub decorator_scope_steps: u64,
 }
 
 /// See [`CheckWork`].
@@ -93,6 +94,6 @@ pub fn check_work() -> CheckWork {
         exports: EXPORTS.load(Ordering::Relaxed),
         keyed: KEYED.load(Ordering::Relaxed),
         memo_trials: MEMO_TRIALS.load(Ordering::Relaxed),
-        decorator_scope_items: DECORATOR_SCOPE_ITEMS.load(Ordering::Relaxed),
+        decorator_scope_steps: DECORATOR_SCOPE_STEPS.load(Ordering::Relaxed),
     }
 }

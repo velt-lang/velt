@@ -430,9 +430,9 @@ pub(crate) struct Ctx<'m> {
     pub js_api_modules: std::cell::OnceCell<FxHashMap<usize, Option<FxHashSet<String>>>>,
     /// Where the native libraries' modules are (`json::handles`): computed when first asked.
     pub native_libraries: std::cell::OnceCell<crate::json::handles::NativeLibraries>,
-    /// Where each module's items are, for its decorators (`decorators::item_spans`): computed for
-    /// a module when one of them first asks.
-    pub decorator_item_spans: std::cell::RefCell<FxHashMap<usize, crate::decorators::ItemSpans>>,
+    /// Each module's scopes below module level, for its decorators (`decorators::scope`):
+    /// found for a module when one of them first asks.
+    pub decorator_scopes: std::cell::RefCell<FxHashMap<usize, crate::decorators::Scopes>>,
     /// Integer types decided for locals declared from literals, by function and declaration
     /// span (`body::literal_locals`).
     pub literal_types: FxHashMap<DefId, FxHashMap<Span, TyId>>,
@@ -648,7 +648,7 @@ impl<'m> Ctx<'m> {
             closure_defs: vec![],
             js_api_modules: std::cell::OnceCell::new(),
             native_libraries: std::cell::OnceCell::new(),
-            decorator_item_spans: Default::default(),
+            decorator_scopes: Default::default(),
             literal_types: FxHashMap::default(),
             literal_found: FxHashMap::default(),
         }

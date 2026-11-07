@@ -6,8 +6,8 @@
 //! definition here, and nothing later.
 
 mod consts;
-mod item_spans;
 mod scope;
+mod suffixes;
 
 use rustc_hash::FxHashSet;
 
@@ -18,7 +18,7 @@ use crate::ctx::{Ctx, Item};
 use crate::defs::{DefInfo, FnInfo, FnKind, FnSource};
 use crate::hir::{self, ConstTree, DecoratorTarget, DefId};
 
-pub(crate) use item_spans::ItemSpans;
+pub(crate) use scope::Scopes;
 
 /// The result types of a `declare decorator function`: where it may be used, with the bit each
 /// stands for and how messages say it. They are words only in that position, so they hide no name
@@ -43,9 +43,11 @@ const REPEATABLE: &str = "Repeatable";
 fn targets_of(ty: &ast::TypeExpr) -> Result<(u8, bool), Span> {
     match &ty.kind {
         ast::TypeExprKind::Named { path, args } => match (path.as_slice(), args.as_slice()) {
-            ([name], [inner]) if name.name == REPEATABLE => {
-                targets_of(inner).map(|(bits, _)| (bits, true))
-            }
+            // Once: `Repeatable<Repeatable<…>>` says nothing more.
+            ([name], [inner]) if name.name == REPEATABLE => match targets_of(inner)? {
+                (_, true) => Err(inner.span),
+                (bits, false) => Ok((bits, true)),
+            },
             ([name], []) => TARGET_NAMES
                 .iter()
                 .find(|(n, ..)| *n == name.name)
@@ -135,7 +137,7 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>) {
                     continue;
                 };
                 let target = DecoratorTarget::Def(d);
-                uses(cx, module, &decl.decorators, TYPE, target);
+                uses(cx, module, &decl.decorators, TYPE, Some(target));
             }
             _ => {}
         }
@@ -144,30 +146,46 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>) {
 
 fn function_uses<'m>(cx: &mut Ctx<'m>, d: DefId, m: usize, kind: FnKind, sig: &'m ast::FnSig) {
     let bit = match kind {
+        _ if abstract_property(cx, d, sig) => FIELD,
         FnKind::Method | FnKind::Static => METHOD,
         _ => FUNCTION,
     };
-    uses(cx, m, &sig.decorators, bit, DecoratorTarget::Def(d));
+    uses(cx, m, &sig.decorators, bit, Some(DecoratorTarget::Def(d)));
     for (i, p) in sig.params.iter().enumerate() {
         let target = DecoratorTarget::Param(d, i as u32);
-        uses(cx, m, &p.decorators, PARAM, target);
+        uses(cx, m, &p.decorators, PARAM, Some(target));
     }
 }
 
+/// Is method `d`, of signature `sig`, the getter of an abstract property (`abstract x: i64;`),
+/// whose decorators are a field's?
+fn abstract_property(cx: &Ctx, d: DefId, sig: &ast::FnSig) -> bool {
+    let decl = cx
+        .fn_info(d)
+        .owner
+        .and_then(|o| cx.adt(o))
+        .and_then(|a| a.decl);
+    decl.is_some_and(|t| {
+        (t.methods.iter()).any(|m| m.is_property && std::ptr::eq(&m.decl.sig, sig))
+    })
+}
+
 fn type_uses<'m>(cx: &mut Ctx<'m>, d: DefId, m: usize, decl: &'m ast::TypeDecl) {
-    uses(cx, m, &decl.decorators, TYPE, DecoratorTarget::Def(d));
+    uses(cx, m, &decl.decorators, TYPE, Some(DecoratorTarget::Def(d)));
     for f in decl.fields.iter().filter(|f| !f.decorators.is_empty()) {
-        let Some(a) = cx.adt(d) else { return };
-        let target = match a.statics.get(&f.name.name) {
-            Some(g) if f.is_static => DecoratorTarget::Def(*g),
+        // A field named by a computed key (`[k]`) has the name the key resolves to.
+        let name = cx
+            .resolve_key(m, &f.name)
+            .unwrap_or_else(|_| f.name.name.clone());
+        let target = cx.adt(d).and_then(|a| match a.statics.get(&name) {
+            Some(g) if f.is_static => Some(DecoratorTarget::Def(*g)),
             _ => {
-                // An erroneous declaration may have left it out, which is reported already.
-                let Some(i) = a.fields.iter().rposition(|x| x.name == f.name.name) else {
-                    continue;
-                };
-                DecoratorTarget::Field(d, i as u32)
+                let i = a.fields.iter().rposition(|x| x.name == name)?;
+                Some(DecoratorTarget::Field(d, i as u32))
             }
-        };
+        });
+        // Checked even when an erroneous declaration left the field out (which is reported
+        // already): only the record needs it.
         uses(cx, m, &f.decorators, FIELD, target);
     }
 }
@@ -220,15 +238,41 @@ fn check_declaration(cx: &mut Ctx, d: DefId, m: usize, sig: &ast::FnSig) {
                     default.span,
                 );
             }
-            Ok(_) => {}
+            Ok(_) => {
+                if let Some(w) = suffixes::wrong_suffix(cx, m, default, ty) {
+                    wrong_suffix(cx, w);
+                }
+            }
             Err(e) => non_constant(cx, e),
         }
     }
 }
 
+/// A number whose suffix (`1i64`) gives it a type that parameter type `ty` doesn't accept.
+fn wrong_suffix(cx: &mut Ctx, w: suffixes::WrongSuffix) {
+    let (shown, suffix) = (cx.display(w.want), w.suffix);
+    cx.error(
+        Diagnostic::error(
+            format!("this number is `{suffix}`, where the decorator's parameter takes `{shown}`"),
+            w.span,
+        )
+        .with_note("as in a call, a literal's suffix says its type: leave it out, or write the parameter's"),
+    );
+}
+
 fn non_constant(cx: &mut Ctx, e: consts::NotConstant) {
     if let Some((module, name)) = e.type_only {
         cx.type_only_value(module, &name, e.span);
+        return;
+    }
+    if let Some(name) = e.duplicate {
+        cx.error(
+            Diagnostic::error(
+                format!("duplicate field `{name}` in object literal"),
+                e.span,
+            )
+            .with_note("an object literal gives each property once (TypeScript's TS1117)"),
+        );
         return;
     }
     cx.error(
@@ -299,13 +343,13 @@ fn run_time_error(cx: &mut Ctx, span: Span, bit: u8) {
     cx.error(d);
 }
 
-/// Checks decorators `ds` and records them for `target`.
+/// Checks decorators `ds` and records them for `target` (`None`: a target an error left out).
 fn uses<'m>(
     cx: &mut Ctx<'m>,
     m: usize,
     ds: &'m [ast::Decorator],
     bit: u8,
-    target: DecoratorTarget,
+    target: Option<DecoratorTarget>,
 ) {
     let mut out: Vec<hir::Decorator> = Vec::with_capacity(ds.len());
     for dec in ds {
@@ -395,7 +439,7 @@ fn uses<'m>(
             });
         }
     }
-    if !out.is_empty() {
+    if let Some(target) = target.filter(|_| !out.is_empty()) {
         cx.decorator_uses.insert(target, out);
     }
 }
@@ -443,7 +487,7 @@ fn arguments(
         } else if let Some(default) = &p.default {
             // A default that isn't constant, or doesn't fit, is reported at the declaration.
             match consts::value_of(cx, decl_module, default) {
-                Ok(v) => out.push(v),
+                Ok(v) => out.push(consts::as_recorded(cx, v, ty)),
                 Err(_) => ok = false,
             }
         } else {
@@ -481,12 +525,23 @@ fn checked_value(
         _ => ty,
     };
     if consts::fits(cx, &v, want) {
-        return Some(v);
+        if let Some(w) = suffixes::wrong_suffix(cx, m, a, want) {
+            wrong_suffix(cx, w);
+            return None;
+        }
+        return Some(consts::as_recorded(cx, v, want));
     }
     let shown = cx.display(want);
-    cx.err(
+    let mut d = Diagnostic::error(
         format!("this argument of the decorator doesn't fit its parameter's type `{shown}`"),
         a.span,
     );
+    if let (hir::TyKind::Float(_), ConstTree::Int(_) | ConstTree::Float(_)) = (cx.ty.kind(want), &v)
+    {
+        d = d.with_note(format!(
+            "this number is outside `{shown}`'s range: as `{shown}` it would be an infinity"
+        ));
+    }
+    cx.error(d);
     None
 }

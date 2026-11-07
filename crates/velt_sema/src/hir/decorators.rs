@@ -9,7 +9,8 @@ use super::DefId;
 /// What a decorator is written on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DecoratorTarget {
-    /// A function, method, struct, class or enum (a `static` field: its `Def::Global`).
+    /// A function, method, struct, class or enum (a `static` field: its `Def::Global`; an abstract
+    /// property, `abstract x: T;`: its getter).
     Def(DefId),
     /// Field `.1` of type `.0`, an index into `AdtDef::fields`.
     Field(DefId, u32),
@@ -22,7 +23,8 @@ pub enum DecoratorTarget {
 pub struct Decorator {
     /// The `declare decorator function` (a `Def::ExternFn` that nothing calls).
     pub def: DefId,
-    /// One per parameter of the declaration, in order, defaults filled in.
+    /// One per parameter of the declaration, in order, defaults filled in, as the parameter's
+    /// type has it (an enum member where a number or a string is expected: that number or string).
     pub args: Vec<ConstTree>,
     /// The `@…` as written: where a reader reports what it finds wrong with it.
     pub span: Span,

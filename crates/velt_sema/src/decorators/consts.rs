@@ -10,7 +10,7 @@ use velt_syntax::ast;
 use super::scope;
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
-use crate::hir::{ConstTree, DefId, IntTy, LitValue, TyId, TyKind};
+use crate::hir::{ConstTree, DefId, FloatTy, IntTy, LitValue, TyId, TyKind};
 
 /// How many `const`s may refer to each other in one argument: far more than code writes, so only
 /// a cycle reaches it.
@@ -37,10 +37,13 @@ pub(super) fn path_of(e: &ast::Expr) -> Option<Vec<ast::Ident>> {
 }
 
 /// Why an expression has no value: the part of it that isn't constant, and when that is a name
-/// imported with `import type`, the module it is imported into and the name.
+/// imported with `import type`, the module it is imported into and the name; or an object literal
+/// of the expression itself (not of a `const` it names, which its own check reports) giving a
+/// property twice, and its name.
 pub(super) struct NotConstant {
     pub span: Span,
     pub type_only: Option<(usize, String)>,
+    pub duplicate: Option<String>,
 }
 
 /// The value of `e` in module `m`.
@@ -49,17 +52,27 @@ pub(super) fn value_of(cx: &Ctx, m: usize, e: &ast::Expr) -> Result<ConstTree, N
         cx,
         nodes: Cell::new(0),
         type_only: RefCell::new(None),
+        duplicate: RefCell::new(None),
     };
-    eval(&f, m, e, 0).map_err(|span| match f.type_only.into_inner() {
-        Some((module, name, at)) => NotConstant {
-            span: at,
-            type_only: Some((module, name)),
+    eval(&f, m, e, 0).map_err(
+        |span| match (f.type_only.into_inner(), f.duplicate.into_inner()) {
+            (Some((module, name, at)), _) => NotConstant {
+                span: at,
+                type_only: Some((module, name)),
+                duplicate: None,
+            },
+            (None, Some((at, name))) => NotConstant {
+                span: at,
+                type_only: None,
+                duplicate: Some(name),
+            },
+            (None, None) => NotConstant {
+                span,
+                type_only: None,
+                duplicate: None,
+            },
         },
-        None => NotConstant {
-            span,
-            type_only: None,
-        },
-    })
+    )
 }
 
 struct Fold<'c, 'm> {
@@ -68,6 +81,8 @@ struct Fold<'c, 'm> {
     /// The first name imported with `import type` that the expression reaches: its module, the
     /// name, and where.
     type_only: RefCell<Option<(usize, String, Span)>>,
+    /// A property an object literal of the argument itself gives twice: where, and its name.
+    duplicate: RefCell<Option<(Span, String)>>,
 }
 
 fn eval(f: &Fold, m: usize, e: &ast::Expr, depth: u32) -> Result<ConstTree, Span> {
@@ -103,6 +118,8 @@ fn eval(f: &Fold, m: usize, e: &ast::Expr, depth: u32) -> Result<ConstTree, Span
         ast::ExprKind::Array(items) => {
             ConstTree::Array(items.iter().map(each).collect::<Result<_, _>>()?)
         }
+        // Sixteen numbers or more, which the parser packs.
+        ast::ExprKind::NumArray(_) => each(&e.unpacked())?,
         ast::ExprKind::Object(props) => {
             let mut out = Vec::with_capacity(props.len());
             for p in props {
@@ -115,6 +132,12 @@ fn eval(f: &Fold, m: usize, e: &ast::Expr, depth: u32) -> Result<ConstTree, Span
                     ast::ObjectProp::Method(f) => return Err(f.sig.name.span),
                 });
             }
+            if let Some((name, span)) = repeated_key(props) {
+                if depth == 0 {
+                    f.duplicate.borrow_mut().get_or_insert((span, name));
+                }
+                return Err(span);
+            }
             ConstTree::Object(out)
         }
         ast::ExprKind::Ident(_) | ast::ExprKind::Member { .. } => {
@@ -122,6 +145,18 @@ fn eval(f: &Fold, m: usize, e: &ast::Expr, depth: u32) -> Result<ConstTree, Span
             named(f, m, &path, depth).map_err(|_| e.span)?
         }
         _ => return Err(e.span),
+    })
+}
+
+/// The first property object literal `props` gives a second time, and where.
+fn repeated_key(props: &[ast::ObjectProp]) -> Option<(String, Span)> {
+    let mut seen = rustc_hash::FxHashSet::default();
+    props.iter().find_map(|p| {
+        let k = match p {
+            ast::ObjectProp::KeyValue(k, _) | ast::ObjectProp::Shorthand(k) => k,
+            _ => return None,
+        };
+        (!seen.insert(k.name.as_str())).then(|| (k.name.clone(), k.span))
     })
 }
 
@@ -165,6 +200,29 @@ fn named(f: &Fold, m: usize, path: &[ast::Ident], depth: u32) -> Result<ConstTre
     }
 }
 
+/// The `const` `path` names in module `m` (`POLICY`, `ns.POLICY`, a `static readonly` field), for
+/// [`super::suffixes`]; `None` for anything else, a local of its name in scope included.
+pub(super) fn constant_named(cx: &Ctx, m: usize, path: &[ast::Ident]) -> Option<DefId> {
+    let last = path.last()?;
+    if scope::shadow_of(cx, m, path.first()?) == Some(scope::Shadow::Local) {
+        return None;
+    }
+    let d = match cx.lookup_path_at(m, path, last.span) {
+        Some(Item::Def(d)) => d,
+        _ => {
+            let (member, owner) = path.split_last()?;
+            let Some(Item::Def(owner)) = cx.lookup_path_at(m, owner, last.span) else {
+                return None;
+            };
+            let DefInfo::Adt(a) = &cx.info[owner.0 as usize] else {
+                return None;
+            };
+            *a.statics.get(&member.name)?
+        }
+    };
+    matches!(&cx.info[d.0 as usize], DefInfo::Global(g) if !g.mutable).then_some(d)
+}
+
 /// The value of constant `d`; `None` for anything else.
 fn global_value(f: &Fold, d: DefId, depth: u32) -> Option<ConstTree> {
     let DefInfo::Global(g) = &f.cx.info[d.0 as usize] else {
@@ -184,13 +242,108 @@ fn int_fits(t: IntTy, v: i128) -> bool {
     }
 }
 
+/// The number or the string enum member `v` stands for (`None`: not a member, or one with a
+/// payload).
+fn enum_value(cx: &Ctx, v: &ConstTree) -> Option<ConstTree> {
+    let ConstTree::EnumMember(e, i) = v else {
+        return None;
+    };
+    let DefInfo::Enum(info) = &cx.info[e.0 as usize] else {
+        return None;
+    };
+    let member = info.variants.get(*i as usize).filter(|_| !info.is_union)?;
+    if !member.payload.is_empty() {
+        return None;
+    }
+    Some(match &member.str_value {
+        Some(s) => ConstTree::Str(s.clone()),
+        None => ConstTree::Int(member.discriminant.into()),
+    })
+}
+
+/// May a float type `t` hold `v`? Within its range, rounded to its nearest value: a number past
+/// its largest finite one (`1e300` for an `f32`) would be an infinity, so it doesn't fit; an
+/// infinity or a NaN written as such does.
+fn float_fits(t: FloatTy, v: f64) -> bool {
+    let max = match t {
+        FloatTy::F64 => return true,
+        FloatTy::F32 => f32::MAX as f64,
+        FloatTy::F16 => 65504.0,
+        FloatTy::BF16 => 3.389_531_389_251_535_5e38,
+    };
+    !v.is_finite() || v.abs() <= max
+}
+
+/// `v` as a parameter of type `ty` records it: an enum member as its number or string where the
+/// parameter is a number or a string, so a reader finds what the type says.
+pub(super) fn as_recorded(cx: &Ctx, v: ConstTree, ty: TyId) -> ConstTree {
+    use ConstTree as C;
+    let kind = cx.ty.kind(ty);
+    match (kind, v) {
+        (
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Str | TyKind::Literal(_),
+            v @ C::EnumMember(..),
+        ) => enum_value(cx, &v).unwrap_or(v),
+        (TyKind::Option(inner, _), v) => as_recorded(cx, v, *inner),
+        (TyKind::Array(elem), C::Array(items)) => C::Array(
+            items
+                .into_iter()
+                .map(|x| as_recorded(cx, x, *elem))
+                .collect(),
+        ),
+        (TyKind::Tuple(elems), C::Array(items)) => C::Array(
+            items
+                .into_iter()
+                .zip(elems.iter())
+                .map(|(x, t)| as_recorded(cx, x, *t))
+                .collect(),
+        ),
+        (TyKind::Adt(d, _), C::Object(props)) => match &cx.info[d.0 as usize] {
+            DefInfo::Adt(a) => C::Object(
+                props
+                    .into_iter()
+                    .map(|(name, x)| {
+                        let field = a.fields.iter().find(|f| f.name == name);
+                        let x = match field {
+                            Some(f) => as_recorded(cx, x, f.ty),
+                            None => x,
+                        };
+                        (name, x)
+                    })
+                    .collect(),
+            ),
+            _ => C::Object(props),
+        },
+        (_, v) => v,
+    }
+}
+
 /// May a parameter of type `ty` hold `v`?
 pub(super) fn fits(cx: &Ctx, v: &ConstTree, ty: TyId) -> bool {
     use ConstTree as C;
+    if cx.dynamic(ty).is_some() {
+        // `any` and `unknown` hold every value.
+        return true;
+    }
+    match (cx.ty.kind(ty), v) {
+        // A member of a numeric or string enum is its number or its string (TypeScript's
+        // `E.A` where a `number` or a `string` is expected).
+        (
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Str | TyKind::Literal(_),
+            C::EnumMember(..),
+        ) => {
+            return enum_value(cx, v).is_some_and(|plain| fits(cx, &plain, ty));
+        }
+        _ => {}
+    }
     match cx.ty.kind(ty) {
         TyKind::Error => true,
         TyKind::Int(t) => matches!(v, C::Int(i) if int_fits(*t, *i)),
-        TyKind::Float(_) => matches!(v, C::Int(_) | C::Float(_)),
+        TyKind::Float(t) => match v {
+            C::Int(i) => float_fits(*t, *i as f64),
+            C::Float(bits) => float_fits(*t, f64::from_bits(*bits)),
+            _ => false,
+        },
         TyKind::Bool => matches!(v, C::Bool(_)),
         TyKind::Str => matches!(v, C::Str(_)),
         TyKind::Literal(lit) => match (lit, v) {

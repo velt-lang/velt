@@ -1675,6 +1675,9 @@ branch the constant made dead).
 of a type, a written parameter of a function) to its compile-time decorators, in source order. Each
 is `Decorator { def, args, span }`: `def` is the `declare decorator function`, a `Def::ExternFn`
 that nothing calls and lowering never declares; `args` has one `ConstTree` per parameter of the
-declaration, defaults filled in. The map is a side table, so a program without decorators has an
+declaration, defaults filled in, each as the parameter's type has it (an enum member where a
+number or a string is expected is that number or string; for `any` or `unknown`, the tree as
+written). An abstract property (`abstract x: T;`) has no field: its decorators, a field's, are on
+its getter's `DecoratorTarget::Def`. The map is a side table, so a program without decorators has an
 empty one and no other HIR type changes. Lowering reads none of it yet. A TC39 run-time decorator
 is an error until #2204, so it never gets here.
