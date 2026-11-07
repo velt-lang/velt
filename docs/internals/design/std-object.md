@@ -113,6 +113,12 @@ compiled optimized, once, and so is what the cache holds. A debug build
   `inline()` are linked as well; and it specializes no closures, so functions that call through a
   pointer are too. In every build, a function compiled alone inlines what is small or marked
   `inline()`, which is therefore in its key.
+- leaves in the program what shows a place in its own files: a caller-tracking instance per call
+  site (`m.set(...)` in `app.velt`), and what would inline one. The location is in the object's
+  key, an absolute path, so no other program could link it, whereas Cranelift's key leaves data out
+  and shares the instance's code. So `velt cache warm` stores it in Cranelift's cache, and a
+  project's first build finds it there. An instance for a call in std has one key everywhere and
+  is served.
 - keys objects without naming clang, and always for the target's default CPU. So `velt run` and
   `velt test`, which build for `native`, link the same objects as `velt build`. A program for a
   CPU lacking what the default requires links none.

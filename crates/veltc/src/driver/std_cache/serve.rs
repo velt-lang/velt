@@ -51,9 +51,11 @@ pub(in crate::driver) fn serve(
         return vec![];
     }
     let helpers = velt_opt::debug_inlined(&program.funcs);
+    let user_sites = select::user_sites(program);
     let rule = select::Rule::Debug {
         helpers: &helpers,
         thread_data: velt_codegen_cl::has_thread_local_data(&cg.target),
+        user_sites: &user_sites,
     };
     let canon = Canon::new(program, Mode::Link);
     let names = statics::Names::new(program, &canon);

@@ -13,7 +13,11 @@
 //! - in a release build, those whose inlinable set calls through a function pointer: in the
 //!   program `const_fields` specializes them for the closure their caller passes and inlines it
 //!   (`Array.map`, `Map.upsert` ran 3-6% slower compiled on their own). A debug build specializes
-//!   nothing.
+//!   nothing;
+//! - in a debug build, those whose inlinable set shows a place in the program's own files
+//!   ([`user_sites`]): a caller-tracking instance per call site. Its key holds that path, so no
+//!   other program can link it, while Cranelift, whose key leaves data out, shares its code with
+//!   every program that has the instance.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -34,9 +38,11 @@ pub(super) enum Rule<'a> {
     /// its code, so what serves them can only make it faster. `thread_data`: the program's
     /// thread-local values are data that an object can share
     /// (`velt_codegen_cl::has_thread_local_data`); else code reaching one stays in the program too.
+    /// `user_sites`: [`user_sites`] of the program.
     Debug {
         helpers: &'a [bool],
         thread_data: bool,
+        user_sites: &'a [bool],
     },
 }
 
@@ -95,7 +101,13 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     {
         return Some("thread-local values");
     }
-    if !statics::nameable(names, &statics::reached(program, &set)) {
+    let reached = statics::reached(program, &set);
+    if let Rule::Debug { user_sites, .. } = rule {
+        if reached.iter().any(|&s| user_sites.get(s) == Some(&true)) {
+            return Some("call sites in the program");
+        }
+    }
+    if !statics::nameable(names, &reached) {
         return Some("statics with identity");
     }
     if matches!(rule, Rule::Release)
@@ -106,6 +118,26 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
         return Some("callbacks");
     }
     None
+}
+
+/// Per static of `program`, whether it is a location in one of the program's own files, as a
+/// caller-tracking instance reports it. Std's files show as `std/<path>`, never by their paths in
+/// `Program::files`, so a path found there is the program's.
+pub(super) fn user_sites(program: &vir::Program) -> Vec<bool> {
+    let files: HashSet<&str> = (program.files.iter())
+        .map(String::as_str)
+        .filter(|f| !f.starts_with(GENERATED_STD))
+        .collect();
+    (program.statics.iter())
+        .map(|s| site_path(&s.bytes).is_some_and(|path| files.contains(path)))
+        .collect()
+}
+
+/// The path of a location's text: `[ at ]<path>:<line>:<col>`.
+fn site_path(bytes: &[u8]) -> Option<&str> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let text = text.strip_prefix(" at ").unwrap_or(text);
+    Some(text.rsplit_once(':')?.0.rsplit_once(':')?.0)
 }
 
 /// The std code of `program` by why it stays in the program (statements), and how much the

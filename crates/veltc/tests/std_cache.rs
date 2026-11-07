@@ -572,7 +572,8 @@ fn served_functions_fail_the_way_compiled_ones_do() {
     for (n, program) in programs.iter().enumerate() {
         let file = format!("p{n}.velt");
         std::fs::write(dir.join(&file), program).unwrap();
-        fill(dir, &file, &cache);
+        // Not `fill`: what the programs before stored may be all this one needs.
+        debug_build(dir, &file, "fill", &cache, &[("VELT_STD_OBJECT_FILL", "1")]);
         let run_all = |out: &str| {
             let exe = dir
                 .join(out)

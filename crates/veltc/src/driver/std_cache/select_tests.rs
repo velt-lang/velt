@@ -200,6 +200,7 @@ fn a_debug_build_serves_small_functions_but_not_what_it_inlines() {
     let rule = Rule::Debug {
         helpers: &helpers,
         thread_data: true,
+        user_sites: &[],
     };
     assert_eq!(candidates(&p, &names(&p), rule), [0, 2]);
     assert_eq!(cands(&p), Vec::<usize>::new(), "release keeps all three");
@@ -243,7 +244,74 @@ fn code_reaching_a_thread_local_stays_where_it_has_no_data_to_share() {
     let rule = |thread_data| Rule::Debug {
         helpers: &helpers,
         thread_data,
+        user_sites: &[],
     };
     assert_eq!(candidates(&p, &names(&p), rule(true)), [0, 1, 2]);
     assert_eq!(candidates(&p, &names(&p), rule(false)), [2]);
+}
+
+/// A string's header static, pointing at its text as a location's does.
+fn header(text: u32) -> StaticData {
+    StaticData {
+        bytes: vec![0; 8],
+        align: 8,
+        relocs: vec![(0, Const::Static(StaticId(text)))],
+        ..Default::default()
+    }
+}
+
+fn text(s: &str) -> StaticData {
+    StaticData {
+        bytes: s.as_bytes().to_vec(),
+        align: 1,
+        ..Default::default()
+    }
+}
+
+/// A caller-tracking instance of a call in the program's own file holds that path: no other
+/// program has its key. It stays for Cranelift, whose code any program shares, and so does what
+/// would inline it. One for a call in std, or in code a std generator wrote, has the same key in
+/// every program.
+#[test]
+fn code_showing_a_place_in_the_program_stays_in_the_program() {
+    let site = func("set_at_user_call", 3, &[], addr(1));
+    let caller = func("constructor_at_user_call", SMALL, &[0], None);
+    let in_std = func("set_at_std_call", 3, &[], addr(3));
+    let generated = func("set_at_generated_call", 3, &[], addr(5));
+    let plain = func("other", 3, &[], None);
+    let mut p = program(
+        vec![site, caller, in_std, generated, plain],
+        vec![
+            text(" at /home/me/app.velt:3:3"),
+            header(0),
+            text(" at std/prelude/map.velt:117:24"),
+            header(2),
+            text(" at <generated>/std/json/reader.velt:1:2"),
+            header(4),
+        ],
+    );
+    p.files = vec![
+        "/home/me/app.velt".into(),
+        "/opt/velt/std/prelude/map.velt".into(),
+        "<generated>/std/json/reader.velt".into(),
+    ];
+    let helpers = [false; 5];
+    let sites = user_sites(&p);
+    assert_eq!(sites, [true, false, false, false, false, false]);
+    let rule = Rule::Debug {
+        helpers: &helpers,
+        thread_data: true,
+        user_sites: &sites,
+    };
+    assert_eq!(candidates(&p, &names(&p), rule), [2, 3, 4]);
+}
+
+/// Only a text of the form a location has names a file.
+#[test]
+fn a_location_is_a_path_a_line_and_a_column() {
+    assert_eq!(site_path(b" at a/b.velt:3:14"), Some("a/b.velt"));
+    assert_eq!(site_path(b"a/b.velt:3:14"), Some("a/b.velt"));
+    assert_eq!(site_path(b"C:/a/b.velt:3:14"), Some("C:/a/b.velt"));
+    assert_eq!(site_path(b"no location"), None);
+    assert_eq!(site_path(&[0xff, b':', b':']), None);
 }
