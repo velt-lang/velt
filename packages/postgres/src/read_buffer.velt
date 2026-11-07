@@ -40,7 +40,9 @@ export class ReadBuffer {
     while (true) {
       // Waits first: what arrived has just been handled, so reading now would mostly find nothing,
       // a system call per reply for no bytes.
-      await s.readable();
+      if (!s.buffered()) {
+        await s.tcp.readable();
+      }
       const n = s.tryRead(this.bytes, this.end as number, this.bytes.length as number);
       if (n == null) {
         return false;
