@@ -7,11 +7,12 @@ import { BodyStream } from "velt/net/http";
 import { connect, TcpStream } from "velt/net";
 import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
-import { delay } from "velt/time";
 import { HttpRequest, HttpResponse, serve, serveHttp } from "../src/lib";
 import { arrivals, arrive, Gate, gate, hold, nextArrival, open, shut } from "./_gate";
 
 const LIMIT: i64 = 10000;
+/// Enough turns of the event loop for what a broken version would do to show.
+const TURNS: i64 = 2000;
 const GET = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
 
 /// Reads from `s` until `text` came, or the end of the stream: what was read.
@@ -29,6 +30,15 @@ async function readUntil(s: TcpStream, text: string): Promise<string> {
 
 async function readAll(s: TcpStream): Promise<string> {
   return await readUntil(s, "\u0001never\u0001");
+}
+
+/// One turn of the event loop.
+async function turn() {
+  await new Promise<void>((resolve) => {
+    setImmediate(() => {
+      resolve();
+    });
+  });
 }
 
 /// A body with nothing to send, ever: only its `cancel` ends it. `cancelled` hears that.
@@ -245,8 +255,8 @@ describe("a client that left with requests behind", () => {
       open(g);
       await timeout(arrivals(done), LIMIT);
       // Turns of the event loop: enough for the connection's task to go on to a next request.
-      for (let i: i64 = 0; i < 200 && next.get() == 0; i++) {
-        await delay(0);
+      for (let i: i64 = 0; i < TURNS && next.get() == 0; i++) {
+        await turn();
       }
       expect(next.get()).toBe(0);
       c.close();
@@ -425,7 +435,6 @@ describe("a handler that isn't reading its body", () => {
   it("has at most 64 KiB read ahead of it, so the client's end stays unread", async () => {
     // Turns of the event loop, not time: enough for a read of everything to come to the end of the
     // client's input, on the loop that also runs the client's writes.
-    const TURNS: i64 = 200;
     const told = gate();
     const started = gate();
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
@@ -433,7 +442,7 @@ describe("a handler that isn't reading its body", () => {
       arrive(started);
       await started.go.receive();
       for (let i: i64 = 0; i < TURNS && !signal.aborted; i++) {
-        await delay(0);
+        await turn();
       }
       arrive(told, signal.aborted ? 1 : 0);
       return new Response("answer");
