@@ -183,7 +183,10 @@ impl FnLower<'_, '_> {
         let wa = self.rvalue_temp(Ty::U64, Rvalue::Cast(pa.clone(), Ty::U64));
         let wb = self.rvalue_temp(Ty::U64, Rvalue::Cast(pb.clone(), Ty::U64));
         let both = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, wa, wb));
-        let bit = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, both, cint(1, Ty::U64)));
+        let bit = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::BitAnd, both, cint(1, Ty::U64)),
+        );
         let tagged = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bit, cint(0, Ty::U64)));
         let (cold, join) = (self.new_block(), self.new_block());
         self.branch(tagged, cold, join);
