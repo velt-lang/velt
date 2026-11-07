@@ -90,4 +90,18 @@ describe("the thread's generator", () => {
     }
     expect(spans).toBe(true);
   });
+
+  it("rejects the biased low range of a wide span", () => {
+    // A span of 3 * 2^62: without the rejection, residues 0, 1 and 2 of (v - min) % 3 come out
+    // about a half, a quarter and a quarter of the time instead of a third each.
+    const min: i64 = -6917529027641081856;
+    const max: i64 = 6917529027641081856;
+    const counts = [0, 0, 0];
+    for (let i = 0; i < 3000; i++) {
+      const v = randomInt(min, max);
+      expect(v >= min && v < max).toBe(true);
+      counts[((v as u64) - (min as u64)) % 3] += 1;
+    }
+    expect(counts.every((c) => c > 850 && c < 1150)).toBe(true);
+  });
 });
