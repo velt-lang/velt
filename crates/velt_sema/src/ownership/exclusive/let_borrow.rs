@@ -125,7 +125,7 @@ fn check_let(
     }
     let mut value = value;
     col.nested_stmts(rest, value.as_deref_mut(), &mut uses);
-    if let Some(u) = changed_by_function_value(col, rest, value.as_deref_mut(), &place) {
+    if let Some(u) = changed_by_function_value(col, rest, value, &place) {
         uses.push(u);
     }
     let hit = uses
