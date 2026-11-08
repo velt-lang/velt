@@ -1,0 +1,17 @@
+// `?.[k]` on a slot that holds `null` through `null!` (#2350): the element link short-circuits with
+// the chain, as `?.f` does, where the chain takes `undefined`.
+class Foo {
+  v = 1;
+  rec: Record<string, number> = { a: 1 };
+  arr: number[] = [1, 2];
+}
+const f: Foo = null!;
+const k = "a";
+const w: number | undefined = f?.rec?.[k];
+console.log(w);
+console.log(f?.arr?.[0]);
+const w2: number | undefined = f?.arr?.[1];
+console.log(w2, !f?.arr?.[0]);
+const g = new Foo();
+const x: number | undefined = g?.rec?.[k];
+console.log(x, g?.arr?.[1], !g?.arr?.[0]);

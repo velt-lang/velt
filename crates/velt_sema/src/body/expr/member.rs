@@ -324,7 +324,7 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         if optional {
-            return self.optional_chain(object, span, |s, v| {
+            return self.chain_with(exp, object, span, |s, v| {
                 if want != Want::BorrowMut {
                     s.array_used_in_place(&v);
                 }
