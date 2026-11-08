@@ -114,7 +114,7 @@ changes for them. Such a build:
   marked `noInline()`; else it does nothing a build without the cache would not do.
 - serves those as `VELT_STD_OBJECT=1` serves anything (the same rules: not reaching statics with
   identity that can't be named, no calls through a function pointer, a `$dup` stays), under the
-  same keys: the CPU the program is built for (`--cpu`, `-march`), clang, and the code a release
+  same keys: the CPU the program is built for (`--cpu`, `VELT_CPU`, `build.cpu`), clang, and the code a release
   build lowered. A key says whether a release or a debug build links it, so a debug build's object
   never serves a release build, nor the other way round.
 - links what it finds, placed before the function comes out, as a debug build does: a miss stays

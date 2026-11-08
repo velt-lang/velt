@@ -45,6 +45,11 @@ pub(in crate::driver) fn optimize(
         Use::NoInline => {
             let served = no_inline::serve(program, opts, &cg, &place);
             sess.record("std cache", t);
+            if served.is_empty() {
+                // Nothing hides behind a declaration: what the program reaches is worked out
+                // after optimization, as in a build without the cache.
+                sess.reaches = None;
+            }
             optimize_stage(sess, opts, program)?;
             sess.std_objects = served.linked(program);
             Ok(())

@@ -25,17 +25,24 @@ use velt_vir::fingerprint::{Canon, Mode};
 use velt_vir::vir::{self, Linkage};
 
 use super::{key, select, serve, statics, stats, take_out, Place, KIND};
+use crate::driver::BuildOptions;
 
 /// What a release build's objects are compiled with: copies of their own of every function they
 /// reach through functions not marked `noInline()` (`select::Depth::Whole`).
 const DEPTH: select::Depth = select::Depth::Whole;
-use crate::driver::BuildOptions;
 
 /// What [`serve`] took out of the program: per function, its symbol, the other functions taken
 /// out that its object may call, and its object in place.
 #[derive(Default)]
 pub(in crate::driver) struct Served {
     entries: Vec<(String, Vec<String>, PathBuf)>,
+}
+
+impl Served {
+    /// Whether nothing was taken out.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 /// Whether a release build of `program` looks in the cache: there is one, it has held objects
@@ -73,8 +80,9 @@ pub(in crate::driver) fn serve(
     let inputs = key::Inputs::of(opts, cg);
     let mut found: Vec<(usize, PathBuf)> = vec![];
     let mut missing = vec![];
+    let mut memo = HashMap::new();
     for i in select::candidates(program, &names, rule) {
-        let key = super::release_key(program, &canon, &inputs, i, DEPTH);
+        let key = super::release_key(program, &canon, &inputs, i, DEPTH, &mut memo);
         match cache.path_of(KIND, &key) {
             Some(path) => found.push((i, path)),
             None => missing.push((i, key)),

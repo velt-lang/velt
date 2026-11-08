@@ -480,11 +480,13 @@ break makes a stamp that never matches). The objects it names
   cache. The stamp's `outside` line is worked out before functions become declarations.
 - Std cache in release builds by default (additive, #2405; `VELT_STD_OBJECT=0` turns it off,
   `=1` is the path above). Release executables as above, without `VELT_STD_OBJECT`, look up the
-  std functions marked `noInline()` (`vir::Inline::Never`) that the path above would serve, and
+  std functions marked `noInline()` (`vir::Inline::Never`) that the path above would serve (it
+  serves a small `noInline()` function too, never compiled into another function's object), and
   that are not an ordinary function checking a CPU extension (`velt_simd_has_<ext>`) itself or
   through what it references, nor gated with such a function among those its object declares,
   with its keys (the program's CPU, clang) but over every internal function reached through
-  internal functions not marked `noInline()` in place of the small ones, when the cache has held
+  internal functions not marked `noInline()` in place of the small ones, preceded by a part that
+  says so (`own copies of every callee up to noInline()`), when the cache has held
   any `stdfn` entry and the program has such a function; the key's last flag says release (a
   debug build's says debug, so neither serves the other). Its object has internal copies of its
   own of those functions, except those whose address it or a static it reaches takes, which are
@@ -496,7 +498,8 @@ break makes a stamp that never matches). The objects it names
   over what those objects call, are linked; the others are removed from `<object stem>.std/`.
   `VELT_STD_OBJECT_STATS=1` prints the reasons (`inlinable` for the functions not marked), then
   `velt: std cache: <n> found, <m> compiled, <k> left in the program` and `velt: std cache: <n> no
-  longer called`.
+  longer called`. The stamp's `outside` line is worked out before functions become declarations
+  when one does, else after optimization, as without the cache.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
   A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);

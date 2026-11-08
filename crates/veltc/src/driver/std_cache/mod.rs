@@ -31,7 +31,7 @@ pub(super) mod stage;
 mod statics;
 mod turn;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use velt_build_cache::Key;
@@ -222,9 +222,10 @@ pub(super) fn split(
         return plan;
     }
     let inputs = key::Inputs::of(opts, cg);
+    let mut memo = HashMap::new();
     let looked_up: Vec<(usize, Key, Option<PathBuf>)> = (candidates.iter())
         .map(|&i| {
-            let key = release_key(program, &canon, &inputs, i, DEPTH_ALL);
+            let key = release_key(program, &canon, &inputs, i, DEPTH_ALL, &mut memo);
             (i, key, cache.path_of(KIND, &key))
         })
         .collect();
@@ -284,20 +285,35 @@ pub(super) fn split(
 /// call, as before release builds served `noInline()` functions by default.
 const DEPTH_ALL: select::Depth = select::Depth::Small;
 
-/// A release build's key of std function `i`: its code and what it is compiled with at `depth`
-/// (`select::inlinable`), then what its object declares (`select::declared`).
+/// A release build's key of std function `i`: at `Depth::Whole` a mark that says so, then its
+/// code and what it is compiled with at `depth` (`select::inlinable`), then what its object
+/// declares (`select::declared`). `memo`: each function's code, worked out once per build (a
+/// function is in the set of everything that reaches it). The mark keeps apart two objects of one
+/// set: at `Depth::Small` the object calls the program's copies of what it doesn't inline, at
+/// `Depth::Whole` its own, which the program then doesn't export.
 fn release_key(
     program: &vir::Program,
     canon: &Canon,
     inputs: &key::Inputs,
     i: usize,
     depth: select::Depth,
+    memo: &mut HashMap<usize, key::Code>,
 ) -> Key {
     let set = select::inlinable(program, i, depth);
     let declared = select::declared(program, &set);
-    let code = (set.iter())
-        .map(|&j| key::Code::of(&program.funcs[j], canon))
-        .chain((declared.iter()).map(|&j| key::Code::declared(&program.funcs[j])));
+    let mut code: Vec<key::Code> = vec![];
+    if depth == select::Depth::Whole {
+        code.push(key::Code {
+            symbol: String::new(),
+            text: "own copies of every callee up to noInline()".into(),
+            attrs: String::new(),
+        });
+    }
+    for &j in &set {
+        let of = || key::Code::of(&program.funcs[j], canon);
+        code.push(memo.entry(j).or_insert_with(of).clone());
+    }
+    code.extend((declared.iter()).map(|&j| key::Code::declared(&program.funcs[j])));
     inputs.key(code)
 }
 
@@ -487,6 +503,32 @@ mod tests {
         let linked = link_with(plan(), &program, &cg, &cache, &place).unwrap();
         assert_eq!(linked.objects, [place.dir.join("0.obj")]);
         assert_eq!(std::fs::read(&linked.objects[0]).unwrap(), b"object bytes");
+    }
+
+    /// One set compiled at both depths makes two objects (the program's copies of the callees, or
+    /// the object's own), so their keys differ.
+    #[test]
+    fn the_depth_is_in_a_release_key() {
+        let mut f = calling("_V3stdN1f", None, 0);
+        f.inline = vir::Inline::Never;
+        let p = vir::Program {
+            funcs: vec![f],
+            ..vir::Program::default()
+        };
+        let canon = Canon::new(&p, velt_vir::fingerprint::Mode::Link);
+        let inputs = key::Inputs {
+            compiler: velt_build_cache::Key([1; 32]),
+            backend: "clang".into(),
+            opt: "-O3".into(),
+            target: "aarch64-apple-darwin".into(),
+            cpu: None,
+            release: true,
+        };
+        let at = |depth| release_key(&p, &canon, &inputs, 0, depth, &mut HashMap::new());
+        assert_eq!(select::inlinable(&p, 0, select::Depth::Small), [0]);
+        assert_eq!(select::inlinable(&p, 0, select::Depth::Whole), [0]);
+        assert_ne!(at(select::Depth::Small), at(select::Depth::Whole));
+        assert_eq!(at(select::Depth::Whole), at(select::Depth::Whole));
     }
 
     #[test]

@@ -928,15 +928,38 @@ fn every_function_a_release_build_serves_is_marked_no_inline() {
     let err = text(&served.stderr);
     let symbols = served_symbols(&served);
     assert!(!symbols.is_empty(), "{err}");
+    // A function marked `noInline()` stays a function in the optimized program, so each one
+    // served is there; one served by mistake would likely have been inlined away.
     let vir = vir_functions(dir, "a.velt");
-    let seen: Vec<&String> = symbols.iter().filter(|s| vir.contains_key(*s)).collect();
-    assert!(!seen.is_empty(), "no served function in the VIR:\n{err}");
-    for s in seen {
-        assert!(vir[s], "{s} is served but not marked `noInline()`");
+    for s in &symbols {
+        let marked = vir.get(s).copied();
+        assert_eq!(
+            marked,
+            Some(true),
+            "{s} is served but not marked `noInline()`"
+        );
     }
     let by_reason = (err.lines()).find(|l| l.contains("by reason"));
     assert!(by_reason.is_some_and(|l| l.contains("inlinable")), "{err}");
     assert_eq!(run(dir, "served"), NO_INLINE_OUTPUT);
+}
+
+/// Objects `VELT_STD_OBJECT=1` stored (compiled with the small functions they call, calling the
+/// program's copies of the rest) are not a default build's, whose objects have their own copies:
+/// a default release build after one links and prints the same.
+#[test]
+fn a_default_release_build_links_after_one_serving_everything() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), NO_INLINE_PROGRAM).unwrap();
+    let all = [("VELT_STD_OBJECT_MIN_MISSES", "1")];
+    let filled = build(dir, "a.velt", "all", &cache, &all);
+    assert!(counts(&filled).1 > 0, "{}", text(&filled.stderr));
+    assert_eq!(run(dir, "all"), NO_INLINE_OUTPUT);
+    let default = release_default(dir, "a.velt", "default", &cache, &[]);
+    assert_eq!(counts(&default).0, 0, "{}", text(&default.stderr));
+    assert_eq!(run(dir, "default"), NO_INLINE_OUTPUT);
 }
 
 /// `velt cache warm` stores what release builds link too: a release build of a warm-up program

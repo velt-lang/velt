@@ -37,6 +37,7 @@ pub(super) struct Inputs {
 }
 
 /// What a function is, as its key sees it.
+#[derive(Clone)]
 pub(super) struct Code {
     pub symbol: String,
     pub text: String,
