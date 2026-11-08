@@ -1,0 +1,33 @@
+// A module constant typed by a function type written inline, not an alias: its closure's
+// `reject`, kept and called later, rejects into that type's `Promise<T>` site.
+
+class HttpError extends Error {
+  status: number;
+  constructor(s: number, m: string) {
+    super(m);
+    this.status = s;
+  }
+}
+
+let saved: ((e: HttpError) => void) | null = null;
+
+
+const make: () => Promise<string> = () => new Promise((resolve, reject) => {
+  saved = reject;
+});
+
+async function main(): Promise<void> {
+  const p = make();
+  saved!(new HttpError(501, "saved"));
+  try {
+    console.log(await p);
+  } catch (e) {
+    if (e instanceof HttpError) {
+      console.log(`http ${e.status}`);
+    } else {
+      console.log("other");
+    }
+  }
+}
+
+await main();

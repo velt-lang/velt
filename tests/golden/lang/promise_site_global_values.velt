@@ -1,0 +1,39 @@
+// Module-level declarations whose initializer is a value, not a closure created there: a declared
+// async function stored as a function type, a function value stored as another, and a promise
+// stored as a `Promise<T>`. Each one's rejection still reaches the site of its written type.
+
+class E1 extends Error {}
+
+type Take = (p: string) => Promise<string>;
+type Next = () => Promise<string>;
+
+async function impl(p: string): Promise<string> {
+  if (p == "") {
+    throw new E1("empty");
+  }
+  return p;
+}
+const take: Take = impl;
+
+const other: Next = async () => {
+  throw new E1("next");
+};
+let next: Next = other;
+
+async function someFn(): Promise<string> {
+  throw new E1("promise");
+}
+const p: Promise<string> = someFn();
+
+async function report(label: string, f: () => Promise<string>): Promise<void> {
+  try {
+    console.log(`${label}: ${await f()}`);
+  } catch (e) {
+    console.log(`${label}: ${e instanceof E1 ? `E1 ${e.message}` : "other"}`);
+  }
+}
+
+await report("take a", () => take("a"));
+await report("take empty", () => take(""));
+await report("next", () => next());
+await report("promise", () => p);

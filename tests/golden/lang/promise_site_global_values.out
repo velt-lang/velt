@@ -1,0 +1,4 @@
+take a: a
+take empty: E1 empty
+next: E1 next
+promise: E1 promise

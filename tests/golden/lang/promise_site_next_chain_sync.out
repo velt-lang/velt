@@ -1,0 +1,3 @@
+[ok /a]
+error 400: empty
+error 403: denied

@@ -503,7 +503,10 @@ impl FnCx<'_, '_> {
             rest,
             defaults: vec![],
         };
+        let noted = self.note_value_args(&f, args);
         let ck = self.check_call(&c, vec![], args, None, span);
+        let kept = self.cx.fn_sites.value_args.len() - noted;
+        self.cx.fn_sites.value_args.truncate(kept);
         if throws != self.cx.ty.never {
             self.throw_src(crate::defs::ThrowSrc::Direct(throws, span));
         }
