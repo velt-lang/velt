@@ -209,6 +209,8 @@ impl FnLower<'_, '_> {
                 let dynamic = self.const_cond(cond) == Some(true);
                 self.expr(if dynamic { then } else { els })
             }
+            // A view chain's test where no view can be (view_options.rs): its other branch.
+            K::If { els, cond, .. } if self.no_view_test(cond) => self.expr(els),
             K::If { cond, then, els } => self.if_expr(cond, then, els, e.ty),
             K::Block(b) => self.block_expr(b, e.ty),
             _ => self.expr_m2(e),

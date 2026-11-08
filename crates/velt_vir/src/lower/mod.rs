@@ -166,6 +166,7 @@ mod truthy;
 mod type_tests;
 mod types;
 mod upcast;
+mod view_options;
 mod view_unswitch;
 mod view_unswitch_addrs;
 mod view_unswitch_handover;
