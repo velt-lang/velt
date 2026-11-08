@@ -480,10 +480,16 @@ break makes a stamp that never matches). The objects it names
   cache. The stamp's `outside` line is worked out before functions become declarations.
 - Std cache in release builds by default (additive, #2405; `VELT_STD_OBJECT=0` turns it off,
   `=1` is the path above). Release executables as above, without `VELT_STD_OBJECT`, look up the
-  std functions marked `noInline()` (`vir::Inline::Never`) that the path above would serve, with
-  its keys (the program's CPU, clang), when the cache has held any `stdfn` entry and the program
-  has such a function; the key's last flag says release (a debug build's says debug, so neither
-  serves the other). A found entry is placed and makes the function an `Import` declaration
+  std functions marked `noInline()` (`vir::Inline::Never`) that the path above would serve, and
+  that are not an ordinary function checking a CPU extension (`velt_simd_has_<ext>`) itself or
+  through what it references, nor gated with such a function among those its object declares,
+  with its keys (the program's CPU, clang) but over every internal function reached through
+  internal functions not marked `noInline()` in place of the small ones, when the cache has held
+  any `stdfn` entry and the program has such a function; the key's last flag says release (a
+  debug build's says debug, so neither serves the other). Its object has internal copies of its
+  own of those functions, except those whose address it or a static it reaches takes, which are
+  declarations keeping their bodies, and the program exports only those and what the object
+  declares. A found entry is placed and makes the function an `Import` declaration
   before optimization; a miss stays in the program, and no clang starts for it, except with
   `VELT_STD_OBJECT_FILL` set and clang found (misses compiled alone for the program's CPU, at
   `Speed`, and stored). After optimization the objects of the functions still declared, closed

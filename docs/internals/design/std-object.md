@@ -124,6 +124,20 @@ changes for them. Such a build:
   them (`VELT_STD_OBJECT_FILL`).
 - `noInline()` is never inlined into an object either: a small function marked so is served
   itself, not compiled into its callers.
+- compiles each object with copies of its own (internal to it) of every function the served
+  function reaches through functions not marked `noInline()`, whatever their size, all in its key
+  (`select::Depth::Whole`): velt_opt and LLVM inline large callees into it in the program too.
+  Compiled with the small ones alone, as `VELT_STD_OBJECT=1` and debug builds compile theirs, the
+  objects called back into the program for the rest: `f64Text`'s object called `floatText`
+  (`float_to_string` +5.2% on arm64) and `escapeFrom`'s called `block` once per 16-byte block
+  (`html_escape` +13% on x86-64). A function whose address is taken stays the program's, with
+  one address, and so do the `noInline()` functions it calls; the program exports only those
+  and what the object declares. What an object can't see is its callers' arguments: the program
+  could fold a constant flag into a function it never inlines.
+- leaves in the program a function the optimizer would clone for a function gated on a CPU
+  extension (`gated_clones`: an ordinary function checking an extension, itself or through what
+  it references), and a gated function whose object would call such a function: in the program
+  the clone has the check folded away, which an object compiled without it would not.
 
 `VELT_STD_OBJECT=0` turns it off, and `VELT_STD_OBJECT=1` serves every function the cache serves
 (above).

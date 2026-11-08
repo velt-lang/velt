@@ -5,7 +5,11 @@
 //! The optimizer never inlines a `noInline()` function into a caller, so its object holds the code
 //! the program would have compiled for it, and the program's clang no longer compiles it. Every
 //! other std function stays in the program, where it can be inlined and specialized
-//! (`select::Rule::NoInline`).
+//! (`select::Rule::NoInline`). The object is compiled with copies of its own of every function it
+//! reaches through functions not marked `noInline()` (`select::Depth::Whole`, all in its key), so
+//! velt_opt and LLVM optimize it with the callees the program would optimize it with; only the
+//! `noInline()` functions it calls, and those whose address it takes, are the program's. What it
+//! can't see is its callers' arguments (constants the program could fold into it).
 //!
 //! As in a debug build (`serve`): a function whose key is in the cache becomes a declaration, its
 //! object placed before it comes out; a miss stays in the program, and no clang starts for it.
@@ -21,6 +25,10 @@ use velt_vir::fingerprint::{Canon, Mode};
 use velt_vir::vir::{self, Linkage};
 
 use super::{key, select, serve, statics, stats, take_out, Place, KIND};
+
+/// What a release build's objects are compiled with: copies of their own of every function they
+/// reach through functions not marked `noInline()` (`select::Depth::Whole`).
+const DEPTH: select::Depth = select::Depth::Whole;
 use crate::driver::BuildOptions;
 
 /// What [`serve`] took out of the program: per function, its symbol, the other functions taken
@@ -52,7 +60,8 @@ pub(in crate::driver) fn serve(
     let Some(cache) = crate::build_cache::cache() else {
         return Served::default();
     };
-    let rule = select::Rule::NoInline;
+    let simd = select::simd_checking(program);
+    let rule = select::Rule::NoInline { simd: &simd };
     let canon = Canon::new(program, Mode::Link);
     let names = statics::Names::new(program, &canon);
     if stats() {
@@ -65,7 +74,7 @@ pub(in crate::driver) fn serve(
     let mut found: Vec<(usize, PathBuf)> = vec![];
     let mut missing = vec![];
     for i in select::candidates(program, &names, rule) {
-        let key = super::release_key(program, &canon, &inputs, i);
+        let key = super::release_key(program, &canon, &inputs, i, DEPTH);
         match cache.path_of(KIND, &key) {
             Some(path) => found.push((i, path)),
             None => missing.push((i, key)),
@@ -75,7 +84,7 @@ pub(in crate::driver) fn serve(
     let misses = missing.len();
     let mut compiled = 0;
     if serve::fill() {
-        let stored = serve::compile_missing(program, &names, cg, cache, missing);
+        let stored = serve::compile_missing(program, &names, cg, cache, missing, DEPTH);
         compiled = stored.len();
         found.extend(stored);
     }
@@ -86,11 +95,17 @@ pub(in crate::driver) fn serve(
             placed.push((i, object));
         }
     }
+    placed.sort_unstable_by_key(|&(i, _)| i);
     let taken: HashSet<usize> = placed.iter().map(|&(i, _)| i).collect();
+    // Every set as keyed, before anything is exported: `inlinable` follows internal functions
+    // only, and exporting one would hide it from the sets after.
+    let linked: Vec<(usize, Vec<usize>)> = (placed.iter())
+        .map(|&(i, _)| (i, select::inlinable(program, i, DEPTH)))
+        .collect();
     let mut served = Served::default();
-    for (i, object) in placed {
-        let mut calls: Vec<String> = (select::inlinable(program, i).into_iter())
-            .flat_map(|j| select::referenced(&program.funcs[j]))
+    for ((i, object), (_, set)) in placed.into_iter().zip(&linked) {
+        let mut calls: Vec<String> = (set.iter())
+            .flat_map(|&j| select::referenced(&program.funcs[j]))
             .filter(|c| *c != i && taken.contains(c))
             .map(|c| program.funcs[c].symbol.clone())
             .collect();
@@ -99,17 +114,15 @@ pub(in crate::driver) fn serve(
         let symbol = program.funcs[i].symbol.clone();
         served.entries.push((symbol, calls, object));
     }
-    let mut taken: Vec<usize> = taken.into_iter().collect();
-    taken.sort_unstable();
-    for &i in &taken {
-        let reached = statics::reached(program, &select::inlinable(program, i));
+    for (_, set) in &linked {
+        let reached = statics::reached(program, set);
         statics::export(program, &names, &reached);
     }
-    take_out(program, &taken);
+    take_out(program, &linked, DEPTH);
     if stats() {
         eprintln!(
             "velt: std cache: {} found, {compiled} compiled, {} left in the program",
-            taken.len() - compiled,
+            linked.len().saturating_sub(compiled),
             misses - compiled
         );
     }

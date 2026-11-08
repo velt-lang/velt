@@ -20,7 +20,15 @@
 //! - in a debug build, those whose inlinable set shows a place in the program's own files
 //!   ([`user_sites`]): a caller-tracking instance per call site. Its key holds that path, so no
 //!   other program can link it, while Cranelift, whose key leaves data out, shares its code with
-//!   every program that has the instance.
+//!   every program that has the instance;
+//! - in a release build by default, those the optimizer would clone for a function gated on a CPU
+//!   extension (`velt_opt`'s `gated_clones`), and gated ones whose code calls such a function
+//!   without compiling it: in the program the clone has the extension's check folded away, which
+//!   their object, compiled without it, would not ([`simd_checking`]).
+//!
+//! What a served function's object is compiled with ([`Depth`]): the small functions it calls
+//! (and those marked `inline()`), or in a release build by default every function it reaches
+//! through functions not marked `noInline()`, as copies of its own.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -40,7 +48,8 @@ pub(super) enum Rule<'a> {
     /// A release build's default: as [`Rule::Release`], and every function std does not mark
     /// `noInline()` (`Inline::Never`). Those are never inlined into a caller, so serving their
     /// objects changes no caller's code, and their callers' clang no longer compiles them.
-    NoInline,
+    /// `simd`: [`simd_checking`] of the program.
+    NoInline { simd: &'a [bool] },
     /// A debug build: those `velt_opt::debug_inlined` marks. Calls of the others stay calls in
     /// its code, so what serves them can only make it faster. `thread_data`: the program's
     /// thread-local values are data that an object can share
@@ -53,17 +62,44 @@ pub(super) enum Rule<'a> {
     },
 }
 
-/// Whether the optimizer inlines `f` into a function compiled with it: it is small, or std marks
-/// it `inline()`, and std does not mark it `noInline()`. Its body goes into what calls it, so it
-/// is in their keys.
-pub(super) fn inlines(f: &vir::Function) -> bool {
-    f.inline != Inline::Never && (size(f) < SMALL || f.inline == Inline::Always)
+/// Which of the functions a served function calls its object is compiled with (their bodies,
+/// which the optimizers may inline into it, and which are in its key).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Depth {
+    /// The small ones and those std marks `inline()`, which an optimized caller inlines whatever
+    /// else it knows; the object keeps them as declarations with their bodies, and calls the
+    /// program's copy where it doesn't inline one.
+    Small,
+    /// Every function it reaches through functions not marked `noInline()`, whatever their size,
+    /// as copies of its own (`compile::own_copies`): in the program velt_opt and LLVM inline
+    /// large callees into it too. With the small ones alone, `f64Text`'s object called
+    /// `floatText`, and `bench/stdport/float_to_string` ran 5.2% slower.
+    Whole,
+}
+
+/// Whether a function compiled at `depth` has `f`'s body compiled into it (its callers' keys
+/// hold it): small or marked `inline()` (any function at [`Depth::Whole`]), and not marked
+/// `noInline()`: such a function stays a call, so its callers' objects declare it.
+pub(super) fn inlines(f: &vir::Function, depth: Depth) -> bool {
+    let compiled_in = match depth {
+        Depth::Small => size(f) < SMALL || f.inline == Inline::Always,
+        Depth::Whole => true,
+    };
+    f.inline != Inline::Never && compiled_in
 }
 
 impl Rule<'_> {
     /// A release build's rule: the optimizer inlines and specializes across functions.
     fn release(self) -> bool {
-        matches!(self, Rule::Release | Rule::NoInline)
+        matches!(self, Rule::Release | Rule::NoInline { .. })
+    }
+
+    /// What a served function's object is compiled with under this rule.
+    pub fn depth(self) -> Depth {
+        match self {
+            Rule::NoInline { .. } => Depth::Whole,
+            Rule::Release | Rule::Debug { .. } => Depth::Small,
+        }
     }
 }
 
@@ -109,15 +145,15 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
         return Some("not internal");
     }
     match rule {
-        Rule::NoInline if f.inline != Inline::Never => return Some("inlinable"),
-        Rule::Release | Rule::NoInline if inlines(f) => return Some("small"),
+        Rule::NoInline { .. } if f.inline != Inline::Never => return Some("inlinable"),
+        Rule::Release if inlines(f, Depth::Small) => return Some("small"),
         Rule::Debug { helpers, .. } if helpers.get(i) == Some(&true) => return Some("small"),
         _ => {}
     }
     if f.symbol.contains("$dup") {
         return Some("$dup");
     }
-    let set = inlinable(program, i);
+    let set = inlinable(program, i, rule.depth());
     if matches!(
         rule,
         Rule::Debug {
@@ -144,7 +180,53 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     {
         return Some("callbacks");
     }
+    if let Rule::NoInline { simd } = rule {
+        let checks = |j: usize| simd.get(j) == Some(&true);
+        let gated = set.iter().any(|&j| program.funcs[j].target.is_some());
+        if checks(i) || (gated && declared(program, &set).into_iter().any(checks)) {
+            return Some("SIMD dispatch");
+        }
+    }
     None
+}
+
+/// Per function of `program`, whether `velt_opt`'s `gated_clones` may clone it for a function
+/// gated on a CPU extension: an ordinary function (no target of its own, not a poll function)
+/// that checks a CPU extension (`velt_simd_has_<ext>`), itself or through functions it
+/// references.
+pub(super) fn simd_checking(program: &vir::Program) -> Vec<bool> {
+    let ordinary = |f: &vir::Function| f.target.is_none() && !f.is_poll;
+    let checks_itself = |f: &vir::Function| {
+        (f.blocks.iter()).any(|b| match &b.term {
+            Terminator::Call {
+                callee: Callee::Extern(e),
+                ..
+            } => matches!(
+                velt_vir::simd::SimdCall::of_symbol(&program.ext(*e).symbol),
+                Some(velt_vir::simd::SimdCall::Has(_))
+            ),
+            _ => false,
+        })
+    };
+    let mut checks: Vec<bool> = (program.funcs.iter())
+        .map(|f| ordinary(f) && checks_itself(f))
+        .collect();
+    let mut callers: Vec<Vec<usize>> = vec![vec![]; program.funcs.len()];
+    for (i, f) in program.funcs.iter().enumerate() {
+        for c in referenced(f) {
+            callers[c].push(i);
+        }
+    }
+    let mut pending: Vec<usize> = (0..checks.len()).filter(|&i| checks[i]).collect();
+    while let Some(c) = pending.pop() {
+        for &i in &callers[c] {
+            if !checks[i] && ordinary(&program.funcs[i]) {
+                checks[i] = true;
+                pending.push(i);
+            }
+        }
+    }
+    checks
 }
 
 /// Per static of `program`, whether it is a location outside std, as a caller-tracking instance
@@ -187,10 +269,10 @@ pub(super) fn reasons(
     by
 }
 
-/// Function `i` and every function the optimizer inlines ([`inlines`]) that it reaches through
-/// such functions: what its code compiled on its own may inline. In a deterministic order, `i`
-/// first.
-pub(super) fn inlinable(program: &vir::Program, i: usize) -> Vec<usize> {
+/// Function `i` and every function compiled into it at `depth` ([`inlines`]) that it reaches
+/// through such functions: what its code compiled on its own may inline. In a deterministic
+/// order, `i` first.
+pub(super) fn inlinable(program: &vir::Program, i: usize, depth: Depth) -> Vec<usize> {
     let mut seen = HashSet::from([i]);
     let mut order = vec![i];
     let mut n = 0;
@@ -198,7 +280,7 @@ pub(super) fn inlinable(program: &vir::Program, i: usize) -> Vec<usize> {
         n += 1;
         for c in referenced(&program.funcs[j]) {
             let f = &program.funcs[c];
-            if f.linkage == Linkage::Internal && inlines(f) && seen.insert(c) {
+            if f.linkage == Linkage::Internal && inlines(f, depth) && seen.insert(c) {
                 order.push(c);
             }
         }

@@ -885,3 +885,84 @@ fn a_release_build_compiles_its_misses_and_never_links_a_debug_object() {
     assert_eq!(counts(&damaged), (0, 0), "{}", text(&damaged.stderr));
     assert_eq!(run(dir, "x"), NO_INLINE_OUTPUT);
 }
+
+/// The symbols a build's stats say it served.
+fn served_symbols(o: &Output) -> Vec<String> {
+    let err = text(&o.stderr);
+    let links = (err.lines()).filter_map(|l| l.strip_prefix("velt: std cache: links "));
+    links
+        .filter_map(|l| l.split(' ').next())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The functions of `file`'s optimized release VIR, each with whether it is marked `noInline()`.
+fn vir_functions(dir: &Path, file: &str) -> std::collections::HashMap<String, bool> {
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let o = (cmd.args(["build", file, "--release", "--emit", "vir"]))
+        .current_dir(dir)
+        .env("VELT_STD_OBJECT", "0")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    (text(&o.stdout).lines())
+        .filter(|l| l.starts_with("fn#"))
+        .filter_map(|l| {
+            let symbol = l.split(' ').nth(2)?.split('(').next()?;
+            Some((symbol.to_string(), l.contains(" noinline")))
+        })
+        .collect()
+}
+
+/// Every function a release build serves by default is one std marks `noInline()` (as the
+/// program's own VIR shows it), and the rest of std stays in the program (`inlinable`).
+#[test]
+fn every_function_a_release_build_serves_is_marked_no_inline() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), NO_INLINE_PROGRAM).unwrap();
+    let fill = [("VELT_STD_OBJECT_FILL", "1")];
+    release_default(dir, "a.velt", "filled", &cache, &fill);
+    let served = release_default(dir, "a.velt", "served", &cache, &[]);
+    let err = text(&served.stderr);
+    let symbols = served_symbols(&served);
+    assert!(!symbols.is_empty(), "{err}");
+    let vir = vir_functions(dir, "a.velt");
+    let seen: Vec<&String> = symbols.iter().filter(|s| vir.contains_key(*s)).collect();
+    assert!(!seen.is_empty(), "no served function in the VIR:\n{err}");
+    for s in seen {
+        assert!(vir[s], "{s} is served but not marked `noInline()`");
+    }
+    let by_reason = (err.lines()).find(|l| l.contains("by reason"));
+    assert!(by_reason.is_some_and(|l| l.contains("inlinable")), "{err}");
+    assert_eq!(run(dir, "served"), NO_INLINE_OUTPUT);
+}
+
+/// `velt cache warm` stores what release builds link too: a release build of a warm-up program
+/// then finds its `noInline()` functions and leaves none in the program.
+#[test]
+fn the_warm_up_stores_what_release_builds_link() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let share = dir.join("share");
+    std::fs::create_dir_all(share.join("warm")).unwrap();
+    std::fs::write(share.join("warm/a.velt"), NO_INLINE_PROGRAM).unwrap();
+    std::fs::write(dir.join("a.velt"), NO_INLINE_PROGRAM).unwrap();
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    let warm = (cmd.args(["cache", "warm"]))
+        .current_dir(dir)
+        .env("VELT_BUILD_CACHE", &cache)
+        .env("VELT_SHARE", &share)
+        .env_remove("VELT_STD_OBJECT")
+        .output()
+        .unwrap();
+    assert!(warm.status.success(), "{}", text(&warm.stderr));
+    let built = release_default(dir, "a.velt", "a", &cache, &[]);
+    let (found, compiled) = counts(&built);
+    assert!(found > 0 && compiled == 0, "{}", text(&built.stderr));
+    assert_eq!(left(&built), 0, "{}", text(&built.stderr));
+    assert_eq!(run(dir, "a"), NO_INLINE_OUTPUT);
+}
