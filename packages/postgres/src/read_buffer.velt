@@ -2,7 +2,6 @@
 // packages/redis: bytes of an incomplete reply stay where they are while more arrive, and move only
 // when room runs out, into a buffer that doubles, so a reply of any size costs linear time.
 
-import { PgStream } from "./transport";
 import { copyBytes } from "./frontend";
 
 // The buffer's first size, and the room each read asks for.
@@ -30,28 +29,6 @@ export class ReadBuffer {
     }
     copyBytes(leftover, this.bytes, 0, 0, n);
     this.end = n;
-  }
-
-  /**
-   * Waits for more bytes; false at the end of the stream, whose failure throws. `pos` may have moved
-   * when this returns: what `shift` says is how far.
-   */
-  async fill(s: PgStream): Promise<bool> {
-    while (true) {
-      // Waits first: what arrived has just been handled, so reading now would mostly find nothing,
-      // a system call per reply for no bytes.
-      if (!s.buffered()) {
-        await s.tcp.readable();
-      }
-      const n = s.tryRead(this.bytes, this.end as number, this.bytes.length as number);
-      if (n == null) {
-        return false;
-      }
-      if (n > 0) {
-        this.end += n as i64;
-        return true;
-      }
-    }
   }
 
   /** What's held is gone: starts over at the front, and lets a large buffer go. */

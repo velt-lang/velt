@@ -17,17 +17,59 @@ export struct PgStream {
   tcp: TcpStream;
   tls: shared<Mutex<TlsStream>> | null;
 
+  // Each operation tests `tls` in place and leaves the TLS work to a method of its own, so a plain
+  // connection's call is the socket's call and nothing more: no copy of the field, small enough to
+  // inline.
+
   /** Whether a `tryRead` may find bytes that waiting on `tcp` wouldn't announce. */
   buffered(): bool {
-    const t = this.tls;
-    return t != null && t.with((s) => s.hasBuffered());
+    return this.tls != null && this.tlsBuffered();
   }
 
   /** `TcpStream.tryRead`, of the plain bytes. */
   tryRead(buf: u8[], start: number, end: number): number | null {
+    if (this.tls == null) {
+      return this.tcp.tryRead(buf, start, end);
+    }
+    return this.tlsRead(buf, start, end);
+  }
+
+  /** `TcpStream.writeBytesLater`: the bytes left to send. */
+  writeBytesLater(data: u8[], start: number, end: number): i64 {
+    if (this.tls == null) {
+      return this.tcp.writeBytesLater(data, start, end);
+    }
+    return this.tlsWriteLater(data, start, end);
+  }
+
+  /** Resolves once the bytes are written. */
+  async writeBytes(data: u8[], start: number, end: number): Promise<void> {
+    if (this.tls == null) {
+      await this.tcp.writeBytes(data, start, end);
+      return;
+    }
+    this.tlsWriteLater(data, start, end);
+    await this.tcp.drained();
+  }
+
+  /** Writes a last small message if the socket takes it now; nothing fails. */
+  tryWrite(data: u8[], start: number, end: number) {
+    if (this.tls == null) {
+      this.tcp.tryWrite(data, start, end);
+      return;
+    }
+    this.tlsTryWrite(data, start, end);
+  }
+
+  private tlsBuffered(): bool {
+    const t = this.tls;
+    return t != null && t.with((s) => s.hasBuffered());
+  }
+
+  private tlsRead(buf: u8[], start: number, end: number): number | null {
     const t = this.tls;
     if (t == null) {
-      return this.tcp.tryRead(buf, start, end);
+      return 0;
     }
     const n = t.with((s): number | null | Error => {
       try {
@@ -42,11 +84,10 @@ export struct PgStream {
     return n;
   }
 
-  /** `TcpStream.writeBytesLater`: the bytes left to send. */
-  writeBytesLater(data: u8[], start: number, end: number): i64 {
+  private tlsWriteLater(data: u8[], start: number, end: number): i64 {
     const t = this.tls;
     if (t == null) {
-      return this.tcp.writeBytesLater(data, start, end);
+      return 0;
     }
     const left = t.with((s): i64 | Error => {
       try {
@@ -61,21 +102,9 @@ export struct PgStream {
     return left;
   }
 
-  /** Resolves once the bytes are written. */
-  async writeBytes(data: u8[], start: number, end: number): Promise<void> {
-    if (this.tls == null) {
-      await this.tcp.writeBytes(data, start, end);
-      return;
-    }
-    this.writeBytesLater(data, start, end);
-    await this.tcp.drained();
-  }
-
-  /** Writes a last small message if the socket takes it now; nothing fails. */
-  tryWrite(data: u8[], start: number, end: number) {
+  private tlsTryWrite(data: u8[], start: number, end: number) {
     const t = this.tls;
     if (t == null) {
-      this.tcp.tryWrite(data, start, end);
       return;
     }
     t.with((s) => {

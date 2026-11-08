@@ -21,21 +21,18 @@ import { copyFail, Out } from "./frontend";
 import { Input } from "./input";
 
 /**
- * Reads until the reply is whole (`done`), or `broken`, or at the start of a COPY when asked to stop
- * there; false if the stream ended first. A failed read throws.
+ * Takes the whole messages that have arrived, after making room for more (`Input.readSome`): true
+ * when the reply is whole (`done`), or `broken`, or at the start of a COPY when asked to stop there.
  */
-export async function readReply(input: Input): Promise<bool> {
-  const buf = input.buffer;
-  while (!scanned(input)) {
-    const shift = buf.makeRoom();
-    if (shift != 0) {
-      shifted(input, shift);
-    }
-    if (!(await buf.fill(input.stream))) {
-      return false;
-    }
+export function scanArrived(input: Input): bool {
+  if (scanned(input)) {
+    return true;
   }
-  return true;
+  const shift = input.buffer.makeRoom();
+  if (shift != 0) {
+    shifted(input, shift);
+  }
+  return false;
 }
 
 function shifted(input: Input, by: i64) {

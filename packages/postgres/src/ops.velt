@@ -12,19 +12,11 @@ import { NEEDS_JSON, NOT_PREPARED, SENT } from "./builder";
 import { Conn } from "./line";
 import { Sent } from "./sent";
 
-// Sends `sql` with `params`, preparing it first if it must be, and reads the whole reply.
-async function send<P>(
-  conn: Conn,
-  generation: i64,
-  sql: string,
-  params: P,
-  rows: bool,
-): Promise<Input> throws PgError {
-  const s = conn.with((l) => l.run<P>(generation, sql, params, null, rows));
-  if (s.status == SENT) {
-    return await replyTo(conn, s, sql);
-  }
-  return await sendSlowly<P>(conn, generation, sql, params, rows, s);
+// Puts one execution of `sql` with `params` on its way. What it returns says whether it went
+// (`SENT`: `replyTo` reads the reply) or must go by `sendSlowly`. The callers await one or the other
+// themselves, so the usual query has no frame of its own here.
+function start<P>(conn: Conn, generation: i64, sql: string, params: P, rows: bool): Sent {
+  return conn.with((l) => l.run<P>(generation, sql, params, null, rows));
 }
 
 // A statement not prepared yet, or values only their JSON text can carry.
@@ -122,7 +114,11 @@ export async function queryAll<T, P>(
   sql: string,
   params: P,
 ): Promise<T[]> throws PgError {
-  const input = await send<P>(conn, generation, sql, params, true);
+  const s = start<P>(conn, generation, sql, params, true);
+  const input =
+    s.status == SENT
+      ? await replyTo(conn, s, sql)
+      : await sendSlowly<P>(conn, generation, sql, params, true, s);
   return allRows<T>(conn, input);
 }
 
@@ -132,7 +128,11 @@ export async function queryFirst<T, P>(
   sql: string,
   params: P,
 ): Promise<T | null> throws PgError {
-  const input = await send<P>(conn, generation, sql, params, true);
+  const s = start<P>(conn, generation, sql, params, true);
+  const input =
+    s.status == SENT
+      ? await replyTo(conn, s, sql)
+      : await sendSlowly<P>(conn, generation, sql, params, true, s);
   return firstRow<T>(conn, input);
 }
 
@@ -160,7 +160,11 @@ export async function executeOne<P>(
   sql: string,
   params: P,
 ): Promise<i64> throws PgError {
-  const input = await send<P>(conn, generation, sql, params, false);
+  const s = start<P>(conn, generation, sql, params, false);
+  const input =
+    s.status == SENT
+      ? await replyTo(conn, s, sql)
+      : await sendSlowly<P>(conn, generation, sql, params, false, s);
   const n = input.affected();
   finish(conn, input);
   return n;

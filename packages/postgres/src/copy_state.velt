@@ -340,7 +340,7 @@ export async function copyRead(h: CopyHandle): Promise<u8[]> throws PgError {
     buf.makeRoom();
     let more = false;
     try {
-      more = await buf.fill(input.stream);
+      more = await input.fill();
     } catch (e) {
       h.with((c) => c.release());
       throw lose(

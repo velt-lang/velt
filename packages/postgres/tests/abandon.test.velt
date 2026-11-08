@@ -57,7 +57,7 @@ export async function test_a_reader_that_goes_away_mid_reply_keeps_what_it_read(
 
 async function holdPartly(conn: Conn, s: Sent) {
   const input: Input = await takeTurn(conn, s);
-  await input.buffer.fill(input.stream);
+  await input.fill();
   assert(input.buffer.end > 0, "something arrived");
 }
 

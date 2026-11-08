@@ -86,7 +86,7 @@ export async function test_tasks_share_a_connection() {
 
 async function holdPartly(conn: Conn, s: Sent) {
   const input: Input = await takeTurn(conn, s);
-  await input.buffer.fill(input.stream);
+  await input.fill();
   assert(input.buffer.end > 0, "something arrived");
 }
 
@@ -98,7 +98,9 @@ export async function test_a_reader_that_goes_away_mid_reply_leaves_the_stream_i
     return;
   }
   const conn = await openConnection(parseConfig(url));
-  const s = conn.with((l) => l.sendSimple(1, "SELECT repeat('x', 100000) FROM generate_series(1, 4)"));
+  const s = conn.with(
+    (l) => l.sendSimple(1, "SELECT repeat('x', 100000) FROM generate_series(1, 4)"),
+  );
   await holdPartly(conn, s);
   assertEq(await simple(conn, 1, "SELECT 1"), 1);
   conn.with((l) => l.shutDownWhenIdle());

@@ -92,6 +92,43 @@ export class Input implements RowSource {
 
   // --- Reading ---
 
+  /** Whether a read must wait for the socket first: nothing is held that it could find now. */
+  mustWait(): bool {
+    return !this.stream.buffered();
+  }
+
+  /**
+   * Reads what has arrived into the buffer, after `makeRoom`: how many bytes (0: none yet), or -1 at
+   * the end of the stream. A failed read throws.
+   */
+  readSome(): i64 {
+    const buf = this.buffer;
+    const n = this.stream.tryRead(buf.bytes, buf.end as number, buf.bytes.length as number);
+    if (n == null) {
+      return -1;
+    }
+    buf.end += n as i64;
+    return n as i64;
+  }
+
+  /**
+   * Waits for more bytes in the buffer, after `makeRoom`; false at the end of the stream, whose
+   * failure throws.
+   */
+  async fill(): Promise<bool> {
+    while (true) {
+      // Waits first: what arrived has just been handled, so reading now would mostly find nothing,
+      // a system call per reply for no bytes.
+      if (this.mustWait()) {
+        await this.stream.tcp.readable();
+      }
+      const n = this.readSome();
+      if (n != 0) {
+        return n > 0;
+      }
+    }
+  }
+
   /** After `COPY`'s data: the rest of its reply is read from here on. */
   continueReply() {
     this.scan = this.buffer.pos;

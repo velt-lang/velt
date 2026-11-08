@@ -20,7 +20,7 @@ import { Channel } from "velt/sync";
 import { errorOf, PgError } from "./errors";
 import { connectionClosed, Failure, ioFailure } from "./failure";
 import { Input } from "./input";
-import { quiet, readReply } from "./reply";
+import { quiet, scanArrived } from "./reply";
 import { FAILED } from "./builder";
 import { Conn } from "./line";
 import { Sent } from "./sent";
@@ -83,20 +83,35 @@ async function waitInLine(
   return input;
 }
 
-/** The `Input`, when `s`'s replies come next. */
-export async function takeTurn(conn: Conn, s: Sent): Promise<Input> throws PgError {
-  if (s.first) {
-    const ready = s.turn.tryReceive();
-    if (ready != null) {
-      ready.parked = false;
-      ready.begin(s.statement);
-      return ready;
-    }
+// The `Input` if `s` is first in line and it waits at home, as it does on a connection nobody else
+// is using; null if `s` must wait for it.
+function readyTurn(s: Sent): Input | null {
+  if (!s.first) {
+    return null;
   }
+  const ready = s.turn.tryReceive();
+  if (ready != null) {
+    ready.parked = false;
+    ready.begin(s.statement);
+  }
+  return ready;
+}
+
+// `takeTurn` when the `Input` isn't ready.
+async function waitTurn(conn: Conn, s: Sent): Promise<Input> throws PgError {
   const input = await waitInLine(conn, s.turn, s.first);
   input.parked = false;
   input.begin(s.statement);
   return input;
+}
+
+/** The `Input`, when `s`'s replies come next. */
+export async function takeTurn(conn: Conn, s: Sent): Promise<Input> throws PgError {
+  const ready = readyTurn(s);
+  if (ready != null) {
+    return ready;
+  }
+  return await waitTurn(conn, s);
 }
 
 /** Counts a failure against the client, for an enclosing `transaction`. */
@@ -151,8 +166,29 @@ export function park(home: Channel<Input>, input: Input) {
  * thrown here, and the `Input` is passed on. `sql` is what to forget if the statement went stale.
  */
 export async function replyTo(conn: Conn, s: Sent, sql: string): Promise<Input> throws PgError {
-  const input = await takeTurn(conn, s);
-  await readWhole(conn, input);
+  // `takeTurn` and `readWhole` without frames of their own, the turn taken at once when the `Input`
+  // is ready.
+  let input = readyTurn(s);
+  if (input == null) {
+    input = await waitTurn(conn, s);
+  }
+  let whole = true;
+  try {
+    while (!scanArrived(input)) {
+      if (input.mustWait()) {
+        await input.stream.tcp.readable();
+      }
+      if (input.readSome() < 0) {
+        whole = false;
+        break;
+      }
+    }
+  } catch (e) {
+    throw readFailed(conn, input, e);
+  }
+  if (!whole || input.broken != null) {
+    checkWhole(conn, input, whole);
+  }
   if (input.errorAt >= 0) {
     const f = input.serverError();
     if (f.code == STALE_PLAN || f.code == STALE_NAME) {
@@ -167,13 +203,35 @@ export async function replyTo(conn: Conn, s: Sent, sql: string): Promise<Input> 
 
 /** Reads until the reply is whole; if the connection ends first, that's what is thrown. */
 export async function readWhole(conn: Conn, input: Input): Promise<void> throws PgError {
-  let whole = false;
+  let whole = true;
   try {
-    whole = await readReply(input);
+    // One wait and one read per pass; a read that finds nothing yet just goes round again.
+    while (!scanArrived(input)) {
+      if (input.mustWait()) {
+        await input.stream.tcp.readable();
+      }
+      if (input.readSome() < 0) {
+        whole = false;
+        break;
+      }
+    }
   } catch (e) {
-    const why = e instanceof IoError ? ioFailure(e.code, e.message) : connectionClosed();
-    throw lose(conn, input, why);
+    throw readFailed(conn, input, e);
   }
+  if (!whole || input.broken != null) {
+    checkWhole(conn, input, whole);
+  }
+}
+
+// A read failed: the connection is gone.
+function readFailed(conn: Conn, input: Input, e: Error): PgError {
+  const why = e instanceof IoError ? ioFailure(e.code, e.message) : connectionClosed();
+  return lose(conn, input, why);
+}
+
+// After the reads: a reply that broke the protocol, or a stream that ended (`whole` false) before
+// the reply did, ends the connection.
+function checkWhole(conn: Conn, input: Input, whole: bool) {
   const broken = input.broken;
   if (broken != null) {
     throw lose(conn, input, broken);

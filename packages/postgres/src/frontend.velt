@@ -44,12 +44,30 @@ export class Out {
 
   u8(v: i64) {
     this.room(1);
-    this.bytes[this.len] = v as u8;
-    this.len += 1;
+    this.put8(v);
   }
 
   i16(v: i64) {
     this.room(2);
+    this.put16(v);
+  }
+
+  i32(v: i64) {
+    this.room(4);
+    this.put32(v);
+  }
+
+  // The `put` writers take room `room` made for them: a message's fixed part asks for its room once.
+  // (An index past the bytes still panics, as any index does.)
+
+  /** A byte, in room made for it. */
+  put8(v: i64) {
+    this.bytes[this.len] = v as u8;
+    this.len += 1;
+  }
+
+  /** A big-endian `i16`, in room made for it. */
+  put16(v: i64) {
     const b = this.bytes;
     const at = this.len;
     b[at] = (v >> 8) as u8;
@@ -57,8 +75,8 @@ export class Out {
     this.len = at + 2;
   }
 
-  i32(v: i64) {
-    this.room(4);
+  /** A big-endian `i32`, in room made for it. */
+  put32(v: i64) {
     const b = this.bytes;
     const at = this.len;
     b[at] = (v >> 24) as u8;
