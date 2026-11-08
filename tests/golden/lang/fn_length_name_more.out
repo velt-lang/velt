@@ -34,3 +34,9 @@ max 2
   [AsyncFunction (anonymous)],
   [Function: addDefault]
 ]
+gen 1 genPlain 1 agen
+[
+  [GeneratorFunction: gen],
+  [GeneratorFunction: genPlain],
+  [AsyncGeneratorFunction: agen]
+]

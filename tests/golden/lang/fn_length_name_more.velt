@@ -101,3 +101,17 @@ async function* stream(): AsyncGenerator<number> {}
 const asyncArrow = async () => 1;
 const kinds: any[] = [load, steps, stream, asyncArrow, async () => 2, addDefault];
 console.log(kinds);
+
+// Generator function expressions: their own name, else the one of where they stand.
+const genNamed = function* gen(a: number): Generator<number> {
+  yield a;
+};
+const genPlain = function* (a: number, b = 1): Generator<number> {
+  yield a + b;
+};
+const genAsync = async function* agen(): AsyncGenerator<number> {
+  yield 1;
+};
+console.log(genNamed.name, genNamed.length, genPlain.name, genPlain.length, genAsync.name);
+const genHeld: any[] = [genNamed, genPlain, genAsync];
+console.log(genHeld);

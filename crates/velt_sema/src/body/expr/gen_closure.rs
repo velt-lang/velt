@@ -33,6 +33,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        self.note_fn_expr_shape(d, span);
         let sig = &d.sig;
         if let (Some(t), false) = (&sig.this_param, sig.is_generator) {
             let this_ty = self.resolve(t);

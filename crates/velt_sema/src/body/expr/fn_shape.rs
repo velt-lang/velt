@@ -208,6 +208,28 @@ impl FnCx<'_, '_> {
         self.cx.fn_shapes.entry(span).or_insert(shape);
     }
 
+    /// Notes what the function expression `d` at `span` (a generator, or one with a `this`
+    /// parameter) says of itself: its own name, else the one of where it stands.
+    pub(super) fn note_fn_expr_shape(&mut self, d: &ast::FnDecl, span: Span) {
+        if self.cx.fn_shapes.contains_key(&span) {
+            return;
+        }
+        let name = match d.sig.name.name.as_str() {
+            "" => self.cx.modules[self.module]
+                .ast
+                .fn_name(span)
+                .map(str::to_string),
+            own => Some(own.to_string()),
+        };
+        let (length, wraps) = (decl_length(&d.sig.params), None);
+        let shape = hir::FnShape {
+            name,
+            length,
+            wraps,
+        };
+        self.cx.fn_shapes.insert(span, shape);
+    }
+
     /// `prop` of `obj`, a value with no such field: `f.length` or `f.name` of a function value
     /// (read-only, as a write reports), else the error.
     pub(super) fn fn_own_member(
