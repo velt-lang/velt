@@ -21,7 +21,7 @@ use crate::driver::BuildOptions;
 
 /// `VELT_STD_OBJECT_FILL`: compile misses with LLVM and store them (`velt cache warm`), where
 /// clang is available.
-fn fill() -> bool {
+pub(super) fn fill() -> bool {
     std::env::var_os("VELT_STD_OBJECT_FILL").is_some() && velt_codegen_llvm::find_clang().is_some()
 }
 
@@ -82,7 +82,12 @@ pub(in crate::driver) fn serve(
     let misses = missing.len();
     let mut compiled = 0;
     if fill {
-        let stored = compile_missing(program, &names, cg, cache, missing);
+        let optimized = velt_codegen_cl::CodegenOptions {
+            target: cg.target.clone(),
+            optimize: true,
+            cpu: None,
+        };
+        let stored = compile_missing(program, &names, &optimized, cache, missing);
         compiled = stored.len();
         found.extend(stored);
     }
@@ -111,24 +116,19 @@ pub(in crate::driver) fn serve(
     objects
 }
 
-/// Compile `missing` on their own and store them: where each stored one is. One that can't be
-/// compiled alone stays in the program.
-fn compile_missing(
+/// Compile `missing` on their own for `cg` and store them: where each stored one is. One that
+/// can't be compiled alone stays in the program.
+pub(super) fn compile_missing(
     program: &vir::Program,
     names: &statics::Names,
     cg: &velt_codegen_cl::CodegenOptions,
     cache: &Cache,
     missing: Vec<(usize, Key)>,
 ) -> Vec<(usize, PathBuf)> {
-    let optimized = velt_codegen_cl::CodegenOptions {
-        target: cg.target.clone(),
-        optimize: true,
-        cpu: None,
-    };
     let programs = (missing.iter())
         .map(|&(i, _)| compile::program_of(program, i, names))
         .collect();
-    let objects = compile::each(programs, &optimized);
+    let objects = compile::each(programs, cg);
     (missing.into_iter().zip(objects))
         .filter_map(|((i, key), object)| {
             let path = compile::store(cache, &key, &object.ok()?)?;

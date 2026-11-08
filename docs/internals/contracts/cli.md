@@ -426,7 +426,7 @@ break makes a stamp that never matches). The objects it names
   when that is over an hour old. `-v` appends
   `(<n> of <m> functions|codegen units from the build cache)` to the codegen line, and a `stamp`
   stage, with `(unchanged: nothing to compile)` when it matched.
-- Std cache (additive, #1728 step 3; off by default). Release executables (`--emit exe`) built by
+- Std cache (additive, #1728 step 3; for all it serves, off by default). Release executables (`--emit exe`) built by
   LLVM without debug info (`-g`), with `VELT_STD_OBJECT=1`,
   take std functions out of the program: each std function that is not small (40 statements),
   not a `$dup` rename, reaches only statics with relocations or written (named by it or by a
@@ -475,8 +475,22 @@ break makes a stamp that never matches). The objects it names
   (at `Speed`, for the default CPU) and stored, and one that fails stays in the program.
   `VELT_STD_OBJECT_STATS=1` ends with `velt: std cache: <n> found, <m> compiled, <k> left in the
   program`. Marked `inline()` counts as small in the release path too: such a function stays in
-  the program and goes into its callers' objects. The JIT host and generator hosts never use the
+  the program and goes into its callers' objects; marked `noInline()` is never small, nor
+  compiled into another function's object. The JIT host and generator hosts never use the
   cache. The stamp's `outside` line is worked out before functions become declarations.
+- Std cache in release builds by default (additive, #2405; `VELT_STD_OBJECT=0` turns it off,
+  `=1` is the path above). Release executables as above, without `VELT_STD_OBJECT`, look up the
+  std functions marked `noInline()` (`vir::Inline::Never`) that the path above would serve, with
+  its keys (the program's CPU, clang), when the cache has held any `stdfn` entry and the program
+  has such a function; the key's last flag says release (a debug build's says debug, so neither
+  serves the other). A found entry is placed and makes the function an `Import` declaration
+  before optimization; a miss stays in the program, and no clang starts for it, except with
+  `VELT_STD_OBJECT_FILL` set and clang found (misses compiled alone for the program's CPU, at
+  `Speed`, and stored). After optimization the objects of the functions still declared, closed
+  over what those objects call, are linked; the others are removed from `<object stem>.std/`.
+  `VELT_STD_OBJECT_STATS=1` prints the reasons (`inlinable` for the functions not marked), then
+  `velt: std cache: <n> found, <m> compiled, <k> left in the program` and `velt: std cache: <n> no
+  longer called`.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
   A first argument `+<toolchain>` is removed and selects that toolchain (reason `+<toolchain>`);
@@ -653,7 +667,8 @@ break makes a stamp that never matches). The objects it names
 - `cache warm [--background]` (additive, #1612): with the build cache on, builds each
   `*.velt` of the warm-up directory (`$VELT_SHARE/warm`, else `share/velt/warm` beside the std
   root's directory: `<prefix>/share/velt/warm`, or the checkout's) with a child `velt build
-  <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, `VELT_STD_OBJECT_FILL=1`, no `VELT_CPU`), once with `--cpu native` and once without, then
+  <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, `VELT_STD_OBJECT_FILL=1`, no `VELT_CPU`), once with `--cpu native` and once without, and
+  with clang found the same again with `--release` (no `VELT_STD_OBJECT`), then
   writes the marker `<cache>/warm/<hex>` (BLAKE3 of the version line and the executable's size
   and time; `<hex>-objects` with clang found, whose builds store objects) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
   present it prints that the cache is warm and does nothing; one run per marker at a time

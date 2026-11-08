@@ -60,7 +60,8 @@ world and a program, and adopting the world's would box `f64[]` and `u8[]` in ev
 Cached one by one, keyed by their code, std functions serve 82-89% of it, and what a program links
 is exactly what it would have compiled (measurements on #1728). So step 3 is a cache of std
 functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds behind
-`VELT_STD_OBJECT=1` (`crates/veltc/src/driver/std_cache/`):
+`VELT_STD_OBJECT=1` (`crates/veltc/src/driver/std_cache/`; by default those marked `noInline()`,
+below):
 
 - Std's code includes what std's generators write for a program (`<generated>/std/…` in the
   source map: `JSON.parse<T>`'s reader of `T`). It is served like a generic instance: an
@@ -98,6 +99,34 @@ IR from `--emit` would name std functions it does not define, and the cached obj
 line info. The key also covers clang's optimization flag and, for every function a cached
 object calls without compiling it, the signature and parameter attributes it is declared with,
 which are whole-program facts the caller is optimized against.
+
+### Release builds: the functions std marks `noInline()`
+
+A release build reads the cache by default for the std functions marked `noInline()`
+(`std_cache/no_inline.rs`, the owner's decision on #2405 and #2404). The optimizer never inlines
+such a function into a caller, so its object holds the code the program would have compiled for
+it, and the program's clang no longer compiles it: the HTML escaper's `escapeFrom` and
+`escapeEntities` cost every release build that used them +178M instructions of clang. Every
+other std function stays in the program, where it can be inlined and specialized, so nothing
+changes for them. Such a build:
+
+- looks in the cache only when it has held a `stdfn` entry and the program has a std function
+  marked `noInline()`; else it does nothing a build without the cache would not do.
+- serves those as `VELT_STD_OBJECT=1` serves anything (the same rules: not reaching statics with
+  identity that can't be named, no calls through a function pointer, a `$dup` stays), under the
+  same keys: the CPU the program is built for (`--cpu`, `-march`), clang, and the code a release
+  build lowered. A key says whether a release or a debug build links it, so a debug build's object
+  never serves a release build, nor the other way round.
+- links what it finds, placed before the function comes out, as a debug build does: a miss stays
+  in the program, and no clang starts for it. After optimization it links the objects of what the
+  program still calls, closed over what those objects call, and removes the others from their
+  place. `velt cache warm` builds its programs in release too, for the same two CPUs, which stores
+  them (`VELT_STD_OBJECT_FILL`).
+- `noInline()` is never inlined into an object either: a small function marked so is served
+  itself, not compiled into its callers.
+
+`VELT_STD_OBJECT=0` turns it off, and `VELT_STD_OBJECT=1` serves every function the cache serves
+(above).
 
 ### Debug builds
 

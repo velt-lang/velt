@@ -338,3 +338,34 @@ fn a_location_is_a_path_a_line_and_a_column() {
     assert_eq!(path("no location"), None);
     assert_eq!(site_path(&[0xff, b':', b':']), None);
 }
+
+/// A release build's default serves only what std marks `noInline()`, at any size, with the small
+/// functions it calls compiled into it; a large function without the marker, or one marked
+/// `inline()`, stays where the optimizer can inline it. A `noInline()` function is never
+/// inlined, so it is in no other function's inlinable set.
+#[test]
+fn by_default_a_release_build_serves_only_what_is_never_inlined() {
+    let mut never_large = func("neverLarge", 60, &[2, 4], None);
+    never_large.inline = Inline::Never;
+    let mut never_small = func("neverSmall", 2, &[], None);
+    never_small.inline = Inline::Never;
+    let mut always = func("always", 60, &[], None);
+    always.inline = Inline::Always;
+    let p = program(
+        vec![
+            func("large", 60, &[0], None),
+            never_large,
+            func("small", 2, &[], None),
+            always,
+            never_small,
+        ],
+        vec![],
+    );
+    assert!(has_no_inline(&p));
+    assert_eq!(candidates(&p, &names(&p), Rule::NoInline), [1, 4]);
+    assert_eq!(cands(&p), [0, 1, 4], "every large function, without the default");
+    assert_eq!(inlinable(&p, 1), [1, 2], "never itself, nor what is marked so");
+    let by = reasons(&p, &names(&p), Rule::NoInline);
+    assert_eq!(by.get("inlinable"), Some(&(62 + 3 + 61)));
+    assert!(!has_no_inline(&program(vec![func("large", 60, &[], None)], vec![])));
+}

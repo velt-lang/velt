@@ -5,6 +5,9 @@
 //! - in a release build, small ones ([`SMALL`]) and those std marks `inline()`, which stay where
 //!   callers can inline them; a debug build inlines neither, so it links them too, and keeps only
 //!   the helpers its optimizer level inlines ([`Rule::Debug`]);
+//! - in a release build by default ([`Rule::NoInline`]), every function std does not mark
+//!   `noInline()`: the optimizer may inline or specialize any other into its callers, so only a
+//!   function it never inlines runs the same from an object;
 //! - renamed duplicates (`$dup`), which are not the same function in every program;
 //! - those whose inlinable set ([`inlinable`]) reaches a static with identity (relocations, or
 //!   written: vtables, type descriptors, module state) that can't be named: such statics are
@@ -34,6 +37,10 @@ pub(super) const SMALL: usize = 40;
 pub(super) enum Rule<'a> {
     /// Those its optimizer may inline ([`inlines`]).
     Release,
+    /// A release build's default: as [`Rule::Release`], and every function std does not mark
+    /// `noInline()` (`Inline::Never`). Those are never inlined into a caller, so serving their
+    /// objects changes no caller's code, and their callers' clang no longer compiles them.
+    NoInline,
     /// A debug build: those `velt_opt::debug_inlined` marks. Calls of the others stay calls in
     /// its code, so what serves them can only make it faster. `thread_data`: the program's
     /// thread-local values are data that an object can share
@@ -47,9 +54,17 @@ pub(super) enum Rule<'a> {
 }
 
 /// Whether the optimizer inlines `f` into a function compiled with it: it is small, or std marks
-/// it `inline()`. Its body goes into what calls it, so it is in their keys.
+/// it `inline()`, and std does not mark it `noInline()`. Its body goes into what calls it, so it
+/// is in their keys.
 pub(super) fn inlines(f: &vir::Function) -> bool {
-    size(f) < SMALL || f.inline == Inline::Always
+    f.inline != Inline::Never && (size(f) < SMALL || f.inline == Inline::Always)
+}
+
+impl Rule<'_> {
+    /// A release build's rule: the optimizer inlines and specializes across functions.
+    fn release(self) -> bool {
+        matches!(self, Rule::Release | Rule::NoInline)
+    }
 }
 
 /// `f`'s statements, terminators included.
@@ -69,6 +84,17 @@ fn is_std(f: &vir::Function) -> bool {
     velt_common::std_modules::is_std(&name) || name.starts_with(GENERATED_STD)
 }
 
+/// Whether `program` has a std function marked `noInline()` that [`Rule::NoInline`] may serve,
+/// by the marker alone: without one, a release build looks no further.
+pub(super) fn has_no_inline(program: &vir::Program) -> bool {
+    (program.funcs.iter()).any(|f| {
+        f.inline == Inline::Never
+            && f.linkage == Linkage::Internal
+            && !f.blocks.is_empty()
+            && is_std(f)
+    })
+}
+
 /// The functions of `program` the cache serves (`names`: its statics' names).
 pub(super) fn candidates(program: &vir::Program, names: &Names, rule: Rule) -> Vec<usize> {
     (0..program.funcs.len())
@@ -83,7 +109,8 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
         return Some("not internal");
     }
     match rule {
-        Rule::Release if inlines(f) => return Some("small"),
+        Rule::NoInline if f.inline != Inline::Never => return Some("inlinable"),
+        Rule::Release | Rule::NoInline if inlines(f) => return Some("small"),
         Rule::Debug { helpers, .. } if helpers.get(i) == Some(&true) => return Some("small"),
         _ => {}
     }
@@ -110,7 +137,7 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     if !statics::nameable(names, &reached) {
         return Some("statics with identity");
     }
-    if matches!(rule, Rule::Release)
+    if rule.release()
         && set
             .iter()
             .any(|&j| calls_through_pointer(&program.funcs[j]))

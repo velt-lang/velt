@@ -1,7 +1,9 @@
 //! The std cache (#1728 step 3): std's functions compiled once per variant, stored in the build
 //! cache, and linked into every program that compiles the same code (design/std-object.md "The
-//! std cache"). Release builds use it behind `VELT_STD_OBJECT=1`, through [`split`] and [`link`];
-//! debug builds by default, through [`serve::serve`], where a miss stays in the program.
+//! std cache"). Release builds use it by default for the functions std marks `noInline()`,
+//! through [`no_inline::serve`], and for all it serves behind `VELT_STD_OBJECT=1`, through
+//! [`split`] and [`link`]; debug builds by default, through [`serve::serve`]. Outside
+//! `VELT_STD_OBJECT=1`, a miss stays in the program.
 //!
 //! - Std's code is std's own and what std's generators wrote for the program (`select::is_std`).
 //! - After lowering, every std function that may be served (`select`) gets a key (`key`): its
@@ -22,8 +24,10 @@
 
 mod compile;
 mod key;
+mod no_inline;
 mod select;
-pub(super) mod serve;
+mod serve;
+pub(super) mod stage;
 mod statics;
 mod turn;
 
@@ -55,8 +59,10 @@ fn min_misses() -> usize {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Use {
     Off,
-    /// [`split`] and [`link`].
+    /// [`split`] and [`link`] (`VELT_STD_OBJECT=1`).
     Release,
+    /// A release build's default, [`no_inline::serve`]: only what std marks `noInline()`.
+    NoInline,
     /// [`serve::serve`].
     Debug,
 }
@@ -66,8 +72,9 @@ pub(super) enum Use {
 /// `--host` build, whose directory holds what the build writes and nothing else
 /// (`commands::host`).
 ///
-/// Release builds: `VELT_STD_OBJECT=1`, by LLVM without debug info (the cached objects carry no
-/// line info, and the cache holds LLVM's code). Debug builds: unless `VELT_STD_OBJECT=0`, with
+/// Release builds: by LLVM without debug info (the cached objects carry no line info, and the
+/// cache holds LLVM's code); with `VELT_STD_OBJECT=1` every function the cache serves, unless
+/// `VELT_STD_OBJECT=0` those std marks `noInline()`. Debug builds: unless `VELT_STD_OBJECT=0`, with
 /// either backend and with `-g`: stepping stays in the program's own code, as the objects have no
 /// lines to step through. WebAssembly has no objects to find: its programs compile everything.
 pub(super) fn wanted(opts: &BuildOptions) -> Use {
@@ -78,9 +85,13 @@ pub(super) fn wanted(opts: &BuildOptions) -> Use {
     if opts.release {
         let llvm = crate::backend::Backend::resolve(opts.backend, opts.release).0
             == crate::backend::Backend::Llvm;
-        return match !opts.debug_info && llvm && setting.is_ok_and(|v| v == "1") {
-            true => Use::Release,
-            false => Use::Off,
+        if opts.debug_info || !llvm {
+            return Use::Off;
+        }
+        return match setting.as_deref() {
+            Ok("1") => Use::Release,
+            Ok("0") => Use::Off,
+            _ => Use::NoInline,
         };
     }
     match setting.is_ok_and(|v| v == "0") || velt_codegen_llvm::is_wasm(&opts.target()) {
@@ -210,17 +221,7 @@ pub(super) fn split(
     let inputs = key::Inputs::of(opts, cg);
     let looked_up: Vec<(usize, Key, Option<PathBuf>)> = (candidates.iter())
         .map(|&i| {
-            let set = select::inlinable(program, i);
-            let declared = select::declared(program, &set);
-            let code = (set
-                .iter()
-                .map(|&j| key::Code::of(&program.funcs[j], &canon)))
-            .chain(
-                declared
-                    .iter()
-                    .map(|&j| key::Code::declared(&program.funcs[j])),
-            );
-            let key = inputs.key(code);
+            let key = release_key(program, &canon, &inputs, i);
             (i, key, cache.path_of(KIND, &key))
         })
         .collect();
@@ -269,6 +270,19 @@ pub(super) fn split(
     }
     take_out(program, &taken);
     plan
+}
+
+/// A release build's key of std function `i`: its code and what it may inline
+/// (`select::inlinable`), then what its object declares (`select::declared`).
+fn release_key(program: &vir::Program, canon: &Canon, inputs: &key::Inputs, i: usize) -> Key {
+    let set = select::inlinable(program, i);
+    let declared = select::declared(program, &set);
+    let code = (set.iter())
+        .map(|&j| key::Code::of(&program.funcs[j], canon))
+        .chain(
+            (declared.iter()).map(|&j| key::Code::declared(&program.funcs[j])),
+        );
+    inputs.key(code)
 }
 
 /// After `program` is optimized: link what it still calls of what [`split`] took out, compiling

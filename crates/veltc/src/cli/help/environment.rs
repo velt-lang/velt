@@ -45,13 +45,13 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
     ),
     (
         "VELT_STD_OBJECT",
-        "`0`: debug builds compile all of std; `1`: release builds link std functions compiled \
-         once in the build cache (experimental)",
+        "`0`: builds compile all of std; `1`: release builds link every std function compiled \
+         once in the build cache, not only those marked `noInline` (experimental)",
     ),
     (
         "VELT_STD_OBJECT_FILL",
-        "set: a debug build compiles the std functions it does not find with clang and stores \
-         them (`velt cache warm` sets it)",
+        "set: a build compiles the std functions it does not find with clang and stores them \
+         (`velt cache warm` sets it)",
     ),
     (
         "VELT_BUILD_STAMP",

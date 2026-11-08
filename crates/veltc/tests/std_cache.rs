@@ -1,6 +1,7 @@
 //! The std cache (#1728): std functions compiled once per key, stored in the build cache, linked
-//! into every program that compiles the same code: release builds with `VELT_STD_OBJECT=1`, debug
-//! builds by default, where only `velt cache warm` stores objects.
+//! into every program that compiles the same code: release builds with `VELT_STD_OBJECT=1` (by
+//! default those marked `noInline()`), debug builds by default, where only `velt cache warm`
+//! stores objects.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -59,6 +60,20 @@ fn counts(o: &Output) -> (usize, usize) {
         .filter_map(|w| w.parse().ok())
         .collect();
     (n[0], n[1])
+}
+
+/// The functions a build without objects for them left in the program, from the stats line.
+fn left(o: &Output) -> usize {
+    let err = text(&o.stderr);
+    let line = (err.lines())
+        .find(|l| l.contains("left in the program"))
+        .unwrap_or_else(|| panic!("no stats in
+{err}"));
+    let n: Vec<usize> = line
+        .split([' ', ','])
+        .filter_map(|w| w.parse().ok())
+        .collect();
+    n[2]
 }
 
 /// The cached objects (`stdfn` file entries, not their sidecars).
@@ -766,4 +781,100 @@ function main() {
     let err = text(&o.stderr);
     assert!(!o.status.success(), "built: {err}");
     assert!(err.contains("cannot reach the file system"), "{err}");
+}
+
+/// A program reaching std functions marked `noInline()`: number formatting (`pushF64`,
+/// `f64Text`, `fixedText`), beside URL code, which has none.
+const NO_INLINE_PROGRAM: &str = "function main() {
+  const x = process.argv.length * 1.5;
+  console.log(`x=${x}`, x / 7, (x * 1000).toFixed(3));
+  const u = new URL(\"https://example.com:8080/a/b/../c?q=1\");
+  console.log(u.href, u.port);
+}
+";
+const NO_INLINE_OUTPUT: &str =
+    "x=1.5 0.21428571428571427 1500.000\nhttps://example.com:8080/a/c?q=1 8080\n";
+
+/// A release build without `VELT_STD_OBJECT` (the default), in `dir`, to `out`.
+fn release_default(
+    dir: &Path,
+    file: &str,
+    out: &str,
+    cache: &Path,
+    extra: &[(&str, &str)],
+) -> Output {
+    let mut cmd = debug_command(dir, file, out, cache);
+    cmd.arg("--release");
+    for (k, v) in extra {
+        cmd.env(k, v);
+    }
+    let o = cmd.output().unwrap();
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    o
+}
+
+/// By default a release build links the objects of the `noInline()` std functions that the
+/// warm-up stored, and prints what a build compiling all of std prints. Only those: a build
+/// serving everything (`VELT_STD_OBJECT=1`) finds the same objects and compiles the URL code's,
+/// which the default left in the program.
+#[test]
+fn a_release_build_links_the_no_inline_functions_stored() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), NO_INLINE_PROGRAM).unwrap();
+    let fill = [("VELT_STD_OBJECT_FILL", "1")];
+    let cold = release_default(dir, "a.velt", "cold", &cache, &[]);
+    assert!(!text(&cold.stderr).contains("found,"), "nothing to look for");
+    assert!(entries(&cache).is_empty(), "a release build stores nothing");
+    assert_eq!(run(dir, "cold"), NO_INLINE_OUTPUT);
+    let filled = release_default(dir, "a.velt", "filled", &cache, &fill);
+    let (_, compiled) = counts(&filled);
+    assert!(compiled > 0, "{}", text(&filled.stderr));
+    assert_eq!(run(dir, "filled"), NO_INLINE_OUTPUT);
+    let served = release_default(dir, "a.velt", "served", &cache, &[]);
+    assert_eq!(counts(&served), (compiled, 0), "{}", text(&served.stderr));
+    let err = text(&served.stderr);
+    assert!(err.contains("std cache: links"), "{err}");
+    assert_eq!(run(dir, "served"), NO_INLINE_OUTPUT);
+    let off = release_default(dir, "a.velt", "off", &cache, &[("VELT_STD_OBJECT", "0")]);
+    assert!(!text(&off.stderr).contains("found,"), "the escape hatch");
+    assert_eq!(run(dir, "off"), NO_INLINE_OUTPUT);
+    let all = build(
+        dir,
+        "a.velt",
+        "all",
+        &cache,
+        &[("VELT_STD_OBJECT_MIN_MISSES", "1")],
+    );
+    let (found, more) = counts(&all);
+    assert!(found > 0 && more > 0, "{}", text(&all.stderr));
+    assert_eq!(run(dir, "all"), NO_INLINE_OUTPUT);
+}
+
+/// A miss is no failure: what the cache lacks stays in the program, and the build prints the same.
+/// Objects a debug build links are no release build's, nor the other way round.
+#[test]
+fn a_release_build_compiles_its_misses_and_never_links_a_debug_object() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), NO_INLINE_PROGRAM).unwrap();
+    let debug = fill(dir, "a.velt", &cache);
+    let release = release_default(dir, "a.velt", "r", &cache, &[]);
+    let (found, compiled) = counts(&release);
+    assert_eq!((found, compiled), (0, 0), "{}", text(&release.stderr));
+    assert!(left(&release) > 0, "{}", text(&release.stderr));
+    assert_eq!(run(dir, "r"), NO_INLINE_OUTPUT);
+    let stored = entries(&cache).len();
+    release_default(dir, "a.velt", "f", &cache, &[("VELT_STD_OBJECT_FILL", "1")]);
+    assert!(entries(&cache).len() > stored);
+    let again = debug_build(dir, "a.velt", "d", &cache, &[]);
+    assert_eq!(counts(&again), (debug, 0), "{}", text(&again.stderr));
+    for e in entries(&cache) {
+        std::fs::write(e, b"damaged").unwrap();
+    }
+    let damaged = release_default(dir, "a.velt", "x", &cache, &[]);
+    assert_eq!(counts(&damaged), (0, 0), "{}", text(&damaged.stderr));
+    assert_eq!(run(dir, "x"), NO_INLINE_OUTPUT);
 }

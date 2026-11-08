@@ -7,7 +7,9 @@
 //! target's default CPU (what `velt build` builds for). The build cache then holds std's
 //! functions, so a project's first build compiles little more than its own code; with clang, as
 //! objects optimized by LLVM (`VELT_STD_OBJECT_FILL`, `std_cache::serve`), so its debug builds
-//! run them too. A marker per
+//! run them too; and then each again in release, for the same two CPUs, which stores the objects
+//! of the std functions marked `noInline()` that release builds link (`std_cache::no_inline`).
+//! A marker per
 //! toolchain (`<cache>/warm/<key>`) makes later runs return at once; the toolchain installers
 //! start `velt cache warm --background` after installing a version, except in CI (`$CI` set),
 //! whose cache goes with the runner, and when `$VELT_CACHE_WARM` is `off`.
@@ -56,10 +58,15 @@ pub fn warm_command(background: bool) -> Result<(), String> {
     std::fs::create_dir_all(&out).map_err(|e| format!("cannot create `{}`: {e}", out.display()))?;
     let started = std::time::Instant::now();
     let mut failed = vec![];
-    for cpu in CPUS {
-        for program in &programs {
-            if !compile(program, cpu, &out) {
-                failed.push(program.display().to_string());
+    // Release builds need clang, without which a release build stores nothing.
+    let modes: &[bool] = if clang { &[false, true] } else { &[false] };
+    for &release in modes {
+        for cpu in CPUS {
+            for program in &programs {
+                let name = program.display().to_string();
+                if !compile(program, cpu, release, &out) && !failed.contains(&name) {
+                    failed.push(name);
+                }
             }
         }
     }
@@ -88,9 +95,10 @@ fn wanted_in_background() -> bool {
     !set("CI") && !off
 }
 
-/// Build `program` as an executable in `out` for `cpu`, by a child `velt build`, so one program
-/// that fails stops nothing else. The build stamp is off: an unchanged stamp would skip codegen.
-fn compile(program: &Path, cpu: Option<&str>, out: &Path) -> bool {
+/// Build `program` as an executable in `out` for `cpu`, in release or debug, by a child `velt
+/// build`, so one program that fails stops nothing else. The build stamp is off: an unchanged
+/// stamp would skip codegen.
+fn compile(program: &Path, cpu: Option<&str>, release: bool, out: &Path) -> bool {
     let Ok(exe) = std::env::current_exe() else {
         return false;
     };
@@ -107,6 +115,9 @@ fn compile(program: &Path, cpu: Option<&str>, out: &Path) -> bool {
         .stderr(Stdio::null());
     if let Some(cpu) = cpu {
         cmd.args(["--cpu", cpu]);
+    }
+    if release {
+        cmd.arg("--release").env_remove("VELT_STD_OBJECT");
     }
     cmd.status().is_ok_and(|s| s.success())
 }
