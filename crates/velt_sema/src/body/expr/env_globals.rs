@@ -237,12 +237,9 @@ impl FnCx<'_, '_> {
     /// or a value of `lib.dom` that Node doesn't have and whose type the prelude has
     /// (`HTMLElement`, `Node`: `DOM_VALUES`)?
     pub(crate) fn browser_global(&mut self, name: &str, span: Span) -> bool {
-        if self.is_local_name(name) {
-            return false;
-        }
         let dom = DOM_VALUES.binary_search(&name).is_ok()
             && !NODE_GLOBALS.iter().any(|(n, _)| *n == name);
-        if !dom && !ABSENT.contains(&name) {
+        if !dom && !ABSENT.contains(&name) || self.is_local_name(name) {
             return false;
         }
         match self.lookup_item(name, span) {

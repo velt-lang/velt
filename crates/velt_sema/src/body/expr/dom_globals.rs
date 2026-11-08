@@ -147,6 +147,9 @@ impl FnCx<'_, '_> {
         }
         let id = self.browser_root(target)?;
         let h = self.browser_global_read(id)?;
+        // Nothing after the throw runs, but the keys and the value are checked.
+        let keys = index_keys(target);
+        self.check_args_loose(&keys);
         self.check_args_loose(std::slice::from_ref(value));
         Some(h)
     }
@@ -225,4 +228,29 @@ impl FnCx<'_, '_> {
         }
         (t, vec![])
     }
+}
+
+/// The keys of the `[k]` steps of `target` (`g.a[k][j]`), outermost last.
+fn index_keys(target: &ast::Expr) -> Vec<ast::Expr> {
+    let mut keys = vec![];
+    let mut e = target;
+    loop {
+        match &e.kind {
+            ast::ExprKind::Paren(inner) => e = inner,
+            ast::ExprKind::Member { object, .. } => e = object,
+            ast::ExprKind::Index {
+                object,
+                index,
+                more,
+                ..
+            } => {
+                keys.extend(more.iter().rev().cloned());
+                keys.push((**index).clone());
+                e = object;
+            }
+            _ => break,
+        }
+    }
+    keys.reverse();
+    keys
 }
