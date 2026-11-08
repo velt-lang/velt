@@ -488,11 +488,9 @@ impl FnCx<'_, '_> {
             let (ast::ObjectProp::KeyValue(k, _) | ast::ObjectProp::Shorthand(k)) = p else {
                 continue;
             };
-            // A callable object's hidden function (`expr::callables`), never written.
-            if crate::symbols::is_computed_key(k)
-                || (crate::callables::is_hidden_field(&k.name) && k.span.lo == k.span.hi)
-                || (crate::typeof_generic::is_set_field(&k.name) && k.span.lo == k.span.hi)
-            {
+            // A callable object's hidden function (`expr::callables`) or an overload set's
+            // signature, never written.
+            if crate::symbols::is_computed_key(k) || crate::typeof_generic::compiler_key(k) {
                 continue;
             }
             if k.name == "__proto__" && matches!(p, ast::ObjectProp::KeyValue(..)) {

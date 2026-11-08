@@ -34,6 +34,13 @@ pub(crate) fn is_set_field(name: &str) -> bool {
         .is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Is `k` a key the compiler wrote into an object literal (an empty span): a callable
+/// object's hidden function (`crate::callables`) or an overload set's field?
+pub(crate) fn compiler_key(k: &velt_syntax::ast::Ident) -> bool {
+    let hidden = crate::callables::is_hidden_field(&k.name) || is_set_field(&k.name);
+    hidden && k.span.lo == k.span.hi
+}
+
 impl Ctx<'_> {
     /// The type `typeof f` gives function `d` when it is generic or overloaded (module docs),
     /// `None` when it is neither, or its declaration doesn't give one.
