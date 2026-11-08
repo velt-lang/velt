@@ -34,7 +34,6 @@ const KNOWN: &[(&str, Kind)] = &[
         Kind::Rounds,
     ),
     ("golden/lang/jsx_async_package_provider.velt", Kind::Rounds),
-    ("golden/lang/overloads_more.velt", Kind::Vir),
     (
         "golden/lang/promise_settled_borrowed_values.velt",
         Kind::Rounds,
