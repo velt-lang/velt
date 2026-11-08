@@ -16,87 +16,46 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// Programs that differ with and without variables, or take more rounds with them, before
-/// #2590 too (function types written without `throws`): #2602. Each with how it differs (what
-/// [`differs`] says: the first line that differs and a hash of all of them, or the rounds),
-/// which the test checks.
-const KNOWN: &[(&str, &str)] = &[
-    (
-        "golden/bugs/lower_adapted_closure_kept.velt",
-        "with variables: agg#13 callsIt state size=64 align=8 { u32@16, agg#1@24, agg#5@40, ptr@56, u64@56 }\n  without: agg#13 callsIt state size=48 align=8 { u32@8, agg#1@16, ptr@32, i64@40, u64@32 }\n  all of it: 42be0e89a1c2672c",
-    ),
-    (
-        "golden/lang/any_fn_members.velt",
-        "with variables:   let _2: agg#41 // <copy>\n  without:   let _2: agg#1\n  all of it: 8d3979df8fe21cbf",
-    ),
-    (
-        "golden/lang/ctor_value_identity.velt",
-        "with variables: agg#5  new (f64) => A } size=8 align=8 { ptr@0 }\n  without: agg#5  Ctor } size=8 align=8 { ptr@0 }\n  all of it: f8029a9fafa04fcf",
-    ),
-    (
-        "golden/lang/ctor_values.velt",
-        "with variables: agg#1 T[] size=24 align=8 { ptr@0, u64@8, u64@16 }\n  without: agg#1 Result<void, std/prelude/errors::RangeError>::Ok size=1 align=1 { u8@0 }\n  all of it: 9cfe538fccad62a3",
-    ),
+/// #2590 too (function types written without `throws`): #2602. Each with the kind of
+/// difference, which the test checks (the text of one depends on the OS).
+const KNOWN: &[(&str, Kind)] = &[
+    ("golden/bugs/lower_adapted_closure_kept.velt", Kind::Vir),
+    ("golden/lang/any_fn_members.velt", Kind::Vir),
+    ("golden/lang/ctor_value_identity.velt", Kind::Vir),
+    ("golden/lang/ctor_values.velt", Kind::Vir),
     (
         "golden/lang/generator_expression_captures.velt",
-        "2 rounds with variables, 1 without",
+        Kind::Rounds,
     ),
     (
         "golden/lang/generator_expression_contextual_type.velt",
-        "2 rounds with variables, 1 without",
+        Kind::Rounds,
     ),
-    (
-        "golden/lang/jsx_async_package_provider.velt",
-        "2 rounds with variables, 1 without",
-    ),
-    (
-        "golden/lang/overloads_more.velt",
-        "with variables: fn#27 internal _Gthunk_env__V4mainN17_7bclosure_232_7d(ptr, f64, i64) -> f64 {\n  without: fn#27 internal _Gthunk_env__V4mainN17_7bclosure_231_7d(ptr, f64, i64) -> f64 {\n  all of it: b01c72431f3a6cbe",
-    ),
+    ("golden/lang/jsx_async_package_provider.velt", Kind::Rounds),
+    ("golden/lang/overloads_more.velt", Kind::Vir),
     (
         "golden/lang/promise_settled_borrowed_values.velt",
-        "2 rounds with variables, 1 without",
+        Kind::Rounds,
     ),
-    (
-        "golden/lang/rethrow_never_thrown_catch.velt",
-        "2 rounds with variables, 1 without",
-    ),
+    ("golden/lang/rethrow_never_thrown_catch.velt", Kind::Rounds),
     (
         "golden/lang/throws_fn_type_rethrow_chain.velt",
-        "builds with variables: true; without: false",
+        Kind::Builds,
     ),
-    (
-        "golden/lang/throws_fn_type_values.velt",
-        "with variables: agg#24 run::{closure#1} env size=24 align=8 { ptr@0, ptr@8, ptr@16 }\n  without: agg#24 Result<f64, std/prelude/errors::Error>::Ok size=16 align=8 { u8@0, f64@8 }\n  all of it: f842dd729f7cd67c",
-    ),
-    (
-        "golden/std/catch_panic.velt",
-        "with variables: agg#2 Error | Refused | PanicError::Error size=16 align=8 { u32@0, ptr@8 }\n  without: agg#2 Error | PanicError::Error size=16 align=8 { u32@0, ptr@8 }\n  all of it: 91601886c86ba998",
-    ),
-    (
-        "golden/std/throws_fn_type_revivers.velt",
-        "with variables: agg#4 RegExpError | UrlError::RegExpError size=16 align=8 { u32@0, ptr@8 }\n  without: agg#4 UrlError | RegExpError::UrlError size=16 align=8 { u32@0, ptr@8 }\n  all of it: 2a8cccb3ab483b66",
-    ),
-    // A module-level value stored where its type is written (#2604's follow-up, merged with
-    // it after these variables were built): one round more with variables than without, to be
-    // looked at.
-    (
-        "golden/lang/promise_site_global_values.velt",
-        "4 rounds with variables, 3 without",
-    ),
+    ("golden/lang/throws_fn_type_values.velt", Kind::Vir),
+    ("golden/std/catch_panic.velt", Kind::Vir),
+    ("golden/std/throws_fn_type_revivers.velt", Kind::Vir),
     // No promise: `const b: G = a` makes the sets of `F` and `G` one with variables, so the
     // `catch` around `a(1)` may catch an `E2`; without them `F`'s set is `E1` alone, and the
     // `instanceof E2` test is rejected as always false. The same before #2590: #2602.
-    (
-        "site_vars_identity/review_u1.velt",
-        "builds with variables: true; without: false",
-    ),
+    ("site_vars_identity/review_u1.velt", Kind::Builds),
     // A store a check without variables misses (an argument after a spread), so its VIR differs,
     // before #2590 too: #2603.
-    (
-        "site_vars_identity/review_sp5.velt",
-        "with variables: agg#4 main state size=56 align=8 { u32@0, agg#3@8, agg#1@32, ptr@48 }\n  without: agg#4 Result<void, E1>::Ok size=1 align=1 { u8@0 }\n  all of it: 2802e16ac7876879",
-    ),
+    ("site_vars_identity/review_sp5.velt", Kind::Vir),
 ];
+
+/// Where the VIR starts in what [`vir`] returns for a program that builds.
+const VIR_MARK: &str = "\n--- vir\n";
 
 /// One program in this many, in the sample.
 const SAMPLE_ONE_IN: u64 = 8;
@@ -166,55 +125,55 @@ fn vir(file: &Path, home: &Path, vars: bool) -> (bool, String, usize) {
     // What it reported: the diagnostics of a failed build, the warnings of one that built.
     let mut text = reported.join("\n");
     if out.status.success() {
-        text.push_str("\n--- vir\n");
+        text.push_str(VIR_MARK);
         text.push_str(&local(&out.stdout));
     }
     (out.status.success(), text, rounds)
 }
 
-/// A hash of every line that differs between `a` and `b` (line by line, and the lines one has
-/// beyond the other): [`KNOWN`] records it, so a known program that differs otherwise fails.
-fn difference(a: &str, b: &str) -> u64 {
-    let (a, b): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for i in 0..a.len().max(b.len()) {
-        let (x, y) = (a.get(i).copied(), b.get(i).copied());
-        if x == y {
-            continue;
-        }
-        let line = format!("{i}\0{}\0{}\n", x.unwrap_or("\u{1}"), y.unwrap_or("\u{1}"));
-        hash = line.bytes().fold(hash, |h, c| {
-            (h ^ u64::from(c)).wrapping_mul(0x0100_0000_01b3)
-        });
-    }
-    hash
+/// How a program differs with and without variables: what [`KNOWN`] records, the same on every
+/// OS (the text of a difference, VIR above all, is not).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    /// It builds with them and not without, or the other way.
+    Builds,
+    /// Both build, to different VIR.
+    Vir,
+    /// What it reported differs (the errors of a program that fails, the warnings of one that
+    /// builds).
+    Diagnostics,
+    /// It builds the same, in more rounds with variables.
+    Rounds,
 }
 
-/// How `file` differs with and without variables, if it does.
-fn differs(file: &Path, home: &Path, built: &AtomicUsize) -> Option<String> {
+/// How `file` differs with and without variables, if it does: its kind and what it is.
+fn differs(file: &Path, home: &Path, built: &AtomicUsize) -> Option<(Kind, String)> {
     let (vars_ok, with, rounds) = vir(file, home, true);
     let (plain_ok, without, plain_rounds) = vir(file, home, false);
     if vars_ok && plain_ok {
         built.fetch_add(1, Ordering::Relaxed);
     }
     if vars_ok != plain_ok {
-        return Some(format!(
-            "builds with variables: {vars_ok}; without: {plain_ok}"
-        ));
+        let why = format!("builds with variables: {vars_ok}; without: {plain_ok}");
+        return Some((Kind::Builds, why));
     }
     if with != without {
         let found = with.lines().zip(without.lines()).find(|(x, y)| x != y);
-        let first = match found {
+        let why = match found {
             Some((x, y)) => format!("with variables: {x}\n  without: {y}"),
             None => "one is longer".into(),
         };
-        return Some(format!(
-            "{first}\n  all of it: {:016x}",
-            difference(&with, &without)
-        ));
+        let vir_of = |t: &str| t.split_once(VIR_MARK).map(|(_, v)| v.to_string());
+        let kind = match vir_of(&with) != vir_of(&without) {
+            true => Kind::Vir,
+            false => Kind::Diagnostics,
+        };
+        return Some((kind, why));
     }
-    (vars_ok && rounds > plain_rounds)
-        .then(|| format!("{rounds} rounds with variables, {plain_rounds} without"))
+    (vars_ok && rounds > plain_rounds).then(|| {
+        let why = format!("{rounds} rounds with variables, {plain_rounds} without");
+        (Kind::Rounds, why)
+    })
 }
 
 #[test]
@@ -257,18 +216,16 @@ fn programs_with_promises_are_the_same_with_and_without_error_set_variables() {
             s.spawn(move || {
                 while let Some(file) = files.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let name = name_of(file);
-                    let known = KNOWN.iter().find(|(n, _)| *n == name).map(|(_, why)| *why);
+                    let known = KNOWN.iter().find(|(n, _)| *n == name).map(|(_, k)| *k);
                     let why = match (differs(file, &home, built), known) {
-                        (Some(why), None) => why,
+                        (Some((_, why)), None) => why,
                         (None, Some(_)) => {
                             "is the same with and without variables now: remove it from `KNOWN`"
                                 .into()
                         }
-                        (Some(why), Some(was)) if why != was => {
-                            format!(
-                                "differs otherwise than `KNOWN` says:\n  {why}\n  recorded: {was}"
-                            )
-                        }
+                        (Some((kind, why)), Some(was)) if kind != was => format!(
+                            "differs otherwise than `KNOWN` says ({was:?}): {kind:?}\n  {why}"
+                        ),
                         _ => continue,
                     };
                     found.lock().unwrap().push((name, why));
