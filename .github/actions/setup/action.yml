@@ -120,10 +120,14 @@ runs:
     # queue entry reads and doesn't write: its branch is deleted when it ends and no other can read
     # what it saved, at 600-900 MiB an entry, which would push out what others can use. Pushes to
     # `main` save what every other run reads, and a pull request's later pushes read its own.
+    # sccache only makes the build faster: when it can't be fetched (GitHub's release download
+    # answering 504, #2594), the job builds without it instead of failing.
     - uses: mozilla-actions/sccache-action@v0.0.11
+      id: sccache
       if: inputs.cache == 'true'
+      continue-on-error: true
     - name: compile through sccache
-      if: inputs.cache == 'true'
+      if: inputs.cache == 'true' && steps.sccache.outcome == 'success'
       shell: bash
       run: |
         {
