@@ -338,10 +338,10 @@ impl super::Cx<'_> {
         let TyKind::Adt(d, _) = self.raw_kind(t) else {
             return false;
         };
+        // A callable object's function (`#call`, `#new`), or an overloaded function's value
+        // (its first signature `#0`, velt_sema typeof_generic.rs).
         let hidden = |a: &hir::AdtDef| {
-            a.fields
-                .first()
-                .is_some_and(|f| f.name == "#call" || f.name == "#new")
+            (a.fields.first()).is_some_and(|f| matches!(f.name.as_str(), "#call" | "#new" | "#0"))
         };
         self.is_array_method(t)
             || self.is_this_fn(t)

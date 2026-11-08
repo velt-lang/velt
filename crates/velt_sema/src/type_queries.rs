@@ -216,6 +216,13 @@ impl Ctx<'_> {
             }
             crate::collect::sigs::fill_pending(self, d);
         }
+        // A generic function's own generic type, or an overloaded one's set of signatures
+        // (`crate::typeof_generic`); `ReturnType` and `Parameters` take the erased signature.
+        if !self.sigq.erase_generics {
+            if let Some(t) = self.generic_query_type(d, span) {
+                return t;
+            }
+        }
         let f = self.fn_info(d);
         // Generic only over what its callbacks throw (`setTimeout<E>(task: () => Promise<void,
         // E>, ms)`): the function type with those errors left out, as TypeScript's
@@ -227,13 +234,6 @@ impl Ctx<'_> {
                 .all(|p| !self.mentions_beyond_errors(p.ty, 0));
         let errors_only = errors_only && !self.mentions_beyond_errors(f.ret, 0);
         let erased = n > 0 && !errors_only && self.sigq.erase_generics && self.any.is_some();
-        // A generic function's own generic type, or an overloaded one's set of signatures
-        // (`crate::typeof_generic`); `ReturnType` and `Parameters` take the erased signature.
-        if !self.sigq.erase_generics {
-            if let Some(t) = self.generic_query_type(d, span) {
-                return t;
-            }
-        }
         if n > 0 && !errors_only && !erased {
             self.error(
                 Diagnostic::error(
@@ -244,7 +244,6 @@ impl Ctx<'_> {
             );
             return self.ty.error;
         }
-        let f = self.fn_info(d);
         if f.is_async || f.is_generator {
             let what = if f.is_generator {
                 "a generator"

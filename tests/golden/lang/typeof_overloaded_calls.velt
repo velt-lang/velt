@@ -49,3 +49,12 @@ console.log(h.make(null).value, h.make({ a: 1 }).a);
 // An object literal with nothing expected: its field has the set's type.
 const lit = { signal, n: 2 };
 console.log(lit.signal(4).value + lit.n, lit.signal({ q: 1 }).q);
+// The set's value is a function to `typeof`, held as itself or as an `unknown`.
+function ov(x: number): number;
+function ov(x: string): string;
+function ov(x: any): any { return typeof x === "number" ? x + 1 : x + "!"; }
+interface C { ov: typeof ov; }
+const c: C = { ov };
+console.log(typeof c.ov, String(typeof c.ov === "function"), c.ov(1), c.ov("a"));
+const held: unknown = c.ov;
+console.log(typeof held, [c.ov, ov].map((f) => typeof f).join(","));

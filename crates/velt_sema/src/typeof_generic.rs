@@ -118,6 +118,18 @@ impl Ctx<'_> {
         (t != self.ty.error).then_some(t)
     }
 
+    /// Is `t` an overload set's type (module docs)?
+    pub(crate) fn is_overload_set(&self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.ty.kind(t) else {
+            return false;
+        };
+        self.adt(*d).is_some_and(|a| {
+            a.kind == AdtKind::Anon
+                && !a.fields.is_empty()
+                && (a.fields.iter().enumerate()).all(|(k, f)| f.name == set_field(k))
+        })
+    }
+
     /// The signatures' function types of overload set type `t` (module docs), in order; `None`
     /// when `t` is not one.
     pub(crate) fn overload_set_parts(&mut self, t: TyId) -> Option<Vec<TyId>> {
