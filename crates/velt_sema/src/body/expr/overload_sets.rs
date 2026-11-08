@@ -65,7 +65,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if !self.cx.has_overloads {
+        if !self.cx.overload_sets {
             return Err(f);
         }
         let Some(parts) = self.cx.overload_set_parts(f.ty) else {
@@ -101,9 +101,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        // Only a program with overloads has their values; a written type argument may be for
+        // Only a program that wrote an overload set's type has its values; a written type argument may be for
         // a generic function value.
-        if !self.cx.has_overloads && type_args.is_empty() {
+        if !self.cx.overload_sets && type_args.is_empty() {
             return Err(recv);
         }
         let fty = match self.field_of(recv.ty, &prop.name) {

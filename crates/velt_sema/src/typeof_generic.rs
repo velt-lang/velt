@@ -66,6 +66,7 @@ impl Ctx<'_> {
             let t = self.declared_sig_type(s, span)?;
             fields.push((set_field(k), t));
         }
+        self.overload_sets = true;
         Some(self.anon_type(&fields, module))
     }
 
