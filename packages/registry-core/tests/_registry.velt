@@ -41,10 +41,8 @@ export class TestRegistry {
       purge: this.purge,
       auth: this.auth,
     };
-    if (reserved != null) {
-      stores.reserved = reserved;
-    }
-    this.registry = new Registry(stores, limits);
+    // A struct never changes: one with the reservations is a new value.
+    this.registry = new Registry(reserved == null ? stores : { ...stores, reserved }, limits);
   }
 
   /** Package `name`'s owners ([] when it was never published). */
