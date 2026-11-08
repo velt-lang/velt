@@ -1,0 +1,19 @@
+// An object literal with a field holding `undefined`, converted through `unknown` to an interface
+// with methods whose field is `unknown` (#2554): the same object, frozen or not.
+interface Sig {
+  aborted: boolean;
+  reason: unknown;
+  throwIfAborted(): void;
+}
+
+let cached: Sig | undefined;
+function inert(): Sig {
+  return (cached ??= Object.freeze({ aborted: false, reason: undefined, throwIfAborted() {} }) as unknown as Sig);
+}
+const s = inert();
+console.log(s.aborted, s.reason, inert() === s);
+s.throwIfAborted();
+
+const plain = { aborted: true, reason: 7, throwIfAborted() { console.log("called"); } } as unknown as Sig;
+console.log(plain.aborted, plain.reason);
+plain.throwIfAborted();
