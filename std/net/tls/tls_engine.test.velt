@@ -688,9 +688,10 @@ describe("reads and writes that don't wait", () => {
     expect(() => cut.tryRead(buf)).toThrow("TLS: the connection closed without close_notify");
   });
 
-  it("sends a refused record's alert if the socket takes it, and keeps the failure", async () => {
+  it("queues a refused record's alert whole, and keeps the failure", async () => {
     const [t, s] = await ready("630303000100");
     t.arrived = 1000000;
+    t.takes = 5;
     const buf: u8[] = Buffer.alloc(8);
     const want = "TLS: an unprotected record of type 99 after encryption started";
     expect(() => s.tryRead(buf)).toThrow(want);
@@ -701,6 +702,7 @@ describe("reads and writes that don't wait", () => {
       259,
     );
     expect(alert).toBe("020a15");
+    expect(t.written.length).toBe(259 + 5 + 2 + 1 + 16);
     expect(() => s.writeBytesLater(payload(1))).toThrow(want);
   });
 

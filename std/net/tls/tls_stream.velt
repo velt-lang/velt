@@ -162,9 +162,9 @@ export class TlsStream implements ByteStream {
   }
 
   /**
-   * Writes `data[start..end]` now, for a last small message before the connection ends: the number
-   * of bytes written, or 0 if the socket didn't take the records whole, and then the connection has
-   * failed (half a record can't be taken back). For a stream over a `TcpStream`, not during a
+   * Writes `data[start..end]` now, for a last small message before the connection ends, and
+   * returns its length: what the socket doesn't take at once is queued behind what it holds, to go
+   * at the task's next wait (as `writeBytesLater`). For a stream over a `TcpStream`, not during a
    * `write`.
    */
   tryWrite(data: u8[] | Uint8Array, start: number = 0, end?: number): i64 {

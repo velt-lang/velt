@@ -344,7 +344,10 @@ export class RecordWriter {
     return err;
   }
 
-  /** `failed` for a caller that can't wait: an alert goes only if the socket takes it now. */
+  /**
+   * `failed` for a caller that can't wait: the alert is queued whole behind what the socket holds,
+   * to go at the task's next wait.
+   */
   failedNow(e: unknown): IoError {
     const err = e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
     if (this.failure == null) {
@@ -354,7 +357,7 @@ export class RecordWriter {
         t != null && e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.turns.busy
       ) {
         try {
-          t.tryWrite(this.protect(ALERT, [2, e.alert]), 0);
+          t.writeBytesLater(this.protect(ALERT, [2, e.alert]), 0);
         } catch (ignored) {
           // The peer may be gone already; the failure is what matters.
         }
