@@ -1,0 +1,12 @@
+1 { b: 'two', c: [ 3 ], d: { e: 4 } }
+[ 'b', 'c', 'd' ] two 3 4
+two undefined 5 { b: 'changed', c: [ 3 ], d: { e: 5 }, extra: true }
+1 dflt [ 3 ] { b: 'two', d: { e: 5 } }
+{ a: 1, b: 'two', c: [ 3 ], d: { e: 5 } } false
+<b>|id,title
+1 { q: 2 } { r: 3 }
+1 { v: 'a' }
+2 { v: 'b', w: 1 }
+two [ 'a', 'c', 'd' ]
+2 { one: 1 } two,one
+x src="a.js" async

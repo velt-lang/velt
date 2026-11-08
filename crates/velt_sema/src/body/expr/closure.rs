@@ -130,6 +130,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         escaping: bool,
     ) -> hir::Expr {
+        self.note_closure_shape(e);
         if self.memo_trials > 0 {
             return self.closure_in_trial(e, exp, escaping);
         }

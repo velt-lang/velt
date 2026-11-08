@@ -487,11 +487,14 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
                 "move the element with `xs.splice(start, 0, ...xs.splice(end - 1, 1))`",
             ),
             ("set", "assign the element: `xs[i] = v`"),
+            // What the compiler calls for `sort(cmp)` of an `any[]` (std/prelude/sort.velt).
+            ("sortDynamic", "call `xs.sort(cmp)`"),
             ("swap", "swap with `[xs[i], xs[j]] = [xs[j], xs[i]]`"),
             (
                 "swapIn",
                 "swap with `[xss[a][i], xss[b][j]] = [xss[b][j], xss[a][i]]`",
             ),
+            ("toSortedDynamic", "call `xs.toSorted(cmp)`"),
             ("truncate", "remove the tail with `xs.splice(n)`"),
             (
                 "utf8Equals",

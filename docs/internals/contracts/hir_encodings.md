@@ -74,6 +74,13 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   heap env filled from its own captures (shared). Members are escaping (counted heap envs).
   In a sync member, a local holding a `ClosureSibling` that is only ever called is never made:
   lowering calls member `def`'s code with the running env directly.
+- `f.length` and `f.name` of a function value are `Intrinsic::FnLength` / `FnName`, also what the
+  `AnyGet` slot of a function type answers. A value says neither, so both go by its code: glues built
+  last compare it with the code of each function that became a value, whose answers are in
+  `Program::fn_shapes` (by `FnDef::span`; a wrapper sema made to fit a function type reads as the
+  function in its `wraps`, or as itself when that is only known at run time). A declared function's
+  `name` comes from its qualified name, a literal's from `ast::Module::fn_names`. `console.log` of one
+  through `any` writes that name.
 - Errors: see "Errors" below.
 - `x ?? d`, `a?.b`, `if (x != null)` narrowing are desugared by sema into `Match` with
   `PatKind::Some/None`; narrowed uses read the payload via `ExprKind::UnwrapSome`.

@@ -301,7 +301,12 @@ fn own_iface_defaults(cx: &mut Ctx, d: DefId) {
         };
         for (k, p) in m.sig.params.iter().enumerate() {
             let Some(e) = &p.default else { continue };
-            let ty = cx.iface(d).expect("ICE: iface").methods[slot].params[k].ty;
+            // A signature reported as an overload the method can't hold has parameters of its
+            // own (`collect::sigs`).
+            let held = cx.iface(d).expect("ICE: iface").methods[slot].params.get(k);
+            let Some(ty) = held.map(|p| p.ty) else {
+                continue;
+            };
             let fname = format!("{qual}.{key}");
             let h = match p.optional {
                 true => optional_default(cx, module, &names, e, ty),

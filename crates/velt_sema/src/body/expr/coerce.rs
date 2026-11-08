@@ -627,6 +627,6 @@ impl FnCx<'_, '_> {
             && fp[..tp.len()] == tp[..]
             && fp[tp.len()..].iter().all(|&p| p == self.cx.ty.unit)
             && fr == tr
-            && ft == tt
+            && (ft == tt || *ft == self.cx.ty.never)
     }
 }

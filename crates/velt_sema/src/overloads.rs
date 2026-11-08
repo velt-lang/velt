@@ -125,6 +125,7 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
                 items,
                 span: m.ast.span,
                 jsx_import_source: m.ast.jsx_import_source.clone(),
+                fn_names: m.ast.fn_names.clone(),
             },
             imports: m.imports.clone(),
             jsx_runtime: m.jsx_runtime.clone(),
@@ -374,7 +375,7 @@ pub(crate) fn signature_fn(
     };
     let returns_void = match &sig.ret {
         None => true,
-        Some(t) => is_named(t, "void"),
+        Some(t) => is_named(t, "void") || matches!(t.kind, ast::TypeExprKind::Void),
     };
     // Awaiting the implementation: an `async` signature over an `async` implementation whose
     // promised results are written differently.

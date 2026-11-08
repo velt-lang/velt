@@ -206,7 +206,11 @@ impl<'a> Parser<'a> {
         self.expect(Tok::LBrace)?;
         let mut props = Vec::new();
         while !self.at(Tok::RBrace) {
-            props.push(self.parse_object_prop()?);
+            let prop = self.parse_object_prop()?;
+            if let ObjectProp::KeyValue(key, value) = &prop {
+                self.name_fn(&key.name, value);
+            }
+            props.push(prop);
             if !self.eat(Tok::Comma) {
                 break;
             }

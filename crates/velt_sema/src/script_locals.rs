@@ -228,6 +228,7 @@ fn with_moved(
                     },
                     span: s.ast.span,
                     jsx_import_source: s.ast.jsx_import_source.clone(),
+                    fn_names: s.ast.fn_names.clone(),
                 },
                 imports: s.imports.clone(),
                 jsx_runtime: s.jsx_runtime.clone(),

@@ -50,6 +50,8 @@ pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
 pub(crate) struct Ctx<'m> {
     /// The program's modules, then the generated ones added during the check (`add_module`).
     pub modules: Vec<&'m SourceModule>,
+    /// `hir::Program::fn_shapes`.
+    pub fn_shapes: FxHashMap<Span, crate::hir::FnShape>,
     pub root: usize,
     /// Generated functions' code and its binding in this check (`crate::generated::Gen`).
     pub gen: crate::generated::Gen<'m>,
@@ -472,6 +474,7 @@ impl<'m> Ctx<'m> {
     pub fn new(modules: &'m [SourceModule], root: usize) -> Self {
         Ctx {
             modules: modules.iter().collect(),
+            fn_shapes: Default::default(),
             root,
             gen: Default::default(),
             export_memo: Default::default(),

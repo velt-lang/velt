@@ -1,0 +1,68 @@
+// `...rest` of an `any` (#1364): the own enumerable properties the pattern didn't take, in their
+// order, in a new object.
+const x: any = { a: 1, b: "two", c: [3], d: { e: 4 } };
+const { a, ...rest } = x;
+console.log(a, rest);
+console.log(Object.keys(rest), rest.b, rest.c[0], rest.d.e);
+
+// The copy is new: writing to it leaves the value alone, nested objects are shared.
+rest.b = "changed";
+rest.extra = true;
+rest.d.e = 5;
+console.log(x.b, x.extra, x.d.e, rest);
+
+// Several keys, a default, a renamed key, a key that isn't there.
+const { a: first, missing = "dflt", c, ...others } = x;
+console.log(first, missing, c, others);
+
+// Only a rest: a copy.
+const { ...copy } = x;
+console.log(copy, copy === x);
+
+// As a parameter, nested, in a loop, and assigned to existing variables.
+function strip({ innerHTML, ...attrs }: any): string {
+  return `${innerHTML}|${Object.keys(attrs).join(",")}`;
+}
+console.log(strip({ innerHTML: "<b>", id: "x", title: "t" }));
+
+const outer: any = { inner: { p: 1, q: 2 }, r: 3 };
+const {
+  inner: { p, ...innerRest },
+  ...outerRest
+} = outer;
+console.log(p, innerRest, outerRest);
+
+for (const { id, ...row } of [{ id: 1, v: "a" }, { id: 2, v: "b", w: 1 }] as any[]) {
+  console.log(id, row);
+}
+
+// A computed key.
+const k = "b";
+const { [k]: picked, ...withoutPicked } = x;
+console.log(picked, Object.keys(withoutPicked));
+
+// Getters run once, in the order of the keys.
+const log: string[] = [];
+const withGetters: any = {
+  get one() {
+    log.push("one");
+    return 1;
+  },
+  get two() {
+    log.push("two");
+    return 2;
+  },
+};
+const { two, ...afterTwo } = withGetters;
+console.log(two, afterTwo, log.join(","));
+
+// The rest goes on as an `any`.
+function serialize(o: Record<string, string | boolean | undefined>): string {
+  return Object.entries(o)
+    .filter(([, v]) => v !== undefined && v !== false)
+    .map(([key, v]) => (v === true ? key : `${key}="${v}"`))
+    .join(" ");
+}
+const script: any = { src: "a.js", async: true, defer: false, innerHTML: "x" };
+const { innerHTML, ...attrs } = script;
+console.log(innerHTML, serialize(attrs));

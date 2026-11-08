@@ -21,7 +21,28 @@ use crate::ast::*;
 use crate::lexer::{Kw, Tok};
 use velt_common::{Diagnostic, Span};
 
+impl Module {
+    /// The name of the function literal at `span` (`fn_names`), `None` for an anonymous one.
+    pub fn fn_name(&self, span: Span) -> Option<&str> {
+        let at = (self.fn_names).partition_point(|(s, _)| (s.lo, s.hi) < (span.lo, span.hi));
+        let (s, name) = self.fn_names.get(at)?;
+        (*s == span).then_some(name.as_str())
+    }
+}
+
 impl<'a> Parser<'a> {
+    /// `value` stands where JavaScript calls a function literal `name` (`Module::fn_names`):
+    /// noted when it is one, as written (a cast is gone at run time) or in parentheses.
+    pub(super) fn name_fn(&mut self, name: &str, value: &Expr) {
+        match &value.kind {
+            ExprKind::Paren(e) | ExprKind::Cast { expr: e, .. } => self.name_fn(name, e),
+            ExprKind::Arrow { .. } | ExprKind::Function(_) => {
+                self.fn_names.push((value.span, name.to_string()));
+            }
+            _ => {}
+        }
+    }
+
     /// A function expression at `function` (after `async`, with `is_async`): `function[*]
     /// [name]<T>(params)[: R] { ... }`; the name may be left out (empty).
     pub(super) fn parse_fn_expr(&mut self, lo: u32, is_async: bool) -> PResult<ExprKind> {
@@ -61,6 +82,8 @@ impl<'a> Parser<'a> {
         let body = self.parse_fn_body()?;
         if !name.name.is_empty() {
             self.no_own_name(&name, &body);
+            let span = self.span_from(lo);
+            self.fn_names.push((span, name.name.clone()));
         }
         // With a `this` parameter and a body that uses `this` or `arguments`, the function keeps
         // its `this` type, so its parameters must be written (sema checks it).

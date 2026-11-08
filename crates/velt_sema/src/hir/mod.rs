@@ -172,6 +172,10 @@ pub struct Program {
     /// `AnyTo` of a record to an object type builds the object from the record's entries.
     /// Additive.
     pub record_fills: bool,
+    /// What each function says of itself as a value, by `FnDef::span`: a closure made from
+    /// another to fit a function type has the span of the one it stands for, so it reads the
+    /// same. Additive.
+    pub fn_shapes: HashMap<velt_common::Span, FnShape>,
     /// The program's module state (module-level `let`s), `None` when it has none
     /// (hir_encodings.md "Module state").
     pub module_state: Option<ModuleState>,
@@ -290,6 +294,31 @@ pub struct Param {
     pub local: LocalId,
     pub ty: TyId,
     pub mode: PassMode,
+}
+
+/// What the qualified name of a declared function says `name` is: `f` of `std/fs::f` and of
+/// `User.f`, also of `f#1` (an overload's signature); nothing for a closure, whose name is in its
+/// [`FnShape`].
+pub fn declared_fn_name(full: &str) -> &str {
+    let last = full.rsplit("::").next().unwrap_or(full);
+    let last = last.rsplit('.').next().unwrap_or(last);
+    match last.starts_with('{') {
+        true => "",
+        false => last.split('#').next().unwrap_or(last),
+    }
+}
+
+/// What JavaScript says of a function as a value (`hir::Program::fn_shapes`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FnShape {
+    /// `f.name` where the qualified name doesn't say it: a function literal's, given or
+    /// inferred from where it stands. `None`: a declared function's, or an anonymous one's.
+    pub name: Option<String>,
+    /// `f.length`: the parameters before the first with a default or a rest parameter.
+    pub length: u32,
+    /// A closure sema made around this function, to fit a function type: it reads as that
+    /// function does.
+    pub wraps: Option<DefId>,
 }
 
 #[derive(Clone, Debug)]

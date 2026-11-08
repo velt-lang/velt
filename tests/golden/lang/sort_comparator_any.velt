@@ -1,0 +1,65 @@
+// A comparator of `any` values may throw from what it reads when the program has proxies: `sort`
+// and `toSorted` of an `any[]` pass the error on, as in Node, and the array stays as it was.
+const reads: string[] = [];
+const held: any = new Proxy({ p: 1, boom: 2 } as any, {
+  get(t, k) {
+    reads.push(String(k));
+    if (k === "boom") throw new Error("trap");
+    return t[k];
+  },
+});
+
+function byP(xs: any[]): any[] {
+  return [...xs].sort((a, b) => (a.p ?? 0) - (b.p ?? 0));
+}
+console.log(byP([{ p: 2 }, held, {}]).length, reads.join());
+
+const items: any[] = [{ boom: 3 }, held, { boom: 1 }];
+try {
+  items.sort((a, b) => a.boom - b.boom);
+  console.log("sorted");
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+console.log(items[0].p ?? items[0].boom, items[2].boom);
+
+try {
+  console.log(items.toSorted((a, b) => a.boom - b.boom).length);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+
+// A comparator that doesn't throw: stable, and a chain goes on from the sorted array.
+const rows: any[] = [
+  { k: 2, v: "a" },
+  { k: 1, v: "b" },
+  { k: 2, v: "c" },
+  { k: 1, v: "d" },
+];
+console.log(rows.toSorted((a, b) => a.k - b.k).map((r) => r.v).join(""));
+console.log(rows.sort((a, b) => b.k - a.k).map((r) => r.v).join(""));
+
+// One written to throw.
+const small: any[] = [2, 1];
+try {
+  small.sort((a, b) => {
+    if (a > 0) throw new RangeError("no order");
+    return a - b;
+  });
+} catch (e) {
+  console.log((e as Error).name, (e as Error).message, small);
+}
+
+// A throw after elements have moved: the array is as it was, as in Node.
+const big: any[] = [];
+for (let i = 0; i < 50; i++) big.push((i * 37) % 50);
+let count = 0;
+try {
+  big.sort((a, b) => {
+    if (++count === 40) throw new Error("late");
+    return a - b;
+  });
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+console.log(big.join(","));

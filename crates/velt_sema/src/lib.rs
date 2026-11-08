@@ -485,6 +485,7 @@ fn check_timed(
         generic_fns,
         lock_free_callbacks,
         fn_views,
+        fn_shapes,
         ..
     } = cx;
     let any_fn_views = fn_views.into_program();
@@ -499,6 +500,7 @@ fn check_timed(
         anon_shapes: anon_shapes.into_iter().collect(),
         union_shapes: union_shapes.into_iter().collect(),
         counted_objects,
+        fn_shapes: fn_shapes.into_iter().collect(),
         null_proto_records: objects.null_proto_records,
         record_fills: objects.record_fills,
         module_state,

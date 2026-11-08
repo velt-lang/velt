@@ -352,6 +352,9 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        if let Some(d) = &default {
+            self.name_fn(&name.name, d);
+        }
         if let (true, Some(d)) = (mods.is_declare, &default) {
             self.error("initializers are not allowed in ambient contexts", d.span);
         }
@@ -374,6 +377,7 @@ impl<'a> Parser<'a> {
     fn parse_untyped_field(&mut self, lo: u32, name: Ident, mods: &Modifiers) -> PResult<Field> {
         self.bump(); // =
         let default = self.parse_assign()?;
+        self.name_fn(&name.name, &default);
         let ty = self.field_type_of(&name, &default).ok_or(Fail)?;
         let span = self.span_from(lo);
         self.expect_member_end()?;

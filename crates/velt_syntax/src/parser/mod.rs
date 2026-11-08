@@ -80,6 +80,8 @@ pub(crate) struct Parser<'a> {
     /// End offset of the most recently consumed token.
     prev_hi: u32,
     next_id: u32,
+    /// `Module::fn_names`, in the order they were met.
+    fn_names: Vec<(Span, String)>,
     /// Parser diagnostics produced so far (the lexer's are collected by `finish`).
     pub(crate) diags: Vec<Diagnostic>,
     depth: u32,
@@ -202,6 +204,7 @@ impl<'a> Parser<'a> {
             pos: 0,
             prev_hi: 0,
             next_id: 0,
+            fn_names: Vec::new(),
             diags: Vec::new(),
             depth: 0,
             ternary_cache: BTreeMap::new(),

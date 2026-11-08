@@ -266,6 +266,8 @@ impl FnLower<'_, '_> {
                 self.zero_value(vt)
             }
             (I::FnCapturesNothing, [f]) => self.fn_captures_nothing(f),
+            (I::FnLength, [f]) => self.fn_length(f),
+            (I::FnName, [f]) => self.fn_name(f),
             (I::SimdShuffle(simd, mask), [a, b]) => self.simd_shuffle(simd, &mask, a, b),
             (I::ClosureSibling(def), []) => self.closure_sibling(def, ty),
             (I::Truthy, [a]) => self.truthy_intrinsic(a),

@@ -24,6 +24,59 @@ pub(super) struct Receiver {
 }
 
 impl FnCx<'_, '_> {
+    /// The method `sort(cmp)` or `toSorted(cmp)` of the array of `any` values of type `recv`
+    /// calls, whose comparator may throw (std/prelude/sort.velt).
+    pub(super) fn dynamic_sort_name(
+        &self,
+        recv: hir::TyId,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+    ) -> Option<ast::Ident> {
+        let name = match (prop.name.as_str(), args) {
+            ("sort", [_]) => "sortDynamic",
+            ("toSorted", [_]) => "toSortedDynamic",
+            _ => return None,
+        };
+        let elem = self.cx.ty.array_elem(recv)?;
+        if self.cx.dynamic(elem) != Some(crate::any::Dynamic::Any) || !self.may_throw(&args[0]) {
+            return None;
+        }
+        Some(ast::Ident {
+            name: name.to_string(),
+            span: prop.span,
+        })
+    }
+
+    /// May comparator `cmp` throw? It writes a `throw`, or in a program with proxies (whose
+    /// traps may throw) it reads through its `any` parameters or calls something; a function
+    /// named here may do anything there. Any other comparator sorts as before, at its cost.
+    fn may_throw(&self, cmp: &ast::Expr) -> bool {
+        use velt_syntax::visit::{walk_expr, Visit};
+        struct Seen {
+            throws: bool,
+            reads: bool,
+        }
+        impl<'a> Visit<'a> for Seen {
+            fn stmt(&mut self, s: &'a ast::Stmt) {
+                self.throws |= matches!(s.kind, ast::StmtKind::Throw(_));
+            }
+            fn expr(&mut self, e: &'a ast::Expr) {
+                use ast::ExprKind as E;
+                self.reads |= matches!(e.kind, E::Member { .. } | E::Index { .. } | E::Call { .. });
+            }
+        }
+        let mut seen = Seen {
+            throws: false,
+            reads: false,
+        };
+        let arrow = matches!(
+            super::method_value::strip_parens(cmp).kind,
+            ast::ExprKind::Arrow { .. }
+        );
+        walk_expr(cmp, &mut seen);
+        seen.throws || (self.uses_proxy() && (seen.reads || !arrow))
+    }
+
     /// `recv`, checked from `object`, as the receiver of a member access: when `object` is a
     /// call of `sort`, `reverse` or `fill` on an array, the call runs first and the receiver is
     /// the array it changed.

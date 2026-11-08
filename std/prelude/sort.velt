@@ -223,6 +223,40 @@ extend<T> Array<T> {
     out.sort(cmp);
     return out;
   }
+
+  /**
+   * `sort(cmp)` of an `any[]`, as the compiler calls it: reading an `any` may run a proxy's trap,
+   * so `cmp` may throw. The sort moves elements through a scratch buffer and can't stop halfway:
+   * the first error ends the comparing, and as in Node the array stays as it was.
+   */
+  sortDynamic<E>(cmp: (x: T, y: T) => number throws E) throws E {
+    const before = this.slice();
+    const caught: E[] = [];
+    this.sort((a, b) => {
+      if (caught.length > 0) {
+        return 0;
+      }
+      try {
+        return cmp(a, b);
+      } catch (e) {
+        caught.push(e);
+        return 0;
+      }
+    });
+    if (caught.length > 0) {
+      for (let i = 0; i < before.length; i++) {
+        this[i] = before[i];
+      }
+      throw caught[0];
+    }
+  }
+
+  /** `toSorted(cmp)` of an `any[]`, as [`sortDynamic`]. */
+  toSortedDynamic<E>(cmp: (x: T, y: T) => number throws E): T[] throws E {
+    const out = this.slice();
+    out.sortDynamic(cmp);
+    return out;
+  }
 }
 
 // ───────────────────────── elements that may be `undefined` ─────────────────────────

@@ -1,0 +1,32 @@
+0 none
+2 two
+2 optional
+1 defaulted
+1 rest
+2 destructured
+1 arrow
+2 fnExpr
+1 inner
+1 typed
+1 cast
+2 parenthesized
+1 assigned
+1 plain
+2 long
+0 own
+2 field
+1 typedField
+cb1
+true 1
+two/2
+arrow/1
+(anonymous)/0
+(anonymous)/1
+local/2
+2 next 2 next 2 4
+next:2
+makeOne anon given
+1 later 2 gen 2 lateArrow
+2 two 3 true
+no props needs props 1
+n 3

@@ -54,6 +54,10 @@ pub struct Module {
     /// `// @jsxImportSource pkg` in the comments before the first token: the module whose
     /// `jsx-runtime` provides the JSX factories for this file.
     pub jsx_import_source: Option<String>,
+    /// What JavaScript names the function literals that get a name: `function g() {}`, and from
+    /// where they stand, `const f = () => {}`, `{ k: () => {} }`, `x = () => {}`, a default and
+    /// a field. By the literal's span, sorted (see [`Module::fn_name`]). Additive.
+    pub fn_names: Vec<(Span, String)>,
 }
 
 // ───────────────────────────── Items ─────────────────────────────

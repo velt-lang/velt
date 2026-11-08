@@ -73,6 +73,12 @@ use crate::vir::{self, Function, Operand, Place, Proj, Ty};
 /// Kinds of per-type glue functions (see the module table).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Glue {
+    /// `(code) -> f64`: `length` of the function with that code (fn_shapes.rs).
+    FnLength,
+    /// `(code, out)`: `name` of the function with that code, a string at `out` (fn_shapes.rs).
+    FnName,
+    /// `(code) -> u8`: what `console.log` calls the function with that code (fn_shapes.rs).
+    FnKind,
     Drop,
     Clone,
     Share,
@@ -217,6 +223,9 @@ impl Glue {
             Glue::ProxyGet => "proxyget",
             Glue::ProxySet => "proxyset",
             Glue::AnyIface => "anyiface",
+            Glue::FnLength => "fnlength",
+            Glue::FnName => "fnname",
+            Glue::FnKind => "fnkind",
             Glue::AnyNumeric => "anynumeric",
             Glue::AnyNumericOrError => "anynumericorerror",
             Glue::AnyNumberError => "anynumbererror",
@@ -273,6 +282,9 @@ impl Glue {
             Glue::AnyReflect => (vec![Ptr, U64, U64, Ptr, Ptr], U64),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::AnyIface | Glue::AnyNumeric => (vec![Ptr, Ptr, Ptr], Bool),
+            Glue::FnLength => (vec![Ptr], F64),
+            Glue::FnName => (vec![Ptr, Ptr], Unit),
+            Glue::FnKind => (vec![Ptr], U8),
             Glue::AnyNumericOrError | Glue::AnyNumericExact | Glue::AnyUnbox => {
                 (vec![Ptr, Ptr, Ptr], Unit)
             }
@@ -339,6 +351,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),
             Glue::ProxySet => lw.proxy_set_glue(args[0], args[1], args[2], ty),
             Glue::AnyIface => lw.any_iface_body(args[0], args[1], args[2], ty),
+            Glue::FnLength => lw.fn_length_body(args[0]),
+            Glue::FnName => lw.fn_name_body(args[0], args[1]),
+            Glue::FnKind => lw.fn_kind_body(args[0]),
             Glue::AnyNumeric => lw.any_numeric_body(args[0], args[1], args[2], ty, Numeric::Asks),
             Glue::AnyNumericOrError => {
                 lw.any_numeric_body(args[0], args[1], args[2], ty, Numeric::Stops)

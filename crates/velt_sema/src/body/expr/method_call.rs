@@ -123,6 +123,9 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        // A comparator of `any` values may throw from what it reads: std/prelude/sort.velt.
+        let dynamic_sort = self.dynamic_sort_name(recv.ty, prop, args);
+        let prop = dynamic_sort.as_ref().unwrap_or(prop);
         // Methods of a literal type are its base type's (`kind.toUpperCase()`).
         let recv = self.widen_literal_receiver(recv, &prop.name);
         let recv = self.without_trap_vars(recv);
