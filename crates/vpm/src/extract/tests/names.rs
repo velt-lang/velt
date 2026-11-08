@@ -15,7 +15,16 @@ fn a_name_of_only_ignorable_code_points_is_refused() {
         .symlink("\u{200c}/a/l", "../..")
         .symlink("x", "\u{200c}/a/l/../..")
         .gz();
-    refused(&tar, "code points macOS ignores");
+    refused(&tar, "code points macOS ignores are removed");
+    // `.` and `..` with one: the same names there.
+    refused(
+        &tar_with(".\u{200c}/x"),
+        "code points macOS ignores are removed",
+    );
+    refused(
+        &tar_with("a/..\u{200d}/x"),
+        "code points macOS ignores are removed",
+    );
 }
 
 #[test]

@@ -151,8 +151,8 @@ impl Tree {
         match self.keys.get(&key) {
             Some(other) if other != path => {
                 return Err(format!(
-                    "`{}` and `{}` differ only by case or Unicode normalisation, so they are one \
-                     file on macOS and Windows",
+                    "`{}` and `{}` differ only by case, Unicode normalisation or code points \
+                     macOS ignores, so they are one file on macOS or Windows",
                     other.escape_debug(),
                     path.escape_debug()
                 ))

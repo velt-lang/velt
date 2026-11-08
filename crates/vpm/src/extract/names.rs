@@ -72,9 +72,11 @@ fn check_segment(name: &str) -> Result<(), String> {
                 .to_string(),
         );
     }
-    if name.chars().all(is_hfs_ignorable) {
+    let kept: String = name.chars().filter(|c| !is_hfs_ignorable(*c)).collect();
+    if matches!(kept.as_str(), "" | "." | "..") {
         return Err(
-            "a name of only code points macOS ignores (it is an empty name there)".to_string(),
+            "a name that is empty, `.` or `..` once the code points macOS ignores are removed"
+                .to_string(),
         );
     }
     if is_dot_git(name) {

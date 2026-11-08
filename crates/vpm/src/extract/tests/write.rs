@@ -154,9 +154,18 @@ fn staging_left_by_a_killed_extraction_is_removed_once_it_is_old() {
         std::fs::write(dir.path().join(name).join("f"), "x").unwrap();
     }
     // Other names stay, whatever their age: a tree, its record, a lock.
-    let kept = ["abc", "abc.verified", "abc.lock", ".hidden"];
-    std::fs::create_dir(dir.path().join("abc")).unwrap();
-    for name in &kept[1..] {
+    // `abc.partial-1` too: staging names start with a dot.
+    let kept = [
+        "abc",
+        "abc.partial-1",
+        "abc.verified",
+        "abc.lock",
+        ".hidden",
+    ];
+    for name in &kept[..2] {
+        std::fs::create_dir(dir.path().join(name)).unwrap();
+    }
+    for name in &kept[2..] {
         std::fs::write(dir.path().join(name), "x").unwrap();
     }
     // Just made: a running extraction's, kept.

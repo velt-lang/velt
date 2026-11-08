@@ -280,6 +280,8 @@ const CREDENTIAL_PARAMS: &[&str] = &[
     "sig",
     "signature",
     "access_key",
+    "authorization",
+    "passwd",
     "pwd",
     "jwt",
 ];
@@ -289,12 +291,15 @@ const CREDENTIAL_SUFFIXES: &[&str] = &[
     "_token",
     "_secret",
     "_password",
+    "_passwd",
+    "_key",
     "_signature",
     "_credential",
 ];
 
 /// A query parameter's name with its escapes decoded (`%74oken`), in lower case, with `_` for
-/// `-` (`api-key`).
+/// `-` (`api-key`) and before a capital that follows a lower-case letter or digit
+/// (`accessToken`).
 fn credential_key(key: &str) -> String {
     let bytes = key.as_bytes();
     let hex = |at: usize| Some(char::from(*bytes.get(at)?).to_digit(16)? as u8);
@@ -311,9 +316,19 @@ fn credential_key(key: &str) -> String {
             }
         }
     }
-    String::from_utf8_lossy(&out)
-        .to_ascii_lowercase()
-        .replace('-', "_")
+    let mut name = String::with_capacity(out.len());
+    let mut lower_before = false;
+    for c in String::from_utf8_lossy(&out).chars() {
+        if c.is_ascii_uppercase() && lower_before {
+            name.push('_');
+        }
+        lower_before = c.is_ascii_lowercase() || c.is_ascii_digit();
+        name.push(match c {
+            '-' => '_',
+            c => c.to_ascii_lowercase(),
+        });
+    }
+    name
 }
 
 /// A warning when the URL of dependency `name` holds a query parameter named like a credential
@@ -450,7 +465,8 @@ fn lock_raw(raw: &Path) -> Result<std::fs::File, String> {
         .open(&path)
         .map_err(|e| format!("cannot open `{}`: {e}", path.display()))?;
     // A filesystem with no locks (some network mounts) still installs: two installs that meet
-    // there fail in the extractor's rename, and neither leaves a wrong tree.
+    // there fail in the extractor's rename, or one URL goes unrecorded (one more download
+    // later), and neither leaves a wrong tree.
     let _ = file.lock();
     Ok(file)
 }

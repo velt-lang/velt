@@ -551,24 +551,46 @@ fn a_credential_in_the_query_is_warned_of_and_an_ordinary_query_is_not() {
         );
         warnings
     };
+    // The value is never in the warning: the URL holding it is printed nowhere new.
+    let value = "s3cr3tvalue";
     for query in [
-        "token=abc",
-        "v=1&X-Amz-Signature=f00",
-        "Private_Token=x",
-        "sig=y&sv=2020",
-        "api-key=x",
-        "deploy_token=x",
-        "client_secret=x",
-        "v=1;jwt=x",
-        "%74oken=x",
+        "token=s3cr3tvalue",
+        "v=1&X-Amz-Signature=s3cr3tvalue",
+        "Private_Token=s3cr3tvalue",
+        "sig=s3cr3tvalue&sv=2020",
+        "v=1;jwt=s3cr3tvalue",
+        "%74oken=s3cr3tvalue",
     ] {
         let warnings = install(query);
         assert!(
             (warnings.iter()).any(|w| w.contains("looks like a credential") && w.contains("`vue`")),
             "{query}: {warnings:?}"
         );
+        assert!(
+            !(warnings.iter()).any(|w| w.contains(value)),
+            "{warnings:?}"
+        );
     }
-    for query in ["v=1", "download=1&tokenized=yes", "keys=a"] {
+    for key in [
+        "api-key",
+        "deploy_token",
+        "client_secret",
+        "accessToken",
+        "authToken",
+        "apiToken",
+        "clientSecret",
+        "x-api-key",
+        "private_key",
+        "secret_key",
+        "authorization",
+        "passwd",
+    ] {
+        let url = format!("https://h/a.tgz?v=1;{key}={value}");
+        let warning = crate::url_source::credential_warning("x", &url);
+        let warning = warning.unwrap_or_else(|| panic!("{key}: no warning"));
+        assert!(!warning.contains(value), "{warning}");
+    }
+    for query in ["v=1", "download=1&tokenized=yes", "keys=a", "monkey=1"] {
         let warnings = install(query);
         assert!(
             !(warnings.iter()).any(|w| w.contains("credential")),

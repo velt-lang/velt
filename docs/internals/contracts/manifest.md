@@ -231,7 +231,8 @@ hash alone, and `allowNative` matches the URL as written); without a lock, a cac
 read in full against the recorded checksum, so a changed tree never reaches a new lock. All but a
 hit for this URL run under the archive's lock (`<sha256>.lock`, `url_source::lock_raw`) and look
 at the cache again once they hold it: a concurrent install waits for the first one's tree, and no
-recorded URL is lost. Staging directories a killed extraction left beside the tree
+recorded URL is lost. On a filesystem without locks they run anyway: two installs that meet there
+fail with "already exists", or one URL goes unrecorded and costs one more download. Staging directories a killed extraction left beside the tree
 (`.<name>.partial-…`) are removed by the next extraction there once a week old. The extractor
 refuses `.git` in any spelling, a directory git would take for a repository by its contents
 (`HEAD` with `objects` and `refs`, or with `commondir`) under any name, a name over 255 bytes,
