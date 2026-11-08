@@ -1,5 +1,5 @@
-// velt/compress (internal): unchecked reads of the Brotli encoder's input, and the 4-byte write
-// of its table, for the match finder.
+// velt/compress (internal): unchecked reads of the Brotli encoder's input, and the writes of its
+// table, for the match finder.
 
 import { inline } from "velt/lang/intrinsics";
 import { u32x4, u64x2, u8x16 } from "velt/simd";
@@ -25,7 +25,6 @@ export function word(d: u8[], at: i64): u64 {
  * load of 16 stays inside the array, then one at a time.
  */
 export function common(d: u8[], a: i64, b: i64, max: i64): i64 {
-  inline();
   let n: i64 = 0;
   const wide = (d.length as i64) - 16 - b;
   const most = max < wide ? max : wide;
@@ -59,4 +58,18 @@ export function put32(table: u8[], at: u64, value: u64) {
   inline();
   const v = velt_simd_u32x4_as_u8x16(velt_simd_u32x4_splat(value as u32));
   velt_simd_u8x16_store_partial(v, table, at, 4);
+}
+
+/** Writes `value` as `n` little-endian `u32`s from `at`, which must be inside `table`. */
+export function fill32(table: u8[], at: u64, value: u64, n: u64) {
+  const v = velt_simd_u32x4_as_u8x16(velt_simd_u32x4_splat(value as u32));
+  let i: u64 = 0;
+  while (i + 4 <= n) {
+    velt_simd_u8x16_store_partial(v, table, at + i * 4, 16);
+    i += 4;
+  }
+  while (i < n) {
+    velt_simd_u8x16_store_partial(v, table, at + i * 4, 4);
+    i++;
+  }
 }

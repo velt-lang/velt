@@ -2,16 +2,17 @@
 // positions over the first four to six bytes of each, by quality.
 //
 // A bucket holds positions as the stream's offset modulo 2^32, so the window can slide without
-// touching the table. The table is bytes, four to a position, made zeroed (`Buffer.alloc`), so a
-// search can read 16 bytes, four positions, at a time. Zeroing costs in proportion to the size, so
-// a one-shot input gets a table for its length, and a stream starts with 64 KiB and grows at fixed
-// positions. An empty slot reads as position 0, a real candidate whose bytes are compared like any
-// other, so the output depends only on the input. Up to four positions a bucket, a position's slot
-// is picked from the position itself, as the reference encoder's fast hashers do; above that, a
-// counter per bucket turns.
+// touching the table. The table is bytes, four to a position, so a search can read 16 bytes, four
+// positions, at a time. A one-shot input gets a zeroed table for its length (`Buffer.alloc`); an
+// empty slot reads as position 0, a real candidate whose bytes are compared like any other. A
+// stream gets the full table unzeroed, since zeroing it costs more than a short stream's whole
+// compression, and a bitmap (zeroed, a bit per bucket) of the buckets used: a bucket is filled with
+// its first position when first used, a distance of 0 that no search takes. Either way the output
+// depends only on the input. Up to four positions a bucket, a position's slot is picked from the
+// position itself, as the reference encoder's fast hashers do; above that, a counter per bucket
+// turns.
 
-import { inline } from "velt/lang/intrinsics";
-import { put32, word } from "velt/compress/brotli/match_bytes";
+import { fill32, put32, word } from "velt/compress/brotli/match_bytes";
 import { BUCKET_BITS, HASHED, INSERT_KEPT, WAY_BITS } from "velt/compress/brotli/match_settings";
 import { MetaBlock } from "velt/compress/brotli/meta_block";
 
@@ -19,9 +20,6 @@ const HASH_MUL: u64 = 0x1e35a7bd1e35a7bd;
 export const MASK32: u64 = 0xffffffff;
 /** The bytes from a position a match needs, and a search reads. */
 export const HASH_BYTES: i64 = 4;
-/** A stream (no size hint) starts with at most 2^14 slots, 64 KiB, and grows from there. */
-const FIRST_SLOTS: i64 = 14;
-const NEVER: i64 = 1 << 62;
 
 /** The positions of a window of input, by the hash of their first bytes. */
 export class PositionTable extends MetaBlock {
@@ -37,9 +35,9 @@ export class PositionTable extends MetaBlock {
   /** Per bucket, above four slots: where the next position goes. */
   private num: u8[] = [];
   bucketBits: u64;
-  /** The bucket bits of a full-sized table, and the position where the table grows next. */
-  private fullBits: i64;
-  growAt: i64 = NEVER;
+  /** A stream's table: its buckets are set when first used, which `touched` has a bit for. */
+  stream: bool;
+  private touched: u8[] = [];
   /** `HASH_MUL` in a field, which a loop keeps in a register; a constant is built at each use. */
   multiplier: u64 = HASH_MUL;
   /** The hash's input is the low `HASHED` bytes of a 64-bit load, shifted up by this. */
@@ -61,47 +59,27 @@ export class PositionTable extends MetaBlock {
         bits = need;
       }
     }
-    this.fullBits = BUCKET_BITS[quality];
     this.wayBits = WAY_BITS[quality];
-    // Zeroing the full table costs more than a short stream's whole compression: start small.
-    if (sizeHint < 0 && bits + this.wayBits > FIRST_SLOTS) {
-      bits = FIRST_SLOTS - this.wayBits;
-      this.growAt = 1 << FIRST_SLOTS;
-    }
     this.bucketBits = bits as u64;
     this.insertKept = INSERT_KEPT[quality];
     this.hashShift = (64 - 8 * HASHED[quality]) as u64;
-    this.newTable();
+    this.stream = sizeHint < 0;
+    // 16 bytes past the last slot, for the last bucket's 16-byte load.
+    const size = ((1 << (bits + this.wayBits)) * 4 + 16) as usize;
+    const counters = (this.wayBits > 2 ? 1 << bits : 1) as usize;
+    if (this.stream) {
+      this.table = Buffer.allocUnsafe(size);
+      this.num = Buffer.allocUnsafe(counters);
+      this.touched = Buffer.alloc((((1 << bits) + 7) >> 3) as usize);
+    } else {
+      this.table = Buffer.alloc(size);
+      this.num = Buffer.alloc(counters);
+    }
   }
 
   /** Moves every position `by` bytes down, after the window slid that much (`base` grew). */
   shift(by: i64) {
     this.hashed -= by;
-  }
-
-  // 16 bytes past the last slot, for the last bucket's 16-byte load.
-  private newTable() {
-    const bits = this.bucketBits as i64;
-    this.table = Buffer.alloc(((1 << (bits + this.wayBits)) * 4 + 16) as usize);
-    this.num = Buffer.alloc((this.wayBits > 2 ? 1 << bits : 1) as usize);
-  }
-
-  /**
-   * A table four times the size, holding the positions in the window: once the stream has as many
-   * positions as the table has slots.
-   */
-  grow() {
-    let bits = (this.bucketBits as i64) + 2;
-    if (bits >= this.fullBits) {
-      bits = this.fullBits;
-      this.growAt = NEVER;
-    } else {
-      this.growAt = 1 << (bits + this.wayBits);
-    }
-    this.bucketBits = bits as u64;
-    this.newTable();
-    const from = this.hashed - this.maxBackward;
-    this.insertRun(from > 0 ? from : 0, this.hashed);
   }
 
   /** Adds positions `from` to `to` (exclusive) to the table, up to where four bytes are left. */
@@ -151,7 +129,16 @@ export class PositionTable extends MetaBlock {
     const mask = ((1 as u64) << wayBits) - 1;
     const base = this.base;
     let p = from;
-    if (wayBits <= 2) {
+    if (this.stream) {
+      while (p < fast) {
+        const h = (word(d, p) << shift).wrappingMul(multiplier) >> drop;
+        if (!this.used(h)) {
+          this.firstUse(h, base + p);
+        }
+        this.enter(p, h);
+        p++;
+      }
+    } else if (wayBits <= 2) {
       while (p < fast) {
         const h = (word(d, p) << shift).wrappingMul(multiplier) >> drop;
         const abs = (base + p) as u64;
@@ -169,14 +156,22 @@ export class PositionTable extends MetaBlock {
       }
     }
     while (p < to) {
-      this.enter(p, (this.key(p) << shift).wrappingMul(multiplier) >> drop);
+      const h = (this.key(p) << shift).wrappingMul(multiplier) >> drop;
+      if (this.stream && !this.used(h)) {
+        this.firstUse(h, base + p);
+      }
+      this.enter(p, h);
       p++;
     }
   }
 
-  /** Adds `pos`, whose hash is `h`, to the table. */
+  /** Whether bucket `h` of a stream's table was used, so a search can read it. */
+  used(h: u64): bool {
+    return (this.touched[(h >> 3) as i64] & ((1 << (h & 7)) as u8)) != 0;
+  }
+
+  /** Adds `pos`, whose hash is `h`, to the table; a stream's bucket `h` must have been used. */
   enter(pos: i64, h: u64) {
-    inline();
     const abs = (this.base + pos) as u64;
     const wayBits = this.wayBits as u64;
     const mask = ((1 as u64) << wayBits) - 1;
@@ -187,5 +182,15 @@ export class PositionTable extends MetaBlock {
       this.num[h as i64] = ((n + 1) & 255) as u8;
     }
     put32(this.table, ((h << wayBits) + slot) * 4, abs & MASK32);
+  }
+
+  /** Fills a stream's bucket `h` with position `abs`, a distance of 0, and marks it used. */
+  firstUse(h: u64, abs: i64) {
+    const wayBits = this.wayBits as u64;
+    fill32(this.table, (h << wayBits) * 4, (abs as u64) & MASK32, (1 as u64) << wayBits);
+    if (wayBits > 2) {
+      this.num[h as i64] = 0;
+    }
+    this.touched[(h >> 3) as i64] |= (1 << (h & 7)) as u8;
   }
 }

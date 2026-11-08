@@ -87,6 +87,17 @@ function same(a: u8[], b: u8[]): bool {
   return true;
 }
 
+/** `input` through a stream of quality `q`, written in pieces of `step` bytes. */
+function streamed(input: u8[], q: f64, step: i64): u8[] {
+  const e = new BrotliEncoding(q).encoder();
+  const end = input.length as i64;
+  let out: u8[] = [];
+  for (let at: i64 = 0; at < end; at += step) {
+    out = out.concat(e.write(input, at, at + step < end ? at + step : end));
+  }
+  return out.concat(e.finish());
+}
+
 /** Everything `d` can output now. */
 function drain(d: BrotliDecoder): u8[] {
   let out: u8[] = [];
@@ -261,26 +272,34 @@ describe("BrotliEncoding", () => {
     expect(ok).toBe(true);
   });
 
-  it("grows a stream's table and keeps the positions in the window", () => {
-    // A stream starts with a small table, and bytes from 16 symbols at random fill every bucket
-    // (random bytes of all 256 values would be stored as they are). The block's second copy, 330 KB
-    // on, is found only if the table grew and took along the positions already in the window:
-    // without that, the stream is 9 % larger. Written whole, it must still grow before its
-    // meta-block ends.
+  it("finds a stream's positions far back, written whole or in pieces", () => {
+    // Bytes from 16 symbols at random fill every bucket (random bytes of all 256 values would be
+    // stored as they are). The block's second copy, 330 KB on, is found only if its first copy's
+    // positions are still in the table: without that, the stream is 9 % larger.
     const block = noise(30000, 16, 11);
     const input = block.concat(noise(300000, 16, 12)).concat(block);
-    const end = input.length as i64;
     const whole = brotliCompress(input, 4).length;
-    const steps: i64[] = [1000, end];
+    const steps: i64[] = [1000, input.length as i64];
     for (const step of steps) {
-      const e = new BrotliEncoding(4).encoder();
-      let out: u8[] = [];
-      for (let at: i64 = 0; at < end; at += step) {
-        out = out.concat(e.write(input, at, at + step < end ? at + step : end));
-      }
-      out = out.concat(e.finish());
+      const out = streamed(input, 4, step);
       const ok = same(brotliDecompress(out), input) && out.length < whole + whole / 100;
       expect(ok ? "" : `pieces of ${step}: ${out.length} bytes, one-shot ${whole}`).toBe("");
+    }
+  });
+
+  it("gives a stream the same bytes, whatever streams ran before it", () => {
+    // A stream's table is not zeroed: the stream before, whose freed table the allocator may hand
+    // back, must not show through. That one has `a` 30 KB on from where `t` has it, where `t` has
+    // a second copy of `a`, one match, whose middle positions are not entered: one left by the
+    // stream before would give `t`'s third copy a nearer distance.
+    const a = noise(30000, 16, 13);
+    const t = a.concat(a).concat(noise(5000, 16, 14)).concat(a.slice(0, 10000));
+    const before = noise(30000, 16, 15).concat(a);
+    const qs: f64[] = [1, 4, 6, 9];
+    for (const q of qs) {
+      const first = streamed(t, q, 4096);
+      streamed(before, q, 4096);
+      expect(same(streamed(t, q, 4096), first) ? "" : `quality ${q}`).toBe("");
     }
   });
 

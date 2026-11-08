@@ -1,0 +1,30 @@
+// Brotli compression (`velt/compress`) of streamed responses at quality 4, as `compress()` in
+// packages/web makes them: 30 streams of 300 KB from the 1 MB JSON of `json`
+// (rust/src/bin/gen_inputs.rs, written by run.sh), one encoder each, written once and finished. The
+// Rust port uses the `brotli` crate's `CompressorWriter` (window 2^22). Both print the bytes read
+// and whether the last stream decodes to its input.
+import { readFileBytesSync } from "velt/fs";
+import { BrotliEncoding, brotliDecompress } from "velt/compress";
+
+function main() {
+  const input = readFileBytesSync(`${process.env.STDPORT_INPUTS ?? "."}/json`);
+  const encoding = new BrotliEncoding(4);
+  let total: i64 = 0;
+  let last: u8[] = [];
+  let start: i64 = 0;
+  for (let i: i64 = 0; i < 30; i++) {
+    start = i * 20000;
+    const encoder = encoding.encoder();
+    last = encoder.write(input, start, start + 307200);
+    for (const b of encoder.finish()) {
+      last.push(b);
+    }
+    total += 307200;
+  }
+  const back = brotliDecompress(last);
+  let same = back.length == 307200;
+  for (let i: usize = 0; same && i < back.length; i++) {
+    same = back[i] == input[(start as usize) + i];
+  }
+  console.log(`${total} ${same}`);
+}

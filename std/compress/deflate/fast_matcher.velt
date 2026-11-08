@@ -219,7 +219,6 @@ function matchLength(w: u8[], a: i64, b: i64, clear: i64, fill: i64): i64 {
  * two bytes are known, the 16-byte steps end on the limit exactly.
  */
 function common258(w: u8[], a: i64, b: i64): i64 {
-  inline();
   let n: i64 = 2;
   while (n < MAX_MATCH) {
     const x = velt_simd_u8x16_as_u64x2(

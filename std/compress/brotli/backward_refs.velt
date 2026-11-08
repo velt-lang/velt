@@ -7,7 +7,6 @@
 // The table of positions is `PositionTable`; a search reads a bucket 16 bytes, four positions,
 // at a time.
 
-import { inline } from "velt/lang/intrinsics";
 import { common, word } from "velt/compress/brotli/match_bytes";
 import {
   CACHE_CHECKS,
@@ -97,27 +96,13 @@ export class Matcher extends PositionTable {
    * meta-block reaches `blockLimit` bytes.
    */
   choose(stop: i64, blockLimit: i64) {
-    // The table grows at the first command past `growAt`, however the input arrives.
-    while (true) {
-      while (this.base + this.pos >= this.growAt) {
-        this.grow();
-      }
-      const edge = this.growAt - this.base;
-      const to = stop < edge ? stop : edge;
-      this.chooseTo(to, blockLimit);
-      if (to == stop || this.base + this.pos < this.growAt) {
-        return;
-      }
-    }
-  }
-
-  private chooseTo(stop: i64, blockLimit: i64) {
-    inline();
+    // In a local, the flag stays in a register through the loop and the searches.
+    const stream = this.stream;
     const end = this.fill;
     let pos = this.pos;
     while (pos < stop && pos + HASH_BYTES <= end && pos - this.blockStart < blockLimit) {
       const room = end - pos < MAX_MATCH ? end - pos : MAX_MATCH;
-      if (!this.search(pos, room)) {
+      if (!this.search(pos, room, stream)) {
         pos = this.literal(pos, stop);
         continue;
       }
@@ -129,7 +114,7 @@ export class Matcher extends PositionTable {
         while (delayed < maxDelay && pos + 1 + HASH_BYTES <= end) {
           const score = this.bestScore;
           const next = end - pos - 1 < MAX_MATCH ? end - pos - 1 : MAX_MATCH;
-          if (!this.search(pos + 1, next) || this.bestScore < score + LAZY_COST) {
+          if (!this.search(pos + 1, next, stream) || this.bestScore < score + LAZY_COST) {
             break;
           }
           pos++;
@@ -193,9 +178,10 @@ export class Matcher extends PositionTable {
 
   /**
    * The best match for `pos`, at most `max` bytes, into `bestLen`, `bestDist` and `bestScore`;
-   * whether one scores above `MIN_SCORE`. Adds `pos` to the table.
+   * whether one scores above `MIN_SCORE`. Adds `pos` to the table. `stream`: the table is a
+   * stream's, whose buckets are read once used.
    */
-  private search(pos: i64, max: i64): bool {
+  private search(pos: i64, max: i64, stream: bool): bool {
     const d = this.data;
     const abs = this.base + pos;
     const maxDist = pos < this.maxBackward ? pos : this.maxBackward;
@@ -238,7 +224,8 @@ export class Matcher extends PositionTable {
     if (pos >= this.hashed) {
       const wayBits = this.wayBits as u64;
       const h = (x << this.hashShift).wrappingMul(this.multiplier) >> (64 - this.bucketBits);
-      const ways = (1 as i64) << (wayBits as i64);
+      const fresh = stream && !this.used(h);
+      const ways = fresh ? 0 : (1 as i64) << (wayBits as i64);
       const first = ((h << wayBits) * 4) as u64;
       const table = this.table;
       // The byte a candidate must have to be longer than the best, while it can be read unchecked.
@@ -272,6 +259,9 @@ export class Matcher extends PositionTable {
             wanted = pos + len <= safe ? (d[pos + len] as u64) : NONE;
           }
         }
+      }
+      if (fresh) {
+        this.firstUse(h, abs);
       }
       this.enter(pos, h);
       this.hashed = pos + 1;

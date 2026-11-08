@@ -176,26 +176,31 @@ this JSON (145,470 bytes), though smaller over the real files (5.11 MB against 5
 (`"fastest"` and `"optimal"`) against the `brotli` crate at the same qualities (window 2^22): the
 1 MB JSON of `gen_inputs.rs`. A new component, not a port. Instructions per compression, measured
 as for gzip above, and the size of one stream against Node's encoder (the reference encoder, as the
-crate is). On x86-64 `brotli_default` is about 5 % further from Rust than here: 1.06 before quality
+crate is). On x86-64 `brotli_default` was about 5 % further from Rust than here: 1.06 before quality
 4 checked three cached distances instead of four, which cut its arm64 count by 4 %.
 
 | benchmark | Velt | Rust | Velt / Rust | Velt bytes | Node bytes |
 |---|---:|---:|---:|---:|---:|
-| brotli_fast | 43.9 M | 59.3 M | 0.74 | 76,379 | 96,467 |
-| brotli_default | 59.0 M | 61.7 M | 0.96 | 47,575 | 47,346 |
+| brotli_fast | 45.3 M | 59.3 M | 0.76 | 76,379 | 96,467 |
+| brotli_default | 60.9 M | 61.7 M | 0.99 | 47,575 | 47,346 |
 
-`brotli_stream_small` is what `compress()` in packages/web does for each short response: 1,000
-streams of 1 KB from the same JSON at quality 4, one encoder each (`BrotliEncoding`'s `encoder()`
-against the crate's `CompressorWriter`). It measures setting an encoder up. Instructions of the
-whole program (cachegrind, arm64 Linux, `VELT_THREADS=1`) and the best of 7 wall-clock runs:
+The stream rows are what `compress()` in packages/web does for each response: streams from the
+same JSON at quality 4, one encoder each (`BrotliEncoding`'s `encoder()` against the crate's
+`CompressorWriter`), written once and finished. `brotli_stream_small` is 1,000 streams of 1 KB and
+measures setting an encoder up; `brotli_stream_20k` is 300 of 20 KB and `brotli_stream_300k` 30 of
+300 KB. Instructions of the whole program (cachegrind, arm64 Linux, `VELT_THREADS=1`) and the best
+of 7 wall-clock runs:
 
 | benchmark | Velt | Rust | Velt / Rust | Velt ms | Rust ms |
 |---|---:|---:|---:|---:|---:|
-| brotli_stream_small | 250 M | 248 M | 1.01 | 13 | 16 |
+| brotli_stream_small | 258 M | 248 M | 1.04 | 13 | 16 |
+| brotli_stream_20k | 650 M | 504 M | 1.29 | 32 | 23 |
+| brotli_stream_300k | 724 M | 628 M | 1.15 | 37 | 29 |
 
-A stream has no size hint, so its table starts at 64 KiB and grows fourfold, taking the positions
-in the window along, each time the stream has as many positions as the table has slots. A one-shot
-input gets a table for its length at once.
+A one-shot input gets a zeroed table for its length. A stream has no size hint, so it gets the full
+table (4 MiB at quality 4) without zeroing it, and a bitmap of the buckets it used, 32 KiB, which is
+all it zeroes: a bucket is set when first used. Streams of 20 KB and more are still behind the
+crate, though the one-shot rows are not.
 
 From quality 4 the encoder splits literals into block types, each with its own prefix code, with
 the reference's greedy splitter; it has no context modeling or static dictionary yet. Over the
