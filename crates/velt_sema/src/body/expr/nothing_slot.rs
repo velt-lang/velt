@@ -96,7 +96,7 @@ impl FnCx<'_, '_> {
         }
         let span = nothing.then_some(inner.span);
         let outer = std::mem::replace(&mut self.chain_span, span);
-        let outer_link = std::mem::replace(&mut self.link_span, None);
+        let outer_link = self.link_span.take();
         let r = check(self);
         self.chain_span = outer;
         self.link_span = outer_link;
