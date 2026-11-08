@@ -227,10 +227,12 @@ impl FnSites {
     }
 
     /// Does a diagnostic of this check show a variable as nothing where a check without
-    /// variables shows its set: has it variables, a set that is not empty (or not solved), and
-    /// is it not checked again anyway with the sets it found (without the program's variables)?
+    /// variables shows its set: has it variables (a check without any shows none), a set that
+    /// is not empty (or not solved), and is it not checked again anyway with the sets it found
+    /// (without the program's variables)?
     fn shows_vars(&self) -> bool {
-        self.use_vars && self.sets_empty != Some(true) && !self.again()
+        let none = self.vars.is_empty() || self.sets_empty == Some(true);
+        self.use_vars && !none && !self.again()
     }
 
     /// Is this the last check, whatever it finds?

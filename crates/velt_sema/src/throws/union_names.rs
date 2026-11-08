@@ -120,8 +120,9 @@ impl Ctx<'_> {
         names
     }
 
-    /// Debug builds (the goldens) check that no union lowering sees has two variants of one
-    /// name, which its layouts are named by ([`Ctx::distinct_names`]).
+    /// Debug builds (the goldens) check that no union lowering sees has two function-type
+    /// variants of one name, which [`Ctx::distinct_names`] keeps apart (other members may share
+    /// a name: two classes `A` of different scopes).
     pub(crate) fn debug_distinct_variants(&self) {
         if !cfg!(debug_assertions) {
             return;
@@ -134,8 +135,19 @@ impl Ctx<'_> {
             // A union with variables is replaced by its solved form (`crate::union_layouts`).
             let union =
                 self.enum_info(d).is_some_and(|e| e.is_union) && !self.replaced_unions.contains(&d);
-            for (j, v) in h.variants.iter().enumerate().filter(|_| union) {
-                let again = h.variants[..j].iter().any(|w| w.name == v.name);
+            let is_fn = |v: &crate::hir::VariantDef| {
+                matches!(
+                    v.payload.first().map(|t| self.ty.kind(*t)),
+                    Some(TyKind::FnPtr { .. })
+                )
+            };
+            for (j, v) in h
+                .variants
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| union && is_fn(v))
+            {
+                let again = h.variants[..j].iter().any(|w| is_fn(w) && w.name == v.name);
                 assert!(
                     !again,
                     "ICE: union `{}` has two variants named `{}`",

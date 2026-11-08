@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::programs::ok_src;
+use common::programs::{load_src, ok_src};
 
 const HTTP_ERROR: &str = "class HttpError extends Error {\n  status: number;\n  constructor(status: number, message: string) {\n    super(message);\n    this.status = status;\n  }\n}\n";
 
@@ -15,6 +15,14 @@ const HTTP_ERROR: &str = "class HttpError extends Error {\n  status: number;\n  
 fn rounds(src: &str) -> usize {
     let before = velt_sema::check_rounds();
     ok_src(&format!("{HTTP_ERROR}{src}"));
+    velt_sema::check_rounds() - before
+}
+
+/// How many rounds checking `src` takes, which reports something (`errors`: an error).
+fn rounds_reporting(src: &str, errors: bool) -> usize {
+    let before = velt_sema::check_rounds();
+    let (_, diags) = load_src(src).check();
+    assert!(!diags.is_empty() && diags.iter().any(|d| d.is_error()) == errors);
     velt_sema::check_rounds() - before
 }
 
@@ -293,7 +301,29 @@ fn rejecting_promises_stored_into_promise_types_written_without_errors_take_one_
     assert_eq!(rounds(GROWS), 2);
     // A diagnostic of an overload tried and dropped shows no type the program's do.
     assert_eq!(rounds(OVERLOAD_TRIED), 1);
+    // A program without sites that reports a warning, or an error, is checked once: it shows
+    // no variable.
+    assert_eq!(rounds_reporting(WARNS, false), 1);
+    assert_eq!(rounds_reporting(FAILS, true), 1);
 }
+
+/// `=== null` on an `i64 | undefined`, always false: a warning, and no site.
+const WARNS: &str = r#"
+function opt(x: i64, b: boolean): i64 | undefined { if (b) { return x; } return undefined; }
+function main() {
+  const r = opt(1, true);
+  if (r === null) { console.log("null"); }
+  console.log(r);
+}
+"#;
+
+/// A type error, and no site.
+const FAILS: &str = r#"
+function main() {
+  const x: string = 1;
+  console.log(x);
+}
+"#;
 
 /// A promise passed to an overloaded function: checking it against the first signature reports
 /// a mismatch showing the promise's type, which the second signature then drops.

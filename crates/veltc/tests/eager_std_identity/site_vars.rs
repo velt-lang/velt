@@ -1,9 +1,11 @@
 //! Error-set variables change nothing but the cost (#2590, `velt_sema::throws::vars`): every
-//! golden that mentions `Promise` or `async`, and every program in `site_vars_identity/`, built
+//! golden that mentions `Promise` or `async`, a sample of those that report errors or warnings
+//! ([`reports`]), and every program in `site_vars_identity/`, built
 //! with `--emit vir` with the variables and with `VELT_NO_SITE_VARS=1` (the sets found by checking
 //! the program again), gives the same VIR and warnings, or fails with the same diagnostics, and
 //! the check with the variables of a program that builds takes no more rounds than the one
-//! without (one that fails is checked again without variables, for its diagnostics). The
+//! without (one that fails at most one more: it is checked again without variables, for its
+//! diagnostics). The
 //! programs in [`KNOWN`] are compared too, and must differ as recorded: one that no longer
 //! differs leaves the list, and one that differs otherwise is looked at again.
 //!
@@ -63,13 +65,31 @@ const SAMPLE_ONE_IN: u64 = 8;
 /// Whether the program `name` is in the sample: chosen by a hash of its name, so a new one
 /// moves no other in or out.
 fn in_sample(name: &str) -> bool {
-    let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-    });
-    hash % SAMPLE_ONE_IN == 0
+    name_hash(name).is_multiple_of(SAMPLE_ONE_IN)
 }
 
-/// The `.velt` files under `dir` that mention `Promise` or `async` (`all`: every one).
+/// A hash of `name`, the same on every OS.
+fn name_hash(name: &str) -> u64 {
+    name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// One golden that reports errors in this many, besides those with promises: a check that
+/// reports anything may be checked again (`throws::vars`), also one without sites.
+const ERRORS_ONE_IN: u64 = 4;
+
+/// Does the golden `p` report something: errors (a `.err` file), or warnings (in its
+/// `.stderr`)? Those with errors are taken one in [`ERRORS_ONE_IN`], by name.
+fn reports(p: &Path, name: &str) -> bool {
+    let warns =
+        std::fs::read_to_string(p.with_extension("stderr")).is_ok_and(|s| s.contains("warning"));
+    let errs = p.with_extension("err").exists() && name_hash(name) % ERRORS_ONE_IN == 1;
+    warns || errs
+}
+
+/// The `.velt` files under `dir` that mention `Promise` or `async`, or report something
+/// ([`reports`]) (`all`: every one).
 fn programs(dir: &Path, all: bool, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap().flatten() {
         let p = entry.path();
@@ -78,7 +98,7 @@ fn programs(dir: &Path, all: bool, out: &mut Vec<PathBuf>) {
             programs(&p, all, out);
         } else if name.ends_with(".velt") && !name.starts_with('_') {
             let src = std::fs::read_to_string(&p).unwrap_or_default();
-            if all || src.contains("Promise") || src.contains("async") {
+            if all || src.contains("Promise") || src.contains("async") || reports(&p, &name) {
                 out.push(p);
             }
         }
@@ -170,7 +190,9 @@ fn differs(file: &Path, home: &Path, built: &AtomicUsize) -> Option<(Kind, Strin
         };
         return Some((kind, why));
     }
-    (vars_ok && rounds > plain_rounds).then(|| {
+    // One that fails may take one more, checked again without variables for its diagnostics.
+    let allowed = plain_rounds + usize::from(!vars_ok);
+    (rounds > allowed).then(|| {
         let why = format!("{rounds} rounds with variables, {plain_rounds} without");
         (Kind::Rounds, why)
     })
