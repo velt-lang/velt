@@ -49,6 +49,10 @@ export class Input implements RowSource {
   /** The bytes arrived and not taken yet. */
   buffer: ReadBuffer = new ReadBuffer();
   stream: PgStream;
+  // TLS: what the last read said is buffered past it (`PgStream.tryReadTls`), so the next one needs
+  // no lock to know whether to wait first. Only a read changes it; a new `Input` reads first, since
+  // the start-up or the `Input` before it may have left something. Always false on a plain socket.
+  private more: bool;
   /** The connection this reads for; null while connecting, and then nothing is owed. */
   conn: Conn | null = null;
   /** Nobody is owed anything through this one: dropping it does nothing. */
@@ -87,6 +91,7 @@ export class Input implements RowSource {
 
   constructor(stream: PgStream, none: shared<Prepared>) {
     this.stream = stream;
+    this.more = stream.tls != null;
     this.statement = none;
   }
 
@@ -94,7 +99,7 @@ export class Input implements RowSource {
 
   /** Whether a read must wait for the socket first: nothing is held that it could find now. */
   mustWait(): bool {
-    return !this.stream.buffered();
+    return !this.more;
   }
 
   /**
@@ -103,7 +108,14 @@ export class Input implements RowSource {
    */
   readSome(): i64 {
     const buf = this.buffer;
-    const n = this.stream.tryRead(buf.bytes, buf.end as number, buf.bytes.length as number);
+    let n: number | null = 0;
+    if (this.stream.tls == null) {
+      n = this.stream.tcp.tryRead(buf.bytes, buf.end as number, buf.bytes.length as number);
+    } else {
+      const r = this.stream.tryReadTls(buf.bytes, buf.end as number, buf.bytes.length as number);
+      this.more = r.more;
+      n = r.n;
+    }
     if (n == null) {
       return -1;
     }

@@ -120,14 +120,13 @@ export function quiet(input: Input): bool {
   try {
     while (true) {
       buf.makeRoom();
-      const n = input.stream.tryRead(buf.bytes, buf.end as number, buf.bytes.length as number);
-      if (n == null) {
+      const n = input.readSome();
+      if (n < 0) {
         return false;
       }
       if (n == 0) {
         break;
       }
-      buf.end += n as i64;
     }
   } catch (e) {
     return false;

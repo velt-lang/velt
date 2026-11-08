@@ -11,6 +11,13 @@
 
 import { TcpStream, TlsStream } from "velt/net";
 
+/** What a read on a TLS connection found: the bytes (`TcpStream.tryRead`), and whether more wait. */
+export struct TlsRead {
+  n: number | null;
+  /** A `tryRead` now may find bytes that waiting on the socket wouldn't announce. */
+  more: bool;
+}
+
 /** The byte stream under a connection. */
 export struct PgStream {
   /** The socket. What waits, waits on this. */
@@ -31,7 +38,30 @@ export struct PgStream {
     if (this.tls == null) {
       return this.tcp.tryRead(buf, start, end);
     }
-    return this.tlsRead(buf, start, end);
+    return this.tryReadTls(buf, start, end).n;
+  }
+
+  /**
+   * On a TLS connection, `tryRead` and `buffered` after it, under one lock: what a reader keeps for
+   * its next read, which then needs no lock to know whether to wait first.
+   */
+  tryReadTls(buf: u8[], start: number, end: number): TlsRead {
+    const t = this.tls;
+    if (t == null) {
+      return { n: this.tcp.tryRead(buf, start, end), more: false };
+    }
+    const r = t.with((s): TlsRead | Error => {
+      try {
+        const n = s.tryRead(buf, start, end);
+        return { n: n, more: s.hasBuffered() };
+      } catch (e) {
+        return e;
+      }
+    });
+    if (r instanceof Error) {
+      throw r;
+    }
+    return r;
   }
 
   /** `TcpStream.writeBytesLater`: the bytes left to send. */
@@ -64,24 +94,6 @@ export struct PgStream {
   private tlsBuffered(): bool {
     const t = this.tls;
     return t != null && t.with((s) => s.hasBuffered());
-  }
-
-  private tlsRead(buf: u8[], start: number, end: number): number | null {
-    const t = this.tls;
-    if (t == null) {
-      return 0;
-    }
-    const n = t.with((s): number | null | Error => {
-      try {
-        return s.tryRead(buf, start, end);
-      } catch (e) {
-        return e;
-      }
-    });
-    if (n instanceof Error) {
-      throw n;
-    }
-    return n;
   }
 
   private tlsWriteLater(data: u8[], start: number, end: number): i64 {
