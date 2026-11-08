@@ -178,6 +178,10 @@ fn word_uses<'a>(src: &'a str, word: &'a str) -> impl Iterator<Item = usize> + '
     })
 }
 
+/// The `bench/stdport/` rows of ports that have no hook, because only std called the Rust they
+/// replaced, so `HOOKS` can't name them.
+const PORTS_WITHOUT_A_HOOK: [&str; 1] = ["prng"];
+
 /// The warm-up stores what debug builds link (`velt cache warm`, std_cache/serve.rs), and prebuilt
 /// objects will be what it reaches: a port not on its list runs unoptimized in debug builds, as
 /// `localeCompare` did (+163% against the Rust). A port's benchmark exercises it, so it goes there.
@@ -185,14 +189,14 @@ fn word_uses<'a>(src: &'a str, word: &'a str) -> impl Iterator<Item = usize> + '
 fn every_ported_hook_is_warmed() {
     let list = crates().join("../share/velt/warm/programs.txt");
     let list = std::fs::read_to_string(list).expect("the warm-up list");
-    for h in HOOKS {
-        let Some(row) = h.bench else { continue };
+    let hooked = HOOKS.iter().filter_map(|h| Some((h.name, h.bench?)));
+    let unhooked = PORTS_WITHOUT_A_HOOK.iter().map(|&row| (row, row));
+    for (name, row) in hooked.chain(unhooked) {
         let line = format!("../../../bench/stdport/{row}.velt");
         assert!(
             list.lines().any(|l| l.trim() == line),
-            "{}: share/velt/warm/programs.txt has no `{line}`, so debug builds would compile \
+            "{name}: share/velt/warm/programs.txt has no `{line}`, so debug builds would compile \
              this port unoptimized",
-            h.name
         );
     }
 }
@@ -247,6 +251,10 @@ fn every_replaced_extern_is_defined_by_the_runtime_or_deleted() {
     // An extern only std called is deleted with no hook replacing it, so the check above doesn't
     // see it.
     for name in DELETED {
+        assert!(
+            name.starts_with("velt_rt_"),
+            "std_hooks::DELETED lists `{name}`, no runtime extern"
+        );
         let def = format!("extern \"C\" fn {name}(");
         assert!(
             !rt.iter().any(|(_, src)| src.contains(&def)),

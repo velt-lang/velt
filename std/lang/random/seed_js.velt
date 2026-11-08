@@ -1,0 +1,16 @@
+// velt/lang/random (internal): a generator's seed under a JS host (the browser, workers), from
+// `crypto.getRandomValues` in the glue's `velt:random` module (velt_web.mjs `randomHost`). Not
+// for secrets.
+
+declare host("velt:random") function fill(buf: u8[]): void;
+
+/** 64 bits to seed a generator with. */
+export function seedWord(): u64 {
+  const b: u8[] = Buffer.alloc(8);
+  fill(b);
+  let w: u64 = 0;
+  for (let i = 0; i < 8; i++) {
+    w = (w << 8) | (b[i] as u64);
+  }
+  return w;
+}

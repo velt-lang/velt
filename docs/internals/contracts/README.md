@@ -172,9 +172,10 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   loads them for a module declaring one. On JS hosts `velt_main` hands `main`'s root to
   `velt_rt_host_main` with the code after it (VIR `Work::MainFinish`) instead of calling
   `velt_rt_block_on` (rt_abi_async.md §2.5).
-- std's own host functions (#1785): the import module `velt:fetch`
-  (std/net/http/fetch/client/transport/js_host.velt), `fetch`'s transport on JS hosts, which the
-  glue provides itself (rt_abi.md "Host values").
+- std's own host functions (#1785): the import modules `velt:fetch`
+  (std/net/http/fetch/client/transport/js_host.velt), `fetch`'s transport on JS hosts, and
+  `velt:random` (std/lang/random/seed_js.velt), `Math.random()`'s seed, which the glue provides
+  itself (rt_abi.md "Host values").
 
 ## Who owns what
 | Area | Crates / files |

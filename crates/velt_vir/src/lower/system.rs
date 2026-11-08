@@ -699,16 +699,33 @@ impl super::Cx<'_> {
                 (Some(_), _) => {
                     "only a JS host (wasm32-unknown-unknown) provides host functions".into()
                 }
-                (None, Some(_)) => {
-                    "C functions need a native target: WebAssembly can't link C libraries yet"
-                        .into()
-                }
+                (None, Some(c)) => self.c_note(&c.library),
                 (None, None) => self.system_note(&x.symbol),
             });
             out.push(diag);
         }
         out.extend(self.c_clashes.iter().cloned());
         out
+    }
+
+    /// Why the C function of `library` can't be called here. On wasip1, std's calls of `c` can,
+    /// so a call of `c` that lands here is a package's.
+    fn c_note(&self, library: &str) -> String {
+        if !super::c_call::wasi(&self.target) {
+            return "C functions need a native target or wasm32-wasip1: the JS host has no C \
+                    library, and std reaches the host through `declare host`"
+                .into();
+        }
+        if library != "c" {
+            return format!(
+                "`{library}` has no library on {}: only the C library `c` (wasi-libc) is linked there",
+                self.target
+            );
+        }
+        format!(
+            "C functions in packages need a native target on {} until their headers can be checked",
+            self.target
+        )
     }
 
     /// Where the system function `symbol` is available, for the error of a call on a target

@@ -54,7 +54,6 @@ pub mod native;
 pub mod net;
 pub mod os;
 pub mod panic;
-pub mod prng;
 pub mod process;
 pub mod proxy_array;
 pub mod random;

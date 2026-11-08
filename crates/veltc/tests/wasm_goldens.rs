@@ -167,7 +167,7 @@ const SHARDS: usize = 8;
 /// The wasm32-wasip1 goldens: every file with an `.out` in these directories,
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
-/// and the std code written with them.
+/// the std code written with them, and `random` (its seed is WASI's, through wasi-libc).
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "half_dot",
@@ -175,6 +175,7 @@ const WASI_STD: &[&str] = &[
     "half_dot_bf16_lengths_short",
     "half_dot_lengths",
     "half_dot_lengths_short",
+    "random",
     "simd_aes",
     "simd_any",
     "simd_dot",
@@ -351,6 +352,85 @@ fn conditional_imports_pick_the_target_variant() {
             String::from_utf8_lossy(&o.stderr)
         );
     }
+}
+
+/// `Math.random()`'s seed on WebAssembly: WASI's `random_get` through wasi-libc, and the JS
+/// host's `crypto.getRandomValues` (`velt:random`). Two runs of tests/wasm_random/main.velt print
+/// different numbers on each target, which a constant seed (a `fill` that does nothing, a
+/// `seed_wasi` returning a constant) fails.
+#[test]
+fn math_random_seeds_each_run_on_webassembly() {
+    let root = root();
+    let main = root.join("crates/veltc/tests/wasm_random/main.velt");
+    for (target, runner) in [
+        ("wasm32-wasip1", "wasmtime"),
+        ("wasm32-unknown-unknown", "node"),
+    ] {
+        if let Some(missing) = missing_tools(target, runner) {
+            eprintln!("note: {missing} not available; skipping Math.random's seed on {target}");
+            continue;
+        }
+        build_runtime(&root, target);
+        let run = || {
+            let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+                .args(["run", "--target", target])
+                .arg(&main)
+                .output()
+                .expect("run velt");
+            let out = String::from_utf8_lossy(&o.stdout).into_owned();
+            assert!(
+                o.status.success() && !out.trim().is_empty(),
+                "{target}: exit {:?}\n{out}{}",
+                o.status,
+                String::from_utf8_lossy(&o.stderr)
+            );
+            out
+        };
+        let (one, two) = (run(), run());
+        assert_ne!(one, two, "{target}: two runs printed the same numbers");
+    }
+}
+
+/// A `random_get` that fails stops the program with a panic (exit 101) rather than seeding
+/// `Math.random()` with zeros: tests/wasm_random/seed_fails.mjs runs the wasm32-wasip1 module
+/// under node:wasi with a `random_get` that returns EIO.
+#[test]
+fn a_failed_wasi_seed_panics() {
+    if let Some(missing) = missing_tools("wasm32-wasip1", "node") {
+        eprintln!("note: {missing} not available; skipping the failed WASI seed");
+        return;
+    }
+    let root = root();
+    build_runtime(&root, "wasm32-wasip1");
+    let dir = root.join("crates/veltc/tests/wasm_random");
+    let work =
+        work_dir::work_dir(&root, "golden-work-seed").join(format!("{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).expect("work dir");
+    let module = work.join("main.wasm");
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "--target", "wasm32-wasip1"])
+        .arg(dir.join("main.velt"))
+        .arg("-o")
+        .arg(&module)
+        .output()
+        .expect("run velt");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let o = crate::no_window::command("node")
+        .arg("--no-warnings")
+        .arg(for_node(&dir.join("seed_fails.mjs")))
+        .arg(for_node(&module))
+        .output()
+        .expect("run node");
+    let _ = std::fs::remove_dir_all(&work);
+    let (out, err) = (
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr),
+    );
+    assert!(
+        out.contains("exit 101") && err.contains("panic: WASI random_get failed"),
+        "--- stdout ---\n{out}--- stderr ---\n{err}"
+    );
 }
 
 /// Host functions (https://veltlang.com/docs/reference/host-functions/) under node: tests/wasm_host/main.velt, built
