@@ -1,0 +1,99 @@
+// `s.localeCompare(t)` (std/lang/string/collate.velt): the order of `Intl.Collator("und")`. The
+// expected output is Node's (the host's locale `en-US` orders these strings like the root).
+
+const PAIRS: string[][] = [
+  // Case and base letters.
+  ["a", "A"],
+  ["A", "a"],
+  ["a", "B"],
+  ["B", "a"],
+  ["ab", "Aa"],
+  ["Zebra", "apple"],
+  ["", ""],
+  ["", "a"],
+  ["a", ""],
+  ["same", "same"],
+  // Punctuation and spaces are not ignored, and digits come before letters.
+  ["a-b", "ab"],
+  ["a b", "a-b"],
+  ["_", "-"],
+  ["9", "a"],
+  ["$", "0"],
+  ["a10", "a2"],
+  // A control character is ignored at every level.
+  ["x", "x\u0000"],
+  ["\u0001a", "a"],
+  ["a\u0085b", "ab"],
+  // Accents weigh after the base letters, before case.
+  ["résumé", "resume"],
+  ["résumé", "Resume"],
+  ["e", "é"],
+  ["é", "f"],
+  ["ä", "á"],
+  ["é", "E"],
+  ["É", "é"],
+  ["ø", "p"],
+  ["ạ", "b"],
+  ["Việt", "viet"],
+  ["Việt", "Viet"],
+  // A character that is two letters.
+  ["æ", "ae"],
+  ["æ", "af"],
+  ["ß", "ss"],
+  ["ßa", "ssb"],
+  ["Œ", "oe"],
+  ["ǆ", "dz"],
+  ["ǆ", "dž"],
+  // An expansion's second element has no accent: the accent read after `ǅ` decides.
+  ["ǅ", "\u0300ǳ"],
+  // Greek and Cyrillic.
+  ["z", "α"],
+  ["Β", "α"],
+  ["Б", "а"],
+  ["ά", "α"],
+  ["ё", "е"],
+  ["α", "а"],
+  ["москва", "Москва"],
+  ["Άλφα", "αλφα"],
+  // General punctuation and currency.
+  ["‼", "!!"],
+  ["€", "$"],
+  ["—", "-"],
+  ["…", "..."],
+  ["“a", "a"],
+  [" ", " "],
+  // Scripts after the table's, and symbols before the digits.
+  ["中", "가"],
+  ["가", "あ"],
+  ["あ", "中"],
+  ["z", "中"],
+  ["😀", "a"],
+  ["😀", "0"],
+  ["˂", "0"],
+  ["h", "\u9fff"],
+  // A long common prefix, on the heap, then a difference.
+  ["the quick brown fox jumps over the lazy dog", "the quick brown fox jumps over the lazy Dog"],
+  ["the quick brown fox jumps over the lazy dog", "the quick brown fox jumps over the lazy dot"],
+  ["the quick brown fox jumps over the lazy dög", "the quick brown fox jumps over the lazy dog"],
+];
+
+const WORDS: string[] = [
+  "zoo", "Zoë", "Việt", "viet", "Straße", "strasse", "Résumé", "résumé", "Resume", "resume", "Œuvre",
+  "oeuvre", "łódź", "lodz", "ǆ", "dž", "Ångström", "angle", "Ångel", "ạch", "9", "10", "😀", "-y", "_x",
+  "αλφα", "Άλφα", "βήτα", "ёлка", "елка", "жук", "Москва", "москва", "Ўзбек", "中文", "一", "アイ", "あい",
+  "가나", "Ab", "ab-", "a", "ä", "ab", "A", "æ", "b", "ae", "a1", "aB", "Á", "a b", "á", "af",
+];
+
+for (const p of PAIRS) {
+  console.log(JSON.stringify(p[0]), JSON.stringify(p[1]), p[0].localeCompare(p[1]));
+}
+const sorted = WORDS.slice();
+sorted.sort((a, b) => a.localeCompare(b));
+console.log(sorted.join(" "));
+const reversed = sorted.slice();
+reversed.reverse();
+reversed.sort((a, b) => a.localeCompare(b));
+console.log(reversed.join(" ") == sorted.join(" "));
+// Through `any`.
+const held: any = "résumé";
+console.log(held.localeCompare("resume"), held.localeCompare("résumé"), held.localeCompare("z"));

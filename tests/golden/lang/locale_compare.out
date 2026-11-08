@@ -1,0 +1,66 @@
+"a" "A" -1
+"A" "a" 1
+"a" "B" -1
+"B" "a" 1
+"ab" "Aa" 1
+"Zebra" "apple" 1
+"" "" 0
+"" "a" -1
+"a" "" 1
+"same" "same" 0
+"a-b" "ab" -1
+"a b" "a-b" -1
+"_" "-" -1
+"9" "a" -1
+"$" "0" -1
+"a10" "a2" -1
+"x" "x\u0000" 0
+"\u0001a" "a" 0
+"ab" "ab" -1
+"résumé" "resume" 1
+"résumé" "Resume" 1
+"e" "é" -1
+"é" "f" -1
+"ä" "á" 1
+"é" "E" 1
+"É" "é" 1
+"ø" "p" -1
+"ạ" "b" -1
+"Việt" "viet" 1
+"Việt" "Viet" 1
+"æ" "ae" 1
+"æ" "af" -1
+"ß" "ss" 1
+"ßa" "ssb" -1
+"Œ" "oe" 1
+"ǆ" "dz" 1
+"ǆ" "dž" 1
+"ǅ" "̀ǳ" -1
+"z" "α" -1
+"Β" "α" 1
+"Б" "а" 1
+"ά" "α" 1
+"ё" "е" 1
+"α" "а" -1
+"москва" "Москва" -1
+"Άλφα" "αλφα" 1
+"‼" "!!" 1
+"€" "$" 1
+"—" "-" 1
+"…" "..." 1
+"“a" "a" -1
+" " " " 1
+"中" "가" 1
+"가" "あ" -1
+"あ" "中" -1
+"z" "中" -1
+"😀" "a" -1
+"😀" "0" -1
+"˂" "0" -1
+"h" "鿿" -1
+"the quick brown fox jumps over the lazy dog" "the quick brown fox jumps over the lazy Dog" -1
+"the quick brown fox jumps over the lazy dog" "the quick brown fox jumps over the lazy dot" -1
+"the quick brown fox jumps over the lazy dög" "the quick brown fox jumps over the lazy dog" 1
+_x -y 😀 10 9 a A á Á ä a b a1 ab aB Ab ab- ạch ae æ af Ångel angle Ångström b dž ǆ lodz łódź oeuvre Œuvre resume Resume résumé Résumé strasse Straße viet Việt Zoë zoo αλφα Άλφα βήτα елка ёлка жук москва Москва Ўзбек 가나 あい アイ 一 中文
+true
+1 0 -1

@@ -1,0 +1,9 @@
+// velt/lang/hooks (internal): `s.localeCompare(t)` of a string held as `any`, loaded with the
+// method itself (std/prelude/global/locale_compare.velt), which is not in every program.
+
+import { anyStrArg } from "./any_methods";
+import { localeOrder } from "velt/lang/string/collate";
+
+export function anyStr_localeCompare(s: string, args: any[]): any {
+  return localeOrder(s, anyStrArg(args, 0)) as number;
+}
