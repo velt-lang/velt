@@ -58,7 +58,8 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Brands, Option<Vec<SourceMod
     let own: Vec<(usize, &SourceModule)> = (modules.iter().enumerate())
         .filter(|(_, m)| !m.is_std)
         .collect();
-    let scanned = crate::par::map(&own, crate::par::module_weight(modules), |&(i, m)| {
+    let weight = crate::par::module_weight(own.iter().map(|&(_, m)| m));
+    let scanned = crate::par::map(&own, weight, |&(i, m)| {
         let (mut brands, mut adds) = (Brands::default(), vec![]);
         let mut scan = Scan {
             module: i,

@@ -357,10 +357,7 @@ pub(crate) fn check(modules: &[SourceModule]) -> Vec<Diagnostic> {
     }
     // Each module on its own (`crate::par`), the errors in module order.
     let own: Vec<&SourceModule> = modules.iter().filter(|m| !m.is_std).collect();
-    let weight: usize = own
-        .iter()
-        .map(|m| m.ast.span.hi.saturating_sub(m.ast.span.lo) as usize / 8)
-        .sum();
+    let weight = crate::par::module_weight(own.iter().copied());
     let found = crate::par::map(&own, weight, |m| {
         let mut v = Sigs(vec![]);
         walk_module(&m.ast, &mut v);

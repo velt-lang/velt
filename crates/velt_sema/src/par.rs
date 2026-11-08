@@ -90,9 +90,12 @@ where
         .collect()
 }
 
-/// The weight of work over every module's AST: about a node per 8 bytes of source.
-pub(crate) fn module_weight(modules: &[crate::SourceModule]) -> usize {
-    (modules.iter())
+/// The weight of work over the ASTs of `modules`: about a node per 8 bytes of source. A pass
+/// that skips some modules (std) weighs only those it works on.
+pub(crate) fn module_weight<'a>(
+    modules: impl IntoIterator<Item = &'a crate::SourceModule>,
+) -> usize {
+    (modules.into_iter())
         .map(|m| m.ast.span.hi.saturating_sub(m.ast.span.lo) as usize / 8)
         .sum()
 }

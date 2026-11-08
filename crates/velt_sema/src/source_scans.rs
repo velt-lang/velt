@@ -65,15 +65,15 @@ pub(crate) struct Found {
 /// Scan the program's own modules once for every round of the check, each module on its own
 /// (`crate::par`).
 pub(crate) fn program(modules: &[crate::SourceModule]) -> Found {
-    let scans = crate::par::map(modules, crate::par::module_weight(modules), |m| {
-        if m.is_std {
-            return [false; 4];
-        }
+    // Std is not scanned: neither weighed nor mapped, so a small program starts no threads.
+    let own: Vec<&crate::SourceModule> = modules.iter().filter(|m| !m.is_std).collect();
+    let weight = crate::par::module_weight(own.iter().copied());
+    let scans = crate::par::map(&own, weight, |m| {
         [
             calls_object_create_null(&m.ast),
             reads_constructor(&m.ast),
             crate::defined_accessors::defines_accessors(&m.ast),
-            crate::ts_protocol::calls_throw(std::slice::from_ref(m)),
+            crate::ts_protocol::calls_throw(std::slice::from_ref(*m)),
         ]
     });
     let any = |k: usize| scans.iter().any(|s| s[k]);
