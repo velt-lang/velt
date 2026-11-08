@@ -177,6 +177,7 @@ fn the_conformance_suite_passes() {
     uploads_are_limited_to_10_mib(&base, &url, alice);
     signing_in_gives_tokens_that_publish(&base, &url);
     signing_in_fails_closed(&base, &modules, &worker);
+    commits_from_a_stale_revision_lose(&base, &modules);
     drop(server);
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -270,6 +271,37 @@ fn publish(
         .current_dir(&dir)
         .output()
         .expect("run velt")
+}
+
+/// D1MetadataDb's commit, from a revision that is no longer the package's, changes nothing
+/// (registry_worker/d1probe.mjs, on registry_worker/d1-probe built as a Worker of its own).
+fn commits_from_a_stale_revision_lose(base: &Path, modules: &Path) {
+    let probe = base.join("scripts/d1-probe");
+    let args = ["build", "--release", "--host", "registry-cloudflare"];
+    let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(args)
+        .current_dir(&probe)
+        .output()
+        .expect("run velt");
+    assert!(
+        out.status.success(),
+        "velt {args:?} in d1-probe:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let worker = probe.join("target/velt/d1-probe-workers");
+    let out = no_window::command("node")
+        .current_dir(base)
+        .arg(script(base, "d1probe.mjs"))
+        .arg(for_node(modules))
+        .arg(for_node(&worker))
+        .output()
+        .expect("run node");
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// A Worker without its GitHub secret starts no sign-in, and a user who owns packages can't be

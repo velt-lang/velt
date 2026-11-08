@@ -1,0 +1,37 @@
+// `POST /commit` with `{ "name", "base", "version", "checksum", "owner" }` commits that version of
+// that package to the D1 database bound as `DB`, made from revision `base` (with `owner` as its
+// owner when `base` is 0), and answers whether it won: what a writer whose read is `base` sends.
+
+import { HttpServeOptions, serve } from "http-server";
+import { IndexEntry, PackageChange, PackageIndex } from "registry-core";
+import { D1MetadataDb } from "registry-cloudflare";
+
+struct CommitBody {
+  name: string;
+  base: i64;
+  version: string;
+  checksum: string;
+  owner: string;
+}
+
+const db = new D1MetadataDb("DB");
+
+async function commit(req: Request): Promise<Response> {
+  const body = JSON.parse<CommitBody>(await req.text());
+  const entry = new IndexEntry(body.version, body.checksum);
+  const index = new PackageIndex(body.name);
+  index.versions.push(entry);
+  const change = new PackageChange(body.name, body.base, index);
+  change.changed = [entry];
+  if (body.base == 0) {
+    change.owners = [body.owner];
+  }
+  return new Response(`${await db.commit(change)}`);
+}
+
+const opts: HttpServeOptions = { port: 8080 };
+await serve(
+  opts,
+  async (req: Request): Promise<Response> =>
+    req.method == "POST" ? await commit(req) : new Response("not found", { status: 404 }),
+);

@@ -388,6 +388,25 @@ describe("the index file", () => {
     expect(file).toContain(`"yanked": true`);
   });
 
+  it("never goes back when the newer index has the same bytes as the one read", async () => {
+    // A yank reads the file (not yanked). An unyank commits after it and writes those same bytes
+    // again: the same hash, as an R2 etag would be. The yank's write, were it to land, would time
+    // out after.
+    const blobs = new SlowIndexBlobs();
+    const db = new MemoryMetadataDb();
+    const r = new TestRegistry(new RegistryLimits(), db, blobs);
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    blobs.meanwhile = async (): Promise<void> => {
+      const other = new TestRegistry(new RegistryLimits(), db, blobs);
+      expect((await other.call("DELETE", "lib/1.0.0/yank")).status).toBe(200);
+      blobs.failAfter = true;
+    };
+    expect((await r.call("PUT", "lib/1.0.0/yank")).status).toBe(200);
+    const record = await db.record("lib");
+    expect(record?.index.versions[0].yanked).toBe(false);
+    expect((await r.call("GET", "lib/index")).text).not.toContain(`"yanked": true`);
+  });
+
   it("fails the write when other writes keep landing on it", async () => {
     const r = new TestRegistry(new RegistryLimits(), new MemoryMetadataDb(), new ContendedBlobs());
     const answer = await r.publish("lib", "1.0.0");

@@ -9,12 +9,18 @@ import { R2ObjectBody } from "./r2_object_body";
 import { R2Objects, R2Page } from "./r2_objects";
 
 /**
- * A condition on an object's etag. `etagDoesNotMatch: "*"` puts only when the key is free
- * (create-only); `etagMatches: obj.etag` replaces only the version read (compare-and-swap).
+ * A condition on an object's etag and upload time. `etagDoesNotMatch: "*"` puts only when the key
+ * is free (create-only); `etagMatches: obj.etag` replaces only an object with those bytes (an
+ * etag is their MD5, so the same bytes written again match too: add `uploadedBefore` just after
+ * `obj.uploaded` to replace only the very object read).
  */
 export interface R2Conditional {
   etagMatches?: string;
   etagDoesNotMatch?: string;
+  /** Only an object uploaded before this time. */
+  uploadedBefore?: Date;
+  /** Only an object uploaded after this time. */
+  uploadedAfter?: Date;
 }
 
 /** The options of `put`. */
@@ -44,9 +50,12 @@ struct PutWire {
   customMetadata: Record<string, string> | null;
 }
 
+// The times cross as milliseconds since 1970; src/cloudflare.mjs makes them `Date`s.
 struct ConditionalWire {
   etagMatches: string | null;
   etagDoesNotMatch: string | null;
+  uploadedBefore: f64 | null;
+  uploadedAfter: f64 | null;
 }
 
 struct ListWire {
@@ -114,7 +123,12 @@ function putWire(options?: R2PutOptions): string {
     onlyIf:
       c == undefined
         ? null
-        : { etagMatches: c.etagMatches ?? null, etagDoesNotMatch: c.etagDoesNotMatch ?? null },
+        : {
+          etagMatches: c.etagMatches ?? null,
+          etagDoesNotMatch: c.etagDoesNotMatch ?? null,
+          uploadedBefore: c.uploadedBefore?.getTime() ?? null,
+          uploadedAfter: c.uploadedAfter?.getTime() ?? null,
+        },
     httpMetadata: options?.httpMetadata ?? null,
     customMetadata: options?.customMetadata ?? null,
   };

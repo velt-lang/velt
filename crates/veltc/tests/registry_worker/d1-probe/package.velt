@@ -1,0 +1,15 @@
+import type { Package } from "velt/package";
+
+// A Worker that commits to registry-cloudflare's D1MetadataDb as told, for d1probe.mjs
+// (crates/veltc/tests/registry_worker.rs). Built with `--host registry-cloudflare`.
+export const pkg: Package = {
+  name: "d1-probe",
+  version: "0.1.0",
+  entry: "src/main.velt",
+  dependencies: {
+    cloudflare: { path: "../../cloudflare" },
+    "http-server": { path: "../../http-server" },
+    "registry-cloudflare": { path: "../../registry-cloudflare" },
+    "registry-core": { path: "../../registry-core" },
+  },
+};

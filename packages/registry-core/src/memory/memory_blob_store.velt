@@ -1,27 +1,40 @@
 // registry-core: a `BlobStore` in memory, for tests and for trying a registry out.
 
+import { sha256 } from "velt/crypto";
+import { hexEncode } from "velt/encoding";
 import { BlobStore } from "../stores/blob_store";
 import { StoredFile } from "../stores/stored_file";
 
-// One stored file: its bytes, its tag and the revision it was written from.
+// One stored file: its bytes, their hash (as an R2 etag is), when it was written (a count of
+// writes) and the revision it was written from.
 struct Held {
   bytes: u8[];
-  tag: string;
+  hash: string;
+  written: i64;
   revision: i64;
 }
 
+// A file's tag: its hash and when it was written, as R2's adapter makes it of an etag and an
+// upload time.
+function tagOf(held: Held): string {
+  return `${held.hash} ${held.written}`;
+}
+
 /**
- * Static files in a map; lost when the program ends. Each write gets a new tag, and a conditional
- * write checks and stores with no `await` between, as a store's conditional write is one step.
+ * Static files in a map; lost when the program ends. A conditional write matches the hash and
+ * time in its tag as R2 matches an etag and an upload time: the same bytes written again keep the
+ * hash, not the time. It checks and stores with no `await` between, as a store's conditional write
+ * is one step.
  */
 export class MemoryBlobStore implements BlobStore {
   private files: Map<string, Held> = new Map();
   private writes: i64 = 0;
 
-  // Stores `bytes` under `key` with a new tag.
+  // Stores `bytes` under `key`.
   private store(key: string, bytes: u8[], revision: i64): void {
     this.writes++;
-    this.files.set(key, { bytes: [...bytes], tag: `t${this.writes}`, revision });
+    const hash = hexEncode(sha256(bytes));
+    this.files.set(key, { bytes: [...bytes], hash, written: this.writes, revision });
   }
 
   async putIfAbsent(key: string, bytes: u8[]): Promise<bool> {
@@ -34,12 +47,12 @@ export class MemoryBlobStore implements BlobStore {
 
   async head(key: string): Promise<StoredFile | null> {
     const found = this.files.get(key);
-    return found == null ? null : new StoredFile(found.tag, found.revision);
+    return found == null ? null : new StoredFile(tagOf(found), found.revision);
   }
 
   async putIfTag(key: string, bytes: u8[], revision: i64, tag: string | null): Promise<bool> {
     const found = this.files.get(key);
-    if ((found?.tag ?? null) != tag) {
+    if (found == null ? tag != null : tag == null || tag != tagOf(found)) {
       return false;
     }
     this.store(key, bytes, revision);
