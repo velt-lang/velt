@@ -650,6 +650,10 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        let f = match self.overload_set_call("", f, type_args, args, exp, span) {
+            Ok(h) => return h,
+            Err(f) => f,
+        };
         let Some(g) = self.cx.generic_sig(f.ty) else {
             return self.call_value(f, args, span);
         };

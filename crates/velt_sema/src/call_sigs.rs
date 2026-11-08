@@ -58,7 +58,7 @@ fn sig_type(s: &ast::CallSig) -> ast::TypeExpr {
 }
 
 /// `(x: T) => R` / `<T>(x: T) => R` for signature `sig` (at `span`).
-fn fn_type(sig: &ast::FnSig, span: Span) -> ast::TypeExpr {
+pub(crate) fn fn_type(sig: &ast::FnSig, span: Span) -> ast::TypeExpr {
     let ret = sig.ret.clone().unwrap_or(ast::TypeExpr {
         kind: ast::TypeExprKind::Void,
         span: Span::new(span.file, span.hi, span.hi),

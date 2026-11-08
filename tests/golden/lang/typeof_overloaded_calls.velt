@@ -1,0 +1,51 @@
+// `typeof f` of a function with overloads: the set of its signatures, as `tsc` types it. A call
+// through a field, variable or parameter of that type picks the first signature that accepts
+// the arguments, as a call of `f` does (#2617).
+type Primitive = string | number | boolean | null | undefined;
+type PrimitiveSignal<T> = { value: T };
+type Signal<T extends object> = T;
+
+function signal<T extends Primitive>(target: T): PrimitiveSignal<T>;
+function signal<T extends object>(target: T): Signal<T>;
+function signal<T>(target: T): PrimitiveSignal<T> | Signal<T & object> {
+  if (target === null || typeof target !== "object") {
+    return { value: target } as PrimitiveSignal<T>;
+  }
+  return target as Signal<T & object>;
+}
+
+interface Ctx<P> { props: P; signal: typeof signal; }
+function setup<P>(props: P, body: (ctx: Ctx<P>) => string): string {
+  return body({ props, signal });
+}
+
+console.log(setup({ initial: 3 }, (ctx) => {
+  const count = ctx.signal(ctx.props.initial);
+  count.value++;
+  const state = ctx.signal({ open: false, width: 0 });
+  state.open = !state.open;
+  state.width += 10;
+  const label = ctx.signal<string>("x");
+  return `${count.value} ${state.open} ${state.width} ${label.value}`;
+}));
+
+// A variable, a parameter, destructuring, an array, a type literal.
+const s: typeof signal = signal;
+console.log(s(true).value, s({ n: 1 }).n);
+function useIt(make: typeof signal): number {
+  return make(2).value + make({ m: 3 }).m;
+}
+console.log(useIt(signal));
+const ctx: Ctx<number> = { props: 1, signal };
+const { signal: sig } = ctx;
+console.log(sig("str").value, useIt(sig), useIt(ctx.signal));
+const all: (typeof signal)[] = [signal, sig, ctx.signal];
+let sum = 0;
+for (const mk of all) sum += mk(5).value + mk({ v: 1 }).v;
+console.log(sum);
+type Holder = { make: typeof signal };
+const h: Holder = { make: ctx.signal };
+console.log(h.make(null).value, h.make({ a: 1 }).a);
+// An object literal with nothing expected: its field has the set's type.
+const lit = { signal, n: 2 };
+console.log(lit.signal(4).value + lit.n, lit.signal({ q: 1 }).q);

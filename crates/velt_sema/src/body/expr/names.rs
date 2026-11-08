@@ -407,6 +407,9 @@ impl FnCx<'_, '_> {
         match &self.cx.info[d.0 as usize] {
             DefInfo::Fn(_) => {
                 if self.cx.has_overloads {
+                    if let Some(h) = self.overload_set_value(id, exp, want) {
+                        return h;
+                    }
                     if let Some(h) = self.overloaded_fn_value(id, exp) {
                         return h;
                     }

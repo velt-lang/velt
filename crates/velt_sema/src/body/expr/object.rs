@@ -491,6 +491,7 @@ impl FnCx<'_, '_> {
             // A callable object's hidden function (`expr::callables`), never written.
             if crate::symbols::is_computed_key(k)
                 || (crate::callables::is_hidden_field(&k.name) && k.span.lo == k.span.hi)
+                || (crate::typeof_generic::is_set_field(&k.name) && k.span.lo == k.span.hi)
             {
                 continue;
             }
