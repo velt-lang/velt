@@ -21,6 +21,7 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
         for &d in fns {
             if let Some(decl) = cx.fn_info(d).declared_throws {
                 let own = own_final(cx, d);
+                cx.note_thrown(decl.ty, own);
                 if cx.throw_into_vars(decl.ty, own) {
                     into_vars.insert(d);
                 }

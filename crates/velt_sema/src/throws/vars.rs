@@ -388,7 +388,7 @@ impl Ctx<'_> {
     }
 
     /// The variables among the members of error type `t`.
-    fn vars_of(&mut self, t: TyId) -> Vec<u32> {
+    pub(super) fn vars_of(&mut self, t: TyId) -> Vec<u32> {
         let ms = self.error_members(t);
         ms.into_iter().filter_map(|m| self.err_var(m)).collect()
     }

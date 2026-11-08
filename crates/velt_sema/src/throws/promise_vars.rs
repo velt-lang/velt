@@ -270,13 +270,39 @@ impl Ctx<'_> {
         true
     }
 
+    /// A closure created for a site's type throws `own` into the variables of its error type
+    /// `decl` (`Ctx::throw_into_vars`): what it throws is the site's own, also where a store
+    /// added it first ([`Ctx::seed_sets`]).
+    pub(crate) fn note_thrown(&mut self, decl: Option<TyId>, own: Option<TyId>) {
+        let (Some(decl), Some(own)) = (decl, own) else {
+            return;
+        };
+        let Some(&first) = self.vars_of(decl).first() else {
+            return;
+        };
+        let allowed = self.error_members(decl);
+        for m in self.error_members(own) {
+            if !allowed.contains(&m) && !self.is_err_var(m) {
+                self.fn_sites.thrown.push((first, m));
+            }
+        }
+    }
+
     /// Each variable's set without the members only stores added (`store_into_var`): what a
     /// check without variables seeds the sites of the variable with (`Ctx::var_seeds`).
     pub(super) fn seed_sets(&mut self) -> rustc_hash::FxHashMap<TyId, Vec<TyId>> {
         let n = self.fn_sites.vars.len();
         let stored = std::mem::take(&mut self.fn_sites.stored);
+        let thrown = std::mem::take(&mut self.fn_sites.thrown);
+        let mut by_rep = |list: Vec<(u32, TyId)>| -> Vec<(usize, TyId)> {
+            (list.into_iter())
+                .map(|(v, m)| (self.fn_sites.var_sets.find(v) as usize, m))
+                .collect()
+        };
+        let (stored, thrown) = (by_rep(stored), by_rep(thrown));
+        // A member a closure throws too is not one only stores added.
         let stored: Vec<(usize, TyId)> = (stored.into_iter())
-            .map(|(v, m)| (self.fn_sites.var_sets.find(v) as usize, m))
+            .filter(|s| !thrown.contains(s))
             .collect();
         let mut sets: Vec<Vec<TyId>> = vec![vec![]; n];
         let mut edges: Vec<Vec<usize>> = vec![vec![]; n];

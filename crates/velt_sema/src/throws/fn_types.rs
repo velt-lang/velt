@@ -169,6 +169,9 @@ pub(crate) struct FnSites {
     pub(crate) var_sets: super::vars::VarSets,
     /// The members stores added to variables (`promise_vars`), by variable number.
     pub(crate) stored: Vec<(u32, TyId)>,
+    /// The members closures created for sites' types throw into variables, by variable number:
+    /// a member a store added first is the closure's too ([`Ctx::note_thrown`]).
+    pub(crate) thrown: Vec<(u32, TyId)>,
     /// How many `reject` values of promises whose rejection type is a variable were checked
     /// and not called (`var_known`): what they are called with is not counted.
     pub(crate) reject_values: usize,
