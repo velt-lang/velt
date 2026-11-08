@@ -5,6 +5,7 @@
 import {
   arraySetLen,
   arrayWithCapacity,
+  inline,
   noInline,
   share,
   strByteAt,
@@ -96,10 +97,10 @@ function block(s: string, i: usize, n: usize): u8x16 {
 // array and then made a string once. The text is copied in 16-byte blocks, each stored whole: a
 // block holding a byte to escape is overwritten from there by its entity, and the entity by the
 // plain run after it. Each byte becomes at most six and the bytes before `first` stay one each,
-// so with ten bytes to spare every store fits, even at the last byte. Out of line (as is
-// `escapeEntities`): each caller would otherwise compile its own copy of the loops.
+// so with ten bytes to spare every store fits, even at the last byte. Compiled into its two
+// entry points, `escapeFromPlain` and `escapeFromHex`, each with `hexApos` fixed.
 function escapeFrom(s: string, first: usize, n: usize, hexApos: bool): string {
-  noInline();
+  inline();
   const room = first + (n - first) * 6 + 10;
   const buf: u8[] = arrayWithCapacity(room);
   arraySetLen(buf, room);
@@ -161,13 +162,30 @@ function entityWord(b: u8, hexApos: bool): u64 {
   return hexApos ? 0x3b3732782326 : 0x3b39332326; // &#x27; or &#39;
 }
 
+// `escapeFrom` with `'` as `&#39;`. Out of line (as are the other entry points): each caller would
+// otherwise compile its own copy of the loops. One per apostrophe, so that each is compiled with
+// its flag fixed, also where its object is compiled once for every program (the std cache).
+function escapeFromPlain(s: string, first: usize, n: usize): string {
+  noInline();
+  return escapeFrom(s, first, n, false);
+}
+
+// `escapeFrom` with `'` as `&#x27;`.
+function escapeFromHex(s: string, first: usize, n: usize): string {
+  noInline();
+  return escapeFrom(s, first, n, true);
+}
+
 // `s` with its bytes to escape replaced; `s` itself, shared, when it has none. The share keeps
 // `s` borrowed (returning `s` would move it, and callers would copy a field they pass in).
 function escapeEntities(s: string, hexApos: bool): string {
-  noInline();
+  inline();
   const n = strByteLen(s);
   const first = nextSpecial(s, 0, n);
-  return first == n ? share(s) : escapeFrom(s, first, n, hexApos);
+  if (first == n) {
+    return share(s);
+  }
+  return hexApos ? escapeFromHex(s, first, n) : escapeFromPlain(s, first, n);
 }
 
 /**
@@ -176,10 +194,12 @@ function escapeEntities(s: string, hexApos: bool): string {
  * characters (including non-ASCII) are kept as they are.
  */
 export function escapeHtml(s: string): string {
+  noInline();
   return escapeEntities(s, false);
 }
 
 /** As `escapeHtml`, with `'` as `&#x27;`, as react-dom writes it (std/jsx). */
 export function escapeHtmlHexApos(s: string): string {
+  noInline();
   return escapeEntities(s, true);
 }
