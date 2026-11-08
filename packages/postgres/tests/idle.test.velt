@@ -1,0 +1,156 @@
+// Where a connection's reading end (`Input`) waits while nobody holds it: in the line while it is
+// idle, else at home for the first in line. Tasks sharing a client, a pool's idle check, a COPY
+// among queries and a connection fresh from its start-up each find it, with nothing left waiting.
+// Needs VELT_TEST_PG_URL (tests/support/pg.velt).
+import { Client, connect, createPool, PgError, Pool } from "../src/lib";
+import { timeout } from "velt/task";
+import { pgUrl } from "./support/pg";
+
+class Value {
+  v: i64;
+
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+
+class Pid {
+  pid: i64;
+
+  constructor(pid: i64) {
+    this.pid = pid;
+  }
+}
+
+// `n` queries on a client, each with its own value: how many got it back.
+async function onClient(c: Client, t: i64, n: i64): Promise<i64> throws PgError {
+  let right: i64 = 0;
+  for (let k: i64 = 0; k < n; k++) {
+    const want = t * 1000 + k;
+    const r: Value | null = await c.queryOne("SELECT $1::int8 AS v", [want]);
+    if (r != null && r.v == want) {
+      right++;
+    }
+  }
+  return right;
+}
+
+// The same through a pool.
+async function onPool(pool: Pool, t: i64, n: i64): Promise<i64> throws PgError {
+  let right: i64 = 0;
+  for (let k: i64 = 0; k < n; k++) {
+    const want = t * 1000 + k;
+    const r: Value | null = await pool.queryOne("SELECT $1::int8 AS v", [want]);
+    if (r != null && r.v == want) {
+      right++;
+    }
+  }
+  return right;
+}
+
+// How many of `tasks` got their value back, within the time a hang is given.
+async function total(tasks: Promise<i64, PgError>[]): Promise<i64> {
+  let right: i64 = 0;
+  for (const n of await timeout(Promise.all(tasks), 60000)) {
+    right += n;
+  }
+  return right;
+}
+
+// The line goes idle and busy again and again, from tasks on several workers: a request that comes
+// while the one before it is handing the `Input` on gets it at home.
+export async function test_tasks_sharing_a_client_each_find_its_reading_end() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const c = await connect(url);
+  const tasks: Promise<i64, PgError>[] = [];
+  for (let t: i64 = 0; t < 16; t++) {
+    tasks.push(spawn(onClient(c, t, 50)));
+  }
+  assertEq(await total(tasks), 800);
+  const r: Value | null = await c.queryOne("SELECT $1::int8 AS v", [7]);
+  assertEq(r?.v, 7);
+  c.close();
+}
+
+// A connection idle long enough has its socket looked at before it is lent, which takes the
+// `Input` from the line and puts it back, while other tasks wait for the connection.
+export async function test_an_idle_check_leaves_the_reading_end_for_the_next_query() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 1 });
+  for (let round: i64 = 0; round < 3; round++) {
+    // timing: longer than the pool's wait before it looks at an idle socket
+    await sleep(150);
+    const tasks: Promise<i64, PgError>[] = [];
+    for (let t: i64 = 0; t < 8; t++) {
+      tasks.push(spawn(onPool(pool, t, 10)));
+    }
+    assertEq(await total(tasks), 80);
+  }
+  pool.end();
+}
+
+// A COPY holds the reading end between its calls; queries from other tasks on the client wait,
+// and go on when it ends.
+export async function test_a_copy_among_queries_on_one_client() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const c = await connect(url);
+  const tasks: Promise<i64, PgError>[] = [];
+  for (let t: i64 = 0; t < 4; t++) {
+    tasks.push(spawn(onClient(c, t, 20)));
+  }
+  for (let round: i64 = 0; round < 3; round++) {
+    const r = await c.copyTo("COPY (SELECT generate_series(1, 2000)) TO STDOUT");
+    let text = "";
+    let chunk = await r.read();
+    while (chunk != null) {
+      text += chunk;
+      chunk = await r.read();
+    }
+    assertEq(text.split("\n").length, 2001);
+  }
+  assertEq(await total(tasks), 80);
+  const after: Value | null = await c.queryOne("SELECT $1::int8 AS v", [9]);
+  assertEq(after?.v, 9);
+  c.close();
+}
+
+// A connection fresh from its start-up has its reading end in the line: tasks that use it at once
+// find it, and so do those of the connection a pool opens after the server ended the first.
+export async function test_a_new_connection_and_a_reopened_one_are_ready() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const c = await connect(url);
+  const tasks: Promise<i64, PgError>[] = [];
+  for (let t: i64 = 0; t < 8; t++) {
+    tasks.push(spawn(onClient(c, t, 5)));
+  }
+  assertEq(await total(tasks), 40);
+  c.close();
+
+  const pool = createPool({ url: url, max: 1 });
+  const held = await pool.connect();
+  const p: Pid | null = await held.selectOne("SELECT pg_backend_pid()::int8 AS pid");
+  held.close();
+  const killer = await connect(url);
+  await killer.execute("SELECT pg_terminate_backend($1::int4)", [p?.pid ?? 0]);
+  killer.close();
+  // timing: longer than the pool's wait before it looks at an idle socket
+  await sleep(300);
+  const again: Promise<i64, PgError>[] = [];
+  for (let t: i64 = 0; t < 8; t++) {
+    again.push(spawn(onPool(pool, t, 5)));
+  }
+  assertEq(await total(again), 40);
+  pool.end();
+}
