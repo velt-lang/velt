@@ -143,18 +143,18 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
     names
 }
 
-/// Whether module `module` (source `src`) names global `name`: as a whole word of its source,
-/// for `RegExp` also by a regular expression literal, and for `Proxy` by a literal nothing put
-/// where its type may have none (`null!`, `null as any`), which a view of the nothing holds
-/// (velt_vir `lower/any_view.rs`).
-pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool {
-    mentions(src, name)
-        || (name == "RegExp" && src.contains('/') && has_regex(module))
+/// Whether module `module` (its source's `words`) names global `name`: as a whole word of its
+/// source, for `RegExp` also by a regular expression literal, and for `Proxy` by a literal
+/// nothing put where its type may have none (`null!`, `null as any`), which a view of the
+/// nothing holds (velt_vir `lower/any_view.rs`).
+pub(super) fn names_global(words: &Words, module: &ast::Module, name: &str) -> bool {
+    words.has(name)
+        || (name == "RegExp" && words.src.contains('/') && has_regex(module))
         || (name == "Proxy"
-            && (mentions(src, "null") || mentions(src, "undefined"))
+            && (words.has("null") || words.has("undefined"))
             && has_nothing_slot(module))
-        || (name == THIS_FN && mentions(src, "this") && has_this_fn(module))
-        || (name == ASYNC_HOST && mentions(src, "host") && has_async_host(module))
+        || (name == THIS_FN && words.has("this") && has_this_fn(module))
+        || (name == ASYNC_HOST && words.has("host") && has_async_host(module))
 }
 
 /// The trigger of the global an async host function loads (std/prelude/global/host_async.velt:
@@ -252,12 +252,12 @@ fn has_regex(module: &ast::Module) -> bool {
     find.0
 }
 
-/// Whether module `module` (source `src`) uses a conditional global's word: mentions `name` as
-/// a whole identifier, or for `.name` reads property `name` ([`reads_property`]).
-pub(super) fn mentions_word(src: &str, module: &ast::Module, word: &str) -> bool {
+/// Whether module `module` (its source's `words`) uses a conditional global's word: mentions
+/// `name` as a whole identifier, or for `.name` reads property `name` ([`reads_property`]).
+pub(super) fn mentions_word(words: &Words, module: &ast::Module, word: &str) -> bool {
     match word.strip_prefix('.') {
-        Some(prop) => mentions(src, prop) && reads_property(module, prop),
-        None => mentions(src, word),
+        Some(prop) => words.has(prop) && reads_property(module, prop),
+        None => words.has(word),
     }
 }
 
@@ -326,10 +326,41 @@ fn reads_property(module: &ast::Module, prop: &str) -> bool {
     find.found
 }
 
+/// An identifier character, as the lexer reads them: an ASCII letter or digit, `_` or `$`.
+fn ident(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '$'
+}
+
+/// The whole identifiers of a module's source, split out once: asking whether it [`mentions`]
+/// each of the globals' many names is then a lookup, not a search of the whole source per name
+/// (which was about a quarter of loading a program's modules).
+pub(super) struct Words<'s> {
+    pub(super) src: &'s str,
+    words: std::collections::HashSet<&'s str>,
+}
+
+impl<'s> Words<'s> {
+    pub(super) fn of(src: &'s str) -> Words<'s> {
+        let words = src
+            .split(|c: char| !ident(c))
+            .filter(|w| !w.is_empty())
+            .collect();
+        Words { src, words }
+    }
+
+    /// [`mentions`]: a name of identifier characters is a whole identifier of the source when
+    /// it is one of the runs of identifier characters the source splits into.
+    pub(super) fn has(&self, name: &str) -> bool {
+        match !name.is_empty() && name.chars().all(ident) {
+            true => self.words.contains(name),
+            false => mentions(self.src, name),
+        }
+    }
+}
+
 /// Whether `src` contains `name` as a whole identifier (not as part of a longer one; identifier
 /// characters are ASCII letters, digits, `_` and `$`, as the lexer reads them).
 pub(super) fn mentions(src: &str, name: &str) -> bool {
-    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
     src.match_indices(name).any(|(at, _)| {
         let before = src[..at].chars().next_back();
         let after = src[at + name.len()..].chars().next();
@@ -357,12 +388,49 @@ mod tests {
     }
 
     #[test]
+    fn words_find_what_the_search_finds() {
+        let sources = [
+            "const r = await fetch(url);",
+            "fetch",
+            "Responseé x$y _a b_ $ $$ a1 1a",
+            "Response_x prefetch fetcher // fetch in a comment",
+            "s = \"globalThis.x\"; global.y = 1; global[k]",
+            "",
+        ];
+        let names = [
+            "fetch",
+            "Response",
+            "x$y",
+            "_a",
+            "b_",
+            "$",
+            "$$",
+            "a1",
+            "1a",
+            "x",
+            "globalThis",
+            "global.",
+            "global[",
+            "é",
+            "",
+            "Response_x",
+            "comment",
+        ];
+        for src in sources {
+            let words = Words::of(src);
+            for name in names {
+                assert_eq!(words.has(name), mentions(src, name), "{name:?} in {src:?}");
+            }
+        }
+    }
+
+    #[test]
     fn a_dot_word_is_a_property_read() {
         let uses = |src: &str, word: &str| {
             let mut sm = SourceMap::new();
             let file = sm.add(Path::new("m.velt"), src.to_string());
             let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
-            mentions_word(src, &module, word)
+            mentions_word(&Words::of(src), &module, word)
         };
         assert!(uses("const b = res.body;", ".body"));
         assert!(uses(
@@ -391,7 +459,7 @@ mod tests {
             let mut sm = SourceMap::new();
             let file = sm.add(Path::new("m.velt"), src.to_string());
             let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
-            names_global(src, &module, "Proxy")
+            names_global(&Words::of(src), &module, "Proxy")
         };
         assert!(names("class A {}\nconst a: A = null!;\n"));
         assert!(names("const a: { x: number } = null as any;\n"));
@@ -406,7 +474,7 @@ mod tests {
             let mut sm = SourceMap::new();
             let file = sm.add(Path::new("m.velt"), src.to_string());
             let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
-            names_global(src, &module, "RegExp")
+            names_global(&Words::of(src), &module, "RegExp")
         };
         assert!(names(
             "function f(): bool {\n  return /a+/.test(\"caa\");\n}\n"
@@ -468,10 +536,10 @@ mod tests {
             velt_syntax::parse_file(file, &sm.get(file).src).0
         };
         let with = "const f = function (this: any) { return this; };\n";
-        assert!(names_global(with, &parse(with), THIS_FN));
+        assert!(names_global(&Words::of(with), &parse(with), THIS_FN));
         // The class's name is no trigger: a program cannot name it.
         let named = "const ThisFn = 1;\n";
-        assert!(!names_global(named, &parse(named), THIS_FN));
+        assert!(!names_global(&Words::of(named), &parse(named), THIS_FN));
     }
 
     #[test]
@@ -491,8 +559,8 @@ mod tests {
             velt_syntax::parse_file(file, &sm.get(file).src).0
         };
         let with = "declare host(\"m\") async function f(): Promise<u32>;\n";
-        assert!(names_global(with, &parse(with), ASYNC_HOST));
+        assert!(names_global(&Words::of(with), &parse(with), ASYNC_HOST));
         let sync = "declare host(\"m\") function f(): u32;\n";
-        assert!(!names_global(sync, &parse(sync), ASYNC_HOST));
+        assert!(!names_global(&Words::of(sync), &parse(sync), ASYNC_HOST));
     }
 }

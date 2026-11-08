@@ -116,6 +116,7 @@ closures are `<fn>::{closure#N}` (stable while the closures in a function keep t
 
 The long-lived host could keep parsed and type-checked std and prelude modules and re-run only
 changed modules. Sema is now most of a reload's time (see "Measured"), so this is the next lever.
+Designed in [dev-warm-front-end.md](dev-warm-front-end.md) (#2621).
 
 ## Decisions
 
