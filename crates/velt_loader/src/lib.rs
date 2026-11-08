@@ -322,12 +322,13 @@ impl Loader<'_, '_> {
         let src = &self.sm.get(self.modules[index].file).src;
         let ast = &self.modules[index].ast;
         let own = globals::bound_names(ast);
+        let words = globals::Words::of(src);
         let (wanted, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.globals)
             .into_iter()
             .partition(|g| {
                 g.names
                     .iter()
-                    .any(|n| !own.contains(n.as_str()) && globals::names_global(src, ast, n))
+                    .any(|n| !own.contains(n.as_str()) && globals::names_global(&words, ast, n))
             });
         self.globals = rest;
         let Some(std) = self.opts.std_root.clone() else {
@@ -413,15 +414,23 @@ impl Loader<'_, '_> {
             return false;
         };
         let (modules, sm) = (&self.modules, &*self.sm);
+        // Each non-std module's words, split once for every global's, when one is due.
+        let own: std::cell::OnceCell<Vec<(&ast::Module, globals::Words)>> = Default::default();
+        let own = || {
+            own.get_or_init(|| {
+                (modules.iter())
+                    .filter(|m| !m.is_std)
+                    .map(|m| (&m.ast, globals::Words::of(&sm.get(m.file).src)))
+                    .collect()
+            })
+        };
         let due = |g: &globals::Global| {
             let Some((module, words)) = &g.when else {
                 return false;
             };
             modules.iter().any(|m| m.is_std && m.path == *module)
-                && modules.iter().filter(|m| !m.is_std).any(|m| {
-                    let src = &sm.get(m.file).src;
-                    words.iter().any(|w| globals::mentions_word(src, &m.ast, w))
-                })
+                && (own().iter())
+                    .any(|(ast, src)| words.iter().any(|w| globals::mentions_word(src, ast, w)))
         };
         let (wanted, rest): (Vec<_>, Vec<_>) =
             std::mem::take(&mut self.globals).into_iter().partition(due);
