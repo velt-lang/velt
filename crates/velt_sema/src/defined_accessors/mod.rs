@@ -152,27 +152,34 @@ fn declares_object(module: &ast::Module) -> bool {
 pub(crate) fn rewrite(modules: &[SourceModule]) -> (Vec<Diagnostic>, Option<Vec<SourceModule>>) {
     let wanted =
         |m: &SourceModule| !m.is_std && !declares_object(&m.ast) && defines_accessors(&m.ast);
-    if !modules.iter().any(wanted) {
+    let marked = crate::par::map(modules, crate::par::module_weight(modules), wanted);
+    if !marked.contains(&true) {
         return (vec![], None);
     }
+    // Each module on its own (`crate::par`), the errors kept in module order.
+    let done = crate::par::map(modules, crate::par::module_weight(modules), |m| {
+        let mut diags = vec![];
+        let mut ast = m.ast.clone();
+        if wanted(m) {
+            let mut w = Bodies { diags: &mut diags };
+            ast.items.iter_mut().for_each(|i| w.item(i));
+        }
+        let m = SourceModule {
+            path: m.path.clone(),
+            is_std: m.is_std,
+            is_dependency: m.is_dependency,
+            file: m.file,
+            ast,
+            imports: m.imports.clone(),
+            jsx_runtime: m.jsx_runtime.clone(),
+        };
+        (m, diags)
+    });
     let mut diags = vec![];
-    let out = modules
-        .iter()
-        .map(|m| {
-            let mut ast = m.ast.clone();
-            if wanted(m) {
-                let mut w = Bodies { diags: &mut diags };
-                ast.items.iter_mut().for_each(|i| w.item(i));
-            }
-            SourceModule {
-                path: m.path.clone(),
-                is_std: m.is_std,
-                is_dependency: m.is_dependency,
-                file: m.file,
-                ast,
-                imports: m.imports.clone(),
-                jsx_runtime: m.jsx_runtime.clone(),
-            }
+    let out = (done.into_iter())
+        .map(|(m, d)| {
+            diags.extend(d);
+            m
         })
         .collect();
     (diags, Some(out))

@@ -102,7 +102,11 @@ pub(crate) fn rewrite(
     let mut diags = vec![];
     let names = |m: &SourceModule| !m.is_std && keys::mentions(&m.ast);
     let typed = |m: &SourceModule| m.ast.items.iter().any(|i| declared_type(i).is_some());
-    if !modules.iter().any(names) && !modules.iter().any(typed) {
+    // Each module scanned on its own (`crate::par`).
+    let scanned = crate::par::map(modules, crate::par::module_weight(modules), |m| {
+        names(m) || typed(m)
+    });
+    if !scanned.contains(&true) {
         return (props, diags, None);
     }
     let consts: Vec<FxHashMap<String, String>> = modules

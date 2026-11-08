@@ -37,25 +37,41 @@ pub(crate) struct Asserted {
 
 /// Drop the assertions on assignment targets in `modules` (see the module docs).
 pub(crate) fn rewrite(modules: &[SourceModule]) -> Asserted {
-    let marked: Vec<bool> = modules.iter().map(has_asserted_target).collect();
+    let marked: Vec<bool> = crate::par::map(
+        modules,
+        crate::par::module_weight(modules),
+        has_asserted_target,
+    );
     if !marked.contains(&true) {
         return Asserted::default();
     }
+    // Each module on its own (`crate::par`).
+    let pairs: Vec<(&SourceModule, bool)> = modules.iter().zip(marked).collect();
+    let done = crate::par::map(
+        &pairs,
+        crate::par::module_weight(modules),
+        |&(m, marked)| {
+            let mut w = Rewrite::default();
+            let mut ast = m.ast.clone();
+            if marked {
+                ast.items.iter_mut().for_each(|i| w.item(i));
+            }
+            let m = SourceModule {
+                path: m.path.clone(),
+                is_std: m.is_std,
+                is_dependency: m.is_dependency,
+                file: m.file,
+                ast,
+                imports: m.imports.clone(),
+                jsx_runtime: m.jsx_runtime.clone(),
+            };
+            (m, w.rmw)
+        },
+    );
     let mut w = Rewrite::default();
-    let out = modules.iter().zip(marked).map(|(m, marked)| {
-        let mut ast = m.ast.clone();
-        if marked {
-            ast.items.iter_mut().for_each(|i| w.item(i));
-        }
-        SourceModule {
-            path: m.path.clone(),
-            is_std: m.is_std,
-            is_dependency: m.is_dependency,
-            file: m.file,
-            ast,
-            imports: m.imports.clone(),
-            jsx_runtime: m.jsx_runtime.clone(),
-        }
+    let out = done.into_iter().map(|(m, rmw)| {
+        w.rmw.extend(rmw);
+        m
     });
     let modules = Some(out.collect());
     Asserted {

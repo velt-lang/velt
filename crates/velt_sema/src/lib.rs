@@ -279,54 +279,84 @@ fn check_timed(
     // Outlives every `Ctx` below, with the modules the driver generates during the check.
     let generator = gen.and_then(|g| g.generate).map(generated::Generator::new);
     let rewrite_start = std::time::Instant::now();
-    let chunks = module_chunks::split(modules, root);
+    let chunks = timings::pass("rewrite: module_chunks", || {
+        module_chunks::split(modules, root)
+    });
     let modules = chunks.modules.as_deref().unwrap_or(modules);
-    let asserted = asserted_targets::rewrite(modules);
+    let asserted = timings::pass("rewrite: asserted_targets", || {
+        asserted_targets::rewrite(modules)
+    });
     let modules = asserted.modules.as_deref().unwrap_or(modules);
     let mut merge_diags = chunks.diags.clone();
-    merge_diags.extend(call_sigs::check(modules));
-    let destructured = module_destructure::rewrite(modules);
+    merge_diags.extend(timings::pass("rewrite: call_sigs::check", || {
+        call_sigs::check(modules)
+    }));
+    let destructured = timings::pass("rewrite: module_destructure", || {
+        module_destructure::rewrite(modules)
+    });
     let modules = destructured.as_deref().unwrap_or(modules);
-    let global_ns = namespaces::global_namespaces(modules);
-    let (flat, ns_private, diags) = namespaces::flatten(modules);
+    let global_ns = timings::pass("rewrite: global_namespaces", || {
+        namespaces::global_namespaces(modules)
+    });
+    let (flat, ns_private, diags) = timings::pass("rewrite: namespaces::flatten", || {
+        namespaces::flatten(modules)
+    });
     merge_diags.extend(diags);
     let modules = flat.as_deref().unwrap_or(modules);
-    let (merged, diags) = interface_merge::rewrite(modules);
+    let (merged, diags) = timings::pass("rewrite: interface_merge", || {
+        interface_merge::rewrite(modules)
+    });
     merge_diags.extend(diags);
     let modules = merged.as_deref().unwrap_or(modules);
-    let (callable, diags) = call_sigs::rewrite(modules);
+    let (callable, diags) = timings::pass("rewrite: call_sigs", || call_sigs::rewrite(modules));
     merge_diags.extend(diags);
     let modules = callable.as_deref().unwrap_or(modules);
-    let lifted = generic_arrows::lift(modules);
+    let lifted = timings::pass("rewrite: generic_arrows", || generic_arrows::lift(modules));
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
-    let overloaded = overloads::rewrite(modules);
+    let overloaded = timings::pass("rewrite: overloads", || overloads::rewrite(modules));
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
-    let (rewritten, alias_blocked) = recursive_aliases::rewrite(modules);
+    let (rewritten, alias_blocked) = timings::pass("rewrite: recursive_aliases", || {
+        recursive_aliases::rewrite(modules)
+    });
     let modules = rewritten.as_deref().unwrap_or(modules);
-    let (global_props, global_diags, globals) = global_this::rewrite(modules);
+    let (global_props, global_diags, globals) =
+        timings::pass("rewrite: global_this", || global_this::rewrite(modules));
     merge_diags.extend(global_diags);
     let modules = globals.as_deref().unwrap_or(modules);
-    let (accessor_diags, accessors) = defined_accessors::rewrite(modules);
+    let (accessor_diags, accessors) = timings::pass("rewrite: defined_accessors", || {
+        defined_accessors::rewrite(modules)
+    });
     merge_diags.extend(accessor_diags);
     let modules = accessors.as_deref().unwrap_or(modules);
-    let (brands, branded) = defined_props::rewrite(modules);
+    let (brands, branded) =
+        timings::pass("rewrite: defined_props", || defined_props::rewrite(modules));
     let modules = branded.as_deref().unwrap_or(modules);
-    let closures = nested_closures::rewrite(modules);
+    let closures = timings::pass("rewrite: nested_closures", || {
+        nested_closures::rewrite(modules)
+    });
     let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return ((None, vec![d]), Default::default());
     };
     timings::record("source rewrites", rewrite_start.elapsed());
-    let null_proto = modules
-        .iter()
-        .any(|m| !m.is_std && source_scans::calls_object_create_null(&m.ast));
-    let ctor_reads = modules
-        .iter()
-        .any(|m| !m.is_std && source_scans::reads_constructor(&m.ast));
-    let record_accessors = modules
-        .iter()
-        .any(|m| !m.is_std && defined_accessors::defines_accessors(&m.ast));
+    // The program's own modules scanned on their own (`crate::par`), once for every round.
+    let scans = timings::pass("source scans", || {
+        crate::par::map(modules, crate::par::module_weight(modules), |m| {
+            if m.is_std {
+                return [false; 4];
+            }
+            [
+                source_scans::calls_object_create_null(&m.ast),
+                source_scans::reads_constructor(&m.ast),
+                defined_accessors::defines_accessors(&m.ast),
+                ts_protocol::calls_throw(std::slice::from_ref(m)),
+            ]
+        })
+    });
+    let any_scan = |k: usize| scans.iter().any(|s| s[k]);
+    let (null_proto, ctor_reads) = (any_scan(0), any_scan(1));
+    let (record_accessors, gen_throw) = (any_scan(2), any_scan(3));
     // What a round found it needed once it was too late to demand or check it.
     let assumed = std::cell::RefCell::new(body::lazy_std::Assumed::default());
     let new_cx = |round: &'static str,
@@ -348,7 +378,7 @@ fn check_timed(
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
         cx.global_namespaces = global_ns.clone();
-        cx.gen_throw = ts_protocol::calls_throw(modules);
+        cx.gen_throw = gen_throw;
         cx.alias_blocked = alias_blocked.clone();
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();

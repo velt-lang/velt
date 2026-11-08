@@ -90,6 +90,13 @@ where
         .collect()
 }
 
+/// The weight of work over every module's AST: about a node per 8 bytes of source.
+pub(crate) fn module_weight(modules: &[crate::SourceModule]) -> usize {
+    (modules.iter())
+        .map(|m| m.ast.span.hi.saturating_sub(m.ast.span.lo) as usize / 8)
+        .sum()
+}
+
 /// The least weight [`map`] starts threads for: below it, starting them costs more than the
 /// work they would split.
 const MIN_WEIGHT: usize = 2_000;
