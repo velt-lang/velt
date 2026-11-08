@@ -28,6 +28,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::ctx::Ctx;
+use crate::defs::DefInfo;
 use crate::hir::{TyId, TyKind};
 
 impl Ctx<'_> {
@@ -134,11 +135,13 @@ impl Ctx<'_> {
 
     /// The anonymous object defs and union defs whose fields or members hold error-set
     /// variables get the names a check without variables gives them, of their solved types:
-    /// lowering names its layouts by them.
-    pub(crate) fn name_solved_defs(&mut self) {
+    /// lowering names its layouts by them. `solved` is every type with variables and its
+    /// solved form ([`Ctx::solved_types`]).
+    pub(crate) fn name_solved_defs(&mut self, solved: &[(TyId, TyId)]) {
         if self.fn_sites.vars.is_empty() {
             return;
         }
+        self.name_solved_fn_unions(solved);
         let n = self.info.len();
         let mut anons = vec![];
         for i in 0..n {
@@ -238,6 +241,79 @@ impl Ctx<'_> {
             }
         }
         self.display_params = saved;
+    }
+
+    /// A function type written without `throws` is shown as written, also solved: a check
+    /// without variables shows the type it resolves to with its set so (`Types::inferred_fns`).
+    /// The union defs whose members hold such a solved type, named when it was shown with its
+    /// set (a union interned by solving, or one written with the same type), get the names a
+    /// check without variables gives them.
+    fn name_solved_fn_unions(&mut self, solved: &[(TyId, TyId)]) {
+        let mut marked = rustc_hash::FxHashSet::default();
+        for &(t, s) in solved {
+            if t != s && self.shown_as_written(t) && self.ty.inferred_fns.insert(s) {
+                marked.insert(s);
+            }
+        }
+        if marked.is_empty() {
+            return;
+        }
+        for i in 0..self.info.len() {
+            let d = crate::hir::DefId(i as u32);
+            let Some(e) = self
+                .enum_info(d)
+                .filter(|e| e.is_union && e.generics.names.is_empty())
+            else {
+                continue;
+            };
+            let payloads: Vec<TyId> = (e.variants.iter())
+                .filter_map(|v| v.payload.first().copied())
+                .collect();
+            if payloads.len() != e.variants.len()
+                || !payloads.iter().any(|p| self.holds_any(*p, &marked))
+            {
+                continue;
+            }
+            self.reorder_union_def(d, &payloads);
+            let DefInfo::Enum(e) = &self.info[i] else {
+                continue;
+            };
+            let (name, names): (String, Vec<String>) = (
+                e.name.clone(),
+                e.variants.iter().map(|v| v.name.clone()).collect(),
+            );
+            if let Some(Some(crate::hir::Def::Enum(h))) = self.defs.get_mut(i) {
+                for (v, n) in h.variants.iter_mut().zip(names) {
+                    v.name = n;
+                }
+                h.name = name;
+            }
+        }
+    }
+
+    /// Is function type `t` shown as written, without its error type (`crate::display`)?
+    fn shown_as_written(&self, t: TyId) -> bool {
+        let TyKind::FnPtr { ret, throws, .. } = self.ty.kind(t) else {
+            return false;
+        };
+        self.ty.inferred_fns.contains(&t)
+            || self.only_err_vars(*throws)
+            || matches!(self.ty.kind(*ret), TyKind::Promise(_, e) if self.only_err_vars(*e))
+    }
+
+    /// Does `t` hold one of `tys` (itself or in its component types)?
+    fn holds_any(&self, t: TyId, tys: &rustc_hash::FxHashSet<TyId>) -> bool {
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut stack = vec![t];
+        while let Some(t) = stack.pop() {
+            if tys.contains(&t) {
+                return true;
+            }
+            if seen.insert(t) {
+                stack.extend(crate::types::children(self.ty.kind(t)));
+            }
+        }
+        false
     }
 
     /// Is `t` error-set variables, or a union (or option) holding them as members: a value's

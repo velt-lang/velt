@@ -61,7 +61,7 @@ pub(crate) fn erase(
     // A type with error-set variables is its solved type (`throws::vars`), erased; unions of
     // one erased member list are one def, of one erased member that member.
     let solved = cx.solved_types();
-    cx.name_solved_defs();
+    cx.name_solved_defs(&solved);
     let mut plan = crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved);
     let merged = std::mem::take(&mut plan.merged);
     cx.replaced_unions = std::mem::take(&mut plan.replaced);
