@@ -1,0 +1,18 @@
+// `undefined!` in a `Foo`, then given to a `Foo | null` (which has no `undefined` of its own),
+// a parameter of that type and a `Foo | null | undefined` (#2350): the value stays `undefined`,
+// as in Node.
+class Foo {
+  v = 1;
+}
+const u: Foo = undefined!;
+const a: Foo | null = u;
+console.log(a, typeof a);
+function take(x: Foo | null): string {
+  return String(x);
+}
+console.log(take(u));
+const g: Foo | null | undefined = a;
+console.log(g === null, g);
+const nv: Foo = null!;
+const b: Foo | null | undefined = nv;
+console.log(b === null, b === undefined, b);

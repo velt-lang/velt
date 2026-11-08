@@ -1,6 +1,7 @@
-//! A `T | null` (or `T | undefined`) never holds a view of a nothing (any_view.rs): a view on
-//! its way into one becomes the option's own nothing (`WrapSome`), so testing and matching an
-//! option is its own test alone. Sema may still read such an option as its payload where a
+//! Options whose payload may be a view of a nothing (any_view.rs). A `T | null` keeps such a
+//! view as its payload, and `option_present` tests the payload for one, so `??`, `?.` and
+//! patterns see the nothing. A `T | null | undefined`'s `null` pattern takes a view of `null`
+//! but not one of `undefined` (`three_state_null`). Sema may still read such an option as its payload where a
 //! narrowing says it holds one (`const o: Foo | null = f` narrows `o` to `Foo` even when `f`
 //! held `null!`): that read gives a view of `null` again (`unwrapped_view`), so a member read
 //! is Node's `TypeError` and a test sees the nothing, never a null pointer read as a `Foo`.
@@ -8,7 +9,7 @@
 use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
 use super::FnLower;
-use crate::vir::{BinOp, Callee, Operand, Place, Rvalue, Terminator, Ty};
+use crate::vir::{BinOp, Callee, Operand, Place, Rvalue, Terminator, Ty, UnOp};
 
 impl FnLower<'_, '_> {
     /// Is `t` a pointer type that may hold a view, whose options this file keeps view-free?
@@ -16,34 +17,31 @@ impl FnLower<'_, '_> {
         self.holds_view(t) && self.cx.ty(t) == Ty::Ptr
     }
 
-    /// `WrapSome` of the owned pointer `v` of type `inner` into the pointer-sized option `ty`:
-    /// a view of a nothing becomes the option's nothing (its reference released). `None` where
-    /// `inner` holds no view (the plain `WrapSome`).
-    pub(super) fn wrap_some_view(&mut self, v: Operand, inner: TyId, ty: TyId) -> Option<Operand> {
-        if self.dead() || self.cx.ty(ty) != Ty::Ptr || !self.view_option_payload(inner) {
+    /// The `null` of a `T | null | undefined` (`ty`, at `p`) as a pattern tests it (`Some(None)`,
+    /// sema's `=== null` on it): its `T | null` holds `null` itself or a view of `null`, not a
+    /// view of `undefined` (`undefined!` given to the `T | null`), which is its `undefined`.
+    pub(super) fn three_state_null(&mut self, p: &Place, ty: TyId) -> Option<Operand> {
+        let TyKind::Option(inner, Nothing::Undefined) = self.cx.kind(ty) else {
+            return None;
+        };
+        let TyKind::Option(e, Nothing::Null) = self.cx.kind(inner) else {
+            return None;
+        };
+        if self.cx.ty(inner) != Ty::Ptr || !self.view_option_payload(e) {
             return None;
         }
-        let vp = Place::local(self.temp(Ty::Ptr));
-        self.assign(vp.clone(), Rvalue::Use(v));
-        let nil = self.view_nothing(Operand::Copy(vp.clone()), true);
-        let out = Place::local(self.temp(Ty::Ptr));
-        let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(nil, yes, no);
-        self.switch_to(yes);
-        self.drop_glue(vp.clone(), inner);
-        let none = self.none_value(ty);
-        self.assign(out.clone(), Rvalue::Use(none));
-        self.goto(join);
-        self.switch_to(no);
-        self.assign(out.clone(), Rvalue::Use(Operand::Copy(vp)));
-        self.goto(join);
-        self.switch_to(join);
-        Some(self.own_value(Operand::Copy(out), ty))
+        let outer = self.option_is_some(p, ty);
+        let ip = self.some_payload(p, ty);
+        let inner_some = self.option_is_some(&ip, inner);
+        let null = self.view_nothing(Operand::Copy(ip.clone()), false);
+        let none = self.rvalue_temp(Ty::Bool, Rvalue::Unary(UnOp::Not, inner_some));
+        let either = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, none, null));
+        Some(self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, outer, either)))
     }
 
     /// The payload `p` (of type `pty`) an `UnwrapSome` of the option type `oty` reads: a null
-    /// pointer (the option's nothing, where a narrowing assumed a value) becomes a view of
-    /// `null`, owned by a slot of the frame's temporaries, so what follows sees `null`.
+    /// pointer (the option's nothing, where a narrowing assumed a value) becomes a view of that
+    /// nothing, owned by a slot of the frame's temporaries, so what follows sees it.
     pub(super) fn unwrapped_view(&mut self, p: Operand, pty: TyId, oty: TyId) -> Operand {
         if self.dead() || pty == oty || !self.view_option_payload(pty) {
             return p;
@@ -64,7 +62,11 @@ impl FnLower<'_, '_> {
         let (yes, join) = (self.new_block(), self.new_block());
         self.branch(zero, yes, join);
         self.switch_to(yes);
-        let view = self.null_view();
+        let n = match self.cx.kind(oty) {
+            TyKind::Option(_, Nothing::Undefined) => Nothing::Undefined,
+            _ => Nothing::Null,
+        };
+        let view = self.nothing_view(n);
         self.assign(Place::local(slot), Rvalue::Use(view.clone()));
         self.assign(out.clone(), Rvalue::Use(view));
         self.goto(join);
@@ -126,12 +128,12 @@ impl FnLower<'_, '_> {
         plain && !self.cx.is_dynamic(t) && !self.holds_view(t)
     }
 
-    /// A new view of `null`, tagged (any_view.rs `any_nothing_view`).
-    fn null_view(&mut self) -> Operand {
+    /// A new view of the nothing `n`, tagged (any_view.rs `any_nothing_view`).
+    fn nothing_view(&mut self, n: Nothing) -> Operand {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let p = Place::local(self.temp(avt));
-        self.any_nothing_into(Nothing::Null, &p);
+        self.any_nothing_into(n, &p);
         let Some(view) = self.cx.view_fn() else {
             super::ice("a view of null without `Proxy`")
         };
