@@ -177,7 +177,6 @@ velt_rt velt_rt_group_new
 velt_rt velt_rt_group_wait
 velt_rt velt_rt_host_clone
 velt_rt velt_rt_host_release
-velt_rt velt_rt_html_escape
 velt_rt velt_rt_i64_to_radix
 velt_rt velt_rt_isatty
 velt_rt velt_rt_json_enter
@@ -230,7 +229,6 @@ velt_rt velt_rt_json_value_push
 velt_rt velt_rt_json_value_set
 velt_rt velt_rt_json_value_set_at
 velt_rt velt_rt_json_value_stringify
-velt_rt velt_rt_jsx_escape
 velt_rt velt_rt_keep_alive_acquire
 velt_rt velt_rt_keep_alive_release
 velt_rt velt_rt_latch_free
