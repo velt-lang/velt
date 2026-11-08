@@ -3,7 +3,7 @@
 use velt_vir::vir::{Const, Operand, Ty};
 
 use super::{Emitter, Val};
-use crate::statics::static_name;
+
 use crate::types::{float_literal, global_name, int_literal, llvm_type};
 use crate::CodegenResult;
 
@@ -59,7 +59,7 @@ impl Emitter<'_> {
                 if id.0 as usize >= self.program.statics.len() {
                     bail!("unknown static #{}", id.0)
                 }
-                static_name(self.program, id.0 as usize)
+                self.static_names[id.0 as usize].clone()
             }
             Const::Func(id) => match self.program.funcs.get(id.0 as usize) {
                 Some(f) => global_name(&f.symbol),

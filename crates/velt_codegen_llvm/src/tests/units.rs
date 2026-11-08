@@ -223,19 +223,23 @@ fn unit_modules_link_across_units() {
     has(1, "declare hidden i64 @\"a\"(i64)");
     has(1, "declare hidden i64 @\"b\"()");
     has(1, "define hidden ptr @\"c\"(");
+    let vtable = super::static_name(&p, 0);
     has(
         1,
-        "@.s0 = hidden unnamed_addr constant <{ ptr }> <{ ptr @\"a\" }>",
+        &format!("{vtable} = hidden unnamed_addr constant <{{ ptr }}> <{{ ptr @\"a\" }}>"),
     );
     has(2, "define available_externally hidden i64 @\"a\"(");
     has(2, "declare hidden ptr @\"c\"()");
     has(2, "define dso_local i32 @\"velt_main\"(");
     has(
         2,
-        "@.s0 = available_externally hidden unnamed_addr constant <{ ptr }> <{ ptr @\"a\" }>",
+        &format!(
+            "{vtable} = available_externally hidden unnamed_addr constant <{{ ptr }}> \
+             <{{ ptr @\"a\" }}>"
+        ),
     );
     assert!(
-        !ir[0].contains("@.s0 ="),
+        !ir[0].contains(&format!("{vtable} =")),
         "the first unit does not use the vtable"
     );
 
@@ -247,7 +251,7 @@ fn unit_modules_link_across_units() {
     };
     let ir = emit_unit(&p, &target, true, &whole, &Default::default()).unwrap();
     assert!(ir.contains("define internal i64 @\"a\"("));
-    assert!(ir.contains("@.s0 = private unnamed_addr constant"));
+    assert!(ir.contains(&format!("{vtable} = private unnamed_addr constant")));
     assert!(!ir.contains("hidden") && !ir.contains("declare i64"));
 }
 
