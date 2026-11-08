@@ -9,8 +9,9 @@
 //! assigns values that need no drop, to locals or through its params (elements and fields);
 //! and it only calls quiet functions, `velt_simd_*` externs and intrinsics that run no user
 //! code and are handed no place to modify or move. Anything else (`new`, closures, `await`,
-//! `try`, `throw`, `for…of`, patterns, indirect, virtual and interface calls, module state)
-//! makes it not quiet, and so does a field read or write on a type that may hold a typed proxy
+//! `try`, `throw`, `for…of`, patterns, indirect, virtual and interface calls, module state,
+//! though a named literal is no state) makes it not quiet, and so does a field read or write
+//! on a type that may hold a typed proxy
 //! (proxy_typed.rs): it may run a `get` or `set` trap, which is user code. Std's byte readers
 //! and writers (`loadF64(this.buf.bytes, o)` in a typed array's element access) are quiet, so
 //! the access counts no reference per element.
@@ -76,6 +77,17 @@ impl Cx<'_> {
         q
     }
 
+    /// Are these statements and this value, the rest of a block, quiet?
+    pub(super) fn quiet_rest(
+        &mut self,
+        stmts: &[hir::Stmt],
+        value: Option<&hir::Expr>,
+        level: Quiet,
+    ) -> bool {
+        stmts.iter().all(|s| self.quiet_stmt(s, level))
+            && value.is_none_or(|v| self.quiet_expr(v, level))
+    }
+
     fn quiet_block(&mut self, b: &hir::Block, level: Quiet) -> bool {
         b.stmts.iter().all(|s| self.quiet_stmt(s, level))
             && b.value.as_deref().is_none_or(|v| self.quiet_expr(v, level))
@@ -112,6 +124,13 @@ impl Cx<'_> {
     fn quiet_expr(&mut self, e: &hir::Expr, level: Quiet) -> bool {
         match &e.kind {
             H::Lit(_) | H::Local(..) => true,
+            // A named literal is evaluated at each use, as the literal is.
+            H::Global(d) => match self.hir.def(*d) {
+                hir::Def::Global(g) => {
+                    g.slot.is_none() && g.c_const.is_none() && matches!(g.init.kind, H::Lit(_))
+                }
+                _ => false,
+            },
             H::Unary { expr: x, .. } | H::Cast(x) => self.quiet_expr(x, level),
             H::Binary { lhs, rhs, .. } | H::Logical { lhs, rhs, .. } => {
                 self.quiet_expr(lhs, level) && self.quiet_expr(rhs, level)

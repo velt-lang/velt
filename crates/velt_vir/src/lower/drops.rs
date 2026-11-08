@@ -24,6 +24,10 @@ impl FnLower<'_, '_> {
             .scopes
             .pop()
             .unwrap_or_else(|| ice("scope stack underflow"));
+        let open = self.scopes.len();
+        while self.str_datas.last().is_some_and(|d| d.2 > open) {
+            self.str_datas.pop();
+        }
         for d in s.drops.iter().rev() {
             self.drop_entry(d);
         }
@@ -70,7 +74,11 @@ impl FnLower<'_, '_> {
     /// (`finally_floor`; the `try`s around it are left on this edge).
     fn finally_body(&mut self, b: &velt_sema::hir::Block) {
         let floor = std::mem::replace(&mut self.finally_floor, self.scopes.len());
+        // On an early exit the scopes it leaves are still open, and quiet code ended there
+        // (str_data.rs): this code wasn't checked, so it knows no string's pointer.
+        let known = std::mem::take(&mut self.str_datas);
         self.block(b);
+        self.str_datas = known;
         self.finally_floor = floor;
     }
 

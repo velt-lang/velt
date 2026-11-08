@@ -148,6 +148,7 @@ mod srcloc;
 mod stabilize;
 mod static_atomic;
 mod stmt;
+mod str_data;
 mod strbuf;
 mod strings;
 mod symbols;
@@ -622,6 +623,9 @@ struct FnLower<'c, 'h> {
     any_write: bool,
     /// The view bit tests and loops lowered, for versioning (view_unswitch.rs).
     view_loops: view_unswitch::ViewLoops,
+    /// Where a string local's bytes are, with the number of scopes open where that was worked
+    /// out: the entry goes when its block ends (str_data.rs).
+    str_datas: Vec<(LocalId, Operand, usize)>,
     /// This function's read mode, once asked (rc.rs `lk_mode`).
     lk_mode: Option<Local>,
     /// This thread's `RwLock` reader state, once a `read` returned it (async_fn/sync.rs).

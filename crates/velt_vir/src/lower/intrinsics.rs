@@ -117,6 +117,10 @@ impl FnLower<'_, '_> {
                 self.rvalue_temp(t, Rvalue::Use(Operand::Copy(place)))
             }
             (I::StrByteAt, [s, i]) => {
+                if let Some(data) = self.known_str_data(s) {
+                    let i = self.expr(i);
+                    return self.text_byte_at(data, i);
+                }
                 let v = self.projection_base(s, BoxHold::No);
                 let i = self.expr(i);
                 self.str_byte_at(v, i)
