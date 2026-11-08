@@ -604,10 +604,12 @@ impl Ctx<'_> {
     /// members of their own that std doesn't list): does `have` extend `want`, or the base whose
     /// shape `want` has (`HTMLSpanElement` adds no property to `HTMLElement`, `Comment` none to
     /// `CharacterData`, so `Text` converts to it)? `HTMLElement` doesn't convert to
-    /// `HTMLAnchorElement` though std lists no member of the latter's own. Any other pair:
+    /// `HTMLAnchorElement` though std lists no member of the latter's own. Any other `want`:
     /// `true` (members decide).
     fn dom_related(&self, have: DefId, want: DefId) -> bool {
-        if !(self.std_dom_iface(have) && self.std_dom_iface(want)) {
+        // A program's own interface that extends a DOM one too (`MyEl extends HTMLElement`):
+        // it isn't a sibling of it (`HTMLAnchorElement`), as `tsc` sees by the members.
+        if !self.std_dom_iface(want) {
             return true;
         }
         let mut shape = want;

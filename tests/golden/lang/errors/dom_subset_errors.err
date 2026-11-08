@@ -7,5 +7,12 @@ dom_subset_errors.velt:9:10: error: mismatched types
 dom_subset_errors.velt:12:25: error: mismatched types
   = note: expected string | URL | null | undefined, found f64
 dom_subset_errors.velt:16:23: error: cannot find `missingKey` in this scope
+dom_subset_errors.velt:23:10: error: mismatched types
+  = note: expected HTMLAnchorElement, found MyEl
+  = note: `MyEl` does not declare `implements HTMLAnchorElement`
+dom_subset_errors.velt:26:10: error: mismatched types
+  = note: expected HTMLDivElement, found MyEl
+  = note: `MyEl` does not declare `implements HTMLDivElement`
+dom_subset_errors.velt:29:10: error: cannot cast `MyEl` as `HTMLAnchorElement`
 dom_subset_errors.velt:14:52: error: mismatched types
   = note: expected AbortSignal | undefined, found f64

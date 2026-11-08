@@ -15,4 +15,18 @@ const options: AddEventListenerOptions = { signal: 5 };
 function write(): void {
   window.localStorage[missingKey] = "x";
 }
+// A program's own interface extending a DOM one is no sibling of it (TS2322, TS2352).
+interface MyEl extends HTMLElement {
+  extra: number;
+}
+function mine(m: MyEl): HTMLAnchorElement {
+  return m;
+}
+function mineDiv(m: MyEl): HTMLDivElement {
+  return m;
+}
+function mineCast(m: MyEl): HTMLAnchorElement {
+  return m as HTMLAnchorElement;
+}
+console.log(typeof mine, typeof mineDiv, typeof mineCast);
 console.log(typeof write, typeof anchor, typeof created, typeof push, options.once);
