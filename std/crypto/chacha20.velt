@@ -48,9 +48,10 @@ export function chachaState(key: u8[]): u32[] {
 
 /** Sets the nonce words of `state` to the 12-byte `nonce`. */
 export function chachaSetNonce(state: u32[], nonce: u8[]) {
-  for (let i: usize = 0; i < 3; i++) {
-    state[13 + i] = load32le(nonce, 4 * i);
-  }
+  const v = u8x16.loadPartial(nonce, 0).asU32x4();
+  state[13] = v.lane(0);
+  state[14] = v.lane(1);
+  state[15] = v.lane(2);
 }
 
 // Each lane rotated left by 16 and by 8: whole bytes, so a byte shuffle.
@@ -138,15 +139,23 @@ export function chachaXorInPlace(state: u32[], counter: u32, buf: u8[], start: u
   let d = u32x4.load(state, 12).withLane(0, counter);
   const one = u32x4.splat(0).withLane(0, 1);
   let off = start;
-  while (off < end) {
+  while (end - off >= 64) {
+    const x = block(a, b, c, d);
+    const at = off as u64;
+    velt_simd_u8x16_store(velt_simd_u8x16_load(buf, at).xor(x.a.asU8x16()), buf, at);
+    velt_simd_u8x16_store(velt_simd_u8x16_load(buf, at + 16).xor(x.b.asU8x16()), buf, at + 16);
+    velt_simd_u8x16_store(velt_simd_u8x16_load(buf, at + 32).xor(x.c.asU8x16()), buf, at + 32);
+    velt_simd_u8x16_store(velt_simd_u8x16_load(buf, at + 48).xor(x.d.asU8x16()), buf, at + 48);
+    d = d.add(one);
+    off += 64;
+  }
+  if (off < end) {
     const x = block(a, b, c, d);
     const n = end - off;
     xorInto(buf, off, n, x.a);
     xorInto(buf, off + 16, n > 16 ? n - 16 : 0, x.b);
     xorInto(buf, off + 32, n > 32 ? n - 32 : 0, x.c);
     xorInto(buf, off + 48, n > 48 ? n - 48 : 0, x.d);
-    d = d.add(one);
-    off += n < 64 ? n : 64;
   }
 }
 

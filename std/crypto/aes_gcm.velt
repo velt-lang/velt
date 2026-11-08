@@ -33,8 +33,10 @@ import { u8x16 } from "velt/simd";
  * (tasks on one thread may share it: no call awaits).
  */
 export class AesGcm implements Aead {
+  // The bitsliced path's key, GHASH and scratch (empty, and null, where the CPU has the
+  // instructions: then nothing uses them).
   private skey: u64[];
-  private ghash: Ghash;
+  private ghash: Ghash | null;
   private q: u64[];
   private ks: u8[];
   private block: u8[];
@@ -67,6 +69,12 @@ export class AesGcm implements Aead {
       this.hp = gcmPowersArm(h1, h0);
     } else if (u8x16.hasAesX86()) {
       this.hp = gcmPowersX86(h1, h0);
+    }
+    if (u8x16.hasAes()) {
+      this.skey = [];
+      this.q = [];
+      this.ks = [];
+      this.ghash = null;
     }
   }
 
@@ -148,6 +156,9 @@ export class AesGcm implements Aead {
       return;
     }
     const g = this.ghash;
+    if (g == null) {
+      panic("ICE: AES-GCM: no bitsliced state");
+    }
     g.reset();
     g.update(aad, 0, aad.length);
     g.update(ct, start, end);
