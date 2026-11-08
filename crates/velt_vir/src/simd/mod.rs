@@ -240,7 +240,8 @@ pub enum Op {
     DotAddFast(Lanes),
     /// `(a, b, c) -> v`: `a * b + c` with one rounding (fused), the same bits on every CPU: one
     /// instruction where the CPU has FMA (arm64, x86 with `--cpu x86-64-v3`), a library call
-    /// per lane elsewhere. Floats only.
+    /// per lane elsewhere; on `f16x8` without FP16 no FMA is needed ([`Op::is_f16_arithmetic`]).
+    /// Floats only.
     MulAdd,
     /// `(a, b, c) -> v`: `a * b + c`, fused where that is faster and rounded twice elsewhere,
     /// so the last bit may differ between CPUs. Floats only.
@@ -278,11 +279,13 @@ pub enum Op {
 
 impl Op {
     /// Whether this operation reads the lanes of `f16x8` as IEEE binary16 numbers, each rounded
-    /// to nearest even with subnormals kept: `Add` to `Sqrt` and the comparisons, which a backend
-    /// must not take for what they mean on the `U16` that [`Lanes::scalar`] gives (`bf16x8` has
-    /// none of them). Every result is the same bits on every target but for which NaN a NaN is:
-    /// an operation computed in `f32` and narrowed rounds as the native one does (f32 has at
-    /// least 2p + 2 bits, Figueroa 1995), and `Min` and `Max` pick an operand.
+    /// to nearest even with subnormals kept: `Add` to `Sqrt`, `MulAdd`, `MulAddFast` and the
+    /// comparisons, which a backend must not take for what they mean on the `U16` that
+    /// [`Lanes::scalar`] gives (`bf16x8` has none of them). Every result but `MulAddFast`'s is
+    /// the same bits on every target but for which NaN a NaN is: an operation computed in `f32`
+    /// and narrowed rounds as the native one does (f32 has at least 2p + 2 bits, Figueroa 1995),
+    /// `Min` and `Max` pick an operand, and `MulAdd`, for which `f32` is too short, is computed
+    /// in `f64` (the argument is at `half_arith::fused` in `velt_codegen_llvm`).
     pub fn is_f16_arithmetic(self) -> bool {
         matches!(
             self,
@@ -293,6 +296,8 @@ impl Op {
                 | Op::Neg
                 | Op::Abs
                 | Op::Sqrt
+                | Op::MulAdd
+                | Op::MulAddFast
                 | Op::Min
                 | Op::Max
                 | Op::Eq
@@ -642,8 +647,6 @@ fn half_supported(lanes: Lanes, op: Op) -> bool {
             | Op::DotAdd
             | Op::DotAddHalf(_)
             | Op::DotAddFast(_)
-            | Op::MulAdd
-            | Op::MulAddFast
             | Op::ZipLow
             | Op::ZipHigh
             | Op::Narrow

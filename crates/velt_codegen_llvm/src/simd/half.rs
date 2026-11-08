@@ -5,7 +5,9 @@
 use velt_vir::simd::Lanes;
 
 use super::{Arch, Body, Caps};
-use crate::half::{HalfNative, BF16_TO_F32, F16_TO_F32_SOFT, F32_TO_BF16, F32_TO_F16_SOFT};
+use crate::half::{
+    HalfNative, BF16_TO_F32, F16_TO_F32_SOFT, F32_TO_BF16, F32_TO_F16_SOFT, F64_TO_F32_ODD,
+};
 
 const FLOATS: &str = "<4 x float>";
 
@@ -162,8 +164,16 @@ fn chain(b: &mut Body, of: Lanes, half: HalfNative) -> String {
     b.bytes(&r, FLOATS)
 }
 
+/// The four `double`s `x` as `float`s rounded to odd, which round to `f16` as `x` itself would
+/// (`crate::half`).
+pub(super) fn narrowed_to_odd(b: &mut Body, x: &str) -> String {
+    let (name, definition) = four_lanes(F64_TO_F32_ODD);
+    b.declarations.push(definition);
+    b.inst(format!("call {FLOATS} {name}(<4 x double> {x})"))
+}
+
 /// The scalar helper `definition` (one of `crate::half`'s sequences, whose lines are plain
-/// instructions on `i1`, `i16`, `i32` and `float`) on four lanes: every type four of it, every
+/// instructions on `i1`, `i16`, `i32`, `i64`, `float` and `double`) on four lanes: every type four of it, every
 /// constant operand a vector of it, `.v4` after its name. Its name and definition. So the
 /// sequence stays written once, and LLVM need not rediscover the vector form.
 fn four_lanes(definition: &str) -> (String, String) {
@@ -191,7 +201,7 @@ fn four_lanes_line(line: &str, name: &mut String) -> String {
             Some(word) => (word, ","),
             None => (token, ""),
         };
-        if matches!(word, "i1" | "i16" | "i32" | "float") {
+        if matches!(word, "i1" | "i16" | "i32" | "i64" | "float" | "double") {
             ty = word;
             out.push(format!("{}{comma}", wide(word)));
         } else if is_constant(word) && !ty.is_empty() {
