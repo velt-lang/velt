@@ -78,9 +78,9 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
 ## Scoped names (additive, #929)
 - `name` and the keys of `dependencies` may be scoped, `@scope/name`, each part lowercase
   letters and digits (starting with either) joined by single `-` or `_`, not a Windows device
-  name (`vpm::manifest::is_valid_dependency_name`); `is_valid_package_name` (registry names)
-  stays unscoped. A scoped dependency needs a `path` ("dependency `@x/y` needs a `path`:
-  registries hold unscoped packages only"); a scoped package can't have `native`.
+  name (`vpm::manifest::is_valid_dependency_name`); `is_valid_package_name` stays unscoped. A
+  registry holds scoped packages too (the first publisher of one claims its scope, #1740), so a
+  scoped dependency may be a `version`; a scoped package can't have `native`.
   `"@scope/name/sub"` imports the dependency's `src/sub`.
 
 ## `define` (additive, #929)
@@ -409,6 +409,11 @@ registry: "https://registry.example.com",
   <url>/api/v1/<name>/owners/<user>` add/remove one (400 for an invalid package name, or a user
   name that isn't `[a-z][a-z0-9_-]*`, 404 for an unknown user or a user who isn't an owner, 409 for the last
   owner, 400 on a server without users).
+- Scopes (additive, registry-core servers, #1740): `@scope/name` packages at
+  `<url>/api/v1/@scope/name/…`. The first user to publish a package in a scope claims it; only its
+  owners add packages to it (`GET <url>/api/v1/scopes/<scope>/owners`, `PUT`/`DELETE
+  …/owners/<user>`, with the rules above). A registry directory keeps them at
+  `<dir>/@scope/name/`. `velt registry serve` (the Rust server) doesn't serve them.
 - Yank (additive): index entries gain `yanked = true` (absent when false). `PUT`/`DELETE
   <url>/api/v1/<name>/<version>/yank` set/clear it (owners). Resolution never selects a yanked
   version unless the lockfile pins it; yanked versions stay downloadable.

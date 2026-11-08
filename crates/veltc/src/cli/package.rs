@@ -156,7 +156,9 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
                     path: flags.path,
                 });
             }
-            let (pkg, version) = match spec.split_once('@') {
+            // A scoped name's own `@` comes first: the version's is the next one.
+            let at = spec.char_indices().skip(1).find(|&(_, c)| c == '@');
+            let (pkg, version) = match at.map(|(i, _)| (&spec[..i], &spec[i + 1..])) {
                 Some((p, v)) if !v.is_empty() => (p.to_string(), Some(v.to_string())),
                 Some(_) => {
                     return Err(format!("missing version requirement after `@` in `{spec}`"))
@@ -288,6 +290,23 @@ mod tests {
                 path: None
             }
         );
+        assert_eq!(
+            p(&["add", "@sigx/core@^1.2"]).unwrap(),
+            Command::Add {
+                name: "@sigx/core".into(),
+                version: Some("^1.2".into()),
+                path: None
+            }
+        );
+        assert_eq!(
+            p(&["add", "@sigx/core"]).unwrap(),
+            Command::Add {
+                name: "@sigx/core".into(),
+                version: None,
+                path: None
+            }
+        );
+        assert!(p(&["add", "@sigx/core@"]).is_err());
         assert_eq!(
             p(&["add", "util", "--path", "../util"]).unwrap(),
             Command::Add {

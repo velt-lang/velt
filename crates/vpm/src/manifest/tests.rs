@@ -431,14 +431,12 @@ fn scoped_names_for_packages_and_path_dependencies() {
         let err = Manifest::parse(&text).unwrap_err();
         assert!(err.contains("invalid scoped package name"), "{err}");
     }
-    // Scoped packages are not in registries: a path is required.
-    let registry = r#"export const pkg: Package = { name: "a", version: "1.0.0", dependencies: { "@sigx/x": "1" } };"#;
-    let err = Manifest::parse(registry).unwrap_err();
-    assert!(
-        err.contains("registries hold unscoped packages only"),
-        "{err}"
-    );
-    // Scoped names are not registry names.
+    // A registry holds scoped packages too: a version is enough.
+    let registry = r#"export const pkg: Package = { name: "a", version: "1.0.0", dependencies: { "@sigx/x": "1", "@sigx/y": { version: "^2" } } };"#;
+    let m = Manifest::parse(registry).unwrap();
+    assert_eq!(m.dependencies["@sigx/x"].version(), Some("1"));
+    assert_eq!(m.dependencies["@sigx/y"].version(), Some("^2"));
+    // Still not a package name in the unscoped sense (a directory and an export prefix).
     assert!(!is_valid_package_name("@sigx/reactivity"));
 }
 

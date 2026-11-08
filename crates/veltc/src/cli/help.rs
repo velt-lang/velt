@@ -534,14 +534,17 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "owner",
-        summary: "List or change a package's owners",
-        usage: &["owner list <pkg>", "owner add <pkg> <user>", "owner remove <pkg> <user>"],
+        summary: "List or change the owners of a package or a scope",
+        usage: &["owner list <pkg|@scope>", "owner add <pkg|@scope> <user>", "owner remove <pkg|@scope> <user>"],
         about: "Owners publish versions, yank and change the owners of a package on a registry \
-                server; its first publisher is its first owner. The last owner can't be removed.",
+                server; its first publisher is its first owner. A scope's owners (`@scope`, \
+                claimed by the first publisher of a package in it) add new packages to it. The \
+                last owner can't be removed.",
         options: &[],
         examples: &[
             ("velt owner list json", "who may publish json"),
             ("velt owner add json bob", "let bob publish json too"),
+            ("velt owner add @acme bob", "let bob publish new packages in @acme"),
         ],
     },
     CommandHelp {

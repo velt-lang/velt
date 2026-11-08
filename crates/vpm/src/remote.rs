@@ -221,6 +221,36 @@ pub fn set_owner(url: &str, name: &str, user: &str, add: bool) -> Result<(), Str
     .map(drop)
 }
 
+/// The scope `scope` (without `@`) and its owners' path: `/api/v1/scopes/<scope>/owners`.
+fn scope_owners_url(url: &str, scope: &str) -> Result<String, String> {
+    if !crate::manifest::is_valid_scope_part(scope) {
+        return Err(format!(
+            "invalid scope `@{scope}` (lowercase letters and digits with single `-` or `_` between words)"
+        ));
+    }
+    Ok(api(url, "scopes", &format!("{scope}/owners")))
+}
+
+/// The owners of the scope `scope` (without `@`).
+pub fn scope_owners(url: &str, scope: &str) -> Result<Vec<String>, String> {
+    let resp = velt_http::fetch("GET", &scope_owners_url(url, scope)?, &[], b"")?;
+    match resp.status {
+        200 => Ok(resp.body_text().lines().map(str::to_string).collect()),
+        404 => Err(format!(
+            "no package in the registry {url} has claimed `@{scope}`"
+        )),
+        s => Err(format!("registry {url}: {s}: {}", resp.body_text().trim())),
+    }
+}
+
+/// Add (`add`) or remove `user` as an owner of the scope `scope` (without `@`).
+pub fn set_scope_owner(url: &str, scope: &str, user: &str, add: bool) -> Result<(), String> {
+    let target = format!("{}/{user}", scope_owners_url(url, scope)?);
+    check_names(&[], &[user])?;
+    let method = if add { "PUT" } else { "DELETE" };
+    write(url, method, &target, &[], b"").map(drop)
+}
+
 /// Package and user names go into URL paths: only valid ones are sent (package names by the
 /// package rules, user names by [`crate::manifest::is_valid_user_name`]).
 fn check_names(packages: &[&str], users: &[&str]) -> Result<(), String> {
@@ -263,4 +293,58 @@ pub fn search_within(
         ));
     }
     crate::search::from_json(&resp.body_text()).map_err(|e| format!("registry {url}: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use velt_http::{Request, Response, Server};
+
+    /// A registry whose scope `@acme` has the owner `alice`, logging each request's method and path.
+    fn registry() -> (Server, Arc<Mutex<Vec<String>>>) {
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let l = log.clone();
+        let handler = Arc::new(move |req: Request| {
+            l.lock()
+                .unwrap()
+                .push(format!("{} {}", req.method, req.path));
+            match (req.method.as_str(), req.path.as_str()) {
+                ("GET", "/api/v1/scopes/acme/owners") => Response::text(200, "alice\nbob\n"),
+                ("PUT" | "DELETE", "/api/v1/scopes/acme/owners/bob") => Response::text(200, "ok"),
+                (_, "/api/v1/scopes/acme/owners/carol") => Response::text(403, "not an owner"),
+                _ => Response::text(404, "no scope"),
+            }
+        });
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        (Server::start(listener, handler, 1 << 16).unwrap(), log)
+    }
+
+    #[test]
+    fn scope_owners_are_listed_and_changed_under_api_v1_scopes() {
+        let (server, log) = registry();
+        let url = format!("http://{}", server.addr());
+        assert_eq!(super::scope_owners(&url, "acme").unwrap(), ["alice", "bob"]);
+        let missing = super::scope_owners(&url, "nope").unwrap_err();
+        assert!(missing.contains("has claimed `@nope`"), "{missing}");
+        super::set_scope_owner(&url, "acme", "bob", true).unwrap();
+        super::set_scope_owner(&url, "acme", "bob", false).unwrap();
+        let refused = super::set_scope_owner(&url, "acme", "carol", true).unwrap_err();
+        assert!(refused.contains("403: not an owner"), "{refused}");
+        // Invalid scopes and users are refused before anything is sent.
+        assert!(super::scope_owners(&url, "Acme").is_err());
+        assert!(super::set_scope_owner(&url, "acme/x", "bob", true).is_err());
+        assert!(super::set_scope_owner(&url, "acme", "../x", true).is_err());
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "GET /api/v1/scopes/acme/owners",
+                "GET /api/v1/scopes/nope/owners",
+                "PUT /api/v1/scopes/acme/owners/bob",
+                "DELETE /api/v1/scopes/acme/owners/bob",
+                "PUT /api/v1/scopes/acme/owners/carol",
+            ]
+        );
+        server.stop();
+    }
 }

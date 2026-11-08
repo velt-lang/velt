@@ -139,22 +139,39 @@ pub fn legacy_index_error(registry: &Path, name: &str) -> Option<String> {
     })
 }
 
+/// The packages of the registry directory `root`, in no order: each directory with an index, and
+/// in a scope's directory (`@scope`), each one there as `@scope/name`.
+pub fn package_names(root: &Path) -> Vec<String> {
+    let has_index = |e: &std::fs::DirEntry| e.path().join(INDEX_FILE).is_file();
+    let mut names = vec![];
+    for entry in std::fs::read_dir(root).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if has_index(&entry) {
+            names.push(name);
+        } else if name.starts_with('@') {
+            for inner in std::fs::read_dir(entry.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                if has_index(&inner) {
+                    names.push(format!("{name}/{}", inner.file_name().to_string_lossy()));
+                }
+            }
+        }
+    }
+    names
+}
+
 /// Names in the registry at `root` that the current name rules refuse: invalid names (published
 /// before the rules changed) and pairs that differ only in `-` versus `_`. One line each.
 pub fn name_problems(root: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(root)
-        .map(|rd| {
-            rd.flatten()
-                .filter(|e| e.path().join(INDEX_FILE).is_file())
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut names = package_names(root);
     names.sort();
     let mut problems = vec![];
     let mut seen: BTreeMap<String, String> = BTreeMap::new();
     for name in &names {
-        if !crate::manifest::is_valid_package_name(name) {
+        if !crate::manifest::is_valid_dependency_name(name) {
             problems.push(format!("`{name}` is no longer a valid package name"));
             continue;
         }
@@ -378,15 +395,8 @@ fn check_name_is_free(registry: &Path, name: &str) -> Result<(), String> {
         return Ok(());
     }
     let norm = crate::manifest::normalized_name(name);
-    let Ok(entries) = std::fs::read_dir(registry) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
-        let other = entry.file_name().to_string_lossy().into_owned();
-        if other != name
-            && crate::manifest::normalized_name(&other) == norm
-            && entry.path().join(INDEX_FILE).is_file()
-        {
+    for other in package_names(registry) {
+        if other != name && crate::manifest::normalized_name(&other) == norm {
             return Err(format!(
                 "cannot publish `{name}`: the registry has `{other}`, and names that differ only in `-` and `_` count as the same; choose another name"
             ));

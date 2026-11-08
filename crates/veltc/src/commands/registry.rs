@@ -129,7 +129,7 @@ pub fn yank_command(name: &str, version: &str, undo: bool) -> Result<(), String>
     Ok(())
 }
 
-/// `velt owner list|add|remove <pkg> [<user>]` (registry servers only).
+/// `velt owner list|add|remove <pkg|@scope> [<user>]` (registry servers only).
 pub fn owner_command(action: &OwnerAction, package: &str) -> Result<(), String> {
     let loc = locations()?;
     let Some(url) = &loc.remote else {
@@ -138,13 +138,29 @@ pub fn owner_command(action: &OwnerAction, package: &str) -> Result<(), String> 
             loc.describe()
         ));
     };
-    match action {
-        OwnerAction::List => {
+    // `@scope` alone (no `/name`) is a scope.
+    let scope = package.strip_prefix('@').filter(|s| !s.contains('/'));
+    match (action, scope) {
+        (OwnerAction::List, Some(scope)) => {
+            for owner in vpm::remote::scope_owners(url, scope)? {
+                println!("{owner}");
+            }
+        }
+        (OwnerAction::Add(user) | OwnerAction::Remove(user), Some(scope)) => {
+            let add = matches!(action, OwnerAction::Add(_));
+            vpm::remote::set_scope_owner(url, scope, user, add)?;
+            let verb = if add { "Added" } else { "Removed" };
+            style::status(
+                verb,
+                &format!("`{user}` as an owner of the scope `@{scope}`"),
+            );
+        }
+        (OwnerAction::List, None) => {
             for owner in vpm::remote::owners(url, package)? {
                 println!("{owner}");
             }
         }
-        OwnerAction::Add(user) | OwnerAction::Remove(user) => {
+        (OwnerAction::Add(user) | OwnerAction::Remove(user), None) => {
             let add = matches!(action, OwnerAction::Add(_));
             vpm::remote::set_owner(url, package, user, add)?;
             let verb = if add { "Added" } else { "Removed" };

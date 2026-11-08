@@ -267,3 +267,34 @@ fn the_roots_entries_are_solved_first() {
     assert_eq!(r.packages["util"].source, Source::Path { dir: local });
     assert_eq!(r.overrides["util"][0].by, "lib");
 }
+
+#[test]
+fn resolves_scoped_registry_packages() {
+    let e = env();
+    e.publish("@sigx/reactivity", "1.2.0", "");
+    e.publish("@sigx/core", "1.0.0", "\"@sigx/reactivity\": \"^1\", ");
+    let r = e.resolve("\"@sigx/core\": \"1\", ", None).unwrap();
+    let mut got = versions(&r);
+    got.sort();
+    assert_eq!(got, ["@sigx/core 1.0.0", "@sigx/reactivity 1.2.0"]);
+    assert_eq!(r.packages["@sigx/core"].dependencies, ["@sigx/reactivity"]);
+    // A registry directory keeps them under the scope's directory, and lists and searches them.
+    assert!(e
+        .loc
+        .registry
+        .join("@sigx/core")
+        .join(crate::registry::INDEX_FILE)
+        .is_file());
+    let mut names = crate::registry::package_names(&e.loc.registry);
+    names.sort();
+    assert_eq!(names, ["@sigx/core", "@sigx/reactivity"]);
+    let hits = crate::search::search_local(&e.loc.registry, "reactivity").unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].name, "@sigx/reactivity");
+    // Names that differ only in `-` and `_` are one, inside a scope too.
+    e.publish("@sigx/dom-utils", "1.0.0", "");
+    let dir = e.root.join("src-pkgs/clash");
+    write_package(&dir, "@sigx/dom_utils", "1.0.0", "");
+    let err = crate::registry::publish(&dir, &e.loc).unwrap_err();
+    assert!(err.contains("the registry has `@sigx/dom-utils`"), "{err}");
+}
