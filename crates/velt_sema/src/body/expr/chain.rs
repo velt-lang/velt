@@ -26,10 +26,11 @@ impl FnCx<'_, '_> {
         let name = format!("<chain@{}>", link.span.lo);
         let rest = rewrite(e, link.span, &name, object.span);
         let span = e.span;
-        let s = self.test_operand(object, None, Want::Borrow);
-        let s = self.flatten_chain(s);
         // A view of a nothing (`null!`) gives `undefined` where that fits (nothing_slot.rs).
-        let nothing = self.undefined_fits(exp, span) && self.may_hold_nothing(s.ty);
+        let fits = self.undefined_fits(exp, span);
+        let s = self.chain_object(object, fits, |s| s.test_operand(object, None, Want::Borrow));
+        let s = self.flatten_chain(s);
+        let nothing = fits && self.may_hold_nothing(s.ty);
         let s = match s.kind {
             H::UnwrapSome(base, _) if nothing => *base,
             _ => s,

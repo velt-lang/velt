@@ -1,0 +1,23 @@
+// A chain of two `?.` links on a slot that holds `null` through `null!` (#2350): the first link
+// short-circuits the whole chain, as in Node, where the chain takes `undefined`.
+class Foo {
+  v = 1;
+  inner: Foo | null = null;
+  get sub(): Foo {
+    return this;
+  }
+}
+const f: Foo = null!;
+const w: number | undefined = f?.inner?.v;
+console.log(w);
+function r(): number | undefined {
+  return f?.inner?.v;
+}
+console.log(r());
+if (f?.inner?.v) console.log("then");
+else console.log("else");
+console.log(!f?.inner?.v);
+console.log(f?.sub?.v ? 1 : 2);
+const g: Foo = new Foo();
+const x: number | undefined = g?.sub?.v;
+console.log(x, g?.inner?.v === undefined ? "inner unset" : "set");

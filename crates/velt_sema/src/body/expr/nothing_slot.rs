@@ -81,11 +81,32 @@ impl FnCx<'_, '_> {
         self.optional_chain(object, span, f)
     }
 
+    /// `object` (a link's object, or a printed value) checked by `check`, which reads it as it
+    /// is: when the reader takes `undefined` (`nothing`), an optional chain that `object` is
+    /// takes it too, so `f?.inner?.v` short-circuits as a whole, as in JavaScript.
+    pub(crate) fn chain_object<R>(
+        &mut self,
+        object: &ast::Expr,
+        nothing: bool,
+        check: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let mut inner = object;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        let span = nothing.then_some(inner.span);
+        let outer = std::mem::replace(&mut self.chain_span, span);
+        let r = check(self);
+        self.chain_span = outer;
+        r
+    }
+
     /// Does the chain at `span`, expected as `exp`, take `undefined`: an `exp` that is dynamic or
-    /// has `undefined`, or a condition's test (`test_span`). With nothing expected it keeps its
+    /// has `undefined`, a condition's test (`test_span`), or a link's object or printed value that takes it (`chain_span`). With nothing expected it keeps its
     /// payload's type, as TypeScript types `f?.v` of a `Foo` `f` (`number`).
     pub(super) fn undefined_fits(&self, exp: Option<TyId>, span: Span) -> bool {
         self.test_span == Some(span)
+            || self.chain_span == Some(span)
             || exp.is_some_and(|t| {
                 self.cx.dynamic(t).is_some()
                     || self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())

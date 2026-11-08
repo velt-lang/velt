@@ -18,7 +18,9 @@ impl FnCx<'_, '_> {
         f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
     ) -> hir::Expr {
         let nothing = std::mem::take(&mut self.chain_nothing);
-        let s = self.test_operand(object, None, Want::Borrow);
+        let s = self.chain_object(object, nothing, |s| {
+            s.test_operand(object, None, Want::Borrow)
+        });
         let s = self.flatten_chain(s);
         // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
         if self
