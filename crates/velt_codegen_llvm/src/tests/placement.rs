@@ -4,7 +4,7 @@ use super::builder::*;
 use velt_vir::vir::Ty::*;
 use velt_vir::vir::*;
 
-use crate::units::{plan, Plan};
+use crate::units::{plan, plan_apart, Plan};
 
 /// One function of a [`program`]: symbol, statements, the functions it calls (by index).
 struct Spec {
@@ -231,7 +231,7 @@ fn the_root_module_gets_a_unit_of_its_own() {
     };
     let before = program(&specs(10, false));
     let after = program(&specs(4_000, true));
-    let (plan_before, plan_after) = (plan(&before, 4), plan(&after, 4));
+    let (plan_before, plan_after) = (plan_apart(&before, 4), plan_apart(&after, 4));
     let own = |p: &Program| -> Vec<usize> {
         (0..p.funcs.len())
             .filter(|&f| crate::units::is_root_module(&p.funcs[f].symbol))

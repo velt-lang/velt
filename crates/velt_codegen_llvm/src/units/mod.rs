@@ -123,23 +123,32 @@ pub(crate) fn count_for(total: usize) -> usize {
     }
 }
 
-/// Split `program` into (at most) `count` units of similar weight (see `place`). A split
-/// program's root module (`own_code`) gets a unit of its own after the library units, which are
-/// placed as if it were not there: an edit of the entry file changes its unit only, and the
-/// library units' modules, the same as before, come from the build cache.
+/// Split `program` into (at most) `count` units of similar weight (see `place`).
 pub(crate) fn plan(program: &vir::Program, count: usize) -> Plan {
     let count = count.clamp(1, program.funcs.len().max(1));
     let refs = References::of(program);
-    let owner = match own_code(program) {
-        Some(own) if count >= 2 => owners_apart(program, &refs, &own, count),
-        _ => {
-            let exported: Vec<bool> = (program.funcs.iter())
-                .map(|f| f.linkage == vir::Linkage::Export)
-                .collect();
-            place::owners(&exported, &refs.weights, &refs.funcs, &refs.statics, count)
-        }
-    };
+    let exported: Vec<bool> = (program.funcs.iter())
+        .map(|f| f.linkage == vir::Linkage::Export)
+        .collect();
+    let owner = place::owners(&exported, &refs.weights, &refs.funcs, &refs.statics, count);
     assemble(program, &refs, &owner)
+}
+
+/// [`plan`] for a count chosen from the program's size (`unit_count` without a request): the
+/// root module (`own_code`) gets a unit of its own after the `count` library units, which are
+/// placed as if it were not there, so an edit of the entry file changes its unit only and the
+/// library units' modules, the same as before, come from the build cache. A requested count
+/// (`VELT_CODEGEN_UNITS`) is [`plan`]'s: exactly that many units.
+pub(crate) fn plan_apart(program: &vir::Program, count: usize) -> Plan {
+    let count = count.clamp(1, program.funcs.len().max(1));
+    match own_code(program) {
+        Some(own) if count >= 2 => {
+            let refs = References::of(program);
+            let owner = owners_apart(program, &refs, &own, count);
+            assemble(program, &refs, &owner)
+        }
+        _ => plan(program, count),
+    }
 }
 
 /// Per function: is it the root module's (the program's entry file), not std's, a package's or
