@@ -300,8 +300,6 @@ velt_rt velt_rt_parse_int
 velt_rt velt_rt_perf_now
 velt_rt velt_rt_pow_f64
 velt_rt velt_rt_pow_i64
-velt_rt velt_rt_prng_f64
-velt_rt velt_rt_prng_range
 velt_rt velt_rt_process_args
 velt_rt velt_rt_process_chdir
 velt_rt velt_rt_process_cwd
@@ -641,8 +639,6 @@ velt_rt_wasm velt_rt_mutex_lock_checked
 velt_rt_wasm velt_rt_mutex_unlock
 velt_rt_wasm velt_rt_panic
 velt_rt_wasm velt_rt_perf_now
-velt_rt_wasm velt_rt_prng_f64
-velt_rt_wasm velt_rt_prng_range
 velt_rt_wasm velt_rt_process_args
 velt_rt_wasm velt_rt_process_chdir
 velt_rt_wasm velt_rt_process_cwd
