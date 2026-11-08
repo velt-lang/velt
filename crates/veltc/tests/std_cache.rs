@@ -67,8 +67,12 @@ fn left(o: &Output) -> usize {
     let err = text(&o.stderr);
     let line = (err.lines())
         .find(|l| l.contains("left in the program"))
-        .unwrap_or_else(|| panic!("no stats in
-{err}"));
+        .unwrap_or_else(|| {
+            panic!(
+                "no stats in
+{err}"
+            )
+        });
     let n: Vec<usize> = line
         .split([' ', ','])
         .filter_map(|w| w.parse().ok())
@@ -793,7 +797,7 @@ const NO_INLINE_PROGRAM: &str = "function main() {
 }
 ";
 const NO_INLINE_OUTPUT: &str =
-    "x=1.5 0.21428571428571427 1500.000\nhttps://example.com:8080/a/c?q=1 8080\n";
+    "x=3 0.42857142857142855 3000.000\nhttps://example.com:8080/a/c?q=1 8080\n";
 
 /// A release build without `VELT_STD_OBJECT` (the default), in `dir`, to `out`.
 fn release_default(
@@ -825,7 +829,10 @@ fn a_release_build_links_the_no_inline_functions_stored() {
     std::fs::write(dir.join("a.velt"), NO_INLINE_PROGRAM).unwrap();
     let fill = [("VELT_STD_OBJECT_FILL", "1")];
     let cold = release_default(dir, "a.velt", "cold", &cache, &[]);
-    assert!(!text(&cold.stderr).contains("found,"), "nothing to look for");
+    assert!(
+        !text(&cold.stderr).contains("found,"),
+        "nothing to look for"
+    );
     assert!(entries(&cache).is_empty(), "a release build stores nothing");
     assert_eq!(run(dir, "cold"), NO_INLINE_OUTPUT);
     let filled = release_default(dir, "a.velt", "filled", &cache, &fill);

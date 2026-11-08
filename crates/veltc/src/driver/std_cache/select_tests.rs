@@ -363,9 +363,20 @@ fn by_default_a_release_build_serves_only_what_is_never_inlined() {
     );
     assert!(has_no_inline(&p));
     assert_eq!(candidates(&p, &names(&p), Rule::NoInline), [1, 4]);
-    assert_eq!(cands(&p), [0, 1, 4], "every large function, without the default");
-    assert_eq!(inlinable(&p, 1), [1, 2], "never itself, nor what is marked so");
+    assert_eq!(
+        cands(&p),
+        [0, 1, 4],
+        "every large function, without the default"
+    );
+    assert_eq!(
+        inlinable(&p, 1),
+        [1, 2],
+        "never itself, nor what is marked so"
+    );
     let by = reasons(&p, &names(&p), Rule::NoInline);
     assert_eq!(by.get("inlinable"), Some(&(62 + 3 + 61)));
-    assert!(!has_no_inline(&program(vec![func("large", 60, &[], None)], vec![])));
+    assert!(!has_no_inline(&program(
+        vec![func("large", 60, &[], None)],
+        vec![]
+    )));
 }

@@ -209,7 +209,10 @@ mod tests {
             None,
             "always the default CPU's objects"
         );
-        assert!(!Inputs::debug("t").release, "never a release build's objects");
+        assert!(
+            !Inputs::debug("t").release,
+            "never a release build's objects"
+        );
     }
 
     /// Each input, changed alone, gives another key.

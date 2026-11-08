@@ -74,9 +74,10 @@ pub(super) enum Use {
 ///
 /// Release builds: by LLVM without debug info (the cached objects carry no line info, and the
 /// cache holds LLVM's code); with `VELT_STD_OBJECT=1` every function the cache serves, unless
-/// `VELT_STD_OBJECT=0` those std marks `noInline()`. Debug builds: unless `VELT_STD_OBJECT=0`, with
-/// either backend and with `-g`: stepping stays in the program's own code, as the objects have no
-/// lines to step through. WebAssembly has no objects to find: its programs compile everything.
+/// `VELT_STD_OBJECT=0` those std marks `noInline()`. Debug builds: unless `VELT_STD_OBJECT=0`,
+/// with either backend and with `-g`: stepping stays in the program's own code, as the objects
+/// have no lines to step through. WebAssembly has no objects to find: its programs compile
+/// everything (unless `VELT_STD_OBJECT=1`).
 pub(super) fn wanted(opts: &BuildOptions) -> Use {
     if opts.emit != super::Emit::Exe || opts.report_numbers || opts.host.is_some() {
         return Use::Off;
@@ -88,9 +89,11 @@ pub(super) fn wanted(opts: &BuildOptions) -> Use {
         if opts.debug_info || !llvm {
             return Use::Off;
         }
+        let wasm = velt_codegen_llvm::is_wasm(&opts.target());
         return match setting.as_deref() {
             Ok("1") => Use::Release,
             Ok("0") => Use::Off,
+            _ if wasm => Use::Off,
             _ => Use::NoInline,
         };
     }
@@ -279,9 +282,7 @@ fn release_key(program: &vir::Program, canon: &Canon, inputs: &key::Inputs, i: u
     let declared = select::declared(program, &set);
     let code = (set.iter())
         .map(|&j| key::Code::of(&program.funcs[j], canon))
-        .chain(
-            (declared.iter()).map(|&j| key::Code::declared(&program.funcs[j])),
-        );
+        .chain((declared.iter()).map(|&j| key::Code::declared(&program.funcs[j])));
     inputs.key(code)
 }
 

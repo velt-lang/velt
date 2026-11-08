@@ -175,7 +175,8 @@ mod tests {
                 ("c".into(), vec![], object("2.o")),
             ],
         };
-        let declared = |s: &str| vir::Function::new(s.into(), vec![], vir::Ty::I64, Linkage::Import);
+        let declared =
+            |s: &str| vir::Function::new(s.into(), vec![], vir::Ty::I64, Linkage::Import);
         let program = vir::Program {
             funcs: vec![declared("a"), declared("velt_rt_other")],
             ..vir::Program::default()
