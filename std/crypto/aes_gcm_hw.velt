@@ -1,0 +1,224 @@
+// velt/crypto (internal): AES-GCM's counter mode and tag on the CPU's instructions: ARMv8's AES
+// and PMULL (`u8x16.hasAesArm()`), x86's AES-NI and PCLMULQDQ (`u8x16.hasAesX86()`). Each
+// operation is a function gated on the extension, so the helpers it calls are cloned with the
+// bare instructions. The instructions take the same time whatever the key and the data, so this
+// is constant time as the bitsliced path is; `AesGcm` uses it where the CPU has them.
+// GHASH is std/crypto/ghash_hw.velt's.
+
+import { ghashAll, ghashPowers } from "velt/crypto/ghash_hw";
+import { targetFeature } from "velt/lang/intrinsics";
+import { u32x4, u8x16 } from "velt/simd";
+
+// Unchecked: every caller has checked the range (the AEAD's `check*Range`).
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
+// A lane by constant index (the method's range check does not fold in every clone).
+declare function velt_simd_u32x4_with_lane(v: u32x4, index: u64, x: u32): u32x4;
+
+/** The round keys of the FIPS 197 key expansion `w` (four words a round key) as bytes. */
+export function roundKeyBytes(w: u32[]): u8[] {
+  const out = Buffer.alloc(4 * w.length);
+  for (let i: usize = 0; i < w.length; i++) {
+    const x = w[i];
+    out[4 * i] = (x & 0xff) as u8;
+    out[4 * i + 1] = ((x >>> 8) & 0xff) as u8;
+    out[4 * i + 2] = ((x >>> 16) & 0xff) as u8;
+    out[4 * i + 3] = (x >>> 24) as u8;
+  }
+  return out;
+}
+
+// The round keys in registers: 11 (AES-128) or 15 (AES-256, `wide`).
+struct RoundKeys {
+  k0: u8x16;
+  k1: u8x16;
+  k2: u8x16;
+  k3: u8x16;
+  k4: u8x16;
+  k5: u8x16;
+  k6: u8x16;
+  k7: u8x16;
+  k8: u8x16;
+  k9: u8x16;
+  k10: u8x16;
+  k11: u8x16;
+  k12: u8x16;
+  k13: u8x16;
+  k14: u8x16;
+  wide: bool;
+}
+
+// The round keys of `rk` (176 or 240 bytes) loaded once; AES-128 leaves k11..k14 zero.
+function roundKeys(rk: u8[]): RoundKeys {
+  if (rk.length != 176 && rk.length != 240) {
+    panic(`ICE: AES-GCM round keys of ${rk.length} bytes`);
+  }
+  const wide = rk.length == 240;
+  const z = u8x16.splat(0);
+  return {
+    k0: velt_simd_u8x16_load(rk, 0),
+    k1: velt_simd_u8x16_load(rk, 16),
+    k2: velt_simd_u8x16_load(rk, 32),
+    k3: velt_simd_u8x16_load(rk, 48),
+    k4: velt_simd_u8x16_load(rk, 64),
+    k5: velt_simd_u8x16_load(rk, 80),
+    k6: velt_simd_u8x16_load(rk, 96),
+    k7: velt_simd_u8x16_load(rk, 112),
+    k8: velt_simd_u8x16_load(rk, 128),
+    k9: velt_simd_u8x16_load(rk, 144),
+    k10: velt_simd_u8x16_load(rk, 160),
+    k11: wide ? velt_simd_u8x16_load(rk, 176) : z,
+    k12: wide ? velt_simd_u8x16_load(rk, 192) : z,
+    k13: wide ? velt_simd_u8x16_load(rk, 208) : z,
+    k14: wide ? velt_simd_u8x16_load(rk, 224) : z,
+    wide: wide,
+  };
+}
+
+// One ARM round: AESE XORs the key in first, AESMC is the separate MixColumns.
+function roundArm(s: u8x16, k: u8x16): u8x16 {
+  return s.aese(k).aesmc();
+}
+
+// One block under the round keys `k`. ARM's last round is AESE and an XOR; x86's AESENC does a
+// whole round with the key last, after an initial XOR.
+function encrypt(k: RoundKeys, x: u8x16): u8x16 {
+  if (u8x16.hasAesArm()) {
+    let s = roundArm(x, k.k0);
+    s = roundArm(s, k.k1);
+    s = roundArm(s, k.k2);
+    s = roundArm(s, k.k3);
+    s = roundArm(s, k.k4);
+    s = roundArm(s, k.k5);
+    s = roundArm(s, k.k6);
+    s = roundArm(s, k.k7);
+    s = roundArm(s, k.k8);
+    if (!k.wide) {
+      return s.aese(k.k9).xor(k.k10);
+    }
+    s = roundArm(s, k.k9);
+    s = roundArm(s, k.k10);
+    s = roundArm(s, k.k11);
+    s = roundArm(s, k.k12);
+    return s.aese(k.k13).xor(k.k14);
+  }
+  let s = x.xor(k.k0).aesenc(k.k1).aesenc(k.k2).aesenc(k.k3).aesenc(k.k4).aesenc(k.k5);
+  s = s.aesenc(k.k6).aesenc(k.k7).aesenc(k.k8).aesenc(k.k9);
+  if (!k.wide) {
+    return s.aesenclast(k.k10);
+  }
+  s = s.aesenc(k.k10).aesenc(k.k11).aesenc(k.k12).aesenc(k.k13);
+  return s.aesenclast(k.k14);
+}
+
+// The counter block: the 12-byte nonce, then `counter` big-endian.
+function counterBlock(nonce: u32x4, counter: u32): u8x16 {
+  return velt_simd_u32x4_with_lane(nonce, 3, counter.swapBytes()).asU8x16();
+}
+
+// XORs `buf[start..end]` with the keystream from `counter` on (wrapping, as GCM's inc32).
+function ctr(rk: u8[], nonce: u8[], counter: u32, buf: u8[], start: usize, end: usize) {
+  const k = roundKeys(rk);
+  const iv = velt_simd_u8x16_load_partial(nonce, 0, 12).asU32x4();
+  let c = counter;
+  let off = start;
+  while (end - off >= 16) {
+    const ks = encrypt(k, counterBlock(iv, c));
+    velt_simd_u8x16_store(velt_simd_u8x16_load(buf, off as u64).xor(ks), buf, off as u64);
+    c = c + 1;
+    off += 16;
+  }
+  if (off < end) {
+    const n = (end - off) as u64;
+    const ks = encrypt(k, counterBlock(iv, c));
+    const v = velt_simd_u8x16_load_partial(buf, off as u64, n).xor(ks);
+    velt_simd_u8x16_store_partial(v, buf, off as u64, n);
+  }
+}
+
+// The tag of `aad` and the ciphertext `ct[start..end]` into `out[0..16]`: GHASH under the powers
+// of H `hp` of both and their bit lengths, XORed with the counter block 1's keystream.
+function tag(
+  rk: u8[],
+  hp: u64[],
+  nonce: u8[],
+  aad: u8[],
+  ct: u8[],
+  start: usize,
+  end: usize,
+  out: u8[],
+) {
+  const digest = ghashAll(hp, aad, ct, start, end);
+  const iv = velt_simd_u8x16_load_partial(nonce, 0, 12).asU32x4();
+  velt_simd_u8x16_store(digest.xor(encrypt(roundKeys(rk), counterBlock(iv, 1))), out, 0);
+}
+
+/** H to H^4 for GHASH (`h1` H's first half) on ARMv8 (only where `u8x16.hasAesArm()`). */
+export function gcmPowersArm(h1: u64, h0: u64): u64[] {
+  targetFeature("aes-arm");
+  return ghashPowers(h1, h0);
+}
+
+/** H to H^4 for GHASH (`h1` H's first half) on x86 (only where `u8x16.hasAesX86()`). */
+export function gcmPowersX86(h1: u64, h0: u64): u64[] {
+  targetFeature("aes-x86");
+  return ghashPowers(h1, h0);
+}
+
+/** Counter mode from `counter` over `buf[start..end]` on ARMv8 (only where `u8x16.hasAesArm()`). */
+export function gcmCtrArm(
+  rk: u8[],
+  nonce: u8[],
+  counter: u32,
+  buf: u8[],
+  start: usize,
+  end: usize,
+) {
+  targetFeature("aes-arm");
+  ctr(rk, nonce, counter, buf, start, end);
+}
+
+/** Counter mode from `counter` over `buf[start..end]` on x86 (only where `u8x16.hasAesX86()`). */
+export function gcmCtrX86(
+  rk: u8[],
+  nonce: u8[],
+  counter: u32,
+  buf: u8[],
+  start: usize,
+  end: usize,
+) {
+  targetFeature("aes-x86");
+  ctr(rk, nonce, counter, buf, start, end);
+}
+
+/** The tag of `aad` and `ct[start..end]` into `out[0..16]` on ARMv8 (only where `u8x16.hasAesArm()`). */
+export function gcmTagArm(
+  rk: u8[],
+  hp: u64[],
+  nonce: u8[],
+  aad: u8[],
+  ct: u8[],
+  start: usize,
+  end: usize,
+  out: u8[],
+) {
+  targetFeature("aes-arm");
+  tag(rk, hp, nonce, aad, ct, start, end, out);
+}
+
+/** The tag of `aad` and `ct[start..end]` into `out[0..16]` on x86 (only where `u8x16.hasAesX86()`). */
+export function gcmTagX86(
+  rk: u8[],
+  hp: u64[],
+  nonce: u8[],
+  aad: u8[],
+  ct: u8[],
+  start: usize,
+  end: usize,
+  out: u8[],
+) {
+  targetFeature("aes-x86");
+  tag(rk, hp, nonce, aad, ct, start, end, out);
+}

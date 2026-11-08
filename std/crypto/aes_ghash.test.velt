@@ -3,10 +3,22 @@
 // The bitsliced S-box is checked against the S-box computed from its definition (FIPS 197 §5.1.1:
 // the inverse in GF(2^8), then the affine map) for all 256 inputs, and GHASH's constant-time
 // integer products against the carry-less multiply instruction (where the CPU has one: release
-// builds on x86-64 and arm64; elsewhere both sides take the integer path).
+// builds on x86-64 and arm64; elsewhere both sides take the integer path), and AES-GCM on the AES
+// instructions against the bitsliced rounds with that GHASH.
 import { describe, expect, it } from "velt/test";
 import { ortho, sbox } from "velt/crypto/aes_bitslice";
+import { aesCtrInPlace, aesExpandKey, aesKeyWords } from "velt/crypto/aes_ctr";
+import {
+  gcmCtrArm,
+  gcmCtrX86,
+  gcmPowersArm,
+  gcmPowersX86,
+  gcmTagArm,
+  gcmTagX86,
+  roundKeyBytes,
+} from "velt/crypto/aes_gcm_hw";
 import { Ghash } from "velt/crypto/ghash";
+import { u8x16 } from "velt/simd";
 
 // Multiplication in GF(2^8) mod x^8 + x^4 + x^3 + x + 1, bit by bit.
 function gmul(a: u32, b: u32): u32 {
@@ -86,6 +98,119 @@ describe("GHASH", () => {
       soft.digestInto(a, 0);
       hard.digestInto(b, 0);
       expect(a).toEqual(b);
+    }
+  });
+});
+
+// GCM on the bitsliced AES and the integer GHASH: `p` sealed under `key`, `nonce` and `aad`.
+function softSeal(key: u8[], nonce: u8[], aad: u8[], p: u8[]): u8[] {
+  const skey = aesExpandKey(key);
+  const q: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  const ks = Buffer.alloc(64);
+  const h = Buffer.alloc(16);
+  aesCtrInPlace(skey, q, ks, Buffer.alloc(12), 0, h, 0, 16);
+  const out = p.slice();
+  aesCtrInPlace(skey, q, ks, nonce, 2, out, 0, out.length);
+  const g = new Ghash(h, false);
+  g.update(aad, 0, aad.length);
+  g.update(out, 0, out.length);
+  const lens = Buffer.alloc(16);
+  const abits = (aad.length as u64) * 8;
+  const cbits = (out.length as u64) * 8;
+  for (let i: usize = 0; i < 8; i++) {
+    lens[i] = ((abits >> (56 - 8 * (i as u64))) & 0xff) as u8;
+    lens[8 + i] = ((cbits >> (56 - 8 * (i as u64))) & 0xff) as u8;
+  }
+  g.update(lens, 0, 16);
+  const t = Buffer.alloc(16);
+  g.digestInto(t, 0);
+  aesCtrInPlace(skey, q, ks, nonce, 1, t, 0, 16);
+  for (let i: usize = 0; i < 16; i++) {
+    out.push(t[i]);
+  }
+  return out;
+}
+
+// The same on the CPU's instructions, or null where it has none. `p` sits between other bytes,
+// which must stay as they are.
+function hardSeal(key: u8[], nonce: u8[], aad: u8[], p: u8[]): u8[] | null {
+  if (!u8x16.hasAes()) {
+    return null;
+  }
+  const rk = roundKeyBytes(aesKeyWords(key));
+  const h = Buffer.alloc(16);
+  aesCtrInPlace(
+    aesExpandKey(key),
+    [0, 0, 0, 0, 0, 0, 0, 0],
+    Buffer.alloc(64),
+    Buffer.alloc(12),
+    0,
+    h,
+    0,
+    16,
+  );
+  let h1: u64 = 0;
+  let h0: u64 = 0;
+  for (let i: usize = 0; i < 8; i++) {
+    h1 = (h1 << 8) | (h[i] as u64);
+    h0 = (h0 << 8) | (h[8 + i] as u64);
+  }
+  let hp: u64[] = [];
+  if (u8x16.hasAesArm()) {
+    hp = gcmPowersArm(h1, h0);
+  } else if (u8x16.hasAesX86()) {
+    hp = gcmPowersX86(h1, h0);
+  }
+  const buf: u8[] = [0xa5, 0xa5, 0xa5];
+  for (let i: usize = 0; i < p.length; i++) {
+    buf.push(p[i]);
+  }
+  for (let i = 0; i < 19; i++) {
+    buf.push(0x5a);
+  }
+  const end = 3 + p.length;
+  const t = Buffer.alloc(16);
+  if (u8x16.hasAesArm()) {
+    gcmCtrArm(rk, nonce, 2, buf, 3, end);
+    gcmTagArm(rk, hp, nonce, aad, buf, 3, end, t);
+  } else if (u8x16.hasAesX86()) {
+    gcmCtrX86(rk, nonce, 2, buf, 3, end);
+    gcmTagX86(rk, hp, nonce, aad, buf, 3, end, t);
+  }
+  expect(buf.slice(0, 3)).toEqual([0xa5, 0xa5, 0xa5]);
+  expect(buf.slice(end as i64)).toEqual(new Array<u8>(19).fill(0x5a));
+  const out = buf.slice(3, end as i64);
+  for (let i: usize = 0; i < 16; i++) {
+    out.push(t[i]);
+  }
+  return out;
+}
+
+describe("AES-GCM on the AES instructions", () => {
+  it("seals as the bitsliced rounds do, at every length up to 150 and both key sizes", () => {
+    let seed: u64 = 0x2545f4914f6cdd1d;
+    const next = (): u8 => {
+      seed ^= seed << 13;
+      seed ^= seed >> 7;
+      seed ^= seed << 17;
+      return (seed & 0xff) as u8;
+    };
+    const bytes = (n: usize): u8[] => {
+      const out: u8[] = [];
+      for (let i: usize = 0; i < n; i++) {
+        out.push(next());
+      }
+      return out;
+    };
+    for (let n: usize = 0; n <= 150; n++) {
+      const key = bytes(n % 2 == 0 ? 16 : 32);
+      const nonce = bytes(12);
+      const aad = bytes(n % 71);
+      const p = bytes(n);
+      const hard = hardSeal(key, nonce, aad, p);
+      if (hard != null) {
+        expect(hard).toEqual(softSeal(key, nonce, aad, p));
+      }
     }
   });
 });

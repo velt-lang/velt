@@ -15,6 +15,10 @@ import { TlsStream } from "velt/net/tls/tls_stream";
 import { Channel, channel } from "velt/sync";
 import { describe, expect, it } from "velt/test";
 
+// The suites in the order the traces' ClientHellos list them (ChaCha20-Poly1305, AES-128-GCM),
+// whatever this CPU would prefer: the transcript hashes depend on it.
+const TRACE_SUITES: usize[] = [0x1303, 0x1301];
+
 // 32 bytes.
 const CLIENT_PRIVATE = "49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005";
 // 196 bytes.
@@ -240,6 +244,7 @@ async function handshaken(t: Playback): Promise<TlsEngine> {
       alpn: [],
       fixed: hexDecode(CLIENT_HELLO),
       fixedRetry: null,
+      suites: TRACE_SUITES.slice(),
       retryKey: null,
     },
     hexDecode(CLIENT_PRIVATE),
@@ -829,6 +834,7 @@ describe("a retry on the connection, in compatibility mode", () => {
         alpn: [],
         fixed: null,
         fixedRetry: null,
+        suites: TRACE_SUITES.slice(),
         retryKey: null,
       },
       hexDecode(CLIENT_PRIVATE),

@@ -1,0 +1,161 @@
+// velt/crypto (internal): GHASH (NIST SP 800-38D §6.4) on the carry-less multiply instruction,
+// for std/crypto/aes_gcm_hw.velt's gated functions, which these helpers are cloned into (with the
+// bare instructions). Field elements are std/crypto/ghash.velt's two `u64` halves, here the lanes
+// of a `u64x2` (lane 0 the low half): a block is its 16 bytes reversed. Four blocks at a time
+// are multiplied by H^4..H (precomputed) and their products summed before one reduction, so in
+// a long message a block costs three carry-less products and a quarter of a reduction. No branch or index depends
+// on H or the data, only on the lengths.
+
+import { u64x2, u8x16 } from "velt/simd";
+
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+declare function velt_simd_u64x2_with_lane(v: u64x2, index: u64, x: u64): u64x2;
+declare function velt_simd_u64x2_splat(x: u64): u64x2;
+
+function lane(v: u64x2, i: u64): u64 {
+  return velt_simd_u64x2_lane(v, i);
+}
+
+// The vector with lanes `lo`, `hi`.
+function pair(lo: u64, hi: u64): u64x2 {
+  return velt_simd_u64x2_with_lane(velt_simd_u64x2_splat(lo), 1, hi);
+}
+
+// A block's bytes reversed (and a field element's back): lane 1 the big-endian first half.
+function reversed(v: u8x16): u64x2 {
+  return u8x16.shuffle(v, v, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0).asU64x2();
+}
+
+// The three Karatsuba products of a 128-bit carry-less product, unreduced: the low halves', the
+// high halves', and that of both halves XORed. Products of several pairs XOR together.
+struct Parts {
+  lo: u64x2;
+  hi: u64x2;
+  mid: u64x2;
+}
+
+// `a` times the power `h` (`hk`: both lanes h's halves XORed), unreduced.
+function parts(a: u64x2, h: u64x2, hk: u64x2): Parts {
+  const s = velt_simd_u64x2_splat(lane(a, 0) ^ lane(a, 1));
+  return { lo: a.clmulLow(h), hi: a.clmulHigh(h), mid: s.clmulLow(hk) };
+}
+
+function sum(p: Parts, q: Parts): Parts {
+  return { lo: p.lo.xor(q.lo), hi: p.hi.xor(q.hi), mid: p.mid.xor(q.mid) };
+}
+
+// The 256-bit product the parts make, shifted left by one (the products are of the reflected
+// operands) and reduced by x^128 + x^7 + x^2 + x + 1: std/crypto/ghash.velt's `multiply`.
+function reduce(p: Parts): u64x2 {
+  const z0 = lane(p.lo, 0);
+  const z0h = lane(p.lo, 1);
+  const z1 = lane(p.hi, 0);
+  const z1h = lane(p.hi, 1);
+  const z2 = lane(p.mid, 0) ^ z0 ^ z1;
+  const z2h = lane(p.mid, 1) ^ z0h ^ z1h;
+  let v0 = z0;
+  let v1 = z0h ^ z2;
+  let v2 = z1 ^ z2h;
+  let v3 = z1h;
+  v3 = (v3 << 1) | (v2 >> 63);
+  v2 = (v2 << 1) | (v1 >> 63);
+  v1 = (v1 << 1) | (v0 >> 63);
+  v0 = v0 << 1;
+  v2 ^= v0 ^ (v0 >> 1) ^ (v0 >> 2) ^ (v0 >> 7);
+  v1 ^= (v0 << 63) ^ (v0 << 62) ^ (v0 << 57);
+  v3 ^= v1 ^ (v1 >> 1) ^ (v1 >> 2) ^ (v1 >> 7);
+  v2 ^= (v1 << 63) ^ (v1 << 62) ^ (v1 << 57);
+  return pair(v2, v3);
+}
+
+function multiply(a: u64x2, b: u64x2): u64x2 {
+  return reduce(parts(a, b, velt_simd_u64x2_splat(lane(b, 0) ^ lane(b, 1))));
+}
+
+/** H, H^2, H^3 and H^4 (`h1` H's first half), two halves each, low first. */
+export function ghashPowers(h1: u64, h0: u64): u64[] {
+  const h = pair(h0, h1);
+  const h2 = multiply(h, h);
+  const h3 = multiply(h2, h);
+  const h4 = multiply(h3, h);
+  return [
+    lane(h, 0),
+    lane(h, 1),
+    lane(h2, 0),
+    lane(h2, 1),
+    lane(h3, 0),
+    lane(h3, 1),
+    lane(h4, 0),
+    lane(h4, 1),
+  ];
+}
+
+// The powers in registers, with their halves XORed for the middle products.
+struct Powers {
+  h1: u64x2;
+  h2: u64x2;
+  h3: u64x2;
+  h4: u64x2;
+  k1: u64x2;
+  k2: u64x2;
+  k3: u64x2;
+  k4: u64x2;
+}
+
+function powers(hp: u64[]): Powers {
+  if (hp.length != 8) {
+    panic(`ICE: GHASH powers of ${hp.length} words`);
+  }
+  return {
+    h1: pair(hp[0], hp[1]),
+    h2: pair(hp[2], hp[3]),
+    h3: pair(hp[4], hp[5]),
+    h4: pair(hp[6], hp[7]),
+    k1: velt_simd_u64x2_splat(hp[0] ^ hp[1]),
+    k2: velt_simd_u64x2_splat(hp[2] ^ hp[3]),
+    k3: velt_simd_u64x2_splat(hp[4] ^ hp[5]),
+    k4: velt_simd_u64x2_splat(hp[6] ^ hp[7]),
+  };
+}
+
+// The state `y` after `data[start..end]` (inside the array), one block at a time, the last one
+// zero-padded.
+function singles(y0: u64x2, p: Powers, data: u8[], start: usize, end: usize): u64x2 {
+  let y = y0;
+  let off = start;
+  while (off < end) {
+    const n = end - off;
+    const v =
+      n >= 16
+        ? velt_simd_u8x16_load(data, off as u64)
+        : velt_simd_u8x16_load_partial(data, off as u64, n as u64);
+    y = reduce(parts(reversed(v).xor(y), p.h1, p.k1));
+    off += n < 16 ? n : 16;
+  }
+  return y;
+}
+
+/**
+ * GHASH under the powers `hp` (`ghashPowers`) of `aad`, the ciphertext `ct[start..end]` (the
+ * caller has checked the range) and their bit lengths: the state, reversed back to bytes.
+ */
+export function ghashAll(hp: u64[], aad: u8[], ct: u8[], start: usize, end: usize): u8x16 {
+  const p = powers(hp);
+  let y = singles(velt_simd_u64x2_splat(0), p, aad, 0, aad.length);
+  let off = start;
+  while (end - off >= 64) {
+    const x1 = reversed(velt_simd_u8x16_load(ct, off as u64)).xor(y);
+    const x2 = reversed(velt_simd_u8x16_load(ct, (off + 16) as u64));
+    const x3 = reversed(velt_simd_u8x16_load(ct, (off + 32) as u64));
+    const x4 = reversed(velt_simd_u8x16_load(ct, (off + 48) as u64));
+    const a = sum(parts(x1, p.h4, p.k4), parts(x2, p.h3, p.k3));
+    y = reduce(sum(a, sum(parts(x3, p.h2, p.k2), parts(x4, p.h1, p.k1))));
+    off += 64;
+  }
+  y = singles(y, p, ct, off, end);
+  const lengths = pair(((end - start) as u64) * 8, (aad.length as u64) * 8);
+  y = reduce(parts(y.xor(lengths), p.h1, p.k1));
+  return reversed(y.asU8x16()).asU8x16();
+}

@@ -1,166 +1,159 @@
-// velt/crypto (internal): the Poly1305 one-time authenticator (RFC 8439 §2.5), in five 26-bit
-// limbs (products fit a `u64`). Constant time: the final reduction mod 2^130 - 5 selects with a
-// mask, never a branch on the accumulator or the key.
+// velt/crypto (internal): the Poly1305 one-time authenticator (RFC 8439 §2.5) in base 2^64: the
+// accumulator is two 64-bit limbs and a small third, each block four 64x64-bit products (`*` and
+// `Math.umulh`, one instruction each) and a partial reduction by 2^130 = 5. Constant time: carries
+// are comparisons turned into 0 or 1, and the final reduction mod 2^130 - 5 selects with a mask,
+// never a branch on the accumulator or the key.
 
-import { load32le, store32le } from "velt/crypto/chacha20";
 import { CryptoError } from "velt/crypto/errors";
+import { u64x2 } from "velt/simd";
 
-const M26: u64 = 0x3ffffff;
+// Unchecked: `updatePadded` and `finishInto` check the ranges.
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+
+// The carry out of `sum = a + b` (wrapping): 1 when it wrapped.
+function carry(sum: u64, b: u64): u64 {
+  return (sum < b) as u64;
+}
 
 /**
  * A running Poly1305 MAC: `reset` with a key, `updatePadded` pieces, then `finishInto`;
- * reusable.
+ * reusable. The limbs are plain fields, so a run of blocks keeps them in registers.
  */
 export class Poly1305 {
-  private r: u64[];
-  private h: u64[];
-  private pad: u64[];
-  private tail: u8[];
+  // r (clamped) in two limbs, s1 = r1 + r1 / 4 (r1 * 5/4: r1's multiples of 2^130 folded back),
+  // h the accumulator (h2 a few bits), pad the key's s half.
+  private r0: u64;
+  private r1: u64;
+  private s1: u64;
+  private h0: u64;
+  private h1: u64;
+  private h2: u64;
+  private pad0: u64;
+  private pad1: u64;
 
   /** A MAC under the one-time `key` (32 bytes: r, then s); throws `CryptoError` for another length. */
   constructor(key: u8[]) {
-    this.r = [0, 0, 0, 0, 0];
-    this.pad = [0, 0, 0, 0];
-    this.h = [0, 0, 0, 0, 0];
-    this.tail = Buffer.alloc(16);
+    this.r0 = 0;
+    this.r1 = 0;
+    this.s1 = 0;
+    this.h0 = 0;
+    this.h1 = 0;
+    this.h2 = 0;
+    this.pad0 = 0;
+    this.pad1 = 0;
     this.reset(key);
   }
 
-  /** Starts a new MAC under the one-time 32-byte `key`, keeping the arrays. */
+  /** Starts a new MAC under the one-time 32-byte `key`. */
   reset(key: u8[]) {
     if (key.length != 32) {
       throw new CryptoError(`Poly1305 key must be 32 bytes, got ${key.length}`);
     }
-    this.r[0] = (load32le(key, 0) as u64) & 0x3ffffff;
-    this.r[1] = ((load32le(key, 3) as u64) >> 2) & 0x3ffff03;
-    this.r[2] = ((load32le(key, 6) as u64) >> 4) & 0x3ffc0ff;
-    this.r[3] = ((load32le(key, 9) as u64) >> 6) & 0x3f03fff;
-    this.r[4] = ((load32le(key, 12) as u64) >> 8) & 0x00fffff;
-    for (let i: usize = 0; i < 4; i++) {
-      this.pad[i] = load32le(key, 16 + 4 * i) as u64;
-    }
-    for (let i: usize = 0; i < 5; i++) {
-      this.h[i] = 0;
-    }
+    const r = velt_simd_u8x16_load(key, 0).asU64x2();
+    const s = velt_simd_u8x16_load(key, 16).asU64x2();
+    this.r0 = r.lane(0) & 0x0ffffffc0fffffff;
+    this.r1 = r.lane(1) & 0x0ffffffc0ffffffc;
+    this.s1 = this.r1 + (this.r1 >> 2);
+    this.pad0 = s.lane(0);
+    this.pad1 = s.lane(1);
+    this.h0 = 0;
+    this.h1 = 0;
+    this.h2 = 0;
   }
 
-  // One 16-byte block at `m[off..]`, `hibit` the 2^128 marker (1 << 24 in the top limb).
-  private block(m: u8[], off: usize, hibit: u64) {
-    const r0 = this.r[0];
-    const r1 = this.r[1];
-    const r2 = this.r[2];
-    const r3 = this.r[3];
-    const r4 = this.r[4];
-    const s1 = r1 * 5;
-    const s2 = r2 * 5;
-    const s3 = r3 * 5;
-    const s4 = r4 * 5;
-    const h0 = this.h[0] + ((load32le(m, off) as u64) & M26);
-    const h1 = this.h[1] + (((load32le(m, off + 3) as u64) >> 2) & M26);
-    const h2 = this.h[2] + (((load32le(m, off + 6) as u64) >> 4) & M26);
-    const h3 = this.h[3] + (((load32le(m, off + 9) as u64) >> 6) & M26);
-    const h4 = this.h[4] + (((load32le(m, off + 12) as u64) >> 8) | hibit);
-    const d0 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1;
-    let d1 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2;
-    let d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3;
-    let d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4;
-    let d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0;
-    let c = d0 >> 26;
-    let n0 = d0 & M26;
-    d1 += c;
-    c = d1 >> 26;
-    const n1 = d1 & M26;
-    d2 += c;
-    c = d2 >> 26;
-    this.h[2] = d2 & M26;
-    d3 += c;
-    c = d3 >> 26;
-    this.h[3] = d3 & M26;
-    d4 += c;
-    c = d4 >> 26;
-    this.h[4] = d4 & M26;
-    n0 += c * 5;
-    c = n0 >> 26;
-    this.h[0] = n0 & M26;
-    this.h[1] = n1 + c;
+  // The 16-byte blocks at `m[start..end]`, the last one zero-padded, each with the 2^128 marker.
+  // h stays below 2^130 + a little: h2 is at most 4 after each block.
+  private blocks(m: u8[], start: usize, end: usize) {
+    const r0 = this.r0;
+    const r1 = this.r1;
+    const s1 = this.s1;
+    let h0 = this.h0;
+    let h1 = this.h1;
+    let h2 = this.h2;
+    let off = start;
+    while (off < end) {
+      const left = end - off;
+      const w = (
+        left >= 16
+          ? velt_simd_u8x16_load(m, off as u64)
+          : velt_simd_u8x16_load_partial(m, off as u64, left as u64)
+      ).asU64x2();
+      // h += m + 2^128.
+      const m0 = w.lane(0);
+      const m1 = w.lane(1);
+      h0 += m0;
+      let c = carry(h0, m0);
+      h1 += c;
+      let c1 = carry(h1, c);
+      h1 += m1;
+      c1 += carry(h1, m1);
+      h2 += c1 + 1;
+      // d = h * r, with the parts at 2^130 and above folded back times 5 (s1, and below).
+      let d0 = h0 * r0;
+      let d0h = Math.umulh(h0, r0);
+      let x = h1 * s1;
+      d0 += x;
+      d0h += Math.umulh(h1, s1) + carry(d0, x);
+      let d1 = h0 * r1;
+      let d1h = Math.umulh(h0, r1);
+      x = h1 * r0;
+      d1 += x;
+      d1h += Math.umulh(h1, r0) + carry(d1, x);
+      x = h2 * s1;
+      d1 += x;
+      d1h += carry(d1, x);
+      h2 = h2 * r0;
+      h0 = d0;
+      d1 += d0h;
+      d1h += carry(d1, d0h);
+      h1 = d1;
+      h2 += d1h;
+      // The bits at 2^130 and above, times 5, back into the bottom.
+      c = (h2 >> 2) + (h2 & ~(3 as u64));
+      h2 &= 3;
+      h0 += c;
+      c = carry(h0, c);
+      h1 += c;
+      h2 += carry(h1, c);
+      off += left < 16 ? left : 16;
+    }
+    this.h0 = h0;
+    this.h1 = h1;
+    this.h2 = h2;
   }
 
   /** Absorbs `m[start..end]`, zero-padded to whole 16-byte blocks (as the AEAD's padding). */
   updatePadded(m: u8[], start: usize, end: usize) {
-    let off = start;
-    while (end - off >= 16) {
-      this.block(m, off, 1 << 24);
-      off += 16;
+    if (start > end || end > m.length) {
+      throw new CryptoError(`Poly1305 range ${start}..${end} is outside 0..${m.length}`);
     }
-    if (off < end) {
-      const last = this.tail;
-      for (let i: usize = 0; i < 16; i++) {
-        last[i] = off + i < end ? m[off + i] : 0;
-      }
-      this.block(last, 0, 1 << 24);
-    }
+    this.blocks(m, start, end);
   }
 
   /** The 16-byte tag (h fully reduced mod 2^130 - 5, plus s, mod 2^128) into `out[at..at + 16]`. */
   finishInto(out: u8[], at: usize) {
-    let h0 = this.h[0];
-    let h1 = this.h[1];
-    let h2 = this.h[2];
-    let h3 = this.h[3];
-    let h4 = this.h[4];
-    let c = h1 >> 26;
-    h1 &= M26;
-    h2 += c;
-    c = h2 >> 26;
-    h2 &= M26;
-    h3 += c;
-    c = h3 >> 26;
-    h3 &= M26;
-    h4 += c;
-    c = h4 >> 26;
-    h4 &= M26;
-    h0 += c * 5;
-    c = h0 >> 26;
-    h0 &= M26;
-    h1 += c;
-    // g = h + 5 - 2^130: if it does not borrow, h >= p and g is the reduced value.
-    let g0 = h0 + 5;
-    c = g0 >> 26;
-    g0 &= M26;
-    let g1 = h1 + c;
-    c = g1 >> 26;
-    g1 &= M26;
-    let g2 = h2 + c;
-    c = g2 >> 26;
-    g2 &= M26;
-    let g3 = h3 + c;
-    c = g3 >> 26;
-    g3 &= M26;
-    let g4 = h4 + c - (1 << 26);
-    // All ones when g4 did not go negative (top bit clear).
-    const mask = (g4 >> 63) - 1;
-    g0 &= mask;
-    g1 &= mask;
-    g2 &= mask;
-    g3 &= mask;
-    g4 &= mask;
+    if (at > out.length || out.length - at < 16) {
+      throw new CryptoError(`Poly1305 tag at ${at} does not fit in ${out.length} bytes`);
+    }
+    const h0 = this.h0;
+    const h1 = this.h1;
+    // g = h + 5: it reaches 2^130 exactly when h >= p = 2^130 - 5, and then h mod p is g's low bits.
+    const g0 = h0 + 5;
+    let c = carry(g0, 5);
+    const g1 = h1 + c;
+    c = carry(g1, c);
+    const g2 = this.h2 + c;
+    // All ones when g reached 2^130 (bit 130 set).
+    const mask = (0 as u64) - (g2 >> 2);
     const keep = ~mask;
-    h0 = (h0 & keep) | g0;
-    h1 = (h1 & keep) | g1;
-    h2 = (h2 & keep) | g2;
-    h3 = (h3 & keep) | g3;
-    h4 = (h4 & keep) | g4;
-    const w0 = (h0 | (h1 << 26)) & 0xffffffff;
-    const w1 = ((h1 >> 6) | (h2 << 20)) & 0xffffffff;
-    const w2 = ((h2 >> 12) | (h3 << 14)) & 0xffffffff;
-    const w3 = ((h3 >> 18) | (h4 << 8)) & 0xffffffff;
-    let f = w0 + this.pad[0];
-    store32le(out, at, f as u32);
-    f = w1 + this.pad[1] + (f >> 32);
-    store32le(out, at + 4, f as u32);
-    f = w2 + this.pad[2] + (f >> 32);
-    store32le(out, at + 8, f as u32);
-    f = w3 + this.pad[3] + (f >> 32);
-    store32le(out, at + 12, f as u32);
+    let t0 = (h0 & keep) | (g0 & mask);
+    let t1 = (h1 & keep) | (g1 & mask);
+    t0 += this.pad0;
+    c = carry(t0, this.pad0);
+    t1 += this.pad1 + c;
+    const tag = u64x2.splat(t0).withLane(1, t1).asU8x16();
+    velt_simd_u8x16_store(tag, out, at as u64);
   }
 }

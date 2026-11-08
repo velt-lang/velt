@@ -1,7 +1,17 @@
 // velt/crypto (internal): the ChaCha20 stream cipher (RFC 8439 §2.3-2.4): add-rotate-xor on
-// `u32` words, constant time by construction (no branches or indexes on the key or the data). It works in
-// place on the caller's buffer, with the state and the block in the caller's scratch words, so
+// `u32` words, constant time by construction (no branches or indexes on the key or the data).
+// A block's four rows are four `u32x4` vectors (velt/simd: NEON, SSE, WebAssembly SIMD), so a
+// round's four quarter rounds run as one, and the diagonal rounds rotate rows into columns with
+// lane shuffles. It works in place on the caller's buffer, with the state the caller keeps, so
 // encrypting a record allocates nothing.
+
+import { u32x4, u8x16 } from "velt/simd";
+
+// Unchecked: the callers check the ranges (the AEAD's `check*Range`).
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
 
 /** Little-endian `u32` at `off` of `b`. */
 export function load32le(b: u8[], off: usize): u32 {
@@ -43,74 +53,107 @@ export function chachaSetNonce(state: u32[], nonce: u8[]) {
   }
 }
 
-function quarter(x: u32[], a: usize, b: usize, c: usize, d: usize) {
-  x[a] = x[a] + x[b];
-  x[d] = (x[d] ^ x[a]).rotateLeft(16);
-  x[c] = x[c] + x[d];
-  x[b] = (x[b] ^ x[c]).rotateLeft(12);
-  x[a] = x[a] + x[b];
-  x[d] = (x[d] ^ x[a]).rotateLeft(8);
-  x[c] = x[c] + x[d];
-  x[b] = (x[b] ^ x[c]).rotateLeft(7);
+// Each lane rotated left by 16 and by 8: whole bytes, so a byte shuffle.
+function rot16(x: u32x4): u32x4 {
+  const b = x.asU8x16();
+  return u8x16.shuffle(b, b, 2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13).asU32x4();
 }
 
-/** The 64-byte keystream block of `state` (its counter in word 12) into `x` (16 words). */
-export function chachaBlock(state: u32[], x: u32[]) {
-  for (let i: usize = 0; i < 16; i++) {
-    x[i] = state[i];
-  }
+function rot8(x: u32x4): u32x4 {
+  const b = x.asU8x16();
+  return u8x16.shuffle(b, b, 3, 0, 1, 2, 7, 4, 5, 6, 11, 8, 9, 10, 15, 12, 13, 14).asU32x4();
+}
+
+function rot12(x: u32x4): u32x4 {
+  return x.shl(12).or(x.shr(20));
+}
+
+function rot7(x: u32x4): u32x4 {
+  return x.shl(7).or(x.shr(25));
+}
+
+// A block's rows after the 20 rounds and the final addition.
+struct Rows {
+  a: u32x4;
+  b: u32x4;
+  c: u32x4;
+  d: u32x4;
+}
+
+// The keystream block of the rows `a` (the constants), `b`, `c` (the key) and `d` (counter and
+// nonce): ten double rounds, a column round then a diagonal one, each four quarter rounds at
+// once.
+function block(a0: u32x4, b0: u32x4, c0: u32x4, d0: u32x4): Rows {
+  let a = a0;
+  let b = b0;
+  let c = c0;
+  let d = d0;
   for (let r = 0; r < 10; r++) {
-    quarter(x, 0, 4, 8, 12);
-    quarter(x, 1, 5, 9, 13);
-    quarter(x, 2, 6, 10, 14);
-    quarter(x, 3, 7, 11, 15);
-    quarter(x, 0, 5, 10, 15);
-    quarter(x, 1, 6, 11, 12);
-    quarter(x, 2, 7, 8, 13);
-    quarter(x, 3, 4, 9, 14);
+    a = a.add(b);
+    d = rot16(d.xor(a));
+    c = c.add(d);
+    b = rot12(b.xor(c));
+    a = a.add(b);
+    d = rot8(d.xor(a));
+    c = c.add(d);
+    b = rot7(b.xor(c));
+    // The diagonals into columns: row i rotated left by i lanes.
+    b = u32x4.shuffle(b, b, 1, 2, 3, 0);
+    c = u32x4.shuffle(c, c, 2, 3, 0, 1);
+    d = u32x4.shuffle(d, d, 3, 0, 1, 2);
+    a = a.add(b);
+    d = rot16(d.xor(a));
+    c = c.add(d);
+    b = rot12(b.xor(c));
+    a = a.add(b);
+    d = rot8(d.xor(a));
+    c = c.add(d);
+    b = rot7(b.xor(c));
+    b = u32x4.shuffle(b, b, 3, 0, 1, 2);
+    c = u32x4.shuffle(c, c, 2, 3, 0, 1);
+    d = u32x4.shuffle(d, d, 1, 2, 3, 0);
   }
-  for (let i: usize = 0; i < 16; i++) {
-    x[i] = x[i] + state[i];
+  return { a: a.add(a0), b: b.add(b0), c: c.add(c0), d: d.add(d0) };
+}
+
+// `v`'s first `n` bytes (at most 16) XORed into `buf[at..at + n]`.
+function xorInto(buf: u8[], at: usize, n: usize, v: u32x4) {
+  if (n >= 16) {
+    const x = velt_simd_u8x16_load(buf, at as u64).xor(v.asU8x16());
+    velt_simd_u8x16_store(x, buf, at as u64);
+  } else if (n > 0) {
+    const x = velt_simd_u8x16_load_partial(buf, at as u64, n as u64).xor(v.asU8x16());
+    velt_simd_u8x16_store_partial(x, buf, at as u64, n as u64);
   }
 }
 
 /**
  * XORs `buf[start..end]` in place with the keystream of `state` from block `counter` on
- * (encryption and decryption are the same operation); `x` is 16 words of scratch.
+ * (encryption and decryption are the same operation). The range must be inside `buf`.
  */
-export function chachaXorInPlace(
-  state: u32[],
-  x: u32[],
-  counter: u32,
-  buf: u8[],
-  start: usize,
-  end: usize,
-) {
-  let block = counter;
+export function chachaXorInPlace(state: u32[], counter: u32, buf: u8[], start: usize, end: usize) {
+  const a = u32x4.load(state, 0);
+  const b = u32x4.load(state, 4);
+  const c = u32x4.load(state, 8);
+  let d = u32x4.load(state, 12).withLane(0, counter);
+  const one = u32x4.splat(0).withLane(0, 1);
   let off = start;
-  while (end - off >= 64) {
-    state[12] = block;
-    chachaBlock(state, x);
-    for (let i: usize = 0; i < 16; i++) {
-      store32le(buf, off + 4 * i, load32le(buf, off + 4 * i) ^ x[i]);
-    }
-    block = block + 1;
-    off += 64;
-  }
-  if (off < end) {
-    state[12] = block;
-    chachaBlock(state, x);
-    for (let i: usize = 0; i < end - off; i++) {
-      buf[off + i] ^= ((x[i >> 2] >>> (8 * ((i & 3) as u32))) & 0xff) as u8;
-    }
+  while (off < end) {
+    const x = block(a, b, c, d);
+    const n = end - off;
+    xorInto(buf, off, n, x.a);
+    xorInto(buf, off + 16, n > 16 ? n - 16 : 0, x.b);
+    xorInto(buf, off + 32, n > 32 ? n - 32 : 0, x.c);
+    xorInto(buf, off + 48, n > 48 ? n - 48 : 0, x.d);
+    d = d.add(one);
+    off += n < 64 ? n : 64;
   }
 }
 
 /** The one-time Poly1305 key (the first 32 bytes of block 0, RFC 8439 §2.6) into `out[0..32]`. */
-export function chachaPolyKey(state: u32[], x: u32[], out: u8[]) {
-  state[12] = 0;
-  chachaBlock(state, x);
-  for (let i: usize = 0; i < 8; i++) {
-    store32le(out, 4 * i, x[i]);
-  }
+export function chachaPolyKey(state: u32[], out: u8[]) {
+  const d = u32x4.load(state, 12).withLane(0, 0);
+  const x = block(u32x4.load(state, 0), u32x4.load(state, 4), u32x4.load(state, 8), d);
+  x.a.asU8x16().store(out, 0);
+  x.b.asU8x16().store(out, 16);
 }

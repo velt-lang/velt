@@ -5,18 +5,30 @@
 
 import { Aead } from "velt/crypto/aead";
 import { checkOpenRange, checkSealRange, tagMatches, withRoom } from "velt/crypto/aead_tag";
-import { aesCtrInPlace, aesExpandKey } from "velt/crypto/aes_ctr";
+import { aesCtrInPlace, aesExpandKey, aesKeyWords } from "velt/crypto/aes_ctr";
+import {
+  gcmCtrArm,
+  gcmCtrX86,
+  gcmPowersArm,
+  gcmPowersX86,
+  gcmTagArm,
+  gcmTagX86,
+  roundKeyBytes,
+} from "velt/crypto/aes_gcm_hw";
 import { CryptoError } from "velt/crypto/errors";
 import { Ghash } from "velt/crypto/ghash";
 import { arrayTruncate } from "velt/lang/intrinsics";
+import { u8x16 } from "velt/simd";
 
 /**
  * AES-GCM (NIST SP 800-38D) under a 16-byte (AES-128) or 32-byte (AES-256) key, with 12-byte
  * nonces and 16-byte tags: `seal` encrypts and appends the tag, `open` checks it (in constant
  * time) and decrypts; `sealInPlace` and `openInPlace` do the same in the caller's buffer. A
  * nonce must never be used twice with one key. A message is at most 68,719,476,704 bytes
- * (2^32 - 2 blocks, SP 800-38D §5.2.1.1); a longer one throws `CryptoError`. The AES rounds are
- * bitsliced, with no table lookups, so the time does not depend on the key or the data.
+ * (2^32 - 2 blocks, SP 800-38D §5.2.1.1); a longer one throws `CryptoError`. Where the CPU has
+ * AES and carry-less multiply instructions (`u8x16.hasAes()`) it uses them; elsewhere the AES
+ * rounds are bitsliced, with no table lookups. Either way the time does not depend on the key
+ * or the data.
  * An object keeps its scratch between calls, so it must not be used by two threads at once
  * (tasks on one thread may share it: no call awaits).
  */
@@ -26,6 +38,9 @@ export class AesGcm implements Aead {
   private q: u64[];
   private ks: u8[];
   private block: u8[];
+  // Where the CPU has the instructions: the round keys as bytes, and H to H^4.
+  private rk: u8[];
+  private hp: u64[];
 
   /** An AEAD under `key`; throws `CryptoError` unless it is 16 or 32 bytes. */
   constructor(key: u8[]) {
@@ -40,6 +55,19 @@ export class AesGcm implements Aead {
     aesCtrInPlace(this.skey, this.q, this.ks, Buffer.alloc(12), 0, h, 0, 16);
     this.ghash = new Ghash(h);
     this.block = Buffer.alloc(16);
+    this.rk = u8x16.hasAes() ? roundKeyBytes(aesKeyWords(key)) : [];
+    let h1: u64 = 0;
+    let h0: u64 = 0;
+    for (let i: usize = 0; i < 8; i++) {
+      h1 = (h1 << 8) | (h[i] as u64);
+      h0 = (h0 << 8) | (h[8 + i] as u64);
+    }
+    this.hp = [];
+    if (u8x16.hasAesArm()) {
+      this.hp = gcmPowersArm(h1, h0);
+    } else if (u8x16.hasAesX86()) {
+      this.hp = gcmPowersX86(h1, h0);
+    }
   }
 
   /** `plaintext` encrypted under `nonce` (12 bytes), followed by the 16-byte tag over `aad` and it. */
@@ -70,7 +98,7 @@ export class AesGcm implements Aead {
     checkNonce(nonce);
     checkSealRange("AES-GCM", buf, start, end);
     gcmCheckLength((end - start) as u64);
-    aesCtrInPlace(this.skey, this.q, this.ks, nonce, 2, buf, start, end);
+    this.ctr(nonce, buf, start, end);
     this.tag(nonce, aad, buf, start, end);
     for (let i: usize = 0; i < 16; i++) {
       buf[end + i] = this.block[i];
@@ -94,12 +122,31 @@ export class AesGcm implements Aead {
     if (!tagMatches(this.block, buf, n)) {
       return false;
     }
-    aesCtrInPlace(this.skey, this.q, this.ks, nonce, 2, buf, start, n);
+    this.ctr(nonce, buf, start, n);
     return true;
+  }
+
+  // Counter mode from block 2 over `buf[start..end]`.
+  private ctr(nonce: u8[], buf: u8[], start: usize, end: usize) {
+    if (u8x16.hasAesArm()) {
+      gcmCtrArm(this.rk, nonce, 2, buf, start, end);
+    } else if (u8x16.hasAesX86()) {
+      gcmCtrX86(this.rk, nonce, 2, buf, start, end);
+    } else {
+      aesCtrInPlace(this.skey, this.q, this.ks, nonce, 2, buf, start, end);
+    }
   }
 
   // GHASH(aad, ct, lengths) XORed with E(K, nonce || 1), into `this.block`.
   private tag(nonce: u8[], aad: u8[], ct: u8[], start: usize, end: usize) {
+    if (u8x16.hasAesArm()) {
+      gcmTagArm(this.rk, this.hp, nonce, aad, ct, start, end, this.block);
+      return;
+    }
+    if (u8x16.hasAesX86()) {
+      gcmTagX86(this.rk, this.hp, nonce, aad, ct, start, end, this.block);
+      return;
+    }
     const g = this.ghash;
     g.reset();
     g.update(aad, 0, aad.length);

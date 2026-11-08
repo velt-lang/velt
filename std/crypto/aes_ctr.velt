@@ -23,11 +23,8 @@ function subWord(x: u32): u32 {
   return q[0] as u32;
 }
 
-/**
- * The round keys of a 16- or 32-byte AES `key` (10 or 14 rounds), bitsliced: eight words per
- * round key, each round key repeated for the four blocks.
- */
-export function aesExpandKey(key: u8[]): u64[] {
+/** The FIPS 197 key expansion of a 16- or 32-byte AES `key`: four little-endian words a round key. */
+export function aesKeyWords(key: u8[]): u32[] {
   const nk = key.length / 4;
   const rounds = nk + 6;
   const total = (rounds + 1) * 4;
@@ -52,6 +49,16 @@ export function aesExpandKey(key: u8[]): u64[] {
       k++;
     }
   }
+  return w;
+}
+
+/**
+ * The round keys of a 16- or 32-byte AES `key` (10 or 14 rounds), bitsliced: eight words per
+ * round key, each round key repeated for the four blocks.
+ */
+export function aesExpandKey(key: u8[]): u64[] {
+  const w = aesKeyWords(key);
+  const total = w.length;
   const out: u64[] = [];
   const q: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
   for (let i: usize = 0; i < total; i += 4) {

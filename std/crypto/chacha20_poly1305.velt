@@ -27,7 +27,6 @@ import { arrayTruncate } from "velt/lang/intrinsics";
  */
 export class ChaCha20Poly1305 implements Aead {
   private state: u32[];
-  private x: u32[];
   private polyKey: u8[];
   private mac: Poly1305;
   private scratch: u8[];
@@ -38,7 +37,6 @@ export class ChaCha20Poly1305 implements Aead {
       throw new CryptoError(`ChaCha20-Poly1305 key must be 32 bytes, got ${key.length}`);
     }
     this.state = chachaState(key);
-    this.x = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     this.polyKey = Buffer.alloc(32);
     this.mac = new Poly1305(this.polyKey);
     this.scratch = Buffer.alloc(16);
@@ -73,7 +71,7 @@ export class ChaCha20Poly1305 implements Aead {
     checkSealRange("ChaCha20-Poly1305", buf, start, end);
     chachaCheckLength((end - start) as u64);
     this.begin(nonce, aad);
-    chachaXorInPlace(this.state, this.x, 1, buf, start, end);
+    chachaXorInPlace(this.state, 1, buf, start, end);
     this.mac.updatePadded(buf, start, end);
     this.lengths(aad.length, end - start);
     this.mac.finishInto(buf, end);
@@ -99,14 +97,14 @@ export class ChaCha20Poly1305 implements Aead {
     if (!tagMatches(this.scratch, buf, n)) {
       return false;
     }
-    chachaXorInPlace(this.state, this.x, 1, buf, start, n);
+    chachaXorInPlace(this.state, 1, buf, start, n);
     return true;
   }
 
   // The nonce (checked) in the state, the one-time Poly1305 key, the additional data absorbed.
   private begin(nonce: u8[], aad: u8[]) {
     chachaSetNonce(this.state, nonce);
-    chachaPolyKey(this.state, this.x, this.polyKey);
+    chachaPolyKey(this.state, this.polyKey);
     this.mac.reset(this.polyKey);
     this.mac.updatePadded(aad, 0, aad.length);
   }
