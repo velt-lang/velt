@@ -13,7 +13,6 @@ import {
   DocumentFragment,
   DocumentOrShadowRoot,
   Element,
-  Event,
   EventTarget,
   GlobalEventHandlers,
   HTMLElement,
@@ -24,9 +23,7 @@ import {
   Slottable,
 } from "velt/lang/dom/types";
 
-export interface AbstractRange {
-  readonly collapsed: boolean;
-}
+export interface AbstractRange {}
 
 export interface AnimationFrameProvider {}
 
@@ -64,21 +61,7 @@ export interface ElementCreationOptions {
   is?: string;
 }
 
-export interface FontFace {
-  ascentOverride: string;
-}
-
-export interface FontFaceSet extends EventTarget {
-  onloading: ((ev: FontFaceSetLoadEvent) => any throws unknown) | null;
-}
-
-export interface FontFaceSetLoadEvent extends Event {
-  readonly fontfaces: ReadonlyArray<FontFace>;
-}
-
-export interface FontFaceSource {
-  readonly fonts: FontFaceSet;
-}
+export interface FontFaceSource {}
 
 export type HTMLCollectionBase = ReadonlyArray<Element>;
 
@@ -125,13 +108,7 @@ export interface Range extends AbstractRange {
   selectNode(node: Node): void;
 }
 
-export interface Storage {
-  readonly length: number;
-}
-
-export interface Text extends CharacterData, Slottable {
-  readonly wholeText: string;
-}
+export interface Text extends CharacterData, Slottable {}
 
 export interface TreeWalker {
   nextNode(): Node | null;
@@ -145,16 +122,10 @@ export interface Window extends EventTarget, AnimationFrameProvider, GlobalEvent
   matchMedia(query: string): MediaQueryList;
 }
 
-export interface WindowLocalStorage {
-  readonly localStorage: Storage;
-}
+export interface WindowLocalStorage {}
 
-export interface WindowOrWorkerGlobalScope {
-  readonly crossOriginIsolated: boolean;
-}
+export interface WindowOrWorkerGlobalScope {}
 
-export interface WindowSessionStorage {
-  readonly sessionStorage: Storage;
-}
+export interface WindowSessionStorage {}
 
 export interface XPathEvaluatorBase {}

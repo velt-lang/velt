@@ -8,9 +8,7 @@
 
 import { AbortSignal } from "velt/task/signal";
 
-export interface ARIAMixin {
-  ariaActiveDescendantElement: Element | null;
-}
+export interface ARIAMixin {}
 
 export interface AddEventListenerOptions extends EventListenerOptions {
   once?: boolean;
@@ -42,9 +40,7 @@ export interface CustomEvent<T = any> extends Event {
 
 export type DOMStringMap = Record<string, string | undefined>;
 
-export interface DocumentFragment extends Node, NonElementParentNode, ParentNode {
-  textContent: string;
-}
+export interface DocumentFragment extends Node, NonElementParentNode, ParentNode {}
 
 export interface DocumentOrShadowRoot {
   readonly activeElement: Element | null;
@@ -65,7 +61,6 @@ export interface Element extends Node, ARIAMixin, Animatable, ChildNode, NonDocu
   readonly namespaceURI: string | null;
   outerHTML: string;
   scrollIntoView(arg?: boolean | ScrollIntoViewOptions): void;
-  textContent: string;
 }
 
 export interface ElementCSSInlineStyle {
@@ -114,16 +109,12 @@ export interface FocusOptions {
   preventScroll?: boolean;
 }
 
-export interface GlobalEventHandlers {
-  onabort: ((ev: UIEvent) => any throws unknown) | null;
-}
+export interface GlobalEventHandlers {}
 
 export type HTMLCollection = ReadonlyArray<Element>;
 export type HTMLCollectionOf<T extends Element> = ReadonlyArray<T>;
 
-export interface HTMLDivElement extends HTMLElement {
-  align: string;
-}
+export interface HTMLDivElement extends HTMLElement {}
 
 export interface HTMLElement extends Element, ElementCSSInlineStyle, ElementContentEditable, GlobalEventHandlers, HTMLOrSVGElement {
   title: string;
@@ -158,10 +149,6 @@ export interface HTMLSelectElement extends HTMLElement {
   readonly selectedOptions: HTMLCollectionOf<HTMLOptionElement>;
 }
 
-export interface HTMLSlotElement extends HTMLElement {
-  name: string;
-}
-
 export interface HTMLTextAreaElement extends HTMLElement {
   value: string;
 }
@@ -190,9 +177,7 @@ export interface Node extends EventTarget {
 
 export type NodeListOf<TNode extends Node> = ReadonlyArray<TNode>;
 
-export interface NonDocumentTypeChildNode {
-  readonly nextElementSibling: Element | null;
-}
+export interface NonDocumentTypeChildNode {}
 
 export interface NonElementParentNode {}
 
@@ -204,13 +189,9 @@ export interface ParentNode extends Node {
   readonly lastElementChild: Element | null;
 }
 
-export interface PopoverInvokerElement {
-  popoverTargetAction: string;
-}
+export interface PopoverInvokerElement {}
 
-export interface SVGElement extends Element, ElementCSSInlineStyle, GlobalEventHandlers, HTMLOrSVGElement {
-  readonly className: any;
-}
+export interface SVGElement extends Element, ElementCSSInlineStyle, GlobalEventHandlers, HTMLOrSVGElement {}
 
 export type ScrollBehavior = "auto" | "instant" | "smooth";
 
@@ -230,10 +211,4 @@ export interface ShadowRoot extends DocumentFragment, DocumentOrShadowRoot {
   innerHTML: string;
 }
 
-export interface Slottable {
-  readonly assignedSlot: HTMLSlotElement | null;
-}
-
-export interface UIEvent extends Event {
-  readonly detail: number;
-}
+export interface Slottable {}

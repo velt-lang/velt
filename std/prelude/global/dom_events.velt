@@ -8,7 +8,6 @@ export {
   AnimationEvent,
   ClipboardEvent,
   CompositionEvent,
-  DataTransfer,
   DragEvent,
   FocusEvent,
   InputEvent,
@@ -18,5 +17,6 @@ export {
   PointerEvent,
   TouchEvent,
   TransitionEvent,
+  UIEvent,
   WheelEvent,
 } from "velt/lang/dom/events";

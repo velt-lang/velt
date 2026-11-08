@@ -33,7 +33,7 @@ impl Ctx<'_> {
         (have, from): (DefId, &[TyId]),
         (want, to): (DefId, &[TyId]),
     ) -> bool {
-        if have == want {
+        if have == want || !self.dom_related(have, want) {
             return false;
         }
         // A conversion back (`A` to `B` and `B` to `A`) makes each table hold the other
@@ -597,4 +597,30 @@ fn setter_param(ours: &[(String, Member)], name: &str, ty: TyId) -> Option<TyId>
         },
         _ => None,
     })
+}
+
+impl Ctx<'_> {
+    /// For two of std's `lib.dom` interfaces, which `tsc` relates by their members (most add
+    /// members of their own that std doesn't list): does `have` extend `want`? `HTMLElement`
+    /// doesn't convert to `HTMLAnchorElement` though std lists no member of the latter's own.
+    /// Any other pair: `true` (members decide).
+    fn dom_related(&self, have: DefId, want: DefId) -> bool {
+        let dom = |d: DefId| {
+            self.iface(d).is_some_and(|i| {
+                self.scopes[i.module].is_std && crate::lib_dom_names::is_lib_dom_type(&i.name)
+            })
+        };
+        !(dom(have) && dom(want)) || self.iface_extends_def(have, want, 0)
+    }
+
+    /// Does interface `d` extend `base`, directly or through others?
+    pub(crate) fn iface_extends_def(&self, d: DefId, base: DefId, depth: u32) -> bool {
+        let Some(i) = self.iface(d) else {
+            return false;
+        };
+        depth < 64
+            && i.parents
+                .iter()
+                .any(|p| p.iface == base || self.iface_extends_def(p.iface, base, depth + 1))
+    }
 }

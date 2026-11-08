@@ -23,8 +23,10 @@
 //   `ReadonlyArray`: Velt has no index signature or iterator for an interface yet (#937), and code
 //   indexes, iterates and `Array.from`s them;
 // - a function type may throw (`throws unknown`), as a JavaScript function may;
-// - an interface with members of its own in `lib.dom` but none listed gets its first own field, so
-//   that its base doesn't convert to it;
+// - a field a base declares too is left to the base (an interface value converts to the ones it
+//   extends where their fields have the same types); sema relates std's `lib.dom` interfaces by
+//   what they extend, as `tsc` does by their members (`HTMLElement` doesn't convert to
+//   `HTMLAnchorElement`);
 // - a std global a declaration names (`AbortSignal`, `URL`) is imported from its defining file;
 // - an index signature next to members, a `this` parameter, conditional, mapped and template
 //   literal types are left out, and any other type that std declares itself is `any`.
@@ -360,23 +362,13 @@ function emit(t) {
   const tp = typeParams(decl.typeParameters, scope);
   const inherited = inheritedWanted(t);
   const lines = [];
-  // An interface with members of its own in `lib.dom` but none wanted would have its base's shape,
-  // and the base would convert to it (`HTMLElement` to `HTMLAnchorElement`, TS2740 under `tsc`):
-  // its first own field keeps it apart.
-  const ownWanted = [...want.get(t)].some((m) => all.some((x) => memberName(x) === m));
-  if (!ownWanted) {
-    const fields = all.filter((x) => (ts.isPropertySignature(x) || ts.isGetAccessor(x)) && memberName(x));
-    // A field of a primitive type if there is one: it reaches no other type.
-    const KW = [ts.SyntaxKind.StringKeyword, ts.SyntaxKind.NumberKeyword, ts.SyntaxKind.BooleanKeyword];
-    const first = fields.find((x) => x.type && KW.includes(x.type.kind)) ?? fields[0];
-    if (first) {
-      want.get(t).add(memberName(first));
-      note("an own field so the base doesn't convert to it");
-    }
-  }
   for (const m of want.get(t)) {
     const isMethod = ownMembers(t).some((x) => memberName(x) === m && x.kind === ts.SyntaxKind.MethodSignature);
     if (isMethod && inherited.has(m)) { note("method a base declares: left to the base"); continue; }
+    // A field a base declares too is the base's (`Element.textContent: string` narrows
+    // `Node.textContent: string | null`): an interface value converts to the interfaces it
+    // extends only where their fields have the same types.
+    if (!isMethod && inherited.has(m)) { note("field a base declares: left to the base"); continue; }
     const line = memberOf(t, m, scope);
     if (line) lines.push(line);
   }

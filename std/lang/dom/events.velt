@@ -6,35 +6,19 @@
 // scripts/dom-subset/names.txt: do not edit, change the list and run the script.
 // Derived from TypeScript's lib.dom.d.ts, Copyright (c) Microsoft Corporation, Apache-2.0; see NOTICE.
 
-import { Event, EventTarget, UIEvent } from "velt/lang/dom/types";
+import { Event } from "velt/lang/dom/types";
 
-export interface AnimationEvent extends Event {
-  readonly animationName: string;
-}
+export interface AnimationEvent extends Event {}
 
-export interface ClipboardEvent extends Event {
-  readonly clipboardData: DataTransfer | null;
-}
+export interface ClipboardEvent extends Event {}
 
-export interface CompositionEvent extends UIEvent {
-  readonly data: string;
-}
+export interface CompositionEvent extends UIEvent {}
 
-export interface DataTransfer {
-  dropEffect: "none" | "copy" | "link" | "move";
-}
+export interface DragEvent extends MouseEvent {}
 
-export interface DragEvent extends MouseEvent {
-  readonly dataTransfer: DataTransfer | null;
-}
+export interface FocusEvent extends UIEvent {}
 
-export interface FocusEvent extends UIEvent {
-  readonly relatedTarget: EventTarget | null;
-}
-
-export interface InputEvent extends UIEvent {
-  readonly inputType: string;
-}
+export interface InputEvent extends UIEvent {}
 
 export interface KeyboardEvent extends UIEvent {
   readonly key: string;
@@ -44,22 +28,14 @@ export interface MediaQueryListEvent extends Event {
   readonly matches: boolean;
 }
 
-export interface MouseEvent extends UIEvent {
-  readonly altKey: boolean;
-}
+export interface MouseEvent extends UIEvent {}
 
-export interface PointerEvent extends MouseEvent {
-  readonly altitudeAngle: number;
-}
+export interface PointerEvent extends MouseEvent {}
 
-export interface TouchEvent extends UIEvent {
-  readonly altKey: boolean;
-}
+export interface TouchEvent extends UIEvent {}
 
-export interface TransitionEvent extends Event {
-  readonly elapsedTime: number;
-}
+export interface TransitionEvent extends Event {}
 
-export interface WheelEvent extends MouseEvent {
-  readonly deltaMode: number;
-}
+export interface UIEvent extends Event {}
+
+export interface WheelEvent extends MouseEvent {}

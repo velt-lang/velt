@@ -15,95 +15,37 @@ export interface SVGAnimateMotionElement extends SVGAnimationElement {}
 
 export interface SVGAnimateTransformElement extends SVGAnimationElement {}
 
-export interface SVGAnimatedEnumeration {
-  readonly animVal: number;
-}
+export interface SVGAnimatedPoints {}
 
-export interface SVGAnimatedLength {
-  readonly animVal: SVGLength;
-}
+export interface SVGAnimationElement extends SVGElement, SVGTests {}
 
-export interface SVGAnimatedLengthList {
-  readonly animVal: SVGLengthList;
-}
+export interface SVGCircleElement extends SVGGeometryElement {}
 
-export interface SVGAnimatedNumber {
-  readonly animVal: number;
-}
+export interface SVGClipPathElement extends SVGElement {}
 
-export interface SVGAnimatedPoints {
-  readonly animatedPoints: SVGPointList;
-}
-
-export interface SVGAnimatedPreserveAspectRatio {
-  readonly animVal: SVGPreserveAspectRatio;
-}
-
-export interface SVGAnimatedString {
-  readonly animVal: string;
-}
-
-export interface SVGAnimatedTransformList {
-  readonly animVal: SVGTransformList;
-}
-
-export interface SVGAnimationElement extends SVGElement, SVGTests {
-  readonly targetElement: SVGElement | null;
-}
-
-export interface SVGCircleElement extends SVGGeometryElement {
-  readonly cx: SVGAnimatedLength;
-}
-
-export interface SVGClipPathElement extends SVGElement {
-  readonly clipPathUnits: SVGAnimatedEnumeration;
-}
-
-export interface SVGComponentTransferFunctionElement extends SVGElement {
-  readonly amplitude: SVGAnimatedNumber;
-}
+export interface SVGComponentTransferFunctionElement extends SVGElement {}
 
 export interface SVGDefsElement extends SVGGraphicsElement {}
 
-export interface SVGEllipseElement extends SVGGeometryElement {
-  readonly cx: SVGAnimatedLength;
-}
+export interface SVGEllipseElement extends SVGGeometryElement {}
 
-export interface SVGFEBlendElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly in1: SVGAnimatedString;
-}
+export interface SVGFEBlendElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFEColorMatrixElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly in1: SVGAnimatedString;
-}
+export interface SVGFEColorMatrixElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFEComponentTransferElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly in1: SVGAnimatedString;
-}
+export interface SVGFEComponentTransferElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFECompositeElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly in1: SVGAnimatedString;
-}
+export interface SVGFECompositeElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFEConvolveMatrixElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly bias: SVGAnimatedNumber;
-}
+export interface SVGFEConvolveMatrixElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFEDiffuseLightingElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly diffuseConstant: SVGAnimatedNumber;
-}
+export interface SVGFEDiffuseLightingElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFEDisplacementMapElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly in1: SVGAnimatedString;
-}
+export interface SVGFEDisplacementMapElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFEDistantLightElement extends SVGElement {
-  readonly azimuth: SVGAnimatedNumber;
-}
+export interface SVGFEDistantLightElement extends SVGElement {}
 
-export interface SVGFEDropShadowElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly dx: SVGAnimatedNumber;
-}
+export interface SVGFEDropShadowElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
 export interface SVGFEFloodElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
@@ -115,178 +57,86 @@ export interface SVGFEFuncGElement extends SVGComponentTransferFunctionElement {
 
 export interface SVGFEFuncRElement extends SVGComponentTransferFunctionElement {}
 
-export interface SVGFEGaussianBlurElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly in1: SVGAnimatedString;
-}
+export interface SVGFEGaussianBlurElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFEImageElement extends SVGElement, SVGFilterPrimitiveStandardAttributes, SVGURIReference {
-  readonly preserveAspectRatio: SVGAnimatedPreserveAspectRatio;
-}
+export interface SVGFEImageElement extends SVGElement, SVGFilterPrimitiveStandardAttributes, SVGURIReference {}
 
 export interface SVGFEMergeElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFEMergeNodeElement extends SVGElement {
-  readonly in1: SVGAnimatedString;
-}
+export interface SVGFEMergeNodeElement extends SVGElement {}
 
-export interface SVGFEMorphologyElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly in1: SVGAnimatedString;
-}
+export interface SVGFEMorphologyElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFEOffsetElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly dx: SVGAnimatedNumber;
-}
+export interface SVGFEOffsetElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFEPointLightElement extends SVGElement {
-  readonly x: SVGAnimatedNumber;
-}
+export interface SVGFEPointLightElement extends SVGElement {}
 
-export interface SVGFESpecularLightingElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly in1: SVGAnimatedString;
-}
+export interface SVGFESpecularLightingElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFESpotLightElement extends SVGElement {
-  readonly limitingConeAngle: SVGAnimatedNumber;
-}
+export interface SVGFESpotLightElement extends SVGElement {}
 
-export interface SVGFETileElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly in1: SVGAnimatedString;
-}
+export interface SVGFETileElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFETurbulenceElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {
-  readonly baseFrequencyX: SVGAnimatedNumber;
-}
+export interface SVGFETurbulenceElement extends SVGElement, SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFilterElement extends SVGElement, SVGURIReference {
-  readonly filterUnits: SVGAnimatedEnumeration;
-}
+export interface SVGFilterElement extends SVGElement, SVGURIReference {}
 
-export interface SVGFilterPrimitiveStandardAttributes {
-  readonly height: SVGAnimatedLength;
-}
+export interface SVGFilterPrimitiveStandardAttributes {}
 
-export interface SVGFitToViewBox {
-  readonly preserveAspectRatio: SVGAnimatedPreserveAspectRatio;
-}
+export interface SVGFitToViewBox {}
 
-export interface SVGForeignObjectElement extends SVGGraphicsElement {
-  readonly height: SVGAnimatedLength;
-}
+export interface SVGForeignObjectElement extends SVGGraphicsElement {}
 
 export interface SVGGElement extends SVGGraphicsElement {}
 
-export interface SVGGeometryElement extends SVGGraphicsElement {
-  readonly pathLength: SVGAnimatedNumber;
-}
+export interface SVGGeometryElement extends SVGGraphicsElement {}
 
-export interface SVGGradientElement extends SVGElement, SVGURIReference {
-  readonly gradientTransform: SVGAnimatedTransformList;
-}
+export interface SVGGradientElement extends SVGElement, SVGURIReference {}
 
-export interface SVGGraphicsElement extends SVGElement, SVGTests {
-  readonly transform: SVGAnimatedTransformList;
-}
+export interface SVGGraphicsElement extends SVGElement, SVGTests {}
 
-export interface SVGImageElement extends SVGGraphicsElement, SVGURIReference {
-  crossOrigin: string | null;
-}
+export interface SVGImageElement extends SVGGraphicsElement, SVGURIReference {}
 
-export interface SVGLength {
-  readonly unitType: number;
-}
+export interface SVGLineElement extends SVGGeometryElement {}
 
-export interface SVGLengthList {
-  readonly length: number;
-}
+export interface SVGLinearGradientElement extends SVGGradientElement {}
 
-export interface SVGLineElement extends SVGGeometryElement {
-  readonly x1: SVGAnimatedLength;
-}
+export interface SVGMarkerElement extends SVGElement, SVGFitToViewBox {}
 
-export interface SVGLinearGradientElement extends SVGGradientElement {
-  readonly x1: SVGAnimatedLength;
-}
-
-export interface SVGMarkerElement extends SVGElement, SVGFitToViewBox {
-  readonly markerHeight: SVGAnimatedLength;
-}
-
-export interface SVGMaskElement extends SVGElement {
-  readonly height: SVGAnimatedLength;
-}
+export interface SVGMaskElement extends SVGElement {}
 
 export interface SVGMetadataElement extends SVGElement {}
 
-export interface SVGPathElement extends SVGGeometryElement {
-  readonly pathLength: SVGAnimatedNumber;
-}
+export interface SVGPathElement extends SVGGeometryElement {}
 
-export interface SVGPatternElement extends SVGElement, SVGFitToViewBox, SVGURIReference {
-  readonly height: SVGAnimatedLength;
-}
-
-export interface SVGPointList {
-  readonly length: number;
-}
+export interface SVGPatternElement extends SVGElement, SVGFitToViewBox, SVGURIReference {}
 
 export interface SVGPolygonElement extends SVGGeometryElement, SVGAnimatedPoints {}
 
 export interface SVGPolylineElement extends SVGGeometryElement, SVGAnimatedPoints {}
 
-export interface SVGPreserveAspectRatio {
-  align: number;
-}
+export interface SVGRadialGradientElement extends SVGGradientElement {}
 
-export interface SVGRadialGradientElement extends SVGGradientElement {
-  readonly cx: SVGAnimatedLength;
-}
+export interface SVGRectElement extends SVGGeometryElement {}
 
-export interface SVGRectElement extends SVGGeometryElement {
-  readonly height: SVGAnimatedLength;
-}
+export interface SVGSVGElement extends SVGGraphicsElement, SVGFitToViewBox, WindowEventHandlers {}
 
-export interface SVGSVGElement extends SVGGraphicsElement, SVGFitToViewBox, WindowEventHandlers {
-  currentScale: number;
-}
-
-export interface SVGStopElement extends SVGElement {
-  readonly offset: SVGAnimatedNumber;
-}
-
-export interface SVGStringList {
-  readonly length: number;
-}
+export interface SVGStopElement extends SVGElement {}
 
 export interface SVGSymbolElement extends SVGElement, SVGFitToViewBox {}
 
 export interface SVGTSpanElement extends SVGTextPositioningElement {}
 
-export interface SVGTests {
-  readonly requiredExtensions: SVGStringList;
-}
+export interface SVGTests {}
 
-export interface SVGTextContentElement extends SVGGraphicsElement {
-  readonly lengthAdjust: SVGAnimatedEnumeration;
-}
+export interface SVGTextContentElement extends SVGGraphicsElement {}
 
 export interface SVGTextElement extends SVGTextPositioningElement {}
 
-export interface SVGTextPathElement extends SVGTextContentElement, SVGURIReference {
-  readonly method: SVGAnimatedEnumeration;
-}
+export interface SVGTextPathElement extends SVGTextContentElement, SVGURIReference {}
 
-export interface SVGTextPositioningElement extends SVGTextContentElement {
-  readonly dx: SVGAnimatedLengthList;
-}
+export interface SVGTextPositioningElement extends SVGTextContentElement {}
 
-export interface SVGTransformList {
-  readonly length: number;
-}
+export interface SVGURIReference {}
 
-export interface SVGURIReference {
-  readonly href: SVGAnimatedString;
-}
-
-export interface SVGUseElement extends SVGGraphicsElement, SVGURIReference {
-  readonly height: SVGAnimatedLength;
-}
+export interface SVGUseElement extends SVGGraphicsElement, SVGURIReference {}

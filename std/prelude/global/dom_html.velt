@@ -5,8 +5,6 @@
 // Derived from TypeScript's lib.dom.d.ts, Copyright (c) Microsoft Corporation, Apache-2.0; see NOTICE.
 
 export {
-  CSSRuleList,
-  CSSStyleSheet,
   HTMLAnchorElement,
   HTMLAreaElement,
   HTMLAudioElement,
@@ -50,6 +48,7 @@ export {
   HTMLProgressElement,
   HTMLQuoteElement,
   HTMLScriptElement,
+  HTMLSlotElement,
   HTMLSourceElement,
   HTMLSpanElement,
   HTMLStyleElement,
@@ -66,6 +65,5 @@ export {
   HTMLUListElement,
   HTMLVideoElement,
   LinkStyle,
-  StyleSheet,
   WindowEventHandlers,
 } from "velt/lang/dom/html";

@@ -33,7 +33,6 @@ export {
   HTMLOptionsCollection,
   HTMLOrSVGElement,
   HTMLSelectElement,
-  HTMLSlotElement,
   HTMLTextAreaElement,
   Node,
   NodeListOf,
@@ -48,5 +47,4 @@ export {
   ScrollOptions,
   ShadowRoot,
   Slottable,
-  UIEvent,
 } from "velt/lang/dom/types";

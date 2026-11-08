@@ -21,7 +21,7 @@ function filter(f: SVGFEFuncRElement, m: Comment, t: Text): string {
 }
 function list(root: Element): void {
   root.querySelectorAll("li").forEach((li) => {
-    console.log(li.textContent.length);
+    console.log(li.textContent?.length);
   });
 }
 console.log(typeof onClick, typeof filter, typeof list);
