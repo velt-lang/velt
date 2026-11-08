@@ -615,3 +615,29 @@ fn closures_made_in_an_undone_try_keep_their_numbers() {
     assert_eq!(main.len(), 1, "{main:?}");
     assert_eq!(main[0].0, "main::{closure#0}");
 }
+
+/// A std function that holds its own object as `any` and reads a member of it. It is named
+/// `probeTwice` because that is the name `probe_check`'s index re-exports besides `Gadget`.
+const PROBE_ANY_READ: &str = "\
+export class Gadget { constructor() {} }
+export function probeTwice(): string {
+  const o: any = { x: 5 };
+  return typeof o.x;
+}
+";
+
+#[test]
+fn a_member_read_through_any_in_reached_std_code_adds_the_member_slots() {
+    // #2578: the read in std's own code needs the slots of the `any` tables as a program's does;
+    // without them lowering would call a null entry. Unreached, it costs the program nothing.
+    let calls = "import { probeTwice } from \"velt/zzprobe\";\n\
+                 function main() { console.log(probeTwice()); }\n";
+    let (_, (p, d)) = probe_check(PROBE_ANY_READ, calls, false);
+    assert!(!d.iter().any(|d| d.is_error()), "{d:?}");
+    assert!(p.expect("checks").dyn_members.is_some());
+    let hello =
+        "import { Gadget } from \"velt/zzprobe\";\nfunction main() { console.log(\"hi\"); }\n";
+    let (_, (p, d)) = probe_check(PROBE_ANY_READ, hello, false);
+    assert!(!d.iter().any(|d| d.is_error()), "{d:?}");
+    assert!(p.expect("checks").dyn_members.is_none());
+}

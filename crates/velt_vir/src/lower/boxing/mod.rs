@@ -53,6 +53,11 @@ pub(super) struct Boxing {
     /// The program writes a member through `any` (`AnySet` / `AnySetIndex`): the `any` tables
     /// have the write slots (any_set.rs).
     pub(super) any_writes: bool,
+    /// Code built in a program sema gave no member slots (`hir::Program::dyn_members`) reads or
+    /// calls a member through `any`: a std hook a generic body reaches at a dynamic type
+    /// argument (`a == b` with `T = unknown`, #2578). The `any` tables have the member slots,
+    /// filled with fields only (any_member.rs `any_member_entries`).
+    pub(super) any_members: bool,
     /// The program writes through `any` and holds functions there: a function may have
     /// properties (any_fn_props.rs), a declared function's are module state the runtime keeps,
     /// and every `with`, `read` and `write` takes the module lock first (velt_rt
@@ -264,6 +269,8 @@ pub(super) struct Facts {
     pub(super) generic_any: bool,
     /// A member is written through `any`.
     any_set: bool,
+    /// A member slot is called in a program without them (`Boxing::any_members`).
+    any_member_call: bool,
     /// `key in x` is tested on an `any`.
     any_has: bool,
     /// A function in `shared(...)` is made or called: only then do environments' transfer entries
@@ -377,6 +384,11 @@ impl Cx<'_> {
     }
 
     /// Record that a member is written through `any`.
+    /// A member slot is called in a program sema gave none (`Boxing::any_members`).
+    pub(super) fn note_any_member_call(&mut self) {
+        self.facts.any_member_call = true;
+    }
+
     pub(super) fn note_any_set(&mut self) {
         self.facts.any_set = true;
     }
@@ -571,6 +583,7 @@ impl Cx<'_> {
         next.generic_any |= self.facts.generic_any;
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
+        next.any_members |= self.facts.any_member_call;
         next.any_has |= self.facts.any_has;
         next.shared_fns |= self.facts.shared_fns;
         next.any_delete |= self.facts.any_delete;
@@ -737,6 +750,7 @@ impl Boxing {
             fn_identity,
             generic_any,
             any_writes,
+            any_members,
             fn_props,
             any_has,
             any_delete,

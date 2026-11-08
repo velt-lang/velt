@@ -104,7 +104,7 @@ impl Cx<'_> {
 
     /// The member slots of the `any` table of `ty` (module docs), when the program has them.
     pub(super) fn any_member_entries(&mut self, ty: TyId) -> Vec<(i128, Const)> {
-        if self.hir.dyn_members.is_none() {
+        if self.hir.dyn_members.is_none() && !self.boxing.any_members {
             return vec![];
         }
         let mut slots = vec![
@@ -303,7 +303,10 @@ impl FnLower<'_, '_> {
         self.assign(proj(out, Proj::Field(1)), Rvalue::Use(table));
     }
 
-    /// Call descriptor slot `slot` of `desc` with `args` of VIR types `params`.
+    /// Call descriptor slot `slot` of `desc` with `args` of VIR types `params`. A member slot
+    /// (`SLOT_GET` to `SLOT_APPLY`) is in the tables when sema saw a member of an `any` used
+    /// (`hir::Program::dyn_members`), or when a pass before built such a call
+    /// (`Boxing::any_members`): without it the call would jump to a null entry (#2578).
     pub(super) fn any_slot(
         &mut self,
         desc: Operand,
@@ -311,6 +314,9 @@ impl FnLower<'_, '_> {
         args: Vec<Operand>,
         params: Vec<Ty>,
     ) -> Operand {
+        if (SLOT_GET..=SLOT_APPLY).contains(&slot) && self.cx.hir.dyn_members.is_none() {
+            self.cx.note_any_member_call();
+        }
         let f = self.dispatch(desc, slot);
         let out = Place::local(self.temp(Ty::U8));
         let callee = Callee::Ptr {
