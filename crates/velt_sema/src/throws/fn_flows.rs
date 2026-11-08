@@ -330,10 +330,10 @@ impl crate::body::FnCx<'_, '_> {
         let Some(site) = self.site_of_value(f).or_else(|| self.elem_fn_site(f)) else {
             return 0;
         };
-        let Some(written) = self.cx.fn_sites.param_types.get(&site).cloned() else {
+        let Some(written) = self.cx.fn_sites.param_types.get(&site) else {
             return 0;
         };
-        let pairs: Vec<(Span, Span)> = (args.iter().zip(written))
+        let pairs: Vec<(Span, Span)> = (args.iter().zip(written.iter().copied()))
             .map(|(a, w)| (a.span, w))
             .collect();
         let n = pairs.len();
