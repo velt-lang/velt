@@ -28,7 +28,7 @@ impl FnCx<'_, '_> {
         let span = e.span;
         // A view of a nothing (`null!`) gives `undefined` where that fits (nothing_slot.rs).
         let fits = self.undefined_fits(exp, span);
-        let s = self.chain_object(object, fits, |s| s.test_operand(object, None, Want::Borrow));
+        let s = self.link_object(object, fits, |s| s.test_operand(object, None, Want::Borrow));
         let s = self.flatten_chain(s);
         let nothing = fits && self.may_hold_nothing(s.ty);
         let s = match s.kind {

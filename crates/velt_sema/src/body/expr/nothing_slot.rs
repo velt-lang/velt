@@ -96,9 +96,31 @@ impl FnCx<'_, '_> {
         }
         let span = nothing.then_some(inner.span);
         let outer = std::mem::replace(&mut self.chain_span, span);
+        let outer_link = std::mem::replace(&mut self.link_span, None);
         let r = check(self);
         self.chain_span = outer;
+        self.link_span = outer_link;
         r
+    }
+
+    /// `chain_object` for the object of an outer link (`f?.inner` in `f?.inner?.v`), which the
+    /// link only tests for a nothing: a view chain there keeps the option it has
+    /// (`nothing_chain_match`). A printed value is not one: it prints its own nothing's word.
+    pub(super) fn link_object<R>(
+        &mut self,
+        object: &ast::Expr,
+        nothing: bool,
+        check: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let mut inner = object;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        let span = inner.span;
+        self.chain_object(object, nothing, |s| {
+            s.link_span = nothing.then_some(span);
+            check(s)
+        })
     }
 
     /// Does the chain at `span`, expected as `exp`, take `undefined`: an `exp` that is dynamic or
@@ -156,7 +178,7 @@ impl FnCx<'_, '_> {
         // The object of an outer link (`f?.inner` in `f?.inner?.v`) is only tested for a
         // nothing, so a rest that has one already (`Foo | null`) keeps its own option: its
         // nothing stands for the short-circuit too, and the outer link tests it once.
-        let link = self.chain_span == Some(span);
+        let link = self.link_span == Some(span);
         let keeps = r.ty == self.cx.ty.unit
             || self
                 .cx

@@ -370,6 +370,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The object of an optional link whose chain takes `undefined` (nothing_slot.rs): an inner
     /// chain there short-circuits with it, as `f?.inner?.v` does as a whole in JavaScript.
     pub chain_span: Option<Span>,
+    /// The same span when it is the object of an outer link, not a printed value
+    /// (`FnCx::link_object`).
+    pub link_span: Option<Span>,
     /// A member read of an assertion, `(u as M).f`, that is only tested (a condition, a
     /// nullish or `typeof` test): the value read is tested as it is (`expr/cast_member.rs`).
     pub cast_member_test: Option<(Span, expr::CastTest)>,
@@ -481,6 +484,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             chain_nothing: false,
             test_span: None,
             chain_span: None,
+            link_span: None,
             cast_member_test: None,
             cast_member_numbers: vec![],
             payload_spans: vec![],
