@@ -108,9 +108,7 @@ export class AesGcm implements Aead {
     gcmCheckLength((end - start) as u64);
     this.ctr(nonce, buf, start, end);
     this.tag(nonce, aad, buf, start, end);
-    for (let i: usize = 0; i < 16; i++) {
-      buf[end + i] = this.block[i];
-    }
+    u8x16.load(this.block, 0).store(buf, end);
   }
 
   /**
