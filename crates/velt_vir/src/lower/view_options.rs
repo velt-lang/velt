@@ -114,8 +114,16 @@ impl FnLower<'_, '_> {
             return false;
         }
         let t = self.sub(arg.ty);
-        let plain = matches!(self.cx.kind(t), TyKind::Adt(..)) && !self.cx.is_dynamic(t);
-        plain && !self.holds_view(t)
+        // A class instance or an object type (sema's `may_hold_nothing`), never a union, whose
+        // members may hold a nothing of their own.
+        let plain = match self.cx.kind(t) {
+            TyKind::Adt(d, _) => matches!(
+                self.cx.hir.def(d),
+                hir::Def::Adt(a) if matches!(a.kind, hir::AdtKind::Class | hir::AdtKind::Anon)
+            ),
+            _ => false,
+        };
+        plain && !self.cx.is_dynamic(t) && !self.holds_view(t)
     }
 
     /// A new view of `null`, tagged (any_view.rs `any_nothing_view`).
