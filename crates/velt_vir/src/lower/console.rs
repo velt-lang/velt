@@ -57,8 +57,7 @@ impl FnLower<'_, '_> {
     fn print_direct(&mut self, stream: Operand, vals: Vec<(Operand, TyId)>) {
         let count = vals.len();
         for (k, (v, t)) in vals.into_iter().enumerate() {
-            let end = if k + 1 == count { b'
-' } else { b' ' };
+            let end = if k + 1 == count { b'\n' } else { b' ' };
             if let Some((p, n)) = self.option_scalar(t) {
                 self.write_option(&stream, v, t, p, n, end);
                 continue;
@@ -130,7 +129,7 @@ impl FnLower<'_, '_> {
         self.write_byte(stream, end);
     }
 
-    fn write_byte(&mut self, stream: &Operand, b: u8) {
+    pub(super) fn write_byte(&mut self, stream: &Operand, b: u8) {
         self.call_rt(
             Rt::WriteByte,
             vec![stream.clone(), cint(b as i128, Ty::U8)],
