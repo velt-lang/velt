@@ -15,7 +15,7 @@ use velt_syntax::ast;
 
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind};
-use crate::hir::{self, ExprKind as H, StmtKind as S, UseMode};
+use crate::hir::{self, ExprKind as H, StmtKind as S, TyKind, UseMode};
 
 /// The receiver of a member access, with the statements that must run before it.
 pub(super) struct Receiver {
@@ -25,26 +25,73 @@ pub(super) struct Receiver {
 
 impl FnCx<'_, '_> {
     /// The method `sort(cmp)` or `toSorted(cmp)` of the array of `any` values of type `recv`
-    /// calls, whose comparator may throw (std/prelude/sort.velt).
+    /// calls (std/prelude/sort.velt): one whose comparator returns a dynamic value, which Node
+    /// converts to a number (`true` is 1, `"-1"` is -1, `NaN` is 0; #2577), or else one whose
+    /// comparator may throw.
     pub(super) fn dynamic_sort_name(
-        &self,
+        &mut self,
         recv: hir::TyId,
         prop: &ast::Ident,
         args: &[ast::Expr],
     ) -> Option<ast::Ident> {
-        let name = match (prop.name.as_str(), args) {
-            ("sort", [_]) => "sortDynamic",
-            ("toSorted", [_]) => "toSortedDynamic",
-            _ => return None,
+        let ([cmp], "sort" | "toSorted") = (args, prop.name.as_str()) else {
+            return None;
         };
         let elem = self.cx.ty.array_elem(recv)?;
-        if self.cx.dynamic(elem) != Some(crate::any::Dynamic::Any) || !self.may_throw(&args[0]) {
+        if self.cx.dynamic(elem) != Some(crate::any::Dynamic::Any) {
             return None;
         }
+        let name = match (prop.name.as_str(), self.returns_dynamic(cmp)) {
+            ("sort", true) => "sortAnyResult",
+            ("toSorted", true) => "toSortedAnyResult",
+            _ if !self.may_throw(cmp) => return None,
+            ("sort", false) => "sortDynamic",
+            _ => "toSortedDynamic",
+        };
         Some(ast::Ident {
             name: name.to_string(),
             span: prop.span,
         })
+    }
+
+    /// Does comparator `cmp` return an `any` or `unknown`: an arrow or a function declared so, or a
+    /// variable holding a function that does, or an `any` itself (called through `any`)? An arrow
+    /// whose result is an `any` without saying so, or a member (`o.cmp`), is not seen yet: it
+    /// sorts as before, and a result that is not a number stops it.
+    fn returns_dynamic(&mut self, cmp: &ast::Expr) -> bool {
+        let dynamic = |t: &ast::TypeExpr| match &t.kind {
+            ast::TypeExprKind::Named { path, args } => {
+                args.is_empty()
+                    && matches!(path.as_slice(), [p] if p.name == "any" || p.name == "unknown")
+            }
+            _ => false,
+        };
+        match &super::method_value::strip_parens(cmp).kind {
+            ast::ExprKind::Arrow { ret: Some(r), .. } => dynamic(r),
+            ast::ExprKind::Ident(id) => {
+                let Some(l) = self.lookup_local(&id.name, id.span) else {
+                    // A function declared to return one (`function cmp(a: any, b: any): any`).
+                    return match self.lookup_item(&id.name, id.span) {
+                        Some(crate::ctx::Item::Def(d))
+                            if matches!(
+                                self.cx.info[d.0 as usize],
+                                crate::defs::DefInfo::Fn(_)
+                            ) =>
+                        {
+                            let ret = self.cx.fn_info(d).ret;
+                            self.cx.dynamic(ret).is_some()
+                        }
+                        _ => false,
+                    };
+                };
+                let t = self.local_ty(l);
+                match self.cx.ty.kind(t).clone() {
+                    TyKind::FnPtr { ret, .. } => self.cx.dynamic(ret).is_some(),
+                    _ => self.cx.dynamic(t).is_some(),
+                }
+            }
+            _ => false,
+        }
     }
 
     /// May comparator `cmp` throw? It writes a `throw`, or in a program with proxies (whose

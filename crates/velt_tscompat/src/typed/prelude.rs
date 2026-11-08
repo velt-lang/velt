@@ -488,12 +488,14 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ),
             ("set", "assign the element: `xs[i] = v`"),
             // What the compiler calls for `sort(cmp)` of an `any[]` (std/prelude/sort.velt).
+            ("sortAnyResult", "call `xs.sort(cmp)`"),
             ("sortDynamic", "call `xs.sort(cmp)`"),
             ("swap", "swap with `[xs[i], xs[j]] = [xs[j], xs[i]]`"),
             (
                 "swapIn",
                 "swap with `[xss[a][i], xss[b][j]] = [xss[b][j], xss[a][i]]`",
             ),
+            ("toSortedAnyResult", "call `xs.toSorted(cmp)`"),
             ("toSortedDynamic", "call `xs.toSorted(cmp)`"),
             ("truncate", "remove the tail with `xs.splice(n)`"),
             (
