@@ -1,0 +1,18 @@
+// A union of two function types over two classes of one name from different modules: each is
+// its own member, though both are shown alike (#2590).
+import * as a from "./_union_classes_same_name_a.velt";
+import * as b from "./_union_classes_same_name_b.velt";
+
+function pick(n: i64): ((v: a.Foo) => i64) | ((v: b.Foo) => i64) {
+  if (n > 0) {
+    return (v: a.Foo): i64 => v.x;
+  }
+  return (v: b.Foo): i64 => v.y.length;
+}
+
+function main() {
+  const f = pick(1);
+  const g = pick(0);
+  console.log(typeof f);
+  console.log(typeof g);
+}

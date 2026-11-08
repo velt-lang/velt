@@ -120,41 +120,66 @@ impl Ctx<'_> {
         names
     }
 
-    /// Debug builds (the goldens) check that no union lowering sees has two function-type
-    /// variants of one name, which [`Ctx::distinct_names`] keeps apart (other members may share
-    /// a name: two classes `A` of different scopes).
-    pub(crate) fn debug_distinct_variants(&self) {
+    /// Debug builds (the goldens) check what [`Ctx::distinct_names`] promises: no union lowering
+    /// sees has two members named alike that are one function type but for what they throw or
+    /// reject with. Other members may share a name (two classes `Foo` of different modules, and
+    /// function types over them), which are different types.
+    pub(crate) fn debug_distinct_variants(&mut self) {
         if !cfg!(debug_assertions) {
             return;
         }
+        let mut unions = vec![];
         for (i, d) in self.defs.iter().enumerate() {
             let Some(crate::hir::Def::Enum(h)) = d else {
                 continue;
             };
             let d = crate::hir::DefId(i as u32);
             // A union with variables is replaced by its solved form (`crate::union_layouts`).
-            let union =
-                self.enum_info(d).is_some_and(|e| e.is_union) && !self.replaced_unions.contains(&d);
-            let is_fn = |v: &crate::hir::VariantDef| {
-                matches!(
-                    v.payload.first().map(|t| self.ty.kind(*t)),
-                    Some(TyKind::FnPtr { .. })
-                )
-            };
-            for (j, v) in h
-                .variants
-                .iter()
-                .enumerate()
-                .filter(|(_, v)| union && is_fn(v))
-            {
-                let again = h.variants[..j].iter().any(|w| is_fn(w) && w.name == v.name);
-                assert!(
-                    !again,
-                    "ICE: union `{}` has two variants named `{}`",
-                    h.name, v.name
-                );
+            if self.enum_info(d).is_some_and(|e| e.is_union) && !self.replaced_unions.contains(&d) {
+                let vs: Vec<(String, Option<TyId>)> = (h.variants.iter())
+                    .map(|v| (v.name.clone(), v.payload.first().copied()))
+                    .collect();
+                unions.push((h.name.clone(), vs));
             }
         }
+        for (name, vs) in unions {
+            let plain: Vec<Option<TyId>> = vs
+                .iter()
+                .map(|(_, t)| t.and_then(|t| self.without_errors(t)))
+                .collect();
+            for j in 0..vs.len() {
+                for k in 0..j {
+                    let alike = vs[j].0 == vs[k].0 && plain[j].is_some() && plain[j] == plain[k];
+                    assert!(
+                        !alike,
+                        "ICE: union `{name}` has two variants named `{}` that differ only in their errors",
+                        vs[j].0
+                    );
+                }
+            }
+        }
+    }
+
+    /// Function type `t` without what it throws or its promise rejects with (`None` for another
+    /// type).
+    fn without_errors(&mut self, t: TyId) -> Option<TyId> {
+        let TyKind::FnPtr {
+            params, ret, rest, ..
+        } = self.ty.kind(t).clone()
+        else {
+            return None;
+        };
+        let ret = match self.ty.kind(ret).clone() {
+            TyKind::Promise(v, _) => self.ty.promise(v),
+            _ => ret,
+        };
+        let never = self.ty.never;
+        Some(self.ty.intern(TyKind::FnPtr {
+            params,
+            ret,
+            throws: never,
+            rest,
+        }))
     }
 
     /// Is function type `t` shown as written, without its error type (`crate::display`)?

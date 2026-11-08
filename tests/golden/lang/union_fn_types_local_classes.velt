@@ -1,0 +1,24 @@
+// A union of two function types over local classes named `A` in different functions: each is
+// its own member, though both are shown alike (#2590).
+function mk1() {
+  class A {
+    constructor(public x: i64) {}
+  }
+  const f = (a: A): i64 => a.x;
+  return f;
+}
+
+function mk2() {
+  class A {
+    constructor(public y: string) {}
+  }
+  const f = (a: A): i64 => a.y.length;
+  return f;
+}
+
+function main() {
+  for (const first of [true, false]) {
+    const v = first ? mk1() : mk2();
+    console.log(typeof v);
+  }
+}
