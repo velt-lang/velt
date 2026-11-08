@@ -1,7 +1,9 @@
 //! Channel semantics through the C ABI, on the shared multi-thread runtime.
 
 use super::*;
-use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, FUT_RESULT_OFFSET, PENDING};
+use crate::task::{
+    raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, SendPtr, FUT_RESULT_OFFSET, PENDING,
+};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};

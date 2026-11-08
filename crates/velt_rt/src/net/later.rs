@@ -75,10 +75,25 @@ impl Later {
 
 /// Sends the bytes deferred during the poll that just ended on this thread.
 pub fn flush_due() {
-    let due = DUE.with(|d| std::mem::take(&mut *d.borrow_mut()));
-    for obj in due {
+    let due = DUE.with(|d| {
+        let mut d = d.borrow_mut();
+        // Most polls defer no write: nothing to take.
+        (!d.is_empty()).then(|| std::mem::take(&mut *d))
+    });
+    let Some(mut due) = due else {
+        return;
+    };
+    for obj in due.drain(..) {
         obj.send_later();
     }
+    // The list goes back for the next poll's writes (no allocation each poll), unless a send
+    // just listed a stream again.
+    DUE.with(|d| {
+        let mut d = d.borrow_mut();
+        if d.capacity() == 0 {
+            *d = due;
+        }
+    });
 }
 
 impl StreamObj {
@@ -226,6 +241,11 @@ pub(crate) fn due_len() -> usize {
 }
 
 #[cfg(test)]
+fn due_capacity() -> usize {
+    DUE.with(|d| d.borrow().capacity())
+}
+
+#[cfg(test)]
 mod tests {
     use super::super::stream::StreamObj;
     use super::super::sys::TcpStream;
@@ -254,6 +274,10 @@ mod tests {
 
             super::flush_due();
             assert_eq!(super::due_len(), 0);
+            assert!(
+                super::due_capacity() > 0,
+                "the list is kept for the next poll"
+            );
             obj.clone().drained(0).await.unwrap();
             peer.set_nonblocking(false).unwrap();
             peer.set_read_timeout(Some(std::time::Duration::from_secs(5)))

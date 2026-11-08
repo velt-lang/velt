@@ -1,21 +1,22 @@
 //! The channel itself: a FIFO of items of one size (every operation passes it; a `Channel<T>`
 //! only ever holds `T`s), the bytes of Velt values moved in and out of a [`Ring`] of slots
-//! under a mutex, plus two `Notify`s for the tasks waiting for an item or for space.
+//! under a mutex, plus the lines of tasks waiting for an item or for space, under the same mutex
+//! (one lock per operation: see line.rs).
 //!
 //! The channel keeps the drop function (`item_drop`) of its items, from the first `send` that
 //! passed one, so [`Chan::drop_items`] can drop what is still queued when the program ends.
 //!
-//! `Notify::notify_one` stores a permit when nobody waits and forwards it to another waiter when
-//! a notified waiter is dropped, so a cancelled `receive` never swallows a wake-up meant for
-//! another receiver.
+//! A wake goes to the first waiter in line, which leaves the line (`WOKEN`) and looks again when
+//! polled. A woken receive dropped before it looked hands the wake on while items are queued (a
+//! woken send likewise while there is room), so a cancelled operation never swallows a wake-up
+//! meant for another.
 
 use std::sync::Mutex;
+use std::task::{Poll, Waker};
 
-use tokio::sync::Notify;
-
+use super::line::{wake, Line, WaitCell, IDLE, QUEUED, WOKEN};
 use super::ring::Ring;
 use crate::task::all::ResultDropFn;
-use crate::task::SendPtr;
 
 /// What [`Chan::try_push`] did with an item.
 pub(super) enum Push {
@@ -25,11 +26,26 @@ pub(super) enum Push {
 }
 
 /// What [`Chan::try_pop`] found.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Pop {
     Item,
+    /// The last item of a closed channel: nothing will come out of it any more.
+    LastItem,
     Empty,
     /// Closed and drained: no item will ever come.
     Closed,
+}
+
+impl Pop {
+    /// An item was taken.
+    pub(super) fn got(self) -> bool {
+        matches!(self, Pop::Item | Pop::LastItem)
+    }
+
+    /// The channel is closed and empty now: its handle can leave the table.
+    pub(super) fn done(self) -> bool {
+        matches!(self, Pop::LastItem | Pop::Closed)
+    }
 }
 
 struct State {
@@ -38,16 +54,16 @@ struct State {
     /// The items' drop glue (every item of a channel is a `T`), from the first push that
     /// passed one; `None` while none has (and for items with nothing to drop).
     item_drop: Option<ResultDropFn>,
+    /// Receives waiting for an item (or the close).
+    receivers: Line,
+    /// Sends waiting for space (or the close).
+    senders: Line,
 }
 
 /// A channel; `capacity == 0` means unbounded.
 pub struct Chan {
     capacity: usize,
     state: Mutex<State>,
-    /// An item arrived (or the channel closed).
-    items: Notify,
-    /// Space freed up (or the channel closed).
-    space: Notify,
 }
 
 impl Chan {
@@ -58,9 +74,9 @@ impl Chan {
                 items: Ring::new(),
                 closed: false,
                 item_drop: None,
+                receivers: Line::new(),
+                senders: Line::new(),
             }),
-            items: Notify::new(),
-            space: Notify::new(),
         }
     }
 
@@ -84,19 +100,31 @@ impl Chan {
         // Before the item is visible: a receiver on another worker may take it at once.
         crate::io::publish_before_handoff();
         let mut s = self.lock();
+        let (push, woken) = self.push_locked(&mut s, src, size, item_drop);
+        drop(s);
+        wake(woken);
+        push
+    }
+
+    /// [`try_push`](Self::try_push) under the lock: also the receiver to wake.
+    unsafe fn push_locked(
+        &self,
+        s: &mut State,
+        src: *const u8,
+        size: usize,
+        item_drop: Option<ResultDropFn>,
+    ) -> (Push, Option<Waker>) {
         if s.closed {
-            return Push::Closed;
+            return (Push::Closed, None);
         }
         if self.capacity != 0 && s.items.len() >= self.capacity {
-            return Push::Full;
+            return (Push::Full, None);
         }
         if s.item_drop.is_none() {
             s.item_drop = item_drop;
         }
         s.items.push(src, size);
-        drop(s);
-        self.items.notify_one();
-        Push::Sent
+        (Push::Sent, s.receivers.wake_first())
     }
 
     /// Move the oldest item to `dst` (`size` bytes).
@@ -109,15 +137,29 @@ impl Chan {
             crate::io::publish_before_handoff();
         }
         let mut s = self.lock();
+        let (pop, woken) = self.pop_locked(&mut s, dst, size);
+        drop(s);
+        wake(woken);
+        pop
+    }
+
+    /// [`try_pop`](Self::try_pop) under the lock: also the sender to wake.
+    unsafe fn pop_locked(&self, s: &mut State, dst: *mut u8, size: usize) -> (Pop, Option<Waker>) {
         if s.items.is_empty() {
-            return if s.closed { Pop::Closed } else { Pop::Empty };
+            return (if s.closed { Pop::Closed } else { Pop::Empty }, None);
         }
         s.items.pop(dst, size);
-        drop(s);
-        if self.capacity != 0 {
-            self.space.notify_one();
-        }
-        Pop::Item
+        let pop = if s.closed && s.items.is_empty() {
+            Pop::LastItem
+        } else {
+            Pop::Item
+        };
+        let woken = if self.capacity != 0 {
+            s.senders.wake_first()
+        } else {
+            None
+        };
+        (pop, woken)
     }
 
     /// Close: senders fail from now on, receivers drain what is left. Wakes every waiter.
@@ -128,9 +170,10 @@ impl Chan {
             return;
         }
         s.closed = true;
+        // SAFETY: under the lock.
+        let (receivers, senders) = unsafe { (s.receivers.wake_all(), s.senders.wake_all()) };
         drop(s);
-        self.items.notify_waiters();
-        self.space.notify_waiters();
+        receivers.into_iter().chain(senders).for_each(Waker::wake);
     }
 
     pub(super) fn is_closed(&self) -> bool {
@@ -142,40 +185,103 @@ impl Chan {
         self.lock().items.len()
     }
 
-    /// Wait for an item into `dst`; false once the channel is closed and drained.
+    /// Poll a receive into `dst`: `Ready` with what [`try_pop`](Self::try_pop) found once that
+    /// is an item or the end (`Pop::Closed`), else `Pending` with `cell` in the receivers' line.
     ///
     /// # Safety
-    /// `dst` must stay valid for `size` bytes until the future completes or is dropped.
-    pub(super) async unsafe fn receive(&self, dst: SendPtr<u8>, size: usize) -> bool {
-        loop {
-            let ready = self.items.notified();
-            match self.try_pop(dst.0, size) {
-                Pop::Item => return true,
-                Pop::Closed => return false,
-                Pop::Empty => ready.await,
-            }
+    /// `dst` must point to `size` writable bytes. `cell` belongs to this receive alone and
+    /// stays where it is until it is out of line: the receive completes, or is dropped after
+    /// [`cancel_receive`](Self::cancel_receive).
+    pub(super) unsafe fn poll_receive(
+        &self,
+        dst: *mut u8,
+        size: usize,
+        cell: &WaitCell,
+        waker: &Waker,
+    ) -> Poll<Pop> {
+        if self.capacity != 0 {
+            crate::io::publish_before_handoff();
         }
+        let mut g = self.lock();
+        let s = &mut *g;
+        let (pop, woken) = self.pop_locked(s, dst, size);
+        if pop == Pop::Empty {
+            wait_in(&mut s.receivers, cell, waker);
+            return Poll::Pending;
+        }
+        done_waiting(&mut s.receivers, cell);
+        drop(g);
+        wake(woken);
+        Poll::Ready(pop)
     }
 
-    /// Wait for space, then append the bytes at `src`; false if the channel is (or gets)
-    /// closed first, in which case the bytes were not taken.
+    /// A receive that waited (polled `Pending`) is dropped before it finished: out of line, and
+    /// a wake it got but did not use goes to the next receiver while items are queued.
     ///
     /// # Safety
-    /// `src` must stay valid for `size` bytes until the future completes or is dropped.
-    pub(super) async unsafe fn send(
+    /// `cell` is the receive's, as for [`poll_receive`](Self::poll_receive).
+    pub(super) unsafe fn cancel_receive(&self, cell: &WaitCell) {
+        let mut s = self.lock();
+        let woken = match cell.get().state {
+            QUEUED => {
+                s.receivers.leave(cell);
+                None
+            }
+            WOKEN if !s.items.is_empty() => s.receivers.wake_first(),
+            _ => None,
+        };
+        cell.get().state = IDLE;
+        drop(s);
+        wake(woken);
+    }
+
+    /// Poll a send of the `size` bytes at `src`: `Ready` with what
+    /// [`try_push`](Self::try_push) did once that is not `Full`, else `Pending` with `cell` in
+    /// the senders' line.
+    ///
+    /// # Safety
+    /// `src` must point to `size` readable bytes; `cell` as for
+    /// [`poll_receive`](Self::poll_receive), with [`cancel_send`](Self::cancel_send).
+    pub(super) unsafe fn poll_send(
         &self,
-        src: SendPtr<u8>,
+        src: *const u8,
         size: usize,
         item_drop: Option<ResultDropFn>,
-    ) -> bool {
-        loop {
-            let space = self.space.notified();
-            match self.try_push(src.0, size, item_drop) {
-                Push::Sent => return true,
-                Push::Closed => return false,
-                Push::Full => space.await,
-            }
+        cell: &WaitCell,
+        waker: &Waker,
+    ) -> Poll<Push> {
+        crate::io::publish_before_handoff();
+        let mut g = self.lock();
+        let s = &mut *g;
+        let (push, woken) = self.push_locked(s, src, size, item_drop);
+        if let Push::Full = push {
+            wait_in(&mut s.senders, cell, waker);
+            return Poll::Pending;
         }
+        done_waiting(&mut s.senders, cell);
+        drop(g);
+        wake(woken);
+        Poll::Ready(push)
+    }
+
+    /// [`cancel_receive`](Self::cancel_receive) for a send: an unused wake goes to the next
+    /// sender while there is room.
+    ///
+    /// # Safety
+    /// `cell` is the send's, as for [`poll_send`](Self::poll_send).
+    pub(super) unsafe fn cancel_send(&self, cell: &WaitCell) {
+        let mut s = self.lock();
+        let woken = match cell.get().state {
+            QUEUED => {
+                s.senders.leave(cell);
+                None
+            }
+            WOKEN if !s.closed && s.items.len() < self.capacity => s.senders.wake_first(),
+            _ => None,
+        };
+        cell.get().state = IDLE;
+        drop(s);
+        wake(woken);
     }
 
     /// Take every queued item out and drop it with the channel's drop glue: what is left in a
@@ -210,3 +316,32 @@ impl Chan {
 #[derive(Clone, Copy)]
 #[repr(C, align(16))]
 struct Block([u8; 16]);
+
+/// An operation that found nothing to do waits in `line`: it keeps its place when it is still
+/// in line (polled again before a wake), and goes to the back otherwise (first wait, or woken
+/// and what it waited for went to another task).
+///
+/// # Safety
+/// Under the channel's lock; `cell` as for [`Chan::poll_receive`].
+unsafe fn wait_in(line: &mut Line, cell: &WaitCell, waker: &Waker) {
+    let w = cell.get();
+    if w.state == QUEUED {
+        if !w.waker.as_ref().is_some_and(|old| old.will_wake(waker)) {
+            w.waker = Some(waker.clone());
+        }
+    } else {
+        line.enter(cell, waker);
+    }
+}
+
+/// An operation finished: out of `line` if it is still in it (finished without a wake).
+///
+/// # Safety
+/// Under the channel's lock; `cell` as for [`Chan::poll_receive`].
+unsafe fn done_waiting(line: &mut Line, cell: &WaitCell) {
+    match cell.get().state {
+        IDLE => {}
+        QUEUED => line.leave(cell),
+        _ => cell.get().state = IDLE,
+    }
+}

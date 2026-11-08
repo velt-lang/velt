@@ -75,7 +75,7 @@ impl Ring {
                 tail -= slots;
             }
             // SAFETY: `tail < slots`, so the slot lies inside `buf`.
-            std::ptr::copy_nonoverlapping(src, self.buf.as_mut_ptr().add(tail * size), size);
+            copy_item(src, self.buf.as_mut_ptr().add(tail * size), size);
         }
         self.len += 1;
     }
@@ -96,7 +96,7 @@ impl Ring {
             self.slot
         );
         // SAFETY: a non-empty ring has `head < slots`, so the slot lies inside `buf`.
-        std::ptr::copy_nonoverlapping(self.buf.as_ptr().add(self.head * size), dst, size);
+        copy_item(self.buf.as_ptr().add(self.head * size), dst, size);
         self.head = if self.len == 0 || self.head + 1 == self.slots() {
             0
         } else {
@@ -116,6 +116,20 @@ impl Ring {
         buf[first..self.buf.len()].copy_from_slice(&self.buf[..split]);
         self.buf = buf;
         self.head = 0;
+    }
+}
+
+/// Copy an item's `size` bytes: the common sizes (a pointer or number, two words) as fixed-size
+/// copies the compiler inlines, the rest through `memcpy`.
+///
+/// # Safety
+/// As `copy_nonoverlapping(src, dst, size)`.
+#[inline(always)]
+unsafe fn copy_item(src: *const u8, dst: *mut u8, size: usize) {
+    match size {
+        8 => std::ptr::copy_nonoverlapping(src, dst, 8),
+        16 => std::ptr::copy_nonoverlapping(src, dst, 16),
+        _ => std::ptr::copy_nonoverlapping(src, dst, size),
     }
 }
 
@@ -143,7 +157,7 @@ mod tests {
 
     #[test]
     fn large_and_odd_sized_items_come_out_whole_and_in_order() {
-        for size in [1, 3, 8, 37, 96, 4099] {
+        for size in [1, 3, 8, 16, 37, 96, 4099] {
             let mut r = Ring::new();
             for n in 0..50 {
                 push(&mut r, n, size);

@@ -44,7 +44,8 @@ pub fn init_stdout() {
 /// in order before the task can continue on another thread, then sends the socket writes the poll
 /// deferred (`TcpStream.writeLater`, net/later.rs).
 pub fn publish_thread_output() {
-    stdout::publish_local();
+    // Most polls print nothing: one thread-local flag says so.
+    stdout::publish_if_buffered();
     crate::net::later::flush_due();
 }
 

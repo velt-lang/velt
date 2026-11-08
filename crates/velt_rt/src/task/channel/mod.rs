@@ -16,13 +16,14 @@
 //! [`drop_abandoned_items`] drops them then, with the drop glue the channel kept from its sends.
 
 mod fut;
+mod line;
 mod queue;
 mod ring;
 
-use self::fut::{done_op, new_op, ItemBuf, NOT_SENT, SENT};
-use self::queue::{Chan, Pop, Push};
+use self::fut::{new_op, slot, start, ItemBuf, Op, NOT_SENT, SENT};
+use self::queue::{Chan, Push};
 use super::all::ResultDropFn;
-use super::{SendPtr, VeltFut};
+use super::VeltFut;
 use crate::registry::{Key, Registry};
 
 static CHANNELS: Registry<Chan> = Registry::new();
@@ -32,6 +33,12 @@ fn retire_if_done(key: Key<Chan>, chan: &Chan) {
     if chan.is_closed() && chan.len() == 0 {
         CHANNELS.remove(key);
     }
+}
+
+/// Drop the table's reference to a channel a receive found closed and empty
+/// ([`queue::Pop::done`]).
+fn retire(key: Key<Chan>) {
+    CHANNELS.remove(key);
 }
 
 /// At program end (`main` returned and the tasks settled): drop the items still queued in every
@@ -99,19 +106,20 @@ pub unsafe extern "C-unwind" fn velt_rt_chan_send(
         }
         Push::Full => {}
     }
-    let item = ItemBuf::take(src, size, item_drop);
-    new_op(1, move |slot| async move {
-        // Whole-value captures: the closure would otherwise capture the raw `slot.0` (not Send).
-        let (slot, mut item) = (slot, item);
-        let sent = match c {
-            Some(c) => c.send(item.ptr(), size, item.item_drop()).await,
-            None => false,
-        };
-        if sent {
-            item.moved();
-        }
-        *slot.0 = sent as u8;
-    })
+    let Some(chan) = c else {
+        // `Push::Closed` above.
+        return NOT_SENT.ptr();
+    };
+    let f = new_op(1);
+    start(
+        f,
+        Op::Send {
+            chan,
+            item: ItemBuf::take(src, size, item_drop),
+            size,
+        },
+    );
+    f
 }
 
 /// `ch.trySend(value)`: moves the `size`-byte item at `src` (and its ownership) into the
@@ -151,44 +159,25 @@ pub unsafe extern "C-unwind" fn velt_rt_chan_receive(
     payload: u64,
     slot_size: u64,
 ) -> *mut VeltFut {
-    let c = CHANNELS.get(h);
-    let (size, payload) = (size as usize, payload as usize);
-    // Fast path: an item is queued, or the channel is gone or closed and drained.
-    let now = match &c {
-        Some(c) => {
-            let probe = done_op(slot_size as usize, |_| {});
-            let slot = (probe as *mut u8).add(super::FUT_RESULT_OFFSET);
-            match c.try_pop(slot.add(payload), size) {
-                Pop::Empty => {
-                    ((*probe).drop)(probe);
-                    None
-                }
-                p => {
-                    retire_if_done(h, c);
-                    write_option(slot, payload, size, matches!(p, Pop::Item));
-                    Some(probe)
-                }
-            }
-        }
-        None => Some(done_op(slot_size as usize, |slot| {
-            write_option(slot, payload, size, false)
-        })),
-    };
-    if let Some(f) = now {
+    let (size, payload, slot_size) = (size as usize, payload as usize, slot_size as usize);
+    let f = new_op(slot_size);
+    let at = slot(f);
+    let Some(chan) = CHANNELS.get(h) else {
+        write_option(at, payload, size, false);
         return f;
-    }
-    new_op(slot_size as usize, move |slot| async move {
-        let slot = slot;
-        let got = match c {
-            Some(c) => {
-                let got = c.receive(SendPtr(slot.0.add(payload)), size).await;
-                retire_if_done(h, &c);
-                got
-            }
-            None => false,
-        };
-        write_option(slot.0, payload, size, got);
-    })
+    };
+    // The first poll (right after this call: the future is awaited at once) takes a queued
+    // item, or puts the receive in line with one look under the channel's lock.
+    start(
+        f,
+        Op::Receive {
+            chan,
+            key: h,
+            size,
+            payload,
+        },
+    );
+    f
 }
 
 /// `ch.tryReceive()`: moves the oldest (`size`-byte) item into the `T | null` at `dst` (see
@@ -205,9 +194,11 @@ pub unsafe extern "C-unwind" fn velt_rt_chan_try_receive(
 ) {
     let (size, payload) = (size as usize, payload as usize);
     let got = CHANNELS.get(h).is_some_and(|c| {
-        let got = matches!(c.try_pop(dst.add(payload), size), Pop::Item);
-        retire_if_done(h, &c);
-        got
+        let pop = c.try_pop(dst.add(payload), size);
+        if pop.done() {
+            retire(h);
+        }
+        pop.got()
     });
     write_option(dst, payload, size, got);
 }
@@ -215,7 +206,7 @@ pub unsafe extern "C-unwind" fn velt_rt_chan_try_receive(
 /// Complete the `T | null` at `slot` whose payload (the item) is at offset `payload`: with a
 /// nonzero `payload` the value is `{ present: bool @0, item @payload }`; `payload == 0` means a
 /// pointer-like `T` whose null is all zero bits (the `size`-byte item *is* the value).
-unsafe fn write_option(slot: *mut u8, payload: usize, size: usize, present: bool) {
+pub(super) unsafe fn write_option(slot: *mut u8, payload: usize, size: usize, present: bool) {
     if payload == 0 {
         if !present {
             std::ptr::write_bytes(slot, 0, size);
@@ -225,8 +216,7 @@ unsafe fn write_option(slot: *mut u8, payload: usize, size: usize, present: bool
     }
 }
 
-/// `SendPtr` for the result slot an operation writes.
-type Slot = SendPtr<u8>;
-
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wait_tests;

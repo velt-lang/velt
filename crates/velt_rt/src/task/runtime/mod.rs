@@ -422,6 +422,14 @@ mod tests {
     }
 
     #[test]
+    fn the_end_of_a_poll_publishes_this_threads_output() {
+        use crate::io::handoff_probe::{buffer_output, published};
+        buffer_output();
+        crate::io::publish_thread_output();
+        assert!(published());
+    }
+
+    #[test]
     fn an_idle_worker_publishes_this_threads_output() {
         // Output printed outside a task poll (a future dropped after it finished) has no
         // end-of-poll publish: the idle hook must publish it, not only write the shared buffer.
