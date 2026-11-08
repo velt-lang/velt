@@ -5,7 +5,7 @@
 // or index depends on the accumulator, the key or the message; the final reduction mod
 // 2^130 - 5 selects with a mask.
 
-import { load32le, store32le } from "velt/crypto/chacha20";
+import { load32le } from "velt/crypto/chacha20";
 import { CryptoError } from "velt/crypto/errors";
 
 // Declared directly: `velt/simd` is the API, and loading all of it costs a program that only needs
@@ -13,6 +13,12 @@ import { CryptoError } from "velt/crypto/errors";
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
 declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+// The last partial block (`count` under 16) and the tag, unchecked: the callers check the ranges.
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u64x2_splat(x: u64): u64x2;
+declare function velt_simd_u64x2_with_lane(v: u64x2, index: u64, x: u64): u64x2;
+declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;
 
 // r's clamp (RFC 8439 §2.5.1) on its two little-endian 64-bit halves.
 const CLAMP0: u64 = 0x0ffffffc0fffffff;
@@ -112,10 +118,16 @@ export class Poly1305 {
     const full = start + ((end - start) & ~(15 as usize));
     this.blocks(m, start, full);
     if (full < end) {
-      const last = this.tail;
-      for (let i: usize = 0; i < 16; i++) {
-        last[i] = full + i < end ? m[full + i] : 0;
+      // The last bytes, zero-padded, in one partial load (`blocks` checked `full`, this `end`).
+      if (end > m.length) {
+        throw new CryptoError(`Poly1305 range is out of bounds: end ${end}, length ${m.length}`);
       }
+      const last = this.tail;
+      velt_simd_u8x16_store(
+        velt_simd_u8x16_load_partial(m, full as u64, (end - full) as u64),
+        last,
+        0,
+      );
       this.blocks(last, 0, 16);
     }
   }
@@ -135,10 +147,11 @@ export class Poly1305 {
     h1 = (h1 & ~mask) | (g1 & mask);
     const f0 = h0 + this.pad[0];
     const f1 = h1 + this.pad[1] + ((f0 < h0) as u64);
-    store32le(out, at, f0 as u32);
-    store32le(out, at + 4, (f0 >> 32) as u32);
-    store32le(out, at + 8, f1 as u32);
-    store32le(out, at + 12, (f1 >> 32) as u32);
+    if (at > out.length || out.length - at < 16) {
+      throw new CryptoError(`Poly1305 tag at ${at} does not fit in ${out.length} bytes`);
+    }
+    const tag = velt_simd_u64x2_with_lane(velt_simd_u64x2_splat(f0), 1, f1);
+    velt_simd_u8x16_store(velt_simd_u64x2_as_u8x16(tag), out, at as u64);
   }
 }
 
