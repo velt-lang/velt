@@ -1,0 +1,28 @@
+class E1 extends Error {}
+
+type AF = (x: i64) => Promise<i64>;
+
+function opt<T>(x: T, b: boolean): T | undefined {
+  if (b) {
+    return x;
+  }
+  return undefined;
+}
+
+async function main() {
+  const af: AF = async (x: i64) => {
+    if (x < 0) {
+      throw new E1("neg");
+    }
+    return x * 3;
+  };
+  const r = opt(af(1), true);
+  if (r === null) {
+    console.log("null");
+  }
+  try {
+    console.log(await af(1));
+  } catch (e) {
+    console.log("e");
+  }
+}

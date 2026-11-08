@@ -161,7 +161,7 @@ fn analyze(
     // As in `crate::check_with`: the error types of function types written without `throws`.
     let mut seeds = crate::throws::FnTypeSeeds::default();
     let mut cx = new_cx(true, &seeds, false);
-    if let Some(s) = cx.fn_sites.doubted(crate::error_count(&cx) > 0) {
+    if let Some(s) = cx.checked_again(!cx.diags.is_empty()) {
         seeds = s;
         cx = new_cx(true, &seeds, false);
     }

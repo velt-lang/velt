@@ -172,6 +172,8 @@ pub(crate) struct FnSites {
     /// How many `reject` values of promises whose rejection type is a variable were checked
     /// and not called (`var_known`): what they are called with is not counted.
     pub(crate) reject_values: usize,
+    /// Whether every variable's solved set is empty (`None` before they are solved).
+    pub(crate) sets_empty: Option<bool>,
     /// The closures created for sites' types found so far (`var_known`).
     pub(crate) site_closures: super::var_known::SiteClosures,
 }
@@ -207,19 +209,25 @@ impl FnSites {
         merge_seeds(&mut self.found, quiet, &self.flows);
     }
 
-    /// The check with error-set variables reported errors: the sets to check the program with
-    /// again without variables (as written, the sets found by checking again), whose
-    /// diagnostics are the program's, whatever types they show (`throws::vars`). Not when the
-    /// program is checked again anyway, with the sets this check found: that check has no
-    /// variables of the program's sites.
-    pub fn doubted(&self, errors: bool) -> Option<FnTypeSeeds> {
-        (self.use_vars && errors && !self.again()).then(|| {
+    /// The check with error-set variables reported errors (`reported`): the sets to check the
+    /// program with again without variables (as written, the sets found by checking again),
+    /// whose diagnostics are the program's (`throws::vars`). Only while some set is not empty
+    /// and the program is not checked again anyway ([`Ctx::checked_again`]).
+    fn doubted(&self, reported: bool) -> Option<FnTypeSeeds> {
+        (reported && self.shows_vars()).then(|| {
             let mut s = self.found.clone();
             merge_seeds(&mut s, self.quiet.clone(), &self.flows);
             s.no_vars = true;
             s.exact = true;
             s
         })
+    }
+
+    /// Does a diagnostic of this check show a variable as nothing where a check without
+    /// variables shows its set: has it variables, a set that is not empty (or not solved), and
+    /// is it not checked again anyway with the sets it found (without the program's variables)?
+    fn shows_vars(&self) -> bool {
+        self.use_vars && self.sets_empty != Some(true) && !self.again()
     }
 
     /// Is this the last check, whatever it finds?
@@ -234,6 +242,22 @@ impl FnSites {
 }
 
 impl Ctx<'_> {
+    /// The sets to check the program with again when this check reported diagnostics
+    /// (`reported`) that may show a variable as nothing, where a check without variables shows
+    /// its set (`throws::vars`): with errors, a check without any variable
+    /// ([`FnSites::doubted`]); a program that checks, with the solved sets written in
+    /// (`FnSites::fallback`), which a check without variables ends with.
+    pub(crate) fn checked_again(&mut self, reported: bool) -> Option<FnTypeSeeds> {
+        if !reported || !self.fn_sites.shows_vars() {
+            return None;
+        }
+        if crate::error_count(self) > 0 {
+            return self.fn_sites.doubted(true);
+        }
+        self.var_seeds();
+        self.fn_sites.grown()
+    }
+
     /// `(params) => ret [throws E]`, with `rest`: `(a: A, ...xs: T[]) => R`, whose last parameter
     /// must have an array or tuple type. After a `Promise` result, `throws E` is the promise's
     /// rejection type (calling an async function never throws; awaiting its promise does).

@@ -1,0 +1,26 @@
+class E1 extends Error {}
+
+type AF = (x: i64) => Promise<i64>;
+
+function opt<T>(x: T, b: boolean): T | undefined {
+  if (b) {
+    return x;
+  }
+  return undefined;
+}
+
+const af: AF = async (x: i64) => {
+  if (x < 0) {
+    throw new E1("neg");
+  }
+  return x * 3;
+};
+export let p = Promise.resolve(1);
+
+function f() {
+  return p;
+}
+
+p = Promise.resolve(2);
+const r: string = opt(af(1), true);
+console.log(r, f());

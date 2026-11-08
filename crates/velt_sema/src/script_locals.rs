@@ -47,6 +47,13 @@ pub(crate) fn refused(cx: &Ctx, root: usize) -> Refused {
     Refused { vars }
 }
 
+/// Will the program be checked again with refused script variables moved into `main` (`m` is
+/// the root module checked)?
+pub(crate) fn moves_more(cx: &Ctx, m: &ast::Module) -> bool {
+    let refused = refused(cx, cx.root);
+    !refused.vars.is_empty() && !movable(m, refused.vars.into_iter().collect()).is_empty()
+}
+
 /// Check `modules` with `check`, and again with the refused script variables that can move
 /// moved into `main`: one extra check, since a check reports every variable it refuses and
 /// [`movable`] moves them together (module docs). It checks again only while that moves more.

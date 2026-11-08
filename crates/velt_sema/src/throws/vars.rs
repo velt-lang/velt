@@ -24,10 +24,12 @@
 //! again), a `finally` block of a generator and a value converted as its type written without
 //! variables an empty set. When an assumption does not hold, or a function value's error type
 //! differs from the site's set it was stored as, the program is checked again with the solved
-//! sets written in, as before (`FnSites::fallback`). When the check reports errors, the
-//! program is checked again without variables (`FnSites::doubted`): its diagnostics are then
-//! exactly those of a check without them, whatever types they show. A program without errors
-//! is checked once.
+//! sets written in, as before (`FnSites::fallback`). A diagnostic shows a variable as nothing,
+//! which a check without variables shows only while its set is empty: when the check reports
+//! anything (an error or a warning, also from the passes after the rounds) and some set is not
+//! empty, the program is checked again (`Ctx::checked_again`), without any variable when it has
+//! errors (`FnSites::doubted`), else with the solved sets written in, and that check's
+//! diagnostics are the program's.
 //!
 //! The comparisons see the variables in the fields of a non-generic anonymous object type
 //! (`{ print: (d: Doc) => string }`): its plain form is the object type of its fields' plain
@@ -552,6 +554,7 @@ impl Ctx<'_> {
             }
         }
         let mut ok = !self.fn_sites.var_sets.unsupported && self.fn_sites.reject_values == 0;
+        self.fn_sites.sets_empty = Some(reps.iter().all(|&r| sets[r as usize].is_empty()));
         for (v, &r) in reps.iter().enumerate() {
             let s = self.error_union(&sets[r as usize]).unwrap_or(self.ty.never);
             let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v as u32), vec![]));
