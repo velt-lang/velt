@@ -15,10 +15,15 @@ import {
   KEEP_READING,
   SEND_RETRY,
 } from "velt/net/tls/client_handshake";
-import { clientHello, HelloInput, X25519 } from "velt/net/tls/client_hello";
+import { clientHello, HelloInput, preferredSuites, X25519 } from "velt/net/tls/client_hello";
 import { HandshakeBuffer } from "velt/net/tls/handshake_buffer";
 import { finishedMac } from "velt/net/tls/key_schedule";
+import { u8x16 } from "velt/simd";
 import { describe, expect, it } from "velt/test";
+
+// The suites in the order the traces' ClientHellos list them (ChaCha20-Poly1305, AES-128-GCM),
+// whatever this CPU would prefer: the transcript hashes depend on it.
+const TRACE_SUITES: usize[] = [0x1303, 0x1301];
 
 // 32 bytes.
 const CLIENT_PRIVATE = "49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005";
@@ -95,7 +100,11 @@ function bytes32(): u8[] {
   return out;
 }
 
-function input(serverName: string, alpn: string[]): HelloInput {
+function input(
+  serverName: string,
+  alpn: string[],
+  suites: usize[] = TRACE_SUITES.slice(),
+): HelloInput {
   return {
     random: bytes32(),
     sessionId: bytes32(),
@@ -104,6 +113,7 @@ function input(serverName: string, alpn: string[]): HelloInput {
     alpn: alpn,
     fixed: null,
     fixedRetry: null,
+    suites: suites,
     retryKey: null,
   };
 }
@@ -119,6 +129,7 @@ function traced(steps: usize, alpn: string[] = []): ClientHandshake {
       alpn: alpn,
       fixed: hexDecode(CLIENT_HELLO),
       fixedRetry: null,
+      suites: TRACE_SUITES.slice(),
       retryKey: null,
     },
     hexDecode(CLIENT_PRIVATE),
@@ -411,13 +422,15 @@ describe("a KeyUpdate", () => {
 
 describe("a generated ClientHello", () => {
   function hello(serverName: string): string {
-    const sent = input(serverName, []);
+    const sent = input(serverName, [], preferredSuites());
     return hexEncode(clientHello(sent, false, null, X25519, sent.publicKey));
   }
 
   it("says legacy_version 0x0303, its random and session id, and both suites", () => {
     const random = hexEncode(bytes32());
-    const start = `0303${random}20${random}000413031301` + "0100";
+    // AES-128-GCM first where the CPU has the AES instructions, else ChaCha20-Poly1305.
+    const suites = u8x16.hasAes() ? "13011303" : "13031301";
+    const start = `0303${random}20${random}0004${suites}` + "0100";
     expect(hello("example.com").slice(8, (8 + start.length) as i64)).toBe(start);
   });
 
