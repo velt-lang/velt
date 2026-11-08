@@ -6,11 +6,16 @@
 //! - placement (`place`) keeps call chains together: mutually recursive functions and small
 //!   callees go to the unit of their first caller, larger callees next to it, and units are
 //!   contiguous runs of such groups;
-//! - the root module's functions (`own_code`) get a unit of their own, the last, and the
-//!   library units are placed from the library's functions alone and import no body of the
-//!   root module: an edit of `main` recompiles that unit only, and the library units' modules
-//!   come from the build cache (a static's name comes from its contents, not its index, so the
-//!   program's new strings rename nothing in them);
+//! - the root module's functions (the entry file's: `own_code`) get a unit of their own, the
+//!   last, and the library units are placed from the library's functions alone and import no
+//!   body of the root module: an edit of the entry file recompiles that unit only, and the
+//!   library units' modules come from the build cache (a static's name comes from its contents,
+//!   not its index, so the program's new strings rename nothing in them). An edit that changes
+//!   library code still recompiles the library units it changes: a new call of a library
+//!   function (velt_opt's inliner shares one budget across the program, so its decisions in
+//!   library code depend on the whole program), and a string literal equal to one a library
+//!   uses (equal strings are one static, which then becomes shared: its linkage changes in the
+//!   library units that define or copy it);
 //! - an internal function referenced from another unit (call, address, vtable slot) becomes a
 //!   `hidden` external symbol of its unit (its name is already unique in the program), and the
 //!   other units declare it `hidden` too, so their calls and address computations are direct and
@@ -119,8 +124,8 @@ pub(crate) fn count_for(total: usize) -> usize {
 }
 
 /// Split `program` into (at most) `count` units of similar weight (see `place`). A split
-/// program's own code (`own_code`) gets a unit of its own after the library units, which are
-/// placed as if it were not there: an edit of the program changes its unit only, and the
+/// program's root module (`own_code`) gets a unit of its own after the library units, which are
+/// placed as if it were not there: an edit of the entry file changes its unit only, and the
 /// library units' modules, the same as before, come from the build cache.
 pub(crate) fn plan(program: &vir::Program, count: usize) -> Plan {
     let count = count.clamp(1, program.funcs.len().max(1));
@@ -137,12 +142,15 @@ pub(crate) fn plan(program: &vir::Program, count: usize) -> Plan {
     assemble(program, &refs, &owner)
 }
 
-/// Per function: is it the program's root module's (`main`), not std's or a library's? Its
-/// symbol says: `velt_vir::mangle` starts it with the module path, `_V4main` for the root (its
-/// closures and generic instances too; `velt_main`, the entry that calls it, does not change with
-/// it and stays with the libraries). Other
-/// modules of the program are not told apart from packages' (both are root-relative paths), so
-/// they stay with the libraries. `None` unless the program has functions of both kinds.
+/// Per function: is it the root module's (the program's entry file), not std's, a package's or
+/// another module's? Its symbol says (`velt_vir::mangle`): the root module's items are named
+/// without a module (`main` → `_V4main`, `helper` → `_V6helper`, `P.get` → `_V1PM3get`), while
+/// every other module's are `<module>::<name>` (`_V4utilN3foo`, `_V3stdP2fsN8readFile`). So a
+/// symbol whose first segment is followed by its end, a member (`M`), type arguments (`_T`), a
+/// suffix (`$poll`) or a closure (`N` and an escaped `{`) is the root module's. Glue (`_G…`)
+/// and `velt_main`, which do not change with the program's code, stay with the libraries. The
+/// program's other modules are not told apart from packages (both are root-relative paths), so
+/// they stay with the libraries too. `None` unless the program has functions of both kinds.
 fn own_code(program: &vir::Program) -> Option<Vec<bool>> {
     let own: Vec<bool> = program
         .funcs
@@ -152,10 +160,25 @@ fn own_code(program: &vir::Program) -> Option<Vec<bool>> {
     (own.contains(&true) && own.contains(&false)).then_some(own)
 }
 
-/// Is `symbol` a function of the root module (`main`)?
-fn is_root_module(symbol: &str) -> bool {
-    (symbol.strip_prefix("_V4main"))
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['N', 'M', 'P', '_', '$']))
+/// Is `symbol` a function of the root module ([`own_code`])?
+pub(crate) fn is_root_module(symbol: &str) -> bool {
+    let Some(rest) = symbol.strip_prefix("_V") else {
+        return false;
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    let Ok(len) = rest[..digits].parse::<usize>() else {
+        return false;
+    };
+    let Some(after) = rest.get(digits + len..) else {
+        return false;
+    };
+    after.is_empty()
+        || after.starts_with(['M', '$'])
+        || after.starts_with("_T")
+        || (after.strip_prefix('N')).is_some_and(|n| {
+            n.trim_start_matches(|c: char| c.is_ascii_digit())
+                .starts_with("_7b")
+        })
 }
 
 /// [`place::owners`] of the library functions alone, numbered among themselves, as if the

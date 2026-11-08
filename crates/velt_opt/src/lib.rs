@@ -339,11 +339,10 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
     t.time("dead_funcs", || dead_funcs::run(program));
 }
 
-/// After `numrep` changed `func`: forward the copies it made, fold what that exposed (an
-/// integer compared with itself), and drop what became dead.
-/// `work` on each of `funcs`, on every core (`parallel`): a per-function pass reads the rest of
-/// the program only, so each function sees the same inputs whatever the number of threads. A
-/// pass's time is the sum over the threads. Whether `work` changed any function.
+/// `work` on each of `funcs`, on several threads when there are enough functions (`parallel`):
+/// a per-function pass reads the rest of the program only, so each function sees the same inputs
+/// whatever the number of threads. A pass's time is the sum over the threads. Whether `work`
+/// changed any function.
 fn each_function<'f>(
     funcs: impl Iterator<Item = &'f mut vir::Function>,
     t: &mut PassTimings,
@@ -363,6 +362,8 @@ fn each_function<'f>(
     changed
 }
 
+/// After `numrep` changed `func`: forward the copies it made, fold what that exposed (an
+/// integer compared with itself), and drop what became dead.
 fn numrep_cleanup(aggs: &[vir::AggLayout], func: &mut vir::Function, t: &mut PassTimings) {
     t.time("copyprop", || copyprop::run(func));
     if t.time("numrep", || numrep::self_comparisons(func)) {

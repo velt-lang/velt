@@ -54,8 +54,8 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    a cycle that does not call itself is inlined into the loops of callers outside its cycle
    once, its calls back into the cycle staying calls, so a rarely taken recursion such as
    `Cursor.int` ⇄ `Cursor.real` does not keep its entry out of the loops that call it),
-   `const_fields`, and per function (on every core, like every per-function loop of the
-   release pipeline: `velt_opt::parallel`) `vtable_loads`,
+   `const_fields`, and per function (on several threads when there are enough functions, like
+   every per-function loop of the release pipeline: `velt_opt::parallel`) `vtable_loads`,
    `constfold`, `copyprop`, `addr_forward`, `heap_sroa`, `sroa`, `dce`, `thread_tags` (a jump
    into the test of an inlined callee's `Result` tag that the jumping block just set goes where
    the tag sends it) and `simplify_cfg`; then
@@ -119,8 +119,11 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    compiled by clang (`-O3`, or `VELT_LLVM_OPT`, for release builds; unoptimized for `--backend
    llvm`) and, for WebAssembly, by LLVM's `opt` and `llc`. Large programs are split into codegen
    units that clang compiles in parallel (`velt_codegen_llvm::units`); the root module's
-   functions get a unit of their own, so a release build after an edit of `main` recompiles that
-   unit and takes the library units from the build cache. Calls that would grow a
+   functions (the entry file's) get a unit of their own, so a release build after an edit of the
+   entry file recompiles that unit and takes the library units from the build cache, unless the
+   edit changes library code (a new call of a library function, a string a library also uses).
+   The program's other modules are not told apart from packages and stay with the libraries.
+   Calls that would grow a
    function past velt_opt's caller limit are `noinline` (`velt_codegen_llvm::inlining`), so LLVM's
    inliner never merges a program into one huge function.
 7. **Link** (`velt_link`): the toolchain's bundled lld with a link kit for the target, else the
