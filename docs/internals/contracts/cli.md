@@ -668,7 +668,8 @@ break makes a stamp that never matches). The objects it names
   `*.velt` of the warm-up directory (`$VELT_SHARE/warm`, else `share/velt/warm` beside the std
   root's directory: `<prefix>/share/velt/warm`, or the checkout's) with a child `velt build
   <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, `VELT_STD_OBJECT_FILL=1`, no `VELT_CPU`), once with `--cpu native` and once without, and
-  with clang found the same again with `--release` (no `VELT_STD_OBJECT`), then
+  with clang found the same again with `--release` (no `VELT_STD_OBJECT`; a build with
+  `VELT_STD_OBJECT_FILL` stores no LLVM codegen units, only `stdfn` entries), then
   writes the marker `<cache>/warm/<hex>` (BLAKE3 of the version line and the executable's size
   and time; `<hex>-objects` with clang found, whose builds store objects) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
   present it prints that the cache is warm and does nothing; one run per marker at a time
