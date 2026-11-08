@@ -28,7 +28,7 @@ const ALLOWED: &[(&str, &str, usize, &str)] = &[
     ("velt_vir/src/lower/rt.rs", "velt_rt_str_from_f64", 3, DECLARED),
     ("velt_vir/src/lower/rt.rs", "velt_rt_strbuf_push_f64", 3, DECLARED),
     // The fallbacks when a float hook is missing or unchecked.
-    ("velt_vir/src/lower/template.rs", "velt_rt_str_from_f64", 1, FALLBACK),
+    ("velt_vir/src/lower/stringify.rs", "velt_rt_str_from_f64", 1, FALLBACK),
     ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_f64", 1, FALLBACK),
     // Emitters with no hook in between.
     ("velt_vir/src/lower/glue/literals.rs", "velt_rt_strbuf_push_f64", 1, FLOAT_LITERAL),

@@ -1,0 +1,22 @@
+// An optional number, string or boolean printed and made into text (#2584): its payload as the
+// payload prints, or its nothing's word, in `console.log`, a template, `String(x)` and a lone
+// `${x}`, as in Node.
+const nums: (number | undefined)[] = [1.5, undefined, -0, NaN, 1e21, 42];
+for (const n of nums) {
+  console.log(n);
+  console.log("n =", n, "!");
+  console.log(`${n}`, `[${n}]`, String(n), (`${n}`).length);
+}
+const strs: (string | null)[] = ["text", null, ""];
+for (const s of strs) {
+  console.log(s);
+  console.log(`<${s}>`, String(s), s === null ? "was null" : s.length);
+}
+const flags: (boolean | undefined)[] = [true, false, undefined];
+for (const b of flags) {
+  console.log(b, `${b}`, String(b));
+}
+function maybe(i: number): number | null {
+  return i % 2 == 0 ? i : null;
+}
+console.log(maybe(2), maybe(3), `${maybe(4)}|${maybe(5)}`);

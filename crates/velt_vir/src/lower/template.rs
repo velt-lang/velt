@@ -15,7 +15,7 @@
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
-use super::hook_calls::{self as hooks, ty, Construct, HookTy};
+use super::hook_calls::Construct;
 use super::operand::proj;
 use super::rt::Rt;
 use super::sequence::{may_move_local, root_local, Later};
@@ -585,9 +585,12 @@ impl FnLower<'_, '_> {
 
     /// Evaluate `e` and append its `console.log` text to the builder at `buf` (`implicit`: a
     /// `TemplateToString`, where a symbol throws).
-    fn push_formatted(&mut self, buf: &Operand, e: &hir::Expr, implicit: bool) {
+    pub(super) fn push_formatted(&mut self, buf: &Operand, e: &hir::Expr, implicit: bool) {
         let v = self.expr(e);
         let t = self.sub(e.ty);
+        if let Some((p, n)) = self.option_scalar(t) {
+            return self.push_option(buf, v, t, p, n);
+        }
         match self.cx.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => self.push_scalar(buf, v, t),
             TyKind::Never => {}
@@ -729,56 +732,5 @@ impl FnLower<'_, '_> {
             TyKind::Adt(..) => Some("[object Object]"),
             _ => None,
         }
-    }
-
-    /// `ToString(x)` → owned string: `velt_rt_str_from_*` for scalars, a clone for strings, the
-    /// format glue into a builder for everything else.
-    /// `implicit`: a `TemplateToString`, where a symbol throws.
-    pub(super) fn stringify(&mut self, a: &hir::Expr, ty: TyId, implicit: bool) -> Operand {
-        let aty = self.sub(a.ty);
-        let ty = self.sub(ty);
-        let kind = self.cx.kind(aty);
-        if !matches!(
-            kind,
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str
-        ) {
-            let (buf, bp) = self.new_strbuf(32);
-            self.own_temp(buf, ty);
-            self.push_formatted(&bp, a, implicit);
-            return Operand::Copy(Place::local(buf));
-        }
-        let v = self.expr(a);
-        let out = self.temp(STR);
-        let o = self.addr(Place::local(out));
-        let from = self.cx.ty(aty);
-        match kind {
-            // std's number printing, as `push_scalar` (strbuf.rs) appends it.
-            TyKind::Int(it) if it.is_signed() => {
-                let v = self.cast_to(v, from, Ty::I64);
-                hooks::int_text(self, Construct::TextInt, ty::I64::arg(v))
-                    .emit_to(self, Place::local(out));
-            }
-            TyKind::Int(_) => {
-                let v = self.cast_to(v, from, Ty::U64);
-                hooks::uint_text(self, Construct::TextUint, ty::U64::arg(v))
-                    .emit_to(self, Place::local(out));
-            }
-            TyKind::Float(_) => {
-                let v = self.float_as_f64(v, aty);
-                let call = hooks::float_text(self, ty::F64::arg(v.clone()))
-                    .or_else(|| hooks::number_text(self, ty::F64::arg(v.clone())));
-                match call {
-                    Some(c) => c.emit_to(self, Place::local(out)),
-                    None => self.call_rt(Rt::StrFromF64, vec![v, o], None),
-                }
-            }
-            TyKind::Bool => self.call_rt(Rt::StrFromBool, vec![v, o], None),
-            _ => {
-                let src = self.operand_addr(v, STR);
-                self.call_rt(Rt::StrClone, vec![src, o], None);
-            }
-        }
-        self.own_temp(out, ty);
-        Operand::Copy(Place::local(out))
     }
 }

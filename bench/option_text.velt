@@ -1,0 +1,13 @@
+// Optional numbers, strings and booleans made into text (#2584): templates and `String(x)` of a
+// `number | undefined`, a `string | null` and a `boolean | undefined`, most holding a value.
+function main() {
+  let total = 0;
+  for (let i = 0; i < 1000000; i++) {
+    const n: number | undefined = i % 16 == 0 ? undefined : i % 1000;
+    const s: string | null = i % 8 == 0 ? null : "row";
+    const b: boolean | undefined = i % 4 == 0 ? undefined : i % 2 == 0;
+    const line = `${n}:${s}:${b}`;
+    total += line.length + String(n).length;
+  }
+  console.log(total);
+}
