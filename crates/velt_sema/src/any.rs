@@ -407,7 +407,7 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
 /// library's are not printed or serialized)? Then printing, `JSON.stringify` and `Object.keys` of
 /// one, in an `any` or not (also inside another object), need its accessors listed, even where no
 /// member is read through `any`, and whether or not the program has an `any` at all.
-fn accessor_literals_dynamic(cx: &Ctx) -> bool {
+pub(crate) fn accessor_literals_dynamic(cx: &Ctx) -> bool {
     cx.literal_structs.iter().any(|&d| {
         cx.adt(d).is_some_and(|a| {
             !cx.scopes[a.module].is_std

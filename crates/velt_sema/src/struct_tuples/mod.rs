@@ -9,23 +9,28 @@
 //! struct holding another holds what that one holds, and the inner one is reported. An instance
 //! made only inside a generic body (`G<T>` in `outer<T>`) is checked where the body is
 //! instantiated: [`check_generic_bodies`] carries the types a generic function stores in struct
-//! fields to every instantiation site ([`crate::inst_sites`]) and dispatched method
-//! ([`crate::dispatch`]), as `record_keys` carries key requirements. Where it can't tell, it
-//! refuses and says what to write instead: a value reaches the methods of an `extend` that
-//! implements an interface through `any` too, with no site at all, so such a method can't store
-//! its type parameter ([`refused_extends`]), and a walk that reaches a limit reports it.
+//! fields to every instantiation site ([`crate::inst_sites`]), dispatched method
+//! ([`crate::dispatch`]), hook glue runs and method a dynamic value reaches by name
+//! ([`crate::glue_reach`]), as `record_keys` carries key requirements ([`carry`]). Where it
+//! can't tell, it refuses and says what to write instead: a value reaches the methods of an
+//! `extend` that implements an interface through `any` too, with no site at all, so such a
+//! method can't store its type parameter ([`refused_extends`]), and a walk that reaches a limit
+//! reports it.
 //! [`check_field_writes`] carries a write to a field of a type parameter the same way: a struct
 //! given for that parameter would change, which its fields don't.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use velt_common::{Diagnostic, Span};
+
+mod carry;
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::dispatch::{add_work, instantiate, Pass, Rounds};
+use crate::dispatch::{add_work, instantiate, Pass};
 use crate::hir::{AdtKind, DefId, ImplDef, TyId, TyKind};
-use crate::inst_sites::{carry_guard, resolve_param_calls, ParamCall, Uses};
+use crate::inst_sites::Uses;
 use crate::types::{children, collect_params};
+use carry::{carry, Found, Site};
 
 /// How deep [`stored_types`] follows a type, and how many struct instances it looks into per
 /// function: a struct that refers to itself at a growing argument (`L<T>` holding an `L<T[]>`)
@@ -198,146 +203,6 @@ fn carried(cx: &Ctx, t: TyId) -> bool {
     nesting(cx, t, 0) <= MAX_CARRIED_DEPTH
 }
 
-/// How a generic function was reached at the span an error is reported at.
-#[derive(Clone, Copy)]
-enum Site {
-    Call,
-    /// A method that runs for a type mentioned there (`Uses::dyn_calls`).
-    Dispatched,
-}
-
-/// A type a function stores in a struct field, and its guard bits (`inst_sites::carry_guard`).
-type Need = (TyId, u64);
-
-/// A type reaching a function, with where to report it and how it got there.
-type Reached = (Need, Span, Site);
-
-/// What is known so far: the types each function stores in struct fields, in terms of its own
-/// parameters; the param calls whose receiver is generic in each function; the tuples found.
-#[derive(Default)]
-struct Found {
-    needs: FxHashMap<DefId, Vec<Need>>,
-    /// Those of `needs` a function's own body brings, not a method of a type it mentions.
-    in_body: FxHashSet<(DefId, TyId)>,
-    pneeds: FxHashMap<DefId, Vec<ParamCall>>,
-    bad: Vec<(Span, TyId, Site)>,
-    /// Where a limit stopped the check.
-    limits: Vec<Span>,
-    work: u64,
-}
-
-/// The types `f` takes from what `u` instantiates, and the param calls that reach it.
-fn reached(cx: &mut Ctx, u: &Uses, s: &Found) -> (Vec<Reached>, Vec<(ParamCall, Span, Site)>) {
-    let mut types = vec![];
-    let mut pending: Vec<_> = (u.param_calls.iter())
-        .map(|(p, s)| (p.clone(), *s, Site::Call))
-        .collect();
-    for ((g, targs, span), site) in u.calls.iter().zip(&u.guards) {
-        for (t, need) in s.needs.get(g).into_iter().flatten() {
-            if let Some(guard) = carry_guard(cx, *need, targs, *site) {
-                types.push(((cx.subst(*t, targs), guard), *span, Site::Call));
-            }
-        }
-        for p in s.pneeds.get(g).into_iter().flatten() {
-            pending.push((p.subst(cx, targs), *span, Site::Call));
-        }
-    }
-    for c in &u.closures {
-        let span = cx.def_spans[c.0 as usize];
-        for need in s.needs.get(c).into_iter().flatten() {
-            types.push((*need, span, Site::Call));
-        }
-        for p in s.pneeds.get(c).into_iter().flatten() {
-            pending.push((p.clone(), span, Site::Call));
-        }
-    }
-    for (m, args, span) in &u.dyn_calls {
-        for (t, need) in s.needs.get(m).into_iter().flatten() {
-            let Some(guard) = carry_guard(cx, *need, args, 0) else {
-                continue;
-            };
-            if let Some(t) = instantiate(cx, *t, args) {
-                types.push(((t, guard), *span, Site::Dispatched));
-            }
-        }
-        for p in s.pneeds.get(m).into_iter().flatten() {
-            let p = p.instantiate(cx, args);
-            pending.extend(p.map(|p| (p, *span, Site::Dispatched)));
-        }
-    }
-    (types, pending)
-}
-
-/// Carries what `s` holds through `uses` until nothing changes (`refused`: methods not to read
-/// through a param call, already reported; `bad`: is this type, given for what's carried, an
-/// error).
-fn carry(
-    cx: &mut Ctx,
-    uses: &[(DefId, Uses)],
-    refused: &FxHashSet<DefId>,
-    s: &mut Found,
-    bad: fn(&mut Ctx, TyId) -> bool,
-) {
-    let reads = uses
-        .iter()
-        .enumerate()
-        .flat_map(|(i, (_, u))| u.reads().map(move |d| (i, d)));
-    let mut rounds = Rounds::new(uses.len(), reads);
-    while let Some(i) = rounds.pop() {
-        let (f, u) = &uses[i];
-        s.work += u.size();
-        let (mut types, pending) = reached(cx, u, s);
-        let mut grew = false;
-        for (p, span, site) in pending {
-            let (needs, pneeds) = (&s.needs, &s.pneeds);
-            let generic = resolve_param_calls(cx, &mut rounds, i, vec![p], &mut |cx, m, args| {
-                if refused.contains(&m) {
-                    return vec![];
-                }
-                for (t, _) in needs.get(&m).into_iter().flatten() {
-                    types.push(((cx.subst(*t, args), 0), span, site));
-                }
-                let ps = pneeds.get(&m).into_iter().flatten();
-                ps.map(|p| p.subst(cx, args)).collect()
-            });
-            for p in generic {
-                let parts = std::iter::once(&p.recv).chain(&p.margs);
-                if parts.into_iter().any(|t| !carried(cx, *t)) {
-                    continue;
-                }
-                let n = s.pneeds.entry(*f).or_default();
-                if !n.contains(&p) {
-                    n.push(p);
-                    grew = true;
-                }
-            }
-        }
-        for ((t, guard), span, site) in types {
-            if bad(cx, t) {
-                s.bad.push((span, t, site));
-                continue;
-            }
-            let mut parts = vec![];
-            field_types(cx, t, &mut parts, 0);
-            let n = s.needs.entry(*f).or_default();
-            for part in parts {
-                if !matches!(site, Site::Dispatched) {
-                    s.in_body.insert((*f, part));
-                }
-                if !carried(cx, part) {
-                    s.limits.push(span);
-                } else if !n.contains(&(part, guard)) {
-                    n.push((part, guard));
-                    grew = true;
-                }
-            }
-        }
-        if grew {
-            rounds.changed(*f);
-        }
-    }
-}
-
 /// The implementations [`crate::dispatch`] doesn't list for a type: those of an `extend`
 /// (`extend<T> Array<T> implements I`, `extend string implements I {}` with a default method).
 /// A class's vtable and its own impls exist wherever the class does; these run where a value is
@@ -372,6 +237,10 @@ fn unprovable(cx: &mut Ctx, index: u32, m: DefId, needs: &[TyId]) -> Option<TyId
     let mut on_target = vec![];
     stored_types(cx, ty, &mut Walk::default(), &mut on_target, 0);
     needs.iter().copied().find(|t| {
+        // A tuple given under a primitive guard (see `carry`).
+        if holds_tuple(cx, *t, 0) {
+            return true;
+        }
         if !default {
             let mut ps = vec![];
             collect_params(&cx.ty, *t, &mut ps);
@@ -398,6 +267,23 @@ fn written(cx: &Ctx, m: DefId, t: TyId) -> String {
     name.cloned().unwrap_or_else(|| cx.display(t))
 }
 
+/// Where the `extend` of impl `index` names the interface, if `m` is that interface's default
+/// method (the error is at the interface's method, which another `extend` may give too).
+fn extend_of_default(cx: &Ctx, index: u32, m: DefId) -> Option<Span> {
+    let imp = &cx.impls[index as usize];
+    let default =
+        (cx.iface(imp.iface)).is_some_and(|i| i.methods.iter().any(|d| d.default == Some(m)));
+    if !default {
+        return None;
+    }
+    let ext = cx
+        .extensions
+        .iter()
+        .find(|e| e.target == imp.ty && e.implements.iter().any(|(b, _)| b.iface == imp.iface))?;
+    let (_, at) = ext.implements.iter().find(|(b, _)| b.iface == imp.iface)?;
+    Some(*at)
+}
+
 /// The methods of `extend`s that implement an interface and store what can't be shown not to be
 /// a tuple. Nothing says which types reach such a method: a value of any type may be cast to the
 /// interface from `any`. Each is reported once, here, and carried no further.
@@ -413,27 +299,34 @@ fn refused_extends(cx: &mut Ctx, s: &Found) -> FxHashSet<DefId> {
             let own: Vec<TyId> = own.filter(|t| s.in_body.contains(&(m, *t))).collect();
             if let Some(t) = unprovable(cx, index, m, &own) {
                 if refused.insert(m) {
-                    found.push((cx.def_spans[m.0 as usize], m, t));
+                    found.push((cx.def_spans[m.0 as usize], m, t, index));
                 }
             }
         }
     }
-    found.sort_by_key(|(s, _, _)| (s.file, s.lo));
-    for (span, m, t) in found {
+    found.sort_by_key(|(s, _, _, _)| (s.file, s.lo));
+    for (span, m, t, index) in found {
         let shown = written(cx, m, t);
-        cx.error(
-            Diagnostic::error(
+        let mut d = match extend_of_default(cx, index, m) {
+            None => Diagnostic::error(
                 format!("this method of an `extend` stores `{shown}` in a struct's field, and it implements an interface, so nothing shows that this isn't a tuple, which a struct can't hold yet"),
                 span,
+            ),
+            Some(at) => Diagnostic::error(
+                format!("this default method stores `{shown}` in a struct's field, and an `extend` implements its interface, so nothing shows that this isn't a tuple, which a struct can't hold yet"),
+                span,
             )
-            .with_note("a value of any type reaches the method through the interface or `any`; take the interface off the `extend` and call the method directly, or make the struct a class, or give the field a type of its own"),
-        );
+            .with_label(at, "this `extend` gives the interface the default method"),
+        };
+        d = d.with_note("a value of any type reaches the method through the interface or `any`; take the interface off the `extend` and call the method directly, or make the struct a class, or give the field a type of its own");
+        cx.error(d);
     }
     refused
 }
 
 /// A tuple given for a type a generic body stores in a struct field, through any chain of
-/// generic calls, closures and dispatched methods, is an error where it is given.
+/// generic calls, closures, dispatched methods, hooks and methods reached through a dynamic
+/// value, is an error where it is given.
 /// `uses`: the instantiation sites `record_keys` collected and resolved dynamic dispatch for.
 pub(crate) fn check_generic_bodies(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
     let mut s = Found::default();
@@ -558,7 +451,7 @@ fn report(cx: &mut Ctx, mut bad: Vec<(Span, TyId, Site)>, mut limits: Vec<Span>)
         let shown = cx.display(t);
         let what = match site {
             Site::Call => "this call stores",
-            Site::Dispatched => "a method of this type stores",
+            Site::Dispatched(_) => "a method of this type stores",
         };
         cx.error(
             Diagnostic::error(
