@@ -181,6 +181,32 @@ pub fn is_user(root: &Path, name: &str) -> Result<bool, String> {
     Ok(load(root)?.is_some_and(|u| u.users.contains_key(name)))
 }
 
+/// `DELETE /api/v1/token` (`velt logout`): the token `req` carries stops working. Its user stays,
+/// owning what they owned, with no token until `velt registry user token` makes one.
+/// Called under the registry's lock, which the handler holds for every write.
+pub fn revoke(root: &Path, req: &Request) -> Response {
+    let user = match caller(root, req) {
+        Ok(Caller::User(user)) => user,
+        Ok(Caller::Anyone) => {
+            return Response::text(
+                400,
+                "this registry has no users, so it has no tokens to revoke",
+            )
+        }
+        Err(refused) => return refused,
+    };
+    let result = load(root).and_then(|users| {
+        let mut users = users.unwrap_or_default();
+        // No token hashes to "".
+        users.users.insert(user.clone(), String::new());
+        save(root, &users)
+    });
+    match result {
+        Ok(()) => Response::text(200, format!("revoked this token of `{user}`\n")),
+        Err(e) => Response::text(500, e),
+    }
+}
+
 /// The caller of `req`, or the 401 (500 for an unreadable users file) to answer.
 pub fn caller(root: &Path, req: &Request) -> Result<Caller, Response> {
     let Some(users) = load(root).map_err(|e| Response::text(500, e))? else {

@@ -142,28 +142,30 @@ async function commitVersion(
   expect((await r.publish(name, version, token)).status).toBe(201);
 }
 
-// An upload of `lib` 1.0.0 whose body arrives only when `finish` is called.
+// An upload of `lib` `version` whose body arrives only when `finish` is called.
 class SlowUpload {
   private ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
+  private version: string;
   answer: Promise<Answer>;
 
-  constructor(r: TestRegistry, token: string = "") {
+  constructor(r: TestRegistry, token: string = "", version: string = "1.0.0") {
+    this.version = version;
     const stream = new ReadableStream<Uint8Array>({
       start: (c: ReadableStreamDefaultController<Uint8Array>): void => {
         this.ctl = c;
       },
     });
     const headers: [string, string][] = [
-      ["x-velt-checksum", contentChecksum(packageFiles("lib", "1.0.0"))],
+      ["x-velt-checksum", contentChecksum(packageFiles("lib", version))],
     ];
     if (token.length > 0) {
       headers.push(["authorization", `Bearer ${token}`]);
     }
-    this.answer = r.send("PUT", "/api/v1/lib/1.0.0", headers, stream);
+    this.answer = r.send("PUT", `/api/v1/lib/${version}`, headers, stream);
   }
 
   finish(): void {
-    this.ctl?.enqueue(Uint8Array.fromBytes(packArchive(packageFiles("lib", "1.0.0"))));
+    this.ctl?.enqueue(Uint8Array.fromBytes(packArchive(packageFiles("lib", this.version))));
     this.ctl?.close();
   }
 }
@@ -473,6 +475,19 @@ describe("uploads", () => {
     slow.finish();
     expect((await slow.answer).status).toBe(401);
     expect(await r.db.record("lib")).toBeNull();
+  });
+
+  it("stop a token revoked while the body arrived", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    expect((await r.publish("lib", "1.0.0", alice)).status).toBe(201);
+    const slow = new SlowUpload(r, alice, "1.1.0");
+    // Past the first check by now, as above; then alice logs out elsewhere.
+    await r.publish("other", "1.0.0", alice);
+    expect((await r.call("DELETE", "token", alice)).status).toBe(200);
+    slow.finish();
+    expect((await slow.answer).status).toBe(401);
+    expect(await versionsOf(r.db, "lib")).toEqual(["1.0.0"]);
   });
 
   it("check the caller again once the body has arrived", async () => {

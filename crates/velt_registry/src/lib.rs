@@ -89,6 +89,7 @@ impl Registry {
         match (req.method.as_str(), parts.as_slice()) {
             ("GET", [""]) => self.listing(),
             ("GET", ["api", "v1", "search"]) => self.search(&req.query),
+            ("DELETE", ["api", "v1", "token"]) => auth::revoke(root, req),
             ("GET", ["api", "v1", name, "index"]) => self.index(name),
             ("GET", ["api", "v1", name, "owners"]) => owners::list(root, name),
             ("PUT", ["api", "v1", name, "owners", user]) => {

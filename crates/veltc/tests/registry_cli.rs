@@ -218,12 +218,29 @@ fn share_a_package_through_the_registry_server() {
     );
     let unyanked = velt(&lib, &home_a, &["yank", "greet@0.1.0", "--undo"]);
     assert!(unyanked.status.success(), "{}", text(&unyanked));
-    // After `velt logout`, writes are refused again; $VELT_REGISTRY_TOKEN still works (CI).
+    // `velt logout` revokes the token on the registry and forgets it: writes are refused again,
+    // also with that token copied elsewhere. A new token works, from $VELT_REGISTRY_TOKEN too (CI).
     let logout = velt_login(&home_a, "logout", &url, "");
     assert!(logout.status.success(), "{}", text(&logout));
+    assert!(text(&logout).contains("Revoked"), "{}", text(&logout));
     assert!(!velt(&lib, &home_a, &["yank", "greet@0.1.0"])
         .status
         .success());
+    let copied = velt_as(&token, &lib, &home_a, &["yank", "greet@0.1.0"]);
+    assert!(
+        text(&copied).contains("refused the request"),
+        "{}",
+        text(&copied)
+    );
+    let again = velt_login(&home_a, "logout", &url, "");
+    assert!(text(&again).contains("no token stored"), "{}", text(&again));
+    let rotated = velt(
+        tmp.path(),
+        &tmp.path().join("admin"),
+        &["registry", "user", "token", "alice", "--dir", &dir_arg],
+    );
+    assert!(rotated.status.success(), "{}", text(&rotated));
+    let token = String::from_utf8_lossy(&rotated.stdout).trim().to_string();
     let yanked = velt_as(&token, &lib, &home_a, &["yank", "greet@0.1.0"]);
     assert!(yanked.status.success(), "{}", text(&yanked));
     let unyanked = velt_as(&token, &lib, &home_a, &["yank", "greet@0.1.0", "--undo"]);

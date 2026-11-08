@@ -38,6 +38,33 @@ describe("tokens", () => {
   });
 });
 
+describe("revoking a token", () => {
+  it("stops the token it carries, and only that user's", async () => {
+    const r = new TestRegistry();
+    const [alice, bob] = await withLib(r);
+    const revoked = await r.call("DELETE", "token", alice);
+    expect(revoked.status).toBe(200);
+    expect(revoked.text).toBe("revoked this token of `alice`\n");
+    expect((await r.publish("lib", "1.1.0", alice)).status).toBe(401);
+    expect((await r.call("DELETE", "token", alice)).status).toBe(401);
+    // alice is still a user and owner: a new token publishes again.
+    expect(await r.auth.isUser("alice")).toBe(true);
+    expect(await r.owners("lib")).toEqual(["alice"]);
+    expect((await r.call("PUT", "lib/owners/alice", bob)).status).toBe(403);
+    expect((await r.publish("other", "1.0.0", bob)).status).toBe(201);
+    expect((await r.publish("lib", "1.1.0", r.user("alice"))).status).toBe(201);
+  });
+
+  it("needs a token, and has none to revoke on an open registry", async () => {
+    const r = new TestRegistry();
+    expect((await r.call("DELETE", "token")).status).toBe(400);
+    r.user("alice");
+    expect((await r.call("DELETE", "token")).status).toBe(401);
+    expect((await r.call("DELETE", "token", "nope")).status).toBe(401);
+    expect((await r.call("GET", "token")).status).toBe(404);
+  });
+});
+
 describe("owners", () => {
   it("lets only owners publish, yank and change owners; the last one stays", async () => {
     const r = new TestRegistry();
