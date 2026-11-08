@@ -244,7 +244,20 @@ impl<'a> Parser<'a> {
             }
             if p.at_index_signature() {
                 let sig = p.parse_index_signature(lo, readonly)?;
-                p.add_index_signature(&mut index, sig);
+                match sig.pattern_name() {
+                    Some(name) => decl.fields.push(Field {
+                        name,
+                        ty: sig.value,
+                        default: None,
+                        readonly,
+                        optional: true,
+                        is_private: false,
+                        is_static: false,
+                        decorators: vec![],
+                        span: sig.span,
+                    }),
+                    None => p.add_index_signature(&mut index, sig),
+                }
                 return p.expect_member_end();
             }
             if let Some(sig) = p.parse_call_signature()? {

@@ -1,0 +1,29 @@
+// An automatic runtime whose entries narrow fields they inherit, as sigx's `<input>` variants do.
+export namespace JSX {
+  export type Element = string;
+  export interface IntrinsicAttributes { key?: string }
+  interface Attrs {
+    type?: string;
+    value?: string | number;
+    onUpdate?: (v: any) => void;
+  }
+  interface Num extends Attrs { type: "number"; value?: number | string }
+  interface Chk extends Attrs {
+    type: "checkbox" | "radio";
+    checked?: boolean;
+    onUpdate?: (checked: boolean) => void;
+  }
+  interface Txt<T = string> extends Attrs { value?: string; extra?: T }
+  export interface IntrinsicElements {
+    a: Num;
+    b: Chk;
+    c: Txt;
+  }
+}
+
+export function jsx(t: string, p: Record<string, any>, k?: string): string {
+  const keys = Object.keys(p).map((x) => x + "=" + typeof p[x]);
+  return t + "(" + keys.join(",") + ")";
+}
+export const jsxs = jsx;
+export const Fragment = "F";

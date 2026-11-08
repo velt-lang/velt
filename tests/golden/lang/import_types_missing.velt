@@ -1,0 +1,2 @@
+// A module that doesn't exist, reported where it is written.
+type M = import("./_import_types/none").T;

@@ -7,6 +7,7 @@ use crate::ast::*;
 use crate::lexer::{Kw, Tok};
 use velt_common::Span;
 
+use super::index_signatures::IndexSignature;
 pub(super) use super::optional_types::{optional_param, or_undefined};
 
 impl<'a> Parser<'a> {
@@ -101,7 +102,8 @@ impl<'a> Parser<'a> {
             && (Self::is_ident_like(self.nth(1))
                 || matches!(self.nth(1), Tok::LBracket | Tok::LParen | Tok::LBrace)
                 || self.nth(1) == Tok::Kw(Kw::Void)
-                || self.nth(1) == Tok::Kw(Kw::Null))
+                || self.nth(1) == Tok::Kw(Kw::Null)
+                || self.nth(1) == Tok::Kw(Kw::Import))
     }
 
     /// `readonly T[]` (TypeScript's `ReadonlyArray<T>`, which it is parsed as) or
@@ -220,6 +222,7 @@ impl<'a> Parser<'a> {
                 })
             }
             Tok::Kw(Kw::Typeof) => self.parse_type_query(),
+            Tok::Kw(Kw::Import) if self.at_import_type() => self.parse_named_type(),
             Tok::Template(..) => self.parse_template_type(),
             Tok::Ident if self.at_word("infer") && Self::is_ident_like(self.nth(1)) => {
                 self.parse_infer_type(lo)
@@ -261,38 +264,32 @@ impl<'a> Parser<'a> {
             && (Self::is_ident_like(self.nth(1))
                 || matches!(
                     self.nth(1),
-                    Tok::Kw(Kw::Typeof) | Tok::LBrace | Tok::LParen | Tok::LBracket
+                    Tok::Kw(Kw::Typeof | Kw::Import) | Tok::LBrace | Tok::LParen | Tok::LBracket
                 ))
     }
 
-    /// `typeof x` / `typeof ns.f` / `typeof obj.field` in a type (a type query). `typeof
-    /// import("m")` and type arguments after the name (`typeof f<string>`) are not supported yet:
-    /// they are reported here and parsed as an empty query, which sema skips.
+    /// `typeof x` / `typeof ns.f` / `typeof obj.field` / `typeof import("m").x` in a type (a type
+    /// query). `typeof import("m")` of a whole module and type arguments after the name
+    /// (`typeof f<string>`) are not supported yet: they are reported here and parsed as an empty
+    /// query, which sema skips.
     fn parse_type_query(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
         self.bump(); // typeof
-        if self.at(Tok::Kw(Kw::Import)) {
-            self.bump();
-            self.expect(Tok::LParen)?;
-            if matches!(self.peek(), Tok::Str(_)) {
-                self.bump();
+        let mut path = if self.at_import_type() {
+            let head = self.parse_import_type_head()?;
+            if !self.at(Tok::Dot) {
+                let span = self.span_from(lo);
+                self.error(
+                    "`typeof import(...)` of a whole module is not supported yet (#936)",
+                    span,
+                );
+                return Ok(TypeExpr {
+                    kind: TypeExprKind::Query(vec![]),
+                    span,
+                });
             }
-            self.expect(Tok::RParen)?;
-            while self.at(Tok::Dot) && Self::is_name(self.nth(1)) {
-                self.bump();
-                self.bump();
-            }
-            let span = self.span_from(lo);
-            self.error(
-                "`typeof import(...)` types are not supported yet (#936)",
-                span,
-            );
-            return Ok(TypeExpr {
-                kind: TypeExprKind::Query(vec![]),
-                span,
-            });
-        }
-        let mut path = if self.at(Tok::Kw(Kw::This)) {
+            vec![head]
+        } else if self.at(Tok::Kw(Kw::This)) {
             let span = self.cur_span();
             self.bump();
             vec![Ident {
@@ -385,7 +382,17 @@ impl<'a> Parser<'a> {
             }
             if self.at_index_signature() {
                 let sig = self.parse_index_signature(flo, readonly)?;
-                self.add_index_signature(&mut index, sig);
+                match sig.pattern_name() {
+                    Some(name) => fields.push(ObjectTypeField {
+                        name,
+                        ty: or_undefined(sig.value),
+                        optional: true,
+                        readonly,
+                        span: sig.span,
+                        accessors: vec![],
+                    }),
+                    None => self.add_index_signature(&mut index, sig),
+                }
                 if !self.eat_type_member_end() {
                     break;
                 }
@@ -446,55 +453,6 @@ impl<'a> Parser<'a> {
             },
             span,
         })
-    }
-
-    /// At `[name: K]` (an index signature, after any `readonly`)?
-    pub(super) fn at_index_signature(&mut self) -> bool {
-        self.at(Tok::LBracket) && Self::is_name(self.nth(1)) && self.nth(2) == Tok::Colon
-    }
-
-    /// `[key: K]: V` (the cursor at `[`).
-    pub(super) fn parse_index_signature(
-        &mut self,
-        lo: u32,
-        readonly: bool,
-    ) -> PResult<IndexSignature> {
-        self.bump(); // [
-        let key_name = self.take_ident();
-        self.bump(); // :
-        let key = self.parse_type()?;
-        self.expect(Tok::RBracket)?;
-        if self.at(Tok::Question) {
-            let span = self.cur_span();
-            self.error("an index signature cannot be optional", span);
-            self.bump();
-        }
-        self.expect(Tok::Colon)?;
-        let value = self.parse_type()?;
-        Ok(IndexSignature {
-            key_name,
-            key,
-            value,
-            readonly,
-            span: self.span_from(lo),
-        })
-    }
-
-    /// Records index signature `sig` of an object type or interface; a second one (`[k:
-    /// number]` next to `[k: string]`) is not supported yet.
-    pub(super) fn add_index_signature(
-        &mut self,
-        index: &mut Option<IndexSignature>,
-        sig: IndexSignature,
-    ) {
-        if index.is_some() {
-            self.error(
-                "more than one index signature in a type is not supported yet (#937)",
-                sig.span,
-            );
-            return;
-        }
-        *index = Some(sig);
     }
 
     /// A return type: a type, or a type predicate (`x is T`, `this is T`, `asserts x is T`,
@@ -678,10 +636,21 @@ impl<'a> Parser<'a> {
                 span,
             });
         }
-        let mut path = vec![self.parse_ident()?];
+        let head = match self.at_import_type() {
+            true => self.parse_import_type_head()?,
+            false => self.parse_ident()?,
+        };
+        let mut path = vec![head];
         while self.at(Tok::Dot) && Self::is_name(self.nth(1)) {
             self.bump();
             path.push(self.take_ident());
+        }
+        if path.len() == 1 && path[0].name.starts_with("import(") {
+            let span = self.span_from(lo);
+            self.error(
+                "a whole module as a type (`import(\"m\")`) is not supported yet (#936): name a member, `import(\"m\").T`",
+                span,
+            );
         }
         let mut args = vec![];
         // In a type, type arguments start on the line of the name, as in TypeScript: in an
@@ -756,30 +725,6 @@ const PROTOCOL_TYPES: [&str; 10] = [
     "IteratorObject",
     "IteratorResult",
 ];
-
-/// An index signature while its object type or interface is parsed.
-pub(super) struct IndexSignature {
-    pub key_name: Ident,
-    pub key: TypeExpr,
-    pub value: TypeExpr,
-    pub readonly: bool,
-    pub span: Span,
-}
-
-impl IndexSignature {
-    /// The object type with this index signature and the named members `fields`.
-    pub(super) fn into_type(self, fields: Vec<ObjectTypeField>) -> TypeExprKind {
-        TypeExprKind::IndexSig {
-            fields,
-            key: Box::new(IndexKey {
-                name: self.key_name,
-                ty: self.key,
-            }),
-            value: Box::new(self.value),
-            readonly: self.readonly,
-        }
-    }
-}
 
 impl Parser<'_> {
     /// At `new` of a construct signature type, `new (a: A) => R` (`abstract new …` when

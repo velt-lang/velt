@@ -1,0 +1,20 @@
+// `import("m").T` in a type: a module's type without an import, in a namespace too, with type
+// arguments and through the module's own namespaces. Only types are named, so `m` is not evaluated.
+type A = import("./_import_types/lib").Box<number>;
+namespace N {
+  export type B = import("./_import_types/lib").Box<string> | import('./_import_types/lib').Id;
+  export interface C { p: import("./_import_types/lib").Inner.P }
+  export type U<T> = import("./_import_types/lib").Box<T>;
+}
+const a: A = { v: 1 };
+function f(x: import("./_import_types/lib").Box<string>): string { return x.v; }
+const b: N.B = "id";
+const c: N.C = { p: { x: 2 } };
+const u: N.U<boolean> = { v: true };
+let g: typeof import("./_import_types/lib").answer = 42;
+console.log(a.v, f({ v: "s" }), b, c.p.x, u.v, g);
+// After `keyof` and `readonly`, and as a type argument of a call.
+const kk: keyof import("./_import_types/lib").Box<number> = "v";
+const rr: readonly import("./_import_types/lib").Id[] = ["x"];
+function first<T>(xs: T[]): T { return xs[0]; }
+console.log(kk, rr.length, first<import("./_import_types/lib").Id>(["y"]));

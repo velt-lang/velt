@@ -1,0 +1,3 @@
+// A member the module doesn't have, and a value of the wrong type for the type named.
+type M = import("./_import_types/lib").Nope;
+const a: import("./_import_types/lib").Box<number> = { v: "s" };

@@ -215,6 +215,7 @@ impl<'a> Parser<'a> {
                     | Tok::Pipe
                     | Tok::Kw(Kw::Null)
                     | Tok::Kw(Kw::Void)
+                    | Tok::Kw(Kw::Import)
             )
     }
 

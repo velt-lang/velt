@@ -1,0 +1,10 @@
+a(type=string,value=number)
+a(type=string,value=string,onUpdate=function)
+b(type=string,checked=boolean,onUpdate=function)
+c(value=string,extra=string)
+6 2
+1 x
+1
+2 1
+y
+2

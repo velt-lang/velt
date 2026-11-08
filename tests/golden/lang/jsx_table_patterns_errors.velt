@@ -1,0 +1,7 @@
+/** @jsxImportSource ./_jsx_patterns */
+// What `tsc` reports: a value that isn't the signature's type, and a name that fits none.
+console.log(<div use:a="s" />);
+console.log(<div nope="1" />);
+console.log(<div xy={true} />);
+console.log(<input model:v={1} />);
+console.log(<span prop:n="s" />);

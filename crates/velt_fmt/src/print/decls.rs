@@ -2,6 +2,7 @@
 //! methods are separate lists in the AST), `interface`, `extend` and `enum`.
 
 use crate::source::has_modifier;
+use velt_syntax::ast::key_pattern;
 use velt_syntax::ast::{
     CallSig, CtorVisibility, EnumDecl, ExtendDecl, Field, FnDecl, InterfaceDecl, InterfaceMethod,
     Method, TypeDecl, TypeExpr, Variant,
@@ -287,6 +288,10 @@ impl<'a> Printer<'a> {
             ""
         };
         let readonly = if f.readonly { "readonly " } else { "" };
+        if key_pattern(&f.name.name).is_some() {
+            let ty = self.ty(&f.ty);
+            return cat![readonly, text(f.name.name.clone()), ": ", ty, ";"];
+        }
         if f.optional && f.default.is_none() {
             if let Some(sig) = self.method_sig_type(&f.name, true, &f.ty) {
                 return cat![private, is_static, readonly, sig, ";"];

@@ -1,0 +1,3 @@
+Property 'nope' does not exist on type 'JSX.IntrinsicElements["div"]'.
+Property 'xy' does not exist on type 'JSX.IntrinsicElements["div"]'.
+Type 'string' is not assignable to type 'f64'.

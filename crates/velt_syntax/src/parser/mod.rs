@@ -20,7 +20,9 @@ mod field_types;
 mod fn_exprs;
 mod for_loop;
 mod import_meta;
+mod import_types;
 mod imports;
+mod index_signatures;
 mod items;
 mod jsx;
 mod members;
@@ -146,6 +148,8 @@ pub(crate) struct Parser<'a> {
     after_decorators: u32,
     /// Where the module first mentions `import.meta` (`import_meta`).
     import_meta: Option<Span>,
+    /// The modules named by `import("m")` types: (namespace name, specifier, its span).
+    import_types: Vec<(String, String, Span)>,
     /// The `this: T` parameter of the parameter list parsed last (`parse_this_param`): its span
     /// and `T`.
     this_param: Option<(Span, TypeExpr)>,
@@ -238,6 +242,7 @@ impl<'a> Parser<'a> {
             decorated_params: false,
             after_decorators: 0,
             import_meta: None,
+            import_types: vec![],
         }
     }
 

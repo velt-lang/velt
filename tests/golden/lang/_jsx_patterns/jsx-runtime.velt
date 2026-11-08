@@ -1,0 +1,34 @@
+// An automatic runtime whose attributes have template-literal index signatures, inherited ones
+// too, next to named attributes.
+export namespace JSX {
+  export type Element = string;
+  export interface IntrinsicAttributes { key?: string }
+  interface Attrs {
+    id?: string;
+    onClick?: (e: string) => void;
+    [key: `on${string}`]: any;
+    [key: `aria-${string}`]: string;
+    [key: `data-${string}`]: any;
+    [key: `use:${string}`]: number | ((v: string) => void);
+    [key: `x${string}y${string}z`]: boolean;
+  }
+  interface Form<T> extends Attrs {
+    value?: T;
+    [key: `model:${string}`]: [object, string] | (() => any);
+  }
+  interface Html<T = string> { ref?: (el: T) => void; [key: `prop:${string}`]: T }
+  interface Div extends Html<number>, Attrs {}
+  export interface IntrinsicElements {
+    div: Attrs;
+    input: Form<string>;
+    span: Div;
+    [tag: `my-${string}`]: Attrs;
+  }
+}
+
+export function jsx(t: string, p: Record<string, any>, k?: string): string {
+  const keys = Object.keys(p).map((x) => x + "=" + typeof p[x]);
+  return t + "(" + keys.join(",") + ")";
+}
+export const jsxs = jsx;
+export const Fragment = "F";

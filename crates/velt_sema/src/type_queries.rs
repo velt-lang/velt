@@ -554,7 +554,11 @@ impl Ctx<'_> {
                     return self.ty.error;
                 };
                 let mut keys: Vec<TyId> = vec![];
-                for f in fields {
+                // A template-literal index signature has no literal type here (#934).
+                for f in fields
+                    .iter()
+                    .filter(|f| ast::key_pattern(&f.name).is_none())
+                {
                     let Ok(k) = self.key_literal(d, &f.name, t.span) else {
                         return self.ty.error;
                     };

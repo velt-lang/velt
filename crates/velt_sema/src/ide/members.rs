@@ -218,6 +218,7 @@ fn adt_instance(cx: &mut Ctx, d: DefId) -> Vec<Raw> {
         .fields
         .iter()
         .enumerate()
+        .filter(|(_, f)| velt_syntax::ast::key_pattern(&f.name).is_none())
         .map(|(i, f)| Raw {
             name: f.name.clone(),
             target: Target::Field(d, i as u32),

@@ -254,6 +254,11 @@ impl<'a> Printer<'a> {
 
     /// `name: T` / `name?: T` / `readonly name: T`
     fn object_type_field(&mut self, f: &ObjectTypeField) -> Doc {
+        if velt_syntax::ast::key_pattern(&f.name.name).is_some() {
+            let ty = self.ty_optional_field(&f.ty);
+            let readonly = if f.readonly { "readonly " } else { "" };
+            return cat![readonly, text(f.name.name.clone()), ": ", ty];
+        }
         if let Some(sig) = self.method_sig_type(&f.name, f.optional, &f.ty) {
             return sig;
         }

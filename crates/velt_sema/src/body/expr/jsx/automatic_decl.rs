@@ -25,8 +25,27 @@ pub(super) struct Declared {
     pub fields: Vec<Field>,
     /// The type of the names not listed; `None` makes them errors.
     pub rest: Option<TyId>,
+    /// Template-literal index signatures: (member name, type of the names that fit).
+    pub patterns: Vec<(String, TyId)>,
     /// How the type is shown in messages.
     pub shown: String,
+}
+
+impl Declared {
+    /// The attribute `name` by a template-literal index signature of the type: a field of its
+    /// own from here on, so the value is checked and contextually typed like a declared one.
+    pub(super) fn pattern_field(&mut self, name: &str) -> Option<usize> {
+        let (_, ty) = (self.patterns.iter())
+            .find(|(p, _)| ast::key_pattern(p).is_some_and(|k| k.matches(name)))?;
+        self.fields.push(Field {
+            name: name.to_string(),
+            ty: *ty,
+            required: false,
+            at: None,
+            also: None,
+        });
+        Some(self.fields.len() - 1)
+    }
 }
 
 impl FnCx<'_, '_> {
@@ -35,6 +54,7 @@ impl FnCx<'_, '_> {
         Declared {
             fields: vec![],
             rest: self.any_ty(),
+            patterns: vec![],
             shown: "{}".to_string(),
         }
     }
@@ -72,8 +92,11 @@ impl FnCx<'_, '_> {
                     }
                 };
             }
+            let fits =
+                |(p, _): &&(String, TyId)| ast::key_pattern(p).is_some_and(|k| k.matches(tag));
+            let by_pattern = decl.patterns.iter().find(fits).map(|(_, t)| *t);
             names.extend(decl.fields.into_iter().map(|f| f.name));
-            by_index = by_index.or(decl.rest);
+            by_index = by_pattern.or(by_index).or(decl.rest);
         }
         if let Some(t) = by_index {
             let shown = format!("JSX.IntrinsicElements[\"{tag}\"]");
@@ -112,6 +135,7 @@ impl FnCx<'_, '_> {
             let Some(common) = self.declared_of(t, String::new()) else {
                 continue;
             };
+            decl.patterns.extend(common.patterns);
             for f in common.fields.into_iter().filter(|f| f.name != "key") {
                 match decl.fields.iter_mut().find(|o| o.name == f.name) {
                     Some(own) => own.also = Some(f.ty),
@@ -146,15 +170,17 @@ impl FnCx<'_, '_> {
             return Some(Declared {
                 fields: vec![],
                 rest,
+                patterns: vec![],
                 shown,
             });
         }
         if let Some((base, tag)) = self.cx.record_view(core) {
             let rest = self.record_args(base).map(|(_, v)| v);
-            let fields = self.declared_of(tag, String::new())?.fields;
+            let named = self.declared_of(tag, String::new())?;
             return Some(Declared {
-                fields,
+                fields: named.fields,
                 rest,
+                patterns: named.patterns,
                 shown,
             });
         }
@@ -163,6 +189,7 @@ impl FnCx<'_, '_> {
                 return Some(Declared {
                     fields: vec![],
                     rest: Some(v),
+                    patterns: vec![],
                     shown,
                 });
             }
@@ -170,9 +197,14 @@ impl FnCx<'_, '_> {
         let (d, fields) = self.attr_fields(core)?;
         let defs = self.attr_flags(d);
         let mut out = vec![];
+        let mut patterns = vec![];
         for (i, (name, ty)) in fields.into_iter().enumerate() {
             let (optional, has_default, hidden) = defs.get(i).copied().unwrap_or_default();
             if hidden {
+                continue;
+            }
+            if ast::key_pattern(&name).is_some() {
+                patterns.push((name, self.cx.ty.opt_payload(ty).unwrap_or(ty)));
                 continue;
             }
             let required = !optional && !has_default && self.cx.ty.opt_payload(ty).is_none();
@@ -188,6 +220,7 @@ impl FnCx<'_, '_> {
         Some(Declared {
             fields: out,
             rest: None,
+            patterns,
             shown,
         })
     }
