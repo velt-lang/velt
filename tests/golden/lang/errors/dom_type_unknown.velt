@@ -1,0 +1,7 @@
+// A `lib.dom` type std doesn't declare yet: `cannot find type`, with a note saying so.
+function connect(pc: RTCPeerConnection): void {
+  console.log(typeof pc);
+}
+type Tags = keyof HTMLElementTagNameMap;
+const t: Tags | null = null;
+console.log(typeof connect, t);

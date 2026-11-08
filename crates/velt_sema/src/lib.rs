@@ -31,6 +31,8 @@ pub mod js_protos;
 
 mod absent_fields;
 mod ctx_lookup;
+mod lib_dom_names;
+mod not_found_notes;
 mod reserved;
 pub(crate) use reserved::{reserved_key, reserved_key_message, reserved_prefixes};
 mod alias_expand;

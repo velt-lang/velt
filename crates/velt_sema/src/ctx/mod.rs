@@ -686,13 +686,12 @@ impl<'m> Ctx<'m> {
         if !self.poisoned.is_empty() && self.poisoned.contains(&(span.file, name.to_string())) {
             return;
         }
-        let mut d = Diagnostic::error(msg, span);
-        if crate::hir::SimdTy::named(name).is_some() {
-            d = d.with_note(format!(
-                "import it: `import {{ {name} }} from \"velt/simd\";`"
-            ));
-        }
-        self.diags.push(d);
+        let note = crate::not_found_notes::note(&msg, name);
+        let d = Diagnostic::error(msg, span);
+        self.diags.push(match note {
+            Some(n) => d.with_note(n),
+            None => d,
+        });
     }
 
     /// Define the closure of a rolled-back check again as `info` (`body::recheck`).
