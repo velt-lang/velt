@@ -74,9 +74,9 @@ pub enum SimdTy {
     U64x2,
     F32x4,
     F64x2,
-    /// Eight `f16` lanes, a storage type like `f16`: bits, widening and narrowing, no arithmetic.
+    /// Eight `f16` lanes: bits, widening and narrowing, and lane arithmetic.
     F16x8,
-    /// Eight `bf16` lanes, likewise.
+    /// Eight `bf16` lanes: bits, widening and narrowing, no arithmetic.
     BF16x8,
     Mask8x16,
     Mask16x8,

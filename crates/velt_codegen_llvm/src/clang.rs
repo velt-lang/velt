@@ -136,33 +136,35 @@ pub(crate) fn x86_features(triple: &str, cpu: &str) -> CodegenResult<u32> {
     Ok(mask)
 }
 
-/// The half-precision dot products a CPU has (`Target::half_dot`).
+/// The half-precision instructions a CPU has beyond the conversions (`Target::half_ops`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct HalfDot {
+pub(crate) struct HalfOps {
     /// Arm's `fmlal`/`fmlal2` (FEAT_FHM).
     pub fhm: bool,
     /// A bf16 dot product: Arm's `bfdot` (FEAT_BF16), or x86's `vdpbf16ps` on 128-bit vectors
     /// (AVX512-BF16 with AVX512VL).
     pub bf16: bool,
+    /// Lane arithmetic on `<8 x half>`: Arm's FEAT_FP16, or x86's AVX512-FP16 with AVX512VL.
+    pub fp16: bool,
 }
 
-/// What clang lets code for `cpu` on `triple` use of the half-precision dot products: from the
+/// What clang lets code for `cpu` on `triple` use of the half-precision instructions: from the
 /// macros it defines, once per CPU and process, for `native` as for a name. Without a clang,
 /// none (`velt build --emit llvm` needs no clang; everything that compiles the IR does).
-pub(crate) fn half_dot(triple: &str, cpu: &str) -> CodegenResult<HalfDot> {
-    static FEATURES: OnceLock<Mutex<HashMap<(String, String), HalfDot>>> = OnceLock::new();
+pub(crate) fn half_ops(triple: &str, cpu: &str) -> CodegenResult<HalfOps> {
+    static FEATURES: OnceLock<Mutex<HashMap<(String, String), HalfOps>>> = OnceLock::new();
     let features = FEATURES.get_or_init(Default::default);
     let key = (triple.to_string(), cpu.to_string());
     if let Some(dot) = features.lock().ok().and_then(|f| f.get(&key).copied()) {
         return Ok(dot);
     }
     let Some(clang) = find_clang() else {
-        return Ok(HalfDot::default());
+        return Ok(HalfOps::default());
     };
     let x86 = triple.starts_with("x86_64");
     let flag = if x86 { "-march" } else { "-mcpu" };
     let defines = cpu_macros(&clang, triple, flag, cpu, probe_limit())?;
-    let dot = half_dot_from_macros(&defines, x86);
+    let dot = half_ops_from_macros(&defines, x86);
     if let Ok(mut f) = features.lock() {
         f.insert(key, dot);
     }
@@ -205,8 +207,8 @@ pub(crate) fn cpu_macros(
     }
 }
 
-/// What the macros in `defines` (clang's `-dM -E` output) say of the half-precision dot products.
-fn half_dot_from_macros(defines: &str, x86: bool) -> HalfDot {
+/// What the macros in `defines` (clang's `-dM -E` output) say of the half-precision instructions.
+fn half_ops_from_macros(defines: &str, x86: bool) -> HalfOps {
     let has = |name: &str| {
         defines
             .lines()
@@ -214,14 +216,16 @@ fn half_dot_from_macros(defines: &str, x86: bool) -> HalfDot {
             .any(|m| m == name)
     };
     if x86 {
-        HalfDot {
+        HalfOps {
             fhm: false,
             bf16: has("__AVX512BF16__") && has("__AVX512VL__"),
+            fp16: has("__AVX512FP16__") && has("__AVX512VL__"),
         }
     } else {
-        HalfDot {
+        HalfOps {
             fhm: has("__ARM_FEATURE_FP16_FML"),
             bf16: has("__ARM_FEATURE_BF16_VECTOR_ARITHMETIC"),
+            fp16: has("__ARM_FEATURE_FP16_VECTOR_ARITHMETIC"),
         }
     }
 }
@@ -340,33 +344,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn half_dot_products_are_what_clang_defines() {
-        let dot = |text, x86| half_dot_from_macros(text, x86);
-        let none = HalfDot::default();
+    fn half_ops_are_what_clang_defines() {
+        let dot = |text, x86| half_ops_from_macros(text, x86);
+        let none = HalfOps::default();
         assert_eq!(dot("#define __FOO__ 1\n", false), none);
         assert_eq!(dot("#define __ARM_FEATURE_FP16_FML 1\n", true), none);
         assert_eq!(
             dot("#define __ARM_FEATURE_FP16_FML 1\n", false),
-            HalfDot {
-                fhm: true,
-                bf16: false
-            }
+            HalfOps { fhm: true, ..none }
         );
         assert_eq!(
             dot("#define __ARM_FEATURE_BF16_VECTOR_ARITHMETIC 1\n", false),
-            HalfDot {
-                fhm: false,
-                bf16: true
-            }
+            HalfOps { bf16: true, ..none }
         );
-        // x86's 128-bit form needs AVX512VL as well.
+        assert_eq!(
+            dot("#define __ARM_FEATURE_FP16_VECTOR_ARITHMETIC 1\n", false),
+            HalfOps { fp16: true, ..none }
+        );
+        // Arm's scalar-only macro is not the vectors'.
+        assert_eq!(
+            dot("#define __ARM_FEATURE_FP16_SCALAR_ARITHMETIC 1\n", false),
+            none
+        );
+        // x86's 128-bit forms need AVX512VL as well.
         assert_eq!(dot("#define __AVX512BF16__ 1\n", true), none);
         assert_eq!(
             dot("#define __AVX512BF16__ 1\n#define __AVX512VL__ 1\n", true),
-            HalfDot {
-                fhm: false,
-                bf16: true
-            }
+            HalfOps { bf16: true, ..none }
+        );
+        assert_eq!(dot("#define __AVX512FP16__ 1\n", true), none);
+        assert_eq!(
+            dot("#define __AVX512FP16__ 1\n#define __AVX512VL__ 1\n", true),
+            HalfOps { fp16: true, ..none }
         );
     }
 

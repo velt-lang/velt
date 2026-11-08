@@ -193,6 +193,9 @@ impl Translator<'_, '_> {
             Op::WidenLow | Op::WidenHigh if lanes.is_half() => {
                 self.simd_half_widen(lanes, op == Op::WidenHigh, values[0])
             }
+            _ if lanes == Lanes::F16 && op.is_f16_arithmetic() => {
+                self.simd_half_arithmetic(op, values)
+            }
             Op::Select => {
                 let x = self.lanes_of(values[1], ty);
                 let y = self.lanes_of(values[2], ty);
@@ -264,7 +267,7 @@ impl Translator<'_, '_> {
 
     /// An operation on one vector, `x`: negation and the like, widening half of it, or
     /// converting its lanes between integers and floats.
-    fn simd_unary(&mut self, lanes: Lanes, op: Op, x: ir::Value) -> ir::Value {
+    pub(super) fn simd_unary(&mut self, lanes: Lanes, op: Op, x: ir::Value) -> ir::Value {
         let (float, signed) = (lanes.is_float(), lanes.is_signed());
         let ins = self.builder.ins();
         match op {
@@ -470,7 +473,13 @@ impl Translator<'_, '_> {
         self.builder.ins().stack_load(ty, slot, 0)
     }
 
-    fn simd_binary(&mut self, lanes: Lanes, op: Op, x: ir::Value, y: ir::Value) -> ir::Value {
+    pub(super) fn simd_binary(
+        &mut self,
+        lanes: Lanes,
+        op: Op,
+        x: ir::Value,
+        y: ir::Value,
+    ) -> ir::Value {
         let float = lanes.is_float();
         let signed = lanes.is_signed();
         let ins = self.builder.ins();

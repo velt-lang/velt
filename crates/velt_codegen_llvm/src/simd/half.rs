@@ -16,7 +16,7 @@ fn native(lanes: Lanes, half: HalfNative) -> bool {
 }
 
 /// The low (or high) four lanes of the `<8 x i16>` value `x` as `<4 x float>`, exactly.
-fn widened(b: &mut Body, x: &str, lanes: Lanes, high: bool, half: HalfNative) -> String {
+pub(super) fn widened(b: &mut Body, x: &str, lanes: Lanes, high: bool, half: HalfNative) -> String {
     let picks = if high {
         "4, i32 5, i32 6, i32 7"
     } else {
@@ -40,7 +40,7 @@ fn widened(b: &mut Body, x: &str, lanes: Lanes, high: bool, half: HalfNative) ->
 }
 
 /// The four lanes of the `<4 x float>` value `x` rounded to `<4 x i16>` of `to`.
-fn narrowed(b: &mut Body, x: &str, to: Lanes, half: HalfNative) -> String {
+pub(super) fn narrowed(b: &mut Body, x: &str, to: Lanes, half: HalfNative) -> String {
     if native(to, half) && half == HalfNative::All {
         let h = b.inst(format!("fptrunc {FLOATS} {x} to <4 x half>"));
         return b.inst(format!("bitcast <4 x half> {h} to <4 x i16>"));
