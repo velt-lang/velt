@@ -495,7 +495,7 @@ impl FnCx<'_, '_> {
         }
         match self.instanceof_class_quiet(ty) {
             Some(class) => self.class_facts(e, class),
-            None => self.ctor_value_facts(e, ty),
+            None => self.dom_or_ctor_facts(e, ty),
         }
     }
 

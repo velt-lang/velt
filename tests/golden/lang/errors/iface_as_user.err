@@ -1,0 +1,1 @@
+tests/golden/lang/errors/iface_as_user.velt:16:11: error: cannot cast `A` as `B`

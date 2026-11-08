@@ -145,6 +145,9 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> Option<hir::Expr> {
         let target = self.narrowed_class(l)?;
+        if let Some(h) = self.dom_narrowed_read(target, span) {
+            return Some(h);
+        }
         let u = payload.unwrap_or(ty);
         self.cx.union_def(u)?;
         if payload.is_none() && self.cx.ty.opt_payload(ty).is_some() {
@@ -168,6 +171,9 @@ impl FnCx<'_, '_> {
         };
         if self.dynamic_raw == Some(e.span) && self.cx.dynamic(e.ty).is_some() {
             return e; // `x as T` converts the value held (`member::type_assertion`)
+        }
+        if let Some(h) = self.dom_narrowed_read(target, e.span) {
+            return h;
         }
         if self.cx.dynamic(target) == Some(crate::any::Dynamic::Any) && self.per_instance(e.ty) {
             // `Array.isArray(x)` on a value of a type parameter: the value, as an `any`.
@@ -295,6 +301,10 @@ impl FnCx<'_, '_> {
             };
             self.view_receiver = false;
             return self.late_checked_read(e, checks);
+        }
+        if let Some(h) = self.browser_global_read(id) {
+            // A `lib.dom` value whose type the prelude has (`Node.ELEMENT_NODE`).
+            return h;
         }
         match self.lookup_item(&id.name, id.span) {
             Some(Item::Def(d)) => return self.def_value(d, id, exp, want),

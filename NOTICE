@@ -21,6 +21,18 @@ This product includes documentation text adapted from TypeScript
   EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED WARRANTIES OR CONDITIONS
   OF TITLE, FITNESS FOR A PARTICULAR PURPOSE, MERCHANTABLITY OR NON-INFRINGEMENT.
 
+This product includes declarations derived from TypeScript's lib.dom.d.ts
+(https://github.com/microsoft/TypeScript, as shipped in the `typescript` package pinned in
+tests/tscompat-oracle):
+
+  std/lang/dom/*.velt, crates/velt_sema/src/body/expr/dom_values.rs and
+  crates/velt_sema/src/lib_dom_names.rs are generated from lib/lib.dom.d.ts by
+  scripts/dom-subset/generate.mjs: the names, members and types of the declarations listed in
+  scripts/dom-subset/names.txt, written as Velt declarations, and the names of all of the file's
+  interfaces and type aliases. These generated files remain under the Apache License 2.0 only;
+  they are not offered under the MIT license. Copyright (c) Microsoft Corporation. All rights
+  reserved. Licensed under the Apache License, Version 2.0, with the terms quoted above.
+
 Release toolchains bundle third-party programs and libraries for linking (lib/velt/,
 lib/targets/; docs/internals/linking.md):
 

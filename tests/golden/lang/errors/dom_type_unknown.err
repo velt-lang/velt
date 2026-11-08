@@ -1,0 +1,4 @@
+dom_type_unknown.velt:2:22: error: cannot find type `RTCPeerConnection` in this scope
+  = note: `RTCPeerConnection` is a type of TypeScript's `lib.dom` that std doesn't declare yet (std/lang/dom, scripts/dom-subset/names.txt)
+dom_type_unknown.velt:5:19: error: cannot find type `HTMLElementTagNameMap` in this scope
+  = note: `HTMLElementTagNameMap` is a type of TypeScript's `lib.dom` that std doesn't declare yet (std/lang/dom, scripts/dom-subset/names.txt)

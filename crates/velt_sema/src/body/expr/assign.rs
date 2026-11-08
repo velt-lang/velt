@@ -327,7 +327,7 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> (hir::Expr, bool) {
-        if let Some(h) = self.pattern_assign(op, target, value, span) {
+        if let Some(h) = self.pattern_or_global_assign(op, target, value, span) {
             return (h, false);
         }
         if let Some(h) = self.keyed_assign(op, target, value, span) {

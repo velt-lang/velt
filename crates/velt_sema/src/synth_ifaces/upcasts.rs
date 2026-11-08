@@ -33,7 +33,7 @@ impl Ctx<'_> {
         (have, from): (DefId, &[TyId]),
         (want, to): (DefId, &[TyId]),
     ) -> bool {
-        if have == want {
+        if have == want || !self.dom_related(have, want) {
             return false;
         }
         // A conversion back (`A` to `B` and `B` to `A`) makes each table hold the other
@@ -597,4 +597,62 @@ fn setter_param(ours: &[(String, Member)], name: &str, ty: TyId) -> Option<TyId>
         },
         _ => None,
     })
+}
+
+impl Ctx<'_> {
+    /// For two of std's `lib.dom` interfaces, which `tsc` relates by their members (most add
+    /// members of their own that std doesn't list): does `have` extend `want`, or the base whose
+    /// shape `want` has (`HTMLSpanElement` adds no property to `HTMLElement`, `Comment` none to
+    /// `CharacterData`, so `Text` converts to it)? `HTMLElement` doesn't convert to
+    /// `HTMLAnchorElement` though std lists no member of the latter's own. Any other `want`:
+    /// `true` (members decide).
+    fn dom_related(&self, have: DefId, want: DefId) -> bool {
+        // A program's own interface that extends a DOM one too (`MyEl extends HTMLElement`):
+        // it isn't a sibling of it (`HTMLAnchorElement`), as `tsc` sees by the members.
+        if !self.std_dom_iface(want) {
+            return true;
+        }
+        let mut shape = want;
+        for _ in 0..64 {
+            if shape == have || self.iface_extends_def(have, shape, 0) {
+                return true;
+            }
+            let Some(i) = self.iface(shape) else {
+                return false;
+            };
+            let shapes = &crate::lib_dom_names::SAME_SHAPE;
+            let Ok(k) = shapes.binary_search_by(|(n, _)| (*n).cmp(i.name.as_str())) else {
+                return false;
+            };
+            let base = shapes[k].1;
+            let parent = i
+                .parents
+                .iter()
+                .find(|p| self.iface(p.iface).is_some_and(|pi| pi.name == base));
+            match parent {
+                Some(p) => shape = p.iface,
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// Is `d` an interface of std's `lib.dom` subset (a module of std/lang/dom)?
+    pub(crate) fn std_dom_iface(&self, d: DefId) -> bool {
+        self.iface(d).is_some_and(|i| {
+            let m = &self.modules[i.module];
+            m.is_std && m.path.starts_with("std/lang/dom/")
+        })
+    }
+
+    /// Does interface `d` extend `base`, directly or through others?
+    pub(crate) fn iface_extends_def(&self, d: DefId, base: DefId, depth: u32) -> bool {
+        let Some(i) = self.iface(d) else {
+            return false;
+        };
+        depth < 64
+            && i.parents
+                .iter()
+                .any(|p| p.iface == base || self.iface_extends_def(p.iface, base, depth + 1))
+    }
 }

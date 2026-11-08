@@ -1,0 +1,37 @@
+// `===` between values of two interfaces, one extending the other: the same object is itself,
+// whichever interface it is seen through, as in TypeScript.
+interface A {
+  a(): number;
+}
+interface B extends A {
+  b(): number;
+}
+interface D {
+  d(): number;
+}
+interface E extends A, D {
+  e(): number;
+}
+class C implements B, E {
+  a(): number {
+    return 1;
+  }
+  b(): number {
+    return 2;
+  }
+  d(): number {
+    return 3;
+  }
+  e(): number {
+    return 4;
+  }
+}
+const c = new C();
+const other = new C();
+const x: A = c;
+const y: B = c;
+const z: B = other;
+const w: E = c;
+const n: A | null = null;
+console.log(x === y, x !== y, x === z, n === y, y === n);
+console.log(w === x, x === w, w == x, w === (z as A));

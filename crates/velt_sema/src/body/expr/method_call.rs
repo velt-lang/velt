@@ -114,9 +114,12 @@ impl FnCx<'_, '_> {
         getter: bool,
     ) -> hir::Expr {
         if self.cx.ty.is_bottom(recv.ty) {
-            self.check_args_loose(args);
             // A receiver narrowed to `never` panics before the call: the call is unreachable.
             let never = recv.ty == self.cx.ty.never;
+            match never {
+                true => self.check_args_unreached(args),
+                false => self.check_args_loose(args),
+            }
             return if never { recv } else { self.error_expr(span) };
         }
         if self.shadowed_private_name(recv.ty, prop) {

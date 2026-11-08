@@ -1,0 +1,82 @@
+// `lib.dom`'s values in server code: what Node does with each (#2383). Node has no DOM, so a
+// browser-only value reads as a `ReferenceError`, `instanceof` of one throws, and a write through
+// one throws before its value is computed; the code behind a `typeof` guard compiles and is left
+// out.
+function report(what: string, f: () => void): void {
+  try {
+    f();
+    console.log(what, "ran");
+  } catch (e) {
+    console.log(what, e instanceof ReferenceError, (e as Error).message);
+  }
+}
+
+// Types from the generated subset, in signatures a server never calls.
+function onClick(e: MouseEvent, a: HTMLAnchorElement): void {
+  e.preventDefault();
+  a.setAttribute("href", "#");
+}
+function filter(f: SVGFEFuncRElement, m: Comment, t: Text): string {
+  return f.tagName + m.data + t.data;
+}
+function list(root: Element): void {
+  root.querySelectorAll("li").forEach((li) => {
+    console.log(li.textContent?.length);
+  });
+}
+console.log(typeof onClick, typeof filter, typeof list);
+
+// `Node`'s constants, as a value: Node has no `Node`.
+function isElement(n: Node): boolean {
+  return n.nodeType === Node.ELEMENT_NODE;
+}
+report("Node.ELEMENT_NODE", () => console.log(Node.ELEMENT_NODE));
+report("in Node.prototype", () => console.log("moveBefore" in Node.prototype));
+console.log(typeof isElement);
+
+// A write through a browser global: the value isn't computed.
+function side(v: string): string {
+  console.log("computed", v);
+  return v;
+}
+report("document.title", () => {
+  document.title = side("x");
+});
+report("location.hash", () => {
+  window.location.hash = side("#top");
+});
+
+// `instanceof` of a `lib.dom` class: throws where Node has no such class, `false` where Node has
+// it (no value here is a `CustomEvent`). Where it holds, the variable has the tested type.
+function tagOf(n: Node | null): string {
+  if (n instanceof HTMLElement) {
+    n.focus();
+    return n.tagName;
+  }
+  return "not an element";
+}
+function detailOf(e: Event | null): unknown {
+  if (e instanceof CustomEvent) {
+    return e.detail;
+  }
+  return "no detail";
+}
+function closest(target: EventTarget | null): Element | null {
+  return target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+}
+report("instanceof HTMLElement", () => console.log(tagOf(null)));
+report("instanceof Element", () => console.log(closest(null) === null));
+console.log(detailOf(null));
+
+// Guards: the browser branch compiles, and never runs here.
+function mount(): string {
+  if (typeof window === "undefined") {
+    return "server";
+  }
+  document.addEventListener("click", (e) => {
+    console.log((e.target as HTMLElement).tagName);
+  });
+  window.addEventListener("resize", () => console.log(window.innerWidth));
+  return "browser";
+}
+console.log(mount());

@@ -1,0 +1,95 @@
+// What client code does with the generated `lib.dom` declarations (std/lang/dom): it compiles on
+// the server, where none of it runs.
+
+// Node methods with a type parameter (`appendChild<T extends Node>(node: T): T`) take a node made
+// by `document`, which reads as Node's `ReferenceError` here.
+function mount(parent: Element, dom: Node | null, el: HTMLElement | null): Node {
+  const comment = document.createComment("");
+  if (el && el.parentNode) {
+    el.parentNode.removeChild(el);
+  }
+  return dom ? parent.insertBefore(comment, dom) : parent.appendChild(comment);
+}
+
+// Nodes compared across the interfaces they extend.
+function skip(ph: Node | null, marker: Comment | null, parent: Node): Node | null {
+  let at = ph;
+  while (at && at !== marker && at.nodeType !== Node.ELEMENT_NODE) {
+    at = at.nextSibling;
+  }
+  return at !== null && at.parentNode === parent ? at : null;
+}
+
+// An element is a node (`Element` extends `Node` and, through `ChildNode` and `ParentNode`, again),
+// and `as` takes a node or an element to what extends it, as `tsc` allows.
+function asNode(e: Element): Node {
+  return e;
+}
+function htmlAsNode(e: HTMLElement): Node {
+  return e;
+}
+function heldAsNode(a: Element): Node {
+  const e: Element = a;
+  return e;
+}
+function anchorOf(e: HTMLElement): HTMLAnchorElement {
+  return e as HTMLAnchorElement;
+}
+function elementOf(n: Node): HTMLElement {
+  return n as HTMLElement;
+}
+// A base converts to an interface that adds no property of its own in `lib.dom`, as `tsc` relates
+// them by shape: `HTMLSpanElement` is an `HTMLElement`, and `Comment` and `Text` are both just
+// `CharacterData`.
+function audioOf(m: HTMLMediaElement): HTMLAudioElement {
+  return m;
+}
+function spanOf(e: HTMLElement): HTMLSpanElement {
+  return e;
+}
+function commentOf(t: Text): Comment {
+  return t;
+}
+
+// Collections index, iterate and convert like arrays.
+function selected(sel: HTMLSelectElement): string[] {
+  const options = sel.options;
+  for (let i = 0; i < options.length; i++) {
+    options[i].selected = options[i].value === "a";
+  }
+  for (const o of sel.selectedOptions) {
+    console.log(o.value);
+  }
+  return Array.from(sel.selectedOptions).map((o) => o.value);
+}
+
+// A listener may throw, as any JavaScript function may.
+function wire(dom: Element): void {
+  const handler = (e: Event): void => {
+    if (e.type === "x") throw new Error("bad");
+  };
+  dom.addEventListener("input", handler);
+  dom.removeEventListener("input", handler);
+}
+
+// A method's optional parameter inherited from a base (`scrollIntoView(arg?)` of `Element`), called
+// in a module constant's initializer.
+function component(setup: (n: number) => () => string): string {
+  return setup(1)();
+}
+const rendered = component((n) => {
+  const toggle = (el: HTMLDivElement, key: string): void => {
+    el.scrollIntoView();
+    el.style.setProperty(key, String(n));
+  };
+  return () => typeof toggle;
+});
+
+console.log(typeof asNode, typeof htmlAsNode, typeof heldAsNode, typeof anchorOf, typeof elementOf);
+console.log(typeof audioOf, typeof spanOf, typeof commentOf);
+console.log(typeof mount, typeof skip, typeof selected, typeof wire, rendered);
+try {
+  console.log(document.createComment("x").appendChild(document.createTextNode("y")));
+} catch (e) {
+  console.log(e instanceof ReferenceError, (e as Error).message);
+}

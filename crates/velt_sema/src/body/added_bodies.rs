@@ -11,6 +11,9 @@ pub(super) fn check_bodies_from(cx: &mut Ctx, from: u32) {
     for &d in &all {
         super::driver::field_defaults(cx, d);
     }
+    // Interface methods' defaults before a module constant's initializer may call one
+    // (`const P = wrap(() => el.scrollIntoView())`, `arg?` inherited from `Element`).
+    super::defaults::iface_defaults(cx, from);
     for &d in &all {
         if cx.global(d).is_some() && !super::lazy_std::deferred(cx, d) {
             super::ensure_global(cx, d);
@@ -20,7 +23,6 @@ pub(super) fn check_bodies_from(cx: &mut Ctx, from: u32) {
     for &d in &fns {
         super::defaults::param_defaults(cx, d);
     }
-    super::defaults::iface_defaults(cx, from);
     super::literal_hosts::ensure_all(cx);
     for d in fns {
         if !super::lazy_std::deferred(cx, d) {
