@@ -1,0 +1,21 @@
+// `?.` tested as a condition on a slot that holds `null` through `null!` (#2350): the chain is
+// `undefined`, so `if`, `!`, a ternary's test and a `while` with `&&` see a falsy value, as in Node.
+class Foo {
+  v = 1;
+  ok = true;
+}
+let f: Foo = null!;
+if (f?.v) console.log("then");
+else console.log("else");
+console.log(!f?.v, !f?.ok);
+console.log(f?.v ? "y" : "n");
+let i = 0;
+while (f?.v && i < 3) i++;
+console.log(i);
+f = new Foo();
+if (f?.v) console.log("then");
+else console.log("else");
+console.log(!f?.v, f?.v ? "y" : "n");
+i = 0;
+while (f?.ok && i < 3) i++;
+console.log(i);

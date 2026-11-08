@@ -1,4 +1,6 @@
-// `?.` on a slot that holds `null` through `null!`: `undefined`, as in Node.
+// `?.` on a slot that holds `null` through `null!`: `undefined`, as in Node, where the value is
+// expected as a type with `undefined` (or dynamic) and where only its truthiness is tested. With
+// nothing expected `f?.v` keeps `f.v`'s type, as in TypeScript (nothing_slot_chain_typed.velt).
 type Title = { title: string };
 class Foo {
   v = 1;
@@ -8,17 +10,25 @@ class Foo {
 }
 const a: Title = null as any;
 const f: Foo = null!;
-console.log(a?.title, f?.v, f?.m());
+const t1: string | undefined = a?.title;
+const v1: number | undefined = f?.v;
+const m1: number | undefined = f?.m();
+const d1: any = f?.v;
+console.log(t1, v1, m1, d1);
 const asOpt: Title | null = a;
-console.log(asOpt?.title);
+const t2: string | undefined = asOpt?.title;
+console.log(t2);
 const real: Title = { title: "t" };
 const realOpt: Title | null = real;
-console.log(real?.title, realOpt?.title, new Foo()?.m());
+const t3: string | undefined = real?.title;
+const t4: string | undefined = realOpt?.title;
+const m2: number | undefined = new Foo()?.m();
+console.log(t3, t4, m2);
 function get(t: Title): string | undefined {
   return t?.title;
 }
 console.log(get(a), get(real));
-function t(f: Foo): number | undefined {
-  return f?.m();
+function call(x: Foo): number | undefined {
+  return x?.m();
 }
-console.log(t(new Foo()), t(null!));
+console.log(call(new Foo()), call(null!));
