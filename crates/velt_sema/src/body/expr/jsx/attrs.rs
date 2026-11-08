@@ -131,7 +131,7 @@ impl FnCx<'_, '_> {
         if tag.contains('-') || tag.contains(':') {
             return Ok(None);
         }
-        let Some((d, tags)) = self.object_fields(p.intrinsics) else {
+        let Some((d, tags)) = self.attr_fields(p.intrinsics) else {
             self.cx.err(
                 format!(
                     "`JSX.IntrinsicElements` of the JSX provider '{}' must be an object type",
@@ -147,7 +147,7 @@ impl FnCx<'_, '_> {
             return Err(());
         };
         self.cx.rec_ref(span, Target::Field(d, i as u32));
-        let Some((def, fields)) = self.object_fields(tags[i].1) else {
+        let Some((def, fields)) = self.attr_fields(tags[i].1) else {
             self.cx.err(
                 format!("`JSX.IntrinsicElements[\"{tag}\"]` must be an object type of attributes"),
                 span,

@@ -106,15 +106,17 @@ fn is_field_only(
     field_only
 }
 
-/// The interface an `extends` entry names, when it is a plain (one-segment) name.
+/// The interface an `extends` entry names: a plain name, or a path (`ns.T`; in a namespace a
+/// member's written `T` is `N.T`, `crate::namespaces`).
 fn parent_iface(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> Option<DefId> {
     let ast::TypeExprKind::Named { path, .. } = &t.kind else {
         return None;
     };
-    let [name] = path.as_slice() else {
-        return None;
+    let item = match path.as_slice() {
+        [name] => cx.lookup_type_item_at(module, &name.name, name.span)?,
+        _ => cx.lookup_path_at(module, path, t.span)?,
     };
-    match cx.lookup_type_item_at(module, &name.name, name.span)? {
+    match item {
         Item::Def(p) if cx.iface(p).is_some() => Some(p),
         _ => None,
     }

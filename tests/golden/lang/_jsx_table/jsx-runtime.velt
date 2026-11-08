@@ -1,0 +1,45 @@
+// An automatic runtime whose `JSX.IntrinsicElements` entries are interfaces with `extends`:
+// generics, several bases, an empty base, methods, aliases and utility types of them.
+export namespace JSX {
+  export type Element = string;
+  export interface IntrinsicAttributes { key?: string }
+  interface Ev { onClick?: (e: string) => void; }
+  interface Id { id?: string; }
+  interface Empty {}
+  interface E extends Ev { h?: string }
+  interface Two extends Ev, Id { w?: number }
+  interface Gen<T> { value?: T; on?: (v: T) => void; }
+  interface GenE<T = string> extends Gen<T>, Empty { tag?: T }
+  interface Chain extends GenE<number> { last?: boolean; key?: string }
+  interface Req extends Id { need: string }
+  interface ReqE extends Req { more?: string }
+  interface Meth extends Ev { go(x: number): string; opt?(s: string): void; }
+  interface MethE extends Meth { other?: string }
+  type Alias = Two;
+  export interface Base { base: Id }
+  export interface IntrinsicElements extends Base {
+    a: E;
+    b: Ev;
+    c: Two;
+    d: GenE;
+    e: GenE<number>;
+    f: Chain;
+    g: ReqE;
+    h: Meth;
+    i: MethE;
+    j: Alias;
+    k: Two & { extra?: string };
+    l: Partial<ReqE>;
+    m: Omit<Two, "w">;
+    n: Empty;
+    o: GenE<string[]>;
+  }
+}
+
+export function jsx(t: any, p: Record<string, any>, k?: string): string {
+  const name = typeof t === "string" ? t : "component";
+  const keys = Object.keys(p).sort().map((x) => x + "=" + typeof p[x]);
+  return name + "(" + keys.join(",") + ")" + (k === undefined ? "" : "#" + k);
+}
+export const jsxs = jsx;
+export const Fragment = "F";
