@@ -189,17 +189,30 @@ pub(crate) fn compile_with_zig(
     std::fs::read(&output).map_err(|e| format!("codegen: zig cc wrote no object: {e}"))
 }
 
-/// A directory of one zig compile's own, removed when dropped: units compile in parallel.
+/// A directory of one zig compile's own, removed when dropped: units compile in parallel. It is
+/// always a new one: a name already taken (left by a crash, another process with this id, or
+/// put there by someone else) is passed over, never written into.
 struct ZigDir(PathBuf);
+
+/// The number in the next zig directory's name.
+static NEXT_ZIG_DIR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl ZigDir {
     fn new() -> CodegenResult<ZigDir> {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("velt-wasm-{}-{n}", std::process::id()));
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("codegen: cannot make a directory for zig: {e}"))?;
-        Ok(ZigDir(dir))
+        let temp = std::env::temp_dir();
+        for _ in 0..100 {
+            let n = NEXT_ZIG_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = temp.join(format!("velt-wasm-{}-{n}", std::process::id()));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return Ok(ZigDir(dir)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => bail!("codegen: cannot make a directory for zig: {e}"),
+            }
+        }
+        bail!(
+            "codegen: cannot make a directory for zig in {}",
+            temp.display()
+        )
     }
 }
 
@@ -212,6 +225,28 @@ impl Drop for ZigDir {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A name already taken is passed over, and what is there is left alone.
+    #[test]
+    fn zig_directories_are_new() {
+        let next = NEXT_ZIG_DIR.load(std::sync::atomic::Ordering::Relaxed);
+        let temp = std::env::temp_dir();
+        // Only the names this test makes are its own: tests compiling through zig run beside it.
+        let taken: Vec<PathBuf> = (next..next + 3)
+            .map(|n| temp.join(format!("velt-wasm-{}-{n}", std::process::id())))
+            .filter(|dir| std::fs::create_dir(dir).is_ok())
+            .collect();
+        for dir in &taken {
+            std::fs::write(dir.join("theirs"), "x").unwrap();
+        }
+        let dir = ZigDir::new().unwrap();
+        assert!(!taken.contains(&dir.0), "{}", dir.0.display());
+        assert!(std::fs::read_dir(&dir.0).unwrap().next().is_none());
+        for t in &taken {
+            assert!(t.join("theirs").is_file());
+            let _ = std::fs::remove_dir_all(t);
+        }
+    }
 
     #[test]
     fn version_banner() {
