@@ -17,23 +17,24 @@ use std::sync::Mutex;
 
 /// Programs that differ with and without variables, or take more rounds with them, before
 /// #2590 too (function types written without `throws`): #2602. Each with how it differs (what
-/// [`differs`] says), which the test checks.
+/// [`differs`] says: the first line that differs and a hash of all of them, or the rounds),
+/// which the test checks.
 const KNOWN: &[(&str, &str)] = &[
     (
         "golden/bugs/lower_adapted_closure_kept.velt",
-        "with variables: agg#13 callsIt state size=64 align=8 { u32@16, agg#1@24, agg#5@40, ptr@56, u64@56 }\n  without: agg#13 callsIt state size=48 align=8 { u32@8, agg#1@16, ptr@32, i64@40, u64@32 }",
+        "with variables: agg#13 callsIt state size=64 align=8 { u32@16, agg#1@24, agg#5@40, ptr@56, u64@56 }\n  without: agg#13 callsIt state size=48 align=8 { u32@8, agg#1@16, ptr@32, i64@40, u64@32 }\n  all of it: 42be0e89a1c2672c",
     ),
     (
         "golden/lang/any_fn_members.velt",
-        "with variables:   let _2: agg#41 // <copy>\n  without:   let _2: agg#1",
+        "with variables:   let _2: agg#41 // <copy>\n  without:   let _2: agg#1\n  all of it: 8d3979df8fe21cbf",
     ),
     (
         "golden/lang/ctor_value_identity.velt",
-        "with variables: agg#5  new (f64) => A } size=8 align=8 { ptr@0 }\n  without: agg#5  Ctor } size=8 align=8 { ptr@0 }",
+        "with variables: agg#5  new (f64) => A } size=8 align=8 { ptr@0 }\n  without: agg#5  Ctor } size=8 align=8 { ptr@0 }\n  all of it: f8029a9fafa04fcf",
     ),
     (
         "golden/lang/ctor_values.velt",
-        "with variables: agg#1 T[] size=24 align=8 { ptr@0, u64@8, u64@16 }\n  without: agg#1 Result<void, std/prelude/errors::RangeError>::Ok size=1 align=1 { u8@0 }",
+        "with variables: agg#1 T[] size=24 align=8 { ptr@0, u64@8, u64@16 }\n  without: agg#1 Result<void, std/prelude/errors::RangeError>::Ok size=1 align=1 { u8@0 }\n  all of it: 9cfe538fccad62a3",
     ),
     (
         "golden/lang/generator_expression_captures.velt",
@@ -49,7 +50,7 @@ const KNOWN: &[(&str, &str)] = &[
     ),
     (
         "golden/lang/overloads_more.velt",
-        "with variables: fn#27 internal _Gthunk_env__V4mainN17_7bclosure_232_7d(ptr, f64, i64) -> f64 {\n  without: fn#27 internal _Gthunk_env__V4mainN17_7bclosure_231_7d(ptr, f64, i64) -> f64 {",
+        "with variables: fn#27 internal _Gthunk_env__V4mainN17_7bclosure_232_7d(ptr, f64, i64) -> f64 {\n  without: fn#27 internal _Gthunk_env__V4mainN17_7bclosure_231_7d(ptr, f64, i64) -> f64 {\n  all of it: b01c72431f3a6cbe",
     ),
     (
         "golden/lang/promise_settled_borrowed_values.velt",
@@ -65,15 +66,22 @@ const KNOWN: &[(&str, &str)] = &[
     ),
     (
         "golden/lang/throws_fn_type_values.velt",
-        "with variables: agg#24 run::{closure#1} env size=24 align=8 { ptr@0, ptr@8, ptr@16 }\n  without: agg#24 Result<f64, std/prelude/errors::Error>::Ok size=16 align=8 { u8@0, f64@8 }",
+        "with variables: agg#24 run::{closure#1} env size=24 align=8 { ptr@0, ptr@8, ptr@16 }\n  without: agg#24 Result<f64, std/prelude/errors::Error>::Ok size=16 align=8 { u8@0, f64@8 }\n  all of it: f842dd729f7cd67c",
     ),
     (
         "golden/std/catch_panic.velt",
-        "with variables: agg#2 Error | Refused | PanicError::Error size=16 align=8 { u32@0, ptr@8 }\n  without: agg#2 Error | PanicError::Error size=16 align=8 { u32@0, ptr@8 }",
+        "with variables: agg#2 Error | Refused | PanicError::Error size=16 align=8 { u32@0, ptr@8 }\n  without: agg#2 Error | PanicError::Error size=16 align=8 { u32@0, ptr@8 }\n  all of it: 91601886c86ba998",
     ),
     (
         "golden/std/throws_fn_type_revivers.velt",
-        "with variables: agg#4 RegExpError | UrlError::RegExpError size=16 align=8 { u32@0, ptr@8 }\n  without: agg#4 UrlError | RegExpError::UrlError size=16 align=8 { u32@0, ptr@8 }",
+        "with variables: agg#4 RegExpError | UrlError::RegExpError size=16 align=8 { u32@0, ptr@8 }\n  without: agg#4 UrlError | RegExpError::UrlError size=16 align=8 { u32@0, ptr@8 }\n  all of it: 2a8cccb3ab483b66",
+    ),
+    // A module-level value stored where its type is written (#2604's follow-up, merged with
+    // it after these variables were built): one round more with variables than without, to be
+    // looked at.
+    (
+        "golden/lang/promise_site_global_values.velt",
+        "4 rounds with variables, 3 without",
     ),
     // No promise: `const b: G = a` makes the sets of `F` and `G` one with variables, so the
     // `catch` around `a(1)` may catch an `E2`; without them `F`'s set is `E1` alone, and the
@@ -86,7 +94,7 @@ const KNOWN: &[(&str, &str)] = &[
     // before #2590 too: #2603.
     (
         "site_vars_identity/review_sp5.velt",
-        "with variables: agg#4 main state size=56 align=8 { u32@0, agg#3@8, agg#1@32, ptr@48 }\n  without: agg#4 Result<void, E1>::Ok size=1 align=1 { u8@0 }",
+        "with variables: agg#4 main state size=56 align=8 { u32@0, agg#3@8, agg#1@32, ptr@48 }\n  without: agg#4 Result<void, E1>::Ok size=1 align=1 { u8@0 }\n  all of it: 2802e16ac7876879",
     ),
 ];
 
@@ -164,6 +172,24 @@ fn vir(file: &Path, home: &Path, vars: bool) -> (bool, String, usize) {
     (out.status.success(), text, rounds)
 }
 
+/// A hash of every line that differs between `a` and `b` (line by line, and the lines one has
+/// beyond the other): [`KNOWN`] records it, so a known program that differs otherwise fails.
+fn difference(a: &str, b: &str) -> u64 {
+    let (a, b): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for i in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(i).copied(), b.get(i).copied());
+        if x == y {
+            continue;
+        }
+        let line = format!("{i}\0{}\0{}\n", x.unwrap_or("\u{1}"), y.unwrap_or("\u{1}"));
+        hash = line.bytes().fold(hash, |h, c| {
+            (h ^ u64::from(c)).wrapping_mul(0x0100_0000_01b3)
+        });
+    }
+    hash
+}
+
 /// How `file` differs with and without variables, if it does.
 fn differs(file: &Path, home: &Path, built: &AtomicUsize) -> Option<String> {
     let (vars_ok, with, rounds) = vir(file, home, true);
@@ -178,10 +204,14 @@ fn differs(file: &Path, home: &Path, built: &AtomicUsize) -> Option<String> {
     }
     if with != without {
         let found = with.lines().zip(without.lines()).find(|(x, y)| x != y);
-        return Some(match found {
+        let first = match found {
             Some((x, y)) => format!("with variables: {x}\n  without: {y}"),
             None => "one is longer".into(),
-        });
+        };
+        return Some(format!(
+            "{first}\n  all of it: {:016x}",
+            difference(&with, &without)
+        ));
     }
     (vars_ok && rounds > plain_rounds)
         .then(|| format!("{rounds} rounds with variables, {plain_rounds} without"))
