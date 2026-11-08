@@ -1,0 +1,3 @@
+// Global (loaded when a module names one of these): Node's `sessionStorage`
+// (https://veltlang.com/docs/reference/globals/).
+export { Storage, sessionStorage } from "velt/lang/storage";

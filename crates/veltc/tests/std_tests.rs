@@ -120,3 +120,16 @@ fn std_modules_pass_their_tests() {
     });
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+#[test]
+fn navigator_names_this_toolchain_version() {
+    // `navigator.userAgent` is `"Velt/<version>"`, written in std (it has no other source of the
+    // version): a release that bumps the version updates it here.
+    let src = std::fs::read_to_string(root().join("std/lang/navigator/navigator.velt"))
+        .expect("navigator.velt");
+    let ua = format!("return \"Velt/{}\";", env!("CARGO_PKG_VERSION"));
+    assert!(
+        src.contains(&ua),
+        "std/lang/navigator/navigator.velt: expected `{ua}`"
+    );
+}

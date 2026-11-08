@@ -1,0 +1,2 @@
+// velt/lang/navigator: Node's `navigator` global (internal; std/prelude/global/navigator.velt).
+export { Navigator, navigator } from "./navigator";

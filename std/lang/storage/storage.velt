@@ -1,0 +1,91 @@
+// velt/lang/storage (internal): Node's `sessionStorage` global, the Web Storage API kept in memory
+// (https://veltlang.com/docs/reference/globals/).
+
+/**
+ * Node's `Storage`: string values by string keys, kept in memory for the life of the process.
+ * `key(i)` and the order of the keys are Node's: by the bytes of each key in UTF-16LE (as SQLite
+ * orders the blobs Node keeps them in). `sessionStorage` is
+ * the one instance: one per process, shared by every task and thread (Node has one per worker
+ * thread). Items are reached with the methods; reading or writing one as a property
+ * (`sessionStorage.theme`) is not supported.
+ */
+export class Storage {
+  private items: Map<string, string> = new Map();
+  /** The keys, sorted, while no item was added or removed since they were sorted. */
+  private sorted: string[] | null = null;
+
+  /** How many items there are. */
+  get length(): number {
+    return this.items.size as number;
+  }
+
+  /**
+   * The `index`th key in order, or `null` past the last. `index` converts as Web IDL's
+   * `unsigned long` does: truncated, modulo 2^32, `NaN` as 0 (`key(1.5)` is `key(1)`).
+   */
+  key(index: number): string | null {
+    const keys = this.keys();
+    let i = index === index && index !== Infinity && index !== -Infinity ? Math.trunc(index) : 0;
+    i = i % 4294967296;
+    if (i < 0) {
+      i += 4294967296;
+    }
+    if (i >= (keys.length as number)) {
+      return null;
+    }
+    return keys[i as usize];
+  }
+
+  /** The value of `key`, or `null` when there is none. */
+  getItem(key: string): string | null {
+    return this.items.get(key) ?? null;
+  }
+
+  /** Sets the value of `key`. */
+  setItem(key: string, value: string): void {
+    if (!this.items.has(key)) {
+      this.sorted = null;
+    }
+    this.items.set(key, value);
+  }
+
+  /** Removes `key` and its value, if there is one. */
+  removeItem(key: string): void {
+    if (this.items.delete(key)) {
+      this.sorted = null;
+    }
+  }
+
+  /** Removes every item. */
+  clear(): void {
+    this.items.clear();
+    this.sorted = null;
+  }
+
+  private keys(): string[] {
+    const known = this.sorted;
+    if (known !== null) {
+      return known;
+    }
+    const keys = Array.from(this.items.keys()).sort(utf16leOrder);
+    this.sorted = keys;
+    return keys;
+  }
+}
+
+/** The order of `a` and `b` by their bytes in UTF-16LE: each code unit's low byte, then high. */
+function utf16leOrder(a: string, b: string): number {
+  const n = a.length < b.length ? a.length : b.length;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a.charCodeAt(i as i64);
+    const y = b.charCodeAt(i as i64);
+    if (x != y) {
+      const lo = (x & 0xff) - (y & 0xff);
+      return (lo != 0 ? lo : (x >> 8) - (y >> 8)) as number;
+    }
+  }
+  return a.length < b.length ? -1 : a.length > b.length ? 1 : 0;
+}
+
+/** Node's `sessionStorage`. */
+export let sessionStorage: Storage = new Storage();

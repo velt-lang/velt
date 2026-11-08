@@ -1,0 +1,3 @@
+// Global (loaded when a module names one of these): Node's `navigator`
+// (https://veltlang.com/docs/reference/globals/).
+export { Navigator, navigator } from "velt/lang/navigator";

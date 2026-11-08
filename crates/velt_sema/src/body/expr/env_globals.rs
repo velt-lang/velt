@@ -27,7 +27,7 @@ use crate::type_meanings::Meaning;
 /// The globals of other environments that Node 22 doesn't have in an ES module: the browser's
 /// (TypeScript's `lib.dom`), other runtimes' (`Deno`, `Bun`) and CommonJS's (`require`,
 /// `__dirname`). `typeof` is `"undefined"`, and reading one throws a `ReferenceError`.
-const ABSENT: [&str; 30] = [
+const ABSENT: [&str; 29] = [
     "require",
     "module",
     "exports",
@@ -42,7 +42,6 @@ const ABSENT: [&str; 30] = [
     "history",
     "screen",
     "localStorage",
-    "sessionStorage",
     "customElements",
     "requestAnimationFrame",
     "cancelAnimationFrame",
@@ -62,7 +61,7 @@ const ABSENT: [&str; 30] = [
 
 /// Node 22's own globals and what `typeof` gives for them, for names Velt may not have as values
 /// (`typeof process`, `typeof navigator`).
-pub(crate) const NODE_GLOBALS: [(&str, &str); 53] = [
+pub(crate) const NODE_GLOBALS: [(&str, &str); 54] = [
     ("globalThis", "object"),
     ("global", "object"),
     ("process", "object"),
@@ -71,6 +70,7 @@ pub(crate) const NODE_GLOBALS: [(&str, &str); 53] = [
     ("JSON", "object"),
     ("Reflect", "object"),
     ("navigator", "object"),
+    ("sessionStorage", "object"),
     ("performance", "object"),
     ("crypto", "object"),
     ("Object", "function"),
