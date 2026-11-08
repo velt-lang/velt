@@ -77,14 +77,16 @@ impl Ctx<'_> {
             let shown: Vec<&str> = e.variants.iter().map(|v| v.name.as_str()).collect();
             let named =
                 (e.name != shown.join(" | ")).then(|| (e.name.clone(), e.qual_name.clone()));
-            self.reorder_union_def(d, &payloads);
+            let names = self.distinct_names(&payloads);
             let DefInfo::Enum(e) = &mut self.info[i] else {
                 continue;
             };
-            if let Some((name, qual)) = named {
-                e.name = name;
-                e.qual_name = qual;
+            for (v, n) in e.variants.iter_mut().zip(&names) {
+                v.name.clone_from(n);
             }
+            let (name, qual) = named.unwrap_or_else(|| (names.join(" | "), names.join(" | ")));
+            e.name = name;
+            e.qual_name = qual;
             let (name, names): (String, Vec<String>) = (
                 e.qual_name.clone(),
                 e.variants.iter().map(|v| v.name.clone()).collect(),
@@ -94,6 +96,51 @@ impl Ctx<'_> {
                     v.name = n;
                 }
                 h.name = name;
+            }
+        }
+    }
+
+    /// The names of a union's members `ts`: each as shown, but members that would be shown
+    /// alike (`(i64) => i64` for two function types that throw different sets) are shown with
+    /// their error types (solved), so the union's variants keep distinct names.
+    fn distinct_names(&mut self, ts: &[TyId]) -> Vec<String> {
+        let mut names: Vec<String> = ts.iter().map(|t| self.display(*t)).collect();
+        let alike: Vec<usize> = (0..names.len())
+            .filter(|&i| names.iter().filter(|n| **n == names[i]).count() > 1)
+            .collect();
+        if !alike.is_empty() {
+            let shown = std::mem::take(&mut self.ty.inferred_fns);
+            for i in alike {
+                // With variables, the solved type: one with them shows them as nothing.
+                let t = self.solved_type(ts[i]);
+                names[i] = self.display(t);
+            }
+            self.ty.inferred_fns = shown;
+        }
+        names
+    }
+
+    /// Debug builds (the goldens) check that no union lowering sees has two variants of one
+    /// name, which its layouts are named by ([`Ctx::distinct_names`]).
+    pub(crate) fn debug_distinct_variants(&self) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+        for (i, d) in self.defs.iter().enumerate() {
+            let Some(crate::hir::Def::Enum(h)) = d else {
+                continue;
+            };
+            let d = crate::hir::DefId(i as u32);
+            // A union with variables is replaced by its solved form (`crate::union_layouts`).
+            let union =
+                self.enum_info(d).is_some_and(|e| e.is_union) && !self.replaced_unions.contains(&d);
+            for (j, v) in h.variants.iter().enumerate().filter(|_| union) {
+                let again = h.variants[..j].iter().any(|w| w.name == v.name);
+                assert!(
+                    !again,
+                    "ICE: union `{}` has two variants named `{}`",
+                    h.name, v.name
+                );
             }
         }
     }

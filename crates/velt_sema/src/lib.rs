@@ -488,6 +488,7 @@ fn check_timed(
     let hooks_demanded = body::lazy_std::hooks_demanded(&cx);
     layout_merge::merge(&mut cx);
     let type_names = readonly::erase(&mut cx, &mut generated);
+    cx.debug_distinct_variants();
     let module_state = module_state::build(&mut cx, entry);
     let type_ops = type_level::lowered_ops(&mut cx);
     let anon_shapes = anon::concrete_shapes(&cx);

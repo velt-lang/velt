@@ -1,0 +1,28 @@
+class E1 extends Error {}
+
+class E2 extends Error {
+  code: i64 = 7;
+}
+
+type F = (x: i64) => i64;
+type K = (x: i64) => i64;
+type Both = F | K | string;
+
+function main() {
+  const f: F = (x: i64) => {
+    if (x < 0) {
+      throw new E1("neg");
+    }
+    return x * 2;
+  };
+  const k: K = (x: i64) => {
+    if (x < 0) {
+      throw new E2("neg");
+    }
+    return x * 3;
+  };
+  const arr: Both[] = [f, k, "s"];
+  for (const a of arr) {
+    console.log(typeof a);
+  }
+}
