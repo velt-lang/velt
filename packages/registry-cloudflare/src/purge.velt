@@ -1,5 +1,0 @@
-// registry-cloudflare (internal): the host function of the module `registry-cloudflare`, whose
-// JavaScript is src/purge.mjs.
-
-/** Purges `paths` (JSON: an array of paths) from Cloudflare's cache. */
-export declare host("registry-cloudflare") async function purgePaths(paths: string): Promise<void>;

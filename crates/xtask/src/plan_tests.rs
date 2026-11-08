@@ -176,7 +176,6 @@ fn a_tooling_crate_runs_veltc_unit_tests_and_its_binaries_only() {
         Veltc::Some(set(&[
             "cloudflare",
             "playground",
-            "registry_worker",
             "wasm_goldens",
             "workerd",
             "workers"

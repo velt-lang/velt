@@ -158,8 +158,12 @@ const WINDOWS_PACKAGE_TESTS: &[&str] = &[
 
 /// The packages whose tests a pull request runs on Windows (`VELT_PACKAGES` of veltc's `packages`
 /// test): `""` for none, `"all"`, or their names separated by `,`. `skip` are files where only
-/// comments changed.
-pub fn windows_packages(paths: &[String], skip: &std::collections::BTreeSet<String>) -> String {
+/// comments changed; `exists` says whether a package is still there (a change may delete one).
+pub fn windows_packages(
+    paths: &[String],
+    skip: &std::collections::BTreeSet<String>,
+    exists: impl Fn(&str) -> bool,
+) -> String {
     let mut names = std::collections::BTreeSet::new();
     for path in paths.iter().filter(|p| !skip.contains(*p)) {
         if WINDOWS_PACKAGE_TESTS.iter().any(|p| path.starts_with(p)) {
@@ -169,8 +173,8 @@ pub fn windows_packages(paths: &[String], skip: &std::collections::BTreeSet<Stri
             .strip_prefix("packages/")
             .and_then(|r| r.split_once('/'))
         {
-            // Documentation alone changes no test.
-            if !rest.ends_with(".md") {
+            // Documentation alone changes no test, and a deleted package has none.
+            if !rest.ends_with(".md") && exists(name) {
                 names.insert(name.to_string());
             }
         }
@@ -265,7 +269,7 @@ mod tests {
         let none = std::collections::BTreeSet::new();
         let p = |paths: &[&str]| {
             let paths: Vec<String> = paths.iter().map(|s| s.to_string()).collect();
-            windows_packages(&paths, &none)
+            windows_packages(&paths, &none, |name| name != "gone")
         };
         assert_eq!(p(&["crates/velt_sema/src/lib.rs", "docs/std/net.md"]), "");
         assert_eq!(p(&["packages/http-server/README.md"]), "");
@@ -276,6 +280,11 @@ mod tests {
             ]),
             "http-server,sqlite"
         );
+        // A change that deletes a package leaves nothing of it to test.
+        assert_eq!(
+            p(&["packages/gone/package.velt", "packages/gone/src/a.velt"]),
+            ""
+        );
         for every in [
             "std/net/tcp_stream.velt",
             "std/test/run.velt",
@@ -285,7 +294,10 @@ mod tests {
             assert_eq!(p(&["packages/sqlite/src/db.velt", every]), "all", "{every}");
         }
         let skip = std::collections::BTreeSet::from(["std/net/listen.velt".to_string()]);
-        assert_eq!(windows_packages(&["std/net/listen.velt".into()], &skip), "");
+        assert_eq!(
+            windows_packages(&["std/net/listen.velt".into()], &skip, |_| true),
+            ""
+        );
     }
 
     #[test]
