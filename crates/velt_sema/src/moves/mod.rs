@@ -12,6 +12,7 @@
 mod elements;
 mod expr;
 mod loops;
+mod per_fn;
 mod state;
 mod tries;
 
@@ -26,6 +27,7 @@ use crate::hir::{
     UseMode,
 };
 use loops::LoopFlow;
+use per_fn::{check_fn, FnInput, Tables};
 use state::{join, Flow, MoveKind, State};
 
 struct Moves<'a> {
@@ -161,110 +163,66 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         ..Outcome::default()
     };
     let mut unshared = vec![];
-    for (i, d) in cx.defs.iter().enumerate() {
-        let Some(Def::Fn(f)) = d else { continue };
-        let def = DefId(i as u32);
-        let soft = cx
-            .try_fn(def)
-            .map(|info| info.soft_moves.iter().copied().collect())
-            .unwrap_or_default();
-        let using = cx
-            .try_fn(def)
-            .map(|info| {
-                let kinds = &info.local_kinds;
-                kinds.iter().map(|k| *k == LocalKind::Using).collect()
+    // What each function's check reads of the `Ctx`, gathered here: the checks themselves run
+    // on several threads (`crate::par`) and only read the HIR and these tables.
+    let held = |c: DefId| cx.try_fn(c).is_some_and(|i| !i.escaping);
+    let mut weight = 0;
+    let inputs: Vec<FnInput> = (cx.defs.iter().enumerate())
+        .filter_map(|(i, d)| {
+            let Some(Def::Fn(f)) = d else { return None };
+            let def = DefId(i as u32);
+            let info = cx.try_fn(def);
+            weight += f.body.locals.len() + f.body.block.stmts.len();
+            Some(FnInput {
+                def,
+                f,
+                soft: info
+                    .map(|info| info.soft_moves.iter().copied().collect())
+                    .unwrap_or_default(),
+                using: info
+                    .map(|info| {
+                        let kinds = &info.local_kinds;
+                        kinds.iter().map(|k| *k == LocalKind::Using).collect()
+                    })
+                    .unwrap_or_default(),
+                held: crate::ownership::held_closures_by(&f.body.block, held),
+                late: (f.body.locals.iter())
+                    .map(|l| cx.late_consts.contains(&l.span))
+                    .collect(),
             })
-            .unwrap_or_default();
-        let mut m = Moves {
-            locals: &f.body.locals,
-            using,
-            captures: &captures,
-            escaping: &escaping,
-            held: crate::ownership::held_closures(cx, &f.body.block),
-            in_step: false,
-            holder: None,
-            open: vec![],
-            never,
-            boxable: shared[i]
-                .iter()
-                .zip(&copy[i])
-                .enumerate()
-                .map(|(l, (s, c))| {
-                    (*s || *c) && !async_captured.contains(&(def, LocalId(l as u32)))
-                })
-                .collect(),
-            threaded: (0..f.body.locals.len())
-                .map(|l| async_captured.contains(&(def, LocalId(l as u32))))
-                .collect(),
-            nested: vec![],
-            shared: shared[i].clone(),
-            promise: promise[i].clone(),
-            writers: &writers,
-            generators: &generators,
-            boxed: FxHashSet::default(),
-            own_captures: match f.is_async && !f.is_generator && !f.shares_captures {
-                true => FxHashSet::default(),
-                false => f.captures.iter().map(|c| c.inner).collect(),
-            },
-            tries: vec![],
-            late: (f.body.locals.iter())
-                .map(|l| cx.late_consts.contains(&l.span))
-                .collect(),
-            capturing: false,
-            late_reported: FxHashSet::default(),
-            report: false,
-            errors: vec![],
-            loops: vec![],
-            soft,
-            reused: FxHashSet::default(),
-        };
-        // A silent pass first (only bodies creating an escaping closure can need a cell): a
-        // variable found to need a shared cell late in the body is no move error earlier either.
-        if creates_escaping(&f.body.block, &escaping) {
-            m.report = false;
-            m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
-        }
-        m.report = true;
-        m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
-        // A `for (let …)` variable cannot be one cell (each iteration has its own, copied into
-        // the next one): when it needs one only because a closure created inside an escaping
-        // closure assigns it, and not anyway, it is an error.
-        let mut cannot: Vec<LocalId> = m
-            .boxed
-            .iter()
-            .copied()
-            .filter(|l| nested_only.contains(l) && out.per_iteration.contains(&(def, *l)))
-            .collect();
-        // In declaration order, not the hash set's: the errors come in that order.
-        cannot.sort_unstable();
-        if !cannot.is_empty() {
-            let (boxed, errors, reused) = (m.boxed.clone(), m.errors.len(), m.reused.clone());
-            m.writers = &own_writers;
-            m.report = false;
-            m.boxed.clear();
-            m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
-            m.block(&f.body.block, &mut Some(State::new(f.body.locals.len())));
-            let anyway = std::mem::replace(&mut m.boxed, boxed);
-            m.errors.truncate(errors);
-            m.reused = reused;
-            m.writers = &writers;
-            for l in cannot.into_iter().filter(|l| !anyway.contains(l)) {
-                m.boxed.remove(&l);
-                unshared.push((def, l));
-            }
-        }
-        all.extend(m.errors);
+        })
+        .collect();
+    let shared_tables = Tables {
+        captures: &captures,
+        escaping: &escaping,
+        writers: &writers,
+        own_writers: &own_writers,
+        generators: &generators,
+        nested_only: &nested_only,
+        per_iteration: &out.per_iteration,
+        async_captured: &async_captured,
+        shared: &shared,
+        copy: &copy,
+        promise: &promise,
+        never,
+    };
+    let checked = crate::par::map(&inputs, weight, |input| check_fn(&shared_tables, input));
+    for (input, c) in inputs.iter().zip(checked) {
+        let def = input.def;
+        all.extend(c.errors);
+        unshared.extend(c.unshared.into_iter().map(|l| (def, l)));
         // The closure that captured the variable is reported for it: its creator's use of the
         // variable after moving it into the closure is no second error.
-        let closure = cx.def_spans.get(i).copied();
-        nested.extend(m.nested.into_iter().map(|(name, at)| (name, at, closure)));
-        if !m.reused.is_empty() {
-            out.reused.insert(def, m.reused);
+        let closure = cx.def_spans.get(def.0 as usize).copied();
+        nested.extend(c.nested.into_iter().map(|(name, at)| (name, at, closure)));
+        if !c.reused.is_empty() {
+            out.reused.insert(def, c.reused);
         }
-        if !m.boxed.is_empty() {
-            out.boxed.insert(def, m.boxed);
+        if !c.boxed.is_empty() {
+            out.boxed.insert(def, c.boxed);
         }
     }
+    drop(inputs);
     // A closure, stored or called on the spot, that assigns a variable bound by reference
     // into an element: the variable lives in a cell (`elements`, #799).
     elements::box_element_writes(cx, (&shared, &copy), &async_captured, &mut out, &mut all);

@@ -45,17 +45,18 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
     let types = typed::GenericFnTypes::new(modules);
     // Which items declare a local one: only those are rewritten (the rewriter's scope analysis
     // of a whole function is not run for the rest of the program).
-    let has_local: Vec<Vec<bool>> = (modules.iter().enumerate())
-        .map(|(k, m)| {
-            (m.ast.items.iter())
-                .map(|i| local::item_has_local(i, &types, k))
-                .collect()
-        })
-        .collect();
-    let any = modules.iter().enumerate().any(|(k, m)| {
-        has_local[k].contains(&true)
-            || (m.ast.items.iter()).any(|i| as_function(i, k, &types).is_some())
+    // Each module scanned on its own (`crate::par`).
+    let indexed: Vec<(usize, &SourceModule)> = modules.iter().enumerate().collect();
+    let scanned = crate::par::map(&indexed, crate::par::module_weight(modules), |&(k, m)| {
+        let has: Vec<bool> = (m.ast.items.iter())
+            .map(|i| local::item_has_local(i, &types, k))
+            .collect();
+        let any = has.contains(&true)
+            || (m.ast.items.iter()).any(|i| as_function(i, k, &types).is_some());
+        (has, any)
     });
+    let any = scanned.iter().any(|(_, any)| *any);
+    let has_local: Vec<Vec<bool>> = scanned.into_iter().map(|(has, _)| has).collect();
     if !any {
         return None;
     }

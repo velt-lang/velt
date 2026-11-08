@@ -49,3 +49,38 @@ pub(crate) fn reads_constructor(module: &velt_syntax::ast::Module) -> bool {
     velt_syntax::visit::walk_module(module, &mut f);
     f.0
 }
+
+/// What [`program`] found in the program's own modules (std is left out).
+pub(crate) struct Found {
+    /// Some module calls `Object.create(null)` ([`calls_object_create_null`]).
+    pub null_proto: bool,
+    /// Some module reads a `constructor` ([`reads_constructor`]).
+    pub ctor_reads: bool,
+    /// Some module defines accessors (`crate::defined_accessors::defines_accessors`).
+    pub record_accessors: bool,
+    /// Some module calls a `throw()` method (`crate::ts_protocol::calls_throw`).
+    pub gen_throw: bool,
+}
+
+/// Scan the program's own modules once for every round of the check, each module on its own
+/// (`crate::par`).
+pub(crate) fn program(modules: &[crate::SourceModule]) -> Found {
+    // Std is not scanned: neither weighed nor mapped, so a small program starts no threads.
+    let own: Vec<&crate::SourceModule> = modules.iter().filter(|m| !m.is_std).collect();
+    let weight = crate::par::module_weight(own.iter().copied());
+    let scans = crate::par::map(&own, weight, |m| {
+        [
+            calls_object_create_null(&m.ast),
+            reads_constructor(&m.ast),
+            crate::defined_accessors::defines_accessors(&m.ast),
+            crate::ts_protocol::calls_throw(std::slice::from_ref(*m)),
+        ]
+    });
+    let any = |k: usize| scans.iter().any(|s| s[k]);
+    Found {
+        null_proto: any(0),
+        ctor_reads: any(1),
+        record_accessors: any(2),
+        gen_throw: any(3),
+    }
+}

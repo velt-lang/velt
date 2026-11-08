@@ -71,38 +71,47 @@ pub(crate) struct ClosureGroup {
 
 /// The rewritten modules, or `None` when no function body declares a nested function.
 pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
-    let any = modules.iter().any(|m| {
+    // Each module scanned on its own (`crate::par`): every body of every module is walked.
+    let nested = crate::par::map(modules, crate::par::module_weight(modules), |m| {
         m.ast.items.iter().any(|i| {
             let mut s = Scan::default();
             s.item_bodies(i);
             s.nested_fn
         })
     });
-    if !any {
+    if !nested.contains(&true) {
         return None;
     }
+    // Each module on its own (`crate::par`), the rewriter's findings merged in module order.
+    let done = crate::par::map(modules, crate::par::module_weight(modules), |m| {
+        let mut rw = Rw::default();
+        let mut items = m.ast.items.clone();
+        for i in &mut items {
+            rw.item(i, &FxHashSet::default());
+        }
+        let m = SourceModule {
+            path: m.path.clone(),
+            is_std: m.is_std,
+            is_dependency: m.is_dependency,
+            file: m.file,
+            ast: ast::Module {
+                items,
+                span: m.ast.span,
+                jsx_import_source: m.ast.jsx_import_source.clone(),
+                fn_names: m.ast.fn_names.clone(),
+            },
+            imports: m.imports.clone(),
+            jsx_runtime: m.jsx_runtime.clone(),
+        };
+        (m, rw)
+    });
     let mut rw = Rw::default();
-    let modules = modules
-        .iter()
-        .map(|m| {
-            let mut items = m.ast.items.clone();
-            for i in &mut items {
-                rw.item(i, &FxHashSet::default());
-            }
-            SourceModule {
-                path: m.path.clone(),
-                is_std: m.is_std,
-                is_dependency: m.is_dependency,
-                file: m.file,
-                ast: ast::Module {
-                    items,
-                    span: m.ast.span,
-                    jsx_import_source: m.ast.jsx_import_source.clone(),
-                    fn_names: m.ast.fn_names.clone(),
-                },
-                imports: m.imports.clone(),
-                jsx_runtime: m.jsx_runtime.clone(),
-            }
+    let modules = (done.into_iter())
+        .map(|(m, part)| {
+            rw.diags.extend(part.diags);
+            rw.kept.extend(part.kept);
+            rw.groups.extend(part.groups);
+            m
         })
         .collect();
     Some(Rewritten {

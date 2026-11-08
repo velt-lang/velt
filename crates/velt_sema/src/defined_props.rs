@@ -54,10 +54,13 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Brands, Option<Vec<SourceMod
     let mut adds: Vec<(String, ast::Ident, ast::TypeExpr)> = vec![];
     // (module, key) of each symbol member an asserted literal adds.
     let mut cast_keys: Vec<(usize, String)> = vec![];
-    for (i, m) in modules.iter().enumerate() {
-        if m.is_std {
-            continue;
-        }
+    // Each module scanned on its own (`crate::par`), its findings appended in module order.
+    let own: Vec<(usize, &SourceModule)> = (modules.iter().enumerate())
+        .filter(|(_, m)| !m.is_std)
+        .collect();
+    let weight = crate::par::module_weight(own.iter().map(|&(_, m)| m));
+    let scanned = crate::par::map(&own, weight, |&(i, m)| {
+        let (mut brands, mut adds) = (Brands::default(), vec![]);
         let mut scan = Scan {
             module: i,
             declared: vec![],
@@ -67,10 +70,16 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Brands, Option<Vec<SourceMod
             adds: &mut adds,
         };
         visit::walk_module(&m.ast, &mut scan);
+        let (strings, asserted) = (scan.strings, scan.asserted);
+        (brands, adds, strings, asserted, module_consts(&m.ast))
+    });
+    for ((i, _), (found, added, strings, asserted, consts)) in own.iter().zip(scanned) {
+        let i = *i;
+        brands.sites.extend(found.sites);
+        brands.direct.extend(found.direct);
+        adds.extend(added);
         // A string constant's key names a string field, which the type declares or not; a key
         // that is not a module constant is reported where the literal is.
-        let (strings, asserted) = (scan.strings, scan.asserted);
-        let consts = module_consts(&m.ast);
         for a in asserted {
             let key = &a.1.name[1..a.1.name.len() - 1];
             if strings.contains(key) || !consts.contains(key) {

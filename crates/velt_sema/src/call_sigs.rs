@@ -97,40 +97,46 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
     if !modules.iter().any(|m| m.ast.items.iter().any(callable)) {
         return (None, vec![]);
     }
-    let mut diags = vec![];
-    let out = modules
-        .iter()
-        .map(|m| {
-            let mut ast = m.ast.clone();
-            if ast.items.iter().any(callable) {
-                let items = std::mem::take(&mut ast.items);
-                ast.items = items
-                    .into_iter()
-                    .map(|item| match item.kind {
-                        ast::ItemKind::Interface(d)
-                            if !d.call_sigs.is_empty()
-                                || d.extends.iter().any(|b| names_function(b, &fn_bases)) =>
-                        {
-                            ast::Item {
-                                kind: ast::ItemKind::TypeAlias(interface_alias(
-                                    d, item.span, &mut diags,
-                                )),
-                                ..item
-                            }
+    // Each module on its own (`crate::par`), the errors in module order.
+    let done = crate::par::map(modules, crate::par::module_weight(modules), |m| {
+        let mut diags = vec![];
+        let mut ast = m.ast.clone();
+        if ast.items.iter().any(callable) {
+            let items = std::mem::take(&mut ast.items);
+            ast.items = items
+                .into_iter()
+                .map(|item| match item.kind {
+                    ast::ItemKind::Interface(d)
+                        if !d.call_sigs.is_empty()
+                            || d.extends.iter().any(|b| names_function(b, &fn_bases)) =>
+                    {
+                        ast::Item {
+                            kind: ast::ItemKind::TypeAlias(interface_alias(
+                                d, item.span, &mut diags,
+                            )),
+                            ..item
                         }
-                        _ => item,
-                    })
-                    .collect();
-            }
-            SourceModule {
-                path: m.path.clone(),
-                is_std: m.is_std,
-                is_dependency: m.is_dependency,
-                file: m.file,
-                ast,
-                imports: m.imports.clone(),
-                jsx_runtime: m.jsx_runtime.clone(),
-            }
+                    }
+                    _ => item,
+                })
+                .collect();
+        }
+        let m = SourceModule {
+            path: m.path.clone(),
+            is_std: m.is_std,
+            is_dependency: m.is_dependency,
+            file: m.file,
+            ast,
+            imports: m.imports.clone(),
+            jsx_runtime: m.jsx_runtime.clone(),
+        };
+        (m, diags)
+    });
+    let mut diags = vec![];
+    let out = (done.into_iter())
+        .map(|(m, d)| {
+            diags.extend(d);
+            m
         })
         .collect();
     (Some(out), diags)
@@ -349,9 +355,13 @@ pub(crate) fn check(modules: &[SourceModule]) -> Vec<Diagnostic> {
             }
         }
     }
-    let mut v = Sigs(vec![]);
-    for m in modules.iter().filter(|m| !m.is_std) {
+    // Each module on its own (`crate::par`), the errors in module order.
+    let own: Vec<&SourceModule> = modules.iter().filter(|m| !m.is_std).collect();
+    let weight = crate::par::module_weight(own.iter().copied());
+    let found = crate::par::map(&own, weight, |m| {
+        let mut v = Sigs(vec![]);
         walk_module(&m.ast, &mut v);
-    }
-    v.0
+        v.0
+    });
+    found.into_iter().flatten().collect()
 }

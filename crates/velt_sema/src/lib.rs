@@ -104,6 +104,7 @@ mod key_groups;
 mod known;
 mod layout_merge;
 mod literals;
+mod main_fn;
 mod module_chunks;
 mod module_destructure;
 mod module_scripts;
@@ -119,6 +120,7 @@ mod object_views;
 mod overload_adapter;
 mod overloads;
 mod ownership;
+mod par;
 mod promise_copies;
 pub mod property_order;
 mod readonly;
@@ -158,9 +160,6 @@ mod weak_threads;
 mod written_types;
 
 use velt_common::{Diagnostic, Diagnostics, Span};
-
-use crate::ctx::Item;
-use crate::defs::{DefInfo, FnKind};
 
 pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
@@ -278,54 +277,73 @@ fn check_timed(
     // Outlives every `Ctx` below, with the modules the driver generates during the check.
     let generator = gen.and_then(|g| g.generate).map(generated::Generator::new);
     let rewrite_start = std::time::Instant::now();
-    let chunks = module_chunks::split(modules, root);
+    let chunks = timings::pass("rewrite: module_chunks", || {
+        module_chunks::split(modules, root)
+    });
     let modules = chunks.modules.as_deref().unwrap_or(modules);
-    let asserted = asserted_targets::rewrite(modules);
+    let asserted = timings::pass("rewrite: asserted_targets", || {
+        asserted_targets::rewrite(modules)
+    });
     let modules = asserted.modules.as_deref().unwrap_or(modules);
     let mut merge_diags = chunks.diags.clone();
-    merge_diags.extend(call_sigs::check(modules));
-    let destructured = module_destructure::rewrite(modules);
+    merge_diags.extend(timings::pass("rewrite: call_sigs::check", || {
+        call_sigs::check(modules)
+    }));
+    let destructured = timings::pass("rewrite: module_destructure", || {
+        module_destructure::rewrite(modules)
+    });
     let modules = destructured.as_deref().unwrap_or(modules);
-    let global_ns = namespaces::global_namespaces(modules);
-    let (flat, ns_private, diags) = namespaces::flatten(modules);
+    let global_ns = timings::pass("rewrite: global_namespaces", || {
+        namespaces::global_namespaces(modules)
+    });
+    let (flat, ns_private, diags) = timings::pass("rewrite: namespaces::flatten", || {
+        namespaces::flatten(modules)
+    });
     merge_diags.extend(diags);
     let modules = flat.as_deref().unwrap_or(modules);
-    let (merged, diags) = interface_merge::rewrite(modules);
+    let (merged, diags) = timings::pass("rewrite: interface_merge", || {
+        interface_merge::rewrite(modules)
+    });
     merge_diags.extend(diags);
     let modules = merged.as_deref().unwrap_or(modules);
-    let (callable, diags) = call_sigs::rewrite(modules);
+    let (callable, diags) = timings::pass("rewrite: call_sigs", || call_sigs::rewrite(modules));
     merge_diags.extend(diags);
     let modules = callable.as_deref().unwrap_or(modules);
-    let lifted = generic_arrows::lift(modules);
+    let lifted = timings::pass("rewrite: generic_arrows", || generic_arrows::lift(modules));
     let modules = lifted.as_ref().map_or(modules, |l| &l.modules[..]);
-    let overloaded = overloads::rewrite(modules);
+    let overloaded = timings::pass("rewrite: overloads", || overloads::rewrite(modules));
     let modules = overloaded.as_ref().map_or(modules, |o| &o.modules[..]);
-    let (rewritten, alias_blocked) = recursive_aliases::rewrite(modules);
+    let (rewritten, alias_blocked) = timings::pass("rewrite: recursive_aliases", || {
+        recursive_aliases::rewrite(modules)
+    });
     let modules = rewritten.as_deref().unwrap_or(modules);
-    let (global_props, global_diags, globals) = global_this::rewrite(modules);
+    let (global_props, global_diags, globals) =
+        timings::pass("rewrite: global_this", || global_this::rewrite(modules));
     merge_diags.extend(global_diags);
     let modules = globals.as_deref().unwrap_or(modules);
-    let (accessor_diags, accessors) = defined_accessors::rewrite(modules);
+    let (accessor_diags, accessors) = timings::pass("rewrite: defined_accessors", || {
+        defined_accessors::rewrite(modules)
+    });
     merge_diags.extend(accessor_diags);
     let modules = accessors.as_deref().unwrap_or(modules);
-    let (brands, branded) = defined_props::rewrite(modules);
+    let (brands, branded) =
+        timings::pass("rewrite: defined_props", || defined_props::rewrite(modules));
     let modules = branded.as_deref().unwrap_or(modules);
-    let closures = nested_closures::rewrite(modules);
+    let closures = timings::pass("rewrite: nested_closures", || {
+        nested_closures::rewrite(modules)
+    });
     let modules = closures.as_ref().map_or(modules, |c| &c.modules[..]);
     let Some(root_mod) = modules.get(root) else {
         let d = Diagnostic::error("no root module to check", Span::DUMMY);
         return ((None, vec![d]), Default::default());
     };
     timings::record("source rewrites", rewrite_start.elapsed());
-    let null_proto = modules
-        .iter()
-        .any(|m| !m.is_std && source_scans::calls_object_create_null(&m.ast));
-    let ctor_reads = modules
-        .iter()
-        .any(|m| !m.is_std && source_scans::reads_constructor(&m.ast));
-    let record_accessors = modules
-        .iter()
-        .any(|m| !m.is_std && defined_accessors::defines_accessors(&m.ast));
+    let source_scans::Found {
+        null_proto,
+        ctor_reads,
+        record_accessors,
+        gen_throw,
+    } = timings::pass("source scans", || source_scans::program(modules));
     // What a round found it needed once it was too late to demand or check it.
     let assumed = std::cell::RefCell::new(body::lazy_std::Assumed::default());
     let new_cx = |round: &'static str,
@@ -347,7 +365,7 @@ fn check_timed(
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
         cx.global_namespaces = global_ns.clone();
-        cx.gen_throw = ts_protocol::calls_throw(modules);
+        cx.gen_throw = gen_throw;
         cx.alias_blocked = alias_blocked.clone();
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
@@ -561,7 +579,7 @@ fn analyze(
     opts: CheckOptions,
 ) -> Option<hir::DefId> {
     analyze_bodies(cx);
-    let entry = check_main(cx, root, root_mod, opts.require_main);
+    let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
     alias_expand::check_unused_aliases(cx);
     entry
 }
@@ -707,78 +725,4 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         ownership::check_many_threads(cx)
     });
     timings::pass("weak_threads::check", || weak_threads::check(cx, weak));
-}
-
-/// Validate the root module's `main`; a missing one is an error only when `require_main`.
-fn check_main(
-    cx: &mut ctx::Ctx,
-    root: usize,
-    root_mod: &SourceModule,
-    require_main: bool,
-) -> Option<hir::DefId> {
-    let file_start = Span::new(root_mod.file, root_mod.ast.span.lo, root_mod.ast.span.lo);
-    // A script that declares `main` itself starts at its statements (`velt_syntax::SCRIPT_MAIN`).
-    let main = (cx.scopes[root].items.get(velt_syntax::SCRIPT_MAIN))
-        .or_else(|| cx.scopes[root].items.get("main"))
-        .copied();
-    // A library module may use the name `main` for anything; only a `main` function is checked.
-    let is_fn = |id: hir::DefId| matches!(cx.info[id.0 as usize], DefInfo::Fn(_));
-    if !require_main && !matches!(main, Some(Item::Def(id)) if is_fn(id)) {
-        return None;
-    }
-    let Some(Item::Def(id)) = main else {
-        cx.error(Diagnostic::error(
-            "`main` function not found in the root module",
-            file_start,
-        ));
-        return None;
-    };
-    let f = match &cx.info[id.0 as usize] {
-        DefInfo::Fn(f) => f,
-        _ => {
-            let span = cx.def_spans[id.0 as usize];
-            cx.error(Diagnostic::error("`main` must be a function", span));
-            return None;
-        }
-    };
-    let span = f.name_span;
-    // `async main` returns `Promise<void | i32>`; the runtime blocks on it.
-    let ret = if f.is_async {
-        cx.ty.async_result(f.ret)
-    } else {
-        f.ret
-    };
-    let (ret_span, kind, has_params, generic) = (
-        f.ret_span,
-        f.kind,
-        !f.params.is_empty(),
-        f.generics.len() > 0,
-    );
-    let mut ok = true;
-    if kind == FnKind::Extern {
-        cx.error(Diagnostic::error(
-            "`main` must be a function with a body",
-            span,
-        ));
-        ok = false;
-    }
-    if has_params || generic {
-        cx.error(Diagnostic::error(
-            "`main` function must not take parameters",
-            span,
-        ));
-        ok = false;
-    }
-    if ret != cx.ty.unit && ret != cx.ty.i32 && ret != cx.ty.error {
-        let found = cx.display(ret);
-        cx.error(
-            Diagnostic::error(
-                "`main` must return `void` or `i32`",
-                ret_span.unwrap_or(span),
-            )
-            .with_note(format!("found return type `{found}`")),
-        );
-        ok = false;
-    }
-    ok.then_some(id)
 }

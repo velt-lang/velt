@@ -45,7 +45,11 @@ fn pair(name: &str, decl: &str, call: &str) -> Vec<String> {
 }
 
 fn program(decl: &str, call: &str, field: &str) -> Loaded {
-    let dir = std::env::temp_dir().join(format!("velt-keyed-rows-{}", std::process::id()));
+    // A directory per program: the tests run on several threads, and one rewriting
+    // `pool.velt` while another loads it made the import fail now and then.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("velt-keyed-rows-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("pool.velt"),
@@ -56,6 +60,7 @@ fn program(decl: &str, call: &str, field: &str) -> Loaded {
         "{HEAD}{decl}\nasync function main() {{\n  const l = new App();\n  await onEachWorker(async (): Promise<void> => {{\n    const c = new Holder(l);\n    {call}\n    c.{field}.push(\"x\");\n  }});\n}}\nmain();\n"
     );
     let mut loaded = load_src_at(&dir.join("main.velt"), &src);
+    let _ = std::fs::remove_dir_all(&dir);
     for m in &mut loaded.modules {
         m.is_dependency |= m.path.ends_with("pool");
     }
