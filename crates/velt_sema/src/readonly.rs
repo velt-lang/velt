@@ -28,6 +28,11 @@ pub(crate) fn erase(
     let mut named: Vec<(TyId, String)> = (cx.alias_names.iter())
         .map(|(t, n)| (*t, crate::namespaces::written(n).into_owned()))
         .collect();
+    // Union names show function types written without `throws` as written
+    // (`Ctx::name_unions_as_written`); with variables, once they are solved (below).
+    if cx.fn_sites.vars.is_empty() {
+        cx.name_unions_as_written(&[]);
+    }
     if cx.readonly_twins.is_empty()
         && cx.brands.is_empty()
         && cx.fn_sites.vars.is_empty()
@@ -61,7 +66,10 @@ pub(crate) fn erase(
     // A type with error-set variables is its solved type (`throws::vars`), erased; unions of
     // one erased member list are one def, of one erased member that member.
     let solved = cx.solved_types();
-    cx.name_solved_defs(&solved);
+    cx.name_solved_defs();
+    if !cx.fn_sites.vars.is_empty() {
+        cx.name_unions_as_written(&solved);
+    }
     let mut plan = crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved);
     let merged = std::mem::take(&mut plan.merged);
     cx.replaced_unions = std::mem::take(&mut plan.replaced);
