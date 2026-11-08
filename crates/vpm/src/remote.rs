@@ -363,8 +363,9 @@ mod tests {
         // A server without the request (404) keeps the token.
         let older = format!("{url}/older");
         assert_eq!(revoke_token(&older, "good").unwrap(), Revoked::Unsupported);
-        // Never over plain http:// to another machine.
-        assert!(revoke_token("http://registry.example.com", "good").is_err());
+        // Never over plain http:// to another machine: refused by the rule, before any connection.
+        let plain = revoke_token("http://registry.example.com", "good").unwrap_err();
+        assert!(plain.contains("refusing to send the token"), "{plain}");
         assert_eq!(log.lock().unwrap().len(), 4);
         server.stop();
     }
