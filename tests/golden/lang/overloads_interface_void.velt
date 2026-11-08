@@ -67,3 +67,16 @@ const e2: Emitter = bus;
 e2.on("a", (x) => {});
 e2.on("b", (x) => {});
 console.log(bus.count);
+
+// An object literal writes the merged signature, here with a function-typed optional parameter.
+interface Done {
+  k(a: string): void;
+  k(a: string, cb?: () => void): void;
+}
+const done: Done = {
+  k(a: string, cb?: () => void) {
+    console.log("k", a, cb === undefined);
+  },
+};
+done.k("x");
+done.k("y", () => {});

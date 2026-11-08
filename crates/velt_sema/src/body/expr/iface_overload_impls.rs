@@ -109,8 +109,9 @@ impl FnCx<'_, '_> {
             if self.cx.dynamic(*t).is_some() || self.cx.ty.has_error(*t) {
                 continue;
             }
-            if !self.converts_to(p.ty, *t) {
-                let (have, want) = (self.cx.display(*t), self.cx.display(p.ty));
+            // The same type as written (function types each carry the errors stored into them).
+            let (have, want) = (self.cx.display(*t), self.cx.display(p.ty));
+            if !self.converts_to(p.ty, *t) && have != want {
                 return Some(format!(
                     "its parameter {pname} (`{have}`) does not take the signature's `{want}`"
                 ));
