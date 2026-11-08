@@ -136,6 +136,7 @@ mod literal_types;
 mod matching;
 mod math_minmax;
 pub(crate) mod member;
+mod member_cast;
 mod member_errors;
 mod member_keys;
 mod method;
