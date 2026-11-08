@@ -1,0 +1,11 @@
+dom_subset_errors.velt:6:10: error: mismatched types
+  = note: expected HTMLAnchorElement, found HTMLElement
+  = note: `HTMLElement` does not declare `implements HTMLAnchorElement`
+dom_subset_errors.velt:9:10: error: mismatched types
+  = note: expected HTMLAnchorElement, found HTMLElement
+  = note: `HTMLElement` does not declare `implements HTMLAnchorElement`
+dom_subset_errors.velt:12:25: error: mismatched types
+  = note: expected string | URL | null | undefined, found f64
+dom_subset_errors.velt:16:23: error: cannot find `missingKey` in this scope
+dom_subset_errors.velt:14:52: error: mismatched types
+  = note: expected AbortSignal | undefined, found f64

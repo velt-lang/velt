@@ -1,0 +1,18 @@
+// What `tsc --strict` refuses in the generated `lib.dom` declarations stays refused: a base
+// doesn't convert to an interface that adds members of its own in `lib.dom` (TS2740), and a std
+// type a declaration names is that type, not `any` (TS2345, TS2322). The keys of a write through
+// a browser global are checked, though the write throws first (TS2304).
+function anchor(e: HTMLElement): HTMLAnchorElement {
+  return e;
+}
+function created(d: Document): HTMLAnchorElement {
+  return d.createElement("div");
+}
+function push(h: History): void {
+  h.pushState(null, "", 5);
+}
+const options: AddEventListenerOptions = { signal: 5 };
+function write(): void {
+  window.localStorage[missingKey] = "x";
+}
+console.log(typeof write, typeof anchor, typeof created, typeof push, options.once);
