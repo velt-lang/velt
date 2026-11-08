@@ -5,7 +5,7 @@
 //! held `null!`): that read gives a view of `null` again (`unwrapped_view`), so a member read
 //! is Node's `TypeError` and a test sees the nothing, never a null pointer read as a `Foo`.
 
-use velt_sema::hir::{Nothing, TyId, TyKind};
+use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
 use super::FnLower;
 use crate::vir::{BinOp, Callee, Operand, Place, Rvalue, Terminator, Ty};
@@ -93,6 +93,29 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Unreachable);
         self.switch_to(ok);
         payload
+    }
+
+    /// Is `cond` a nothing test of a variable (sema's view chain: `IsNullish(l)`) whose type
+    /// has no nothing and holds no view here? Then it is `false` with nothing to evaluate, and
+    /// an `if` on it is its other branch (expr.rs), so the chain is the code it would be
+    /// without the test.
+    pub(super) fn no_view_test(&mut self, cond: &hir::Expr) -> bool {
+        let hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::IsNullish | hir::Intrinsic::IsNull),
+            args,
+        } = &cond.kind
+        else {
+            return false;
+        };
+        let [arg] = args.as_slice() else {
+            return false;
+        };
+        if !matches!(arg.kind, hir::ExprKind::Local(..)) {
+            return false;
+        }
+        let t = self.sub(arg.ty);
+        let plain = matches!(self.cx.kind(t), TyKind::Adt(..)) && !self.cx.is_dynamic(t);
+        plain && !self.holds_view(t)
     }
 
     /// A new view of `null`, tagged (any_view.rs `any_nothing_view`).
