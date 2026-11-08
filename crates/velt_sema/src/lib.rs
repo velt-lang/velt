@@ -104,6 +104,7 @@ mod key_groups;
 mod known;
 mod layout_merge;
 mod literals;
+mod main_fn;
 mod module_chunks;
 mod module_destructure;
 mod module_scripts;
@@ -159,9 +160,6 @@ mod weak_threads;
 mod written_types;
 
 use velt_common::{Diagnostic, Diagnostics, Span};
-
-use crate::ctx::Item;
-use crate::defs::{DefInfo, FnKind};
 
 pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
@@ -340,23 +338,12 @@ fn check_timed(
         return ((None, vec![d]), Default::default());
     };
     timings::record("source rewrites", rewrite_start.elapsed());
-    // The program's own modules scanned on their own (`crate::par`), once for every round.
-    let scans = timings::pass("source scans", || {
-        crate::par::map(modules, crate::par::module_weight(modules), |m| {
-            if m.is_std {
-                return [false; 4];
-            }
-            [
-                source_scans::calls_object_create_null(&m.ast),
-                source_scans::reads_constructor(&m.ast),
-                defined_accessors::defines_accessors(&m.ast),
-                ts_protocol::calls_throw(std::slice::from_ref(m)),
-            ]
-        })
-    });
-    let any_scan = |k: usize| scans.iter().any(|s| s[k]);
-    let (null_proto, ctor_reads) = (any_scan(0), any_scan(1));
-    let (record_accessors, gen_throw) = (any_scan(2), any_scan(3));
+    let source_scans::Found {
+        null_proto,
+        ctor_reads,
+        record_accessors,
+        gen_throw,
+    } = timings::pass("source scans", || source_scans::program(modules));
     // What a round found it needed once it was too late to demand or check it.
     let assumed = std::cell::RefCell::new(body::lazy_std::Assumed::default());
     let new_cx = |round: &'static str,
@@ -592,7 +579,7 @@ fn analyze(
     opts: CheckOptions,
 ) -> Option<hir::DefId> {
     analyze_bodies(cx);
-    let entry = check_main(cx, root, root_mod, opts.require_main);
+    let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
     alias_expand::check_unused_aliases(cx);
     entry
 }
@@ -738,78 +725,4 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         ownership::check_many_threads(cx)
     });
     timings::pass("weak_threads::check", || weak_threads::check(cx, weak));
-}
-
-/// Validate the root module's `main`; a missing one is an error only when `require_main`.
-fn check_main(
-    cx: &mut ctx::Ctx,
-    root: usize,
-    root_mod: &SourceModule,
-    require_main: bool,
-) -> Option<hir::DefId> {
-    let file_start = Span::new(root_mod.file, root_mod.ast.span.lo, root_mod.ast.span.lo);
-    // A script that declares `main` itself starts at its statements (`velt_syntax::SCRIPT_MAIN`).
-    let main = (cx.scopes[root].items.get(velt_syntax::SCRIPT_MAIN))
-        .or_else(|| cx.scopes[root].items.get("main"))
-        .copied();
-    // A library module may use the name `main` for anything; only a `main` function is checked.
-    let is_fn = |id: hir::DefId| matches!(cx.info[id.0 as usize], DefInfo::Fn(_));
-    if !require_main && !matches!(main, Some(Item::Def(id)) if is_fn(id)) {
-        return None;
-    }
-    let Some(Item::Def(id)) = main else {
-        cx.error(Diagnostic::error(
-            "`main` function not found in the root module",
-            file_start,
-        ));
-        return None;
-    };
-    let f = match &cx.info[id.0 as usize] {
-        DefInfo::Fn(f) => f,
-        _ => {
-            let span = cx.def_spans[id.0 as usize];
-            cx.error(Diagnostic::error("`main` must be a function", span));
-            return None;
-        }
-    };
-    let span = f.name_span;
-    // `async main` returns `Promise<void | i32>`; the runtime blocks on it.
-    let ret = if f.is_async {
-        cx.ty.async_result(f.ret)
-    } else {
-        f.ret
-    };
-    let (ret_span, kind, has_params, generic) = (
-        f.ret_span,
-        f.kind,
-        !f.params.is_empty(),
-        f.generics.len() > 0,
-    );
-    let mut ok = true;
-    if kind == FnKind::Extern {
-        cx.error(Diagnostic::error(
-            "`main` must be a function with a body",
-            span,
-        ));
-        ok = false;
-    }
-    if has_params || generic {
-        cx.error(Diagnostic::error(
-            "`main` function must not take parameters",
-            span,
-        ));
-        ok = false;
-    }
-    if ret != cx.ty.unit && ret != cx.ty.i32 && ret != cx.ty.error {
-        let found = cx.display(ret);
-        cx.error(
-            Diagnostic::error(
-                "`main` must return `void` or `i32`",
-                ret_span.unwrap_or(span),
-            )
-            .with_note(format!("found return type `{found}`")),
-        );
-        ok = false;
-    }
-    ok.then_some(id)
 }
