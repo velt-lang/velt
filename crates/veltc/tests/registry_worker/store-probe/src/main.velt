@@ -1,0 +1,58 @@
+// `POST /commit` with `{ "name", "base", "version", "checksum", "owner" }` commits that version of
+// that package to the D1 database bound as `DB`, made from revision `base` (with `owner` as its
+// owner when `base` is 0), and answers whether it won: what a writer whose read is `base` sends.
+// `POST /aba` writes an index file to the R2 bucket bound as `BLOBS`, writes the same bytes again,
+// then tries a write with the first file's tag, and answers what each write said.
+
+import { HttpServeOptions, serve } from "http-server";
+import { IndexEntry, PackageChange, PackageIndex } from "registry-core";
+import { utf8Encode } from "velt/encoding";
+import { D1MetadataDb, R2BlobStore } from "registry-cloudflare";
+
+struct CommitBody {
+  name: string;
+  base: i64;
+  version: string;
+  checksum: string;
+  owner: string;
+}
+
+const db = new D1MetadataDb("DB");
+
+async function commit(req: Request): Promise<Response> {
+  const body = JSON.parse<CommitBody>(await req.text());
+  const entry = new IndexEntry(body.version, body.checksum);
+  const index = new PackageIndex(body.name);
+  index.versions.push(entry);
+  const change = new PackageChange(body.name, body.base, index);
+  change.changed = [entry];
+  if (body.base == 0) {
+    change.owners = [body.owner];
+  }
+  return new Response(`${await db.commit(change)}`);
+}
+
+// The first write, the same bytes again, then a write over the first one's tag (which must lose:
+// the file there is newer, though its etag is the same), and the revision left.
+async function aba(): Promise<Response> {
+  const blobs = new R2BlobStore("BLOBS");
+  const key = "index/aba.json";
+  const same = utf8Encode("{}\n");
+  const first = await blobs.putIfTag(key, same, 1, null);
+  const read = await blobs.head(key);
+  // A later upload time than the first, at R2's millisecond granularity.
+  await sleep(20);
+  const again = await blobs.putIfTag(key, same, 2, (await blobs.head(key))?.tag ?? null);
+  const stale = await blobs.putIfTag(key, utf8Encode("{\"old\":1}\n"), 3, read?.tag ?? null);
+  const left = (await blobs.head(key))?.revision ?? 0;
+  return new Response(`${first} ${again} ${stale} ${left}`);
+}
+
+const opts: HttpServeOptions = { port: 8080 };
+await serve(
+  opts,
+  async (req: Request): Promise<Response> =>
+    req.method != "POST"
+      ? new Response("not found", { status: 404 })
+      : new URL(req.url).pathname == "/aba" ? await aba() : await commit(req),
+);

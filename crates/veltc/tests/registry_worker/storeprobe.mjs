@@ -1,7 +1,9 @@
-// D1MetadataDb's commit refuses a write made from a revision that is no longer the package's
-// (crates/veltc/tests/registry_worker.rs). A losing writer sends exactly that, so no interleaving
-// is needed: d1-probe commits as told, and the rows are read back here. `node d1probe.mjs <modules>
-// <d1-probe's Worker dir>`. Exits 1 on a failure.
+// registry-cloudflare's stores refuse a stale write (crates/veltc/tests/registry_worker.rs), driven
+// through store-probe. D1MetadataDb's commit made from a revision that is no longer the package's
+// changes nothing: a losing writer sends exactly that, so no interleaving is needed, and the rows
+// are read back here. R2BlobStore's write over a tag it read loses once the same bytes were written
+// again (R2's etag is the same; the upload time isn't). `node storeprobe.mjs <modules>
+// <store-probe's Worker dir>`. Exits 1 on a failure.
 
 import assert from "node:assert/strict";
 import { start } from "./start.mjs";
@@ -42,6 +44,11 @@ try {
     { package: "my-lib", user: "alice" },
   ]);
   assert.deepEqual((await rows("SELECT package FROM search")).map((r) => r.package), ["my-lib"]);
+
+  // R2: the first write and the same bytes again win; the write over the first tag loses, and the
+  // second file (revision 2) stays.
+  const aba = await fetch(new URL("/aba", url), { method: "POST" });
+  assert.equal(await aba.text(), "true true false 2");
   console.log("ok");
 } finally {
   await mf.dispose();

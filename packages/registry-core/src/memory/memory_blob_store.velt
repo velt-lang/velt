@@ -1,30 +1,26 @@
 // registry-core: a `BlobStore` in memory, for tests and for trying a registry out.
 
-import { sha256 } from "velt/crypto";
-import { hexEncode } from "velt/encoding";
 import { BlobStore } from "../stores/blob_store";
 import { StoredFile } from "../stores/stored_file";
 
-// One stored file: its bytes, their hash (as an R2 etag is), when it was written (a count of
-// writes) and the revision it was written from.
+// One stored file: its bytes, when it was written (a count of writes) and the revision it was
+// written from.
 struct Held {
   bytes: u8[];
-  hash: string;
   written: i64;
   revision: i64;
 }
 
-// A file's tag: its hash and when it was written, as R2's adapter makes it of an etag and an
-// upload time.
+// A file's tag: when it was written, as R2's adapter makes it of the upload time.
 function tagOf(held: Held): string {
-  return `${held.hash} ${held.written}`;
+  return `${held.written}`;
 }
 
 /**
- * Static files in a map; lost when the program ends. A conditional write matches the hash and
- * time in its tag as R2 matches an etag and an upload time: the same bytes written again keep the
- * hash, not the time. It checks and stores with no `await` between, as a store's conditional write
- * is one step.
+ * Static files in a map; lost when the program ends. A conditional write replaces a file only if
+ * it was written no later than the time in its tag, as R2's `uploadedBefore` does: the same bytes
+ * written again are a newer file. It checks and stores with no `await` between, as a store's
+ * conditional write is one step.
  */
 export class MemoryBlobStore implements BlobStore {
   private files: Map<string, Held> = new Map();
@@ -33,8 +29,7 @@ export class MemoryBlobStore implements BlobStore {
   // Stores `bytes` under `key`.
   private store(key: string, bytes: u8[], revision: i64): void {
     this.writes++;
-    const hash = hexEncode(sha256(bytes));
-    this.files.set(key, { bytes: [...bytes], hash, written: this.writes, revision });
+    this.files.set(key, { bytes: [...bytes], written: this.writes, revision });
   }
 
   async putIfAbsent(key: string, bytes: u8[]): Promise<bool> {
@@ -52,7 +47,8 @@ export class MemoryBlobStore implements BlobStore {
 
   async putIfTag(key: string, bytes: u8[], revision: i64, tag: string | null): Promise<bool> {
     const found = this.files.get(key);
-    if (found == null ? tag != null : tag == null || tag != tagOf(found)) {
+    // `uploadedBefore` just after the time read: written no later than it.
+    if (found == null ? tag != null : tag == null || found.written > parseInt(tag)) {
       return false;
     }
     this.store(key, bytes, revision);

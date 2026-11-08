@@ -1,7 +1,7 @@
 // registry-cloudflare: the registry's static files in an R2 bucket, with the HTTP headers a public
 // bucket serves them with: archives cached for good (their key is their checksum), each index
 // briefly (it changes, and a write purges it). An index's revision is in its custom metadata, and
-// it is replaced only over the object read: its etag and its upload time (`StoredFile.tag`).
+// it is replaced only over the object read, which its upload time tells (`StoredFile.tag`).
 
 import { R2Bucket, R2Conditional, R2HTTPMetadata, r2Bucket } from "cloudflare";
 import { BlobStore, StoredFile } from "registry-core";
@@ -52,7 +52,7 @@ export class R2BlobStore implements BlobStore {
         return null;
       }
       const revision = parseInt(object.customMetadata[REVISION] ?? "0");
-      const tag = `${object.etag} ${object.uploaded.getTime()}`;
+      const tag = `${object.uploaded.getTime()}`;
       return new StoredFile(tag, Number.isNaN(revision) ? 0 : revision as i64);
     } catch (e) {
       throw storeFailure("the blob store", e);
@@ -61,15 +61,12 @@ export class R2BlobStore implements BlobStore {
 
   async putIfTag(key: string, bytes: u8[], revision: i64, tag: string | null): Promise<bool> {
     try {
-      // Null when the object there isn't the one read, or, for no tag, when there is one. An etag
-      // is the MD5 of the bytes, so the same index written again (a yank, then an unyank) has the
-      // same etag: the upload time tells the object read from that newer one.
-      let onlyIf: R2Conditional = { etagDoesNotMatch: "*" };
-      if (tag != null) {
-        const space = tag.lastIndexOf(" ");
-        const uploaded = parseFloat(tag.slice(space + 1));
-        onlyIf = { etagMatches: tag.slice(0, space), uploadedBefore: new Date(uploaded + 1) };
-      }
+      // Null when the object there isn't the one read, or, for no tag, when there is one. The
+      // object read is told by its upload time alone: an etag is the MD5 of the bytes, so the same
+      // index written again (a yank, then an unyank) keeps it, and R2, as HTTP, doesn't look at
+      // `uploadedBefore` once a given `etagMatches` matches. So `uploadedBefore` goes alone.
+      const onlyIf: R2Conditional =
+        tag == null ? { etagDoesNotMatch: "*" } : { uploadedBefore: new Date(parseFloat(tag) + 1) };
       const put = await this.bucket.put(key, bytes, {
         onlyIf,
         httpMetadata: headersOf(key),
