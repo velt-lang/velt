@@ -69,8 +69,8 @@ pub struct Hook {
     /// counts is that the compiler no longer calls it in the hook's place.
     pub replaces: &'static [&'static str],
     /// Lowering calls the runtime instead when the hook is missing or left unchecked (it is
-    /// one of [`ON_DEMAND_FLOAT`]): its `velt_vir` builder returns an `Option`. Every other
-    /// lowered hook missing is an internal compiler error.
+    /// one of [`ON_DEMAND_FLOAT`] or [`ON_DEMAND_WRITE`]): its `velt_vir` builder returns an
+    /// `Option`. Every other lowered hook missing is an internal compiler error.
     pub fallback: bool,
     /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.velt`)
     /// that measures this hook against the Rust it replaced, if one does.
@@ -231,11 +231,11 @@ hooks! {
     uint_write => lang_hooks_number_text, "uintWrite", sig((u32, u64, u8) -> void), lowered,
         replaces("velt_rt_write_u64"), constructs(Format);
     /// A float as `console.log` prints it and the byte after it: a whole number other than `-0` by
-    /// `int_write`, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
-    /// whole `x` that is not `-0` into one of `int_write`. Sema counts a printed float as
-    /// `Format` (`live.rs`), since this hook's code holds the integer writer.
-    number_write => lang_hooks_number_text, "numberWrite", sig((u32, f64, u8) -> void), lowered,
-        replaces("velt_rt_write_f64"), constructs(Format);
+    /// `int_write`, anything else by the runtime's printer, which lowering calls while this is
+    /// unchecked ([`ON_DEMAND_WRITE`]). numrep turns a call with a whole `x` that is not `-0` into
+    /// one of `int_write`.
+    number_write => lang_hooks_number_write, "numberWrite", sig((u32, f64, u8) -> void), lowered,
+        fallback, replaces("velt_rt_write_f64");
     /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
     /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
     /// whole `x` into one of `int_text`.
@@ -645,33 +645,8 @@ pub fn find(qualified: &str) -> Option<&'static Hook> {
         .find(|h| h.item == item && crate::std_modules::rel(h.module_entry) == Some(rel))
 }
 
-/// Lowered hooks that sema checks only once the program's own code converts a value that may hold
-/// a float to text (`velt_sema` `lazy_std`), by their entries' names: the float hooks, whose whole
-/// numbers take std's integer printing, and, where the program loaded it, std's float printing
-/// (velt/lang/number/format, `shortest`, the table of powers of ten). Lowering calls the runtime's
-/// printer where one is unchecked. The integer hooks have no fallback (#2197): sema checks them
-/// where live code has one of their `constructs` ([`crate::hook_demand`]).
-pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
-
-/// The std modules of hooks no program needs by default: not loaded with the prelude. Sema demands
-/// each when it finds the hook needed, during the check (#2161 (a1): `velt_sema` `std_load`), so
-/// each follows the rule of `velt_loader::std_index`. `VELT_EAGER_STD=1` loads them all up front,
-/// in this order. A check given no load callback adds none of them: those its program did not load
-/// stay out, and their hooks are not checked (`velt_sema::ide::check_for_ide`).
-pub const ON_DEMAND_MODULES: &[&str] = &[
-    "std/lang/hooks/number_text",
-    "std/lang/hooks/number_float",
-    "std/lang/hooks/any_record",
-    "std/lang/hooks/unwind",
-];
-
-/// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).
-pub fn on_demand(names: &'static [&'static str]) -> impl Iterator<Item = String> {
-    HOOKS
-        .iter()
-        .filter(move |h| names.contains(&h.name))
-        .map(Hook::qualified)
-}
+mod on_demand;
+pub use on_demand::{on_demand, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE};
 
 /// Is the definition with qualified name `qualified` a hook lowering calls by name?
 pub fn is_lowered(qualified: &str) -> bool {

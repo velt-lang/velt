@@ -132,7 +132,6 @@ impl PB {
         for i in [
             velt_common::std_hooks::hook_index::int_write,
             velt_common::std_hooks::hook_index::uint_write,
-            velt_common::std_hooks::hook_index::number_write,
         ] {
             hooks_demanded.insert(i);
         }

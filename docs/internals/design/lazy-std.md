@@ -144,11 +144,12 @@ Checking on demand still parses every module a program loads, and parsing and co
 costs about as much as checking it. So some of std is not loaded at all unless a program needs it.
 
 **During the check (#2161 (a1)).** The modules of hooks no program needs by default
-(velt_common `std_hooks::ON_DEMAND_MODULES`: `velt/lang/hooks/number_text`, `number_float` and
-`any_record`) are not loaded with the prelude. `reach` finds out, from checked code and its types,
-that one of their hooks is needed (a live construct's integer hook, `live.rs`; a text conversion in
-the program's own code of a value that may hold a float, `number_text.rs`; a conversion to a record
-with string keys, `record_hooks_needed`), and demands the module (`Ctx::demand_std`, `std_load.rs`):
+(velt_common `std_hooks::ON_DEMAND_MODULES`: `velt/lang/hooks/number_text`, `number_write`,
+`number_float` and `any_record`) are not loaded with the prelude. `reach` finds out, from checked
+code and its types, that one of their hooks is needed (a live construct's integer hook, `live.rs`;
+a text conversion in the program's own code of a value that may hold a float, or a float printed
+by live code, `number_text.rs`; a conversion to a record with string keys, `record_hooks_needed`),
+and demands the module (`Ctx::demand_std`, `std_load.rs`):
 - The driver's load callback (`velt_sema::LoadFn`) goes on from the program's load
   (`velt_loader::load_more`) with the module and what it imports that is not loaded. Each must
   follow the rule of `velt_loader::std_index`, so what it adds stays local to it; the loader applies

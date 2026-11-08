@@ -27,9 +27,11 @@ const ALLOWED: &[(&str, &str, usize, &str)] = &[
     // The runtime calls lowering can emit (`Rt` and its symbols).
     ("velt_vir/src/lower/rt.rs", "velt_rt_str_from_f64", 3, DECLARED),
     ("velt_vir/src/lower/rt.rs", "velt_rt_strbuf_push_f64", 3, DECLARED),
+    ("velt_vir/src/lower/rt.rs", "velt_rt_write_f64", 3, DECLARED),
     // The fallbacks when a float hook is missing or unchecked.
     ("velt_vir/src/lower/stringify.rs", "velt_rt_str_from_f64", 1, FALLBACK),
     ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_f64", 1, FALLBACK),
+    ("velt_vir/src/lower/console.rs", "velt_rt_write_f64", 1, FALLBACK),
     // Emitters with no hook in between.
     ("velt_vir/src/lower/glue/literals.rs", "velt_rt_strbuf_push_f64", 1, FLOAT_LITERAL),
     ("velt_vir/src/lower/any_member.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),

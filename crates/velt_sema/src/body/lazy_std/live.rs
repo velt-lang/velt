@@ -87,6 +87,8 @@ pub(crate) struct Live {
     demanded: ConstructSet,
     /// Per type: may its text or format print an integer ([`may_print_int`])?
     int_text: FxHashMap<TyId, bool>,
+    /// Live code prints a float: `console.log`'s float writer is needed (`number_text.rs`).
+    pub(super) prints_float: bool,
 }
 
 impl Live {
@@ -548,7 +550,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             callee: Callee::Intrinsic(I::Print | I::PrintErr),
             args,
         } => {
-            // A float is written by `numberWrite`, whose code holds the integer writer.
+            // A float is written by `numberWrite`, which waits for this (`number_text.rs`).
             w.prints_float |= (args.iter()).any(|a| matches!(ty.kind(a.ty), TyKind::Float(_)));
             w.formats.extend(args.iter().map(|a| a.ty));
         }

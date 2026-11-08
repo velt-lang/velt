@@ -3,11 +3,12 @@
 // when the check finds one needed (velt_common `ON_DEMAND_MODULES`,
 // docs/internals/design/lazy-std.md). Lowering converts and writes every integer through the
 // integer ones, with no runtime fallback (#2197): sema checks them where live code has a construct
-// whose lowering calls them (velt_common `hook_demand.rs`). The other float ones are checked once
-// the program's own code converts a value that may hold a float (`ON_DEMAND_FLOAT`), which also
-// loads std's float printer (velt/lang/hooks/number_float, which lowering prefers). A float that
-// is not a whole number goes to the runtime's printer here, and where lowering needs a float hook
-// the program lacks (a conversion in std's own code) it calls the runtime.
+// whose lowering calls them (velt_common `hook_demand.rs`). The float ones are checked once the
+// program's own code converts a value that may hold a float (`ON_DEMAND_FLOAT`), which also loads
+// std's float printer (velt/lang/hooks/number_float, which lowering prefers). A float that is not
+// a whole number goes to the runtime's printer here, and where lowering needs a float hook the
+// program lacks (a conversion in std's own code) it calls the runtime. `console.log`'s float
+// writer is in velt/lang/hooks/number_write.
 
 import { trunc } from "velt/lang/intrinsics";
 import { i64Text, pushI64, pushU64, u64Text } from "velt/lang/number/integer";
@@ -15,8 +16,6 @@ import { oneWord, restWrite } from "velt/lang/number/integer_write";
 
 declare function velt_rt_str_from_f64(x: f64): string;
 declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
-declare function velt_rt_write_f64(stream: u32, x: f64);
-declare function velt_rt_write_byte(stream: u32, b: u8);
 
 /** `String(v)` of a signed integer (a template's `${v}`, `v.toString()`): lowering calls it. */
 export function intText(v: i64): string {
@@ -62,20 +61,6 @@ export function uintWrite(stream: u32, v: u64, end: u8): void {
     return;
   }
   restWrite(stream, v, false, end);
-}
-
-/**
- * Writes a float as `console.log` prints it and `end` to `stream`: a whole number below 2^53 other
- * than `-0` by `intWrite` (which `velt_opt` numrep calls directly when it knows `x` is one),
- * anything else (`-0`, `0.5`, `1e+21`, `NaN`) by the runtime's printer.
- */
-export function numberWrite(stream: u32, x: f64, end: u8): void {
-  if (whole(x) && (x != 0.0 || 1.0 / x > 0.0)) {
-    intWrite(stream, x as i64, end);
-    return;
-  }
-  velt_rt_write_f64(stream, x);
-  velt_rt_write_byte(stream, end);
 }
 
 /** Is `x` a whole number below 2^53 in magnitude (`-0` included)? Its text is the integer's. */

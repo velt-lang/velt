@@ -139,15 +139,22 @@ impl FnLower<'_, '_> {
     }
 
     /// A number in JS formatting and the byte after it, through std's writers
-    /// (std/lang/hooks/number_text.velt).
+    /// (std/lang/hooks/number_text.velt, number_write.velt). A float goes to the runtime's printer
+    /// while sema leaves the float writer unchecked (velt_common `ON_DEMAND_WRITE`).
     fn write_number(&mut self, stream: Operand, v: Operand, t: TyId, end: u8) {
-        let (s, from) = (ty::U32::arg(stream), self.cx.ty(t));
+        let (s, from) = (ty::U32::arg(stream.clone()), self.cx.ty(t));
         let e = ty::U8::arg(cint(end as i128, Ty::U8));
         let c = Construct::Format;
         match self.cx.kind(t) {
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, t);
-                _ = hooks::number_write(self, c, s, ty::F64::arg(v), e).emit(self);
+                match hooks::number_write(self, s, ty::F64::arg(v.clone()), e) {
+                    Some(call) => _ = call.emit(self),
+                    None => {
+                        self.call_rt(Rt::WriteF64, vec![stream.clone(), v], None);
+                        self.write_byte(&stream, end);
+                    }
+                }
             }
             TyKind::Int(it) if !it.is_signed() => {
                 let v = self.cast_to(v, from, Ty::U64);
