@@ -55,6 +55,9 @@ pub(crate) struct VarSets {
     pub(super) members: Vec<Vec<TyId>>,
     /// Variables each one contains (`i ⊇ j`).
     pub(super) edges: Vec<Vec<u32>>,
+    /// What the checked closures created for each one's site throw, found so far: members
+    /// and variables (`var_known`, which `throws::checks` adds once inference is done).
+    pub(super) closures: Vec<(Vec<TyId>, Vec<u32>)>,
     /// The sets a check assumed variables have (a `catch` variable's type): empty, or what was
     /// known when it was checked (`var_known`).
     pub(super) assumed: Vec<(u32, TyId)>,
@@ -98,6 +101,7 @@ impl VarSets {
             self.parent.push(n);
             self.members.push(vec![]);
             self.edges.push(vec![]);
+            self.closures.push(Default::default());
         }
     }
 
@@ -126,6 +130,7 @@ impl VarSets {
         self.members[a as usize].extend(ms);
         let es = std::mem::take(&mut self.edges[b as usize]);
         self.edges[a as usize].extend(es);
+        super::var_known::merge_closures(&mut self.closures, a, b);
     }
 }
 

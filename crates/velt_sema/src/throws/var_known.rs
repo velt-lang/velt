@@ -25,6 +25,9 @@
 //! shows it as nothing, where a check without variables shows its set: that assumes the set
 //! empty, and else the program is checked again with the solved sets, whose diagnostics show
 //! it. A union def's name does not count: it is named again once the sets are solved.
+//!
+//! What the checked closures throw is kept with the variable they throw into as they are found,
+//! so finding a variable's known set costs what the variables it reaches hold.
 
 use rustc_hash::FxHashMap;
 
@@ -37,11 +40,21 @@ use crate::hir::{DefId, TyId, TyKind};
 pub(crate) struct SiteClosures {
     /// How many defs were looked at.
     scanned: usize,
-    /// The closures of user modules whose bodies were not checked yet when last looked at.
+    /// The closures of user modules allocated since last looked at.
     pending: Vec<DefId>,
-    /// Each checked one created for a site's type: the variable it throws into and what it
-    /// threw, beyond its error type, when it was first looked at once checked.
-    known: Vec<(u32, Vec<TyId>)>,
+}
+
+/// Variable `b`'s class is merged into `a`'s: what the closures of `b`'s site throw is `a`'s too
+/// (`VarSets::union`).
+pub(super) fn merge_closures(closures: &mut [(Vec<TyId>, Vec<u32>)], a: u32, b: u32) {
+    let (ms, es) = std::mem::take(&mut closures[b as usize]);
+    let (into, edges) = &mut closures[a as usize];
+    for m in ms {
+        if !into.contains(&m) {
+            into.push(m);
+        }
+    }
+    edges.extend(es);
 }
 
 impl Ctx<'_> {
@@ -71,9 +84,10 @@ impl Ctx<'_> {
     }
 
     /// The members of variable `v`'s set from the constraints recorded so far (a fixpoint over
-    /// the variables it reaches).
+    /// the variables it reaches). Costs what those variables hold: what the closures throw is
+    /// kept with each variable as they are found ([`Ctx::closures_now`]).
     fn var_known(&mut self, v: u32) -> Vec<TyId> {
-        let own = self.closures_now();
+        self.closures_now();
         let mut sets: FxHashMap<u32, Vec<TyId>> = FxHashMap::default();
         let mut edges: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
         let root = self.fn_sites.var_sets.find(v);
@@ -85,17 +99,13 @@ impl Ctx<'_> {
             let vs = &mut self.fn_sites.var_sets;
             let mut ms = vs.members.get(r as usize).cloned().unwrap_or_default();
             let mut out: Vec<u32> = vs.edges.get(r as usize).cloned().unwrap_or_default();
-            for (target, errs) in &own {
-                if self.fn_sites.var_sets.find(*target) != r {
-                    continue;
-                }
-                for &m in errs {
-                    match self.err_var(m) {
-                        Some(w) => out.push(w),
-                        None if !ms.contains(&m) => ms.push(m),
-                        None => {}
+            if let Some((cms, ces)) = vs.closures.get(r as usize) {
+                for m in cms {
+                    if !ms.contains(m) {
+                        ms.push(*m);
                     }
                 }
+                out.extend(ces.iter().copied());
             }
             let out: Vec<u32> = (out.into_iter())
                 .map(|w| self.fn_sites.var_sets.find(w))
@@ -126,11 +136,12 @@ impl Ctx<'_> {
         sets.remove(&root).unwrap_or_default()
     }
 
-    /// Each checked closure created for a site's type: the variable it throws into and what it
-    /// throws beyond its error type (as `Ctx::throw_into_vars` counts it), found once its body
-    /// is checked (a later call through a function it calls may find more, which the solved
-    /// set then holds: the program is checked again).
-    fn closures_now(&mut self) -> Vec<(u32, Vec<TyId>)> {
+    /// Records each closure created for a site's type allocated since last called, whose body
+    /// is checked: what it throws beyond its error type (as `Ctx::throw_into_vars` counts it)
+    /// goes with the variable it throws into (`VarSets::closures`). A closure is looked at
+    /// once (a later call through a function it calls may find more, which the solved set
+    /// then holds: the program is checked again).
+    fn closures_now(&mut self) {
         let n = self.info.len();
         let from = self.fn_sites.site_closures.scanned;
         for i in from..n {
@@ -167,10 +178,18 @@ impl Ctx<'_> {
                 .into_iter()
                 .filter(|m| !ms.contains(m))
                 .collect();
-            self.fn_sites.site_closures.known.push((target, errs));
+            let r = self.fn_sites.var_sets.find(target) as usize;
+            for m in errs {
+                let w = self.err_var(m);
+                let (cms, ces) = &mut self.fn_sites.var_sets.closures[r];
+                match w {
+                    Some(w) => ces.push(w),
+                    None if !cms.contains(&m) => cms.push(m),
+                    None => {}
+                }
+            }
         }
         self.fn_sites.site_closures.pending = still;
-        self.fn_sites.site_closures.known.clone()
     }
 
     /// A value of type `t` is used (a rejection reason in a `.catch` callback, a settled
