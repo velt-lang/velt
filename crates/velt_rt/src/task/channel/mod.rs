@@ -28,15 +28,8 @@ use crate::registry::{Key, Registry};
 
 static CHANNELS: Registry<Chan> = Registry::new();
 
-/// Drop the table's reference once `chan` is closed and empty (nothing can come out of it).
-fn retire_if_done(key: Key<Chan>, chan: &Chan) {
-    if chan.is_closed() && chan.len() == 0 {
-        CHANNELS.remove(key);
-    }
-}
-
-/// Drop the table's reference to a channel a receive found closed and empty
-/// ([`queue::Pop::done`]).
+/// Drop the table's reference to a channel found closed and empty ([`queue::Pop::done`]):
+/// nothing can come out of it.
 fn retire(key: Key<Chan>) {
     CHANNELS.remove(key);
 }
@@ -57,9 +50,8 @@ pub extern "C-unwind" fn velt_rt_chan_new(capacity: u64) -> Key<Chan> {
 /// queued, then `null`.
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_chan_close(h: Key<Chan>) {
-    if let Some(c) = CHANNELS.get(h) {
-        c.close();
-        retire_if_done(h, &c);
+    if CHANNELS.get(h).is_some_and(|c| c.close()) {
+        CHANNELS.remove(h);
     }
 }
 
@@ -216,6 +208,8 @@ pub(super) unsafe fn write_option(slot: *mut u8, payload: usize, size: usize, pr
     }
 }
 
+#[cfg(test)]
+mod stress_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

@@ -236,3 +236,108 @@ fn a_receive_takes_its_item_when_first_polled() {
     assert_eq!(a.item(), Some(2));
     velt_rt_chan_close(h);
 }
+
+/// Drop glue that records the ids it drops (each test uses ids of its own).
+static GLUE_DROPPED: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+
+unsafe extern "C-unwind" fn record_glue(item: *mut u8) {
+    GLUE_DROPPED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(*(item as *const u64));
+}
+
+fn glue_dropped(id: u64) -> usize {
+    let d = GLUE_DROPPED.lock().unwrap_or_else(|e| e.into_inner());
+    d.iter().filter(|&&x| x == id).count()
+}
+
+#[test]
+fn a_waiting_send_cancelled_drops_its_item_once() {
+    let h = velt_rt_chan_new(1);
+    assert!(try_send(h, 0));
+    let id = 7001u64;
+    // SAFETY: an 8-byte item with drop glue.
+    let a = Hand::new(unsafe {
+        velt_rt_chan_send(h, &id as *const u64 as *const u8, 8, Some(record_glue))
+    });
+    assert!(!a.poll(), "full: waits");
+    drop(a);
+    assert_eq!(glue_dropped(id), 1, "the item it held is dropped, once");
+    assert_eq!(velt_rt_chan_len(h), 1, "and was never queued");
+    velt_rt_chan_close(h);
+    assert_eq!(glue_dropped(id), 1);
+}
+
+#[test]
+fn a_receive_dropped_unpolled_leaves_the_others_waiting() {
+    let h = velt_rt_chan_new(0);
+    let a = Hand::receive(h);
+    assert!(!a.poll());
+    // Made but never polled: never in line.
+    drop(Hand::receive(h));
+    let c = Hand::receive(h);
+    assert!(!c.poll());
+    drop(Hand::receive(h));
+    assert!(try_send(h, 1));
+    assert!(try_send(h, 2));
+    assert_eq!(
+        (a.wakes(), c.wakes()),
+        (1, 1),
+        "both waiters still in line, in order"
+    );
+    assert!(a.poll() && c.poll());
+    assert_eq!((a.item(), c.item()), (Some(1), Some(2)));
+    velt_rt_chan_close(h);
+}
+
+/// A waker whose last reference locks the channel when it goes (as a task's state owning an
+/// operation on the same channel does).
+struct Reenter(Key<Chan>);
+
+// Its wake does nothing: what matters is its drop.
+#[allow(clippy::manual_noop_waker)]
+impl Wake for Reenter {
+    fn wake(self: Arc<Self>) {}
+}
+
+impl Drop for Reenter {
+    fn drop(&mut self) {
+        velt_rt_chan_len(self.0);
+    }
+}
+
+#[test]
+fn a_replaced_waker_is_dropped_after_the_lock_is_released() {
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let h = velt_rt_chan_new(0);
+        let a = Hand::receive(h);
+        // Polled with a waker only the line keeps, then with another: the first one goes.
+        let first = Waker::from(Arc::new(Reenter(h)));
+        let mut cx = Context::from_waker(&first);
+        // SAFETY: a live channel future.
+        assert_eq!(unsafe { velt_rt_fut_poll(a.f, raw_cx(&mut cx).ptr()) }, 0);
+        drop(first);
+        assert!(!a.poll(), "replaces the waker: no deadlock");
+        // The same for a send waiting for room.
+        let b = velt_rt_chan_new(1);
+        assert!(try_send(b, 0));
+        let s = Hand::send(b, 1);
+        let first = Waker::from(Arc::new(Reenter(b)));
+        let mut cx = Context::from_waker(&first);
+        // SAFETY: as above.
+        assert_eq!(unsafe { velt_rt_fut_poll(s.f, raw_cx(&mut cx).ptr()) }, 0);
+        drop(first);
+        assert!(!s.poll());
+        velt_rt_chan_close(h);
+        velt_rt_chan_close(b);
+        let _ = done_tx.send(());
+    });
+    assert!(
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .is_ok(),
+        "deadlocked: a waker dropped under the channel's lock"
+    );
+}

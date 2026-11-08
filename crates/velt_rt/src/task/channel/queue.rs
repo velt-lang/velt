@@ -14,7 +14,7 @@
 use std::sync::Mutex;
 use std::task::{Poll, Waker};
 
-use super::line::{wake, Line, WaitCell, IDLE, QUEUED, WOKEN};
+use super::line::{wake, Line, WaitCell, WOKEN};
 use super::ring::Ring;
 use crate::task::all::ResultDropFn;
 
@@ -163,17 +163,21 @@ impl Chan {
     }
 
     /// Close: senders fail from now on, receivers drain what is left. Wakes every waiter.
-    pub(super) fn close(&self) {
+    /// Returns whether the channel is empty (closed and drained: its handle can leave the
+    /// table).
+    pub(super) fn close(&self) -> bool {
         crate::io::publish_before_handoff();
         let mut s = self.lock();
+        let empty = s.items.is_empty();
         if s.closed {
-            return;
+            return empty;
         }
         s.closed = true;
         // SAFETY: under the lock.
         let (receivers, senders) = unsafe { (s.receivers.wake_all(), s.senders.wake_all()) };
         drop(s);
         receivers.into_iter().chain(senders).for_each(Waker::wake);
+        empty
     }
 
     pub(super) fn is_closed(&self) -> bool {
@@ -206,10 +210,12 @@ impl Chan {
         let s = &mut *g;
         let (pop, woken) = self.pop_locked(s, dst, size);
         if pop == Pop::Empty {
-            wait_in(&mut s.receivers, cell, waker);
+            let replaced = s.receivers.wait(cell, waker);
+            drop(g);
+            drop(replaced);
             return Poll::Pending;
         }
-        done_waiting(&mut s.receivers, cell);
+        s.receivers.leave(cell);
         drop(g);
         wake(woken);
         Poll::Ready(pop)
@@ -223,14 +229,10 @@ impl Chan {
     pub(super) unsafe fn cancel_receive(&self, cell: &WaitCell) {
         let mut s = self.lock();
         let woken = match cell.get().state {
-            QUEUED => {
-                s.receivers.leave(cell);
-                None
-            }
             WOKEN if !s.items.is_empty() => s.receivers.wake_first(),
             _ => None,
         };
-        cell.get().state = IDLE;
+        s.receivers.leave(cell);
         drop(s);
         wake(woken);
     }
@@ -255,10 +257,12 @@ impl Chan {
         let s = &mut *g;
         let (push, woken) = self.push_locked(s, src, size, item_drop);
         if let Push::Full = push {
-            wait_in(&mut s.senders, cell, waker);
+            let replaced = s.senders.wait(cell, waker);
+            drop(g);
+            drop(replaced);
             return Poll::Pending;
         }
-        done_waiting(&mut s.senders, cell);
+        s.senders.leave(cell);
         drop(g);
         wake(woken);
         Poll::Ready(push)
@@ -272,14 +276,10 @@ impl Chan {
     pub(super) unsafe fn cancel_send(&self, cell: &WaitCell) {
         let mut s = self.lock();
         let woken = match cell.get().state {
-            QUEUED => {
-                s.senders.leave(cell);
-                None
-            }
             WOKEN if !s.closed && s.items.len() < self.capacity => s.senders.wake_first(),
             _ => None,
         };
-        cell.get().state = IDLE;
+        s.senders.leave(cell);
         drop(s);
         wake(woken);
     }
@@ -316,32 +316,3 @@ impl Chan {
 #[derive(Clone, Copy)]
 #[repr(C, align(16))]
 struct Block([u8; 16]);
-
-/// An operation that found nothing to do waits in `line`: it keeps its place when it is still
-/// in line (polled again before a wake), and goes to the back otherwise (first wait, or woken
-/// and what it waited for went to another task).
-///
-/// # Safety
-/// Under the channel's lock; `cell` as for [`Chan::poll_receive`].
-unsafe fn wait_in(line: &mut Line, cell: &WaitCell, waker: &Waker) {
-    let w = cell.get();
-    if w.state == QUEUED {
-        if !w.waker.as_ref().is_some_and(|old| old.will_wake(waker)) {
-            w.waker = Some(waker.clone());
-        }
-    } else {
-        line.enter(cell, waker);
-    }
-}
-
-/// An operation finished: out of `line` if it is still in it (finished without a wake).
-///
-/// # Safety
-/// Under the channel's lock; `cell` as for [`Chan::poll_receive`].
-unsafe fn done_waiting(line: &mut Line, cell: &WaitCell) {
-    match cell.get().state {
-        IDLE => {}
-        QUEUED => line.leave(cell),
-        _ => cell.get().state = IDLE,
-    }
-}
