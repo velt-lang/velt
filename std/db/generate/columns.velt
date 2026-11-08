@@ -90,8 +90,9 @@ function expectedName(t: Type): string {
 
 /**
  * Writes the code that starts reading rows of type `id`: the column map. Native: the rows state
- * `st` over the cursor in the local `cursor` (ended by `endRows`); a source: `fields`, each
- * column's field, from the source's column names.
+ * `st` over the cursor in the local `cursor` (ended by `endRows`); a source: each column's field,
+ * from the source's column names (in the word `fmap` for the first 16 columns of a row type of at
+ * most 15 fields, the rest in `fields`).
  */
 export function beginRows(
   out: Output,
@@ -117,6 +118,22 @@ export function beginRows(
   }
   const s = from.name;
   out.line(`const ncols = ${s}.columnCount();`);
+  if (t.fields.length <= 15) {
+    // As the native cursor's: the first 16 columns' fields (each plus one, 0 for none) in one
+    // word, so matching the columns allocates nothing; `fields` holds those past them.
+    out.line(`let fmap: i64 = 0;`);
+    out.line(`const fields: i64[] = [];`);
+    out.line(`for (let c: i64 = 0; c < ncols; c++) {`);
+    out.line(`let f: i64 = -1;`);
+    out.line(`switch (${s}.columnName(c)) {`);
+    for (let i: i64 = 0; i < (t.fields.length as i64); i++) {
+      out.line(`case ${out.literal(t.fields[i].name)}: f = ${i}; break;`);
+    }
+    out.line(`}`);
+    out.line(`if (c < 16) { fmap = fmap | ((f + 1) << (c * 4)); } else { fields.push(f); }`);
+    out.line(`}`);
+    return;
+  }
   out.line(`const fields: i64[] = [];`);
   out.line(`for (let c: i64 = 0; c < ncols; c++) {`);
   out.line(`switch (${s}.columnName(c)) {`);
@@ -188,7 +205,11 @@ export function readRow(
     }
   } else {
     out.line(`for (let c: i64 = 0; c < ncols; c++) {`);
-    out.line(`const fi = fields[c];`);
+    if (n <= 15) {
+      out.line(`const fi: i64 = c < 16 ? ((fmap >> (c * 4)) & 15) - 1 : fields[c - 16];`);
+    } else {
+      out.line(`const fi = fields[c];`);
+    }
   }
   for (let i: i64 = 0; i < n; i++) {
     const f = t.fields[i];
