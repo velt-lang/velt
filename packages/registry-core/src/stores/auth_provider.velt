@@ -13,4 +13,9 @@ export interface AuthProvider {
   caller(authorization: string | null): Promise<Caller>;
   /** Whether `name` is a user (one an owner may make an owner too). */
   isUser(name: string): Promise<bool>;
+  /**
+   * Stops the token in `authorization` (a header that `caller` took as a user's) working, for
+   * `DELETE /api/v1/token`. The user stays, with any other tokens they have.
+   */
+  revoke(authorization: string): Promise<void>;
 }

@@ -10,6 +10,7 @@ import { refused, text } from "./answer";
 import { RegistryLimits } from "./registry_limits";
 import { RegistryStores } from "./registry_stores";
 import { changeScopeOwners, listScopeOwners } from "./scope_owners";
+import { revokeToken } from "./tokens";
 import { search } from "./search";
 import { StoreError } from "../stores/store_error";
 import { yank } from "./yank";
@@ -103,6 +104,9 @@ export class Registry {
     }
     if (m == "GET" && n == 3 && p[2] == "search") {
       return await search(s, query);
+    }
+    if (m == "DELETE" && n == 3 && p[2] == "token") {
+      return await revokeToken(s, req);
     }
     // No package route has these shapes, so a package named `scopes` is still reached.
     if (n == 5 && p[2] == "scopes" && p[4] == "owners" && m == "GET") {

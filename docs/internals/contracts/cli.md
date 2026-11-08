@@ -225,7 +225,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `$VELT_HOME/credentials.json`: `{"registries": {"<url>": {"token": "…"}}}`, keys with the scheme
   and host lowercased and no trailing `/`, written atomically (temporary file, synced, renamed),
   mode 0600 on Unix, an owner-only protected DACL on Windows; the terminal doesn't echo the
-  token. `logout` removes the entry. Writes to a registry server (`publish`, `yank`, `owner
+  token. `logout` first revokes the stored token on the registry (`DELETE /api/v1/token` with it:
+  2xx revoked, 401 already invalid, 404/405 an older server that keeps it, which is a warning, as
+  is a failed request), then removes the entry either way. Writes to a registry server (`publish`, `yank`, `owner
   add|remove`) send `$VELT_REGISTRY_TOKEN` if set, else the token stored for exactly that
   registry, else none. A token is never sent (nor stored) for a plain `http://` URL whose host is
   not loopback (a host part with `@`, `?`, `#` or `\` is never loopback); that is an error.

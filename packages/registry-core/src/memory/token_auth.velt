@@ -59,6 +59,22 @@ export class TokenAuth implements AuthProvider {
   async isUser(name: string): Promise<bool> {
     return this.users?.has(name) ?? false;
   }
+
+  /** The user of the token keeps their name and packages, with no token until `setUser`. */
+  async revoke(authorization: string): Promise<void> {
+    const users = this.users;
+    const token = bearerToken(authorization);
+    if (users == null || token.length == 0) {
+      return;
+    }
+    const hashed = tokenHash(token);
+    for (const [name, hash] of users) {
+      if (hash == hashed) {
+        // No token hashes to "".
+        users.set(name, "");
+      }
+    }
+  }
 }
 
 /**

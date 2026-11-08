@@ -251,6 +251,32 @@ pub fn set_scope_owner(url: &str, scope: &str, user: &str, add: bool) -> Result<
     write(url, method, &target, &[], b"").map(drop)
 }
 
+/// What `DELETE /api/v1/token` did to a token.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Revoked {
+    /// The registry revoked it.
+    Revoked,
+    /// The registry took it for no user's: already revoked, expired or never valid.
+    NotValid,
+    /// The registry has no such request (an older server): the token still works there.
+    Unsupported,
+}
+
+/// Revokes `token` on the registry at `url` (`velt logout`): sent only over https:// or to this
+/// machine, as every token is.
+pub fn revoke_token(url: &str, token: &str) -> Result<Revoked, String> {
+    crate::credentials::check_transport(url, "the token")?;
+    let auth = format!("Bearer {token}");
+    let target = format!("{}/api/v1/token", url.trim_end_matches('/'));
+    let resp = velt_http::fetch("DELETE", &target, &[("Authorization", auth.as_str())], b"")?;
+    match resp.status {
+        200..=299 => Ok(Revoked::Revoked),
+        401 => Ok(Revoked::NotValid),
+        404 | 405 => Ok(Revoked::Unsupported),
+        s => Err(format!("registry {url}: {s}: {}", resp.body_text().trim())),
+    }
+}
+
 /// Package and user names go into URL paths: only valid ones are sent (package names by the
 /// package rules, user names by [`crate::manifest::is_valid_user_name`]).
 fn check_names(packages: &[&str], users: &[&str]) -> Result<(), String> {
@@ -310,6 +336,11 @@ mod tests {
                 .unwrap()
                 .push(format!("{} {}", req.method, req.path));
             match (req.method.as_str(), req.path.as_str()) {
+                ("DELETE", "/api/v1/token") => match req.header("authorization") {
+                    Some("Bearer good") => Response::text(200, "revoked"),
+                    Some("Bearer broken") => Response::text(500, "the database failed"),
+                    _ => Response::text(401, "no user"),
+                },
                 ("GET", "/api/v1/scopes/acme/owners") => Response::text(200, "alice\nbob\n"),
                 ("PUT" | "DELETE", "/api/v1/scopes/acme/owners/bob") => Response::text(200, "ok"),
                 (_, "/api/v1/scopes/acme/owners/carol") => Response::text(403, "not an owner"),
@@ -318,6 +349,24 @@ mod tests {
         });
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         (Server::start(listener, handler, 1 << 16).unwrap(), log)
+    }
+
+    #[test]
+    fn tokens_are_revoked_with_delete_api_v1_token() {
+        use super::{revoke_token, Revoked};
+        let (server, log) = registry();
+        let url = format!("http://{}", server.addr());
+        assert_eq!(revoke_token(&url, "good").unwrap(), Revoked::Revoked);
+        assert_eq!(revoke_token(&url, "gone").unwrap(), Revoked::NotValid);
+        let failed = revoke_token(&url, "broken").unwrap_err();
+        assert!(failed.contains("500: the database failed"), "{failed}");
+        // A server without the request (404) keeps the token.
+        let older = format!("{url}/older");
+        assert_eq!(revoke_token(&older, "good").unwrap(), Revoked::Unsupported);
+        // Never over plain http:// to another machine.
+        assert!(revoke_token("http://registry.example.com", "good").is_err());
+        assert_eq!(log.lock().unwrap().len(), 4);
+        server.stop();
     }
 
     #[test]
