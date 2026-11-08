@@ -119,6 +119,7 @@ mod object_views;
 mod overload_adapter;
 mod overloads;
 mod ownership;
+mod par;
 mod promise_copies;
 pub mod property_order;
 mod readonly;

@@ -28,7 +28,10 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    output is a typed HIR. The same passes answer editor queries (`velt_sema::ide`). A program
    is checked again, whole, while the error sets of function types written without `throws`
    grow, and once more with sharing when a held borrow caused an error (the checks after that
-   one share too; `check_on_current_thread` in `lib.rs`). `VELT_SEMA_TIMINGS=1` prints each pass's time in each of these rounds to stderr.
+   one share too; `check_on_current_thread` in `lib.rs`). `VELT_SEMA_TIMINGS=1` prints each pass's time in each of these rounds to stderr. Passes whose
+   work per function only reads the HIR and tables gathered first (the move check, `moves`) run
+   that work on several threads (`par.rs`), their results applied in order, so the output does
+   not depend on the thread count; `VELT_SEMA_THREADS=n` caps the threads (`1`: none).
 4. **Lower** (`velt_vir`): monomorphization, data layouts, vtables, drop and clone glue (a
    self-referential class drops its chain in a loop, `lower/glue/drop_chain.rs`; other drops
    that can nest are bounded by the runtime, `lower/glue/drop_depth.rs`), async

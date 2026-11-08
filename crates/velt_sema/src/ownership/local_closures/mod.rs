@@ -66,9 +66,18 @@ pub(crate) fn demote_local_closures(cx: &mut Ctx) {
 /// The closures of body `b` that are held in a local and do not escape (demoted by this pass),
 /// by local. A call through such a local runs the closure on its borrowed captures.
 pub(crate) fn held_closures(cx: &Ctx, b: &Block) -> FxHashMap<LocalId, DefId> {
+    held_closures_by(b, |c| cx.try_fn(c).is_some_and(|i| !i.escaping))
+}
+
+/// [`held_closures`] with `held` telling whether a closure is not escaping, for a caller off
+/// the checking thread (`crate::par`).
+pub(crate) fn held_closures_by(
+    b: &Block,
+    held: impl Fn(DefId) -> bool,
+) -> FxHashMap<LocalId, DefId> {
     let mut out = FxHashMap::default();
     for (local, c) in closure_lets(b) {
-        if cx.try_fn(c).is_some_and(|i| !i.escaping) {
+        if held(c) {
             out.insert(local, c);
         }
     }
