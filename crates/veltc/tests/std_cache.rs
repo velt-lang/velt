@@ -818,9 +818,9 @@ fn release_default(
 }
 
 /// By default a release build links the objects of the `noInline()` std functions that the
-/// warm-up stored, and prints what a build compiling all of std prints. Only those: a build
-/// serving everything (`VELT_STD_OBJECT=1`) finds the same objects and compiles the URL code's,
-/// which the default left in the program.
+/// warm-up stored, and prints what a build compiling all of std prints. A build serving everything
+/// (`VELT_STD_OBJECT=1`) finds none of them: its objects call the program's copies of what they
+/// don't inline, the default's have their own, so their keys differ. It compiles its own.
 #[test]
 fn a_release_build_links_the_no_inline_functions_stored() {
     let tmp = test_dir::TestDir::new();
@@ -855,7 +855,7 @@ fn a_release_build_links_the_no_inline_functions_stored() {
         &[("VELT_STD_OBJECT_MIN_MISSES", "1")],
     );
     let (found, more) = counts(&all);
-    assert!(found > 0 && more > 0, "{}", text(&all.stderr));
+    assert!(found == 0 && more > 0, "{}", text(&all.stderr));
     assert_eq!(run(dir, "all"), NO_INLINE_OUTPUT);
 }
 
