@@ -1,0 +1,15 @@
+// An optional chain printed as it is (a `console.log` argument, a template part) on a slot that
+// holds `null` through `null!` (#2350): `undefined`, as in Node; on a real value its value.
+class Foo {
+  v = 1;
+  inner: Foo | null = null;
+  m(): number {
+    return this.v;
+  }
+}
+const f: Foo = null!;
+console.log(f?.v, f?.m(), f?.inner?.v);
+console.log(`${f?.v} ${f?.inner?.v}`);
+const g = new Foo();
+console.log(g?.v, g?.m(), g?.inner?.v);
+console.log(`${g?.v} ${g?.inner?.v}`);

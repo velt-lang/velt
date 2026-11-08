@@ -242,13 +242,15 @@ impl FnCx<'_, '_> {
 
     /// `e` checked where its value is printed or written into a template as it is: a field
     /// path of a local is not taken as its payload there either (`needs_payload`).
+    /// An optional chain printed there takes `undefined` (nothing_slot.rs): `console.log(f?.v)` on
+    /// a slot holding a view of a nothing prints `undefined`, and no type the program sees changes.
     pub(crate) fn printed_expr(&mut self, e: &ast::Expr) -> hir::Expr {
         if !self.has_breakable_narrowing() {
-            return self.expr(e, None, Want::Borrow);
+            return self.chain_object(e, true, |s| s.expr(e, None, Want::Borrow));
         }
         let mark = self.as_is_spans.len();
         self.mark_value(e, true);
-        let h = self.expr(e, None, Want::Borrow);
+        let h = self.chain_object(e, true, |s| s.expr(e, None, Want::Borrow));
         self.as_is_spans.truncate(mark);
         h
     }
