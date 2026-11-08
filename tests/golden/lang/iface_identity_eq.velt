@@ -1,5 +1,6 @@
 // `===` between values of two interfaces, one extending the other: the same object is itself,
-// whichever interface it is seen through, as in TypeScript.
+// whichever interface it is seen through, as in TypeScript; and `as` takes it back to the
+// interface that extends the one it is seen through.
 interface A {
   a(): number;
 }
@@ -35,3 +36,5 @@ const w: E = c;
 const n: A | null = null;
 console.log(x === y, x !== y, x === z, n === y, y === n);
 console.log(w === x, x === w, w == x, w === (z as A));
+const back = x as B;
+console.log(back.b(), back.a(), back === y);

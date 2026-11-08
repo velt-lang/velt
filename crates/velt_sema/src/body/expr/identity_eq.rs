@@ -66,4 +66,23 @@ impl FnCx<'_, '_> {
                 .iter()
                 .any(|p| p.iface == base || self.iface_extends(p.iface, base, depth + 1))
     }
+
+    /// `e as B` for an `A` value where `B` extends `A` (`node as HTMLElement`), which `tsc`
+    /// allows since one is assignable to the other: the value as an `any`, converted to `B` and
+    /// checked at run time as an `any` is (`Err`: not such a pair).
+    pub(super) fn related_iface_cast(
+        &mut self,
+        h: hir::Expr,
+        target: TyId,
+        span: velt_common::Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if !self.related_ifaces(h.ty, target) || self.cx.ty.opt_payload(target).is_some() {
+            return Err(h);
+        }
+        let Some(any) = self.any_ty() else {
+            return Err(h);
+        };
+        let a = self.compared_operand(h, any);
+        Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![a], target, span))
+    }
 }

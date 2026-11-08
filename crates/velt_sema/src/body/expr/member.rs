@@ -672,7 +672,8 @@ impl FnCx<'_, '_> {
         (self.dynamic_raw, self.asserted_fn) = (saved, outer);
         match self.assert_value(inner, target, span) {
             Ok(h) => h,
-            Err(h) => self.cast_error(h, target, span),
+            Err(h) => (self.related_iface_cast(h, target, span))
+                .unwrap_or_else(|h| self.cast_error(h, target, span)),
         }
     }
 

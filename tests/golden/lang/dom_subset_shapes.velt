@@ -20,6 +20,25 @@ function skip(ph: Node | null, marker: Comment | null, parent: Node): Node | nul
   return at !== null && at.parentNode === parent ? at : null;
 }
 
+// An element is a node (`Element` extends `Node` and, through `ChildNode` and `ParentNode`, again),
+// and `as` takes a node or an element to what extends it, as `tsc` allows.
+function asNode(e: Element): Node {
+  return e;
+}
+function htmlAsNode(e: HTMLElement): Node {
+  return e;
+}
+function heldAsNode(a: Element): Node {
+  const e: Element = a;
+  return e;
+}
+function anchorOf(e: HTMLElement): HTMLAnchorElement {
+  return e as HTMLAnchorElement;
+}
+function elementOf(n: Node): HTMLElement {
+  return n as HTMLElement;
+}
+
 // Collections index, iterate and convert like arrays.
 function selected(sel: HTMLSelectElement): string[] {
   const options = sel.options;
@@ -54,6 +73,7 @@ const rendered = component((n) => {
   return () => typeof toggle;
 });
 
+console.log(typeof asNode, typeof htmlAsNode, typeof heldAsNode, typeof anchorOf, typeof elementOf);
 console.log(typeof mount, typeof skip, typeof selected, typeof wire, rendered);
 try {
   console.log(document.createComment("x").appendChild(document.createTextNode("y")));
