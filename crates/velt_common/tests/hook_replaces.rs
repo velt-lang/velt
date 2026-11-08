@@ -292,6 +292,7 @@ fn a_deleted_extern_is_named_nowhere() {
     let mut wrong = vec![];
     for path in files {
         if path.ends_with(Path::new("velt_common/src/std_hooks.rs"))
+            || path.ends_with(Path::new("velt_common/src/std_hooks/deleted.rs"))
             || path.file_name() == Some(this)
         {
             continue; // The table and this test name them as history.
