@@ -430,7 +430,7 @@ impl Loader<'_, '_> {
             };
             modules.iter().any(|m| m.is_std && m.path == *module)
                 && (own().iter())
-                    .any(|(ast, src)| words.iter().any(|w| globals::mentions_word(src, ast, w)))
+                    .any(|(ast, said)| words.iter().any(|w| globals::mentions_word(said, ast, w)))
         };
         let (wanted, rest): (Vec<_>, Vec<_>) =
             std::mem::take(&mut self.globals).into_iter().partition(due);

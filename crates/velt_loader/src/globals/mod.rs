@@ -143,10 +143,10 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
     names
 }
 
-/// Whether module `module` (source `src`) names global `name`: as a whole word of its source,
-/// for `RegExp` also by a regular expression literal, and for `Proxy` by a literal nothing put
-/// where its type may have none (`null!`, `null as any`), which a view of the nothing holds
-/// (velt_vir `lower/any_view.rs`).
+/// Whether module `module` (its source's `words`) names global `name`: as a whole word of its
+/// source, for `RegExp` also by a regular expression literal, and for `Proxy` by a literal
+/// nothing put where its type may have none (`null!`, `null as any`), which a view of the
+/// nothing holds (velt_vir `lower/any_view.rs`).
 pub(super) fn names_global(words: &Words, module: &ast::Module, name: &str) -> bool {
     words.has(name)
         || (name == "RegExp" && words.src.contains('/') && has_regex(module))
@@ -252,8 +252,8 @@ fn has_regex(module: &ast::Module) -> bool {
     find.0
 }
 
-/// Whether module `module` (source `src`) uses a conditional global's word: mentions `name` as
-/// a whole identifier, or for `.name` reads property `name` ([`reads_property`]).
+/// Whether module `module` (its source's `words`) uses a conditional global's word: mentions
+/// `name` as a whole identifier, or for `.name` reads property `name` ([`reads_property`]).
 pub(super) fn mentions_word(words: &Words, module: &ast::Module, word: &str) -> bool {
     match word.strip_prefix('.') {
         Some(prop) => words.has(prop) && reads_property(module, prop),
