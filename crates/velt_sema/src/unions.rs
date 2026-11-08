@@ -245,7 +245,8 @@ impl Ctx<'_> {
             generics.push(&format!("T{i}"));
         }
         let saved = std::mem::replace(&mut self.display_params, generics.names.clone());
-        let names: Vec<String> = norm.iter().map(|t| self.display(*t)).collect();
+        // A union with error-set variables is named again once they are solved (`throws::vars`).
+        let names: Vec<String> = self.unshown(|cx| norm.iter().map(|t| cx.display(*t)).collect());
         self.display_params = saved;
         let name = names.join(" | ");
         let variants = names

@@ -20,6 +20,11 @@
 //! checked again with the solved sets, where it has its type. So is a program that uses the
 //! `reject` of a promise whose rejection type is a variable as a value, whose calls through
 //! that value are not counted.
+//!
+//! A promise type shown with a variable as its rejection type (in a diagnostic: `Promise<T>`)
+//! shows it as nothing, where a check without variables shows its set: that assumes the set
+//! empty, and else the program is checked again with the solved sets, whose diagnostics show
+//! it. A union def's name does not count: it is named again once the sets are solved.
 
 use rustc_hash::FxHashMap;
 
@@ -202,6 +207,41 @@ impl Ctx<'_> {
                 self.fn_sites.var_sets.unsupported = true;
             }
         }
+    }
+
+    /// The rejection type `e` of a promise type was shown (in a diagnostic) as written, its
+    /// variables as nothing, where a check without variables shows their sets: what is shown
+    /// is right only while their sets are empty, which the check then assumes
+    /// ([`Ctx::assume_shown_empty`]).
+    pub(crate) fn shown_as_nothing(&self, e: TyId) {
+        if !self.fn_sites.use_vars || e == self.ty.never {
+            return;
+        }
+        let mut shown = self.fn_sites.shown.borrow_mut();
+        let ms = match self.union_def(e).and_then(|(d, _)| self.enum_info(d)) {
+            Some(u) => (u.variants.iter())
+                .filter_map(|v| v.payload.first().copied())
+                .collect(),
+            None => vec![e],
+        };
+        shown.extend(ms.into_iter().filter_map(|m| self.err_var(m)));
+    }
+
+    /// `f`'s result, where what it shows is named again once the variables are solved (a union
+    /// def's name): it assumes nothing ([`Ctx::shown_as_nothing`]).
+    pub(crate) fn unshown<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let before = std::mem::take(self.fn_sites.shown.get_mut());
+        let r = f(self);
+        *self.fn_sites.shown.get_mut() = before;
+        r
+    }
+
+    /// The variables shown as nothing ([`Ctx::shown_as_nothing`]) are assumed empty: when one is
+    /// not, the program is checked again with the solved sets, where its type shows its set.
+    pub(crate) fn assume_shown_empty(&mut self) {
+        let never = self.ty.never;
+        let shown = std::mem::take(self.fn_sites.shown.get_mut());
+        (self.fn_sites.var_sets.assumed).extend(shown.into_iter().map(|v| (v, never)));
     }
 
     /// Is `t` the type of the `reject` of a promise whose rejection type is a variable?

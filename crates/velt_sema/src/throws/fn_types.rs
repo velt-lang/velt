@@ -177,6 +177,8 @@ pub(crate) struct FnSites {
     /// A type with a variable failed a comparison or a bound: when the check reports errors,
     /// they may come from the variables ([`FnSites::doubted`]).
     pub doubt: std::cell::Cell<bool>,
+    /// The variables a promise type was shown with as nothing (`var_known`).
+    pub(crate) shown: std::cell::RefCell<FxHashSet<u32>>,
 }
 
 impl FnSites {

@@ -29,8 +29,9 @@
 //! where they must be one type, or a variable was outside a bound, the program is checked
 //! again without variables too (`FnSites::doubted`): its errors are then exactly those of a
 //! check without them. A conversion that fails with the variables and as written fails
-//! without them too, and diagnostics show a type with variables as written (a variable as
-//! nothing), so neither raises that doubt.
+//! without them too, so it raises no doubt; diagnostics show a function type with variables as
+//! written, as a check without them does, and a promise type's variable as nothing, which
+//! assumes its set empty (`var_known`).
 //!
 //! The comparisons see the variables in the fields of a non-generic anonymous object type
 //! (`{ print: (d: Doc) => string }`): its plain form is the object type of its fields' plain
