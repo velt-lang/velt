@@ -46,6 +46,7 @@ export { MetadataDb } from "./stores/metadata_db";
 export { PackageChange } from "./stores/package_change";
 export { PackageRecord } from "./stores/package_record";
 export { SearchEntry } from "./stores/search_entry";
+export { StoredFile } from "./stores/stored_file";
 export { archiveKey, indexKey } from "./stores/static_files";
 export { StoreError } from "./stores/store_error";
 export { Caller } from "./server/caller";

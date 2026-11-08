@@ -159,6 +159,43 @@ async function publishesAtOnceAllCount(run: Run): Promise<void> {
   check.is("every version is in the index", found, versions.sort().join());
 }
 
+// The first publishes of a new name, all at the same time: a registry that doesn't check a name is
+// still free as it commits keeps one of two first publishes, or lets two archives claim one
+// version (and a lockfile made from the first 201 names a checksum that is gone).
+async function firstPublishesAtOnce(run: Run): Promise<void> {
+  const { client, check } = run;
+  const lib = run.name("first");
+  const token = run.users.alice;
+  const one = packageFiles(lib, "1.0.0", `description: "one"`);
+  const two = packageFiles(lib, "1.0.0", `description: "two"`);
+  const both = [one, two].map(
+    (files: ArchiveEntry[]): Promise<Reply> => client.upload(
+      lib,
+      "1.0.0",
+      packArchive(files),
+      contentChecksum(files),
+      token,
+    ),
+  );
+  const others: Promise<Reply>[] = [];
+  for (let minor: i64 = 1; minor <= 3; minor++) {
+    others.push(client.publish(lib, `1.${minor}.0`, token));
+  }
+  const first = await both[0];
+  const second = await both[1];
+  for (const answer of others) {
+    check.answer("another version at the same time", await answer, 201);
+  }
+  const statuses = [first.status, second.status].sort().join();
+  check.is("one of two archives of 1.0.0 wins, the other gets 409", statuses, "201,409");
+  const won = first.status == 201 ? one : two;
+  const listed = JSON.parse<IndexBody>((await client.call("GET", `${lib}/index`)).text).versions;
+  const found = listed.map((e): string => e.version).sort().join();
+  check.is("every version is in the index", found, "1.0.0,1.1.0,1.2.0,1.3.0");
+  const entry = listed.find((e): bool => e.version == "1.0.0");
+  check.is("1.0.0 is the archive that got 201", entry?.checksum ?? "none", contentChecksum(won));
+}
+
 /** Publishing and reading back. */
 export const publishing: Case[] = [
   new Case("a version is published once, and never changes", versionsAreImmutable),
@@ -167,4 +204,5 @@ export const publishing: Case[] = [
   new Case("a manifest is read as data, and refused by name", manifestsAreData),
   new Case("the index keeps what each version says", theIndexKeepsEachVersion),
   new Case("publishes of one package at the same time all count", publishesAtOnceAllCount),
+  new Case("first publishes of a new name at the same time count once", firstPublishesAtOnce),
 ];

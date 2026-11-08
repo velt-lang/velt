@@ -31,24 +31,47 @@ export function indexPaths(name: string): string[] {
 }
 
 /**
- * Writes package `name`'s index file from its record, and again while the record has moved on
- * meanwhile: of two writes whose files land out of order, the one that lands last sees the newer
- * revision and writes again, so an older index never stays. Throws a `StoreError` when the record
- * kept moving for `MAX_ATTEMPTS` writes, so the caller hears its file may be behind and tries
- * again (which writes it).
+ * Brings package `name`'s index file up to its record: does nothing when the stored file was
+ * written from this revision or a newer one, and otherwise writes it, only over the copy it read
+ * (`putIfTag`), reading again when another write landed meanwhile, or when a newer revision
+ * committed meanwhile (its writer may stop before writing). So a write that lost the race, or
+ * stopped half-way (a timeout, a Worker cancelled after its write), never leaves an older index
+ * over a newer one. Resolves to whether it wrote the file. Throws a `StoreError` when other writes
+ * kept landing for `MAX_ATTEMPTS` tries, so the caller hears its file may be behind and tries again
+ * (which writes it).
  */
-export async function writeIndexFile(stores: RegistryStores, name: string): Promise<void> {
+export async function writeIndexFile(stores: RegistryStores, name: string): Promise<bool> {
+  const key = indexKey(name);
+  let wrote = false;
   for (let i: i64 = 0; i < MAX_ATTEMPTS; i++) {
     const record = await stores.db.record(name);
     if (record == null) {
-      return;
+      return wrote;
     }
-    await stores.blobs.put(indexKey(name), utf8Encode(record.index.toJson()));
-    if ((await stores.db.revision(name)) == record.revision) {
-      return;
+    const stored = await stores.blobs.head(key);
+    if (stored != null && stored.revision >= record.revision) {
+      return wrote;
+    }
+    const bytes = utf8Encode(record.index.toJson());
+    if (await stores.blobs.putIfTag(key, bytes, record.revision, stored?.tag ?? null)) {
+      wrote = true;
+      // Done unless a newer revision committed meanwhile, whose writer may never write its file.
+      if ((await stores.db.revision(name)) == record.revision) {
+        return true;
+      }
     }
   }
   throw new StoreError(`the index of \`${name}\` couldn't be written; try again`);
+}
+
+/**
+ * Writes package `name`'s index file when it is behind its record, as after a write whose file
+ * failed, and has the cache forget the old one.
+ */
+export async function mendIndexFile(stores: RegistryStores, name: string): Promise<void> {
+  if (await writeIndexFile(stores, name)) {
+    await purgeAfterWrite(stores, indexPaths(name));
+  }
 }
 
 /**
@@ -56,7 +79,8 @@ export async function writeIndexFile(stores: RegistryStores, name: string): Prom
  * published), reading the record again and calling `attempt` again when another write committed
  * first. `attempt` throws a `Refusal` to answer without writing, or returns null when there is
  * nothing to change. Resolves to whether a change was committed; either way the index file is
- * written afterwards (so a write whose file failed is mended by trying it again), and the cache
+ * brought up to the record afterwards (so a write whose file failed is mended by trying it
+ * again), and the cache
  * forgets `paths` (what the write changed) after a commit. Tries wait a random while between
  * them, so writes that collide spread out; answers 503 when the package keeps changing.
  */
@@ -69,7 +93,7 @@ export async function commitChange(
   for (let i: i64 = 0; i < MAX_ATTEMPTS; i++) {
     const change = await attempt(await stores.db.record(name));
     if (change == null) {
-      await writeIndexFile(stores, name);
+      await mendIndexFile(stores, name);
       return false;
     }
     if (await stores.db.commit(change)) {

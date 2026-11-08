@@ -35,7 +35,9 @@ export class MemoryMetadataDb implements MetadataDb {
     if ((current?.revision ?? 0) != change.base) {
       return false;
     }
-    if (current == null && (await this.spelling(normalizedName(change.name))) != null) {
+    // Checked and set with no `await` between: a commit is one step, as a database's
+    // transaction is, so two first publishes of one name can't both get here.
+    if (current == null && this.spellingNow(normalizedName(change.name)) != null) {
       return false;
     }
     const index = current?.index.copy() ?? new PackageIndex(change.name);
@@ -52,13 +54,18 @@ export class MemoryMetadataDb implements MetadataDb {
     return true;
   }
 
-  async spelling(normalized: string): Promise<string | null> {
+  // The published name whose `normalizedName` is `normalized`, or null.
+  private spellingNow(normalized: string): string | null {
     for (const [name, _] of this.records) {
       if (normalizedName(name) == normalized) {
         return name;
       }
     }
     return null;
+  }
+
+  async spelling(normalized: string): Promise<string | null> {
+    return this.spellingNow(normalized);
   }
 
   async packageNames(): Promise<string[]> {

@@ -12,10 +12,12 @@ import {
   MemoryBlobStore,
   MemoryMetadataDb,
   PackageChange,
+  PackageIndex,
   packArchive,
   RecordingCachePurge,
   RegistryLimits,
   StoreError,
+  tokenHash,
 } from "../src/lib";
 import { Answer, packageFiles, TestRegistry } from "./_registry";
 
@@ -46,13 +48,6 @@ class LosingDb extends MemoryMetadataDb {
   }
 }
 
-// A database whose revision has always moved on by the time it is read again.
-class MovingDb extends MemoryMetadataDb {
-  override async revision(name: string): Promise<i64> {
-    return (await super.revision(name)) + 1;
-  }
-}
-
 // A database whose commits fail.
 class FailingDb extends MemoryMetadataDb {
   override async commit(change: PackageChange): Promise<bool> {
@@ -74,13 +69,20 @@ class EmptyBlobs extends MemoryBlobStore {
   }
 }
 
-// A blob store whose next index write runs `meanwhile` first (another write committing while
-// this one writes its file), or fails when `fail` is set.
+// A blob store whose next index write runs `meanwhile` first (another write landing while this
+// one writes its file), or fails when `fail` is set. With `failAfter`, its next write that stores
+// its file then fails all the same, as a write whose answer timed out.
 class SlowIndexBlobs extends MemoryBlobStore {
   meanwhile: (() => Promise<void>) | null = null;
   fail: bool = false;
+  failAfter: bool = false;
 
-  override async put(key: string, bytes: u8[]): Promise<void> {
+  override async putIfTag(
+    key: string,
+    bytes: u8[],
+    revision: i64,
+    tag: string | null,
+  ): Promise<bool> {
     if (this.fail) {
       this.fail = false;
       throw new StoreError("the blob store is down");
@@ -90,7 +92,24 @@ class SlowIndexBlobs extends MemoryBlobStore {
       this.meanwhile = null;
       await meanwhile();
     }
-    await super.put(key, bytes);
+    const stored = await super.putIfTag(key, bytes, revision, tag);
+    if (stored && this.failAfter) {
+      this.failAfter = false;
+      throw new StoreError("the blob store timed out");
+    }
+    return stored;
+  }
+}
+
+// A blob store where another write always lands first.
+class ContendedBlobs extends MemoryBlobStore {
+  override async putIfTag(
+    key: string,
+    bytes: u8[],
+    revision: i64,
+    tag: string | null,
+  ): Promise<bool> {
+    return false;
   }
 }
 
@@ -116,8 +135,9 @@ async function commitVersion(
   name: string,
   version: string,
   owner: string,
+  blobs: MemoryBlobStore = new MemoryBlobStore(),
 ): Promise<void> {
-  const r = new TestRegistry(new RegistryLimits(), db);
+  const r = new TestRegistry(new RegistryLimits(), db, blobs);
   const token = owner.length > 0 ? r.user(owner) : "";
   expect((await r.publish(name, version, token)).status).toBe(201);
 }
@@ -304,6 +324,38 @@ describe("commits", () => {
   });
 });
 
+describe("first publishes of a new name at the same time", () => {
+  it("commit once in the database", async () => {
+    const db = new MemoryMetadataDb();
+    const a = new PackageChange("lib", 0, new PackageIndex("lib"));
+    const b = new PackageChange("lib", 0, new PackageIndex("lib"));
+    const won = await Promise.all([db.commit(a), db.commit(b)]);
+    expect(won.filter((w: bool): bool => w).length).toBe(1);
+  });
+
+  it("all count when their versions differ", async () => {
+    const r = new TestRegistry();
+    const answers = await Promise.all([r.publish("lib", "1.0.0"), r.publish("lib", "1.1.0")]);
+    expect(answers.map((a: Answer): i64 => a.status)).toEqual([201, 201]);
+    expect(await versionsOf(r.db, "lib")).toEqual(["1.0.0", "1.1.0"]);
+  });
+
+  it("publish one version once, whichever bytes win", async () => {
+    const r = new TestRegistry();
+    const one = packageFiles("lib", "1.0.0", `description: "one"`);
+    const two = packageFiles("lib", "1.0.0", `description: "two"`);
+    const answers = await Promise.all([
+      r.upload("lib", "1.0.0", packArchive(one), contentChecksum(one)),
+      r.upload("lib", "1.0.0", packArchive(two), contentChecksum(two)),
+    ]);
+    const statuses = answers.map((a: Answer): i64 => a.status).sort();
+    expect(statuses).toEqual([201, 409]);
+    const won = answers[0].status == 201 ? one : two;
+    const record = await r.db.record("lib");
+    expect(record?.index.versions[0].checksum).toBe(contentChecksum(won));
+  });
+});
+
 describe("the index file", () => {
   it("is written again when a newer revision landed while it was written", async () => {
     const blobs = new SlowIndexBlobs();
@@ -319,8 +371,25 @@ describe("the index file", () => {
     expect(file).toContain(`"1.0.0"`);
   });
 
-  it("fails the write when the record keeps moving while it is written", async () => {
-    const r = new TestRegistry(new RegistryLimits(), new MovingDb());
+  it("never goes back to an older revision", async () => {
+    // A yank writes its file; before its write lands, a publish of 1.1.0 runs start to finish.
+    const blobs = new SlowIndexBlobs();
+    const db = new MemoryMetadataDb();
+    const r = new TestRegistry(new RegistryLimits(), db, blobs);
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    // The publish writes the same store; the yank's write, were it to land, would time out after.
+    blobs.meanwhile = async (): Promise<void> => {
+      await commitVersion(db, "lib", "1.1.0", "", blobs);
+      blobs.failAfter = true;
+    };
+    expect((await r.call("PUT", "lib/1.0.0/yank")).status).toBe(200);
+    const file = (await r.call("GET", "lib/index")).text;
+    expect(file).toContain(`"1.1.0"`);
+    expect(file).toContain(`"yanked": true`);
+  });
+
+  it("fails the write when other writes keep landing on it", async () => {
+    const r = new TestRegistry(new RegistryLimits(), new MemoryMetadataDb(), new ContendedBlobs());
     const answer = await r.publish("lib", "1.0.0");
     expect(`${answer.status} ${answer.text}`).toBe(
       "500 the index of `lib` couldn't be written; try again",
@@ -363,6 +432,28 @@ describe("uploads", () => {
     expect((await r.publish("lib", "0.9.1")).status).toBe(201);
     slow.finish();
     expect((await slow.answer).status).toBe(201);
+  });
+
+  it("store nothing for a publish refused for its version", async () => {
+    const r = new TestRegistry();
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    const stored = r.blobs.size;
+    const other = packageFiles("lib", "1.0.0", `description: "other bytes"`);
+    const again = await r.upload("lib", "1.0.0", packArchive(other), contentChecksum(other));
+    expect(again.status).toBe(409);
+    expect(r.blobs.size).toBe(stored);
+  });
+
+  it("stop a token taken away while the body arrived", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    const slow = new SlowUpload(r, alice);
+    // Past the first check by now, as below.
+    await r.publish("other", "1.0.0", alice);
+    r.auth.setUser("alice", tokenHash("a-new-token"));
+    slow.finish();
+    expect((await slow.answer).status).toBe(401);
+    expect(await r.db.record("lib")).toBeNull();
   });
 
   it("check the caller again once the body has arrived", async () => {

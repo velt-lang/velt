@@ -69,6 +69,17 @@ cd packages/registry-conformance   # in the repository
 velt run src/main.velt <url> --alice <token> --bob <token>
 ```
 
+## Editing the database by hand
+
+Writes are compare-and-set on each package's `revision`. An administrator who changes a package's
+rows by SQL (its `owners`, say) raises its revision in the same batch, or a write that read the
+package before will put back what it read:
+
+```sh
+npx wrangler d1 execute velt-registry-staging --remote --command \
+  "DELETE FROM owners WHERE package = 'lib'; INSERT INTO owners VALUES ('lib', 0, 'alice'); UPDATE packages SET revision = revision + 1 WHERE name = 'lib'"
+```
+
 ## Settings
 
 `PUBLIC_URL` and the GitHub app's two settings are needed for signing in. With a cache in front of

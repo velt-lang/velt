@@ -80,8 +80,9 @@ const manifest = readManifest(text); // ManifestError when vpm would refuse it
 - **Static files** (`BlobStore`, `src/stores/static_files.velt`): what clients read, as #1325's
   protocol lays them out, so any static host or bucket can serve them: archives at
   `blobs/sha256/<hex>`, which never change, and each package's index at `index/<name>.json`,
-  rewritten after each write (and again while a newer revision landed meanwhile, so an older
-  index never stays). `GET /api/v1/<name>/index` answers that file.
+  rewritten after each write with the revision it shows, and only over the copy read and only
+  when that copy is older (`BlobStore.putIfTag`), so an older index never replaces a newer one,
+  even from a write that stopped half-way. `GET /api/v1/<name>/index` answers that file.
 - **Stores** (`src/stores/`): the interfaces a host implements, and in-memory adapters
   (`src/memory/`) for tests and for trying a registry out. `MetadataDb` holds small rows: a
   record per package (versions, owners, revision) and a search entry; reads of an index never

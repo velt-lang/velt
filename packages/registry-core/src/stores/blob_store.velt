@@ -1,7 +1,10 @@
 // registry-core: where the registry's static files are kept (#1325's `BlobStore`): a folder
 // natively, R2 on Cloudflare. They are what clients read, served as they are by any static host:
 // archives at `archiveKey`, addressed by their content checksum so they never change, and each
-// package's index at `indexKey`, rewritten after each write (`static_files.velt`).
+// package's index at `indexKey`, rewritten after each write with the revision it shows, and only
+// over an older one (`writeIndexFile`).
+
+import { StoredFile } from "./stored_file";
 
 /** Static files by key (a relative path). */
 export interface BlobStore {
@@ -10,8 +13,13 @@ export interface BlobStore {
    * are then the same, since the key holds their checksum). Resolves to whether it stored them.
    */
   putIfAbsent(key: string, bytes: u8[]): Promise<bool>;
-  /** Stores `bytes` under `key`, replacing what was there. */
-  put(key: string, bytes: u8[]): Promise<void>;
+  /** The tag and revision of the file stored under `key`, or null when there is none. */
+  head(key: string): Promise<StoredFile | null>;
+  /**
+   * Stores `bytes` under `key`, written from `revision`, only if the file there still has the tag
+   * `tag` (or, when `tag` is null, there is none). Resolves to whether it stored them.
+   */
+  putIfTag(key: string, bytes: u8[], revision: i64, tag: string | null): Promise<bool>;
   /** The file stored under `key`, or null. */
   get(key: string): Promise<u8[] | null>;
 }

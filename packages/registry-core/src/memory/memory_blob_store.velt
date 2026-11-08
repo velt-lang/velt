@@ -1,30 +1,58 @@
 // registry-core: a `BlobStore` in memory, for tests and for trying a registry out.
 
 import { BlobStore } from "../stores/blob_store";
+import { StoredFile } from "../stores/stored_file";
 
-/** Static files in a map; lost when the program ends. */
+// One stored file: its bytes, its tag and the revision it was written from.
+struct Held {
+  bytes: u8[];
+  tag: string;
+  revision: i64;
+}
+
+/**
+ * Static files in a map; lost when the program ends. Each write gets a new tag, and a conditional
+ * write checks and stores with no `await` between, as a store's conditional write is one step.
+ */
 export class MemoryBlobStore implements BlobStore {
-  private blobs: Map<string, u8[]> = new Map();
+  private files: Map<string, Held> = new Map();
+  private writes: i64 = 0;
+
+  // Stores `bytes` under `key` with a new tag.
+  private store(key: string, bytes: u8[], revision: i64): void {
+    this.writes++;
+    this.files.set(key, { bytes: [...bytes], tag: `t${this.writes}`, revision });
+  }
 
   async putIfAbsent(key: string, bytes: u8[]): Promise<bool> {
-    if (this.blobs.has(key)) {
+    if (this.files.has(key)) {
       return false;
     }
-    this.blobs.set(key, [...bytes]);
+    this.store(key, bytes, 0);
     return true;
   }
 
-  async put(key: string, bytes: u8[]): Promise<void> {
-    this.blobs.set(key, [...bytes]);
+  async head(key: string): Promise<StoredFile | null> {
+    const found = this.files.get(key);
+    return found == null ? null : new StoredFile(found.tag, found.revision);
+  }
+
+  async putIfTag(key: string, bytes: u8[], revision: i64, tag: string | null): Promise<bool> {
+    const found = this.files.get(key);
+    if ((found?.tag ?? null) != tag) {
+      return false;
+    }
+    this.store(key, bytes, revision);
+    return true;
   }
 
   async get(key: string): Promise<u8[] | null> {
-    const found = this.blobs.get(key);
-    return found == null ? null : [...found];
+    const found = this.files.get(key);
+    return found == null ? null : [...found.bytes];
   }
 
   /** How many files it holds. */
   get size(): i64 {
-    return this.blobs.size;
+    return this.files.size;
   }
 }

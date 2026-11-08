@@ -5,7 +5,7 @@
 import { checkUserName, isValidPackageName } from "../names";
 import { PackageChange } from "../stores/package_change";
 import { PackageRecord } from "../stores/package_record";
-import { authorize, isPublished, ownerOf } from "./access";
+import { authorize, isPublished, ownerOf, writer } from "./access";
 import { text } from "./answer";
 import { Caller } from "./caller";
 import { commitChange } from "./commit";
@@ -82,7 +82,7 @@ export async function changeOwners(
   if (bad != null) {
     return text(400, bad);
   }
-  const caller = await ownerOf(stores, req, name);
+  await ownerOf(stores, req, name);
   if (!(await isPublished(stores, name))) {
     return text(404, `no package \`${name}\``);
   }
@@ -90,7 +90,8 @@ export async function changeOwners(
   await commitChange(stores, name, [`/api/v1/${name}/owners`], async (
     record: PackageRecord | null,
   ): Promise<PackageChange | null> => {
-    const change = await ownersChange(stores, record, caller, name, user, add);
+    // Each try asks who the caller is again: a token taken away meanwhile stops here.
+    const change = await ownersChange(stores, record, await writer(stores, req), name, user, add);
     owners = change?.owners ?? record?.owners ?? [];
     return change;
   });

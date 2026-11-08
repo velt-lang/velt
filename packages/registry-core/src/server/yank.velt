@@ -6,7 +6,7 @@ import { isValidPackageName } from "../names";
 import { Version } from "../semver/version";
 import { PackageChange } from "../stores/package_change";
 import { PackageRecord } from "../stores/package_record";
-import { authorize, isPublished, ownerOf } from "./access";
+import { authorize, isPublished, ownerOf, writer } from "./access";
 import { text } from "./answer";
 import { Caller } from "./caller";
 import { commitChange, indexPaths } from "./commit";
@@ -54,7 +54,7 @@ export async function yank(
   if (!isValidPackageName(name) || !Version.isValid(version)) {
     return text(400, "invalid package name or version");
   }
-  const caller = await ownerOf(stores, req, name);
+  await ownerOf(stores, req, name);
   if (!(await isPublished(stores, name))) {
     return text(404, notInRegistry(name));
   }
@@ -63,9 +63,10 @@ export async function yank(
     stores,
     name,
     indexPaths(name),
+    // Each try asks who the caller is again: a token taken away meanwhile stops here.
     async (record: PackageRecord | null): Promise<PackageChange | null> => yankChange(
       record,
-      caller,
+      await writer(stores, req),
       name,
       normal,
       yanked,
