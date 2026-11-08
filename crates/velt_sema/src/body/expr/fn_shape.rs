@@ -14,7 +14,7 @@ use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::ctx::Ctx;
 use crate::defs::FnSource;
-use crate::hir::{self, DefId, Intrinsic, TyKind, UseMode};
+use crate::hir::{self, DefId, Intrinsic, TyId, TyKind, UseMode};
 
 /// What `length` counts of parameters given as `(has a default, optional, rest)`: the parser
 /// gives an optional parameter a default, which leaves no trace in the JavaScript.
@@ -66,6 +66,17 @@ impl FnCx<'_, '_> {
         self.cx.fn_shapes.insert(e.span, shape);
     }
 
+    /// `length` of function `d` as declared, when it has a declaration.
+    fn declared_length(&self, d: DefId) -> Option<u32> {
+        if !matches!(self.cx.info[d.0 as usize], crate::defs::DefInfo::Fn(_)) {
+            return None;
+        }
+        let Some(FnSource::Decl(decl)) = self.cx.fn_info(d).source else {
+            return None;
+        };
+        Some(decl_length(&decl.sig.params))
+    }
+
     /// `length` or `name` of declared function `d`.
     fn declared_fn_member(&mut self, d: DefId, prop: &ast::Ident, span: Span) -> Option<hir::Expr> {
         let f = self.cx.fn_info(d);
@@ -87,10 +98,25 @@ impl FnCx<'_, '_> {
     /// isn't given), when that is known here (`callback::wrap`).
     pub(super) fn note_wrapper_shape(
         &mut self,
-        span: Span,
+        arrow: &ast::Expr,
         wrapped: Option<DefId>,
         callee: &ast::Expr,
     ) {
+        let span = arrow.span;
+        // `Math.max` as a value: a member named, which the wrapper is called by.
+        if let (None, ast::ExprKind::Member { prop, .. }) = (wrapped, &callee.kind) {
+            if let ast::ExprKind::Arrow { params, .. } = &arrow.kind {
+                let (name, wraps) = (Some(prop.name.clone()), None);
+                let length = params.len() as u32;
+                let shape = hir::FnShape {
+                    name,
+                    length,
+                    wraps,
+                };
+                self.cx.fn_shapes.entry(span).or_insert(shape);
+            }
+            return;
+        }
         let named = |cx: &Ctx, module, name: &ast::Ident| match cx.lookup_item(module, &name.name) {
             Some(crate::ctx::Item::Def(d))
                 if matches!(cx.info[d.0 as usize], crate::defs::DefInfo::Fn(_)) =>
@@ -109,12 +135,21 @@ impl FnCx<'_, '_> {
     }
 
     /// The closure `arrow` is method `prop` read as a value: it has the method's name.
-    pub(super) fn note_method_value(&mut self, arrow: &ast::Expr, prop: &ast::Ident) {
+    pub(super) fn note_method_value(&mut self, arrow: &ast::Expr, prop: &ast::Ident, recv: TyId) {
         let ast::ExprKind::Arrow { params, .. } = &arrow.kind else {
             return;
         };
         let (name, wraps) = (Some(prop.name.clone()), None);
-        let length = params.len() as u32;
+        // The method's own parameters, as written: the arrow's have no defaults.
+        let def = match self.resolve_method(recv, &prop.name) {
+            Some(super::method::Resolved::Def { def, .. })
+            | Some(super::method::Resolved::Virtual { def, .. }) => Some(def),
+            _ => None,
+        };
+        let length = match def.and_then(|d| self.declared_length(d)) {
+            Some(n) => n,
+            None => params.len() as u32,
+        };
         let shape = hir::FnShape {
             name,
             length,
@@ -134,8 +169,15 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Member { prop, .. } => &prop.name,
             _ => return,
         };
+        let declared = match &f.kind {
+            ast::ExprKind::Ident(id) => match self.cx.lookup_item(self.module, &id.name) {
+                Some(crate::ctx::Item::Def(d)) => self.declared_length(d),
+                _ => None,
+            },
+            _ => None,
+        };
         let name = Some(format!("bound {name}"));
-        let (length, wraps) = (length as u32, None);
+        let (length, wraps) = (declared.unwrap_or(length as u32), None);
         let shape = hir::FnShape {
             name,
             length,

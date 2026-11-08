@@ -545,7 +545,7 @@ impl FnLower<'_, '_> {
 impl FnLower<'_, '_> {
     /// The tag of a class object's function type (velt_sema's `ctor_objects.rs`): its rest
     /// parameter is `ClassMarker<T>[]`, `T` the tag (std/lang/hooks/class_object.velt).
-    fn class_object_tag(&self, ty: TyId) -> Option<TyId> {
+    pub(in crate::lower) fn class_object_tag(&self, ty: TyId) -> Option<TyId> {
         let TyKind::FnPtr {
             params, rest: true, ..
         } = self.cx.kind(ty)

@@ -21,3 +21,16 @@ true
 quoted-key
 [Function: two] [Function: f] [Function: heldArrow] [ [Function: two] ] { held: [Function: two] }
 [Function (anonymous)]
+1 m 1 bound m
+1 bound addDefault
+pf pg
+lg la ln
+max 2
+[
+  [AsyncFunction: load],
+  [GeneratorFunction: steps],
+  [AsyncGeneratorFunction: stream],
+  [AsyncFunction: asyncArrow],
+  [AsyncFunction (anonymous)],
+  [Function: addDefault]
+]

@@ -121,6 +121,9 @@ impl<'a> Parser<'a> {
         }
         let lo = pat.span.lo;
         let value = self.parse_assign()?;
+        if let PatternKind::Ident(name) = &pat.kind {
+            self.name_fn(&name.name, &value);
+        }
         let span = self.span_from(lo);
         let kind = PatternKind::Default {
             pattern: Box::new(pat),

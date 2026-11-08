@@ -198,7 +198,7 @@ impl FnCx<'_, '_> {
             self.cx.error(d);
             return self.error_expr(span);
         };
-        self.note_method_value(&arrow, prop);
+        self.note_method_value(&arrow, prop, obj.ty);
         if direct {
             return match generic {
                 Some(g) => self.generic_closure(&arrow, Some(g)),

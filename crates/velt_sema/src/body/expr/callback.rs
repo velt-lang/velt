@@ -250,7 +250,7 @@ impl FnCx<'_, '_> {
             Wrap::Task => self.void_task = Some(arrow.span),
             Wrap::Call | Wrap::Discard => {}
         }
-        self.note_wrapper_shape(arrow.span, closure, &named_call);
+        self.note_wrapper_shape(&arrow, closure, &named_call);
         let mut w = self.closure(&arrow, exp, true);
         // A function value converted to another function type (#943, `FreshClosure`).
         if let (Some((_, v)), Some(to)) = (&bound, exp) {

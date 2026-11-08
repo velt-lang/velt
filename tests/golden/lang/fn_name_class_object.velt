@@ -1,0 +1,9 @@
+// `name` and `length` of a class read through `any`: Node gives `K 1`. Velt's class objects
+// share one function type that doesn't say which class they are, so the read stops (#924)
+// rather than answer wrongly.
+class K {
+  constructor(a: number) {}
+}
+const ak: any = K as any;
+console.log("before");
+console.log(ak.name, ak.length);

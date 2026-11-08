@@ -16,6 +16,14 @@ use super::rt::Rt;
 use super::{cfunc, cint, Cx, FnLower, Work};
 use crate::vir::{self, BinOp, Callee, FuncId, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
+/// What `console.log` calls a function, by its kind: plain, `async`, a generator, both.
+const KINDS: [&str; 4] = [
+    "Function",
+    "AsyncFunction",
+    "GeneratorFunction",
+    "AsyncGeneratorFunction",
+];
+
 /// The function whose value has the code of `work`, if `work` is such code.
 fn value_def(work: &Work) -> Option<(DefId, bool)> {
     match work {
@@ -48,8 +56,9 @@ impl Cx<'_> {
         }
     }
 
-    /// The code of each function that may be a value and its `(name, length)`, in a fixed order.
-    fn fn_codes(&self) -> Vec<(FuncId, String, u32)> {
+    /// The code of each function that may be a value and its `(name, length, kind)`, in a fixed
+    /// order; the kind is what `console.log` writes (`KINDS`).
+    fn fn_codes(&self) -> Vec<(FuncId, String, u32, u8)> {
         let mut out = vec![];
         for (work, &fid) in &self.work_map {
             let Some((d, thunk)) = value_def(work) else {
@@ -64,18 +73,19 @@ impl Cx<'_> {
                 continue;
             }
             let mut shape = self.hir.fn_shapes.get(&f.span);
+            // A wrapper's own name (`bound f`) goes before the wrapped function's.
+            let mut name = shape.and_then(|s| s.name.as_deref());
             while let Some(w) = shape.and_then(|s| s.wraps) {
                 let hir::Def::Fn(inner) = self.hir.def(w) else {
                     break;
                 };
                 f = inner;
                 shape = self.hir.fn_shapes.get(&f.span);
+                name = name.or(shape.and_then(|s| s.name.as_deref()));
             }
-            let name = match shape.and_then(|s| s.name.as_deref()) {
-                Some(n) => n,
-                None => hir::declared_fn_name(&f.name),
-            };
-            out.push((fid, name.to_string(), shape.map_or(0, |s| s.length)));
+            let name = name.unwrap_or(hir::declared_fn_name(&f.name));
+            let kind = u8::from(f.is_async) + 2 * u8::from(f.is_generator);
+            out.push((fid, name.to_string(), shape.map_or(0, |s| s.length), kind));
         }
         out.sort_by_key(|e| e.0 .0);
         out
@@ -121,7 +131,29 @@ impl FnLower<'_, '_> {
 
     /// A function value in the text of `console.log`, as Node writes it (`format.rs`).
     pub(super) fn format_fn(&mut self, buf: &Operand, place: &Place) {
-        let name = self.fn_name_of(Operand::Copy(proj(place, Proj::Field(0))));
+        let code = Operand::Copy(proj(place, Proj::Field(0)));
+        let kind = self.cx.fn_table(Glue::FnKind);
+        let k = Place::local(self.temp(Ty::U8));
+        self.call(
+            Callee::Func(kind),
+            vec![code.clone()],
+            Some(k.clone()),
+            false,
+        );
+        let join = self.new_block();
+        for (i, word) in KINDS.iter().enumerate() {
+            let is = Rvalue::Binary(BinOp::Eq, Operand::Copy(k.clone()), cint(i as i128, Ty::U8));
+            let is = self.rvalue_temp(Ty::Bool, is);
+            let (yes, no) = (self.new_block(), self.new_block());
+            self.branch(is, yes, no);
+            self.switch_to(yes);
+            self.push_text(buf, &format!("[{word}"));
+            self.goto(join);
+            self.switch_to(no);
+        }
+        self.goto(join);
+        self.switch_to(join);
+        let name = self.fn_name_of(code);
         let st = self.cx.str_ty();
         let vt = self.cx.ty(st);
         let name = Place::local(self.copy_to_temp(name, vt));
@@ -129,23 +161,40 @@ impl FnLower<'_, '_> {
         let lengths = Operand::Copy(proj(&name, Proj::Field(1)));
         let none = Rvalue::Binary(BinOp::Eq, lengths, cint(0, Ty::U64));
         let none = self.rvalue_temp(Ty::Bool, none);
-        let (anonymous, named, join) = (self.new_block(), self.new_block(), self.new_block());
+        let (anonymous, named, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(none, anonymous, named);
         self.switch_to(anonymous);
-        self.push_text(buf, "[Function (anonymous)]");
-        self.goto(join);
+        self.push_text(buf, " (anonymous)]");
+        self.goto(done);
         self.switch_to(named);
-        self.push_text(buf, "[Function: ");
+        self.push_text(buf, ": ");
         let at = self.addr(name);
         self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), at], None);
         self.push_text(buf, "]");
-        self.goto(join);
-        self.switch_to(join);
+        self.goto(done);
+        self.switch_to(done);
+    }
+
+    /// The body of `Glue::FnKind`: the index in `KINDS` of the function with code `code`.
+    pub(super) fn fn_kind_body(&mut self, code: vir::Local) {
+        for (f, _, _, kind) in self.cx.fn_codes() {
+            if kind != 0 {
+                let next = self.on_code(code, f);
+                self.terminate(Terminator::Return(cint(i128::from(kind), Ty::U8)));
+                self.switch_to(next);
+            }
+        }
+        self.terminate(Terminator::Return(cint(0, Ty::U8)));
     }
 
     /// `length` and `name` in the `AnyGet` slot body of a function type: answered here, and any
     /// other key goes on in the current block.
     pub(super) fn fn_own_get(&mut self, data: vir::Local, key: vir::Local, out: &Place, ty: TyId) {
+        // A class object: one closure type for every class, whose code says nothing of the
+        // class, so `name` and `length` stop as before (#924).
+        if self.class_object_tag(ty).is_some() {
+            return;
+        }
         let vp = self.any_value_place(data, ty);
         let next = self.on_key(key, "length");
         let n = self.fn_length_of(Operand::Copy(proj(&vp, Proj::Field(0))));
@@ -174,7 +223,7 @@ impl FnLower<'_, '_> {
 
     /// The body of `Glue::FnLength`.
     pub(super) fn fn_length_body(&mut self, code: vir::Local) {
-        for (f, _, length) in self.cx.fn_codes() {
+        for (f, _, length, _) in self.cx.fn_codes() {
             if length != 0 {
                 let next = self.on_code(code, f);
                 let v = Operand::Const(vir::Const::Float(f64::from(length)), Ty::F64);
@@ -194,7 +243,7 @@ impl FnLower<'_, '_> {
             local: out,
             proj: vec![Proj::Deref(vt)],
         };
-        for (f, name, _) in self.cx.fn_codes() {
+        for (f, name, _, _) in self.cx.fn_codes() {
             if !name.is_empty() {
                 let next = self.on_code(code, f);
                 let s = self.str_lit(&name);

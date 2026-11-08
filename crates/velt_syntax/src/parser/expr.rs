@@ -63,7 +63,11 @@ impl<'a> Parser<'a> {
             self.bump();
         }
         let value = self.guarded(|p| p.parse_assign())?;
-        if let (None, ExprKind::Ident(name)) = (op, &lhs.kind) {
+        let names = matches!(
+            op,
+            None | Some(BinaryOp::And | BinaryOp::Or | BinaryOp::Nullish)
+        );
+        if let (true, ExprKind::Ident(name)) = (names, &lhs.kind) {
             self.name_fn(&name.name, &value);
         }
         let span = self.span_from(lo);

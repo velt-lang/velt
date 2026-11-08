@@ -63,3 +63,41 @@ function anonymousHolder(v: any) {
   return v;
 }
 console.log(anonymousHolder(() => 1));
+
+// A method read as a value, and `bind`, count parameters as declared: up to the first default.
+class WithDefaults {
+  m(a: number, b: number = 3) {
+    return a + b;
+  }
+}
+const wd = new WithDefaults();
+const mv = wd.m;
+console.log(mv.length, mv.name, wd.m.bind(wd).length, wd.m.bind(wd).name);
+function addDefault(a: number, b = 2) {
+  return a + b;
+}
+console.log(addDefault.bind(null).length, addDefault.bind(null).name);
+
+// Names JavaScript gives a literal in a pattern default and in a logical assignment.
+const { pf = () => 1 } = {} as { pf?: () => number };
+const [pg = (x: number) => x] = [] as ((x: number) => number)[];
+console.log(pf.name, pg.name);
+let lg: (() => number) | undefined;
+lg ||= () => 2;
+let la: (() => number) | null = () => 0;
+la &&= () => 3;
+let ln: (() => number) | undefined;
+ln ??= () => 4;
+console.log(lg!.name, la!.name, ln!.name);
+
+// A built-in method as a value.
+const mx: (a: number, b: number) => number = Math.max;
+console.log(mx.name, mx(1, 2));
+
+// `console.log` writes what kind of function it is.
+async function load() {}
+function* steps(): Generator<number> {}
+async function* stream(): AsyncGenerator<number> {}
+const asyncArrow = async () => 1;
+const kinds: any[] = [load, steps, stream, asyncArrow, async () => 2, addDefault];
+console.log(kinds);
