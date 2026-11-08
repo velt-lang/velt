@@ -1399,13 +1399,6 @@ instead), and a send waits while more than 1 MiB is queued. No callbacks are sto
 | `velt_rt_html_escape` | `(const VeltStr* s, VeltStr* out)` | owned `s` with `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`, in one pass (output sized once); other bytes unchanged. Without any of them, `s` itself (as `velt_rt_str_own`: shared, no copy) |
 | `velt_rt_jsx_escape` | `(const VeltStr* s, VeltStr* out)` | as `velt_rt_html_escape`, but `'` → `&#x27;` (react-dom's; `std/jsx`) |
 
-Stable hash (`velt/hash`, additive):
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_fnv1a64_str` | `(const VeltStr* s) -> u64` | `velt/hash`: 64-bit FNV-1a of the bytes; stable forever (std contract) |
-| `velt_rt_fnv1a64_bytes` | `(const VeltBytes* data) -> u64` | the same over a `u8[]` |
-
 ### 14.11 SQLite (moved)
 
 The SQLite driver left the runtime for the `sqlite` package (`packages/sqlite`), which calls SQLite

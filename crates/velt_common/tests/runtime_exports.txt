@@ -109,8 +109,6 @@ velt_rt velt_rt_fnprop_identity_of
 velt_rt velt_rt_fnprop_key
 velt_rt velt_rt_fnprop_len
 velt_rt velt_rt_fnprop_set
-velt_rt velt_rt_fnv1a64_bytes
-velt_rt velt_rt_fnv1a64_str
 velt_rt velt_rt_free
 velt_rt velt_rt_free_after_reads
 velt_rt velt_rt_fs_append_file
