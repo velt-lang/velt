@@ -153,12 +153,16 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(r.ty) {
             return r;
         }
+        // The object of an outer link (`f?.inner` in `f?.inner?.v`) is only tested for a
+        // nothing, so a rest that has one already (`Foo | null`) keeps its own option: its
+        // nothing stands for the short-circuit too, and the outer link tests it once.
+        let link = self.chain_span == Some(span);
         let keeps = r.ty == self.cx.ty.unit
             || self
                 .cx
                 .ty
                 .nothing_of(r.ty)
-                .is_some_and(|n| n.has_undefined());
+                .is_some_and(|n| n.has_undefined() || link);
         let (rty, body) = match keeps {
             true => (r.ty, r),
             false => {
