@@ -41,3 +41,26 @@ console.log(q, w, e, none);
 const emptyRest: any = { only: 1 };
 const { only, ...nothing } = emptyRest;
 console.log(only, nothing, Object.keys(nothing).length);
+
+// A proxy is asked as Node asks it: the keys, then a descriptor and a value of each key the
+// pattern didn't take; a key it took is not read again.
+const trapLog: string[] = [];
+const traced: any = new Proxy({ a: 1, b: 2, c: 3 } as any, {
+  get(t, k) {
+    trapLog.push("get " + String(k));
+    return t[k];
+  },
+  ownKeys(t) {
+    trapLog.push("ownKeys");
+    return Reflect.ownKeys(t);
+  },
+  getOwnPropertyDescriptor(t, k) {
+    trapLog.push("gopd " + String(k));
+    return Reflect.getOwnPropertyDescriptor(t, k);
+  },
+});
+const { a: ta, ...traceRest } = traced;
+console.log(ta, traceRest, trapLog.join(","));
+trapLog.length = 0;
+const { ...traceAll } = traced;
+console.log(traceAll, trapLog.join(","));

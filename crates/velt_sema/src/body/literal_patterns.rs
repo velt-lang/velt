@@ -310,8 +310,7 @@ impl FnCx<'_, '_> {
     /// `kind rest = …` of a pattern taking apart the `any` in `tmp`, after its properties are
     /// read: as in JavaScript, a new object of the own enumerable properties without the keys
     /// of `fields`, whose values are not read again (the hook `restAny`), an `any` as TypeScript
-    /// types it. A value with no properties (`null`, `undefined`) stops with the `TypeError` of
-    /// a read first, as a pattern with keys does.
+    /// types it. A value with no properties (`null`, `undefined`) stops with Node's `TypeError`.
     fn any_object_rest(
         &mut self,
         kind: VarKind,
@@ -339,15 +338,6 @@ impl FnCx<'_, '_> {
             let expr = Box::new(expr);
             mk(E::Cast { expr, ty }, span)
         };
-        if fields.is_empty() {
-            let read = E::Member {
-                object: Box::new(tmp.clone()),
-                prop: ident("#rest", span),
-                optional: false,
-            };
-            let kind = ast::StmtKind::Expr(mk(read, span));
-            self.stmt(&ast::Stmt { kind, span }, out);
-        }
         let mut taken = vec![];
         for (key, _) in fields {
             taken.push(match self.key_read(key) {

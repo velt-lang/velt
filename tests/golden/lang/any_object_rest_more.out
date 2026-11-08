@@ -13,3 +13,5 @@ k 1 { q: 2 }
 2 { '0': 1, '1': 2 }
 1 { w: 2 } { e: 3 } {}
 1 {} 0
+1 { b: 2, c: 3 } get a,ownKeys,gopd b,get b,gopd c,get c
+{ a: 1, b: 2, c: 3 } ownKeys,gopd a,get a,gopd b,get b,gopd c,get c

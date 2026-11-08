@@ -56,10 +56,14 @@ export function spreadAnyProxy(r: Record<string, any>, o: any): void {
 /** `const { a, ...rest } = o` of an `any` `o`: a proxy's other enumerable own entries, else `restAny`. */
 export function restAnyProxy(o: any, taken: any): any {
   if (o instanceof Proxy) {
+    // As Node: the keys, then a descriptor and a value of each key the pattern didn't take.
     const r: Record<string, any> = {};
-    for (const [k, v] of proxyEntries(o)) {
-      if (!restTaken(taken, k)) {
-        r[RECORD_SET](k, v);
+    for (const k of o[PROXY_OWN_KEYS]()) {
+      if (typeof k === "string" && !restTaken(taken, k)) {
+        const d = o[PROXY_GET_OWN_PROPERTY_DESCRIPTOR](k);
+        if (d !== undefined && d.enumerable === true) {
+          r[RECORD_SET](k, o[PROXY_GET](k, o));
+        }
       }
     }
     return r;

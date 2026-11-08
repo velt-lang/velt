@@ -32,11 +32,20 @@ export function restTaken(taken: any, k: string): boolean {
   return false;
 }
 
+/** Stops as Node does when a rest pattern takes apart `null` or `undefined`. */
+export function restFrom(o: any): void {
+  if (o === null || o === undefined) {
+    const what = o === null ? "null" : "undefined";
+    panic(`TypeError: Cannot destructure '${what}' as it is ${what}.`);
+  }
+}
+
 /**
  * `const { a, ...rest } = o` of an `any` `o`, the keys before the rest in `taken`: a new object of
  * the other own enumerable keys, in their order; the values taken are not read again.
  */
 export function restAny(o: any, taken: any): any {
+  restFrom(o);
   const r: Record<string, any> = {};
   for (const k of Object.keys(o)) {
     if (!restTaken(taken, k)) {
