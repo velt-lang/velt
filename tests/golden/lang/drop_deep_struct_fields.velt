@@ -1,0 +1,104 @@
+// check: no leaks
+// Long chains that run through struct fields (a class field holding the next struct, an
+// interface value, a `shared` box) drop without overflowing the stack (#543): each struct field
+// that can lead back to the struct is bracketed for the depth limit, as a class's field is, and
+// a null one drops at once.
+
+interface Side {
+  id(): i64;
+}
+
+class Node implements Side {
+  next: Link | null = null;
+
+  id(): i64 {
+    return 1;
+  }
+}
+
+struct Link {
+  id: i64;
+  node: Node | null;
+}
+
+struct DynLink {
+  id: i64;
+  side: Side | null;
+}
+
+class DynNode implements Side {
+  next: DynLink;
+
+  constructor(next: DynLink) {
+    this.next = next;
+  }
+
+  id(): i64 {
+    return this.next.id + 1;
+  }
+}
+
+class Cell {
+  link: SharedLink;
+
+  constructor(link: SharedLink) {
+    this.link = link;
+  }
+}
+
+struct SharedLink {
+  id: i64;
+  next: shared<Mutex<Cell>> | null;
+}
+
+function links(n: i64): Link {
+  let head: Link = { id: 0, node: null };
+  for (let i: i64 = 1; i < n; i++) {
+    const node = new Node();
+    node.next = head;
+    head = { id: i, node: node };
+  }
+  return head;
+}
+
+function dynLinks(n: i64): DynLink {
+  let d: DynLink = { id: 0, side: null };
+  for (let i: i64 = 1; i < n; i++) {
+    d = { id: i, side: new DynNode(d) };
+  }
+  return d;
+}
+
+function sharedLinks(n: i64): SharedLink {
+  let s: SharedLink = { id: 0, next: null };
+  for (let i: i64 = 1; i < n; i++) {
+    s = { id: i, next: shared(new Mutex(new Cell(s))) };
+  }
+  return s;
+}
+
+function scopeEnd() {
+  const a = links(1000000);
+  const d = dynLinks(1000000);
+  const s = sharedLinks(1000000);
+  console.log("scope", a.id, d.id, d.side!.id(), s.id);
+}
+
+function main() {
+  scopeEnd();
+  console.log("scope dropped");
+  let a = links(1000000);
+  a = { id: -1, node: null };
+  let d = dynLinks(1000000);
+  d = { id: -1, side: null };
+  let s = sharedLinks(1000000);
+  s = { id: -1, next: null };
+  console.log("reassigned", a.id, d.id, s.id);
+  // Short-lived structs whose field that leads back is null.
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < 1000; i++) {
+    const l: Link = { id: i, node: null };
+    sum += l.id;
+  }
+  console.log("null fields", sum);
+}

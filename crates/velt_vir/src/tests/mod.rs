@@ -11,6 +11,7 @@ mod const_arrays;
 mod control;
 mod cpu_checks;
 mod drop_chain;
+mod drop_struct_fields;
 mod drops;
 mod fingerprint;
 mod for_of_consume;
