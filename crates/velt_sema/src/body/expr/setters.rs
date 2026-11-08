@@ -11,7 +11,7 @@ use super::accessor_rmw::Rmw;
 use super::method::Resolved;
 use crate::body::FnCx;
 use crate::defs::member_key;
-use crate::hir::{self, TyId};
+use crate::hir::{self, TyId, TyKind};
 
 /// Evaluating `e` twice is the same as once: a variable, `this` or a field path of those.
 pub(super) fn side_effect_free(e: &ast::Expr) -> bool {
@@ -124,6 +124,20 @@ impl FnCx<'_, '_> {
         if !self.require_mutable(&obj, "assign to a property of") {
             self.check_args_loose(args);
             return self.error_expr(span);
+        }
+        // Through an interface, a write of the field of whatever object implements it (a setter
+        // an object type fills with its field), for frozen objects (`object_views::check_frozen`)
+        // and copies (`crate::object_copies`).
+        if matches!(self.cx.ty.kind(obj.ty), TyKind::Dyn(..)) {
+            self.cx
+                .object_copies
+                .writes
+                .push(crate::object_copies::Write {
+                    ty: None,
+                    name: prop.name.clone(),
+                    span: prop.span,
+                    dynamic: false,
+                });
         }
         if let Some(f) = self.iface_field_of(obj.ty, &prop.name) {
             return self.iface_setter_call(obj, f, arg, span);

@@ -1,0 +1,8 @@
+// Node refuses a write to a frozen object, which has no mark at run time here (#2554): a frozen
+// object seen as a type whose fields can be written is refused once the program writes one,
+// here after it is held as its own readonly type first.
+interface Desc { kind: string; anon: boolean; }
+const f = Object.freeze({ kind: "fn", anon: true });
+const d: Desc = f;
+d.anon = false;
+console.log(d.anon);

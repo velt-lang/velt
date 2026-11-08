@@ -138,11 +138,25 @@ pub(crate) struct Copies {
     /// Whether the program's own code has a `new Proxy(...)` (`FnCx::program_makes_proxies`),
     /// once asked.
     pub makes_proxies: Option<bool>,
+    /// Frozen objects seen as a type whose fields can be written (`object_views::check_frozen`).
+    pub frozen: Vec<Frozen>,
+}
+
+/// An object `Object.freeze` froze, seen as type `to` whose fields can be written: an error once
+/// the program writes one of them (`object_views::check_frozen`), as Node throws there.
+pub(crate) struct Frozen {
+    /// The frozen object's type: an `Object.freeze` result's readonly type, or the type of the
+    /// value an `Object.freeze(x)` froze (`existing`).
+    pub from: TyId,
+    pub to: TyId,
+    pub span: Span,
+    /// `Object.freeze(x)` of a value made before (not an object literal): it keeps its type.
+    pub existing: bool,
 }
 
 impl Copies {
     /// How many of each there are now (`body::recheck::Lens`).
-    pub(crate) fn mark(&self) -> [usize; 7] {
+    pub(crate) fn mark(&self) -> [usize; 8] {
         [
             self.copies.len(),
             self.writes.len(),
@@ -151,11 +165,12 @@ impl Copies {
             self.null_literals.len(),
             self.record_writes.len(),
             self.view_casts.len(),
+            self.frozen.len(),
         ]
     }
 
     /// Drop what was added since `mark`.
-    pub(crate) fn rollback(&mut self, mark: [usize; 7]) {
+    pub(crate) fn rollback(&mut self, mark: [usize; 8]) {
         self.copies.truncate(mark[0]);
         self.writes.truncate(mark[1]);
         self.seen.truncate(mark[2]);
@@ -163,6 +178,7 @@ impl Copies {
         self.null_literals.truncate(mark[4]);
         self.record_writes.truncate(mark[5]);
         self.view_casts.truncate(mark[6]);
+        self.frozen.truncate(mark[7]);
     }
 
     /// The index of key `k` in `in_keys` (for `Seen::In`).
@@ -193,6 +209,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         record_writes,
         mut view_casts,
         writes,
+        frozen,
         ..
     } = std::mem::take(&mut cx.object_copies);
     let spans: Vec<(Span, TyId)> = copies.iter().map(|c| (c.span, c.to)).collect();
@@ -276,6 +293,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         }
     }
     crate::object_views::check_frozen_dynamic(cx, &seen, &writes);
+    crate::object_views::check_frozen(cx, &frozen, &seen, &writes);
     crate::object_views::check_record_sources(cx, &copies, &view_casts);
     crate::object_views::check_view_spreads(cx, &seen, &view_casts);
     if !strict.is_empty() {

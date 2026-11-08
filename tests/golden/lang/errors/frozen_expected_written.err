@@ -1,0 +1,2 @@
+frozen_expected_written.velt:5:17: error: an `Object.freeze` result where a `Desc` is expected, in a program that assigns field `anon`, is not supported yet
+frozen_expected_written.velt:6:3: assigned here

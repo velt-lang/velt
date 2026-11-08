@@ -1,0 +1,10 @@
+// Node refuses a write to a frozen object, which has no mark at run time here (#2554): a frozen
+// object seen as a type whose fields can be written is refused once the program writes one,
+// here by generic code.
+interface Desc { kind: string; anon: boolean; }
+const d: Desc = Object.freeze({ kind: "fn", anon: true });
+function clear<T extends { anon: boolean }>(t: T): void {
+  t.anon = false;
+}
+clear(d);
+console.log(d.anon);

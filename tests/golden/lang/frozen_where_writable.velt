@@ -1,0 +1,45 @@
+// An `Object.freeze` result where a type whose fields could be written is expected, and
+// `Object.freeze(x)` of a value made before (#2554): the same object, in a program that writes
+// none of its fields (a write anywhere would be refused: errors/frozen_*_written.velt).
+interface Desc {
+  kind: "fn";
+  anon: boolean;
+}
+function describe(anon: boolean): Desc {
+  const d: Desc = Object.freeze({ kind: "fn" as const, anon });
+  return d;
+}
+const d = describe(true);
+console.log(d.kind, d.anon);
+
+// A field that is `null` alone, as TypeScript types `{ value: null }`.
+const STATE = Object.freeze({
+  state: "pending" as const,
+  value: null,
+  loading: true,
+  refresh: () => 1,
+});
+console.log(STATE.state, STATE.value, STATE.loading, STATE.refresh());
+const blank = { v: null, n: 1 };
+console.log(blank, blank.v === null);
+
+// A value made before, frozen where it is.
+interface Config {
+  name: string;
+  port: number;
+}
+const config: Config = { name: "app", port: 80 };
+const same = Object.freeze(config);
+console.log(same.name, same.port, same === config);
+function frozen(c: Config): Config {
+  return Object.freeze(c);
+}
+console.log(frozen({ name: "b", port: 1 }).name);
+
+// An interface with a method.
+interface Sig {
+  aborted: boolean;
+  check(): string;
+}
+const sig: Sig = Object.freeze({ aborted: false, check: () => "ok" });
+console.log(sig.aborted, sig.check());

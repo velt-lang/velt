@@ -1,0 +1,2 @@
+frozen_expected_written_iface.velt:5:30: error: an `Object.freeze` result where a `Sig` is expected, in a program that assigns field `aborted`, is not supported yet
+frozen_expected_written_iface.velt:6:3: assigned here
