@@ -1,8 +1,9 @@
 //! Error-set variables change nothing but the cost (#2590, `velt_sema::throws::vars`): every
 //! golden that mentions `Promise` or `async`, and every program in `site_vars_identity/`, built
 //! with `--emit vir` with the variables and with `VELT_NO_SITE_VARS=1` (the sets found by checking
-//! the program again), gives the same VIR, or fails with the same diagnostics, and the check
-//! with the variables takes no more rounds than the one without.
+//! the program again), gives the same VIR and warnings, or fails with the same diagnostics, and
+//! the check with the variables takes no more rounds than the one without. The programs in
+//! [`KNOWN`] are compared too, and must still differ: one that no longer does leaves the list.
 //!
 //! Long, a part of `eager_std_identity`, which `cargo xtask affected` runs with `--ignored`. With
 //! `VELT_VIR_IDENTITY=sample` it compares one program in [`SAMPLE_ONE_IN`].
@@ -13,7 +14,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// Programs that differ with and without variables, or take more rounds with them, before
-/// #2590 too (function types written without `throws`): #2602.
+/// #2590 too (function types written without `throws`): #2602. Each is still compared, and the
+/// test fails when one no longer differs.
 const KNOWN: &[&str] = &[
     "golden/bugs/lower_adapted_closure_kept.velt",
     "golden/lang/any_fn_members.velt",
@@ -26,14 +28,17 @@ const KNOWN: &[&str] = &[
     "golden/lang/jsx_async_package_provider.velt",
     "golden/lang/overloads_more.velt",
     "golden/lang/promise_settled_borrowed_values.velt",
-    "golden/lang/promises_new_resolve_fn.velt",
     "golden/lang/rethrow_never_thrown_catch.velt",
     "golden/lang/throws_fn_type_rethrow_chain.velt",
     "golden/lang/throws_fn_type_values.velt",
     "golden/std/catch_panic.velt",
     "golden/std/throws_fn_type_revivers.velt",
+    // No promise: `const b: G = a` makes the sets of `F` and `G` one with variables, so the
+    // `catch` around `a(1)` may catch an `E2`; without them `F`'s set is `E1` alone, and the
+    // `instanceof E2` test is rejected as always false. The same before #2590: #2602.
     "site_vars_identity/review_u1.velt",
-    // A store a check without variables misses (an argument after a spread): #2603.
+    // A store a check without variables misses (an argument after a spread), so its VIR differs,
+    // before #2590 too: #2603.
     "site_vars_identity/review_sp5.velt",
 ];
 
@@ -65,8 +70,8 @@ fn programs(dir: &Path, all: bool, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// `--emit vir` of `file`: whether it built, the VIR or what it reported (without the timing
-/// lines), and how many rounds the check took.
+/// `--emit vir` of `file`: whether it built, what it reported (without the timing lines) and the
+/// VIR when it built, and how many rounds the check took.
 fn vir(file: &Path, home: &Path, vars: bool) -> (bool, String, usize) {
     let mut c = no_window::command(env!("CARGO_BIN_EXE_velt"));
     c.arg("build")
@@ -95,10 +100,12 @@ fn vir(file: &Path, home: &Path, vars: bool) -> (bool, String, usize) {
         .lines()
         .filter(|l| !l.starts_with("velt-sema:"))
         .collect();
-    let text = match out.status.success() {
-        true => String::from_utf8_lossy(&out.stdout).into_owned(),
-        false => reported.join("\n"),
-    };
+    // What it reported: the diagnostics of a failed build, the warnings of one that built.
+    let mut text = reported.join("\n");
+    if out.status.success() {
+        text.push_str("\n--- vir\n");
+        text.push_str(&String::from_utf8_lossy(&out.stdout));
+    }
     (out.status.success(), text, rounds)
 }
 
@@ -152,7 +159,6 @@ fn programs_with_promises_are_the_same_with_and_without_error_set_variables() {
         files.retain(|p| in_sample(&name_of(p)));
         eprintln!("the sample: {} programs", files.len());
     }
-    files.retain(|p| !KNOWN.contains(&name_of(p).as_str()));
     let next = AtomicUsize::new(0);
     let built = AtomicUsize::new(0);
     let found = Mutex::new(vec![]);
@@ -165,8 +171,16 @@ fn programs_with_promises_are_the_same_with_and_without_error_set_variables() {
             let name_of = &name_of;
             s.spawn(move || {
                 while let Some(file) = files.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    if let Some(why) = differs(file, &home, built) {
-                        found.lock().unwrap().push((name_of(file), why));
+                    let name = name_of(file);
+                    let known = KNOWN.contains(&name.as_str());
+                    match (differs(file, &home, built), known) {
+                        (Some(why), false) => found.lock().unwrap().push((name, why)),
+                        (None, true) => found.lock().unwrap().push((
+                            name,
+                            "is the same with and without variables now: remove it from `KNOWN`"
+                                .into(),
+                        )),
+                        _ => {}
                     }
                 }
             });
