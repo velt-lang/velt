@@ -29,7 +29,7 @@ impl FnCx<'_, '_> {
         let s = self.test_operand(object, None, Want::Borrow);
         let s = self.flatten_chain(s);
         // A view of a nothing (`null!`) gives `undefined` where that fits (nothing_slot.rs).
-        let nothing = self.undefined_fits(exp) && self.may_hold_nothing(s.ty);
+        let nothing = self.undefined_fits(exp, span) && self.may_hold_nothing(s.ty);
         let s = match s.kind {
             H::UnwrapSome(base, _) if nothing => *base,
             _ => s,

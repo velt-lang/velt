@@ -77,17 +77,19 @@ impl FnCx<'_, '_> {
         span: Span,
         f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
     ) -> hir::Expr {
-        self.chain_nothing = self.undefined_fits(exp);
+        self.chain_nothing = self.undefined_fits(exp, span);
         self.optional_chain(object, span, f)
     }
 
-    /// Does a value expected as `exp` take `undefined` (nothing expected, a dynamic type, or a
-    /// type with `undefined`)?
-    pub(super) fn undefined_fits(&self, exp: Option<TyId>) -> bool {
-        exp.is_none_or(|t| {
-            self.cx.dynamic(t).is_some()
-                || self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
-        })
+    /// Does the chain at `span`, expected as `exp`, take `undefined`: an `exp` that is dynamic or
+    /// has `undefined`, or a condition's test (`test_span`). With nothing expected it keeps its
+    /// payload's type, as TypeScript types `f?.v` of a `Foo` `f` (`number`).
+    pub(super) fn undefined_fits(&self, exp: Option<TyId>, span: Span) -> bool {
+        self.test_span == Some(span)
+            || exp.is_some_and(|t| {
+                self.cx.dynamic(t).is_some()
+                    || self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
+            })
     }
 
     /// `s?.rest` (`f` makes `rest`) of an `s` whose type has no nothing but may hold a view of
