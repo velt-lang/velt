@@ -15,8 +15,9 @@
 //! A build looks only at the tree's directories ([`TreeCheck::Directories`]): their times change
 //! when a file is added, removed or renamed, and checking them costs a few `stat` calls where
 //! every file's costs one per file (+39% on a no-op build with a Vue-sized dependency, against a
-//! ±3% budget). An edit in place is then caught once the build is no longer a no-op, before it
-//! compiles anything ([`crate::PackageGraph::verify_fetched`], every file), and by `velt install`,
+//! ±3% budget). An edit in place is then caught whenever the program is loaded again, by a build
+//! that is no longer a no-op and by `velt check`, before anything is read
+//! ([`crate::PackageGraph::verify_fetched`], every file), and by `velt install`,
 //! `update` and `add`, which look at every file; `velt install --locked` reads every byte
 //! ([`TreeCheck::Bytes`]). An edit to a file the program never reads leaves a no-op build a
 //! no-op. Stamps live outside the trees (`<cache>/stamps/`), so they are never part of what they
@@ -193,9 +194,9 @@ fn stamp_path_in(cache: &Path, dir: &Path) -> PathBuf {
 }
 
 /// A fetched tree (a git checkout, an archive's package directory) with the checksum its lock
-/// holds, which a build checks file by file once it is no longer a no-op ([`Fetched::verify`]):
-/// a build that isn't one reads files again anyway, and then an edit in place must not reach
-/// it. A no-op build looks only at directories ([`TreeCheck::Directories`]).
+/// holds, checked file by file whenever the program is loaded again ([`Fetched::verify`]): that
+/// reads files anyway, and an edit in place must not reach it. A no-op build looks only at
+/// directories ([`TreeCheck::Directories`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Fetched {
     pub dir: PathBuf,
@@ -270,7 +271,7 @@ impl Fetched {
 /// differs and the tree is read in full once, which is only slower. Bytes are hashed as they
 /// are, with no text formatting or sorting: this runs on every build.
 pub(crate) fn fingerprint(dir: &Path) -> Result<(String, Vec<String>, u128), String> {
-    let mut hasher = Sha256::new();
+    let mut hasher = Meta::default();
     let mut dirs = vec![".".to_string()];
     let mut newest = 0;
     walk(dir, "", &mut hasher, (&mut dirs, &mut newest))?;
@@ -283,7 +284,7 @@ pub(crate) fn fingerprint(dir: &Path) -> Result<(String, Vec<String>, u128), Str
 /// A hash of the times of `dir`'s directories `dirs` (relative): a directory's times change
 /// when an entry is added, removed or renamed in it.
 fn dirs_fingerprint(dir: &Path, dirs: &[String]) -> Result<String, String> {
-    let mut hasher = Sha256::new();
+    let mut hasher = Meta::default();
     for rel in dirs {
         let path = dir.join(rel);
         let meta = std::fs::symlink_metadata(&path)
@@ -298,18 +299,41 @@ fn dirs_fingerprint(dir: &Path, dirs: &[String]) -> Result<String, String> {
     Ok(hex(hasher))
 }
 
-fn hex(hasher: Sha256) -> String {
-    hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+/// The hash of a fingerprint. It only compares a tree with its own earlier state on this
+/// machine, and anyone who can edit the tree can edit its stamp, so it needs no cryptographic
+/// hash: SHA-256 took about one block per entry, +5.7% on `velt check` with a 5,000-file
+/// dependency. Two SipHash-1-3 runs with different first bytes give 128 bits. A Rust release
+/// that changes `DefaultHasher` only misses each stamp once.
+struct Meta([std::hash::DefaultHasher; 2]);
+
+impl Default for Meta {
+    fn default() -> Self {
+        let mut pair = [
+            std::hash::DefaultHasher::new(),
+            std::hash::DefaultHasher::new(),
+        ];
+        std::hash::Hasher::write_u8(&mut pair[1], 1);
+        Meta(pair)
+    }
+}
+
+impl Meta {
+    fn update(&mut self, bytes: impl AsRef<[u8]>) {
+        for h in &mut self.0 {
+            std::hash::Hasher::write(h, bytes.as_ref());
+        }
+    }
+}
+
+fn hex(hasher: Meta) -> String {
+    let [a, b] = hasher.0.map(|h| std::hash::Hasher::finish(&h));
+    format!("{a:016x}{b:016x}")
 }
 
 fn walk(
     dir: &Path,
     rel: &str,
-    hasher: &mut Sha256,
+    hasher: &mut Meta,
     (dirs, newest): (&mut Vec<String>, &mut u128),
 ) -> Result<(), String> {
     let read =

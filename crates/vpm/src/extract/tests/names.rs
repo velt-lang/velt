@@ -7,6 +7,27 @@ fn tar_with(name: &str) -> Vec<u8> {
 }
 
 #[test]
+fn a_name_of_only_ignorable_code_points_is_refused() {
+    // Its clash key is empty, so the raw name and an ordinary one would share keys, and a link
+    // through it would be missed: `\u{200c}/a/l` -> `../..`, then `x` -> `\u{200c}/a/l/../..`.
+    let tar = TarBuilder::default()
+        .file("\u{200c}/a/f", b"x")
+        .symlink("\u{200c}/a/l", "../..")
+        .symlink("x", "\u{200c}/a/l/../..")
+        .gz();
+    refused(&tar, "code points macOS ignores are removed");
+    // `.` and `..` with one: the same names there.
+    refused(
+        &tar_with(".\u{200c}/x"),
+        "code points macOS ignores are removed",
+    );
+    refused(
+        &tar_with("a/..\u{200d}/x"),
+        "code points macOS ignores are removed",
+    );
+}
+
+#[test]
 fn paths_outside_the_tree_are_refused() {
     refused(&tar_with("/etc/passwd"), "an absolute path");
     refused(&tar_with("../evil"), "a `..` segment");
@@ -271,4 +292,50 @@ fn a_repository_under_any_name_is_refused() {
         .dir("c/refs")
         .gz();
     assert!(read(&apart, Limits::DEFAULT).is_ok());
+}
+
+#[test]
+fn short_names_with_tildes_long_names_and_clock_are_refused() {
+    // A short name's stem may hold `~` itself.
+    for name in ["A~B~CD~1", "A~B~CD~1.TXT", "x~~1"] {
+        refused(&tar_with(name), "short (8.3) name");
+    }
+    for name in ["a~b", "readme~", "notes~old.txt"] {
+        assert!(read(&tar_with(name), Limits::DEFAULT).is_ok(), "{name}");
+    }
+    for name in ["CLOCK$", "clock$.txt"] {
+        refused(&tar_with(name), "a device name");
+    }
+    // A name past 255 bytes is refused when read, not when written.
+    let long = |name: &str| {
+        TarBuilder::default()
+            .pax(b'x', &[("path", name)])
+            .file("x", b"")
+            .gz()
+    };
+    refused(&long(&"n".repeat(256)), "a name longer than 255 bytes");
+    assert!(read(&long(&"n".repeat(255)), Limits::DEFAULT).is_ok());
+    let pax = TarBuilder::default()
+        .pax(b'x', &[("path", &format!("d/{}", "\u{e9}".repeat(128)))])
+        .file("x", b"")
+        .gz();
+    refused(&pax, "a name longer than 255 bytes");
+}
+
+#[test]
+fn names_that_differ_by_an_hfs_ignorable_code_point_clash() {
+    // HFS+ takes `a\u{200c}b` for `ab`: two entries are one file there, and a link through one
+    // spelling reaches the other.
+    let tar = TarBuilder::default()
+        .file("ab", b"1")
+        .file("a\u{200c}b", b"2")
+        .gz();
+    refused(&tar, "");
+    let e = refusal(&tar);
+    assert!(
+        e.contains("same") || e.contains("clash") || e.contains("one file"),
+        "{e}"
+    );
+    let key = super::super::names::clash_key;
+    assert_eq!(key("d\u{feff}ir/A\u{200d}B"), key("dir/ab"));
 }

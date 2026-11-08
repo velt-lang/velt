@@ -140,3 +140,64 @@ fn what_is_ready_is_recorded_before_the_tree_is_seen_and_a_replaced_tree_stays_u
     // Nothing is left beside it.
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 }
+
+#[test]
+fn staging_left_by_a_killed_extraction_is_removed_once_it_is_old() {
+    let dir = tempfile::tempdir().unwrap();
+    let left = [
+        ".abc.partial-1-0",
+        ".abc.partial-1-0.old",
+        ".def.partial-9-3",
+    ];
+    for name in left {
+        std::fs::create_dir(dir.path().join(name)).unwrap();
+        std::fs::write(dir.path().join(name).join("f"), "x").unwrap();
+    }
+    // Other names stay, whatever their age: a tree, its record, a lock.
+    // `abc.partial-1` too: staging names start with a dot.
+    let kept = [
+        "abc",
+        "abc.partial-1",
+        "abc.verified",
+        "abc.lock",
+        ".hidden",
+    ];
+    for name in &kept[..2] {
+        std::fs::create_dir(dir.path().join(name)).unwrap();
+    }
+    for name in &kept[2..] {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    // Just made: a running extraction's, kept.
+    let now = std::time::SystemTime::now();
+    super::super::remove_stale_staging(dir.path(), now);
+    assert!(left.iter().all(|n| dir.path().join(n).exists()));
+    // A day later, as a suspended extraction could be: kept.
+    let day = now + std::time::Duration::from_secs(24 * 3600);
+    super::super::remove_stale_staging(dir.path(), day);
+    assert!(left.iter().all(|n| dir.path().join(n).exists()));
+    // Eight days later: removed.
+    let later = now + std::time::Duration::from_secs(8 * 24 * 3600);
+    super::super::remove_stale_staging(dir.path(), later);
+    assert!(left.iter().all(|n| !dir.path().join(n).exists()));
+    assert!(kept.iter().all(|n| dir.path().join(n).exists()));
+}
+
+// Opening a directory to set its time needs another flag on Windows; the sweep itself is tested
+// above on every OS.
+#[cfg(unix)]
+#[test]
+fn an_extraction_removes_staging_left_beside_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let left = dir.path().join(".other.partial-1-0");
+    std::fs::create_dir(&left).unwrap();
+    let eight_days = std::time::Duration::from_secs(8 * 24 * 3600);
+    let long_ago = std::time::SystemTime::now() - eight_days;
+    (std::fs::File::open(&left).unwrap())
+        .set_modified(long_ago)
+        .unwrap();
+    let tar = TarBuilder::default().file("f", b"x").gz();
+    let tree = read(&tar, Limits::DEFAULT).unwrap();
+    super::super::write(&tree, &dir.path().join("dest"), Links::NATIVE).unwrap();
+    assert!(!left.exists());
+}
