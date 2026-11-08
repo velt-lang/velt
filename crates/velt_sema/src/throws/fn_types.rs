@@ -174,11 +174,6 @@ pub(crate) struct FnSites {
     pub(crate) reject_values: usize,
     /// The closures created for sites' types found so far (`var_known`).
     pub(crate) site_closures: super::var_known::SiteClosures,
-    /// A type with a variable failed a comparison or a bound: when the check reports errors,
-    /// they may come from the variables ([`FnSites::doubted`]).
-    pub doubt: std::cell::Cell<bool>,
-    /// The variables a promise type was shown with as nothing (`var_known`).
-    pub(crate) shown: std::cell::RefCell<FxHashSet<u32>>,
 }
 
 impl FnSites {
@@ -212,23 +207,19 @@ impl FnSites {
         merge_seeds(&mut self.found, quiet, &self.flows);
     }
 
-    /// The check with error-set variables reported errors, and a type with a variable failed
-    /// a comparison: the sets to check the program with again without variables (as written,
-    /// the sets found by checking again), whose errors are the program's.
+    /// The check with error-set variables reported errors: the sets to check the program with
+    /// again without variables (as written, the sets found by checking again), whose
+    /// diagnostics are the program's, whatever types they show (`throws::vars`). Not when the
+    /// program is checked again anyway, with the sets this check found: that check has no
+    /// variables of the program's sites.
     pub fn doubted(&self, errors: bool) -> Option<FnTypeSeeds> {
-        (self.use_vars && self.doubt.get() && errors).then(|| {
+        (self.use_vars && errors && !self.again()).then(|| {
             let mut s = self.found.clone();
             merge_seeds(&mut s, self.quiet.clone(), &self.flows);
             s.no_vars = true;
             s.exact = true;
             s
         })
-    }
-
-    /// A type with a variable failed a comparison: the errors are in doubt
-    /// ([`FnSites::doubted`]).
-    pub fn set_doubt(&self) {
-        self.doubt.set(true);
     }
 
     /// Is this the last check, whatever it finds?

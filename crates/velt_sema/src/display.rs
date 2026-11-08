@@ -80,10 +80,8 @@ impl Ctx<'_> {
             }
             TyKind::Option(t, n) => format!("{}{}", self.display_in(*t, names), n.suffix()),
             TyKind::Result(a, b) => with_args(self, "Result", &[*a, *b]),
-            // A variable is shown as written: nothing (`throws::vars`), which assumes its set
-            // empty (`Ctx::shown_as_nothing`).
+            // A variable is shown as written: nothing (`throws::vars`).
             TyKind::Promise(t, e) if *e == self.ty.never || self.only_err_vars(*e) => {
-                self.shown_as_nothing(*e);
                 with_args(self, "Promise", &[*t])
             }
             TyKind::Promise(t, e) => with_args(self, "Promise", &[*t, *e]),

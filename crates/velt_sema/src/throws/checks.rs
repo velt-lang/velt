@@ -79,7 +79,6 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     // The program is checked again with the solved sets also when this check grew a set
     // the variables don't hold (a closure's error a site's type can't keep): the next check
     // has no variables, and starts from what they found.
-    cx.assume_shown_empty();
     let holds = solved_ok && cx.assumptions_hold();
     if vars && (!holds || (cx.fn_sites.sites_grew && cx.fn_sites.again())) {
         cx.var_seeds();

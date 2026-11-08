@@ -291,7 +291,25 @@ fn rejecting_promises_stored_into_promise_types_written_without_errors_take_one_
         assert_eq!(rounds(p), 1, "program C{i}");
     }
     assert_eq!(rounds(GROWS), 2);
+    // A diagnostic of an overload tried and dropped shows no type the program's do.
+    assert_eq!(rounds(OVERLOAD_TRIED), 1);
 }
+
+/// A promise passed to an overloaded function: checking it against the first signature reports
+/// a mismatch showing the promise's type, which the second signature then drops.
+const OVERLOAD_TRIED: &str = r#"
+type P = () => Promise<number>;
+const f: P = async () => { throw new HttpError(500, "x"); };
+function k(a: string): number;
+function k<T>(a: T): number;
+function k<T>(a: T): number { return 1; }
+async function main1(): Promise<void> {
+  const q = f();
+  console.log(k(q));
+  try { await q; } catch (e) { console.log("c"); }
+}
+await main1();
+"#;
 
 /// Rejection reasons used as values: a `.catch` callback's parameter, a `.then` rejection
 /// callback's, a `Promise.allSettled` result's `reason`, and a reason narrowed by `instanceof`

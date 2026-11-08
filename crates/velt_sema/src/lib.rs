@@ -409,7 +409,12 @@ fn check_timed(
     let mut views = union_views::Families::default();
     let mut view_rounds = 0;
     let (mut cx, mut entry) = new_cx("round: first", true, &seeds, false, &views);
-    if let Some(s) = cx.fn_sites.doubted(error_count(&cx) > 0) {
+    // A check that reports errors is checked again without error-set variables, for its
+    // diagnostics (`throws::vars`); not one that refuses script variables, which is checked
+    // again with them moved into `main` (`script_locals`).
+    let doubt =
+        |cx: &ctx::Ctx| error_count(cx) > 0 && script_locals::refused(cx, root).vars.is_empty();
+    if let Some(s) = cx.fn_sites.doubted(doubt(&cx)) {
         seeds = s;
         if let Some(g) = cx.union_views_grown() {
             view_rounds += 1;
@@ -450,6 +455,11 @@ fn check_timed(
         {
             let last = rounds == FN_SITE_ROUNDS;
             (cx, entry) = new_cx("round: known too late", held, &seeds, last, &views);
+        } else if let Some(s) = cx.fn_sites.doubted(doubt(&cx)) {
+            // A later check with variables (std/proxy's traps) that reports errors.
+            let (last, round) = (rounds == FN_SITE_ROUNDS, "round: doubted throws variables");
+            seeds = s;
+            (cx, entry) = new_cx(round, held, &seeds, last, &views);
         } else {
             break;
         }

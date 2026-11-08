@@ -24,21 +24,17 @@
 //! again), a `finally` block of a generator and a value converted as its type written without
 //! variables an empty set. When an assumption does not hold, or a function value's error type
 //! differs from the site's set it was stored as, the program is checked again with the solved
-//! sets written in, as before (`FnSites::fallback`). When the
-//! check reports errors and two types that differ in more than their variables were compared
-//! where they must be one type, or a variable was outside a bound, the program is checked
-//! again without variables too (`FnSites::doubted`): its errors are then exactly those of a
-//! check without them. A conversion that fails with the variables and as written fails
-//! without them too, so it raises no doubt; diagnostics show a function type with variables as
-//! written, as a check without them does, and a promise type's variable as nothing, which
-//! assumes its set empty (`var_known`).
+//! sets written in, as before (`FnSites::fallback`). When the check reports errors, the
+//! program is checked again without variables (`FnSites::doubted`): its diagnostics are then
+//! exactly those of a check without them, whatever types they show. A program without errors
+//! is checked once.
 //!
 //! The comparisons see the variables in the fields of a non-generic anonymous object type
 //! (`{ print: (d: Doc) => string }`): its plain form is the object type of its fields' plain
 //! types, and after solving it is the first def of its solved shape (`solved_anon_twins`). A
 //! generic one (`T & { $set: (v: T) => void }`) keeps its def, since deferred types over it are
-//! reduced only for the instances sema saw; a mismatch where its fields hold a variable raises
-//! the doubt (`anon_vars_may_mismatch`).
+//! reduced only for the instances sema saw; a mismatch where its fields hold a variable is an
+//! error, which a check without variables then decides.
 
 use rustc_hash::FxHashMap;
 
@@ -176,121 +172,6 @@ impl Ctx<'_> {
         m
     }
 
-    /// Does a generic anonymous object type in `t` have a field type with a variable? The
-    /// comparisons look into the fields of non-generic ones only ([`Ctx::seen_anon`]).
-    pub(crate) fn anon_fields_hold_vars(&mut self, t: TyId) -> bool {
-        if !self.fn_sites.use_vars || self.fn_sites.vars.is_empty() {
-            return false;
-        }
-        let mut seen = rustc_hash::FxHashSet::default();
-        let mut stack = vec![t];
-        while let Some(t) = stack.pop() {
-            if !seen.insert(t) || seen.len() > 4096 {
-                continue;
-            }
-            let k = self.ty.kind(t).clone();
-            stack.extend(crate::types::children(&k));
-            if let TyKind::Adt(d, _) = k {
-                if self.adt(d).is_some_and(|a| a.kind == AdtKind::Anon) {
-                    let fs = self.anon_field_tys(d);
-                    if self.seen_anon(d).is_none() && fs.iter().any(|f| self.mentions_err_var(*f)) {
-                        return true;
-                    }
-                    stack.extend(fs);
-                }
-            }
-        }
-        false
-    }
-
-    /// Could a mismatch between `a` and `b` come from a variable in a field of a generic
-    /// anonymous object type, which the comparisons don't see? Only when one of them has such a field
-    /// and the two have one shape but for their error types: an object type converted to an
-    /// interface it does not implement, or to an object type with other fields, is a mismatch
-    /// without variables too.
-    pub(crate) fn anon_vars_may_mismatch(&mut self, a: TyId, b: TyId) -> bool {
-        (self.anon_fields_hold_vars(a) || self.anon_fields_hold_vars(b))
-            && self.same_but_errors(a, b, 0)
-    }
-
-    /// Are `a` and `b` one type but for their error types (what function types throw, what
-    /// promises reject with), field by field for anonymous object types? True where that is not
-    /// known (deferred types, unions, interface values a type may implement).
-    fn same_but_errors(&mut self, a: TyId, b: TyId, depth: u32) -> bool {
-        if a == b || depth > 32 {
-            return true;
-        }
-        let same = |cx: &mut Self, x: &[TyId], y: &[TyId]| {
-            x.len() == y.len()
-                && x.iter()
-                    .zip(y)
-                    .all(|(p, q)| cx.same_but_errors(*p, *q, depth + 1))
-        };
-        if self.union_def(a).is_some() || self.union_def(b).is_some() {
-            return true;
-        }
-        let anon = |cx: &Self, d: crate::hir::DefId| {
-            cx.adt(d)
-                .is_some_and(|a| a.kind == crate::hir::AdtKind::Anon)
-        };
-        match (self.ty.kind(a).clone(), self.ty.kind(b).clone()) {
-            (TyKind::Op(..), _) | (_, TyKind::Op(..)) | (TyKind::Error, _) | (_, TyKind::Error) => {
-                true
-            }
-            (
-                TyKind::FnPtr {
-                    params: p,
-                    ret: r,
-                    rest: pr,
-                    ..
-                },
-                TyKind::FnPtr {
-                    params: q,
-                    ret: s,
-                    rest: qr,
-                    ..
-                },
-            ) => pr == qr && same(self, &p, &q) && same(self, &[r], &[s]),
-            (TyKind::Promise(x, _), TyKind::Promise(y, _))
-            | (TyKind::Array(x), TyKind::Array(y))
-            | (TyKind::Shared(x), TyKind::Shared(y)) => same(self, &[x], &[y]),
-            (TyKind::Option(x, n), TyKind::Option(y, m)) => n == m && same(self, &[x], &[y]),
-            (TyKind::Map(x, y), TyKind::Map(z, w))
-            | (TyKind::Result(x, y), TyKind::Result(z, w)) => same(self, &[x, y], &[z, w]),
-            (TyKind::Tuple(xs), TyKind::Tuple(ys)) => same(self, &xs, &ys),
-            (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) if d == e => same(self, &xs, &ys),
-            (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) if anon(self, d) && anon(self, e) => {
-                let fields = |cx: &Self, d| {
-                    cx.adt(d)
-                        .map(|a| {
-                            a.fields
-                                .iter()
-                                .map(|f| (f.name.clone(), f.optional, f.ty))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default()
-                };
-                let (fa, fb) = (fields(self, d), fields(self, e));
-                if fa.len() != fb.len() || fa.iter().zip(&fb).any(|(x, y)| x.0 != y.0 || x.1 != y.1)
-                {
-                    return false;
-                }
-                let ta: Vec<TyId> = fa.iter().map(|f| self.subst(f.2, &xs)).collect();
-                let tb: Vec<TyId> = fb.iter().map(|f| self.subst(f.2, &ys)).collect();
-                same(self, &ta, &tb)
-            }
-            // A class instance converted to an object type is copied field by field.
-            (TyKind::Adt(..), TyKind::Adt(..)) => true,
-            // An object type is converted to an interface only by an implementation, which an
-            // anonymous object type does not have.
-            (TyKind::Dyn(..), TyKind::Adt(d, _)) | (TyKind::Adt(d, _), TyKind::Dyn(..)) => {
-                !anon(self, d)
-            }
-            (TyKind::Dyn(..), _) | (_, TyKind::Dyn(..)) => true,
-            _ => false,
-        }
-    }
-
     /// `t` with every variable replaced by `never`: the type as written.
     pub(crate) fn plain_type(&mut self, t: TyId) -> TyId {
         if let Some(&p) = self.fn_sites.var_sets.plain.get(&t) {
@@ -328,8 +209,8 @@ impl Ctx<'_> {
     /// is not generic and does not reach itself? After solving, such a def is the def of its
     /// solved shape ([`Ctx::solved_anon_twins`]). A generic one (`T & { $set: (v: T) => void
     /// }`) is not: deferred types over it are reduced for the instances sema saw, so it keeps
-    /// its def, and a mismatch it may cause is checked again without variables
-    /// ([`Ctx::anon_vars_may_mismatch`]).
+    /// its def, and a mismatch it may cause is an error, which a check without variables then
+    /// decides.
     fn seen_anon(&self, d: DefId) -> Option<()> {
         let a = self.adt(d)?;
         (a.kind == AdtKind::Anon && a.generics.names.is_empty() && !self.reaches_itself(d))
@@ -422,11 +303,7 @@ impl Ctx<'_> {
         if a == b || !self.fn_sites.use_vars {
             return a == b;
         }
-        let same = self.unify_err_vars(a, b);
-        if !same && (self.mentions_err_var(a) || self.mentions_err_var(b)) {
-            self.fn_sites.set_doubt();
-        }
-        same
+        self.unify_err_vars(a, b)
     }
 
     /// Are `a` and `b` pairwise equal but for their variables? Then they are unified.
