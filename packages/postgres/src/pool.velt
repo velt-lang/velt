@@ -79,10 +79,11 @@ export async function borrow(pool: PoolHandle): Promise<Conn> throws PgError {
       const waiting = new WaitingForPool(pool, ch);
       const g = await ch.receive();
       waiting.released = true;
-      ch.close();
       if (g == null) {
+        // The pool ended, which closed the channel.
         throw poolClosed();
       }
+      pool.with((p) => p.reuse(ch));
       const conn = g.conn;
       if (conn != null) {
         return conn;

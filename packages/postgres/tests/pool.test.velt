@@ -4,6 +4,7 @@
 // end. Needs VELT_TEST_PG_URL (tests/support/pg.velt).
 import { connect, createPool, Client, PgError, Pool } from "../src/lib";
 import { uuidv4 } from "velt/random/uuid";
+import { timeout, TimeoutError } from "velt/task";
 import { pgUrl } from "./support/pg";
 
 class Count {
@@ -11,6 +12,14 @@ class Count {
 
   constructor(n: i64) {
     this.n = n;
+  }
+}
+
+class Value {
+  v: i64;
+
+  constructor(v: i64) {
+    this.v = v;
   }
 }
 
@@ -174,4 +183,59 @@ export async function test_ended_pool_fails() {
     code = e.code.clone();
   }
   assertEq(code, "ECLOSED");
+}
+
+// One task's turns on a busy pool: how many queries got their own value back.
+async function turns(pool: Pool, t: i64, n: i64): Promise<i64> throws PgError {
+  let right: i64 = 0;
+  for (let k: i64 = 0; k < n; k++) {
+    const want = t * 1000 + k;
+    const r: Value | null = await pool.queryOne("SELECT $1::int8 AS v", [want]);
+    if (r != null && r.v == want) {
+      right++;
+    }
+  }
+  return right;
+}
+
+// Many tasks wait for one connection, again and again (each wait's channel serves the next waits);
+// every one gets its turn, and those still waiting when the pool ends hear so.
+export async function test_waiters_for_one_connection_each_get_their_turns() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 1 });
+  const tasks: Promise<i64, PgError>[] = [];
+  for (let t: i64 = 0; t < 20; t++) {
+    tasks.push(spawn(turns(pool, t, 25)));
+  }
+  let right: i64 = 0;
+  for (const n of await timeout(Promise.all(tasks), 60000)) {
+    right += n;
+  }
+  assertEq(right, 500);
+
+  // Waiters when the pool ends: they fail, none hangs.
+  const limited: Promise<i64, PgError | TimeoutError>[] = [];
+  for (let t: i64 = 0; t < 8; t++) {
+    limited.push(spawn(timeout(spawn(turns(pool, t, 25)), 20000)));
+  }
+  await pool.run("SELECT 1");
+  pool.end();
+  let closed: i64 = 0;
+  let stuck: i64 = 0;
+  for (const p of limited) {
+    try {
+      await p;
+    } catch (e) {
+      if (e instanceof PgError && e.code == "ECLOSED") {
+        closed++;
+      } else if (e instanceof TimeoutError) {
+        stuck++;
+      }
+    }
+  }
+  assert(closed > 0, "the pool's end reached its waiters");
+  assertEq(stuck, 0);
 }

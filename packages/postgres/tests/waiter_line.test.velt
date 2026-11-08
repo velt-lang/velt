@@ -1,0 +1,150 @@
+// The line of tasks waiting for a pool's connection, on its own: who a connection goes to, against
+// a plain model of the rule (the first 64 waiters looked at, a waiter on a worker holding none when
+// the worker it came back on holds more than one, else one on that worker, else the first; the first
+// passed over at most 64 times in a row).
+import { WaiterLine } from "../src/waiter_line";
+
+// The rule, written the plain way: the line is an array, and a waiter served leaves it.
+class Model {
+  ids: i64[] = [];
+  workers: i64[] = [];
+  skips: i64 = 0;
+
+  add(id: i64, worker: i64) {
+    this.ids.push(id);
+    this.workers.push(worker);
+  }
+
+  next(here: i64, held: i64[]): i64 {
+    const n = this.ids.length as i64;
+    if (n == 0) {
+      return -1;
+    }
+    let chosen: i64 = 0;
+    if (this.skips < 64) {
+      const stop = n < 64 ? n : 64;
+      const crowded = heldOn(held, here) > 1;
+      let local: i64 = -1;
+      let spreads: i64 = -1;
+      for (let k: i64 = 0; k < stop; k++) {
+        const w = this.workers[k];
+        if (local < 0 && w == here) {
+          local = k;
+        }
+        if (spreads < 0 && heldOn(held, w) == 0) {
+          spreads = k;
+        }
+      }
+      if (crowded && spreads >= 0) {
+        chosen = spreads;
+      } else if (local >= 0) {
+        chosen = local;
+      }
+    }
+    this.skips = chosen == 0 ? 0 : this.skips + 1;
+    const id = this.ids[chosen];
+    this.ids.splice(chosen as number, 1);
+    this.workers.splice(chosen as number, 1);
+    return id;
+  }
+}
+
+function heldOn(held: i64[], w: i64): i64 {
+  return w < (held.length as i64) ? held[w] : 0;
+}
+
+// A small generator of numbers, the same on every run.
+class Numbers {
+  state: i64 = 12345;
+
+  below(n: i64): i64 {
+    this.state = (this.state * 1103515245 + 12345) % 2147483648;
+    return (this.state >> 8) % n;
+  }
+}
+
+// Adds and serves at random, `waiters` the most that wait at once, and compares every choice.
+function race(seed: i64, workers: i64, waiters: i64, steps: i64) {
+  const r = new Numbers();
+  r.state = seed;
+  const line = new WaiterLine<i64>();
+  const model = new Model();
+  let id: i64 = 0;
+  let waiting: i64 = 0;
+  for (let s: i64 = 0; s < steps; s++) {
+    if (waiting < waiters && (waiting == 0 || r.below(3) != 0)) {
+      const w = r.below(workers);
+      line.add(id, w);
+      model.add(id, w);
+      id++;
+      waiting++;
+      continue;
+    }
+    const held: i64[] = [];
+    for (let w: i64 = 0; w < workers; w++) {
+      held.push(r.below(4) == 0 ? 0 : r.below(3));
+    }
+    const here = r.below(workers);
+    const want = model.next(here, held);
+    const got = line.next(here, held);
+    assert(got != null, "a waiter is served");
+    if (got != null) {
+      assertEq(got.ch, want);
+    }
+    waiting--;
+  }
+  assertEq(line.anyone, waiting > 0);
+}
+
+export function test_a_connection_goes_to_the_waiter_the_rule_picks() {
+  race(1, 9, 20, 20000);
+  race(2, 3, 8, 20000);
+  race(3, 16, 64, 20000);
+}
+
+export function test_a_long_line_is_looked_at_only_near_its_front() {
+  race(4, 9, 300, 40000);
+  race(5, 40, 200, 40000);
+}
+
+export function test_the_first_in_line_is_passed_over_at_most_64_times() {
+  // Every connection comes back on worker 1, and only the first waiter is on worker 0.
+  const line = new WaiterLine<i64>();
+  const model = new Model();
+  line.add(0, 0);
+  model.add(0, 0);
+  for (let i: i64 = 1; i <= 100; i++) {
+    line.add(i, 1);
+    model.add(i, 1);
+  }
+  const held: i64[] = [0, 1];
+  let firstServedAt: i64 = -1;
+  for (let k: i64 = 0; k <= 100; k++) {
+    const got = line.next(1, held);
+    assert(got != null, "a waiter is served");
+    if (got != null) {
+      assertEq(got.ch, model.next(1, held));
+      if (got.ch == 0) {
+        firstServedAt = k;
+      }
+    }
+  }
+  assertEq(firstServedAt, 64);
+  assert(!line.anyone, "nobody waits");
+  assertEq(line.next(1, held) == null, true);
+}
+
+export function test_an_ended_line_hands_back_who_still_waits() {
+  const line = new WaiterLine<i64>();
+  for (let i: i64 = 0; i < 5; i++) {
+    line.add(i, i % 2);
+  }
+  // Worker 1 holds one connection: its waiter 1 goes ahead of waiter 0.
+  const got = line.next(1, [0, 1]);
+  assert(got != null, "a waiter is served");
+  if (got != null) {
+    assertEq(got.ch, 1);
+  }
+  assertEq(line.takeAll().join(","), "0,2,3,4");
+  assert(!line.anyone, "nobody waits");
+}

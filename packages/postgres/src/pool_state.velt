@@ -11,17 +11,13 @@ import { currentWorker } from "velt/task";
 import { Conn } from "./line";
 import { Grant } from "./grant";
 import { Taken } from "./taken";
+import { WaiterLine } from "./waiter_line";
 
 /** A pool shared by every copy of its handle. */
 export type PoolHandle = shared<Mutex<PoolState>>;
 
-// Past this many answered places at the front of the line for connections, it's cut down.
-const COMPACT_FROM: usize = 32;
-
-// A connection going back looks this far along the line for a task on its worker, and the first in
-// line lets others go ahead at most this many times.
-const LOOK_AHEAD: usize = 64;
-const MAX_SKIPS: i64 = 64;
+// Channels kept for waiters to come, at most.
+const MAX_SPARE: i64 = 256;
 
 // What a task finds.
 export const TAKE_IDLE: u8 = 0;
@@ -36,12 +32,6 @@ struct Idle {
   worker: i64;
 }
 
-// A task in line for a connection, and its worker.
-struct Waiter {
-  ch: Channel<Grant>;
-  worker: i64;
-}
-
 /** The state behind a pool's lock. */
 export class PoolState {
   config: PgConfig;
@@ -49,9 +39,9 @@ export class PoolState {
   // Connections open or being opened.
   private open: i64 = 0;
   private idle: Idle[] = [];
-  private waiters: Waiter[] = [];
-  private firstWaiter: usize = 0;
-  private skips: i64 = 0;
+  private waiters: WaiterLine<Channel<Grant>> = new WaiterLine<Channel<Grant>>();
+  // Channels of waiters that were handed what they waited for, empty again: the next waiters'.
+  private spare: Channel<Grant>[] = [];
   // How many connections each worker holds, roughly: tasks can move. Grows as workers are seen:
   // `workerCount()` doesn't bound `currentWorker()`, which helper threads go past.
   private connsOn: i64[] = [];
@@ -88,8 +78,8 @@ export class PoolState {
       this.addTo(currentWorker(), 1);
       return { status: TAKE_OPEN, conn: null, idleMs: 0.0, wait: null };
     }
-    const ch = channel<Grant>(1);
-    this.waiters.push({ ch: ch, worker: currentWorker() });
+    const ch = this.spare.pop() ?? channel<Grant>(1);
+    this.waiters.add(ch, currentWorker());
     return { status: TAKE_WAIT, conn: null, idleMs: 0.0, wait: ch };
   }
 
@@ -112,53 +102,19 @@ export class PoolState {
     return last;
   }
 
-  // The waiter to serve, and its place in line ends here; null if there is none. One on this worker
-  // goes ahead, as far as that keeps the line fair.
+  // The waiter to serve, which leaves the line; null if there is none (waiter_line.velt).
   private nextWaiter(): Channel<Grant> | null {
-    const first = this.firstWaiter;
-    const n = this.waiters.length as usize;
-    if (first >= n) {
+    if (!this.waiters.anyone) {
       return null;
     }
-    let chosen = first;
     const here = currentWorker();
-    if (this.skips < MAX_SKIPS) {
-      const stop = first + LOOK_AHEAD < n ? first + LOOK_AHEAD : n;
-      const crowded = this.heldOn(here) > 1;
-      let local = -1;
-      let spreads = -1;
-      for (let k = first; k < stop; k++) {
-        const worker = this.waiters[k].worker;
-        if (local < 0 && worker == here) {
-          local = k as i64;
-        }
-        if (spreads < 0 && this.heldOn(worker) == 0) {
-          spreads = k as i64;
-        }
-      }
-      if (crowded && spreads >= 0) {
-        chosen = spreads as usize;
-      } else if (local >= 0) {
-        chosen = local as usize;
-      }
+    const w = this.waiters.next(here, this.connsOn);
+    if (w == null) {
+      return null;
     }
-    const w = this.waiters[chosen];
     if (w.worker != here) {
       this.addTo(here, -1);
       this.addTo(w.worker, 1);
-    }
-    if (chosen == first) {
-      this.skips = 0;
-    } else {
-      this.skips++;
-      for (let k = chosen; k > first; k--) {
-        this.waiters[k] = this.waiters[k - 1];
-      }
-    }
-    this.firstWaiter = first + 1;
-    if (this.firstWaiter >= COMPACT_FROM && this.firstWaiter * 2 >= n) {
-      this.waiters = this.waiters.slice(this.firstWaiter as i64);
-      this.firstWaiter = 0;
     }
     return w.ch;
   }
@@ -196,6 +152,15 @@ export class PoolState {
     return w;
   }
 
+  /** A waiter was handed what it waited for: its channel, empty now, waits for the next. */
+  reuse(ch: Channel<Grant>) {
+    if (this.ended || (this.spare.length as i64) >= MAX_SPARE) {
+      ch.close();
+      return;
+    }
+    this.spare.push(ch);
+  }
+
   /** Connections waiting idle. */
   get idleCount(): i64 {
     return this.idle.length as i64;
@@ -211,15 +176,13 @@ export class PoolState {
       i.conn.with((l) => l.shutDownWhenIdle());
     }
     this.idle = [];
-    for (let k = this.firstWaiter; k < this.waiters.length; k++) {
-      this.waiters[k].ch.close();
+    for (const ch of this.waiters.takeAll()) {
+      ch.close();
     }
-    this.waiters.length = 0;
-    this.firstWaiter = 0;
-  }
-
-  get isEnded(): bool {
-    return this.ended;
+    for (const ch of this.spare) {
+      ch.close();
+    }
+    this.spare = [];
   }
 }
 
@@ -241,7 +204,8 @@ export function connectionGone(pool: PoolHandle) {
 
 /** A connection comes back; with `reusable` false, it's closed. */
 export function putBack(pool: PoolHandle, conn: Conn, reusable: bool) {
-  if (reusable && !pool.with((p) => p.isEnded)) {
+  // An ended pool closes it in `arrived`.
+  if (reusable) {
     while (true) {
       const w = pool.with((p) => p.arrived(conn));
       if (w == null || w.trySend({ conn: conn })) {
