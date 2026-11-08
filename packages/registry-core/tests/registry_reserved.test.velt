@@ -11,7 +11,8 @@ import {
 } from "../src/lib";
 import { checkNotReserved } from "../src/server/reserved";
 import { Caller, RegistryStores } from "../src/lib";
-import { TestRegistry } from "./_registry";
+import { contentChecksum, packArchive } from "../src/lib";
+import { packageFiles, TestRegistry } from "./_registry";
 
 const REQUEST = "https://example.test/request-a-name";
 
@@ -94,5 +95,45 @@ describe("reserved names", () => {
     expect(refusal).toContain("the scope `@acme` is reserved");
     expect(refusal).toContain("?name=%40acme%2Ftool");
     await checkNotReserved(stores, "@acme/other", Caller.ofUser("carol"));
+  });
+
+  it("are refused before the body is read", async () => {
+    const [r, _] = registry();
+    r.user("mallory");
+    // A body that fails when read: reading it would answer 500.
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        c.error(new Error("the body was read"));
+      },
+    });
+    const headers: [string, string][] = [["authorization", "Bearer token-of-mallory"]];
+    const answer = await r.send("PUT", "/api/v1/vue/1.0.0", headers, stream);
+    expect(answer.status).toBe(403);
+  });
+
+  it("are refused when reserved while the body arrived", async () => {
+    const [r, reserved] = registry();
+    const mallory = r.user("mallory");
+    let ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const stream = new ReadableStream<Uint8Array>({
+      start: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        ctl = c;
+      },
+    });
+    const files = packageFiles("fresh", "1.0.0");
+    const headers: [string, string][] = [
+      ["authorization", `Bearer ${mallory}`],
+      ["x-velt-checksum", contentChecksum(files)],
+    ];
+    const answer = r.send("PUT", "/api/v1/fresh/1.0.0", headers, stream);
+    // Past the first check by now: this publish has run through more steps than that takes.
+    expect((await r.publish("other", "1.0.0", mallory)).status).toBe(201);
+    reserved.reserve("fresh", "reserved meanwhile");
+    const stored = r.blobs.size;
+    ctl?.enqueue(Uint8Array.fromBytes(packArchive(files)));
+    ctl?.close();
+    expect((await answer).status).toBe(403);
+    expect(await r.db.record("fresh")).toBeNull();
+    expect(r.blobs.size).toBe(stored);
   });
 });
