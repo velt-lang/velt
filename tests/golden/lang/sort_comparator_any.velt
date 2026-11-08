@@ -49,3 +49,17 @@ try {
 } catch (e) {
   console.log((e as Error).name, (e as Error).message, small);
 }
+
+// A throw after elements have moved: the array is as it was, as in Node.
+const big: any[] = [];
+for (let i = 0; i < 50; i++) big.push((i * 37) % 50);
+let count = 0;
+try {
+  big.sort((a, b) => {
+    if (++count === 40) throw new Error("late");
+    return a - b;
+  });
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+console.log(big.join(","));

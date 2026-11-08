@@ -38,10 +38,43 @@ impl FnCx<'_, '_> {
             _ => return None,
         };
         let elem = self.cx.ty.array_elem(recv)?;
-        (self.cx.dynamic(elem) == Some(crate::any::Dynamic::Any)).then(|| ast::Ident {
+        if self.cx.dynamic(elem) != Some(crate::any::Dynamic::Any) || !self.may_throw(&args[0]) {
+            return None;
+        }
+        Some(ast::Ident {
             name: name.to_string(),
             span: prop.span,
         })
+    }
+
+    /// May comparator `cmp` throw? It writes a `throw`, or in a program with proxies (whose
+    /// traps may throw) it reads through its `any` parameters or calls something; a function
+    /// named here may do anything there. Any other comparator sorts as before, at its cost.
+    fn may_throw(&self, cmp: &ast::Expr) -> bool {
+        use velt_syntax::visit::{walk_expr, Visit};
+        struct Seen {
+            throws: bool,
+            reads: bool,
+        }
+        impl<'a> Visit<'a> for Seen {
+            fn stmt(&mut self, s: &'a ast::Stmt) {
+                self.throws |= matches!(s.kind, ast::StmtKind::Throw(_));
+            }
+            fn expr(&mut self, e: &'a ast::Expr) {
+                use ast::ExprKind as E;
+                self.reads |= matches!(e.kind, E::Member { .. } | E::Index { .. } | E::Call { .. });
+            }
+        }
+        let mut seen = Seen {
+            throws: false,
+            reads: false,
+        };
+        let arrow = matches!(
+            super::method_value::strip_parens(cmp).kind,
+            ast::ExprKind::Arrow { .. }
+        );
+        walk_expr(cmp, &mut seen);
+        seen.throws || (self.uses_proxy() && (seen.reads || !arrow))
     }
 
     /// `recv`, checked from `object`, as the receiver of a member access: when `object` is a
