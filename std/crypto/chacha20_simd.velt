@@ -1,10 +1,10 @@
 // velt/crypto (internal): ChaCha20's keystream XORed into data four blocks at a time, one block
 // per lane of a `u32x4` (the vertical layout: vector i holds word i of the four blocks), with
-// the state words in vectors for the whole run. A message shorter than a block takes one scalar
-// block instead, which costs less than four in vectors. Constant time as the scalar rounds are:
+// the state words in vectors for the whole run. A message of at most two blocks takes them one
+// at a time in rows instead (std/crypto/chacha20_rows.velt), which costs less than four. Constant time as the scalar rounds are:
 // adds, XORs and rotations by constants, with branches on the data's length only.
 
-import { chachaBlock } from "velt/crypto/chacha20";
+import { rowsXor } from "velt/crypto/chacha20_rows";
 import { CryptoError } from "velt/crypto/errors";
 
 // The vector operations used here, declared directly: `velt/simd` is the API, and loading all of
@@ -20,7 +20,6 @@ declare function velt_simd_u32x4_shr(v: u32x4, count: u32): u32x4;
 declare function velt_simd_u32x4_zip_low(a: u32x4, b: u32x4): u32x4;
 declare function velt_simd_u32x4_zip_high(a: u32x4, b: u32x4): u32x4;
 declare function velt_simd_u32x4_as_u8x16(v: u32x4): u8x16;
-declare function velt_simd_u32x4_store(v: u32x4, to: u32[], at: u64);
 declare function velt_simd_u64x2_zip_low(a: u64x2, b: u64x2): u64x2;
 declare function velt_simd_u64x2_zip_high(a: u64x2, b: u64x2): u64x2;
 declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;
@@ -29,6 +28,8 @@ declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
 declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
 
 /**
  * XORs `buf[start..end]` in place with the keystream of `state` from block `counter` on
@@ -49,12 +50,9 @@ export function chachaXorInPlace(
       `ChaCha20 range is out of bounds: end ${end}, length ${buf.length}, scratch ${x.length}`,
     );
   }
-  if (end - start < 64) {
-    if (start < end) {
-      state[12] = counter;
-      chachaBlock(state, x);
-      xorWords(buf, start, end, x);
-    }
+  if (end - start <= 128) {
+    // One or two blocks: in rows, a block at a time (four in vectors would waste the rest).
+    rowsXor(state, counter, buf, start, end);
     return;
   }
   const s0 = velt_simd_u32x4_splat(state[0]);
@@ -199,7 +197,6 @@ export function chachaXorInPlace(
         buf,
         off,
         end,
-        x,
         row0(x0, x1, x2, x3),
         row0(x4, x5, x6, x7),
         row0(x8, x9, x10, x11),
@@ -210,7 +207,6 @@ export function chachaXorInPlace(
           buf,
           off + 64,
           end,
-          x,
           row1(x0, x1, x2, x3),
           row1(x4, x5, x6, x7),
           row1(x8, x9, x10, x11),
@@ -222,7 +218,6 @@ export function chachaXorInPlace(
           buf,
           off + 128,
           end,
-          x,
           row2(x0, x1, x2, x3),
           row2(x4, x5, x6, x7),
           row2(x8, x9, x10, x11),
@@ -234,7 +229,6 @@ export function chachaXorInPlace(
           buf,
           off + 192,
           end,
-          x,
           row3(x0, x1, x2, x3),
           row3(x4, x5, x6, x7),
           row3(x8, x9, x10, x11),
@@ -304,17 +298,8 @@ function row3(a: u32x4, b: u32x4, c: u32x4, d: u32x4): u8x16 {
 }
 
 // XORs the keystream block a | b | c | d into `buf[at..]` up to `end` (`at < end`): whole
-// vectors for a full block, through the scratch words `x` for the last, partial one.
-function xorBlock(
-  buf: u8[],
-  at: usize,
-  end: usize,
-  x: u32[],
-  a: u8x16,
-  b: u8x16,
-  c: u8x16,
-  d: u8x16,
-) {
+// vectors for a full block, partial ones for the last.
+function xorBlock(buf: u8[], at: usize, end: usize, a: u8x16, b: u8x16, c: u8x16, d: u8x16) {
   if (end - at >= 64) {
     xorAt(buf, at, a);
     xorAt(buf, at + 16, b);
@@ -322,16 +307,20 @@ function xorBlock(
     xorAt(buf, at + 48, d);
     return;
   }
-  velt_simd_u32x4_store(velt_simd_u8x16_as_u32x4(a), x, 0);
-  velt_simd_u32x4_store(velt_simd_u8x16_as_u32x4(b), x, 4);
-  velt_simd_u32x4_store(velt_simd_u8x16_as_u32x4(c), x, 8);
-  velt_simd_u32x4_store(velt_simd_u8x16_as_u32x4(d), x, 12);
-  xorWords(buf, at, end, x);
+  const n = end - at;
+  xorSome(buf, at, n, a);
+  xorSome(buf, at + 16, n > 16 ? n - 16 : 0, b);
+  xorSome(buf, at + 32, n > 32 ? n - 32 : 0, c);
+  xorSome(buf, at + 48, n > 48 ? n - 48 : 0, d);
 }
 
-// `buf[at..end] ^=` the bytes of the keystream words `x`, a partial block.
-function xorWords(buf: u8[], at: usize, end: usize, x: u32[]) {
-  for (let i: usize = 0; i < end - at; i++) {
-    buf[at + i] ^= ((x[i >> 2] >>> (8 * ((i & 3) as u32))) & 0xff) as u8;
+// `buf[at..at + n] ^=` the first `n` bytes (at most 16) of `v`, unchecked: whole or partial
+// vector loads and stores (a partial one's count is under 16).
+function xorSome(buf: u8[], at: usize, n: usize, v: u8x16) {
+  if (n >= 16) {
+    xorAt(buf, at, v);
+  } else if (n > 0) {
+    const x = velt_simd_u8x16_xor(velt_simd_u8x16_load_partial(buf, at as u64, n as u64), v);
+    velt_simd_u8x16_store_partial(x, buf, at as u64, n as u64);
   }
 }

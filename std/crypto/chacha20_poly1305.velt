@@ -5,11 +5,18 @@
 
 import { Aead } from "velt/crypto/aead";
 import { checkOpenRange, checkSealRange, tagMatches, withRoom } from "velt/crypto/aead_tag";
-import { chachaPolyKey, chachaSetNonce, chachaState, store32le } from "velt/crypto/chacha20";
+import { chachaSetNonce, chachaState } from "velt/crypto/chacha20";
+import { rowsPolyKey } from "velt/crypto/chacha20_rows";
 import { chachaXorInPlace } from "velt/crypto/chacha20_simd";
 import { CryptoError } from "velt/crypto/errors";
 import { Poly1305 } from "velt/crypto/poly1305";
 import { arrayTruncate } from "velt/lang/intrinsics";
+
+// Declared directly, as chacha20_simd.velt does. The store is unchecked: `scratch` has 16 bytes.
+declare function velt_simd_u64x2_splat(x: u64): u64x2;
+declare function velt_simd_u64x2_with_lane(v: u64x2, index: u64, x: u64): u64x2;
+declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 
 /**
  * The ChaCha20-Poly1305 AEAD (RFC 8439) under a 32-byte key: `seal` encrypts and appends a
@@ -101,19 +108,16 @@ export class ChaCha20Poly1305 implements Aead {
   // The nonce (checked) in the state, the one-time Poly1305 key, the additional data absorbed.
   private begin(nonce: u8[], aad: u8[]) {
     chachaSetNonce(this.state, nonce);
-    chachaPolyKey(this.state, this.x, this.polyKey);
+    rowsPolyKey(this.state, this.polyKey);
     this.mac.reset(this.polyKey);
     this.mac.updatePadded(aad, 0, aad.length);
   }
 
-  // le64(aad length) | le64(ciphertext length), the MAC's last block.
+  // le64(aad length) | le64(ciphertext length), the MAC's last block: one vector store.
   private lengths(a: usize, c: usize) {
-    const l = this.scratch;
-    store32le(l, 0, a as u32);
-    store32le(l, 4, ((a as u64) >> 32) as u32);
-    store32le(l, 8, c as u32);
-    store32le(l, 12, ((c as u64) >> 32) as u32);
-    this.mac.updatePadded(l, 0, 16);
+    const l = velt_simd_u64x2_with_lane(velt_simd_u64x2_splat(a as u64), 1, c as u64);
+    velt_simd_u8x16_store(velt_simd_u64x2_as_u8x16(l), this.scratch, 0);
+    this.mac.updatePadded(this.scratch, 0, 16);
   }
 }
 

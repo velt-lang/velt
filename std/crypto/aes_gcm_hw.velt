@@ -42,6 +42,9 @@ export function rev(v: u8x16): u8x16 {
 // function grows with its branches times its locals).
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+// The last partial block: `count` is under 16 (16 would be poison in a release build).
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
 
 /** The 16 bytes of `b` from `at`, which the caller knows are there. */
 export function load16(b: u8[], at: usize): u8x16 {
@@ -173,6 +176,39 @@ function ghash8(y: u64x2, hp: u64x2[], b: u8[], off: usize): u64x2 {
   return reduce(lo, mid, hi);
 }
 
+/**
+ * `ghash8` for four blocks `b[off..off + 64]`: (y + c0) H^4 + c1 H^3 + c2 H^2 + c3 H, one
+ * reduction (the four to seven blocks a short message leaves after the groups of eight).
+ */
+function ghash4(y: u64x2, hp: u64x2[], b: u8[], off: usize): u64x2 {
+  noInline();
+  const x0 = element(b, off).xor(y);
+  const c1 = element(b, off + 16);
+  const c2 = element(b, off + 32);
+  const c3 = element(b, off + 48);
+  const h3 = hp[3];
+  const s3 = hp[11];
+  let lo = x0.clmulLow(h3);
+  let hi = x0.clmulHigh(h3);
+  let mid = x0.clmulLow(s3).xor(x0.clmulHigh(s3));
+  const h2 = hp[2];
+  const s2 = hp[10];
+  lo = lo.xor(c1.clmulLow(h2));
+  hi = hi.xor(c1.clmulHigh(h2));
+  mid = mid.xor(c1.clmulLow(s2)).xor(c1.clmulHigh(s2));
+  const h1 = hp[1];
+  const s1 = hp[9];
+  lo = lo.xor(c2.clmulLow(h1));
+  hi = hi.xor(c2.clmulHigh(h1));
+  mid = mid.xor(c2.clmulLow(s1)).xor(c2.clmulHigh(s1));
+  const h0 = hp[0];
+  const s0 = hp[8];
+  lo = lo.xor(c3.clmulLow(h0));
+  hi = hi.xor(c3.clmulHigh(h0));
+  mid = mid.xor(c3.clmulLow(s0)).xor(c3.clmulHigh(s0));
+  return reduce(lo, mid, hi);
+}
+
 /** The GHASH state `y` after `b[start..end]`, its last block zero-padded. */
 export function ghashBytes(y: u64x2, hp: u64x2[], b: u8[], start: usize, end: usize): u64x2 {
   let s = y;
@@ -180,6 +216,10 @@ export function ghashBytes(y: u64x2, hp: u64x2[], b: u8[], start: usize, end: us
   while (end - off >= 128) {
     s = ghash8(s, hp, b, off);
     off += 128;
+  }
+  if (end - off >= 64) {
+    s = ghash4(s, hp, b, off);
+    off += 64;
   }
   while (end - off >= 16) {
     s = gfmul(s.xor(element(b, off)), hp[0], hp[8]);
@@ -191,19 +231,9 @@ export function ghashBytes(y: u64x2, hp: u64x2[], b: u8[], start: usize, end: us
   return s;
 }
 
-/** The field element of `b[start..end]` (under 16 bytes) zero-padded. */
+/** The field element of `b[start..end]` (under 16 bytes, which the caller knows are there) zero-padded. */
 export function partial(b: u8[], start: usize, end: usize): u64x2 {
-  let hi: u64 = 0;
-  let lo: u64 = 0;
-  for (let i = start; i < end; i++) {
-    const at = (i - start) as u64;
-    if (at < 8) {
-      hi |= (b[i] as u64) << (56 - 8 * at);
-    } else {
-      lo |= (b[i] as u64) << (120 - 8 * at);
-    }
-  }
-  return u64x2.splat(lo).withLane(1, hi);
+  return rev(velt_simd_u8x16_load_partial(b, start as u64, (end - start) as u64)).asU64x2();
 }
 
 /** The lengths block of GCM: the bits of the additional data and of the text. */
@@ -226,9 +256,9 @@ export function counterBase(nonce: u8[]): u32x4 {
     .withLane(2, load32le(nonce, 8));
 }
 
-/** XORs the bytes `buf[start..end]` (under 16) with the keystream block `ks`. */
+/** XORs the bytes `buf[start..end]` (under 16, which the caller knows are there) with the keystream block `ks`. */
 export function xorTail(buf: u8[], start: usize, end: usize, ks: u8x16) {
-  for (let i = start; i < end; i++) {
-    buf[i] ^= ks.lane(i - start);
-  }
+  const n = (end - start) as u64;
+  const v = velt_simd_u8x16_load_partial(buf, start as u64, n).xor(ks);
+  velt_simd_u8x16_store_partial(v, buf, start as u64, n);
 }
