@@ -49,7 +49,11 @@ pub(super) fn merge_closures(closures: &mut [(Vec<TyId>, Vec<u32>)], a: u32, b: 
             into.push(m);
         }
     }
-    edges.extend(es);
+    for e in es {
+        if !edges.contains(&e) {
+            edges.push(e);
+        }
+    }
 }
 
 impl Ctx<'_> {
@@ -102,10 +106,12 @@ impl Ctx<'_> {
                 }
                 out.extend(ces.iter().copied());
             }
-            let out: Vec<u32> = (out.into_iter())
+            let mut out: Vec<u32> = (out.into_iter())
                 .map(|w| self.fn_sites.var_sets.find(w))
                 .filter(|w| *w != r)
                 .collect();
+            out.sort_unstable();
+            out.dedup();
             work.extend(out.iter().copied());
             sets.insert(r, ms);
             edges.insert(r, out);
@@ -175,12 +181,14 @@ impl Ctx<'_> {
                 .collect();
             let r = self.fn_sites.var_sets.find(target) as usize;
             for m in errs {
-                let w = self.err_var(m);
+                // A variable by its representative now: many closures throwing one keep it
+                // once.
+                let w = self.err_var(m).map(|w| self.fn_sites.var_sets.find(w));
                 let (cms, ces) = &mut self.fn_sites.var_sets.closures[r];
                 match w {
-                    Some(w) => ces.push(w),
+                    Some(w) if !ces.contains(&w) => ces.push(w),
                     None if !cms.contains(&m) => cms.push(m),
-                    None => {}
+                    _ => {}
                 }
             }
         }
