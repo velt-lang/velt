@@ -156,8 +156,9 @@ fn a_class_converted_to_any_demands_its_format_slot() {
 }
 
 /// The integer hooks act as one bit, which is what makes the demand sound (velt_common
-/// `hook_demand.rs`): any one construct in a program demands and checks all of them, `console.log`'s
-/// integer writers included, through the std code of the first. If this fails, live code must first cover what lowering builds (#2161).
+/// `hook_demand.rs`): any one construct in a program demands and checks all of them,
+/// `console.log`'s integer writers included, through the std code of the first. If this fails,
+/// live code must first cover what lowering builds (#2161).
 #[test]
 fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
     for src in [
@@ -184,9 +185,9 @@ fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
 
 /// `console.log` of a float checks its writer (`numberWrite`, velt_common `ON_DEMAND_WRITE`) and
 /// the integer writer it holds, which only its whole numbers reach, but demands no integer hook
-/// and checks none of the text hooks (velt/lang/hooks/number_text, which the check then doesn't
-/// load: `velt_lsp`'s `demand` test). A program that prints no float leaves the float writer
-/// unchecked.
+/// and checks none of the text hooks (their module, velt/lang/hooks/number_text, is loaded for the
+/// integer writer). A program that prints no float leaves the float writer unchecked (`velt_lsp`'s
+/// `demand` test: nor does it load its module).
 #[test]
 fn a_float_printed_checks_its_writer_and_no_text_hook() {
     let number_write = hook_index::number_write;
@@ -216,5 +217,13 @@ fn a_float_printed_checks_its_writer_and_no_text_hook() {
     assert!(
         !checked(&p, number_write),
         "numberWrite is checked for an integer"
+    );
+    // A type parameter's value may be a float.
+    let p = ok_src(
+        "function show<T>(x: T) {\n  console.log(x);\n}\nfunction main() {\n  show(0.5);\n}\n",
+    );
+    assert!(
+        checked(&p, number_write),
+        "numberWrite is not checked for a `T`"
     );
 }

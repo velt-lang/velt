@@ -194,8 +194,10 @@ demands nothing. A function may get a `throws` that needs formatting from what i
 declares, which is known only after the passes, too late to load a hook: the check then runs once
 more with `Format` assumed (`too_late`). Live code is a superset of what lowering builds: the program's
 own and the std code it reaches (`velt_sema` `body/lazy_std/live.rs`), std's own conversions
-included, so hello world checks none of std's integer printing. The four integer hooks act as one
-bit: a program demands none of them or all of them (`live_constructs.rs` `demanded_for`).
+included, so hello world checks none of std's integer printing. The integer hooks (`console.log`'s
+integer writers among them) act as one bit: a program demands none of them or all of them
+(`live_constructs.rs` `demanded_for`). `console.log`'s float writer is not one of them: it waits
+for live code that prints a float (`ON_DEMAND_WRITE`, `number_text.rs`).
 
 `host_async` is not moved: `velt/host/promise` loads `velt/io/error`, whose `IoError` extends the
 prelude's `Error`, which the rule excludes. It keeps its trigger below until (a2) (#2161 step 4).

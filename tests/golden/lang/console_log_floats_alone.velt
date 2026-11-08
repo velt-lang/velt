@@ -1,0 +1,13 @@
+// console.log of floats in a program that prints no integer, through the float writer
+// (velt/lang/hooks/number_write), whose whole numbers take the integer writer: `1`, not `1.0`
+// (#2197). The runtime's printer, lowering's fallback, prints the same: what this checks is that
+// the program builds with the writers live in a debug compiler. That sema checks the writer is
+// velt_sema's `live_hooks` test.
+function main() {
+  let x: f64 = 0.25;
+  for (let k = 0; k < 4; k++) {
+    console.log(x);
+    x = x * 2.0;
+  }
+  console.log(-0.0, 1e21, NaN, -x);
+}

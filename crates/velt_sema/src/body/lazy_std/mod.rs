@@ -19,8 +19,8 @@
 //! kinds of hook lowering can do without stay unchecked until the program needs them:
 //! [`RECORD_HOOKS`], for a conversion to a record ([`record_hooks_needed`]), and the float hooks,
 //! for a text conversion in the program's own code or a float printed (`number_text.rs`). The
-//! hooks whose table entry lists constructs (velt_common `hook_demand.rs`) are demanded by the constructs of live code,
-//! and `hir::Program::hooks_demanded` tells lowering.
+//! hooks whose table entry lists constructs (velt_common `hook_demand.rs`) are demanded by the
+//! constructs of live code, and `hir::Program::hooks_demanded` tells lowering.
 //!
 //! All of std is checked with laziness off (`VELT_CHECK_ALL_STD=1`), as `velt check --std` and
 //! veltc's `all_of_std_checks_without_diagnostics` do. The editor's analysis checks everything.

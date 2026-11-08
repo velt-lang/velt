@@ -2,8 +2,8 @@
 // registers (one multiply per split over all lanes at once, `digits4` and `digits8`) and handed
 // to the string as words (`strAsciiWords`, `strbufPushAsciiWords`), so `${n}` and `String(n)`
 // make no runtime call: an integer's text is at most 20 digits and a sign, which a string holds
-// inline. The leading zeros are counted from the digits (`leadingZeroBits`): no table is read,
-// so no bounds check, whose message would bring in the unsigned printer. The entry points are
+// inline. The leading zeros are counted from the digits (`leadingZeroBits`): the printers read no
+// table, so they have no bounds check, whose message would bring in the unsigned printer. The entry points are
 // out of line (`@noInline`): inlined at every `${n}`, they would take the program's inlining
 // budget from hotter code.
 

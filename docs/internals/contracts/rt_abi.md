@@ -862,8 +862,7 @@ through `any` never call them.
 `console.log(a, b)` lowers to: `write_<a>(1, a); write_byte(1, ' '); write_<b>(1, b); write_byte(1, '\n')`,
 except that a number is written by std's hooks (velt/lang/hooks/number_text and number_write,
 #2197) in one call with the byte after it: `intWrite(1, a, ' ')`, `uintWrite` (integers, extended
-to 64-bit; their text through `write_str`, the integer forms `write_i64` / `_u64` are gone) and
-`numberWrite` (floats, `f32` converted to `f64`).
+to 64-bit; their text through `write_str`) and `numberWrite` (floats, `f32` converted to `f64`).
 
 ## Memory [M1]
 | Symbol | Signature |
