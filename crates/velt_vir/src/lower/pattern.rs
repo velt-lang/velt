@@ -121,13 +121,6 @@ impl FnLower<'_, '_> {
                 self.switch_to(next);
             }
             PatKind::Some(p) => {
-                // `null` of a `T | null | undefined` whose `T` may hold a view (view_options.rs).
-                if matches!(p.kind, PatKind::None) {
-                    if let Some(null) = self.three_state_null(place, ty) {
-                        self.cond_jump(null, fail);
-                        return;
-                    }
-                }
                 let some = self.option_present(place, ty);
                 self.cond_jump(some, fail);
                 let (payload, inner) = self.some_part(p, place, ty);
