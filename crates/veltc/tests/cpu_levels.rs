@@ -266,7 +266,7 @@ fn f16_paths() -> Vec<Vec<&'static str>> {
 fn built_golden(root: &Path, name: &str, flags: &[&str], at: usize) -> std::path::PathBuf {
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
     let source = golden.join(format!("{name}.velt"));
-    let exe = root.join(format!("app{at}{}", std::env::consts::EXE_SUFFIX));
+    let exe = root.join(format!("{name}-{at}{}", std::env::consts::EXE_SUFFIX));
     let mut args = vec!["build"];
     args.extend(flags);
     args.extend([source.to_str().unwrap(), "-o", exe.to_str().unwrap()]);

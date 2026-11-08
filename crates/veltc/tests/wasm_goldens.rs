@@ -186,6 +186,7 @@ const WASI_STD: &[&str] = &[
     "simd_half_convert",
     "simd_half_dot",
     "simd_half_fits_pair",
+    "simd_half_index_range",
     "simd_half_lane_range",
     "simd_half_load_range",
     "simd_half_narrow_nan",

@@ -1,7 +1,13 @@
 //! The arithmetic of `f16x8` (`Op::is_f16_arithmetic`): `<8 x half>` instructions where the target
 //! has them (`Caps::fp16`), and elsewhere each half of the vector widened to `<4 x float>`,
-//! computed there and narrowed, explicitly. LLVM could promote `half` itself, but where the
-//! target has no conversion instruction that means compiler-rt calls lane by lane. The two paths
+//! computed there and narrowed, with step 4's helpers. Where the target converts `half` in
+//! hardware (F16C, arm64) the helpers are `fpext` and `fptrunc`, and after `-O3` InstCombine folds
+//! `fpext`, one `+ - * /` and `fptrunc` back into a `half` operation, which the backend's own
+//! promotion lowers to the same conversion, `f32` operation and conversion (`fcvtl`, `fadd.4s`,
+//! `fcvtn` on `cortex-a53`). That is exact, as the explicit form is: one `f32` operation rounds
+//! as `f16` would (24 >= 2*11 + 2), and in a chain the narrowing stays between operations. `sqrt`,
+//! `min` and `max` stay in `f32`. Where the target has no conversion (x86-64-v2) the helpers are
+//! integer code, which nothing folds, so there are no compiler-rt calls lane by lane. The paths
 //! give the same bits but for which NaN a NaN is: see `Op::is_f16_arithmetic`.
 
 use velt_vir::simd::{Lanes, Op};
