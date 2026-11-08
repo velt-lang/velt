@@ -20,14 +20,25 @@ export class StatementCache {
   private named: Map<string, Entry> = new Map<string, Entry>();
   private clock: i64 = 0;
   private serial: i64 = 0;
+  // The entry `get` found last, and its key: a connection mostly runs the same text again, which
+  // then costs a comparison rather than hashing the text. Dropped when its entry leaves.
+  private last: Entry | null = null;
+  private lastSql: string = "";
+  private lastNamed: bool = false;
   /** Names of statements dropped here, for the next request to close on the server. */
   closing: string[] = [];
 
   /** The statement for `sql`, marked recently used. */
   get(sql: string, named: bool): shared<Prepared> | null {
-    const e = named ? this.named.get(sql) : this.positional.get(sql);
-    if (e == null) {
-      return null;
+    let e = this.last;
+    if (e == null || named != this.lastNamed || sql != this.lastSql) {
+      e = (named ? this.named.get(sql) : this.positional.get(sql)) ?? null;
+      if (e == null) {
+        return null;
+      }
+      this.last = e;
+      this.lastSql = sql;
+      this.lastNamed = named;
     }
     this.clock++;
     e.used = this.clock;
@@ -53,6 +64,7 @@ export class StatementCache {
     }
     this.clock++;
     map.set(sql, new Entry(statement, this.clock));
+    this.last = null;
   }
 
   /** Forgets `sql` (its plan went stale on the server). */
@@ -62,6 +74,7 @@ export class StatementCache {
     if (had != null) {
       this.closing.push(had.statement.name);
       map.delete(sql);
+      this.last = null;
     }
   }
 
