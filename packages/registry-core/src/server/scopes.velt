@@ -1,0 +1,104 @@
+// registry-core (internal): scopes. The first user to publish a package in a scope (`@acme/…`)
+// claims it, and from then on only its owners add packages to it; a package's own owners keep
+// publishing its versions. Claiming a scope takes what taking its name would: it isn't reserved
+// for someone else (`checkNotReserved`), and no other user's published package has its name. A
+// new unscoped name that is someone else's scope is refused the same way, so neither a scope nor
+// a package takes the other's name. On an open registry (no users) scopes have no owners.
+
+import { normalizedName, splitScoped } from "../names";
+import { ScopeChange } from "../stores/scope_change";
+import { Caller } from "./caller";
+import { Refusal } from "./refusal";
+import { RegistryStores } from "./registry_stores";
+
+// The owners, for a refusal.
+function listed(owners: string[]): string {
+  return owners.length == 0 ? "none" : owners.join(", ");
+}
+
+/**
+ * Returns when `caller` may publish the new package `name` as far as scopes go: for a scoped
+ * name, `caller` owns its scope, or nobody does and `caller` may claim it; for an unscoped one,
+ * no other user's scope has its name. Else throws the refusal.
+ */
+export async function checkScope(
+  stores: RegistryStores,
+  name: string,
+  caller: Caller,
+): Promise<void> {
+  const user = caller.user;
+  if (user == null) {
+    return;
+  }
+  const scoped = splitScoped(name);
+  if (scoped == null) {
+    const other = await stores.db.scope(normalizedName(name));
+    if (other != null && !other.owners.includes(user)) {
+      throw new Refusal(
+        403,
+        `cannot publish \`${name}\`: it is the name of the scope \`@${other.scope}\`, which \`${user}\` doesn't own (owners: ${listed(other.owners)})`,
+      );
+    }
+    return;
+  }
+  const scope = scoped[0];
+  const found = await stores.db.scope(normalizedName(scope));
+  if (found == null) {
+    await checkMayClaim(stores, name, scope, user);
+    return;
+  }
+  if (found.scope != scope) {
+    throw new Refusal(
+      400,
+      `cannot publish \`${name}\`: the registry has the scope \`@${found.scope}\`, and scopes that differ only in \`-\` and \`_\` count as the same; publish as \`@${found.scope}/${scoped[1]}\``,
+    );
+  }
+  if (!found.owners.includes(user)) {
+    throw new Refusal(
+      403,
+      `cannot publish \`${name}\`: \`${user}\` is not an owner of the scope \`@${scope}\` (owners: ${listed(found.owners)}); an owner can add you`,
+    );
+  }
+}
+
+// Returns when `user` may claim `scope` with the new package `name`: no other user's package is
+// named as the scope. Its reservations are `checkNotReserved`'s.
+async function checkMayClaim(
+  stores: RegistryStores,
+  name: string,
+  scope: string,
+  user: string,
+): Promise<void> {
+  const spelled = await stores.db.spelling(normalizedName(scope));
+  if (spelled == null) {
+    return;
+  }
+  const owners = (await stores.db.record(spelled))?.owners ?? [];
+  if (!owners.includes(user)) {
+    throw new Refusal(
+      403,
+      `cannot publish \`${name}\`: the scope \`@${scope}\` would take the name of the package \`${spelled}\`, which \`${user}\` doesn't own (owners: ${listed(owners)})`,
+    );
+  }
+}
+
+/**
+ * Claims the scope of the new package `name` for `caller` when nobody has it yet, before the
+ * package is committed; the package's commit checks the scope again (`checkScope`), so a claim
+ * that lost to another user's leaves this publish refused. A claim stands even when the publish
+ * then fails.
+ */
+export async function claimScope(
+  stores: RegistryStores,
+  name: string,
+  caller: Caller,
+): Promise<void> {
+  const user = caller.user;
+  const scoped = splitScoped(name);
+  if (user == null || scoped == null) {
+    return;
+  }
+  if ((await stores.db.scope(normalizedName(scoped[0]))) == null) {
+    await stores.db.commitScope(new ScopeChange(scoped[0], 0, [user]));
+  }
+}

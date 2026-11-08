@@ -2,7 +2,7 @@
 // /api/v1/<name>/owners/<user>` (crates/velt_registry/src/owners.rs). Only an owner changes
 // the owners, only to users that exist, and the last owner stays.
 
-import { checkUserName, isValidPackageName } from "../names";
+import { checkUserName, isValidDependencyName } from "../names";
 import { PackageChange } from "../stores/package_change";
 import { PackageRecord } from "../stores/package_record";
 import { authorize, isPublished, ownerOf, writer } from "./access";
@@ -14,7 +14,7 @@ import { RegistryStores } from "./registry_stores";
 
 /** `GET /api/v1/<name>/owners`: one owner per line. */
 export async function listOwners(stores: RegistryStores, name: string): Promise<Response> {
-  if (!isValidPackageName(name)) {
+  if (!isValidDependencyName(name)) {
     return text(400, "invalid package name");
   }
   const record = await stores.db.record(name);
@@ -75,7 +75,7 @@ export async function changeOwners(
   user: string,
   add: bool,
 ): Promise<Response> {
-  if (!isValidPackageName(name)) {
+  if (!isValidDependencyName(name)) {
     return text(400, "invalid package name");
   }
   const bad = checkUserName(user);

@@ -1,5 +1,5 @@
-// registry-core (internal): reserved names. A new package whose name, or scope, a registry's
-// `NameReservations` holds back is published only by the user approved for it.
+// registry-core (internal): reserved names. A new package whose name, or unclaimed scope, a
+// registry's `NameReservations` holds back is published only by the user approved for it.
 
 import { normalizedName, splitScoped } from "../names";
 import { Caller } from "./caller";
@@ -8,20 +8,32 @@ import { RegistryStores } from "./registry_stores";
 
 /**
  * The keys a reservation of package `name` may be under: its `normalizedName`, and for a scoped
- * name its scope (`@` and the scope's `normalizedName`).
+ * name, what claiming its scope takes: the scope's (`@` and its `normalizedName`) and the
+ * unscoped name the scope spells, so nobody takes `@react` while `react` is kept back.
  */
 export function reservationKeys(name: string): string[] {
   const keys = [normalizedName(name)];
   const scoped = splitScoped(name);
   if (scoped != null) {
-    keys.push(`@${normalizedName(scoped[0])}`);
+    const scope = normalizedName(scoped[0]);
+    keys.push(`@${scope}`, scope);
   }
   return keys;
 }
 
+// What the refusal says is reserved, for key `i` of `reservationKeys(name)`.
+function reservedWhat(name: string, keys: string[], i: i64): string {
+  if (i == 0) {
+    return `\`${name}\``;
+  }
+  const scope = keys[1];
+  return i == 1 ? `the scope \`${scope}\`` : `the scope \`${scope}\` (as the name \`${keys[i]}\`)`;
+}
+
 /**
- * Returns when `caller` may take the new name `name`: every reservation it falls under (its own,
- * and its scope's) is held by `caller`. Else throws the 403 saying how to ask.
+ * Returns when `caller` may take the new name `name`: every reservation it falls under is held
+ * by `caller`. For a name in a scope already claimed, that is only the name's own: the scope's
+ * owners decide what goes in it. Else throws the 403 saying how to ask.
  */
 export async function checkNotReserved(
   stores: RegistryStores,
@@ -32,7 +44,11 @@ export async function checkNotReserved(
   if (reserved == null) {
     return;
   }
-  const keys = reservationKeys(name);
+  let keys = reservationKeys(name);
+  const scoped = splitScoped(name);
+  if (scoped != null && (await stores.db.scope(normalizedName(scoped[0]))) != null) {
+    keys = [keys[0]];
+  }
   for (let i: i64 = 0; i < keys.length; i++) {
     const found = await reserved.reservation(keys[i]);
     if (found == null) {
@@ -42,11 +58,9 @@ export async function checkNotReserved(
     if (holder != null && holder == caller.user) {
       continue;
     }
-    // The first key is the name's own; a second is its scope's.
-    const what = i == 0 ? `\`${name}\`` : `the scope \`${keys[i]}\``;
     throw new Refusal(
       403,
-      `cannot publish \`${name}\`: ${what} is reserved (${found.reason}); to ask for it: ${reserved.howToRequest(name)}`,
+      `cannot publish \`${name}\`: ${reservedWhat(name, reservationKeys(name), i)} is reserved (${found.reason}); to ask for it: ${reserved.howToRequest(name)}`,
     );
   }
 }

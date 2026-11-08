@@ -70,12 +70,11 @@ describe("reserved names", () => {
 
   it("are looked up by the normalized name, and by the scope of a scoped one", () => {
     expect(reservationKeys("my-lib")).toEqual(["my_lib"]);
-    expect(reservationKeys("@vue/core-x")).toEqual(["@vue/core_x", "@vue"]);
-    expect(reservationKeys("@my-org/x")).toEqual(["@my_org/x", "@my_org"]);
+    expect(reservationKeys("@vue/core-x")).toEqual(["@vue/core_x", "@vue", "vue"]);
+    expect(reservationKeys("@my-org/x")).toEqual(["@my_org/x", "@my_org", "my_org"]);
   });
 
   it("need every reservation a scoped name falls under to be the caller's", async () => {
-    // Scoped names can't be published yet, so the check is called directly.
     const [r, reserved] = registry();
     reserved.reserve("@acme", "a well-known npm scope", "carol");
     reserved.reserve("@acme/tool", "a well-known npm package", "dave");

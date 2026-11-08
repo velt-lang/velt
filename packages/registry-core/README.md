@@ -46,8 +46,8 @@ const manifest = readManifest(text); // ManifestError when vpm would refuse it
 ```
 
 - **Names** (`src/names.velt`): package names (lowercase words joined by single `-` or `_`; not
-  `std`, `velt`, a native prefix such as `rt-…`, or a Windows device name), scoped dependency
-  names (`@scope/name`) and registry user names.
+  `std`, `velt`, a native prefix such as `rt-…`, or a Windows device name), scoped names
+  (`@scope/name`) and registry user names.
 - **Versions** (`src/semver/version.velt`): semver 2.0 versions, parsed and ordered exactly as the
   Rust `semver` crate does for `velt` (numbers up to `u64`'s largest; build metadata ordered
   too).
@@ -83,12 +83,20 @@ const manifest = readManifest(text); // ManifestError when vpm would refuse it
   rewritten after each write with the revision it shows, and only over the copy read and only
   when that copy is older (`BlobStore.putIfTag`), so an older index never replaces a newer one,
   even from a write that stopped half-way. `GET /api/v1/<name>/index` answers that file.
+- **Scopes** (`src/server/scopes.velt`): packages named `@scope/name`, served at
+  `/api/v1/@scope/name/…`. The first user to publish a package in a scope claims it; then only
+  the scope's owners add packages to it (`GET`, `PUT` and `DELETE
+  /api/v1/scopes/<scope>/owners[/<user>]` change them as a package's owners change), while each
+  package's own owners publish its versions. Claiming a scope is checked as taking a name is: it
+  isn't reserved, as `@scope` or as the name `scope`, for someone else, no other user's package
+  is named so, and scopes that differ only in `-` and `_` are one. A new unscoped name that is
+  another user's scope is refused too. On an open registry, scopes have no owners.
 - **Reserved names** (`src/server/reserved.velt`, optional): a host that gives the registry
   `NameReservations` keeps those names, and scopes, back. A new package under one is published
   only by the user an administrator approved for it, and the refusal says how to ask.
 - **Stores** (`src/stores/`): the interfaces a host implements, and in-memory adapters
   (`src/memory/`) for tests and for trying a registry out. `MetadataDb` holds small rows: a
-  record per package (versions, owners, revision) and a search entry; reads of an index never
+  record per package (versions, owners, revision), a search entry, and each scope's owners; reads of an index never
   reach it.
 
 `crates/veltc/tests/registry_core.rs` checks every rule against the Rust it must agree with

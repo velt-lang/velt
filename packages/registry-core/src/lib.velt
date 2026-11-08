@@ -11,9 +11,11 @@ export {
   isNativePrefixName,
   isValidDependencyName,
   isValidPackageName,
+  isValidScopePart,
   isValidUserName,
   isWindowsDeviceName,
   normalizedName,
+  scopeOf,
   splitScoped,
 } from "./names";
 export { SemverError } from "./semver/semver_error";
@@ -47,6 +49,8 @@ export { NameReservations } from "./stores/name_reservations";
 export { Reservation } from "./stores/reservation";
 export { PackageChange } from "./stores/package_change";
 export { PackageRecord } from "./stores/package_record";
+export { ScopeChange } from "./stores/scope_change";
+export { ScopeRecord } from "./stores/scope_record";
 export { SearchEntry } from "./stores/search_entry";
 export { StoredFile } from "./stores/stored_file";
 export { archiveKey, indexKey } from "./stores/static_files";

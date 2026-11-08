@@ -6,6 +6,8 @@ import { PackageIndex } from "../server/package_index";
 import { MetadataDb } from "../stores/metadata_db";
 import { PackageChange } from "../stores/package_change";
 import { PackageRecord } from "../stores/package_record";
+import { ScopeChange } from "../stores/scope_change";
+import { ScopeRecord } from "../stores/scope_record";
 import { SearchEntry } from "../stores/search_entry";
 
 // `record`'s copy, sharing nothing with it.
@@ -20,6 +22,8 @@ function copyOf(record: PackageRecord): PackageRecord {
  */
 export class MemoryMetadataDb implements MetadataDb {
   private records: Map<string, PackageRecord> = new Map();
+  // By the scope's `normalizedName`.
+  private scopes: Map<string, ScopeRecord> = new Map();
 
   async record(name: string): Promise<PackageRecord | null> {
     const found = this.records.get(name);
@@ -85,5 +89,22 @@ export class MemoryMetadataDb implements MetadataDb {
       }
     }
     return out;
+  }
+
+  async scope(normalized: string): Promise<ScopeRecord | null> {
+    const found = this.scopes.get(normalized);
+    return found == null ? null : new ScopeRecord(found.scope, [...found.owners], found.revision);
+  }
+
+  async commitScope(change: ScopeChange): Promise<bool> {
+    const key = normalizedName(change.scope);
+    const current = this.scopes.get(key);
+    if ((current?.revision ?? 0) != change.base) {
+      return false;
+    }
+    // A claimed scope keeps its first spelling.
+    const scope = current?.scope ?? change.scope;
+    this.scopes.set(key, new ScopeRecord(scope, [...change.owners], change.base + 1));
+    return true;
   }
 }

@@ -6,7 +6,8 @@
 // free, and native code only where the host accepts it. Then the archive is stored by its
 // checksum, the first publisher of a new package becomes its owner, and the version joins the
 // index; versions are immutable. The body is read and the archive checked before the package's
-// write is committed, so a stalled or large upload holds up nothing but itself. A write commits
+// write is committed, so a stalled or large upload holds up nothing but itself. A new package in
+// a scope nobody has claims it for the publisher (`scopes.velt`). A write commits
 // only if the package hasn't changed since it was read (`commitChange`), so none needs a lock.
 
 import { EncodingError, utf8Decode } from "velt/encoding";
@@ -15,7 +16,7 @@ import { ArchiveError } from "../archive_error";
 import { Manifest } from "../manifest/manifest";
 import { readManifest } from "../manifest/decode";
 import { ManifestError } from "../manifest/manifest_error";
-import { isValidPackageName, normalizedName } from "../names";
+import { isValidDependencyName, normalizedName } from "../names";
 import { readPackageArchive } from "../package_archive";
 import { Version } from "../semver/version";
 import { PackageChange } from "../stores/package_change";
@@ -32,6 +33,7 @@ import { Refusal } from "./refusal";
 import { RegistryLimits } from "./registry_limits";
 import { RegistryStores } from "./registry_stores";
 import { checkNotReserved } from "./reserved";
+import { checkScope, claimScope } from "./scopes";
 import { declaredLength, tooLarge, uploadBody } from "./upload_body";
 
 // The archive's entries and checksum, after the checks of its format, checksum and the publish
@@ -119,6 +121,14 @@ async function checkNameIsFree(stores: RegistryStores, name: string): Promise<vo
   }
 }
 
+// Returns when `caller` may take the new name `name`: no published name differs from it only in
+// `-` and `_`, it isn't reserved for someone else, and its scope is `caller`'s or free to claim.
+async function checkNewName(stores: RegistryStores, name: string, caller: Caller): Promise<void> {
+  await checkNameIsFree(stores, name);
+  await checkScope(stores, name, caller);
+  await checkNotReserved(stores, name, caller);
+}
+
 // The upload `body`'s entries, checksum and manifest, once the archive, the publish policy, the
 // manifest and the host's limits accept it. Nothing here reads a store.
 function checkedUpload(
@@ -164,8 +174,7 @@ async function publishChange(
 ): Promise<PackageChange> {
   authorize(record, name, caller);
   if (record == null) {
-    await checkNameIsFree(stores, name);
-    await checkNotReserved(stores, name, caller);
+    await checkNewName(stores, name, caller);
   }
   const index = record?.index.copy() ?? new PackageIndex(name);
   const version = Version.parse(entry.version);
@@ -199,7 +208,7 @@ export async function publish(
   name: string,
   version: string,
 ): Promise<Response> {
-  if (!isValidPackageName(name) || !Version.isValid(version)) {
+  if (!isValidDependencyName(name) || !Version.isValid(version)) {
     return text(400, "invalid package name or version");
   }
   // A body announced too large is refused before anything else, as the Rust server's HTTP
@@ -211,8 +220,7 @@ export async function publish(
   // name doesn't collide with a published one's and isn't reserved for someone else.
   const caller = await ownerOf(stores, req, name);
   if (!(await isPublished(stores, name))) {
-    await checkNameIsFree(stores, name);
-    await checkNotReserved(stores, name, caller);
+    await checkNewName(stores, name, caller);
   }
   const body = await uploadBody(req, limits.maxArchiveBytes);
   const [entries, sum, m] = checkedUpload(limits, req, name, version, body);
@@ -224,6 +232,9 @@ export async function publish(
   // Stored before the commit, by its checksum: only a publish that loses a race after this leaves
   // an archive nothing names, and one retried stores nothing new.
   await stores.blobs.putIfAbsent(archiveKey(sum), packArchive(entries));
+  if (now == null) {
+    await claimScope(stores, name, await writer(stores, req));
+  }
   // Each try asks who the caller is again: a token taken away while the body arrived stops here.
   await commitChange(
     stores,
