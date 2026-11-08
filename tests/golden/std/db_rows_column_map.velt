@@ -2,6 +2,7 @@
 // for a row type of up to 15 fields the first 16 columns' fields are kept in one word, and the
 // columns past them in an array. A field may come from any column, before or past the 16th; a
 // column no field names is skipped; a row type of 16 fields keeps every column's field in the array.
+// A row type of 15 fields fills the word's top slot (column 15, field 14), whose bits reach the sign.
 import { CellKind, readRow, readRows, RowSource } from "velt/db";
 
 // Columns named `names`; the cell in column `i` of row `r` (from 0) is `(r + 1) * 100 + i`.
@@ -53,6 +54,24 @@ struct Two {
   q: i64;
 }
 
+struct Fifteen {
+  f0: i64;
+  f1: i64;
+  f2: i64;
+  f3: i64;
+  f4: i64;
+  f5: i64;
+  f6: i64;
+  f7: i64;
+  f8: i64;
+  f9: i64;
+  f10: i64;
+  f11: i64;
+  f12: i64;
+  f13: i64;
+  f14: i64;
+}
+
 struct Sixteen {
   f0: i64;
   f1: i64;
@@ -97,6 +116,15 @@ function main() {
   }
   for (const s of readRows<Sixteen, Wide>(new Wide(reversed, 1))) {
     console.log("sixteen", s.f0, s.f7, s.f15);
+  }
+
+  // Column 0 is no field's; columns 1 to 15 are f0 to f14, so f14 is in the top slot.
+  const shifted: string[] = ["x0"];
+  for (let i: i64 = 0; i < 15; i++) {
+    shifted.push(`f${i}`);
+  }
+  for (const s of readRows<Fifteen, Wide>(new Wide(shifted, 1))) {
+    console.log("fifteen", s.f0, s.f7, s.f14);
   }
 
   // A required field no column fills.
