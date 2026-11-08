@@ -138,8 +138,8 @@ export class TlsEngine {
   }
 
   /**
-   * `fill` without waiting, over a transport that can: DATA, NOTHING_YET, or ENDED. The state changes
-   * only here, so whoever then waits on the transport and goes away leaves nothing half done.
+   * `fill` without waiting, over a transport that can: DATA, NOTHING_YET, or ENDED. The state
+   * changes only here, so whoever then waits on the transport and goes away leaves nothing half done.
    */
   tryFill(): u8 {
     const t = this.out.tryTransport();
@@ -153,20 +153,23 @@ export class TlsEngine {
         if (r.ended) {
           return ENDED;
         }
-        const type = r.step();
+        const step = r.step();
+        if (step == MORE) {
+          const got = r.tryMore(t);
+          if (got == null) {
+            r.cut(true);
+          } else if (got == 0) {
+            return NOTHING_YET;
+          }
+          continue;
+        }
+        const type = step as u8;
         if (type == APPLICATION_DATA) {
           r.keepContent();
         } else if (type == HANDSHAKE) {
           this.addHandshake();
           while (this.hs.hasMessage()) {
             this.noteHandshake(this.hs.take());
-          }
-        } else if (type == MORE) {
-          const got = r.tryMore(t);
-          if (got == null) {
-            r.cut(true);
-          } else if (got == 0) {
-            return NOTHING_YET;
           }
         } else if (type != END) {
           throw new TlsFailure(UNEXPECTED_MESSAGE, `unexpected record type ${type}`);

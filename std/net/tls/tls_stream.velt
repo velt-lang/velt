@@ -69,8 +69,8 @@ export class TlsStream implements ByteStream {
 
   /**
    * Reads what has arrived into `buf[start..end]` without waiting: the number of bytes read, `0`
-   * when nothing has arrived yet (wait on the transport, then try again), or `null` at the end of the
-   * stream. For a stream over a `TcpStream`, whose `readable()` is the wait unless `hasBuffered()`
+   * when nothing has arrived yet (wait on the transport, then try again), or `null` at the end of
+   * the stream. For a stream over a `TcpStream`, whose `readable()` is the wait unless `hasBuffered()`
    * says the bytes are here already. Nothing waits, so a holder can keep this stream behind a
    * `Mutex` and read and write from whichever task has its turn. Not during `read` or `readInto`.
    * `RangeError` for an empty or out-of-range range.

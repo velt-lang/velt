@@ -116,6 +116,8 @@ class Playback implements TryStream {
   direct: bool;
   /** How many bytes `tryWrite` takes. */
   takes: usize;
+  /** Bytes `writeBytesLater` queued that no waiting write has sent yet; `tryWrite` takes none. */
+  queued: i64;
   /** The most one read hands back. */
   chunk: usize;
   written: u8[];
@@ -132,6 +134,7 @@ class Playback implements TryStream {
     this.gate = null;
     this.direct = true;
     this.takes = 1000000;
+    this.queued = 0;
     this.chunk = 1000000;
     this.written = [];
     this.closed = false;
@@ -177,6 +180,7 @@ class Playback implements TryStream {
     for (let i = start as usize; i < (to as usize); i++) {
       this.written.push(data[i]);
     }
+    this.queued = 0;
   }
 
   close() {
@@ -214,6 +218,9 @@ class Playback implements TryStream {
     if (data instanceof Uint8Array) {
       throw new Error("a test writes arrays");
     }
+    if (this.queued > 0) {
+      return 0;
+    }
     const to = end ?? (data.length as number);
     let n = (to - start) as usize;
     n = n < this.takes ? n : this.takes;
@@ -223,8 +230,17 @@ class Playback implements TryStream {
     return n as i64;
   }
 
+  // Like a socket's: queued behind what it holds, sent at the next wait; the bytes left to send.
   writeBytesLater(data: u8[] | Uint8Array, start: number, end?: number): i64 {
-    return this.tryWrite(data, start, end);
+    if (data instanceof Uint8Array) {
+      throw new Error("a test writes arrays");
+    }
+    const to = end ?? (data.length as number);
+    for (let i = start as usize; i < (to as usize); i++) {
+      this.written.push(data[i]);
+    }
+    this.queued += (to - start) as i64;
+    return this.queued;
   }
 }
 
@@ -321,6 +337,8 @@ function refused(hs: bool): [string, string, string, string][] {
   const bad = "020a15";
   const inner99 =
     hs ? "unexpected record type 99 during the handshake" : "unexpected record type 99";
+  const inner255 =
+    hs ? "unexpected record type 255 during the handshake" : "unexpected record type 255";
   const plain = "an unprotected record of type";
   const ccs = hs ? "a malformed ChangeCipherSpec" : `${plain} 20`;
   return [
@@ -330,6 +348,7 @@ function refused(hs: bool): [string, string, string, string][] {
     ["a ChangeCipherSpec of two bytes", "14030300020101", `TLS: ${ccs}`, bad],
     ["an empty ChangeCipherSpec", "1403030000", `TLS: ${ccs}`, bad],
     ["an unknown inner type", sealedAfter(secret, before, [1, 99]), `TLS: ${inner99}`, bad],
+    ["inner type 255", sealedAfter(secret, before, [1, 255]), `TLS: ${inner255}`, bad],
     [
       "an empty handshake record",
       sealedAfter(secret, before, [22]),
@@ -354,6 +373,7 @@ describe("what the record reader passes up", () => {
       "TLS: unexpected record type 99 during the handshake",
     ],
     ["outer type 0", "000303000100", "TLS: unexpected record type 0 during the handshake"],
+    ["outer type 255", "ff0303000100", "TLS: unexpected record type 255 during the handshake"],
     ["a ChangeCipherSpec of the wrong value", "140303000102", "TLS: a malformed ChangeCipherSpec"],
     ["a ChangeCipherSpec of two bytes", "14030300020101", "TLS: a malformed ChangeCipherSpec"],
     ["an empty ChangeCipherSpec", "1403030000", "TLS: a malformed ChangeCipherSpec"],
@@ -749,15 +769,52 @@ describe("reads and writes that don't wait", () => {
     expect(openAt(n, t.written, then)[0]).toBe("0017");
   });
 
-  it("writes a last message whole, and fails the connection on a short write", async () => {
+  it("writes a last message whole, and queues what a short write leaves", async () => {
     const [t, s] = await ready("");
     expect(s.tryWrite([1, 2])).toBe(2);
     const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
-    expect(openAt(c, t.written, 259)[0]).toBe("010217");
+    const [first, at] = openAt(c, t.written, 259);
+    expect(first).toBe("010217");
     t.takes = 3;
-    expect(s.tryWrite([3])).toBe(0);
-    expect(t.closed).toBe(true);
-    expect(() => s.writeBytesLater([4])).toThrow("the socket took part of a record");
+    expect(s.tryWrite([3])).toBe(1);
+    expect(t.queued).toBe(1 + 22 - 3);
+    expect(t.closed).toBe(false);
+    const [second, end] = openAt(c, t.written, at);
+    expect(second).toBe("0317");
+    expect(end).toBe(t.written.length);
+  });
+
+  it("writes a last message behind the records queued before it", async () => {
+    const [t, s] = await ready("");
+    expect(s.writeBytesLater([1])).toBe(1 + 22);
+    expect(s.writeBytesLater([], 0, 0)).toBe(1 + 22);
+    expect(s.tryWrite([2])).toBe(1);
+    expect(t.closed).toBe(false);
+    expect(t.queued).toBe(2 * (1 + 22));
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    const [one, at] = openAt(c, t.written, 259);
+    expect(one).toBe("0117");
+    expect(openAt(c, t.written, at)[0]).toBe("0217");
+  });
+
+  it("answers a KeyUpdate that asks for one before a last message", async () => {
+    const ku = sealedAfter(SERVER_AP_SECRET, 1, [24, 0, 0, 1, 1, 22]);
+    const [t, s] = await ready(ku + "17");
+    t.arrived += hexDecode(ku).length;
+    expect(s.tryRead(Buffer.alloc(4))).toBe(0);
+    expect(s.tryWrite([1])).toBe(1);
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    const [update, at] = openAt(c, t.written, 259);
+    expect(update).toBe("180000010016");
+    const n = new RecordCipher(0x1301, updated(CLIENT_AP_SECRET));
+    expect(openAt(n, t.written, at)[0]).toBe("0117");
+  });
+
+  it("refuses a record whose type is no content type, without waiting", async () => {
+    const odd = sealedAfter(SERVER_AP_SECRET, 1, [1, 255]);
+    const [t, s] = await ready(odd + sealedAfter(SERVER_AP_SECRET, 2, [7, 23]));
+    t.arrived = 1000000;
+    expect(() => s.tryRead(Buffer.alloc(4))).toThrow("unexpected record type 255");
   });
 
   it("refuses a transport that must wait", async () => {

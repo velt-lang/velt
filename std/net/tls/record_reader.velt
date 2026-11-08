@@ -26,8 +26,8 @@ export const HANDSHAKE: u8 = 22;
 export const APPLICATION_DATA: u8 = 23;
 /** Not a content type: the stream ended with close_notify. */
 export const END: u8 = 0;
-/** Not a content type: no whole record has been read yet. */
-export const MORE: u8 = 255;
+/** Not a content type (none fits in a byte): no whole record has been read yet. */
+export const MORE: u16 = 256;
 
 /** The most content a record carries. */
 export const MAX_PLAIN: usize = 16384;
@@ -109,7 +109,7 @@ export class RecordReader {
     while (true) {
       const type = this.step();
       if (type != MORE) {
-        return type;
+        return type as u8;
       }
       if (!(await this.readMore())) {
         this.cut(after);
@@ -117,10 +117,13 @@ export class RecordReader {
     }
   }
 
-  /** `next` from what has been read so far: MORE when no whole record is left in it. */
-  step(): u8 {
+  /**
+   * `next` from what has been read so far, a content type or END; MORE when no whole record is
+   * left in it.
+   */
+  step(): u16 {
     if (this.ended) {
-      return END;
+      return END as u16;
     }
     const failed = this.failure;
     if (failed != null) {
@@ -143,10 +146,10 @@ export class RecordReader {
         this.rstart = at + HEADER + len;
         const type = this.open(at, len);
         if (type != ALERT) {
-          return type;
+          return type as u16;
         }
         if (this.alert()) {
-          return END;
+          return END as u16;
         }
       }
     } catch (e) {

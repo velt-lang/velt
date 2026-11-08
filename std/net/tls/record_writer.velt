@@ -131,9 +131,12 @@ export class RecordWriter {
     const t = this.tryTransport();
     let writer = this.writerForNow();
     const limit = this.writeLimit;
-    let left: i64 = 0;
     let off = from;
     try {
+      if (off >= to) {
+        return t.writeBytesLater(this.buf, 0, 0);
+      }
+      let left: i64 = 0;
       while (off < to) {
         if (writer.seq >= limit || this.updateOwed) {
           t.writeBytesLater(this.protect(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]), 0);
@@ -143,28 +146,38 @@ export class RecordWriter {
         off += this.sealedPlain;
         left = t.writeBytesLater(this.buf, 0, n as number);
       }
+      return left;
     } catch (e) {
       throw this.failedNow(e);
     }
-    return left;
   }
 
   /**
-   * Seals `bytes[from..to]` and writes the records now, for a last small message. Records go whole
-   * or the connection fails, so a socket that doesn't take them all ends it: the bytes written, 0
-   * in that case. Over a transport that can; not during a `write`.
+   * Seals `bytes[from..to]` and writes the records now, for a last
+   * small message: what the socket doesn't take now is queued behind what it holds already, as
+   * `writeLater` does, so records go whole and in order. The bytes taken, all of them. Over a
+   * transport that can; not during a `write`.
    */
   tryWrite(bytes: u8[], from: usize, to: usize): i64 {
     const t = this.tryTransport();
-    this.writerForNow();
+    let writer = this.writerForNow();
     if (from >= to) {
       return 0;
     }
-    const out = this.protect(APPLICATION_DATA, bytes.slice(from as i64, to as i64));
-    const sent = t.tryWrite(out, 0);
-    if ((sent as usize) < out.length) {
-      this.failedNow(new IoError("EPIPE", "TLS stream: the socket took part of a record"));
-      return 0;
+    try {
+      let update: u8[] = [];
+      if (writer.seq >= this.writeLimit || this.updateOwed) {
+        update = this.protect(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]);
+        writer = this.nextWriter();
+      }
+      const data = this.protect(APPLICATION_DATA, bytes.slice(from as i64, to as i64));
+      const out = update.length == 0 ? data : update.concat(data);
+      const sent = t.tryWrite(out, 0);
+      if ((sent as usize) < out.length) {
+        t.writeBytesLater(out, sent as number);
+      }
+    } catch (e) {
+      throw this.failedNow(e);
     }
     return (to - from) as i64;
   }
