@@ -9,6 +9,7 @@
 //! site is not known, the sites are matched by type, as before.
 
 use velt_common::Span;
+use velt_syntax::ast;
 
 use super::fn_types::Portable;
 use crate::ctx::Ctx;
@@ -297,6 +298,12 @@ impl crate::body::FnCx<'_, '_> {
     /// for the value of a `push`, the site of its array's element type.
     pub(crate) fn arg_site(&mut self, p: &crate::defs::ParamSig, arg: Span) -> Option<Span> {
         let pushed = (self.cx.fn_sites.push).filter(|(a, _)| *a == arg);
+        // An argument of a call through a function value read from a site: where the
+        // parameter's type is written in that site's function type.
+        let through = (self.cx.fn_sites.value_args.iter().rev())
+            .find(|(a, _)| *a == arg)
+            .map(|(_, s)| *s);
+        let pushed = pushed.or(through.map(|s| (arg, s)));
         // The parameter's own site, else the receiver's (a parameter typed by its class's type
         // argument), else where the parameter's type is written.
         let exact = (self.cx.fn_sites.by_file.contains_key(&p.span.file))
@@ -307,6 +314,54 @@ impl crate::body::FnCx<'_, '_> {
             self.cx.bind_async_arg(arg, s);
         }
         site
+    }
+
+    /// A call through function value `f` with `args` is checked: where each argument's
+    /// parameter type is written, when `f` is read from a site (`arg_site`). Returns how many
+    /// entries were added, which the caller removes after the call.
+    pub(crate) fn note_value_args(&mut self, f: &crate::hir::Expr, args: &[ast::Expr]) -> usize {
+        let Some(site) = self.site_of_value(f).or_else(|| self.elem_fn_site(f)) else {
+            return 0;
+        };
+        let Some(written) = self.cx.fn_sites.param_types.get(&site).cloned() else {
+            return 0;
+        };
+        let pairs: Vec<(Span, Span)> = (args.iter().zip(written))
+            .map(|(a, w)| (a.span, w))
+            .collect();
+        let n = pairs.len();
+        self.cx.fn_sites.value_args.extend(pairs);
+        n
+    }
+
+    /// The site of the function type of `f`, an element of an array (or a `Map`'s value) of
+    /// functions read from a variable, a field or a constant whose type is written
+    /// (`routes[0]`).
+    fn elem_fn_site(&self, f: &crate::hir::Expr) -> Option<Span> {
+        use crate::hir::ExprKind as H;
+        let mut base = f;
+        while let H::Index { base: b, .. } = &base.kind {
+            base = b;
+        }
+        if std::ptr::eq(base, f) {
+            return None;
+        }
+        let range = match &base.kind {
+            H::Local(l, _) => self.cx.written_range(self.f.locals.get(l.0 as usize)?.span),
+            H::Global(d) => match self.cx.info.get(d.0 as usize)? {
+                crate::defs::DefInfo::Global(g) => {
+                    (self.cx.written_range(g.span)).or(g.src.ann.map(|t| t.span))
+                }
+                _ => None,
+            },
+            _ => None,
+        }?;
+        // `Handler[]` with `type Handler = …`: the site is in the body of the alias used there.
+        self.cx.site_in(range, f.ty).or_else(|| {
+            let uses = self.cx.fn_sites.alias_written.iter();
+            (uses.filter(|(u, _)| u.file == range.file && u.lo >= range.lo && u.hi <= range.hi))
+                .find_map(|(_, body)| self.cx.site_in(*body, f.ty))
+        })
     }
 
     /// The site of parameter `p` of a function being called.

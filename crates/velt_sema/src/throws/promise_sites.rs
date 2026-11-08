@@ -354,18 +354,27 @@ impl Ctx<'_> {
         if errs.is_empty() {
             return;
         }
-        let Some(ids) = self.fn_sites.by_file.get(&to.file) else {
-            return;
-        };
-        let site = (ids.iter().map(|&i| self.fn_sites.sites[i]))
-            .filter(|(s, g)| s.lo >= to.lo && s.hi <= to.hi && self.takes_rejections(*g))
-            .max_by_key(|(s, _)| s.lo)
-            .map(|(s, _)| s);
+        // A type alias written there (`const make: Make = …`): the sites are in its body.
+        let site = self.last_promise_site_in(to).or_else(|| {
+            let body = *self.fn_sites.alias_written.get(&to)?;
+            (body != to)
+                .then(|| self.last_promise_site_in(body))
+                .flatten()
+        });
         if let Some(site) = site {
             for e in errs {
                 self.seed_site_with(site, e);
             }
         }
+    }
+
+    /// The last site of a promise (or generator) type written within `range`.
+    fn last_promise_site_in(&self, range: Span) -> Option<Span> {
+        let ids = self.fn_sites.by_file.get(&range.file)?;
+        (ids.iter().map(|&i| self.fn_sites.sites[i]))
+            .filter(|(s, g)| s.lo >= range.lo && s.hi <= range.hi && self.takes_rejections(*g))
+            .max_by_key(|(s, _)| s.lo)
+            .map(|(s, _)| s)
     }
 
     /// Where the type of the declaration named at `name` is written.

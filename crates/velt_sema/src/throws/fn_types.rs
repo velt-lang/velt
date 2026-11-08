@@ -97,6 +97,13 @@ pub(crate) struct FnSites {
     /// The argument (by its span) of the `push` being checked and the site of its array's
     /// element type (`promise_sites`).
     pub push: Option<(Span, Span)>,
+    /// Where each parameter's type is written, by the span of the function type written
+    /// without `throws` it belongs to (`fn_flows`: the site of an argument of a call through a
+    /// value of that type).
+    pub(super) param_types: FxHashMap<Span, Vec<Span>>,
+    /// The arguments (by their spans) of the call through a function value being checked, each
+    /// with where its parameter's type is written.
+    pub value_args: Vec<(Span, Span)>,
     /// The result type of an async function is being resolved: its `Promise<T>` rejects with
     /// what the body throws, so it is no site (`promise_sites`).
     pub async_ret: bool,
@@ -293,6 +300,10 @@ impl Ctx<'_> {
         });
         if throws_clause.is_none() {
             self.record_fn_site(span, env.module, t);
+            if self.site_module(env.module) && span != Span::DUMMY {
+                let at: Vec<Span> = written.iter().map(|w| w.span).collect();
+                self.fn_sites.param_types.entry(span).or_insert(at);
+            }
         }
         // The type as written is interned here too, as in a check without variables: unions
         // order their members by it (`throws::vars`).

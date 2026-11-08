@@ -221,7 +221,19 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     let made = fcx.cx.made_init(d, ann);
     let init = match (init_expr, ann) {
         _ if made.is_some() => made,
-        (Some(e), Some(t)) => Some(fcx.expr_coerce(e, t, Want::Move)),
+        // A closure created as its value throws into the sites of its written type, and what
+        // its promises reject with goes there (`throws::fn_flows`, `throws::promise_sites`).
+        (Some(e), Some(t)) => {
+            let at = fcx.cx.global(d).map(|g| g.span);
+            let site = at.and_then(|at| fcx.cx.decl_site(at, t));
+            let outer = fcx.set_target(site);
+            let h = fcx.expr_coerce(e, t, Want::Move);
+            fcx.set_target(outer);
+            if matches!(h.kind, hir::ExprKind::Closure(_)) {
+                fcx.flow_into(&h, site);
+            }
+            Some(h)
+        }
         (Some(e), None) => {
             self_typed(&mut fcx, d, e);
             Some(fcx.expr(e, None, Want::Move))
