@@ -162,6 +162,9 @@ pub(crate) struct FnSites {
     pub solved: FxHashMap<TyId, TyId>,
     /// The constraints on the variables (`throws::vars`).
     pub(crate) var_sets: super::vars::VarSets,
+    /// How many `reject` values of promises whose rejection type is a variable were checked
+    /// and not called (`var_known`): what they are called with is not counted.
+    pub(crate) reject_values: usize,
     /// The closures created for sites' types found so far (`var_known`).
     pub(crate) site_closures: super::var_known::SiteClosures,
     /// A type with a variable failed a comparison or a bound: when the check reports errors,
@@ -197,7 +200,7 @@ impl FnSites {
         self.found.no_vars = true;
         self.grew = true;
         let quiet = std::mem::take(&mut self.quiet);
-        merge_seeds(&mut self.found, quiet);
+        merge_seeds(&mut self.found, quiet, &self.flows);
     }
 
     /// The check with error-set variables reported errors, and a type with a variable failed
@@ -206,7 +209,7 @@ impl FnSites {
     pub fn doubted(&self, errors: bool) -> Option<FnTypeSeeds> {
         (self.use_vars && self.doubt.get() && errors).then(|| {
             let mut s = self.found.clone();
-            merge_seeds(&mut s, self.quiet.clone());
+            merge_seeds(&mut s, self.quiet.clone(), &self.flows);
             s.no_vars = true;
             s.exact = true;
             s
@@ -706,13 +709,28 @@ impl Ctx<'_> {
     }
 }
 
-/// Add the sets `more` to `seeds`.
-fn merge_seeds(seeds: &mut FnTypeSeeds, more: FxHashMap<Span, Vec<Portable>>) {
+/// Add the sets `more` to `seeds`, and to the sites their values flow to (as
+/// `Ctx::add_to_site` does).
+fn merge_seeds(
+    seeds: &mut FnTypeSeeds,
+    more: FxHashMap<Span, Vec<Portable>>,
+    flows: &FxHashMap<Span, Vec<Span>>,
+) {
+    let mut more: Vec<(Span, Vec<Portable>)> = more.into_iter().collect();
+    more.sort_by_key(|(s, _)| (s.file, s.lo, s.hi));
     for (s, ms) in more {
-        let set = seeds.sites.entry(s).or_default();
-        for m in ms {
-            if !set.contains(&m) {
-                set.push(m);
+        let mut work = vec![s];
+        while let Some(s) = work.pop() {
+            let set = seeds.sites.entry(s).or_default();
+            let mut grew = false;
+            for m in &ms {
+                if !set.contains(m) {
+                    set.push(m.clone());
+                    grew = true;
+                }
+            }
+            if grew {
+                work.extend(flows.get(&s).into_iter().flatten().copied());
             }
         }
     }

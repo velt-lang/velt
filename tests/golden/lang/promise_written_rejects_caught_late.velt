@@ -9,13 +9,21 @@ class HttpError extends Error {
     this.status = status;
   }
 }
+
 class Late extends Error {}
+
 type Handler = (path: string) => Promise<string>;
+
 const routes: Handler[] = [];
-function get(h: Handler): void { routes.push(h); }
+
+function get(h: Handler): void {
+  routes.push(h);
+}
 
 get(async (path) => {
-  if (path == "") { throw new HttpError(400, "empty"); }
+  if (path == "") {
+    throw new HttpError(400, "empty");
+  }
   return "ok " + path;
 });
 for (const i of [0, 1]) {

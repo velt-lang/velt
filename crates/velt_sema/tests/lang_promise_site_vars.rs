@@ -125,7 +125,7 @@ const outer = wrap<string>(async (s, next) => "<" + (await next(s)) + ">", inner
 console.log(await outer("a"));
 "#;
 
-/// Rejections handled by `.then` and `.catch` callbacks.
+/// Rejections handled by `.then` and `.catch` callbacks, which read the reason.
 const P5: &str = r#"
 function later(ok: boolean): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -277,11 +277,50 @@ for (const i of [0, 1]) {
 
 #[test]
 fn rejecting_promises_stored_into_promise_types_written_without_errors_take_one_round() {
-    for (i, p) in [P0, P1, P2, P3, P4, P5].into_iter().enumerate() {
+    for (i, p) in REASONS.into_iter().enumerate() {
+        assert_eq!(rounds(p), 2, "reasons program {i}");
+    }
+    for (i, p) in [P0, P1, P2, P3, P4].into_iter().enumerate() {
         assert_eq!(rounds(p), 1, "program P{i}");
     }
+    // The callbacks' reasons are values of the variables' type ([`REASONS`]).
+    assert_eq!(rounds(P5), 2);
     for (i, p) in [C0, C1, C2, C3].into_iter().enumerate() {
         assert_eq!(rounds(p), 1, "program C{i}");
     }
     assert_eq!(rounds(GROWS), 2);
 }
+
+/// Rejection reasons used as values: a `.catch` callback's parameter, a `.then` rejection
+/// callback's, a `Promise.allSettled` result's `reason`, and a reason narrowed by `instanceof`
+/// in a `.catch` callback. Their type is the variable's set, which a check with variables
+/// doesn't know while it checks them (`throws::var_known`): each program is checked again with
+/// the solved sets, where it checks (the golden `promise_written_rejects_reasons` runs them).
+const REASONS: [&str; 4] = [
+    r#"
+type Handler = (path: string) => Promise<string>;
+const h: Handler = async (path) => { if (path == "") { throw new HttpError(400, "empty"); } return path; };
+console.log(await h("").catch((e) => e.message));
+"#,
+    r#"
+function later(ok: boolean): Promise<string> {
+  return new Promise((resolve, reject) => { if (ok) { resolve("fine"); } else { reject(new HttpError(503, "later")); } });
+}
+console.log(await later(false).then((v) => v, (e) => "rejected: " + e.message));
+"#,
+    r#"
+type Handler = (path: string) => Promise<string>;
+const routes: Handler[] = [];
+function get(h: Handler): void { routes.push(h); }
+get(async (p) => { if (p == "") { throw new HttpError(400, "e"); } return "a" + p; });
+const rs = await Promise.allSettled([routes[0]("")]);
+for (const r of rs) {
+  if (r.status == "rejected") { console.log("reason " + r.reason.message); }
+}
+"#,
+    r#"
+type Handler = (path: string) => Promise<string>;
+const h: Handler = async (path) => { if (path == "") { throw new HttpError(400, "empty"); } return path; };
+console.log(await h("").catch((e) => { if (e instanceof HttpError) { return `s ${e.status}`; } return "x"; }));
+"#,
+];

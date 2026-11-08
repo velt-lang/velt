@@ -340,20 +340,15 @@ impl FnCx<'_, '_> {
         }
         // A value that can't exist (the reason of a promise that never rejects) is no
         // instance. Error-set variables alone (the reason of a promise a function type written
-        // without `throws` returns) have the sets known now (`throws::var_known`): nothing
-        // until something is stored into them.
-        let vars = sty != self.cx.ty.never && self.cx.mentions_err_var(sty) && {
-            let plain = self.cx.plain_type(sty);
-            plain == self.cx.ty.never
-        };
-        let mut s = s;
-        if vars {
-            let known = self.cx.assume_vars_known(Some(sty));
-            if let Some(k) = known.filter(|k| *k != self.cx.ty.never) {
-                s.ty = k;
-            }
-        }
-        if s.ty == self.cx.ty.never || (vars && s.ty == sty) {
+        // without `throws` returns) are nothing as written: assumed empty until their sets are
+        // known (`throws::vars`).
+        let never = sty == self.cx.ty.never
+            || self.cx.mentions_err_var(sty) && {
+                let plain = self.cx.plain_type(sty);
+                plain == self.cx.ty.never
+            };
+        if never {
+            self.cx.assume_empty_in(sty);
             let b = self.cx.ty.bool_;
             return self.mk(H::Lit(hir::Lit::Bool(false)), b, span);
         }

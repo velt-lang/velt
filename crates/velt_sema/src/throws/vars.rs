@@ -17,11 +17,14 @@
 //!
 //! After inference the sets are solved (a fixpoint over the variables), the functions' error
 //! types are replaced by their solved forms, and every type is replaced by its solved form
-//! before lowering (`crate::readonly::erase`). The constructs that need a solved set while bodies are checked (a
-//! `catch` variable's type, a `finally` block of a generator, a value converted as its type
-//! written without variables) assume the variables they meet are empty; when one is not, or a
-//! function value's error type differs from the site's set it was stored as, the program is
-//! checked again with the solved sets written in, as before (`FnSites::fallback`). When the
+//! before lowering (`crate::readonly::erase`). The constructs that need a solved set while
+//! bodies are checked assume a set for the variables they meet: a `catch` variable's type the
+//! set known so far (`var_known`), a value typed by variables (a rejection reason) and an
+//! `instanceof` test of one an empty set when nothing is known (else the program is checked
+//! again), a `finally` block of a generator and a value converted as its type written without
+//! variables an empty set. When an assumption does not hold, or a function value's error type
+//! differs from the site's set it was stored as, the program is checked again with the solved
+//! sets written in, as before (`FnSites::fallback`). When the
 //! check reports errors and two types that differ in more than their variables were compared
 //! where they must be one type, or a variable was outside a bound, the program is checked
 //! again without variables too (`FnSites::doubted`): its errors are then exactly those of a
@@ -665,7 +668,7 @@ impl Ctx<'_> {
                 break;
             }
         }
-        let mut ok = !self.fn_sites.var_sets.unsupported;
+        let mut ok = !self.fn_sites.var_sets.unsupported && self.fn_sites.reject_values == 0;
         for (v, &r) in reps.iter().enumerate() {
             let s = self.error_union(&sets[r as usize]).unwrap_or(self.ty.never);
             let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v as u32), vec![]));

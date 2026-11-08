@@ -8,12 +8,24 @@
 //! inference is done). The check assumes the variable's final set is that one; when it is not
 //! (a closure checked later, a set that grew), the program is checked again with the solved
 //! sets, as for a variable assumed empty, which is the set known before anything is stored.
+//!
+//! What is known depends on the order bodies are checked in: a `catch` in a function whose body
+//! is checked before the code that stores the handlers (an `async function` called before them,
+//! or checked on demand from an earlier call) knows nothing yet, so such a program is checked
+//! twice, as before.
+//!
+//! A value whose type is variables (the parameter of a `.catch` callback, a settled result's
+//! `reason`) is checked as that type, which is nothing until the sets are solved: such a value
+//! is right only while nothing is known to be stored into them, and else the program is
+//! checked again with the solved sets, where it has its type. So is a program that uses the
+//! `reject` of a promise whose rejection type is a variable as a value, whose calls through
+//! that value are not counted.
 
 use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, FnKind};
-use crate::hir::{DefId, TyId};
+use crate::hir::{DefId, TyId, TyKind};
 
 /// The closures created for a site's type (their error type holds its variable), found so far.
 #[derive(Default)]
@@ -154,5 +166,57 @@ impl Ctx<'_> {
         }
         self.fn_sites.site_closures.pending = still;
         self.fn_sites.site_closures.known.clone()
+    }
+
+    /// A value of type `t` is used (a rejection reason in a `.catch` callback, a settled
+    /// result's `reason`): when `t` is error-set variables (or holds them as members), the
+    /// check, which takes each as written, nothing, is right only while that is its set. A
+    /// variable nothing is known to be stored into yet is assumed empty, as a `catch` assumes;
+    /// one with a known set makes the program checked again with the solved sets, where the
+    /// value has its type.
+    pub(crate) fn value_typed_by_vars(&mut self, t: TyId) {
+        if !self.fn_sites.use_vars || self.fn_sites.vars.is_empty() || !self.mentions_err_var(t) {
+            return;
+        }
+        let t = self.ty.core(t).unwrap_or(t);
+        // The `reject` of a promise whose rejection type is a variable, used as a value (passed
+        // on, stored): what it is called with there is not counted, so the program is checked
+        // again with the solved sets, where `reject` takes the promise's error type. A value
+        // that is called right away is not one ([`Ctx::reject_called`]).
+        if self.is_reject_fn(t) {
+            self.fn_sites.reject_values += 1;
+            return;
+        }
+        let members = match self.union_members(t) {
+            Some(ms) => ms,
+            None => vec![t],
+        };
+        let vars: Vec<u32> = members.iter().filter_map(|m| self.err_var(*m)).collect();
+        if vars.is_empty() || self.only_trap_vars(t) {
+            return;
+        }
+        for v in vars {
+            if self.var_known(v).is_empty() {
+                self.fn_sites.var_sets.assumed.push((v, self.ty.never));
+            } else {
+                self.fn_sites.var_sets.unsupported = true;
+            }
+        }
+    }
+
+    /// Is `t` the type of the `reject` of a promise whose rejection type is a variable?
+    fn is_reject_fn(&self, t: TyId) -> bool {
+        let TyKind::FnPtr { params, .. } = self.ty.kind(t) else {
+            return false;
+        };
+        (params.iter()).any(|p| self.fn_sites.rejects.iter().any(|(r, _)| r == p))
+    }
+
+    /// A value of type `t` is called: a `reject` checked as a value just before is called, not
+    /// passed on ([`Ctx::value_typed_by_vars`]).
+    pub(crate) fn reject_called(&mut self, t: TyId) {
+        if self.fn_sites.reject_values > 0 && self.is_reject_fn(t) {
+            self.fn_sites.reject_values -= 1;
+        }
     }
 }
