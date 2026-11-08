@@ -1,0 +1,36 @@
+// A `catch` of what handlers stored as a function type with a `Promise<T>` result reject
+// with (#2590), checked when only one of them was known: a handler stored later rejects with
+// another error, which the same `catch` tells apart.
+
+class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+class Late extends Error {}
+type Handler = (path: string) => Promise<string>;
+const routes: Handler[] = [];
+function get(h: Handler): void { routes.push(h); }
+
+get(async (path) => {
+  if (path == "") { throw new HttpError(400, "empty"); }
+  return "ok " + path;
+});
+for (const i of [0, 1]) {
+  try {
+    console.log(await routes[i](""));
+  } catch (e) {
+    if (e instanceof Late) {
+      console.log("late: " + e.message);
+    } else if (e instanceof HttpError) {
+      console.log(`http ${e.status}`);
+    }
+  }
+  if (i == 0) {
+    get(async (path) => {
+      throw new Late("after " + path);
+    });
+  }
+}

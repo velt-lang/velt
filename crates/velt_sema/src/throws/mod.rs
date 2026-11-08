@@ -26,6 +26,7 @@ mod inits;
 mod promise_sites;
 mod promise_vars;
 mod sets;
+mod var_known;
 mod vars;
 
 use rustc_hash::FxHashSet;

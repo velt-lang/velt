@@ -301,15 +301,12 @@ fn generic_group(cx: &mut Ctx, members: &[DefId]) {
 fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     let mut fin = super::infer::srcs_final(cx, &c.srcs);
     let mut obs = cx.canon_error(c.observed);
-    // A `catch` variable's type assumed the variables in it empty (`vars`): that is checked
-    // when the sets are solved; an exact type is compared solved.
+    // A `catch` variable's type assumed the variables in it have the sets known then
+    // (`var_known`): that is checked when the sets are solved, and the types are compared
+    // solved.
     if cx.fn_sites.use_vars {
-        if c.exact {
-            fin = solved(cx, fin);
-            obs = solved(cx, obs);
-        } else {
-            fin = cx.assume_vars_empty(fin);
-        }
+        fin = solved(cx, fin);
+        obs = solved(cx, obs);
     }
     let ok = if c.exact {
         fin == obs

@@ -48,11 +48,12 @@ pub(crate) struct VarSets {
     /// Union-find parent of each variable (by `TyOp::ErrSite` number).
     parent: Vec<u32>,
     /// The error types stored into each variable (its representative's entry counts).
-    members: Vec<Vec<TyId>>,
+    pub(super) members: Vec<Vec<TyId>>,
     /// Variables each one contains (`i ⊇ j`).
-    edges: Vec<Vec<u32>>,
-    /// Variables a check assumed empty (a `catch` variable's type).
-    assumed_empty: Vec<u32>,
+    pub(super) edges: Vec<Vec<u32>>,
+    /// The sets a check assumed variables have (a `catch` variable's type): empty, or what was
+    /// known when it was checked (`var_known`).
+    pub(super) assumed: Vec<(u32, TyId)>,
     /// A function value of a known error type stored as a site's, or a promise or a rejected
     /// value retyped as one with a variable (`promise_vars`): the set must be that type.
     pub(super) exact: Vec<(u32, TyId)>,
@@ -96,7 +97,7 @@ impl VarSets {
         }
     }
 
-    fn find(&mut self, v: u32) -> u32 {
+    pub(super) fn find(&mut self, v: u32) -> u32 {
         self.ensure(v);
         let mut r = v;
         while self.parent[r as usize] != r {
@@ -553,7 +554,7 @@ impl Ctx<'_> {
             return;
         }
         if let Some(v) = self.err_var(t) {
-            self.fn_sites.var_sets.assumed_empty.push(v);
+            self.fn_sites.var_sets.assumed.push((v, self.ty.never));
             return;
         }
         let mut parts = crate::types::children(self.ty.kind(t));
@@ -610,7 +611,7 @@ impl Ctx<'_> {
         for m in self.error_members(t) {
             match self.err_var(m) {
                 Some(v) if self.fn_sites.trap_vars.contains(&v) => {
-                    self.fn_sites.var_sets.assumed_empty.push(v)
+                    self.fn_sites.var_sets.assumed.push((v, self.ty.never))
                 }
                 _ => keep.push(m),
             }
@@ -627,7 +628,7 @@ impl Ctx<'_> {
         let mut keep = vec![];
         for m in self.error_members(t) {
             match self.err_var(m) {
-                Some(v) => self.fn_sites.var_sets.assumed_empty.push(v),
+                Some(v) => self.fn_sites.var_sets.assumed.push((v, self.ty.never)),
                 None => keep.push(m),
             }
         }
@@ -678,13 +679,13 @@ impl Ctx<'_> {
         ok
     }
 
-    /// Are the variables a check assumed empty (a `catch` variable's type) empty?
+    /// Do the variables have the sets a check assumed (empty, or what was known then)?
     pub(crate) fn assumptions_hold(&mut self) -> bool {
-        let never = self.ty.never;
-        let assumed = std::mem::take(&mut self.fn_sites.var_sets.assumed_empty);
-        assumed.into_iter().all(|v| {
+        let assumed = std::mem::take(&mut self.fn_sites.var_sets.assumed);
+        assumed.into_iter().all(|(v, t)| {
             let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v), vec![]));
-            self.fn_sites.solved.get(&var).is_none_or(|s| *s == never)
+            let s = self.fn_sites.solved.get(&var).copied();
+            s.unwrap_or(self.ty.never) == t
         })
     }
 
@@ -771,8 +772,9 @@ impl Ctx<'_> {
         self.fn_sites.fallback();
         // Every site of a variable: a function type's result `Promise<T>` shares its function
         // type's (`fn_types`), and a check without variables has a set for each.
-        let mut spans: Vec<(TyId, velt_common::Span)> =
-            (self.fn_sites.var_of.iter()).map(|(s, v)| (*v, *s)).collect();
+        let mut spans: Vec<(TyId, velt_common::Span)> = (self.fn_sites.var_of.iter())
+            .map(|(s, v)| (*v, *s))
+            .collect();
         spans.sort_by_key(|(v, s)| (v.0, s.file, s.lo, s.hi));
         for (var, span) in spans {
             let s = self.fn_sites.solved.get(&var).copied();

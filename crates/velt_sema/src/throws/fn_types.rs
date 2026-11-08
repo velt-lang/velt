@@ -162,6 +162,8 @@ pub(crate) struct FnSites {
     pub solved: FxHashMap<TyId, TyId>,
     /// The constraints on the variables (`throws::vars`).
     pub(crate) var_sets: super::vars::VarSets,
+    /// The closures created for sites' types found so far (`var_known`).
+    pub(crate) site_closures: super::var_known::SiteClosures,
     /// A type with a variable failed a comparison or a bound: when the check reports errors,
     /// they may come from the variables ([`FnSites::doubted`]).
     pub doubt: std::cell::Cell<bool>,
