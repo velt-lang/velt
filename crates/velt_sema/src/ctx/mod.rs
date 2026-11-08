@@ -244,6 +244,9 @@ pub(crate) struct Ctx<'m> {
     pub field_defaults_checked: FxHashSet<DefId>,
     /// Closure counters per top-level function name.
     pub closure_counts: FxHashMap<String, u32>,
+    /// Closures a rolled-back check created, by name: the check that creates them again reuses
+    /// them, so a closure's number doesn't depend on what was tried first (`recheck`, #1838).
+    pub dropped_closures: FxHashMap<String, DefId>,
     /// Every function-like def, in creation order.
     pub fn_defs: Vec<DefId>,
     /// Named functions used as values (`FnRef`) with type arguments, checked after ownership.
@@ -584,6 +587,7 @@ impl<'m> Ctx<'m> {
             hook_adapters: FxHashMap::default(),
             field_defaults_checked: FxHashSet::default(),
             closure_counts: FxHashMap::default(),
+            dropped_closures: FxHashMap::default(),
             fn_defs: vec![],
             fn_values: vec![],
             frozen_elems: FxHashSet::default(),

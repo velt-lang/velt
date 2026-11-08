@@ -590,7 +590,9 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// The closure the prelude function `f` returns (its only one).
+    /// The closure the prelude function `f` returns (its only one). Its number doesn't depend on
+    /// the program: a check that is undone and done again creates it under the same name
+    /// (velt_sema `recheck.rs`, #1838).
     fn prelude_closure(&self, f: &str) -> Option<DefId> {
         let name = format!("{f}::{{closure#0}}");
         let at = self
