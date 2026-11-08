@@ -167,6 +167,7 @@ mod operator_bigint;
 mod operator_simd;
 mod operators;
 mod ops;
+mod optional_chain;
 mod optional_fn_call;
 mod ordering;
 mod overload_arg;
