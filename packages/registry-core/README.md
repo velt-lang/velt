@@ -90,7 +90,10 @@ const manifest = readManifest(text); // ManifestError when vpm would refuse it
   package's own owners publish its versions. Claiming a scope is checked as taking a name is: it
   isn't reserved, as `@scope` or as the name `scope`, for someone else, no other user's package
   is named so, and scopes that differ only in `-` and `_` are one. A new unscoped name that is
-  another user's scope is refused too. On an open registry, scopes have no owners.
+  another user's scope is refused too, and each commit holds the other's table to what its
+  checks read (`PackageChange.scopeRevision`, `ScopeChange.packageRevision`), so a scope and a
+  package of one spelling never both commit for different users. On an open registry, scopes
+  have no owners.
 - **Reserved names** (`src/server/reserved.velt`, optional): a host that gives the registry
   `NameReservations` keeps those names, and scopes, back. A new package under one is published
   only by the user an administrator approved for it, and the refusal says how to ask.

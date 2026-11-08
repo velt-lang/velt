@@ -1,6 +1,6 @@
 // registry-core: a `MetadataDb` in memory, for tests and for trying a registry out.
 
-import { normalizedName } from "../names";
+import { guardedScope, normalizedName } from "../names";
 import { IndexEntry } from "../server/index_entry";
 import { PackageIndex } from "../server/package_index";
 import { MetadataDb } from "../stores/metadata_db";
@@ -42,6 +42,13 @@ export class MemoryMetadataDb implements MetadataDb {
     // Checked and set with no `await` between: a commit is one step, as a database's
     // transaction is, so two first publishes of one name can't both get here.
     if (current == null && this.spellingNow(normalizedName(change.name)) != null) {
+      return false;
+    }
+    const scopeRevision = change.scopeRevision;
+    if (
+      scopeRevision != null &&
+      (this.scopes.get(guardedScope(change.name))?.revision ?? 0) != scopeRevision
+    ) {
       return false;
     }
     const index = current?.index.copy() ?? new PackageIndex(change.name);
@@ -101,6 +108,15 @@ export class MemoryMetadataDb implements MetadataDb {
     const current = this.scopes.get(key);
     if ((current?.revision ?? 0) != change.base) {
       return false;
+    }
+    // Checked and set with no `await` between, as `commit` is.
+    const packageRevision = change.packageRevision;
+    if (packageRevision != null) {
+      const spelled = this.spellingNow(key);
+      const revision = spelled == null ? 0 : (this.records.get(spelled)?.revision ?? 0);
+      if (revision != packageRevision) {
+        return false;
+      }
     }
     // A claimed scope keeps its first spelling.
     const scope = current?.scope ?? change.scope;

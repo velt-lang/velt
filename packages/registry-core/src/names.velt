@@ -120,6 +120,15 @@ export function isValidScopePart(part: string): bool {
   );
 }
 
+/**
+ * The `normalizedName` of the scope whose claim a new package `name` is checked against: its own
+ * scope's for a scoped name, and for an unscoped one, the scope it would be spelled as.
+ */
+export function guardedScope(name: string): string {
+  const scoped = splitScoped(name);
+  return normalizedName(scoped == null ? name : scoped[0]);
+}
+
 /** A scoped name's scope and name (`@sigx/reactivity` gives `["sigx", "reactivity"]`). */
 export function splitScoped(name: string): [string, string] | null {
   if (!name.startsWith("@")) {

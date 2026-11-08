@@ -22,8 +22,9 @@ export interface MetadataDb {
   revision(name: string): Promise<i64>;
   /**
    * Applies `change` atomically, only if package `change.name` is still at revision
-   * `change.base`, and, for a new name (`base` 0), no published name has its `normalizedName`.
-   * Raises the revision by one. Resolves to whether it applied the change; false changes nothing.
+   * `change.base`, and, for a new name (`base` 0), no published name has its `normalizedName`,
+   * and when `change.scopeRevision` isn't null, the scope `guardedScope(change.name)` is at that
+   * revision (0: unclaimed). Raises the revision by one. Resolves to whether it applied the change; false changes nothing.
    */
   commit(change: PackageChange): Promise<bool>;
   /** The published name whose `normalizedName` is `normalized`, or null. */
@@ -42,7 +43,9 @@ export interface MetadataDb {
   /**
    * Applies `change` atomically, only if the scope with `change.scope`'s `normalizedName` is
    * still at revision `change.base` (0: no scope of that `normalizedName` is claimed, under any
-   * spelling). Raises the revision by one. Resolves to whether it applied the change.
+   * spelling), and when `change.packageRevision` isn't null, the published package whose
+   * `normalizedName` is the scope's is at that revision (0: there is none). Raises the revision
+   * by one. Resolves to whether it applied the change.
    */
   commitScope(change: ScopeChange): Promise<bool>;
 }

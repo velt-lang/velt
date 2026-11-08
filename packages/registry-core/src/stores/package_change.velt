@@ -7,7 +7,8 @@ import { PackageIndex } from "../server/package_index";
  * A change to package `name`, made from its record at revision `base` (0 for a name never
  * published). `changed` holds the index entries it adds or changes (by version), `owners` the new
  * owners, or null when they stay. `index` is the whole index afterwards, for what an adapter
- * keeps beside it (a search row).
+ * keeps beside it (a search row). `scopeRevision` keeps a new name and a scope of its spelling
+ * from both committing for different users.
  */
 export class PackageChange {
   name: string;
@@ -15,6 +16,11 @@ export class PackageChange {
   index: PackageIndex;
   changed: IndexEntry[] = [];
   owners: string[] | null = null;
+  /**
+   * For a new package, the revision of the scope `guardedScope(name)` its checks read (0: nobody
+   * had claimed it); the change applies only while the scope is still at it. Null: no guard.
+   */
+  scopeRevision: i64 | null = null;
 
   constructor(name: string, base: i64, index: PackageIndex) {
     this.name = name;
