@@ -480,8 +480,9 @@ AVX512-BF16: code built for a `--cpu` that has them stops with an illegal instru
 has not. Cranelift always widens and uses `fma`.
 
 `velt_simd_f16x8_<op>` [additive] for `add`, `sub`, `mul`, `div`, `mul_add`, `mul_add_fast`, `min`,
-`max`, `neg`, `abs`, `sqrt` and the comparisons `eq`, `ne`, `lt`, `le`, `gt`, `ge` (giving a `mask16x8`) read the lanes as
-binary16, rounded to nearest even with subnormals kept, and `_select` moves their bits. They are
+`max`, `neg`, `abs`, `sqrt` and the comparisons `eq`, `ne`, `lt`, `le`, `gt`, `ge` (giving a `mask16x8`) take `(v)` for
+`neg`, `abs` and `sqrt`, `(a, b, c)` giving `a * b + c` for `mul_add` and `mul_add_fast`, and `(a, b)` for the rest,
+and read the lanes as binary16, rounded to nearest even with subnormals kept, and `_select` moves their bits. They are
 the same bits on every target but for which NaN a NaN is, `_mul_add_fast` excepted. LLVM uses
 `<8 x half>` where the target
 has the instructions (Apple arm64 with no `--cpu` or `baseline`, a `--cpu` for which clang defines
