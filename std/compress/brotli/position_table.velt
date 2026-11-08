@@ -1,0 +1,196 @@
+// velt/compress (internal): the hash table of the Brotli match finder: buckets of recent
+// positions over the first four to six bytes of each, by quality.
+//
+// A bucket holds positions as the stream's offset modulo 2^32, so the window can slide without
+// touching the table. The table is bytes, four to a position, so a search can read 16 bytes, four
+// positions, at a time. A one-shot input gets a zeroed table for its length (`Buffer.alloc`); an
+// empty slot reads as position 0, a real candidate whose bytes are compared like any other. A
+// stream gets the full table unzeroed, since zeroing it costs more than a short stream's whole
+// compression, and a bitmap (zeroed, a bit per bucket) of the buckets used: a bucket is filled with
+// its first position when first used, a distance of 0 that no search takes. Either way the output
+// depends only on the input. Up to four positions a bucket, a position's slot is picked from the
+// position itself, as the reference encoder's fast hashers do; above that, a counter per bucket
+// turns.
+
+import { fill32, put32, word } from "velt/compress/brotli/match_bytes";
+import { BUCKET_BITS, HASHED, INSERT_KEPT, WAY_BITS } from "velt/compress/brotli/match_settings";
+import { MetaBlock } from "velt/compress/brotli/meta_block";
+
+const HASH_MUL: u64 = 0x1e35a7bd1e35a7bd;
+export const MASK32: u64 = 0xffffffff;
+/** The bytes from a position a match needs, and a search reads. */
+export const HASH_BYTES: i64 = 4;
+
+/** The positions of a window of input, by the hash of their first bytes. */
+export class PositionTable extends MetaBlock {
+  /** `data[0..fill]` is the stream from its offset `base`. */
+  base: i64 = 0;
+  fill: i64 = 0;
+  /** Positions below this are in the table. */
+  hashed: i64 = 0;
+  /** The most bytes back a distance can reach: the window less 16 (section 9.1). */
+  maxBackward: i64;
+  /** Bucket `h`'s slots are the `u32`s (little-endian) at byte `(h << wayBits) * 4`. */
+  table: u8[] = [];
+  /** Per bucket, above four slots: where the next position goes. */
+  private num: u8[] = [];
+  bucketBits: u64;
+  /** A stream's table: its buckets are set when first used, which `touched` has a bit for. */
+  stream: bool;
+  private touched: u8[] = [];
+  /** `HASH_MUL` in a field, which a loop keeps in a register; a constant is built at each use. */
+  multiplier: u64 = HASH_MUL;
+  /** The hash's input is the low `HASHED` bytes of a 64-bit load, shifted up by this. */
+  hashShift: u64;
+  wayBits: i64;
+  private insertKept: i64;
+
+  /** `sizeHint`: the whole input's length when known (one-shot), for a smaller table. */
+  constructor(quality: i64, lgwin: i64, sizeHint: i64) {
+    super();
+    this.maxBackward = (1 << lgwin) - 16;
+    let bits = BUCKET_BITS[quality];
+    if (sizeHint >= 0) {
+      let need: i64 = 8;
+      while (need < 24 && (1 << need) < sizeHint) {
+        need++;
+      }
+      if (need < bits) {
+        bits = need;
+      }
+    }
+    this.wayBits = WAY_BITS[quality];
+    this.bucketBits = bits as u64;
+    this.insertKept = INSERT_KEPT[quality];
+    this.hashShift = (64 - 8 * HASHED[quality]) as u64;
+    this.stream = sizeHint < 0;
+    // 16 bytes past the last slot, for the last bucket's 16-byte load.
+    const size = ((1 << (bits + this.wayBits)) * 4 + 16) as usize;
+    const counters = (this.wayBits > 2 ? 1 << bits : 1) as usize;
+    if (this.stream) {
+      this.table = Buffer.allocUnsafe(size);
+      this.num = Buffer.allocUnsafe(counters);
+      this.touched = Buffer.alloc((((1 << bits) + 7) >> 3) as usize);
+    } else {
+      this.table = Buffer.alloc(size);
+      this.num = Buffer.alloc(counters);
+    }
+  }
+
+  /** Moves every position `by` bytes down, after the window slid that much (`base` grew). */
+  shift(by: i64) {
+    this.hashed -= by;
+  }
+
+  /** Adds positions `from` to `to` (exclusive) to the table, up to where four bytes are left. */
+  insertRange(from: i64, to: i64) {
+    let a = from > this.hashed ? from : this.hashed;
+    const last = this.fill - HASH_BYTES;
+    const b = to - 1 < last ? to : last + 1;
+    // A long match adds its first and last positions only: the middle of a run rarely helps, and
+    // in a small table it pushes out what does.
+    const keep = this.insertKept;
+    if (b - a > 2 * keep) {
+      this.insertRun(a, a + keep);
+      a = b - keep;
+    }
+    this.insertRun(a, b);
+    if (b > this.hashed) {
+      this.hashed = b;
+    }
+  }
+
+  /**
+   * The eight bytes at `pos`, read one by one, zeros past what came in: a streamed buffer has old
+   * memory there, and the array may end first.
+   */
+  key(pos: i64): u64 {
+    const d = this.data;
+    const left = this.fill - pos;
+    const n = left < 8 ? left : 8;
+    let x: u64 = 0;
+    for (let k: i64 = 0; k < n; k++) {
+      x |= (d[pos + k] as u64) << ((8 * k) as u64);
+    }
+    return x;
+  }
+
+  // Adds the positions `from` to `to` (exclusive), which have four bytes each, to the table.
+  private insertRun(from: i64, to: i64) {
+    const d = this.data;
+    const wide = (d.length as i64) - 15;
+    const inside = wide < this.fill - 7 ? wide : this.fill - 7;
+    const fast = to < inside ? to : inside;
+    const table = this.table;
+    const shift = this.hashShift;
+    const multiplier = this.multiplier;
+    const drop = 64 - this.bucketBits;
+    const wayBits = this.wayBits as u64;
+    const mask = ((1 as u64) << wayBits) - 1;
+    const base = this.base;
+    let p = from;
+    if (this.stream) {
+      while (p < fast) {
+        const h = (word(d, p) << shift).wrappingMul(multiplier) >> drop;
+        if (!this.used(h)) {
+          this.firstUse(h, base + p);
+        }
+        this.enter(p, h);
+        p++;
+      }
+    } else if (wayBits <= 2) {
+      while (p < fast) {
+        const h = (word(d, p) << shift).wrappingMul(multiplier) >> drop;
+        const abs = (base + p) as u64;
+        put32(table, ((h << wayBits) + ((abs >> 3) & mask)) * 4, abs & MASK32);
+        p++;
+      }
+    } else {
+      const num = this.num;
+      while (p < fast) {
+        const h = (word(d, p) << shift).wrappingMul(multiplier) >> drop;
+        const n = num[h as i64] as u64;
+        num[h as i64] = ((n + 1) & 255) as u8;
+        put32(table, ((h << wayBits) + (n & mask)) * 4, ((base + p) as u64) & MASK32);
+        p++;
+      }
+    }
+    while (p < to) {
+      const h = (this.key(p) << shift).wrappingMul(multiplier) >> drop;
+      if (this.stream && !this.used(h)) {
+        this.firstUse(h, base + p);
+      }
+      this.enter(p, h);
+      p++;
+    }
+  }
+
+  /** Whether bucket `h` of a stream's table was used, so a search can read it. */
+  used(h: u64): bool {
+    return (this.touched[(h >> 3) as i64] & ((1 << (h & 7)) as u8)) != 0;
+  }
+
+  /** Adds `pos`, whose hash is `h`, to the table; a stream's bucket `h` must have been used. */
+  enter(pos: i64, h: u64) {
+    const abs = (this.base + pos) as u64;
+    const wayBits = this.wayBits as u64;
+    const mask = ((1 as u64) << wayBits) - 1;
+    let slot = (abs >> 3) & mask;
+    if (wayBits > 2) {
+      const n = this.num[h as i64] as u64;
+      slot = n & mask;
+      this.num[h as i64] = ((n + 1) & 255) as u8;
+    }
+    put32(this.table, ((h << wayBits) + slot) * 4, abs & MASK32);
+  }
+
+  /** Fills a stream's bucket `h` with position `abs`, a distance of 0, and marks it used. */
+  firstUse(h: u64, abs: i64) {
+    const wayBits = this.wayBits as u64;
+    fill32(this.table, (h << wayBits) * 4, (abs as u64) & MASK32, (1 as u64) << wayBits);
+    if (wayBits > 2) {
+      this.num[h as i64] = 0;
+    }
+    this.touched[(h >> 3) as i64] |= (1 << (h & 7)) as u8;
+  }
+}

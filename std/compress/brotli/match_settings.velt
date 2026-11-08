@@ -1,0 +1,20 @@
+// velt/compress (internal): the Brotli match finder's settings per quality, 0 to 11.
+
+/** The most bytes a lazy match moves on before it takes what it has. */
+export const MAX_DELAY: i64[] = [0, 0, 0, 1, 1, 4, 4, 4, 4, 4, 4, 4];
+/** Log2 of the positions a bucket holds. */
+export const WAY_BITS: i64[] = [0, 0, 1, 2, 2, 4, 5, 6, 7, 8, 8, 8];
+/** Log2 of the number of buckets, a stream's or a large input's. */
+export const BUCKET_BITS: i64[] = [14, 16, 16, 17, 18, 15, 15, 15, 15, 14, 14, 14];
+/** How many of the 16 short distance codes are tried. */
+export const CACHE_CHECKS: i64[] = [1, 2, 4, 4, 3, 10, 10, 16, 16, 16, 16, 16];
+/** The shortest match a short distance code is taken for. */
+export const CACHE_MIN: i64[] = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3];
+/** The bytes the hash covers. */
+export const HASHED: i64[] = [5, 5, 5, 5, 6, 4, 4, 4, 4, 4, 4, 4];
+/** The positions entered at each end of a match. */
+export const INSERT_KEPT: i64[] = [8, 8, 8, 8, 5, 32, 32, 32, 32, 32, 32, 32];
+/** From this quality on, literals are split into block types. */
+export const FIRST_SPLIT: i64 = 4;
+/** From this quality on, matches are lazy. */
+export const FIRST_LAZY: i64 = 3;

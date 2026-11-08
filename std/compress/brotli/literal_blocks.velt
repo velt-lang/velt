@@ -1,0 +1,206 @@
+// velt/compress (internal): the literal block types of a Brotli meta-block (RFC 7932 section 6),
+// split as the reference encoder's greedy splitter does: every so many literals, the block so far
+// goes to the last type, to the type before it, or to a new one, by what that does to the entropy
+// of the types' histograms. A type then has its own prefix code, which is where text mixed with
+// markup or numbers saves its bytes.
+//
+// Entropy is in 1/256 bits, from a table of logarithms, with no floating point per symbol.
+
+const SYMBOLS: i64 = 256;
+/** The literals of a block before it is compared with the others. */
+const MIN_BLOCK: i64 = 512;
+/** The bits a new type must save, for the description of its code and its switches. */
+const NEW_TYPE_SAVES: i64 = 400 * 256;
+/** How much better the type before the last must be than the last. */
+const PREVIOUS_SAVES: i64 = 20 * 256;
+/** More types cost more codes to build than they save. */
+export const MAX_TYPES: i64 = 32;
+/** Fewer literals than this stay in one type. */
+const MIN_SPLIT: i64 = 2 * MIN_BLOCK;
+const LOG_ENTRIES: i64 = 1024;
+
+/** Filled by `add`: `lengths[i]` literals of `types[i]`, and `histograms[t * 256 ..]` per type. */
+export class LiteralBlocks {
+  types: u8[] = [];
+  lengths: u32[] = [];
+  /** The types' histograms, and the block being read in the slot after the last type. */
+  histograms: u32[] = [];
+  typeCount: i64 = 0;
+  private combined: u32[] = [];
+  private blockSize: i64 = 0;
+  private target: i64 = MIN_BLOCK;
+  private lastType: i64 = 0;
+  private previousType: i64 = 0;
+  private lastEntropy: i64 = 0;
+  private previousEntropy: i64 = 0;
+  private merged: i64 = 0;
+  /** log2 of 1 to 1023, in 1/256 bits; made for the first input worth splitting. */
+  private logs: u32[] = [];
+
+  constructor() {}
+
+  /** Starts a meta-block of `literals` literals; whether they will be split. */
+  start(literals: i64): bool {
+    if (literals < MIN_SPLIT) {
+      return false;
+    }
+    if (this.logs.length == 0) {
+      this.logs = logTable();
+      this.histograms = new Array<u32>(((MAX_TYPES + 1) * SYMBOLS) as usize).fill(0);
+      this.combined = new Array<u32>(SYMBOLS as usize).fill(0);
+    }
+    this.histograms.fill(0);
+    this.types.truncate(0);
+    this.lengths.truncate(0);
+    this.typeCount = 0;
+    this.blockSize = 0;
+    this.target = MIN_BLOCK;
+    this.lastType = 0;
+    this.previousType = 0;
+    this.merged = 0;
+    return true;
+  }
+
+  /** Takes the literals `data[from..to]`. */
+  add(data: u8[], from: i64, to: i64) {
+    const h = this.histograms;
+    let at = from;
+    while (at < to) {
+      const room = this.target - this.blockSize;
+      const n = to - at < room ? to - at : room;
+      const base = this.typeCount * SYMBOLS;
+      for (let i = at; i < at + n; i++) {
+        h[base + (data[i] as i64)] += 1;
+      }
+      at += n;
+      this.blockSize += n;
+      if (this.blockSize == this.target) {
+        this.finishBlock();
+      }
+    }
+  }
+
+  /** Ends the meta-block's literals. */
+  finish() {
+    if (this.blockSize > 0) {
+      this.finishBlock();
+    }
+  }
+
+  private finishBlock() {
+    const size = this.blockSize;
+    const current = this.typeCount;
+    const entropy = this.entropy(current, -1);
+    if (current == 0) {
+      this.lengths.push(size as u32);
+      this.types.push(0);
+      this.lastEntropy = entropy;
+      this.previousEntropy = entropy;
+      this.typeCount = 1;
+      this.blockSize = 0;
+      return;
+    }
+    const joined = this.entropy(current, this.lastType);
+    const joinedPrevious = this.entropy(current, this.previousType);
+    const costLast = joined - entropy - this.lastEntropy;
+    const costPrevious = joinedPrevious - entropy - this.previousEntropy;
+    if (current < MAX_TYPES && costLast > NEW_TYPE_SAVES && costPrevious > NEW_TYPE_SAVES) {
+      this.lengths.push(size as u32);
+      this.types.push(current as u8);
+      this.previousType = this.lastType;
+      this.previousEntropy = this.lastEntropy;
+      this.lastType = current;
+      this.lastEntropy = entropy;
+      this.typeCount = current + 1;
+      this.blockSize = 0;
+      this.merged = 0;
+      this.target = MIN_BLOCK;
+      return;
+    }
+    if (costPrevious < costLast - PREVIOUS_SAVES) {
+      this.lengths.push(size as u32);
+      this.types.push(this.previousType as u8);
+      this.move(this.previousType);
+      const type = this.previousType;
+      this.previousType = this.lastType;
+      this.previousEntropy = this.lastEntropy;
+      this.lastType = type;
+      this.lastEntropy = joinedPrevious;
+      this.merged = 0;
+      this.target = MIN_BLOCK;
+    } else {
+      this.lengths[this.lengths.length - 1] += size as u32;
+      this.move(this.lastType);
+      this.lastEntropy = joined;
+      if (current == 1) {
+        this.previousEntropy = joined;
+      }
+      this.merged++;
+      if (this.merged > 1) {
+        this.target += MIN_BLOCK;
+      }
+    }
+    this.blockSize = 0;
+  }
+
+  // Adds the block being read to `type`'s histogram, and clears it.
+  private move(type: i64) {
+    const h = this.histograms;
+    const from = this.typeCount * SYMBOLS;
+    const to = type * SYMBOLS;
+    for (let i: i64 = 0; i < SYMBOLS; i++) {
+      h[to + i] += h[from + i];
+      h[from + i] = 0;
+    }
+  }
+
+  // The bits of the histogram of type `a`, joined with that of `b` unless that's -1, in the best
+  // code for it: at least a bit a symbol.
+  private entropy(a: i64, b: i64): i64 {
+    const h = this.histograms;
+    const logs = this.logs;
+    const x = a * SYMBOLS;
+    const y = b < 0 ? x : b * SYMBOLS;
+    const twice = b >= 0;
+    let total: i64 = 0;
+    let bits: i64 = 0;
+    for (let i: i64 = 0; i < SYMBOLS; i++) {
+      const n = (h[x + i] as i64) + (twice ? (h[y + i] as i64) : 0);
+      if (n != 0) {
+        total += n;
+        bits -= n * log(logs, n);
+      }
+    }
+    bits += total * log(logs, total);
+    return bits > total * 256 ? bits : total * 256;
+  }
+}
+
+function log(logs: u32[], n: i64): i64 {
+  if (n < LOG_ENTRIES) {
+    return logs[n] as i64;
+  }
+  const shift = 54 - ((n as u64).leadingZeros() as i64);
+  return (logs[n >> shift] as i64) + shift * 256;
+}
+
+/** log2 of `n` from 1 up, in 1/256 bits: squaring in fixed point gives its bits one by one. */
+function logTable(): u32[] {
+  const logs: u32[] = new Array<u32>(LOG_ENTRIES as usize).fill(0);
+  for (let n: i64 = 2; n < LOG_ENTRIES; n++) {
+    const whole = 63 - ((n as u64).leadingZeros() as i64);
+    // `n` below 2^10, as a number from 1 to 2 with 30 bits after the point.
+    let y = (n as u64) << ((30 - whole) as u64);
+    let fraction: i64 = 0;
+    for (let bit: i64 = 0; bit < 8; bit++) {
+      y = (y * y) >> 30;
+      fraction <<= 1;
+      if (y >= (2 << 30)) {
+        y >>= 1;
+        fraction |= 1;
+      }
+    }
+    logs[n] = ((whole << 8) | fraction) as u32;
+  }
+  return logs;
+}

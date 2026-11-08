@@ -1,23 +1,27 @@
 // velt/compress (internal): the match finder of the DEFLATE encoder (RFC 1951 §4): a sliding
-// window of 64 KiB, hash chains over three-byte prefixes, and the greedy (levels 1 to 3) or lazy
-// (4 to 9) choice between a match and a literal.
+// window of 64 KiB, hash chains over three-byte prefixes, and the greedy (levels 2 and 3) or lazy
+// (4 to 9) choice between a match and a literal; level 1 is `FastMatcher`.
 //
-// The parameters of each level are zlib's, so its levels compare with zlib's. Input is copied into
+// The parameters of levels 2 to 9 are zlib's, so they compare with zlib's. Input is copied into
 // the window; when the position reaches the top, the upper half moves down and the chains are
 // rebased. Chain links are `u16` positions in the window, 0 ending a chain, in arrays made once.
 
-import { BlockWriter } from "velt/compress/deflate/block_writer";
+import {
+  common,
+  FastMatcher,
+  MAX_DIST,
+  MAX_MATCH,
+  MIN_MATCH,
+  SYMBOL_LIMIT,
+  WINDOW,
+} from "velt/compress/deflate/fast_matcher";
 import { copyBytes } from "velt/lang/bytes/copy";
 import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 const W_SIZE: i64 = 32768;
 const W_MASK: i64 = 32767;
-const WINDOW: i64 = 65536;
-const MIN_MATCH: i64 = 3;
-const MAX_MATCH: i64 = 258;
 /** A match is searched for only with this much input ahead, until the input ends. */
 const MIN_LOOKAHEAD: i64 = 262;
-const MAX_DIST: i64 = 32506;
 /** When the window slides: a match never starts this far up without a full lookahead. */
 const SLIDE_AT: i64 = 65274;
 /** A match of 3 bytes farther back than this costs about as much as its literals. */
@@ -25,8 +29,9 @@ const TOO_FAR: i64 = 4096;
 const HASH_SIZE: usize = 32768;
 const HASH_MULTIPLIER: u64 = 0x9e3779b1;
 const HASH_SHIFT: u64 = 17;
-const SYMBOL_LIMIT: i64 = 16383;
 
+/** At this level, `FastMatcher` and no chains. */
+const FAST_LEVEL: i64 = 1;
 /** Below this level, the greedy loop; `MAX_LAZY` is then its limit for inserting a match. */
 const FIRST_LAZY_LEVEL: i64 = 4;
 /** By level, as in zlib's table: a match length that cuts the search, and so on. */
@@ -36,21 +41,17 @@ const NICE_LENGTH: i64[] = [0, 8, 16, 32, 16, 32, 128, 128, 258, 258];
 const MAX_CHAIN: i64[] = [0, 4, 8, 32, 16, 32, 128, 256, 1024, 4096];
 
 /** The match finder, writing the symbols it chooses to the block it inherits. */
-export class Matcher extends BlockWriter {
-  private head: u16[] = new Array<u16>(HASH_SIZE).fill(0);
+export class Matcher extends FastMatcher {
+  private head: u16[];
   // Not zeroed: a chain only reaches a slot its position's insert wrote, as a slot a later
   // position took over is past `MAX_DIST` by then, where the walk stops first. Zeroing it was
   // most of the cost of a small input.
-  private prev: u16[] = unfilled16(W_SIZE as usize);
-  /** The window holds input up to `fill`; symbols were chosen up to `pos`. */
-  private fill: i64 = 0;
-  private pos: i64 = 0;
-  /** Where the current block starts; below 0 once its start has slid out of the window. */
-  private blockStart: i64 = 0;
+  private prev: u16[];
   private matchLen: i64 = MIN_MATCH - 1;
   private matchStart: i64 = 0;
   /** Lazy matching: the byte before `pos` has no symbol yet. */
   private pending: bool = false;
+  private fastMode: bool;
   private lazyMode: bool;
   private good: i64;
   private maxLazy: i64;
@@ -58,7 +59,10 @@ export class Matcher extends BlockWriter {
   private maxChain: i64;
 
   constructor(level: i64) {
-    super();
+    super(level == FAST_LEVEL);
+    this.fastMode = level == FAST_LEVEL;
+    this.head = this.fastMode ? [] : new Array<u16>(HASH_SIZE).fill(0);
+    this.prev = this.fastMode ? [] : unfilled16(W_SIZE as usize);
     this.lazyMode = level >= FIRST_LAZY_LEVEL;
     this.good = GOOD_LENGTH[level];
     this.maxLazy = MAX_LAZY[level];
@@ -115,40 +119,12 @@ export class Matcher extends BlockWriter {
   }
 
   private choose(stop: i64) {
-    if (this.lazyMode) {
+    if (this.fastMode) {
+      this.fast(stop);
+    } else if (this.lazyMode) {
       this.lazy(stop);
     } else {
       this.greedy(stop);
-    }
-  }
-
-  private literal(b: u8) {
-    this.syms[this.count] = b as u32;
-    this.count++;
-    this.litFreq[b as i64] += 1;
-  }
-
-  /** Adds a match of `len` bytes, `dist` back, to the block. */
-  private match(len: i64, dist: i64) {
-    const x = (len - MIN_MATCH) as u64;
-    this.syms[this.count] = ((dist as u32) << 16) | (x as u32);
-    this.count++;
-    let symbol: i64;
-    if (x < 8) {
-      symbol = 257 + (x as i64);
-    } else if (x == 255) {
-      symbol = 285;
-    } else {
-      const extra = 61 - (x.leadingZeros() as u64);
-      symbol = 257 + ((((extra + 1) << 2) | ((x >> extra) & 3)) as i64);
-    }
-    this.litFreq[symbol] += 1;
-    const y = (dist - 1) as u64;
-    if (y < 4) {
-      this.distFreq[y as i64] += 1;
-    } else {
-      const more = 62 - (y.leadingZeros() as u64);
-      this.distFreq[(((more + 1) << 1) | ((y >> more) & 1)) as i64] += 1;
     }
   }
 
@@ -164,7 +140,7 @@ export class Matcher extends BlockWriter {
   }
 
   /**
-   * Level 1 to 3: takes the match at each position if there is one. Up to `maxLazy` bytes of it
+   * Level 2 and 3: takes the match at each position if there is one. Up to `maxLazy` bytes of it
    * go into the chains; a longer one is skipped, which is what makes the level fast on long runs.
    */
   private greedy(stop: i64) {
@@ -277,10 +253,7 @@ export class Matcher extends BlockWriter {
     let m = candidate;
     while (true) {
       if (w[m + best] == tail && w[m + best - 1] == tail1 && w[m] == first && w[m + 1] == second) {
-        let len: i64 = 2;
-        while (len < maxLen && w[m + len] == w[pos + len]) {
-          len++;
-        }
+        const len = common(w, m, pos, maxLen);
         if (len > best) {
           best = len;
           this.matchStart = m;
@@ -302,12 +275,12 @@ export class Matcher extends BlockWriter {
   /** Moves the upper half of the window down, and every position with it. */
   private slide() {
     this.window.copyWithin(0, W_SIZE, this.fill);
-    this.fill -= W_SIZE;
-    this.pos -= W_SIZE;
-    this.blockStart -= W_SIZE;
+    this.slid(W_SIZE);
     this.matchStart -= W_SIZE;
-    rebase(this.head);
-    rebase(this.prev);
+    if (!this.fastMode) {
+      rebase(this.head);
+      rebase(this.prev);
+    }
   }
 }
 
