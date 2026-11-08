@@ -7,6 +7,7 @@ import { AesGcm } from "velt/crypto/aes_gcm";
 import { ChaCha20Poly1305 } from "velt/crypto/chacha20_poly1305";
 import { BAD_RECORD_MAC, INTERNAL_ERROR, TlsFailure } from "velt/net/tls/alert";
 import { expandLabel } from "velt/net/tls/key_schedule";
+import { u64x2, u8x16 } from "velt/simd";
 
 /** TLS_AES_128_GCM_SHA256. */
 export const AES_128_GCM_SHA256: usize = 0x1301;
@@ -53,12 +54,11 @@ export class RecordCipher {
     if (this.seq == LAST_SEQUENCE) {
       throw new TlsFailure(INTERNAL_ERROR, "the record sequence number ran out");
     }
-    for (let i: usize = 0; i < 12; i++) {
-      this.nonce[i] = this.iv[i];
-    }
-    for (let i: usize = 0; i < 8; i++) {
-      this.nonce[4 + i] ^= ((this.seq >> (56 - 8 * (i as u64))) & 0xff) as u8;
-    }
+    // The sequence number big-endian in bytes 4..12: byte-swapped, its low half in the top of
+    // lane 0 and its high half in the bottom of lane 1.
+    const be = this.seq.swapBytes();
+    const seq = u64x2.splat((be & 0xffffffff) << 32).withLane(1, be >> 32);
+    u8x16.loadPartial(this.iv, 0).xor(seq.asU8x16()).storePartial(this.nonce, 0);
     this.seq += 1;
   }
 

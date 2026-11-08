@@ -6,6 +6,7 @@ import { randomBytes } from "velt/crypto/random";
 import { x25519PublicKey } from "velt/crypto/x25519";
 import { IoError } from "velt/io/error";
 import { ByteStream } from "velt/net/byte_stream";
+import { preferredSuites } from "velt/net/tls/client_hello";
 import { TlsEngine } from "velt/net/tls/tls_engine";
 import { TlsStream } from "velt/net/tls/tls_stream";
 
@@ -28,8 +29,10 @@ export struct TlsStartOptions {
 
 /**
  * Runs a TLS 1.3 client handshake over `stream` and resolves to the encrypted stream; `stream`
- * belongs to it from then on. Cipher suites TLS_CHACHA20_POLY1305_SHA256 and
- * TLS_AES_128_GCM_SHA256; key exchange X25519, or secp256r1 when the server asks for it with a
+ * belongs to it from then on. Cipher suites TLS_AES_128_GCM_SHA256 and
+ * TLS_CHACHA20_POLY1305_SHA256, the faster here offered first: AES-128-GCM when `u8x16.hasAes()`
+ * holds at run time, else ChaCha20-Poly1305 (so debug builds and `VELT_SIMD_DISABLE=aes` offer
+ * ChaCha20 first); key exchange X25519, or secp256r1 when the server asks for it with a
  * HelloRetryRequest. Throws `IoError` (`EPROTO`, "TLS: …") when the handshake fails, and
  * `EINVAL` unless `opts.verify` is `false`. With `verify: false` the server is not authenticated:
  * this protects against passive observers only, and anyone who can intercept the connection can
@@ -53,6 +56,7 @@ export async function startTls(stream: ByteStream, opts: TlsStartOptions = {}): 
       alpn: opts.alpn ?? [],
       fixed: null,
       fixedRetry: null,
+      suites: preferredSuites(),
       retryKey: null,
     },
     key,
