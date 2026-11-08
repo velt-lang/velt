@@ -41,7 +41,11 @@ impl FnLower<'_, '_> {
             if !self.cx.is_fn_or_dyn(ty) {
                 self.cx.note_identity(ty);
             }
-            return self.identity(a, b, ty);
+            let eq = self.identity(a, b, ty);
+            if self.holds_view(ty) {
+                return self.same_nothing(a, b, eq);
+            }
+            return eq;
         }
         match self.cx.kind(ty) {
             TyKind::Option(..) | TyKind::Tuple(_) | TyKind::Result(..) => self.same_glue(a, b, ty),

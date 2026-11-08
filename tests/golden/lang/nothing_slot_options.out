@@ -1,0 +1,8 @@
+true none no
+null set
+true undefined none
+true false
+true false 1
+true undefined
+else
+true

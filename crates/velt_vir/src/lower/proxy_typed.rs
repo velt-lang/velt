@@ -91,7 +91,7 @@ impl Cx<'_> {
     /// The proxiable types implied by this pass's facts (rules 1 to 3 of #823's design), and
     /// the counts they need.
     pub(super) fn close_proxies(&mut self, next: &mut Boxing) {
-        if !self.facts.proxy_new {
+        if !self.facts.proxy_new && !self.hir.nothing_slots {
             return;
         }
         if next.proxy_class.is_none() {
@@ -404,6 +404,7 @@ impl FnLower<'_, '_> {
                 if name.starts_with('#') {
                     return lw.proxy_private(&name);
                 }
+                lw.view_member_error(&u, &name, false);
                 let key = lw.proxy_key_addr(&name);
                 let out = lw.addr(Place::local(slot.unwrap_or(val)));
                 let f = lw.cx.func(Work::Glue(Glue::ProxyGet, fty));

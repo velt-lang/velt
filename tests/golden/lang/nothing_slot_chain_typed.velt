@@ -1,0 +1,20 @@
+// `x?.f` on a value that can't be null keeps the type TypeScript gives it (`number` for
+// `f?.v` of a `Foo`), also in a program with a `null!` elsewhere: each line compiles as with `tsc`.
+class Foo { v = 1; m(): number { return 2; } inner: { w: number } = { w: 3 }; }
+const f = new Foo();
+const a = f?.v;
+const b: number = a;
+console.log(b + 1, a * 2);
+let c = f?.m();
+c = c + 1;
+console.log(c);
+const d = f?.inner.w;
+const e: number = d;
+console.log(e);
+function g(x: Foo): number { const r = x?.v; return r; }
+console.log(g(f));
+const arr = [f?.v, f?.v];
+const s: number[] = arr;
+console.log(s.length);
+const unused: Foo = null!;
+console.log(unused === null);

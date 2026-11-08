@@ -1,0 +1,37 @@
+// A `T | null` given a `T` that holds `null` through `null!` holds `null` (#2350): a field, a
+// parameter, a return value, an array element and a variable a narrowing reads as its `T`.
+class Foo {
+  v = 1;
+  inner: Foo | null = null;
+}
+type Title = { title: string };
+const a: Title = null as any;
+const asOpt: Title | null = a;
+console.log(asOpt === null, asOpt ?? "none", asOpt ? "yes" : "no");
+function readTitle(t: Title | null): string {
+  try {
+    const narrowed: Title | null = t;
+    return narrowed === null ? "null" : "set";
+  } catch (e) {
+    return "caught";
+  }
+}
+console.log(readTitle(a), readTitle({ title: "x" }));
+const f: Foo = null!;
+const holder = new Foo();
+holder.inner = f;
+console.log(holder.inner === null, holder.inner?.v, holder.inner ?? "none");
+function back(x: Foo): Foo | null {
+  return x;
+}
+console.log(back(f) === null, back(new Foo()) === null);
+const list: (Foo | null)[] = [];
+list.push(f);
+list.push(new Foo());
+console.log(list[0] === null, list[1] === null, list.filter((x) => x !== null).length);
+let later: Foo | null = new Foo();
+later = f;
+console.log(later === null, later?.v);
+if (holder.inner?.v) console.log("then");
+else console.log("else");
+console.log(!holder.inner?.v);

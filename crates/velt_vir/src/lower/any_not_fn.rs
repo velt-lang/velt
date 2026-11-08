@@ -17,15 +17,27 @@ impl FnLower<'_, '_> {
     /// `TypeError: <text> is not a function`, thrown or stopping (module docs). Ends the block.
     pub(super) fn not_fn_error(&mut self, text: &str) {
         let msg = format!("{text} is not a function");
-        let Some((d, te)) = self.type_error_routed() else {
+        if !self.throw_type_error(&msg) {
             self.panic_msg(&format!("TypeError: {msg}"));
             self.terminate(Terminator::Unreachable);
-            return;
+        }
+    }
+
+    /// Does a `TypeError` here reach a `catch` of this function (module docs)?
+    pub(super) fn routes_type_error(&mut self) -> bool {
+        self.type_error_routed().is_some()
+    }
+
+    /// `throw new TypeError(msg)` to the `catch` that takes it (module docs), ending the block;
+    /// `false`, with nothing emitted, where none does.
+    pub(super) fn throw_type_error(&mut self, msg: &str) -> bool {
+        let Some((d, te)) = self.type_error_routed() else {
+            return false;
         };
         let str_ty = self.cx.intern(TyKind::Str);
         let span = Span::DUMMY;
         let lit = hir::Expr {
-            kind: hir::ExprKind::Lit(hir::Lit::Str(msg)),
+            kind: hir::ExprKind::Lit(hir::Lit::Str(msg.to_string())),
             ty: str_ty,
             span,
         };
@@ -39,6 +51,7 @@ impl FnLower<'_, '_> {
             span,
         };
         self.throw(&new);
+        true
     }
 
     /// The prelude's `TypeError` class and type, when the innermost `catch` of this function

@@ -337,6 +337,9 @@ impl FnCx<'_, '_> {
             // A function that throws into a function type written without `throws` (its sites
             // take its errors), converted through a wrapper as a value is.
             || self.cx.fn_throws_differ(from, to) == Some(true)
+            // `{ value: null }` as `{ value: T | null }` (or `T | null | undefined`).
+            || (from == self.cx.ty.null_alone()
+                && self.cx.ty.nothing_of(to).is_some_and(|n| n.has_null()))
             // A value boxed into a field of a dynamic type (`{ value: [any, any] }` as
             // `{ value: any }`, an `IteratorResult<any>`; #1185).
             || (self.cx.dynamic(from).is_none()

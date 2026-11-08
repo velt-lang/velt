@@ -115,13 +115,13 @@ impl FnLower<'_, '_> {
                 self.cond_jump(ok, fail);
             }
             PatKind::None => {
-                let some = self.option_is_some(place, ty);
+                let some = self.option_present(place, ty);
                 let next = self.new_block();
                 self.branch(some, fail, next);
                 self.switch_to(next);
             }
             PatKind::Some(p) => {
-                let some = self.option_is_some(place, ty);
+                let some = self.option_present(place, ty);
                 self.cond_jump(some, fail);
                 let (payload, inner) = self.some_part(p, place, ty);
                 self.test_pat(p, &payload, inner, fail);
@@ -180,7 +180,7 @@ impl FnLower<'_, '_> {
     /// `value == literal` for a literal pattern (strings: `velt_rt_str_eq`).
     fn lit_eq(&mut self, l: &Lit, place: &Place, ty: TyId) -> Operand {
         if let Lit::Null = l {
-            let some = self.option_is_some(place, ty);
+            let some = self.option_present(place, ty);
             return self.rvalue_temp(Ty::Bool, Rvalue::Unary(crate::vir::UnOp::Not, some));
         }
         // An `f16`/`bf16` by value, as the f64 it is, never by its bits (#2049): `-0` is `0`.

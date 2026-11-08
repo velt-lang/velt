@@ -31,7 +31,9 @@ impl FnCx<'_, '_> {
             s.pop_scope();
             h
         };
-        let late = |e: &ast::Expr| untyped(e) || only_nothings(e);
+        let late = |e: &ast::Expr| {
+            untyped(e) || only_nothings(e) || super::nothing_slot::is_asserted_nothing(e)
+        };
         let before = self.narrow_state();
         let (t, f) = if late(then) && !late(els) {
             let f = branch(self, els, &when_false, exp);

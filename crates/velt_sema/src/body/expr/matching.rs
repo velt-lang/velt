@@ -7,7 +7,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use crate::body::places::{is_place, place_root, set_place_mode};
+use crate::body::places::is_place;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, Nothing, PatKind as P, TyId, UseMode};
 
@@ -69,6 +69,15 @@ impl FnCx<'_, '_> {
             return self.negated(e, !is_eq, span);
         }
         if self.never_nullish(s.ty) {
+            if self.may_hold_nothing(s.ty) {
+                let b = self.cx.ty.bool_;
+                let e = match (strict, word) {
+                    (true, "null") => self.intrinsic(hir::Intrinsic::IsNull, vec![s], b, span),
+                    (true, _) => self.undefined_test(s, span),
+                    _ => self.intrinsic(hir::Intrinsic::IsNullish, vec![s], b, span),
+                };
+                return self.negated(e, !is_eq, span);
+            }
             // TS accepts a test of a value that is never nullish (a defensive check).
             return self.never_null_compare(other, s, is_eq, span);
         }
@@ -349,6 +358,9 @@ impl FnCx<'_, '_> {
         keep: bool,
         span: Span,
     ) -> hir::Expr {
+        if nothing_lit(inner).is_some() {
+            return self.asserted_nothing(inner, exp, span);
+        }
         let mut h = self.expr(inner, None, Want::Borrow);
         let payload = self.cx.ty.opt_payload(h.ty);
         if let (Want::Move, H::Global(d)) = (want, &h.kind) {
@@ -421,6 +433,9 @@ impl FnCx<'_, '_> {
             return self.param_nullish(s, rhs, span);
         }
         if self.never_nullish(s.ty) {
+            if self.may_hold_nothing(s.ty) {
+                return self.param_nullish(s, rhs, span);
+            }
             // TS accepts `??` on a value that is never nullish: the value itself.
             return self.never_null_nullish(lhs, s, rhs, span);
         }
@@ -621,7 +636,7 @@ impl FnCx<'_, '_> {
     /// (`x?: T`), or a union with one (`T | Mod<T> | undefined`): at `T = X | null` or
     /// `T = unknown` the present value may be a nothing, which `??` and `?.` take as one, as
     /// in JavaScript. The payload is tested at run time (`Intrinsic::IsNullish`).
-    fn present_guard(
+    pub(super) fn present_guard(
         &mut self,
         sty: TyId,
         l: hir::LocalId,
@@ -640,123 +655,6 @@ impl FnCx<'_, '_> {
         let guard = self.negated(test, true, span);
         (Some(guard), self.pat(P::Wildcard, sty, span))
     }
-
-    /// `object?.<rest>`: apply `f` to the present payload; `null` or `undefined` short-circuits
-    /// to `undefined`.
-    pub(crate) fn optional_chain(
-        &mut self,
-        object: &ast::Expr,
-        span: Span,
-        f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
-    ) -> hir::Expr {
-        let s = self.test_operand(object, None, Want::Borrow);
-        let s = self.flatten_chain(s);
-        // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
-        if self
-            .cx
-            .dynamic(s.ty)
-            .is_some_and(|d| d != crate::any::Dynamic::Unknown)
-        {
-            let (l, mode) = self.option_binding(&s, s.ty, "<chain>", false);
-            let text = self.callee_text(&s);
-            self.f.chain_texts.push((l, text));
-            let use_mode = match mode {
-                UseMode::Move => UseMode::Borrow,
-                m => m,
-            };
-            let v = self.mk(H::Local(l, use_mode), s.ty, span);
-            let r = f(self, v);
-            return self.dynamic_chain_match(s, l, mode, r, span);
-        }
-        let Some(payload) = self.present_payload(s.ty) else {
-            return f(self, s);
-        };
-        let (l, mode) = self.option_binding(&s, payload, "<chain>", false);
-        self.note_readonly_binding(l, object, &s);
-        // A moved-in payload (the object was a temporary) is owned by the binding, which drops
-        // it after the rest: the rest uses it as a place, moving out of it only if it consumes it.
-        let use_mode = match mode {
-            UseMode::Move => UseMode::Borrow,
-            m => m,
-        };
-        let v = self.mk(H::Local(l, use_mode), payload, span);
-        let mut r = f(self, v);
-        // A binding that borrows the object (a place) does not own the payload: the rest reads
-        // through it without moving out of it, so a consumer shares what it reads
-        // (`const s = rec?.state` moved the string out of `rec`, which released it again).
-        if mode == UseMode::Borrow && place_root(&r) == Some(l) && moves_out(&r) {
-            set_place_mode(&mut r, UseMode::Borrow);
-        }
-        self.chain_match(s, l, mode, payload, r, span)
-    }
-
-    /// `match (s) { l => r (wrapped as `T | undefined`), nothing => undefined }`: the short-circuit of
-    /// an optional chain whose rest `r` was checked on the payload bound to `l`.
-    pub(super) fn chain_match(
-        &mut self,
-        s: hir::Expr,
-        l: hir::LocalId,
-        mode: UseMode,
-        payload: TyId,
-        r: hir::Expr,
-        span: Span,
-    ) -> hir::Expr {
-        if self.cx.ty.is_bottom(r.ty) {
-            return r;
-        }
-        // The short-circuit gives `undefined`, on a `T | null` object too, as in JavaScript
-        // (issue #930).
-        let nothing = Nothing::Undefined;
-        let (ty, body) = if nothing == Nothing::Undefined
-            && self.cx.ty.nothing_of(r.ty) == Some(Nothing::Null)
-        {
-            // A `T | null` rest: the chain gives `T | null | undefined`.
-            let t = self.cx.ty.option_of(r.ty, Nothing::Undefined);
-            (t, self.mk(H::WrapSome(Box::new(r)), t, span))
-        } else if r.ty == self.cx.ty.unit || self.cx.ty.opt_payload(r.ty).is_some() {
-            (r.ty, r)
-        } else {
-            let t = self.cx.ty.option_of(r.ty, nothing);
-            (t, self.mk(H::WrapSome(Box::new(r)), t, span))
-        };
-        let none_body = if ty == self.cx.ty.unit {
-            self.unit_expr(span)
-        } else {
-            self.mk(H::Lit(hir::Lit::Null), ty, span)
-        };
-        let sty = s.ty;
-        let some = self.pat(P::Binding(l, mode), payload, span);
-        let (guard, rest) = self.present_guard(sty, l, payload, span);
-        let arms = vec![
-            hir::Arm {
-                pat: self.present_pat(some, sty, span),
-                guard,
-                body,
-            },
-            hir::Arm {
-                pat: rest,
-                guard: None,
-                body: none_body,
-            },
-        ];
-        let kind = H::Match {
-            scrutinee: Box::new(s),
-            arms,
-        };
-        self.mk(kind, ty, span)
-    }
-}
-
-/// Does the place `e` move its value out (its outermost use is `Move`)?
-fn moves_out(e: &hir::Expr) -> bool {
-    match &e.kind {
-        H::Field { mode, .. } | H::Index { mode, .. } | H::UnwrapSome(_, mode) => {
-            *mode == UseMode::Move
-        }
-        H::UnwrapVariant { mode, .. } => *mode == UseMode::Move,
-        H::Downcast(x) => moves_out(x),
-        _ => false,
-    }
 }
 
 /// The nothing `e` is written as (`null`, `undefined`), if it is one of those literals.
@@ -771,7 +669,7 @@ fn nothing_branch(e: &ast::Expr) -> Option<Nothing> {
     }
 }
 
-fn nothing_lit(e: &ast::Expr) -> Option<Nothing> {
+pub(super) fn nothing_lit(e: &ast::Expr) -> Option<Nothing> {
     match &e.kind {
         ast::ExprKind::Lit(ast::Lit::Null) => Some(Nothing::Null),
         ast::ExprKind::Lit(ast::Lit::Undefined) => Some(Nothing::Undefined),

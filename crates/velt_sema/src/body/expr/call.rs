@@ -555,7 +555,7 @@ impl FnCx<'_, '_> {
             return h;
         }
         if optional {
-            return self.optional_chain(object, span, |s, recv| {
+            return self.chain_with(exp, object, span, |s, recv| {
                 if s.record_internal_call(&recv, prop) {
                     s.check_args_loose(args);
                     return s.error_expr(span);

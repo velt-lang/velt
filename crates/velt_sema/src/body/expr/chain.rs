@@ -26,8 +26,15 @@ impl FnCx<'_, '_> {
         let name = format!("<chain@{}>", link.span.lo);
         let rest = rewrite(e, link.span, &name, object.span);
         let span = e.span;
-        let s = self.test_operand(object, None, Want::Borrow);
+        // A view of a nothing (`null!`) gives `undefined` where that fits (nothing_slot.rs).
+        let fits = self.undefined_fits(exp, span);
+        let s = self.link_object(object, fits, |s| s.test_operand(object, None, Want::Borrow));
         let s = self.flatten_chain(s);
+        let nothing = fits && self.may_hold_nothing(s.ty);
+        let s = match s.kind {
+            H::UnwrapSome(base, _) if nothing => *base,
+            _ => s,
+        };
         if self.cx.ty.is_bottom(s.ty) {
             // The rest is still checked (its own errors), on the link's object bound as an
             // error value: the synthetic name must not be reported as unknown.
@@ -61,6 +68,7 @@ impl FnCx<'_, '_> {
         }
         Some(match payload {
             Some(p) => self.chain_match(s, l, mode, p, r, span),
+            None if nothing => self.nothing_chain_match(s, (l, mode), r, span),
             None => {
                 // A non-null link object: nothing to short-circuit, only bind it.
                 let ty = r.ty;

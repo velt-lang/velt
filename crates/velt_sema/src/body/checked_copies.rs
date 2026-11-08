@@ -242,13 +242,18 @@ impl FnCx<'_, '_> {
 
     /// `e` checked where its value is printed or written into a template as it is: a field
     /// path of a local is not taken as its payload there either (`needs_payload`).
+    /// In a program that can hold a view of a nothing (it has loaded `Proxy`), an optional chain
+    /// printed there takes `undefined` (nothing_slot.rs): `console.log(f?.v)` on a slot holding one
+    /// prints `undefined`, and no type the program sees changes. Elsewhere the chain keeps its own
+    /// type, printed as it was.
     pub(crate) fn printed_expr(&mut self, e: &ast::Expr) -> hir::Expr {
+        let views = self.uses_proxy();
         if !self.has_breakable_narrowing() {
-            return self.expr(e, None, Want::Borrow);
+            return self.chain_object(e, views, |s| s.expr(e, None, Want::Borrow));
         }
         let mark = self.as_is_spans.len();
         self.mark_value(e, true);
-        let h = self.expr(e, None, Want::Borrow);
+        let h = self.chain_object(e, views, |s| s.expr(e, None, Want::Borrow));
         self.as_is_spans.truncate(mark);
         h
     }

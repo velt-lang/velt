@@ -1,0 +1,15 @@
+// A printed chain on a slot that holds `null` through `null!` prints `undefined`, as in Node,
+// also when the chain's own value is a `T | null` (#2350).
+class Foo {
+  v = 1;
+  inner: Foo | null = null;
+  m(): Foo | null {
+    return this.inner;
+  }
+}
+const f: Foo = null!;
+console.log(f?.inner);
+console.log(f?.m());
+console.log(`${f?.inner}`);
+const g = new Foo();
+console.log(g?.inner, g?.m(), `${g?.inner}`);

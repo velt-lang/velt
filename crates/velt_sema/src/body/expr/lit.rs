@@ -135,24 +135,6 @@ impl FnCx<'_, '_> {
         self.mk(H::Lit(hir::Lit::Float(value)), ty, span)
     }
 
-    /// The value of field `name` of an object literal of its own type. Converted to an `any`
-    /// or `unknown` (`dynamic`: `const u: unknown = { a: null }`), a `null` field (TypeScript's
-    /// type `null`) is an `any` holding `null`, and so is one in a nested object or array
-    /// literal (`{ b: { c: null } }`, `{ a: [null, 1] }`). A conditional, `&&`, `||` or `??`
-    /// with an `any` value is an `any` there too (`{ q: c ? 1 : a.q }`, `any_join`).
-    pub(super) fn anon_prop_value(
-        &mut self,
-        name: &ast::Ident,
-        value: Option<&ast::Expr>,
-        dynamic: bool,
-    ) -> hir::Expr {
-        let any = match value.is_some_and(|v| dynamic && dynamic_hinted(v)) {
-            true => self.any_ty(),
-            false => None,
-        };
-        self.prop_value(name, value, any)
-    }
-
     /// The element type of an array literal of `elems` where a `t` is expected: `t`'s, or for an
     /// `any` (or `unknown`) `t` when an element is a conditional, `&&`, `||` or `??` (`[c ? 1 : a.q]`), or
     /// a literal holding or spreading one, whose `any` value stays one (`any_join`).
@@ -767,7 +749,7 @@ fn holds_join(e: &ast::Expr) -> bool {
 /// Does the field value `e` of an object literal converted to an `any` take the `any` as its
 /// expected type: the literal `null` (in parentheses or not), a conditional, `&&`, `||` or `??`
 /// (whose `any` value stays one), or an object or array literal holding or spreading one?
-fn dynamic_hinted(e: &ast::Expr) -> bool {
+pub(super) fn dynamic_hinted(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Paren(inner) => dynamic_hinted(inner),
         ast::ExprKind::Lit(ast::Lit::Null) => true,
