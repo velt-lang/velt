@@ -14,7 +14,7 @@ export struct Transaction {
 
   /** The package's own: the transaction `begin()` opened on a connection. */
   static of(handle: Conn, generation: i64, depth: u32): Transaction {
-    return Transaction { handle: handle, generation: generation, depth: depth };
+    return { handle: handle, generation: generation, depth: depth };
   }
 
   async commit(): Promise<void> {

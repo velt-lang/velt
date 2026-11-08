@@ -12,7 +12,7 @@ export struct CopyWriter {
 
   /** The package's own: the writer of a started copy. */
   static of(handle: CopyHandle): CopyWriter {
-    return CopyWriter { handle: handle };
+    return { handle: handle };
   }
 
   /** Sends a chunk (any split: rows may span chunks). */

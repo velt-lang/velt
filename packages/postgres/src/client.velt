@@ -32,7 +32,7 @@ export struct Client {
 
   /** The package's own: the `Client` numbered `generation` of a connection. */
   static of(handle: Conn, generation: i64): Client {
-    return Client { handle: handle, generation: generation };
+    return { handle: handle, generation: generation };
   }
 
   /** Every row of `sql` (any statement that returns rows). */

@@ -36,8 +36,7 @@ function described(input: Input): Description {
     if (tag == PARAMETER_DESCRIPTION) {
       // The count is unsigned: a statement may have up to 65535 parameters.
       if (size < 7 || u16At(b, p + 5) * 4 > end - (p + 7)) {
-        d.problem = "a bad ParameterDescription";
-        return d;
+        return { ...d, problem: "a bad ParameterDescription" };
       }
       const n = u16At(b, p + 5);
       for (let i: i64 = 0; i < n; i++) {
@@ -45,8 +44,7 @@ function described(input: Input): Description {
       }
     } else if (tag == ROW_DESCRIPTION) {
       if (size < 7 || i16At(b, p + 5) < 0) {
-        d.problem = "a bad RowDescription";
-        return d;
+        return { ...d, problem: "a bad RowDescription" };
       }
       const n = i16At(b, p + 5);
       let at = p + 7;
@@ -54,8 +52,7 @@ function described(input: Input): Description {
         const nameEnd = cstrEnd(b, at, end);
         // The name's NUL, then table OID 4, attribute 2, type 4, size 2, modifier 4, format 2.
         if (nameEnd < 0 || end - nameEnd < 19) {
-          d.problem = "a bad RowDescription";
-          return d;
+          return { ...d, problem: "a bad RowDescription" };
         }
         d.names.push(b.utf8Slice(at, nameEnd));
         d.types.push(u32At(b, nameEnd + 7));
