@@ -16,8 +16,6 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use velt_vir::vir::{self, Linkage};
-
 use super::graph::{components, successors, Refs};
 
 /// Components of at most this weight join the group of their first referrer; larger ones are
@@ -29,20 +27,20 @@ const SMALL_COMPONENT_WEIGHT: usize = 2_000;
 /// The unit of every function (`0..count`; every unit below the largest one defines at least
 /// one function).
 pub(super) fn owners(
-    program: &vir::Program,
+    exported: &[bool],
     weights: &[usize],
     refs: &[Refs],
     static_refs: &[Refs],
     count: usize,
 ) -> Vec<usize> {
-    let (group, parent) = groups(program, weights, refs, static_refs, count);
+    let (group, parent) = groups(exported, weights, refs, static_refs, count);
     cut(weights, &group, &parent, count)
 }
 
 /// The group of every function, and the parent of every group: the group of the first referrer
 /// of the component that started it. Groups are numbered callers first.
 fn groups(
-    program: &vir::Program,
+    exported_fns: &[bool],
     weights: &[usize],
     refs: &[Refs],
     static_refs: &[Refs],
@@ -66,9 +64,7 @@ fn groups(
     for c in callers_first(&succ, &comp, &members) {
         let nodes = &members[c];
         let weight: usize = nodes.iter().filter(|&&v| v < n).map(|&v| weights[v]).sum();
-        let exported = nodes
-            .iter()
-            .any(|&v| v < n && program.funcs[v].linkage == Linkage::Export);
+        let exported = nodes.iter().any(|&v| v < n && exported_fns[v]);
         let first = nodes
             .iter()
             .flat_map(|&v| preds[v].iter().copied())

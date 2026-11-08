@@ -67,12 +67,21 @@ fn ir() -> String {
     emit_ir(&sample(), "x86_64-unknown-linux-gnu").expect("emit_ir")
 }
 
+/// The name of static `i` of `p` (`crate::statics::static_names`: from its contents).
+fn static_name(p: &velt_vir::vir::Program, i: usize) -> String {
+    crate::statics::static_names(p)[i].clone()
+}
+
 #[test]
 fn module_structure() {
     let ir = ir();
+    let boom = format!(
+        "{} = private unnamed_addr constant [6 x i8] c\"boom\\22\\0A\", align 1",
+        static_name(&sample(), 0)
+    );
     for needle in [
         "target triple = \"x86_64-unknown-linux-gnu\"",
-        "@.s0 = private unnamed_addr constant [6 x i8] c\"boom\\22\\0A\", align 1",
+        boom.as_str(),
         "declare void @\"velt_rt_panic\"(ptr) #2",
         "define internal zeroext i8 @\"helper\"(i8 signext %p0, i16 zeroext %p1) #0 {",
         "define dso_local i32 @\"velt_main\"() #0 {",
@@ -291,11 +300,17 @@ fn vtable_sample() -> Program {
 
 #[test]
 fn relocated_statics_and_memory_intrinsics() {
-    let ir = emit_ir(&vtable_sample(), "x86_64-pc-windows-msvc").unwrap();
+    let p = vtable_sample();
+    let ir = emit_ir(&p, "x86_64-pc-windows-msvc").unwrap();
+    let vtable = format!(
+        "{} = private unnamed_addr constant <{{ [8 x i8], ptr, ptr, ptr, [8 x i8] }}> \
+         <{{ [8 x i8] c\"header!!\", ptr @\"helper\", ptr @\"velt_rt_panic\", ptr {}, \
+         [8 x i8] c\"\\00\\00\\00\\00\\00\\00\\00\\7F\" }}>, align 8",
+        static_name(&p, 1),
+        static_name(&p, 0)
+    );
     for needle in [
-        "@.s1 = private unnamed_addr constant <{ [8 x i8], ptr, ptr, ptr, [8 x i8] }> \
-         <{ [8 x i8] c\"header!!\", ptr @\"helper\", ptr @\"velt_rt_panic\", ptr @.s0, \
-         [8 x i8] c\"\\00\\00\\00\\00\\00\\00\\00\\7F\" }>, align 8",
+        vtable.as_str(),
         "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)",
         "call void @llvm.memset.p0.i64(ptr align 1 %",
         ", i8 -85, i64 %",

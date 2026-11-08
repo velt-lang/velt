@@ -23,6 +23,7 @@ use velt_vir::vir::{self, Ty};
 use crate::debug::{DebugInfo, FnDebug};
 use crate::inlining::Caps;
 use crate::module::{define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS};
+use crate::statics::StaticNames;
 use crate::target::Target;
 use crate::tbaa::Access;
 use crate::types::{global_name, scalar_type, size_align};
@@ -76,6 +77,8 @@ enum Val {
 /// Per-function translation state.
 struct Emitter<'a> {
     program: &'a vir::Program,
+    /// The names of the program's statics (`crate::statics::static_names`).
+    static_names: &'a StaticNames,
     function: &'a vir::Function,
     intrinsics: &'a mut Intrinsics,
     /// Instructions emitted so far (labels included).
@@ -119,7 +122,7 @@ struct Emitter<'a> {
 /// Translate `function` into a complete `define ... { ... }` text.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_function(
-    program: &vir::Program,
+    (program, static_names): (&vir::Program, &StaticNames),
     (function, index): (&vir::Function, usize),
     how: Definition,
     caps: &Caps,
@@ -139,6 +142,7 @@ pub(crate) fn emit_function(
     let array = crate::tbaa::array_agg(program);
     let mut emitter = Emitter {
         program,
+        static_names,
         function,
         intrinsics,
         body: String::new(),

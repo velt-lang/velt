@@ -242,20 +242,22 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             );
             let signatures = t.time("signatures", || callgraph::signatures(program));
             let fold = constfold::Program::of(&signatures);
-            for func in with_bodies(&mut program.funcs) {
+            let aggs = &program.aggs;
+            each_function(with_bodies(&mut program.funcs), t, |t, func| {
                 if t.time("numrep", || numrep::run(&env, func)) {
-                    numrep_cleanup(&program.aggs, func, t);
+                    numrep_cleanup(aggs, func, t);
                 }
-                t.time("frozen", || frozen::run(&program.aggs, func));
+                t.time("frozen", || frozen::run(aggs, func));
                 if func.param_attrs.iter().any(|a| a.frozen) {
                     // `a || b` as two branches (threaded), the shape `bounds` reads facts from.
                     t.time("constfold", || constfold::run(&fold, func));
                     t.time("copyprop", || copyprop::run(func));
-                    t.time("dce", || dce::run(&program.aggs, func));
+                    t.time("dce", || dce::run(aggs, func));
                     t.time("simplify_cfg", || simplify_cfg::run(func));
-                    t.time("bounds", || bounds::run(&program.aggs, func));
+                    t.time("bounds", || bounds::run(aggs, func));
                 }
-            }
+                false
+            });
             let mut budget = inline::Budget::for_program(program);
             let mut specs = const_fields::Specializations::default();
             for _ in 0..MAX_ROUNDS {
@@ -289,49 +291,75 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 &program.aggs,
                 &program.statics,
             );
-            for func in with_bodies(&mut program.funcs) {
+            let aggs = &program.aggs;
+            each_function(with_bodies(&mut program.funcs), t, |t, func| {
                 if t.time("module_state", || module_state::run(lookups, func)) {
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
-                if t.time("map_probe", || map_probe::run(&program.aggs, &probes, func)) {
+                if t.time("map_probe", || map_probe::run(aggs, &probes, func)) {
                     t.time("copyprop", || copyprop::run(func));
-                    t.time("dce", || dce::run(&program.aggs, func));
+                    t.time("dce", || dce::run(aggs, func));
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
                 if t.time("borrowed_copies", || {
-                    borrowed_copies::run(&program.aggs, &runtime, func)
+                    borrowed_copies::run(aggs, &runtime, func)
                 }) {
                     t.time("copyprop", || copyprop::run(func));
-                    t.time("dce", || dce::run(&program.aggs, func));
+                    t.time("dce", || dce::run(aggs, func));
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
                 if t.time("numrep", || numrep::run(&env, func)) {
-                    numrep_cleanup(&program.aggs, func, t);
+                    numrep_cleanup(aggs, func, t);
                 }
                 t.time("divisions", || divisions::run(func));
-                t.time("dead_fills", || {
-                    dead_fills::run(&program.aggs, allocator, func)
-                });
-            }
+                t.time("dead_fills", || dead_fills::run(aggs, allocator, func));
+                false
+            });
             promote_memory(program, t);
             let kinds = invariant_reads::Kinds::of(&program.aggs, &program.externs);
-            for func in with_bodies(&mut program.funcs) {
+            let aggs = &program.aggs;
+            each_function(with_bodies(&mut program.funcs), t, |t, func| {
                 if t.time("invariant_reads", || {
-                    invariant_reads::run(&program.aggs, &kinds, func)
+                    invariant_reads::run(aggs, &kinds, func)
                 }) {
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
-            }
+                false
+            });
             let no_return = cold_calls::NoReturn::find(program);
-            for func in &mut program.funcs {
+            each_function(program.funcs.iter_mut(), t, |t, func| {
                 if t.time("cold_calls", || cold_calls::run(&no_return, func)) {
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
-            }
+                false
+            });
             t.time("null_exits", || null_exits::run(program));
         }
     }
     t.time("dead_funcs", || dead_funcs::run(program));
+}
+
+/// `work` on each of `funcs`, on several threads when there are enough functions (`parallel`):
+/// a per-function pass reads the rest of the program only, so each function sees the same inputs
+/// whatever the number of threads. A pass's time is the sum over the threads. Whether `work`
+/// changed any function.
+fn each_function<'f>(
+    funcs: impl Iterator<Item = &'f mut vir::Function>,
+    t: &mut PassTimings,
+    work: impl Fn(&mut PassTimings, &mut vir::Function) -> bool + Sync,
+) -> bool {
+    let mut funcs: Vec<&mut vir::Function> = funcs.collect();
+    let per_thread = parallel::for_each(
+        &mut funcs,
+        || (PassTimings::new(), false),
+        |(t, changed), func| *changed |= work(t, func),
+    );
+    let mut changed = false;
+    for (thread, c) in &per_thread {
+        t.add(thread);
+        changed |= c;
+    }
+    changed
 }
 
 /// After `numrep` changed `func`: forward the copies it made, fold what that exposed (an
@@ -349,17 +377,19 @@ fn numrep_cleanup(aggs: &[vir::AggLayout], func: &mut vir::Function, t: &mut Pas
 fn promote_memory(program: &mut vir::Program, t: &mut PassTimings) {
     let signatures = t.time("signatures", || callgraph::signatures(program));
     let fold = constfold::Program::of(&signatures);
-    for func in with_bodies(&mut program.funcs) {
-        let mut changed = t.time("noalias", || noalias::run(&program.aggs, func));
-        changed |= t.time("frozen", || frozen::run(&program.aggs, func));
-        changed |= t.time("frame_slots", || frame_slots::run(&program.aggs, func));
+    let aggs = &program.aggs;
+    each_function(with_bodies(&mut program.funcs), t, |t, func| {
+        let mut changed = t.time("noalias", || noalias::run(aggs, func));
+        changed |= t.time("frozen", || frozen::run(aggs, func));
+        changed |= t.time("frame_slots", || frame_slots::run(aggs, func));
         if changed {
             t.time("constfold", || constfold::run(&fold, func));
             t.time("copyprop", || copyprop::run(func));
-            t.time("dce", || dce::run(&program.aggs, func));
+            t.time("dce", || dce::run(aggs, func));
             t.time("simplify_cfg", || simplify_cfg::run(func));
         }
-    }
+        false
+    });
 }
 
 /// One round of the `Speed` pipeline; returns whether anything changed.
@@ -378,21 +408,21 @@ fn speed_round(
     // at the end: optimizing it again would only double the work on its body.
     let live = t.time("dead_funcs", || dead_funcs::live_functions(program));
     let funcs = (program.funcs.iter_mut().zip(live)).filter(|(f, l)| *l && !f.blocks.is_empty());
-    for (func, _) in funcs {
-        changed |= t.time("vtable_loads", || {
-            vtable_loads::run(&program.aggs, &program.statics, allocator, func)
+    let (aggs, statics) = (&program.aggs, &program.statics);
+    changed |= each_function(funcs.map(|(f, _)| f), t, |t, func| {
+        let mut changed = t.time("vtable_loads", || {
+            vtable_loads::run(aggs, statics, allocator, func)
         });
         changed |= t.time("constfold", || constfold::run(&fold, func));
         changed |= t.time("copyprop", || copyprop::run(func));
-        changed |= t.time("addr_forward", || addr_forward::run(&program.aggs, func));
-        changed |= t.time("heap_sroa", || {
-            heap_sroa::run(&program.aggs, allocator, func)
-        });
-        changed |= t.time("enum_sroa", || enum_sroa::run(&program.aggs, func));
-        changed |= t.time("sroa", || sroa::run(&program.aggs, func));
-        changed |= t.time("dce", || dce::run(&program.aggs, func));
-        changed |= t.time("thread_tags", || thread_tags::run(&program.aggs, func));
+        changed |= t.time("addr_forward", || addr_forward::run(aggs, func));
+        changed |= t.time("heap_sroa", || heap_sroa::run(aggs, allocator, func));
+        changed |= t.time("enum_sroa", || enum_sroa::run(aggs, func));
+        changed |= t.time("sroa", || sroa::run(aggs, func));
+        changed |= t.time("dce", || dce::run(aggs, func));
+        changed |= t.time("thread_tags", || thread_tags::run(aggs, func));
         changed |= t.time("simplify_cfg", || simplify_cfg::run(func));
-    }
+        changed
+    });
     changed
 }

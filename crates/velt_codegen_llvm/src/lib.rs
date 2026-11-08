@@ -155,7 +155,10 @@ pub fn emit_objects_cached(
     }
     types::validate_aggregates(program)?;
     let start = Instant::now();
-    let plan = units::plan(program, count);
+    let plan = match units {
+        Some(_) => units::plan(program, count),
+        None => units::plan_apart(program, count),
+    };
     let caps = inlining::Caps::of_units(program, &plan.shared.funcs);
     timings.push(("units", start.elapsed()));
     let start = Instant::now();

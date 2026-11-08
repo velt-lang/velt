@@ -21,11 +21,75 @@ pub(crate) enum StaticDefinition {
     Import,
 }
 
-/// Name of static `i`: its symbol (vir invariant 13), else `.s<i>`.
-pub(crate) fn static_name(program: &vir::Program, i: usize) -> String {
-    match program.statics.get(i).and_then(|s| s.symbol.as_deref()) {
-        Some(symbol) => global_name(symbol),
-        None => format!("@.s{i}"),
+/// The name of every static of a program ([`static_names`]), by index.
+pub(crate) type StaticNames = [String];
+
+/// Name of every static: its symbol (vir invariant 13), else `.s.<hash>` of its contents (bytes,
+/// alignment, relocation targets, an atomic's id), with `.<k>` after the hash for the `k`-th
+/// later static of the same contents. A name does not depend on the static's index, so a codegen
+/// unit's module stays the same, and comes from the build cache, when the program adds or drops
+/// statics of other code (`units`: a program's own code and its libraries are in different
+/// units).
+pub(crate) fn static_names(program: &vir::Program) -> Vec<String> {
+    let mut seen: rustc_hash::FxHashMap<u64, usize> = rustc_hash::FxHashMap::default();
+    (program.statics.iter())
+        .map(|s| match s.symbol.as_deref() {
+            Some(symbol) => global_name(symbol),
+            None => {
+                let h = static_hash(program, s);
+                let k = seen.entry(h).or_insert(0);
+                *k += 1;
+                match *k {
+                    1 => format!("@.s.{h:016x}"),
+                    k => format!("@.s.{h:016x}.{}", k - 1),
+                }
+            }
+        })
+        .collect()
+}
+
+/// FNV-1a over what makes static `s` what it is; a static it points to counts by its bytes.
+fn static_hash(program: &vir::Program, s: &vir::StaticData) -> u64 {
+    let mut h = Fnv(0xcbf2_9ce4_8422_2325);
+    h.bytes(&s.bytes);
+    h.bytes(&s.align.to_le_bytes());
+    h.bytes(&s.mutable.unwrap_or(0).to_le_bytes());
+    h.bytes(&[s.mutable.is_some() as u8, s.linkage as u8]);
+    for (offset, target) in &s.relocs {
+        h.bytes(&offset.to_le_bytes());
+        match target {
+            vir::Const::Func(id) => {
+                h.bytes(b"f");
+                if let Some(f) = program.funcs.get(id.0 as usize) {
+                    h.bytes(f.symbol.as_bytes());
+                }
+            }
+            vir::Const::Extern(id) => {
+                h.bytes(b"e");
+                if let Some(e) = program.externs.get(id.0 as usize) {
+                    h.bytes(e.symbol.as_bytes());
+                }
+            }
+            vir::Const::Static(id) => {
+                h.bytes(b"s");
+                if let Some(t) = program.statics.get(id.0 as usize) {
+                    h.bytes(&t.bytes);
+                    h.bytes(&(t.relocs.len() as u64).to_le_bytes());
+                }
+            }
+            _ => h.bytes(b"?"),
+        }
+    }
+    h.0
+}
+
+struct Fnv(u64);
+
+impl Fnv {
+    fn bytes(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
     }
 }
 
@@ -33,6 +97,7 @@ pub(crate) fn static_name(program: &vir::Program, i: usize) -> String {
 /// Zero-sized data is padded to one byte, like the Cranelift backend does.
 pub(crate) fn static_data(
     program: &vir::Program,
+    names: &StaticNames,
     index: usize,
     data: &vir::StaticData,
     how: StaticDefinition,
@@ -57,7 +122,7 @@ pub(crate) fn static_data(
             data.align
         );
     }
-    let name = static_name(program, index);
+    let name = names[index].clone();
     // A static atomic's word: written through atomic instructions, so neither constant nor
     // merged with equal data.
     if data.mutable.is_some() {
@@ -77,7 +142,7 @@ pub(crate) fn static_data(
             byte_run(bytes)
         ));
     }
-    let (types, values) = relocated_fields(program, data, wide_pointer_slots)
+    let (types, values) = relocated_fields((program, names), data, wide_pointer_slots)
         .map_err(|e| format!("codegen: static #{index}: {e}"))?;
     Ok(format!(
         "{name} = {linkage} unnamed_addr constant <{{ {} }}> <{{ {} }}>, align {align}\n",
@@ -93,7 +158,7 @@ fn byte_run(bytes: &[u8]) -> String {
 
 /// Field types and typed values of a relocated static: byte runs between 8-byte `ptr` slots.
 fn relocated_fields(
-    program: &vir::Program,
+    (program, names): (&vir::Program, &StaticNames),
     data: &vir::StaticData,
     wide_pointer_slots: bool,
 ) -> CodegenResult<(Vec<String>, Vec<String>)> {
@@ -111,7 +176,7 @@ fn relocated_fields(
             values.push(byte_run(&data.bytes[pos..start]));
         }
         types.push("ptr".into());
-        values.push(format!("ptr {}", target_name(program, target)?));
+        values.push(format!("ptr {}", target_name(program, names, target)?));
         if wide_pointer_slots {
             types.push("[4 x i8]".into());
             values.push("[4 x i8] zeroinitializer".into());
@@ -125,7 +190,11 @@ fn relocated_fields(
     Ok((types, values))
 }
 
-fn target_name(program: &vir::Program, target: &vir::Const) -> CodegenResult<String> {
+fn target_name(
+    program: &vir::Program,
+    names: &StaticNames,
+    target: &vir::Const,
+) -> CodegenResult<String> {
     Ok(match target {
         vir::Const::Func(id) => match program.funcs.get(id.0 as usize) {
             Some(f) => global_name(&f.symbol),
@@ -135,9 +204,7 @@ fn target_name(program: &vir::Program, target: &vir::Const) -> CodegenResult<Str
             Some(e) => global_name(&e.symbol),
             None => bail!("unknown extern #{}", id.0),
         },
-        vir::Const::Static(id) if (id.0 as usize) < program.statics.len() => {
-            static_name(program, id.0 as usize)
-        }
+        vir::Const::Static(id) if (id.0 as usize) < names.len() => names[id.0 as usize].clone(),
         vir::Const::Static(id) => bail!("unknown static #{}", id.0),
         other => bail!("relocation target {other} is not an address"),
     })

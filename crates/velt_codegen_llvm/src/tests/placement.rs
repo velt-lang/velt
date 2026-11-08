@@ -4,7 +4,7 @@ use super::builder::*;
 use velt_vir::vir::Ty::*;
 use velt_vir::vir::*;
 
-use crate::units::{plan, Plan};
+use crate::units::{plan, plan_apart, Plan};
 
 /// One function of a [`program`]: symbol, statements, the functions it calls (by index).
 struct Spec {
@@ -197,4 +197,99 @@ fn large_components_are_cut() {
     let owner = owners(&plan, p.funcs.len());
     let changes = owner.windows(2).filter(|w| w[0] != w[1]).count();
     assert!(changes <= 4, "{owner:?}");
+}
+
+/// The root module's functions (`main`, a top-level `helper`, a method `P.get`) of a split
+/// program get a unit of their own, the last, and the library units are placed as if they were
+/// not there: an edit of the entry file (here its functions grown, and one more of them) leaves
+/// every library unit as it was, so their modules come from the build cache.
+#[test]
+fn the_root_module_gets_a_unit_of_its_own() {
+    // `velt_main` → `main` → `helper` (top level: `_V6helper`), which calls the library:
+    // `lib0` … `lib7`, each calling the next and a leaf of its own.
+    // With `extra`, one more function of `main` comes before the library's, as lowering adds
+    // a new function where its module's are: every library function's index moves up by one.
+    let specs = |main_stmts: usize, extra: bool| {
+        let lib = if extra { 4 } else { 3 };
+        let mut s = vec![
+            spec("velt_main", 2, &[1]),
+            spec("_V4main", main_stmts, &[2]),
+            spec("_V6helper", main_stmts, &[lib, lib + 2, lib + 4, lib + 6]),
+        ];
+        if extra {
+            s.push(spec("_V1PM3get", main_stmts, &[lib]));
+        }
+        for k in 0..8 {
+            let next = match k {
+                7 => vec![lib + 1 + 2 * k],
+                _ => vec![lib + 2 * (k + 1), lib + 1 + 2 * k],
+            };
+            s.push(spec(&format!("_V3stdP3libN4lib{k}"), 3_000, &next));
+            s.push(spec(&format!("_V3stdP3libN4leaf{k}"), 2_000, &[]));
+        }
+        s
+    };
+    let before = program(&specs(10, false));
+    let after = program(&specs(4_000, true));
+    let (plan_before, plan_after) = (plan_apart(&before, 4), plan_apart(&after, 4));
+    let own = |p: &Program| -> Vec<usize> {
+        (0..p.funcs.len())
+            .filter(|&f| crate::units::is_root_module(&p.funcs[f].symbol))
+            .collect()
+    };
+    for (p, pl) in [(&before, &plan_before), (&after, &plan_after)] {
+        let last = pl.units.last().expect("units");
+        assert_eq!(
+            last.defines,
+            own(p),
+            "the last unit holds the root module only"
+        );
+        assert!(
+            pl.units.len() >= 3,
+            "the library is split too: {:?}",
+            pl.units
+        );
+    }
+    // The library units define the same functions (by symbol) and import the same bodies.
+    let library = |p: &Program, pl: &Plan| -> Vec<(Vec<String>, Vec<String>)> {
+        let names = |fs: &[usize]| fs.iter().map(|&f| p.funcs[f].symbol.clone()).collect();
+        let n = pl.units.len() - 1;
+        (pl.units[..n].iter())
+            .map(|u| (names(&u.defines), names(&u.imports)))
+            .collect()
+    };
+    assert_eq!(library(&before, &plan_before), library(&after, &plan_after));
+}
+
+/// Which symbols are the root module's (`units::is_root_module`): items named without a module,
+/// their members, instances, suffixes and closures; not other modules', std's, glue or the entry.
+#[test]
+fn root_module_symbols() {
+    use crate::units::is_root_module;
+    for own in [
+        "_V4main",
+        "_V6helper",
+        "_V1PM3get",
+        "_V3sum_T3i64",
+        "_V4main$poll",
+        "_V4mainN17_7bclosure_230_7d",
+        "_V6helperN17_7bclosure_230_7d",
+        "_V7_23main",
+        "_V7_23mainN17_7bclosure_230_7d",
+    ] {
+        assert!(is_root_module(own), "{own} is the root module's");
+    }
+    for other in [
+        "_V4utilN3foo",
+        "_V4utilN1fN17_7bclosure_230_7d",
+        "_V3stdP2fsN8readFile",
+        "_V13http_2dserverP2h2P8outboundN10pumpStream",
+        "_V3libP1mN7_23main",
+        "_Gdrop_5Point",
+        "velt_main",
+        "velt_rt_panic",
+        "_V9broken",
+    ] {
+        assert!(!is_root_module(other), "{other} is not the root module's");
+    }
 }

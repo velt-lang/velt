@@ -6,6 +6,16 @@
 //! - placement (`place`) keeps call chains together: mutually recursive functions and small
 //!   callees go to the unit of their first caller, larger callees next to it, and units are
 //!   contiguous runs of such groups;
+//! - the root module's functions (the entry file's: `own_code`) get a unit of their own, the
+//!   last, and the library units are placed from the library's functions alone and import no
+//!   body of the root module: an edit of the entry file recompiles that unit only, and the
+//!   library units' modules come from the build cache (a static's name comes from its contents,
+//!   not its index, so the program's new strings rename nothing in them). An edit that changes
+//!   library code still recompiles the library units it changes: a new call of a library
+//!   function (velt_opt's inliner shares one budget across the program, so its decisions in
+//!   library code depend on the whole program), and a string literal equal to one a library
+//!   uses (equal strings are one static, which then becomes shared: its linkage changes in the
+//!   library units that define or copy it);
 //! - an internal function referenced from another unit (call, address, vtable slot) becomes a
 //!   `hidden` external symbol of its unit (its name is already unique in the program), and the
 //!   other units declare it `hidden` too, so their calls and address computations are direct and
@@ -117,8 +127,109 @@ pub(crate) fn count_for(total: usize) -> usize {
 pub(crate) fn plan(program: &vir::Program, count: usize) -> Plan {
     let count = count.clamp(1, program.funcs.len().max(1));
     let refs = References::of(program);
-    let owner = place::owners(program, &refs.weights, &refs.funcs, &refs.statics, count);
+    let exported: Vec<bool> = (program.funcs.iter())
+        .map(|f| f.linkage == vir::Linkage::Export)
+        .collect();
+    let owner = place::owners(&exported, &refs.weights, &refs.funcs, &refs.statics, count);
     assemble(program, &refs, &owner)
+}
+
+/// [`plan`] for a count chosen from the program's size (`unit_count` without a request): the
+/// root module (`own_code`) gets a unit of its own after the `count` library units, which are
+/// placed as if it were not there, so an edit of the entry file changes its unit only and the
+/// library units' modules, the same as before, come from the build cache. A requested count
+/// (`VELT_CODEGEN_UNITS`) is [`plan`]'s: exactly that many units.
+pub(crate) fn plan_apart(program: &vir::Program, count: usize) -> Plan {
+    let count = count.clamp(1, program.funcs.len().max(1));
+    match own_code(program) {
+        Some(own) if count >= 2 => {
+            let refs = References::of(program);
+            let owner = owners_apart(program, &refs, &own, count);
+            assemble(program, &refs, &owner)
+        }
+        _ => plan(program, count),
+    }
+}
+
+/// Per function: is it the root module's (the program's entry file), not std's, a package's or
+/// another module's? Its symbol says (`velt_vir::mangle`): the root module's items are named
+/// without a module (`main` → `_V4main`, `helper` → `_V6helper`, `P.get` → `_V1PM3get`), while
+/// every other module's are `<module>::<name>` (`_V4utilN3foo`, `_V3stdP2fsN8readFile`). So a
+/// symbol whose first segment is followed by its end, a member (`M`), type arguments (`_T`), a
+/// suffix (`$poll`) or a closure (`N` and an escaped `{`) is the root module's. Glue (`_G…`)
+/// and `velt_main`, which do not change with the program's code, stay with the libraries. The
+/// program's other modules are not told apart from packages (both are root-relative paths), so
+/// they stay with the libraries too. `None` unless the program has functions of both kinds.
+fn own_code(program: &vir::Program) -> Option<Vec<bool>> {
+    let own: Vec<bool> = program
+        .funcs
+        .iter()
+        .map(|f| is_root_module(&f.symbol))
+        .collect();
+    (own.contains(&true) && own.contains(&false)).then_some(own)
+}
+
+/// Is `symbol` a function of the root module ([`own_code`])?
+pub(crate) fn is_root_module(symbol: &str) -> bool {
+    let Some(rest) = symbol.strip_prefix("_V") else {
+        return false;
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    let Ok(len) = rest[..digits].parse::<usize>() else {
+        return false;
+    };
+    let Some(after) = rest.get(digits + len..) else {
+        return false;
+    };
+    after.is_empty()
+        || after.starts_with(['M', '$'])
+        || after.starts_with("_T")
+        || (after.strip_prefix('N')).is_some_and(|n| {
+            n.trim_start_matches(|c: char| c.is_ascii_digit())
+                .starts_with("_7b")
+        })
+}
+
+/// [`place::owners`] of the library functions alone, numbered among themselves, as if the
+/// program's own functions (`own`) were not there: adding, removing or growing those changes no
+/// library unit. The own functions all go to one more unit, the last.
+fn owners_apart(
+    program: &vir::Program,
+    refs: &References,
+    own: &[bool],
+    count: usize,
+) -> Vec<usize> {
+    let library: Vec<usize> = (0..own.len()).filter(|&f| !own[f]).collect();
+    let mut index = vec![usize::MAX; own.len()];
+    for (i, &f) in library.iter().enumerate() {
+        index[f] = i;
+    }
+    let renumber = |r: &Refs| Refs {
+        calls: r
+            .calls
+            .iter()
+            .filter(|&&f| !own[f])
+            .map(|&f| index[f])
+            .collect(),
+        addresses: (r.addresses.iter())
+            .filter(|&&f| !own[f])
+            .map(|&f| index[f])
+            .collect(),
+        statics: r.statics.clone(),
+    };
+    let exported: Vec<bool> = (library.iter())
+        .map(|&f| program.funcs[f].linkage == vir::Linkage::Export)
+        .collect();
+    let weights: Vec<usize> = library.iter().map(|&f| refs.weights[f]).collect();
+    let funcs: Vec<Refs> = library.iter().map(|&f| renumber(&refs.funcs[f])).collect();
+    let statics: Vec<Refs> = refs.statics.iter().map(renumber).collect();
+    let placed = place::owners(&exported, &weights, &funcs, &statics, count);
+    let units = placed.iter().max().map_or(0, |&u| u + 1);
+    let mut owner = vec![units; own.len()];
+    for (i, &f) in library.iter().enumerate() {
+        owner[f] = placed[i];
+    }
+    owner
 }
 
 /// The plan for a given unit of every function (`owner`; units numbered from 0, none empty).
@@ -161,6 +272,10 @@ fn assemble(program: &vir::Program, refs: &References, owner: &[usize]) -> Plan 
     let imported: Vec<bool> = (program.funcs.iter())
         .map(|f| f.linkage == vir::Linkage::Import)
         .collect();
+    // A library unit imports no body of the root module's (`own_code`): an edit of the program
+    // would change the library unit's module too.
+    let own = own_code(program).unwrap_or_default();
+    let is_own = |f: usize| own.get(f).copied().unwrap_or(false);
     for (i, &u) in owner.iter().enumerate() {
         if !imported[i] {
             units[u].defines.push(i);
@@ -179,7 +294,12 @@ fn assemble(program: &vir::Program, refs: &References, owner: &[usize]) -> Plan 
             .filter(|&&f| weights[f] <= IMPORT_CALLER_WEIGHT)
         {
             for &callee in &refs[f].calls {
-                if owner[callee] != u && weights[callee] <= IMPORT_WEIGHT && !imported[callee] {
+                let library_imports_own = is_own(callee) && !is_own(f);
+                if owner[callee] != u
+                    && weights[callee] <= IMPORT_WEIGHT
+                    && !imported[callee]
+                    && !library_imports_own
+                {
                     imports.insert(callee);
                 }
             }
