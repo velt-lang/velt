@@ -1,0 +1,17 @@
+// `as` from an interface to one that extends it, for interfaces of the program's own: refused, as
+// before. `tsc` allows it unchecked, and Node goes on with the object as it is; Velt can't hold an
+// `A` as a `B` it isn't, and checking it at the cast would stop a program Node runs on.
+interface A {
+  a(): string;
+}
+interface B extends A {
+  b: number;
+}
+class C implements A {
+  a(): string {
+    return "a";
+  }
+}
+const x: A = new C();
+const y = x as B;
+console.log(y.a(), y.b);

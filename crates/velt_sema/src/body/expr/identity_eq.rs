@@ -67,16 +67,21 @@ impl FnCx<'_, '_> {
                 .any(|p| p.iface == base || self.iface_extends(p.iface, base, depth + 1))
     }
 
-    /// `e as B` for an `A` value where `B` extends `A` (`node as HTMLElement`), which `tsc`
-    /// allows since one is assignable to the other: the value as an `any`, converted to `B` and
-    /// checked at run time as an `any` is (`Err`: not such a pair).
+    /// `e as B` for an `A` value where `B` extends `A`, both of std's `lib.dom` interfaces
+    /// (`node as HTMLElement`), which `tsc` allows since one is assignable to the other: the value
+    /// as an `any`, converted to `B` (`Err`: not such a pair). No such value exists on a server, so
+    /// the conversion never runs; between other interfaces it is still `cannot cast`, since the
+    /// check would stop a program where Node goes on.
     pub(super) fn related_iface_cast(
         &mut self,
         h: hir::Expr,
         target: TyId,
         span: velt_common::Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if !self.related_ifaces(h.ty, target) || self.cx.ty.opt_payload(target).is_some() {
+        if !self.related_ifaces(h.ty, target)
+            || self.cx.ty.opt_payload(target).is_some()
+            || !self.both_std_dom(h.ty, target)
+        {
             return Err(h);
         }
         let Some(any) = self.any_ty() else {
@@ -84,5 +89,15 @@ impl FnCx<'_, '_> {
         };
         let a = self.compared_operand(h, any);
         Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![a], target, span))
+    }
+
+    /// Are `a` and `b` (or what they hold besides `null`/`undefined`) both of std's `lib.dom`
+    /// interfaces?
+    fn both_std_dom(&self, a: TyId, b: TyId) -> bool {
+        let dom = |t: TyId| {
+            let t = self.cx.ty.core(t).unwrap_or(t);
+            matches!(self.cx.ty.kind(t), TyKind::Dyn(d, _) if self.cx.std_dom_iface(*d))
+        };
+        dom(a) && dom(b)
     }
 }
