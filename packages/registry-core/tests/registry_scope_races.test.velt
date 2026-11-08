@@ -142,6 +142,22 @@ describe("scopes under racing writes", () => {
     expect((await r.publish("@acme/y", "1.0.0", alice)).status).toBe(201);
   });
 
+  it(
+    "claim again when the claimer's own package of the scope's name changed meanwhile",
+    async () => {
+      const db = new RacingDb();
+      const r = over(db);
+      const alice = r.user("alice");
+      expect((await r.publish("foo", "1.0.0", alice)).status).toBe(201);
+      // The first claim, held to `foo` 1.0.0's revision, loses; the next one wins.
+      db.beforeScope = async (): Promise<void> => {
+        expect((await r.publish("foo", "1.1.0", alice)).status).toBe(201);
+      };
+      expect((await r.publish("@foo/x", "1.0.0", alice)).status).toBe(201);
+      expect((await r.db.scope("foo"))?.owners).toEqual(["alice"]);
+    },
+  );
+
   it("refuse a claim of a scope reserved after the publish's checks", async () => {
     const reserved = new MemoryNameReservations("https://example.test/ask");
     const blobs = new ReservingBlobs();

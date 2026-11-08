@@ -10,7 +10,7 @@
 import { guardedScope, normalizedName, splitScoped } from "../names";
 import { ScopeChange } from "../stores/scope_change";
 import { Caller } from "./caller";
-import { MAX_ATTEMPTS } from "./commit";
+import { backoff, MAX_ATTEMPTS } from "./commit";
 import { Refusal } from "./refusal";
 import { RegistryStores } from "./registry_stores";
 import { checkNotReserved } from "./reserved";
@@ -120,6 +120,7 @@ export async function claimScope(
     if (await stores.db.commitScope(new ScopeChange(scoped[0], 0, [user], packageRevision))) {
       return;
     }
+    await backoff(i);
   }
   throw new Refusal(503, `the scope \`@${scoped[0]}\` is changing too often right now; try again`);
 }
