@@ -203,10 +203,15 @@ impl FnCx<'_, '_> {
             then: Box::new(none),
             els: Box::new(body),
         };
+        let test = self.mk(kind, rty, span);
+        // A variable needs no binding of its own: the test and the rest read it (`l` is it).
+        if matches!(s.kind, hir::ExprKind::Local(x, _) if x == l) {
+            return test;
+        }
         let arms = vec![hir::Arm {
             pat: self.pat(hir::PatKind::Binding(l, mode), ty, span),
             guard: None,
-            body: self.mk(kind, rty, span),
+            body: test,
         }];
         let kind = hir::ExprKind::Match {
             scrutinee: Box::new(s),

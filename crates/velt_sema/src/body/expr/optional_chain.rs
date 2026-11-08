@@ -125,8 +125,12 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut s = self.link_object(inner, true, |s| s.test_operand(inner, None, Want::Borrow));
         let ty = s.ty;
-        let (l, mode) = self.option_binding(&s, ty, "<chain>", false);
-        if mode == UseMode::Move {
+        // A variable is read where it is; anything else is bound once.
+        let (l, mode) = match s.kind {
+            H::Local(x, m) => (x, m),
+            _ => self.option_binding(&s, ty, "<chain>", false),
+        };
+        if mode == UseMode::Move && !matches!(s.kind, H::Local(..)) {
             self.force_move(&mut s);
         }
         let read = match mode {
