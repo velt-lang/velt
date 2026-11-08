@@ -368,7 +368,12 @@ fn flake_guards(root: &Path, args: &Args) -> FlakeGuards {
     };
     FlakeGuards {
         repeat,
-        windows_packages: os::windows_packages(&paths, &skip),
+        windows_packages: os::windows_packages(&paths, &skip, |name| {
+            root.join("packages")
+                .join(name)
+                .join("package.velt")
+                .is_file()
+        }),
         windows_apps: zig::windows_apps(&paths, &skip),
     }
 }
