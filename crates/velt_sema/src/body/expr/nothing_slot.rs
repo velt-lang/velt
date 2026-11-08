@@ -104,7 +104,12 @@ impl FnCx<'_, '_> {
     /// Does the chain at `span`, expected as `exp`, take `undefined`: an `exp` that is dynamic or
     /// has `undefined`, a condition's test (`test_span`), or a link's object or printed value that takes it (`chain_span`). With nothing expected it keeps its
     /// payload's type, as TypeScript types `f?.v` of a `Foo` `f` (`number`).
+    /// Only a program that has loaded `Proxy` can hold a view; any other keeps the chain's own
+    /// type, and its code, everywhere.
     pub(super) fn undefined_fits(&self, exp: Option<TyId>, span: Span) -> bool {
+        if !self.uses_proxy() {
+            return false;
+        }
         self.test_span == Some(span)
             || self.chain_span == Some(span)
             || exp.is_some_and(|t| {
