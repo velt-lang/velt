@@ -81,7 +81,8 @@ fn unchanged_inputs_match() {
     std::fs::create_dir_all(&pkg).unwrap();
     let mut seen = seen;
     let now = probe::listing_hash(dir).unwrap();
-    seen.listed.insert(vpm::relpath::absolute(dir), now);
+    seen.listed
+        .insert(vpm::relpath::absolute(dir).into_os_string(), now);
     let stamp = render_of(&sm, &seen, &[]);
     assert_eq!(check(&stamp, &key, LATER), Some(2));
     std::fs::write(pkg.join("package.json"), "{}").unwrap();
@@ -242,7 +243,7 @@ fn a_rebuild_hashes_only_files_that_may_have_changed() {
     let stamp_path = dir.join("app.build-stamp");
     std::fs::write(&stamp_path, render_of(&sm, &seen, &[])).unwrap();
     set_time(&stamp_path, 2_000_000);
-    let abs = |p: &Path| vpm::relpath::absolute(p);
+    let abs = |p: &Path| vpm::relpath::absolute(p).into_os_string();
     // Marked, to tell a reused hash from one computed again.
     let marked = || {
         let mut known = known(&stamp_path);
@@ -411,6 +412,54 @@ fn entries_of_directories_in_turn_expand_to_their_own_paths() {
         assert_eq!(check(&text, &Key::of(&[b"opts"]), LATER), None, "{name}");
         std::fs::write(&path, before).unwrap();
     }
+}
+
+/// Entries are in byte order, where `a-b/` and `a.c/` come before `a/`, and `a/b/` between the
+/// files of `a/`: a directory that comes back is still one row of the table.
+#[test]
+fn a_directory_interrupted_by_others_is_one_row() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = vpm::relpath::absolute(tmp.path());
+    for sub in ["a/b", "a-b", "a.c"] {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+    }
+    let files = [
+        ("a-b/1.velt", "1"),
+        ("a.c/1.velt", "2"),
+        ("a/1.velt", "3"),
+        ("a/b/1.velt", "4"),
+        ("a/z.velt", "5"),
+    ];
+    let (sm, seen) = build(&dir, &files);
+    let text = render_of(&sm, &seen, &[]);
+    let rows: Vec<&str> = text.lines().filter(|l| l.starts_with("d ")).collect();
+    let unique: std::collections::HashSet<&&str> = rows.iter().collect();
+    assert_eq!(rows.len(), unique.len(), "{text}");
+    assert_eq!(check(&text, &Key::of(&[b"opts"]), LATER), Some(2), "{text}");
+    let entries = entry_lines(&text).unwrap();
+    for (name, _) in files {
+        let path = dir.join(name).display().to_string();
+        assert!(entries.iter().any(|e| e.ends_with(&path)), "{name}: {text}");
+    }
+}
+
+/// A stamp's text is UTF-8, so a name that isn't reads back as another path: a file with such a
+/// name is recorded, and the stamp doesn't match, rather than the file going unwatched.
+#[cfg(unix)]
+#[test]
+fn a_file_whose_name_is_not_utf8_is_not_left_out() {
+    use std::os::unix::ffi::OsStrExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = vpm::relpath::absolute(tmp.path());
+    let odd = dir.join(std::ffi::OsStr::from_bytes(b"a\xff.velt"));
+    if std::fs::write(&odd, "1").is_err() {
+        return; // This file system takes only UTF-8 names (APFS).
+    }
+    let ((), seen) = probe::record(|| {
+        assert!(probe::is_file(&odd));
+    });
+    let text = render_of(&SourceMap::new(), &seen, &[]);
+    assert_eq!(check(&text, &Key::of(&[b"opts"]), LATER), None, "{text}");
 }
 
 #[cfg(unix)]
