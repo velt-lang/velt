@@ -18,9 +18,24 @@ impl FnCx<'_, '_> {
         f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
     ) -> hir::Expr {
         let nothing = std::mem::take(&mut self.chain_nothing);
+        if let Some((inner, prop)) = self.nothing_link_parts(object, nothing) {
+            return self.nothing_link(inner, prop, span, f);
+        }
         let s = self.link_object(object, nothing, |s| {
             s.test_operand(object, None, Want::Borrow)
         });
+        self.optional_chain_rest(s, Some(object), nothing, span, f)
+    }
+
+    /// `optional_chain` once its object is checked (`s`; `object` its syntax, when it has one).
+    fn optional_chain_rest(
+        &mut self,
+        s: hir::Expr,
+        object: Option<&ast::Expr>,
+        nothing: bool,
+        span: Span,
+        f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
+    ) -> hir::Expr {
         let s = self.flatten_chain(s);
         // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
         if self
@@ -52,7 +67,9 @@ impl FnCx<'_, '_> {
             return f(self, s);
         };
         let (l, mode) = self.option_binding(&s, payload, "<chain>", false);
-        self.note_readonly_binding(l, object, &s);
+        if let Some(object) = object {
+            self.note_readonly_binding(l, object, &s);
+        }
         // A moved-in payload (the object was a temporary) is owned by the binding, which drops
         // it after the rest: the rest uses it as a place, moving out of it only if it consumes it.
         let use_mode = match mode {
@@ -68,6 +85,58 @@ impl FnCx<'_, '_> {
             set_place_mode(&mut r, UseMode::Borrow);
         }
         self.chain_match(s, l, mode, payload, r, span)
+    }
+
+    /// The object `inner` and member `prop` of a link `object` (`f?.inner` in `f?.inner?.v`) that
+    /// `nothing_link` checks: a chain that takes `undefined` on an `inner` of a type with no
+    /// nothing that may hold a view of one.
+    fn nothing_link_parts<'a>(
+        &mut self,
+        object: &'a ast::Expr,
+        nothing: bool,
+    ) -> Option<(&'a ast::Expr, &'a ast::Ident)> {
+        if !nothing {
+            return None;
+        }
+        let ast::ExprKind::Member {
+            object: inner,
+            prop,
+            optional: true,
+        } = &super::assign_paths::strip_parens(object).kind
+        else {
+            return None;
+        };
+        let t = self.peek_ty(inner)?;
+        let fits = self.cx.dynamic(t).is_none()
+            && self.present_payload(t).is_none()
+            && self.may_hold_nothing(t);
+        fits.then_some((inner, prop))
+    }
+
+    /// `inner?.prop?.<rest>` taking `undefined`, where `inner` may be a view of a nothing:
+    /// `undefined` when `inner` is one, else `inner.prop?.<rest>` on the field itself, read in
+    /// place. The chain tests `inner` once, and the field's own option once.
+    fn nothing_link(
+        &mut self,
+        inner: &ast::Expr,
+        prop: &ast::Ident,
+        span: Span,
+        f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
+    ) -> hir::Expr {
+        let mut s = self.link_object(inner, true, |s| s.test_operand(inner, None, Want::Borrow));
+        let ty = s.ty;
+        let (l, mode) = self.option_binding(&s, ty, "<chain>", false);
+        if mode == UseMode::Move {
+            self.force_move(&mut s);
+        }
+        let read = match mode {
+            UseMode::Move => UseMode::Borrow,
+            m => m,
+        };
+        let v = self.mk(H::Local(l, read), ty, span);
+        let field = self.member_of(v, prop, Want::Borrow, span);
+        let r = self.optional_chain_rest(field, None, true, span, f);
+        self.nothing_chain_match(s, (l, mode), r, span)
     }
 
     /// `match (s) { l => r (wrapped as `T | undefined`), nothing => undefined }`: the short-circuit of
