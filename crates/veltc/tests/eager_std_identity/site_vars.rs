@@ -2,8 +2,10 @@
 //! golden that mentions `Promise` or `async`, and every program in `site_vars_identity/`, built
 //! with `--emit vir` with the variables and with `VELT_NO_SITE_VARS=1` (the sets found by checking
 //! the program again), gives the same VIR and warnings, or fails with the same diagnostics, and
-//! the check with the variables takes no more rounds than the one without. The programs in
-//! [`KNOWN`] are compared too, and must still differ: one that no longer does leaves the list.
+//! the check with the variables of a program that builds takes no more rounds than the one
+//! without (one that fails is checked again without variables, for its diagnostics). The
+//! programs in [`KNOWN`] are compared too, and must differ as recorded: one that no longer
+//! differs leaves the list, and one that differs otherwise is looked at again.
 //!
 //! Long, a part of `eager_std_identity`, which `cargo xtask affected` runs with `--ignored`. With
 //! `VELT_VIR_IDENTITY=sample` it compares one program in [`SAMPLE_ONE_IN`].
@@ -14,32 +16,78 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// Programs that differ with and without variables, or take more rounds with them, before
-/// #2590 too (function types written without `throws`): #2602. Each is still compared, and the
-/// test fails when one no longer differs.
-const KNOWN: &[&str] = &[
-    "golden/bugs/lower_adapted_closure_kept.velt",
-    "golden/lang/any_fn_members.velt",
-    "golden/lang/ctor_value_identity.velt",
-    "golden/lang/ctor_values.velt",
-    "golden/lang/errors/assign_target_replaced_holder_values.velt",
-    "golden/lang/errors/http_server/http_handler_store_by_key.velt",
-    "golden/lang/generator_expression_captures.velt",
-    "golden/lang/generator_expression_contextual_type.velt",
-    "golden/lang/jsx_async_package_provider.velt",
-    "golden/lang/overloads_more.velt",
-    "golden/lang/promise_settled_borrowed_values.velt",
-    "golden/lang/rethrow_never_thrown_catch.velt",
-    "golden/lang/throws_fn_type_rethrow_chain.velt",
-    "golden/lang/throws_fn_type_values.velt",
-    "golden/std/catch_panic.velt",
-    "golden/std/throws_fn_type_revivers.velt",
+/// #2590 too (function types written without `throws`): #2602. Each with how it differs (what
+/// [`differs`] says), which the test checks.
+const KNOWN: &[(&str, &str)] = &[
+    (
+        "golden/bugs/lower_adapted_closure_kept.velt",
+        "with variables: agg#13 callsIt state size=64 align=8 { u32@16, agg#1@24, agg#5@40, ptr@56, u64@56 }\n  without: agg#13 callsIt state size=48 align=8 { u32@8, agg#1@16, ptr@32, i64@40, u64@32 }",
+    ),
+    (
+        "golden/lang/any_fn_members.velt",
+        "with variables:   let _2: agg#41 // <copy>\n  without:   let _2: agg#1",
+    ),
+    (
+        "golden/lang/ctor_value_identity.velt",
+        "with variables: agg#5  new (f64) => A } size=8 align=8 { ptr@0 }\n  without: agg#5  Ctor } size=8 align=8 { ptr@0 }",
+    ),
+    (
+        "golden/lang/ctor_values.velt",
+        "with variables: agg#1 T[] size=24 align=8 { ptr@0, u64@8, u64@16 }\n  without: agg#1 Result<void, std/prelude/errors::RangeError>::Ok size=1 align=1 { u8@0 }",
+    ),
+    (
+        "golden/lang/generator_expression_captures.velt",
+        "2 rounds with variables, 1 without",
+    ),
+    (
+        "golden/lang/generator_expression_contextual_type.velt",
+        "2 rounds with variables, 1 without",
+    ),
+    (
+        "golden/lang/jsx_async_package_provider.velt",
+        "2 rounds with variables, 1 without",
+    ),
+    (
+        "golden/lang/overloads_more.velt",
+        "with variables: fn#27 internal _Gthunk_env__V4mainN17_7bclosure_232_7d(ptr, f64, i64) -> f64 {\n  without: fn#27 internal _Gthunk_env__V4mainN17_7bclosure_231_7d(ptr, f64, i64) -> f64 {",
+    ),
+    (
+        "golden/lang/promise_settled_borrowed_values.velt",
+        "2 rounds with variables, 1 without",
+    ),
+    (
+        "golden/lang/rethrow_never_thrown_catch.velt",
+        "2 rounds with variables, 1 without",
+    ),
+    (
+        "golden/lang/throws_fn_type_rethrow_chain.velt",
+        "builds with variables: true; without: false",
+    ),
+    (
+        "golden/lang/throws_fn_type_values.velt",
+        "with variables: agg#24 run::{closure#1} env size=24 align=8 { ptr@0, ptr@8, ptr@16 }\n  without: agg#24 Result<f64, std/prelude/errors::Error>::Ok size=16 align=8 { u8@0, f64@8 }",
+    ),
+    (
+        "golden/std/catch_panic.velt",
+        "with variables: agg#2 Error | Refused | PanicError::Error size=16 align=8 { u32@0, ptr@8 }\n  without: agg#2 Error | PanicError::Error size=16 align=8 { u32@0, ptr@8 }",
+    ),
+    (
+        "golden/std/throws_fn_type_revivers.velt",
+        "with variables: agg#4 RegExpError | UrlError::RegExpError size=16 align=8 { u32@0, ptr@8 }\n  without: agg#4 UrlError | RegExpError::UrlError size=16 align=8 { u32@0, ptr@8 }",
+    ),
     // No promise: `const b: G = a` makes the sets of `F` and `G` one with variables, so the
     // `catch` around `a(1)` may catch an `E2`; without them `F`'s set is `E1` alone, and the
     // `instanceof E2` test is rejected as always false. The same before #2590: #2602.
-    "site_vars_identity/review_u1.velt",
+    (
+        "site_vars_identity/review_u1.velt",
+        "builds with variables: true; without: false",
+    ),
     // A store a check without variables misses (an argument after a spread), so its VIR differs,
     // before #2590 too: #2603.
-    "site_vars_identity/review_sp5.velt",
+    (
+        "site_vars_identity/review_sp5.velt",
+        "with variables: agg#4 main state size=56 align=8 { u32@0, agg#3@8, agg#1@32, ptr@48 }\n  without: agg#4 Result<void, E1>::Ok size=1 align=1 { u8@0 }",
+    ),
 ];
 
 /// One program in this many, in the sample.
@@ -87,7 +135,14 @@ fn vir(file: &Path, home: &Path, vars: bool) -> (bool, String, usize) {
         false => c.env("VELT_NO_SITE_VARS", "1"),
     };
     let out = c.output().unwrap();
-    let err = String::from_utf8_lossy(&out.stderr);
+    // Diagnostics name the file by its path: by its name alone, the same on every machine.
+    let dir = file.parent().unwrap().to_string_lossy().into_owned();
+    let local = |s: &[u8]| {
+        let s = String::from_utf8_lossy(s).into_owned();
+        s.replace(&format!("{dir}/"), "")
+            .replace(&format!("{dir}\\"), "")
+    };
+    let err = local(&out.stderr);
     // `velt-sema:   round: first   1.2 ms  x1`: the totals, one line per kind of round.
     let rounds = (err.lines())
         .filter(|l| l.starts_with("velt-sema:   round: "))
@@ -104,7 +159,7 @@ fn vir(file: &Path, home: &Path, vars: bool) -> (bool, String, usize) {
     let mut text = reported.join("\n");
     if out.status.success() {
         text.push_str("\n--- vir\n");
-        text.push_str(&String::from_utf8_lossy(&out.stdout));
+        text.push_str(&local(&out.stdout));
     }
     (out.status.success(), text, rounds)
 }
@@ -128,7 +183,7 @@ fn differs(file: &Path, home: &Path, built: &AtomicUsize) -> Option<String> {
             None => "one is longer".into(),
         });
     }
-    (rounds > plain_rounds)
+    (vars_ok && rounds > plain_rounds)
         .then(|| format!("{rounds} rounds with variables, {plain_rounds} without"))
 }
 
@@ -172,16 +227,21 @@ fn programs_with_promises_are_the_same_with_and_without_error_set_variables() {
             s.spawn(move || {
                 while let Some(file) = files.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let name = name_of(file);
-                    let known = KNOWN.contains(&name.as_str());
-                    match (differs(file, &home, built), known) {
-                        (Some(why), false) => found.lock().unwrap().push((name, why)),
-                        (None, true) => found.lock().unwrap().push((
-                            name,
+                    let known = KNOWN.iter().find(|(n, _)| *n == name).map(|(_, why)| *why);
+                    let why = match (differs(file, &home, built), known) {
+                        (Some(why), None) => why,
+                        (None, Some(_)) => {
                             "is the same with and without variables now: remove it from `KNOWN`"
-                                .into(),
-                        )),
-                        _ => {}
-                    }
+                                .into()
+                        }
+                        (Some(why), Some(was)) if why != was => {
+                            format!(
+                                "differs otherwise than `KNOWN` says:\n  {why}\n  recorded: {was}"
+                            )
+                        }
+                        _ => continue,
+                    };
+                    found.lock().unwrap().push((name, why));
                 }
             });
         }
