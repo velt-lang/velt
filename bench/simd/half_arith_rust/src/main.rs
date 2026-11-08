@@ -143,7 +143,20 @@ mod kernels {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let passes: usize = args[2].parse().unwrap();
+    let usage = || -> ! {
+        eprintln!("usage: half_arith <axpy|act|dot> <passes>");
+        std::process::exit(2)
+    };
+    if args.len() != 3 {
+        usage();
+    }
+    let passes: usize = args[2].parse().unwrap_or_else(|_| usage());
+    let kernel = match args[1].as_str() {
+        "axpy" => kernels::axpy,
+        "act" => kernels::act,
+        "dot" => kernels::dot,
+        _ => usage(),
+    };
     let mut x = Vec::with_capacity(N);
     let mut y = Vec::with_capacity(N);
     let mut z = vec![f16::from_bits(0); N];
@@ -152,11 +165,6 @@ fn main() {
         x.push(f16::from_bits(0x3000 + ((i % 97) * 31) as u16 | sign));
         y.push(f16::from_bits(0x2c00 + ((i % 89) * 37) as u16));
     }
-    let kernel = match args[1].as_str() {
-        "axpy" => kernels::axpy,
-        "act" => kernels::act,
-        _ => kernels::dot,
-    };
     let mut sum = 0u64;
     for _ in 0..passes {
         sum = sum.wrapping_add(unsafe { kernel(std::hint::black_box(&x), &mut y, &mut z) });

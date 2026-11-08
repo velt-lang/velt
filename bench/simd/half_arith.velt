@@ -4,7 +4,7 @@
 // `mulAddFast`. One kernel a run, called through a table as Rust's are `#[inline(never)]`;
 // half_arith.sh runs each with 0 and with `passes` passes and subtracts. It prints a checksum.
 //   velt run half_arith.velt <kernel> <passes>
-import { f16x8, u16x8 } from "velt/simd";
+import { f16x8 } from "velt/simd";
 
 const N: usize = 1048576;
 
@@ -84,8 +84,14 @@ function dotFast(x: f16[], y: f16[], z: f16[]): u64 {
 function main() {
   const names = ["axpy", "axpy_fast", "act", "act_fast", "dot", "dot_fast"];
   const kernels = [axpy, axpyFast, act, actFast, dot, dotFast];
-  const at = names.indexOf(process.argv[2]) as usize;
-  const passes = Number(process.argv[3]) as usize;
+  const found = process.argv.length == 4 ? names.indexOf(process.argv[2]) : -1;
+  const count = process.argv.length == 4 ? Number(process.argv[3]) : -1;
+  if (found < 0 || !Number.isInteger(count) || count < 0) {
+    console.error(`usage: half_arith.velt <${names.join("|")}> <passes>`);
+    process.exit(2);
+  }
+  const at = found as usize;
+  const passes = count as usize;
   const x: f16[] = [];
   const y: f16[] = [];
   const z: f16[] = [];

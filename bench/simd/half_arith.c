@@ -73,9 +73,15 @@ int main(int argc, char **argv) {
   const char *names[] = {"axpy", "act", "dot", "axpy_wide", "act_wide", "dot_wide"};
   kernel *const kernels[] = {axpy, act, dot, axpy_wide, act_wide, dot_wide};
   kernel *volatile k = 0;
-  for (int i = 0; i < 6; i++) if (!strcmp(argv[1], names[i])) k = kernels[i];
+  for (int i = 0; argc == 3 && i < 6; i++) if (!strcmp(argv[1], names[i])) k = kernels[i];
+  char *end;
+  long passes = argc == 3 ? strtol(argv[2], &end, 10) : -1;
+  if (!k || passes < 0 || *end) {
+    fprintf(stderr, "usage: half_arith <axpy|act|dot|axpy_wide|act_wide|dot_wide> <passes>\n");
+    return 2;
+  }
   uint64_t sum = 0;
-  for (int p = atoi(argv[2]); p > 0; p--) sum += k((float16_t *)x, (float16_t *)y, (float16_t *)z);
+  for (long p = passes; p > 0; p--) sum += k((float16_t *)x, (float16_t *)y, (float16_t *)z);
   for (int i = 0; i < N; i++) sum += (uint64_t)y[i] + z[i];
   printf("%llu\n", (unsigned long long)sum);
 }
