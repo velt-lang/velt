@@ -6,7 +6,7 @@ use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
 use super::rt::Rt;
 use super::{cint, unit, FnLower};
-use crate::vir::{Operand, Ty, STR_AGG};
+use crate::vir::{Operand, Place, Ty, STR_AGG};
 
 /// Initial capacity of a `console.log` line builder: most lines fit without growing.
 const LINE_CAP: u64 = 64;
@@ -29,7 +29,8 @@ impl FnLower<'_, '_> {
             let t = self.sub(a.ty);
             vals.push((v, t));
         }
-        if vals.iter().all(|&(_, t)| self.writes_directly(t)) {
+        let direct = |lw: &Self, t: TyId| lw.writes_directly(t) || lw.option_scalar(t).is_some();
+        if vals.iter().all(|&(_, t)| direct(self, t)) {
             self.print_direct(stream, vals);
         } else {
             self.print_formatted(stream, vals);
@@ -55,6 +56,10 @@ impl FnLower<'_, '_> {
         for (k, (v, t)) in vals.into_iter().enumerate() {
             if k > 0 {
                 self.write_byte(&stream, b' ');
+            }
+            if let Some((p, n)) = self.option_scalar(t) {
+                self.write_option(&stream, v, t, p, n);
+                continue;
             }
             match self.cx.kind(t) {
                 TyKind::Str => {
@@ -96,6 +101,17 @@ impl FnLower<'_, '_> {
         self.push_text(&bp, "\n");
         self.call_rt(Rt::WriteStr, vec![stream, bp.clone()], None);
         self.call_rt(Rt::StrbufDrop, vec![bp], None);
+    }
+
+    /// Write the number, string or boolean at `place` (of type `ty`) as `console.log` does.
+    pub(super) fn write_payload(&mut self, stream: &Operand, place: Place, ty: TyId) {
+        match self.cx.kind(ty) {
+            TyKind::Str => {
+                let a = self.addr(place);
+                self.call_rt(Rt::WriteStr, vec![stream.clone(), a], None);
+            }
+            _ => self.write_scalar(stream.clone(), Operand::Copy(place), ty),
+        }
     }
 
     fn write_byte(&mut self, stream: &Operand, b: u8) {

@@ -1,0 +1,28 @@
+1.5
+n = 1.5 !
+1.5 [1.5] 1.5 3
+undefined
+n = undefined !
+undefined [undefined] undefined 9
+-0
+n = -0 !
+0 [0] 0 1
+NaN
+n = NaN !
+NaN [NaN] NaN 3
+1e+21
+n = 1e+21 !
+1e+21 [1e+21] 1e+21 5
+42
+n = 42 !
+42 [42] 42 2
+text
+<text> text 4
+null
+<null> null was null
+
+<>  0
+true true true
+false false false
+undefined undefined undefined
+2 null 4|null
