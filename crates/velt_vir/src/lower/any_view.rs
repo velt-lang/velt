@@ -205,20 +205,10 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
-    /// Does the option at `p` (of type `ty`) hold a value, as a pattern and `=== null` see it:
-    /// a pointer option whose payload may be a view of a nothing (a `T | null` given a `T` that
-    /// holds `null!`) holds that nothing then, so `??`, `?.`, `if (x)` and `switch` see `null`.
+    /// Does the option at `p` (of type `ty`) hold a value, as a pattern and `=== null` see it.
+    /// An option never holds a view of a nothing (view_options.rs): it is the option's own test.
     pub(super) fn option_present(&mut self, p: &Place, ty: TyId) -> Operand {
-        let some = self.option_is_some(p, ty);
-        let TyKind::Option(e, _) = self.cx.kind(ty) else {
-            return some;
-        };
-        if self.cx.ty(ty) != Ty::Ptr || !self.holds_view(e) {
-            return some;
-        }
-        let nil = self.view_nothing(Operand::Copy(p.clone()), true);
-        let real = self.rvalue_temp(Ty::Bool, Rvalue::Unary(vir::UnOp::Not, nil));
-        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, some, real))
+        self.option_is_some(p, ty)
     }
 
     /// In `AnyTo` to the union `ty` (`n` variants) of the `any` at `p` (owned) that holds none

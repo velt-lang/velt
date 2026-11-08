@@ -1,0 +1,17 @@
+// A `T | null` variable initialized from a `T` that holds `null` through `null!`, which a
+// narrowing reads as its `T` (#2350): it holds `null`, so `??`, `?.`, `!`, printing and a
+// member read behave as in Node (the read is Node's `TypeError`).
+type Title = { title: string };
+function run(a: Title): void {
+  const asOpt: Title | null = a;
+  console.log(asOpt ?? "none");
+  console.log(asOpt?.title, !asOpt, asOpt);
+  try {
+    console.log(asOpt.title);
+  } catch (e) {
+    console.log("caught", e instanceof TypeError, (e as Error).message);
+  }
+}
+const nothing: Title = null as any;
+run(nothing);
+run({ title: "real" });

@@ -237,8 +237,9 @@ impl FnLower<'_, '_> {
         } else {
             self.some_payload(&p, oty)
         };
-        self.move_payload(inner, &p, &payload, pty, mode)
-            .unwrap_or(Operand::Copy(payload))
+        let v =
+            (self.move_payload(inner, &p, &payload, pty, mode)).unwrap_or(Operand::Copy(payload));
+        self.unwrapped_view(v, pty, oty)
     }
 
     /// Sema unwraps a narrowed local directly (nothing can change it unseen) and a narrowed
@@ -421,11 +422,8 @@ impl FnLower<'_, '_> {
                 let oty = self.sub(inner.ty);
                 let p = self.place_expr_with(inner, pre);
                 self.check_narrowed_field(inner, &p, oty);
-                if self.sub(e.ty) == oty {
-                    p
-                } else {
-                    self.some_payload(&p, oty)
-                }
+                let ety = self.sub(e.ty);
+                self.unwrapped_place(p, oty, ety)
             }
             K::UnwrapVariant { expr, variant, .. } => {
                 let ety = self.sub(expr.ty);
