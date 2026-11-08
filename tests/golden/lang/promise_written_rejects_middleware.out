@@ -1,0 +1,9 @@
+[ok /a]
+error 400: empty
+error 403: denied
+[later /later]
+error 503: unavailable
+[object /obj]
+error 404: no route for /missing
+ok /a
+caught 400 empty

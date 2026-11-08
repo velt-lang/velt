@@ -53,8 +53,9 @@ pub(crate) struct VarSets {
     edges: Vec<Vec<u32>>,
     /// Variables a check assumed empty (a `catch` variable's type).
     assumed_empty: Vec<u32>,
-    /// A function value of a known error type stored as a site's: the set must be that type.
-    exact: Vec<(u32, TyId)>,
+    /// A function value of a known error type stored as a site's, or a promise or a rejected
+    /// value retyped as one with a variable (`promise_vars`): the set must be that type.
+    pub(super) exact: Vec<(u32, TyId)>,
     /// `t` with every variable replaced by `never` (the type as written).
     plain: FxHashMap<TyId, TyId>,
     /// The earliest type id each plain or solved type stands for: the id it would have in a
@@ -86,7 +87,7 @@ impl VarSets {
         self.first.insert(t, plain.0);
     }
 
-    fn ensure(&mut self, v: u32) {
+    pub(super) fn ensure(&mut self, v: u32) {
         while self.parent.len() <= v as usize {
             let n = self.parent.len() as u32;
             self.parent.push(n);
@@ -110,7 +111,7 @@ impl VarSets {
         r
     }
 
-    fn union(&mut self, a: u32, b: u32) {
+    pub(super) fn union(&mut self, a: u32, b: u32) {
         let (a, b) = (self.find(a), self.find(b));
         if a == b {
             return;
@@ -768,9 +769,12 @@ impl Ctx<'_> {
     /// The solved sets as seeds for checking the program again (`FnSites::fallback`).
     pub(crate) fn var_seeds(&mut self) {
         self.fn_sites.fallback();
-        let spans = self.fn_sites.vars.clone();
-        for (v, span) in spans.into_iter().enumerate() {
-            let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v as u32), vec![]));
+        // Every site of a variable: a function type's result `Promise<T>` shares its function
+        // type's (`fn_types`), and a check without variables has a set for each.
+        let mut spans: Vec<(TyId, velt_common::Span)> =
+            (self.fn_sites.var_of.iter()).map(|(s, v)| (*v, *s)).collect();
+        spans.sort_by_key(|(v, s)| (v.0, s.file, s.lo, s.hi));
+        for (var, span) in spans {
             let s = self.fn_sites.solved.get(&var).copied();
             let Some(s) = s.filter(|s| *s != self.ty.never) else {
                 continue;

@@ -83,6 +83,9 @@ pub(crate) struct FnSites {
     pub(super) by_file: FxHashMap<velt_common::FileId, Vec<usize>>,
     /// `seeds` with what this check found added.
     pub(super) found: FnTypeSeeds,
+    /// What a check without variables would have added to `found` for the stores the
+    /// variables took (`promise_vars`): added to it when the program is checked again.
+    pub(super) quiet: FxHashMap<Span, Vec<Portable>>,
     pub(super) grew: bool,
     /// What a call through a function type may throw beyond its type ([`Ctx::indirect_error`]),
     /// for the current `found`.
@@ -107,6 +110,11 @@ pub(crate) struct FnSites {
     /// The result type of an async function is being resolved: its `Promise<T>` rejects with
     /// what the body throws, so it is no site (`promise_sites`).
     pub async_ret: bool,
+    /// Where a `Promise<T>` that gets an error-set variable is written (`promise_vars`): the
+    /// result of a function type, a function or a closure. Elsewhere (a type argument, a
+    /// method's result, a variable's type) a promise type is compared as written, so the sites
+    /// there take their errors by checking again.
+    pub promise_var_at: Option<Span>,
     /// The result type of a generator function is being resolved: its `Generator<T>` throws
     /// what the body throws, so it is no site (`generator_sites`).
     pub generator_ret: bool,
@@ -186,6 +194,8 @@ impl FnSites {
     pub(super) fn fallback(&mut self) {
         self.found.no_vars = true;
         self.grew = true;
+        let quiet = std::mem::take(&mut self.quiet);
+        merge_seeds(&mut self.found, quiet);
     }
 
     /// The check with error-set variables reported errors, and a type with a variable failed
@@ -194,6 +204,7 @@ impl FnSites {
     pub fn doubted(&self, errors: bool) -> Option<FnTypeSeeds> {
         (self.use_vars && self.doubt.get() && errors).then(|| {
             let mut s = self.found.clone();
+            merge_seeds(&mut s, self.quiet.clone());
             s.no_vars = true;
             s.exact = true;
             s
@@ -250,6 +261,7 @@ impl Ctx<'_> {
             }
         }
         let never = self.ty.never;
+        let ret_span = ret.span;
         let throws_clause = throws;
         let err = throws.map(|t| {
             let e = self.resolve_type(t, env);
@@ -265,7 +277,7 @@ impl Ctx<'_> {
                 let e = self.canon_error(Some(e)).unwrap_or(never);
                 self.ty.promise_rejecting(v, e)
             }
-            _ => self.resolve_type(ret, env),
+            _ => self.resolve_promise_var_at(ret, env),
         };
         let inferred = throws.is_none();
         // A trap of std/proxy gets a variable in every check with variables, unless the previous
@@ -274,10 +286,23 @@ impl Ctx<'_> {
             true => self.fn_sites.use_vars && !self.fn_sites.seeds.sites.contains_key(&span),
             false => self.fn_sites.user_vars,
         };
-        let err = match err {
-            Some(e) => self.canon_error(Some(e)),
-            None if gets_var => self.site_var(span, env.module),
-            None => self.site_error(span, env.module),
+        // A `Promise<T>` result written without an error type has a variable of its own
+        // (`promise_sites`): the function type's errors are what its promise rejects with, so
+        // the function type's site shares it.
+        let ret_var = match self.ty.kind(ret) {
+            TyKind::Promise(_, e) if gets_var && self.fn_sites.var_of.get(&ret_span) == Some(e) => {
+                Some(*e)
+            }
+            _ => None,
+        };
+        let err = match (err, ret_var) {
+            (Some(e), _) => self.canon_error(Some(e)),
+            (None, Some(v)) => {
+                self.fn_sites.var_of.insert(span, v);
+                Some(v)
+            }
+            (None, None) if gets_var => self.site_var(span, env.module),
+            (None, None) => self.site_error(span, env.module),
         };
         let var_site = inferred && err.is_some() && gets_var;
         let inferred = inferred && err.is_some() && !gets_var;
@@ -367,7 +392,7 @@ impl Ctx<'_> {
 
     /// The error-set variable of the site at `span` in module `module` (`None` outside user
     /// modules).
-    fn site_var(&mut self, span: Span, module: usize) -> Option<TyId> {
+    pub(super) fn site_var(&mut self, span: Span, module: usize) -> Option<TyId> {
         if !self.site_module(module) || span == Span::DUMMY {
             return None;
         }
@@ -676,6 +701,18 @@ impl Ctx<'_> {
             self.seed_fn_sites(to, have, site);
         }
         Some(false)
+    }
+}
+
+/// Add the sets `more` to `seeds`.
+fn merge_seeds(seeds: &mut FnTypeSeeds, more: FxHashMap<Span, Vec<Portable>>) {
+    for (s, ms) in more {
+        let set = seeds.sites.entry(s).or_default();
+        for m in ms {
+            if !set.contains(&m) {
+                set.push(m);
+            }
+        }
     }
 }
 

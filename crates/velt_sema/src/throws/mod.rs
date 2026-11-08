@@ -24,6 +24,7 @@ mod hints;
 mod infer;
 mod inits;
 mod promise_sites;
+mod promise_vars;
 mod sets;
 mod vars;
 
