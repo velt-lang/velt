@@ -65,7 +65,7 @@ pub(super) fn parse_owner(args: Vec<OsString>) -> Result<Command, String> {
     if let Some(flag) = args.iter().find(|a| a.starts_with('-')) {
         return Err(super::unknown_option("owner", flag));
     }
-    let usage = "usage: velt owner list <pkg> | velt owner add <pkg> <user> | velt owner remove <pkg> <user>";
+    let usage = "usage: velt owner list <pkg|@scope> | velt owner add <pkg|@scope> <user> | velt owner remove <pkg|@scope> <user>";
     let (action, package) = match args.as_slice() {
         [cmd, pkg] if cmd == "list" => (OwnerAction::List, pkg),
         [cmd, pkg, user] if cmd == "add" => (OwnerAction::Add(user.clone()), pkg),

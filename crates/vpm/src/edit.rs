@@ -8,7 +8,7 @@ use velt_syntax::ast::{Expr, ExprKind, ItemKind, ObjectProp};
 
 use crate::manifest::write::{dependency_lit, key};
 use crate::manifest::{
-    check_dependency, is_valid_package_name, Dependency, DetailedDependency, Manifest,
+    check_dependency, is_valid_dependency_name, Dependency, DetailedDependency, Manifest,
     MANIFEST_FILE,
 };
 
@@ -31,7 +31,7 @@ pub fn add_dependency_text(
     name: &str,
     spec: &DependencySpec,
 ) -> Result<String, String> {
-    if !is_valid_package_name(name) {
+    if !is_valid_dependency_name(name) {
         return Err(format!("invalid package name `{name}`"));
     }
     let dep = match (&spec.version, &spec.path) {

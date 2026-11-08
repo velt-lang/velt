@@ -58,18 +58,14 @@ pub fn search_within(
 pub fn search_local(root: &Path, query: &str) -> Result<Vec<Hit>, String> {
     let query = query.trim().to_lowercase();
     let terms: Vec<&str> = query.split_whitespace().collect();
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return Ok(Vec::new());
-    };
     let mut ranked = Vec::new();
     // Keywords and descriptions are in the indexes, so every package's index is read: fine for
     // a registry directory of today's size; a large registry would keep them in memory.
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !crate::manifest::is_valid_package_name(&name) {
+    for name in crate::registry::package_names(root) {
+        if !crate::manifest::is_valid_dependency_name(&name) {
             continue;
         }
-        let path = entry.path().join(INDEX_FILE);
+        let path = root.join(&name).join(INDEX_FILE);
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };

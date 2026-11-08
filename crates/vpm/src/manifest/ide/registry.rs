@@ -301,7 +301,7 @@ pub fn diagnostics(
         else {
             continue;
         };
-        if !crate::manifest::is_valid_package_name(&dep.name) {
+        if !crate::manifest::is_valid_dependency_name(&dep.name) {
             continue; // the reader reports it
         }
         let Some(index) = lookup(&dep.name) else {

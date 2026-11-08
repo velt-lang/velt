@@ -595,8 +595,7 @@ pub fn split_scoped(name: &str) -> Option<(&str, &str)> {
 
 /// Whether `name` may name a package in `package.velt` (`name` and `dependencies`): a valid
 /// [package name](is_valid_package_name), or a scoped one, `@scope/name`, whose two parts are
-/// lowercase words like a package name's. Registries hold unscoped packages only, so a scoped
-/// package is a local (`path`) dependency.
+/// lowercase words like a package name's.
 pub fn is_valid_dependency_name(name: &str) -> bool {
     match split_scoped(name) {
         Some((scope, rest)) => is_valid_scope_part(scope) && is_valid_scope_part(rest),
@@ -606,7 +605,7 @@ pub fn is_valid_dependency_name(name: &str) -> bool {
 
 /// One part of a scoped name: lowercase letters and digits starting with one, words joined by
 /// single `-` or `_`, not a Windows device name (each part is a directory in `node_modules`).
-fn is_valid_scope_part(part: &str) -> bool {
+pub fn is_valid_scope_part(part: &str) -> bool {
     let mut chars = part.chars();
     !is_windows_device_name(part)
         && name_separators_ok(part)

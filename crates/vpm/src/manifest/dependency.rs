@@ -83,11 +83,6 @@ pub(crate) fn check_dependency(name: &str, dep: &Dependency) -> Result<(), Strin
             "dependency `{name}` needs a `version`, a `path`, a `git` repository or a `url`"
         ));
     }
-    if split_scoped(name).is_some() && dep.path().is_none() && !remote {
-        return Err(format!(
-            "dependency `{name}` needs a `path`: registries hold unscoped packages only"
-        ));
-    }
     if let Some(req) = dep.version() {
         semver::VersionReq::parse(req).map_err(|e| {
             format!("dependency `{name}`: invalid version requirement `{req}`: {e}")

@@ -13,7 +13,6 @@ import {
 } from "./chars";
 import { Dependency } from "./dependency";
 import { isValidRequirement } from "../semver/requirement";
-import { splitScoped } from "../names";
 
 function gitUrlOk(url: string): string | null {
   const schemes = ["https://", "http://", "ssh://", "git://", "file://"];
@@ -125,9 +124,6 @@ export function checkDependency(name: string, d: Dependency): string | null {
   }
   if (version == null && d.path == null && d.git == null) {
     return `dependency \`${name}\` needs a \`version\`, a \`path\` or a \`git\` repository`;
-  }
-  if (splitScoped(name) != null && d.path == null && d.git == null) {
-    return `dependency \`${name}\` needs a \`path\`: registries hold unscoped packages only`;
   }
   if (version != null && !isValidRequirement(version)) {
     return `dependency \`${name}\`: invalid version requirement \`${version}\``;

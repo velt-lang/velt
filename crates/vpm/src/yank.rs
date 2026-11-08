@@ -38,7 +38,7 @@ pub fn yank_local(loc: &Locations, name: &str, version: &str, yanked: bool) -> R
 
 /// The normalized version, or why `name`@`version` can't be yanked.
 fn check(name: &str, version: &str) -> Result<String, String> {
-    if !crate::manifest::is_valid_package_name(name) {
+    if !crate::manifest::is_valid_dependency_name(name) {
         return Err(format!("invalid package name `{name}`"));
     }
     semver::Version::parse(version)

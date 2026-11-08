@@ -216,8 +216,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   package's registry (local, or remote: owners only). Resolution skips yanked versions unless
   `velt.lock.json` pins them; `add` without a version picks the newest stable version not yanked
   (the newest pre-release not yanked if there is no stable one).
-- `owner list|add|remove <pkg> [<user>]` (additive): a package's owners on a registry server
-  (`list` prints one per line on stdout); an error for a local registry.
+- `owner list|add|remove <pkg|@scope> [<user>]` (additive): a package's owners on a registry
+  server, or with `@scope` (no `/name`) a scope's (`/api/v1/scopes/<scope>/owners`, registry-core
+  servers); `list` prints one per line on stdout; an error for a local registry.
+- `add @scope/name[@<req>]` (additive): the version's `@` is the one after the scope's.
 - `login <registry-url>` / `logout <registry-url>` (additive): `login` reads one line from stdin
   (prompting on stderr when stdin is a terminal) and stores it as the token of that registry in
   `$VELT_HOME/credentials.json`: `{"registries": {"<url>": {"token": "…"}}}`, keys with the scheme
