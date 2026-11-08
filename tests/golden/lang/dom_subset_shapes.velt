@@ -38,6 +38,18 @@ function anchorOf(e: HTMLElement): HTMLAnchorElement {
 function elementOf(n: Node): HTMLElement {
   return n as HTMLElement;
 }
+// A base converts to an interface that adds no property of its own in `lib.dom`, as `tsc` relates
+// them by shape: `HTMLSpanElement` is an `HTMLElement`, and `Comment` and `Text` are both just
+// `CharacterData`.
+function audioOf(m: HTMLMediaElement): HTMLAudioElement {
+  return m;
+}
+function spanOf(e: HTMLElement): HTMLSpanElement {
+  return e;
+}
+function commentOf(t: Text): Comment {
+  return t;
+}
 
 // Collections index, iterate and convert like arrays.
 function selected(sel: HTMLSelectElement): string[] {
@@ -74,6 +86,7 @@ const rendered = component((n) => {
 });
 
 console.log(typeof asNode, typeof htmlAsNode, typeof heldAsNode, typeof anchorOf, typeof elementOf);
+console.log(typeof audioOf, typeof spanOf, typeof commentOf);
 console.log(typeof mount, typeof skip, typeof selected, typeof wire, rendered);
 try {
   console.log(document.createComment("x").appendChild(document.createTextNode("y")));

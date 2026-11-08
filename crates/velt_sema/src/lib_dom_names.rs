@@ -371,7 +371,32 @@ const NAMES: &str =
     XMLHttpRequestUpload XMLSerializer XPathEvaluator XPathEvaluatorBase XPathExpression \
     XPathNSResolver XPathResult XSLTProcessor webkitURL ";
 
-/// Is `name` a type of `lib.dom`?
+/// Is `name` a type of `lib.dom`? (A search of the names, split once.)
 pub(crate) fn is_lib_dom_type(name: &str) -> bool {
-    NAMES.split(' ').any(|n| n == name)
+    static SORTED: std::sync::OnceLock<Vec<&str>> = std::sync::OnceLock::new();
+    let names = SORTED.get_or_init(|| NAMES.split(' ').filter(|n| !n.is_empty()).collect());
+    names.binary_search(&name).is_ok()
 }
+
+/// The interfaces of std/lang/dom that declare no property of their own in `lib.dom` and
+/// extend one interface: `tsc` relates them to their base by shape, so the base converts to
+/// them (`HTMLElement` to `HTMLSpanElement`), sorted.
+pub(crate) const SAME_SHAPE: [(&str, &str); 17] = [
+    ("Comment", "CharacterData"),
+    ("HTMLAudioElement", "HTMLMediaElement"),
+    ("HTMLHeadElement", "HTMLElement"),
+    ("HTMLPictureElement", "HTMLElement"),
+    ("HTMLSpanElement", "HTMLElement"),
+    ("SVGAnimateElement", "SVGAnimationElement"),
+    ("SVGAnimateMotionElement", "SVGAnimationElement"),
+    ("SVGAnimateTransformElement", "SVGAnimationElement"),
+    ("SVGDefsElement", "SVGGraphicsElement"),
+    ("SVGFEFuncAElement", "SVGComponentTransferFunctionElement"),
+    ("SVGFEFuncBElement", "SVGComponentTransferFunctionElement"),
+    ("SVGFEFuncGElement", "SVGComponentTransferFunctionElement"),
+    ("SVGFEFuncRElement", "SVGComponentTransferFunctionElement"),
+    ("SVGGElement", "SVGGraphicsElement"),
+    ("SVGMetadataElement", "SVGElement"),
+    ("SVGTSpanElement", "SVGTextPositioningElement"),
+    ("SVGTextElement", "SVGTextPositioningElement"),
+];
