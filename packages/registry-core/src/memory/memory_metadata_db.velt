@@ -1,42 +1,89 @@
 // registry-core: a `MetadataDb` in memory, for tests and for trying a registry out.
 
+import { normalizedName } from "../names";
+import { IndexEntry } from "../server/index_entry";
 import { PackageIndex } from "../server/package_index";
 import { MetadataDb } from "../stores/metadata_db";
+import { PackageChange } from "../stores/package_change";
+import { PackageRecord } from "../stores/package_record";
+import { SearchEntry } from "../stores/search_entry";
 
-/** Indexes and owners in maps; it hands out and keeps copies, as a database would. */
+// `record`'s copy, sharing nothing with it.
+function copyOf(record: PackageRecord): PackageRecord {
+  return new PackageRecord(record.index.copy(), [...record.owners], record.revision);
+}
+
+/**
+ * Records in a map; it hands out and keeps copies, as a database would. A commit applies only the
+ * change's `changed` entries and owners to the record it has, as a database keeping one row per
+ * version does, so a change that leaves an entry out shows in tests.
+ */
 export class MemoryMetadataDb implements MetadataDb {
-  private indexes: Map<string, PackageIndex> = new Map();
-  private ownerLists: Map<string, string[]> = new Map();
+  private records: Map<string, PackageRecord> = new Map();
 
-  async index(name: string): Promise<PackageIndex | null> {
-    return this.indexes.get(name)?.copy() ?? null;
+  async record(name: string): Promise<PackageRecord | null> {
+    const found = this.records.get(name);
+    return found == null ? null : copyOf(found);
   }
 
-  async putIndex(name: string, index: PackageIndex): Promise<void> {
-    this.indexes.set(name, index.copy());
+  async revision(name: string): Promise<i64> {
+    return this.records.get(name)?.revision ?? 0;
+  }
+
+  async commit(change: PackageChange): Promise<bool> {
+    const current = this.records.get(change.name);
+    if ((current?.revision ?? 0) != change.base) {
+      return false;
+    }
+    // Checked and set with no `await` between: a commit is one step, as a database's
+    // transaction is, so two first publishes of one name can't both get here.
+    if (current == null && this.spellingNow(normalizedName(change.name)) != null) {
+      return false;
+    }
+    const index = current?.index.copy() ?? new PackageIndex(change.name);
+    for (const e of change.changed) {
+      const at = index.versions.findIndex((v: IndexEntry): bool => v.version == e.version);
+      if (at < 0) {
+        index.versions.push(e.copy());
+      } else {
+        index.versions[at] = e.copy();
+      }
+    }
+    const owners = change.owners != null ? [...change.owners] : [...(current?.owners ?? [])];
+    this.records.set(change.name, new PackageRecord(index, owners, change.base + 1));
+    return true;
+  }
+
+  // The published name whose `normalizedName` is `normalized`, or null.
+  private spellingNow(normalized: string): string | null {
+    for (const [name, _] of this.records) {
+      if (normalizedName(name) == normalized) {
+        return name;
+      }
+    }
+    return null;
+  }
+
+  async spelling(normalized: string): Promise<string | null> {
+    return this.spellingNow(normalized);
   }
 
   async packageNames(): Promise<string[]> {
     const names: string[] = [];
-    for (const [name, _] of this.indexes) {
+    for (const [name, _] of this.records) {
       names.push(name);
     }
     return names;
   }
 
-  async searchCandidates(terms: string[]): Promise<PackageIndex[]> {
-    const out: PackageIndex[] = [];
-    for (const [_, index] of this.indexes) {
-      out.push(index.copy());
+  async searchCandidates(terms: string[]): Promise<SearchEntry[]> {
+    const out: SearchEntry[] = [];
+    for (const [name, record] of this.records) {
+      const shown = record.index.newest();
+      if (shown != null) {
+        out.push(new SearchEntry(name, shown.copy()));
+      }
     }
     return out;
-  }
-
-  async owners(name: string): Promise<string[]> {
-    return [...(this.ownerLists.get(name) ?? [])];
-  }
-
-  async putOwners(name: string, owners: string[]): Promise<void> {
-    this.ownerLists.set(name, [...owners]);
   }
 }

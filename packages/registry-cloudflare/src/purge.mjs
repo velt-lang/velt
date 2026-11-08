@@ -19,7 +19,7 @@ export default (host) => ({
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ files }),
-      // The registry holds the package's lock meanwhile, and the client waits.
+      // The write is committed by now, and the client waits for its answer.
       signal: AbortSignal.timeout(PURGE_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`the purge answered ${res.status}`);

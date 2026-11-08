@@ -3,7 +3,7 @@
 The package registry's rules in Velt ([#1740](https://github.com/velt-lang/velt/issues/1740)): what
 a registry accepts, with the definitions `velt` uses, so a registry written in Velt and the `velt`
 client agree, and the registry's HTTP API over pluggable storage (`BlobStore`, `MetadataDb`,
-`PublishLock`, `CachePurge`, `AuthProvider`), for the Cloudflare host and for `velt registry
+`CachePurge`, `AuthProvider`), for the Cloudflare host and for `velt registry
 serve` alike ([#1325](https://github.com/velt-lang/velt/issues/1325)).
 
 ```ts ignore
@@ -11,7 +11,6 @@ import { serve } from "http-server";
 import {
   MemoryBlobStore,
   MemoryMetadataDb,
-  MemoryPublishLock,
   RecordingCachePurge,
   Registry,
   TokenAuth,
@@ -20,7 +19,6 @@ import {
 const registry = new Registry({
   blobs: new MemoryBlobStore(),
   db: new MemoryMetadataDb(),
-  lock: new MemoryPublishLock(),
   purge: new RecordingCachePurge(),
   auth: new TokenAuth(), // open: anyone may publish until it has a user
 });
@@ -72,11 +70,23 @@ const manifest = readManifest(text); // ManifestError when vpm would refuse it
   characters Windows refuses, a trailing dot or space), for `target` directories and `.git`
   under any spelling, above a size and file-count limit, and for native code where the host
   takes none (`RegistryLimits`). Native libraries answer 501 for now. A publish reads its body
-  and checks the archive before it takes the package's lock, so a stalled or large upload holds
-  up no other write. A cache purge that fails after a write is logged and
-  fails nothing: the write stands, and the cache shows old answers until they expire.
+  and checks the archive before it commits anything, so a stalled or large upload holds up no
+  other write. A cache purge that fails after a write is logged and fails nothing: the write
+  stands, and the cache shows old answers until they expire.
+- **Writes without locks** (`src/server/commit.velt`): a write reads the package's record,
+  checks itself against it and commits a change made from that revision (`MetadataDb.commit`,
+  compare-and-set). One that lost a race is tried again from a fresh read, after a short random
+  wait, and answers 503 after 32 tries. Then the handler writes the package's index file.
+- **Static files** (`BlobStore`, `src/stores/static_files.velt`): what clients read, as #1325's
+  protocol lays them out, so any static host or bucket can serve them: archives at
+  `blobs/sha256/<hex>`, which never change, and each package's index at `index/<name>.json`,
+  rewritten after each write with the revision it shows, and only over the copy read and only
+  when that copy is older (`BlobStore.putIfTag`), so an older index never replaces a newer one,
+  even from a write that stopped half-way. `GET /api/v1/<name>/index` answers that file.
 - **Stores** (`src/stores/`): the interfaces a host implements, and in-memory adapters
-  (`src/memory/`) for tests and for trying a registry out.
+  (`src/memory/`) for tests and for trying a registry out. `MetadataDb` holds small rows: a
+  record per package (versions, owners, revision) and a search entry; reads of an index never
+  reach it.
 
 `crates/veltc/tests/registry_core.rs` checks every rule against the Rust it must agree with
 (vpm, the `semver` crate) over some 5,000 listed and generated cases, among them manifests

@@ -1,28 +1,36 @@
 // registry-core: what a registry knows about its packages (#1325's `MetadataDb`): each package's
-// index (its published versions) and its owners. SQLite natively, D1 on Cloudflare. Users and
-// their tokens are the `AuthProvider`'s.
+// versions, owners and revision, and a search row. SQLite natively, D1 on Cloudflare. Users and
+// their tokens are the `AuthProvider`'s. The index clients read is a static file the handler
+// writes from it (`BlobStore`), so reads never reach the database.
 
-import { PackageIndex } from "../server/package_index";
+import { PackageChange } from "./package_change";
+import { PackageRecord } from "./package_record";
+import { SearchEntry } from "./search_entry";
 
 /**
- * The packages of a registry. The handler changes a package only while it holds that package's
- * `PublishLock`, so an adapter needs no transactions of its own; it must not hand out objects
- * the handler's changes would reach before `putIndex`/`putOwners` (return copies).
+ * The packages of a registry. Writes are compare-and-set: the handler reads a record, checks the
+ * write against it, and commits a `PackageChange` made from that revision; one that lost a race
+ * is retried from a fresh read. So no lock is needed. An adapter hands out copies: nothing the
+ * handler changes reaches it before `commit`.
  */
 export interface MetadataDb {
-  /** The index of package `name`, or null when it was never published. */
-  index(name: string): Promise<PackageIndex | null>;
-  /** Replaces the index of package `name` (creating it on its first publish). */
-  putIndex(name: string, index: PackageIndex): Promise<void>;
+  /** Package `name`'s record, or null when it was never published. */
+  record(name: string): Promise<PackageRecord | null>;
+  /** Package `name`'s revision: 0 when it was never published. */
+  revision(name: string): Promise<i64>;
+  /**
+   * Applies `change` atomically, only if package `change.name` is still at revision
+   * `change.base`, and, for a new name (`base` 0), no published name has its `normalizedName`.
+   * Raises the revision by one. Resolves to whether it applied the change; false changes nothing.
+   */
+  commit(change: PackageChange): Promise<bool>;
+  /** The published name whose `normalizedName` is `normalized`, or null. */
+  spelling(normalized: string): Promise<string | null>;
   /** Every published package's name, in any order. */
   packageNames(): Promise<string[]>;
   /**
-   * The packages a search for `terms` (lowercased, each a word) may find, each with its index:
-   * every package, or fewer when the adapter can rule some out. The handler ranks them.
+   * What a search for `terms` (lowercased, each a word) may find: each package with a version
+   * that isn't yanked, or fewer when the adapter can rule some out. The handler ranks them.
    */
-  searchCandidates(terms: string[]): Promise<PackageIndex[]>;
-  /** The owners of package `name`, in the order they were added; empty when it has none. */
-  owners(name: string): Promise<string[]>;
-  /** Replaces the owners of package `name`. */
-  putOwners(name: string, owners: string[]): Promise<void>;
+  searchCandidates(terms: string[]): Promise<SearchEntry[]>;
 }

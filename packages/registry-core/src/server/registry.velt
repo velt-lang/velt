@@ -48,8 +48,9 @@ function isApi(p: string[]): bool {
 
 /**
  * A package registry. Reads are public; writes (publishing, yanking, owners) need a user's
- * token unless the registry is open, and an owner for a published package. Each write holds its
- * package's `PublishLock`, taken only once the caller may write. A store that fails answers 500
+ * token unless the registry is open, and an owner for a published package. A write commits only
+ * if its package hasn't changed since it was read, and is tried again otherwise; then the
+ * package's index file, the static file clients read, is written. A store that fails answers 500
  * with its message.
  */
 export class Registry {

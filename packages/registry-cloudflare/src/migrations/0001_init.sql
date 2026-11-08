@@ -1,8 +1,22 @@
--- The registry's D1 database. `index_json` is a package's index as `index.json` holds it in
--- every registry (registry-core's `PackageIndex.toJson`).
+-- The registry's D1 database: small rows only. Clients read each package's index as a static file
+-- in R2, which the Worker writes from these rows after each write, so reads never reach here.
+
+-- `revision` rises by one with each committed write: a write commits only from the revision it read
+-- (compare-and-set). `normalized` is registry-core's `normalizedName`: one per package.
 CREATE TABLE packages (
   name TEXT PRIMARY KEY,
-  index_json TEXT NOT NULL
+  normalized TEXT NOT NULL UNIQUE,
+  revision INTEGER NOT NULL
+);
+
+-- One row per version, `entry_json` its entry as `index.json` has it; `position` keeps them in
+-- publication order.
+CREATE TABLE versions (
+  package TEXT NOT NULL,
+  version TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  entry_json TEXT NOT NULL,
+  PRIMARY KEY (package, version)
 );
 
 -- `position` keeps owners in the order they were added. An owner is a user, so a user who owns
@@ -12,6 +26,13 @@ CREATE TABLE owners (
   position INTEGER NOT NULL,
   user TEXT NOT NULL REFERENCES users (name),
   PRIMARY KEY (package, position)
+);
+
+-- The entry a search shows for each package (the version `velt add` picks); none when every
+-- version is yanked.
+CREATE TABLE search (
+  package TEXT PRIMARY KEY,
+  entry_json TEXT NOT NULL
 );
 
 -- `github_id` is the GitHub account a user signs in with (null for one an administrator added):

@@ -4,7 +4,7 @@ export const pkg: Package = {
   name: "registry-cloudflare",
   version: "0.1.0",
   description:
-    "The Velt package registry on Cloudflare Workers: registry-core over R2, D1 and a Durable Object",
+    "The Velt package registry on Cloudflare Workers: registry-core over R2 and D1, with GitHub sign-in",
   dependencies: {
     cloudflare: { path: "../cloudflare" },
     "http-server": { path: "../http-server" },
@@ -16,8 +16,8 @@ export const pkg: Package = {
     "registry-cloudflare": "./src/purge.mjs",
     "registry-cloudflare-github": "./src/github.mjs",
   },
-  // Its own host, not host-cloudflare: a Durable Object's class has to be exported by the Worker's
-  // entry, so the entry here also holds the publish lock's class.
+  // Its own host, not host-cloudflare, for the files a deployment needs: wrangler.toml with the
+  // registry's bindings, and the database's schema.
   host: {
     target: "wasm32-unknown-unknown",
     condition: "workers",

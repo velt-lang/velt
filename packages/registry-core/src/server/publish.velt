@@ -6,8 +6,8 @@
 // free, and native code only where the host accepts it. Then the archive is stored by its
 // checksum, the first publisher of a new package becomes its owner, and the version joins the
 // index; versions are immutable. The body is read and the archive checked before the package's
-// lock is taken (the Rust server has the body whole before its lock), so a stalled or large
-// upload holds up nothing but itself.
+// write is committed, so a stalled or large upload holds up nothing but itself. A write commits
+// only if the package hasn't changed since it was read (`commitChange`), so none needs a lock.
 
 import { EncodingError, utf8Decode } from "velt/encoding";
 import { ArchiveEntry, contentChecksum, MANIFEST_FILE, packArchive } from "../archive";
@@ -18,18 +18,20 @@ import { ManifestError } from "../manifest/manifest_error";
 import { isValidPackageName, normalizedName } from "../names";
 import { readPackageArchive } from "../package_archive";
 import { Version } from "../semver/version";
-import { ownerOf } from "./access";
+import { PackageChange } from "../stores/package_change";
+import { PackageRecord } from "../stores/package_record";
+import { archiveKey } from "../stores/static_files";
+import { authorize, isPublished, ownerOf, writer } from "./access";
 import { text } from "./answer";
 import { Caller } from "./caller";
+import { commitChange, indexPaths, mendIndexFile } from "./commit";
 import { IndexEntry } from "./index_entry";
 import { PackageIndex } from "./package_index";
 import { publishPathProblem } from "./publish_policy";
-import { purgeAfterWrite } from "./purge_after_write";
 import { Refusal } from "./refusal";
 import { RegistryLimits } from "./registry_limits";
 import { RegistryStores } from "./registry_stores";
 import { declaredLength, tooLarge, uploadBody } from "./upload_body";
-import { indexPath } from "./yank";
 
 // The archive's entries and checksum, after the checks of its format, checksum and the publish
 // policy.
@@ -107,77 +109,17 @@ function requirements(m: Manifest): Map<string, string> {
 // A new package's name may not differ from a published one's only in `-` versus `_`: their
 // native functions, init functions and library files would share names.
 async function checkNameIsFree(stores: RegistryStores, name: string): Promise<void> {
-  const norm = normalizedName(name);
-  for (const other of await stores.db.packageNames()) {
-    if (other != name && normalizedName(other) == norm) {
-      throw new Refusal(
-        400,
-        `cannot publish \`${name}\`: the registry has \`${other}\`, and names that differ only in \`-\` and \`_\` count as the same; choose another name`,
-      );
-    }
+  const other = await stores.db.spelling(normalizedName(name));
+  if (other != null && other != name) {
+    throw new Refusal(
+      400,
+      `cannot publish \`${name}\`: the registry has \`${other}\`, and names that differ only in \`-\` and \`_\` count as the same; choose another name`,
+    );
   }
-}
-
-// The new version's index entry and the index it joins, once every check has passed.
-async function newEntry(
-  stores: RegistryStores,
-  m: Manifest,
-  sum: string,
-): Promise<[PackageIndex, IndexEntry]> {
-  const deps = requirements(m);
-  const version = Version.parse(m.version);
-  const existing = await stores.db.index(m.name);
-  if (existing == null) {
-    await checkNameIsFree(stores, m.name);
-  }
-  const index = existing ?? new PackageIndex(m.name);
-  for (const e of index.versions) {
-    if (Version.isValid(e.version) && Version.parse(e.version).compare(version) == 0) {
-      throw new Refusal(
-        409,
-        `\`${m.name}\` ${version.toString()} is already published (bump \`version\` in package.velt)`,
-      );
-    }
-  }
-  const entry = new IndexEntry(version.toString(), sum);
-  entry.description = m.description;
-  entry.keywords = [...m.keywords];
-  entry.dependencies = deps;
-  return [index, entry];
-}
-
-// Stores the version: its archive, its first owner (the publisher of a new package, recorded
-// first, so a package is never published without its owner), then its index entry.
-async function store(
-  stores: RegistryStores,
-  caller: Caller,
-  index: PackageIndex,
-  entry: IndexEntry,
-  entries: ArchiveEntry[],
-): Promise<void> {
-  await stores.blobs.putIfAbsent(entry.checksum, packArchive(entries));
-  const name = index.name;
-  const user = caller.user;
-  const claimed = user != null && (await stores.db.owners(name)).length == 0;
-  if (claimed && user != null) {
-    await stores.db.putOwners(name, [user]);
-  }
-  index.versions.push(entry);
-  try {
-    await stores.db.putIndex(name, index);
-  } catch (e) {
-    // A failed publish takes the claim back, so the name stays free for anyone.
-    if (claimed) {
-      await stores.db.putOwners(name, []);
-    }
-    throw e;
-  }
-  await purgeAfterWrite(stores, [indexPath(name), `/api/v1/${name}/${entry.version}`, "/"]);
 }
 
 // The upload `body`'s entries, checksum and manifest, once the archive, the publish policy, the
-// manifest and the host's limits accept it. Nothing here reads a store, so it runs before the
-// package's lock: a large archive is hashed without holding up the package's other publishers.
+// manifest and the host's limits accept it. Nothing here reads a store.
 function checkedUpload(
   limits: RegistryLimits,
   req: Request,
@@ -199,19 +141,52 @@ function checkedUpload(
   return [entries, sum, m];
 }
 
-// Publishes the checked upload, holding the package's lock. The caller is checked again: the
-// owners may have changed while the body arrived.
-async function publishUpload(
+// The new version's index entry, from the manifest and the archive's checksum.
+function newEntry(m: Manifest, sum: string): IndexEntry {
+  const deps = requirements(m);
+  const entry = new IndexEntry(Version.parse(m.version).toString(), sum);
+  entry.description = m.description;
+  entry.keywords = [...m.keywords];
+  entry.dependencies = deps;
+  return entry;
+}
+
+// The change publishing `entry` makes to package `name`, from its `record` (null when new): the
+// caller checked again (the owners may have changed while the body arrived), the version free,
+// and for a new package, its name free and its publisher its first owner.
+async function publishChange(
   stores: RegistryStores,
-  req: Request,
+  caller: Caller,
   name: string,
-  upload: [ArchiveEntry[], string, Manifest],
-): Promise<Response> {
-  const [entries, sum, m] = upload;
-  const caller = await ownerOf(stores, req, name);
-  const [index, entry] = await newEntry(stores, m, sum);
-  await store(stores, caller, index, entry, entries);
-  return text(201, `published \`${name}\` ${entry.version}\n`);
+  entry: IndexEntry,
+  record: PackageRecord | null,
+): Promise<PackageChange> {
+  authorize(record, name, caller);
+  if (record == null) {
+    await checkNameIsFree(stores, name);
+  }
+  const index = record?.index.copy() ?? new PackageIndex(name);
+  const version = Version.parse(entry.version);
+  for (const e of index.versions) {
+    if (Version.isValid(e.version) && Version.parse(e.version).compare(version) == 0) {
+      if (e.checksum == entry.checksum) {
+        // Most likely this publish tried again after its index file failed: write it now.
+        await mendIndexFile(stores, name);
+      }
+      throw new Refusal(
+        409,
+        `\`${name}\` ${entry.version} is already published (bump \`version\` in package.velt)`,
+      );
+    }
+  }
+  index.versions.push(entry);
+  const change = new PackageChange(name, record?.revision ?? 0, index);
+  change.changed = [entry];
+  const user = caller.user;
+  if (record == null && user != null) {
+    change.owners = [user];
+  }
+  return change;
 }
 
 /** Publishes package `name` `version` from the archive in `req`'s body. */
@@ -230,20 +205,34 @@ export async function publish(
   if (declaredLength(req.headers.get("content-length")) > limits.maxArchiveBytes) {
     throw tooLarge(limits.maxArchiveBytes);
   }
-  // Only a caller who may publish gets a body read.
+  // Only a caller who may publish gets a body read: an owner, or for a new name, any user whose
+  // name doesn't collide with a published one's.
   await ownerOf(stores, req, name);
-  // Any valid token passes the owner check for a new name, and the other spelling of a published
-  // package's name shares that package's lock: it's refused before the lock (and checked again
-  // inside it, where two publishes of a new name can't race).
-  if ((await stores.db.index(name)) == null) {
+  if (!(await isPublished(stores, name))) {
     await checkNameIsFree(stores, name);
   }
   const body = await uploadBody(req, limits.maxArchiveBytes);
-  const upload = checkedUpload(limits, req, name, version, body);
-  const held = await stores.lock.acquire(normalizedName(name));
-  try {
-    return await publishUpload(stores, req, name, upload);
-  } finally {
-    await held.release();
-  }
+  const [entries, sum, m] = checkedUpload(limits, req, name, version, body);
+  const entry = newEntry(m, sum);
+  // Checked against the package as it is before the archive is stored, so a publish refused
+  // (a version that exists, an owner removed meanwhile) stores nothing.
+  const now = await stores.db.record(name);
+  await publishChange(stores, await writer(stores, req), name, entry.copy(), now);
+  // Stored before the commit, by its checksum: only a publish that loses a race after this leaves
+  // an archive nothing names, and one retried stores nothing new.
+  await stores.blobs.putIfAbsent(archiveKey(sum), packArchive(entries));
+  // Each try asks who the caller is again: a token taken away while the body arrived stops here.
+  await commitChange(
+    stores,
+    name,
+    [...indexPaths(name), `/api/v1/${name}/${entry.version}`, "/"],
+    async (record: PackageRecord | null): Promise<PackageChange | null> => await publishChange(
+      stores,
+      await writer(stores, req),
+      name,
+      entry.copy(),
+      record,
+    ),
+  );
+  return text(201, `published \`${name}\` ${entry.version}\n`);
 }

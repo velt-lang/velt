@@ -1,0 +1,15 @@
+// registry-core: what a static file's store says about the copy it holds.
+
+/**
+ * A stored file's `tag` (changes with every write: an R2 etag), and the revision of the record it
+ * was written from (`BlobStore.putIfTag`; 0 when none was given).
+ */
+export class StoredFile {
+  tag: string;
+  revision: i64;
+
+  constructor(tag: string, revision: i64) {
+    this.tag = tag;
+    this.revision = revision;
+  }
+}

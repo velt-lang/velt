@@ -2,7 +2,7 @@
 // crates/velt_registry's tests check it: tokens, owners, an open registry, and names that would
 // leave a registry directory.
 import { describe, expect, it } from "velt/test";
-import { Caller, MemoryPublishLock, TokenAuth, tokenHash } from "../src/lib";
+import { Caller, TokenAuth, tokenHash } from "../src/lib";
 import { TestRegistry } from "./_registry";
 
 // A registry with users alice (owner of the published `lib`) and bob; returns their tokens.
@@ -97,7 +97,7 @@ describe("owners", () => {
     expect(taken.text).toContain("velt registry owner add");
     expect((await r.publish("lib", "1.1.0", alice)).status).toBe(403);
     // ...until an administrator assigns an owner; a new package is still its first publisher's.
-    await r.db.putOwners("lib", ["alice"]);
+    await r.setOwners("lib", ["alice"]);
     expect((await r.call("DELETE", "lib/1.0.0/yank", alice)).status).toBe(200);
     expect((await r.publish("lib", "1.1.0", alice)).status).toBe(201);
     expect((await r.publish("fresh", "1.0.0", alice)).status).toBe(201);
@@ -114,9 +114,9 @@ describe("owners", () => {
       `dependencies: { lib: { path: "../lib" } }`,
     );
     expect(refused.status).toBe(400);
-    expect(await r.db.owners("taken")).toEqual([]);
+    expect(await r.owners("taken")).toEqual([]);
     expect((await r.publish("taken", "1.0.0", bob)).status).toBe(201);
-    expect(await r.db.owners("taken")).toEqual(["bob"]);
+    expect(await r.owners("taken")).toEqual(["bob"]);
   });
 });
 
@@ -153,25 +153,5 @@ describe("names", () => {
     expect((await r.call("PUT", `lib/1.0.0/native/${target}`, alice)).status).toBe(501);
     expect((await r.call("GET", `lib/1.0.0/native/${target}`)).status).toBe(501);
     expect((await r.call("GET", "lib/1.0.0/native/sparc-sun-solaris")).status).toBe(400);
-  });
-});
-
-describe("the publish lock", () => {
-  it("holds a key until it is released, and other keys meanwhile", async () => {
-    const lock = new MemoryPublishLock();
-    const order: string[] = [];
-    const first = await lock.acquire("my_pkg");
-    const second = (async (): Promise<void> => {
-      const held = await lock.acquire("my_pkg");
-      order.push("second");
-      await held.release();
-    })();
-    const other = await lock.acquire("other");
-    order.push("other");
-    await other.release();
-    order.push("first released");
-    await first.release();
-    await second;
-    expect(order).toEqual(["other", "first released", "second"]);
   });
 });

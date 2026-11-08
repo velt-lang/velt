@@ -1,0 +1,14 @@
+// registry-core: what a search looks at for one package.
+
+import { IndexEntry } from "../server/index_entry";
+
+/** Package `name` and the version a search shows: the one `velt add` picks. */
+export class SearchEntry {
+  name: string;
+  entry: IndexEntry;
+
+  constructor(name: string, entry: IndexEntry) {
+    this.name = name;
+    this.entry = entry;
+  }
+}

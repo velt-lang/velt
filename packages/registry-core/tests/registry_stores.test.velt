@@ -1,65 +1,115 @@
-// The registry over stores that wait, fail or lose data (src/server/registry.velt, publish.velt):
-// writes to one package hold its lock, a failed write takes its owner claim back, a failing
-// store answers 500, and what the cache in front is told to forget. An upload's body is read
-// outside the lock, and a cache that can't be purged fails no write.
-import { channel, Channel } from "velt/sync";
+// The registry over stores that race, fail or lose data (src/server/registry.velt, commit.velt,
+// publish.velt): a write commits only from the revision it read, and is tried again from a fresh
+// read when another write committed first; the index file is written after, and again while a
+// newer revision landed; a failing store answers 500; and what the cache in front is told to
+// forget. An upload's body is read before anything is committed, and a cache that can't be purged
+// fails no write.
 import { describe, expect, it } from "velt/test";
 import {
   contentChecksum,
-  HeldLock,
+  IndexEntry,
+  indexKey,
   MemoryBlobStore,
   MemoryMetadataDb,
-  MemoryPublishLock,
-  normalizedName,
+  PackageChange,
   PackageIndex,
   packArchive,
   RecordingCachePurge,
   RegistryLimits,
   StoreError,
+  tokenHash,
 } from "../src/lib";
 import { Answer, packageFiles, TestRegistry } from "./_registry";
 
-// A database whose `packageNames` waits for a token from `gate` (while it is set).
-class GatedDb extends MemoryMetadataDb {
-  gate: Channel<bool> | null = null;
+// A database that lists the packages it was asked to commit, and can let another write commit
+// first: `race`, when set, runs once before the next commit of its package.
+class RacingDb extends MemoryMetadataDb {
+  commits: string[] = [];
+  race: ((db: MemoryMetadataDb) => Promise<void>) | null = null;
 
-  override async packageNames(): Promise<string[]> {
-    const gate = this.gate;
-    if (gate != null) {
-      await gate.receive();
+  override async commit(change: PackageChange): Promise<bool> {
+    this.commits.push(change.name);
+    const race = this.race;
+    if (race != null) {
+      this.race = null;
+      await race(this);
     }
-    return await super.packageNames();
+    return await super.commit(change);
   }
 }
 
-// A database whose `putIndex` fails.
+// A database where every write loses its race.
+class LosingDb extends MemoryMetadataDb {
+  tries: i64 = 0;
+
+  override async commit(change: PackageChange): Promise<bool> {
+    this.tries++;
+    return false;
+  }
+}
+
+// A database whose commits fail.
 class FailingDb extends MemoryMetadataDb {
-  override async putIndex(name: string, index: PackageIndex): Promise<void> {
+  override async commit(change: PackageChange): Promise<bool> {
     throw new StoreError("the database is down");
   }
 }
 
 // A database that fails with an error no adapter worded for clients.
 class BrokenDb extends MemoryMetadataDb {
-  override async putIndex(name: string, index: PackageIndex): Promise<void> {
+  override async commit(change: PackageChange): Promise<bool> {
     throw new Error("open /srv/registry/db.sqlite: permission denied");
   }
 }
 
-// A blob store that has lost every blob.
+// A blob store that has lost every file.
 class EmptyBlobs extends MemoryBlobStore {
   override async get(key: string): Promise<u8[] | null> {
     return null;
   }
 }
 
-// A lock that lists the keys it was asked for, in order.
-class RecordingLock extends MemoryPublishLock {
-  keys: string[] = [];
+// A blob store whose next index write runs `meanwhile` first (another write landing while this
+// one writes its file), or fails when `fail` is set. With `failAfter`, its next write that stores
+// its file then fails all the same, as a write whose answer timed out.
+class SlowIndexBlobs extends MemoryBlobStore {
+  meanwhile: (() => Promise<void>) | null = null;
+  fail: bool = false;
+  failAfter: bool = false;
 
-  override async acquire(key: string): Promise<HeldLock> {
-    this.keys.push(key);
-    return await super.acquire(key);
+  override async putIfTag(
+    key: string,
+    bytes: u8[],
+    revision: i64,
+    tag: string | null,
+  ): Promise<bool> {
+    if (this.fail) {
+      this.fail = false;
+      throw new StoreError("the blob store is down");
+    }
+    const meanwhile = this.meanwhile;
+    if (meanwhile != null) {
+      this.meanwhile = null;
+      await meanwhile();
+    }
+    const stored = await super.putIfTag(key, bytes, revision, tag);
+    if (stored && this.failAfter) {
+      this.failAfter = false;
+      throw new StoreError("the blob store timed out");
+    }
+    return stored;
+  }
+}
+
+// A blob store where another write always lands first.
+class ContendedBlobs extends MemoryBlobStore {
+  override async putIfTag(
+    key: string,
+    bytes: u8[],
+    revision: i64,
+    tag: string | null,
+  ): Promise<bool> {
+    return false;
   }
 }
 
@@ -68,6 +118,28 @@ class FailingPurge extends RecordingCachePurge {
   override async purge(paths: string[]): Promise<void> {
     throw new StoreError("the cache is down");
   }
+}
+
+// What `db` has for package `name`, version by version: `version` and `y` when yanked.
+async function versionsOf(db: MemoryMetadataDb, name: string): Promise<string[]> {
+  const record = await db.record(name);
+  return (record?.index.versions ?? []).map(
+    (e: IndexEntry): string => `${e.version}${e.yanked ? "y" : ""}`,
+  );
+}
+
+// Publishes `name` `version` into `db` through a registry of its own, as another write would: by
+// `owner`, or on an open registry when `owner` is "".
+async function commitVersion(
+  db: MemoryMetadataDb,
+  name: string,
+  version: string,
+  owner: string,
+  blobs: MemoryBlobStore = new MemoryBlobStore(),
+): Promise<void> {
+  const r = new TestRegistry(new RegistryLimits(), db, blobs);
+  const token = owner.length > 0 ? r.user(owner) : "";
+  expect((await r.publish(name, version, token)).status).toBe(201);
 }
 
 // An upload of `lib` 1.0.0 whose body arrives only when `finish` is called.
@@ -96,22 +168,21 @@ class SlowUpload {
   }
 }
 
-describe("the lock", () => {
-  // A package of alice's, a user who owns nothing, and a lock that starts counting after that.
+describe("commits", () => {
+  // A package of alice's, a user who owns nothing, and a database that lists commits after that.
   async function published(
     limits: RegistryLimits = new RegistryLimits(),
-  ): Promise<[TestRegistry, RecordingLock]> {
-    const lock = new RecordingLock();
-    const r = new TestRegistry(limits, new MemoryMetadataDb(), new MemoryBlobStore(), lock);
+  ): Promise<[TestRegistry, RacingDb]> {
+    const db = new RacingDb();
+    const r = new TestRegistry(limits, db);
     r.user("bob");
     await r.publish("my-lib", "1.0.0", r.user("alice"));
-    lock.keys = [];
-    return [r, lock];
+    db.commits = [];
+    return [r, db];
   }
 
-  it("isn't taken for a request that can't write", async () => {
-    const [r, lock] = await published();
-    // No such route, whatever its third part is.
+  it("aren't tried for a request that can't write", async () => {
+    const [r, db] = await published();
     for (const [method, path] of [
       ["POST", "/a/b/my-lib"],
       ["DELETE", "/x/y/my-lib"],
@@ -134,8 +205,7 @@ describe("the lock", () => {
         expect(answer.status == 401 || answer.status == 403).toBe(true);
       }
     }
-    // The other spelling of a published package's name shares its lock, and isn't published: any
-    // valid token passes the owner check for it, so the lock has to wait for the name to exist.
+    // The other spelling of a published package's name isn't published.
     for (const token of [r.user("bob"), r.user("alice")]) {
       for (const [method, path] of [
         ["PUT", "my_lib/1.0.0/yank"],
@@ -145,16 +215,15 @@ describe("the lock", () => {
       ]) {
         expect((await r.call(method, path, token)).status).toBe(404);
       }
-      // A publish to that spelling is refused for the name, before its lock.
       expect((await r.publish("my_lib", "1.0.0", token)).status).toBe(400);
     }
-    expect(lock.keys).toEqual([]);
+    expect(db.commits).toEqual([]);
   });
 
-  it("isn't taken for an archive the registry refuses", async () => {
+  it("aren't tried for an archive the registry refuses", async () => {
     const limits = new RegistryLimits();
     limits.nativePackages = false;
-    const [r, lock] = await published(limits);
+    const [r, db] = await published(limits);
     const alice = r.user("alice");
     const files = packageFiles("my-lib", "2.0.0");
     const bad = await r.upload("my-lib", "2.0.0", packArchive(files), "sha256:00", alice);
@@ -181,59 +250,197 @@ describe("the lock", () => {
       alice,
     );
     expect(refused.status).toBe(400);
-    expect(lock.keys).toEqual([]);
+    expect(db.commits).toEqual([]);
   });
 
-  it("is taken by an owner's write, by the package's normalized name", async () => {
-    const [r, lock] = await published();
+  it("are tried again from a fresh read when another write committed first", async () => {
+    const [r, db] = await published();
     const alice = r.user("alice");
+    // A publish of 1.1.0 loses to one of 1.0.1, and a yank to one of 1.0.2: neither is lost.
+    db.race = async (d: MemoryMetadataDb): Promise<void> => await commitVersion(
+      d,
+      "my-lib",
+      "1.0.1",
+      "alice",
+    );
+    expect((await r.publish("my-lib", "1.1.0", alice)).status).toBe(201);
+    db.race = async (d: MemoryMetadataDb): Promise<void> => await commitVersion(
+      d,
+      "my-lib",
+      "1.0.2",
+      "alice",
+    );
     expect((await r.call("PUT", "my-lib/1.0.0/yank", alice)).status).toBe(200);
-    expect((await r.call("PUT", "my-lib/owners/bob", alice)).status).toBe(200);
-    const key = normalizedName("my-lib");
-    expect(lock.keys).toEqual([key, key]);
+    expect(await versionsOf(db, "my-lib")).toEqual(["1.0.0y", "1.0.1", "1.1.0", "1.0.2"]);
+    expect((await db.record("my-lib"))?.revision).toBe(5);
+    // The index file shows them all.
+    const file = (await r.call("GET", "my-lib/index")).text;
+    for (const v of [`"1.0.1"`, `"1.1.0"`, `"1.0.2"`]) {
+      expect(file).toContain(v);
+    }
   });
 
-  it("is no help to an owner removed while waiting for it", async () => {
+  it("check the caller again after losing a race", async () => {
     for (const [method, path] of [
       ["PUT", "my-lib/1.0.0/yank"],
       ["PUT", "my-lib/owners/bob"],
     ]) {
-      const [r, lock] = await published();
-      const key = normalizedName("my-lib");
-      await r.db.putOwners("my-lib", ["alice", "carol"]);
+      const [r, db] = await published();
       r.user("carol");
-      // Another write holds the lock while carol, still an owner, gets past the first check.
-      const other = await lock.acquire(key);
-      const waiting = r.call(method, path, r.user("carol"));
-      // timing: only waits for the call to reach the lock; the deadline is a hang guard.
-      const deadline = Date.now() + 60000;
-      while (lock.keys.length < 2) {
-        expect(Date.now() < deadline).toBe(true);
-        await sleep(1);
-      }
-      await r.db.putOwners("my-lib", ["alice"]);
-      await other.release();
-      expect((await waiting).status).toBe(403);
+      await r.setOwners("my-lib", ["alice", "carol"]);
+      // Carol passes the first check; the write that beats hers takes her off the owners.
+      db.race = async (d: MemoryMetadataDb): Promise<void> => await r.setOwners("my-lib", [
+        "alice",
+      ]);
+      expect((await r.call(method, path, r.user("carol"))).status).toBe(403);
+      expect(await r.owners("my-lib")).toEqual(["alice"]);
+      expect(await versionsOf(db, "my-lib")).toEqual(["1.0.0"]);
     }
+  });
+
+  it("publish one name's spellings once", async () => {
+    const db = new RacingDb();
+    const r = new TestRegistry(new RegistryLimits(), db);
+    // my_pkg passes the name check; my-pkg commits before it does.
+    db.race = async (d: MemoryMetadataDb): Promise<void> => await commitVersion(
+      d,
+      "my-pkg",
+      "1.0.0",
+      "alice",
+    );
+    const answer = await r.publish("my_pkg", "1.0.0");
+    expect(answer.status).toBe(400);
+    expect(answer.text).toContain("the registry has `my-pkg`");
+    expect(await db.packageNames()).toEqual(["my-pkg"]);
+  });
+
+  it("give up with 503 when the package keeps changing", async () => {
+    const db = new LosingDb();
+    const r = new TestRegistry(new RegistryLimits(), db);
+    const answer = await r.publish("lib", "1.0.0");
+    expect(answer.status).toBe(503);
+    expect(answer.text).toBe("`lib` is changing too often right now; try again");
+    expect(db.tries).toBe(32);
+  });
+});
+
+describe("first publishes of a new name at the same time", () => {
+  it("commit once in the database", async () => {
+    const db = new MemoryMetadataDb();
+    const a = new PackageChange("lib", 0, new PackageIndex("lib"));
+    const b = new PackageChange("lib", 0, new PackageIndex("lib"));
+    const won = await Promise.all([db.commit(a), db.commit(b)]);
+    expect(won.filter((w: bool): bool => w).length).toBe(1);
+  });
+
+  it("all count when their versions differ", async () => {
+    const r = new TestRegistry();
+    const answers = await Promise.all([r.publish("lib", "1.0.0"), r.publish("lib", "1.1.0")]);
+    expect(answers.map((a: Answer): i64 => a.status)).toEqual([201, 201]);
+    expect(await versionsOf(r.db, "lib")).toEqual(["1.0.0", "1.1.0"]);
+  });
+
+  it("publish one version once, whichever bytes win", async () => {
+    const r = new TestRegistry();
+    const one = packageFiles("lib", "1.0.0", `description: "one"`);
+    const two = packageFiles("lib", "1.0.0", `description: "two"`);
+    const answers = await Promise.all([
+      r.upload("lib", "1.0.0", packArchive(one), contentChecksum(one)),
+      r.upload("lib", "1.0.0", packArchive(two), contentChecksum(two)),
+    ]);
+    const statuses = answers.map((a: Answer): i64 => a.status).sort();
+    expect(statuses).toEqual([201, 409]);
+    const won = answers[0].status == 201 ? one : two;
+    const record = await r.db.record("lib");
+    expect(record?.index.versions[0].checksum).toBe(contentChecksum(won));
+  });
+});
+
+describe("the index file", () => {
+  it("is written again when a newer revision landed while it was written", async () => {
+    const blobs = new SlowIndexBlobs();
+    const db = new MemoryMetadataDb();
+    const r = new TestRegistry(new RegistryLimits(), db, blobs);
+    // While lib 1.0.0's file is written, 1.1.0 commits and its file lands first.
+    blobs.meanwhile = async (): Promise<void> => {
+      await commitVersion(db, "lib", "1.1.0", "");
+    };
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    const file = (await r.call("GET", "lib/index")).text;
+    expect(file).toContain(`"1.1.0"`);
+    expect(file).toContain(`"1.0.0"`);
+  });
+
+  it("never goes back to an older revision", async () => {
+    // A yank writes its file; before its write lands, a publish of 1.1.0 runs start to finish.
+    const blobs = new SlowIndexBlobs();
+    const db = new MemoryMetadataDb();
+    const r = new TestRegistry(new RegistryLimits(), db, blobs);
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    // The publish writes the same store; the yank's write, were it to land, would time out after.
+    blobs.meanwhile = async (): Promise<void> => {
+      await commitVersion(db, "lib", "1.1.0", "", blobs);
+      blobs.failAfter = true;
+    };
+    expect((await r.call("PUT", "lib/1.0.0/yank")).status).toBe(200);
+    const file = (await r.call("GET", "lib/index")).text;
+    expect(file).toContain(`"1.1.0"`);
+    expect(file).toContain(`"yanked": true`);
+  });
+
+  it("never goes back when the newer index has the same bytes as the one read", async () => {
+    // A yank reads the file (not yanked). An unyank commits after it and writes those same bytes
+    // again: the same hash, as an R2 etag would be. The yank's write, were it to land, would time
+    // out after.
+    const blobs = new SlowIndexBlobs();
+    const db = new MemoryMetadataDb();
+    const r = new TestRegistry(new RegistryLimits(), db, blobs);
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    blobs.meanwhile = async (): Promise<void> => {
+      const other = new TestRegistry(new RegistryLimits(), db, blobs);
+      expect((await other.call("DELETE", "lib/1.0.0/yank")).status).toBe(200);
+      blobs.failAfter = true;
+    };
+    expect((await r.call("PUT", "lib/1.0.0/yank")).status).toBe(200);
+    const record = await db.record("lib");
+    expect(record?.index.versions[0].yanked).toBe(false);
+    expect((await r.call("GET", "lib/index")).text).not.toContain(`"yanked": true`);
+  });
+
+  it("fails the write when other writes keep landing on it", async () => {
+    const r = new TestRegistry(new RegistryLimits(), new MemoryMetadataDb(), new ContendedBlobs());
+    const answer = await r.publish("lib", "1.0.0");
+    expect(`${answer.status} ${answer.text}`).toBe(
+      "500 the index of `lib` couldn't be written; try again",
+    );
+  });
+
+  it("is mended by trying a write again after it failed", async () => {
+    const blobs = new SlowIndexBlobs();
+    const r = new TestRegistry(new RegistryLimits(), new MemoryMetadataDb(), blobs);
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    blobs.fail = true;
+    const failed = await r.publish("lib", "1.1.0");
+    expect(`${failed.status} ${failed.text}`).toBe("500 the blob store is down");
+    expect((await r.call("GET", "lib/index")).text).not.toContain(`"1.1.0"`);
+    // The version is published; trying again writes the file.
+    expect((await r.publish("lib", "1.1.0")).status).toBe(409);
+    expect((await r.call("GET", "lib/index")).text).toContain(`"1.1.0"`);
+    expect(await blobs.get(indexKey("lib"))).not.toBeNull();
   });
 });
 
 describe("uploads", () => {
-  it("take the package's lock only once the body has arrived", async () => {
-    const lock = new RecordingLock();
-    const r = new TestRegistry(
-      new RegistryLimits(),
-      new MemoryMetadataDb(),
-      new MemoryBlobStore(),
-      lock,
-    );
+  it("commit only once the body has arrived", async () => {
+    const db = new RacingDb();
+    const r = new TestRegistry(new RegistryLimits(), db);
     const slow = new SlowUpload(r);
     // Another package's publish runs start to finish while lib's body is on its way.
     expect((await r.publish("other", "1.0.0")).status).toBe(201);
-    expect(lock.keys).toEqual(["other"]);
+    expect(db.commits).toEqual(["other"]);
     slow.finish();
     expect((await slow.answer).status).toBe(201);
-    expect(lock.keys).toEqual(["other", "lib"]);
+    expect(db.commits).toEqual(["other", "lib"]);
   });
 
   it("let a package's other writes through while a body is on its way", async () => {
@@ -246,18 +453,41 @@ describe("uploads", () => {
     expect((await slow.answer).status).toBe(201);
   });
 
+  it("store nothing for a publish refused for its version", async () => {
+    const r = new TestRegistry();
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    const stored = r.blobs.size;
+    const other = packageFiles("lib", "1.0.0", `description: "other bytes"`);
+    const again = await r.upload("lib", "1.0.0", packArchive(other), contentChecksum(other));
+    expect(again.status).toBe(409);
+    expect(r.blobs.size).toBe(stored);
+  });
+
+  it("stop a token taken away while the body arrived", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    const slow = new SlowUpload(r, alice);
+    // Past the first check by now, as below.
+    await r.publish("other", "1.0.0", alice);
+    r.auth.setUser("alice", tokenHash("a-new-token"));
+    slow.finish();
+    expect((await slow.answer).status).toBe(401);
+    expect(await r.db.record("lib")).toBeNull();
+  });
+
   it("check the caller again once the body has arrived", async () => {
     const r = new TestRegistry();
     const alice = r.user("alice");
     const slow = new SlowUpload(r, alice);
     // Past the first check by now: this publish has run through more steps than that takes.
     await r.publish("other", "1.0.0", alice);
-    await r.db.putOwners("lib", ["bob"]);
+    // Bob publishes lib first, and owns it.
+    expect((await r.publish("lib", "0.9.0", r.user("bob"))).status).toBe(201);
     slow.finish();
     const answer = await slow.answer;
     expect(answer.status).toBe(403);
-    expect(await r.db.index("lib")).toBeNull();
-    expect(await r.db.owners("lib")).toEqual(["bob"]);
+    expect(await versionsOf(r.db, "lib")).toEqual(["0.9.0"]);
+    expect(await r.owners("lib")).toEqual(["bob"]);
   });
 
   it("read no body for a caller who may not publish", async () => {
@@ -289,19 +519,6 @@ describe("uploads", () => {
     const answer = await r.send("PUT", "/api/v1/my_lib/1.0.0", headers, stream);
     expect(answer.status).toBe(400);
   });
-
-  it("go on for both spellings when both were published before the rule", async () => {
-    const r = new TestRegistry();
-    const alice = r.user("alice");
-    await r.publish("my-lib", "1.0.0", alice);
-    const index = await r.db.index("my-lib");
-    if (index == null) {
-      throw new Error("my-lib has no index");
-    }
-    await r.db.putIndex("my_lib", index);
-    await r.db.putOwners("my_lib", ["alice"]);
-    expect((await r.publish("my_lib", "1.0.1", alice)).status).toBe(201);
-  });
 });
 
 describe("a cache that can't be purged", () => {
@@ -310,7 +527,6 @@ describe("a cache that can't be purged", () => {
       new RegistryLimits(),
       new MemoryMetadataDb(),
       new MemoryBlobStore(),
-      new MemoryPublishLock(),
       new FailingPurge(),
     );
   }
@@ -330,35 +546,18 @@ describe("a cache that can't be purged", () => {
     await r.publish("lib", "1.0.0", alice);
     expect((await r.call("PUT", "lib/1.0.0/yank", alice)).status).toBe(200);
     expect((await r.call("PUT", "lib/owners/bob", alice)).status).toBe(200);
-    expect(await r.db.owners("lib")).toEqual(["alice", "bob"]);
+    expect(await r.owners("lib")).toEqual(["alice", "bob"]);
   });
 });
 
 describe("stores", () => {
-  it("publish one name's spellings one at a time", async () => {
-    const db = new GatedDb();
-    // Each reads the names twice: before reading its body, and under the lock.
-    const gate = channel<bool>(4);
-    db.gate = gate;
-    const r = new TestRegistry(new RegistryLimits(), db);
-    // Both reach the name check before either is let through; without the lock both would
-    // find the name free.
-    const first = r.publish("my-pkg", "1.0.0");
-    const second = r.publish("my_pkg", "1.0.0");
-    for (let i = 0; i < 4; i++) {
-      gate.trySend(true);
-    }
-    const answers: Answer[] = [await first, await second];
-    expect(answers.map((a: Answer): i64 => a.status)).toEqual([201, 400]);
-  });
-
-  it("take an owner claim back when the index can't be written", async () => {
+  it("commit a new package's owner with its first version, or neither", async () => {
     const r = new TestRegistry(new RegistryLimits(), new FailingDb());
     const alice = r.user("alice");
     const failed = await r.publish("lib", "1.0.0", alice);
     expect(failed.status).toBe(500);
     expect(failed.text).toBe("the database is down");
-    expect(await r.db.owners("lib")).toEqual([]);
+    expect(await r.db.record("lib")).toBeNull();
   });
 
   it("show only a StoreError's message", async () => {
@@ -382,11 +581,16 @@ describe("caches and choices", () => {
     const alice = r.user("alice");
     r.user("bob");
     await r.publish("lib", "1.0.0", alice);
-    expect(r.purge.purged).toEqual(["/api/v1/lib/index", "/api/v1/lib/1.0.0", "/"]);
+    expect(r.purge.purged).toEqual([
+      "/api/v1/lib/index",
+      "/index/lib.json",
+      "/api/v1/lib/1.0.0",
+      "/",
+    ]);
     r.purge.purged = [];
     await r.call("PUT", "lib/1.0.0/yank", alice);
     await r.call("PUT", "lib/1.0.0/yank", alice);
-    expect(r.purge.purged).toEqual(["/api/v1/lib/index"]);
+    expect(r.purge.purged).toEqual(["/api/v1/lib/index", "/index/lib.json"]);
     r.purge.purged = [];
     await r.call("PUT", "lib/owners/bob", alice);
     expect(r.purge.purged).toEqual(["/api/v1/lib/owners"]);

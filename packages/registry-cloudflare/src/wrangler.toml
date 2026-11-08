@@ -15,11 +15,3 @@ binding = "DB"
 database_name = "velt-registry-staging"
 database_id = "fill-in"
 migrations_dir = "migrations"
-
-[[durable_objects.bindings]]
-name = "LOCKS"
-class_name = "RegistryLock"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["RegistryLock"]

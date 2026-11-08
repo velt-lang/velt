@@ -1,7 +1,7 @@
-//! The registry's Worker (packages/registry-cloudflare) under workerd, with workerd's local R2, D1
-//! and Durable Objects: packages/registry-conformance over HTTP, and the publish lock's Durable
-//! Object directly (#1740 step 4). This file only builds and starts them; the cases are in the
-//! package and in registry_worker/lock.mjs.
+//! The registry's Worker (packages/registry-cloudflare) under workerd, with workerd's local R2 and
+//! D1: packages/registry-conformance over HTTP, the upload limit, and signing in with GitHub
+//! (#1740 step 4). This file only builds and starts them; the cases are in the package and in
+//! registry_worker/login.mjs.
 //!
 //! Needs what tests/workerd.rs needs, and is skipped or required the same way.
 
@@ -177,6 +177,7 @@ fn the_conformance_suite_passes() {
     uploads_are_limited_to_10_mib(&base, &url, alice);
     signing_in_gives_tokens_that_publish(&base, &url);
     signing_in_fails_closed(&base, &modules, &worker);
+    stale_writes_lose(&base, &modules);
     drop(server);
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -272,6 +273,38 @@ fn publish(
         .expect("run velt")
 }
 
+/// registry-cloudflare's stores refuse stale writes: D1MetadataDb's commit from a revision that
+/// is no longer the package's, and R2BlobStore's write over a file written again since
+/// (registry_worker/storeprobe.mjs, on registry_worker/store-probe built as a Worker of its own).
+fn stale_writes_lose(base: &Path, modules: &Path) {
+    let probe = base.join("scripts/store-probe");
+    let args = ["build", "--release", "--host", "registry-cloudflare"];
+    let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(args)
+        .current_dir(&probe)
+        .output()
+        .expect("run velt");
+    assert!(
+        out.status.success(),
+        "velt {args:?} in store-probe:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let worker = probe.join("target/velt/store-probe-workers");
+    let out = no_window::command("node")
+        .current_dir(base)
+        .arg(script(base, "storeprobe.mjs"))
+        .arg(for_node(modules))
+        .arg(for_node(&worker))
+        .output()
+        .expect("run node");
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// A Worker without its GitHub secret starts no sign-in, and a user who owns packages can't be
 /// deleted (registry_worker/accounts.mjs, on a Worker of its own).
 fn signing_in_fails_closed(base: &Path, modules: &Path, worker: &Path) {
@@ -322,25 +355,4 @@ fn signing_in_gives_tokens_that_publish(base: &Path, url: &str) {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-}
-
-#[test]
-fn the_publish_lock_serializes_and_recovers() {
-    let Some((base, modules, worker)) = build("lock") else {
-        return;
-    };
-    let out = no_window::command("node")
-        .current_dir(&base)
-        .arg(script(&base, "lock.mjs"))
-        .arg(for_node(&modules))
-        .arg(for_node(&worker))
-        .output()
-        .expect("run node");
-    assert!(
-        out.status.success(),
-        "{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&base);
 }

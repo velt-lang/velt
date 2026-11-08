@@ -1,7 +1,7 @@
 // registry-core: the package registry's rules in Velt (#1740, #1325): package and user names,
 // semver versions and requirements, `package.velt` as vpm reads it, and the package archive with
 // its content checksum, as `velt` and vpm define them; and the registry's HTTP API (`Registry`,
-// `/api/v1/…`) over a host's stores (`BlobStore`, `MetadataDb`, `PublishLock`, `CachePurge`,
+// `/api/v1/…`) over a host's stores (`BlobStore`, `MetadataDb`, `CachePurge`,
 // `AuthProvider`), with in-memory adapters.
 
 export {
@@ -42,9 +42,12 @@ export { readPackageArchive } from "./package_archive";
 export { AuthProvider } from "./stores/auth_provider";
 export { BlobStore } from "./stores/blob_store";
 export { CachePurge } from "./stores/cache_purge";
-export { HeldLock } from "./stores/held_lock";
 export { MetadataDb } from "./stores/metadata_db";
-export { PublishLock } from "./stores/publish_lock";
+export { PackageChange } from "./stores/package_change";
+export { PackageRecord } from "./stores/package_record";
+export { SearchEntry } from "./stores/search_entry";
+export { StoredFile } from "./stores/stored_file";
+export { archiveKey, indexKey } from "./stores/static_files";
 export { StoreError } from "./stores/store_error";
 export { Caller } from "./server/caller";
 export { IndexEntry } from "./server/index_entry";
@@ -54,6 +57,5 @@ export { RegistryLimits } from "./server/registry_limits";
 export { RegistryStores } from "./server/registry_stores";
 export { MemoryBlobStore } from "./memory/memory_blob_store";
 export { MemoryMetadataDb } from "./memory/memory_metadata_db";
-export { MemoryPublishLock } from "./memory/memory_publish_lock";
 export { RecordingCachePurge } from "./memory/recording_cache_purge";
 export { bearerToken, TokenAuth, tokenHash } from "./memory/token_auth";

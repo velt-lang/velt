@@ -202,6 +202,17 @@ function present(o) {
   return out;
 }
 
+/** `put`'s options as R2 takes them: an `onlyIf` time crosses as milliseconds, R2 wants a `Date`. */
+function putOptions(wire) {
+  const options = present(wire);
+  for (const field of ["uploadedBefore", "uploadedAfter"]) {
+    if (typeof options.onlyIf?.[field] === "number") {
+      options.onlyIf[field] = new Date(options.onlyIf[field]);
+    }
+  }
+  return options;
+}
+
 /** Header lines `name\nvalue\n…` as `[name, value]` pairs. */
 function headerPairs(flat) {
   const parts = flat === "" ? [] : flat.split("\n");
@@ -257,7 +268,7 @@ export default (host) => {
     r2Head: async (bucket, key) => (await r2(bucket).head(key)) ?? null,
     r2Get: async (bucket, key) => (await r2(bucket).get(key)) ?? null,
     r2Put: async (bucket, key, value, options) =>
-      (await r2(bucket).put(key, value, present(JSON.parse(options)))) ?? null,
+      (await r2(bucket).put(key, value, putOptions(JSON.parse(options)))) ?? null,
     r2Delete: async (bucket, keys) => {
       await r2(bucket).delete(JSON.parse(keys));
     },
