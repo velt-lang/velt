@@ -9,8 +9,11 @@ declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
 declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
 declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
-// Checked by the runtime: the four bytes it writes must be inside the array.
+// Checked by the runtime: the four bytes it writes must be inside the array. It takes fewer
+// bytes than a vector's 16 only.
 declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64): void;
+// Unchecked: `fill32` writes 16 bytes only where its caller keeps them inside the array.
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 declare function velt_simd_u32x4_splat(x: u32): u32x4;
 declare function velt_simd_u32x4_as_u8x16(v: u32x4): u8x16;
 
@@ -60,12 +63,12 @@ export function put32(table: u8[], at: u64, value: u64) {
   velt_simd_u8x16_store_partial(v, table, at, 4);
 }
 
-/** Writes `value` as `n` little-endian `u32`s from `at`, which must be inside `table`. */
+/** Writes `value` as `n` little-endian `u32`s from `at`; the `4 * n` bytes must be in `table`. */
 export function fill32(table: u8[], at: u64, value: u64, n: u64) {
   const v = velt_simd_u32x4_as_u8x16(velt_simd_u32x4_splat(value as u32));
   let i: u64 = 0;
   while (i + 4 <= n) {
-    velt_simd_u8x16_store_partial(v, table, at + i * 4, 16);
+    velt_simd_u8x16_store(v, table, at + i * 4);
     i += 4;
   }
   while (i < n) {

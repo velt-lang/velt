@@ -195,7 +195,7 @@ of 7 wall-clock runs:
 |---|---:|---:|---:|---:|---:|
 | brotli_stream_small | 258 M | 248 M | 1.04 | 13 | 16 |
 | brotli_stream_20k | 650 M | 504 M | 1.29 | 32 | 23 |
-| brotli_stream_300k | 724 M | 628 M | 1.15 | 37 | 29 |
+| brotli_stream_300k | 726 M | 628 M | 1.16 | 37 | 29 |
 
 A one-shot input gets a zeroed table for its length. A stream has no size hint, so it gets the full
 table (4 MiB at quality 4) without zeroing it, and a bitmap of the buckets it used, 32 KiB, which is
