@@ -3,7 +3,7 @@
 
 import { utf8Decode } from "velt/encoding";
 import { NATIVE_TARGETS } from "../manifest/checks";
-import { isValidPackageName } from "../names";
+import { isValidDependencyName } from "../names";
 import { Version } from "../semver/version";
 import { archiveKey, indexKey } from "../stores/static_files";
 import { archive, json, text } from "./answer";
@@ -23,7 +23,7 @@ export async function listing(stores: RegistryStores): Promise<Response> {
 
 /** `GET /api/v1/<name>/index`: the package's `index.json`, its static file as a static host has it. */
 export async function index(stores: RegistryStores, name: string): Promise<Response> {
-  if (!isValidPackageName(name)) {
+  if (!isValidDependencyName(name)) {
     return text(400, "invalid package name");
   }
   const found = await stores.blobs.get(indexKey(name));
@@ -39,7 +39,7 @@ export async function download(
   name: string,
   version: string,
 ): Promise<Response> {
-  if (!isValidPackageName(name) || !Version.isValid(version)) {
+  if (!isValidDependencyName(name) || !Version.isValid(version)) {
     return text(400, "invalid package name or version");
   }
   const record = await stores.db.record(name);
@@ -62,7 +62,9 @@ export async function download(
  * registry doesn't take yet (their checks read the libraries' export tables, #1740 step 1d).
  */
 export function native(name: string, version: string, target: string): Response {
-  if (!isValidPackageName(name) || !Version.isValid(version) || !NATIVE_TARGETS.includes(target)) {
+  if (
+    !isValidDependencyName(name) || !Version.isValid(version) || !NATIVE_TARGETS.includes(target)
+  ) {
     return text(400, "invalid package name, version or target");
   }
   return text(501, "this registry does not serve native libraries yet");

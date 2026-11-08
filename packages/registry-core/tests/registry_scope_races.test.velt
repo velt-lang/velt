@@ -1,0 +1,179 @@
+// Scopes under writes that race (src/server/scopes.velt): of two claims, or a claim and a package
+// of the scope's name, only one user's commits; a change of a scope's owners while a publish is
+// on its way, and a reservation made after its checks, are seen by its commit.
+import { describe, expect, it } from "velt/test";
+import {
+  MemoryBlobStore,
+  MemoryMetadataDb,
+  MemoryNameReservations,
+  PackageChange,
+  RecordingCachePurge,
+  RegistryLimits,
+  ScopeChange,
+} from "../src/lib";
+import { TestRegistry } from "./_registry";
+
+// A database where another write can run first: `beforeCommit` once before the next package
+// commit, `beforeScope` once before the next scope commit.
+class RacingDb extends MemoryMetadataDb {
+  beforeCommit: (() => Promise<void>) | null = null;
+  beforeScope: (() => Promise<void>) | null = null;
+
+  override async commit(change: PackageChange): Promise<bool> {
+    const race = this.beforeCommit;
+    if (race != null) {
+      this.beforeCommit = null;
+      await race();
+    }
+    return await super.commit(change);
+  }
+
+  override async commitScope(change: ScopeChange): Promise<bool> {
+    const race = this.beforeScope;
+    if (race != null) {
+      this.beforeScope = null;
+      await race();
+    }
+    return await super.commitScope(change);
+  }
+}
+
+// A blob store that runs `beforePut` once before the next archive is stored.
+class ReservingBlobs extends MemoryBlobStore {
+  beforePut: (() => void) | null = null;
+
+  override async putIfAbsent(key: string, bytes: u8[]): Promise<bool> {
+    const before = this.beforePut;
+    if (before != null) {
+      this.beforePut = null;
+      before();
+    }
+    return await super.putIfAbsent(key, bytes);
+  }
+}
+
+// A registry over `db`, keeping back what `reserved` holds.
+function over(db: RacingDb, reserved: MemoryNameReservations | null = null): TestRegistry {
+  return new TestRegistry(
+    new RegistryLimits(),
+    db,
+    new MemoryBlobStore(),
+    new RecordingCachePurge(),
+    reserved,
+  );
+}
+
+describe("scopes under racing writes", () => {
+  it("give a scope claimed by two users at once to one of them", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    const answers = await Promise.all([
+      r.publish("@acme/x", "1.0.0", alice),
+      r.publish("@acme/y", "1.0.0", bob),
+    ]);
+    const statuses = answers.map((a): i64 => a.status);
+    statuses.sort();
+    expect(statuses).toEqual([201, 403]);
+    const owners = (await r.db.scope("acme"))?.owners ?? [];
+    expect(owners.length).toBe(1);
+    const winner = owners[0] == "alice" ? "@acme/x" : "@acme/y";
+    const loser = owners[0] == "alice" ? "@acme/y" : "@acme/x";
+    expect(await r.owners(winner)).toEqual(owners);
+    expect(await r.db.record(loser)).toBeNull();
+  });
+
+  it("refuse a claim when another user's package of its name commits first", async () => {
+    const db = new RacingDb();
+    const r = over(db);
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    // bob's claim of `@foo` was checked; alice's `foo` commits before it.
+    db.beforeScope = async (): Promise<void> => {
+      expect((await r.publish("foo", "1.0.0", alice)).status).toBe(201);
+    };
+    const answer = await r.publish("@foo/x", "1.0.0", bob);
+    expect(answer.status).toBe(403);
+    expect(answer.text).toContain("would take the name of the package `foo`");
+    expect(await r.db.scope("foo")).toBeNull();
+    expect(await r.db.record("@foo/x")).toBeNull();
+    expect(await r.owners("foo")).toEqual(["alice"]);
+  });
+
+  it("refuse a package when another user's claim of its name commits first", async () => {
+    const db = new RacingDb();
+    const r = over(db);
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    // alice's `foo` was checked; bob's claim of `@foo` commits before it.
+    db.beforeCommit = async (): Promise<void> => {
+      expect((await r.publish("@foo/x", "1.0.0", bob)).status).toBe(201);
+    };
+    const answer = await r.publish("foo", "1.0.0", alice);
+    expect(answer.status).toBe(403);
+    expect(answer.text).toContain("it is the name of the scope `@foo`");
+    expect(await r.db.record("foo")).toBeNull();
+    expect((await r.db.scope("foo"))?.owners).toEqual(["bob"]);
+  });
+
+  it("refuse a new package of a scope owner removed while it was on its way", async () => {
+    const db = new RacingDb();
+    const r = over(db);
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    expect((await r.publish("@acme/x", "1.0.0", alice)).status).toBe(201);
+    expect((await r.call("PUT", "scopes/acme/owners/bob", alice)).status).toBe(200);
+    db.beforeCommit = async (): Promise<void> => {
+      expect((await r.call("DELETE", "scopes/acme/owners/bob", alice)).status).toBe(200);
+    };
+    expect((await r.publish("@acme/y", "1.0.0", bob)).status).toBe(403);
+    expect(await r.db.record("@acme/y")).toBeNull();
+  });
+
+  it("keep a new package of a scope whose owners only grew meanwhile", async () => {
+    const db = new RacingDb();
+    const r = over(db);
+    const alice = r.user("alice");
+    r.user("carol");
+    expect((await r.publish("@acme/x", "1.0.0", alice)).status).toBe(201);
+    db.beforeCommit = async (): Promise<void> => {
+      expect((await r.call("PUT", "scopes/acme/owners/carol", alice)).status).toBe(200);
+    };
+    expect((await r.publish("@acme/y", "1.0.0", alice)).status).toBe(201);
+  });
+
+  it(
+    "claim again when the claimer's own package of the scope's name changed meanwhile",
+    async () => {
+      const db = new RacingDb();
+      const r = over(db);
+      const alice = r.user("alice");
+      expect((await r.publish("foo", "1.0.0", alice)).status).toBe(201);
+      // The first claim, held to `foo` 1.0.0's revision, loses; the next one wins.
+      db.beforeScope = async (): Promise<void> => {
+        expect((await r.publish("foo", "1.1.0", alice)).status).toBe(201);
+      };
+      expect((await r.publish("@foo/x", "1.0.0", alice)).status).toBe(201);
+      expect((await r.db.scope("foo"))?.owners).toEqual(["alice"]);
+    },
+  );
+
+  it("refuse a claim of a scope reserved after the publish's checks", async () => {
+    const reserved = new MemoryNameReservations("https://example.test/ask");
+    const blobs = new ReservingBlobs();
+    const r = new TestRegistry(
+      new RegistryLimits(),
+      new RacingDb(),
+      blobs,
+      new RecordingCachePurge(),
+      reserved,
+    );
+    // Reserved once the archive is checked, while it is stored: just before the claim.
+    blobs.beforePut = (): void => {
+      reserved.reserve("@fresh", "reserved meanwhile");
+    };
+    expect((await r.publish("@fresh/x", "1.0.0", r.user("mallory"))).status).toBe(403);
+    expect(await r.db.scope("fresh")).toBeNull();
+    expect(await r.db.record("@fresh/x")).toBeNull();
+  });
+});

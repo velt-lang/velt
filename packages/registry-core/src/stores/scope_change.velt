@@ -1,0 +1,21 @@
+// registry-core: one write to a scope, committed whole or not at all.
+
+/**
+ * A change to scope `scope` (without `@`) made from its record at revision `base` (0 to claim
+ * a scope nobody has): its owners afterwards. A claim carries `packageRevision`: the revision of
+ * the published package whose `normalizedName` is the scope's, as the claim's checks read it (0:
+ * none); it applies only while that package is still at it. Null: no guard.
+ */
+export class ScopeChange {
+  scope: string;
+  base: i64;
+  owners: string[];
+  packageRevision: i64 | null;
+
+  constructor(scope: string, base: i64, owners: string[], packageRevision: i64 | null = null) {
+    this.scope = scope;
+    this.base = base;
+    this.owners = owners;
+    this.packageRevision = packageRevision;
+  }
+}

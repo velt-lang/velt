@@ -2,7 +2,7 @@
 // `yank_local`, behind the Rust server's checks). A yanked version stays downloadable, so
 // lockfiles that pin it keep installing; only its index entry's `yanked` changes.
 
-import { isValidPackageName } from "../names";
+import { isValidDependencyName } from "../names";
 import { Version } from "../semver/version";
 import { PackageChange } from "../stores/package_change";
 import { PackageRecord } from "../stores/package_record";
@@ -51,7 +51,7 @@ export async function yank(
   version: string,
   yanked: bool,
 ): Promise<Response> {
-  if (!isValidPackageName(name) || !Version.isValid(version)) {
+  if (!isValidDependencyName(name) || !Version.isValid(version)) {
     return text(400, "invalid package name or version");
   }
   await ownerOf(stores, req, name);

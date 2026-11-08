@@ -1,0 +1,19 @@
+// registry-core: who may add packages to a scope.
+
+/**
+ * The scope `scope` (as it was first spelled, without `@`), claimed by the first user to publish a
+ * package in it: its owners, in the order they were added, may publish new packages in it and
+ * change its owners. Its revision rises by one with each committed change
+ * (`MetadataDb.commitScope`).
+ */
+export class ScopeRecord {
+  scope: string;
+  owners: string[];
+  revision: i64;
+
+  constructor(scope: string, owners: string[], revision: i64) {
+    this.scope = scope;
+    this.owners = owners;
+    this.revision = revision;
+  }
+}

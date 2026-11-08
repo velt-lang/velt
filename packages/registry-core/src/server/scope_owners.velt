@@ -1,0 +1,108 @@
+// registry-core (internal): `GET /api/v1/scopes/<scope>/owners`, and `PUT`/`DELETE
+// /api/v1/scopes/<scope>/owners/<user>`: a scope's owners, changed as a package's are (only an
+// owner changes them, only to users that exist, and the last owner stays). Not under
+// `/api/v1/@scope/…`, where a package of the scope would be.
+
+import { checkUserName, isValidScopePart, normalizedName } from "../names";
+import { ScopeChange } from "../stores/scope_change";
+import { ScopeRecord } from "../stores/scope_record";
+import { writer } from "./access";
+import { text } from "./answer";
+import { Caller } from "./caller";
+import { MAX_ATTEMPTS } from "./commit";
+import { purgeAfterWrite } from "./purge_after_write";
+import { Refusal } from "./refusal";
+import { RegistryStores } from "./registry_stores";
+
+// Scope `scope`'s record, or the 404.
+async function claimed(stores: RegistryStores, scope: string): Promise<ScopeRecord> {
+  const found = await stores.db.scope(normalizedName(scope));
+  if (found == null || found.scope != scope) {
+    throw new Refusal(404, `no scope \`@${scope}\``);
+  }
+  return found;
+}
+
+/** `GET /api/v1/scopes/<scope>/owners`: one owner per line. */
+export async function listScopeOwners(stores: RegistryStores, scope: string): Promise<Response> {
+  if (!isValidScopePart(scope)) {
+    return text(400, "invalid scope");
+  }
+  const found = await claimed(stores, scope);
+  return text(200, found.owners.map((o: string): string => `${o}\n`).join(""));
+}
+
+// The change adding (`add`) or removing `user` as an owner of `found`, made by `caller`; null
+// when there is nothing to change.
+async function scopeOwnersChange(
+  stores: RegistryStores,
+  found: ScopeRecord,
+  caller: Caller,
+  user: string,
+  add: bool,
+): Promise<ScopeChange | null> {
+  const scope = found.scope;
+  const by = caller.user;
+  if (by == null) {
+    throw new Refusal(400, "this registry has no users, so scopes have no owners");
+  }
+  if (!found.owners.includes(by)) {
+    throw new Refusal(
+      403,
+      `\`${by}\` is not an owner of the scope \`@${scope}\` (owners: ${found.owners.join(", ")})`,
+    );
+  }
+  const owners = [...found.owners];
+  if (add) {
+    if (!(await stores.auth.isUser(user))) {
+      throw new Refusal(404, `no user \`${user}\``);
+    }
+    if (owners.includes(user)) {
+      return null;
+    }
+    owners.push(user);
+  } else {
+    if (!owners.includes(user)) {
+      throw new Refusal(404, `\`${user}\` is not an owner of the scope \`@${scope}\``);
+    }
+    if (owners.length == 1) {
+      throw new Refusal(
+        409,
+        `\`${user}\` is the last owner of the scope \`@${scope}\`; add another owner first`,
+      );
+    }
+    owners.splice(owners.indexOf(user), 1);
+  }
+  return new ScopeChange(scope, found.revision, owners);
+}
+
+/** `PUT` (`add`) or `DELETE /api/v1/scopes/<scope>/owners/<user>`. */
+export async function changeScopeOwners(
+  stores: RegistryStores,
+  req: Request,
+  scope: string,
+  user: string,
+  add: bool,
+): Promise<Response> {
+  if (!isValidScopePart(scope)) {
+    return text(400, "invalid scope");
+  }
+  const bad = checkUserName(user);
+  if (bad != null) {
+    return text(400, bad);
+  }
+  await writer(stores, req);
+  for (let i: i64 = 0; i < MAX_ATTEMPTS; i++) {
+    const found = await claimed(stores, scope);
+    // Each try asks who the caller is again: a token taken away meanwhile stops here.
+    const change = await scopeOwnersChange(stores, found, await writer(stores, req), user, add);
+    if (change == null) {
+      return text(200, `owners of \`@${scope}\`: ${found.owners.join(", ")}\n`);
+    }
+    if (await stores.db.commitScope(change)) {
+      await purgeAfterWrite(stores, [`/api/v1/scopes/${scope}/owners`]);
+      return text(200, `owners of \`@${scope}\`: ${change.owners.join(", ")}\n`);
+    }
+  }
+  throw new Refusal(503, `the scope \`@${scope}\` is changing too often right now; try again`);
+}

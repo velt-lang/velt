@@ -18,9 +18,11 @@ export const MAX_ATTEMPTS: i64 = 32;
 /** The longest pause between two tries of a write, in milliseconds. */
 const MAX_BACKOFF_MS: f64 = 50;
 
-// Waits a random while before try `i` + 1 of a write, longer after each (up to 50 ms), so writes
-// that keep colliding spread out.
-async function backoff(i: i64): Promise<void> {
+/**
+ * Waits a random while before try `i` + 1 of a write, longer after each (up to 50 ms), so writes
+ * that keep colliding spread out.
+ */
+export async function backoff(i: i64): Promise<void> {
   const ceiling = Math.min(MAX_BACKOFF_MS, Math.pow(2, i as f64));
   await sleep(Math.floor(Math.random() * ceiling) as i64);
 }

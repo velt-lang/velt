@@ -106,8 +106,11 @@ export function isValidPackageName(name: string): bool {
   );
 }
 
-/** One part of a scoped name: like a package name's words, but it may start with a digit. */
-function isValidScopePart(part: string): bool {
+/**
+ * Whether `part` may be one part of a scoped name (the scope, or the name after it): like a
+ * package name's words, but it may start with a digit.
+ */
+export function isValidScopePart(part: string): bool {
   return (
     !isWindowsDeviceName(part) &&
     separatorsOk(part) &&
@@ -115,6 +118,15 @@ function isValidScopePart(part: string): bool {
     (isLower(part.slice(0, 1)) || isDigit(part.slice(0, 1))) &&
     restOk(part)
   );
+}
+
+/**
+ * The `normalizedName` of the scope whose claim a new package `name` is checked against: its own
+ * scope's for a scoped name, and for an unscoped one, the scope it would be spelled as.
+ */
+export function guardedScope(name: string): string {
+  const scoped = splitScoped(name);
+  return normalizedName(scoped == null ? name : scoped[0]);
 }
 
 /** A scoped name's scope and name (`@sigx/reactivity` gives `["sigx", "reactivity"]`). */
@@ -129,7 +141,16 @@ export function splitScoped(name: string): [string, string] | null {
   return [name.slice(1, slash), name.slice(slash + 1)];
 }
 
-/** Whether `name` may name a package in `package.velt`: a package name or `@scope/name`. */
+/** The scope of a scoped name (`@sigx/reactivity` gives `sigx`), or null for an unscoped one. */
+export function scopeOf(name: string): string | null {
+  const scoped = splitScoped(name);
+  return scoped == null ? null : scoped[0];
+}
+
+/**
+ * Whether `name` may name a package in `package.velt`, and in a registry: a package name or
+ * `@scope/name`.
+ */
 export function isValidDependencyName(name: string): bool {
   const scoped = splitScoped(name);
   if (scoped == null) {

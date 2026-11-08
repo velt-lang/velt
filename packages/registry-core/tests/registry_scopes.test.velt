@@ -1,0 +1,207 @@
+// Scopes (src/server/scopes.velt, scope_owners.velt): the first publisher of a package in a scope
+// claims it, only its owners add packages to it, and claiming one takes what taking a name does.
+import { utf8Decode } from "velt/encoding";
+import { describe, expect, it } from "velt/test";
+import {
+  MemoryBlobStore,
+  MemoryMetadataDb,
+  MemoryNameReservations,
+  RecordingCachePurge,
+  RegistryLimits,
+} from "../src/lib";
+import { TestRegistry } from "./_registry";
+
+const REQUEST = "https://example.test/request-a-name";
+
+// A registry keeping back `vue` and `@acme` (approved for nobody yet) and `@corp` (for `carol`).
+function reserving(): TestRegistry {
+  const reserved = new MemoryNameReservations(REQUEST);
+  reserved.reserve("vue", "a well-known npm package");
+  reserved.reserve("@acme", "a well-known npm scope");
+  reserved.reserve("@corp", "a well-known npm scope", "carol");
+  return new TestRegistry(
+    new RegistryLimits(),
+    new MemoryMetadataDb(),
+    new MemoryBlobStore(),
+    new RecordingCachePurge(),
+    reserved,
+  );
+}
+
+describe("scopes", () => {
+  it("are claimed by the first publisher, whose packages only owners add to", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    expect((await r.publish("@sigx/core", "1.0.0", alice)).status).toBe(201);
+    expect((await r.db.scope("sigx"))?.owners).toEqual(["alice"]);
+    expect((await r.publish("@sigx/dom", "1.0.0", alice)).status).toBe(201);
+    const refused = await r.publish("@sigx/evil", "1.0.0", bob);
+    expect(refused.status).toBe(403);
+    expect(refused.text).toBe(
+      "cannot publish `@sigx/evil`: `bob` is not an owner of the scope `@sigx` (owners: alice); an owner can add you",
+    );
+    expect(await r.db.record("@sigx/evil")).toBeNull();
+    expect((await r.call("PUT", "scopes/sigx/owners/bob", alice)).status).toBe(200);
+    expect((await r.publish("@sigx/router", "1.0.0", bob)).status).toBe(201);
+  });
+
+  it("leave a package's versions to its owners", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    expect((await r.publish("@sigx/core", "1.0.0", alice)).status).toBe(201);
+    expect((await r.call("PUT", "@sigx/core/owners/bob", alice)).status).toBe(200);
+    // bob owns the package, not the scope.
+    expect((await r.publish("@sigx/core", "1.1.0", bob)).status).toBe(201);
+    expect((await r.publish("@sigx/more", "1.0.0", bob)).status).toBe(403);
+    expect(await r.owners("@sigx/core")).toEqual(["alice", "bob"]);
+  });
+
+  it("serve their packages' reads and writes under `/api/v1/@scope/name`", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    expect((await r.publish("@sigx/core", "1.0.0", alice)).status).toBe(201);
+    const index = await r.call("GET", "@sigx/core/index");
+    expect(index.status).toBe(200);
+    expect(index.text).toContain('"1.0.0"');
+    expect((await r.call("GET", "@sigx/core/1.0.0")).status).toBe(200);
+    expect((await r.call("GET", "@sigx/core/owners")).text).toBe("alice\n");
+    expect((await r.call("PUT", "@sigx/core/1.0.0/yank", alice)).status).toBe(200);
+    expect(utf8Decode((await r.blobs.get("index/@sigx/core.json")) ?? [])).toContain('"yanked"');
+    expect((await r.call("GET", "@sigx/nope/index")).status).toBe(404);
+    expect((await r.send("GET", "/", [], null)).text).toContain("@sigx/core\n");
+  });
+
+  it("refuse names that aren't `@scope/name`", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    for (const path of [
+      "@/x/1.0.0",
+      "@Sigx/x/1.0.0",
+      "@sigx/X/1.0.0",
+      "@sigx--a/x/1.0.0",
+      "@con/x/1.0.0",
+    ]) {
+      expect((await r.call("PUT", path, alice)).status).toBe(400);
+    }
+    expect((await r.call("GET", "@sigx/index")).status).toBe(404);
+  });
+
+  it("differing only in `-` and `_` are the same scope", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    expect((await r.publish("@my-org/a", "1.0.0", alice)).status).toBe(201);
+    const other = await r.publish("@my_org/b", "1.0.0", r.user("bob"));
+    expect(other.status).toBe(400);
+    expect(other.text).toContain("the registry has the scope `@my-org`");
+    // Even for its owner: one scope has one spelling.
+    expect((await r.publish("@my_org/b", "1.0.0", alice)).status).toBe(400);
+  });
+
+  it("can't be claimed while reserved, except by the approved user", async () => {
+    const r = reserving();
+    const mallory = r.user("mallory");
+    const acme = await r.publish("@acme/x", "1.0.0", mallory);
+    expect(acme.status).toBe(403);
+    expect(acme.text).toBe(
+      `cannot publish \`@acme/x\`: the scope \`@acme\` is reserved (a well-known npm scope); to ask for it: ${REQUEST}?name=%40acme%2Fx`,
+    );
+    expect(await r.db.scope("acme")).toBeNull();
+    expect((await r.publish("@corp/x", "1.0.0", mallory)).status).toBe(403);
+    const carol = r.user("carol");
+    expect((await r.publish("@corp/x", "1.0.0", carol)).status).toBe(201);
+    // Once claimed, the scope's owners decide: a co-owner isn't the reservation's holder.
+    expect((await r.call("PUT", "scopes/corp/owners/mallory", carol)).status).toBe(200);
+    expect((await r.publish("@corp/y", "1.0.0", mallory)).status).toBe(201);
+  });
+
+  it("can't take a reserved package name", async () => {
+    const r = reserving();
+    const answer = await r.publish("@vue/x", "1.0.0", r.user("mallory"));
+    expect(answer.status).toBe(403);
+    expect(answer.text).toContain("the scope `@vue` (as the name `vue`) is reserved");
+  });
+
+  it("can't take another user's package name, nor a package another user's scope", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    expect((await r.publish("lodash", "1.0.0", alice)).status).toBe(201);
+    const scope = await r.publish("@lodash/x", "1.0.0", bob);
+    expect(scope.status).toBe(403);
+    expect(scope.text).toBe(
+      "cannot publish `@lodash/x`: the scope `@lodash` would take the name of the package `lodash`, which `bob` doesn't own (owners: alice)",
+    );
+    expect(await r.db.scope("lodash")).toBeNull();
+    expect((await r.publish("@lodash/x", "1.0.0", alice)).status).toBe(201);
+
+    expect((await r.publish("@acme-co/x", "1.0.0", alice)).status).toBe(201);
+    const name = await r.publish("acme_co", "1.0.0", bob);
+    expect(name.status).toBe(403);
+    expect(name.text).toBe(
+      "cannot publish `acme_co`: it is the name of the scope `@acme-co`, which `bob` doesn't own (owners: alice)",
+    );
+    expect((await r.publish("acme-co", "1.0.0", alice)).status).toBe(201);
+  });
+
+  it("are refused before the body is read", async () => {
+    const r = new TestRegistry();
+    expect((await r.publish("@sigx/core", "1.0.0", r.user("alice"))).status).toBe(201);
+    r.user("bob");
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        c.error(new Error("the body was read"));
+      },
+    });
+    const headers: [string, string][] = [["authorization", "Bearer token-of-bob"]];
+    expect((await r.send("PUT", "/api/v1/@sigx/evil/1.0.0", headers, stream)).status).toBe(403);
+  });
+
+  it("have no owners on an open registry", async () => {
+    const r = new TestRegistry();
+    expect((await r.publish("@sigx/core", "1.0.0")).status).toBe(201);
+    expect((await r.publish("@sigx/dom", "1.0.0")).status).toBe(201);
+    expect(await r.db.scope("sigx")).toBeNull();
+  });
+});
+
+describe("scope owners", () => {
+  it("are listed and changed by an owner, to users that exist, keeping the last", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    expect((await r.call("GET", "scopes/sigx/owners")).status).toBe(404);
+    expect((await r.publish("@sigx/core", "1.0.0", alice)).status).toBe(201);
+    expect((await r.call("GET", "scopes/sigx/owners")).text).toBe("alice\n");
+    expect((await r.call("PUT", "scopes/sigx/owners/bob", bob)).status).toBe(403);
+    expect((await r.call("PUT", "scopes/sigx/owners/nobody", alice)).status).toBe(404);
+    expect((await r.call("PUT", "scopes/sigx/owners/bob")).status).toBe(401);
+    const added = await r.call("PUT", "scopes/sigx/owners/bob", alice);
+    expect(added.text).toBe("owners of `@sigx`: alice, bob\n");
+    expect((await r.call("PUT", "scopes/sigx/owners/bob", alice)).status).toBe(200);
+    expect((await r.call("DELETE", "scopes/sigx/owners/alice", bob)).status).toBe(200);
+    expect((await r.call("GET", "scopes/sigx/owners")).text).toBe("bob\n");
+    expect((await r.call("DELETE", "scopes/sigx/owners/bob", bob)).status).toBe(409);
+    expect((await r.publish("@sigx/dom", "1.0.0", alice)).status).toBe(403);
+    expect(r.purge.purged).toContain("/api/v1/scopes/sigx/owners");
+  });
+
+  it("are refused for invalid scopes and users", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    expect((await r.call("GET", "scopes/Bad/owners")).status).toBe(400);
+    expect((await r.call("PUT", "scopes/sigx/owners/Bad", alice)).status).toBe(400);
+    // Only the spelling the scope was claimed under names it.
+    expect((await r.publish("@my-org/a", "1.0.0", alice)).status).toBe(201);
+    expect((await r.call("GET", "scopes/my_org/owners")).status).toBe(404);
+  });
+
+  it("leave a package named `scopes` reachable", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    expect((await r.publish("scopes", "1.0.0", alice)).status).toBe(201);
+    expect((await r.call("GET", "scopes/index")).status).toBe(200);
+    expect((await r.call("GET", "scopes/owners")).text).toBe("alice\n");
+  });
+});
