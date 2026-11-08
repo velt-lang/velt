@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Smoke test of an installed toolchain on a machine without a C toolchain (no cc, ld or Xcode):
 # with the bundled linker forced ($VELT_LINKER=bundled), `velt doctor` reports it, and hello and
-# examples/http_hello.velt build in debug and release mode, run and answer a request. Extra
-# arguments are more targets to build and run the same way (e.g. x86_64-unknown-linux-musl).
+# examples/http_hello.velt build in debug and release mode, run and answer a request; hello also
+# builds for wasm32-unknown-unknown. Extra arguments are more targets to build and run the same
+# way (e.g. x86_64-unknown-linux-musl).
 # release.yml runs it in debian:bookworm-slim and on macOS; scripts/smoke-clean.ps1 is the
 # Windows counterpart. Needs bash (for /dev/tcp: slim images have no curl).
 #
@@ -60,6 +61,12 @@ step "debug build (shared runtime)"
 run_both debug
 step "release build"
 run_both release --release
+# With no Rust or LLVM on the machine: the toolchain's WebAssembly runtime, compiled through the
+# pinned zig, which velt downloads on first use (#2587).
+step "WebAssembly (wasm32-unknown-unknown, release)"
+"$velt" build --release --target wasm32-unknown-unknown "$repo/tests/golden/m1/hello.velt" -o "$work/hello.wasm"
+[ "$(head -c 4 "$work/hello.wasm" | od -An -c | tr -d ' ')" = '\0asm' ] || { echo "hello.wasm is no WebAssembly module" >&2; exit 1; }
+echo "ok: wasm32-unknown-unknown"
 for target in "$@"; do
     step "--target $target (debug and release)"
     run_both "$target debug" --target "$target"

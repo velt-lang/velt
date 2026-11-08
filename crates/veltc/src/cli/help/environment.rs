@@ -63,7 +63,7 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
     ),
     (
         "VELT_LLVM_BIN",
-        "LLVM bin directory with opt/llc for WebAssembly (default: rustup's llvm-tools)",
+        "LLVM bin directory with opt/llc for WebAssembly (default: rustup's llvm-tools, else zig)",
     ),
     (
         "VELT_WASI_SYSROOT",

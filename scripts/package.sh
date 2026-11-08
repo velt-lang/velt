@@ -5,6 +5,7 @@
 #   bin/velt  bin/velt-launcher (installed as <root>/bin/velt, #948)
 #   lib/libvelt_rt.a  lib/libvelt_rt_shared.{so,dylib}  lib/NATIVE_LIBS.md
 #   lib/velt/lld  lib/targets/<host>/ (the link kit)
+#   lib/wasm32-unknown-unknown/libvelt_rt_wasm.a (the runtime WebAssembly programs and Workers link)
 # and the target packs dist/velt-<version>-target-<triple>.tar.gz (`velt target add`): this host's
 # runtime and kit, and on Linux <arch>-unknown-linux-musl's.
 #   std/** (without its *.test.velt files)  share/velt/lldb/velt_lldb.py  share/velt/warm/*.velt  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
@@ -53,6 +54,8 @@ musl_target="${host%%-*}-unknown-linux-musl"
 if [ "$build" = 1 ]; then
     echo "building release velt + velt-launcher + velt_rt + velt_rt_shared + velt-kit..."
     cargo build --release -p veltc -p velt_launcher -p velt_rt -p velt_rt_shared -p velt_link --manifest-path "$repo/Cargo.toml"
+    echo "building the WebAssembly runtime..."
+    cargo build --release -p velt_rt_wasm --target wasm32-unknown-unknown --manifest-path "$repo/Cargo.toml"
     if [ "$bundled" = 1 ] && [ "$musl" = 1 ]; then
         echo "building the runtime for $musl_target..."
         rustup target add "$musl_target"
@@ -71,7 +74,8 @@ case "$host" in
     *apple*) shared_rt="libvelt_rt_shared.dylib" ;;
     *) shared_rt="libvelt_rt_shared.so" ;;
 esac
-for f in "$release/velt" "$release/velt-launcher" "$release/libvelt_rt.a" "$release/$shared_rt"; do
+wasm_rt="$target_dir/wasm32-unknown-unknown/release/libvelt_rt_wasm.a"
+for f in "$release/velt" "$release/velt-launcher" "$release/libvelt_rt.a" "$release/$shared_rt" "$wasm_rt"; do
     [ -f "$f" ] || { echo "error: missing build output: $f" >&2; exit 1; }
 done
 
@@ -84,6 +88,9 @@ mkdir -p "$out/bin" "$out/lib" "$out/std" "$out/share/velt/lldb" "$out/share/vel
 cp "$release/velt" "$release/velt-launcher" "$out/bin/"
 cp "$release/libvelt_rt.a" "$release/$shared_rt" "$out/lib/"
 cp "$repo/crates/velt_rt/NATIVE_LIBS.md" "$out/lib/"
+# Where `velt` looks for it beside the toolchain (crates/velt_link: find_runtime_lib_for).
+mkdir -p "$out/lib/wasm32-unknown-unknown"
+cp "$wasm_rt" "$out/lib/wasm32-unknown-unknown/"
 cp "$repo/editors/lldb/velt_lldb.py" "$out/share/velt/lldb/"
 # The programs `velt cache warm` compiles std into the build cache with.
 # (A loop over the list, not a pipe, so a missing program fails the script under `set -e`.)
