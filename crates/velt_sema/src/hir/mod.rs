@@ -246,6 +246,12 @@ pub struct Program {
     /// lowering takes the module lock before the lock of every other such call in a program
     /// whose functions may have properties. Additive.
     pub lock_free_callbacks: HashSet<DefId>,
+    /// The `with` / `read` / `write` callbacks (closures and named functions, by `DefId`) that
+    /// never store a value that may hold a function value where the lock's value may reach it,
+    /// nor run code that may (hir_encodings.md "Module state"): the lock's release need not walk
+    /// its value for function values another thread may not call (velt_vir glue/many.rs).
+    /// Additive.
+    pub store_free_callbacks: HashSet<DefId>,
     /// Standard-library functions and module constants that no checked code reaches, left
     /// unchecked (hir_encodings.md "Unchecked definitions"): each has a stub definition (an
     /// empty body, a `void` constant) that lowering never builds or reads. Additive.

@@ -486,6 +486,7 @@ fn check_timed(
         generic_called,
         generic_fns,
         lock_free_callbacks,
+        store_free_callbacks,
         fn_views,
         fn_shapes,
         ..
@@ -526,6 +527,7 @@ fn check_timed(
         extension_impls: extension_impls.into_iter().collect(),
         dyn_bounds: dyn_bounds.into_iter().collect(),
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
+        store_free_callbacks: store_free_callbacks.into_iter().collect(),
         unchecked: unchecked.into_iter().collect(),
         hooks_demanded,
         live: live.map(|l| l.into_iter().collect()),

@@ -933,6 +933,22 @@ has a callback that does. In a program whose functions may have properties, lowe
 `velt_rt_module_with` before the lock of every other call (rt_abi.md "Module state"). Empty in a
 program without `any`.
 
+`Program::store_free_callbacks` (additive) lists the `with` / `read` / `write` callbacks, written
+as a closure or a named function, that never store a value that may hold a function value where
+the lock's value may reach it (velt_sema `module_state_stores.rs`): no body they may run, along
+the same walk's edges and through every implementation of the interface slots they call (also
+of the interfaces whose values convert to that one), assigns such a value to anything but a
+local of its own that no closure shares (a field, an element, a parameter, a captured
+variable), hands one to an intrinsic or a runtime extern, calls a function value whose body is
+not known, or resumes a generator; the hooks the values a body handles may run count as bodies
+it runs. A value may hold a function value when its type is or holds a function type, a type
+parameter, `any` / `unknown`, an interface one of whose implementations does, or a class one of
+whose subclasses does (`shared` values and promises do not count, as in the walk). The lock's
+value was walked for function values that may not be shared (velt_vir glue/many.rs) when it
+became reachable from several threads and at every release since, and only code holding the
+lock changes it, so lowering skips the walk at the release after these callbacks. Empty in a
+program that loads `Proxy` (a field access may run a trap).
+
 ## Unchecked definitions (#1658; additive)
 
 Sema checks a standard-library definition once it is *live*, or a checked call asks for its result

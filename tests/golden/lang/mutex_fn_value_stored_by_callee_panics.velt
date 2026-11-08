@@ -1,0 +1,55 @@
+// A `with` callback that stores no function value itself, but calls code that does (here through
+// an interface method and a function it calls), still has the lock's value checked when the lock
+// is released: a function value that captured a resource without `clone()` stops the program
+// there, as one stored by the callback itself does. A callback that stores none before it leaves
+// the value as it was.
+class Conn {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+interface Keeper {
+  keep(list: (() => Promise<i64>)[]): void;
+}
+
+class Quiet implements Keeper {
+  keep(list: (() => Promise<i64>)[]) {
+    console.log("kept", list.length);
+  }
+}
+
+class Storing implements Keeper {
+  keep(list: (() => Promise<i64>)[]) {
+    list.push(mk(1));
+  }
+}
+
+function mk(id: i64): () => Promise<i64> {
+  const c = new Conn(id);
+  return async (): Promise<i64> => c.id;
+}
+
+function keepWith(k: Keeper, list: (() => Promise<i64>)[]) {
+  k.keep(list);
+}
+
+async function main() {
+  const m = shared(new Mutex<(() => Promise<i64>)[]>([]));
+  const ks: Keeper[] = [new Quiet(), new Storing()];
+  m.with((fs) => {
+    console.log("count", fs.length);
+  });
+  for (const k of ks) {
+    m.with((fs) => {
+      keepWith(k, fs);
+    });
+  }
+  console.log("not reached");
+}

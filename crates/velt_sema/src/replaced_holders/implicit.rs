@@ -211,7 +211,7 @@ impl Implicit {
     }
 
     /// May dropping, formatting or copying a value of type `t` run user code?
-    pub(super) fn maybe(&self, cx: &Ctx, t: TyId) -> bool {
+    pub(crate) fn maybe(&self, cx: &Ctx, t: TyId) -> bool {
         let r = self.reach(cx, t);
         !r.adts.is_empty() || r.param || (r.fns && self.captures_reach)
     }
@@ -421,6 +421,14 @@ impl Implicit {
         v
     }
 
+    /// The `[Symbol.dispose]()` hooks (`dispose`) or the glue hooks a value of type `t` may run
+    /// through the classes it names (a type parameter adds none), and whether it holds a type
+    /// parameter.
+    pub(crate) fn named_hooks(&self, cx: &Ctx, t: TyId, dispose: bool) -> (Vec<DefId>, bool) {
+        let r = self.reach(cx, t);
+        (self.hooks_of(&r, dispose), r.param)
+    }
+
     /// The `[Symbol.dispose]()` hooks (`dispose`) or glue hooks of the classes in `r`.
     pub(super) fn hooks_of(&self, r: &Reach, dispose: bool) -> Vec<DefId> {
         let pick = |h: &(Vec<DefId>, Vec<DefId>)| if dispose { h.0.clone() } else { h.1.clone() };
@@ -540,7 +548,7 @@ pub(super) fn has_field_inits(cx: &Ctx, d: DefId) -> bool {
 /// The arguments of intrinsic `i` whose values glue may format, serialise or deep-copy, calling
 /// class hooks (1 and 2 of the module docs): all of them, or none. The match lists every
 /// intrinsic, so a new one must be classified.
-pub(super) fn glue_args(i: Intrinsic) -> bool {
+pub(crate) fn glue_args(i: Intrinsic) -> bool {
     use Intrinsic as I;
     match i {
         I::Print
@@ -737,7 +745,7 @@ pub(crate) fn resumes(i: Intrinsic) -> bool {
 }
 
 /// Is `e` a place read (its value is dropped by whatever holds it, not here)?
-pub(super) fn is_place(e: &Expr) -> bool {
+pub(crate) fn is_place(e: &Expr) -> bool {
     match &e.kind {
         E::Local(..) | E::Field { .. } | E::Index { .. } | E::Lit(_) => true,
         E::UnwrapSome(x, _) | E::Downcast(x) | E::Upcast(x) | E::UnwrapVariant { expr: x, .. } => {
@@ -753,7 +761,7 @@ pub(super) fn is_place(e: &Expr) -> bool {
 /// `dynamic_call` too), the function value of a call through one, and a closure's captures
 /// (`spawn(async () => …)`); through either branch of a conditional (`spawn_if`) and a block
 /// that only holds a value.
-pub(super) fn glue_types(cx: &Ctx, a: &Expr, out: &mut Vec<TyId>) {
+pub(crate) fn glue_types(cx: &Ctx, a: &Expr, out: &mut Vec<TyId>) {
     out.push(a.ty);
     match &a.kind {
         E::Call { callee, args } => {

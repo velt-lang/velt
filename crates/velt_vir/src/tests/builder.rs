@@ -104,6 +104,7 @@ impl PB {
             extension_impls: Default::default(),
             dyn_bounds: Default::default(),
             lock_free_callbacks: Default::default(),
+            store_free_callbacks: Default::default(),
             any_fn_views: vec![],
             unchecked: Default::default(),
             hooks_demanded: Default::default(),

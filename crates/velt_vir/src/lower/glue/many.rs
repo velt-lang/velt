@@ -23,7 +23,8 @@
 //! code and is never inside a transfer (the glue that transfers runs user code only with the
 //! transfer suspended, and a caught panic forgets what it left open), so its scope has only its own
 //! objects, and its `end` only forgets them. It ends the scope before it panics. The plain walk runs
-//! at every `Mutex.with` and has no scope.
+//! when a `Mutex.with` releases its lock, unless the callback stores no function value
+//! (`Program::store_free_callbacks`), and has no scope.
 
 use velt_sema::hir::{TyId, TyKind};
 

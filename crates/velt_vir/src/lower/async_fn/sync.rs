@@ -448,8 +448,18 @@ impl FnLower<'_, '_> {
         };
         self.mode = mode;
         // A function value stored into the value while the lock was held may be called by
-        // another thread next (glue/many.rs).
-        self.many_walk(false, value, vty);
+        // another thread next (glue/many.rs). The value was walked when it went in and at every
+        // release since: a callback that stores none (`Program::store_free_callbacks`) leaves
+        // nothing new to find.
+        let store_free = match &f.kind {
+            hir::ExprKind::Closure(d) | hir::ExprKind::FnRef(d, _) => {
+                self.cx.hir.store_free_callbacks.contains(d)
+            }
+            _ => false,
+        };
+        if !store_free {
+            self.many_walk(false, value, vty);
+        }
         let mut unlock_args = vec![lock];
         unlock_args.extend(how);
         self.call_rt(unlock_fn, unlock_args, None);

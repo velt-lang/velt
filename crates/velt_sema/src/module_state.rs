@@ -20,8 +20,11 @@ mod always;
 mod locked_props;
 #[path = "module_state_reach.rs"]
 mod reach;
+#[path = "module_state_stores.rs"]
+mod stores;
 
 use reach::{propagate, vars_reached, Reach};
+use stores::written_fn;
 
 /// The module-level `let`s in initialization order (empty when there are none); reports reads
 /// of a `let` before its initializer runs.
@@ -390,6 +393,8 @@ struct Facts {
     /// edges only when module state is checked; the walk for properties goes through the slot
     /// once instead (locked_props.rs), so many calls of many implementations stay linear.
     slots: Vec<(DefId, u32)>,
+    /// What it may store, and the hooks it may run (module_state_stores.rs).
+    st: stores::StoreFacts,
 }
 
 /// A `Mutex` is locked by blocking the thread, while a task holds the module lock for its whole
@@ -405,10 +410,8 @@ struct Facts {
 pub(crate) fn check_locked_access(cx: &mut Ctx) {
     // Without `any`, no function has properties (locked_props.rs).
     let props = cx.any.is_some_and(|a| a.imp.is_some());
-    if cx.module_slots.is_empty() && !props {
-        return;
-    }
     locked_props::reset();
+    stores::reset();
     let dispatch = locked_props::Dispatch::new(cx);
     let fns: Vec<DefId> = cx
         .fn_defs
@@ -477,6 +480,9 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
     // the generator bodies a resume may run.
     let weak = crate::replaced_holders::implicit::weak_entries(cx);
     let im = crate::replaced_holders::implicit::Implicit::new(cx, weak);
+    stores::collect(cx, &mut facts);
+    let free = stores::store_free(cx, &dispatch, &facts, &im, &callbacks);
+    cx.store_free_callbacks = free;
     for f in facts.values_mut() {
         let mut hooks: Vec<DefId> = vec![];
         for &t in &f.tys {
@@ -549,18 +555,6 @@ fn node_name(cx: &Ctx, d: DefId) -> String {
     }
 }
 
-/// Is `e` a closure or a named function written in place (an optional parameter's `Some`, or
-/// either branch of a conditional): a function value whose body the visit sees?
-fn written_fn(e: &hir::Expr) -> bool {
-    match &e.kind {
-        E::Closure(_) | E::FnRef(..) => true,
-        E::WrapSome(x) | E::Upcast(x) => written_fn(x),
-        E::If { then, els, .. } => written_fn(then) && written_fn(els),
-        E::Block(b) if b.stmts.is_empty() => b.value.as_deref().is_some_and(written_fn),
-        _ => false,
-    }
-}
-
 /// Collects a body's [`Facts`] and the callbacks of its `with` calls.
 struct FactsOf<'a, 'm> {
     cx: &'a Ctx<'m>,
@@ -590,6 +584,7 @@ impl<'a, 'm> FactsOf<'a, 'm> {
                 resumes: false,
                 props: false,
                 slots: vec![],
+                st: Default::default(),
             },
             withs: vec![],
             callbacks: vec![],

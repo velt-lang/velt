@@ -21,6 +21,7 @@ mod hybrid;
 mod interp;
 mod keys;
 mod live_superset;
+mod lock_walks;
 mod m2_arrays;
 mod m2_classes;
 mod m2_closures;
