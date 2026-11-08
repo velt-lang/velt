@@ -5,6 +5,7 @@
 #   bin/velt.exe  bin/velt-launcher.exe (installed as <root>\bin\velt.exe, #948)
 #   lib/velt_rt.lib  lib/velt_rt_shared.dll(.lib)  lib/NATIVE_LIBS.md
 #   lib/velt/lld.exe  lib/targets/<triple>/ (link kit)
+#   lib/wasm32-unknown-unknown/libvelt_rt_wasm.a (the runtime WebAssembly programs and Workers link)
 # and the target pack dist/velt-<version>-target-<triple>.tar.gz (`velt target add`).
 #   std/** (without its *.test.velt files)  share/velt/lldb/velt_lldb.py  share/velt/warm/*.velt  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
@@ -49,6 +50,9 @@ if (-not $SkipBuild) {
     Write-Host "building release velt + velt_rt + velt_rt_shared + velt-kit..."
     cargo build --release -p veltc -p velt_launcher -p velt_rt -p velt_rt_shared -p velt_link --manifest-path $Manifest
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+    Write-Host "building the WebAssembly runtime..."
+    cargo build --release -p velt_rt_wasm --target wasm32-unknown-unknown --manifest-path $Manifest
+    if ($LASTEXITCODE -ne 0) { throw "cargo build of the WebAssembly runtime failed" }
 }
 
 # The bundled linker (crates/velt_link/src/bundled.rs): lld.exe plus the link kit.
@@ -95,7 +99,8 @@ $Launcher = Join-Path $Release "velt-launcher.exe"
 $RtLib = Join-Path $Release "velt_rt.lib"
 # The shared runtime debug builds link (crates/velt_rt_shared): the DLL and its import library.
 $SharedRt = @((Join-Path $Release "velt_rt_shared.dll"), (Join-Path $Release "velt_rt_shared.dll.lib"))
-foreach ($f in @($Exe, $Launcher, $RtLib) + $SharedRt) {
+$WasmRt = Join-Path $TargetDir "wasm32-unknown-unknown/release/libvelt_rt_wasm.a"
+foreach ($f in @($Exe, $Launcher, $RtLib, $WasmRt) + $SharedRt) {
     if (-not (Test-Path $f -PathType Leaf)) { throw "missing build output: $f" }
 }
 
@@ -103,6 +108,10 @@ Copy-Item $Exe, $Launcher (Join-Path $Out "bin")
 Copy-Item $RtLib (Join-Path $Out "lib")
 foreach ($f in $SharedRt) { Copy-Item $f (Join-Path $Out "lib") }
 Copy-Item (Join-Path $Repo "crates/velt_rt/NATIVE_LIBS.md") (Join-Path $Out "lib")
+# Where `velt` looks for it beside the toolchain (crates/velt_link: find_runtime_lib_for).
+$WasmDir = Join-Path $Out "lib\wasm32-unknown-unknown"
+New-Item -ItemType Directory -Force $WasmDir | Out-Null
+Copy-Item $WasmRt $WasmDir
 Copy-Item (Join-Path $Repo "editors/lldb/velt_lldb.py") (Join-Path $Out "share\velt\lldb")
 # The programs `velt cache warm` compiles std into the build cache with.
 $WarmDir = Join-Path $Repo "share/velt/warm"

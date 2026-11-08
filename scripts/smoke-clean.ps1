@@ -1,7 +1,8 @@
 # Windows counterpart of scripts/smoke-clean.sh: an installed toolchain on a machine without
 # Visual Studio (release.yml runs it in a Windows Server Core container: no Build Tools, no
 # Windows SDK, no Visual C++ runtime) builds and runs hello and examples/http_hello.velt in debug
-# and release mode with the bundled linker, and `velt doctor` reports it. Runs under Windows
+# and release mode with the bundled linker, and `velt doctor` reports it; hello also builds for
+# wasm32-unknown-unknown. Runs under Windows
 # PowerShell 5.1 (what Server Core has).
 #
 # Usage: powershell -File scripts/smoke-clean.ps1 <path to velt.exe>
@@ -47,3 +48,11 @@ Step "debug build (shared runtime)"
 RunBoth "debug" @()
 Step "release build"
 RunBoth "release" @("--release")
+# With no Rust or LLVM on the machine: the toolchain's WebAssembly runtime, compiled through the
+# pinned zig, which velt downloads on first use (#2587).
+Step "WebAssembly (wasm32-unknown-unknown, release)"
+$Wasm = Join-Path $Work "hello.wasm"
+Velt build --release --target wasm32-unknown-unknown (Join-Path $Repo "tests\golden\m1\hello.velt") -o $Wasm
+$Magic = [IO.File]::ReadAllBytes($Wasm)[0..3]
+if (($Magic -join ",") -ne "0,97,115,109") { throw "hello.wasm is no WebAssembly module" }
+Write-Host "ok: wasm32-unknown-unknown"

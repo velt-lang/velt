@@ -75,6 +75,22 @@ fn wasm_objects_when_llc_is_available() {
     }
 }
 
+/// Without `llc` and `opt`, the pinned zig's clang compiles the same objects (#2587): `VELT_ZIG`
+/// names it (.github/actions/zig).
+#[test]
+fn wasm_objects_through_zig() {
+    let Some(zig) = std::env::var_os("VELT_ZIG").filter(|z| !z.is_empty()) else {
+        eprintln!("note: VELT_ZIG not set; skipping wasm objects through zig");
+        return;
+    };
+    for (target, optimize) in [("wasm32-wasip1", false), ("wasm32-unknown-unknown", true)] {
+        let ir = emit_ir(&sample(), target).unwrap();
+        let target = crate::target::normalize(target).unwrap();
+        let obj = crate::llc::compile_with_zig(zig.as_ref(), &ir, &target, optimize).unwrap();
+        assert_eq!(&obj[..4], b"\0asm", "{}", target.triple);
+    }
+}
+
 /// A host function is declared as the WebAssembly import it is, and the unit defining
 /// `velt_main` lists it in the custom section the JS glue reads.
 #[test]

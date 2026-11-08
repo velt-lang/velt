@@ -9,6 +9,8 @@ fn main() -> ExitCode {
     // The launcher counts launchers running one another (#948); a toolchain ends the chain, so
     // a `velt` that a program it runs starts again counts from zero. Before any thread starts.
     std::env::remove_var("VELT_LAUNCHER_HOPS");
+    // WebAssembly compiles with the pinned zig when no `llc` and `opt` are found (#2587).
+    velt_codegen_llvm::set_zig(pinned_zig);
     // `--workspace`, `-p` and `--affected` choose the members a command runs on (#1855).
     // The generator host the compiler starts (docs/internals/design/source-generators.md).
     let mut raw = std::env::args_os().skip(1);
@@ -30,4 +32,9 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// The pinned zig, downloaded into `$VELT_HOME/cache/zig` on first use.
+fn pinned_zig() -> Result<std::path::PathBuf, String> {
+    velt_toolchain::zig::zig(&vpm::locations::velt_home()?)
 }

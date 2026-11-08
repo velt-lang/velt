@@ -1,11 +1,17 @@
-//! Compiling IR for the WebAssembly targets with LLVM's `opt` + `llc`.
+//! Compiling IR for the WebAssembly targets with LLVM's `opt` + `llc`, or else the clang of the
+//! pinned zig.
 //!
-//! clang is not used for WebAssembly: Apple's clang is built without the WebAssembly backend,
-//! while rustup's `llvm-tools` component (`rustup component add llvm-tools`) ships `opt`/`llc`
-//! with it on every host. Search order for the directory holding both tools: `$VELT_LLVM_BIN`,
-//! the active Rust toolchain's `lib/rustlib/<host>/bin`, `PATH`, then Homebrew's LLVM. A
-//! candidate counts only if `llc --version` reports LLVM 16+ with a `wasm32` target. The result
-//! is cached per process.
+//! The system clang is not used for WebAssembly: Apple's clang is built without the WebAssembly
+//! backend, while rustup's `llvm-tools` component (`rustup component add llvm-tools`) ships
+//! `opt`/`llc` with it on every host. Search order for the directory holding both tools:
+//! `$VELT_LLVM_BIN`, the active Rust toolchain's `lib/rustlib/<host>/bin`, `PATH`, then Homebrew's
+//! LLVM. A candidate counts only if `llc --version` reports LLVM 16+ with a `wasm32` target. The
+//! result is cached per process.
+//!
+//! Without them (a release installed on a machine with no Rust, #2587), the IR goes to `zig cc`:
+//! the zig the toolchain downloads on first use for C headers and sources, whose clang has every
+//! LLVM backend. The command registers how to get it ([`set_zig`]), as this crate doesn't
+//! download anything. `$VELT_LLVM_BIN` stays final: when set, zig is not tried.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,6 +31,17 @@ pub struct LlvmTools {
     pub opt: PathBuf,
     /// The static compiler (IR → object file).
     pub llc: PathBuf,
+}
+
+/// Gives the path of the pinned zig, downloading it on first use: see [`set_zig`].
+pub type ZigSource = fn() -> Result<PathBuf, String>;
+
+static ZIG: OnceLock<ZigSource> = OnceLock::new();
+
+/// Registers how to get the pinned zig, for compiling WebAssembly when no `llc` and `opt` are
+/// found. Called once by the command, before code generation; later calls are ignored.
+pub fn set_zig(source: ZigSource) {
+    let _ = ZIG.set(source);
 }
 
 /// The LLVM tools used for WebAssembly targets, if any were found.
@@ -99,6 +116,16 @@ fn llvm_major(banner: &str) -> Option<u32> {
 /// Compile `ir` to a WebAssembly object file: `opt -O3` (or `$VELT_LLVM_OPT`; release) then `llc`.
 pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResult<Vec<u8>> {
     let Some(tools) = find_wasm_tools() else {
+        let explicit = std::env::var_os("VELT_LLVM_BIN").is_some_and(|d| !d.is_empty());
+        if let (false, Some(source)) = (explicit, ZIG.get()) {
+            let zig = source().map_err(|e| {
+                format!(
+                    "WebAssembly targets need LLVM's `llc` and `opt` (`rustup component add \
+                     llvm-tools`) or zig, which could not be had: {e}"
+                )
+            })?;
+            return compile_with_zig(&zig, ir, target, optimize);
+        }
         bail!(
             "WebAssembly targets need LLVM's `llc` and `opt` with the WebAssembly backend: run \
              `rustup component add llvm-tools`, or set $VELT_LLVM_BIN to an LLVM {MIN_LLVM_MAJOR}+ \
@@ -124,9 +151,102 @@ pub(crate) fn compile(ir: &str, target: &Target, optimize: bool) -> CodegenResul
     run_piped(cmd, &input, "llc")
 }
 
+/// zig's name for a WebAssembly target.
+fn zig_target(triple: &str) -> &'static str {
+    if triple.contains("wasi") {
+        "wasm32-wasi"
+    } else {
+        "wasm32-freestanding"
+    }
+}
+
+/// Compile `ir` to a WebAssembly object file with `zig cc` (clang): optimized as `opt` + `llc`
+/// would be, for the same generic CPU `llc` defaults to. zig reads and writes files only (it
+/// takes neither `-x ir` from stdin nor `-o -`), so both go through a directory of their own.
+pub(crate) fn compile_with_zig(
+    zig: &Path,
+    ir: &str,
+    target: &Target,
+    optimize: bool,
+) -> CodegenResult<Vec<u8>> {
+    let dir = ZigDir::new()?;
+    let (input, output) = (dir.0.join("unit.ll"), dir.0.join("unit.o"));
+    std::fs::write(&input, ir).map_err(|e| format!("codegen: cannot write the IR for zig: {e}"))?;
+    let mut cmd = Command::new(zig);
+    cmd.args(["cc", "-target", zig_target(&target.triple), "-mcpu=generic"])
+        // The IR names `wasm32-unknown-unknown`, which zig spells with one more `-unknown`.
+        .arg("-Wno-override-module")
+        .arg(if optimize {
+            crate::clang::opt_flag()
+        } else {
+            "-O0"
+        })
+        .arg("-c")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output);
+    run_piped(cmd, b"", "zig cc")?;
+    std::fs::read(&output).map_err(|e| format!("codegen: zig cc wrote no object: {e}"))
+}
+
+/// A directory of one zig compile's own, removed when dropped: units compile in parallel. It is
+/// always a new one: a name already taken (left by a crash, another process with this id, or
+/// put there by someone else) is passed over, never written into.
+struct ZigDir(PathBuf);
+
+/// The number in the next zig directory's name.
+static NEXT_ZIG_DIR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl ZigDir {
+    fn new() -> CodegenResult<ZigDir> {
+        let temp = std::env::temp_dir();
+        for _ in 0..100 {
+            let n = NEXT_ZIG_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = temp.join(format!("velt-wasm-{}-{n}", std::process::id()));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return Ok(ZigDir(dir)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => bail!("codegen: cannot make a directory for zig: {e}"),
+            }
+        }
+        bail!(
+            "codegen: cannot make a directory for zig in {}",
+            temp.display()
+        )
+    }
+}
+
+impl Drop for ZigDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A name already taken is passed over, and what is there is left alone.
+    #[test]
+    fn zig_directories_are_new() {
+        let next = NEXT_ZIG_DIR.load(std::sync::atomic::Ordering::Relaxed);
+        let temp = std::env::temp_dir();
+        // Only the names this test makes are its own: tests compiling through zig run beside it.
+        let taken: Vec<PathBuf> = (next..next + 3)
+            .map(|n| temp.join(format!("velt-wasm-{}-{n}", std::process::id())))
+            .filter(|dir| std::fs::create_dir(dir).is_ok())
+            .collect();
+        for dir in &taken {
+            std::fs::write(dir.join("theirs"), "x").unwrap();
+        }
+        let dir = ZigDir::new().unwrap();
+        assert!(!taken.contains(&dir.0), "{}", dir.0.display());
+        assert!(std::fs::read_dir(&dir.0).unwrap().next().is_none());
+        for t in &taken {
+            assert!(t.join("theirs").is_file());
+            let _ = std::fs::remove_dir_all(t);
+        }
+    }
 
     #[test]
     fn version_banner() {
