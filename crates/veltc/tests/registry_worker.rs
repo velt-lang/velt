@@ -175,6 +175,7 @@ fn the_conformance_suite_passes() {
         "purged `{file}`"
     );
     uploads_are_limited_to_10_mib(&base, &url, alice);
+    reserved_names_wait_for_approval(&base, &url, alice, bob);
     signing_in_gives_tokens_that_publish(&base, &url);
     signing_in_fails_closed(&base, &modules, &worker);
     stale_writes_lose(&base, &modules);
@@ -243,6 +244,31 @@ fn uploads_are_limited_to_10_mib(base: &Path, url: &str, token: &str) {
             "velt publish of {name}:\n{}",
             String::from_utf8_lossy(&out.stderr)
         );
+    }
+}
+
+/// A reserved name (0002_reserved_names.sql, and one serve.mjs approved for alice) is published only
+/// by the user approved for it, and the refusal says how to ask.
+fn reserved_names_wait_for_approval(base: &Path, url: &str, alice: &str, bob: &str) {
+    for (name, token, ok) in [
+        ("vue", alice, false),
+        ("alices-lib", bob, false),
+        ("alices-lib", alice, true),
+    ] {
+        let out = publish(base, url, token, name, "1.0.0", 10);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.success(),
+            ok,
+            "velt publish of {name}:\n{stderr}"
+        );
+        if !ok {
+            assert!(
+                stderr.contains("is reserved")
+                    && stderr.contains("github.com/velt-lang/velt/issues/new"),
+                "velt publish of {name}:\n{stderr}"
+            );
+        }
     }
 }
 

@@ -1,0 +1,139 @@
+// Reserved names (src/server/reserved.velt): a new package whose name or scope the registry keeps
+// back is published only by the user approved for it.
+import { describe, expect, it } from "velt/test";
+import {
+  MemoryBlobStore,
+  MemoryMetadataDb,
+  MemoryNameReservations,
+  RecordingCachePurge,
+  RegistryLimits,
+  reservationKeys,
+} from "../src/lib";
+import { checkNotReserved } from "../src/server/reserved";
+import { Caller, RegistryStores } from "../src/lib";
+import { contentChecksum, packArchive } from "../src/lib";
+import { packageFiles, TestRegistry } from "./_registry";
+
+const REQUEST = "https://example.test/request-a-name";
+
+// A registry keeping back `vue` (approved for nobody yet) and `my_lib` (for `holder`).
+function registry(holder: string | null = null): [TestRegistry, MemoryNameReservations] {
+  const reserved = new MemoryNameReservations(REQUEST);
+  reserved.reserve("vue", "a well-known npm package");
+  reserved.reserve("my_lib", "a well-known npm package", holder);
+  const r = new TestRegistry(
+    new RegistryLimits(),
+    new MemoryMetadataDb(),
+    new MemoryBlobStore(),
+    new RecordingCachePurge(),
+    reserved,
+  );
+  return [r, reserved];
+}
+
+describe("reserved names", () => {
+  it("are refused to every user until one is approved, saying how to ask", async () => {
+    const [r, _] = registry();
+    const answer = await r.publish("vue", "1.0.0", r.user("mallory"));
+    expect(answer.status).toBe(403);
+    expect(answer.text).toBe(
+      `cannot publish \`vue\`: \`vue\` is reserved (a well-known npm package); to ask for it: ${REQUEST}?name=vue`,
+    );
+    expect(await r.db.record("vue")).toBeNull();
+    expect(r.blobs.size).toBe(0);
+  });
+
+  it("are published by the approved user, then by the package's owners", async () => {
+    const [r, _] = registry("alice");
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    // Both spellings are the reservation's.
+    expect((await r.publish("my-lib", "1.0.0", bob)).status).toBe(403);
+    expect((await r.publish("my-lib", "1.0.0", alice)).status).toBe(201);
+    expect((await r.call("PUT", "my-lib/owners/bob", alice)).status).toBe(200);
+    expect((await r.publish("my-lib", "1.1.0", bob)).status).toBe(201);
+  });
+
+  it("are refused on an open registry, where nobody can be the approved user", async () => {
+    const [r, _] = registry("alice");
+    expect((await r.publish("my_lib", "1.0.0")).status).toBe(403);
+    // A name approved for nobody isn't the anonymous caller's either.
+    expect((await r.publish("vue", "1.0.0")).status).toBe(403);
+  });
+
+  it("leave other names, and registries without reservations, alone", async () => {
+    const [r, _] = registry();
+    expect((await r.publish("vuex-ish", "1.0.0", r.user("mallory"))).status).toBe(201);
+    const open = new TestRegistry();
+    expect((await open.publish("vue", "1.0.0", open.user("mallory"))).status).toBe(201);
+  });
+
+  it("are looked up by the normalized name, and by the scope of a scoped one", () => {
+    expect(reservationKeys("my-lib")).toEqual(["my_lib"]);
+    expect(reservationKeys("@vue/core-x")).toEqual(["@vue/core_x", "@vue"]);
+    expect(reservationKeys("@my-org/x")).toEqual(["@my_org/x", "@my_org"]);
+  });
+
+  it("need every reservation a scoped name falls under to be the caller's", async () => {
+    // Scoped names can't be published yet, so the check is called directly.
+    const [r, reserved] = registry();
+    reserved.reserve("@acme", "a well-known npm scope", "carol");
+    reserved.reserve("@acme/tool", "a well-known npm package", "dave");
+    const stores: RegistryStores = {
+      blobs: r.blobs,
+      db: r.db,
+      purge: r.purge,
+      auth: r.auth,
+      reserved,
+    };
+    let refusal = "";
+    try {
+      await checkNotReserved(stores, "@acme/tool", Caller.ofUser("dave"));
+    } catch (e) {
+      refusal = e.message;
+    }
+    expect(refusal).toContain("the scope `@acme` is reserved");
+    expect(refusal).toContain("?name=%40acme%2Ftool");
+    await checkNotReserved(stores, "@acme/other", Caller.ofUser("carol"));
+  });
+
+  it("are refused before the body is read", async () => {
+    const [r, _] = registry();
+    r.user("mallory");
+    // A body that fails when read: reading it would answer 500.
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        c.error(new Error("the body was read"));
+      },
+    });
+    const headers: [string, string][] = [["authorization", "Bearer token-of-mallory"]];
+    const answer = await r.send("PUT", "/api/v1/vue/1.0.0", headers, stream);
+    expect(answer.status).toBe(403);
+  });
+
+  it("are refused when reserved while the body arrived", async () => {
+    const [r, reserved] = registry();
+    const mallory = r.user("mallory");
+    let ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const stream = new ReadableStream<Uint8Array>({
+      start: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        ctl = c;
+      },
+    });
+    const files = packageFiles("fresh", "1.0.0");
+    const headers: [string, string][] = [
+      ["authorization", `Bearer ${mallory}`],
+      ["x-velt-checksum", contentChecksum(files)],
+    ];
+    const answer = r.send("PUT", "/api/v1/fresh/1.0.0", headers, stream);
+    // Past the first check by now: this publish has run through more steps than that takes.
+    expect((await r.publish("other", "1.0.0", mallory)).status).toBe(201);
+    reserved.reserve("fresh", "reserved meanwhile");
+    const stored = r.blobs.size;
+    ctl?.enqueue(Uint8Array.fromBytes(packArchive(files)));
+    ctl?.close();
+    expect((await answer).status).toBe(403);
+    expect(await r.db.record("fresh")).toBeNull();
+    expect(r.blobs.size).toBe(stored);
+  });
+});

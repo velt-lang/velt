@@ -83,6 +83,9 @@ const manifest = readManifest(text); // ManifestError when vpm would refuse it
   rewritten after each write with the revision it shows, and only over the copy read and only
   when that copy is older (`BlobStore.putIfTag`), so an older index never replaces a newer one,
   even from a write that stopped half-way. `GET /api/v1/<name>/index` answers that file.
+- **Reserved names** (`src/server/reserved.velt`, optional): a host that gives the registry
+  `NameReservations` keeps those names, and scopes, back. A new package under one is published
+  only by the user an administrator approved for it, and the refusal says how to ask.
 - **Stores** (`src/stores/`): the interfaces a host implements, and in-memory adapters
   (`src/memory/`) for tests and for trying a registry out. `MetadataDb` holds small rows: a
   record per package (versions, owners, revision) and a search entry; reads of an index never

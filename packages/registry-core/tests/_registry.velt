@@ -6,6 +6,7 @@ import {
   contentChecksum,
   MemoryBlobStore,
   MemoryMetadataDb,
+  MemoryNameReservations,
   PackageChange,
   packArchive,
   RecordingCachePurge,
@@ -29,6 +30,7 @@ export class TestRegistry {
     db: MemoryMetadataDb = new MemoryMetadataDb(),
     blobs: MemoryBlobStore = new MemoryBlobStore(),
     purge: RecordingCachePurge = new RecordingCachePurge(),
+    reserved: MemoryNameReservations | null = null,
   ) {
     this.db = db;
     this.blobs = blobs;
@@ -39,7 +41,8 @@ export class TestRegistry {
       purge: this.purge,
       auth: this.auth,
     };
-    this.registry = new Registry(stores, limits);
+    // A struct never changes: one with the reservations is a new value.
+    this.registry = new Registry(reserved == null ? stores : { ...stores, reserved }, limits);
   }
 
   /** Package `name`'s owners ([] when it was never published). */

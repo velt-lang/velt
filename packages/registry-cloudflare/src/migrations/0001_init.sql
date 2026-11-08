@@ -50,3 +50,12 @@ CREATE TABLE tokens (
   user TEXT NOT NULL REFERENCES users (name),
   created INTEGER NOT NULL
 );
+
+-- Names and scopes kept back (registry-core's `NameReservations`): `key` is a package's
+-- `normalizedName`, or `@scope`. Only `holder`, once an administrator approved them, may publish
+-- it. 0002_reserved_names.sql fills it.
+CREATE TABLE reserved_names (
+  key TEXT PRIMARY KEY,
+  reason TEXT NOT NULL,
+  holder TEXT REFERENCES users (name)
+);

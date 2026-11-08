@@ -25,6 +25,7 @@ export const pkg: Package = {
     scaffold: {
       "wrangler.toml": "./src/wrangler.toml",
       "migrations/0001_init.sql": "./src/migrations/0001_init.sql",
+      "migrations/0002_reserved_names.sql": "./src/migrations/0002_reserved_names.sql",
     },
   },
 };
