@@ -152,6 +152,13 @@ impl FnCx<'_, '_> {
     /// unchecked: a primitive reaches the operation, which finds nothing or throws
     /// JavaScript's `TypeError` (velt_vir `weak_object.rs`).
     pub(crate) fn weak_key_coerce(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
+        // An interface value as a weak key or target: lowering reads the `any` table its
+        // interface tables keep (velt_vir `weak_object.rs`), so the program has the `any` impl,
+        // whether or not something else made it.
+        let core = self.cx.ty.core(h.ty).unwrap_or(h.ty);
+        if matches!(self.cx.ty.kind(core), TyKind::Dyn(..)) && self.cx.dynamic(core).is_none() {
+            self.cx.any_impl();
+        }
         if self.cx.dynamic(exp) != Some(Dynamic::Object) {
             return self.coerce(h, exp);
         }
