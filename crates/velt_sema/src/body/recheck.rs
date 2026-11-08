@@ -147,15 +147,21 @@ impl Mark {
         for d in keep_impl_fns(cx, fns) {
             drop_orphan(cx, d);
         }
+        let (mut kept, mut dropped) = (vec![], vec![]);
         for c in cx
             .closure_defs
             .split_off(m.closures.min(cx.closure_defs.len()))
         {
             match cx.object_impls.keeps(c) {
-                true => cx.closure_defs.push(c),
-                false => _ = cx.callback_wrappers.remove(&c),
+                true => kept.push(c),
+                false => {
+                    cx.callback_wrappers.remove(&c);
+                    dropped.push(c);
+                }
             }
         }
+        renumber(cx, &dropped, &kept);
+        cx.closure_defs.extend(kept);
         cx.rec.reported.truncate(m.reported);
         let kept = cx.kept_consts.split_off(m.kept.min(cx.kept_consts.len()));
         crate::kept_consts::unkeep(cx, kept);
@@ -310,10 +316,48 @@ fn drop_orphan(cx: &mut Ctx, d: DefId) {
     }
 }
 
-/// A closure definition of the rolled-back check of the body being checked, to create its
-/// next closure in (`None`: allocate a new one).
-pub(crate) fn reuse_closure(cx: &mut Ctx) -> Option<DefId> {
-    cx.rechecks.last_mut()?.reuse.pop()
+/// A closure definition to create the closure `name` in (`None`: allocate a new one): one of
+/// the rolled-back check of the body being checked, or the one a rolled-back try created
+/// under that name.
+pub(crate) fn reuse_closure(cx: &mut Ctx, name: &str) -> Option<DefId> {
+    match cx.rechecks.last_mut().and_then(|f| f.reuse.pop()) {
+        Some(d) => Some(d),
+        None => cx.dropped_closures.remove(name),
+    }
+}
+
+/// The closures `dropped` of a rolled-back check are numbered again from where they started,
+/// and kept by name for the check that creates them again (`reuse_closure`): a closure's
+/// name doesn't depend on what was tried, or which program reached its function first
+/// (#1838). A function whose closure was `kept` meanwhile with a later number keeps counting.
+fn renumber(cx: &mut Ctx, dropped: &[DefId], kept: &[DefId]) {
+    let mut first: Vec<(String, u32)> = vec![];
+    for &c in dropped {
+        let name = cx.fn_info(c).name.clone();
+        let Some((parent, n)) = closure_number(&name) else {
+            continue;
+        };
+        match first.iter_mut().find(|(p, _)| p == parent) {
+            Some((_, m)) => *m = (*m).min(n),
+            None => first.push((parent.to_string(), n)),
+        }
+        cx.dropped_closures.insert(name, c);
+    }
+    for (parent, n) in first {
+        let taken = kept.iter().any(|&k| {
+            closure_number(&cx.fn_info(k).name).is_some_and(|(p, m)| p == parent && m >= n)
+        });
+        if !taken {
+            cx.closure_counts.insert(parent, n);
+        }
+    }
+}
+
+/// `f::{closure#3}`: `f` and 3.
+fn closure_number(name: &str) -> Option<(&str, u32)> {
+    let at = name.rfind("::{closure#")?;
+    let n = name[at + "::{closure#".len()..].strip_suffix('}')?;
+    Some((&name[..at], n.parse().ok()?))
 }
 
 /// A body's check starts: the bodies it checks meanwhile record their segments for it.
@@ -354,6 +398,21 @@ mod tests {
             class_values: 0,
             ide: None,
         }
+    }
+
+    #[test]
+    fn a_closure_name_gives_its_function_and_number() {
+        assert_eq!(closure_number("main::{closure#0}"), Some(("main", 0)));
+        assert_eq!(
+            closure_number("std/lang/hooks/class_object::classObject::{closure#12}"),
+            Some(("std/lang/hooks/class_object::classObject", 12))
+        );
+        assert_eq!(
+            closure_number("f::{closure#1}::{closure#3}"),
+            Some(("f::{closure#1}", 3))
+        );
+        assert_eq!(closure_number("main"), None);
+        assert_eq!(closure_number("f::{closure#x}"), None);
     }
 
     /// A body checked after a mark inside the body (`Mark::here`) that checks nothing else ends

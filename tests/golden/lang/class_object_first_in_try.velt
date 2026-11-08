@@ -1,0 +1,18 @@
+// A class object first made inside an arrow that is tried against each member of a union of
+// function types: the try is undone and the arrow checked again, and the class object prints
+// as Node prints it (#1838, #379). Its closure used to be numbered after the one the try made,
+// and printing it was an internal error.
+class A {}
+
+class B extends A {}
+
+type F = ((x: number) => any) | ((x: number) => string);
+
+const f: F = (x: number) => {
+  const c: any = x > 0 ? A : B;
+  return c;
+};
+console.log(f(1));
+console.log(f(0));
+const g: any = B;
+console.log(g, [g]);

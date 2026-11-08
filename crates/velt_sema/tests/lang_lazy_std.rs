@@ -576,3 +576,42 @@ fn a_value_that_cannot_hold_a_float_does_not_check_the_float_printer() {
     );
     assert!(checked(&p), "the float printer is not checked for `T`");
 }
+
+/// A std body first checked inside a try that is undone (an arrow tried against each member of
+/// a union of function types) numbers its closures as a check up front does: `classObject`'s
+/// one closure is `{closure#0}`, with its two captures, and so is the arrow's (#1838). Lowering
+/// finds that closure by its name to print a class object.
+#[test]
+fn closures_made_in_an_undone_try_keep_their_numbers() {
+    let p = ok_src(
+        "class A {}\n\
+         type F = ((x: number) => any) | ((x: number) => string);\n\
+         const f: F = (x: number) => {\n  const c: any = A;\n  return c;\n};\n\
+         console.log(f(1));\n",
+    );
+    let closures = |parent: &str| -> Vec<(String, usize, bool)> {
+        let prefix = format!("{parent}::{{closure#");
+        (p.defs.iter())
+            .filter_map(|d| match d {
+                Def::Fn(f)
+                    if f.name.starts_with(&prefix) && !f.name[prefix.len()..].contains("::") =>
+                {
+                    Some((
+                        f.name.clone(),
+                        f.captures.len(),
+                        f.body.block.stmts.is_empty() && f.body.block.value.is_none(),
+                    ))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let hook = "std/lang/hooks/class_object::classObject";
+    assert_eq!(
+        closures(hook),
+        vec![(format!("{hook}::{{closure#0}}"), 2, false)]
+    );
+    let main = closures("main");
+    assert_eq!(main.len(), 1, "{main:?}");
+    assert_eq!(main[0].0, "main::{closure#0}");
+}

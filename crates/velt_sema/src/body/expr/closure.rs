@@ -470,6 +470,8 @@ impl FnCx<'_, '_> {
             .or_insert(0);
         let name = format!("{}::{{closure#{}}}", self.fn_name, n);
         *n += 1;
+        // A check after a rollback creates the same closures again (`recheck`).
+        let reuse = crate::body::recheck::reuse_closure(self.cx, &name);
         let mut info = fn_placeholder(name, span, span, self.module, FnKind::Closure, None);
         info.generics.names = self.env.params.clone();
         info.generics.bounds = self.bounds.clone();
@@ -479,8 +481,7 @@ impl FnCx<'_, '_> {
             .resize(info.generics.names.len(), vec![]);
         info.state = BodyState::Done;
         let info = DefInfo::Fn(Box::new(info));
-        // A check after a rollback creates the same closures again (`recheck`).
-        let def = match crate::body::recheck::reuse_closure(self.cx) {
+        let def = match reuse {
             Some(d) => {
                 self.cx.redefine_closure(d, span, info);
                 d
