@@ -320,6 +320,13 @@ impl crate::body::FnCx<'_, '_> {
     /// parameter type is written, when `f` is read from a site (`arg_site`). Returns how many
     /// entries were added, which the caller removes after the call.
     pub(crate) fn note_value_args(&mut self, f: &crate::hir::Expr, args: &[ast::Expr]) -> usize {
+        // After a spread, an argument's position is not its parameter's (`expand_spreads`).
+        if args
+            .iter()
+            .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)))
+        {
+            return 0;
+        }
         let Some(site) = self.site_of_value(f).or_else(|| self.elem_fn_site(f)) else {
             return 0;
         };
@@ -334,9 +341,8 @@ impl crate::body::FnCx<'_, '_> {
         n
     }
 
-    /// The site of the function type of `f`, an element of an array (or a `Map`'s value) of
-    /// functions read from a variable, a field or a constant whose type is written
-    /// (`routes[0]`).
+    /// The site of the function type of `f`, an element read by index from an array of
+    /// functions in a variable, a field or a constant whose type is written (`routes[0]`).
     fn elem_fn_site(&self, f: &crate::hir::Expr) -> Option<Span> {
         use crate::hir::ExprKind as H;
         let mut base = f;

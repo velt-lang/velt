@@ -1,0 +1,12 @@
+// A class field holding a function value: a rejecting promise passed in a call through it
+// reaches the site of the parameter's written `Promise<T>`.
+class E1 extends Error {}
+type Take = (p: Promise<string>) => Promise<void>;
+class Box {
+  take: Take = async (p) => {
+    try { console.log(await p); } catch (e) { console.log(e instanceof E1 ? "E1" : "other"); }
+  };
+}
+async function bad(): Promise<string> { throw new E1("x"); }
+const b = new Box();
+await b.take(bad());
