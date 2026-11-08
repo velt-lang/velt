@@ -1,0 +1,31 @@
+class HttpError extends Error {
+  status: number;
+  constructor(s: number, m: string) {
+    super(m);
+    this.status = s;
+  }
+}
+
+type Handler = (path: string) => Promise<string>;
+
+const routes: Handler[] = [];
+routes.push(async (p) => {
+  if (p == "") {
+    throw new HttpError(400, "e");
+  }
+  return "ok" + p;
+});
+
+async function c0(): Promise<void> {
+  for (const h of routes) {
+    try {
+      console.log(await h(""));
+    } catch (e) {
+      if (e instanceof HttpError) {
+        console.log("h");
+      }
+    }
+  }
+}
+
+await c0();

@@ -1,0 +1,13 @@
+type F = (n: number) => Promise<string>;
+const f1: F = (n) => new Promise((resolve, reject) => {
+  if (n == 0) {
+    reject(null);
+  } else {
+    resolve("ok");
+  }
+});
+try {
+  console.log(await f1(0));
+} catch (e) {
+  console.log("f1 caught");
+}

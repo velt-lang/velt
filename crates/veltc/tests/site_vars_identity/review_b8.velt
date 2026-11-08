@@ -1,0 +1,21 @@
+class E1 extends Error {}
+
+async function g1(n: number): Promise<string> {
+  if (n == 0) {
+    throw new E1("one");
+  }
+  return "g1";
+}
+
+type F = (n: number) => Promise<string>;
+const pick: F = (n) => g1(n);
+
+class Box {
+  p: Promise<string>;
+  constructor(p: Promise<string>) {
+    this.p = p;
+  }
+}
+
+const b = new Box(pick(1));
+console.log(await b.p);

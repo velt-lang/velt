@@ -1,0 +1,21 @@
+class E1 extends Error {}
+
+type Take = (n: number, f: () => Promise<void>, g: () => Promise<void>) => Promise<void>;
+
+const take: Take = async (n, f, g) => {
+  await f();
+  try {
+    await g();
+  } catch (e) {
+    console.log("g " + (e instanceof E1 ? "E1" : "other"));
+  }
+};
+
+async function main(): Promise<void> {
+  const rest: [number, () => Promise<void>] = [1, async () => console.log("f ran")];
+  await take(...rest, async () => {
+    throw new E1("x");
+  });
+}
+
+await main();

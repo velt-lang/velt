@@ -1,0 +1,17 @@
+class E1 extends Error {
+  a: number = 1;
+}
+
+async function g1(n: number): Promise<string> {
+  if (n == 0) {
+    throw new E1("one");
+  }
+  return "g1";
+}
+
+type F = (n: number) => Promise<string>;
+const w: F = (n) => new Promise((resolve, reject) => {
+  g1(n).catch(reject);
+  resolve("r");
+});
+console.log(await w(1));

@@ -76,7 +76,11 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     for (d, what) in std::mem::take(&mut cx.iface_generators) {
         iface_generator(cx, d, &what);
     }
-    if vars && !(solved_ok && cx.assumptions_hold()) {
+    // The program is checked again with the solved sets also when this check grew a set
+    // the variables don't hold (a closure's error a site's type can't keep): the next check
+    // has no variables, and starts from what they found.
+    let holds = solved_ok && cx.assumptions_hold();
+    if vars && (!holds || (cx.fn_sites.sites_grew && cx.fn_sites.again())) {
         cx.var_seeds();
     }
 }

@@ -1,0 +1,39 @@
+class E1 extends Error {}
+
+class E2 extends Error {
+  status: number;
+  constructor(s: number) {
+    super("e2");
+    this.status = s;
+  }
+}
+
+type Take = (n: number, b: Promise<string>, g: () => Promise<void>) => Promise<void>;
+
+const take: Take = async (n, b, g) => {
+  try {
+    console.log(await b);
+  } catch (e) {
+    console.log("b status " + e.status);
+  }
+  try {
+    await g();
+  } catch (e) {
+    console.log("g " + (e instanceof E1 ? "E1" : "other"));
+  }
+};
+
+async function bad2(): Promise<string> {
+  throw new E2(404);
+}
+
+async function main(): Promise<void> {
+  const b: Promise<string> = bad2();
+  b.catch(() => {});
+  const rest: [number, Promise<string>] = [1, b];
+  await take(...rest, async () => {
+    throw new E1("x");
+  });
+}
+
+await main();

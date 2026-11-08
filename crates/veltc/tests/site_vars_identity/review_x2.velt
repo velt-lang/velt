@@ -1,0 +1,56 @@
+class E1 extends Error {
+  a: number = 1;
+}
+
+class E2 extends Error {
+  b: string = "bee";
+}
+
+type F = (n: number) => Promise<string>;
+
+async function g(n: number): Promise<string> {
+  if (n == 0) {
+    throw new E1("async");
+  }
+  return "g";
+}
+
+function plain(n: number): Promise<string> {
+  if (n == 1) {
+    throw new E2("sync");
+  }
+  return g(n);
+}
+
+const f: F = plain;
+
+async function main(): Promise<void> {
+  for (const n of [0, 1, 2]) {
+    try {
+      const p = f(n);
+      console.log(await p);
+    } catch (e) {
+      if (e instanceof E1) {
+        console.log("E1 " + e.a);
+      } else if (e instanceof E2) {
+        console.log("E2 " + e.b);
+      } else {
+        console.log("?");
+      }
+    }
+    try {
+      const p = plain(n);
+      console.log(await p);
+    } catch (e) {
+      if (e instanceof E1) {
+        console.log("pE1 " + e.a);
+      } else if (e instanceof E2) {
+        console.log("pE2 " + e.b);
+      } else {
+        console.log("p?");
+      }
+    }
+  }
+}
+
+await main();

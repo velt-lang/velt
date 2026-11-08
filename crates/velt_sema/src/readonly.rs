@@ -39,6 +39,7 @@ pub(crate) fn erase(
     // An anonymous object type holding error-set variables is the one of its solved shape.
     // A readonly one is that def's plain twin, not its own (whose fields hold the variables).
     for (d, twin) in cx.solved_anon_twins() {
+        cx.fn_sites.solved_anons.insert(d);
         let twin = twins.get(&twin).map_or(twin, |t| t.0);
         if !matches!(twins.get(&d), Some((_, Some(_)))) {
             twins.insert(d, (twin, None));
@@ -60,6 +61,7 @@ pub(crate) fn erase(
     // A type with error-set variables is its solved type (`throws::vars`), erased; unions of
     // one erased member list are one def, of one erased member that member.
     let solved = cx.solved_types();
+    cx.name_solved_defs();
     let mut plan = crate::union_layouts::plan(&mut cx.ty, &twins, &mut cache, &cx.defs, &solved);
     let merged = std::mem::take(&mut plan.merged);
     cx.replaced_unions = std::mem::take(&mut plan.replaced);

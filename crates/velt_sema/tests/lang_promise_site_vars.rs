@@ -277,14 +277,16 @@ for (const i of [0, 1]) {
 
 #[test]
 fn rejecting_promises_stored_into_promise_types_written_without_errors_take_one_round() {
-    for (i, p) in REASONS.into_iter().enumerate() {
-        assert_eq!(rounds(p), 2, "reasons program {i}");
+    // Checked again with the solved sets: the `new Promise` one as often as without variables.
+    for (i, (p, n)) in REASONS.into_iter().zip([2, 3, 2, 2]).enumerate() {
+        assert_eq!(rounds(p), n, "reasons program {i}");
     }
     for (i, p) in [P0, P1, P2, P3, P4].into_iter().enumerate() {
         assert_eq!(rounds(p), 1, "program P{i}");
     }
-    // The callbacks' reasons are values of the variables' type ([`REASONS`]).
-    assert_eq!(rounds(P5), 2);
+    // The callbacks' reasons are values of the variables' type ([`REASONS`]): as often as
+    // without variables.
+    assert_eq!(rounds(P5), 3);
     for (i, p) in [C0, C1, C2, C3].into_iter().enumerate() {
         assert_eq!(rounds(p), 1, "program C{i}");
     }

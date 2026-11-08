@@ -46,7 +46,12 @@ pub(crate) fn plan(
     solved: &[(TyId, TyId)],
 ) -> Plan {
     let base = std::mem::take(cache);
-    let replaced: FxHashSet<TyId> = solved.iter().map(|(t, _)| *t).collect();
+    // A union whose solved form is itself (its variables are in its members' fields, which
+    // `crate::readonly::erase` replaces) stays a union of its own.
+    let replaced: FxHashSet<TyId> = (solved.iter())
+        .filter(|(t, s)| t != s)
+        .map(|(t, _)| *t)
+        .collect();
     let unions: Vec<DefId> = (defs.iter().enumerate())
         .filter(|(_, d)| matches!(d, Some(Def::Enum(e)) if e.is_union && e.generics == 0))
         .map(|(i, _)| DefId(i as u32))

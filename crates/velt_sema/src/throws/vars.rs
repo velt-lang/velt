@@ -779,12 +779,11 @@ impl Ctx<'_> {
             .map(|(s, v)| (*v, *s))
             .collect();
         spans.sort_by_key(|(v, s)| (v.0, s.file, s.lo, s.hi));
+        let seeds = self.seed_sets();
         for (var, span) in spans {
-            let s = self.fn_sites.solved.get(&var).copied();
-            let Some(s) = s.filter(|s| *s != self.ty.never) else {
+            let Some(ms) = seeds.get(&var).filter(|ms| !ms.is_empty()).cloned() else {
                 continue;
             };
-            let ms: Vec<_> = self.error_members(s);
             let ps: Vec<_> = ms.into_iter().filter_map(|m| self.port_type(m)).collect();
             self.add_seed(span, ps);
         }

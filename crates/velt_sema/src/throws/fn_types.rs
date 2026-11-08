@@ -87,6 +87,8 @@ pub(crate) struct FnSites {
     /// variables took (`promise_vars`): added to it when the program is checked again.
     pub(super) quiet: FxHashMap<Span, Vec<Portable>>,
     pub(super) grew: bool,
+    /// A site's set grew (not only a hint for the next check).
+    pub(super) sites_grew: bool,
     /// What a call through a function type may throw beyond its type ([`Ctx::indirect_error`]),
     /// for the current `found`.
     pub(super) indirect: FxHashMap<TyId, Option<TyId>>,
@@ -158,10 +160,15 @@ pub(crate) struct FnSites {
     /// The variables of std/proxy's trap sites (`ProxyHandler`), by number.
     pub(super) trap_vars: FxHashSet<u32>,
     pub vars: Vec<Span>,
+    /// The anonymous object defs replaced by the def of their solved shape before lowering
+    /// (`Ctx::solved_anon_twins`).
+    pub solved_anons: FxHashSet<DefId>,
     /// Each variable's solved error type, once solved (`never` for an empty set).
     pub solved: FxHashMap<TyId, TyId>,
     /// The constraints on the variables (`throws::vars`).
     pub(crate) var_sets: super::vars::VarSets,
+    /// The members stores added to variables (`promise_vars`), by variable number.
+    pub(crate) stored: Vec<(u32, TyId)>,
     /// How many `reject` values of promises whose rejection type is a variable were checked
     /// and not called (`var_known`): what they are called with is not counted.
     pub(crate) reject_values: usize,
