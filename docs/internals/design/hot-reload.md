@@ -103,7 +103,9 @@ futures already in flight finish on the old code. That is the right behavior for
 them per function key. It restarts when an existing aggregate layout changed (live objects have
 the old shape), a closure's environment layout changed, a function's signature changed (old
 frames would call the new code with the old ABI), `main`'s already-executed part changed, a key
-that live data may still reference disappeared, or the key diff is ambiguous. Everything else
+that live data may still reference disappeared, the key diff is ambiguous, or a value would be
+represented differently (a class one version counts and the other does not, closures that gain
+or lose an identity: #2653). Everything else
 swaps: function bodies, handler logic, new functions and types, string and constant changes, and
 async bodies (through pinning). Velt has no mutable globals, so there is **no global state to
 migrate**, unlike most hot-reload systems.
@@ -169,7 +171,10 @@ its code that does not depend on ids (async state aggregates are fingerprinted b
 embedding a child's state is recompiled through its reference to the child's pinned `poll`
 instead). The restart rules, in order, each with its message: an ambiguous key changed; a layout
 lost a structure and gained another (`Point gained a field`, `the captures of
-main::{closure#0} changed`); a signature changed (`the signature of greet changed`); one of
+main::{closure#0} changed`); a signature changed (`the signature of greet changed`); a value of
+the running version is represented differently, which veltc's host decides before this from
+lowering's counted types (`CountedSeed::representation_change`: `class Node is now counted`,
+`the identity of function values changed`); one of
 `main`'s keys changed (`main changed (it already ran)`); a key whose address was taken
 disappeared; closures were added or reordered while an existing one changed. Otherwise the
 changed and new keys are compiled, plus every function that refers to a recompiled pinned
@@ -206,7 +211,8 @@ through direct calls, function values and a pinned entry; restart reasons; repea
 signature, `main` and capture changes restart); and the reload tests in `tests/reload/` (JIT and
 `--exe`, with a probe asserting that no connection is refused): swaps for `hello_server`,
 `shared_counter` (the count continues), `imported_module`, `new_function`, `generic_edit`, a
-fix after a failed build; restarts for `struct_field`, `signature_change`, `closure_captures`;
+fix after a failed build; restarts for `struct_field`, `signature_change`, `closure_captures`,
+`counted_change`, `fn_identity_change`;
 and `in_flight` (a slow request started before the swap answers from the old code while new
 requests get the new code).
 

@@ -79,7 +79,8 @@ pub struct Carried {
     pub own: Option<super::edits::Snapshot>,
 }
 
-/// `carried`: what the running version leaves, replaced by the new version's when it builds.
+/// `carried`: what the running version leaves, replaced by the new version's when it builds; a
+/// version that represents a value of the running one differently restarts.
 fn reload(
     session: &mut DevSession,
     opts: &BuildOptions,
@@ -92,9 +93,13 @@ fn reload(
     sess.show_details = flags.details;
     // Moved in and back out: lowering replaces it only when it lowers the new version, so a
     // build that fails before or in lowering hands the running version's seed back unchanged.
-    sess.counted_seed = Some(seed.take().unwrap_or_default());
+    let running = seed.take().unwrap_or_default();
+    sess.counted_seed = Some(running.clone());
     let program = driver::compile(&mut sess, opts);
     *seed = sess.counted_seed.take();
+    // Values the running code made that the new code would count, free or call differently
+    // (a class that is counted in one version only, #2653): only a restart is safe.
+    let changed = (seed.as_ref()).and_then(|next| running.representation_change(next));
     if program.is_ok() {
         let own = super::edits::Snapshot::of_build(&sess, &opts.input);
         if let (true, Some(before)) = (verbose, &carried.own) {
@@ -117,6 +122,10 @@ fn reload(
             return Reloaded::Failed { files };
         }
     };
+    if let Some(reason) = changed {
+        report(&sess, verbose);
+        return Reloaded::Restart { reason, files };
+    }
     let start = Instant::now();
     let mut steps = vec![];
     let outcome = session.reload_timed(&program, &mut steps);

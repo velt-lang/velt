@@ -190,3 +190,72 @@ fn a_seeded_class_the_weak_walk_reaches_never_makes_a_read_exclusive() {
     assert!(warm == cold, "v2 with v1's seed is lowered as without it");
     assert_eq!(warm_seed, cold_seed);
 }
+
+/// What the dev host restarts for instead of swapping (#2653): `next` lowered from `prev`'s seed,
+/// compared with it.
+fn change(prev: &str, next: &str) -> Option<String> {
+    let (_, seed, _) = lower(prev, None);
+    let (_, next_seed, _) = lower(next, Some(&seed));
+    seed.representation_change(&next_seed)
+}
+
+#[test]
+fn a_class_that_starts_being_counted_is_a_representation_change() {
+    assert_eq!(change(V3, V1).as_deref(), Some("class Node is now counted"));
+}
+
+#[test]
+fn an_edit_that_keeps_the_counted_types_is_no_representation_change() {
+    assert_eq!(change(V1, V2), None);
+    // The seed keeps `Node` counted (`a_stale_seed_keeps_its_types_counted_in_one_pass`).
+    assert_eq!(change(V1, V3), None);
+}
+
+/// [`V3`] with a new class that is counted from the start: no live object has it yet.
+const V3_NEW_CLASS: &str = "class Node { v: number = 0; next: Node | null = null; }
+class Leaf { v: number = 0; }
+function main() {
+  const a = new Node();
+  a.v += 1;
+  const l = new Leaf();
+  const m = l;
+  const bump = () => { m.v += 1; };
+  bump();
+  console.log(a.v, l.v);
+}
+";
+
+#[test]
+fn a_new_counted_class_is_no_representation_change() {
+    let (_, seed, _) = lower(V3_NEW_CLASS, None);
+    assert!(seed.names("adt Leaf"), "Leaf is counted: {seed:?}");
+    assert_eq!(change(V3, V3_NEW_CLASS), None);
+}
+
+/// A lowering done again without the seed (`locks_may_follow_seed`) stops counting `Config`.
+#[test]
+fn a_class_that_stops_being_counted_is_a_representation_change() {
+    assert_eq!(
+        change(WALK_V1, WALK_V2).as_deref(),
+        Some("class Config is no longer counted")
+    );
+}
+
+/// [`V3`] after an edit that compares function values: every closure gets an identity.
+const V3_FN_COMPARED: &str = "class Node { v: number = 0; next: Node | null = null; }
+function main() {
+  const a = new Node();
+  a.v += 1;
+  const f = () => 1;
+  const g = () => 1;
+  console.log(a.v, f === g);
+}
+";
+
+#[test]
+fn closures_that_get_an_identity_are_a_representation_change() {
+    assert_eq!(
+        change(V3, V3_FN_COMPARED).as_deref(),
+        Some("the identity of function values changed")
+    );
+}
