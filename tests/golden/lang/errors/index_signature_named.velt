@@ -1,0 +1,13 @@
+// A named member next to an index signature must be assignable to the values' type, as in
+// TypeScript (TS2411); an optional member's type includes `undefined`.
+interface A {
+  x?: string;
+  [k: string]: string;
+}
+interface B {
+  x: number;
+  [k: string]: string;
+}
+type C = { n: boolean; ok: string; [k: string]: number | string };
+
+function main() {}

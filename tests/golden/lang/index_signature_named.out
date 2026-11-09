@@ -1,0 +1,16 @@
+description x undefined y undefined
+[ 'name', 'data-x', 'content', 'other' ] {"name":"n2","data-x":"y","content":"x","other":"z"}
+name n2
+data-x y
+content x
+other z
+STYLESHEET /a.css print
+icon,stylesheet
+preload { rel: 'preload', href: '/a.css', media: 'print' }
+true /a.js false boolean
+true {"src":"/a.js","defer":false}
+6 2 1 {"total":3,"a":2,"b":1}
+8
+en undefined {"title":"T","htmlAttrs":{"lang":"en"}}
+[ [ 'lang', 'en' ], [ 'data-theme', 'dark' ], [ 'dir', 'ltr' ] ]
+home -

@@ -1,0 +1,13 @@
+export interface Base {
+  name: string;
+}
+
+export interface SetupContext<TElement = string, TProps extends object = {}, TRef = number> extends Base {
+  el: TElement;
+  props: TProps;
+  ref?: TRef;
+}
+
+export function describe(c: SetupContext): string {
+  return c.name + ":" + c.el;
+}

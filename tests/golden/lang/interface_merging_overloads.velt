@@ -1,0 +1,42 @@
+// Interface declaration merging as in TypeScript: a declaration may leave out type parameters
+// that have defaults (a `declare module` augmentation usually does), a field may be declared
+// again with the same type, and a method declared again is an overload, the later
+// declaration's signatures first.
+import { describe, type SetupContext } from "./_interface_merging_defaults/ctx.velt";
+import { serverFlag } from "./_interface_merging_defaults/ssr.velt";
+
+interface Conv {
+  f(x: number): string;
+}
+interface Conv {
+  f(x: string): number;
+  g: number;
+}
+interface Conv {
+  g: number;
+}
+
+const c: Conv = {
+  f(x: any): any {
+    return typeof x === "number" ? "n" + x : x.length;
+  },
+  g: 1,
+};
+const a: string = c.f(5);
+const b: number = c.f("abc");
+console.log(a, b, c.g);
+
+interface Opts<T = string> {
+  v: T;
+}
+interface Opts {
+  w: number;
+}
+const o: Opts = { v: "s", w: 1 };
+const n: Opts<number> = { v: 2, w: 3 };
+console.log(o.v, o.w, n.v + n.w);
+
+const ctx: SetupContext = { name: "app", el: "div", props: {}, ssr: { isServer: true } };
+console.log(describe(ctx), serverFlag(ctx), ctx._loads, ctx.ref);
+ctx._loads = [1, 2];
+console.log(JSON.stringify(ctx));

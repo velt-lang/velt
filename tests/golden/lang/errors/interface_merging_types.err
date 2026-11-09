@@ -1,0 +1,6 @@
+interface_merging_types.velt:21:11: error: all declarations of `B` must have identical type parameters
+interface_merging_types.velt:29:3: error: `m` is a field in one declaration of the interface `C` and a method or accessor in another
+interface_merging_types.velt:36:3: error: `x` is a field in one declaration of the interface `S` and a method or accessor in another
+interface_merging_types.velt:43:7: error: `w` is a field in one declaration of the interface `G` and a method or accessor in another
+interface_merging_types.velt:11:3: error: subsequent declarations of `x` in the interface `A` must have the same type: it is `f64`, but here `string`
+interface_merging_types.velt:15:3: error: subsequent declarations of `y` in the interface `A` must have the same type: it is `string | undefined`, but here `string`

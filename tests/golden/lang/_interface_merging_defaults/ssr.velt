@@ -1,0 +1,18 @@
+// Augments `SetupContext` without its type parameters (each has a default), as sigx's
+// server renderer does.
+import type { SetupContext } from "./ctx.velt";
+
+export interface SSRHelper {
+  isServer: boolean;
+}
+
+declare module "./ctx.velt" {
+  interface SetupContext {
+    ssr: SSRHelper;
+    _loads?: number[];
+  }
+}
+
+export function serverFlag(c: SetupContext): boolean {
+  return c.ssr.isServer;
+}

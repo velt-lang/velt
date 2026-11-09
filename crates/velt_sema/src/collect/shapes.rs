@@ -259,6 +259,30 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
     }
 }
 
+/// A field of an interface: one declared again by a merged declaration
+/// (`crate::interface_merge`) must have the same type, as in TypeScript (TS2717).
+fn push_iface_field(cx: &mut Ctx, fields: &mut Vec<FieldInfo>, f: FieldInfo, iface: &str) {
+    let Some(g) = fields.iter().find(|g| g.name == f.name) else {
+        fields.push(f);
+        return;
+    };
+    if g.ty == f.ty || cx.ty.has_error(g.ty) || cx.ty.has_error(f.ty) {
+        return;
+    }
+    // An optional field's type already holds its `undefined`.
+    let (first, here, span) = (cx.display(g.ty), cx.display(f.ty), g.span);
+    cx.error(
+        Diagnostic::error(
+            format!(
+                "subsequent declarations of `{}` in the interface `{iface}` must have the same type: it is `{first}`, but here `{here}`",
+                f.name
+            ),
+            f.span,
+        )
+        .with_label(span, "the first declaration"),
+    );
+}
+
 fn push_field(cx: &mut Ctx, fields: &mut Vec<FieldInfo>, f: FieldInfo) {
     if fields.iter().any(|g| g.name == f.name) {
         cx.err(
@@ -280,7 +304,7 @@ fn iface_shape(cx: &mut Ctx, d: DefId) {
     let mut fields = vec![];
     for f in &decl.fields {
         let fi = field_info(cx, d, f, &env);
-        push_field(cx, &mut fields, fi);
+        push_iface_field(cx, &mut fields, fi, &decl.name.name);
     }
     let parents = decl
         .extends
