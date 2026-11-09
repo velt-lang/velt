@@ -215,3 +215,21 @@ fn an_unsafe_intrinsic_needs_unsafe_code() {
     ));
     assert!(!ok.contains("error"), "{ok}");
 }
+
+#[test]
+fn declare_unsafe_function_without_intrinsic_is_an_error() {
+    // `unsafe` on a declaration is for std's `@intrinsic` ones only, in a program as much as in
+    // std, with or without other decorators.
+    for decl in [
+        "declare unsafe function byteLen(n: i64): i64;",
+        "declare decorator function mark(): FunctionDecorator;\n@mark\ndeclare unsafe function byteLen(n: i64): i64;",
+    ] {
+        let e = err_src(&format!(
+            "{decl}\nfunction main() {{ console.log(unsafe {{ byteLen(1) }}); }}"
+        ));
+        assert!(
+            e.contains("only a compiler intrinsic is declared `unsafe`"),
+            "{e}"
+        );
+    }
+}

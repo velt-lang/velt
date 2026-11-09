@@ -158,6 +158,20 @@ fn intrinsic_declarations_are_documented() {
     assert_eq!(f.doc, "Swaps two elements.");
 }
 
+/// A decorated `declare system` or `declare c("lib")` function is no intrinsic: it is left out
+/// like an undecorated one, not documented as a `declare function` without its `system` / `c`.
+#[test]
+fn decorated_system_and_c_declarations_are_not_intrinsics() {
+    let src = "declare decorator function mark(): FunctionDecorator;\n\n/** System. */\n@mark\nexport declare system function strlen(s: string): usize;\n\n/** Native. */\n@mark\nexport declare c(\"m\") function cos(x: f64): f64;\n\n/** Shown. */\n@mark\nexport declare function marked(n: i64): i64;\n";
+    let m = extract("std/lang/intrinsics/probe", src);
+    let names: Vec<&str> = m.items.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(names, ["marked"]);
+    assert_eq!(
+        m.items[0].signature,
+        "@mark declare function marked(n: i64): i64"
+    );
+}
+
 #[test]
 fn plain_comments_and_template_text_are_not_docs() {
     let src = "// Module.\n\n// Not a doc.\nexport function f() {}\n\nconst t = `\n/// inside a template\n`;\nexport function g() {}\n";

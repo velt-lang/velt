@@ -1,7 +1,8 @@
 //! std's inlining decorators (std/lang/intrinsics/decorators.velt, std only, #2203): `@inline`
 //! inlines every call of a function whatever its size, `@noInline` keeps every call a call, and
-//! sema rejects `@inline` on a recursive function, both on one function, and either on a
-//! generator, an async function or a `declare function`. They are std-only (a program's own
+//! sema rejects `@inline` on a recursive function, both on one function, either on a
+//! generator, an async function, a `declare function` or an abstract method, either outside std,
+//! and `@intrinsic` on a function with a body. They are std-only (a program's own
 //! decorators of those names are data: tests/golden/lang/errors/decorators_known_by_role.velt),
 //! so a golden file cannot use them: std is copied to a temp directory with a probe module added,
 //! and `velt` uses it through `$VELT_STD` (as gated_functions.rs does).
@@ -27,6 +28,11 @@ fn copy_tree(from: &Path, to: &Path) {
 /// A std with the module `velt/zz_marked` (`probe`) added, and `main.velt` beside it; runs
 /// `velt <args> main.velt`.
 fn velt(dir: &test_dir::TestDir, probe: &str, args: &[&str]) -> Output {
+    velt_with_main(dir, probe, MAIN, args)
+}
+
+/// [`velt`] with the program `main` instead of [`MAIN`].
+fn velt_with_main(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str]) -> Output {
     let std: PathBuf = dir.path().join("std");
     if !std.exists() {
         copy_tree(
@@ -35,10 +41,11 @@ fn velt(dir: &test_dir::TestDir, probe: &str, args: &[&str]) -> Output {
         );
     }
     std::fs::create_dir_all(std.join("zz_marked")).unwrap();
-    let probe = format!("import {{ inline, noInline }} from \"velt/lang/intrinsics\";\n{probe}");
+    let probe =
+        format!("import {{ inline, noInline, intrinsic }} from \"velt/lang/intrinsics\";\n{probe}");
     std::fs::write(std.join("zz_marked/index.velt"), probe).unwrap();
     let file = dir.path().join("main.velt");
-    std::fs::write(&file, MAIN).unwrap();
+    std::fs::write(&file, main).unwrap();
     let mut all: Vec<&str> = args.to_vec();
     all.push(file.to_str().unwrap());
     no_window::command(env!("CARGO_BIN_EXE_velt"))
@@ -614,4 +621,101 @@ export function probe(a: i64): i64 {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "21");
+}
+
+#[test]
+fn the_decorators_on_an_abstract_method_are_an_error() {
+    // An abstract method has no body to inline, like a `declare function`.
+    let probe = r#"
+abstract class Shape {
+  @inline
+  abstract area(): i64;
+
+  @noInline
+  abstract side(): i64;
+}
+
+class Square extends Shape {
+  area(): i64 {
+    return 4;
+  }
+
+  side(): i64 {
+    return 2;
+  }
+}
+
+export function probe(a: i64): i64 {
+  const s: Shape = new Square();
+  return a + s.area() + s.side();
+}
+"#;
+    check_fails(
+        probe,
+        &[
+            "4:3: error: `@inline` applies to a function with a body, not to an abstract method",
+            "7:3: error: `@noInline` applies to a function with a body, not to an abstract method",
+        ],
+    );
+}
+
+#[test]
+fn intrinsic_on_a_function_with_a_body_is_an_error() {
+    // `@intrinsic` names an operation of the compiler by a declaration's name; on a function
+    // with a body it would do nothing (on a method it is a misplaced function decorator).
+    let probe = r#"
+@intrinsic
+function withBody(x: i64): i64 {
+  return x + 1;
+}
+
+export function probe(a: i64): i64 {
+  return withBody(a);
+}
+"#;
+    check_fails(
+        probe,
+        &["3:1: error: `@intrinsic` applies to a `declare function`"],
+    );
+}
+
+#[test]
+fn the_decorators_outside_std_are_an_error() {
+    // Only import visibility keeps them in std today; were a public std module to re-export them,
+    // a program's use is still refused.
+    let probe = r#"
+export { inline, noInline };
+
+export function probe(a: i64): i64 {
+  return a;
+}
+"#;
+    let main = r#"import { probe, inline, noInline } from "velt/zz_marked";
+
+@inline
+function bump(x: i64): i64 {
+  return x + 1;
+}
+
+class Counter {
+  @noInline
+  twice(x: i64): i64 {
+    return x * 2;
+  }
+}
+
+function main() {
+  console.log(probe(7) + bump(1) + new Counter().twice(2));
+}
+"#;
+    let dir = test_dir::TestDir::new();
+    let out = velt_with_main(&dir, probe, main, &["check"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    for m in [
+        "3:1: error: `@inline` is not allowed: only the standard library marks how its functions are inlined",
+        "9:3: error: `@noInline` is not allowed: only the standard library marks how its functions are inlined",
+    ] {
+        assert!(err.contains(m), "missing `{m}` in:\n{err}");
+    }
 }

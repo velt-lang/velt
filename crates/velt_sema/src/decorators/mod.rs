@@ -103,7 +103,7 @@ pub(crate) fn decl_of<'m>(f: &FnInfo<'m>) -> Option<&'m ast::FnSig> {
 pub(crate) fn check<'m>(cx: &mut Ctx<'m>, from: u32) {
     let mut seen = FxHashSet::default();
     let mut properties = AbstractProperties::default();
-    let roles = known::InlineRoles::find(cx);
+    let roles = known::Roles::find(cx);
     for i in from as usize..cx.info.len() {
         let d = DefId(i as u32);
         match &cx.info[i] {
@@ -122,7 +122,8 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>, from: u32) {
                 if decorated && seen.insert(sig as *const ast::FnSig as usize) {
                     let property = properties.has(cx, d, sig);
                     function_uses(cx, d, module, kind, property, sig);
-                    known::inline_hint(cx, roles, d, sig);
+                    let is_abstract = properties.is_abstract(cx, d, sig);
+                    known::function_hints(cx, roles, d, sig, is_abstract);
                 }
             }
             DefInfo::Adt(a) => {
@@ -172,32 +173,53 @@ fn function_uses<'m>(
     }
 }
 
-/// The getters of abstract properties (`abstract x: i64;`), whose decorators are a field's: found
-/// for a class the first time one of its decorated methods asks, so a class of many decorated
-/// methods is looked through once.
+/// The getters of abstract properties (`abstract x: i64;`), whose decorators are a field's, and
+/// the abstract methods, which have no body: found for a class the first time one of its decorated
+/// methods asks, so a class of many decorated methods is looked through once.
 #[derive(Default)]
 struct AbstractProperties {
     /// The classes looked through.
     owners: FxHashSet<DefId>,
     /// Their abstract properties' getters' signatures.
     getters: FxHashSet<usize>,
+    /// Their abstract methods' signatures (the getters' among them).
+    abstracts: FxHashSet<usize>,
 }
 
 impl AbstractProperties {
-    /// Is method `d`, of signature `sig`, such a getter?
-    fn has(&mut self, cx: &Ctx, d: DefId, sig: &ast::FnSig) -> bool {
+    /// Looks through the class of method `d`, if it has one not looked through yet.
+    fn look(&mut self, cx: &Ctx, d: DefId) {
         let Some(owner) = cx.fn_info(d).owner else {
-            return false;
+            return;
         };
         if self.owners.insert(owner) {
             let methods = cx
                 .adt(owner)
                 .and_then(|a| a.decl)
                 .map_or(&[][..], |t| &t.methods);
-            let getters = methods.iter().filter(|m| m.is_property);
-            (self.getters).extend(getters.map(|m| &m.decl.sig as *const ast::FnSig as usize));
+            for m in methods.iter().filter(|m| m.is_abstract || m.is_property) {
+                let sig = &m.decl.sig as *const ast::FnSig as usize;
+                if m.is_property {
+                    self.getters.insert(sig);
+                }
+                if m.is_abstract {
+                    self.abstracts.insert(sig);
+                }
+            }
         }
+    }
+
+    /// Is method `d`, of signature `sig`, such a getter?
+    fn has(&mut self, cx: &Ctx, d: DefId, sig: &ast::FnSig) -> bool {
+        self.look(cx, d);
         self.getters.contains(&(sig as *const ast::FnSig as usize))
+    }
+
+    /// Is method `d`, of signature `sig`, abstract?
+    fn is_abstract(&mut self, cx: &Ctx, d: DefId, sig: &ast::FnSig) -> bool {
+        self.look(cx, d);
+        self.abstracts
+            .contains(&(sig as *const ast::FnSig as usize))
     }
 }
 

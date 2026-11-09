@@ -6,10 +6,10 @@
 //!
 //! - `@intrinsic` on a `declare function` makes it a compiler intrinsic ([`intrinsics`], during
 //!   collection: a signature's passing modes depend on it). `declare unsafe function` is allowed
-//!   only with it.
-//! - `@inline` / `@noInline` on a function or method set its `FnInfo::inline_marker`
-//!   ([`inline_hint`]), which lowering carries to `vir::Function::inline` (lowering finds the uses
-//!   in `Program::decorators` by the same roles) and `body::inline_markers` checks.
+//!   only with it; on a function with a body it is an error ([`function_hints`]).
+//! - `@inline` / `@noInline` on a std function or method set its `FnInfo::inline_marker`
+//!   ([`function_hints`]), which lowering carries to `vir::Function::inline` (lowering finds the
+//!   uses in `Program::decorators` by the same roles) and `body::inline_markers` checks.
 
 use velt_common::{std_hook, Diagnostic, Span};
 use velt_syntax::ast;
@@ -36,18 +36,20 @@ fn role(cx: &Ctx, qualified: &str) -> Option<DefId> {
     }
 }
 
-/// The inlining decorators' definitions, found once per check of a set of definitions.
+/// The known decorators' definitions, found once per check of a set of definitions.
 #[derive(Clone, Copy, Default)]
-pub(super) struct InlineRoles {
+pub(super) struct Roles {
     inline: Option<DefId>,
     no_inline: Option<DefId>,
+    intrinsic: Option<DefId>,
 }
 
-impl InlineRoles {
+impl Roles {
     pub(super) fn find(cx: &Ctx) -> Self {
-        InlineRoles {
+        Roles {
             inline: role(cx, std_hook!(decorator_inline)),
             no_inline: role(cx, std_hook!(decorator_no_inline)),
+            intrinsic: role(cx, std_hook!(decorator_intrinsic)),
         }
     }
 
@@ -113,16 +115,31 @@ fn written_def(cx: &Ctx, m: usize, dec: &ast::Decorator) -> Option<DefId> {
     }
 }
 
-/// Records `@inline` / `@noInline` among the decorators recorded for function `d` (signature
-/// `sig`) on it: one of them, on a function or method with a body that is neither async nor a
-/// generator (lowering compiles those into a resume function the hint would not reach).
-pub(super) fn inline_hint(cx: &mut Ctx, roles: InlineRoles, d: DefId, sig: &ast::FnSig) {
+/// Checks the known decorators among the decorators recorded for function `d` (signature `sig`,
+/// `is_abstract`: an abstract method's): `@intrinsic` is for a `declare function` (which
+/// [`intrinsics`] has made one already), and `@inline` / `@noInline` is recorded on it: one of
+/// them, on a std function or method with a body that is neither async nor a generator (lowering
+/// compiles those into a resume function the hint would not reach).
+pub(super) fn function_hints(
+    cx: &mut Ctx,
+    roles: Roles,
+    d: DefId,
+    sig: &ast::FnSig,
+    is_abstract: bool,
+) {
     let Some(uses) = cx.decorator_uses.get(&DecoratorTarget::Def(d)) else {
         return;
     };
+    let kind = cx.fn_info(d).kind;
+    let misplaced = (uses.iter())
+        .find(|u| roles.intrinsic.is_some_and(|i| u.def == i) && kind != FnKind::Extern)
+        .map(|u| u.span);
     let hints: Vec<(Inline, Span)> = (uses.iter())
         .filter_map(|u| Some((roles.of(u.def)?, u.span)))
         .collect();
+    if let Some(span) = misplaced {
+        cx.err("`@intrinsic` applies to a `declare function`", span);
+    }
     let Some(&(hint, span)) = hints.first() else {
         return;
     };
@@ -137,10 +154,27 @@ pub(super) fn inline_hint(cx: &mut Ctx, roles: InlineRoles, d: DefId, sig: &ast:
         Inline::Always => "inline",
         Inline::Never => "noInline",
     };
-    let (kind, is_async) = (cx.fn_info(d).kind, cx.fn_info(d).is_async);
+    let (module, is_async) = (cx.fn_info(d).module, cx.fn_info(d).is_async);
+    if !cx.scopes[module].is_std {
+        cx.error(
+            Diagnostic::error(
+                format!("`@{name}` is not allowed: only the standard library marks how its functions are inlined"),
+                span,
+            )
+            .with_note("the optimizer decides what a program's own calls inline"),
+        );
+        return;
+    }
     if kind == FnKind::Extern {
         cx.err(
             format!("`@{name}` applies to a function with a body, not to a `declare function`"),
+            span,
+        );
+        return;
+    }
+    if is_abstract {
+        cx.err(
+            format!("`@{name}` applies to a function with a body, not to an abstract method"),
             span,
         );
         return;
