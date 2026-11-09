@@ -285,7 +285,6 @@ pub(crate) fn lower_program_seeded(
             cx.build_now(fid, &work);
         }
         cx.build_iface_glues();
-        // The functions C calls (`@export`), which no Velt code needs to reach.
         cx.seed_c_exports();
         // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
         cx.func(Work::Main);
@@ -402,8 +401,7 @@ struct Cx<'h> {
     /// JSON glue (json/reader.rs `json_std_fn`): one map, not a scan of every def per call.
     std_fns: std::cell::OnceCell<FxHashMap<&'h str, DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
-    /// scheduler. Known once every function
-    /// but `velt_main` is lowered, which is why it is built last (`lower_program`).
+    /// scheduler. Known once every function but `velt_main` is lowered, hence built last.
     uses_placement: bool,
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
