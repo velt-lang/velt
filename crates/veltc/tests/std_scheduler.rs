@@ -280,3 +280,29 @@ fn promises_woken_while_queued_keep_their_task_s_woken_stack_whole() {
         include_str!("../../../tests/golden/lang/promise_race_settled_order.out"),
     );
 }
+
+/// WASI has no thread to wake the worker and no OS wait to park it in: `VELT_SCHEDULER=std`
+/// does nothing there, and `main`'s root stays the runtime's.
+#[test]
+fn the_variable_does_nothing_on_wasi() {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(
+        dir.path().join("main.velt"),
+        "async function main() {\n  await yieldNow();\n  console.log(\"ok\");\n}\n",
+    )
+    .unwrap();
+    let ir = |std: bool, target: &str| {
+        let mut c = command(env!("CARGO_BIN_EXE_velt"));
+        c.args(["build", "main.velt", "--emit", "llvm", "--target", target])
+            .current_dir(dir.path())
+            .env_remove("VELT_SCHEDULER");
+        if std {
+            c.env("VELT_SCHEDULER", "std");
+        }
+        let o = c.output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    assert!(!ir(true, "wasm32-wasip1").contains("schedBlockOn"));
+    assert!(ir(true, "aarch64-unknown-linux-gnu").contains("schedBlockOn"));
+}

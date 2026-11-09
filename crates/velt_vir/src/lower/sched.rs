@@ -26,10 +26,11 @@ pub(super) const EXTERNS: &[&str] = &[
 ];
 
 impl FnLower<'_, '_> {
-    /// Does this program run on the executor in Velt? Not on a JS host, whose turns the host
-    /// drives (entry.rs).
+    /// Does this program run on the executor in Velt? Only on a native target: a JS host drives
+    /// its turns itself (entry.rs), and WASI has no thread to wake the worker or OS wait for it
+    /// to park in (an idle program would spin forever), so the variable does nothing there.
     pub(super) fn std_sched(&self) -> bool {
-        velt_common::std_hooks::std_scheduler() && !super::host::js_host(&self.cx.target)
+        velt_common::std_hooks::std_scheduler() && !self.cx.target.trim().starts_with("wasm")
     }
 
     /// `op` (a pointer or an integer) as a `usize` argument.
