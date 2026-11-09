@@ -81,8 +81,8 @@ std's runtime code in Velt (the async executor of #2649, tracking #2196) needs w
 did in Rust: read and write raw memory, change a word atomically where C or the OS can see it,
 and call a heap future's poll and drop functions. These are std-only intrinsics
 (`std/lang/intrinsics/address.velt`, `atomic.velt`, `future.velt`); programs and packages reach
-none of them, and the ones that touch raw memory are `declare unsafe intrinsic function`, so
-their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoad` and `Ptr.at`.
+none of them, and the ones that touch raw memory are `@intrinsic declare unsafe function`,
+so their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoad` and `Ptr.at`.
 
 - `addressStore<T>(address: usize, value: T)` is `addressLoad`'s write: one VIR assignment to
   `*(T*)address`, so every backend (LLVM, Cranelift, and wasm through LLVM) emits a plain store.

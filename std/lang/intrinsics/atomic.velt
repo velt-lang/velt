@@ -51,7 +51,8 @@ export declare function atomicCasWeak<T>(
  * For a `shared` one, the address stays valid while the box lives: the caller keeps a reference
  * to it. For `futex`, `__ulock_wait` and their wakes (docs/internals/design/intrinsics.md).
  */
-export declare intrinsic function atomicAddress<T>(a: Atomic<T>): usize;
+@intrinsic
+export declare function atomicAddress<T>(a: Atomic<T>): usize;
 
 /** A memory fence of ordering `order` (never relaxed). */
 @intrinsic
