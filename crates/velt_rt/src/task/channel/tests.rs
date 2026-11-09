@@ -1,7 +1,7 @@
 //! Channel semantics through the C ABI, on the shared multi-thread runtime.
 
 use super::*;
-use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, FUT_RESULT_OFFSET, PENDING};
+use crate::task::{drop_fut, poll_fut, raw_cx, FUT_RESULT_OFFSET, PENDING};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -18,7 +18,7 @@ impl<const N: usize> Future for Await<N> {
         let f = self.0 .0;
         // SAFETY: an owned, live channel future; freed once READY.
         unsafe {
-            if velt_rt_fut_poll(f, raw_cx(cx).ptr()) == PENDING {
+            if poll_fut(f, raw_cx(cx).ptr()) == PENDING {
                 return Poll::Pending;
             }
             let mut out = [0u8; N];
@@ -27,7 +27,7 @@ impl<const N: usize> Future for Await<N> {
                 out.as_mut_ptr(),
                 N,
             );
-            velt_rt_fut_drop(f);
+            drop_fut(f);
             Poll::Ready(out)
         }
     }

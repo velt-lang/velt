@@ -3,7 +3,7 @@
 //!
 //! The box is the only allocation; the Rust future lives inline after the result slot and is pinned
 //! because the box never moves. It is dropped as soon as it completes so that resources (sockets,
-//! timers) are released before generated code gets around to `velt_rt_fut_drop`.
+//! timers) are released before generated code gets around to `drop_fut`.
 //!
 //! A leaf made with [`new_leaf`] waits for a timer or I/O: while it is pending it keeps the
 //! process alive, as a Node request does (quiet.rs, through [`External`]). One that waits for

@@ -6,8 +6,8 @@
 //!   state is embedded in the parent's state is a direct call; no runtime involvement.
 //! * Everything the runtime produces (timers, fs/net/http operations, join handles, boxed compiled
 //!   futures) is a heap `VeltFut`: a 16-byte header `{ poll, drop }` followed by the result slot at
-//!   offset 16. Awaiting one is `velt_rt_fut_poll(f, cx)` then reading the slot, then
-//!   `velt_rt_fut_drop(f)`.
+//!   offset 16. Awaiting one is `poll_fut(f, cx)` then reading the slot, then
+//!   `drop_fut(f)`.
 //! * `cx` is a [`RawCx`]: the Rust `&mut Context` and the task's await word (local/micro.rs),
 //!   passed through as an opaque pointer.
 
@@ -111,15 +111,20 @@ pub(crate) fn raw_cx_with<'a, 'b>(cx: &'a mut Context<'b>, word: *const u32) -> 
     }
 }
 
-/// Poll a heap future: `(f->poll)(f, cx)`.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_fut_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+/// Poll a heap future: `(f->poll)(f, cx)`. The runtime's own; compiled code calls through the
+/// header itself (rt_abi_async.md §1).
+///
+/// # Safety
+/// `f` is a live heap future that has not completed, `cx` the poll's context.
+pub unsafe fn poll_fut(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     ((*f).poll)(f, cx)
 }
 
 /// Drop a heap future: `(f->drop)(f)`. Cancels it if still running; never drops the result slot.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_fut_drop(f: *mut VeltFut) {
+///
+/// # Safety
+/// `f` is a live heap future, not used after.
+pub unsafe fn drop_fut(f: *mut VeltFut) {
     ((*f).drop)(f)
 }
 

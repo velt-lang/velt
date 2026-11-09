@@ -377,6 +377,35 @@ pub enum Intrinsic {
     /// at `address` in memory, unchecked (velt/ffi's raw reads of C memory, which are unsafe
     /// functions). Additive.
     AddressLoad,
+    /// std only: `addressStore<T>(address: usize, v: T)`, `T` a number type or `bool` (sema
+    /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
+    /// Additive.
+    AddressStore,
+    /// std only: `ptrAtomicLoad<T>(p: Ptr<T>, order: u8) -> T`, `T` an integer type: as
+    /// `AtomicLoad` on the integer `p` points to (its address is `p`'s one field). Sema turns the
+    /// declaration's string literal orderings into the `Atomic*` intrinsics' integer literals.
+    /// Additive.
+    PtrAtomicLoad,
+    /// `(p: Ptr<T>, v: T, order: u8)`: as `AtomicStore` at `p`. Additive.
+    PtrAtomicStore,
+    /// `(p: Ptr<T>, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `p` (the declaration's
+    /// `(p, op, v, order)` reordered by sema, `op` a literal as `AtomicRmw` numbers it).
+    /// Additive.
+    PtrAtomicRmw,
+    /// `(p: Ptr<T>, expected: T, v: T, order: u8, failure: u8) -> T`: as `AtomicCas` at `p`.
+    /// Additive.
+    PtrAtomicCas,
+    /// As `PtrAtomicCas`, `-> bool` (may fail spuriously). Additive.
+    PtrAtomicCasWeak,
+    /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
+    /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
+    /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.
+    AtomicAddress,
+    /// std only: `futPoll(f: usize, cx: usize) -> u32`: `f->poll(f, cx)`, the call through
+    /// offset 0 of heap future `f`'s header (rt_abi_async.md §1), inline. Additive.
+    FutPoll,
+    /// std only: `futDrop(f: usize)`: `f->drop(f)`, through offset 8 of the header. Additive.
+    FutDrop,
     /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
     /// range against `StrByteLen`). The bytes are read where the string keeps them.
     StrByteAt,

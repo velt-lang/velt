@@ -81,13 +81,13 @@ pub unsafe extern "C" fn velt_rt_latch_wait(h: Handle<Latch>) -> *mut VeltFut {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, PENDING, READY};
+    use crate::task::{drop_fut, poll_fut, raw_cx, PENDING, READY};
     use std::task::Waker;
 
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
-        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
+        unsafe { poll_fut(f, raw_cx(&mut cx).ptr()) }
     }
 
     #[test]
@@ -104,7 +104,7 @@ mod tests {
                 1,
                 "one slot however often it is polled"
             );
-            velt_rt_fut_drop(a);
+            drop_fut(a);
             let b = velt_rt_latch_wait(h);
             assert_eq!(poll(b), PENDING);
             assert_eq!(
@@ -114,7 +114,7 @@ mod tests {
             );
             velt_rt_latch_open(h);
             assert_eq!(poll(b), READY);
-            velt_rt_fut_drop(b);
+            drop_fut(b);
             velt_rt_latch_free(h);
         }
     }

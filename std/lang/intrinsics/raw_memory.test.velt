@@ -1,0 +1,153 @@
+// velt/lang/intrinsics (tests): white-box tests of the intrinsics on raw memory, run by
+// `velt test std/` (docs/internals/design/intrinsics.md "Memory at an address"): writes and
+// atomic operations at an address, and the address of an `Atomic` that cannot move.
+import { describe, expect, it } from "velt/test";
+import { Ptr } from "velt/ffi";
+import {
+  addressLoad,
+  addressStore,
+  atomicAddress,
+  ptrAtomicCas,
+  ptrAtomicCasWeak,
+  ptrAtomicLoad,
+  ptrAtomicRmw,
+  ptrAtomicStore,
+} from "velt/lang/intrinsics";
+
+declare c("c") function malloc(n: usize): Ptr<u8> | null;
+declare c("c") function free(p: Ptr<u8> | null): void;
+// The OS's wait and wake calls (`__ulock_wait`, `futex`, `WaitOnAddress`) take the word's address
+// as this C function does: through a `Ptr`, from `atomicAddress`.
+declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
+
+/** A static atomic: its word is in the program's data. */
+const WORD = new Atomic<u32>(7);
+
+class Counters {
+  state: Atomic<u64> = new Atomic<u64>(40);
+  inner: Inner = new Inner();
+}
+
+class Inner {
+  waiters: Atomic<i32> = new Atomic<i32>(-3);
+}
+
+describe("velt/lang/intrinsics memory at an address", () => {
+  it("addressStore writes what addressLoad reads, at the width of T", () => {
+    // SAFETY: malloc returns 16 bytes or NULL, freed once below.
+    const p = unsafe { malloc(16) };
+    expect(p !== null).toBe(true);
+    if (p !== null) {
+      const at = Ptr.addressOf(p);
+      // SAFETY: `at` has 16 writable bytes nothing else uses.
+      unsafe {
+        addressStore<u64>(at, 0x1122334455667788);
+        addressStore<u8>(at, 0xff);
+        addressStore<i16>(at + 8, -2);
+        addressStore<f32>(at + 12, 1.5);
+        addressStore<bool>(at + 10, true);
+      }
+      // SAFETY: as above, now written.
+      unsafe {
+        expect(addressLoad<u64>(at)).toBe(0x11223344556677ff);
+        expect(addressLoad<i16>(at + 8)).toBe(-2);
+        expect(addressLoad<u16>(at + 8)).toBe(0xfffe);
+        expect(addressLoad<f32>(at + 12)).toBe(1.5);
+        expect(addressLoad<bool>(at + 10)).toBe(true);
+      }
+      // SAFETY: `p` came from malloc.
+      unsafe {
+        free(p);
+      }
+    }
+  });
+
+  it("the ptrAtomic operations change the integer a Ptr points to", () => {
+    // SAFETY: malloc returns 16 bytes or NULL (aligned for a u64), freed once below.
+    const raw = unsafe { malloc(16) };
+    expect(raw !== null).toBe(true);
+    if (raw !== null) {
+      const at = Ptr.addressOf(raw);
+      // SAFETY: `at` has 16 bytes, aligned, that only this test uses.
+      const p = unsafe { Ptr.at<u64>(at) };
+      // SAFETY: as above.
+      const q = unsafe { Ptr.at<i32>(at + 8) };
+      // SAFETY: `p` and `q` point to memory only this thread uses, changed atomically.
+      unsafe {
+        ptrAtomicStore(p, 10, "release");
+        expect(ptrAtomicLoad(p, "acquire")).toBe(10);
+        expect(ptrAtomicRmw(p, "add", 5, "acqrel")).toBe(10);
+        expect(ptrAtomicRmw(p, "sub", 1, "relaxed")).toBe(15);
+        expect(ptrAtomicRmw(p, "exchange", 3, "seqcst")).toBe(14);
+        expect(ptrAtomicRmw(p, "or", 12, "seqcst")).toBe(3);
+        expect(ptrAtomicRmw(p, "and", 6, "seqcst")).toBe(15);
+        expect(ptrAtomicRmw(p, "xor", 5, "seqcst")).toBe(6);
+        expect(ptrAtomicLoad(p, "seqcst")).toBe(3);
+        expect(ptrAtomicCas(p, 3, 9, "acqrel", "acquire")).toBe(3);
+        expect(ptrAtomicCas(p, 3, 1, "seqcst", "relaxed")).toBe(9);
+        let swapped = false;
+        while (!swapped) {
+          swapped = ptrAtomicCasWeak(p, 9, 2, "seqcst", "seqcst");
+        }
+        expect(ptrAtomicLoad(p, "relaxed")).toBe(2);
+        // A signed `T` compares signed.
+        ptrAtomicStore(q, -5, "seqcst");
+        expect(ptrAtomicRmw(q, "max", -7, "seqcst")).toBe(-5);
+        expect(ptrAtomicRmw(q, "min", -7, "seqcst")).toBe(-5);
+        expect(ptrAtomicLoad(q, "seqcst")).toBe(-7);
+        expect(ptrAtomicRmw(q, "max", 1, "seqcst")).toBe(-7);
+        expect(addressLoad<i32>(at + 8)).toBe(1);
+      }
+      // SAFETY: `raw` came from malloc.
+      unsafe {
+        free(raw);
+      }
+    }
+  });
+
+  it("atomicAddress gives the word of a static atomic", () => {
+    const at = atomicAddress(WORD);
+    expect(at === atomicAddress(WORD)).toBe(true);
+    // SAFETY: a static atomic's word lives as long as the program, a u32, changed atomically.
+    const p = unsafe { Ptr.at<u32>(at) };
+    // SAFETY: as above.
+    unsafe {
+      expect(ptrAtomicLoad(p, "seqcst")).toBe(7);
+      ptrAtomicStore(p, 8, "seqcst");
+    }
+    expect(WORD.load()).toBe(8);
+    WORD.add(2);
+    // SAFETY: as above.
+    expect(unsafe { ptrAtomicRmw(p, "add", 1, "seqcst") }).toBe(10);
+    expect(WORD.load()).toBe(11);
+    // A C function writes the word through the address: every byte 1.
+    // SAFETY: the word is 4 bytes, and nothing else changes it meanwhile.
+    unsafe {
+      memset(Ptr.at<u8>(at), 1, 4);
+    }
+    expect(WORD.load()).toBe(0x01010101);
+  });
+
+  it("atomicAddress gives the word of a field of a shared value", () => {
+    const s = shared(new Counters());
+    const at = atomicAddress(s.state);
+    const inner = atomicAddress(s.inner.waiters);
+    expect(at === atomicAddress(s.state)).toBe(true);
+    expect(at !== inner).toBe(true);
+    // SAFETY: `s` keeps the box alive; the word is a u64 changed atomically.
+    unsafe {
+      const p = Ptr.at<u64>(at);
+      expect(ptrAtomicRmw(p, "add", 2, "seqcst")).toBe(40);
+      const q = Ptr.at<i32>(inner);
+      expect(ptrAtomicCas(q, -3, 4, "seqcst", "seqcst")).toBe(-3);
+    }
+    expect(s.state.load()).toBe(42);
+    expect(s.inner.waiters.load()).toBe(4);
+    // A C function writes a word of the box through its address.
+    // SAFETY: `s` keeps the box alive; the word is 4 bytes nothing else changes meanwhile.
+    unsafe {
+      memset(Ptr.at<u8>(inner), 0xff, 4);
+    }
+    expect(s.inner.waiters.load()).toBe(-1);
+  });
+});

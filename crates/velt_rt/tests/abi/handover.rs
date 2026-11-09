@@ -10,7 +10,7 @@
 use crate::task::local::velt_rt_unhandled_defer;
 use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start_rejecting, velt_rt_fut_transfer};
 use crate::task::runtime::velt_rt_block_on;
-use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, VeltFut, READY};
+use crate::task::{drop_fut, poll_fut, VeltFut, READY};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -76,21 +76,17 @@ fn hand_over(n: i64) -> *mut VeltFut {
 unsafe extern "C-unwind" fn claim(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [i64; 2]);
     let f = st[1] as *mut VeltFut;
-    assert_eq!(
-        velt_rt_fut_poll(f, cx),
-        READY,
-        "the promise finished in task A"
-    );
+    assert_eq!(poll_fut(f, cx), READY, "the promise finished in task A");
     let r = &*((f as *const u8).add(16) as *const Rejected);
     assert_eq!(r.tag, 1);
     st[0] = r.value;
-    velt_rt_fut_drop(f);
+    drop_fut(f);
     READY
 }
 
 /// Task B: drops `p` unawaited.
 unsafe extern "C-unwind" fn give_up(s: *mut u8, _: *mut c_void) -> u32 {
-    velt_rt_fut_drop((*(s as *mut [i64; 2]))[1] as *mut VeltFut);
+    drop_fut((*(s as *mut [i64; 2]))[1] as *mut VeltFut);
     READY
 }
 

@@ -40,6 +40,10 @@ const STACK_BASE: u64 = 1 << 40;
 const FUNC_BASE: u64 = 1 << 50;
 /// Extern function "addresses": `EXTERN_BASE + ExternId` (never dereferenced).
 const EXTERN_BASE: u64 = 1 << 51;
+/// The "addresses" of the emulated runtime's poll and drop functions, which every heap future's
+/// header holds (rt_abi_async.md §1; never dereferenced): compiled code calls through them.
+const FUT_POLL_ENTRY: u64 = EXTERN_BASE - 2;
+const FUT_DROP_ENTRY: u64 = EXTERN_BASE - 1;
 const STEP_LIMIT: u64 = 200_000_000;
 
 /// A value: raw scalar bits or the bytes of an aggregate.
@@ -339,7 +343,12 @@ impl Interp<'_> {
                         ret,
                     } => {
                         let t = self.operand(f, slots, target).0.s();
-                        if let Some(e) = t.checked_sub(EXTERN_BASE) {
+                        if t == FUT_POLL_ENTRY {
+                            V::S(self.fut_poll(argv[0].s())?)
+                        } else if t == FUT_DROP_ENTRY {
+                            self.fut_drop(argv[0].s())?;
+                            V::S(0)
+                        } else if let Some(e) = t.checked_sub(EXTERN_BASE) {
                             let raw: Vec<u64> = argv.iter().map(V::s).collect();
                             let sym = &self.p.externs[e as usize].symbol;
                             V::S(self.rt(sym, &raw)?)

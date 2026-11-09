@@ -21,6 +21,7 @@ mod atomic;
 mod bound_values;
 mod catch_any;
 mod lit_members;
+mod raw_memory;
 mod thread_local;
 pub(crate) use assign_pattern::REPORTED;
 mod attempt;

@@ -134,7 +134,7 @@ pub unsafe extern "C" fn velt_rt_fut_detach(f: *mut VeltFut, quiet_drop: Option<
     give_up(f);
 }
 
-/// A combinator that settled gives up loser `f` (as `velt_rt_fut_drop`: a started promise keeps
+/// A combinator that settled gives up loser `f` (as `drop_fut`: a started promise keeps
 /// running). A started promise created during this turn whose task is queued (woken by this
 /// turn's own code, by a promise it settled, say) runs now, before the combinator's awaiter,
 /// like its JS microtask; anything else runs at its place in the ready queue, as does every
@@ -148,7 +148,7 @@ pub(super) unsafe fn give_up(f: *mut VeltFut) {
         })
         .flatten();
     // An unfinished started promise stays allocated until its task finishes it.
-    super::velt_rt_fut_drop(f);
+    super::drop_fut(f);
     if let Some(id) = task {
         executor::sync_run(|| executor::run_now(id, turn));
     }
@@ -548,7 +548,7 @@ mod tests {
         velt_rt_block_on(poll, state);
         crate::task::executor::after_main();
     }
-    use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, velt_rt_yield_now};
+    use crate::task::{drop_fut, poll_fut, velt_rt_yield_now};
     use std::cell::Cell;
 
     thread_local! {
@@ -594,15 +594,15 @@ mod tests {
             *st.add(2) = started_child() as i64;
             log("main");
             *st.add(3) = started_child() as i64;
-            velt_rt_fut_drop(*st.add(3) as *mut VeltFut);
+            drop_fut(*st.add(3) as *mut VeltFut);
             *st.add(1) = 1;
         }
         let p = *st.add(2) as *mut VeltFut;
-        if velt_rt_fut_poll(p, cx) == PENDING {
+        if poll_fut(p, cx) == PENDING {
             return PENDING;
         }
         *st = *((p as *const u8).add(16) as *const i64);
-        velt_rt_fut_drop(p);
+        drop_fut(p);
         log("main end");
         READY
     }
@@ -618,18 +618,18 @@ mod tests {
         }
         let x = *st.add(2) as *mut VeltFut;
         if *st.add(1) == 1 {
-            if velt_rt_fut_poll(x, cx) == PENDING {
+            if poll_fut(x, cx) == PENDING {
                 return PENDING;
             }
-            velt_rt_fut_drop(x);
+            drop_fut(x);
             log("root got x");
             *st.add(1) = 2;
         }
         let y = *st.add(3) as *mut VeltFut;
-        if velt_rt_fut_poll(y, cx) == PENDING {
+        if poll_fut(y, cx) == PENDING {
             return PENDING;
         }
-        velt_rt_fut_drop(y);
+        drop_fut(y);
         READY
     }
 
@@ -638,7 +638,7 @@ mod tests {
     unsafe extern "C" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         let init = [0i64; 2];
         let f = velt_rt_fut_box(child_poll, no_drop, init.as_ptr() as *const u8, 16, 8);
-        assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+        assert_eq!(poll_fut(f, cx), PENDING);
         velt_rt_fut_detach(f, Some(count_result_drop));
         log("owner goes on");
         *(s as *mut i64) = 0;
@@ -649,10 +649,10 @@ mod tests {
     unsafe extern "C" fn waiter_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         let st = s as *mut i64;
         let wait = *st.add(2) as *mut VeltFut;
-        if velt_rt_fut_poll(wait, cx) == PENDING {
+        if poll_fut(wait, cx) == PENDING {
             return PENDING;
         }
-        velt_rt_fut_drop(wait);
+        drop_fut(wait);
         log("waiter end");
         *st = 0;
         READY
@@ -665,7 +665,7 @@ mod tests {
         let latch = velt_rt_latch_new();
         let init = [0, 0, crate::task::latch::velt_rt_latch_wait(latch) as i64];
         let f = velt_rt_fut_box(waiter_poll, no_drop, init.as_ptr() as *const u8, 24, 8);
-        assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+        assert_eq!(poll_fut(f, cx), PENDING);
         velt_rt_latch_open(latch);
         velt_rt_fut_detach(f, None);
         log("owner goes on");
@@ -701,11 +701,11 @@ mod tests {
             *st.add(1) = 1;
         }
         let p = *st.add(2) as *mut VeltFut;
-        if velt_rt_fut_poll(p, cx) == PENDING {
+        if poll_fut(p, cx) == PENDING {
             return PENDING;
         }
         *st = *((p as *const u8).add(16) as *const i64);
-        velt_rt_fut_drop(p);
+        drop_fut(p);
         READY
     }
 

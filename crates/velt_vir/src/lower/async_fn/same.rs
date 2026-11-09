@@ -54,7 +54,7 @@ impl FnLower<'_, '_> {
         // `q` may have finished in its first run and given up its own holder of `p`.
         let alias = vec![w_op, held_op.clone(), quiet];
         self.call_rt(Rt::FutAlias, alias, None);
-        self.call_rt(Rt::FutDrop, vec![held_op], None);
+        self.fut_drop_call(vec![held_op]);
         self.owned_result(Some(w), t)
     }
 }

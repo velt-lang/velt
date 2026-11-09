@@ -174,7 +174,7 @@ mod tests {
     use std::task::{Context, Waker};
 
     use super::Gate;
-    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, PENDING, READY};
+    use crate::task::{drop_fut, poll_fut, raw_cx, PENDING, READY};
 
     #[test]
     fn a_wait_ends_with_the_poll_it_saw() {
@@ -184,20 +184,20 @@ mod tests {
         // SAFETY: a live handle and leaf, polled and dropped here.
         unsafe {
             let f = super::velt_rt_task_gate_wait(h);
-            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()), PENDING);
+            assert_eq!(poll_fut(f, raw_cx(&mut cx).ptr()), PENDING);
             g.leave();
             g.enter();
             // A later poll of the task does not hold the wait back.
-            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()), READY);
-            velt_rt_fut_drop(f);
+            assert_eq!(poll_fut(f, raw_cx(&mut cx).ptr()), READY);
+            drop_fut(f);
             g.leave();
             let f = super::velt_rt_task_gate_wait(h);
-            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()), READY);
-            velt_rt_fut_drop(f);
+            assert_eq!(poll_fut(f, raw_cx(&mut cx).ptr()), READY);
+            drop_fut(f);
             super::velt_rt_task_gate_free(h);
             let f = super::velt_rt_task_gate_wait(0);
-            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()), READY);
-            velt_rt_fut_drop(f);
+            assert_eq!(poll_fut(f, raw_cx(&mut cx).ptr()), READY);
+            drop_fut(f);
         }
     }
 }

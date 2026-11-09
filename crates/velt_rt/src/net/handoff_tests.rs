@@ -8,7 +8,7 @@ use crate::io::handoff_probe::{buffer_output, published};
 use crate::registry::Key;
 use crate::result::VeltErr;
 use crate::str::VeltStr;
-use crate::task::{velt_rt_fut_drop, VeltFut};
+use crate::task::{drop_fut, VeltFut};
 
 /// Buffers output, runs `send`, and checks the output was published; drops the returned future.
 fn publishes(what: &str, send: impl FnOnce() -> *mut VeltFut) {
@@ -16,7 +16,7 @@ fn publishes(what: &str, send: impl FnOnce() -> *mut VeltFut) {
     let f = send();
     assert!(published(), "{what} publishes this thread's output first");
     // SAFETY: a heap future the call returned, dropped once.
-    unsafe { velt_rt_fut_drop(f) };
+    unsafe { drop_fut(f) };
 }
 
 /// [`publishes`] for a call that returns no future.

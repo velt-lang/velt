@@ -23,9 +23,18 @@ impl FnLower<'_, '_> {
                 | I::AtomicCas
                 | I::AtomicCasWeak
                 | I::AtomicFence
-                | I::AtomicSpinHint,
+                | I::AtomicSpinHint
+                | I::PtrAtomicLoad
+                | I::PtrAtomicStore
+                | I::PtrAtomicRmw
+                | I::PtrAtomicCas
+                | I::PtrAtomicCasWeak,
                 _,
             ) => self.atomic_intrinsic(i, args),
+            (I::AtomicAddress, [a]) => self.atomic_address(a, ty),
+            (I::AddressStore, [a, v]) => self.address_store(a, v),
+            (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
+            (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::ThreadLocalGet | I::ThreadLocalSet, _) => self.thread_local_intrinsic(i, args),
             (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
             (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),

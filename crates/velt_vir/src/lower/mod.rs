@@ -95,6 +95,7 @@ mod for_of_shared;
 mod foreign;
 mod frame_envs;
 mod lower_profile;
+mod raw_memory;
 mod state;
 use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
 mod fn_shapes;
@@ -471,6 +472,8 @@ struct Cx<'h> {
     /// The data of each static atomic used so far, `None` for a global that is not one
     /// (static_atomic.rs).
     static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
+    /// The aggregate of a heap future's header, once made (raw_memory.rs `fut_header`).
+    fut_header: Option<crate::vir::AggId>,
     /// The class id number of each `struct` type with an interface table (class_test.rs
     /// `VALUE_IDS`), in the order the tables are made.
     value_ids: FxHashMap<TyId, u64>,

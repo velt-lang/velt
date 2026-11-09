@@ -1,0 +1,16 @@
+// velt/lang/intrinsics (internal): heap futures (docs/internals/contracts/rt_abi_async.md §1),
+// for std's executor: a `VeltFut*` is the address of its header `{ poll, drop }`, and these
+// call through it, inline, as compiled code polls and drops a heap future.
+
+/**
+ * Polls the heap future at `f` with the task context `cx`: `f->poll(f, cx)`, 1 when it is
+ * ready (its result at `f + 16`), 0 while pending. Unsafe: `f` must be a live heap future that
+ * has not completed, and `cx` the context of the task polling it.
+ */
+export declare unsafe intrinsic function futPoll(f: usize, cx: usize): u32;
+
+/**
+ * Drops the heap future at `f`: `f->drop(f)`, which cancels it if still running and frees it
+ * (never the result). Unsafe: `f` must be a live heap future, not used after.
+ */
+export declare unsafe intrinsic function futDrop(f: usize): void;

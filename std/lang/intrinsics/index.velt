@@ -7,7 +7,15 @@
 // checking that the two name the same set. std code imports them like any function; programs
 // and packages cannot (`velt/lang` is internal), so they use the public APIs instead.
 
-export { addressLoad } from "velt/lang/intrinsics/address";
+export {
+  addressLoad,
+  addressStore,
+  ptrAtomicCas,
+  ptrAtomicCasWeak,
+  ptrAtomicLoad,
+  ptrAtomicRmw,
+  ptrAtomicStore,
+} from "velt/lang/intrinsics/address";
 export {
   anyDelete,
   anyIsList,
@@ -33,6 +41,7 @@ export {
   arrayWithCapacity,
 } from "velt/lang/intrinsics/array";
 export {
+  atomicAddress,
   atomicCas,
   atomicCasWeak,
   atomicFence,
@@ -43,6 +52,7 @@ export {
 } from "velt/lang/intrinsics/atomic";
 export { chanReceive, chanSend, chanTryReceive, chanTrySend } from "velt/lang/intrinsics/channel";
 export { hash, includesEq, keyEq } from "velt/lang/intrinsics/compare";
+export { futDrop, futPoll } from "velt/lang/intrinsics/future";
 export {
   asyncGeneratorDispose,
   asyncGeneratorResume,

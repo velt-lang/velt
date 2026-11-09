@@ -81,7 +81,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let inner = Operand::Copy(proj(&base, Proj::Field(1)));
         let r = lw.temp(Ty::U32);
         let args = vec![inner.clone(), Operand::Copy(Place::local(cxl))];
-        lw.call_rt(Rt::FutPoll, args, Some(Place::local(r)));
+        lw.fut_poll_call(args, Place::local(r));
         let (pend, ready) = (lw.new_block(), lw.new_block());
         let pending = lw.rvalue_temp(
             Ty::Bool,
@@ -91,7 +91,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.switch_to(pend);
         lw.terminate(Terminator::Return(cint(0, Ty::U32)));
         lw.switch_to(ready);
-        lw.call_rt(Rt::FutDrop, vec![inner], None);
+        lw.fut_drop_call(vec![inner]);
         lw.push_scope(ScopeKind::Block);
         lw.settle(&base, slot);
         lw.scopes.clear();
@@ -107,7 +107,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let st = lw.new_local(Ty::Ptr, Some("state".into()));
         let base = proj(&Place::local(st), Proj::Deref(Ty::Agg(wa)));
         let inner = Operand::Copy(proj(&base, Proj::Field(1)));
-        lw.call_rt(Rt::FutDrop, vec![inner], None);
+        lw.fut_drop_call(vec![inner]);
         lw.free_buffer(&proj(&base, Proj::Field(2)), slot);
         lw.terminate(Terminator::Return(unit()));
         let sym = format!("_Gall_settle_drop_{}", lw.cx.type_symbol(slot));

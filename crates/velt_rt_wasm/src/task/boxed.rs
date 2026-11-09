@@ -129,7 +129,7 @@ pub unsafe extern "C" fn velt_rt_fut_box(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, PENDING};
+    use crate::task::{drop_fut, poll_fut, raw_cx, PENDING};
     use std::task::{Context, Waker};
 
     /// State: `{ result: i64, polls: i64 }`; ready on the second poll with result 7.
@@ -158,14 +158,14 @@ mod tests {
         unsafe {
             let f = velt_rt_fut_box(two_polls, count_drop, init.as_ptr() as *const u8, 16, 8);
             assert_eq!(f as usize % 16, 0);
-            assert_eq!(velt_rt_fut_poll(f, raw), PENDING);
-            assert_eq!(velt_rt_fut_poll(f, raw), READY);
+            assert_eq!(poll_fut(f, raw), PENDING);
+            assert_eq!(poll_fut(f, raw), READY);
             assert_eq!(*(state(f) as *const i64), 7);
-            velt_rt_fut_drop(f);
+            drop_fut(f);
             assert_eq!(DROPPED.load(std::sync::atomic::Ordering::SeqCst), 0);
             // Cancelled before completion: the state's drop runs.
             let g = velt_rt_fut_box(two_polls, count_drop, init.as_ptr() as *const u8, 16, 8);
-            velt_rt_fut_drop(g);
+            drop_fut(g);
             assert_eq!(DROPPED.load(std::sync::atomic::Ordering::SeqCst), 1);
         }
     }

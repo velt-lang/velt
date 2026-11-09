@@ -316,7 +316,7 @@ pub extern "C-unwind" fn velt_rt_microtask() -> *mut VeltFut {
 mod tests {
     use std::task::{Context, Waker};
 
-    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, READY};
+    use crate::task::{drop_fut, poll_fut, raw_cx, READY};
 
     #[test]
     fn a_microtask_outside_a_task_is_ready_at_once() {
@@ -324,8 +324,8 @@ mod tests {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf, polled and dropped once.
         unsafe {
-            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()), READY);
-            velt_rt_fut_drop(f);
+            assert_eq!(poll_fut(f, raw_cx(&mut cx).ptr()), READY);
+            drop_fut(f);
         }
     }
 

@@ -11,7 +11,7 @@ use crate::task::local::{
 use crate::task::race::velt_rt_race;
 use crate::task::runtime::velt_rt_block_on;
 use crate::task::spawn::velt_rt_spawn_transfer;
-use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, VeltFut, PENDING, READY};
+use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
 use crate::timer::velt_rt_sleep;
 use std::ffi::c_void;
 use std::ptr::null_mut;
@@ -54,10 +54,10 @@ unsafe extern "C-unwind" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         st.tag = 1;
     }
     if st.tag == 1 {
-        if velt_rt_fut_poll(st.sleep, cx) == PENDING {
+        if poll_fut(st.sleep, cx) == PENDING {
             return PENDING;
         }
-        velt_rt_fut_drop(st.sleep);
+        drop_fut(st.sleep);
     }
     st.result = st.id;
     st.tag = 2;
@@ -67,7 +67,7 @@ unsafe extern "C-unwind" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 unsafe extern "C-unwind" fn job_drop(s: *mut u8) {
     let st = &mut *(s as *mut Job);
     if st.tag == 1 {
-        velt_rt_fut_drop(st.sleep);
+        drop_fut(st.sleep);
     }
 }
 
@@ -133,11 +133,11 @@ unsafe extern "C-unwind" fn hand_on_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         st.ran_at_mark = seen(id).len();
         st.tag = 1;
     }
-    if velt_rt_fut_poll(st.fut, cx) == PENDING {
+    if poll_fut(st.fut, cx) == PENDING {
         return PENDING;
     }
     st.result = *((st.fut as *const u8).add(16) as *const i64);
-    velt_rt_fut_drop(st.fut);
+    drop_fut(st.fut);
     READY
 }
 
@@ -208,10 +208,10 @@ unsafe extern "C-unwind" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     if sleep.is_null() {
         *sleep = velt_rt_sleep(5);
     }
-    if velt_rt_fut_poll(*sleep, cx) == PENDING {
+    if poll_fut(*sleep, cx) == PENDING {
         return PENDING;
     }
-    velt_rt_fut_drop(*sleep);
+    drop_fut(*sleep);
     *sleep = null_mut();
     GLUE_JOBS_DONE.fetch_add(1, Ordering::SeqCst);
     READY
@@ -220,7 +220,7 @@ unsafe extern "C-unwind" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 unsafe extern "C-unwind" fn counted_drop(s: *mut u8) {
     let sleep = *(s.add(8) as *const *mut VeltFut);
     if !sleep.is_null() {
-        velt_rt_fut_drop(sleep);
+        drop_fut(sleep);
     }
 }
 
@@ -236,7 +236,7 @@ unsafe extern "C-unwind" fn start_job_and_tag(slot: *mut u8) {
         8,
     );
     velt_rt_fut_start(f, None);
-    velt_rt_fut_drop(f);
+    drop_fut(f);
     tag(slot);
 }
 
@@ -262,11 +262,11 @@ unsafe extern "C-unwind" fn glue_starts_poll(s: *mut u8, cx: *mut c_void) -> u32
         st[1] = f as i64;
     }
     let f = st[1] as *mut VeltFut;
-    if velt_rt_fut_poll(f, cx) == PENDING {
+    if poll_fut(f, cx) == PENDING {
         return PENDING;
     }
     st[0] = *((f as *const u8).add(16) as *const i64);
-    velt_rt_fut_drop(f);
+    drop_fut(f);
     READY
 }
 

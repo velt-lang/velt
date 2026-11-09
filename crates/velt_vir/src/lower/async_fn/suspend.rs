@@ -5,9 +5,9 @@
 //!   <start the child>            ; embedded state init / take the heap future
 //!   goto resume_k
 //! resume_k:
-//!   r = poll(child, cx)          ; child$poll / velt_rt_fut_poll
+//!   r = poll(child, cx)          ; child$poll / child->poll(child, cx)
 //!   if r == 0 { state.tag = k; return 0 }
-//!   <move the result out>        ; + velt_rt_fut_drop for heap futures
+//!   <move the result out>        ; + child->drop(child) for heap futures
 //! cancel_k:
 //!   <drop the child>; <drop everything the scopes own>; return 0
 //! ```
@@ -17,7 +17,7 @@
 //! - `yieldNow()` calls `velt_rt_yield_now(cx)` and suspends once;
 //! - an async generator's resume and close poll its state (generator.rs);
 //! - anything else is a promise value (`VeltFut*`: rt leaf futures, join handles, boxed
-//!   promises), polled with `velt_rt_fut_poll`, result at `+16`.
+//!   promises), polled through its header (raw_memory.rs `fut_poll_call`), result at `+16`.
 
 use velt_sema::hir::{self, DefId, Intrinsic, PassMode, TyId, TyKind, UseMode};
 
@@ -370,10 +370,10 @@ impl FnLower<'_, '_> {
         self.switch_to(resume);
         let r = self.temp(Ty::U32);
         let cx = self.poll_cx();
-        self.call_rt(Rt::FutPoll, vec![fp.clone(), cx], Some(Place::local(r)));
+        self.fut_poll_call(vec![fp.clone(), cx], Place::local(r));
         let drop_arg = fp.clone();
         self.after_poll(k, Operand::Copy(Place::local(r)), |lw| {
-            lw.call_rt(Rt::FutDrop, vec![drop_arg], None);
+            lw.fut_drop_call(vec![drop_arg]);
         });
         let slot_ty = self.cx.promise_slot(pty);
         let vt = self.cx.ty(slot_ty);
@@ -385,7 +385,7 @@ impl FnLower<'_, '_> {
             let sp = self.operand_place(slot, Ty::Ptr);
             self.copy_to_temp(Operand::Copy(proj(&sp, Proj::Deref(vt))), vt)
         });
-        self.call_rt(Rt::FutDrop, vec![fp], None);
+        self.fut_drop_call(vec![fp]);
         // The promise settled: one step before the code after the `await` runs, as in Node.
         self.await_step(|lw| {
             if let Some(r) = res {

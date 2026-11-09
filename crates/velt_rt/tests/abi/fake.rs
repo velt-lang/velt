@@ -3,7 +3,7 @@
 
 use crate::result::IoResult;
 use crate::task::runtime::velt_rt_block_on;
-use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use crate::task::{drop_fut, poll_fut, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 use crate::VeltStr;
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
@@ -23,11 +23,11 @@ pub struct Awaiter<R> {
 /// Poll function of [`Awaiter`]: one await of a heap future, then move its result out.
 pub unsafe extern "C-unwind" fn awaiter_poll<R>(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Awaiter<R>);
-    if velt_rt_fut_poll(st.fut, cx) == PENDING {
+    if poll_fut(st.fut, cx) == PENDING {
         return PENDING;
     }
     st.result.write(fut_result::<R>(st.fut));
-    velt_rt_fut_drop(st.fut);
+    drop_fut(st.fut);
     st.fut = std::ptr::null_mut();
     READY
 }
