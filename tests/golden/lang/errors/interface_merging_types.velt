@@ -1,6 +1,8 @@
 // Merged interface declarations that TypeScript rejects: a field declared again with another
 // type (TS2717), type parameters that are not a prefix of the others' (TS2428), and a name that
-// is a field in one declaration and a method in another.
+// is a field in one declaration and a method in another (TS2300). A field next to a getter or
+// setter of the same name is accepted by TypeScript but is an error in Velt, whose interfaces
+// can't hold both.
 interface A {
   x: number;
   y?: string;
@@ -25,6 +27,20 @@ interface C {
 }
 interface C {
   m(): number;
+}
+
+interface S {
+  set x(v: string);
+}
+interface S {
+  x: number;
+}
+
+interface G {
+  w: number;
+}
+interface G {
+  get w(): string;
 }
 
 function main() {}

@@ -12,7 +12,8 @@
 //! must have the same type: written alike it is one field, written otherwise collection
 //! compares the resolved types (TS2717). A method declared again is an overload, the later
 //! declaration's signatures first (`crate::iface_overloads` makes the set one method). A field
-//! and a method of one name are an error.
+//! and a method, getter or setter of one name are an error: TypeScript accepts a field next to
+//! accessors, but a Velt interface can't hold both.
 //! The types an augmentation's members name are the augmenting module's (`augment_scope`).
 
 use rustc_hash::FxHashMap;
@@ -282,7 +283,7 @@ fn merge(into: &mut ast::InterfaceDecl, from: ast::InterfaceDecl, diags: &mut Ve
         let method = into
             .methods
             .iter()
-            .find(|m| m.sig.name.name == f.name.name && !m.is_setter)
+            .find(|m| m.sig.name.name == f.name.name)
             .map(|m| m.sig.name.span);
         if method.is_some() {
             twice(&from.name.name, &f.name, diags);
@@ -333,9 +334,9 @@ fn merge(into: &mut ast::InterfaceDecl, from: ast::InterfaceDecl, diags: &mut Ve
 
 /// Joins the type parameters of a later declaration, `from`, into `into`'s, as TypeScript
 /// does: each declaration names a prefix of the merged list (at least every parameter without
-/// a default), with the same names in the same order; a longer list adds its parameters, and a
-/// default or bound one declaration gives is the merged parameter's. `false` when they don't
-/// agree (TS2428).
+/// a default), with the same names in the same order; a longer list adds its parameters, and the
+/// merged parameter takes a default or bound from whichever declaration gives one. `false` when
+/// they don't agree (TS2428).
 fn merge_generics(into: &mut Vec<ast::GenericParam>, from: &[ast::GenericParam]) -> bool {
     if into
         .iter()
@@ -380,17 +381,17 @@ fn unsupported_in_block(what: &str, span: Span, global: bool) -> Diagnostic {
     )
 }
 
-/// Reports member `member` of interface `iface`: a field in one merged declaration and a method
-/// in another (TypeScript's TS2300).
+/// Reports member `member` of interface `iface`: a field in one merged declaration and a method,
+/// getter or setter in another (Velt can't hold a field and accessors of one name).
 fn twice(iface: &str, member: &ast::Ident, diags: &mut Vec<Diagnostic>) {
     diags.push(
         Diagnostic::error(
             format!(
-                "`{}` is a field in one declaration of the interface `{iface}` and a method in another",
+                "`{}` is a field in one declaration of the interface `{iface}` and a method or accessor in another",
                 member.name
             ),
             member.span,
         )
-        .with_note("merged interface declarations may repeat a field with the same type, or a method (an overload), but not use one name for both"),
+        .with_note("merged interface declarations may repeat a field with the same type, or a method (an overload), but not use one name for a field and a method, getter or setter"),
     );
 }
