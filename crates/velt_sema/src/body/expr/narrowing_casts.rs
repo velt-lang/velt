@@ -566,9 +566,13 @@ impl FnCx<'_, '_> {
             .or_else(|h| self.narrowing_assertion(h, t, span))
     }
 
-    /// A value of an object literal asserted to an object type (`{ id } as Product`) as its
-    /// field's type `t`: asserted as a tuple's element is; `coerce` reports a value that isn't.
-    pub(super) fn asserted_field(&mut self, v: hir::Expr, t: TyId) -> hir::Expr {
+    /// Value `v` of the object literal at `lit` as its field's type `t`: converted, or, in a
+    /// literal asserted to an object type (`{ id } as Product`), asserted as a tuple's element
+    /// is; `coerce` reports a value that is neither.
+    pub(super) fn literal_field(&mut self, v: hir::Expr, t: TyId, lit: Span) -> hir::Expr {
+        if self.asserted_lit != Some(lit) {
+            return self.coerce(v, t);
+        }
         let span = v.span;
         match self.element_assertion(v, t, span) {
             Ok(h) => h,
