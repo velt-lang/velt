@@ -1,6 +1,7 @@
 //! Catching a Velt panic that unwinds (docs/internals/design/unwinding.md), built with each
 //! backend: `catchUnwind` returns the panic's message and the process goes on, a panic outside
-//! any catch still ends the process, and another language's exception passes the catch. The
+//! any catch still ends the process, and another language's exception passes the catch (macOS
+//! and Linux: on Windows `catchUnwind` is a plain call until its structured exceptions are built). The
 //! probe module re-exports std's internal `catchVeltPanic`, so std is copied with it added (as
 //! gated_dropped.rs does).
 
@@ -46,11 +47,11 @@ fn velt(dir: &test_dir::TestDir, main: &str, args: &[&str]) -> Output {
 }
 
 /// std's catch, and an exception of another language (class `OTHRLANG`) raised with the
-/// platform's unwinder, which returns when no frame claims it. What it returns is no reliable
-/// reason code: 5 (end of stack) or 3 (a frame that ends the search, a Rust `extern "C"`
-/// function) on macOS, any word on Linux arm64 (libgcc, from C too), so only the return counts.
+/// platform's unwinder. Its payload after the 32-byte header reads as a message, so a catch that
+/// took it by mistake hands back `FOREIGN-CAUGHT`.
 const PROBE: &str = r#"
 import { Ptr, StrBytes } from "velt/ffi";
+import { ptrAddress, ptrOf } from "velt/ffi/ptr";
 
 export { catchVeltPanic } from "velt/task/unwind";
 
@@ -58,23 +59,28 @@ declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 declare c("c") function memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
 declare c("c") function _Unwind_RaiseException(e: Ptr<u8>): i32;
+declare function velt_rt_flush(): void;
 
-export function raiseForeign(): i32 {
-  // SAFETY: a zeroed header of 32 bytes with a class, which the unwinder only reads.
+export function raiseForeign(): void {
+  velt_rt_flush();
+  // SAFETY: a zeroed header of 32 bytes with a class, which the unwinder only reads, then a
+  // NUL-terminated text inside the allocation.
   unsafe {
-    const e = malloc(32);
+    const e = malloc(48);
     if (e === null) {
-      return -1;
+      return;
     }
-    memset(e, 0, 32);
+    memset(e, 0, 48);
     memcpy(e, "OTHRLANG", 8);
-    return _Unwind_RaiseException(e);
+    memcpy(ptrOf<u8>(ptrAddress(e) + 32), "FOREIGN-CAUGHT", 14);
+    _Unwind_RaiseException(e);
   }
 }
 "#;
 
+#[cfg(not(windows))]
 const MAIN: &str = r#"
-import { catchVeltPanic, raiseForeign } from "velt/zz_unwind";
+import { catchVeltPanic } from "velt/zz_unwind";
 
 function deep(n: number, xs: number[]): number {
   if (n == 0) {
@@ -99,20 +105,35 @@ function main() {
   let inner: string | null = null;
   const outer = catchVeltPanic(() => { inner = catchVeltPanic(() => { panic("inner"); }); });
   console.log(first(outer), first(inner));
-  let returned = false;
-  const foreign = catchVeltPanic(() => { raiseForeign(); returned = true; });
-  console.log(first(foreign), returned);
   panic("uncaught");
 }
 "#;
 
+#[cfg(not(windows))]
 const OUT: &str = "null 1
 boom
 index out of bounds: the len is 3 but the index is 6 0
 null inner
-null true
 ";
 
+/// Another language's exception raised inside a catch.
+#[cfg(not(windows))]
+const FOREIGN: &str = r#"
+import { catchVeltPanic, raiseForeign } from "velt/zz_unwind";
+
+function first(m: string | null): string {
+  return m === null ? "null" : m;
+}
+
+function main() {
+  console.log("raising");
+  let returned = false;
+  const foreign = catchVeltPanic(() => { raiseForeign(); returned = true; });
+  console.log(first(foreign), returned);
+}
+"#;
+
+#[cfg(not(windows))]
 #[test]
 fn a_velt_panic_is_caught_with_every_backend() {
     let dir = test_dir::TestDir::new();
@@ -128,6 +149,30 @@ fn a_velt_panic_is_caught_with_every_backend() {
         assert_eq!(out.status.code(), Some(101), "{args:?}: {stderr}");
         for msg in ["panic: boom", "panic: inner", "panic: uncaught"] {
             assert!(stderr.contains(msg), "{args:?}: {stderr}");
+        }
+    }
+}
+
+/// An exception of another class passes `catchVeltPanic`: the catch never returns it. What
+/// happens next depends on the frames above `main`, which this test doesn't rely on: with no
+/// frame claiming it the raise returns and the program goes on (`null true`); a Rust frame above
+/// `main` (an `extern "C"` function's abort-on-unwind pad, which Rust's personality claims for
+/// any class) ends the process there. Either way the catch didn't take it: a catch that claims
+/// every class hands back the payload as the message, `FOREIGN-CAUGHT`.
+#[cfg(not(windows))]
+#[test]
+fn another_languages_exception_passes_the_catch() {
+    let dir = test_dir::TestDir::new();
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let out = velt(&dir, FOREIGN, args);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let why = format!("{args:?}: {:?}\n{stdout}{stderr}", out.status);
+        assert!(!stdout.contains("FOREIGN-CAUGHT"), "{why}");
+        match stdout.as_ref() {
+            "raising\nnull true\n" => assert!(out.status.success(), "{why}"),
+            "raising\n" => assert!(!out.status.success(), "{why}"),
+            _ => panic!("{why}"),
         }
     }
 }

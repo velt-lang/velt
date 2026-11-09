@@ -1,0 +1,15 @@
+// velt/lang/hooks (internal): where generated code doesn't catch Velt's exception (`#unwind-raise`
+// on Windows until its structured exceptions are built, and on WebAssembly;
+// docs/internals/design/unwinding.md). `catchUnwind` is a plain call there and `enterCatch` never
+// counts a catch, so nothing is raised: a panic takes `velt_rt_panic`. No unwinder function is
+// named, so the program links where `_Unwind_RaiseException` doesn't exist.
+
+/** Never called (no catch counts here); raises nothing. */
+export function raise(msg: string): void {}
+
+/**
+ * Never called with an exception (`catchUnwind` returns 0 here). Unsafe, as the Itanium one is.
+ */
+export unsafe function takePanic(e: usize): string {
+  return "";
+}

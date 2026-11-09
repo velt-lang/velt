@@ -54,9 +54,7 @@ pub(crate) fn define<M: Module>(
     try_fn: FuncId,
     unwind: &mut Vec<FunctionUnwind>,
 ) -> CodegenResult<Option<EhSymbols>> {
-    let triple = module.isa().triple().to_string();
-    // Only object modules set a TLS model: the JIT registers no LSDA (crate::tls::native).
-    let catching = Catching::of_triple(&triple) == Catching::Itanium && crate::tls::native(module);
+    let catching = catches(module);
     let sig = crate::abi::make_signature(
         call_conv,
         &[velt_vir::vir::Ty::Ptr; 2],
@@ -152,6 +150,45 @@ pub(crate) fn define<M: Module>(
         personality_ref,
         lsda,
     }))
+}
+
+/// Whether `module`'s `velt_eh_try` catches (see [`define`]): an Itanium target and an object
+/// module (only object modules set a TLS model: the JIT registers no LSDA, crate::tls::native).
+fn catches<M: Module>(module: &M) -> bool {
+    let triple = module.isa().triple().to_string();
+    Catching::of_triple(&triple) == Catching::Itanium && crate::tls::native(module)
+}
+
+/// `velt_eh_catches` (declared as `id`): returns 1 where this module's `velt_eh_try` catches, else
+/// 0; its unwind info goes to `unwind`.
+pub(crate) fn define_catches<M: Module>(
+    module: &mut M,
+    call_conv: CallConv,
+    id: FuncId,
+    unwind: &mut Vec<FunctionUnwind>,
+) -> CodegenResult<()> {
+    let (params, ret) = eh::catches_signature();
+    let mut ctx = module.make_context();
+    ctx.func.signature = crate::abi::make_signature(call_conv, &params, ret)?;
+    ctx.func.name = UserFuncName::user(0, id.as_u32());
+    let mut fctx = FunctionBuilderContext::new();
+    let mut b = FunctionBuilder::new(&mut ctx.func, &mut fctx);
+    let entry = b.create_block();
+    b.switch_to_block(entry);
+    let v = b.ins().iconst(types::I8, i64::from(catches(module)));
+    b.ins().return_(&[v]);
+    b.seal_all_blocks();
+    b.finalize();
+    module
+        .define_function(id, &mut ctx)
+        .map_err(|e| format!("codegen: defining `{}`: {e:?}", eh::CATCHES))?;
+    unwind.extend(crate::module::unwind_info(
+        module.isa(),
+        id,
+        &ctx,
+        eh::CATCHES,
+    )?);
+    Ok(())
 }
 
 /// A local data object `name`, filled by `fill`.

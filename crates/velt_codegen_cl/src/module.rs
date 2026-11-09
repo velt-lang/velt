@@ -265,6 +265,7 @@ fn declare_all<M: Module>(
     let mut externs = Vec::with_capacity(program.externs.len());
     let (mut tls, mut tls_keys) = (FxHashMap::default(), FxHashMap::default());
     let (mut eh, mut eh_try, mut eh_unwind) = (None, None, vec![]);
+    let mut eh_catches = None;
     for e in &program.externs {
         // Catching a Velt panic: a function this module defines (eh.rs).
         if velt_vir::eh::is_try(&e.symbol) {
@@ -275,6 +276,21 @@ fn declare_all<M: Module>(
                     let id = declare_function(module, call_conv, &e.symbol, &p, r, Linkage::Local)?;
                     eh = crate::eh::define(module, call_conv, id, &mut eh_unwind)?;
                     eh_try = Some(id);
+                    id
+                }
+            };
+            externs.push(Some(id));
+            continue;
+        }
+        // Whether `velt_eh_try` catches: a constant this module defines (eh.rs).
+        if velt_vir::eh::is_catches(&e.symbol) {
+            let id = match eh_catches {
+                Some(id) => id,
+                None => {
+                    let (p, r) = velt_vir::eh::catches_signature();
+                    let id = declare_function(module, call_conv, &e.symbol, &p, r, Linkage::Local)?;
+                    crate::eh::define_catches(module, call_conv, id, &mut eh_unwind)?;
+                    eh_catches = Some(id);
                     id
                 }
             };

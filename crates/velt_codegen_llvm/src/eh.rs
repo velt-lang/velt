@@ -22,9 +22,11 @@ use crate::target::Target;
 /// phases (`_URC_CONTINUE_UNWIND`, 8). In the cleanup phase it lands at the handler frame's landing
 /// pad (`_URC_INSTALL_CONTEXT`, 7) with the exception in data register 0 and selector 0 in
 /// register 1 (DWARF registers 0 and 1: rax/rdx, x0/x1). The landing pad is the first entry of the
-/// LSDA's call-site table: `velt_eh_try` is `noinline` and its only call is the `invoke`, so LLVM
-/// writes exactly one (lpstart omitted, call sites in ULEB128, as LLVM always writes them). Only
-/// libunwind / libgcc_s functions are called: no runtime.
+/// LSDA's call-site table (`velt_eh_landing`): `velt_eh_try` is `noinline` and its only call is the
+/// `invoke`, so LLVM writes exactly one, with lpstart omitted and call sites in ULEB128. An LSDA of
+/// another layout (lpstart given, another call-site encoding, no landing pad) makes the frame claim
+/// nothing, in the search phase already, instead of landing at a wrong address. Only libunwind /
+/// libgcc_s functions are called: no runtime.
 const ITANIUM: &str = r#"define linkonce_odr hidden ptr @TRY(ptr %code, ptr %env) noinline ATTRS personality ptr @PERSONALITY {
   invoke void %code(ptr %env) to label %ok unwind label %pad
 ok:
@@ -36,12 +38,15 @@ pad:
 }
 define linkonce_odr hidden i32 @PERSONALITY(i32 %v, i32 %a, i64 %c, ptr %e, ptr %x) ATTRS {
 entry:
-  %p = alloca ptr
   %ours = icmp eq i64 %c, CLASS
   br i1 %ours, label %mine, label %pass
 pass:
   ret i32 8
 mine:
+  %lp = call i64 @velt_eh_landing(ptr %x)
+  %known = icmp ne i64 %lp, 0
+  br i1 %known, label %phase, label %pass
+phase:
   %search = and i32 %a, 1
   %is_search = icmp ne i32 %search, 0
   br i1 %is_search, label %found, label %cleanup
@@ -52,24 +57,6 @@ cleanup:
   %is_frame = icmp ne i32 %frame, 0
   br i1 %is_frame, label %land, label %pass
 land:
-  %lsda = call ptr @_Unwind_GetLanguageSpecificData(ptr %x)
-  %ttype_at = getelementptr i8, ptr %lsda, i64 1
-  %ttype = load i8, ptr %ttype_at
-  %after = getelementptr i8, ptr %lsda, i64 2
-  store ptr %after, ptr %p
-  %has_types = icmp ne i8 %ttype, -1
-  br i1 %has_types, label %types, label %sites
-types:
-  %types_offset = call i64 @velt_eh_uleb(ptr %p)
-  br label %sites
-sites:
-  %q = load ptr, ptr %p
-  %q1 = getelementptr i8, ptr %q, i64 1
-  store ptr %q1, ptr %p
-  %table = call i64 @velt_eh_uleb(ptr %p)
-  %start = call i64 @velt_eh_uleb(ptr %p)
-  %size = call i64 @velt_eh_uleb(ptr %p)
-  %lp = call i64 @velt_eh_uleb(ptr %p)
   %base = call i64 @_Unwind_GetRegionStart(ptr %x)
   %ip = add i64 %base, %lp
   %ei = ptrtoint ptr %e to i64
@@ -77,6 +64,42 @@ sites:
   call void @_Unwind_SetGR(ptr %x, i32 1, i64 0)
   call void @_Unwind_SetIP(ptr %x, i64 %ip)
   ret i32 7
+}
+define linkonce_odr hidden i64 @velt_eh_landing(ptr %x) ATTRS {
+entry:
+  %p = alloca ptr
+  %lsda = call ptr @_Unwind_GetLanguageSpecificData(ptr %x)
+  %none = icmp eq ptr %lsda, null
+  br i1 %none, label %unknown, label %header
+unknown:
+  ret i64 0
+header:
+  %lpstart = load i8, ptr %lsda
+  %omitted = icmp eq i8 %lpstart, -1
+  br i1 %omitted, label %ttype, label %unknown
+ttype:
+  %ttype_at = getelementptr i8, ptr %lsda, i64 1
+  %tt = load i8, ptr %ttype_at
+  %after = getelementptr i8, ptr %lsda, i64 2
+  store ptr %after, ptr %p
+  %has_types = icmp ne i8 %tt, -1
+  br i1 %has_types, label %types, label %sites
+types:
+  %types_offset = call i64 @velt_eh_uleb(ptr %p)
+  br label %sites
+sites:
+  %q = load ptr, ptr %p
+  %enc = load i8, ptr %q
+  %q1 = getelementptr i8, ptr %q, i64 1
+  store ptr %q1, ptr %p
+  %uleb = icmp eq i8 %enc, 1
+  br i1 %uleb, label %entry0, label %unknown
+entry0:
+  %table = call i64 @velt_eh_uleb(ptr %p)
+  %start = call i64 @velt_eh_uleb(ptr %p)
+  %size = call i64 @velt_eh_uleb(ptr %p)
+  %pad = call i64 @velt_eh_uleb(ptr %p)
+  ret i64 %pad
 }
 define linkonce_odr hidden i64 @velt_eh_uleb(ptr %pp) ATTRS {
 entry:
@@ -105,14 +128,25 @@ declare void @_Unwind_SetGR(ptr, i32, i64)
 declare void @_Unwind_SetIP(ptr, i64)
 "#;
 
-/// The definitions of `velt_eh_try` and its personality, if the program calls it.
+/// The definitions of `velt_eh_try` and its personality, and of `velt_eh_catches`, for those the
+/// program calls.
 pub(crate) fn definitions(program: &vir::Program, target: &Target) -> String {
-    if !program.externs.iter().any(|e| eh::is_try(&e.symbol)) {
-        return String::new();
-    }
+    let calls = |f: fn(&str) -> bool| program.externs.iter().any(|e| f(&e.symbol));
+    let catching = Catching::of_triple(&target.triple);
     let mut out = String::new();
+    if calls(eh::is_catches) {
+        let _ = writeln!(
+            out,
+            "define linkonce_odr hidden zeroext i8 @{}() {FN_ATTRS} {{\n  ret i8 {}\n}}",
+            eh::CATCHES,
+            u8::from(catching == Catching::Itanium)
+        );
+    }
+    if !calls(eh::is_try) {
+        return out;
+    }
     let try_fn = eh::TRY;
-    match Catching::of_triple(&target.triple) {
+    match catching {
         Catching::None => {
             let _ = writeln!(
                 out,

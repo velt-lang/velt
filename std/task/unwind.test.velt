@@ -5,11 +5,45 @@
 import { describe, expect, it } from "velt/test";
 import { catchVeltPanic } from "velt/task/unwind";
 
+declare function velt_rt_xfer_suspend(): u32;
+declare function velt_rt_xfer_resume(depth: u32): void;
+
 function deep(n: number, xs: number[]): number {
   if (n == 0) {
     return xs[xs.length + 3];
   }
   return deep(n - 1, xs) + 1;
+}
+
+// A function value that captured a weak collection can't go to another thread: its transfer panics
+// inside the transfer (#2668's repro).
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Cache extends WeakMap<V, V> {}
+
+function mk(keep: V): () => number {
+  const c = new Cache();
+  c.set(keep, keep);
+  return () => {
+    const x = c.get(keep);
+    return x === undefined ? -1 : x.n;
+  };
+}
+
+async function run(f: () => number): Promise<number> {
+  return f();
+}
+
+/** This thread's transfer depth (`suspend` reads it and sets the transfer aside; `resume` undoes). */
+function transferDepth(): u32 {
+  const depth = velt_rt_xfer_suspend();
+  velt_rt_xfer_resume(depth);
+  return depth;
 }
 
 describe("catchVeltPanic", () => {
@@ -50,5 +84,19 @@ describe("catchVeltPanic", () => {
     });
     expect(outer).toBe(null);
     expect(inner !== null && inner.startsWith("inner")).toBe(true);
+  });
+
+  it("closes a transfer the panic left open", async () => {
+    const keep = new V(7);
+    const msg = catchVeltPanic(() => {
+      spawn(run(mk(keep)));
+    });
+    expect(msg !== null && msg.includes("WeakMap")).toBe(true);
+    expect(transferDepth()).toBe(0);
+    // A later transfer is one of its own: copies of a graph keep its sharing.
+    const shared = new V(3);
+    const pair = [shared, shared];
+    const got = await spawn(async () => pair[0] === pair[1] ? pair[0].n : -1);
+    expect(got).toBe(3);
   });
 });

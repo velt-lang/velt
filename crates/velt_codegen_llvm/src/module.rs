@@ -289,7 +289,8 @@ fn extern_declarations(program: &vir::Program) -> CodegenResult<String> {
         {
             continue;
         }
-        if velt_vir::tls::TlsCall::of_symbol(&e.symbol).is_some() || velt_vir::eh::is_try(&e.symbol)
+        if velt_vir::tls::TlsCall::of_symbol(&e.symbol).is_some()
+            || velt_vir::eh::is_backend_defined(&e.symbol)
         {
             continue;
         }
