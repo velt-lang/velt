@@ -12,7 +12,6 @@
 import { inline, noInline } from "velt/lang/intrinsics";
 import { u8x16, u32x4, u64x2 } from "velt/simd";
 import { aesKeyWords } from "velt/crypto/aes_ctr";
-import { load32le } from "velt/crypto/chacha20";
 
 /** The round keys of `key` (16 or 32 bytes) as vectors, 11 or 15 of them. */
 export function aesRoundKeys(key: u8[]): u8x16[] {
@@ -31,6 +30,56 @@ export function aesRoundKeys(key: u8[]): u8x16[] {
   return keys;
 }
 
+/**
+ * The round keys in registers for the blocks taken one at a time: 11 (AES-128) or 15 (AES-256,
+ * `wide`; k11..k14 are zero otherwise), loaded once per message instead of once per round.
+ */
+export struct Rounds {
+  k0: u8x16;
+  k1: u8x16;
+  k2: u8x16;
+  k3: u8x16;
+  k4: u8x16;
+  k5: u8x16;
+  k6: u8x16;
+  k7: u8x16;
+  k8: u8x16;
+  k9: u8x16;
+  k10: u8x16;
+  k11: u8x16;
+  k12: u8x16;
+  k13: u8x16;
+  k14: u8x16;
+  wide: bool;
+}
+
+/** `keys` (`aesRoundKeys`: 11 or 15 of them) as `Rounds`. */
+export function rounds(keys: u8x16[]): Rounds {
+  const wide = keys.length == 15;
+  if (!wide && keys.length != 11) {
+    panic(`ICE: AES-GCM: ${keys.length} round keys`);
+  }
+  const z = u8x16.splat(0);
+  return {
+    k0: keys[0],
+    k1: keys[1],
+    k2: keys[2],
+    k3: keys[3],
+    k4: keys[4],
+    k5: keys[5],
+    k6: keys[6],
+    k7: keys[7],
+    k8: keys[8],
+    k9: keys[9],
+    k10: keys[10],
+    k11: wide ? keys[11] : z,
+    k12: wide ? keys[12] : z,
+    k13: wide ? keys[13] : z,
+    k14: wide ? keys[14] : z,
+    wide: wide,
+  };
+}
+
 /** The block `v` reversed byte for byte: a block as a field element, and back. */
 export function rev(v: u8x16): u8x16 {
   inline();
@@ -42,6 +91,8 @@ export function rev(v: u8x16): u8x16 {
 // function grows with its branches times its locals).
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+// A lane by a constant index: the method's range check stays a call in the gated clones.
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
 // The last partial block: `count` is under 16 (16 would be poison in a release build).
 declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
 declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
@@ -76,10 +127,10 @@ export function swapHalves(v: u64x2): u64x2 {
  */
 export function reduce(lo: u64x2, mid: u64x2, hi: u64x2): u64x2 {
   inline();
-  let v0 = lo.lane(0);
-  let v1 = lo.lane(1) ^ mid.lane(0);
-  let v2 = hi.lane(0) ^ mid.lane(1);
-  let v3 = hi.lane(1);
+  let v0 = velt_simd_u64x2_lane(lo, 0);
+  let v1 = velt_simd_u64x2_lane(lo, 1) ^ velt_simd_u64x2_lane(mid, 0);
+  let v2 = velt_simd_u64x2_lane(hi, 0) ^ velt_simd_u64x2_lane(mid, 1);
+  let v3 = velt_simd_u64x2_lane(hi, 1);
   v3 = (v3 << 1) | (v2 >> 63);
   v2 = (v2 << 1) | (v1 >> 63);
   v1 = (v1 << 1) | (v0 >> 63);
@@ -247,13 +298,9 @@ export function counterBlock(base: u32x4, ctr: u32): u8x16 {
   return base.withLane(3, ctr.swapBytes()).asU8x16();
 }
 
-/** The nonce (12 bytes) as a counter block with the counter 0. */
+/** The nonce (12 bytes, which the caller checked) as a counter block with the counter 0. */
 export function counterBase(nonce: u8[]): u32x4 {
-  return u32x4
-    .splat(0)
-    .withLane(0, load32le(nonce, 0))
-    .withLane(1, load32le(nonce, 4))
-    .withLane(2, load32le(nonce, 8));
+  return velt_simd_u8x16_load_partial(nonce, 0, 12).asU32x4();
 }
 
 /** XORs the bytes `buf[start..end]` (under 16, which the caller knows are there) with the keystream block `ks`. */
