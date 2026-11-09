@@ -1,0 +1,49 @@
+// An `RwLock.write` callback that returns a function value from the locked value copies it out
+// under the lock: the copy copies what the function captured, running the captured `Part`'s
+// own `clone()`, which stores into it a function value that captured a resource without
+// `clone()`. The release checks the value and stops the program.
+class Conn {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+function mk(id: i64): () => i64 {
+  const c = new Conn(id);
+  return () => c.id;
+}
+
+class Part {
+  fs: (() => i64)[] = [];
+  n: number = 0;
+  [Symbol.dispose]() {}
+  clone(): Part {
+    this.fs.push(mk(1));
+    const p = new Part();
+    p.n = this.n;
+    return p;
+  }
+}
+
+function mkf(): () => number {
+  const p = new Part();
+  return () => p.fs.length;
+}
+
+class Leaf {
+  f: () => number = mkf();
+  k: number = 0;
+}
+
+function main() {
+  const m = shared(new RwLock(new Leaf()));
+  const g = m.write((l) => l.f);
+  m.write((l) => {
+    l.k += 1;
+  });
+  console.log("released twice without a walk; g() =", g());
+}

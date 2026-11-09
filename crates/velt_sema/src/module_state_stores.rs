@@ -220,7 +220,24 @@ pub(super) fn collect(cx: &mut Ctx, facts: &mut FxHashMap<DefId, Facts>, callbac
                     locals: Some((f.params.len(), boxed.collect())),
                     st: StoreFacts::default(),
                 };
-                v.st.drop_tys.extend(f.body.locals.iter().map(|l| l.ty));
+                // Its locals drop here, but for the parameters and captures it borrows (the
+                // lock's value among them), which the caller drops.
+                let borrowed = |m: hir::PassMode| {
+                    matches!(m, hir::PassMode::Borrow | hir::PassMode::BorrowMut)
+                };
+                let lent: FxHashSet<u32> = (f.params.iter())
+                    .filter(|p| borrowed(p.mode))
+                    .map(|p| p.local.0)
+                    .chain(
+                        f.captures
+                            .iter()
+                            .filter(|c| borrowed(c.mode))
+                            .map(|c| c.inner.0),
+                    )
+                    .collect();
+                let owned = f.body.locals.iter().enumerate();
+                let owned = owned.filter(|(i, _)| !lent.contains(&(*i as u32)));
+                v.st.drop_tys.extend(owned.map(|(_, l)| l.ty));
                 if callbacks.contains(&d) {
                     let out: Vec<TyId> = [f.ret].into_iter().chain(f.throws).collect();
                     v.st.drop_tys.extend(out.iter().copied());
@@ -349,7 +366,18 @@ impl StoresOf<'_, '_> {
             E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
                 self.st.drop_tys.insert(place.ty);
             }
-            E::Call { args, .. } => self.st.drop_tys.extend(args.iter().map(|a| a.ty)),
+            // A body it calls drops what it takes (its own locals); an intrinsic or a runtime
+            // extern may drop any argument.
+            E::Call { callee, args } => {
+                let body = match callee {
+                    hir::Callee::Def(f, _) => locked_props::has_body(self.cx, *f),
+                    hir::Callee::Intrinsic(_) | hir::Callee::Indirect(_) => false,
+                    _ => true,
+                };
+                if !body {
+                    self.st.drop_tys.extend(args.iter().map(|a| a.ty));
+                }
+            }
             _ => {}
         }
         match &e.kind {
@@ -490,8 +518,23 @@ fn by_type_args(
     im: &Implicit,
     callbacks: &FxHashSet<DefId>,
 ) -> (FxHashMap<DefId, FxHashSet<DefId>>, FxHashSet<DefId>) {
-    // Kind 0: glue hooks, 1: dispose hooks, 2: stores. For a type: the hooks it names, whether
-    // a type parameter in it counts, and whether it holds a function value without one.
+    // A type parameter stands for any type argument the program passes, and a function value
+    // may hold any value a closure captures: what they reach is `wide`, as the module-state check
+    // resolves them (replaced_holders/implicit.rs `open`).
+    let mut wide_args: FxHashSet<TyId> = FxHashSet::default();
+    for f in facts.values() {
+        wide_args.extend(f.st.calls.iter().flat_map(|c| c.1.iter().copied()));
+        wide_args.extend(f.st.targs.iter().copied());
+        for &t in &f.st.drop_tys {
+            if let TyKind::Adt(_, args) | TyKind::Dyn(_, args) = cx.ty.kind(t) {
+                wide_args.extend(args.iter().copied());
+            }
+        }
+    }
+    let wide: [Vec<DefId>; 2] = [false, true].map(|d| im.open_hooks(cx, &wide_args, d));
+    // Kind 0: glue hooks, 1: dispose hooks, 2: stores. For a type: the hooks it may run (those of
+    // the captures of a function value it holds included), whether a type parameter in it
+    // counts, and whether it holds a function value without one.
     let res = |t: TyId, k: usize| -> (Vec<DefId>, bool, bool) {
         match k {
             2 => {
@@ -499,14 +542,16 @@ fn by_type_args(
                 (vec![], !closed && holds_fn(cx, t, true), closed)
             }
             _ => {
-                let (h, p) = im.named_hooks(cx, t, k == 1);
+                let (mut h, p, fns) = im.named_hooks(cx, t, k == 1);
+                if fns {
+                    h.extend(wide[k].iter().copied());
+                }
                 (h, p, false)
             }
         }
     };
     let mut own: FxHashMap<DefId, FxHashSet<DefId>> = FxHashMap::default();
     let mut param: FxHashMap<DefId, [bool; 3]> = FxHashMap::default();
-    let mut wide_args: FxHashSet<TyId> = FxHashSet::default();
     for (&d, f) in facts {
         let mut hooks = FxHashSet::default();
         let mut p = [false, false, f.st.param_stores];
@@ -525,19 +570,6 @@ fn by_type_args(
         }
         own.insert(d, hooks);
         param.insert(d, p);
-        wide_args.extend(f.st.calls.iter().flat_map(|c| c.1.iter().copied()));
-        wide_args.extend(f.st.targs.iter().copied());
-        for &t in &f.st.drop_tys {
-            if let TyKind::Adt(_, args) | TyKind::Dyn(_, args) = cx.ty.kind(t) {
-                wide_args.extend(args.iter().copied());
-            }
-        }
-    }
-    let mut wide: [FxHashSet<DefId>; 2] = Default::default();
-    for t in wide_args {
-        for (k, w) in wide.iter_mut().enumerate() {
-            w.extend(res(t, k).0);
-        }
     }
     // `param`: a body leaves a type parameter's hooks or stores to its callers; `widened`: it
     // takes the program's type arguments for them (for stores: it may store).

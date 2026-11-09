@@ -422,11 +422,20 @@ impl Implicit {
     }
 
     /// The `[Symbol.dispose]()` hooks (`dispose`) or the glue hooks a value of type `t` may run
-    /// through the classes it names (a type parameter adds none), and whether it holds a type
-    /// parameter.
-    pub(crate) fn named_hooks(&self, cx: &Ctx, t: TyId, dispose: bool) -> (Vec<DefId>, bool) {
+    /// through the classes it names (a type parameter adds none); whether it holds a type
+    /// parameter; and whether it holds a function value whose captures may run hooks (copying
+    /// one copies its captures, dropping one drops them): those [`Self::open_hooks`] lists.
+    pub(crate) fn named_hooks(&self, cx: &Ctx, t: TyId, dispose: bool) -> (Vec<DefId>, bool, bool) {
         let r = self.reach(cx, t);
-        (self.hooks_of(&r, dispose), r.param)
+        let fns = r.fns && self.captures_reach;
+        (self.hooks_of(&r, dispose), r.param, fns)
+    }
+
+    /// The `[Symbol.dispose]()` hooks (`dispose`) or the glue hooks a type parameter or a function
+    /// value may run, as the module-state check resolves them (`resolve`): those of what any of
+    /// the type arguments `args` and any value a closure captures reaches.
+    pub(crate) fn open_hooks(&self, cx: &Ctx, args: &FxHashSet<TyId>, dispose: bool) -> Vec<DefId> {
+        self.hooks_of(&self.open(cx, args), dispose)
     }
 
     /// The `[Symbol.dispose]()` hooks (`dispose`) or glue hooks of the classes in `r`.

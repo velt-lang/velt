@@ -156,3 +156,38 @@ fn hooks_of_what_a_callback_returns_are_its_own() {
     ));
     assert_eq!(each_store_free(&p, "f"), vec![true, false]);
 }
+
+#[test]
+fn hooks_of_what_a_function_value_captured_count() {
+    // Copying a function value copies what it captured: returning `b.f` runs the captured
+    // `Part`'s `clone()`, which stores a function.
+    let p = ok_src(&format!(
+        "{PRELUDE}
+         class Part {{
+           fs: (() => number)[] = [];
+           [Symbol.dispose]() {{}}
+           clone(): Part {{ this.fs.push(() => 1); return new Part(); }}
+         }}
+         function mkf(): () => number {{ const p = new Part(); return () => p.fs.length; }}
+         class Box3 {{ f: () => number = mkf(); n: number = 0; }}
+         function f(m: shared<Mutex<Box3>>) {{
+           const g = m.with((b) => b.f);
+           console.log(g());
+         }}
+         function main() {{ f(shared(new Mutex(new Box3()))); }}"
+    ));
+    assert_eq!(each_store_free(&p, "f"), vec![false]);
+}
+
+#[test]
+fn handing_a_function_value_to_a_task_is_a_store() {
+    // A task or a channel may keep what it is handed (and its transfer copies captures).
+    let p = ok_src(&format!(
+        "{PRELUDE}
+         function f(m: shared<Mutex<Holder>>, g: () => number) {{
+           m.with((h) => {{ spawn(async () => {{ console.log(g()); }}); }});
+         }}
+         async function main() {{ f(shared(new Mutex(new Holder())), () => 1); }}"
+    ));
+    assert!(!each_store_free(&p, "f")[0], "the callback is store-free");
+}

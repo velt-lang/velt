@@ -1,0 +1,52 @@
+// A `Mutex.with` callback that deep-copies the locked value (`clone()`) copies what a function
+// value in it captured, running the captured `Part`'s own `clone()`, which stores into it a
+// function value that captured a resource without `clone()`. The release checks the value and
+// stops the program.
+class Conn {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+
+function mk(id: i64): () => i64 {
+  const c = new Conn(id);
+  return () => c.id;
+}
+
+class Part {
+  fs: (() => i64)[] = [];
+  n: number = 0;
+  [Symbol.dispose]() {}
+  clone(): Part {
+    this.fs.push(mk(1));
+    const p = new Part();
+    p.n = this.n;
+    return p;
+  }
+}
+
+function mkf(): () => number {
+  const p = new Part();
+  return () => p.fs.length;
+}
+
+class Leaf {
+  f: () => number = mkf();
+  k: number = 0;
+}
+
+function main() {
+  const m = shared(new Mutex(new Leaf()));
+  m.with((l) => {
+    const c = l.clone();
+    l.k += c.k;
+  });
+  m.with((l) => {
+    l.k += 1;
+  });
+  console.log("released twice without a walk");
+}

@@ -11,10 +11,12 @@ class Conn {
     console.log("close", this.id);
   }
 }
+
 function mk(id: i64): () => i64 {
   const c = new Conn(id);
   return () => c.id;
 }
+
 class Part {
   fs: (() => i64)[] = [];
   n: i64 = 0;
@@ -26,10 +28,12 @@ class Part {
     return p;
   }
 }
+
 class Leaf {
   part: Part = new Part();
   k: number = 0;
 }
+
 function main() {
   const m = shared(new Mutex(new Leaf()));
   const p = m.with((l) => l.part);
