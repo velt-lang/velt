@@ -2,14 +2,18 @@
 
 use rustc_hash::FxHashSet;
 
-use cranelift_codegen::ir::{self, InstBuilder, TrapCode};
-use cranelift_frontend::Switch;
+use cranelift_codegen::ir::{
+    self, BlockArg, BlockCall, ExceptionTableData, ExceptionTableItem, InstBuilder, TrapCode,
+};
+use cranelift_codegen::isa::CallConv;
+use cranelift_frontend::{Switch, Variable};
+use cranelift_module::FuncId;
 use velt_vir::math::MathOp;
 use velt_vir::vir::{BlockId, Callee, Operand, Place, Terminator, Ty};
 
 use super::simd::Inlined;
 use super::{Translator, Val};
-use crate::abi::{as_int, int_bits, make_signature};
+use crate::abi::{as_int, int_bits, make_signature, scalar_type};
 use crate::CodegenResult;
 
 impl Translator<'_, '_> {
@@ -31,7 +35,8 @@ impl Translator<'_, '_> {
                 args,
                 dest,
                 next,
-            } => self.call(callee, args, dest.as_ref(), *next)?,
+                unwind,
+            } => self.call(callee, args, dest.as_ref(), *next, *unwind)?,
             Terminator::Unreachable => {
                 self.builder.ins().trap(TrapCode::unwrap_user(1));
             }
@@ -96,7 +101,11 @@ impl Translator<'_, '_> {
         args: &[Operand],
         dest: Option<&Place>,
         next: BlockId,
+        unwind: Option<BlockId>,
     ) -> CodegenResult<()> {
+        if self.resume(callee)? {
+            return Ok(());
+        }
         let (params, ret) = self.callee_signature(callee)?;
         let mut values = Vec::with_capacity(args.len());
         let mut types = Vec::with_capacity(args.len());
@@ -123,10 +132,13 @@ impl Translator<'_, '_> {
         {
             Some(Inlined::Value(v)) => Some(v),
             Some(Inlined::Unit) => None,
-            None => {
-                let inst = self.emit_call(callee, &values)?;
-                self.builder.inst_results(inst).first().copied()
-            }
+            None => match self.try_callee(callee, unwind, &params)? {
+                Some((target, pad)) => self.try_call(target, &values, ret, pad)?,
+                None => {
+                    let inst = self.emit_call(callee, &values)?;
+                    self.builder.inst_results(inst).first().copied()
+                }
+            },
         };
         self.call_result(dest, ret, result, next)
     }
@@ -152,6 +164,164 @@ impl Translator<'_, '_> {
         let next = self.block(next)?;
         self.builder.ins().jump(next, &[]);
         Ok(())
+    }
+
+    /// A call of `velt_eh_resume` (vir.rs invariant 14): `_Unwind_Resume` of the exception the
+    /// landing block kept, or (where nothing unwinds) a trap. Whether it was one.
+    fn resume(&mut self, callee: &Callee) -> CodegenResult<bool> {
+        let Callee::Extern(id) = callee else {
+            return Ok(false);
+        };
+        if !(self.program.externs.get(id.0 as usize))
+            .is_some_and(|e| velt_vir::eh::is_resume(&e.symbol))
+        {
+            return Ok(false);
+        }
+        match self.decls.unwind_resume.filter(|_| self.unwinds()) {
+            Some(f) => {
+                let exn = self.exn_var();
+                let e = self.builder.use_var(exn);
+                let r = self.func_ref(f);
+                self.builder.ins().call(r, &[e]);
+                self.builder.ins().trap(TrapCode::unwrap_user(1));
+            }
+            None => {
+                self.builder.ins().trap(TrapCode::unwrap_user(1));
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether this function's calls with an unwind edge are `try_call`s: where calls unwind,
+    /// except in a function C calls, which has no unwind entry there (`Function::stops_unwind`):
+    /// an unwind stops before it and its cleanup pads could never run.
+    fn unwinds(&self) -> bool {
+        self.decls.unwinds && !self.function.stops_unwind
+    }
+
+    fn exn_var(&mut self) -> Variable {
+        match self.exn {
+            Some(v) => v,
+            None => {
+                let v = self.builder.declare_var(ir::types::I64);
+                self.exn = Some(v);
+                v
+            }
+        }
+    }
+
+    /// What a call with the unwind edge `unwind` calls through a `try_call`, and its pad: where
+    /// calls unwind, a function or function value whose arguments are all in registers when the
+    /// module's convention isn't SystemV (`try_call` exists only for SystemV, which agrees with
+    /// Apple's arm64 convention for register arguments; their extension attributes apply in
+    /// both). `None`: a plain call.
+    fn try_callee(
+        &mut self,
+        callee: &Callee,
+        unwind: Option<BlockId>,
+        params: &[Ty],
+    ) -> CodegenResult<Option<(TryTarget, BlockId)>> {
+        let Some(pad) = unwind.filter(|_| self.unwinds()) else {
+            return Ok(None);
+        };
+        let system_v = self.decls.call_conv == CallConv::SystemV;
+        if !system_v {
+            let floats = params
+                .iter()
+                .filter(|t| t.is_float() || **t == Ty::V128)
+                .count();
+            if floats > 8 || params.len() - floats > 8 {
+                return Ok(None);
+            }
+        }
+        let target = match callee {
+            Callee::Func(id) => {
+                let func = self.func_id(*id)?;
+                let r = self.func_ref(func);
+                if system_v {
+                    TryTarget::Direct(r)
+                } else {
+                    TryTarget::Direct(self.system_v_ref(func, r))
+                }
+            }
+            Callee::Ptr {
+                target,
+                params,
+                ret,
+            } => {
+                let (target, ty) = self.scalar(target)?;
+                if ty != Ty::Ptr {
+                    bail!("indirect call target must be Ptr, found {ty:?}");
+                }
+                let sig = make_signature(CallConv::SystemV, params, *ret)?;
+                TryTarget::Indirect(target, self.builder.import_signature(sig))
+            }
+            Callee::Extern(_) => return Ok(None),
+        };
+        Ok(Some((target, pad)))
+    }
+
+    /// A reference to `func` (referenced as `r`) with its signature in the SystemV convention.
+    fn system_v_ref(&mut self, func: FuncId, r: ir::FuncRef) -> ir::FuncRef {
+        if let Some(r) = self.try_refs.get(&func) {
+            return *r;
+        }
+        let mut data = self.builder.func.dfg.ext_funcs[r].clone();
+        let mut sig = self.builder.func.dfg.signatures[data.signature].clone();
+        sig.call_conv = CallConv::SystemV;
+        data.signature = self.builder.import_signature(sig);
+        let sv = self.builder.import_function(data);
+        self.try_refs.insert(func, sv);
+        sv
+    }
+
+    /// `target(args)` as a `try_call` whose exceptional edge goes to `pad`'s landing block (which
+    /// keeps the exception for `velt_eh_resume`); continues in a new block. Its result, if any.
+    fn try_call(
+        &mut self,
+        target: TryTarget,
+        args: &[ir::Value],
+        ret: Ty,
+        pad: BlockId,
+    ) -> CodegenResult<Option<ir::Value>> {
+        let ok = self.builder.create_block();
+        let result = match ret {
+            Ty::Unit => None,
+            t => Some(self.builder.append_block_param(ok, scalar_type(t))),
+        };
+        let (landing, new) = match self.landings.get(&pad.0) {
+            Some(&b) => (b, false),
+            None => {
+                let b = self.builder.create_block();
+                self.builder.append_block_param(b, ir::types::I64);
+                self.landings.insert(pad.0, b);
+                (b, true)
+            }
+        };
+        let sig = match target {
+            TryTarget::Direct(r) => self.builder.func.dfg.ext_funcs[r].signature,
+            TryTarget::Indirect(_, sig) => sig,
+        };
+        let pool = &mut self.builder.func.dfg.value_lists;
+        let rets: Vec<BlockArg> = result.iter().map(|_| BlockArg::TryCallRet(0)).collect();
+        let normal = BlockCall::new(ok, rets, pool);
+        let caught = BlockCall::new(landing, [BlockArg::TryCallExn(0)], pool);
+        let table = ExceptionTableData::new(sig, normal, [ExceptionTableItem::Default(caught)]);
+        let table = self.builder.func.dfg.exception_tables.push(table);
+        match target {
+            TryTarget::Direct(r) => self.builder.ins().try_call(r, args, table),
+            TryTarget::Indirect(t, _) => self.builder.ins().try_call_indirect(t, args, table),
+        };
+        if new {
+            let pad_block = self.block(pad)?;
+            self.builder.switch_to_block(landing);
+            let e = self.builder.block_params(landing)[0];
+            let exn = self.exn_var();
+            self.builder.def_var(exn, e);
+            self.builder.ins().jump(pad_block, &[]);
+        }
+        self.builder.switch_to_block(ok);
+        Ok(result)
     }
 
     fn callee_signature(&self, callee: &Callee) -> CodegenResult<(Vec<Ty>, Ty)> {
@@ -318,4 +488,11 @@ impl Translator<'_, '_> {
             }
         })
     }
+}
+
+/// What a `try_call` calls: a function (by a SystemV reference) or a function value.
+#[derive(Clone, Copy)]
+enum TryTarget {
+    Direct(ir::FuncRef),
+    Indirect(ir::Value, ir::SigRef),
 }

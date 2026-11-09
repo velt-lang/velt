@@ -66,6 +66,14 @@
 //!     may read, as LLVM's `available_externally`, but are never emitted). Symbols are unique
 //!     among the program's statics, functions and externs. An `Import` static's relocations
 //!     name only `Export`/`Import` functions and statics, and externs (checked by `verify`).
+//! 14. Unwind edges (additive, #2667; docs/internals/design/unwinding.md "Cleanup in unwound
+//!     frames"): `Terminator::Call::unwind` is `Some(pad)` only in programs that catch Velt
+//!     panics, on calls of functions and function values (`eh::may_unwind`). When the callee
+//!     unwinds with a Velt exception, control continues at `pad` without writing `dest`; the pad
+//!     drops what the frame owns and ends in a call of `velt_eh_resume` (`eh::RESUME`, a
+//!     backend-defined noreturn extern), which continues that unwind and never has an unwind
+//!     edge itself (checked by `verify`). The edge is a CFG successor like `next`. Backends
+//!     without unwinding treat it as absent.
 
 use std::fmt;
 
@@ -597,6 +605,9 @@ pub enum Terminator {
         args: Vec<Operand>,
         dest: Option<Place>,
         next: BlockId,
+        /// Where a Velt exception unwinding out of the callee continues (invariant 14): a
+        /// cleanup pad, with `dest` not written. `None` in every program that doesn't catch.
+        unwind: Option<BlockId>,
     },
     Unreachable,
 }
@@ -780,12 +791,17 @@ impl Program {
                 args,
                 dest,
                 next,
+                unwind,
             } => {
                 let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
                 let call = format!("call {}({})", self.fmt_callee(callee), args.join(", "));
+                let pad = match unwind {
+                    Some(p) => format!(" unwind bb{}", p.0),
+                    None => String::new(),
+                };
                 match dest {
-                    Some(d) => format!("{d} = {call} -> bb{}", next.0),
-                    None => format!("{call} -> bb{}", next.0),
+                    Some(d) => format!("{d} = {call} -> bb{}{pad}", next.0),
+                    None => format!("{call} -> bb{}{pad}", next.0),
                 }
             }
             Terminator::Unreachable => "unreachable".into(),

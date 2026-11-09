@@ -18,7 +18,7 @@
 //! `velt_eh_try` that catches runs on the thread. The JIT (`velt dev`, generator hosts) registers
 //! no LSDA, so there it is 0 on targets whose objects catch.
 
-use crate::vir::Ty;
+use crate::vir::{Callee, Ty};
 
 /// `velt_eh_try(code: ptr, env: ptr) -> ptr`: `code(env)` under a catch of Velt exceptions.
 pub const TRY: &str = "velt_eh_try";
@@ -29,6 +29,27 @@ pub const PERSONALITY: &str = "velt_eh_personality";
 /// `velt_eh_catches() -> u8`: 1 where `velt_eh_try` catches Velt exceptions, 0 where it is a
 /// plain call. Defined by the backend next to `velt_eh_try`, from the same decision.
 pub const CATCHES: &str = "velt_eh_catches";
+
+/// `velt_eh_resume()`: continues the unwind that entered the cleanup pad being run (vir.rs
+/// invariant 14). Noreturn; defined by the backend (LLVM `resume`, `_Unwind_Resume` elsewhere).
+pub const RESUME: &str = "velt_eh_resume";
+
+/// Whether a call of `callee` may unwind with a Velt exception, so that a frame owning values
+/// gives it a cleanup pad: a Velt function or a function value. Externs (the runtime, C) don't:
+/// a panic in a Velt callback the runtime runs leaks the calling frame's values.
+pub fn may_unwind(callee: &Callee) -> bool {
+    matches!(callee, Callee::Func(_) | Callee::Ptr { .. })
+}
+
+/// Whether `symbol` is [`RESUME`].
+pub fn is_resume(symbol: &str) -> bool {
+    symbol == RESUME
+}
+
+/// `velt_eh_resume`'s VIR signature.
+pub fn resume_signature() -> (Vec<Ty>, Ty) {
+    (vec![], Ty::Unit)
+}
 
 /// Velt's exception class, the first word of its `_Unwind_Exception`: the bytes `VELTPANC`.
 pub const CLASS: u64 = u64::from_le_bytes(*b"VELTPANC");
@@ -49,7 +70,7 @@ pub fn is_catches(symbol: &str) -> bool {
 
 /// Whether the backend defines `symbol` itself (no declaration of an outside function).
 pub fn is_backend_defined(symbol: &str) -> bool {
-    is_try(symbol) || is_catches(symbol)
+    is_try(symbol) || is_catches(symbol) || is_resume(symbol)
 }
 
 /// `velt_eh_catches`' VIR signature.

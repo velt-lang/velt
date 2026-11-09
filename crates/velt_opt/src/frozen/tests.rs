@@ -193,6 +193,7 @@ fn program_via_call() -> Program {
                 args: vec![copy_local(Local(0))],
                 dest: Some(Place::local(t)),
                 next: after,
+                unwind: None,
             },
         },
     );

@@ -181,7 +181,7 @@ fn emit_object_from(
     let program = program.get();
     let start = Instant::now();
     let mut product = module.finish();
-    unwind::add_unwind_info(&mut product, &*isa, &built.unwind, built.eh)?;
+    unwind::add_unwind_info(&mut product, &*isa, &built.unwind, built.eh.as_ref())?;
     debug_info::object::add_debug_info(&mut product, program, &built.lines)?;
     let obj = product
         .emit()

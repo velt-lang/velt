@@ -331,7 +331,13 @@ fn calm(kinds: &Kinds, b: &BasicBlock) -> bool {
 /// Visit the successors of a terminator (with duplicates), without allocating.
 fn for_each_target(t: &Terminator, mut f: impl FnMut(usize)) {
     match t {
-        Terminator::Goto(b) | Terminator::Call { next: b, .. } => f(b.0 as usize),
+        Terminator::Goto(b) => f(b.0 as usize),
+        Terminator::Call { next, unwind, .. } => {
+            f(next.0 as usize);
+            if let Some(pad) = unwind {
+                f(pad.0 as usize);
+            }
+        }
         Terminator::Branch { then, els, .. } => {
             f(then.0 as usize);
             f(els.0 as usize);

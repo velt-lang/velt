@@ -7,8 +7,8 @@
 //! spelled out here, because `object` picks `X86_64_RELOC_SIGNED`, which ld64 rejects in
 //! `__eh_frame`.
 //!
-//! `velt_eh_try` (crate::eh) gets a CIE of its own naming the personality routine and an LSDA
-//! pointer in its FDE. The personality is indirect: on ELF through a pointer in data (as
+//! The functions with landing pads (`velt_eh_try` and those with cleanup pads, crate::eh) get a
+//! CIE of their own naming the personality routine and an LSDA pointer in their FDEs. The personality is indirect: on ELF through a pointer in data (as
 //! compilers' `DW.ref.*`), on Mach-O through the GOT (`ARM64_RELOC_POINTER_TO_GOT`,
 //! `X86_64_RELOC_GOT`), which is the only personality relocation ld64 reads.
 
@@ -33,14 +33,16 @@ pub(super) fn add_eh_frame(
     product: &mut ObjectProduct,
     isa: &dyn TargetIsa,
     infos: &[FunctionUnwind],
-    eh: Option<crate::eh::EhSymbols>,
+    eh: Option<&crate::eh::EhSymbols>,
 ) -> CodegenResult<()> {
+    let lsdas: rustc_hash::FxHashMap<_, _> =
+        eh.map_or_else(Default::default, |e| e.lsdas.iter().copied().collect());
     let systemv: Vec<_> = infos
         .iter()
         .filter_map(|(id, _, info)| match info {
             Unwind::Cranelift(UnwindInfo::SystemV(info)) => {
-                let catching = eh.filter(|e| e.try_fn == *id);
-                Some((product.function_symbol(*id), info, catching))
+                let lsda = lsdas.get(id).map(|&d| product.data_symbol(d));
+                Some((product.function_symbol(*id), info, lsda))
             }
             _ => None,
         })
@@ -59,7 +61,8 @@ pub(super) fn add_eh_frame(
             addend: 0,
         }
     };
-    // The CIE of `velt_eh_try`: the plain one plus the personality and the LSDA's encoding.
+    // The CIE of the functions with landing pads: the plain one plus the personality and the
+    // LSDA's encoding.
     let macho = product.object.format() == BinaryFormat::MachO;
     let catching_cie = eh.map(|e| {
         let mut c = cie.clone();
@@ -74,14 +77,14 @@ pub(super) fn add_eh_frame(
         c.lsda_encoding = Some(gimli::DwEhPe(
             gimli::DW_EH_PE_pcrel.0 | gimli::DW_EH_PE_sdata4.0,
         ));
-        (table.add_cie(c), product.data_symbol(e.lsda))
+        table.add_cie(c)
     });
     let cie_id = table.add_cie(cie);
-    for (symbol, info, catching) in systemv {
+    for (symbol, info, lsda) in systemv {
         let address = symbol_address(&mut symbols, symbol);
         let mut fde = info.to_fde(address);
-        let cie = match (catching, catching_cie) {
-            (Some(_), Some((id, lsda))) => {
+        let cie = match (lsda, catching_cie) {
+            (Some(lsda), Some(id)) => {
                 fde.lsda = Some(symbol_address(&mut symbols, lsda));
                 id
             }

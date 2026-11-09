@@ -130,6 +130,7 @@ impl<'h> Cx<'h> {
             shared_locks: Default::default(),
             share_from: Default::default(),
             map_fields: 0,
+            unwinding: Default::default(),
         }
     }
 

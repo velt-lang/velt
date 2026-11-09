@@ -28,7 +28,8 @@ use pts::Set;
 use super::{CLOSE_BIT, DONE, DROP_BIT, PLACEHOLDER};
 use crate::lower::{ice, Cx};
 use crate::vir::{
-    AggId, AggLayout, Const, Function, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty,
+    AggId, AggLayout, BlockId, Const, Function, Local, Operand, Place, Proj, Rvalue, Stmt,
+    Terminator, Ty,
 };
 
 /// Locals 0 and 1 are the poll function's params (`state`, `cx`).
@@ -42,11 +43,52 @@ pub(super) fn spill(
     result: Ty,
     name: &str,
     inputs: &[Local],
+    pad_links: &[(BlockId, BlockId)],
 ) -> (AggId, FxHashMap<Local, u32>) {
     let (spilled, interf) = analyse(f, inputs);
+    bypass_state_drops(f, &spilled, pad_links);
     let (agg, fields) = layout(cx, f, &spilled, &interf, result, name);
     rewrite(f, agg, &fields);
     (agg, fields)
+}
+
+/// A poll function's cleanup pads drop only the frame's own temporaries (lower/cleanup.rs,
+/// design "Async state machines"): what the state holds belongs to the future, which a panic
+/// leaks whole. Each pad link (its first block, the next link) whose code touches a spilled local
+/// is bypassed: its first block jumps to the next link. The blocks left behind are unreachable.
+fn bypass_state_drops(f: &mut Function, spilled: &Bits, links: &[(BlockId, BlockId)]) {
+    for &(start, next) in links {
+        let mut stack = vec![start];
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut touches = false;
+        while let Some(b) = stack.pop() {
+            if b == next || !seen.insert(b) {
+                continue;
+            }
+            let blk = &f.blocks[b.0 as usize];
+            let mut acc = vec![];
+            for s in &blk.stmts {
+                flow::stmt_acc(s, &mut acc);
+            }
+            flow::term_acc(&blk.term, &mut acc);
+            touches |= acc.iter().any(|a| {
+                let (flow::Acc::Read(p) | flow::Acc::Addr(p) | flow::Acc::Write(p)) = a;
+                spilled.get(p.local.0 as usize)
+            });
+            if touches {
+                break;
+            }
+            stack.extend(crate::lower::successors(&blk.term));
+        }
+        if touches {
+            let blk = &mut f.blocks[start.0 as usize];
+            blk.stmts.clear();
+            blk.term = Terminator::Goto(next);
+            if let Some(locs) = f.locs.get_mut(start.0 as usize) {
+                locs.truncate(1);
+            }
+        }
+    }
 }
 
 /// Steps 1 and 2 and the interference of step 3: the locals to spill, and which of them may

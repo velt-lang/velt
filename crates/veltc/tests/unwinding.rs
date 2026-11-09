@@ -194,3 +194,191 @@ fn a_program_without_catch_keeps_the_runtime_panic() {
         "{vir}"
     );
 }
+
+/// Frames that own values, 20 deep under the catch: strings, arrays, class instances (one with a
+/// `[Symbol.dispose]()` that prints) and a closure's environment. Cleanup pads drop them all as
+/// the panic unwinds (#2667), so the leak counters balance.
+#[cfg(not(windows))]
+const OWNING: &str = r#"
+import { catchVeltPanic } from "velt/zz_unwind";
+
+class Item {
+  name: string;
+  items: number[];
+  constructor(name: string) {
+    this.name = name;
+    this.items = [1, 2, 3];
+  }
+}
+
+class Guard {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  [Symbol.dispose]() {
+    if (this.n % 10 == 0) {
+      console.log(`disposed ${this.n}`);
+    }
+  }
+}
+
+function deep(n: number, xs: number[]): number {
+  const s = "frame " + n.toString();
+  const a = [n, n + 1, n + 2];
+  const item = new Item(s + "!");
+  const g = new Guard(n);
+  const f = () => s.length + a.length;
+  if (n == 0) {
+    return xs[xs.length + 3];
+  }
+  return deep(n - 1, xs) + f() + item.items.length + g.n;
+}
+
+function main() {
+  for (let i = 0; i < 3; i++) {
+    const m = catchVeltPanic(() => { deep(20, [1, 2, 3]); });
+    console.log(m === null ? "null" : m.split(" at ")[0]);
+  }
+}
+"#;
+
+#[cfg(not(windows))]
+const OWNING_OUT: &str = "disposed 0
+disposed 10
+disposed 20
+index out of bounds: the len is 3 but the index is 6
+";
+
+/// The debug runtime next to the `velt` binary: it counts blocks (`VELT_RC_STATS`), also for a
+/// release build of the program.
+#[cfg(not(windows))]
+fn debug_runtime() -> PathBuf {
+    Path::new(env!("CARGO_BIN_EXE_velt"))
+        .parent()
+        .unwrap()
+        .join("libvelt_rt.a")
+}
+
+/// `(allocated, freed)` of the `blocks=` and the string `alloc=`/`free=` counts.
+#[cfg(not(windows))]
+fn counts(stderr: &str) -> Option<((u64, u64), (u64, u64))> {
+    let line = stderr.lines().rfind(|l| l.starts_with("rc stats:"))?;
+    let field = |key: &str| {
+        let at = line.find(key)? + key.len();
+        let v = line[at..].split(' ').next()?;
+        Some(v.to_string())
+    };
+    let num = |key: &str| field(key)?.parse::<u64>().ok();
+    let blocks = field(" blocks=")?;
+    let (a, f) = blocks.split_once('/')?;
+    Some((
+        (a.parse().ok()?, f.parse().ok()?),
+        (num(" alloc=")?, num(" free=")?),
+    ))
+}
+
+#[cfg(not(windows))]
+#[test]
+fn unwound_frames_drop_what_they_own() {
+    let dir = test_dir::TestDir::new();
+    let mut want = String::new();
+    for _ in 0..3 {
+        want.push_str(OWNING_OUT);
+    }
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let std = dir.path().join("std");
+        let _ = velt(&dir, "function main() {}\n", &["build", "--emit", "vir"]);
+        let file = dir.path().join("main.velt");
+        std::fs::write(&file, OWNING).unwrap();
+        let mut all: Vec<&str> = args.to_vec();
+        all.push(file.to_str().unwrap());
+        let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(&all)
+            .env("VELT_STD", &std)
+            .env("VELT_RC_STATS", "1")
+            .env("VELT_RT_DEBUG_ALLOC", "1")
+            .env("VELT_RT_LIB", debug_runtime())
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{args:?}: {stderr}"
+        );
+        assert!(out.status.success(), "{args:?}: {stderr}");
+        let ((allocated, freed), (strings, strings_freed)) =
+            counts(&stderr).unwrap_or_else(|| panic!("{args:?}: no counts in {stderr}"));
+        assert!(allocated > 60, "{args:?}: {stderr}");
+        assert_eq!(allocated, freed, "{args:?}: blocks leaked: {stderr}");
+        assert_eq!(strings, strings_freed, "{args:?}: strings leaked: {stderr}");
+    }
+}
+
+/// A drop in a cleanup pad that panics: the second panic aborts instead of unwinding through the
+/// frame whose cleanup is running (which would drop again what it is dropping).
+#[cfg(not(windows))]
+const PANIC_IN_CLEANUP: &str = r#"
+import { catchVeltPanic } from "velt/zz_unwind";
+
+class Bomb {
+  [Symbol.dispose]() {
+    panic("in dispose");
+  }
+}
+
+function inner(xs: number[]): number {
+  const b = new Bomb();
+  return xs[7];
+}
+
+function main() {
+  const m = catchVeltPanic(() => { inner([1]); });
+  console.log("not reached", m);
+}
+"#;
+
+#[cfg(not(windows))]
+#[test]
+fn a_panic_during_a_cleanup_aborts() {
+    let dir = test_dir::TestDir::new();
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let out = velt(&dir, PANIC_IN_CLEANUP, args);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let why = format!("{args:?}: {:?}\n{stdout}{stderr}", out.status);
+        assert!(!stdout.contains("not reached"), "{why}");
+        assert!(stderr.contains("panic: in dispose"), "{why}");
+        assert!(stderr.contains("panic while unwinding: aborting"), "{why}");
+        assert!(!out.status.success(), "{why}");
+    }
+}
+
+/// A program that doesn't catch has no unwind edges; one that catches has them where frames own
+/// values.
+#[test]
+fn only_a_program_that_catches_gets_cleanup_pads() {
+    let dir = test_dir::TestDir::new();
+    let plain =
+        "function f(n: number): string { const s = n.toString() + \"x\"; return g(s) + s; }\n\
+                 function g(s: string): string { return s + \"y\"; }\n\
+                 console.log(f(3));\n";
+    let out = velt(&dir, plain, &["build", "--emit", "vir"]);
+    let vir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !vir.contains(" unwind bb") && !vir.contains("velt_eh_resume"),
+        "{vir}"
+    );
+    let catching = format!(
+        "import {{ catchVeltPanic }} from \"velt/zz_unwind\";\n{plain}\
+         console.log(catchVeltPanic(() => {{ console.log(f(4)); }}));\n"
+    );
+    let out = velt(&dir, &catching, &["build", "--emit", "vir"]);
+    let vir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        vir.contains(" unwind bb") && vir.contains("velt_eh_resume"),
+        "{vir}"
+    );
+}

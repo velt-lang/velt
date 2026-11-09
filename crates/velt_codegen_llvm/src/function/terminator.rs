@@ -33,7 +33,8 @@ impl Emitter<'_> {
                 args,
                 dest,
                 next,
-            } => self.call(callee, args, dest.as_ref(), *next)?,
+                unwind,
+            } => self.call(callee, args, dest.as_ref(), *next, *unwind)?,
             Terminator::Unreachable => self.line("unreachable".into()),
         }
         Ok(())
@@ -102,7 +103,11 @@ impl Emitter<'_> {
         args: &[Operand],
         dest: Option<&Place>,
         next: BlockId,
+        unwind: Option<BlockId>,
     ) -> CodegenResult<()> {
+        if self.resume_call(callee) {
+            return Ok(());
+        }
         let (params, ret) = self.callee_signature(callee)?;
         let mut values = Vec::with_capacity(args.len());
         let mut raw = Vec::with_capacity(args.len());
@@ -182,9 +187,19 @@ impl Emitter<'_> {
         if kept || self.enters_gated(callee) {
             text.push_str(" noinline");
         }
-        // In a function C calls, an `invoke` whose unwind edge aborts (stop_unwind.rs).
+        // A call with an unwind edge: an `invoke` landing at the pad's landing block (mod.rs
+        // `landing_blocks`). In a function C calls (which has no such edges, mod.rs `unwinds`),
+        // an `invoke` whose unwind edge aborts (stop_unwind.rs). Either continues at a label of
+        // its own.
         let mut continues = None;
-        if self.invokes(&target) {
+        if let Some(pad) = unwind.filter(|_| self.unwinds) {
+            self.block(pad)?;
+            self.pads.insert(pad.0);
+            let label = format!("bb{}.ok", self.block);
+            let rest = text.strip_prefix("call ").unwrap_or(&text);
+            text = format!("invoke {rest} to label %{label} unwind label %lp{}", pad.0);
+            continues = Some(label);
+        } else if self.invokes(&target) {
             let (invoke, label) = self.invoke_text(&text);
             text = invoke;
             continues = Some(label);
@@ -213,6 +228,28 @@ impl Emitter<'_> {
         let next = self.block(next)?;
         self.line(format!("br label {next}"));
         Ok(())
+    }
+
+    /// A call of `velt_eh_resume` (vir.rs invariant 14): `resume` of the exception the function's
+    /// landing block kept, or (where nothing unwinds) `unreachable`. Whether it was one.
+    fn resume_call(&mut self, callee: &Callee) -> bool {
+        let Callee::Extern(id) = callee else {
+            return false;
+        };
+        if !(self.program.externs.get(id.0 as usize))
+            .is_some_and(|e| velt_vir::eh::is_resume(&e.symbol))
+        {
+            return false;
+        }
+        if self.unwinds && super::has_unwind_edges(self.function) {
+            let e = self.inst("load ptr, ptr %velt.exn, align 8".into());
+            let v = self.inst(format!("insertvalue {{ ptr, i32 }} poison, ptr {e}, 0"));
+            let v = self.inst(format!("insertvalue {{ ptr, i32 }} {v}, i32 0, 1"));
+            self.line(format!("resume {{ ptr, i32 }} {v}"));
+        } else {
+            self.line("unreachable".into());
+        }
+        true
     }
 
     /// Whether `callee` is a function gated on another CPU target than this one's (#1330). Such a

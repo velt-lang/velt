@@ -87,6 +87,7 @@ impl FuncBuilder {
                 args,
                 dest,
                 next,
+                unwind: None,
             },
         );
         next

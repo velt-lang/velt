@@ -87,6 +87,7 @@ impl FuncBuilder {
                 args,
                 dest: dest.map(Place::local),
                 next,
+                unwind: None,
             },
         );
         next

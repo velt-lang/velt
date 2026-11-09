@@ -225,7 +225,13 @@ impl Ctx<'_> {
                 args,
                 dest,
                 next,
-            } => self.call(callee, args, dest, *next),
+                unwind,
+            } => {
+                if let Some(pad) = unwind {
+                    self.block_ok(*pad)?;
+                }
+                self.call(callee, args, dest, *next)
+            }
             Terminator::Unreachable => Ok(()),
         }
     }
@@ -424,7 +430,7 @@ fn successors(t: &Terminator) -> Vec<BlockId> {
         Terminator::Switch { cases, default, .. } => {
             cases.iter().map(|c| c.1).chain([*default]).collect()
         }
-        Terminator::Call { next, .. } => vec![*next],
+        Terminator::Call { next, unwind, .. } => [*next].into_iter().chain(*unwind).collect(),
         _ => vec![],
     }
 }

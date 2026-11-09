@@ -304,6 +304,7 @@ fn fits_call<'f>(t: &'f Terminator, fits: &[Option<Lanes>]) -> Option<FitsCall<'
         args,
         dest: Some(dest),
         next,
+        ..
     } = t
     else {
         return None;

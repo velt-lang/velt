@@ -377,6 +377,7 @@ mod tests {
                     args: vec![read(local(r))],
                     dest: (r.below(2) == 0).then(|| place(local(r))),
                     next: block(r),
+                    unwind: None,
                 },
                 _ => Terminator::Branch {
                     cond: read(local(r)),

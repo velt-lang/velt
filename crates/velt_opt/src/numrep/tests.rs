@@ -57,6 +57,7 @@ pub(in crate::numrep) fn as_intrinsics(p: Program) -> Program {
                 args,
                 dest: Some(d),
                 next,
+                ..
             } = f.blocks[bi].term.clone()
             else {
                 continue;

@@ -1,14 +1,15 @@
-//! `velt_eh_try` and its personality (`velt_vir::eh`, docs/internals/design/unwinding.md),
-//! defined in each object whose program calls `velt_eh_try`, local to it.
+//! `velt_eh_try`, the LSDAs of functions with landing pads and their personality (`velt_vir::eh`,
+//! docs/internals/design/unwinding.md), defined in each object that needs them, local to it.
 //!
 //! In an object for a target with the Itanium unwinder, `velt_eh_try` calls `code(env)` with a
 //! `try_call_indirect` whose catch-all handler returns the exception object (the first payload
-//! register). Cranelift records the handler's offset; this module writes the GCC LSDA for it
-//! (one call-site entry covering the whole function, whose only call is the `try_call`) and
-//! defines the personality routine, which claims only Velt's class and lands at the handler
-//! itself (the frame has one call, so it needs no call-site lookup). The `.eh_frame` writer gives the
-//! function's FDE a CIE naming them (unwind/eh_frame.rs). Elsewhere (the JIT, WebAssembly,
-//! Windows) `velt_eh_try` is a plain call that returns null.
+//! register), and a call with a cleanup pad is a `try_call` too (function/terminator.rs).
+//! Cranelift records each handler's offset; this module writes a function's GCC LSDA from them
+//! (one call-site entry per call with a handler, in `udata4`) and defines the personality
+//! routine, which reads it: it claims only Velt's class, at a catch (`velt_eh_try`), and lands at
+//! cleanups in the cleanup phase. The `.eh_frame` writer gives those functions' FDEs a CIE naming
+//! the personality and an LSDA pointer (unwind/eh_frame.rs). Elsewhere (the JIT, WebAssembly,
+//! Windows) `velt_eh_try` is a plain call that returns null and nothing has a landing pad.
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
@@ -32,28 +33,94 @@ const CONTINUE_UNWIND: i64 = 8;
 const SEARCH_PHASE: i64 = 1;
 const HANDLER_FRAME: i64 = 4;
 
-/// What an object holds for catching, for its `.eh_frame`.
-#[derive(Clone, Copy, Debug)]
+/// What an object holds for landing pads, for its `.eh_frame`.
+#[derive(Clone, Debug)]
 pub(crate) struct EhSymbols {
-    /// `velt_eh_try`, whose FDE names the personality and the LSDA.
-    pub try_fn: FuncId,
     /// The personality routine.
     pub personality: FuncId,
     /// A pointer to it, which an ELF CIE names (indirectly, as compilers do); a Mach-O CIE
     /// names the routine through the GOT, the only form ld64 accepts.
     pub personality_ref: DataId,
-    /// The LSDA of `velt_eh_try`.
-    pub lsda: DataId,
+    /// The functions with landing pads (`velt_eh_try` and those with cleanup pads) and their
+    /// LSDAs, whose FDEs name the personality's CIE.
+    pub lsdas: Vec<(FuncId, DataId)>,
 }
 
-/// `velt_eh_try` (declared as `try_fn`) and, where it catches, the personality and LSDA:
-/// their unwind info goes to `unwind`.
+/// A call site with a landing pad, for the LSDA: the return address and the handler (offsets
+/// from the function's start), and whether it catches (`velt_eh_try`) or only cleans up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Site {
+    pub ret_addr: u32,
+    pub pad: u32,
+    pub catch: bool,
+}
+
+/// The call sites with a handler of a compiled function, in address order.
+pub(crate) fn sites(code: &cranelift_codegen::CompiledCode, catch: bool) -> Vec<Site> {
+    (code.buffer.call_sites())
+        .filter_map(|site| {
+            let pad = site.exception_handlers.iter().find_map(|h| match h {
+                FinalizedMachExceptionHandler::Default(at) => Some(*at),
+                _ => None,
+            })?;
+            Some(Site {
+                ret_addr: site.ret_addr,
+                pad,
+                catch,
+            })
+        })
+        .collect()
+}
+
+/// Record that `id`, compiled into `code`, has the landing pads `sites`: its LSDA, and the
+/// personality the first time (its unwind info goes to `unwind`).
+pub(crate) fn add_lsda<M: Module>(
+    module: &mut M,
+    call_conv: CallConv,
+    eh: &mut Option<EhSymbols>,
+    id: FuncId,
+    sites: &[Site],
+    unwind: &mut Vec<FunctionUnwind>,
+) -> CodegenResult<()> {
+    if eh.is_none() {
+        let personality = define_personality(module, call_conv, unwind)?;
+        let personality_ref = data(module, "velt_eh_personality_ref", true, |m, desc| {
+            desc.define(vec![0; 8].into_boxed_slice());
+            desc.set_align(8);
+            let f = m.declare_func_in_data(personality, desc);
+            desc.write_function_addr(0, f);
+        })?;
+        *eh = Some(EhSymbols {
+            personality,
+            personality_ref,
+            lsdas: vec![],
+        });
+    }
+    let section = match module.isa().triple().binary_format {
+        BinaryFormat::Macho => ("__TEXT", "__gcc_except_tab"),
+        _ => ("", ".gcc_except_table"),
+    };
+    let name = format!("velt_eh_lsda_{}", id.as_u32());
+    let lsda = data(module, &name, false, |_, desc| {
+        desc.define(lsda(sites).into_boxed_slice());
+        desc.set_align(4);
+        desc.set_segment_section(section.0, section.1, 0);
+    })?;
+    if let Some(eh) = eh {
+        eh.lsdas.push((id, lsda));
+    }
+    Ok(())
+}
+
+/// `velt_eh_try` (declared as `try_fn`) and, where it catches, its LSDA (and the personality,
+/// in `eh_symbols`): their unwind info goes to `unwind`.
 pub(crate) fn define<M: Module>(
     module: &mut M,
     call_conv: CallConv,
     try_fn: FuncId,
+    eh_symbols: &mut Option<EhSymbols>,
     unwind: &mut Vec<FunctionUnwind>,
-) -> CodegenResult<Option<EhSymbols>> {
+) -> CodegenResult<()> {
     let catching = catches(module);
     let sig = crate::abi::make_signature(
         call_conv,
@@ -113,48 +180,21 @@ pub(crate) fn define<M: Module>(
         eh::TRY,
     )?);
     if !catching {
-        return Ok(None);
+        return Ok(());
     }
     let code = ctx
         .compiled_code()
         .ok_or_else(|| format!("ICE: `{}` not compiled", eh::TRY))?;
-    let len = code.code_info().total_size;
-    let pad = code
-        .buffer
-        .call_sites()
-        .flat_map(|site| site.exception_handlers.iter())
-        .find_map(|h| match h {
-            FinalizedMachExceptionHandler::Default(at) => Some(*at),
-            _ => None,
-        })
-        .ok_or_else(|| format!("ICE: `{}` has no landing pad", eh::TRY))?;
-    let personality = define_personality(module, call_conv, pad, unwind)?;
-    let personality_ref = data(module, "velt_eh_personality_ref", true, |m, desc| {
-        desc.define(vec![0; 8].into_boxed_slice());
-        desc.set_align(8);
-        let f = m.declare_func_in_data(personality, desc);
-        desc.write_function_addr(0, f);
-    })?;
-    let section = match module.isa().triple().binary_format {
-        BinaryFormat::Macho => ("__TEXT", "__gcc_except_tab"),
-        _ => ("", ".gcc_except_table"),
-    };
-    let lsda = data(module, "velt_eh_try_lsda", false, |_, desc| {
-        desc.define(lsda(len, pad).into_boxed_slice());
-        desc.set_align(4);
-        desc.set_segment_section(section.0, section.1, 0);
-    })?;
-    Ok(Some(EhSymbols {
-        try_fn,
-        personality,
-        personality_ref,
-        lsda,
-    }))
+    let sites = sites(code, true);
+    if sites.is_empty() {
+        return Err(format!("ICE: `{}` has no landing pad", eh::TRY));
+    }
+    add_lsda(module, call_conv, eh_symbols, try_fn, &sites, unwind)
 }
 
 /// Whether `module`'s `velt_eh_try` catches (see [`define`]): an Itanium target and an object
 /// module (only object modules set a TLS model: the JIT registers no LSDA, crate::tls::native).
-fn catches<M: Module>(module: &M) -> bool {
+pub(crate) fn catches<M: Module>(module: &M) -> bool {
     let triple = module.isa().triple().to_string();
     Catching::of_triple(&triple) == Catching::Itanium && crate::tls::native(module)
 }
@@ -209,17 +249,19 @@ fn data<M: Module>(
     Ok(id)
 }
 
-/// `velt_eh_personality(version, actions, class, exception, context)`, the routine of
-/// `velt_eh_try`'s frame only: `_URC_CONTINUE_UNWIND` for an exception of another class (both
-/// phases); for Velt's, `_URC_HANDLER_FOUND` in the search phase and, in the cleanup phase at this
-/// frame, the landing pad (`pad` bytes into the function, which `_Unwind_GetRegionStart` gives)
-/// with the exception in data register 0 and selector 0 in register 1 (DWARF 0 and 1: rax/rdx,
-/// x0/x1), `_URC_INSTALL_CONTEXT`. The frame's one call needs no call-site lookup. Only
-/// libunwind / libgcc_s functions are called: no runtime.
+/// `velt_eh_personality(version, actions, class, exception, context)`, the routine of every frame
+/// of this object with a landing pad. `_URC_CONTINUE_UNWIND` for an exception of another class
+/// (both phases). For Velt's: the LSDA's call-site entry covering `ip - 1` (the LSDAs of this
+/// module: landing-pad base omitted, the type table skipped, call sites in `udata4`, 13 bytes
+/// each); none, or landing pad 0, continues. An entry with action 0 is a cleanup: continue in the
+/// search phase, land in the cleanup phase. One with an action is a catch (`velt_eh_try`):
+/// `_URC_HANDLER_FOUND` in the search phase, land in the handler frame. Landing puts the exception
+/// in data register 0 and selector 0 in register 1 (DWARF 0 and 1: rax/rdx, x0/x1) and the
+/// handler's address in the IP: `_URC_INSTALL_CONTEXT`. Only libunwind / libgcc_s functions are
+/// called: no runtime.
 fn define_personality<M: Module>(
     module: &mut M,
     call_conv: CallConv,
-    pad: u32,
     unwind: &mut Vec<FunctionUnwind>,
 ) -> CodegenResult<FuncId> {
     let sig_of = |params: &[ir::Type], ret: Option<ir::Type>| {
@@ -235,8 +277,15 @@ fn define_personality<M: Module>(
             .map_err(|e| format!("codegen: declaring `{name}`: {e}"))
     };
     let id = declare(module, eh::PERSONALITY, Linkage::Local, &sig)?;
-    let region = sig_of(&[i64_], Some(i64_));
-    let region = declare(module, "_Unwind_GetRegionStart", Linkage::Import, &region)?;
+    let getter = sig_of(&[i64_], Some(i64_));
+    let region = declare(module, "_Unwind_GetRegionStart", Linkage::Import, &getter)?;
+    let get_ip = declare(module, "_Unwind_GetIP", Linkage::Import, &getter)?;
+    let get_lsda = declare(
+        module,
+        "_Unwind_GetLanguageSpecificData",
+        Linkage::Import,
+        &getter,
+    )?;
     let set_gr = sig_of(&[i64_, i32_, i64_], None);
     let set_gr = declare(module, "_Unwind_SetGR", Linkage::Import, &set_gr)?;
     let set_ip = sig_of(&[i64_, i64_], None);
@@ -246,35 +295,103 @@ fn define_personality<M: Module>(
     ctx.func.name = UserFuncName::user(0, id.as_u32());
     let mut fctx = FunctionBuilderContext::new();
     let mut b = FunctionBuilder::new(&mut ctx.func, &mut fctx);
+    let [region, get_ip, get_lsda, set_gr, set_ip] =
+        [region, get_ip, get_lsda, set_gr, set_ip].map(|f| module.declare_func_in_func(f, b.func));
     let entry = b.create_block();
     b.append_block_params_for_function_params(entry);
     b.switch_to_block(entry);
     let args = b.block_params(entry).to_vec();
     let (actions, exception, context) = (args[1], args[3], args[4]);
+    let flags = ir::MemFlags::new();
     let result = |b: &mut FunctionBuilder, code: i64| {
         let v = b.ins().iconst(i32_, code);
         b.ins().return_(&[v]);
     };
-    let [pass, mine, found, cleanup, land] = [(); 5].map(|_| b.create_block());
+    let call1 = |b: &mut FunctionBuilder, f, x| {
+        let c = b.ins().call(f, &[x]);
+        b.inst_results(c)[0]
+    };
+    let pass = b.create_block();
+    let [mine, header, skip_types, sites, table] = [(); 5].map(|_| b.create_block());
+    // Velt's class only.
     let ours = b.ins().icmp_imm(IntCC::Equal, args[2], eh::CLASS as i64);
     b.ins().brif(ours, mine, &[], pass, &[]);
     b.switch_to_block(pass);
     result(&mut b, CONTINUE_UNWIND);
+    // The LSDA's header: no landing-pad base; the type table's offset (skipped) if any.
     b.switch_to_block(mine);
+    let lsda = call1(&mut b, get_lsda, context);
+    b.ins().brif(lsda, header, &[], pass, &[]);
+    b.switch_to_block(header);
+    let lpstart = b.ins().uload8(i32_, flags, lsda, 0);
+    let omitted = b.ins().icmp_imm(IntCC::Equal, lpstart, 0xff);
+    let check_tt = b.create_block();
+    b.ins().brif(omitted, check_tt, &[], pass, &[]);
+    b.switch_to_block(check_tt);
+    let tt = b.ins().uload8(i32_, flags, lsda, 1);
+    let after = b.ins().iadd_imm(lsda, 2);
+    let no_types = b.ins().icmp_imm(IntCC::Equal, tt, 0xff);
+    b.append_block_param(sites, i64_);
+    b.ins()
+        .brif(no_types, sites, &[after.into()], skip_types, &[]);
+    b.switch_to_block(skip_types);
+    let (_, p) = uleb(&mut b, after);
+    b.ins().jump(sites, &[p.into()]);
+    // The call-site table: `udata4`, its length in ULEB128.
+    b.switch_to_block(sites);
+    let p = b.block_params(sites)[0];
+    let enc = b.ins().uload8(i32_, flags, p, 0);
+    let udata4 = b.ins().icmp_imm(IntCC::Equal, enc, 0x03);
+    let p1 = b.ins().iadd_imm(p, 1);
+    b.append_block_param(table, i64_);
+    b.ins().brif(udata4, table, &[p1.into()], pass, &[]);
+    b.switch_to_block(table);
+    let p = b.block_params(table)[0];
+    let (len, first) = uleb(&mut b, p);
+    let end = b.ins().iadd(first, len);
+    let ip = call1(&mut b, get_ip, context);
+    let start = call1(&mut b, region, context);
+    let ip = b.ins().isub(ip, start);
+    let ip = b.ins().iadd_imm(ip, -1);
+    // The entries, in address order: the one covering `ip`.
+    let [lookup, entry1, upper, hit] = [(); 4].map(|_| b.create_block());
+    b.append_block_param(lookup, i64_);
+    b.ins().jump(lookup, &[first.into()]);
+    b.switch_to_block(lookup);
+    let q = b.block_params(lookup)[0];
+    let more = b.ins().icmp(IntCC::UnsignedLessThan, q, end);
+    b.ins().brif(more, entry1, &[], pass, &[]);
+    b.switch_to_block(entry1);
+    let site = b.ins().uload32(flags, q, 0);
+    let before = b.ins().icmp(IntCC::UnsignedLessThan, ip, site);
+    b.ins().brif(before, pass, &[], upper, &[]);
+    b.switch_to_block(upper);
+    let size = b.ins().uload32(flags, q, 4);
+    let stop = b.ins().iadd(site, size);
+    let inside = b.ins().icmp(IntCC::UnsignedLessThan, ip, stop);
+    let next = b.ins().iadd_imm(q, 13);
+    b.ins().brif(inside, hit, &[], lookup, &[next.into()]);
+    b.switch_to_block(hit);
+    let pad = b.ins().uload32(flags, q, 8);
+    let action = b.ins().uload8(i32_, flags, q, 12);
+    let [known, cleanup_entry, catch_entry, found, frame, land] = [(); 6].map(|_| b.create_block());
+    b.ins().brif(pad, known, &[], pass, &[]);
+    b.switch_to_block(known);
     let search = b.ins().band_imm(actions, SEARCH_PHASE);
-    b.ins().brif(search, found, &[], cleanup, &[]);
+    b.ins().brif(action, catch_entry, &[], cleanup_entry, &[]);
+    // A cleanup: only in the cleanup phase.
+    b.switch_to_block(cleanup_entry);
+    b.ins().brif(search, pass, &[], land, &[]);
+    // A catch: claimed in the search phase, landed at in its handler frame.
+    b.switch_to_block(catch_entry);
+    b.ins().brif(search, found, &[], frame, &[]);
     b.switch_to_block(found);
     result(&mut b, HANDLER_FOUND);
-    b.switch_to_block(cleanup);
+    b.switch_to_block(frame);
     let here = b.ins().band_imm(actions, HANDLER_FRAME);
     b.ins().brif(here, land, &[], pass, &[]);
     b.switch_to_block(land);
-    let region = module.declare_func_in_func(region, b.func);
-    let set_gr = module.declare_func_in_func(set_gr, b.func);
-    let set_ip = module.declare_func_in_func(set_ip, b.func);
-    let call = b.ins().call(region, &[context]);
-    let start = b.inst_results(call)[0];
-    let target = b.ins().iadd_imm(start, i64::from(pad));
+    let target = b.ins().iadd(start, pad);
     let (r0, r1, zero) = (
         b.ins().iconst(i32_, 0),
         b.ins().iconst(i32_, 1),
@@ -298,26 +415,69 @@ fn define_personality<M: Module>(
     Ok(id)
 }
 
-/// The GCC LSDA of a function of `len` bytes whose every call lands at `pad` with a catch-all
-/// clause: no landing-pad base, a type table of one entry (0: any exception, `udata4`), call
-/// sites in ULEB128, one entry for the whole function, one action record (type 1, no next).
-pub(crate) fn lsda(len: u32, pad: u32) -> Vec<u8> {
-    let mut sites = vec![];
-    for v in [0, len, pad, 1] {
-        uleb(&mut sites, v);
+/// Read a ULEB128 number at `p`: (its value, the address after it), as 64-bit values. Leaves
+/// the builder in the block after the loop.
+fn uleb(b: &mut FunctionBuilder, p: ir::Value) -> (ir::Value, ir::Value) {
+    let i64_ = types::I64;
+    let (lp, done) = (b.create_block(), b.create_block());
+    for t in [i64_; 3] {
+        b.append_block_param(lp, t);
     }
-    let mut rest = vec![0x01]; // call sites: DW_EH_PE_uleb128
-    uleb(&mut rest, sites.len() as u32);
-    rest.extend(sites);
+    b.append_block_param(done, i64_);
+    b.append_block_param(done, i64_);
+    let zero = b.ins().iconst(i64_, 0);
+    b.ins().jump(lp, &[p.into(), zero.into(), zero.into()]);
+    b.switch_to_block(lp);
+    let [q, acc, shift] = [0, 1, 2].map(|i| b.block_params(lp)[i]);
+    let byte = b.ins().uload8(i64_, ir::MemFlags::new(), q, 0);
+    let low = b.ins().band_imm(byte, 0x7f);
+    let part = b.ins().ishl(low, shift);
+    let acc = b.ins().bor(acc, part);
+    let q = b.ins().iadd_imm(q, 1);
+    let shift = b.ins().iadd_imm(shift, 7);
+    let more = b.ins().band_imm(byte, 0x80);
+    b.ins().brif(
+        more,
+        lp,
+        &[q.into(), acc.into(), shift.into()],
+        done,
+        &[acc.into(), q.into()],
+    );
+    b.switch_to_block(done);
+    (b.block_params(done)[0], b.block_params(done)[1])
+}
+
+/// The GCC LSDA of a function with the landing pads `sites` (address order): no landing-pad
+/// base; a type table of one entry (0: any exception, `udata4`) only when a site catches; call
+/// sites in `udata4`, one per site covering its call's last byte (`ret_addr - 1`, which the
+/// personality looks up as `ip - 1`), with the handler and action 1 (the catch-all) or 0 (a
+/// cleanup); one action record (type 1, no next) when a site catches.
+pub(crate) fn lsda(sites: &[Site]) -> Vec<u8> {
+    let catches = sites.iter().any(|s| s.catch);
+    let mut table = vec![];
+    for s in sites {
+        for v in [s.ret_addr - 1, 1, s.pad] {
+            table.extend(v.to_le_bytes());
+        }
+        table.push(u8::from(s.catch));
+    }
+    let mut rest = vec![0x03]; // call sites: DW_EH_PE_udata4
+    uleb_bytes(&mut rest, table.len() as u32);
+    rest.extend(table);
+    if !catches {
+        let mut out = vec![0xff, 0xff]; // no landing-pad base, no type table
+        out.extend(rest);
+        return out;
+    }
     rest.extend([0x01, 0x00]); // the action: type filter 1, no next action
     rest.extend([0, 0, 0, 0]); // type 1: null, catch-all
     let mut out = vec![0xff, 0x03]; // no landing-pad base; types: DW_EH_PE_udata4
-    uleb(&mut out, rest.len() as u32); // from here to the end of the type table
+    uleb_bytes(&mut out, rest.len() as u32); // from here to the end of the type table
     out.extend(rest);
     out
 }
 
-fn uleb(out: &mut Vec<u8>, mut v: u32) {
+fn uleb_bytes(out: &mut Vec<u8>, mut v: u32) {
     loop {
         let byte = (v & 0x7f) as u8;
         v >>= 7;
@@ -334,19 +494,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lsda_of_a_small_function() {
-        // 40 bytes, landing pad at 24: header, 4 call-site bytes, action, type entry.
-        assert_eq!(
-            lsda(40, 24),
-            vec![0xff, 0x03, 12, 0x01, 4, 0, 40, 24, 1, 0x01, 0x00, 0, 0, 0, 0]
-        );
+    fn lsda_of_velt_eh_try() {
+        // One catching call returning to 20, landing pad at 24: header, the call-site table
+        // (13 bytes), action, type entry.
+        let site = Site {
+            ret_addr: 20,
+            pad: 24,
+            catch: true,
+        };
+        let mut want = vec![0xff, 0x03, 21, 0x03, 13];
+        want.extend([19, 0, 0, 0, 1, 0, 0, 0, 24, 0, 0, 0, 1]);
+        want.extend([0x01, 0x00, 0, 0, 0, 0]);
+        assert_eq!(lsda(&[site]), want);
     }
 
     #[test]
-    fn lsda_with_long_offsets() {
-        let l = lsda(300, 200);
-        // 300 and 200 take two ULEB128 bytes each.
-        assert_eq!(&l[3..11], &[0x01, 6, 0, 0xac, 0x02, 0xc8, 0x01, 1]);
-        assert_eq!(l[2] as usize, l.len() - 3);
+    fn lsda_of_cleanups() {
+        let sites = [(8, 100), (300, 100)].map(|(ret_addr, pad)| Site {
+            ret_addr,
+            pad,
+            catch: false,
+        });
+        let l = lsda(&sites);
+        assert_eq!(&l[..4], &[0xff, 0xff, 0x03, 26]);
+        assert_eq!(l.len(), 4 + 26);
+        // The second entry: 299, length 1, pad 100, cleanup.
+        assert_eq!(&l[17..30], &[0x2b, 1, 0, 0, 1, 0, 0, 0, 100, 0, 0, 0, 0]);
     }
 }

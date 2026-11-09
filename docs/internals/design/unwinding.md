@@ -497,8 +497,9 @@ program with and without pads); a program built with it leaks as before #2667.
   it; a call of it never has an unwind edge (verify).
 - Passes see the unwind edge as a successor (`velt_opt::visit::successors`, lowering's
   `cfg::successors`, verify's dataflow), so a value a pad reads is live at the call and
-  definitely assigned before it (verify checks the pad as any other successor, which also
-  catches a pad that would read the call's own result). The inliner wires an inlined body into
+  definitely assigned before it (verify checks the pad as any other successor; its check is per
+  block, so a pad reading the call's own result is not caught there: lowering never emits one,
+  since a call's result is owned only after the call). The inliner wires an inlined body into
   the call's edge: the callee's calls that may unwind and have no edge get the call's, and its
   `velt_eh_resume` calls become jumps to the call's pad; a call without an edge inlines the
   body as it is. Nothing else in `velt_opt` changes meaning.

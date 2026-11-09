@@ -341,6 +341,7 @@ impl Gen<'_> {
                     }
                 }),
                 next: next(self),
+                unwind: None,
             },
         }
     }
