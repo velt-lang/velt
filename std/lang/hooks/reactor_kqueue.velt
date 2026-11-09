@@ -1,0 +1,222 @@
+// velt/lang/hooks (internal): the executor's reactor on macOS (sched_io.velt, #2649 step 2):
+// kqueue. A socket is registered once, for reading and writing, edge-triggered (`EV_CLEAR`), with
+// its source (sched_io.velt) as the event's `udata`; the worker's idle wait is a `kevent` wait,
+// and a wake from another thread triggers an `EVFILT_USER` event (ident 0, `udata` 0).
+//
+// Also the few OS calls a non-blocking socket needs whose details differ per OS: `errno`, making
+// a descriptor non-blocking and close-on-exec, keeping a write to a closed peer from raising
+// SIGPIPE. `fcntl` is variadic and `declare c` has no `CVarArgs` yet (docs/internals/design/
+// c-ffi.md): Apple arm64 passes variadic arguments on the stack and x86-64 in registers as fixed
+// ones, so the declaration below passes the flag both third (x86-64 reads it there) and ninth,
+// after eight register parameters, in the first stack slot (where Apple arm64 reads it).
+
+import * as m from "./sched_mem";
+
+/** Does this OS have the reactor? (The default variant has not: sockets stay the runtime's.) */
+export const SUPPORTED: bool = true;
+
+export const EAGAIN: i32 = 35;
+export const EINPROGRESS: i32 = 36;
+export const EINTR: i32 = 4;
+/** `CLOCK_MONOTONIC`. */
+export const MONOTONIC: i32 = 6;
+/** `send`'s flags: none (SIGPIPE is off per socket, `SO_NOSIGPIPE`). */
+export const SEND_FLAGS: i32 = 0;
+/** `socket`'s extra type flags: none on macOS (`prepare` sets them). */
+export const SOCKET_FLAGS: i32 = 0;
+
+// Readiness bits of an event (sched_io.velt).
+const READ: u32 = 1;
+const WRITE: u32 = 2;
+const HUP: u32 = 4;
+const ERR: u32 = 8;
+
+const EVFILT_READ: i16 = -1;
+const EVFILT_WRITE: i16 = -2;
+const EVFILT_USER: i16 = -10;
+const EV_ADD: u16 = 0x1;
+const EV_CLEAR: u16 = 0x20;
+const EV_ERROR: u16 = 0x4000;
+const EV_EOF: u16 = 0x8000;
+const NOTE_TRIGGER: u32 = 0x01000000;
+
+const F_SETFD: i32 = 2;
+const F_SETFL: i32 = 4;
+const FD_CLOEXEC: i64 = 1;
+const O_NONBLOCK: i64 = 4;
+const SOL_SOCKET: i32 = 0xffff;
+const SO_NOSIGPIPE: i32 = 0x1022;
+
+/** Events one wait takes at most. */
+const MAX_EVENTS: usize = 64;
+/** A `struct kevent`: ident, filter i16, flags u16, fflags u32, data, udata. */
+const EV: usize = 32;
+
+// The reactor's block: the kqueue, the events of the last wait, a timespec, a change record.
+const R_KQ: usize = 0;
+const R_TS: usize = 8;
+const R_CHANGE: usize = 24;
+const R_EVENTS: usize = 88;
+const R_SIZE: usize = 88 + 64 * 32;
+
+declare c("c") function kqueue(): i32;
+declare c("c") function kevent(
+  kq: i32,
+  changes: usize,
+  nchanges: i32,
+  events: usize,
+  nevents: i32,
+  timeout: usize,
+): i32;
+declare c("c") function fcntl$io(
+  fd: i32,
+  cmd: i32,
+  arg: i64,
+  r3: i64,
+  r4: i64,
+  r5: i64,
+  r6: i64,
+  r7: i64,
+  stacked: i64,
+): i32;
+declare c("c") function setsockopt$io(fd: i32, level: i32, name: i32, value: usize, len: u32): i32;
+declare c("c") function __error(): usize;
+declare c("c") function accept$io(fd: i32, addr: usize, len: usize): i32;
+declare c("c") function close$io(fd: i32): i32;
+
+/** The calling thread's `errno`. */
+export function errno(): i32 {
+  // SAFETY: `__error` returns the thread's errno slot.
+  return m.ld32(unsafe { __error() }) as i32;
+}
+
+/** A new reactor: its block, or 0 when the OS refused a kqueue. */
+export function open(): usize {
+  // SAFETY: no precondition.
+  const kq = unsafe { kqueue() };
+  if (kq < 0) {
+    return 0;
+  }
+  const r = m.zeroed(R_SIZE);
+  m.st(r + R_KQ, kq as usize);
+  // The wake: a user event, cleared when a wait takes it.
+  change(r, 0, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0);
+  // SAFETY: one change record in the block; no events wanted.
+  unsafe {
+    kevent(kq, r + R_CHANGE, 1, 0, 0, 0);
+  }
+  return r;
+}
+
+/** Fills the block's change record. */
+function change(r: usize, ident: usize, filter: i16, flags: u16, fflags: u32, udata: usize): void {
+  const c = r + R_CHANGE;
+  m.st(c, ident);
+  m.st32(c + 8, ((filter as u16) as u32) | ((flags as u32) << 16));
+  m.st32(c + 12, fflags);
+  m.st(c + 16, 0);
+  m.st(c + 24, udata);
+}
+
+/** Registers `fd` for both directions, edge-triggered, with `source` its events' tag; 0 or errno. */
+export function add(r: usize, fd: i32, source: usize): i32 {
+  const c = r + R_CHANGE;
+  change(r, fd as usize, EVFILT_READ, EV_ADD | EV_CLEAR, 0, source);
+  m.copy(c + EV, c, EV);
+  m.st32(c + EV + 8, ((EVFILT_WRITE as u16) as u32) | (((EV_ADD | EV_CLEAR) as u32) << 16));
+  // SAFETY: two change records in the block (R_CHANGE has room for two).
+  const n = unsafe { kevent(m.ld(r + R_KQ) as i32, c, 2, 0, 0, 0) };
+  return n < 0 ? errno() : 0;
+}
+
+/**
+ * Waits for events, at most `timeoutMs` milliseconds (-1: until one comes, 0: only those ready):
+ * how many the block holds now (`source`, `bits`).
+ */
+export function wait(r: usize, timeoutMs: i64): usize {
+  let ts: usize = 0;
+  if (timeoutMs >= 0) {
+    ts = r + R_TS;
+    m.st(ts, (timeoutMs / 1000) as usize);
+    m.st(ts + 8, ((timeoutMs % 1000) * 1000000) as usize);
+  }
+  // SAFETY: the block has room for MAX_EVENTS events and the timespec.
+  const n = unsafe { kevent(m.ld(r + R_KQ) as i32, 0, 0, r + R_EVENTS, MAX_EVENTS as i32, ts) };
+  return n < 0 ? 0 : n as usize;
+}
+
+/** The source of event `i` of the last wait (0: the wake). */
+export function source(r: usize, i: usize): usize {
+  return m.ld(r + R_EVENTS + i * EV + 24);
+}
+
+/** The readiness bits of event `i` of the last wait. */
+export function bits(r: usize, i: usize): u32 {
+  const e = r + R_EVENTS + i * EV;
+  const fw = m.ld32(e + 8);
+  const filter = (fw & 0xffff) as u16;
+  const flags = (fw >> 16) as u16;
+  if (filter === (EVFILT_WRITE as u16)) {
+    // The end of the write side (this side shut it down, or the peer reset): a send reports it.
+    return WRITE;
+  }
+  let b: u32 = READ;
+  if ((flags & EV_EOF) !== 0) {
+    b = b | HUP;
+  }
+  if ((flags & EV_ERROR) !== 0) {
+    b = b | ERR;
+  }
+  return b;
+}
+
+/** Wakes the worker waiting in `wait` (from any thread). */
+export function wake(r: usize): void {
+  // The change record is the worker's: a wake from another thread builds its own on the stack
+  // of this call, in a small allocation.
+  const c = m.alloc(EV);
+  m.st(c, 0);
+  m.st32(c + 8, ((EVFILT_USER as u16) as u32));
+  m.st32(c + 12, NOTE_TRIGGER);
+  m.st(c + 16, 0);
+  m.st(c + 24, 0);
+  // SAFETY: one change record.
+  unsafe {
+    kevent(m.ld(r + R_KQ) as i32, c, 1, 0, 0, 0);
+  }
+  m.release(c);
+}
+
+/** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */
+export function accept(fd: i32, addr: usize, len: usize): i32 {
+  // SAFETY: `addr` holds the `socklen_t` at `len` bytes.
+  const s = unsafe { accept$io(fd, addr, len) };
+  if (s >= 0 && prepare(s) !== 0) {
+    // SAFETY: the descriptor accept returned, not used after.
+    unsafe {
+      close$io(s);
+    }
+    return -1;
+  }
+  return s;
+}
+
+/** Makes a new socket non-blocking, close-on-exec, and SIGPIPE-free; 0 or errno. */
+export function prepare(fd: i32): i32 {
+  if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
+    return errno();
+  }
+  const one = m.alloc(16);
+  m.st32(one, 1);
+  // SAFETY: an int option, in `one`.
+  unsafe {
+    setsockopt$io(fd, SOL_SOCKET, SO_NOSIGPIPE, one, 4);
+  }
+  m.release(one);
+  return 0;
+}
+
+function fcntl(fd: i32, cmd: i32, arg: i64): i32 {
+  // SAFETY: F_SETFL and F_SETFD take an int: third for x86-64, first stack slot for Apple arm64.
+  return unsafe { fcntl$io(fd, cmd, arg, 0, 0, 0, 0, 0, arg) };
+}

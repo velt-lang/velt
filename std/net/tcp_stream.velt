@@ -1,10 +1,10 @@
 // velt/net (internal): `TcpStream`, a connected TCP (or TLS) stream: a Copy handle released by
-// `close()` (std/net/index.velt).
+// `close()` (std/net/index.velt). Its functions come from `#net-tcp`: the runtime's, or with the
+// executor in Velt non-blocking sockets on its reactor (std/net/tcp_sched.velt).
 
 import { unwrapIo } from "velt/native/result";
 import { TryStream } from "velt/net/byte_stream";
 import { checkIo } from "velt/native/status";
-import { tryWriteTo, writeBytesTo } from "velt/net/bytes";
 import { clampTo, toIndex } from "velt/net/offsets";
 import {
   velt_rt_tcp_abort,
@@ -19,13 +19,15 @@ import {
   velt_rt_tcp_readable_within,
   velt_rt_tcp_shutdown,
   velt_rt_tcp_try_read_into,
+  velt_rt_tcp_try_write,
   velt_rt_tcp_try_write_range,
   velt_rt_tcp_unpark,
   velt_rt_tcp_write,
+  velt_rt_tcp_write_bytes,
   velt_rt_tcp_write_later,
   velt_rt_tcp_write_later_range,
   velt_rt_tcp_write_range,
-} from "velt/net/rt";
+} from "#net-tcp";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { AbortSignal } from "velt/task";
 
@@ -148,7 +150,7 @@ export struct TcpStream implements TryStream {
       return;
     }
     if (start === 0 && end == null) {
-      checkIo(await writeBytesTo(this.handle, data));
+      checkIo(await velt_rt_tcp_write_bytes(this.handle, data));
       return;
     }
     const len = data.length as number;
@@ -171,7 +173,7 @@ export struct TcpStream implements TryStream {
       return velt_rt_tcp_try_write_range(this.handle, data.buf.bytes, from, to) as i64;
     }
     if (start === 0 && end == null) {
-      return tryWriteTo(this.handle, data);
+      return velt_rt_tcp_try_write(this.handle, data) as i64;
     }
     const len = data.length as number;
     const from = clampTo(start, len);

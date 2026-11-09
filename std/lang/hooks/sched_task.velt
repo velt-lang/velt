@@ -4,7 +4,7 @@
 // Everything is raw memory (sched_mem.velt), so nothing here is module state (which is per task):
 // - The executor, allocated once, its address in `EXEC`: the inbox (a stack of tasks woken from
 //   other threads, linked through their `next`), the park word, the worker's own queue (first in,
-//   first out), the live task count, the task being polled, the base of the last microtask
+//   first out), the I/O block (the reactor the worker waits in, sched_io.velt), the live task count, the task being polled, the base of the last microtask
 //   queue's tickets, whether an owner is polling a promise it adopted (sched_node.velt), and the
 //   two waker tables (a task's, a started promise's: sched_node.velt).
 // - A task: the table's address first (a task is its own waker), its reference count (the
@@ -21,7 +21,7 @@
 // memory the worker alone changes; they become atomics in the multi-worker step (#2649 step 3).
 
 import { inline } from "velt/lang/intrinsics";
-import { parkWake } from "#sched-park";
+import * as io from "./sched_io";
 import * as m from "./sched_mem";
 
 /** The executor's address (0 until it starts). */
@@ -40,7 +40,8 @@ export const E_TICKET: usize = 48;
 export const E_ADOPTING: usize = 56;
 export const E_VT: usize = 64;
 export const E_NODE_VT: usize = 96;
-export const E_SIZE: usize = 128;
+export const E_IO: usize = 128;
+export const E_SIZE: usize = 144;
 
 // A task's fields.
 export const T_REFS: usize = 8;
@@ -176,7 +177,7 @@ export function schedule(e: usize, t: usize): void {
   m.pushStack(e + E_INBOX, t, T_NEXT);
   if (m.load32(e + E_PARK) === 1) {
     m.store32(e + E_PARK, 0);
-    parkWake(e + E_PARK);
+    io.wake(m.ld(e + E_IO));
   }
 }
 

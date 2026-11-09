@@ -17,6 +17,7 @@
 // stand-in until `@export` with `exportedAddress` (#2203 step 5) lands.
 
 import { fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
+import * as io from "./sched_io";
 import * as latch from "./sched_latch";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
@@ -48,6 +49,7 @@ function start(): usize {
   m.st(e + t.E_NODE_VT + 8, fnAddress(node.nodeWake));
   m.st(e + t.E_NODE_VT + 16, fnAddress(node.nodeWakeByRef));
   m.st(e + t.E_NODE_VT + 24, fnAddress(node.nodeDropRef));
+  m.st(e + t.E_IO, io.open());
   t.install(e);
   // The runtime's leaves that need its timers and I/O find them from this thread.
   velt_rt_set_scheduler(2);

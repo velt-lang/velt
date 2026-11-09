@@ -5,7 +5,8 @@
 // its root and nothing else), the end of its root and of the task, and its join handle.
 
 import { inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
-import { parkWait } from "#sched-park";
+import * as io from "./sched_io";
+import * as w from "./sched_io_write";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as node from "./sched_node";
@@ -27,6 +28,15 @@ export function turn(e: usize): void {
     m.st(e + t.E_TAIL, 0);
   }
   run(e, k);
+  // What the poll queued with `writeLater` is sent now; a busy worker looks at the reactor.
+  const b = m.ld(e + t.E_IO);
+  if (m.ld(b + io.IO_DUE) !== 0) {
+    w.flushDue(b);
+  }
+  io.poll(b);
+  if (m.ld(b + io.IO_DUE) !== 0) {
+    w.flushDue(b);
+  }
 }
 
 /**
@@ -230,13 +240,23 @@ function takeInbox(e: usize): usize {
   return rev;
 }
 
-/** Sleeps until a task is woken from another thread. */
+/**
+ * Sleeps in the reactor until a socket is ready or a task is woken from another thread; what is
+ * due is sent first, and what the wait made due (writable sockets with bytes left) after it.
+ */
 function park(e: usize): void {
+  const b = m.ld(e + t.E_IO);
+  if (m.ld(b + io.IO_DUE) !== 0) {
+    w.flushDue(b);
+  }
   m.store32(e + t.E_PARK, 1);
-  if (m.load(e + t.E_INBOX) !== 0) {
+  if (m.load(e + t.E_INBOX) !== 0 || m.ld(e + t.E_HEAD) !== 0) {
     m.store32(e + t.E_PARK, 0);
     return;
   }
-  parkWait(e + t.E_PARK, 1);
+  io.park(b);
   m.store32(e + t.E_PARK, 0);
+  if (m.ld(b + io.IO_DUE) !== 0) {
+    w.flushDue(b);
+  }
 }

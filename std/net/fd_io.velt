@@ -1,0 +1,327 @@
+// velt/net (internal): reading and writing a socket on the reactor of the executor in Velt
+// (#2649 step 2, std/net/tcp_sched.velt), with the runtime functions' results: `tryRead` and
+// `tryWrite` straight between the caller's bytes and the socket; `readable`, `drained` and a
+// `write`'s end as waits on the reactor (std/lang/hooks/sched_io_wait.velt); `writeLater`'s bytes
+// in the stream's buffer, sent when the poll ends (std/lang/hooks/sched_io_write.velt).
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { arrayTruncate, promiseAt, strByteLen } from "velt/lang/intrinsics";
+import { StrBytes } from "velt/ffi";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding/utf8";
+import * as r from "#reactor";
+import * as io from "velt/lang/hooks/sched_io";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as wt from "velt/lang/hooks/sched_io_wait";
+import * as wr from "velt/lang/hooks/sched_io_write";
+import { aborted, closed, failed, ok, osError, value } from "velt/net/fd_socket";
+
+declare c("c") function recv$net(fd: i32, buf: usize, n: usize, flags: i32): isize;
+declare c("c") function shutdown$net(fd: i32, how: i32): i32;
+/**
+ * The address of `data`'s first byte (`memset` of nothing returns its destination): a stand-in
+ * until `declare c` can take a pointer into an array (#2187).
+ */
+declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): usize;
+/** `memcpy` from a string's bytes (`memcpy` itself is declared for addresses, one signature). */
+declare c("c") function bcopy$text(src: StrBytes, dst: usize, n: usize): void;
+
+/** The address of byte `at` of `data` (which has it). */
+function addressOf(data: u8[], at: u64): usize {
+  // SAFETY: a copy of nothing; `data` is borrowed for the call.
+  return unsafe { memset$bytes(data, 0, 0) } + (at as usize);
+}
+
+/** The state of stream `s` before an operation: closed, aborted, failed, or fine. */
+function check(s: usize): IoStatus {
+  if (s === 0) {
+    return closed();
+  }
+  if ((m.ld32(s + io.S_FLAGS) & io.F_ABORTED) !== 0) {
+    return aborted();
+  }
+  const e = m.ld32(s + io.S_ERR) as i32;
+  return e !== 0 ? osError(e) : ok();
+}
+
+/** Waits on the source of `h` for `kind` with `arg`, until `deadline` (0: none). */
+async function waitOn(h: u64, kind: u32, arg: u64, deadline: u64): Promise<void> {
+  // SAFETY: `waitFor` makes a heap future, given up to the promise.
+  await unsafe { promiseAt<void>(wt.waitFor(h, kind, arg, deadline)) };
+}
+
+/** Reads into `data[start..end]` now: the count, 0 at the end, -1 when nothing has arrived. */
+export function tryReadInto(h: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
+  const s = tb.lookup(h);
+  if (s === 0 || (m.ld32(s + io.S_FLAGS) & io.F_ABORTED) !== 0) {
+    return failed(check(s), 0);
+  }
+  if (start >= end) {
+    return value(0);
+  }
+  const p = addressOf(data, start);
+  while (true) {
+    // SAFETY: `data` holds `end - start` bytes at `p`; the descriptor is open.
+    const n = unsafe { recv$net(m.ld(s + io.S_FD) as i32, p, (end - start) as usize, 0) };
+    if (n >= 0) {
+      return value(n as i64);
+    }
+    const e = r.errno();
+    if (e === r.EAGAIN) {
+      // Nothing yet: whatever an event said (a hang-up of the other direction included).
+      io.notReady(s, io.READ | io.HUP | io.ERR);
+      return value(-1);
+    }
+    if (e !== r.EINTR) {
+      return failed(osError(e), 0);
+    }
+  }
+}
+
+/** Resolves once a read may find something (data, the end, an error). */
+export async function readable(h: u64): Promise<IoStatus> {
+  const s = tb.lookup(h);
+  if (s === 0) {
+    return closed();
+  }
+  if (!wt.satisfied(s, io.K_READ, 0)) {
+    await waitOn(h, io.K_READ, 0, 0);
+  }
+  return tb.lookup(h) === 0 ? closed() : ok();
+}
+
+/** `readable` for at most `ms` milliseconds: 1 readable, 0 the time ran out. */
+export async function readableWithin(h: u64, ms: i64): Promise<IoResult<u8>> {
+  const s = tb.lookup(h);
+  if (s === 0) {
+    return failed(closed(), 0);
+  }
+  if (!wt.satisfied(s, io.K_READ, 0)) {
+    if (ms <= 0) {
+      return value(0);
+    }
+    await waitOn(h, io.K_READ, 0, wt.now() + (ms as u64) * 1000000);
+  }
+  const t = tb.lookup(h);
+  if (t === 0) {
+    return failed(closed(), 0);
+  }
+  return value(wt.satisfied(t, io.K_READ, 0) ? 1 : 0);
+}
+
+/** The next 1..max bytes (`max` 0: up to 64 KiB); empty at the end of the stream. */
+export async function read(h: u64, max: u64): Promise<IoResult<u8[]>> {
+  const n = max === 0 ? 65536 : max;
+  const out: u8[] = Buffer.alloc(n as usize);
+  while (true) {
+    const got = tryReadInto(h, out, 0, n);
+    if (got.code !== 0) {
+      return failed({ code: got.code, message: got.message }, []);
+    }
+    if (got.value >= 0) {
+      arrayTruncate(out, got.value as usize);
+      return value(out);
+    }
+    const st = await readable(h);
+    if (st.code !== 0) {
+      return failed(st, []);
+    }
+  }
+}
+
+/**
+ * The next chunk as UTF-8; a character split across reads waits in the source for the rest, and
+ * one cut off by the end of the stream becomes U+FFFD. "" at the end.
+ */
+export async function readString(h: u64, max: u64): Promise<IoResult<string>> {
+  while (true) {
+    const got = await read(h, max);
+    if (got.code !== 0) {
+      return failed({ code: got.code, message: got.message }, "");
+    }
+    const s = tb.lookup(h);
+    if (s === 0) {
+      return failed(closed(), "");
+    }
+    let bytes = got.value;
+    const carried = m.ld32(s + io.S_CARRY_LEN);
+    if (carried !== 0) {
+      const all: u8[] = [];
+      const word = m.ld32(s + io.S_CARRY);
+      for (let i: u32 = 0; i < carried; i++) {
+        all.push(((word >> (8 * i)) & 0xff) as u8);
+      }
+      for (const b of bytes) {
+        all.push(b);
+      }
+      m.st32(s + io.S_CARRY_LEN, 0);
+      if (got.value.length === 0) {
+        return value(utf8DecodeLossy(all));
+      }
+      bytes = all;
+    }
+    if (bytes.length === 0) {
+      return value("");
+    }
+    const keep = incompleteTail(bytes);
+    if (keep !== 0) {
+      let word: u32 = 0;
+      const from = bytes.length - keep;
+      for (let i: usize = 0; i < keep; i++) {
+        word = word | ((bytes[from + i] as u32) << (8 * (i as u32)));
+      }
+      m.st32(s + io.S_CARRY, word);
+      m.st32(s + io.S_CARRY_LEN, keep as u32);
+      arrayTruncate(bytes, from);
+      if (bytes.length === 0) {
+        continue;
+      }
+    }
+    return value(utf8DecodeLossy(bytes));
+  }
+}
+
+/** How many bytes at the end of `b` start a UTF-8 character that is not complete yet (0..3). */
+function incompleteTail(b: u8[]): usize {
+  const n = b.length;
+  let i: usize = 0;
+  while (i < 3 && i < n) {
+    const c = b[n - 1 - i];
+    if ((c & 0xc0) !== 0x80) {
+      const need: usize = c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : c >= 0xc0 ? 2 : 1;
+      return need > i + 1 ? i + 1 : 0;
+    }
+    i++;
+  }
+  return 0;
+}
+
+/** Writes what the socket takes of `data[start..end]` now: the count (0 behind buffered bytes). */
+export function tryWriteRange(h: u64, data: u8[], start: u64, end: u64): u64 {
+  const s = tb.lookup(h);
+  if (s === 0 || start >= end || m.ld(s + io.S_LEN) !== 0 || check(s).code !== 0) {
+    return 0;
+  }
+  if ((m.ld32(s + io.S_READY) & io.WRITE) === 0) {
+    return 0;
+  }
+  return wr.sendNow(s, addressOf(data, start), (end - start) as usize) as u64;
+}
+
+/** Resolves once every byte of `data[start..end]` is sent, after the bytes buffered before. */
+export async function writeRange(h: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
+  const s = tb.lookup(h);
+  const st = check(s);
+  if (st.code !== 0 || start >= end) {
+    return st;
+  }
+  const p = addressOf(data, start);
+  const n = (end - start) as usize;
+  let done: usize = 0;
+  if (m.ld(s + io.S_LEN) === 0 && (m.ld32(s + io.S_READY) & io.WRITE) !== 0) {
+    done = wr.sendNow(s, p, n);
+    if (m.ld32(s + io.S_ERR) !== 0) {
+      return check(s);
+    }
+    if (done === n) {
+      return ok();
+    }
+  }
+  wr.append(s, p + done, n - done);
+  if ((m.ld32(s + io.S_READY) & io.WRITE) !== 0) {
+    io.due(s);
+  }
+  await waitOn(h, io.K_WRITTEN, m.ld(s + io.S_QUEUED) as u64, 0);
+  return check(tb.lookup(h));
+}
+
+/** `write` of a string: its UTF-8. */
+export async function writeText(h: u64, data: string): Promise<IoStatus> {
+  const bytes = utf8Encode(data);
+  return await writeRange(h, bytes, 0, bytes.length as u64);
+}
+
+/** Queues `data[start..end]` to be sent when the poll ends: the bytes still to send. */
+export function writeLaterRange(h: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
+  const s = tb.lookup(h);
+  const st = check(s);
+  if (st.code !== 0) {
+    return failed(st, 0);
+  }
+  if (start < end) {
+    wr.append(s, addressOf(data, start), (end - start) as usize);
+    io.due(s);
+  }
+  return value((m.ld(s + io.S_QUEUED) - m.ld(s + io.S_WRITTEN)) as u64);
+}
+
+/** `writeLaterRange` of a string's UTF-8, copied straight into the buffer. */
+export function writeLaterText(h: u64, data: string): IoResult<u64> {
+  const s = tb.lookup(h);
+  const st = check(s);
+  if (st.code !== 0) {
+    return failed(st, 0);
+  }
+  const n = strByteLen(data);
+  if (n !== 0) {
+    const at = wr.room(s, n);
+    // SAFETY: the buffer has `n` bytes of room at `at`; the string's bytes are borrowed.
+    unsafe {
+      bcopy$text(data, at, n);
+    }
+    wr.commit(s, n);
+    io.due(s);
+  }
+  return value((m.ld(s + io.S_QUEUED) - m.ld(s + io.S_WRITTEN)) as u64);
+}
+
+/** Resolves once at most `max` buffered bytes are still to send. */
+export async function drained(h: u64, max: u64): Promise<IoStatus> {
+  const s = tb.lookup(h);
+  const st = check(s);
+  if (st.code !== 0) {
+    return st;
+  }
+  if (!wt.satisfied(s, io.K_DRAINED, max as usize)) {
+    await waitOn(h, io.K_DRAINED, max, 0);
+  }
+  return check(tb.lookup(h));
+}
+
+/** Half-close once the buffered bytes are sent. */
+export function shutdown(h: u64): IoStatus {
+  const s = tb.lookup(h);
+  const st = check(s);
+  if (st.code === 0) {
+    wr.endSource(s, false);
+  }
+  return st;
+}
+
+/** Fails what is in flight and everything after; the handle stays open until `close`. */
+export function abort(h: u64): void {
+  const s = tb.lookup(h);
+  if (s === 0) {
+    return;
+  }
+  m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_ABORTED);
+  m.st(s + io.S_OFF, 0);
+  m.st(s + io.S_LEN, 0);
+  // SAFETY: the source's descriptor, open: both directions end.
+  unsafe {
+    shutdown$net(m.ld(s + io.S_FD) as i32, 2);
+  }
+  wt.wakeAll(s);
+}
+
+/** Releases the handle; the socket closes once its buffered bytes are sent. */
+export function close(h: u64): void {
+  const s = tb.lookup(h);
+  if (s === 0) {
+    return;
+  }
+  tb.forget(h);
+  wt.wakeAll(s);
+  wr.endSource(s, true);
+}
