@@ -1,0 +1,7 @@
+// A narrowed literal union member that the other union lacks does not convert to it (TS2322).
+type A = "a" | "b";
+function g(x: A | "c"): A {
+    if (x === "a") return "a";
+    return x;
+}
+console.log(g("b"));

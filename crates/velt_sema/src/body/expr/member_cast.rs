@@ -33,6 +33,9 @@ impl FnCx<'_, '_> {
         }
         let storage = self.cx.ty.is_storage_float(target);
         if !self.cx.ty.is_numeric(target) && !storage && target != self.cx.ty.bool_ {
+            if let Some(h) = self.asserted_arms(expr, ty, target, want) {
+                return h;
+            }
             return self.type_assertion(expr, target, want, span);
         }
         // An integer literal cast to an integer type is an exact integer first, so the cast
@@ -76,6 +79,36 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         }
         self.mk(H::Cast(Box::new(inner)), target, span)
+    }
+
+    /// `(c ? "only" : r.hydrate) as Strategy` for a union of string literals: each arm asserted
+    /// (`c ? ("only" as Strategy) : (r.hydrate as Strategy)`), the same value, so an arm of
+    /// another literal union is asserted as one (`literal_union_cast`).
+    fn asserted_arms(
+        &mut self,
+        expr: &ast::Expr,
+        ty: &ast::TypeExpr,
+        target: TyId,
+        want: Want,
+    ) -> Option<hir::Expr> {
+        let e = super::object_builtins::strip_parens(expr);
+        let ast::ExprKind::Cond { cond, then, els } = &e.kind else {
+            return None;
+        };
+        self.string_literals(target)?;
+        let arm = |x: &ast::Expr| {
+            let kind = ast::ExprKind::Cast {
+                expr: Box::new(x.clone()),
+                ty: ty.clone(),
+            };
+            Box::new(super::callback::synth(kind, x.span))
+        };
+        let kind = ast::ExprKind::Cond {
+            cond: cond.clone(),
+            then: arm(then),
+            els: arm(els),
+        };
+        Some(self.expr(&super::callback::synth(kind, e.span), Some(target), want))
     }
 
     /// `e as T` for a `T` that is not a number or `bool`: a TypeScript type assertion, which
@@ -162,6 +195,7 @@ impl FnCx<'_, '_> {
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
         self.object_view_cast(inner, target, span)
             .or_else(|h| self.try_coerce(h, target))
+            .or_else(|h| self.literal_union_cast(h, target, span))
             .or_else(|h| self.param_as_object(h, target))
             .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span))

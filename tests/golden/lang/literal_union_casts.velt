@@ -1,0 +1,38 @@
+// A union of string literals asserted to another (TypeScript compares them through `string`),
+// and a literal union narrowed by `===` / `!==`, on a local or a field path, to the members
+// another union has: sigx's island strategies and boundary records.
+type Strategy = "load" | "idle" | "visible" | "only";
+type Hydrate = "load" | "idle" | "visible" | "never";
+interface Info { strategy?: Strategy }
+interface Rec { hydrate?: Hydrate; flush?: "skip" }
+
+function toRecord(info: Info): Rec {
+    const record: Rec = {};
+    if (info.strategy === "only") {
+        record.hydrate = "load";
+        record.flush = "skip";
+    } else if (info.strategy !== undefined) {
+        record.hydrate = info.strategy as Hydrate;
+    }
+    return record;
+}
+function toInfo(record: Rec): Info {
+    return { strategy: (record.flush === "skip" ? "only" : (record.hydrate ?? "load")) as Strategy };
+}
+console.log(toRecord({ strategy: "idle" }), toRecord({ strategy: "only" }), toRecord({}));
+console.log(toInfo({ hydrate: "visible" }), toInfo({ flush: "skip" }), toInfo({}));
+
+function narrowed(s: Strategy): Hydrate {
+    if (s === "only") return "load";
+    return s;
+}
+function kept(s: Strategy): Hydrate | null {
+    if (s !== "only") return s;
+    return null;
+}
+console.log(narrowed("idle"), narrowed("only"), kept("visible"), kept("only"));
+
+function fromInfo(info: Info): Rec {
+    return info.strategy === "only" ? { hydrate: "load", flush: "skip" } : { hydrate: info.strategy };
+}
+console.log(fromInfo({ strategy: "visible" }), fromInfo({ strategy: "only" }), fromInfo({}));

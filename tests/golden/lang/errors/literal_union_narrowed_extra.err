@@ -1,0 +1,2 @@
+literal_union_narrowed_extra.velt:5:12: error: mismatched types
+  = note: expected A, found "a" | "b" | "c"

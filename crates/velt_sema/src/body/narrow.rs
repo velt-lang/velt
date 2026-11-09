@@ -371,15 +371,31 @@ impl FnCx<'_, '_> {
         if let Some(facts) = self.discriminant_facts(other, &lit) {
             return facts;
         }
-        let Some((l, nullable, u)) = self.union_local(other) else {
+        // A union local, or a field path of one (`info.strategy === "only"`).
+        let found = match self.union_local(other) {
+            Some(x) => Some(x),
+            None => (self.field_with_members(other))
+                .map(|(l, nullable, u, _)| (l, nullable, u))
+                .filter(|(_, _, u)| self.cx.union_def(*u).is_some()),
+        };
+        let Some((l, nullable, u)) = found else {
             return (vec![], vec![]);
         };
         let numbers = self.number_lit_members(u, &lit).filter(|f| !f.is_empty());
+        let mut f = vec![];
         let vs = match numbers {
             // `x === 1` on `f64 | u8`: either number member may hold the 1.
             Some(found) => found.into_iter().map(|(v, ..)| v).collect(),
             None => match self.lit_member_quiet(u, lit) {
-                Some((v, _)) => vec![v],
+                Some((v, m)) => {
+                    // A literal-type member is that one value: when the test is false the
+                    // local is one of the others (`s !== "only"` on `"load" | "only"`).
+                    if self.cx.lit_value(m).is_some() {
+                        let n = self.cx.union_members(u).map_or(0, |ms| ms.len() as u32);
+                        f.push(Fact::Members(l, (0..n).filter(|w| *w != v).collect()));
+                    }
+                    vec![v]
+                }
                 None => return (vec![], vec![]),
             },
         };
@@ -387,7 +403,7 @@ impl FnCx<'_, '_> {
         if nullable {
             t.push(Fact::NonNull(l));
         }
-        (t, vec![])
+        (t, f)
     }
 
     /// Facts of `typeof x === tag`.
