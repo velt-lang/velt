@@ -295,7 +295,8 @@ pub fn lower_checked(
 /// [`lower_checked`], also returning the program's counted types as a seed for lowering its next
 /// version (`LowerOptions::counted_seed`). For `velt dev`: a seed that names a type the next
 /// version no longer needs keeps it counted (lower/boxing/seed.rs), so the next version's code
-/// may differ from a lowering without the seed in representation, never in behavior.
+/// may differ from a lowering without the seed in representation (more counting), not in
+/// behavior: what would change behavior (an `RwLock`'s exclusive `read`) is never seeded.
 pub fn lower_seeded(
     program: &hir::Program,
     opts: &LowerOptions,

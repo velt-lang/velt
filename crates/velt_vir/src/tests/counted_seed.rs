@@ -76,3 +76,32 @@ fn a_seed_carries_over_to_an_edited_version() {
         "the same program with and without the old version's seed"
     );
 }
+
+/// [`V1`] after an edit that stops sharing `Node`: one binding, no closure.
+const V3: &str = "class Node { v: number = 0; next: Node | null = null; }
+function main() {
+  const a = new Node();
+  a.v += 1;
+  console.log(a.v);
+}
+";
+
+/// A seed naming a type the edited version no longer needs (the case of a `velt dev` reload
+/// that removes a share): it stays counted, in one pass, and the program is valid.
+#[test]
+fn a_stale_seed_keeps_its_types_counted_in_one_pass() {
+    let (_, seed, _) = lower(V1, None);
+    assert!(seed.names("adt Node"), "v1 counts Node: {seed:?}");
+    let (_, cold_seed, _) = lower(V3, None);
+    assert!(
+        !cold_seed.names("adt Node"),
+        "v3 alone counts nothing of Node"
+    );
+    // `lower` verifies the program.
+    let (_, warm_seed, warm_passes) = lower(V3, Some(&seed));
+    assert_eq!(warm_passes, 1, "nothing more to find");
+    assert!(
+        warm_seed.names("adt Node"),
+        "the stale seed keeps Node counted"
+    );
+}

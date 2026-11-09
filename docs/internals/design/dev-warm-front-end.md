@@ -101,7 +101,10 @@ qualified name) and hands them to the next version's lowering (`LowerOptions::co
 counts the same types. Measured in `velt dev` on `http_hello`: lowering per save from about
 220 ms to about 110 ms. Counted sets only grow within a lowering, so a type an edit stops
 needing stays counted until the host restarts: a representation the cold build would not pick,
-with the same behavior. `velt build` and `velt run` never use a seed.
+with the same behavior; the one counted fact that is behavior, an `RwLock` whose `read` is
+exclusive (`lock_exclusive`), is never seeded. Applying a seed spells every type of the new
+version's table (`Cx::type_key`), which the measured win includes. `velt build` and `velt run`
+never use a seed.
 
 **2b: reuse the lowered functions.** Lowering builds every reached instance through a worklist,
 then lowers again while the counted-types pass grows (`lower/boxing/`). A function's VIR depends on its checked HIR, the

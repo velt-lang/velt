@@ -11,7 +11,18 @@
 //! definitions by their qualified names: the type table of the next version is another one. A
 //! name the next program does not have is dropped. Counted sets only grow within a lowering
 //! (`Cx::close_boxing`), so a seed never takes a type out; one the program no longer needs stays
-//! counted until the host restarts, which changes the representation, not what the program does.
+//! counted until the host restarts. For the sets carried that is a representation the edited
+//! program cannot observe: more counting, an `any` table slot it does not use, an identity for
+//! closures it no longer compares. Not for `lock_exclusive`: an `RwLock` whose `read` stayed
+//! exclusive after the edit removed the reason (a callback in its value) would not let two
+//! readers in at once, so readers waiting for each other could deadlock where the cold build
+//! lets them both read. It is never seeded: each lowering finds it again (it is rare, so it rarely
+//! costs a second pass).
+//!
+//! Type keys name a class or interface by its qualified name, and every object literal that
+//! implements interface `I` by one hidden struct name (`hidden_struct_def`), so two of them share a
+//! key and the seed may count another one than the old version did: every hidden struct may be
+//! counted in a cold build too, so that costs at most an extra pass.
 
 use std::collections::BTreeSet;
 
@@ -35,6 +46,12 @@ pub struct CountedSeed {
 }
 
 impl CountedSeed {
+    /// Whether one of its sets names `name` (a type key, or `adt Node` for a definition).
+    #[cfg(test)]
+    pub(crate) fn names(&self, name: &str) -> bool {
+        (self.types.iter().chain(&self.defs)).any(|s| s.contains(name))
+    }
+
     /// Names nothing (the first version's, or a program that counts nothing): nothing to add.
     fn is_empty(&self) -> bool {
         self.types.iter().all(BTreeSet::is_empty)
@@ -81,7 +98,8 @@ impl Cx<'_> {
             lock_values,
             lock_roots,
             lock_boxes,
-            lock_exclusive,
+            // Not seeded: an exclusive `read` is behavior, not representation (module docs).
+            lock_exclusive: _,
             read_indirect,
         } = b;
         let types = |s: &mut dyn Iterator<Item = &TyId>| s.map(|t| self.type_key(*t)).collect();
@@ -101,7 +119,6 @@ impl Cx<'_> {
                 types(&mut array_views.iter()),
                 types(&mut lock_values.iter()),
                 types(&mut lock_boxes.iter()),
-                types(&mut lock_exclusive.iter()),
             ],
             defs: vec![
                 defs(&mut roots.iter()),
@@ -163,7 +180,6 @@ impl Cx<'_> {
         b.array_views.extend(t(8));
         b.lock_values.extend(t(9));
         b.lock_boxes.extend(t(10));
-        b.lock_exclusive.extend(t(11));
         let d = |i: usize| {
             (seed.defs.get(i).into_iter().flatten()).filter_map(|n| defs.get(n).copied())
         };

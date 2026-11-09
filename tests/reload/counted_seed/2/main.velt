@@ -1,0 +1,24 @@
+// A reload that stops sharing an object, then shares it again (velt_vir lower/boxing/seed.rs):
+// `velt dev` lowers each version from the previous one's counted types, so `Node` stays counted
+// after step 2 stops sharing it, and its layout with it: both edits swap, and every version
+// answers as it should. A restart (`--exe` mode) lowers each version on its own.
+import { serve } from "http-server";
+
+class Node {
+  v: number = 0;
+}
+
+function keep(n: Node, list: Node[]) {
+  list.push(n);
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const list: Node[] = [];
+    const a = new Node();
+    a.v += 1;
+    return new Response(`node=${a.v} ${list.length}`);
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}
