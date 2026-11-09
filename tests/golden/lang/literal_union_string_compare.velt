@@ -1,0 +1,57 @@
+// A `string` asserted to a union of string literals (`path as Route`) inside `includes` /
+// `indexOf` / `lastIndexOf` of an array of the union, or as an operand of `===` / `!==` /
+// `==` / `!=`, only compares the string: an unknown value is not found or unequal, as in Node
+// (#1410). sigx's router: the test, then the conversion it guarantees.
+type Route = '/' | '/counter' | '/forms';
+const ROUTES: ReadonlyArray<Route> = ['/', '/counter', '/forms'];
+
+function parseUrl(url: string): Route {
+    const path = url.split('?')[0].split('#')[0];
+    return ROUTES.includes(path as Route) ? (path as Route) : '/';
+}
+console.log(parseUrl('/counter?x=1'), parseUrl('/nope'), parseUrl('/forms#top'), parseUrl(''));
+
+// A call, an index read or another assertion as the value; the search methods' results.
+const urls = ['/forms', '/elsewhere'];
+const known: Route[] = ['/forms', '/', '/forms'];
+console.log(known.includes(urls[0] as Route), known.includes(urls[1] as Route));
+console.log(known.indexOf(urls[0] as Route), known.indexOf(urls[1] as Route));
+console.log(known.lastIndexOf(urls[0].trim() as Route), known.lastIndexOf('/x' as string as Route));
+console.log(known.includes(('/' + 'forms') as Route), known.includes(`/${'nope'}` as Route));
+
+// Comparisons, on either side, strict and loose.
+const current: Route = '/counter';
+const typed: string = '/counter';
+const other: string = '/missing';
+console.log(current === (typed as Route), (typed as Route) !== current);
+console.log(current === (other as Route), (other as Route) !== current);
+console.log((other as Route) == current, current != (other.toUpperCase() as Route));
+console.log((typed as Route) === (other as Route), (typed as Route) === (typed as Route));
+
+// The receiver is evaluated before the argument, once each.
+let reads = 0;
+function routes(): Route[] { reads++; console.log('routes'); return known; }
+function arg(): string { reads++; console.log('arg'); return '/nowhere'; }
+console.log(routes().includes(arg() as Route), reads);
+function left(): Route { console.log('left'); return '/'; }
+console.log(left() === (arg() as Route));
+
+// A `switch` on the assertion compares the string: an unknown value takes `default`.
+function title(path: string): string {
+    switch (path as Route) {
+        case '/':
+            return 'home';
+        case '/counter':
+            return 'counter';
+        default:
+            return 'not found';
+    }
+}
+console.log(title('/'), title('/counter'), title('/forms'), title('/x'));
+
+// Against a `Route | null`, which doesn't compare with a `string`: the string is tested first.
+const maybe: Route | null = urls.length > 5 ? '/' : null;
+const picked: Route | null = urls.length > 1 ? '/forms' : null;
+console.log(maybe === (urls[0] as Route), picked === (urls[0] as Route), picked !== (typed as Route));
+const p: string = '/forms';
+console.log(picked === (p as Route), (p as Route) !== picked, picked == ('/zz' as string as Route), picked !== ('/zz' as string as Route));

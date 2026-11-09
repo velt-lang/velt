@@ -1,0 +1,18 @@
+/counter / /forms /
+true false
+0 -1
+2 -1
+true false
+true false
+false true
+false true
+false true
+routes
+arg
+false 2
+left
+arg
+false
+home counter not found not found
+false true true
+true false false true

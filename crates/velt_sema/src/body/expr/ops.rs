@@ -305,6 +305,12 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         use ast::BinaryOp as B;
+        // `x === (s as Route)` of a `string` `s` compares the string (#1410).
+        if matches!(op, B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq) {
+            if let Some(h) = self.literal_cast_compare(op, lhs, rhs, exp, span) {
+                return h;
+            }
+        }
         // `===` is `==` except against `null` / `undefined` (`null_compare`).
         let strict = op.is_strict();
         let op = op.loose();

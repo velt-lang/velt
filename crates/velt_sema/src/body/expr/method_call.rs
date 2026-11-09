@@ -145,6 +145,14 @@ impl FnCx<'_, '_> {
                 Err(recv) => recv,
             },
         };
+        // `routes.includes(s as Route)` of a `string` `s` compares the string (#1410).
+        let recv = match getter {
+            true => recv,
+            false => match self.literal_search(recv, prop, type_args, args, exp, span) {
+                Ok(h) => return h,
+                Err(recv) => recv,
+            },
+        };
         // `xs.join()` / `xs.toString()` write each element as JS's `String(x)` (js_list.rs; a
         // list of `any`, `unknown` or `object` values: any_text.rs).
         let list_text = match prop.name.as_str() {
