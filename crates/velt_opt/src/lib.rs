@@ -181,6 +181,13 @@ fn with_bodies(funcs: &mut [vir::Function]) -> impl Iterator<Item = &mut vir::Fu
     funcs.iter_mut().filter(|f| !f.blocks.is_empty())
 }
 
+/// Remove the internal functions nothing exported reaches any more (`dead_funcs`), renumbering
+/// the others: after functions were made declarations once optimized (veltc's std cache), what
+/// only they called. Returns whether any were removed.
+pub fn remove_unused_functions(program: &mut vir::Program) -> bool {
+    dead_funcs::run(program)
+}
+
 /// How hard to optimize.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptLevel {

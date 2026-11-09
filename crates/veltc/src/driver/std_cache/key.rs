@@ -2,7 +2,7 @@
 //!
 //! - Who compiles it for what ([`Inputs`]): the compiler (`build_cache::compiler_identity`),
 //!   the LLVM backend's clang (its path, size and time, as the unit cache keys it), the target,
-//!   the CPU and the optimization level.
+//!   the CPU, and whether a release or a debug build links it.
 //! - What it is ([`Code`]): its canonical code (`velt_vir::fingerprint`, `Mode::Link`: callees,
 //!   statics and aggregates by content and symbol, externs with their declarations, the target
 //!   feature set, poll state) and its parameter attributes; then the same for every small
@@ -31,10 +31,13 @@ pub(super) struct Inputs {
     pub opt: String,
     pub target: String,
     pub cpu: Option<String>,
-    pub optimize: bool,
+    /// For a release build. Both are compiled at `Speed`, but each build lowers its code its own
+    /// way, and a debug build's object never serves a release build, nor the other way round.
+    pub release: bool,
 }
 
 /// What a function is, as its key sees it.
+#[derive(Clone)]
 pub(super) struct Code {
     pub symbol: String,
     pub text: String,
@@ -86,7 +89,7 @@ impl Inputs {
             opt: velt_codegen_llvm::opt_flag().to_string(),
             target: cg.target.clone(),
             cpu: cg.cpu.clone(),
-            optimize: opts.release,
+            release: opts.release,
         }
     }
 
@@ -99,7 +102,7 @@ impl Inputs {
             opt: velt_codegen_llvm::opt_flag().to_string(),
             target: target.to_string(),
             cpu: None,
-            optimize: true,
+            release: false,
         }
     }
 
@@ -131,7 +134,7 @@ impl Inputs {
         h.part(self.opt.as_bytes());
         h.part(self.target.as_bytes());
         h.part(self.cpu.as_deref().unwrap_or("").as_bytes());
-        h.part(&[u8::from(self.cpu.is_some()), u8::from(self.optimize)]);
+        h.part(&[u8::from(self.cpu.is_some()), u8::from(self.release)]);
         h
     }
 }
@@ -147,7 +150,7 @@ mod tests {
             opt: "-O3".into(),
             target: "aarch64-apple-darwin".into(),
             cpu: None,
-            optimize: true,
+            release: true,
         }
     }
 
@@ -196,7 +199,7 @@ mod tests {
                 ..base()
             },
             Inputs {
-                optimize: !base().optimize,
+                release: !base().release,
                 ..base()
             },
         ] {
@@ -206,6 +209,10 @@ mod tests {
             Inputs::debug("t").cpu,
             None,
             "always the default CPU's objects"
+        );
+        assert!(
+            !Inputs::debug("t").release,
+            "never a release build's objects"
         );
     }
 
@@ -240,7 +247,7 @@ mod tests {
                 ..base()
             },
             Inputs {
-                optimize: false,
+                release: false,
                 ..base()
             },
         ];

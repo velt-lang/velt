@@ -89,7 +89,10 @@ impl Backend {
                 Ok((vec![obj], cache.map(|_| stats)))
             }
             Backend::Llvm => {
-                let cache = cache.map(crate::build_cache::Objects);
+                // A build storing std's objects (`velt cache warm`) stores no codegen units: they
+                // hold its whole warm-up program, which no other program's build reuses.
+                let filling = std::env::var_os("VELT_STD_OBJECT_FILL").is_some();
+                let cache = cache.filter(|_| !filling).map(crate::build_cache::Objects);
                 let cache = cache.as_ref().map(|c| c as &dyn CodeCache);
                 let (objs, stats) =
                     velt_codegen_llvm::emit_objects_cached(program, opts, units, timings, cache)?;

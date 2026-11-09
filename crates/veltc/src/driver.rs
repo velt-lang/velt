@@ -465,62 +465,13 @@ fn compile_to_vir_linking(
         )));
     }
 
-    // The std cache (#1728): std functions out of the program before it is optimized, their
-    // objects linked after. The program as lowered is kept to fall back on. A generator host
-    // stays whole: `check_generator_host` looks through its code.
-    let cg = velt_codegen_cl::CodegenOptions {
-        target: opts.target(),
-        optimize: opts.release,
-        cpu: opts.cpu.clone(),
-    };
+    // The std cache (#1728), around the optimizer. A generator host stays whole:
+    // `check_generator_host` looks through its code.
     let std_use = match link_std && !sess.generator_build {
         true => std_cache::wanted(opts),
         false => std_cache::Use::Off,
     };
-    // A declaration hides what its function reaches. Set either way: a build on this session that
-    // stopped early must not leave its answer for this one.
-    sess.reaches = (std_use != std_cache::Use::Off).then(|| outside::reaches(&program));
-    let place =
-        OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target).std_objects();
-    if std_use != std_cache::Use::Off && sess.turn.is_none() {
-        sess.turn = place.lock(sess.verbose);
-    }
-    if std_use == std_cache::Use::Debug {
-        let t = Instant::now();
-        sess.std_objects = std_cache::serve::serve(&mut program, opts, &cg, &place);
-        sess.record("std cache", t);
-    }
-    let std_plan = (std_use == std_cache::Use::Release).then(|| {
-        let t = Instant::now();
-        let unsplit = program.clone();
-        let plan = std_cache::split(&mut program, opts, &cg);
-        sess.record("std cache", t);
-        (unsplit, plan)
-    });
-    optimize_stage(sess, opts, &mut program)?;
-    if let Some((unsplit, plan)) = std_plan {
-        let t = Instant::now();
-        match std_cache::link(plan, &program, &cg, &place) {
-            Ok(linked) => {
-                if std_cache::stats() {
-                    eprintln!(
-                        "velt: std cache: {} found, {} compiled, {} no longer called",
-                        linked.hits, linked.misses, linked.dropped
-                    );
-                }
-                sess.std_objects = linked.objects;
-            }
-            Err(why) => {
-                place.clear();
-                if std_cache::stats() {
-                    eprintln!("velt: std cache: not used for this build: {why}");
-                }
-                program = unsplit;
-                optimize_stage(sess, opts, &mut program)?;
-            }
-        }
-        sess.record("std cache link", t);
-    }
+    std_cache::stage::optimize(sess, opts, &target, std_use, &mut program)?;
     if opts.report_numbers {
         sess.reports.push(crate::numbers_report::render(&program));
         if !line_info {

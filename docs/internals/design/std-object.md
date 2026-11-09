@@ -60,7 +60,8 @@ world and a program, and adopting the world's would box `f64[]` and `u8[]` in ev
 Cached one by one, keyed by their code, std functions serve 82-89% of it, and what a program links
 is exactly what it would have compiled (measurements on #1728). So step 3 is a cache of std
 functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds behind
-`VELT_STD_OBJECT=1` (`crates/veltc/src/driver/std_cache/`):
+`VELT_STD_OBJECT=1` (`crates/veltc/src/driver/std_cache/`; by default those marked `noInline()`,
+below):
 
 - Std's code includes what std's generators write for a program (`<generated>/std/…` in the
   source map: `JSON.parse<T>`'s reader of `T`). It is served like a generic instance: an
@@ -98,6 +99,73 @@ IR from `--emit` would name std functions it does not define, and the cached obj
 line info. The key also covers clang's optimization flag and, for every function a cached
 object calls without compiling it, the signature and parameter attributes it is declared with,
 which are whole-program facts the caller is optimized against.
+
+### Release builds: the functions std marks `noInline()`
+
+A release build reads the cache by default for the std functions marked `noInline()`
+(`std_cache/no_inline.rs`, the owner's decision on #2405 and #2404). The optimizer never inlines
+such a function into a caller, so its object holds the code the program would have compiled for
+it, and the program's clang no longer compiles it: the HTML escaper's `escapeFrom` and
+`escapeEntities` cost every release build that used them +178M instructions of clang. Every
+other std function stays in the program, where it can be inlined and specialized, so nothing
+changes for them. Such a build:
+
+- looks in the cache only when it has held a `stdfn` entry and the program has a std function
+  marked `noInline()`; else it does nothing a build without the cache would not do.
+- serves those as `VELT_STD_OBJECT=1` serves anything (the same rules: not reaching statics with
+  identity that can't be named, no calls through a function pointer, a `$dup` stays), under the
+  same keys: the CPU the program is built for (`--cpu`, `VELT_CPU`, `build.cpu`), clang, and the code a release
+  build lowered. A key says whether a release or a debug build links it, so a debug build's object
+  never serves a release build, nor the other way round. `--cpu native` is keyed as the word, not
+  the host's CPU, so a cache shared between machines (copied, or on a network) can link objects
+  another machine built for its `native`; the LLVM unit cache has the same limitation
+  (`-march=native`).
+- links what it finds, placed before the program is optimized, as a debug build does: a miss stays
+  in the program, and no clang starts for it. After optimization it links the objects of what the
+  program still calls, closed over what those objects call, and removes the others from their
+  place. `velt cache warm` builds its programs in release too, for the same two CPUs, which stores
+  them (`VELT_STD_OBJECT_FILL`).
+- `noInline()` is never inlined into an object either: a small function marked so is served
+  itself, not compiled into its callers.
+- compiles each object with copies of its own (internal to it) of every function the served
+  function reaches through functions not marked `noInline()`, whatever their size, all in its key
+  (`select::Depth::Whole`): velt_opt and LLVM inline large callees into it in the program too.
+  Compiled with the small ones alone, as `VELT_STD_OBJECT=1` and debug builds compile theirs, the
+  objects called back into the program for the rest: `f64Text`'s object called `floatText`
+  (`float_to_string` +5.2% on arm64) and `escapeFrom`'s called `block` once per 16-byte block
+  (`html_escape` +13% on x86-64). A function whose address is taken stays the program's, with
+  one address, and so do the `noInline()` functions it calls; the program exports only those
+  and what the object declares. What an object can't see is its callers' arguments: the program
+  could fold a constant flag into a function it never inlines.
+- **Never served:** leaves in the program the std functions `select::NEVER_SERVED` names
+  (non-generic functions, by their whole name), whatever they are marked; a debug build, which
+  folds no constants, still serves them. It is a tool std's authors use deliberately, beside `noInline()`: for a
+  `noInline()` function whose callers, inlined into the program's code, pass it constants that
+  LLVM specializes it for in the program and an object compiled once can't see. Each entry says
+  why, and a test fails on a name std no longer defines. The first is `fixedText`
+  (std/lang/number/fixed): `toFixed` passes it the caller's `digits`, a constant at most call
+  sites (`toFixed(2)`); served, `bench/stdport/to_fixed` ran 3.1 % more instructions. Constants
+  std itself passes (a flag fixed per entry point) are better fixed in std, with an `inline()`
+  body under `noInline()` entry points, which keeps the object served.
+- takes a served function out of the program after velt_opt has optimized it, not before
+  (`Served::take_out`): it is never inlined, so its callers keep their calls of it, but
+  while velt_opt runs it takes room in the inliner's program-wide budget (`Budget::for_program`)
+  and spends some of it, inlining its own callees. Taken out before, both went to the rest of the
+  program, which was inlined differently: serving the integer printers that
+  `bench/stdport/brotli_stream_*` calls once at the end moved a large drop glue into
+  `Decoder.run` (+3.5 to +6.6 %). Taken out after, the program's code is the same as without the
+  cache, but for the functions its object calls, made `Export` before velt_opt runs so that it
+  takes no facts about them from the program's calls; the cost is velt_opt's work on a body that
+  is then dropped (clang never sees it). Then what only the served functions called is removed.
+  A clone velt_opt makes of a served function (`const_fields` for a known closure, `null_exits`)
+  is the program's own, compiled with it as without the cache.
+- leaves in the program a function the optimizer would clone for a function gated on a CPU
+  extension (`gated_clones`: an ordinary function checking an extension, itself or through what
+  it references), and a gated function whose object would call such a function: in the program
+  the clone has the check folded away, which an object compiled without it would not.
+
+`VELT_STD_OBJECT=0` turns it off, and `VELT_STD_OBJECT=1` serves every function the cache serves
+(above).
 
 ### Debug builds
 

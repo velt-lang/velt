@@ -320,5 +320,6 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   share statics under `.s<n>`; Cranelift declares it as `Hidden` or `Import` data under its
   symbol and defines only the `Export` one.
 - `fingerprint` (both modes) prints a named static's symbol and linkage with its contents.
-- Lowering never names a static; only the std cache does (`VELT_STD_OBJECT=1`, and debug builds
-  that find objects in it), so builds without it are unchanged.
+- Lowering never names a static; only the std cache does (release builds that find objects of
+  `noInline()` functions in it or set `VELT_STD_OBJECT=1`, and debug builds that find objects in
+  it), so builds without it are unchanged.

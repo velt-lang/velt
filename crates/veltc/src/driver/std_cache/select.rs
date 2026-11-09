@@ -5,6 +5,9 @@
 //! - in a release build, small ones ([`SMALL`]) and those std marks `inline()`, which stay where
 //!   callers can inline them; a debug build inlines neither, so it links them too, and keeps only
 //!   the helpers its optimizer level inlines ([`Rule::Debug`]);
+//! - in a release build by default ([`Rule::NoInline`]), every function std does not mark
+//!   `noInline()`: the optimizer may inline or specialize any other into its callers, so only a
+//!   function it never inlines runs the same from an object;
 //! - renamed duplicates (`$dup`), which are not the same function in every program;
 //! - those whose inlinable set ([`inlinable`]) reaches a static with identity (relocations, or
 //!   written: vtables, type descriptors, module state) that can't be named: such statics are
@@ -17,7 +20,17 @@
 //! - in a debug build, those whose inlinable set shows a place in the program's own files
 //!   ([`user_sites`]): a caller-tracking instance per call site. Its key holds that path, so no
 //!   other program can link it, while Cranelift, whose key leaves data out, shares its code with
-//!   every program that has the instance.
+//!   every program that has the instance;
+//! - in a release build by default, those the optimizer would clone for a function gated on a CPU
+//!   extension (`velt_opt`'s `gated_clones`), and gated ones whose code calls such a function
+//!   without compiling it: in the program the clone has the extension's check folded away, which
+//!   their object, compiled without it, would not ([`simd_checking`]);
+//! - in a release build, those [`NEVER_SERVED`] names, whose callers pass them constants the
+//!   program folds into them.
+//!
+//! What a served function's object is compiled with ([`Depth`]): the small functions it calls
+//! (and those marked `inline()`), or in a release build by default every function it reaches
+//! through functions not marked `noInline()`, as copies of its own.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -34,6 +47,11 @@ pub(super) const SMALL: usize = 40;
 pub(super) enum Rule<'a> {
     /// Those its optimizer may inline ([`inlines`]).
     Release,
+    /// A release build's default: as [`Rule::Release`], and every function std does not mark
+    /// `noInline()` (`Inline::Never`). Those are never inlined into a caller, so serving their
+    /// objects changes no caller's code, and their callers' clang no longer compiles them.
+    /// `simd`: [`simd_checking`] of the program.
+    NoInline { simd: &'a [bool] },
     /// A debug build: those `velt_opt::debug_inlined` marks. Calls of the others stay calls in
     /// its code, so what serves them can only make it faster. `thread_data`: the program's
     /// thread-local values are data that an object can share
@@ -46,10 +64,45 @@ pub(super) enum Rule<'a> {
     },
 }
 
-/// Whether the optimizer inlines `f` into a function compiled with it: it is small, or std marks
-/// it `inline()`. Its body goes into what calls it, so it is in their keys.
-pub(super) fn inlines(f: &vir::Function) -> bool {
-    size(f) < SMALL || f.inline == Inline::Always
+/// Which of the functions a served function calls its object is compiled with (their bodies,
+/// which the optimizers may inline into it, and which are in its key).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Depth {
+    /// The small ones and those std marks `inline()`, which an optimized caller inlines whatever
+    /// else it knows; the object keeps them as declarations with their bodies, and calls the
+    /// program's copy where it doesn't inline one.
+    Small,
+    /// Every function it reaches through functions not marked `noInline()`, whatever their size,
+    /// as copies of its own (`compile::own_copies`): in the program velt_opt and LLVM inline
+    /// large callees into it too. With the small ones alone, `f64Text`'s object called
+    /// `floatText`, and `bench/stdport/float_to_string` ran 5.2% slower.
+    Whole,
+}
+
+/// Whether a function compiled at `depth` has `f`'s body compiled into it (its callers' keys
+/// hold it): small or marked `inline()` (any function at [`Depth::Whole`]), and not marked
+/// `noInline()`: such a function stays a call, so its callers' objects declare it.
+pub(super) fn inlines(f: &vir::Function, depth: Depth) -> bool {
+    let compiled_in = match depth {
+        Depth::Small => size(f) < SMALL || f.inline == Inline::Always,
+        Depth::Whole => true,
+    };
+    f.inline != Inline::Never && compiled_in
+}
+
+impl Rule<'_> {
+    /// A release build's rule: the optimizer inlines and specializes across functions.
+    fn release(self) -> bool {
+        matches!(self, Rule::Release | Rule::NoInline { .. })
+    }
+
+    /// What a served function's object is compiled with under this rule.
+    pub fn depth(self) -> Depth {
+        match self {
+            Rule::NoInline { .. } => Depth::Whole,
+            Rule::Release | Rule::Debug { .. } => Depth::Small,
+        }
+    }
 }
 
 /// `f`'s statements, terminators included.
@@ -65,8 +118,44 @@ const GENERATED_STD: &str = "<generated>/std/";
 /// generators (`JSON.parse<T>`'s reader of `T`). Generated code is served like a generic
 /// instance: its key is its code, so a program that generates the same code links it.
 fn is_std(f: &vir::Function) -> bool {
-    let name = velt_vir::mangle::demangle(&f.symbol);
-    velt_common::std_modules::is_std(&name) || name.starts_with(GENERATED_STD)
+    is_std_name(&velt_vir::mangle::demangle(&f.symbol))
+}
+
+/// [`is_std`] of a demangled name.
+fn is_std_name(name: &str) -> bool {
+    velt_common::std_modules::is_std(name) || name.starts_with(GENERATED_STD)
+}
+
+/// Whether [`NEVER_SERVED`] names `f`.
+fn never_served(f: &vir::Function) -> bool {
+    NEVER_SERVED.contains(&velt_vir::mangle::demangle(&f.symbol).as_str())
+}
+
+/// The std functions a release build never serves, by name (`<std module>::<function>`, a function
+/// that is neither generic nor a method: the name is matched whole): each stays in the program,
+/// compiled with it, whatever it is marked. Debug builds, which fold no constants, still serve
+/// them. For a `noInline()` function whose
+/// callers, inlined into the program's code, pass it constants: in the program LLVM specializes
+/// it for them, an object compiled once can't. A tool std's authors use deliberately, each entry
+/// with why (design/std-object.md "Never served"); a name that no longer exists in std fails a
+/// test.
+pub(super) const NEVER_SERVED: &[&str] = &[
+    // `toFixed` (std/lang/number/to_fixed) is inlined into its callers and passes their `digits`,
+    // a constant at most call sites (`toFixed(2)`): the power of ten and the point's place fold.
+    // Served, `bench/stdport/to_fixed` ran 3.1 % more instructions.
+    "std/lang/number/fixed::fixedText",
+];
+
+/// Whether `program` has a std function marked `noInline()` that [`Rule::NoInline`] may serve,
+/// by the marker alone: without one, a release build looks no further.
+pub(super) fn has_no_inline(program: &vir::Program) -> bool {
+    (program.funcs.iter()).any(|f| {
+        f.inline == Inline::Never
+            && f.linkage == Linkage::Internal
+            && !f.blocks.is_empty()
+            && is_std(f)
+            && !never_served(f)
+    })
 }
 
 /// The functions of `program` the cache serves (`names`: its statics' names).
@@ -79,18 +168,26 @@ pub(super) fn candidates(program: &vir::Program, names: &Names, rule: Rule) -> V
 /// Why std function `i` stays in the program; `None` when the cache serves it.
 fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option<&'static str> {
     let f = &program.funcs[i];
-    if !is_std(f) || f.linkage != Linkage::Internal || f.blocks.is_empty() {
+    if f.linkage != Linkage::Internal || f.blocks.is_empty() {
         return Some("not internal");
     }
+    let name = velt_vir::mangle::demangle(&f.symbol);
+    if !is_std_name(&name) {
+        return Some("not internal");
+    }
+    if rule.release() && NEVER_SERVED.contains(&name.as_str()) {
+        return Some("never served");
+    }
     match rule {
-        Rule::Release if inlines(f) => return Some("small"),
+        Rule::NoInline { .. } if f.inline != Inline::Never => return Some("inlinable"),
+        Rule::Release if inlines(f, Depth::Small) => return Some("small"),
         Rule::Debug { helpers, .. } if helpers.get(i) == Some(&true) => return Some("small"),
         _ => {}
     }
     if f.symbol.contains("$dup") {
         return Some("$dup");
     }
-    let set = inlinable(program, i);
+    let set = inlinable(program, i, rule.depth());
     if matches!(
         rule,
         Rule::Debug {
@@ -110,14 +207,60 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     if !statics::nameable(names, &reached) {
         return Some("statics with identity");
     }
-    if matches!(rule, Rule::Release)
+    if rule.release()
         && set
             .iter()
             .any(|&j| calls_through_pointer(&program.funcs[j]))
     {
         return Some("callbacks");
     }
+    if let Rule::NoInline { simd } = rule {
+        let checks = |j: usize| simd.get(j) == Some(&true);
+        let gated = set.iter().any(|&j| program.funcs[j].target.is_some());
+        if checks(i) || (gated && declared(program, &set).into_iter().any(checks)) {
+            return Some("SIMD dispatch");
+        }
+    }
     None
+}
+
+/// Per function of `program`, whether `velt_opt`'s `gated_clones` may clone it for a function
+/// gated on a CPU extension: an ordinary function (no target of its own, not a poll function)
+/// that checks a CPU extension (`velt_simd_has_<ext>`), itself or through functions it
+/// references.
+pub(super) fn simd_checking(program: &vir::Program) -> Vec<bool> {
+    let ordinary = |f: &vir::Function| f.target.is_none() && !f.is_poll;
+    let checks_itself = |f: &vir::Function| {
+        (f.blocks.iter()).any(|b| match &b.term {
+            Terminator::Call {
+                callee: Callee::Extern(e),
+                ..
+            } => matches!(
+                velt_vir::simd::SimdCall::of_symbol(&program.ext(*e).symbol),
+                Some(velt_vir::simd::SimdCall::Has(_))
+            ),
+            _ => false,
+        })
+    };
+    let mut checks: Vec<bool> = (program.funcs.iter())
+        .map(|f| ordinary(f) && checks_itself(f))
+        .collect();
+    let mut callers: Vec<Vec<usize>> = vec![vec![]; program.funcs.len()];
+    for (i, f) in program.funcs.iter().enumerate() {
+        for c in referenced(f) {
+            callers[c].push(i);
+        }
+    }
+    let mut pending: Vec<usize> = (0..checks.len()).filter(|&i| checks[i]).collect();
+    while let Some(c) = pending.pop() {
+        for &i in &callers[c] {
+            if !checks[i] && ordinary(&program.funcs[i]) {
+                checks[i] = true;
+                pending.push(i);
+            }
+        }
+    }
+    checks
 }
 
 /// Per static of `program`, whether it is a location outside std, as a caller-tracking instance
@@ -160,10 +303,10 @@ pub(super) fn reasons(
     by
 }
 
-/// Function `i` and every function the optimizer inlines ([`inlines`]) that it reaches through
-/// such functions: what its code compiled on its own may inline. In a deterministic order, `i`
-/// first.
-pub(super) fn inlinable(program: &vir::Program, i: usize) -> Vec<usize> {
+/// Function `i` and every function compiled into it at `depth` ([`inlines`]) that it reaches
+/// through such functions: what its code compiled on its own may inline. In a deterministic
+/// order, `i` first.
+pub(super) fn inlinable(program: &vir::Program, i: usize, depth: Depth) -> Vec<usize> {
     let mut seen = HashSet::from([i]);
     let mut order = vec![i];
     let mut n = 0;
@@ -171,7 +314,7 @@ pub(super) fn inlinable(program: &vir::Program, i: usize) -> Vec<usize> {
         n += 1;
         for c in referenced(&program.funcs[j]) {
             let f = &program.funcs[c];
-            if f.linkage == Linkage::Internal && inlines(f) && seen.insert(c) {
+            if f.linkage == Linkage::Internal && inlines(f, depth) && seen.insert(c) {
                 order.push(c);
             }
         }

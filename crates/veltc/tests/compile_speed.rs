@@ -400,7 +400,8 @@ fn cache_warm_compiles_the_warm_up_programs_once() {
         .collect();
     assert!(counts.len() == 2 && counts[0] == counts[1], "{err}");
 
-    // A program that does not compile is reported, and leaves the cache unmarked.
+    // A program that does not compile is reported; the others warmed the cache, which is marked,
+    // so a later run does not build them all again only to fail on it again.
     std::fs::remove_dir_all(&cache).unwrap();
     std::fs::write(
         warm.join("broken.velt"),
@@ -411,7 +412,7 @@ fn cache_warm_compiles_the_warm_up_programs_once() {
     let err = text(&o.stderr);
     assert!(!o.status.success() && err.contains("broken.velt"), "{err}");
     let o = velt(dir, &["cache", "warm"], &env);
-    assert!(text(&o.stderr).contains("warmed the build cache with 2 programs"));
+    assert!(text(&o.stderr).contains("warm for this velt already"));
 }
 
 /// Run a copy of `exe` named after `tag`, beside it (where Windows finds the runtime DLL). The

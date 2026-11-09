@@ -1,7 +1,8 @@
 //! Compiling a std function on its own, and storing its object.
 //!
-//! The function is compiled in a program of its own: itself (exported), the small functions it
-//! may inline (declarations keeping their bodies; they are in its key), declarations of what
+//! The function is compiled in a program of its own: itself (exported), the functions it may
+//! inline (`select::Depth`; they are in its key: declarations keeping their bodies in a debug
+//! build's object, internal copies of its own in a release build's), declarations of what
 //! those call, copies of the plain statics they name, and the statics with identity they reach
 //! as `Import`s under the program's names for them, with their contents (`statics`), and
 //! declarations of the functions those name; the aggregates and externs are the program's, so
@@ -10,7 +11,7 @@
 //! anywhere) and compiled by LLVM to an object of its own. The program's entry is declared,
 //! never defined, in such an object (vir.rs invariant 5).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -55,9 +56,21 @@ pub(super) fn each(
 }
 
 /// The program of function `i` alone (module docs); `names`: the program's statics' names.
-pub(super) fn program_of(program: &vir::Program, i: usize, names: &Names) -> vir::Program {
-    let bodies = select::inlinable(program, i);
+pub(super) fn program_of(
+    program: &vir::Program,
+    i: usize,
+    names: &Names,
+    depth: select::Depth,
+) -> vir::Program {
+    let bodies = select::inlinable(program, i, depth);
+    let in_bodies: HashSet<usize> = bodies.iter().copied().collect();
     let reached = statics::reached(program, &bodies);
+    // At `Depth::Whole`, the object's own copies of what it is compiled with, as the program's
+    // are internal to it: velt_opt and LLVM then optimize them with what calls them, as in the
+    // program (as declarations keeping their bodies, `floatText` stayed a call in `f64Text`'s
+    // object, which ran 5% slower). Not those whose address is taken: the program's address
+    // must stay the one address.
+    let own_copy = own_copies(program, &bodies, &reached, depth);
     let mut funcs: HashMap<usize, FuncId> = HashMap::new();
     let mut order: Vec<usize> = vec![];
     let mut add = |j: usize, order: &mut Vec<usize>| {
@@ -107,10 +120,12 @@ pub(super) fn program_of(program: &vir::Program, i: usize, names: &Names) -> vir
         f.locals.iter_mut().for_each(|l| l.debug = None);
         f.linkage = if j == i {
             Linkage::Export
+        } else if own_copy.contains(&j) {
+            Linkage::Internal
         } else {
             Linkage::Import
         };
-        if bodies.contains(&j) {
+        if in_bodies.contains(&j) {
             remap(
                 &mut f,
                 &funcs,
@@ -125,6 +140,33 @@ pub(super) fn program_of(program: &vir::Program, i: usize, names: &Names) -> vir
         alone.funcs.push(f);
     }
     alone
+}
+
+/// Of `bodies` (function `bodies[0]` and what it is compiled with at `depth`, which reach the
+/// statics with identity `reached`), those its object has copies of its own of, internal to it:
+/// at `Depth::Whole`, all but itself and those whose address is taken. The program's address
+/// must stay the one address; and the others are declarations keeping their bodies, the
+/// program's own, which it exports.
+pub(super) fn own_copies(
+    program: &vir::Program,
+    bodies: &[usize],
+    reached: &[usize],
+    depth: select::Depth,
+) -> HashSet<usize> {
+    if depth == select::Depth::Small {
+        return HashSet::new();
+    }
+    let mut taken: HashSet<usize> = statics::functions(program, reached).into_iter().collect();
+    for &j in bodies {
+        select::visit(&program.funcs[j], &mut |op| {
+            if let Operand::Const(Const::Func(f), _) = op {
+                taken.insert(f.0 as usize);
+            }
+        });
+    }
+    (bodies.iter().skip(1).copied())
+        .filter(|j| !taken.contains(j))
+        .collect()
 }
 
 /// Rename `f`'s functions and statics into the program alone, copying each static it names.
