@@ -25,7 +25,7 @@ pub fn serve_reloads(
     channel: Stream,
     opts: BuildOptions,
     mut session: DevSession,
-    mut seed: Option<velt_vir::CountedSeed>,
+    mut carried: Carried,
     args: &BuildArgs,
 ) {
     let flags = Report {
@@ -48,7 +48,7 @@ pub fn serve_reloads(
                         files: source_files(opts.packages.as_ref()),
                     }
                 } else {
-                    reload(&mut session, &opts, flags, &mut seed)
+                    reload(&mut session, &opts, flags, &mut carried)
                 };
                 if reply_reload(&channel, &reply).is_err() {
                     break;
@@ -71,14 +71,22 @@ struct Report {
 }
 
 /// Build the current sources and take them into the running program if possible.
-/// `seed`: lowering's counted types of the running version, replaced by the new version's when
-/// it builds.
+/// What a reload takes from the running version, and leaves for the next one.
+pub struct Carried {
+    /// Lowering's counted types (velt_vir `lower_seeded`).
+    pub seed: Option<velt_vir::CountedSeed>,
+    /// The program's own definitions (`super::edits`): what the next save changed.
+    pub own: Option<super::edits::Snapshot>,
+}
+
+/// `carried`: what the running version leaves, replaced by the new version's when it builds.
 fn reload(
     session: &mut DevSession,
     opts: &BuildOptions,
     flags: Report,
-    seed: &mut Option<velt_vir::CountedSeed>,
+    carried: &mut Carried,
 ) -> Reloaded {
+    let seed = &mut carried.seed;
     let verbose = flags.verbose;
     let mut sess = Session::new();
     sess.show_details = flags.details;
@@ -87,6 +95,13 @@ fn reload(
     sess.counted_seed = Some(seed.take().unwrap_or_default());
     let program = driver::compile(&mut sess, opts);
     *seed = sess.counted_seed.take();
+    if program.is_ok() {
+        let own = super::edits::Snapshot::of_build(&sess, &opts.input);
+        if let (true, Some(before)) = (verbose, &carried.own) {
+            eprintln!("velt dev: edit: {}", super::edits::classify(before, &own));
+        }
+        carried.own = Some(own);
+    }
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
     let program = program.and_then(|p| {
