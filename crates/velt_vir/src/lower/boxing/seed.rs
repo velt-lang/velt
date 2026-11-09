@@ -13,11 +13,13 @@
 //! (`Cx::close_boxing`), so a seed never takes a type out; one the program no longer needs stays
 //! counted until the host restarts. For the sets carried that is a representation the edited
 //! program cannot observe: more counting, an `any` table slot it does not use, an identity for
-//! closures it no longer compares. Not for `lock_exclusive`: an `RwLock` whose `read` stayed
-//! exclusive after the edit removed the reason (a callback in its value) would not let two
-//! readers in at once, so readers waiting for each other could deadlock where the cold build
-//! lets them both read. It is never seeded: each lowering finds it again (it is rare, so it rarely
-//! costs a second pass).
+//! closures it no longer compares. Not for what decides whether an `RwLock`'s `read` is exclusive:
+//! a read that stayed exclusive after the edit removed the reason would not let two readers in at
+//! once, so readers waiting for each other could deadlock where the cold build lets them both
+//! read. So `lock_exclusive` is never seeded, nor what `lock_reach` makes it of: the weak sets
+//! (`weak_roots`, `weak`, and `weak_object` with its `dyn_types`) and the proxy sets
+//! (`proxy_roots`, `proxy_types`, `proxy_traced`, `proxy_class`). Each lowering finds them again;
+//! they are rare, so they rarely cost a second pass.
 //!
 //! Type keys name a class or interface by its qualified name, and every object literal that
 //! implements interface `I` by one hidden struct name (`hidden_struct_def`), so two of them share a
@@ -41,7 +43,6 @@ pub struct CountedSeed {
     defs: Vec<BTreeSet<String>>,
     /// [`Boxing`]'s flags, likewise.
     flags: Vec<bool>,
-    proxy_class: Option<String>,
     any_call_keys: BTreeSet<String>,
 }
 
@@ -57,7 +58,6 @@ impl CountedSeed {
         self.types.iter().all(BTreeSet::is_empty)
             && self.defs.iter().all(BTreeSet::is_empty)
             && !self.flags.contains(&true)
-            && self.proxy_class.is_none()
             && self.any_call_keys.is_empty()
     }
 }
@@ -86,15 +86,18 @@ impl Cx<'_> {
             any_call_keys,
             recursive,
             transferred,
-            weak_roots,
-            weak,
-            weak_object,
-            dyn_types,
+            // Not seeded: whether a class or type is weak-capable or may hold a proxy decides
+            // whether an `RwLock` read of it is exclusive (locks.rs `lock_reach`), which is
+            // behavior (module docs). Each lowering finds them again.
+            weak_roots: _,
+            weak: _,
+            weak_object: _,
+            dyn_types: _,
             dyn_to_any,
-            proxy_roots,
-            proxy_types,
-            proxy_class,
-            proxy_traced,
+            proxy_roots: _,
+            proxy_types: _,
+            proxy_class: _,
+            proxy_traced: _,
             array_views,
             lock_values,
             lock_roots,
@@ -113,10 +116,6 @@ impl Cx<'_> {
                 types(&mut interior.iter()),
                 types(&mut identity_dyns.iter()),
                 types(&mut transferred.iter()),
-                types(&mut weak.iter()),
-                types(&mut dyn_types.iter()),
-                types(&mut proxy_types.iter()),
-                types(&mut proxy_traced.iter()),
                 types(&mut array_views.iter()),
                 types(&mut lock_values.iter()),
                 types(&mut lock_boxes.iter()),
@@ -124,9 +123,7 @@ impl Cx<'_> {
             defs: vec![
                 defs(&mut roots.iter()),
                 defs(&mut recursive.iter()),
-                defs(&mut weak_roots.iter()),
                 defs(&mut dyn_to_any.iter()),
-                defs(&mut proxy_roots.iter()),
                 defs(&mut lock_roots.iter()),
             ],
             flags: vec![
@@ -141,11 +138,9 @@ impl Cx<'_> {
                 *any_keys,
                 *any_reflect,
                 *any_number,
-                *weak_object,
                 *read_indirect,
                 *any_members,
             ],
-            proxy_class: proxy_class.and_then(|d| self.seed_def_name(d)),
             any_call_keys: any_call_keys.clone(),
         }
     }
@@ -175,23 +170,17 @@ impl Cx<'_> {
         b.interior.extend(t(1));
         b.identity_dyns.extend(t(2));
         b.transferred.extend(t(3));
-        b.weak.extend(t(4));
-        b.dyn_types.extend(t(5));
-        b.proxy_types.extend(t(6));
-        b.proxy_traced.extend(t(7));
-        b.array_views.extend(t(8));
-        b.lock_values.extend(t(9));
-        b.lock_boxes.extend(t(10));
+        b.array_views.extend(t(4));
+        b.lock_values.extend(t(5));
+        b.lock_boxes.extend(t(6));
         let d = |i: usize| {
             (seed.defs.get(i).into_iter().flatten()).filter_map(|n| defs.get(n).copied())
         };
         b.roots.extend(d(0));
         b.recursive.extend(d(1));
-        b.weak_roots.extend(d(2));
-        b.dyn_to_any.extend(d(3));
-        b.proxy_roots.extend(d(4));
-        b.lock_roots.extend(d(5));
-        let flags: [&mut bool; 14] = [
+        b.dyn_to_any.extend(d(2));
+        b.lock_roots.extend(d(3));
+        let flags: [&mut bool; 13] = [
             &mut b.any_identity,
             &mut b.fn_identity,
             &mut b.generic_any,
@@ -203,15 +192,11 @@ impl Cx<'_> {
             &mut b.any_keys,
             &mut b.any_reflect,
             &mut b.any_number,
-            &mut b.weak_object,
             &mut b.read_indirect,
             &mut b.any_members,
         ];
         for (flag, &seeded) in flags.into_iter().zip(&seed.flags) {
             *flag |= seeded;
-        }
-        if b.proxy_class.is_none() {
-            b.proxy_class = (seed.proxy_class.as_ref()).and_then(|n| defs.get(n).copied());
         }
         b.any_call_keys.extend(seed.any_call_keys.iter().cloned());
         b

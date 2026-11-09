@@ -1,2 +1,3 @@
 action: start
-get /: node 1 1
+get /fill: filled 2
+get /read: read 2 7

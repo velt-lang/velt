@@ -105,3 +105,40 @@ fn a_stale_seed_keeps_its_types_counted_in_one_pass() {
         "the stale seed keeps Node counted"
     );
 }
+
+/// An `RwLock` of a class a `WeakRef` points at: its `read` is exclusive (a weak-capable object
+/// cannot be read beside others), a write lock.
+const WEAK_V1: &str = "class Config { n: number = 1; }
+function main() {
+  const c = new Config();
+  const w = new WeakRef(c);
+  const lk = new RwLock(c);
+  lk.read((x) => console.log(x.n));
+  console.log(w.deref() !== undefined);
+}
+";
+
+/// [`WEAK_V1`] after an edit that drops the `WeakRef`: `read` is shared again.
+const WEAK_V2: &str = "class Config { n: number = 1; }
+function main() {
+  const c = new Config();
+  const lk = new RwLock(c);
+  lk.read((x) => console.log(x.n));
+}
+";
+
+/// What decides an exclusive `read` is never seeded (lower/boxing/seed.rs): the old version's
+/// weak class must not make the edited version's reads exclusive (readers waiting for each
+/// other would deadlock where the cold build lets them both read).
+#[test]
+fn a_stale_seed_never_makes_a_read_exclusive() {
+    let (v1, seed, _) = lower(WEAK_V1, None);
+    assert!(v1.contains("velt_rt_rwlock_write"), "v1 reads exclusively");
+    let (cold, _, _) = lower(WEAK_V2, None);
+    assert!(cold.contains("velt_rt_rwlock_read") && !cold.contains("velt_rt_rwlock_write"));
+    let (warm, _, _) = lower(WEAK_V2, Some(&seed));
+    assert!(
+        warm.contains("velt_rt_rwlock_read") && !warm.contains("velt_rt_rwlock_write"),
+        "v2 with v1's seed reads beside others, as cold"
+    );
+}

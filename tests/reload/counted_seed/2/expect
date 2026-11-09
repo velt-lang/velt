@@ -1,2 +1,5 @@
 action: swap
-get /: node=1 0
+jit get /drop: dropped 7
+jit get /read: read 1 7
+exe get /drop: dropped -1
+exe get /read: read 0 -1

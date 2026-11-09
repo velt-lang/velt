@@ -1,2 +1,0 @@
-action: swap
-get /: node:1 1
