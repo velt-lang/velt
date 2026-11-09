@@ -1,0 +1,2 @@
+cast_literal_union_field_mismatch.velt:4:27: error: mismatched types
+  = note: expected boolean, found string | f64

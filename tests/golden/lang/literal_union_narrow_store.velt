@@ -1,0 +1,20 @@
+// A literal union narrowed by `===` / `!==` stored where the members left are expected, and
+// returned next to a string from a function without a return type (its result is `string`).
+type Lit = "a" | "b" | "c";
+function f(x: Lit): string { if (x === "a") return "A"; const y: "b" | "c" = x; return y; }
+console.log(f("a"), f("b"), f("c"));
+function g(x: Lit) { if (x !== "a") { const z: "b" | "c" = x; return z; } return "A"; }
+console.log(g("c"));
+function h(z: "b" | "c", c: boolean) { if (c) return z; return "A"; }
+console.log(h("c", true), h("b", false));
+function k(z: "b" | "c", c: boolean) { if (c) return 1; return z; }
+console.log(k("c", true), k("b", false));
+function m(z: "b" | "c", c: boolean) { if (c) return "A"; return z; }
+console.log(m("c", true), m("b", false));
+// The narrowed member returned twice, from a nested function, and before the string.
+function twice(x: Lit) { if (x === "a") return "A"; if (x === "b") return x; return x; }
+console.log(twice("a"), twice("b"), twice("c"));
+function outer(x: Lit) { function inner(y: Lit) { if (y !== "a") return y; return "none"; } return inner(x) + "!"; }
+console.log(outer("a"), outer("c"));
+function first(x: "b" | "c") { if (x === "b") return x; return "A"; }
+console.log(first("b"), first("c"));

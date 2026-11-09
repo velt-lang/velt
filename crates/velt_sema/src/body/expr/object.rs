@@ -660,7 +660,7 @@ impl FnCx<'_, '_> {
         for (i, f) in fields.iter().enumerate() {
             let fty = self.cx.subst(f.ty, &type_args);
             let h = match (values[i].take(), &f.default) {
-                (Some(h), _) => self.coerce(h, fty),
+                (Some(h), _) => self.literal_field(h, fty, span),
                 // `a?: T | null` left out is absent, not a present `null`.
                 (None, _) if crate::anon::has_presence(&self.cx.ty, kind, f) => {
                     self.intrinsic(hir::Intrinsic::FieldAbsent, vec![], fty, span)

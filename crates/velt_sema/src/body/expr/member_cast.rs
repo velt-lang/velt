@@ -33,6 +33,9 @@ impl FnCx<'_, '_> {
         }
         let storage = self.cx.ty.is_storage_float(target);
         if !self.cx.ty.is_numeric(target) && !storage && target != self.cx.ty.bool_ {
+            if let Some(h) = self.asserted_arms(expr, ty, target, want) {
+                return h;
+            }
             return self.type_assertion(expr, target, want, span);
         }
         // An integer literal cast to an integer type is an exact integer first, so the cast
@@ -78,6 +81,36 @@ impl FnCx<'_, '_> {
         self.mk(H::Cast(Box::new(inner)), target, span)
     }
 
+    /// `(c ? "only" : r.hydrate) as Strategy` for a union of string literals: each arm asserted
+    /// (`c ? ("only" as Strategy) : (r.hydrate as Strategy)`), the same value, so an arm of
+    /// another literal union is asserted as one (`literal_union_cast`).
+    fn asserted_arms(
+        &mut self,
+        expr: &ast::Expr,
+        ty: &ast::TypeExpr,
+        target: TyId,
+        want: Want,
+    ) -> Option<hir::Expr> {
+        let e = super::object_builtins::strip_parens(expr);
+        let ast::ExprKind::Cond { cond, then, els } = &e.kind else {
+            return None;
+        };
+        self.string_literals(target)?;
+        let arm = |x: &ast::Expr| {
+            let kind = ast::ExprKind::Cast {
+                expr: Box::new(x.clone()),
+                ty: ty.clone(),
+            };
+            Box::new(super::callback::synth(kind, x.span))
+        };
+        let kind = ast::ExprKind::Cond {
+            cond: cond.clone(),
+            then: arm(then),
+            els: arm(els),
+        };
+        Some(self.expr(&super::callback::synth(kind, e.span), Some(target), want))
+    }
+
     /// `e as T` for a `T` that is not a number or `bool`: a TypeScript type assertion, which
     /// converts nothing. `e` is typed in the context of `T`, as for an annotation, so a literal
     /// takes the asserted shape (`[["a", 1]] as [string, u8][]`), and must then be a `T`. A
@@ -113,7 +146,12 @@ impl FnCx<'_, '_> {
             && matches!(self.cx.ty.kind(target), TyKind::FnPtr { .. });
         let outer = std::mem::replace(&mut self.asserted_fn, asserted.then_some(arrow.span));
         let hint = self.assertion_hint(arrow, target);
+        // `{ id, price } as Product` with `id: string | number`: each value is asserted to its
+        // field's type, as TypeScript compares the literal's type with `Product` (TS2352).
+        let lit = matches!(arrow.kind, ast::ExprKind::Object(..)).then_some(arrow.span);
+        let outer_lit = std::mem::replace(&mut self.asserted_lit, lit);
         let inner = self.expr(expr, Some(hint), want);
+        self.asserted_lit = outer_lit;
         // An `object | null` converts as the `object` holding its nothing (#2144).
         let inner = match inner.ty == target {
             true => inner,
@@ -157,6 +195,7 @@ impl FnCx<'_, '_> {
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
         self.object_view_cast(inner, target, span)
             .or_else(|h| self.try_coerce(h, target))
+            .or_else(|h| self.literal_union_cast(h, target, span))
             .or_else(|h| self.param_as_object(h, target))
             .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span))

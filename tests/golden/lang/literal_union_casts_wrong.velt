@@ -1,0 +1,9 @@
+// A literal union asserted to another that lacks the value's literal stops with a TypeError
+// (Node goes on with the string).
+type Strategy = "load" | "idle" | "only";
+type Hydrate = "load" | "idle" | "never";
+function hydrate(s: Strategy): Hydrate {
+    return s as Hydrate;
+}
+console.log(hydrate("idle"));
+console.log(hydrate("only"));

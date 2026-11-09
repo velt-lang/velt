@@ -45,6 +45,7 @@ mod const_borrow;
 mod consume;
 mod ctor;
 pub(crate) mod defaults;
+mod discriminant_facts;
 mod driver;
 pub(crate) mod expr;
 mod field_narrow;
@@ -396,6 +397,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub view_receiver: bool,
     /// The arrow being checked as the operand of a type assertion (`callables`).
     pub asserted_fn: Option<Span>,
+    /// The object literal being checked as the operand of a type assertion (`member_cast`):
+    /// its values convert to the fields' types as assertions do (`asserted_field`).
+    pub asserted_lit: Option<Span>,
     /// The fixed parameters at a rest position the next `forwarding` passes (`fn_value_as_generic`).
     pub forwarding_items: std::cell::Cell<usize>,
     /// The next generic function value's call is `generic_as_generic`'s forwarding one.
@@ -442,6 +446,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             generic_arrow: false,
             this_fn_forwarding: vec![],
             asserted_fn: None,
+            asserted_lit: None,
             forwarding_items: Default::default(),
             forward_unbounded: Default::default(),
             dynamic_raw: None,

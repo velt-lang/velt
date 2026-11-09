@@ -423,6 +423,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if let Some(h) = self.asserted_dynamic_nullish(lhs, rhs, exp, span) {
+            return h;
+        }
         let s = self.test_operand(lhs, None, Want::Borrow);
         // A read narrowed to no member stops before the right side.
         if s.ty == self.cx.ty.never {

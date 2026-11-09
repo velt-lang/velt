@@ -1,0 +1,7 @@
+// A value asserted to a field's type that holds another member stops with a TypeError, as
+// `u as string` does (Node keeps the number in the string field).
+function make(u: string | number): { id: string } {
+    return { id: u } as { id: string };
+}
+console.log(make("a").id);
+console.log(make(1).id);

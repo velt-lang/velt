@@ -110,7 +110,11 @@ impl FnCx<'_, '_> {
         h: hir::Expr,
         exp: TyId,
     ) -> Result<hir::Expr, hir::Expr> {
-        self.map_members(h, exp, &mut |s, value| s.try_coerce(value, exp).ok())
+        // When every member converts, convert as an unnarrowed value does: one match over all
+        // of them, which a union of literals folds to a table read (a narrowing would add an
+        // unreachable arm that keeps it from folding).
+        let all = self.map_members_in(h, exp, None, &mut |s, value| s.try_coerce(value, exp).ok());
+        all.or_else(|h| self.map_members(h, exp, &mut |s, value| s.try_coerce(value, exp).ok()))
     }
 
     /// Union value `h`, narrowed by `instanceof` to subclass `target` of every member it can

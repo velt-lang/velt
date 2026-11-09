@@ -1,0 +1,13 @@
+// After a field test the members left are the ones it allows: `value` is not on the member
+// whose `issues` is set (TS2339), and `error` is not on the `ok: true` one.
+type Result = { issues: string[] } | { value: number; issues?: undefined };
+function check(r: Result): number {
+    if (r.issues) return r.value;
+    return 0;
+}
+type Cell = { ok: true; value: number } | { ok: false; error: string };
+function read(cell: Cell): string {
+    if (cell.ok) return cell.error;
+    return "";
+}
+console.log(check({ value: 1 }), read({ ok: true, value: 1 }));

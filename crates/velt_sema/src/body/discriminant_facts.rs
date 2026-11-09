@@ -1,0 +1,251 @@
+//! Narrowing a union local by a test of one of its fields, as TypeScript narrows by a
+//! discriminant property (`crate::discriminants`):
+//! - `x.kind === "circle"` where the members' `kind` fields are literals;
+//! - `if (r.done)` / `if (!cell.ok)` where they are `bool` literals, or where some members' field
+//!   is `undefined` or `null` and the others' is always truthy (`{ issues: E[] } | { value: T;
+//!   issues?: undefined }`, `if (result.issues)`);
+//! - `r.issues === undefined` / `!= null` on such a union.
+//!
+//! Only the members the local may still hold count: `cell === RESOLVING` ruled out the symbol
+//! member, so `cell.ok` discriminates what is left (`{ ok: true; … } | { ok: false; … }`).
+
+use velt_syntax::ast;
+
+use super::narrow::Fact;
+use super::FnCx;
+use super::Want;
+use crate::hir::{self, LitValue, LocalId, Nothing, TyId, TyKind};
+
+/// What a member's field says about a test of the field.
+enum Disc {
+    /// A literal type: the field always holds this value.
+    Lit(LitValue),
+    /// `undefined` / `null` alone (`issues?: undefined`).
+    Nothing(Nothing),
+    /// A type whose values are all truthy objects (`E[]`, an object type, a function).
+    Object,
+}
+
+/// A union local tested through one of its fields: the local, whether it is a `U | null`, and
+/// each member's [`Disc`] (`None` for a member the local can no longer hold).
+type Discs = (LocalId, bool, TyId, Vec<Option<Disc>>);
+
+impl FnCx<'_, '_> {
+    /// The members of the union local behind `e` (`x.prop`) by what their field `prop` holds,
+    /// when each member the local may still hold has the field with a [`Disc`] type.
+    fn field_discs(&mut self, e: &ast::Expr) -> Option<Discs> {
+        let (object, prop) = super::expr::member::member_view(e)?;
+        // Each class's `#kind` is its own member: never a discriminant shared by a union.
+        if prop.name.starts_with(ast::PRIVATE_NAME_PREFIX) {
+            return None;
+        }
+        // A union local, or a field path of one (`o.a.b.issues`), narrowed through its token.
+        let (l, nullable, u) = match self.named_local(object) {
+            Some(l) => {
+                let ty = self.local_ty(l);
+                let u = self.cx.ty.core(ty).unwrap_or(ty);
+                (l, self.cx.ty.opt_payload(ty).is_some(), u)
+            }
+            None => {
+                let (token, nullable, u, _) = self.field_with_members(object)?;
+                (token, nullable, u)
+            }
+        };
+        let members = self.cx.union_members(u)?;
+        let live = self.allowed_members(l);
+        let mut out = vec![];
+        for (v, m) in members.into_iter().enumerate() {
+            if live.as_ref().is_some_and(|vs| !vs.contains(&(v as u32))) {
+                out.push(None);
+                continue;
+            }
+            let fty = self.cx.member_field_ty(m, &prop.name)?;
+            out.push(Some(self.disc_of(fty)?));
+        }
+        Some((l, nullable, u, out))
+    }
+
+    fn disc_of(&mut self, t: TyId) -> Option<Disc> {
+        if let Some(v) = self.cx.lit_value(t) {
+            return Some(Disc::Lit(v));
+        }
+        // `null` / `undefined` alone, also both (`issues?: null`: an option of a `null`).
+        let mut p = t;
+        while let Some(q) = self.cx.ty.opt_payload(p) {
+            if q == self.cx.ty.never {
+                return self.cx.ty.nothing_of(t).map(Disc::Nothing);
+            }
+            p = q;
+        }
+        let object = match self.cx.ty.kind(t) {
+            TyKind::Adt(..) => self.cx.union_def(t).is_none() && self.cx.dynamic(t).is_none(),
+            TyKind::Array(_) | TyKind::Map(..) | TyKind::Tuple(_) => true,
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
+            TyKind::Dyn(..) => self.cx.iface_member(t).is_some(),
+            _ => false,
+        };
+        object.then_some(Disc::Object)
+    }
+
+    /// Splits the live members of `discs` by `test` (true / false), as `Members` facts.
+    fn split_discs(discs: Discs, test: impl Fn(&Disc) -> bool) -> (Vec<Fact>, Vec<Fact>) {
+        let (l, nullable, _, discs) = discs;
+        let (mut yes, mut no) = (vec![], vec![]);
+        for (v, d) in discs.iter().enumerate() {
+            match d {
+                Some(d) if test(d) => yes.push(v as u32),
+                Some(_) => no.push(v as u32),
+                None => {}
+            }
+        }
+        let mut t = vec![Fact::Members(l, yes)];
+        if nullable {
+            // `x.kind` could only be read once `x` was known to be non-null.
+            t.push(Fact::NonNull(l));
+        }
+        (t, vec![Fact::Members(l, no)])
+    }
+
+    /// Facts of `x.kind == lit` on a discriminated union local `x`: the members whose
+    /// discriminant is `lit` / the others.
+    pub(super) fn discriminant_facts(
+        &mut self,
+        e: &ast::Expr,
+        lit: &ast::SignedLit,
+    ) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        let discs = self.field_discs(e)?;
+        // A literal discriminant: every member the local may hold has a literal field.
+        if !discs.3.iter().flatten().all(|d| matches!(d, Disc::Lit(_))) {
+            return None;
+        }
+        Some(Self::split_discs(discs, |d| match d {
+            Disc::Lit(v) => crate::literals::lit_matches(v, lit),
+            _ => false,
+        }))
+    }
+
+    /// Facts of `if (x.prop)` on a union local whose members tell the field's truthiness apart:
+    /// `bool` literals (`r.done`), or a nothing in some members and a truthy object in the
+    /// others (`result.issues`).
+    pub(super) fn truthy_discriminant(&mut self, e: &ast::Expr) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        let discs = self.field_discs(e)?;
+        let live = || discs.3.iter().flatten();
+        let bools = live().all(|d| matches!(d, Disc::Lit(LitValue::Bool(_))));
+        let presence = live().all(|d| matches!(d, Disc::Nothing(_) | Disc::Object))
+            && live().any(|d| matches!(d, Disc::Nothing(_)));
+        if !bools && !presence {
+            return None;
+        }
+        let (mut t, f) = Self::split_discs(discs, |d| {
+            matches!(d, Disc::Lit(LitValue::Bool(true)) | Disc::Object)
+        });
+        // The field path itself is not nullish there either (`truthy_facts`).
+        if presence {
+            t.extend(self.truthy_facts(e));
+        }
+        Some((t, f))
+    }
+
+    /// Facts of `x.prop === undefined` (`word`; `==` when not `strict`) on a union local whose
+    /// members' field is a nothing or a truthy object.
+    pub(super) fn nothing_discriminant(
+        &mut self,
+        e: &ast::Expr,
+        word: &str,
+        strict: bool,
+    ) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        let discs = self.field_discs(e)?;
+        let live = || discs.3.iter().flatten();
+        if !live().all(|d| matches!(d, Disc::Nothing(_) | Disc::Object))
+            || !live().any(|d| matches!(d, Disc::Nothing(_)))
+        {
+            return None;
+        }
+        let tested = if word == "null" {
+            Nothing::Null
+        } else {
+            Nothing::Undefined
+        };
+        // A strict test of one nothing (`=== undefined`) on a member whose field may also be
+        // the other (`issues?: null`) leaves that member in both branches.
+        let has = |n: &Nothing| match tested {
+            Nothing::Null => n.has_null(),
+            _ => n.has_undefined(),
+        };
+        let exact = !strict || !live().any(|d| matches!(d, Disc::Nothing(n) if *n != tested));
+        let (l, nullable, _, discs) = discs;
+        let (mut yes, mut no) = (vec![], vec![]);
+        for (v, d) in discs.iter().enumerate() {
+            let Some(d) = d else {
+                continue;
+            };
+            let (y, n) = match d {
+                Disc::Nothing(_) if !strict => (true, false),
+                Disc::Nothing(n) => (has(n), *n != tested),
+                _ => (false, true),
+            };
+            if y {
+                yes.push(v as u32);
+            }
+            if n {
+                no.push(v as u32);
+            }
+        }
+        let mut t = vec![Fact::Members(l, yes)];
+        if nullable {
+            t.push(Fact::NonNull(l));
+        }
+        let mut f = vec![Fact::Members(l, no)];
+        // Where the test fails, the field path itself is not nullish (`eq_facts`).
+        if exact {
+            f.extend(self.field_token(e).map(Fact::NonNull));
+        }
+        Some((t, f))
+    }
+
+    /// `if (r.issues)` on a union local whose members' field is a nothing or a truthy object
+    /// (`truthy_discriminant`): the member test itself, `match (r) { V0(_) => true, _ => false
+    /// }`, which reads no field. Only for struct fields (an interface member's is a getter call)
+    /// and a union without a view (`crate::union_views`), whose view may be any member.
+    pub(crate) fn presence_cond(&mut self, e: &ast::Expr) -> Option<hir::Expr> {
+        let (object, prop) = super::expr::member::member_view(e)?;
+        // A local only: a field path's read is checked against its token (`field_narrow`).
+        self.named_local(object)?;
+        let (l, nullable, u, discs) = self.field_discs(e)?;
+        let live = || discs.iter().flatten();
+        let presence = live().all(|d| matches!(d, Disc::Nothing(_) | Disc::Object))
+            && live().any(|d| matches!(d, Disc::Nothing(_)));
+        if !presence || nullable || self.cx.union_view(u).is_some() {
+            return None;
+        }
+        let (def, _) = self.cx.union_def(u)?;
+        let members = self.cx.union_members(u)?;
+        if members
+            .iter()
+            .any(|m| self.cx.field_of(*m, &prop.name).is_none())
+        {
+            return None;
+        }
+        // A local narrowed to one member reads as that member: the field read decides.
+        if self.allowed_members(l).is_some_and(|vs| vs.len() < 2) {
+            return None;
+        }
+        let obj = self.expr(object, None, Want::Borrow);
+        if obj.ty != u {
+            return None;
+        }
+        let span = e.span;
+        let mut yes = vec![];
+        for (v, d) in discs.iter().enumerate() {
+            if matches!(d, Some(Disc::Object)) {
+                yes.push(self.variant_pat(def, v as u32, members[v], u, span));
+            }
+        }
+        let pat = match yes.len() {
+            0 => None,
+            1 => yes.pop(),
+            _ => Some(self.pat(hir::PatKind::Or(yes), u, span)),
+        };
+        Some(self.bool_match(obj, pat, span))
+    }
+}

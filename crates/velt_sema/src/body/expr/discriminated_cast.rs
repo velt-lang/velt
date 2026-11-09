@@ -217,7 +217,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Can a value of type `t` be the literal `v`? Only a literal type rules it out.
-    fn may_hold_literal(&mut self, t: TyId, v: &LitValue) -> bool {
+    pub(super) fn may_hold_literal(&mut self, t: TyId, v: &LitValue) -> bool {
         let core = self.cx.ty.core(t).unwrap_or(t);
         if let Some(x) = self.cx.lit_value(core) {
             return x == *v;
@@ -230,7 +230,7 @@ impl FnCx<'_, '_> {
 
     /// Do `values` (the members' discriminants) name every value a discriminant of type `t`
     /// has: `true` and `false` of a `boolean`, or each literal of a literal type?
-    fn names_every_value(&mut self, t: TyId, values: &[LitValue]) -> bool {
+    pub(super) fn names_every_value(&mut self, t: TyId, values: &[LitValue]) -> bool {
         let all: Vec<LitValue> = match self.cx.ty.kind(t) {
             TyKind::Bool => vec![LitValue::Bool(true), LitValue::Bool(false)],
             _ => match self.cx.lit_value(t) {
@@ -268,7 +268,7 @@ impl FnCx<'_, '_> {
 }
 
 /// The literal expression of discriminant value `v` (a string or a boolean).
-fn lit_expr(v: &LitValue, span: Span) -> ast::Expr {
+pub(super) fn lit_expr(v: &LitValue, span: Span) -> ast::Expr {
     let lit = match v {
         LitValue::Str(s) => ast::Lit::Str(s.clone()),
         LitValue::Bool(b) => ast::Lit::Bool(*b),

@@ -360,15 +360,25 @@ impl FnCx<'_, '_> {
         let outer = std::mem::replace(&mut self.cx.rec.in_return, true);
         let h = self.expr(e, hint, Want::Move);
         self.cx.rec.in_return = outer;
-        let ty = match self.promise_value(h.ty) {
+        let (ty, promise) = match self.promise_value(h.ty) {
             Some(t) => {
                 self.f.returns.promises = true;
-                t
+                (t, true)
             }
-            None => h.ty,
+            None => (h.ty, false),
         };
-        let ty = self.cx.widened(ty);
-        self.f.returns.values.push(Value { ty, span: h.span });
+        let wide = self.cx.widened(ty);
+        // A literal or a literal union (`x` narrowed to `"b"`, or to `"b" | "c"`) returns its
+        // base type: converted here, where `x`'s narrowing still holds, so every `return`
+        // gives a value of the type recorded for it.
+        let h = match !promise && wide != ty {
+            true => self.coerce(h, wide),
+            false => h,
+        };
+        self.f.returns.values.push(Value {
+            ty: wide,
+            span: h.span,
+        });
         Some(h)
     }
 

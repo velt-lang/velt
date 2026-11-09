@@ -1,0 +1,6 @@
+{ hydrate: 'idle' } { hydrate: 'load', flush: 'skip' } {}
+{ strategy: 'visible' } { strategy: 'only' } { strategy: 'load' }
+idle load visible null
+{ hydrate: 'visible' } { hydrate: 'load', flush: 'skip' } { hydrate: undefined }
+idle visible
+- idle visible
