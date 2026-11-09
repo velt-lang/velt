@@ -263,11 +263,15 @@ pub struct Function {
     /// std decorators `@inline` and `@noInline` (std/lang/intrinsics/decorators.velt). Set by
     /// lowering; `velt_opt` keeps it on clones.
     pub inline: Inline,
-    /// A function C calls (`@export("c_name")`, lowering's c_export.rs): backends emit it without
-    /// unwind information (LLVM: `nounwind`, no `uwtable`), so an unwind started below it (a
-    /// Velt panic that a `catchPanic` further up would stop) can't pass it into C frames: the
-    /// unwinder finds no way past it and the process aborts. Never on Windows, whose unwinder
-    /// takes a function without unwind information for a leaf. False for every other function.
+    /// A function C calls (`@export("c_name")`, lowering's c_export.rs): an unwind started below
+    /// it (a Velt panic that a `catchPanic` further up would stop) must not pass it into C
+    /// frames, so the process aborts there. LLVM makes its calls `invoke`s whose landing pad
+    /// calls `abort` (a `cleanuppad` on Windows), as clang does for `noexcept`; Cranelift emits
+    /// it without unwind information, so the unwinder finds no way past it, except on Windows,
+    /// whose unwinder takes a function without unwind information for a leaf (there it keeps
+    /// it: docs/internals/design/c-ffi.md "Exported functions"). Its small integer parameters
+    /// carry no extension attribute: the C caller may leave their upper bits unset (AAPCS64
+    /// outside Darwin). False for every other function.
     pub stops_unwind: bool,
 }
 

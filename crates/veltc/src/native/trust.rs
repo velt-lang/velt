@@ -4,8 +4,9 @@
 //!   and in packages with native code that the program allows (`allowNative`, or the root's own
 //!   package.velt declaring native code). Elsewhere it is an error, so an audit reads only those
 //!   packages.
-//! - The raw API, `Ptr`, `OutPtr`, `declare c type`s and unsafe functions, is imported only
-//!   there too: by name, through a namespace (`ffi.Ptr`) or re-exported by a package. User code
+//! - The raw API, `Ptr`, `OutPtr`, the `export` decorator (`@export("c_name")` defines a C
+//!   symbol), `declare c type`s and unsafe functions, is imported only there too: by name,
+//!   through a namespace (`ffi.Ptr`, `@ffi.export(…)`) or re-exported by a package. User code
 //!   works with a binding's safe API.
 //! - In those packages, each piece of unsafe code has a `// SAFETY:` comment directly before it
 //!   (an unsafe function: its doc comment's `Unsafe:` paragraph will do). std is held to the
@@ -28,6 +29,13 @@ use super::unsafe_sites::{self, SiteKind};
 fn raw_std_type(module: &str, name: &str) -> bool {
     (module == std_module!(ffi_ptr) && name == "Ptr")
         || (module == std_module!(ffi_out_ptr) && name == "OutPtr")
+}
+
+/// std's raw decorators: `@export("c_name")` (velt/ffi) defines a C symbol, which could replace
+/// one of the C library's or another package's for every caller (`getaddrinfo`,
+/// `clock_gettime`), so only the code that may call C may use it.
+fn raw_std_decorator(module: &str, name: &str) -> bool {
+    module == std_module!(ffi_export) && name == "export"
 }
 
 /// Where unsafe code and the raw API are allowed, for the errors' first note.
@@ -293,6 +301,13 @@ impl<'a> RawExports<'a> {
                 ast::ItemKind::Function(f) if f.sig.is_unsafe => Some(&f.sig.name.name),
                 // A C function is unsafe by its declaration.
                 ast::ItemKind::ExternFn(sig) if sig.is_unsafe || sig.c.is_some() => {
+                    Some(&sig.name.name)
+                }
+                ast::ItemKind::ExternFn(sig)
+                    if m.is_std
+                        && sig.is_decorator
+                        && raw_std_decorator(&m.path, &sig.name.name) =>
+                {
                     Some(&sig.name.name)
                 }
                 ast::ItemKind::Struct(t) | ast::ItemKind::Class(t)

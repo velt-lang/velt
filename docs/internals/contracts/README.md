@@ -265,9 +265,11 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 ## Functions C calls (additive VIR extension)
 - `vir::Function::stops_unwind: bool`: the function lowering builds for an `@export("c_name")`
   (`hir::Program::c_exports`, #2203 step 5), with `Linkage::Export`, the symbol `c_name` and the C
-  signature. Backends give it no unwind information (LLVM: attribute group `nounwind` in place of
-  `uwtable`; Cranelift: no unwind entry), so an unwind started below it can't pass it into C and
-  the process aborts. Never set on Windows (its unwinder takes such a function for a leaf).
+  signature, on every native target. An unwind started below it must not pass it into C: the
+  process aborts. LLVM makes its calls `invoke`s whose landing pad calls `abort` (personality
+  `rust_eh_personality`; on Windows a `cleanuppad` with `__CxxFrameHandler3`), and gives its
+  `i8`/`i16`/`bool` parameters no `signext`/`zeroext`; Cranelift gives it no unwind entry, except
+  on Windows (its unwinder takes such a function for a leaf; c-ffi.md "Exported functions").
   `Function::new` sets `false`.
 
 ## Inlining decorators (additive VIR extension)

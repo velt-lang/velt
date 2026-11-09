@@ -10,8 +10,9 @@
 //! A panic that reaches it ends the process: nothing unwinds into C (owner decision (b) on
 //! #2649, until #2008). A panic ends the process anyway unless a `catchPanic` poll is up the
 //! thread's stack, which only a C function called from Velt can put there; for that case the
-//! function has no unwind information (`Function::stops_unwind`), so the unwinder can't pass it
-//! and the runtime aborts.
+//! function is marked `Function::stops_unwind`, and the backends abort when an unwind reaches it
+//! (LLVM: a landing pad calling `abort`; Cranelift: no unwind information, so the unwinder can't
+//! pass it).
 //!
 //! WebAssembly has no C callers to link with: an export there is an error (a module export
 //! of the function would come with the host's own ABI, not C's).
@@ -60,7 +61,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let hir::Def::Fn(f) = hir_prog.def(e.def) else {
             super::ice("an exported function is not a `Def::Fn`")
         };
-        let lw_windows = cx.target.contains("windows");
         let mut lw = FnLower::bare(cx, vec![]);
         lw.loc = None;
         let params: Vec<Ty> = e.params.iter().map(|t| c_call::c_vir(*t, false)).collect();
@@ -142,9 +142,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let name = e.name.clone();
         let mut func = lw.finish(name, params, ret);
         func.linkage = Linkage::Export;
-        // Not on Windows, whose unwinder takes a function without unwind information for a leaf
-        // and would misread the stack past it.
-        func.stops_unwind = !lw_windows;
+        func.stops_unwind = true;
         func
     }
 }

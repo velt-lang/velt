@@ -373,13 +373,24 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   can't be named `export`). So a module writes `@ffi.export(…)` through a namespace import or
   `@cExport(…)`. velt/ffi rather than the prelude: `declare c` users import from there, and the
   prelude is loaded by every program.
+- **Who may use it**: it is raw native API, as `Ptr` is ("The trust boundary"): only std and the
+  packages with native code the program allows (`allowNative`) import it. An export defines a C
+  symbol, so any other package could replace a C library function no list covers (an exported
+  `getaddrinfo` takes over the program's name lookups, a `clock_gettime` its clock).
 - **What may be exported**: a top-level function with a body, neither generic, async, a
   generator, a method nor nested in another function. Its parameters and result are what a
   `declare c` function passes by value: integers, `f32`, `f64`, `bool`, `Ptr<T>`,
   `Ptr<T> | null`, and `void` as the result. It throws nothing (after inference): C has no
   exceptions, so the function catches its errors and returns a result C reads.
+- **No module state**: C may call it on a thread Velt didn't start (a library's worker, a thread
+  C starts on it). Such a thread has no task to give the module lock back at the end of a step,
+  so the lock its first use of module state takes would never be released and every other use
+  would wait for ever. So module state (module-level `let`s and kept constants) is not reachable
+  from an export, directly or through what it calls: the walk that refuses it in a `with`
+  callback (module_state.rs), an error at the decorator naming the path.
 - **The name** is a C identifier, at most 255 bytes, given to one function of the program; not
-  `velt_…` (the runtime's), not reserved by C (`__…`, `_` and a capital), not `main`, a C keyword
+  `velt_…` (the runtime's) or `rust_…` (the Rust runtime's: `rust_eh_personality`), not
+  reserved by C (`__…`, `_` and a capital), not `main`, a C keyword
   or one of the C library's common functions and objects (an executable's `free` would replace
   the C library's for every caller, the runtime's included), and no `declare c` function of the
   program has it. Each is an error at the decorator.
@@ -388,14 +399,32 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   `Ptr`, a `Ptr` result to its address, with std's `ptrOf`, `ptrOrNull`, `ptrAddress`,
   `ptrAddressOrZero`) and calls the Velt function, which stays an ordinary function for Velt
   callers. Built whether or not Velt code reaches it, in both backends; a std function with
-  `@export` is live for lazy std.
+  `@export` is live for lazy std. Its `i8`, `i16` and `bool` parameters carry no `signext` /
+  `zeroext` in LLVM: AAPCS64 outside Darwin leaves their upper bits unspecified, and clang's
+  callers there don't extend them, so the export extends them itself (its result keeps the
+  attribute). Cranelift's functions extend them already.
 - **Panics**: one that reaches it ends the process; nothing unwinds into C (owner decision (b) on
   #2649, until #2008). A Velt panic ends the process anyway unless a `catchPanic` poll is up the
-  thread's stack, which only a C function called from Velt can put between them: for that case
-  the function has no unwind information (`vir::Function::stops_unwind`; LLVM `nounwind` without
-  `uwtable`, Cranelift without an unwind entry), so the unwinder finds no way past it and the
-  runtime aborts ("failed to initiate panic"). On Windows it keeps its unwind information, whose
-  absence would make the unwinder take it for a leaf: there that case is not handled yet.
+  thread's stack, which only a C function called from Velt can put between them. For that case
+  the function is `vir::Function::stops_unwind`:
+  - **LLVM** (release builds, every target): each call in it is an `invoke` whose landing pad
+    calls `abort`, as clang does for `noexcept` and Rust for `extern "C"`: `landingpad … cleanup`
+    with `rust_eh_personality` on Linux and macOS, `cleanuppad` with `__CxxFrameHandler3` on
+    Windows (Rust's panics are MSVC C++ exceptions there). The unwinder's first phase finds the
+    `catchPanic`; the second one runs the landing pad, which aborts (SIGABRT, exit 134 on Unix).
+    Leaving the function without unwind information was not enough: LLVM writes CFI for it with
+    `-g`, and a call in tail position became a jump, which leaves no frame to stop at. An
+    `invoke` is never a tail call.
+  - **Cranelift** (debug builds) on Linux and macOS: no unwind information, so the unwinder finds
+    no way past it and the runtime aborts ("failed to initiate panic, error 5").
+  - **Cranelift on Windows** keeps its unwind information, whose absence would make the unwinder
+    take it for a leaf and misread the stack. So a debug build on Windows lets that panic unwind
+    through the C frames to the `catchPanic`: SEH pops C frames without handlers as `longjmp`
+    would, `catch_unwind` takes the panic, and the program goes on (the `catchPanic` rejects).
+    Whatever the C code held stays as it was (a lock, a half-updated structure). For C that is
+    defined at the Windows x64 ABI level; C++ built with `/EHsc` would be undefined behaviour
+    (vpm compiles only C). The fix is an `UNW_FLAG_EHANDLER` handler that aborts in the `.xdata`
+    the backend writes (`unwind/windows.rs`), a follow-up.
 - **Its address**: `exportedAddress(f)` (std/lang/intrinsics, std only, unsafe) is the C
   function's address as a `usize`, for a C API taking a function pointer (`pthread_create`,
   `qsort`); its argument must name an `@export` function. A package gets the address from C

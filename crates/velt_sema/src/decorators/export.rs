@@ -7,9 +7,11 @@
 //! (`collect::c_sig::value_ty`): integers, `f32`, `f64`, `bool`, `Ptr<T>` and `Ptr<T> | null`, and
 //! `void` as the result. The function is not generic, async, a generator, a method or nested in
 //! another, and throws nothing ([`throws`], after inference): C has no exceptions. Its name is a C
-//! identifier outside what C and the runtime reserve, given to one function of the program, and
+//! identifier outside what C and the runtimes reserve, given to one function of the program, and
 //! no C function the program declares has it. Each export is recorded in `Program::c_exports`,
-//! which lowering builds a C function for (`velt_vir` `lower/c_export.rs`).
+//! which lowering builds a C function for (`velt_vir` `lower/c_export.rs`). Module state isn't
+//! reachable from one (module_state_reach.rs `refuse_in_exports`), and only std and allowed
+//! native packages may use the decorator (veltc `native/trust.rs`).
 
 use velt_common::{std_hook, Diagnostic, Span};
 use velt_syntax::ast;
@@ -363,6 +365,9 @@ fn c_name(name: &str) -> Result<(), String> {
     }
     if name.starts_with("velt_") || name.starts_with("VELT_") {
         return Err("names starting with `velt_` are the Velt runtime's".into());
+    }
+    if name.starts_with("rust_") {
+        return Err("names starting with `rust_` are the Rust runtime's (`rust_eh_personality`, `rust_begin_unwind`), which the Velt runtime links".into());
     }
     let b = name.as_bytes();
     if b[0] == b'_'

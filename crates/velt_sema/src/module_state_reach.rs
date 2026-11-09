@@ -3,7 +3,10 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use velt_common::Diagnostic;
+
 use super::Facts;
+use crate::ctx::Ctx;
 use crate::hir::DefId;
 
 /// Why a function may reach module state: the `let` or kept `const` it uses, or that it calls a
@@ -98,5 +101,33 @@ pub(super) fn vars_reached(facts: &FxHashMap<DefId, Facts>, mut todo: Vec<DefId>
         if todo.is_empty() {
             return vars;
         }
+    }
+}
+
+/// An `@export` function may run on a thread Velt didn't start (a C library's worker, a thread
+/// C starts on it), which has no task to hand the module lock back at the end of a step: the
+/// lock its first use of module state takes is never released, and the next use anywhere waits
+/// for ever. So module state is not reachable from one, by the walk that refuses it in a `with`
+/// callback.
+pub(super) fn refuse_in_exports(cx: &mut Ctx, reach: &FxHashMap<DefId, Reach>) {
+    let found: Vec<_> = (cx.c_exports.iter())
+        .filter_map(|e| Some((e.span, e.name.clone(), reach.get(&e.def)?.clone())))
+        .collect();
+    for (span, name, r) in found {
+        let what = match r.via.is_empty() {
+            true => r.what,
+            false => {
+                let chain: Vec<String> = r.via.iter().map(|&f| super::node_name(cx, f)).collect();
+                format!("{} (through {})", r.what, chain.join(" -> "))
+            }
+        };
+        cx.error(
+            Diagnostic::error(
+                format!("the `@export` function `{name}` may use module state: it {what}"),
+                span,
+            )
+            .with_note("C may call it on a thread Velt didn't start, which can't take the module lock and give it back: module-level `let`s and kept constants can't be used from it")
+            .with_note("pass what it needs in its arguments (C keeps a `Ptr` for it), and return what it computes"),
+        );
     }
 }

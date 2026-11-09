@@ -6,10 +6,13 @@
  * On a top-level function: C calls it as `name`, an unmangled symbol with the target's C calling
  * convention. Its parameters and result cross as a `declare c` function's do (integers, `f32`,
  * `f64`, `bool`, `Ptr<T>`, `Ptr<T> | null`, and `void` as the result); it is not generic, async or
- * a generator, and throws nothing. `name` is a C identifier, unique in the program, outside the
- * names the runtime and C reserve (`velt_…`, `__…`, `main`). A panic that reaches it ends the
- * process there: nothing unwinds into C. The function stays an ordinary Velt function for Velt
- * callers.
+ * a generator, throws nothing and uses no module state (C may call it on a thread Velt didn't
+ * start). `name` is a C identifier, unique in the program, outside the names the runtimes and C
+ * reserve (`velt_…`, `rust_…`, `__…`, `main`). A panic that reaches it ends the process there:
+ * nothing unwinds into C. The function stays an ordinary Velt function for Velt callers.
+ *
+ * It is raw native API, as `Ptr` is: only packages with native code that the program allows
+ * (`allowNative`) may use it, since an exported name could replace a C library function.
  *
  * `export` is a keyword, so a module imports it under another name (`import { export as cExport }
  * from "velt/ffi"`) or through a namespace (`@ffi.export("name")`).

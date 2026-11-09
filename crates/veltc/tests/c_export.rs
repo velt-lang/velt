@@ -18,17 +18,31 @@ mod runtime_support;
 mod test_dir;
 mod zig_env;
 
-const HEADER: &str =
-    "#include <stdint.h>\n\nint32_t cb_apply(int32_t x);\nint64_t cb_run_thread(int64_t n);\n";
+const HEADER: &str = "#include <stdint.h>\n\nint32_t cb_apply(int32_t x);\nint32_t cb_apply_big(int32_t x);\nint32_t cb_dirty(int32_t bits, int32_t which);\nint64_t cb_run_thread(int64_t n);\n";
 
 /// C calling two exported functions: `cb_twice` directly, `cb_worker` as a thread's start.
 const SOURCE: &str = r#"#include "cb.h"
 #include <pthread.h>
 
 int32_t cb_twice(int32_t x);
+int32_t cb_big(int32_t x);
 void *cb_worker(void *arg);
 
 int32_t cb_apply(int32_t x) { return cb_twice(x) + 1; }
+
+int32_t cb_apply_big(int32_t x) { return cb_big(x) + 1; }
+
+int32_t cb_widen_i8(int8_t x);
+int32_t cb_widen_u16(uint16_t x);
+int32_t cb_bool_i32(_Bool b);
+
+/* Calls an export taking a small integer with `bits` in the whole register, as a caller under
+   AAPCS64 outside Darwin may leave it (clang doesn't extend there): the export must extend. */
+int32_t cb_dirty(int32_t bits, int32_t which) {
+  typedef int32_t (*wide)(int32_t);
+  wide f = which == 0 ? (wide)cb_widen_i8 : which == 1 ? (wide)cb_widen_u16 : (wide)cb_bool_i32;
+  return f(bits);
+}
 
 int64_t cb_run_thread(int64_t n) {
   pthread_t t;
@@ -43,7 +57,29 @@ const LIB: &str = r#"import * as ffi from "velt/ffi";
 import { Ptr, export as cExport } from "velt/ffi";
 
 declare c("cb") function cb_apply(x: i32): i32;
+declare c("cb") function cb_apply_big(x: i32): i32;
 declare c("cb") function cb_run_thread(n: i64): i64;
+declare c("cb") function cb_dirty(bits: i32, which: i32): i32;
+
+@ffi.export("cb_widen_i8")
+function widenI8(x: i8): i32 {
+  return x as i32;
+}
+
+@ffi.export("cb_widen_u16")
+function widenU16(x: u16): i32 {
+  return x as i32;
+}
+
+@ffi.export("cb_bool_i32")
+function boolI32(b: boolean): i32 {
+  return b ? 1 : 0;
+}
+
+export function dirty(bits: i32, which: i32): i32 {
+  // SAFETY: it calls back into Velt with a number.
+  return unsafe { cb_dirty(bits, which) };
+}
 
 @ffi.export("cb_twice")
 function twice(x: i32): i32 {
@@ -51,6 +87,37 @@ function twice(x: i32): i32 {
     panic(`twice of ${x}`);
   }
   return x * 2;
+}
+
+// Too large for LLVM to inline into its export, and called from Velt too: without a landing pad
+// the export compiled to a jump to it (a tail call), leaving no frame of its own to stop at.
+@ffi.export("cb_big")
+function big(x: i32): i32 {
+  if (x < 0) {
+    panic(`big of ${x}`);
+  }
+  const words: string[] = [];
+  let total: i32 = 0;
+  for (let i: i32 = 0; i < x; i++) {
+    words.push(`w${i * 7 + x}`);
+    total += i * 3 + x;
+  }
+  for (const w of words) {
+    if (w.startsWith("w1")) {
+      total += 5;
+    } else if (w.endsWith("9")) {
+      total -= 2;
+    }
+  }
+  const joined = words.join("-");
+  if (joined.includes("w10")) {
+    total += 11;
+  }
+  const parts = joined.split("-");
+  if (parts.length > 2) {
+    total += 1;
+  }
+  return total;
 }
 
 @cExport("cb_worker")
@@ -69,6 +136,15 @@ function worker(arg: Ptr<void> | null): Ptr<void> | null {
 export function apply(x: i32): i32 {
   // SAFETY: it reads only its argument, and calls back into Velt.
   return unsafe { cb_apply(x) };
+}
+
+export function applyBig(x: i32): i32 {
+  // SAFETY: it reads only its argument, and calls back into Velt.
+  return unsafe { cb_apply_big(x) };
+}
+
+export function bigOf(x: i32): i32 {
+  return big(x);
 }
 
 export function runThread(n: i64): i64 {
@@ -198,9 +274,35 @@ fn a_panic_in_an_exported_function_ends_the_process() {
     }
 }
 
+/// `main` calling `call` (of package `cb`) under `catchPanic`.
+fn catching_main(call: &str) -> String {
+    format!(
+        r#"import {{ catchPanic }} from "velt/task";
+import {{ apply, applyBig, bigOf }} from "cb";
+
+async function viaC(): Promise<i32> {{
+  return {call};
+}}
+
+async function main() {{
+  console.log(bigOf(3) > 0);
+  try {{
+    console.log(await catchPanic(viaC));
+  }} catch (e) {{
+    console.log("caught");
+  }}
+  console.log("after");
+}}
+"#
+    )
+}
+
 /// A `catchPanic` up the stack would stop a panic by unwinding to it, through the C function
-/// between: the exported function has no unwind information, so the unwinder can't pass it and
-/// the process aborts instead (owner decision (b) on #2649).
+/// between: the process aborts instead (owner decision (b) on #2649). The release builds (LLVM)
+/// stop the unwind in a landing pad that calls `abort`, which holds with debug info (`-g`, which
+/// gives the export unwind information) and when the exported function isn't inlined into its
+/// export (`big`, which without the landing pad was reached by a jump); debug builds (Cranelift)
+/// give the export no unwind information.
 #[test]
 fn a_panic_does_not_unwind_into_c_even_when_something_would_catch_it() {
     let Some(_zig) = zig_env::zig("build C sources calling exported functions") else {
@@ -209,32 +311,91 @@ fn a_panic_does_not_unwind_into_c_even_when_something_would_catch_it() {
     reload_support::build_runtime();
     let dir = test_dir::TestDir::new();
     let home = home(dir.path());
-    let main = r#"import { catchPanic } from "velt/task";
-import { apply } from "cb";
-
-async function viaC(): Promise<i32> {
-  return apply(-1);
+    let mut modes = modes();
+    modes.push(&["run", "--release", "-g"]);
+    for (call, message) in [
+        ("apply(-1)", "panic: twice of -1"),
+        ("applyBig(-1)", "panic: big of -1"),
+    ] {
+        let app = project(dir.path(), &catching_main(call));
+        for args in &modes {
+            let o = velt(&app, &home, args);
+            let out = text(&o);
+            assert!(!o.status.success(), "{call}, velt {args:?}:\n{out}");
+            assert_eq!(
+                String::from_utf8_lossy(&o.stdout),
+                "true\n",
+                "{call}, velt {args:?}:\n{out}"
+            );
+            assert!(
+                out.contains(message) && !out.contains("caught"),
+                "{call}, velt {args:?}:\n{out}"
+            );
+        }
+    }
 }
 
-async function main() {
-  try {
-    console.log(await catchPanic(viaC));
-  } catch (e) {
-    console.log("caught");
-  }
-  console.log("after");
+/// `@export` is raw native API (c-ffi.md "The trust boundary"): a package without native code
+/// can't define a C symbol, which could replace one of the C library's (`getaddrinfo`).
+#[test]
+fn only_an_allowed_native_package_exports_to_c() {
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let pkg = dir.path().join("plain");
+    std::fs::create_dir_all(pkg.join("src")).unwrap();
+    std::fs::write(
+        pkg.join("package.velt"),
+        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"plain\", version: \"0.1.0\" };\n",
+    )
+    .unwrap();
+    std::fs::write(
+        pkg.join("src/lib.velt"),
+        "import * as ffi from \"velt/ffi\";\n\n@ffi.export(\"getaddrinfo\")\nfunction lookup(a: usize, b: usize, c: usize, d: usize): i32 {\n  return -2;\n}\n\nexport function one(): i32 {\n  return 1;\n}\n",
+    )
+    .unwrap();
+    let app = dir.path().join("app");
+    std::fs::create_dir_all(app.join("src")).unwrap();
+    std::fs::write(
+        app.join("package.velt"),
+        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = {\n  name: \"app\",\n  version: \"0.1.0\",\n  dependencies: { plain: { path: \"../plain\" } },\n};\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("src/main.velt"),
+        "import { one } from \"plain\";\n\nfunction main() {\n  console.log(one());\n}\n",
+    )
+    .unwrap();
+    let o = velt(&app, &home, &["check"]);
+    let out = text(&o);
+    assert!(!o.status.success(), "{out}");
+    assert!(out.contains("`ffi.export` is raw native API"), "{out}");
+    assert!(out.contains("package `plain` has no native code"), "{out}");
+    // The allowed native package of the other tests checks.
+    let app = project(&dir.path().join("allowed"), MAIN);
+    let o = velt(&app, &home, &["check"]);
+    assert!(o.status.success(), "{}", text(&o));
 }
-"#;
+
+/// An export's `i8`, `u16` and `bool` parameters with garbage in the register's upper bits, as
+/// a C caller on aarch64 Linux may pass them: the export extends them itself (LLVM: no
+/// `signext`/`zeroext` on its parameters; Cranelift's functions extend already).
+#[test]
+fn an_export_extends_its_small_integer_parameters_itself() {
+    let Some(_zig) = zig_env::zig("build C sources calling exported functions") else {
+        return;
+    };
+    reload_support::build_runtime();
+    let dir = test_dir::TestDir::new();
+    let home = home(dir.path());
+    let main = "import { dirty } from \"cb\";\n\nfunction main() {\n  console.log(dirty(0x1234ff80, 0), dirty(0x7fff0001, 1), dirty(0x100, 2));\n}\n";
     let app = project(dir.path(), main);
     for args in modes() {
         let o = velt(&app, &home, args);
-        assert!(!o.status.success(), "velt {args:?}:\n{}", text(&o));
-        assert_eq!(String::from_utf8_lossy(&o.stdout), "", "{}", text(&o));
-        let stderr = String::from_utf8_lossy(&o.stderr);
-        assert!(stderr.contains("panic: twice of -1"), "{}", text(&o));
-        assert!(
-            stderr.contains("failed to initiate panic") || stderr.contains("abort"),
-            "{}",
+        assert!(o.status.success(), "velt {args:?}:\n{}", text(&o));
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "-128 1 0\n",
+            "velt {args:?}:\n{}",
             text(&o)
         );
     }

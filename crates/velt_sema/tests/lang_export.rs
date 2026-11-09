@@ -105,6 +105,8 @@ fn the_name_is_a_c_identifier_nothing_else_claims() {
         ("main", "the program's entry"),
         ("int", "a keyword of C"),
         ("free", "of the C library"),
+        ("rust_eh_personality", "the Rust runtime's"),
+        ("rust_begin_unwind", "the Rust runtime's"),
     ] {
         let e = err(&format!("@ffi.export(\"{name}\")\nfunction f(): void {{}}"));
         assert!(
@@ -168,4 +170,27 @@ fn exported_address_takes_an_exported_function() {
         "{intrinsics}@ffi.export(\"lib_e\")\nfunction e(): void {{}}\nfunction g(): usize {{ return exportedAddress(e); }}"
     ));
     assert!(e.contains("unsafe"), "{e}");
+}
+
+/// C may call an export on a thread Velt didn't start, which takes the module lock on its first
+/// use of module state and never gives it back (#2662): module state isn't reachable from one,
+/// directly or through what it calls, as in a `with` callback.
+#[test]
+fn an_exported_function_reaches_no_module_state() {
+    let e = err(
+        "let hits = 0;\n@ffi.export(\"lib_hit\")\nfunction hit(): i32 { hits += 1; return hits; }",
+    );
+    assert!(
+        e.contains("the `@export` function `lib_hit` may use module state"),
+        "{e}"
+    );
+    assert!(e.contains("a thread Velt didn't start"), "{e}");
+    let e = err("const greeting = [\"a\", \"b\"];\nfunction text(): string { return greeting.join(\" \"); }\n@ffi.export(\"lib_len\")\nfunction len(): i32 { return text().length; }");
+    assert!(
+        e.contains("the `@export` function `lib_len` may use module state"),
+        "{e}"
+    );
+    assert!(e.contains("(through `text`)"), "{e}");
+    // A constant of a number is no state, and neither are the function's own locals.
+    ok("const LIMIT: i32 = 10;\n@ffi.export(\"lib_cap\")\nfunction cap(x: i32): i32 { let y = x; return y < LIMIT ? y : LIMIT; }");
 }

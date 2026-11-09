@@ -212,8 +212,12 @@ fn compile_function(
         Translation::NeedsLib(lib) => return Ok(Outcome::NeedsLib(lib)),
     };
     let hit = compile_one(target.isa(), &mut ctx, &func.symbol, cache)?;
-    // A function C calls has none, so an unwind can't pass it (`Function::stops_unwind`).
-    let unwind = match func.stops_unwind {
+    // A function C calls has none, so an unwind can't pass it (`Function::stops_unwind`); on
+    // Windows it keeps it, as the unwinder takes a function without one for a leaf and would
+    // misread the stack past it (c-ffi.md "Exported functions" says what happens there).
+    let windows =
+        target.isa().triple().operating_system == target_lexicon::OperatingSystem::Windows;
+    let unwind = match func.stops_unwind && !windows {
         true => None,
         false => unwind_info(target.isa(), id, &ctx, &func.symbol)?,
     };

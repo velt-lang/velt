@@ -15,15 +15,15 @@ use crate::runtime::{self, Allocator, Effects};
 use crate::statics::static_data;
 use crate::statics::StaticDefinition;
 use crate::target::Target;
-use crate::types::{abi_ret, abi_type, escape_bytes, global_name, validate_aggregates};
+use crate::types::{abi_ret, abi_type, escape_bytes, global_name, llvm_type, validate_aggregates};
 use crate::units::{Shared, Unit};
 use crate::CodegenResult;
 
 /// Attribute group of defined functions.
 pub(crate) const FN_ATTRS: &str = "#0";
 /// Attribute group of the functions C calls (`vir::Function::stops_unwind`): those of
-/// [`FN_ATTRS`] with `nounwind` for `uwtable`, so they get no unwind information and an unwind
-/// can't pass them into C.
+/// [`FN_ATTRS`] and `nounwind`, as their landing pad aborts on an unwind (function/stop_unwind.rs).
+/// They keep `uwtable`: the landing pad needs unwind information.
 pub(crate) const STOP_UNWIND_ATTRS: &str = "#10";
 /// Attribute group of ordinary externs (C functions and the Rust runtime do not unwind into
 /// Velt code: Rust `extern "C"` aborts on panic).
@@ -199,9 +199,10 @@ pub(crate) fn emit_unit_capped(
         "\nattributes {FN_ATTRS} = {{ {} }}",
         target.function_attributes().join(" ")
     );
-    let stop: Vec<&str> = (target.function_attributes().into_iter())
-        .map(|a| if a == "uwtable" { "nounwind" } else { a })
-        .collect();
+    let mut stop = target.function_attributes();
+    if !stop.contains(&"nounwind") {
+        stop.push("nounwind");
+    }
     let _ = writeln!(
         out,
         "attributes {STOP_UNWIND_ATTRS} = {{ {} }}",
@@ -411,11 +412,18 @@ pub(crate) fn definition_params(func: &vir::Function) -> CodegenResult<String> {
     parameters(func, true)
 }
 
-/// Parameter types with their attributes, and `%p<i>` names when `named`.
+/// Parameter types with their attributes, and `%p<i>` names when `named`. A function C calls
+/// (`vir::Function::stops_unwind`) has no `signext`/`zeroext` on its small integer parameters:
+/// C callers outside Darwin's arm64 ABI may leave their upper bits unset (AAPCS64), so it extends
+/// them itself, as clang's definitions do there. Its result keeps its attribute.
 fn parameters(func: &vir::Function, named: bool) -> CodegenResult<String> {
     let mut parts = Vec::with_capacity(func.params.len());
     for (i, &p) in func.params.iter().enumerate() {
-        let mut t = abi_type(p)?;
+        let mut t = match func.stops_unwind {
+            true => (llvm_type(p).map(str::to_string))
+                .ok_or_else(|| format!("type {p:?} is not allowed in a signature"))?,
+            false => abi_type(p)?,
+        };
         let a = func.param_attr(i);
         if a.noalias {
             t.push_str(" noalias");
