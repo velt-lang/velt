@@ -130,6 +130,27 @@ export function dec(a: usize): usize {
   return unsafe { ptrAtomicRmw(Ptr.at<usize>(a), "sub", 1, "acqrel") };
 }
 
+/** Sets the bits `v` in the `u32` at `a`; the word before. */
+@inline
+export function or32(a: usize, v: u32): u32 {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicRmw(Ptr.at<u32>(a), "or", v, "seqcst") };
+}
+
+/** Clears the bits not in `v` in the `u32` at `a`; the word before. */
+@inline
+export function and32(a: usize, v: u32): u32 {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicRmw(Ptr.at<u32>(a), "and", v, "seqcst") };
+}
+
+/** Makes the word at `a` `v`; the word before. */
+@inline
+export function swap(a: usize, v: usize): usize {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicRmw(Ptr.at<usize>(a), "exchange", v, "seqcst") };
+}
+
 /** Pushes `t` on the stack whose head is at `head`, linked through `t + next`. */
 export function pushStack(head: usize, t: usize, next: usize): void {
   let h = load(head);

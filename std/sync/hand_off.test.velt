@@ -12,6 +12,27 @@ class Conn {
   }
 }
 
+async function parked(p: Promise<void>): Promise<i64> {
+  await p;
+  return 1;
+}
+
+async function giveOne(h: shared<HandOff<Conn>>, i: i64): Promise<i64> {
+  return h.give(new Conn(i)) == null ? 0 : 1;
+}
+
+async function yields(n: i64): Promise<void> {
+  for (let i: i64 = 0; i < n; i++) {
+    await yieldNow();
+  }
+}
+
+async function parkAndClaim(h: shared<HandOff<Conn>>): Promise<i64> {
+  // The park is polled again on every yield of the other branch, while a giver gives.
+  await Promise.all<void>([h.park(), yields(20)]);
+  return h.claim()?.id ?? -1;
+}
+
 async function waitFor(h: shared<HandOff<Conn>>): Promise<i64> {
   const c = await h.wait();
   return c?.id ?? -1;
@@ -60,4 +81,45 @@ describe("velt/sync HandOff", () => {
       expect(g.takeBack()).toBe(null);
     },
   );
+
+  it("a wait outlives a hand-off dropped while it waits, and resumes at its end", async () => {
+    // A temporary: the hand-off is gone before the race polls its park.
+    const p = new HandOff<string>().park();
+    await Promise.race<void>([p, yieldNow()]);
+    let t: Promise<i64>;
+    {
+      const h = new HandOff<Conn>();
+      t = spawn(parked(h.park()));
+      await yieldNow();
+    }
+    expect(await t).toBe(1);
+  });
+
+  it("many givers at once: one gives, the others get their item back", async () => {
+    for (let round = 0; round < 200; round++) {
+      const h = shared(new HandOff<Conn>());
+      const waiter = spawn(waitFor(h));
+      const givers: Promise<i64>[] = [];
+      for (let i: i64 = 0; i < 16; i++) {
+        givers.push(spawn(giveOne(h, i)));
+      }
+      let back: i64 = 0;
+      for (const g of givers) {
+        back += await g;
+      }
+      expect(back).toBe(15);
+      const got = await waiter;
+      expect(got >= 0 && got < 16).toBe(true);
+    }
+  });
+
+  it("a park polled again while a give lands gets the item", async () => {
+    for (let round = 0; round < 200; round++) {
+      const h = shared(new HandOff<Conn>());
+      const waiter = spawn(parkAndClaim(h));
+      const giver = spawn(giveOne(h, round));
+      expect(await giver).toBe(0);
+      expect(await waiter).toBe(round);
+    }
+  });
 });

@@ -16,7 +16,7 @@ export class Slot<T> {
   private full: bool = false;
 
   constructor() {
-    const n = slotSize();
+    const n = slotSize<T>();
     // SAFETY: malloc has no precondition; its result is checked.
     const p = unsafe { malloc$slot(n === 0 ? 16 : n) };
     if (p === 0) {

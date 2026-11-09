@@ -425,8 +425,8 @@ pub enum Intrinsic {
     /// with no type arguments; sema checks it is not async or throwing and passes only numbers
     /// and `bool`), callable from C with the C calling convention (#2649). Additive.
     FnAddress,
-    /// std only: `slotSize() -> usize`: the size of the enclosing instance's first type argument
-    /// (std/lang/intrinsics/slot.velt). Additive.
+    /// std only: `slotSizeOfFirst() -> usize`, behind std's `slotSize<T>()`: the size of the
+    /// enclosing instance's first type argument (std/lang/intrinsics/slot.velt). Additive.
     SlotSize,
     /// std only: `slotPut<T>(at: usize, value: T)`: `value` moved to `*(T*)at`, transferred as
     /// a channel send's value is. Additive.

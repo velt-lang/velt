@@ -1,18 +1,26 @@
 // velt/lang/intrinsics (internal): an owned value moved into and out of raw memory, for std's
 // one-shot hand-off and, later, its channel in Velt (#2649). The memory and the state that says
 // whether it holds a value are the caller's; these move the value's bytes with the ownership
-// accounting the compiler does for any move. They are called only from the methods of a generic
-// std class whose first type argument is the value's type (`slotSize` reads it there).
+// accounting the compiler does for any move. `slotSize<T>()` says how many bytes a `T` takes.
 
-import { intrinsic } from "./decorators";
+import { inline, intrinsic } from "./decorators";
 import type { Owned } from "./modes";
 
-/** The bytes a value of the enclosing class's first type argument takes (0 for none). */
+/**
+ * The bytes the first type argument of the enclosing generic function's instance (or its
+ * class's) takes (0 for none); outside one, an internal compiler error. Only `slotSize` calls it.
+ */
 @intrinsic
-export declare function slotSize(): usize;
+declare function slotSizeOfFirst(): usize;
+
+/** The bytes a `T` takes in a slot (0 for none). */
+@inline
+export function slotSize<T>(): usize {
+  return slotSizeOfFirst();
+}
 
 /**
- * Moves `value` into the memory at `at`, which must have `slotSize()` bytes, aligned to 16,
+ * Moves `value` into the memory at `at`, which must have `slotSize<T>()` bytes, aligned to 16,
  * holding no value. The value crosses to whichever task takes it, as a channel send's does: moved
  * when this task held the only reference, else copied, and a resource still shared here stops
  * the program (#2613). Unsafe: the memory and its state are the caller's.
