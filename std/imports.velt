@@ -20,4 +20,11 @@ export const imports: Imports = {
     js: "./lang/random/seed_js.velt",
     default: "./lang/random/seed_native.velt",
   },
+  // How the executor in Velt (std/lang/hooks/sched.velt) sleeps while it has nothing to run and
+  // is woken from another thread: `__ulock_wait` on macOS, a futex on Linux, else spinning.
+  "#sched-park": {
+    darwin: "./lang/hooks/sched_park_darwin.velt",
+    linux: "./lang/hooks/sched_park_linux.velt",
+    default: "./lang/hooks/sched_park_spin.velt",
+  },
 };

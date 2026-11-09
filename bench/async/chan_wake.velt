@@ -1,0 +1,31 @@
+// #2649: the cost of a suspend and resume. Two tasks on one thread hand a number back and forth
+// over two channels: each round suspends and resumes each task once, so instructions / (2 ×
+// ROUNDS) is the cost of one suspend and resume plus a channel send and receive. Run with
+// VELT_THREADS=1 (and VELT_SCHEDULER=std when compiling for the executor in Velt).
+import { channel, Channel } from "velt/sync";
+
+const ROUNDS: i64 = 1000000;
+
+async function echo(inbox: Channel<i64>, out: Channel<i64>): Promise<void> {
+  while (true) {
+    const v = await inbox.receive();
+    if (v == null) {
+      return;
+    }
+    out.trySend(v);
+  }
+}
+
+async function main() {
+  const a = channel<i64>();
+  const b = channel<i64>();
+  const t = spawn(echo(a, b));
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < ROUNDS; i++) {
+    a.trySend(i);
+    sum += (await b.receive()) ?? 0;
+  }
+  a.close();
+  await t;
+  console.log(sum);
+}

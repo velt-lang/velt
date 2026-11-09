@@ -53,7 +53,14 @@ export {
 } from "velt/lang/intrinsics/atomic";
 export { chanReceive, chanSend, chanTryReceive, chanTrySend } from "velt/lang/intrinsics/channel";
 export { hash, includesEq, keyEq } from "velt/lang/intrinsics/compare";
-export { futDrop, futPoll } from "velt/lang/intrinsics/future";
+export {
+  addressCall,
+  fnAddress,
+  futDrop,
+  futPoll,
+  stateDrop,
+  statePoll,
+} from "velt/lang/intrinsics/future";
 export {
   asyncGeneratorDispose,
   asyncGeneratorResume,

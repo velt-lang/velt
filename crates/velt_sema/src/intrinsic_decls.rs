@@ -120,8 +120,12 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("ptrAtomicRmw", Op(I::PtrAtomicRmw)),
     ("ptrAtomicStore", Op(I::PtrAtomicStore)),
     // future.velt
+    ("addressCall", Op(I::AddressCall)),
+    ("fnAddress", Op(I::FnAddress)),
     ("futDrop", Op(I::FutDrop)),
     ("futPoll", Op(I::FutPoll)),
+    ("stateDrop", Op(I::StateDrop)),
+    ("statePoll", Op(I::StatePoll)),
     // string.velt
     ("strAsciiWords", Op(I::StrAsciiWords)),
     ("strByteAt", Op(I::StrByteAt)),

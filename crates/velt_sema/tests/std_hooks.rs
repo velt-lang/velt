@@ -17,7 +17,8 @@ use velt_sema::hir::{Def, DefId, FloatTy, IntTy, Nothing, PassMode, Program, TyI
 /// velt/lang/this_fn, velt/lang/record/reflect, velt/lang/hooks/any_record, tuple_elements and
 /// velt/lang/hooks/number_float, which the driver's loader adds for what a module uses, and this
 /// test's loader does not). velt/lang/hooks/number_text comes with the prelude; imported here,
-/// its float hooks, which are checked on demand, are checked too.
+/// its float hooks, which are checked on demand, are checked too. velt/lang/hooks/sched (the
+/// executor in Velt) is loaded only by a build with `VELT_SCHEDULER=std`.
 const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/record/reflect\";\n\
     import \"velt/lang/hooks/any_record\";\nimport \"velt/lang/hooks/number_text\";\n\
     import \"velt/lang/hooks/number_float\";\nimport \"velt/host\";\n\
@@ -25,7 +26,7 @@ const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/recor
     import \"velt/test/registry\";\nimport \"velt/test/run\";\nimport \"velt/host/promise\";\n\
     import \"velt/ffi/ptr\";\nimport \"velt/ffi/str_bytes\";\nimport \"velt/ffi/c_string\";\n\
     import \"velt/ffi/export\";\n\
-    import \"velt/lang/hooks/locale_compare\";\n\
+    import \"velt/lang/hooks/locale_compare\";\nimport \"velt/lang/hooks/sched\";\n\
     function main() {\n  const p = new Proxy({}, {});\n  const s = new Set<number>();\n  \
     const b = new Uint8Array(1);\n  const r = new RegExp(\"a\");\n  \
     const j = JSON.parse<i64>(\"1\");\n  const v: JsonValue = JsonValue.of(1);\n}\n";

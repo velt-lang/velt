@@ -193,10 +193,15 @@ fn backend() -> Backend {
 
 /// `velt_rt_set_scheduler(kind)`: `velt_main` calls it with `1` first when the program pins a
 /// task (`spawn(…, { worker })`). The default executor keeps pinned tasks on their workers
-/// itself, so nothing changes; kept for the programs compiled to call it.
+/// itself, so nothing changes; kept for the programs compiled to call it. `2`: the executor in
+/// Velt (std/lang/hooks/sched.velt, `VELT_SCHEDULER=std` at compile time) polls tasks on this
+/// thread from now on, so the leaves it polls find the runtime's timers and I/O here, as on a
+/// worker: this thread stays inside the runtime's tokio context for the rest of the process.
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_set_scheduler(kind: u32) {
-    let _ = kind;
+    if kind == 2 {
+        std::mem::forget(enter());
+    }
 }
 
 /// `workerCount()`: the per-core workers, or the stealing runtime's worker threads.

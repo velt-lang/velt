@@ -411,6 +411,20 @@ pub enum Intrinsic {
     /// of its `CExport` there. For a C API that takes a function pointer (`pthread_create`).
     /// Additive.
     ExportedAddress,
+    /// std only: `statePoll(poll: usize, state: usize, cx: usize) -> u32`: the call of the
+    /// compiled poll function at address `poll` with `(state, cx)` (rt_abi_async.md §1), for
+    /// std's executor (#2649). Additive.
+    StatePoll,
+    /// std only: `stateDrop(drop: usize, at: usize)`: the call of the C function at address
+    /// `drop` with `at` (a state's drop function, a result's drop glue). Additive.
+    StateDrop,
+    /// std only: `addressCall(f: usize, a: usize) -> usize`: the call of the C function at
+    /// address `f` with `a`, both pointer-sized (a waker table's `clone`). Additive.
+    AddressCall,
+    /// std only: `fnAddress(f) -> usize`: the address of module-level function `f` (a `FnRef`
+    /// with no type arguments; sema checks it is not async or throwing and passes only numbers
+    /// and `bool`), callable from C with the C calling convention (#2649). Additive.
+    FnAddress,
     /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
     /// range against `StrByteLen`). The bytes are read where the string keeps them.
     StrByteAt,

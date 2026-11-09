@@ -250,6 +250,19 @@ hooks! {
     /// replaces its calls by the runtime's (`async_fn/suspend.rs`).
     top_level_await_at => lang_hooks_process, "topLevelAwaitAt", sig((&string) -> void), lowered;
 
+    // sched.velt: the executor in Velt (#2649 step 3.1), which lowering calls instead of the
+    // runtime's in a program compiled with `VELT_SCHEDULER=std` ([`std_scheduler`]), which is when
+    // sema demands their module (`velt_sema` `lazy_std`); not loaded otherwise, nor up front.
+    /// `velt_main`'s root task (`velt_rt_block_on`'s job): `(poll, state)`.
+    sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize) -> void), lowered;
+    /// `spawn(f(...))` (`velt_rt_spawn`'s job): `(poll, drop, state, size, align, result_size,
+    /// result_drop)`, the join handle.
+    sched_spawn => lang_hooks_sched, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize) -> usize), lowered;
+    /// `await yieldNow()` (`velt_rt_yield_now`'s job): `(cx)`.
+    sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
+    /// The end of `velt_main`: the tasks still alive run to completion.
+    sched_finish => lang_hooks_sched, "schedFinish", sig(() -> void), lowered;
+
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
     satisfies => lang_hooks_syntax, "satisfies", sig(<A>(move A) -> A);
@@ -739,6 +752,8 @@ keys! {
 
 mod deleted;
 pub use deleted::DELETED;
+mod scheduler;
+pub use scheduler::{std_scheduler, SCHEDULER_ENV};
 
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).
 pub fn find(qualified: &str) -> Option<&'static Hook> {

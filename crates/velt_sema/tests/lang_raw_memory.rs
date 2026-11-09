@@ -14,8 +14,9 @@ fn std_diagnostics(src: &str) -> String {
 }
 
 const IMPORTS: &str = "import { Ptr } from \"velt/ffi\";
-import { addressLoad, addressStore, atomicAddress, futDrop, futPoll, ptrAtomicCas, ptrAtomicLoad,
-  ptrAtomicRmw, ptrAtomicStore } from \"velt/lang/intrinsics\";";
+import { addressCall, addressLoad, addressStore, atomicAddress, fnAddress, futDrop, futPoll,
+  ptrAtomicCas, ptrAtomicLoad, ptrAtomicRmw, ptrAtomicStore, stateDrop, statePoll }
+  from \"velt/lang/intrinsics\";";
 
 fn std_ok(body: &str) {
     let d = std_diagnostics(&format!("{IMPORTS}\n{body}"));
@@ -181,4 +182,50 @@ fn atomic_address_takes_only_an_atomic_that_cannot_move() {
         ),
         "{narrow}"
     );
+}
+
+#[test]
+fn fn_address_takes_a_function_c_can_call() {
+    std_ok(
+        "function poll(s: usize, cx: usize): u32 { return (s + cx) as u32; }
+         function wake(w: usize): void {}
+         function flag(b: bool, x: f64): bool { return b && x > 0; }
+         function main() {
+           const p = fnAddress(poll);
+           // SAFETY: test code, never run.
+           if (false) { unsafe { console.log(statePoll(p, 1, 2), addressCall(p, 3)); stateDrop(fnAddress(wake), 4); } }
+           console.log(fnAddress(flag) !== 0);
+         }",
+    );
+    for (decl, arg) in [
+        ("function f(s: string): void {}", "f"),
+        ("function f(): string { return \"\"; }", "f"),
+        ("async function f(): Promise<void> {}", "f"),
+        (
+            "function f(x: u64): u64 throws Error { throw new Error(\"x\"); }",
+            "f",
+        ),
+        ("function f(x: u64): u64 { return x; }", "(x: u64) => x"),
+        ("class C { static m(x: u64): u64 { return x; } }", "C.m"),
+    ] {
+        let e = std_err(&format!(
+            "{decl}\nfunction main() {{ console.log(fnAddress({arg})); }}"
+        ));
+        assert!(
+            e.contains("module-level function C can call"),
+            "{decl}: {e}"
+        );
+    }
+}
+
+#[test]
+fn the_calls_through_an_address_need_unsafe_code() {
+    for call in [
+        "statePoll(8, 16, 24)",
+        "stateDrop(8, 16)",
+        "addressCall(8, 16)",
+    ] {
+        let e = std_err(&format!("function main() {{ console.log({call}); }}"));
+        assert!(e.contains("unsafe"), "{call}: {e}");
+    }
 }

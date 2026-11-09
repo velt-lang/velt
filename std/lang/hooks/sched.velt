@@ -1,0 +1,396 @@
+// velt/lang/hooks (internal): the executor in Velt (#2649 step 3.1), one worker, the thread
+// that runs `main`. A program compiled with `VELT_SCHEDULER=std` runs its root (`schedBlockOn`),
+// its spawned tasks (`schedSpawn`) and `await yieldNow()` (`schedYield`) here instead of on the
+// runtime's executor; `schedFinish` drives the tasks still alive once `main` is done. The
+// runtime's leaves (timers, channels, files, sockets) stay Rust: they wake a task through its C
+// waker (rt_abi_async.md §1) from any thread, which queues it and unparks the worker.
+//
+// Everything is raw memory (sched_mem.velt), so nothing here is module state (which is per task):
+// - The executor, allocated once, its address in `EXEC`: the inbox (a stack of tasks woken from
+//   other threads, linked through their `next`), the park word, the worker's own queue (first in,
+//   first out), the live task count and the waker table.
+// - A task: the table's address first (a task is its own waker), its reference count (the
+//   executor's until it is done, the join handle's, one per waker clone), its state (IDLE,
+//   SCHEDULED, RUNNING, NOTIFIED, DONE), the root's poll and drop and its state's address, the
+//   result's size and drop glue, the waker of the task awaiting it, the `cx` its polls get, the
+//   join handle (a heap future, rt_abi_async.md §1) whose result slot follows, then the initial
+//   state copied in: one allocation per spawn.
+
+import { fnAddress, inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
+import { parkWait, parkWake } from "#sched-park";
+import * as m from "./sched_mem";
+
+declare function velt_rt_set_scheduler(kind: u32): void;
+
+/** The executor's address (0 until it starts). */
+const EXEC = new Atomic<u64>(0);
+/** Is this thread the worker? */
+const ON_WORKER = new ThreadLocal<bool>(false);
+
+// The executor's fields.
+const E_INBOX: usize = 0;
+const E_PARK: usize = 8;
+const E_HEAD: usize = 16;
+const E_TAIL: usize = 24;
+const E_LIVE: usize = 32;
+const E_VT: usize = 64;
+const E_SIZE: usize = 96;
+
+// A task's fields.
+const T_REFS: usize = 8;
+const T_STATE: usize = 16;
+const T_FLAGS: usize = 20;
+const T_NEXT: usize = 24;
+const T_POLL: usize = 32;
+const T_DROP: usize = 40;
+const T_ROOT: usize = 48;
+const T_RESULT_DROP: usize = 56;
+const T_RESULT_SIZE: usize = 64;
+const T_JOINER: usize = 72;
+const T_CX: usize = 80;
+const T_WORD: usize = 96;
+const T_JOIN: usize = 112;
+const T_SLOT: usize = 128;
+
+// A task's states.
+const IDLE: u32 = 0;
+const SCHEDULED: u32 = 1;
+const RUNNING: u32 = 2;
+const NOTIFIED: u32 = 3;
+const DONE: u32 = 4;
+
+// A task's flags: its join handle is alive; the handle took the result; the root of `main`.
+const HANDLE: u32 = 1;
+const CLAIMED: u32 = 2;
+const ROOT: u32 = 4;
+
+/** The executor, started on first use (by the worker: `main`'s thread). */
+@inline
+function exec(): usize {
+  const e = EXEC.load("relaxed") as usize;
+  if (e !== 0) {
+    return e;
+  }
+  return start();
+}
+
+@noInline
+function start(): usize {
+  const e = m.zeroed(E_SIZE);
+  m.st(e + E_VT, fnAddress(wakerClone));
+  m.st(e + E_VT + 8, fnAddress(wakerWake));
+  m.st(e + E_VT + 16, fnAddress(wakerWakeByRef));
+  m.st(e + E_VT + 24, fnAddress(wakerDrop));
+  ON_WORKER.set(true);
+  // The runtime's leaves that need its timers and I/O find them from this thread.
+  velt_rt_set_scheduler(2);
+  EXEC.store(e as u64, "release");
+  return e;
+}
+
+/**
+ * A new task of `poll` and `drop` with a result of `rsize` bytes (dropped with `rdrop`) and room
+ * for a state of `size` bytes after it, holding `refs` references, scheduled but not queued.
+ */
+@inline
+function task(
+  e: usize,
+  poll: usize,
+  drop: usize,
+  rsize: u64,
+  rdrop: usize,
+  size: u64,
+  refs: u64,
+): usize {
+  const t = m.alloc(stateAt(rsize) + (size as usize));
+  m.st(t, e + E_VT);
+  m.st(t + T_REFS, refs as usize);
+  m.st32(t + T_STATE, SCHEDULED);
+  m.st32(t + T_FLAGS, 0);
+  m.st(t + T_NEXT, 0);
+  m.st(t + T_POLL, poll);
+  m.st(t + T_DROP, drop);
+  m.st(t + T_ROOT, t + stateAt(rsize));
+  m.st(t + T_RESULT_DROP, rdrop);
+  m.st(t + T_RESULT_SIZE, rsize as usize);
+  m.st(t + T_JOINER, 0);
+  m.st(t + T_CX, t + T_WORD);
+  m.st(t + T_CX + 8, t);
+  m.st32(t + T_WORD, 0);
+  m.st(t + T_JOIN, fnAddress(joinPoll));
+  m.st(t + T_JOIN + 8, fnAddress(joinDrop));
+  return t;
+}
+
+/** Where a task's state starts, after a result slot of `rsize` bytes. */
+@inline
+function stateAt(rsize: u64): usize {
+  return T_SLOT + ((rsize as usize + 15) & ~15);
+}
+
+/** `velt_main`'s root: runs it, and every task it wakes, until it is done. */
+export function schedBlockOn(poll: usize, state: usize): void {
+  const e = exec();
+  // The executor's reference and this one: the root is read after it is done.
+  const t = task(e, poll, 0, 0, 0, 0, 2);
+  m.st(t + T_ROOT, state);
+  m.st32(t + T_FLAGS, ROOT);
+  push(e, t);
+  while (m.ld32(t + T_STATE) !== DONE) {
+    turn(e);
+  }
+  release(t);
+}
+
+/** Runs the tasks still alive once `main` is done, until none is. */
+export function schedFinish(): void {
+  const e = EXEC.load("acquire") as usize;
+  if (e === 0) {
+    return;
+  }
+  while (m.ld(e + E_LIVE) !== 0) {
+    turn(e);
+  }
+}
+
+/**
+ * `spawn(f(...))`: a task from the initial state at `state` (`size` bytes, aligned to at most 16,
+ * moved in), scheduled now; its join handle, a heap future whose slot gets `rsize` bytes. A
+ * result the handle never claims is dropped with `rdrop` (0: nothing to drop).
+ */
+export function schedSpawn(
+  poll: usize,
+  drop: usize,
+  state: usize,
+  size: u64,
+  align: u64,
+  rsize: u64,
+  rdrop: usize,
+): usize {
+  const e = exec();
+  // The executor's reference and the handle's.
+  const t = task(e, poll, drop, rsize, rdrop, size, 2);
+  m.copy(m.ld(t + T_ROOT), state, size as usize);
+  m.st32(t + T_FLAGS, HANDLE);
+  m.st(e + E_LIVE, m.ld(e + E_LIVE) + 1);
+  schedule(e, t);
+  return t + T_JOIN;
+}
+
+/** `await yieldNow()`: the task polled with `cx` runs again after the other ready tasks. */
+export function schedYield(cx: usize): void {
+  const w = m.ld(cx + 8);
+  if (m.ld(w) === exec() + E_VT) {
+    // Running: polled again once this poll returns, at the back of the queue.
+    m.cas32(w + T_STATE, RUNNING, NOTIFIED);
+    return;
+  }
+  m.wakeByRef(w);
+}
+
+/** One step of the worker: run the next ready task, or park until a wake. */
+function turn(e: usize): void {
+  let t = m.ld(e + E_HEAD);
+  if (t === 0) {
+    t = takeInbox(e);
+  }
+  if (t === 0) {
+    park(e);
+    return;
+  }
+  const next = m.ld(t + T_NEXT);
+  m.st(e + E_HEAD, next);
+  if (next === 0) {
+    m.st(e + E_TAIL, 0);
+  }
+  run(e, t);
+}
+
+/** Polls task `t` once. */
+function run(e: usize, t: usize): void {
+  m.store32(t + T_STATE, RUNNING);
+  // SAFETY: `t`'s root is the state of its poll function, not finished; `t + T_CX` is its cx.
+  const ready = unsafe { statePoll(m.ld(t + T_POLL), m.ld(t + T_ROOT), t + T_CX) };
+  if (ready === 1) {
+    finish(e, t);
+  } else if (m.cas32(t + T_STATE, RUNNING, IDLE) !== RUNNING) {
+    // Woken during its poll.
+    m.store32(t + T_STATE, SCHEDULED);
+    push(e, t);
+  }
+}
+
+/** Task `t` is done: its result to the join handle, its awaiter woken. */
+function finish(e: usize, t: usize): void {
+  const rsize = m.ld(t + T_RESULT_SIZE);
+  if (rsize !== 0) {
+    m.copy(t + T_SLOT, m.ld(t + T_ROOT), rsize);
+  }
+  m.store32(t + T_STATE, DONE);
+  if ((m.ld32(t + T_FLAGS) & ROOT) !== 0) {
+    // The root of `main`: not counted, nothing to hand over.
+    release(t);
+    return;
+  }
+  m.st(e + E_LIVE, m.ld(e + E_LIVE) - 1);
+  const joiner = m.ld(t + T_JOINER);
+  if (joiner !== 0) {
+    m.st(t + T_JOINER, 0);
+    m.wakeOwned(joiner);
+  }
+  if ((m.ld32(t + T_FLAGS) & HANDLE) === 0) {
+    dropResult(t);
+  }
+  release(t);
+}
+
+/** Drops task `t`'s result in its slot, which nobody claimed. */
+function dropResult(t: usize): void {
+  const rdrop = m.ld(t + T_RESULT_DROP);
+  if (rdrop !== 0) {
+    // SAFETY: the slot holds the result, which `rdrop` is the drop glue of.
+    unsafe {
+      stateDrop(rdrop, t + T_SLOT);
+    }
+  }
+}
+
+/** A join handle's poll (C calls it through the handle's header). */
+function joinPoll(f: usize, cx: usize): u32 {
+  const t = f - T_JOIN;
+  if (m.load32(t + T_STATE) === DONE) {
+    m.st32(t + T_FLAGS, m.ld32(t + T_FLAGS) | CLAIMED);
+    return 1;
+  }
+  const old = m.ld(t + T_JOINER);
+  m.st(t + T_JOINER, m.wakerClone(m.ld(cx + 8)));
+  if (old !== 0) {
+    m.wakerDrop(old);
+  }
+  return 0;
+}
+
+/** A join handle's drop: detaches the task; drops a result it never claimed. */
+function joinDrop(f: usize): void {
+  const t = f - T_JOIN;
+  const flags = m.ld32(t + T_FLAGS);
+  m.st32(t + T_FLAGS, flags & ~HANDLE);
+  const joiner = m.ld(t + T_JOINER);
+  if (joiner !== 0) {
+    m.st(t + T_JOINER, 0);
+    m.wakerDrop(joiner);
+  }
+  if (m.load32(t + T_STATE) === DONE && (flags & CLAIMED) === 0) {
+    dropResult(t);
+  }
+  release(t);
+}
+
+// ---- The waker table: C calls these, from any thread. ----
+
+function wakerClone(w: usize): usize {
+  m.inc(w + T_REFS);
+  return w;
+}
+
+function wakerWake(w: usize): void {
+  wake(w);
+  release(w);
+}
+
+function wakerWakeByRef(w: usize): void {
+  wake(w);
+}
+
+function wakerDrop(w: usize): void {
+  release(w);
+}
+
+/** Wakes task `t`: queued once if idle, polled again if running. */
+function wake(t: usize): void {
+  let s = m.load32(t + T_STATE);
+  while (true) {
+    if (s === IDLE) {
+      const was = m.cas32(t + T_STATE, IDLE, SCHEDULED);
+      if (was === IDLE) {
+        schedule(EXEC.load("acquire") as usize, t);
+        return;
+      }
+      s = was;
+    } else if (s === RUNNING) {
+      const was = m.cas32(t + T_STATE, RUNNING, NOTIFIED);
+      if (was === RUNNING) {
+        return;
+      }
+      s = was;
+    } else {
+      return;
+    }
+  }
+}
+
+/** Gives back one reference to task `t`: the last frees it. */
+function release(t: usize): void {
+  if (m.dec(t + T_REFS) === 1) {
+    m.release(t);
+  }
+}
+
+/** Queues scheduled task `t`: on the worker's own queue, or from another thread its inbox. */
+function schedule(e: usize, t: usize): void {
+  if (ON_WORKER.get()) {
+    push(e, t);
+    return;
+  }
+  m.pushStack(e + E_INBOX, t, T_NEXT);
+  if (m.load32(e + E_PARK) === 1) {
+    m.store32(e + E_PARK, 0);
+    parkWake(e + E_PARK);
+  }
+}
+
+/** Appends `t` to the worker's own queue. */
+function push(e: usize, t: usize): void {
+  m.st(t + T_NEXT, 0);
+  const tail = m.ld(e + E_TAIL);
+  if (tail === 0) {
+    m.st(e + E_HEAD, t);
+  } else {
+    m.st(tail + T_NEXT, t);
+  }
+  m.st(e + E_TAIL, t);
+}
+
+/** Moves the inbox, in the order its tasks were woken, to the worker's queue: its first task. */
+function takeInbox(e: usize): usize {
+  let t = m.takeStack(e + E_INBOX);
+  // The stack is last in first out.
+  let rev: usize = 0;
+  while (t !== 0) {
+    const next = m.ld(t + T_NEXT);
+    m.st(t + T_NEXT, rev);
+    rev = t;
+    t = next;
+  }
+  if (rev === 0) {
+    return 0;
+  }
+  m.st(e + E_HEAD, rev);
+  let last = rev;
+  while (m.ld(last + T_NEXT) !== 0) {
+    last = m.ld(last + T_NEXT);
+  }
+  m.st(e + E_TAIL, last);
+  return rev;
+}
+
+/** Sleeps until a task is woken from another thread. */
+function park(e: usize): void {
+  m.store32(e + E_PARK, 1);
+  if (m.load(e + E_INBOX) !== 0) {
+    m.store32(e + E_PARK, 0);
+    return;
+  }
+  parkWait(e + E_PARK, 1);
+  m.store32(e + E_PARK, 0);
+}

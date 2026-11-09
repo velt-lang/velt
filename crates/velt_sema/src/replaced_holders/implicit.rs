@@ -581,10 +581,14 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyReflectHook
         // A heap future's poll and drop functions run any code of its body.
         | I::FutPoll
-        | I::FutDrop => true,
+        | I::FutDrop
+        | I::StatePoll
+        | I::StateDrop
+        | I::AddressCall => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
+        | I::FnAddress
         | I::ThrowLoc
         | I::AnyTo
         | I::AnyToExact
