@@ -129,8 +129,9 @@ impl Ctx<'_> {
                         args.iter().map(|t| self.display_in(*t, names)).collect();
                     // An overloaded function's signatures (`crate::typeof_generic`): their
                     // intersection, as TypeScript reads several call signatures.
-                    let set = (a.fields.iter().enumerate())
-                        .all(|(k, f)| f.name == crate::typeof_generic::set_field(k));
+                    let set = !a.fields.is_empty()
+                        && (a.fields.iter().enumerate())
+                            .all(|(k, f)| f.name == crate::typeof_generic::set_field(k));
                     if set {
                         let parts: Vec<String> = (a.fields.iter())
                             .map(|f| format!("({})", self.display_in(f.ty, &bound)))

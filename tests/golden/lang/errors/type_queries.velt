@@ -5,7 +5,8 @@
 // A signature that needs its own type is an error (TS2502), directly, through other functions
 // or through a body that calls the function (TS7023); `typeof f` of a function with a rest,
 // optional or default parameter is not supported yet.
-function id<T>(x: T): T {
+// A generic function whose result is inferred: `typeof` needs its declaration to give its type.
+function id<T>(x: T) {
   return x;
 }
 
