@@ -75,6 +75,7 @@ impl Cx<'_> {
             fn_identity,
             generic_any,
             any_writes,
+            any_members,
             fn_props,
             any_has,
             shared_fns,
@@ -142,6 +143,7 @@ impl Cx<'_> {
                 *any_number,
                 *weak_object,
                 *read_indirect,
+                *any_members,
             ],
             proxy_class: proxy_class.and_then(|d| self.seed_def_name(d)),
             any_call_keys: any_call_keys.clone(),
@@ -189,7 +191,7 @@ impl Cx<'_> {
         b.dyn_to_any.extend(d(3));
         b.proxy_roots.extend(d(4));
         b.lock_roots.extend(d(5));
-        let flags: [&mut bool; 13] = [
+        let flags: [&mut bool; 14] = [
             &mut b.any_identity,
             &mut b.fn_identity,
             &mut b.generic_any,
@@ -203,6 +205,7 @@ impl Cx<'_> {
             &mut b.any_number,
             &mut b.weak_object,
             &mut b.read_indirect,
+            &mut b.any_members,
         ];
         for (flag, &seeded) in flags.into_iter().zip(&seed.flags) {
             *flag |= seeded;
