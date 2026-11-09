@@ -82,13 +82,11 @@ fn reload(
     let verbose = flags.verbose;
     let mut sess = Session::new();
     sess.show_details = flags.details;
-    sess.counted_seed = seed
-        .clone()
-        .or_else(|| Some(velt_vir::CountedSeed::default()));
+    // Moved in and back out: lowering replaces it only when it lowers the new version, so a
+    // build that fails before or in lowering hands the running version's seed back unchanged.
+    sess.counted_seed = Some(seed.take().unwrap_or_default());
     let program = driver::compile(&mut sess, opts);
-    if program.is_ok() {
-        *seed = sess.counted_seed.take();
-    }
+    *seed = sess.counted_seed.take();
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
     let program = program.and_then(|p| {

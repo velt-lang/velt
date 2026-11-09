@@ -34,6 +34,17 @@ pub struct CountedSeed {
     any_call_keys: BTreeSet<String>,
 }
 
+impl CountedSeed {
+    /// Names nothing (the first version's, or a program that counts nothing): nothing to add.
+    fn is_empty(&self) -> bool {
+        self.types.iter().all(BTreeSet::is_empty)
+            && self.defs.iter().all(BTreeSet::is_empty)
+            && !self.flags.contains(&true)
+            && self.proxy_class.is_none()
+            && self.any_call_keys.is_empty()
+    }
+}
+
 impl Cx<'_> {
     /// `b` as a seed for the next version of the program.
     pub(in crate::lower) fn seed(&self, b: &Boxing) -> CountedSeed {
@@ -123,7 +134,7 @@ impl Cx<'_> {
     /// `b` with what `seed` names that this program has added: the counted types the first
     /// pass starts from.
     pub(in crate::lower) fn with_seed(&self, mut b: Boxing, seed: &CountedSeed) -> Boxing {
-        if *seed == CountedSeed::default() {
+        if seed.is_empty() {
             return b;
         }
         let tys: FxHashMap<String, TyId> = (0..self.types.len())
