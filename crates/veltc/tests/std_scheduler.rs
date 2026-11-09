@@ -329,6 +329,37 @@ fn a_rejection_finishing_while_woken_keeps_the_woken_stack_whole() {
     }
 }
 
+/// A promise shared with a spawned task, which awaits it while microtasks are queued on both
+/// tasks: the holder handed over stays one of the worker's (the executor's tasks have no runtime
+/// task, so the runtime took each for code outside a task and gave the holder to the outside
+/// home's proxy, which nothing drove: the spawned task waited forever).
+#[test]
+fn a_spawned_task_awaits_a_shared_promise_while_microtasks_are_queued() {
+    same_on_both(
+        "shared_spawned",
+        "async function work(): Promise<number> {
+           await yieldNow();
+           return 7;
+         }
+         async function user(p: Promise<number>, tag: string): Promise<number> {
+           queueMicrotask(() => console.log(`${tag}: microtask`));
+           const v = await p;
+           console.log(`${tag}: got ${v}`);
+           return v;
+         }
+         async function main() {
+           const p = work();
+           const q = p;
+           const a = spawn(user(q, \"spawned\"));
+           Promise.resolve().then(() => console.log(\"main: then\"));
+           queueMicrotask(() => console.log(\"main: microtask\"));
+           const v = await p;
+           console.log(`main: got ${v}, spawned returned ${await a}`);
+         }",
+        "main: then\nmain: microtask\nspawned: microtask\nspawned: got 7\nmain: got 7, spawned returned 7\n",
+    );
+}
+
 /// WASI has no thread to wake the worker and no OS wait to park it in: `VELT_SCHEDULER=std`
 /// does nothing there, and `main`'s root stays the runtime's.
 #[test]

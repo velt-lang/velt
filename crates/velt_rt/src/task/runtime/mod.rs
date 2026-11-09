@@ -197,11 +197,24 @@ fn backend() -> Backend {
 /// Velt (std/lang/hooks/sched.velt, `VELT_SCHEDULER=std` at compile time) polls tasks on this
 /// thread from now on, so the leaves it polls find the runtime's timers and I/O here, as on a
 /// worker: this thread stays inside the runtime's tokio context for the rest of the process.
+///
+/// `2` also marks the process as one whose tasks are the Velt executor's ([`velt_executor`]):
+/// they have no runtime task (`velt_rt_task_id` is 0 in all of them), so what the runtime keeps
+/// per task must not take them for code outside a task.
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_set_scheduler(kind: u32) {
     if kind == 2 {
+        VELT_EXECUTOR.store(true, Ordering::Relaxed);
         std::mem::forget(enter());
     }
+}
+
+/// Set once by `velt_rt_set_scheduler(2)`, before the executor in Velt polls its first task.
+static VELT_EXECUTOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Do the program's tasks run on the executor in Velt (`VELT_SCHEDULER=std` at compile time)?
+pub(crate) fn velt_executor() -> bool {
+    VELT_EXECUTOR.load(Ordering::Relaxed)
 }
 
 /// `workerCount()`: the per-core workers, or the stealing runtime's worker threads.
