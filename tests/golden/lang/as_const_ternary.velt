@@ -1,0 +1,33 @@
+// A conditional whose arms are `as const` string literals keeps its literals (`"blocking" |
+// "stream"`), as in TypeScript, so it fits a literal union field or annotation (#2655, sigx's
+// fetch handler).
+interface RenderOptions { template: string; mode?: "stream" | "blocking" }
+function render(o: RenderOptions): string { return `${o.template}:${o.mode ?? "default"}`; }
+
+function handle(bot: boolean, fast: boolean): string {
+    const mode = bot ? ("blocking" as const) : ("stream" as const);
+    const kind = fast ? ("a" as const) : bot ? ("b" as const) : ("c" as const);
+    const k: "a" | "b" | "c" = kind;
+    let again = bot ? ("blocking" as const) : ("stream" as const);
+    const m: "stream" | "blocking" = again;
+    const s: string = mode;
+    return `${render({ template: "t", mode })} ${k} ${m} ${s} ${mode.toUpperCase()} ${mode.length}`;
+}
+console.log(handle(true, false));
+console.log(handle(false, true));
+console.log(handle(false, false));
+
+// Elsewhere (an object literal's value, an array element, a `string` annotation) such a
+// conditional is a `string`, so the object still fits a `string` field.
+function elsewhere(c: boolean) {
+    const xs = [c ? ("a" as const) : ("b" as const), "z"];
+    const o = { mode: c ? ("x" as const) : ("y" as const) };
+    const t: { mode: string } = o;
+    let s: string = c ? ("p" as const) : ("q" as const);
+    s += "!";
+    const arr: string[] = [];
+    arr.push(c ? ("u" as const) : ("v" as const));
+    console.log(xs, t.mode, s, arr, JSON.stringify(o));
+}
+elsewhere(true);
+elsewhere(false);

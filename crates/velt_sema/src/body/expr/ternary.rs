@@ -34,8 +34,25 @@ impl FnCx<'_, '_> {
         let late = |e: &ast::Expr| {
             untyped(e) || only_nothings(e) || super::nothing_slot::is_asserted_nothing(e)
         };
+        // `c ? ("a" as const) : ("b" as const)`: each arm its own literal (below).
+        let const_arms = exp.is_none()
+            && self.kept_arms.take() == Some(span)
+            && as_const_arm(then)
+            && as_const_arm(els);
         let before = self.narrow_state();
-        let (t, f) = if late(then) && !late(els) {
+        let (t, f) = if const_arms {
+            let hint = self.as_const_literal(then);
+            self.kept_arms = Some(super::object_builtins::strip_parens(then).span);
+            let t = branch(self, then, &when_true, hint);
+            let after = self.narrow_state();
+            self.restore_narrowing(&before);
+            let hint = self.as_const_literal(els);
+            self.kept_arms = Some(super::object_builtins::strip_parens(els).span);
+            let f = branch(self, els, &when_false, hint);
+            self.kept_arms = None;
+            self.meet_narrowing(&after);
+            (t, f)
+        } else if late(then) && !late(els) {
             let f = branch(self, els, &when_false, exp);
             let after = self.narrow_state();
             self.restore_narrowing(&before);
@@ -52,13 +69,60 @@ impl FnCx<'_, '_> {
             self.meet_narrowing(&after);
             (t, f)
         };
-        let (t, f, ty) = self.unify_branches(t, f, exp);
+        // A declaration's `c ? ("a" as const) : ("b" as const)` keeps its literals (`"a" |
+        // "b"`), as in TypeScript, where other branches of literal types widen (#2655).
+        let kept = const_arms
+            && self.string_literals(t.ty).is_some()
+            && self.string_literals(f.ty).is_some();
+        let (t, f, ty) = match kept {
+            true if t.ty != f.ty => {
+                let u = self.cx.union_of(&[t.ty, f.ty], false, span);
+                (self.coerce(t, u), self.coerce(f, u), u)
+            }
+            _ => self.unify_branches(t, f, exp),
+        };
         let kind = H::If {
             cond: Box::new(c),
             then: Box::new(t),
             els: Box::new(f),
         };
         self.mk(kind, ty, span)
+    }
+
+    /// `const kind = c ? ("a" as const) : ("b" as const)`: the declaration of `simple_decl`,
+    /// its conditional keeping the arms' literals (`"a" | "b"`) as TypeScript does (#2655).
+    /// Elsewhere (an object literal's value, an array element) such a conditional widens to
+    /// `string`, so a value holding it still fits a `string` field.
+    pub(crate) fn decl_keeping_arms(
+        &mut self,
+        v: &ast::VarDecl,
+        name: &ast::Ident,
+        ann: Option<TyId>,
+        span: Span,
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        let init = v.init.as_ref().map(super::object_builtins::strip_parens);
+        let cond = init.filter(|e| matches!(e.kind, ast::ExprKind::Cond { .. }));
+        let outer = std::mem::replace(&mut self.kept_arms, cond.map(|e| e.span));
+        self.simple_decl(v, name, ann, span, out);
+        self.kept_arms = outer;
+    }
+
+    /// The literal type of an arm written `"a" as const` (`None` for a nested conditional,
+    /// which gives its own arms theirs).
+    fn as_const_literal(&mut self, e: &ast::Expr) -> Option<TyId> {
+        match &e.kind {
+            ast::ExprKind::Paren(inner) => self.as_const_literal(inner),
+            ast::ExprKind::Cast { expr, .. } => {
+                match &super::object_builtins::strip_parens(expr).kind {
+                    ast::ExprKind::Lit(ast::Lit::Str(s)) => {
+                        Some(self.cx.lit_type(hir::LitValue::Str(s.clone())))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Expected type of the second-checked branch: the context's, else the first branch's
@@ -165,5 +229,15 @@ fn written_nothings(e: &ast::Expr) -> Option<Nothing> {
             "null" => Nothing::Null,
             _ => Nothing::Undefined,
         }),
+    }
+}
+
+/// Is `e` written `x as const`, or a conditional whose arms both are?
+fn as_const_arm(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => as_const_arm(inner),
+        ast::ExprKind::Cast { ty, .. } => super::member::is_as_const(ty),
+        ast::ExprKind::Cond { then, els, .. } => as_const_arm(then) && as_const_arm(els),
+        _ => false,
     }
 }

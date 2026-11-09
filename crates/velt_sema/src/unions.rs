@@ -167,6 +167,20 @@ impl Ctx<'_> {
         Some(payloads.into_iter().map(|p| self.subst(p, &args)).collect())
     }
 
+    /// Is `t`, or a member of it, an interface or object type without a call signature (not
+    /// `any` / `unknown` / `object` / `Function`)? TypeScript lets such a value be a function.
+    pub fn has_iface_member(&mut self, t: TyId) -> bool {
+        let t = self.ty.core(t).unwrap_or(t);
+        if let Some(members) = self.union_members(t) {
+            return members.into_iter().any(|m| self.has_iface_member(m));
+        }
+        let iface = match self.ty.kind(t) {
+            TyKind::Dyn(..) => self.dynamic(t).is_none(),
+            _ => self.is_object_type(t),
+        };
+        iface && self.typeof_tag(t) == "object"
+    }
+
     /// What JS `typeof` answers for a (non-null) value of type `t`: every number type is
     /// `"number"`, closures and overloaded functions' values `"function"`, classes / structs / arrays / maps / … `"object"`.
     pub fn typeof_tag(&self, t: TyId) -> &'static str {

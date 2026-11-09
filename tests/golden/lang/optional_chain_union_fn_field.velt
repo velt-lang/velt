@@ -1,0 +1,14 @@
+// `config?.headers` on a `T | undefined` whose field is a union with a function member gives
+// `undefined` for a missing `config` or field, as in Node (#2655).
+interface Config { headers?: Record<string, string> | (() => Record<string, string>) }
+function show(x: unknown): void { console.log(x); }
+function read(config: Config | undefined): void {
+    const h = config?.headers;
+    console.log(h === undefined, typeof h);
+    show(h);
+    const a: any = config?.headers;
+    console.log(a);
+}
+read(undefined);
+read({});
+read({ headers: { a: "b" } });
