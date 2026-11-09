@@ -12,6 +12,20 @@ class Conn {
   }
 }
 
+/** How many `Res` were dropped. */
+const DROPPED = new Atomic<i64>(0);
+
+class Res {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    DROPPED.add(1, "seqcst");
+  }
+}
+
 async function parked(p: Promise<void>): Promise<i64> {
   await p;
   return 1;
@@ -93,6 +107,39 @@ describe("velt/sync HandOff", () => {
       await yieldNow();
     }
     expect(await t).toBe(1);
+  });
+
+  it("a wait given its item resumes with it after the hand-off is dropped", async () => {
+    // The giver holds the only hand-off; the waiter holds only its `wait()`.
+    let p: Promise<Conn | null> | null = null;
+    let back: Conn | null = null;
+    {
+      const h = shared(new HandOff<Conn>());
+      p = h.wait();
+      back = h.give(new Conn(7));
+    }
+    expect(back == null).toBe(true);
+    const c = await p!;
+    expect(c?.id ?? -1).toBe(7);
+    // Given, then both the wait and the hand-off dropped untaken: the wait (a started promise,
+    // which goes on) resumes with the item, which is dropped with its result, once.
+    const before = DROPPED.load("seqcst");
+    {
+      const h = shared(new HandOff<Res>());
+      const q = h.wait();
+      expect(h.give(new Res(9))).toBe(null);
+    }
+    await yields(3);
+    expect(DROPPED.load("seqcst") - before).toBe(1);
+    // A park dropped after its give, then the hand-off: the item left behind is dropped, once.
+    {
+      const h = shared(new HandOff<Res>());
+      {
+        const parked = h.park();
+        expect(h.give(new Res(10))).toBe(null);
+      }
+    }
+    expect(DROPPED.load("seqcst") - before).toBe(2);
   });
 
   it("many givers at once: one gives, the others get their item back", async () => {

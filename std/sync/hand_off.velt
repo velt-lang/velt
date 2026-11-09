@@ -1,12 +1,15 @@
-// velt/sync: `HandOff<T>`, a one-shot hand-off of one value to one waiting task (#2649; what a
-// pool hands an idle connection to its next waiter with). The waiter parks in `wait()`; the
-// giver's `give(item)` stores the item and wakes exactly that waiter: a compare-and-swap, a store
-// and its waker's wake (on the executor in Velt, a queue push), with no handle table. The rules:
+// velt/sync (internal): `HandOff<T>`, a one-shot hand-off of one value to one waiting task
+// (#2649; what a pool hands an idle connection to its next waiter with). The waiter parks in
+// `wait()`; the giver's `give(item)` stores the item and wakes exactly that waiter: a
+// compare-and-swap, a store and its waker's wake (on the executor in Velt, a queue push), with no
+// handle table. The rules:
 // - A waiter that leaves before it is given anything (its `park()` dropped, a timeout) leaves in
 //   constant time: a later `give` gets its item back.
 // - A waiter dropped after its item was given (woken, not yet resumed) leaves the item behind:
-//   `takeBack()` returns it, once; a hand-off dropped with an item still in it drops it. So a
-//   granted item comes back exactly once.
+//   `takeBack()` returns it, once. So a granted item comes back exactly once.
+// - A given item nobody took yet stays while a `wait()` may still take it: the waiter resumes
+//   with it even when the hand-off was dropped meanwhile. Once neither the hand-off nor a
+//   `wait()` is left, the item is dropped.
 // - `end()` is terminal: the waiter resumes with null, and a later `give` gets its item back. A
 //   hand-off dropped while its waiter waits ends it the same way.
 // - The item crosses to the waiter's task as a channel send's value does: moved when the giver
@@ -16,10 +19,13 @@
 // Its block in raw memory, shared by the hand-off and every wait on it (each holds a count, so a
 // wait outliving the hand-off reads live memory): the count, the state word, the waker word and
 // the waiter's waker (an AtomicWaker: a registering poll and a waking giver on two threads never
-// both touch it), then the item. Givers race only through the state word: a giver claims the item
-// (EMPTY or WAITING → FILLING) before it writes it. The item belongs to the hand-off: its dispose
-// drops one nobody took. Share one hand-off between giver and waiter as a `shared` value: its
-// fields never change, only the block does.
+// both touch it), the count of `wait()`s and whether the hand-off is gone, then the item. Givers
+// race only through the state word: a giver claims the item (EMPTY or WAITING → FILLING) before it
+// writes it. An item nobody took is dropped by whichever of the hand-off and the `wait()`s goes
+// last (`dropLeft`; both are generic, so they know the item's type: a park future is not, and
+// never drops one); the one that drops it takes it with a compare-and-swap first. Share one
+// hand-off between giver and waiter as a `shared` value: its fields never change, only the
+// block does.
 
 import {
   atomicSpinHint,
@@ -48,6 +54,8 @@ const B_REFS: usize = 0;
 const B_STATE: usize = 8;
 const B_WAKE: usize = 12;
 const B_WAKER: usize = 16;
+const B_WAITS: usize = 24;
+const B_GONE: usize = 28;
 const B_ITEM: usize = 32;
 
 /** One value handed from a giver to one waiting task, once. */
@@ -83,6 +91,7 @@ export class HandOff<T> {
    */
   wait(): Promise<T | null> {
     m.inc(this.block + B_REFS);
+    addWaits(this.block, 1);
     return waitOn<T>(this.block);
   }
 
@@ -130,22 +139,71 @@ export class HandOff<T> {
     const b = this.block;
     // A waiter still waiting resumes with null.
     endBlock(b);
-    const s = m.load32(b + B_STATE);
-    if ((s === GIVEN || s === RETURNED) && m.cas32(b + B_STATE, s, TAKEN) === s) {
-      // SAFETY: an item nobody took, taken once (TAKEN now); dropped at the end of this block.
-      const item = unsafe { slotTake<T>(b + B_ITEM) };
+    // Gone, then the `wait()`s counted: a `wait()` leaving at the same time sees one or the other
+    // (both sequentially consistent), and the compare-and-swap in `dropLeft` picks one dropper.
+    m.store32(b + B_GONE, 1);
+    if (m.load32(b + B_WAITS) === 0) {
+      dropLeft<T>(b, false);
     }
     release(b);
   }
 }
 
-/** `HandOff.wait` on block `b`, which holds a count for it. */
+/**
+ * The item left in block `b` (given and not taken, or left behind by a dropped waiter): with
+ * `keep`, a given one is left behind for `takeBack` (as a park dropped after its give leaves it);
+ * else it is dropped, now that nobody can take it (the hand-off is gone and no `wait()` is left).
+ */
+function dropLeft<T>(b: usize, keep: bool): void {
+  const s = m.load32(b + B_STATE);
+  if (keep) {
+    if (s === GIVEN) {
+      m.cas32(b + B_STATE, GIVEN, RETURNED);
+    }
+    return;
+  }
+  if ((s === GIVEN || s === RETURNED) && m.cas32(b + B_STATE, s, TAKEN) === s) {
+    // SAFETY: an item nobody took, taken once (TAKEN now); dropped at the end of this block.
+    const item = unsafe { slotTake<T>(b + B_ITEM) };
+  }
+}
+
+/** Adds `d` to block `b`'s count of `wait()`s: the count before. */
+function addWaits(b: usize, d: u32): u32 {
+  let n = m.load32(b + B_WAITS);
+  while (true) {
+    const was = m.cas32(b + B_WAITS, n, n + d);
+    if (was === n) {
+      return n;
+    }
+    n = was;
+  }
+}
+
+/** A `wait()`'s count of block `b`, given back when the wait ends or is dropped. */
+class WaitCount<T> {
+  private readonly b: usize;
+
+  constructor(b: usize) {
+    this.b = b;
+  }
+
+  [Symbol.dispose]() {
+    const b = this.b;
+    // The last `wait()` after the hand-off went drops an item still there: it is nobody's now.
+    // A wait that took its item (or got none) finds nothing to do.
+    const last = addWaits(b, ~0 as u32) === 1;
+    dropLeft<T>(b, !(last && m.load32(b + B_GONE) !== 0));
+    release(b);
+  }
+}
+
+/** `HandOff.wait` on block `b`, which holds a count for it (given back even when dropped). */
 async function waitOn<T>(b: usize): Promise<T | null> {
+  using count = new WaitCount<T>(b);
   // SAFETY: `parkFuture` makes a heap future of this block, given up to the promise.
   await unsafe { promiseAt<void>(parkFuture(b)) };
-  const item = claimFrom<T>(b);
-  release(b);
-  return item;
+  return claimFrom<T>(b);
 }
 
 /** `HandOff.claim` on block `b`. */
@@ -180,7 +238,7 @@ function endBlock(b: usize): void {
   }
 }
 
-/** Gives back one count of block `b`: the last frees it (the hand-off took its item first). */
+/** Gives back one count of block `b`: the last frees it (any item left was taken or dropped). */
 function release(b: usize): void {
   if (m.dec(b + B_REFS) === 1) {
     const w = m.ld(b + B_WAKER);
