@@ -94,17 +94,20 @@ export async function readable(h: u64): Promise<IoStatus> {
   return tb.lookup(h) === 0 ? closed() : ok();
 }
 
-/** `readable` for at most `ms` milliseconds: 1 readable, 0 the time ran out. */
+/**
+ * `readable` for at most `ms` milliseconds: 1 readable, 0 the time ran out. A negative `ms` is
+ * no limit, as the runtime's (a caller racing a signal, http-server's idle wait); 0 only looks.
+ */
 export async function readableWithin(h: u64, ms: i64): Promise<IoResult<u8>> {
   const s = tb.lookup(h);
   if (s === 0) {
     return failed(closed(), 0);
   }
   if (!wt.satisfied(s, io.K_READ, 0)) {
-    if (ms <= 0) {
+    if (ms === 0) {
       return value(0);
     }
-    await waitOn(h, io.K_READ, 0, wt.now() + (ms as u64) * 1000000);
+    await waitOn(h, io.K_READ, 0, ms < 0 ? 0 : wt.now() + (ms as u64) * 1000000);
   }
   const t = tb.lookup(h);
   if (t === 0) {

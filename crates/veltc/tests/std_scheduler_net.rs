@@ -497,3 +497,96 @@ async function main() {
         "-1 -1 -1 -1 -1\ntrue\necho\n",
     );
 }
+
+/// `readableWithin(-1, signal)` has no time limit, as the runtime's: only readiness or the signal
+/// ends it. The reactor's version took a limit of 0 or less as "look now", so a wait with only a
+/// signal said "not readable" at once; http-server waits so for the next request on a kept-alive
+/// connection and closed it as idle, and the client's next request on it failed ("other side
+/// closed", `std/http_server/http_close_releases_handler`). The client writes after a delay and
+/// a `tryRead` finding nothing comes first, so each wait is pending when it starts.
+#[test]
+fn a_read_wait_with_no_limit_waits_for_the_bytes() {
+    same_on_both(
+        "readable_no_limit",
+        "import { connect, listen } from \"velt/net\";
+import { AbortController } from \"velt/task\";
+
+async function main() {
+  const l = await listen(\"127.0.0.1:0\");
+  const stop = new AbortController();
+  const server = spawn((async () => {
+    const s = await l.accept();
+    const buf: u8[] = Buffer.alloc(16);
+    // Nothing has come yet: the socket is not readable now, so each wait below waits.
+    console.log(s.tryRead(buf));
+    console.log(\"signal only:\", await s.readableWithin(-1, stop.signal));
+    console.log(await s.readString());
+    console.log(s.tryRead(buf));
+    console.log(\"no limit:\", await s.readableWithin(-1));
+    console.log(await s.readString());
+    stop.abort();
+    console.log(\"aborted:\", await s.readableWithin(-1, stop.signal));
+    s.close();
+  })());
+  const c = await connect(`127.0.0.1:${l.port}`);
+  await sleep(50);
+  await c.write(\"one\");
+  await sleep(50);
+  await c.write(\"two\");
+  await server;
+  c.close();
+  l.close();
+}
+",
+        "0\nsignal only: true\none\n0\nno limit: true\ntwo\naborted: false\n",
+    );
+}
+
+/// Requests one after another on one kept-alive connection to an http-server served under the
+/// executor in Velt: between them the server waits for the next with only its idle timeout's
+/// signal, and must not close the connection meanwhile (fetch reuses it from its pool at once, so
+/// a close crossed the next request and failed it).
+#[test]
+fn an_http_server_keeps_a_connection_alive_between_requests() {
+    if !cfg!(unix) {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let pkg = manifest().join("../../packages/http-server");
+    let pkg = pkg.canonicalize().unwrap();
+    std::fs::write(
+        dir.path().join("package.velt"),
+        format!(
+            "import type {{ Package }} from \"velt/package\";
+
+export const pkg: Package = {{
+  name: \"keep-alive-test\",
+  version: \"0.0.0\",
+  dependencies: {{ \"http-server\": {{ path: {:?} }} }},
+}};
+",
+            pkg.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let src = "import { serve } from \"http-server\";
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(`got ${new URL(req.url).pathname}`);
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  for (let i = 0; i < 10; i++) {
+    console.log(await (await fetch(`${base}/${i}`)).text());
+  }
+  await server.shutdown();
+}
+";
+    let want: String = (0..10).map(|i| format!("got /{i}\n")).collect();
+    let (rt, _) = build_and_run(dir.path(), "keep_alive", src, false);
+    let (std, std_bin) = build_and_run(dir.path(), "keep_alive", src, true);
+    assert_eq!(rt, want, "the runtime's sockets");
+    assert_eq!(std, want, "sockets on the reactor in Velt");
+    assert!(contains(&std_bin, b"listenOn"), "no sockets in Velt");
+}
