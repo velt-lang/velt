@@ -251,6 +251,21 @@ extend<T> Array<T> {
     }
   }
 
+  /**
+   * `sort(cmp)` of an `any[]` whose comparator returns an `any`, as the compiler calls it: each
+   * result converted to a number as Node converts it (`true` is 1, `"-1"` is -1, `NaN` is 0).
+   */
+  sortAnyResult<E>(cmp: (x: T, y: T) => any throws E) throws E {
+    this.sortDynamic((a, b) => compareResult(cmp(a, b)));
+  }
+
+  /** `toSorted(cmp)` of an `any[]` whose comparator returns an `any`, as [`sortAnyResult`]. */
+  toSortedAnyResult<E>(cmp: (x: T, y: T) => any throws E): T[] throws E {
+    const out = this.slice();
+    out.sortAnyResult(cmp);
+    return out;
+  }
+
   /** `toSorted(cmp)` of an `any[]`, as [`sortDynamic`]. */
   toSortedDynamic<E>(cmp: (x: T, y: T) => number throws E): T[] throws E {
     const out = this.slice();
@@ -281,4 +296,10 @@ extend<T> Array<T | undefined> {
     out.sort(cmp);
     return out;
   }
+}
+
+/** A comparator's result as a number, as Node's sort takes it: `ToNumber`, with `NaN` as 0. */
+function compareResult(r: any): number {
+  const n = +r;
+  return n === n ? n : 0;
 }

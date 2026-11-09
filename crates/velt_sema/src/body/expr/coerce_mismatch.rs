@@ -39,16 +39,6 @@ impl FnCx<'_, '_> {
             );
             return;
         }
-        if self.cx.unfreezes(found.ty, expected) {
-            self.cx.error(
-                Diagnostic::error(
-                    format!("an `Object.freeze` result where a `{e}` is expected is not supported yet: its fields could be written there"),
-                    found.span,
-                )
-                .with_note("Node throws a `TypeError` when a frozen object's field is written, which Velt checks while compiling: pass it where a `Readonly<T>` is expected"),
-            );
-            return;
-        }
         if let (Some(have), Some(want)) = (
             self.cx.ty.nothing_of(found.ty),
             self.cx.ty.nothing_of(expected),

@@ -152,7 +152,7 @@ impl FnCx<'_, '_> {
         Some(match name {
             "is" => self.object_is(args, span),
             "assign" => self.object_assign(args, Want::Borrow, span),
-            "freeze" => self.object_freeze(args, span),
+            "freeze" => self.object_freeze(args, exp, span),
             "fromEntries" => self.object_from_entries(callee, type_args, args, exp, span)?,
             "hasOwn" => self.has_own(args, "Object.hasOwn", span),
             "getPrototypeOf" => self.get_prototype_of(args, span),
@@ -417,19 +417,43 @@ impl FnCx<'_, '_> {
         self.intrinsic(Intrinsic::SameValue, vec![l, r], b, span)
     }
 
-    /// `Object.freeze(o)`.
-    pub(super) fn object_freeze(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
+    /// `Object.freeze(o)`, where an `exp` is expected: an object literal takes its type from it
+    /// (`const d: Desc = Object.freeze({ kind: "fn" as const })`), as TypeScript infers `T` of
+    /// `freeze<T>(o: T): Readonly<T>` from where the result goes.
+    pub(super) fn object_freeze(
+        &mut self,
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
         let [arg] = args else {
             return self.arity_error("Object.freeze", 1, args, span);
         };
         let fresh = matches!(strip_parens(arg).kind, ast::ExprKind::Object(_));
-        let h = self.expr(arg, None, Want::Move);
+        let hint = exp
+            .map(|t| self.cx.ty.opt_payload(t).unwrap_or(t))
+            .filter(|&t| fresh && self.cx.is_object_type(t));
+        let h = self.expr(arg, hint, Want::Move);
         if self.cx.ty.is_bottom(h.ty) {
             return self.error_expr(span);
         }
         let frozen = fresh
             .then(|| self.cx.frozen_type(h.ty, self.module))
             .flatten();
+        // A value made before, or a literal of the object type expected, of an object type (not
+        // a class, nor an interface with methods, whose objects' own writes aren't followed): the
+        // same value, an error once the program writes one of its fields
+        // (`object_views::check_frozen`).
+        if frozen.is_none() && self.cx.is_object_type(h.ty) {
+            let frozen = crate::object_copies::Frozen {
+                from: h.ty,
+                to: h.ty,
+                span,
+                existing: !fresh,
+            };
+            self.cx.object_copies.frozen.push(frozen);
+            return h;
+        }
         let Some(frozen) = frozen else {
             let tn = self.cx.display(h.ty);
             self.cx.error(

@@ -1,0 +1,2 @@
+frozen_expected_written_setter.velt:8:28: error: an `Object.freeze` result where a `P` is expected, in a program that assigns field `port`, is not supported yet
+frozen_expected_written_setter.velt:9:3: assigned here

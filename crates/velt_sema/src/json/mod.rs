@@ -215,7 +215,9 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         .collect();
     // Looks at values matter only for object copies and frozen objects (`object_copies`); most
     // programs have neither.
-    let looks = !cx.object_copies.copies.is_empty() || !cx.objects.frozen_defs.is_empty();
+    let looks = !cx.object_copies.copies.is_empty()
+        || !cx.objects.frozen_defs.is_empty()
+        || !cx.object_copies.frozen.is_empty();
     let copies: Vec<(Span, TyId)> = cx
         .object_copies
         .copies

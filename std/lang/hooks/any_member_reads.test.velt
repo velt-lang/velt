@@ -1,0 +1,27 @@
+// velt/lang/hooks (tests): std code that holds its own object as `any` and reads its members, run
+// by `velt test std/`. A program's reads add the member slots of the `any` tables; std's own
+// count too (#2578: before, comparing such an object by its `valueOf` read a missing slot and
+// crashed).
+import { describe, expect, it } from "velt/test";
+
+function holding(n: number): any {
+  return { valueOf: () => n };
+}
+
+describe("an object std holds as any", () => {
+  it("reads its members", () => {
+    const o: any = { x: 5, f: () => 7 };
+    expect(typeof o.x).toBe("number");
+    expect(o.x === 5).toBe(true);
+    expect(o.f() === 7).toBe(true);
+  });
+
+  it("compares by its valueOf closure", () => {
+    const o: any = { valueOf: () => 5 };
+    expect(o < 1).toBe(false);
+    expect(o > 1).toBe(true);
+    expect(o >= 5).toBe(true);
+    expect(holding(3) < holding(4)).toBe(true);
+    expect(holding(4) <= holding(3)).toBe(false);
+  });
+});

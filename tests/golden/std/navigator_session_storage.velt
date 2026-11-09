@@ -1,0 +1,30 @@
+// Node's `navigator` and `sessionStorage` globals (#2576), compared with Node 26: the facts
+// that don't depend on the machine, and the in-memory storage with its sorted keys. Node 26
+// has `sessionStorage` (Node 24 doesn't).
+console.log(typeof navigator, typeof sessionStorage, navigator === navigator, sessionStorage === sessionStorage);
+console.log(navigator.hardwareConcurrency > 0, navigator.languages.length, navigator.languages[0] === navigator.language);
+console.log(/^[a-z]{2,3}(-[A-Za-z0-9]+)*$|^und$/.test(navigator.language));
+sessionStorage.setItem("b", "1");
+sessionStorage.setItem("a", "2");
+sessionStorage.setItem("c", "3");
+sessionStorage.setItem("b", "4");
+console.log(sessionStorage.length, sessionStorage.key(0), sessionStorage.key(1), sessionStorage.key(2), sessionStorage.key(3), sessionStorage.key(-1));
+console.log(sessionStorage.getItem("b"), sessionStorage.getItem("zz"));
+sessionStorage.removeItem("a");
+sessionStorage.removeItem("nope");
+console.log(sessionStorage.length, sessionStorage.key(0));
+sessionStorage.clear();
+console.log(sessionStorage.length, sessionStorage.key(0));
+function save(s: Storage, k: string): void { s.setItem(k, "v"); }
+save(sessionStorage, "k");
+console.log(sessionStorage.getItem("k"), sessionStorage instanceof Storage, navigator instanceof Navigator);
+// The platform as Node names it on each OS Velt runs on.
+console.log(["MacIntel", "Win32", "Linux x86_64", "Linux arm64"].includes(navigator.platform), typeof navigator.userAgent);
+// Keys in Node's order (by their UTF-16LE bytes), and `key(i)` converting `i` as Web IDL does.
+sessionStorage.clear();
+for (const k of ["b", "B", "é", "a", "10", "9", "Z", "😀", "ｚ"]) sessionStorage.setItem(k, "1");
+const ks: string[] = [];
+for (let i = 0; i < sessionStorage.length; i++) ks.push(sessionStorage.key(i)!);
+console.log(ks.join(","), sessionStorage.key(1.5), sessionStorage.key(NaN), sessionStorage.key(2 ** 32), sessionStorage.key(-1 + 2 ** 32));
+// The runtime names itself as `<name>/<version>`, and the object prints as a plain object.
+console.log(String(navigator), `${navigator}`, "" + navigator, /^[A-Za-z.]+\/\d+(\.\d+)*$/.test(navigator.userAgent));

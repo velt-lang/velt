@@ -1,0 +1,99 @@
+// velt/lang/navigator (internal): Node's `navigator` global, the facts it gives about the runtime
+// and the machine (https://veltlang.com/docs/reference/globals/).
+
+import { arch, availableParallelism, platform } from "velt/os";
+
+/**
+ * Node's `Navigator`: the runtime (`userAgent`), the machine's CPUs (`hardwareConcurrency`) and
+ * platform, and the user's language. `navigator` is the one instance.
+ */
+export class Navigator {
+  /** Logical CPUs this process may use, as `os.availableParallelism()` counts them. */
+  get hardwareConcurrency(): number {
+    return availableParallelism() as number;
+  }
+
+  /**
+   * The user's language as a BCP 47 tag (`"en-US"`), from the locale the environment names, as
+   * Node's ICU maps it: `LC_ALL`, else `LC_MESSAGES`, else `LANG` (`fr_FR.UTF-8` is `"fr-FR"`,
+   * `sr_RS@latin` is `"sr-RS-latin"`); the `C` and `POSIX` locales, and none set, are `"en-US"`;
+   * a variable set to nothing is `"und"`.
+   */
+  get language(): string {
+    return localeLanguage();
+  }
+
+  /** The user's languages, most preferred first: `[language]`. */
+  get languages(): string[] {
+    return [localeLanguage()];
+  }
+
+  /**
+   * The platform as browsers name it: `"MacIntel"` on macOS, `"Win32"` on Windows, and
+   * `"Linux x86_64"` or `"Linux arm64"` on Linux, as Node gives them.
+   */
+  get platform(): string {
+    const p = platform();
+    if (p == "darwin") {
+      return "MacIntel";
+    }
+    if (p == "win32") {
+      return "Win32";
+    }
+    const a = arch() == "x64" ? "x86_64" : arch();
+    return p == "linux" ? `Linux ${a}` : `${p} ${a}`;
+  }
+
+  /**
+   * The runtime and its version, `"Velt/0.6.0"`, as Node gives `"Node.js/<major>"`: code that
+   * checks for Node doesn't take Velt for it. (`crates/veltc/tests/std_tests.rs` keeps the
+   * version the toolchain's.)
+   */
+  get userAgent(): string {
+    return "Velt/0.6.0";
+  }
+
+  /** `"[object Object]"`, as Node's `String(navigator)` gives. */
+  toString(): string {
+    return "[object Object]";
+  }
+}
+
+/** The language of the environment's locale (`Navigator.language`). */
+function localeLanguage(): string {
+  let empty = false;
+  for (const name of ["LC_ALL", "LC_MESSAGES", "LANG"]) {
+    const v = process.env[name];
+    if (v === undefined) {
+      continue;
+    }
+    if (v != "") {
+      return languageTag(v);
+    }
+    empty = true;
+  }
+  return empty ? "und" : "en-US";
+}
+
+/**
+ * `fr_FR.UTF-8` as the tag `fr-FR`, `C` and `POSIX` as `en-US`. A modifier (`@latin`) is a variant
+ * subtag when it can be one (5 to 8 letters or digits, or 4 starting with a digit), else a private
+ * one (`de_DE@euro` is `de-DE-x-lvariant-euro`), as ICU maps it.
+ */
+function languageTag(locale: string): string {
+  const parts = locale.split("@");
+  const name = parts[0].split(".")[0];
+  if (name == "C" || name == "POSIX" || name == "") {
+    return "en-US";
+  }
+  const tag = name.replaceAll("_", "-");
+  if (parts.length < 2 || parts[1] == "") {
+    return tag;
+  }
+  const m = parts[1].toLowerCase();
+  const variant = (m.length >= 5 && m.length <= 8) || (m.length == 4 && m[0] >= "0" && m[0] <= "9");
+  return variant ? `${tag}-${m}` : `${tag}-x-lvariant-${m}`;
+}
+
+/** Node's `navigator`. */
+export let navigator: Navigator = new Navigator();

@@ -176,8 +176,16 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        // A frozen object where its fields could be written: an error once the program writes
+        // one (`object_views::check_frozen`).
         if self.cx.unfreezes(h.ty, exp) {
-            return Err(h);
+            let frozen = crate::object_copies::Frozen {
+                from: h.ty,
+                to: exp,
+                span: h.span,
+                existing: false,
+            };
+            self.cx.object_copies.frozen.push(frozen);
         }
         // A `shared<T>` where a `T` is expected: the value inside, read (`frozen`, #36).
         if matches!(self.cx.ty.kind(h.ty), TyKind::Shared(t) if *t == exp) {
