@@ -224,6 +224,58 @@ mod tests {
         assert!(n.balanced(), "every reference a clone took given back");
     }
 
+    /// The contract's "a wake after the task finished is harmless": a wait cancelled before the
+    /// latch opens (on another thread) gives its waker back and nothing reaches the table after.
+    #[test]
+    fn a_cancelled_wait_gives_its_foreign_waker_back_before_the_latch_opens() {
+        use crate::task::waker::tests::TestHeader;
+        let n = TestHeader::new();
+        let word = 0u32;
+        let mut cx = n.cx(&word);
+        let cx = &mut cx as *mut crate::task::VeltCx as *mut std::ffi::c_void;
+        let h = velt_rt_latch_new();
+        // SAFETY: `h` is live until freed; the future is owned here; `cx` outlives the poll.
+        unsafe {
+            let f = velt_rt_latch_wait(h);
+            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+            velt_rt_fut_drop(f);
+            assert!(n.balanced(), "the cancelled wait gave its reference back");
+            let before = n.get();
+            let opener = SendHandle(h);
+            std::thread::spawn(move || {
+                let opener = opener;
+                velt_rt_latch_open(opener.0)
+            })
+            .join()
+            .unwrap();
+            assert_eq!(n.get(), before, "nothing reaches the table after the drop");
+            velt_rt_latch_free(h);
+        }
+        assert!(n.balanced());
+    }
+
+    /// Woken, never polled again, then dropped: the wake consumed its reference, and the drop
+    /// gives back nothing more.
+    #[test]
+    fn a_woken_wait_dropped_unpolled_stays_balanced() {
+        use crate::task::waker::tests::TestHeader;
+        let n = TestHeader::new();
+        let word = 0u32;
+        let mut cx = n.cx(&word);
+        let cx = &mut cx as *mut crate::task::VeltCx as *mut std::ffi::c_void;
+        let h = velt_rt_latch_new();
+        // SAFETY: as above.
+        unsafe {
+            let f = velt_rt_latch_wait(h);
+            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+            velt_rt_latch_open(h);
+            assert_eq!(n.woken(), 1);
+            velt_rt_fut_drop(f);
+            velt_rt_latch_free(h);
+        }
+        assert!(n.balanced());
+    }
+
     struct SendHandle(Handle<Latch>);
     // SAFETY: latch handles are thread-safe (opening is).
     unsafe impl Send for SendHandle {}
