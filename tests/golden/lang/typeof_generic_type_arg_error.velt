@@ -1,0 +1,6 @@
+// `typeof f` of a generic function: a written type argument is checked against the call (#2617).
+// `tsc`: Argument of type 'string' is not assignable to parameter of type 'number'.
+function signal<T>(v: T): { value: T } { return { value: v }; }
+interface Ctx { signal: typeof signal; }
+const ctx: Ctx = { signal };
+console.log(ctx.signal<number>("x").value);

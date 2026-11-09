@@ -1,0 +1,6 @@
+// A non-generic function is not a value of a generic function type (`typeof signal`); `tsc`
+// refuses it too (TS2322) (#2617).
+function signal<T>(v: T): { value: T } { return { value: v }; }
+interface Ctx { signal: typeof signal; }
+const ctx: Ctx = { signal: (v: number) => ({ value: v }) };
+console.log(ctx.signal(1).value);

@@ -1,0 +1,2 @@
+typeof_overloaded_assign_error.velt:6:24: error: mismatched types
+  = note: expected (<T>(T) => T) & (<T>(T) => T), found (string) => string

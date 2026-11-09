@@ -1,0 +1,2 @@
+typeof_generic_not_generic_error.velt:5:53: error: mismatched types
+  = note: expected T, found f64

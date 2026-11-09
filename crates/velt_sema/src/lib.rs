@@ -147,6 +147,7 @@ mod type_level;
 mod type_meanings;
 mod type_queries;
 mod type_reach;
+mod typeof_generic;
 mod types;
 mod undefined_args;
 mod union_layouts;

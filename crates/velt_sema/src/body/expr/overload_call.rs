@@ -208,7 +208,7 @@ impl FnCx<'_, '_> {
 
     /// The first of `n` signatures whose call (`call(k)`, checked as a try and rolled back)
     /// reports no error, or each one's first error.
-    fn pick_signature(
+    pub(super) fn pick_signature(
         &mut self,
         name: &str,
         n: usize,
@@ -246,7 +246,7 @@ impl FnCx<'_, '_> {
 
     /// TS2769: no signature of `name` accepts the call; reported at the argument the first
     /// signature rejected, as `tsc` does (at the call when it rejected another part of it).
-    fn no_overload(
+    pub(super) fn no_overload(
         &mut self,
         name: &str,
         misfits: Misfits,
@@ -261,7 +261,11 @@ impl FnCx<'_, '_> {
                     .find(|a| a.span.file == at.file && a.span.lo <= at.lo && at.hi <= a.span.hi)
             })
             .map_or(span, |a| a.span);
-        let mut d = Diagnostic::error(format!("no overload of `{name}` matches this call"), at);
+        let msg = match name {
+            "" => "no overload matches this call".to_string(),
+            _ => format!("no overload of `{name}` matches this call"),
+        };
+        let mut d = Diagnostic::error(msg, at);
         for (k, (why, _)) in misfits.into_iter().enumerate() {
             d = d.with_note(format!("overload {} of {n}: {why}", k + 1));
         }

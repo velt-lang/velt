@@ -7,8 +7,9 @@
 //! - `keyof T` on an object type: the union of its keys as string literal types.
 //! - `ReturnType<F>` and `Parameters<F>` on a function type.
 //!
-//! Anything Velt cannot represent exactly (a generic function's type, a class's constructor
-//! type, `keyof` of a class) is an error saying it is not supported yet, never an
+//! `typeof f` of a generic or overloaded function is its generic function type or its set of
+//! signatures (`crate::typeof_generic`). Anything Velt cannot represent exactly (a class's
+//! constructor type, `keyof` of a class) is an error saying it is not supported yet, never an
 //! approximation.
 
 use velt_common::{Diagnostic, Span};
@@ -215,6 +216,13 @@ impl Ctx<'_> {
             }
             crate::collect::sigs::fill_pending(self, d);
         }
+        // A generic function's own generic type, or an overloaded one's set of signatures
+        // (`crate::typeof_generic`); `ReturnType` and `Parameters` take the erased signature.
+        if !self.sigq.erase_generics {
+            if let Some(t) = self.generic_query_type(d, span) {
+                return t;
+            }
+        }
         let f = self.fn_info(d);
         // Generic only over what its callbacks throw (`setTimeout<E>(task: () => Promise<void,
         // E>, ms)`): the function type with those errors left out, as TypeScript's
@@ -370,7 +378,7 @@ impl Ctx<'_> {
 
     /// Does `t` mention a type parameter other than as an error type (a function type's
     /// `throws`, a promise's rejection type)?
-    fn mentions_beyond_errors(&self, t: TyId, depth: u32) -> bool {
+    pub(crate) fn mentions_beyond_errors(&self, t: TyId, depth: u32) -> bool {
         if depth > 32 {
             return true;
         }
@@ -413,11 +421,11 @@ impl Ctx<'_> {
         self.sigq.field_erased
     }
 
-    /// The type a field's written type `t` gives it. Function types have no type parameters, and
-    /// a field's type is one layout for every instantiation, so `signal: typeof signal` of a
-    /// generic function and `emit: EmitFn<TEvents>`, a generic function type over a conditional
-    /// one, have no type of their own here: such a field is an `any`, whose value is called and
-    /// read as TypeScript's erased code does. Nothing of the program's behavior changes; what is
+    /// The type a field's written type `t` gives it. A field's type is one layout for every
+    /// instantiation, so `emit: EmitFn<TEvents>`, a generic function type over a conditional
+    /// one, and `typeof f` of a generic function whose declaration doesn't give its type (no
+    /// written result), have no type of their own here: such a field is an `any`, whose value is
+    /// called and read as TypeScript's erased code does. Nothing of the program's behavior changes; what is
     /// lost is TypeScript's checking of the uses.
     pub(crate) fn resolve_field_type(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
         let outer = (self.sigq.in_field, self.sigq.field_erased);

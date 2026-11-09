@@ -76,6 +76,7 @@ mod dynamic_write;
 mod env_globals;
 mod generic_dynamic;
 mod identity_eq;
+mod overload_sets;
 mod proxy_getters;
 mod static_call;
 mod storage_floats;

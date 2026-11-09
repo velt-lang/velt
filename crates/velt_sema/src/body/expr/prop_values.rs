@@ -27,16 +27,20 @@ impl FnCx<'_, '_> {
         // (`init as unknown as Ctx`, sigx's component context) is written through that type,
         // which Node allows: so the field is an `any` holding `null`, which takes it.
         let null = value.is_some_and(|v| crate::body::narrow::nothing_word(v) == Some("null"));
-        // `{ signal: signal }` of a generic function: function types have no type parameters, so
-        // the field is an `any`, as for `typeof signal` (`Ctx::resolve_field_type`).
+        // `{ signal: signal }` of a generic function: the field has its type, as `typeof signal`
+        // (`crate::typeof_generic`), else (no type from its declaration) an `any`, as for
+        // `typeof signal` (`Ctx::resolve_field_type`).
         let generic = match value.map(|v| &v.kind) {
             Some(ast::ExprKind::Ident(id)) => self.names_generic_fn(id),
             None => self.names_generic_fn(name),
-            _ => false,
+            _ => None,
         };
         let any = match generic {
-            true => self.any_ty(),
-            false => any,
+            Some(d) => match self.cx.generic_query_type(d, name.span) {
+                Some(t) => Some(t),
+                None => self.any_ty(),
+            },
+            None => any,
         };
         let any = match null && any.is_none() {
             true => self.any_ty(),
@@ -45,14 +49,16 @@ impl FnCx<'_, '_> {
         self.prop_value(name, value, any)
     }
 
-    /// Does `id` name a generic function of this module's scope, not a local?
-    fn names_generic_fn(&mut self, id: &ast::Ident) -> bool {
+    /// The generic function of this module's scope (not a local) `id` names.
+    fn names_generic_fn(&mut self, id: &ast::Ident) -> Option<crate::hir::DefId> {
         if !self.is_fn_item(id) {
-            return false;
+            return None;
         }
         match self.lookup_item(&id.name, id.span) {
-            Some(crate::ctx::Item::Def(d)) => !self.cx.fn_info(d).generics.names.is_empty(),
-            _ => false,
+            Some(crate::ctx::Item::Def(d)) => {
+                (!self.cx.fn_info(d).generics.names.is_empty()).then_some(d)
+            }
+            _ => None,
         }
     }
 

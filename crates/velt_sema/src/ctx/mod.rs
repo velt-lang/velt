@@ -349,6 +349,9 @@ pub(crate) struct Ctx<'m> {
     pub group_defs: FxHashSet<DefId>,
     /// TypeScript-form overloads exist (`crate::overloads`): calls choose among `name#k`.
     pub has_overloads: bool,
+    /// `typeof f` of an overloaded function has given a type (`crate::typeof_generic`): calls
+    /// may go through a value of it.
+    pub overload_sets: bool,
     /// A user module calls a `throw()` method (`crate::ts_protocol::calls_throw`).
     pub gen_throw: bool,
     /// Names of overloaded methods (`crate::overloads::Rewritten::methods`).
@@ -629,6 +632,7 @@ impl<'m> Ctx<'m> {
             generic_arrow_all: FxHashSet::default(),
             alias_blocked: Default::default(),
             has_overloads: false,
+            overload_sets: false,
             gen_throw: false,
             overloaded_methods: FxHashSet::default(),
             jsx_providers: FxHashMap::default(),

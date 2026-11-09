@@ -1,0 +1,6 @@
+// A call through `typeof f` of an overloaded function that no signature accepts: TS2769 (#2617).
+function pick<T extends string>(x: T): T;
+function pick<T extends number>(x: T): T;
+function pick<T>(x: T): T { return x; }
+const p: typeof pick = pick;
+console.log(p("a"), p(1), p(true));

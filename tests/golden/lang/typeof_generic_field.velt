@@ -1,5 +1,5 @@
-// `typeof f` of a generic function in a field: the field holds
-// the function and calls pass what they pass, as in the JavaScript TypeScript erases to.
+// `typeof f` of a generic function in a field: the field keeps the generic signature, and
+// each call instantiates it (#2617).
 function box<T>(v: T): { v: T } { return { v }; }
 interface Ctx { box: typeof box; name: string; }
 const ctx: Ctx = { box, name: "c" };
