@@ -191,6 +191,9 @@ pub struct Session {
     pub details: Vec<(&'static str, &'static str, Duration)>,
     /// Print [`Session::details`] under their stage (`--timings`).
     pub show_details: bool,
+    /// `velt dev`: the counted types of the previous version, which lowering starts from, and
+    /// after lowering the new version's (`velt_vir::lower_seeded`). `None`: lowering as always.
+    pub counted_seed: Option<velt_vir::CountedSeed>,
     /// `-v`: say at once that the build waits for another of its output (`std_cache::Place::lock`).
     pub verbose: bool,
     /// Reports the build was asked for (`--report`), printed after the diagnostics.
@@ -436,9 +439,19 @@ fn compile_to_vir_linking(
         // Generic instances shared by shape: debug builds only, for now (shape-sharing.md).
         shapes: !opts.release,
         no_cpu_extensions: Backend::of_build(opts) == Backend::Cranelift,
+        counted_seed: sess.counted_seed.as_ref(),
     };
-    let mut program = match velt_vir::lower_checked(&hir, &lower_opts) {
-        Ok(p) => p,
+    let lowered = match sess.counted_seed.is_some() {
+        true => velt_vir::lower_seeded(&hir, &lower_opts).map(|(p, seed)| (p, Some(seed))),
+        false => velt_vir::lower_checked(&hir, &lower_opts).map(|p| (p, None)),
+    };
+    let mut program = match lowered {
+        Ok((p, seed)) => {
+            if seed.is_some() {
+                sess.counted_seed = seed;
+            }
+            p
+        }
         Err(diags) => {
             sess.diagnostics.extend(diags);
             sess.stop_if_errors()?;

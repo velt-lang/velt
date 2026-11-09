@@ -1,0 +1,59 @@
+// An object stored twice in module state, then a version that stops sharing it and drops one
+// copy (velt_vir lower/boxing/seed.rs, #2653): `velt dev` lowers each version from the previous
+// one's counted types, so `Node` stays counted after the swap, and dropping one copy leaves the
+// other alive. Lowered on its own, the second version would not count `Node` and would free the
+// object the array still holds. The array is read and written only through helpers both versions
+// have and reach (#2654). A restart (`--exe` mode) starts with an empty array.
+import { serve } from "http-server";
+
+class Node {
+  v: number = 0;
+  // Read after the drop: freed, a string's bytes are not what they were (a number may be).
+  name: string = "node";
+}
+
+let store: Node[] = [];
+
+function put(n: Node) {
+  store.push(n);
+}
+
+function take(): Node | undefined {
+  return store.pop();
+}
+
+function size(): number {
+  return store.length;
+}
+
+function first(): string {
+  return store.length > 0 ? `${store[0].name}${store[0].v}` : "-";
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const path = new URL(req.url).pathname;
+    if (path == "/never") {
+      // Never requested: both versions reach `take` and `put`, so their code (and module state)
+      // is the same before and after the swap.
+      const n = take();
+      if (n !== undefined) {
+        put(n);
+      }
+      return new Response("never");
+    }
+    if (path == "/fill") {
+      const a = new Node();
+      a.v = 7;
+      put(a);
+      put(a);
+      return new Response(`filled ${size()}`);
+    }
+    if (path == "/read") {
+      return new Response(`read ${size()} ${first()}`);
+    }
+    return new Response("ok");
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

@@ -9,6 +9,7 @@ mod builder_prelude;
 mod c_wasi;
 mod const_arrays;
 mod control;
+mod counted_seed;
 mod cpu_checks;
 mod drop_chain;
 mod drops;

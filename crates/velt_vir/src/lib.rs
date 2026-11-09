@@ -246,7 +246,12 @@ pub struct LowerOptions<'a> {
     /// `velt_simd_has_<ext>` is false in this build, so what only such a check reaches is not
     /// lowered (lower/cpu_checks.rs). `false` leaves only the target's architecture to decide.
     pub no_cpu_extensions: bool,
+    /// The counted types of the previous version of this program ([`lower_seeded`], `velt dev`):
+    /// the first pass starts from them, so it is often the only one.
+    pub counted_seed: Option<&'a CountedSeed>,
 }
+
+pub use lower::CountedSeed;
 
 /// One native library to initialize before `main` runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -284,6 +289,22 @@ pub fn lower_checked(
         Ok(p)
     } else {
         Err(diags)
+    }
+}
+
+/// [`lower_checked`], also returning the program's counted types as a seed for lowering its next
+/// version (`LowerOptions::counted_seed`). For `velt dev`: a seed that names a type the next
+/// version no longer needs keeps it counted (lower/boxing/seed.rs), so the next version's code
+/// may differ from a lowering without the seed in representation (more counting), not in
+/// behavior: what would change behavior (an `RwLock`'s exclusive `read`) is never seeded.
+pub fn lower_seeded(
+    program: &hir::Program,
+    opts: &LowerOptions,
+) -> Result<(vir::Program, CountedSeed), Vec<velt_common::Diagnostic>> {
+    let (p, diags, seed) = lower::lower_program_seeded(program, opts, true);
+    match diags.is_empty() {
+        true => Ok((p, seed.unwrap_or_default())),
+        false => Err(diags),
     }
 }
 

@@ -20,8 +20,16 @@ thread_local! {
     static PROF: RefCell<Option<Prof>> = const { RefCell::new(None) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Passes `lower_program` has run on this thread (tests of the counted seed).
+    pub(crate) static PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Start a lowering pass.
 pub(super) fn start_pass() {
+    #[cfg(test)]
+    PASSES.with(|n| n.set(n.get() + 1));
     let on = std::env::var_os("VELT_LOWER_PROFILE").is_some();
     PROF.with(|p| *p.borrow_mut() = on.then(Prof::default));
 }

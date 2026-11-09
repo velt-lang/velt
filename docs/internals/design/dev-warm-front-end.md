@@ -92,8 +92,22 @@ re-targets a kept AST's spans.
 
 ### Step 2: warm lowering (expected −110 ms)
 
-Lowering builds every reached instance through a worklist, then lowers again while the
-counted-types pass grows (`lower/boxing/`). A function's VIR depends on its checked HIR, the
+**2a, done: the counted types carried over (−90 to −110 ms).** Lowering lowers the whole program
+again while a pass finds more types that must be counted: on `http_hello` two passes of about
+100 ms each, the first one only to find them. The dev host keeps the counted types of each
+version (`velt_vir::CountedSeed`: types by their stable spelling `Cx::type_key`, definitions by
+qualified name) and hands them to the next version's lowering (`LowerOptions::counted_seed`,
+`lower_seeded`), whose first pass then already uses them and is the only one when the edit
+counts the same types. Measured in `velt dev` on `http_hello`: lowering per save from about
+220 ms to about 110 ms. Counted sets only grow within a lowering, so a type an edit stops
+needing stays counted until the host restarts: a representation the cold build would not pick,
+with the same behavior; the one counted fact that is behavior, an `RwLock` whose `read` is
+exclusive (`lock_exclusive`), is never seeded. Applying a seed spells every type of the new
+version's table (`Cx::type_key`), which the measured win includes. `velt build` and `velt run`
+never use a seed.
+
+**2b: reuse the lowered functions.** Lowering builds every reached instance through a worklist,
+then lowers again while the counted-types pass grows (`lower/boxing/`). A function's VIR depends on its checked HIR, the
 types it mentions, and whole-program facts (counted types, the shared flag, union tags, class
 ids, parameter attributes). package-cache.md's **facts trace** is exactly the record needed:
 lowering asks those facts through one `Facts` interface, and a recorder keeps every question
@@ -173,7 +187,7 @@ it if another write arrives (the build is cheap by then), instead of waiting eve
 | settle | 30 ms | ~5–10 ms |
 | parse | ~80 ms (60–70 after the `Words` fix) | ~5 ms (the edited file, the graph) |
 | sema | ~200 ms | ~20–30 ms (app bodies, incremental passes) |
-| lower + optimize | ~145 ms | ~10 ms (changed functions) |
+| lower + optimize | ~145 ms (one pass since 2a) | ~10 ms (changed functions) |
 | diff, JIT, swap | ~15 ms | ~15 ms |
 | **save to first new response** | **~540 ms** | **~65–75 ms** |
 
@@ -184,7 +198,8 @@ package-cache.md is their counterpart, and steps 1–2 share its building blocks
 
 1. Step 1 (warm parse): small, contained in `velt_loader` and the dev host; measurable alone
    (its `Words` fix for every build is in).
-2. The `Facts` interface and recorder (package-cache.md step 1), then step 2.
+2. Step 2a (done), then the `Facts` interface and recorder (package-cache.md step 1) and
+   step 2b.
 3. Step 3a–3b (`Ctx: Clone`, library-first layout, app-only collect/check) with the full
    whole-program passes still run: already removes `check_bodies`' library share.
 4. Step 3c pass by pass, largest first (`ownership_passes`: 127 ms here), each behind its own

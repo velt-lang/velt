@@ -33,6 +33,8 @@ velt build main.velt
       │                                                 std's parses come from the build cache)
       ├─ velt_sema::check              whole program → hir::Program (check_with: library roots)
       ├─ velt_vir::lower_checked (+ verify)           → vir::Program (with source locations)
+      │    (`velt dev`: velt_vir::lower_seeded, with LowerOptions::counted_seed: the previous
+      │     version's counted types in, the new version's out; dev-warm-front-end.md step 2a)
       ├─ velt_opt::optimize                           → vir::Program (release: all passes)
       ├─ velt_codegen_cl::emit_object                 → main.o / main.obj (debug builds)
       │  or velt_codegen_llvm::emit_objects_timed     → one object per codegen unit (release)
