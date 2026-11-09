@@ -51,20 +51,15 @@ fn item_named(analysis: &Analysis, item: &ast::Item, name: &str) -> String {
     let text = |ty: &ast::TypeExpr| analysis.snippet(ty.span).to_string();
     match &item.kind {
         ast::ItemKind::Function(f) => function(analysis, &f.sig),
-        ast::ItemKind::ExternFn(sig) if sig.is_system => {
-            format!("declare system {}", function(analysis, sig))
+        ast::ItemKind::ExternFn(sig) => {
+            // `@intrinsic declare function …`: the decorators say why the declaration is special.
+            let decorators: String = sig
+                .decorators
+                .iter()
+                .map(|d| format!("{}\n", analysis.snippet(d.span)))
+                .collect();
+            format!("{decorators}{}", extern_fn(analysis, sig))
         }
-        ast::ItemKind::ExternFn(sig) if sig.host.is_some() => {
-            let module = sig.host.as_ref().map_or("", |h| analysis.snippet(h.span));
-            format!("declare host({module}) {}", function(analysis, sig))
-        }
-        ast::ItemKind::ExternFn(sig) if sig.is_decorator => {
-            format!("declare decorator {}", function(analysis, sig))
-        }
-        ast::ItemKind::ExternFn(sig) if sig.is_unsafe => {
-            format!("declare unsafe {}", function(analysis, sig))
-        }
-        ast::ItemKind::ExternFn(sig) => format!("declare {}", function(analysis, sig)),
         ast::ItemKind::Class(t) if t.is_abstract => type_decl(analysis, "abstract class", t),
         ast::ItemKind::Class(t) => type_decl(analysis, "class", t),
         ast::ItemKind::Struct(t) => type_decl(analysis, "struct", t),
@@ -95,6 +90,25 @@ fn item_named(analysis: &Analysis, item: &ast::Item, name: &str) -> String {
             None => "declare global".to_string(),
         },
         ast::ItemKind::Namespace(n) => format!("namespace {}", n.name.name),
+    }
+}
+
+/// `declare [system | host(m) | decorator | unsafe] function …`, without its decorators.
+fn extern_fn(analysis: &Analysis, sig: &ast::FnSig) -> String {
+    if sig.is_system {
+        format!("declare system {}", function(analysis, sig))
+    } else if let Some(h) = &sig.host {
+        format!(
+            "declare host({}) {}",
+            analysis.snippet(h.span),
+            function(analysis, sig)
+        )
+    } else if sig.is_decorator {
+        format!("declare decorator {}", function(analysis, sig))
+    } else if sig.is_unsafe {
+        format!("declare unsafe {}", function(analysis, sig))
+    } else {
+        format!("declare {}", function(analysis, sig))
     }
 }
 
