@@ -239,6 +239,9 @@ pub fn publish(native_artifacts: Option<&Path>, native_only: bool) -> Result<(),
     for target in bundles.keys() {
         style::status("Native", &format!("prebuilt library for {target}"));
     }
+    if let (Some(url), false) = (&loc.remote, native_only) {
+        super::readme::send(&root, url, &manifest.package.name, &entry.version);
+    }
     Ok(())
 }
 

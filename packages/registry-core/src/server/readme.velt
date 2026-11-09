@@ -1,0 +1,129 @@
+// registry-core (internal): `PUT` and `GET /api/v1/<name>/<version>/readme`, a published version's
+// README, which `velt publish` sends after the archive. It isn't part of the archive (whose files
+// a package's checksum covers), so a version's README can be added or corrected after it is
+// published without changing what installs. The text is stored by its checksum, as archives are
+// (`blobs/sha256/<hex>`), and the version's index entry names it (`readme`), so a static site
+// reads it from the static files alone.
+
+import { sha256 } from "velt/crypto";
+import { EncodingError, hexEncode, utf8Decode } from "velt/encoding";
+import { isValidDependencyName } from "../names";
+import { Version } from "../semver/version";
+import { PackageChange } from "../stores/package_change";
+import { PackageRecord } from "../stores/package_record";
+import { archiveKey } from "../stores/static_files";
+import { authorize, isPublished, ownerOf, writer } from "./access";
+import { text } from "./answer";
+import { Caller } from "./caller";
+import { commitChange, indexPaths } from "./commit";
+import { Refusal } from "./refusal";
+import { RegistryLimits } from "./registry_limits";
+import { RegistryStores } from "./registry_stores";
+import { uploadBody } from "./upload_body";
+
+function notPublished(name: string, version: string): Refusal {
+  return new Refusal(404, `\`${name}\` ${version} is not published`);
+}
+
+// The change making `sum` package `name` `version`'s README, from its record; null when it is.
+function readmeChange(
+  record: PackageRecord | null,
+  caller: Caller,
+  name: string,
+  version: string,
+  sum: string,
+): PackageChange | null {
+  if (record == null) {
+    throw notPublished(name, version);
+  }
+  authorize(record, name, caller);
+  const index = record.index.copy();
+  const entry = index.entry(version);
+  if (entry == null) {
+    throw notPublished(name, version);
+  }
+  if (entry.readme == sum) {
+    return null;
+  }
+  entry.readme = sum;
+  const change = new PackageChange(name, record.revision, index);
+  change.changed = [entry];
+  return change;
+}
+
+/** Stores the README in `req`'s body (UTF-8 text) as package `name` `version`'s. */
+export async function putReadme(
+  stores: RegistryStores,
+  limits: RegistryLimits,
+  req: Request,
+  name: string,
+  version: string,
+): Promise<Response> {
+  if (!isValidDependencyName(name) || !Version.isValid(version)) {
+    return text(400, "invalid package name or version");
+  }
+  // Only an owner gets a body read.
+  await ownerOf(stores, req, name);
+  const normal = Version.parse(version).toString();
+  if (!(await isPublished(stores, name))) {
+    throw notPublished(name, normal);
+  }
+  const body = await uploadBody(req, limits.maxReadmeBytes);
+  try {
+    utf8Decode(body);
+  } catch (e) {
+    if (e instanceof EncodingError) {
+      return text(400, "the README is not valid UTF-8");
+    }
+    throw e;
+  }
+  const sum = `sha256:${hexEncode(sha256(body))}`;
+  // Checked before the text is stored, so a refused one stores nothing.
+  const now = await stores.db.record(name);
+  readmeChange(now, await writer(stores, req), name, normal, sum);
+  // By its checksum, as an archive: one that loses a race leaves a file nothing names.
+  await stores.blobs.putIfAbsent(archiveKey(sum), body);
+  await commitChange(
+    stores,
+    name,
+    indexPaths(name),
+    // Each try asks who the caller is again: a token taken away meanwhile stops here.
+    async (record: PackageRecord | null): Promise<PackageChange | null> => readmeChange(
+      record,
+      await writer(stores, req),
+      name,
+      normal,
+      sum,
+    ),
+  );
+  return text(200, `stored the README of \`${name}\` ${normal}\n`);
+}
+
+/** Package `name` `version`'s README, as `text/markdown`; 404 when it has none. */
+export async function getReadme(
+  stores: RegistryStores,
+  name: string,
+  version: string,
+): Promise<Response> {
+  if (!isValidDependencyName(name) || !Version.isValid(version)) {
+    return text(400, "invalid package name or version");
+  }
+  const normal = Version.parse(version).toString();
+  const record = await stores.db.record(name);
+  const entry = record?.index.entry(normal) ?? null;
+  if (entry == null) {
+    return text(404, `no \`${name}\` ${version}`);
+  }
+  const sum = entry.readme;
+  if (sum == null) {
+    return text(404, `\`${name}\` ${normal} has no README`);
+  }
+  const bytes = await stores.blobs.get(archiveKey(sum));
+  if (bytes == null) {
+    return text(500, `the README of \`${name}\` ${normal} is missing from the registry's store`);
+  }
+  return new Response(bytes, {
+    status: 200,
+    headers: { "content-type": "text/markdown; charset=utf-8" },
+  });
+}

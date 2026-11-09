@@ -21,6 +21,11 @@ export class IndexEntry {
   native: Map<string, string> = new Map();
   /** Withdrawn by an owner: still downloadable, never chosen for a new requirement. */
   yanked: bool = false;
+  /**
+   * `sha256:<hex>` of the version's README (`PUT /api/v1/<name>/<version>/readme`), stored by it
+   * as an archive is; null when it has none. Not part of the package's files: clients ignore it.
+   */
+  readme: string | null = null;
 
   constructor(version: string, checksum: string) {
     this.version = version;
@@ -36,6 +41,7 @@ export class IndexEntry {
     e.nativeAbi = this.nativeAbi;
     e.native = new Map(this.native);
     e.yanked = this.yanked;
+    e.readme = this.readme;
     return e;
   }
 
@@ -62,6 +68,9 @@ export class IndexEntry {
     }
     if (this.yanked) {
       fields.push(jsonField("yanked", "true"));
+    }
+    if (this.readme != null) {
+      fields.push(jsonField("readme", jsonString(this.readme)));
     }
     return jsonObject(fields, depth);
   }

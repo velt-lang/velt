@@ -21,6 +21,7 @@ pub mod members;
 mod native_headers;
 mod package;
 pub(crate) mod project;
+mod readme;
 mod registry;
 mod target;
 pub mod test;

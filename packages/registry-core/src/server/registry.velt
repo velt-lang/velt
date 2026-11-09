@@ -4,6 +4,7 @@
 
 import { listOwners, changeOwners } from "./owners";
 import { publish } from "./publish";
+import { getReadme, putReadme } from "./readme";
 import { download, index, listing, native } from "./reads";
 import { Refusal } from "./refusal";
 import { refused, text } from "./answer";
@@ -75,8 +76,19 @@ export class Registry {
     this.limits = limits;
   }
 
-  /** Answers one request. */
+  /**
+   * Answers one request. Reads are public, so a `GET`'s answer may be read by a page on any
+   * site (`Access-Control-Allow-Origin: *`; a `GET` sends no credentials and needs no preflight).
+   */
   async handle(req: Request): Promise<Response> {
+    const res = await this.answer(req);
+    if (req.method == "GET") {
+      res.headers.set("access-control-allow-origin", "*");
+    }
+    return res;
+  }
+
+  private async answer(req: Request): Promise<Response> {
     const [path, query] = target(req.url);
     const parts = joinScoped(trimSlashes(path).split("/"));
     try {
@@ -132,6 +144,12 @@ export class Registry {
     }
     if (n == 5 && p[4] == "yank" && (m == "PUT" || m == "DELETE")) {
       return await yank(s, req, p[2], p[3], m == "PUT");
+    }
+    if (n == 5 && p[4] == "readme" && m == "PUT") {
+      return await putReadme(s, this.limits, req, p[2], p[3]);
+    }
+    if (n == 5 && p[4] == "readme" && m == "GET") {
+      return await getReadme(s, p[2], p[3]);
     }
     if (n == 6 && p[4] == "native" && (m == "GET" || m == "PUT")) {
       return native(p[2], p[3], p[5]);

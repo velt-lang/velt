@@ -4,6 +4,8 @@
 export class RegistryLimits {
   /** The largest archive accepted, in bytes (64 MiB): a larger body answers 413. */
   maxArchiveBytes: i64 = 64 * 1024 * 1024;
+  /** The largest README accepted (`PUT /api/v1/<name>/<version>/readme`), in bytes (512 KiB). */
+  maxReadmeBytes: i64 = 512 * 1024;
   /** The most files an archive may hold. */
   maxEntries: i64 = 10000;
   /**

@@ -431,6 +431,16 @@ registry: "https://registry.example.com",
 - Yank (additive): index entries gain `yanked = true` (absent when false). `PUT`/`DELETE
   <url>/api/v1/<name>/<version>/yank` set/clear it (owners). Resolution never selects a yanked
   version unless the lockfile pins it; yanked versions stay downloadable.
+- READMEs (additive, registry-core servers, #1740): `PUT <url>/api/v1/<name>/<version>/readme`
+  with UTF-8 text (owners; 512 KiB by default, 413 above) stores a published version's README by
+  its checksum (`blobs/sha256/<hex>`, beside the archives), and the version's index entry gains
+  `readme: "sha256:<hex>"` (absent when it has none; clients ignore it). Sent again, it replaces
+  the earlier one. `GET` the same path → the text, `text/markdown`, 404 when there is none. It is
+  not one of the package's files and changes no checksum. `velt publish` to a URL sends the
+  package's `README.md` (any case) after the archive; a server without the request (404, 405) is
+  skipped silently, and any other failure is a warning (the version stays published).
+  registry-core servers answer every `GET` with `Access-Control-Allow-Origin: *`, so a web page
+  (the registry's site) reads them from the browser.
 - Search (additive): `GET <url>/api/v1/search?q=<text>` →
   `{"packages":[{"name":"…","version":"…","description"?:"…","keywords"?:["…"]}]}`. The text is
   lowercased and split on whitespace into terms; a package matches when every term is a

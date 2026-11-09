@@ -1,0 +1,92 @@
+// A version's README (src/server/readme.velt): stored by its checksum beside the archives, named
+// by the version's index entry, and changed only by an owner.
+import { sha256 } from "velt/crypto";
+import { hexEncode, utf8Encode } from "velt/encoding";
+import { describe, expect, it } from "velt/test";
+import { archiveKey, RegistryLimits } from "../src/lib";
+import { TestRegistry } from "./_registry";
+
+function checksumOf(text: string): string {
+  return `sha256:${hexEncode(sha256(utf8Encode(text)))}`;
+}
+
+describe("a version's README", () => {
+  it("is stored by its checksum and named by the index", async () => {
+    const r = new TestRegistry();
+    await r.publish("lib", "1.0.0");
+    await r.publish("lib", "1.1.0");
+    expect((await r.call("GET", "lib/1.0.0/readme")).text).toBe("`lib` 1.0.0 has no README");
+    const put = await r.call("PUT", "lib/1.0.0/readme", "", utf8Encode("# lib\n\nÅ library.\n"));
+    expect(put.status).toBe(200);
+    expect(put.text).toBe("stored the README of `lib` 1.0.0\n");
+    const sum = checksumOf("# lib\n\nÅ library.\n");
+    expect(await r.blobs.get(archiveKey(sum))).not.toBeNull();
+    const index = (await r.call("GET", "lib/index")).text;
+    expect(index).toContain(`"readme": "${sum}"`);
+    // Only the version it was sent for.
+    expect(index.split(`"readme"`).length).toBe(2);
+    const got = await r.call("GET", "lib/1.0.0/readme");
+    expect(got.type).toBe("text/markdown; charset=utf-8");
+    expect(got.text).toBe("# lib\n\nÅ library.\n");
+    expect(r.purge.purged).toContain("/api/v1/lib/index");
+
+    // Sent again, nothing changes; a corrected one replaces it.
+    const revision = await r.db.revision("lib");
+    await r.call("PUT", "lib/1.0.0/readme", "", utf8Encode("# lib\n\nÅ library.\n"));
+    expect(await r.db.revision("lib")).toBe(revision);
+    await r.call("PUT", "lib/1.0.0/readme", "", utf8Encode("# lib\n"));
+    expect((await r.call("GET", "lib/1.0.0/readme")).text).toBe("# lib\n");
+    expect((await r.call("GET", "lib/index")).text).toContain(
+      `"readme": "${checksumOf("# lib\n")}"`,
+    );
+    // Another version's change keeps it.
+    await r.call("PUT", "lib/1.1.0/yank");
+    expect((await r.call("GET", "lib/1.0.0/readme")).text).toBe("# lib\n");
+  });
+
+  it(
+    "is refused for a version not published, text that isn't UTF-8 and above the limit",
+    async () => {
+      const limits = new RegistryLimits();
+      limits.maxReadmeBytes = 8;
+      const r = new TestRegistry(limits);
+      await r.publish("lib", "1.0.0");
+      const missing = await r.call("PUT", "lib/2.0.0/readme", "", utf8Encode("# lib"));
+      expect(missing.status).toBe(404);
+      expect(missing.text).toBe("`lib` 2.0.0 is not published");
+      expect((await r.call("PUT", "nope/1.0.0/readme", "", utf8Encode("# x"))).status).toBe(404);
+      const binary = await r.call("PUT", "lib/1.0.0/readme", "", [0xff, 0xfe]);
+      expect(binary.status).toBe(400);
+      expect(binary.text).toBe("the README is not valid UTF-8");
+      const large = await r.call("PUT", "lib/1.0.0/readme", "", utf8Encode("# 123456789"));
+      expect(large.status).toBe(413);
+      expect((await r.call("PUT", "lib/1.0.0/readme", "", utf8Encode("# 1234"))).status).toBe(200);
+      expect((await r.call("GET", "lib/x/readme")).status).toBe(400);
+      expect((await r.call("GET", "lib/2.0.0/readme")).status).toBe(404);
+    },
+  );
+
+  it("is changed only by an owner", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    await r.publish("lib", "1.0.0", alice);
+    const text = utf8Encode("# lib\n");
+    expect((await r.call("PUT", "lib/1.0.0/readme", "", text)).status).toBe(401);
+    const refused = await r.call("PUT", "lib/1.0.0/readme", bob, text);
+    expect(refused.status).toBe(403);
+    expect(await r.blobs.get(archiveKey(checksumOf("# lib\n")))).toBeNull();
+    expect((await r.call("PUT", "lib/1.0.0/readme", alice, text)).status).toBe(200);
+    // Reads are public, also to a page on another site; writes aren't.
+    const req = new Request("http://registry.test/api/v1/lib/1.0.0/readme");
+    const res = await r.registry.handle(req);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    expect((await res.bytes()).toBytes()).toEqual(text);
+    const put = new Request("http://registry.test/api/v1/lib/1.0.0/readme", {
+      method: "PUT",
+      headers: [["authorization", `Bearer ${alice}`]],
+      body: text,
+    });
+    expect((await r.registry.handle(put)).headers.get("access-control-allow-origin")).toBeNull();
+  });
+});
