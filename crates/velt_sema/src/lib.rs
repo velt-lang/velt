@@ -414,8 +414,12 @@ fn check_timed(
     // moves into `main`, which is checked again anyway (`script_locals`).
     let given = merge_diags.len() + closures.as_ref().map_or(0, |c| c.diags.len());
     let doubt = |cx: &ctx::Ctx| {
-        cx.diags.len() > given && !script_locals::moves_more(cx, &modules[root].ast)
+        let moves = script_locals::moves_more(cx, &modules[root].ast);
+        cx.diags.len() > given && !moves && !throws::first_check_only()
     };
+    // The check checked again, kept while that one runs: when that one reports an error this
+    // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
+    let (mut first, mut kept_first) = (None, false);
     // A check with sharing may grow the sets too: the checks after it share as well.
     let (mut rounds, mut held) = (0, true);
     let mut generated = 'check: loop {
@@ -452,9 +456,15 @@ fn check_timed(
         cx.upcast_writes();
         // What these passes and the rounds reported, as after the first check.
         let doubted = "round: doubted throws variables";
-        if let Some(s) = cx.checked_again(doubt(&cx)) {
+        if let Some((f, e)) = first.take().filter(|(f, _)| throws::adds_errors(f, &cx)) {
+            (cx, entry, kept_first) = (f, e, true);
+        } else if let Some(s) = cx.checked_again(doubt(&cx) && !kept_first) {
             seeds = s;
-            (cx, entry) = new_cx(doubted, held, &seeds, rounds == FN_SITE_ROUNDS, &views);
+            let (c, e) = new_cx(doubted, held, &seeds, rounds == FN_SITE_ROUNDS, &views);
+            first = Some((
+                std::mem::replace(&mut cx, c),
+                std::mem::replace(&mut entry, e),
+            ));
             continue 'check;
         }
         if !recovered.is_empty() || cx.diags.iter().any(|d| d.is_error()) {
@@ -474,7 +484,7 @@ fn check_timed(
                     )
                 }
             };
-        if let Some(s) = cx.checked_again(doubt(&cx)) {
+        if let Some(s) = cx.checked_again(doubt(&cx) && !kept_first) {
             seeds = s;
             (cx, entry) = new_cx(doubted, held, &seeds, rounds == FN_SITE_ROUNDS, &views);
             continue 'check;

@@ -185,7 +185,7 @@ impl FnSites {
     /// The sites of a check with `seeds`; `last`: the program is not checked again whatever
     /// this check finds.
     pub fn new(seeds: FnTypeSeeds, last: bool) -> Self {
-        let allowed = std::env::var_os("VELT_NO_SITE_VARS").is_none();
+        let allowed = std::env::var_os("VELT_NO_SITE_VARS").is_none_or(|v| v.is_empty());
         let user_vars = seeds.sites.is_empty() && !seeds.no_vars && allowed;
         let trap_vars = allowed && !seeds.exact && !seeds.proxy_sites.is_empty();
         FnSites {
