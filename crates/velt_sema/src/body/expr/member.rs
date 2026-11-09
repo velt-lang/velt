@@ -219,7 +219,12 @@ impl FnCx<'_, '_> {
         }
         let cast = self.cast_member_read(object, prop, optional, want, span);
         if let (true, None) = (optional, &cast) {
-            return self.chain_with(exp, object, span, |s, v| s.member_of(v, prop, want, span));
+            // `a?.b` reads `b` as a test of the path narrowed it (`typeof a?.b === "function"`
+            // failed: not the function member).
+            return self.chain_with(exp, object, span, |s, v| {
+                let h = s.member_of(v, prop, want, span);
+                s.narrowed_field(object, prop, h, want, None)
+            });
         }
         if let Some(h) = cast.or_else(|| self.narrowed_dynamic_member(object, prop, want, span)) {
             return h;

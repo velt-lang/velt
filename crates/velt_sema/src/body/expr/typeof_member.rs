@@ -252,6 +252,39 @@ impl FnCx<'_, '_> {
         let str_ = self.cx.ty.str_;
         Some(self.intrinsic(hir::Intrinsic::AnyTypeof, vec![v], str_, span))
     }
+
+    /// `typeof a?.b === tag` (`typeof config?.headers === "function"`): where it holds for a tag
+    /// other than `"undefined"`, `a` has a value and `a.b` is of the tag's type.
+    pub(crate) fn typeof_optional_chain(
+        &mut self,
+        e: &ast::Expr,
+        tag: &str,
+    ) -> Option<(Vec<Fact>, Vec<Fact>)> {
+        let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: true,
+        } = &e.kind
+        else {
+            return None;
+        };
+        if tag == "undefined" {
+            return None;
+        }
+        let plain = ast::Expr {
+            kind: ast::ExprKind::Member {
+                object: object.clone(),
+                prop: prop.clone(),
+                optional: false,
+            },
+            ..e.clone()
+        };
+        // Where it fails, `a.b` (when `a` has a value) is not of the tag's type: those facts are
+        // about `a.b`'s token, which a read only reaches once `a` is known to have a value.
+        let (mut t, f) = self.typeof_split(&plain, tag);
+        t.extend(self.truthy_facts(object));
+        Some((t, f))
+    }
 }
 
 /// Replaces the wildcard for the member's value (of type `t`) inside `pat` (`Some` and variant

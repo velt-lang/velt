@@ -408,6 +408,9 @@ impl FnCx<'_, '_> {
 
     /// Facts of `typeof x === tag`.
     pub(super) fn typeof_split(&mut self, e: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
+        if let Some(facts) = self.typeof_optional_chain(e, tag) {
+            return facts;
+        }
         // `any` / `unknown`: read as the primitive type the tag names.
         if let Some(l) = self.own_dynamic_local(e) {
             {
@@ -528,7 +531,27 @@ impl FnCx<'_, '_> {
             };
         }
         let Some((l, nullable, u)) = self.local_with_members(e) else {
-            return (vec![], vec![]);
+            // A field path (`Array.isArray(g.codec) ? g.codec.slice() : []`).
+            let pred = crate::body::expr::object_builtins::is_array_ty;
+            let Some((token, nullable, u, _)) = self.field_with_members(e) else {
+                // A path whose type only its read tells (a field of a view, `globalThis as
+                // { codec?: H[] }`): a nullable array is not nullish where the test holds.
+                let ty = self.peek_ty(e);
+                let array = ty
+                    .and_then(|t| self.cx.ty.core(t))
+                    .is_some_and(|c| pred(self.cx, c));
+                return match array.then(|| self.field_token(e)).flatten() {
+                    Some(token) => (vec![Fact::NonNull(token)], vec![]),
+                    None => (vec![], vec![]),
+                };
+            };
+            if self.cx.union_def(u).is_some() {
+                return self.split_facts(token, nullable, u, &pred, false);
+            }
+            return match nullable && pred(self.cx, u) {
+                true => (vec![Fact::NonNull(token)], vec![]),
+                false => (vec![], vec![]),
+            };
         };
         if let Some(facts) = self.generic_member_array_facts(l, nullable, u) {
             return facts;

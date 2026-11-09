@@ -1,0 +1,6 @@
+undefined_narrowing_paths_refused.velt:6:23: error: mismatched types
+  = note: expected f64, found f64 | undefined
+undefined_narrowing_paths_refused.velt:11:52: error: no method named `headers` found for type `T | undefined`
+  = note: the value may be undefined: use `?.headers(...)` or check `!= null` first
+undefined_narrowing_paths_refused.velt:15:37: error: value of type `f64[] | undefined` may be undefined
+  = note: use `?.length` or check `!= null` first

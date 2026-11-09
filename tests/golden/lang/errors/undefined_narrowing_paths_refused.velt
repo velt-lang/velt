@@ -1,0 +1,17 @@
+// What tsc refuses next to the accepted forms: the parameter whose default may be `undefined`
+// used as a `T` (TS2322), the member after a failed `typeof a?.b` test (TS2722), and the field
+// after a failed `Array.isArray` (TS18048).
+function current(): number | undefined { return undefined; }
+function f(x: number | undefined = current()): number {
+    const y: number = x;
+    return y;
+}
+interface T { headers?: () => string }
+function g(c: T | undefined): string {
+    if (typeof c?.headers !== "function") return c.headers();
+    return "";
+}
+function h(o: { a?: number[] }): number {
+    return Array.isArray(o.a) ? 0 : o.a.length;
+}
+console.log(f(), g(undefined), h({}));

@@ -218,12 +218,22 @@ impl super::FnCx<'_, '_> {
             let param = || synth(ast::ExprKind::Ident(name.clone()));
             let test = undefined_test(param(), span);
             let cond = self.cond(&test);
-            // A `T | undefined` parameter is a `T` once its default is applied.
-            let (ty, value) = match undefined_only(self.cx, ty) {
-                Some(inner) => (inner, synth(ast::ExprKind::NonNull(Box::new(param())))),
-                None => (ty, param()),
+            // A `T | undefined` parameter is a `T` once its default is applied, unless the
+            // default may itself be `undefined` (`config: C | undefined = current()`): then it
+            // stays a `T | undefined`, as in TypeScript.
+            let (ty, then, value) = match undefined_only(self.cx, ty) {
+                Some(inner) => {
+                    let d = self.expr(e, Some(inner), Want::Move);
+                    match self.try_coerce(d, inner) {
+                        Ok(then) => {
+                            let value = synth(ast::ExprKind::NonNull(Box::new(param())));
+                            (inner, then, value)
+                        }
+                        Err(d) => (ty, self.coerce(d, ty), param()),
+                    }
+                }
+                None => (ty, self.expr_coerce(e, ty, Want::Move), param()),
             };
-            let then = self.expr_coerce(e, ty, Want::Move);
             let els = self.expr_coerce(&value, ty, Want::Move);
             let pick = crate::hir::ExprKind::If {
                 cond: Box::new(cond),

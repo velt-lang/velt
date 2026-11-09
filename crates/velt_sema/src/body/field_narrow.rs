@@ -399,7 +399,10 @@ impl FnCx<'_, '_> {
                 }
             }
             let owner = self.name_owner(&path[k]);
-            (_, t) = self.cx.field_seen_from(t, &path[k], owner)?;
+            // Through a nullable step (`typeof c?.headers`, tested as `c.headers` where `c` is
+            // known to hold a value: `typeof_split`).
+            let step = self.cx.ty.core(t).unwrap_or(t);
+            (_, t) = self.cx.field_seen_from(step, &path[k], owner)?;
         }
         let token = self.field_token(e)?;
         let nothing = self.cx.ty.nothing_of(t);
