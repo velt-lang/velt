@@ -9,13 +9,15 @@
 #
 # Every port of runtime code to std has its benchmark here (`bench(...)` in velt_common's
 # std_hooks.rs; its test `hook_replaces.rs` checks): debug builds run std at the speed of what this
-# list reaches.
+# list reaches. A port's release objects are keyed by the parameter attributes of the program they
+# were compiled in, so a port may have a second row in another program's shape (html_escape_jsx).
 ../../../bench/stdport/int_to_string.velt
 ../../../bench/stdport/float_to_string.velt
 ../../../bench/stdport/prng.velt
 ../../../bench/stdport/locale_compare.velt
 ../../../bench/stdport/fnv.velt
 ../../../bench/stdport/html_escape.velt
+../../../bench/stdport/html_escape_jsx.velt
 #
 # The rest, greedily:
 ../../../tests/std/fetch/server_api.test.velt
