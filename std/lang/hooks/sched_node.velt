@@ -1,12 +1,18 @@
 // velt/lang/hooks (internal): boxed and started promises in the executor in Velt (sched.velt,
 // #2649; rt_abi_async.md §1.1): `velt_rt_fut_box`'s and `velt_rt_fut_start`'s jobs.
 //
-// A node is `[head (96)][VeltFut header (16)][state]`; the promise is the header's address, so
+// A node is `[head (112)][VeltFut header (16)][state]`; the promise is the header's address, so
 // the state's result (its offset 0) is the result slot at +16. The head: the node's waker table
 // (a node is its own waker), its reference count (the owner's handle, the task driving it, a
 // place among its task's woken nodes, each waker clone), its flags, the state's poll and drop,
-// the result's drop glue, the task driving it, its link among that task's woken nodes, the waker
-// of whoever awaits it, and the `cx` its polls get (its task's await word, itself).
+// the result's drop glue, the task driving it (a started node holds a reference to it, so a wake
+// from another thread never touches a freed task), its link in that task's woken stack (other
+// threads push on it), the waker of whoever awaits it, the `cx` its polls get (its task's await
+// word, itself), and its link in the list of woken nodes the task took to run (its own, so a node
+// woken again while it waits there is pushed without breaking that list).
+//
+// The flags change only through atomic or/and: a wake on another thread sets QUEUED while the
+// worker sets and clears the others.
 //
 // A lazy node (boxed, not started) is polled by whoever awaits it with their `cx`. Started (from
 // a poll of a task: outside one it stays lazy), it runs at once until it suspends, with the
@@ -19,7 +25,7 @@ import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as t from "./sched_task";
 
-export const N_HEAD: usize = 96;
+export const N_HEAD: usize = 112;
 const N_REFS: usize = 8;
 const N_FLAGS: usize = 16;
 const N_POLL: usize = 24;
@@ -29,6 +35,7 @@ export const N_TASK: usize = 48;
 const N_NEXT: usize = 56;
 const N_AWAITER: usize = 64;
 const N_CX: usize = 80;
+const N_TAKEN_NEXT: usize = 96;
 
 // A node's flags: started; its state finished; its owner dropped the handle (the task drops the
 // result); among its task's woken nodes; it can reject; its owner took the result.
@@ -63,6 +70,7 @@ export function boxed(
   m.st(n + N_AWAITER, 0);
   m.st(n + N_CX, 0);
   m.st(n + N_CX + 8, n);
+  m.st(n + N_TAKEN_NEXT, 0);
   const f = n + N_HEAD;
   m.st(f, hdrPoll);
   m.st(f + 8, hdrDrop);
@@ -105,12 +113,12 @@ export function nodePoll(f: usize, cx: usize): u32 {
     // the state with its own cx ("adopts" it), so its leaves wake the owner directly and a
     // `resolve` queues the owner's step at once, as in Node. One level only: a chain of
     // promises each awaiting the one before it is not polled in one deep call.
-    m.store32(n + N_FLAGS, fl | RUNNING);
+    m.or32(n + N_FLAGS, RUNNING);
     m.st(e + t.E_ADOPTING, 1);
     // SAFETY: a started node's state, not being polled, polled now by its task's code.
     const r = unsafe { statePoll(m.ld(n + N_POLL), f + 16, cx) };
     m.st(e + t.E_ADOPTING, 0);
-    m.store32(n + N_FLAGS, m.load32(n + N_FLAGS) & ~RUNNING);
+    m.and32(n + N_FLAGS, ~RUNNING);
     if (r === 1) {
       setFlags(n, FINISHED | DELIVERED);
       m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
@@ -187,7 +195,7 @@ function dropNow(n: usize): void {
 }
 
 function setFlags(n: usize, f: u32): void {
-  m.store32(n + N_FLAGS, m.load32(n + N_FLAGS) | f);
+  m.or32(n + N_FLAGS, f);
 }
 
 /**
@@ -204,8 +212,10 @@ export function start(task: usize, f: usize, rdrop: usize, rejecting: bool, hdrP
   if ((fl & (STARTED | FINISHED)) !== 0) {
     return;
   }
-  m.store32(n + N_FLAGS, fl | STARTED | (rejecting ? REJECTING : 0));
+  m.or32(n + N_FLAGS, STARTED | (rejecting ? REJECTING : 0));
   m.st(n + N_RESULT_DROP, rdrop);
+  // The node's reference to its task, given back when the node is freed.
+  m.inc(task + t.T_REFS);
   m.st(n + N_TASK, task);
   m.st(n + N_CX, task + t.T_WORD);
   // The task's reference.
@@ -213,7 +223,7 @@ export function start(task: usize, f: usize, rdrop: usize, rejecting: bool, hdrP
   t.bump(task + t.T_LOCALS, 1);
   t.flags(task, t.LOCALS, 0);
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
-  run(task, n);
+  run(task, n, false);
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
 }
 
@@ -224,16 +234,22 @@ export function handled(f: usize, qdrop: usize, hdrPoll: usize): void {
   }
 }
 
-/** Polls started node `n` of task `task` once (it is not running). */
-export function run(task: usize, n: usize): void {
-  m.store32(n + N_FLAGS, m.load32(n + N_FLAGS) & ~QUEUED);
+/**
+ * Polls started node `n` of task `task` once (it is not running). Only a node `taken` off the
+ * task's woken stack (`takeWoken`) leaves QUEUED: one run from elsewhere (a microtask, its start)
+ * may still be on the stack, and a wake must not push it there twice.
+ */
+export function run(task: usize, n: usize, taken: bool): void {
+  if (taken) {
+    m.and32(n + N_FLAGS, ~QUEUED);
+  }
   if ((m.load32(n + N_FLAGS) & (FINISHED | RUNNING)) !== 0) {
     return;
   }
   setFlags(n, RUNNING);
   // SAFETY: a started node's state, polled only by its task, with its own cx.
   const r = unsafe { statePoll(m.ld(n + N_POLL), n + N_HEAD + 16, n + N_CX) };
-  m.store32(n + N_FLAGS, m.load32(n + N_FLAGS) & ~RUNNING);
+  m.and32(n + N_FLAGS, ~RUNNING);
   if (r !== 1) {
     return;
   }
@@ -262,13 +278,16 @@ export function ownNode(task: usize, w: usize): bool {
   return m.ld(w) === t.exec() + t.E_NODE_VT && m.ld(w + N_TASK) === task;
 }
 
-/** Takes task `task`'s woken nodes, in the order they were woken: the first (linked by next). */
+/**
+ * Takes task `task`'s woken nodes, in the order they were woken: the first, linked through their
+ * taken link (`nextWoken`), so a node woken again meanwhile goes on the stack without breaking it.
+ */
 export function takeWoken(task: usize): usize {
   let n = m.takeStack(task + t.T_WOKEN);
   let rev: usize = 0;
   while (n !== 0) {
     const next = m.ld(n + N_NEXT);
-    m.st(n + N_NEXT, rev);
+    m.st(n + N_TAKEN_NEXT, rev);
     rev = n;
     n = next;
   }
@@ -277,7 +296,7 @@ export function takeWoken(task: usize): usize {
 
 /** The node after `n` in a list `takeWoken` gave. */
 export function nextWoken(n: usize): usize {
-  return m.ld(n + N_NEXT);
+  return m.ld(n + N_TAKEN_NEXT);
 }
 
 // ---- A node's waker table: C calls these, from any thread. ----
@@ -325,7 +344,11 @@ function wake(n: usize): void {
 /** Gives back one reference to node `n`: the last frees it. */
 export function release(n: usize): void {
   if (m.dec(n + N_REFS) === 1) {
+    const task = m.ld(n + N_TASK);
     m.release(n);
+    if (task !== 0) {
+      t.release(task);
+    }
   }
 }
 

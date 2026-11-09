@@ -73,7 +73,7 @@ function runWoken(e: usize, k: usize): void {
   let n = node.takeWoken(k);
   while (n !== 0) {
     const next = node.nextWoken(n);
-    node.run(k, n);
+    node.run(k, n, true);
     node.release(n);
     drain(e, k);
     n = next;
@@ -131,7 +131,7 @@ function drain(e: usize, k: usize): void {
       pollRoot(e, k);
       t.release(k);
     } else if (node.ownNode(k, w)) {
-      node.run(k, w);
+      node.run(k, w, false);
       node.release(w);
     } else {
       m.wakeOwned(w);

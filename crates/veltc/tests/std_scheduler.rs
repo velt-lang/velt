@@ -268,3 +268,15 @@ async function main(): Promise<i32> {
         3,
     );
 }
+
+/// Promises run from a microtask while they wait on their task's woken stack, and woken again
+/// there: the golden that crashed (a node pushed on the stack twice made a cycle) prints Node's
+/// order on both executors.
+#[test]
+fn promises_woken_while_queued_keep_their_task_s_woken_stack_whole() {
+    same_on_both(
+        "race_settled_order",
+        include_str!("../../../tests/golden/lang/promise_race_settled_order.velt"),
+        include_str!("../../../tests/golden/lang/promise_race_settled_order.out"),
+    );
+}
