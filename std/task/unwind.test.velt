@@ -1,0 +1,54 @@
+// velt/task (tests): catching a Velt panic that unwinds (docs/internals/design/unwinding.md),
+// run by `velt test std/`, debug (Cranelift) and release (LLVM). That another language's
+// exception passes through is veltc's `unwinding` test: the test runner polls tests in a task
+// whose Rust frames would claim it (and abort) before the end of the stack.
+import { describe, expect, it } from "velt/test";
+import { catchVeltPanic } from "velt/task/unwind";
+
+function deep(n: number, xs: number[]): number {
+  if (n == 0) {
+    return xs[xs.length + 3];
+  }
+  return deep(n - 1, xs) + 1;
+}
+
+describe("catchVeltPanic", () => {
+  it("returns null when nothing panics", () => {
+    let ran = 0;
+    expect(
+      catchVeltPanic(() => {
+        ran = ran + 1;
+      }),
+    ).toBe(null);
+    expect(ran).toBe(1);
+  });
+
+  it("catches panic(msg) with its message", () => {
+    const msg = catchVeltPanic(() => {
+      panic("boom");
+    });
+    expect(msg !== null && msg.startsWith("boom")).toBe(true);
+  });
+
+  it("catches an index out of bounds deep in calls, and the process goes on", () => {
+    let after = 0;
+    const msg = catchVeltPanic(() => {
+      deep(20, [1, 2, 3]);
+      after = 1;
+    });
+    expect(msg === null).toBe(false);
+    expect(after).toBe(0);
+    expect(catchVeltPanic(() => {})).toBe(null);
+  });
+
+  it("nests: the inner catch takes the panic", () => {
+    let inner: string | null = null;
+    const outer = catchVeltPanic(() => {
+      inner = catchVeltPanic(() => {
+        panic("inner");
+      });
+    });
+    expect(outer).toBe(null);
+    expect(inner !== null && inner.startsWith("inner")).toBe(true);
+  });
+});

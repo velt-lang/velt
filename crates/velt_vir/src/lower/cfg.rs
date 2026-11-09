@@ -160,8 +160,28 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn call_rt(&mut self, r: Rt, args: Vec<Operand>, dest: Option<Place>) {
+        if matches!(r, Rt::Panic) && self.panic_in_std(&args) {
+            return;
+        }
         let id = self.cx.rt(r);
         self.call(vir::Callee::Extern(id), args, dest, r.sig().3);
+    }
+
+    /// A panic with message `args[0]` (a string's address) through std's panic path, in a program
+    /// that calls `catchUnwind` (sema demanded the hook): whether it emitted the call.
+    fn panic_in_std(&mut self, args: &[Operand]) -> bool {
+        use super::hook_calls::{self as hooks, ty, Construct, HookTy};
+        let index = velt_common::std_hooks::hook_index::panic_raise;
+        let ([msg], false) = (args, self.dead()) else {
+            return false;
+        };
+        if !self.cx.hir.hooks_demanded.contains(index) {
+            return false;
+        }
+        let call = hooks::panic_raise(self, Construct::CatchUnwind, ty::Str::arg(msg.clone()));
+        call.emit(self);
+        self.terminate(Terminator::Unreachable);
+        true
     }
 
     /// Calls the runtime function `r`, whose `u8` result is a flag: whether it is not 0.

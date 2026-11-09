@@ -250,6 +250,13 @@ hooks! {
     /// replaces its calls by the runtime's (`async_fn/suspend.rs`).
     top_level_await_at => lang_hooks_process, "topLevelAwaitAt", sig((&string) -> void), lowered;
 
+    // unwind.velt: the panic path in std (docs/internals/design/unwinding.md), in a program that
+    // calls `catchUnwind`; its module is loaded on demand.
+    /// Every panic (`velt_rt_panic`'s job when a catch is active): `(message)`. It raises Velt's
+    /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
+    /// otherwise.
+    panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
+
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
     satisfies => lang_hooks_syntax, "satisfies", sig(<A>(move A) -> A);
@@ -766,6 +773,7 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_text",
     "std/lang/hooks/number_float",
     "std/lang/hooks/any_record",
+    "std/lang/hooks/unwind",
 ];
 
 /// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).

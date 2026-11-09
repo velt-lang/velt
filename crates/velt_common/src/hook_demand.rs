@@ -54,16 +54,21 @@ pub enum Construct {
     /// A value held as `any` (`unknown`, `object`, `Function`): its table's glue writes numeric
     /// keys (`Object.keys`, `k in x`) and formats what it holds.
     Dynamic,
+    /// A call of `catchUnwind` (std only, docs/internals/design/unwinding.md): every panic of the
+    /// program goes through std's panic path, which raises Velt's exception when a catch is
+    /// active on the thread.
+    CatchUnwind,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 5] = [
+    pub const ALL: [Construct; 6] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
         Construct::IndexCheck,
         Construct::Dynamic,
+        Construct::CatchUnwind,
     ];
 
     /// The construct as the ICE names it.
@@ -74,6 +79,7 @@ impl Construct {
             Construct::Format => "Format (formatting glue of a type that may print an integer)",
             Construct::IndexCheck => "IndexCheck (a bounds-checked array index)",
             Construct::Dynamic => "Dynamic (the glue of a value held as any)",
+            Construct::CatchUnwind => "CatchUnwind (a call of catchUnwind)",
         }
     }
 

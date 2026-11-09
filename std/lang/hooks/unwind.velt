@@ -1,0 +1,88 @@
+// velt/lang/hooks (internal): the panic path in std and Velt's exception
+// (docs/internals/design/unwinding.md). Loaded only in a program that calls `catchUnwind`: then
+// lowering calls `panicRaise` for every panic instead of `velt_rt_panic`.
+//
+// Velt's exception is one allocation: the unwinder's header (`_Unwind_Exception`, 32 bytes on
+// 64-bit targets: the class `VELTPANC`, no cleanup function, two words the unwinder owns), then
+// the message, NUL-terminated. It is raised with `_Unwind_RaiseException` and caught by
+// `catchUnwind` on the same thread, so whoever catches it frees it (`takePanic`).
+
+import { Ptr, StrBytes, byteLength, readCString } from "velt/ffi";
+import { ptrAddress, ptrOf } from "velt/ffi/ptr";
+
+declare c("c") function malloc(n: usize): Ptr<u8> | null;
+declare c("c") function free(p: Ptr<u8>): void;
+declare c("c") function memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
+declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
+declare c("c") function _Unwind_RaiseException(e: Ptr<u8>): i32;
+declare function velt_rt_panic(msg: string): never;
+declare function velt_rt_exit(code: i32): never;
+declare function velt_rt_flush(): void;
+declare function velt_rt_write_str(stream: u32, s: string);
+
+/** The unwinder's header in front of Velt's payload (`velt_vir::eh::HEADER_SIZE`). */
+const HEADER: usize = 32;
+
+/** How many `catchUnwind`s of this thread are running (`enterCatch` / `leaveCatch`). */
+const CATCHING = new ThreadLocal<u32>(0);
+
+/**
+ * Every panic of a program that calls `catchUnwind`: with a catch running on this thread, prints
+ * the message as `velt_rt_panic` does and raises Velt's exception; otherwise `velt_rt_panic`,
+ * which ends the process (or unwinds to a runtime `catchPanic`) as in any other program.
+ */
+export function panicRaise(msg: string): never {
+  if (CATCHING.get() != 0) {
+    velt_rt_flush();
+    velt_rt_write_str(2, "panic: " + msg + "\n");
+    raise(msg);
+    // No frame claimed it (a frame of the runtime that catches nothing stopped the search):
+    // the process ends as with an uncaught panic, whose message is printed already.
+    velt_rt_exit(101);
+  }
+  velt_rt_panic(msg);
+}
+
+/** Raise Velt's exception with message `msg`; returns only if no frame claimed it. */
+function raise(msg: string): void {
+  const n = byteLength(msg);
+  // SAFETY: the allocation holds the header, the message and its NUL; every pointer below
+  // stays inside it, and the unwinder owns it until the catch hands it back.
+  unsafe {
+    const e = malloc(HEADER + n + 1);
+    if (e === null) {
+      return;
+    }
+    memset(e, 0, HEADER);
+    memcpy(e, "VELTPANC", 8);
+    const text = ptrOf<u8>(ptrAddress(e) + HEADER);
+    memcpy(text, msg, n);
+    memset(ptrOf<u8>(ptrAddress(e) + HEADER + n), 0, 1);
+    _Unwind_RaiseException(e);
+    free(e);
+  }
+}
+
+/** A `catchUnwind` starts on this thread: panics raise Velt's exception. */
+export function enterCatch(): void {
+  CATCHING.set(CATCHING.get() + 1);
+}
+
+/** The `catchUnwind` that `enterCatch` announced ended. */
+export function leaveCatch(): void {
+  CATCHING.set(CATCHING.get() - 1);
+}
+
+/**
+ * The message of the exception object at `e` (from `catchUnwind`), which it frees. Unsafe: `e`
+ * must be a Velt exception that `catchUnwind` returned, taken once.
+ */
+export unsafe function takePanic(e: usize): string {
+  // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
+  const msg = unsafe { readCString(ptrOf<u8>(e + HEADER)) };
+  // SAFETY: `raise` allocated it with malloc, and the caller takes it once.
+  unsafe {
+    free(ptrOf<u8>(e));
+  }
+  return msg;
+}

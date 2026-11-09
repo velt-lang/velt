@@ -1,0 +1,24 @@
+// velt/task (internal): running a function and catching the Velt panic that unwinds out of it
+// (docs/internals/design/unwinding.md), for the executor's catch at a started promise and for
+// `catchPanic`.
+
+import { catchUnwind } from "velt/lang/intrinsics/unwind";
+import { enterCatch, leaveCatch, takePanic } from "velt/lang/hooks/unwind";
+
+/**
+ * Calls `f`; returns null when it returns, or the panic's message when a Velt panic unwound out
+ * of it (the message is printed to stderr when it happens, as an uncaught one is). What `f` was
+ * doing is abandoned, not undone: its memory is leaked, nothing it held is dropped. Any other
+ * exception passes through. Where nothing unwinds (WebAssembly), a panic ends the process.
+ */
+export function catchVeltPanic(f: () => void): string | null {
+  enterCatch();
+  // SAFETY: the exception object is taken once, below.
+  const e = unsafe { catchUnwind(f) };
+  leaveCatch();
+  if (e == 0) {
+    return null;
+  }
+  // SAFETY: `e` is the exception `catchUnwind` returned, taken here once.
+  return unsafe { takePanic(e) };
+}

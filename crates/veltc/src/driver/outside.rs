@@ -118,9 +118,15 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
 const NATIVE_SUPPORT: &str = "native code";
 
 /// Velt's own functions besides the runtime's that touch nothing outside: SIMD, atomics,
-/// thread-local storage and CPU feature checks (with the underscore, and no `__`: a package's
+/// thread-local storage, CPU feature checks and catching a Velt panic (with the underscore, and no `__`: a package's
 /// exports are `velt_<package>__…`, and a package may be called `simdjson` or `atomic_ops`).
-const PURE_OWN: &[&str] = &["velt_simd_", "velt_atomic_", "velt_tls_", "velt_cpu_"];
+const PURE_OWN: &[&str] = &[
+    "velt_simd_",
+    "velt_atomic_",
+    "velt_tls_",
+    "velt_cpu_",
+    "velt_eh_",
+];
 
 /// What a record entry stands for when the build can't attribute code to a test file (its
 /// registering function was inlined) or has no entry for it.
