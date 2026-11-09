@@ -3,8 +3,9 @@
 // runtime's executor: its root (`schedBlockOn`), its spawned tasks (`schedSpawn`), `await
 // yieldNow()` (`schedYield`), boxed and started promises (`schedBox`, `schedStart`,
 // sched_node.velt), the microtask steps of `await` and the prelude's microtasks (`schedAwaitTick`,
-// `schedAwaitReady`, `schedMicrotask`, sched_micro.velt); `schedFinish` drives the tasks still
-// alive once `main` is done. The runtime's leaves (timers, channels, files, sockets) stay Rust:
+// `schedAwaitReady`, `schedMicrotask`, sched_micro.velt), the process lifetime (keep-alive
+// references, a due `unref()`'d timer's question, the top-level `await` waiting: sched_end.velt);
+// `schedFinish` drives the tasks still alive once `main` is done. The runtime's leaves (timers, channels, files, sockets) stay Rust:
 // they wake a task through its C waker (rt_abi_async.md §1) from any thread, which queues it and
 // unparks the worker. The layout of the executor and its tasks is in sched_task.velt.
 //
@@ -17,6 +18,7 @@
 // stand-in until `@export` with `exportedAddress` (#2203 step 5) lands.
 
 import { fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
+import * as end from "./sched_end";
 import * as io from "./sched_io";
 import * as latch from "./sched_latch";
 import * as m from "./sched_mem";
@@ -26,6 +28,7 @@ import * as run from "./sched_run";
 import * as t from "./sched_task";
 
 declare function velt_rt_set_scheduler(kind: u32): void;
+declare function velt_rt_spawn_target(worker: i64): void;
 
 /** The executor, started on first use (by the worker: `main`'s thread). */
 @inline
@@ -50,6 +53,7 @@ function start(): usize {
   m.st(e + t.E_NODE_VT + 16, fnAddress(node.nodeWakeByRef));
   m.st(e + t.E_NODE_VT + 24, fnAddress(node.nodeDropRef));
   m.st(e + t.E_IO, io.open(e + t.E_TICK));
+  end.open(e);
   t.install(e);
   // The runtime's leaves that need its timers and I/O find them from this thread.
   velt_rt_set_scheduler(2);
@@ -108,15 +112,19 @@ export function schedBlockOn(poll: usize, state: usize): void {
   m.st(k + t.T_ROOT, state);
   m.st32(k + t.T_FLAGS, t.ROOT);
   t.push(e, k);
+  // A park that finds nothing left to happen while it runs ends the program (sched_end.velt).
+  m.st(e + t.E_ROOT, k);
   while (!t.has(k, t.ROOT_DONE)) {
     run.turn(e);
   }
+  m.st(e + t.E_ROOT, 0);
   t.release(k);
 }
 
 /**
- * Runs the tasks still alive once `main` is done, until none is; not after a `main` that
- * returned an exit code other than 0, which ends the program at once.
+ * Runs the tasks still alive once `main` is done, until none is or none can run again (a park
+ * finds nothing left to happen: sched_end.velt); not after a `main` that returned an exit code
+ * other than 0, which ends the program at once.
  */
 export function schedFinish(code: i32): void {
   const e = t.exec();
@@ -150,6 +158,35 @@ export function schedSpawn(
   t.bump(e + t.E_LIVE, 1);
   t.schedule(e, k);
   return k + t.T_JOIN;
+}
+
+/**
+ * `spawn(p)` of heap future `f` (a stored promise, a join handle, a leaf): a task polling it,
+ * scheduled now; its join handle, whose slot gets `rsize` bytes (dropped with `rdrop` when
+ * nobody claims them). The task's state is `f` and `rsize`, then the root's result.
+ */
+export function schedSpawnFut(f: usize, rsize: u64, rdrop: usize): usize {
+  const e = exec();
+  const k = task(e, fnAddress(run.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
+  const at = m.ld(k + t.T_ROOT);
+  m.st(at, f);
+  m.st(at + 8, rsize as usize);
+  m.st(k + t.T_ROOT, at + 16);
+  m.st32(k + t.T_FLAGS, t.HANDLE);
+  t.bump(e + t.E_LIVE, 1);
+  t.schedule(e, k);
+  return k + t.T_JOIN;
+}
+
+/**
+ * `velt_rt_spawn_target`: the next spawn is pinned to `worker` and stays the runtime's (its
+ * worker threads run it). The executor cannot see whether such a task still runs, so from now on
+ * a park never decides the program's end (sched_end.velt); the multi-worker step takes pinned
+ * spawns over (#2649 step 3).
+ */
+export function schedPinned(worker: i64): void {
+  m.st(exec() + t.E_PINNED, 1);
+  velt_rt_spawn_target(worker);
 }
 
 /** `await yieldNow()`: the task polled with `cx` runs again after the other ready tasks. */
@@ -236,6 +273,27 @@ export function schedMicrotask(): usize {
   m.st(f + 8, fnAddress(microDrop));
   m.st(f + 16, 0);
   return f;
+}
+
+/** `velt_rt_keep_alive_acquire`: a ref'd timer keeps the process alive. */
+export function schedKeepAliveAcquire(): void {
+  end.keepAcquire(exec());
+}
+
+/** `velt_rt_keep_alive_release`: the reference `schedKeepAliveAcquire` took, given back. */
+export function schedKeepAliveRelease(): void {
+  end.keepRelease(exec());
+}
+
+/** `velt_rt_timer_unref_due`: a heap future, whether a due `unref()`'d timer's process ends. */
+export function schedUnrefDue(): usize {
+  exec();
+  return end.unrefDue();
+}
+
+/** `velt_rt_tla_at`: the top-level `await` at `site` suspends. */
+export function schedTlaAt(site: string): void {
+  end.tlaAt(exec(), site);
 }
 
 /** `velt_rt_latch_new`: a closed latch. */

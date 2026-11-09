@@ -385,3 +385,39 @@ fn the_variable_does_nothing_on_wasi() {
     assert!(!ir(true, "wasm32-wasip1").contains("schedBlockOn"));
     assert!(ir(true, "aarch64-unknown-linux-gnu").contains("schedBlockOn"));
 }
+
+/// A promise nobody can settle keeps nothing alive, as in Node and the runtime (quiet.rs): once
+/// the worker would park with no keep-alive reference, no pending I/O and no runtime leaf
+/// outstanding, the program ends with code 0 (stdout flushed), or with Node's 13 when the top
+/// level waits at an `await` (sched_end.velt).
+#[test]
+fn a_never_settled_promise_exits_like_the_runtime() {
+    same_on_both(
+        "never_settled",
+        "async function stuck(): Promise<void> {
+  await new Promise<void>((r) => {});
+  console.log(\"never\");
+}
+
+async function main() {
+  spawn(stuck());
+  await sleep(10);
+  console.log(\"waiting\");
+  await new Promise<void>((r) => {});
+  console.log(\"never\");
+}
+",
+        "waiting\n",
+    );
+    same_on_both_exiting(
+        "never_settled_top",
+        "console.log(\"before\");
+await sleep(10);
+const { promise } = Promise.withResolvers<void>();
+await promise;
+console.log(\"never\");
+",
+        "before\n",
+        13,
+    );
+}

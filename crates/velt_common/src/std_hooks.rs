@@ -278,6 +278,17 @@ hooks! {
     sched_latch_free => lang_hooks_sched, "schedLatchFree", sig((u64) -> void), lowered;
     sched_latch_open => lang_hooks_sched, "schedLatchOpen", sig((u64) -> void), lowered;
     sched_latch_wait => lang_hooks_sched, "schedLatchWait", sig((u64) -> usize), lowered;
+    /// The process lifetime's (std/prelude/timers.velt's externs): `velt_rt_keep_alive_acquire`'s
+    /// and `_release`'s (a ref'd timer), `velt_rt_timer_unref_due`'s (a heap future: is the process
+    /// ending?); then `velt_rt_tla_at`'s: the top-level `await` that suspended last.
+    sched_keep_alive_acquire => lang_hooks_sched, "schedKeepAliveAcquire", sig(() -> void), lowered;
+    sched_keep_alive_release => lang_hooks_sched, "schedKeepAliveRelease", sig(() -> void), lowered;
+    sched_unref_due => lang_hooks_sched, "schedUnrefDue", sig(() -> usize), lowered;
+    sched_tla_at => lang_hooks_sched, "schedTlaAt", sig((&string) -> void), lowered;
+    /// `velt_rt_spawn_fut`'s: `(f, result_size, result_drop)`, the handle; then
+    /// `velt_rt_spawn_target`'s (`(worker)`: the next spawn is pinned, and stays the runtime's).
+    sched_spawn_fut => lang_hooks_sched, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
+    sched_pinned => lang_hooks_sched, "schedPinned", sig((i64) -> void), lowered;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.

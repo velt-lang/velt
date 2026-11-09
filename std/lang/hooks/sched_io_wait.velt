@@ -2,7 +2,8 @@
 // step 2): heap futures (rt_abi_async.md §1: poll, drop; no result) that complete once their
 // source is ready for what they wait for, or their deadline passed. A pending wait is linked into
 // its source (any number per source; dropped, it leaves in constant time) and, with a deadline,
-// into the I/O block's timer list, sorted by deadline, which the worker's wait looks at.
+// into the I/O block's timer list, sorted by deadline, which the worker's wait looks at. The
+// block counts the linked waits: pending I/O keeps the process alive (sched_end.velt).
 
 import { inline, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
@@ -33,6 +34,7 @@ export function wakeAll(s: usize): void {
   m.st(s + io.S_WAITERS, 0);
   while (w !== 0) {
     const next = m.ld(w + W_NEXT);
+    waiting(-1);
     m.st(w + W_LINKED, 0);
     m.st(w + W_PREV, 0);
     m.st(w + W_NEXT, 0);
@@ -110,6 +112,7 @@ export function waitPoll(f: usize, cx: usize): u32 {
     }
     m.st(s + io.S_WAITERS, f);
     m.st(f + W_LINKED, s);
+    waiting(1);
   }
   if (m.ld(f + W_DEADLINE) !== 0 && m.ld(f + W_TIMED) === 0) {
     time(f);
@@ -134,6 +137,14 @@ function unlink(f: usize): void {
     m.st(next + W_PREV, prev);
   }
   m.st(f + W_LINKED, 0);
+  waiting(-1);
+}
+
+/** One more (`d` 1) or one fewer (-1) wait linked into a source: the I/O block's count. */
+@inline
+function waiting(d: isize): void {
+  const b = io.io();
+  m.st(b + io.IO_WAITING, ((m.ld(b + io.IO_WAITING) as isize) + d) as usize);
 }
 
 export function waitDrop(f: usize): void {

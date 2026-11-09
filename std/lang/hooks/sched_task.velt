@@ -9,7 +9,12 @@
 //   two waker tables (a task's, a started promise's: sched_node.velt), the I/O block (the
 //   reactor the worker waits in, sched_io.velt), and the I/O tick: the polls left until the
 //   worker looks at the reactor again, set to 1 when a deferred write is due, so the end of a
-//   poll checks one word for both (sched_run.velt `turn`).
+//   poll checks one word for both (sched_run.velt `turn`); then what the process lifetime reads
+//   at a park (sched_end.velt): the keep-alive references held, the due `unref()`'d timers
+//   waiting for the answer, the root of `main` while it runs, the probe that asks the runtime
+//   about its leaves (a waker table, its header, a `cx`), and the location of the top-level
+//   `await` that suspended last (a string in a slot, and whether it holds one), and whether a
+//   pinned spawn handed a task to the runtime's executor (whose tasks the executor cannot see).
 // - A task: the table's address first (a task is its own waker), its reference count (the
 //   executor's until it is done, the join handle's, one per waker clone), its state (IDLE,
 //   SCHEDULED, RUNNING, NOTIFIED, DONE) and flags, the root's poll and drop and its state's
@@ -45,7 +50,17 @@ export const E_VT: usize = 64;
 export const E_NODE_VT: usize = 96;
 export const E_IO: usize = 128;
 export const E_TICK: usize = 136;
-export const E_SIZE: usize = 144;
+export const E_KEEP: usize = 144;
+export const E_UNREF: usize = 152;
+export const E_ROOT: usize = 160;
+export const E_PROBE_VT: usize = 168;
+export const E_PROBE: usize = 200;
+export const E_PROBE_WORD: usize = 208;
+export const E_PROBE_CX: usize = 216;
+export const E_TLA_SET: usize = 232;
+export const E_TLA: usize = 240;
+export const E_PINNED: usize = 272;
+export const E_SIZE: usize = 280;
 
 // A task's fields.
 export const T_REFS: usize = 8;

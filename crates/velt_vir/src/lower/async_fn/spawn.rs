@@ -132,6 +132,10 @@ impl FnLower<'_, '_> {
         if !self.dead() {
             self.transfer_result(fut.clone(), pty);
         }
+        if self.std_sched() && worker.is_none() {
+            // One worker: the task polls the heap future on this thread.
+            return self.sched_spawn_fut(fut, rsize, result_drop, ty);
+        }
         self.pin(worker);
         self.rt_value(Rt::SpawnFut, vec![fut, rsize, result_drop], ty)
     }

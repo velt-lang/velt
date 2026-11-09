@@ -51,7 +51,9 @@ export const TICKS: usize = 64;
 export const IO_WAIT_POLL: usize = 64;
 export const IO_WAIT_DROP: usize = 72;
 export const IO_TIMERS: usize = 80;
-const IO_SIZE: usize = 88;
+/** Waits linked into a source: pending I/O, which keeps the process alive (sched_end.velt). */
+export const IO_WAITING: usize = 88;
+const IO_SIZE: usize = 96;
 
 // A source's fields.
 export const S_FD: usize = 0;

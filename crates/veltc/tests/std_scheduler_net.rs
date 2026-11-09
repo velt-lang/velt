@@ -363,3 +363,35 @@ fn velt_net_users_compile_the_same_on_both_executors() {
     let differ = differ.into_inner().unwrap();
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
+
+/// A pending accept is pending I/O: it keeps the process alive after `main` until the listener
+/// is closed, as in Node. The client runs from an `unref()`'d timer, which runs only while
+/// something else keeps the process alive: without the accept counted, the program ends at
+/// once with nothing printed after `main`.
+#[test]
+fn a_listening_server_keeps_the_process_alive_until_closed() {
+    same_on_both(
+        "listener_alive",
+        "import { connect, listen } from \"velt/net\";
+
+async function main() {
+  const l = await listen(\"127.0.0.1:0\");
+  const port = l.port;
+  spawn((async () => {
+    const s = await l.accept();
+    console.log(`accepted ${await s.readString()}`);
+    s.close();
+    l.close();
+  })());
+  setTimeout(async () => {
+    const c = await connect(`127.0.0.1:${port}`);
+    console.log(\"connected\");
+    await c.write(\"hi\");
+    c.close();
+  }, 50).unref();
+  console.log(\"main done\");
+}
+",
+        "main done\nconnected\naccepted hi\n",
+    );
+}

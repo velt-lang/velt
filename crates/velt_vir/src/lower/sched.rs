@@ -1,11 +1,14 @@
 //! The executor in Velt (std/lang/hooks/sched.velt, #2649 step 3.1): with `VELT_SCHEDULER=std`
 //! when the compiler starts (velt_common `std_hooks::std_scheduler`), lowering calls its hooks
 //! where it would call the runtime's executor: `velt_main`'s root (`velt_rt_block_on`), a spawn
-//! from an initial state (`velt_rt_spawn`, `velt_rt_spawn_transfer`), `await yieldNow()`
+//! from an initial state (`velt_rt_spawn`, `velt_rt_spawn_transfer`) or of a heap future
+//! (`velt_rt_spawn_fut`), the pin of a spawn that stays the runtime's (`velt_rt_spawn_target`),
+//! `await yieldNow()`
 //! (`velt_rt_yield_now`), boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`,
 //! `_start_rejecting`), the microtask step of `await` (`velt_rt_await_tick`, `_ready`), the
-//! prelude's microtasks (`velt_rt_microtask`), and at the end of `velt_main` the tasks still
-//! alive. The choice is made
+//! prelude's microtasks (`velt_rt_microtask`), the process lifetime (keep-alive references,
+//! a due `unref()`'d timer's question, the top-level `await` waiting now: `velt_rt_tla_at`), and
+//! at the end of `velt_main` the tasks still alive. The choice is made
 //! here, at compile time: a program pays no branch for it when it runs. Everything else (`spawn`
 //! of a promise value, combinators, `new Promise`'s latch, timers' order) still goes to the runtime,
 //! whose leaves wake the Velt executor's tasks through their C waker.
@@ -23,7 +26,15 @@ pub(super) const EXTERNS: &[&str] = &[
     "velt_rt_latch_free",
     "velt_rt_latch_open",
     "velt_rt_latch_wait",
+    "velt_rt_keep_alive_acquire",
+    "velt_rt_keep_alive_release",
+    UNREF_DUE,
 ];
+
+/// The prelude's question of a due `unref()`'d timer (std/prelude/timers.velt, an async extern).
+/// The executor itself asks the runtime the same through a `declare c` of that symbol (not
+/// async), which stays the runtime's.
+pub(super) const UNREF_DUE: &str = "velt_rt_timer_unref_due";
 
 impl FnLower<'_, '_> {
     /// Does this program run on the executor in Velt? Only on a native target: a JS host drives
@@ -67,6 +78,31 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(Ty::Ptr, Rvalue::Cast(h, Ty::Ptr))
     }
 
+    /// `spawn(p)` of a heap future `fut` (`velt_rt_spawn_fut`'s arguments): a task on this
+    /// thread polling it; its join handle, of promise type `ty`.
+    pub(super) fn sched_spawn_fut(
+        &mut self,
+        fut: Operand,
+        rsize: Operand,
+        rdrop: Operand,
+        ty: velt_sema::hir::TyId,
+    ) -> Operand {
+        self.cx.sched_tasks = true;
+        let [fut, rdrop] = [fut, rdrop].map(|o| self.as_usize(o));
+        let h = hooks::sched_spawn_fut(
+            self,
+            ty::USize::arg(fut),
+            ty::U64::arg(rsize),
+            ty::USize::arg(rdrop),
+        )
+        .emit(self)
+        .op();
+        let d = self.temp(Ty::Ptr);
+        self.assign(Place::local(d), Rvalue::Cast(h, Ty::Ptr));
+        let ty = self.sub(ty);
+        self.owned_result(Some(d), ty)
+    }
+
     /// `await yieldNow()`'s call before it suspends.
     pub(super) fn sched_yield(&mut self, cx: Operand) {
         let cx = self.as_usize(cx);
@@ -99,6 +135,8 @@ impl FnLower<'_, '_> {
                 | Rt::FutsHandled
                 | Rt::AwaitTick
                 | Rt::AwaitReady
+                | Rt::TlaAt
+                | Rt::SpawnTarget
         ) || !self.std_sched()
         {
             return Err((args, dest));
@@ -151,6 +189,14 @@ impl FnLower<'_, '_> {
                     c.emit(self);
                     None
                 }
+                (Rt::SpawnTarget, [w]) => {
+                    hooks::sched_pinned(self, ty::I64::arg(w.clone())).emit(self);
+                    None
+                }
+                (Rt::TlaAt, [site]) => {
+                    hooks::sched_tla_at(self, ty::Str::arg(site.clone())).emit(self);
+                    None
+                }
                 (Rt::AwaitTick, [cx]) => {
                     let cx = self.as_usize(cx.clone());
                     Some(
@@ -187,6 +233,13 @@ impl FnLower<'_, '_> {
             _ => super::ice("a latch call takes the latch"),
         };
         let fut = match symbol {
+            "velt_rt_keep_alive_acquire" => {
+                return hooks::sched_keep_alive_acquire(self).emit(self).op()
+            }
+            "velt_rt_keep_alive_release" => {
+                return hooks::sched_keep_alive_release(self).emit(self).op()
+            }
+            UNREF_DUE => hooks::sched_unref_due(self).emit(self).op(),
             "velt_rt_microtask" => hooks::sched_microtask(self).emit(self).op(),
             "velt_rt_latch_wait" => {
                 let l = arg(self);
