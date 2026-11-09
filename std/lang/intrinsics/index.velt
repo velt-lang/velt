@@ -61,6 +61,7 @@ export {
   stateDrop,
   statePoll,
 } from "velt/lang/intrinsics/future";
+export { promiseAt, slotPut, slotSize, slotTake } from "velt/lang/intrinsics/slot";
 export {
   asyncGeneratorDispose,
   asyncGeneratorResume,

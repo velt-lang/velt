@@ -425,6 +425,17 @@ pub enum Intrinsic {
     /// with no type arguments; sema checks it is not async or throwing and passes only numbers
     /// and `bool`), callable from C with the C calling convention (#2649). Additive.
     FnAddress,
+    /// std only: `slotSize() -> usize`: the size of the enclosing instance's first type argument
+    /// (std/lang/intrinsics/slot.velt). Additive.
+    SlotSize,
+    /// std only: `slotPut<T>(at: usize, value: T)`: `value` moved to `*(T*)at`, transferred as
+    /// a channel send's value is. Additive.
+    SlotPut,
+    /// std only: `slotTake<T>(at: usize) -> T`: the value at `at`, moved out. Additive.
+    SlotTake,
+    /// std only: `promiseAt<T>(f: usize) -> Promise<T>`: the heap future at `f` as an owned
+    /// promise. Additive.
+    PromiseAt,
     /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
     /// range against `StrByteLen`). The bytes are read where the string keeps them.
     StrByteAt,

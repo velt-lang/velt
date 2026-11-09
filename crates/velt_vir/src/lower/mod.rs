@@ -99,6 +99,7 @@ mod frame_envs;
 mod lower_profile;
 mod raw_memory;
 mod sched;
+mod slot;
 mod state;
 use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
 mod fn_shapes;

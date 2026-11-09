@@ -1,0 +1,36 @@
+// velt/lang/intrinsics (internal): an owned value moved into and out of raw memory, for std's
+// one-shot hand-off and, later, its channel in Velt (#2649). The memory and the state that says
+// whether it holds a value are the caller's; these move the value's bytes with the ownership
+// accounting the compiler does for any move. They are called only from the methods of a generic
+// std class whose first type argument is the value's type (`slotSize` reads it there).
+
+import { intrinsic } from "./decorators";
+import type { Owned } from "./modes";
+
+/** The bytes a value of the enclosing class's first type argument takes (0 for none). */
+@intrinsic
+export declare function slotSize(): usize;
+
+/**
+ * Moves `value` into the memory at `at`, which must have `slotSize()` bytes, aligned to 16,
+ * holding no value. The value crosses to whichever task takes it, as a channel send's does: moved
+ * when this task held the only reference, else copied, and a resource still shared here stops
+ * the program (#2613). Unsafe: the memory and its state are the caller's.
+ */
+@intrinsic
+export declare unsafe function slotPut<T>(at: usize, value: Owned<T>): void;
+
+/**
+ * Moves the value out of the memory at `at`, which then holds none: the caller owns it (and
+ * drops it when it is done). Unsafe: a value must be there, and taken once.
+ */
+@intrinsic
+export declare unsafe function slotTake<T>(at: usize): T;
+
+/**
+ * The heap future at `f` (rt_abi_async.md §1: its header, its `T` result at `f + 16`) as a
+ * promise the caller owns: awaiting it polls the header's poll, dropping it calls its drop.
+ * Unsafe: `f` must be such a future, given up by the caller.
+ */
+@intrinsic
+export declare unsafe function promiseAt<T>(f: usize): Promise<T>;

@@ -126,6 +126,11 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("futPoll", Op(I::FutPoll)),
     ("stateDrop", Op(I::StateDrop)),
     ("statePoll", Op(I::StatePoll)),
+    // slot.velt
+    ("promiseAt", Op(I::PromiseAt)),
+    ("slotPut", Op(I::SlotPut)),
+    ("slotSize", Op(I::SlotSize)),
+    ("slotTake", Op(I::SlotTake)),
     // string.velt
     ("strAsciiWords", Op(I::StrAsciiWords)),
     ("strByteAt", Op(I::StrByteAt)),

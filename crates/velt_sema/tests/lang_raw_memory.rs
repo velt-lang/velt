@@ -15,7 +15,8 @@ fn std_diagnostics(src: &str) -> String {
 
 const IMPORTS: &str = "import { Ptr } from \"velt/ffi\";
 import { addressCall, addressLoad, addressStore, atomicAddress, fnAddress, futDrop, futPoll,
-  ptrAtomicCas, ptrAtomicLoad, ptrAtomicRmw, ptrAtomicStore, stateDrop, statePoll }
+  ptrAtomicCas, ptrAtomicLoad, ptrAtomicRmw, ptrAtomicStore, promiseAt, slotPut, slotTake,
+  stateDrop, statePoll }
   from \"velt/lang/intrinsics\";";
 
 fn std_ok(body: &str) {
@@ -228,4 +229,21 @@ fn the_calls_through_an_address_need_unsafe_code() {
         let e = std_err(&format!("function main() {{ console.log({call}); }}"));
         assert!(e.contains("unsafe"), "{call}: {e}");
     }
+}
+
+#[test]
+fn slot_intrinsics_move_owned_values_in_unsafe_code() {
+    std_ok(
+        "function main() {
+           if (false) {
+             // SAFETY: test code, never run.
+             unsafe {
+               slotPut<string>(16, `moved ${1}`);
+               const s: string = slotTake<string>(16);
+               console.log(s);
+               const p: Promise<void> = promiseAt<void>(32);
+             }
+           }
+         }",
+    );
 }

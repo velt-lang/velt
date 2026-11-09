@@ -1,0 +1,63 @@
+// velt/sync (tests): `HandOff<T>`: a value given to the task waiting for it, once; a waiter that
+// leaves first gets nothing and the giver its item back; an item given to a waiter dropped before
+// it resumed comes back through `takeBack`, once; `end` resumes the waiter with null. A waiter
+// leaves by dropping its `park()` (here a `Promise.race` loser).
+import { describe, expect, it } from "velt/test";
+import { HandOff } from "./hand_off";
+
+class Conn {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+}
+
+async function waitFor(h: shared<HandOff<Conn>>): Promise<i64> {
+  const c = await h.wait();
+  return c?.id ?? -1;
+}
+
+describe("velt/sync HandOff", () => {
+  it("hands a value to the task that waits for it", async () => {
+    const h = shared(new HandOff<Conn>());
+    const waiter = spawn(waitFor(h));
+    await yieldNow();
+    expect(h.give(new Conn(7))).toBe(null);
+    expect(await waiter).toBe(7);
+    // Given once: a second give gets its item back.
+    expect(h.give(new Conn(8))?.id).toBe(8);
+  });
+
+  it("a value given before the wait is there when it starts", async () => {
+    const h = shared(new HandOff<Conn>());
+    expect(h.give(new Conn(3))).toBe(null);
+    expect(await waitFor(h)).toBe(3);
+  });
+
+  it("ends: the waiter resumes with null and a later give gets its item back", async () => {
+    const h = shared(new HandOff<Conn>());
+    const waiter = spawn(waitFor(h));
+    await yieldNow();
+    h.end();
+    expect(await waiter).toBe(-1);
+    expect(h.give(new Conn(4))?.id).toBe(4);
+  });
+
+  it(
+    "a waiter that leaves gets nothing; one dropped after its give leaves the item behind",
+    async () => {
+      const h = shared(new HandOff<Conn>());
+      // The race drops the wait it did not pick.
+      await Promise.race<void>([h.park(), yieldNow()]);
+      expect(h.give(new Conn(5))?.id).toBe(5);
+      const g = shared(new HandOff<Conn>());
+      // The wait is given its item, then dropped before it resumes.
+      {
+        const parked = g.park();
+        expect(g.give(new Conn(6))).toBe(null);
+      }
+      expect(g.takeBack()?.id).toBe(6);
+      expect(g.takeBack()).toBe(null);
+    },
+  );
+});

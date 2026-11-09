@@ -1,0 +1,224 @@
+// velt/sync (internal): `HandOff<T>`, a one-shot hand-off of one value to one waiting task
+// (#2649; what a pool hands an idle connection to its next waiter with). The waiter parks in
+// `wait()`; the giver's `give(item)` stores the item and wakes exactly that waiter: a store, a
+// compare-and-swap and its waker's wake (on the executor in Velt, a queue push), with no handle
+// table. The rules:
+// - A waiter that leaves before it is given anything (its `wait()` dropped, a timeout) leaves in
+//   constant time: a later `give` gets its item back.
+// - A waiter dropped after its item was given (woken, not yet resumed) leaves the item behind:
+//   `takeBack()` returns it, once; a hand-off dropped with an item still in it drops it. So a
+//   granted item comes back exactly once.
+// - `end()` is terminal: the waiter resumes with null, and a later `give` gets its item back.
+// - The item crosses to the waiter's task as a channel send's value does: moved when the giver
+//   held the only reference, else copied; a resource the giver still shares stops the program
+//   (#2613, std/lang/intrinsics/slot.velt).
+//
+// Its block in raw memory: the state word (atomic), the waiter's waker (a reference of its own,
+// rt_abi_async.md §1), then the item. Share one hand-off between giver and waiter as a `shared`
+// value: its fields never change, only the block does.
+
+import { fnAddress, promiseAt, slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
+import * as m from "velt/lang/hooks/sched_mem";
+
+const EMPTY: u32 = 0;
+const WAITING: u32 = 1;
+const GIVEN: u32 = 2;
+const TAKEN: u32 = 3;
+const LEFT: u32 = 4;
+const ENDED: u32 = 5;
+const RETURNED: u32 = 6;
+
+const B_STATE: usize = 0;
+const B_WAKER: usize = 8;
+const B_ITEM: usize = 16;
+
+/** One value handed from a giver to one waiting task, once. */
+export class HandOff<T> {
+  private readonly block: usize;
+
+  constructor() {
+    const n = slotSize();
+    const b = m.zeroed(B_ITEM + (n === 0 ? 16 : n));
+    this.block = b;
+  }
+
+  /**
+   * A wait for the item, which completes once it is given or the hand-off ends; `claim()` then
+   * takes the item. This is a runtime wait: dropping it before it completes (a `Promise.race`
+   * loser, a cancelled task) leaves in constant time, and a later `give` gets its item back.
+   */
+  park(): Promise<void> {
+    // SAFETY: `parkFuture` makes a heap future of this block, given up to the promise.
+    return unsafe { promiseAt<void>(parkFuture(this.block)) };
+  }
+
+  /** The item given (once), or null when none was given (the hand-off ended, or it was taken). */
+  claim(): T | null {
+    return claimFrom<T>(this.block);
+  }
+
+  /**
+   * `park()` then `claim()`. The promise holds the block, not the hand-off (a hand-off shared
+   * with the giver is not copied into it); as an async function it keeps waiting when it is
+   * abandoned started: use `park()` where a waiter may leave.
+   */
+  wait(): Promise<T | null> {
+    return waitOn<T>(this.block);
+  }
+
+  /**
+   * Gives `item` to the waiter, waking it: null when it got it, or the item back when the waiter
+   * left or the hand-off ended (or was given to already).
+   */
+  give(item: T): T | null {
+    const b = this.block;
+    const s = m.load32(b + B_STATE);
+    if (s !== EMPTY && s !== WAITING) {
+      return item;
+    }
+    // SAFETY: only the giver writes the item, before it publishes GIVEN; nobody takes it before.
+    unsafe {
+      slotPut<T>(b + B_ITEM, item);
+    }
+    const was = m.cas32(b + B_STATE, s, GIVEN);
+    if (was === s || (was === WAITING && m.cas32(b + B_STATE, WAITING, GIVEN) === WAITING)) {
+      wakeWaiter(b);
+      return null;
+    }
+    // The waiter left (or the hand-off ended) meanwhile: the item comes back.
+    // SAFETY: the item was put above and never published.
+    return unsafe { slotTake<T>(b + B_ITEM) };
+  }
+
+  /** Ends the hand-off: the waiter resumes with null; later gives get their item back. */
+  end(): void {
+    const b = this.block;
+    let s = m.load32(b + B_STATE);
+    while (s === EMPTY || s === WAITING) {
+      const was = m.cas32(b + B_STATE, s, ENDED);
+      if (was === s) {
+        wakeWaiter(b);
+        return;
+      }
+      s = was;
+    }
+  }
+
+  /** The item a waiter left behind after it was given (dropped before it resumed), once. */
+  takeBack(): T | null {
+    if (m.cas32(this.block + B_STATE, RETURNED, TAKEN) !== RETURNED) {
+      return null;
+    }
+    // SAFETY: the item is in the block (it was RETURNED), taken once (TAKEN now).
+    return unsafe { slotTake<T>(this.block + B_ITEM) };
+  }
+
+  [Symbol.dispose]() {
+    const b = this.block;
+    const s = m.load32(b + B_STATE);
+    if (s === GIVEN || s === RETURNED) {
+      // SAFETY: an item nobody took; dropped at the end of this block.
+      const item = unsafe { slotTake<T>(b + B_ITEM) };
+    }
+    const w = m.ld(b + B_WAKER);
+    if (w !== 0) {
+      m.wakerDrop(w);
+    }
+    m.release(b);
+  }
+}
+
+/** `HandOff.wait` on block `b`. */
+async function waitOn<T>(b: usize): Promise<T | null> {
+  // SAFETY: `parkFuture` makes a heap future of this block, given up to the promise.
+  await unsafe { promiseAt<void>(parkFuture(b)) };
+  return claimFrom<T>(b);
+}
+
+/** `HandOff.claim` on block `b`. */
+function claimFrom<T>(b: usize): T | null {
+  if (m.cas32(b + B_STATE, GIVEN, TAKEN) !== GIVEN) {
+    return null;
+  }
+  // SAFETY: the item is in the block (state was GIVEN), taken once (it is TAKEN now).
+  return unsafe { slotTake<T>(b + B_ITEM) };
+}
+
+/** Wakes the waiter of block `b`, giving its waker's reference back. */
+function wakeWaiter(b: usize): void {
+  const w = m.ld(b + B_WAKER);
+  if (w !== 0) {
+    m.st(b + B_WAKER, 0);
+    m.wakeOwned(w);
+  }
+}
+
+// The park future: a heap future (rt_abi_async.md §1; its header, then the block, then whether
+// it saw the end of the wait) with no result. Its poll and drop are C functions (`fnAddress`, a
+// stand-in for `exportedAddress`, #2203 step 5).
+
+const F_BLOCK: usize = 16;
+const F_DONE: usize = 24;
+
+function parkFuture(b: usize): usize {
+  const f = m.alloc(32);
+  m.st(f, fnAddress(parkPoll));
+  m.st(f + 8, fnAddress(parkDrop));
+  m.st(f + F_BLOCK, b);
+  m.st(f + F_DONE, 0);
+  return f;
+}
+
+function parkPoll(f: usize, cx: usize): u32 {
+  const b = m.ld(f + F_BLOCK);
+  const w = m.ld(cx + 8);
+  let s = m.load32(b + B_STATE);
+  while (true) {
+    if (s === GIVEN || s === ENDED) {
+      m.st(f + F_DONE, 1);
+      return 1;
+    }
+    if (s === EMPTY) {
+      m.st(b + B_WAKER, m.wakerClone(w));
+      const was = m.cas32(b + B_STATE, EMPTY, WAITING);
+      if (was === EMPTY) {
+        return 0;
+      }
+      // Given or ended meanwhile.
+      m.wakerDrop(m.ld(b + B_WAKER));
+      m.st(b + B_WAKER, 0);
+      s = was;
+    } else if (s === WAITING) {
+      // Polled again (by another task's waker, or the same): the newest waker resumes it.
+      const old = m.ld(b + B_WAKER);
+      if (old !== w) {
+        m.st(b + B_WAKER, m.wakerClone(w));
+        if (old !== 0) {
+          m.wakerDrop(old);
+        }
+      }
+      return 0;
+    } else {
+      // Taken, left or returned: nothing more to wait for.
+      m.st(f + F_DONE, 1);
+      return 1;
+    }
+  }
+}
+
+function parkDrop(f: usize): void {
+  const b = m.ld(f + F_BLOCK);
+  if (m.ld(f + F_DONE) === 0) {
+    // Dropped while waiting: leave, or leave the item given meanwhile behind.
+    if (m.cas32(b + B_STATE, WAITING, LEFT) === WAITING) {
+      const w = m.ld(b + B_WAKER);
+      if (w !== 0) {
+        m.st(b + B_WAKER, 0);
+        m.wakerDrop(w);
+      }
+    } else {
+      m.cas32(b + B_STATE, GIVEN, RETURNED);
+    }
+  }
+  m.release(f);
+}
