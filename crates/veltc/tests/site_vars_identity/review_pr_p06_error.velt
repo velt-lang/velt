@@ -1,0 +1,30 @@
+class E1 extends Error {}
+class E2 extends Error {}
+type Mw = (next: () => Promise<string>) => Promise<string>;
+function wrap(tag: string, fail: number): Mw {
+  return async (next) => {
+    if (fail === 1) throw new E1(tag);
+    if (fail === 2) throw new E2(tag);
+    return tag + ":" + (await next());
+  };
+}
+async function chain(mws: Mw[], end: () => Promise<string>): Promise<string> {
+  let f = end;
+  for (let i = mws.length - 1; i >= 0; i--) {
+    const m = mws[i];
+    const n = f;
+    f = () => m(n);
+  }
+  try { return await f(); } catch (e) {
+    if (e instanceof E2) return "E2 " + e.message;
+    if (e instanceof E1) return "E1 " + e.message;
+    return "?";
+  }
+}
+async function main() {
+  console.log(await chain([wrap("a", 0), wrap("b", 0)], async () => "end"));
+  console.log(await chain([wrap("a", 0), wrap("b", 1)], async () => "end"));
+  console.log(await chain([wrap("a", 2)], async () => "end"));
+}
+main();
+const unrelated: number = "oops";
