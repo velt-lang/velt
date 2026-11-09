@@ -3,8 +3,8 @@
 //!
 //! Allocation layout (align 16): `[Tail][VeltFut hdr (16)][result (slot_size)]`, like
 //! `velt_rt_race`'s: the result slot is at offset 16 of the returned pointer. One allocation per
-//! operation: a receive takes an item straight into its slot when first polled, and one that has
-//! to wait waits in the same block (its [`WaitCell`] there is what the channel's line points
+//! operation: a receive takes a queued item straight into its slot when it is made, and one that
+//! has to wait waits in the same block (its [`WaitCell`] there is what the channel's line points
 //! to).
 
 use std::alloc::Layout;
@@ -43,7 +43,8 @@ struct Tail {
     op: Op,
     /// The operation's place in its channel's line while it waits.
     cell: WaitCell,
-    slot_size: usize,
+    /// The size of the whole block (see [`layout`]).
+    block: usize,
 }
 
 const TAIL: usize = std::mem::size_of::<Tail>();
@@ -88,7 +89,7 @@ pub(super) fn new_op(slot_size: usize) -> *mut VeltFut {
         (base as *mut Tail).write(Tail {
             op: Op::Done,
             cell: WaitCell::new(),
-            slot_size,
+            block: l.size(),
         });
         let f = base.add(TAIL) as *mut VeltFut;
         f.write(VeltFut {
@@ -120,7 +121,8 @@ unsafe impl Sync for StaticDone {}
 
 impl StaticDone {
     pub(super) fn ptr(&'static self) -> *mut VeltFut {
-        &self.hdr as *const VeltFut as *mut VeltFut
+        // The whole value, not just its header: the result slot after it is read through this.
+        self as *const StaticDone as *mut VeltFut
     }
 }
 
@@ -194,7 +196,8 @@ unsafe extern "C-unwind" fn op_drop(f: *mut VeltFut) {
         Op::Receive { chan, .. } => chan.cancel_receive(cell),
         Op::Send { chan, .. } => chan.cancel_send(cell),
     }
-    let l = layout((*t).slot_size);
+    // SAFETY: the size `new_op` allocated with `layout`, align 16.
+    let l = Layout::from_size_align_unchecked((*t).block, 16);
     std::ptr::drop_in_place(t);
     std::alloc::dealloc(t as *mut u8, l);
 }

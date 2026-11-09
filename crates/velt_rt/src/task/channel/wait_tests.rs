@@ -53,10 +53,12 @@ impl Hand {
 
     /// The received item (after `poll` returned true).
     fn item(&self) -> Option<u64> {
-        // SAFETY: a finished receive's 16-byte result slot.
-        let b =
-            unsafe { std::slice::from_raw_parts((self.f as *const u8).add(FUT_RESULT_OFFSET), 16) };
-        (b[0] != 0).then(|| u64::from_le_bytes(b[8..16].try_into().unwrap_or_default()))
+        // SAFETY: a finished receive's 16-byte result slot: the flag at 0, and the item at 8
+        // when it is set (the runtime writes nothing else).
+        unsafe {
+            let at = (self.f as *const u8).add(FUT_RESULT_OFFSET);
+            (*at != 0).then(|| std::ptr::read_unaligned(at.add(8) as *const u64))
+        }
     }
 
     /// The `bool` a finished send wrote.
@@ -223,17 +225,18 @@ fn close_ends_waiting_sends_with_false() {
 }
 
 #[test]
-fn a_receive_takes_its_item_when_first_polled() {
+fn a_receive_takes_a_queued_item_when_it_is_made() {
     let h = velt_rt_chan_new(0);
     assert!(try_send(h, 1));
     let a = Hand::receive(h);
     let mut slot = [0u8; 16];
-    // SAFETY: a 16-byte `u64 | null` slot. The receive was made but never polled.
+    // SAFETY: a 16-byte `u64 | null` slot. The receive was made but not polled yet.
     unsafe { velt_rt_chan_try_receive(h, slot.as_mut_ptr(), 8, 8) };
-    assert_eq!((slot[0], slot[8]), (1, 1), "the queued item is still there");
+    assert_eq!(slot[0], 0, "the item went to the receive made first");
     assert!(try_send(h, 2));
-    assert!(a.poll(), "polled: takes the item queued now");
-    assert_eq!(a.item(), Some(2));
+    assert!(a.poll());
+    assert_eq!(a.item(), Some(1));
+    assert_eq!(velt_rt_chan_len(h), 1);
     velt_rt_chan_close(h);
 }
 

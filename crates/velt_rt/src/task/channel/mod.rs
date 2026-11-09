@@ -21,7 +21,7 @@ mod queue;
 mod ring;
 
 use self::fut::{new_op, slot, start, ItemBuf, Op, NOT_SENT, SENT};
-use self::queue::{Chan, Push};
+use self::queue::{Chan, Pop, Push};
 use super::all::ResultDropFn;
 use super::VeltFut;
 use crate::registry::{Key, Registry};
@@ -158,17 +158,26 @@ pub unsafe extern "C-unwind" fn velt_rt_chan_receive(
         write_option(at, payload, size, false);
         return f;
     };
-    // The first poll (right after this call: the future is awaited at once) takes a queued
-    // item, or puts the receive in line with one look under the channel's lock.
-    start(
-        f,
-        Op::Receive {
-            chan,
-            key: h,
-            size,
-            payload,
-        },
-    );
+    // An item queued (or the channel closed and drained): taken now, into the block's own slot;
+    // the operation is finished and keeps no reference to the channel. Else it waits in the same
+    // block, put in line by its first poll.
+    let pop = chan.try_pop(at.add(payload), size);
+    if pop == Pop::Empty {
+        start(
+            f,
+            Op::Receive {
+                chan,
+                key: h,
+                size,
+                payload,
+            },
+        );
+    } else {
+        if pop.done() {
+            retire(h);
+        }
+        write_option(at, payload, size, pop.got());
+    }
     f
 }
 

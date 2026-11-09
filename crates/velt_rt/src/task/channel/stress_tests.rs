@@ -16,26 +16,31 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
 
-/// A channel future awaited by Rust code: its first 16 result bytes; dropped (cancelled when
-/// unfinished) with the wrapper.
-struct Op(SendPtr<VeltFut>);
+/// A channel future awaited by Rust code, dropped (cancelled when unfinished) with the wrapper.
+/// Its result: byte 0 (a send's `bool`, a receive's present flag) and, for a receive that got
+/// an item, the item at 8..16; the other bytes are left 0 (the runtime never writes them).
+struct Op {
+    f: SendPtr<VeltFut>,
+    /// Where a receive's item is (0: a send).
+    payload: usize,
+}
 
 impl Future for Op {
     type Output = [u8; 16];
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<[u8; 16]> {
-        let f = self.0 .0;
-        // SAFETY: an owned, live channel future.
+        let f = self.f.0;
+        // SAFETY: an owned, live channel future; only bytes it wrote are read.
         unsafe {
             if velt_rt_fut_poll(f, raw_cx(cx).ptr()) == PENDING {
                 return Poll::Pending;
             }
+            let at = (f as *const u8).add(FUT_RESULT_OFFSET);
             let mut out = [0u8; 16];
-            std::ptr::copy_nonoverlapping(
-                (f as *const u8).add(FUT_RESULT_OFFSET),
-                out.as_mut_ptr(),
-                16,
-            );
+            out[0] = *at;
+            if self.payload != 0 && out[0] != 0 {
+                std::ptr::copy_nonoverlapping(at.add(8), out.as_mut_ptr().add(8), 8);
+            }
             Poll::Ready(out)
         }
     }
@@ -44,7 +49,7 @@ impl Future for Op {
 impl Drop for Op {
     fn drop(&mut self) {
         // SAFETY: owned; dropped once (finished or not).
-        unsafe { velt_rt_fut_drop(self.0 .0) };
+        unsafe { velt_rt_fut_drop(self.f.0) };
     }
 }
 
@@ -64,19 +69,26 @@ static SENDS_GIVEN_UP: AtomicUsize = AtomicUsize::new(0);
 static RECEIVES_GIVEN_UP: AtomicUsize = AtomicUsize::new(0);
 /// Of those, the ones woken before they were given up (the hand-on path).
 static WOKEN_THEN_GIVEN_UP: AtomicUsize = AtomicUsize::new(0);
-const PER_PRODUCER: u64 = 3000;
+// Fewer under Miri, which runs it some hundred times slower.
+const PER_PRODUCER: u64 = if cfg!(miri) { 40 } else { 3000 };
 const FIRST_ID: u64 = 1_000_000;
 
 fn send(h: Key<Chan>, id: u64) -> Op {
     // SAFETY: an 8-byte item with drop glue.
-    Op(SendPtr(unsafe {
-        velt_rt_chan_send(h, &id as *const u64 as *const u8, 8, Some(record))
-    }))
+    Op {
+        f: SendPtr(unsafe {
+            velt_rt_chan_send(h, &id as *const u64 as *const u8, 8, Some(record))
+        }),
+        payload: 0,
+    }
 }
 
 fn receive(h: Key<Chan>) -> Op {
     // SAFETY: `u64 | null` as `{ present @0, item @8 }`.
-    Op(SendPtr(unsafe { velt_rt_chan_receive(h, 8, 8, 16) }))
+    Op {
+        f: SendPtr(unsafe { velt_rt_chan_receive(h, 8, 8, 16) }),
+        payload: 8,
+    }
 }
 
 /// Polls `op` once; if it has to wait, lets the other tasks run a turn (which may wake it) and
@@ -117,9 +129,9 @@ impl Wake for Woken {
     }
 }
 
-async fn produce(h: Key<Chan>, p: u64) {
+async fn produce(h: Key<Chan>, first: u64, p: u64) {
     for i in 0..PER_PRODUCER {
-        let id = FIRST_ID + p * PER_PRODUCER + i;
+        let id = first + p * PER_PRODUCER + i;
         if i.is_multiple_of(5) {
             // Given up if it waits too long: the item is dropped, unless it was queued.
             if give_up_after_a_turn(send(h, id)).await.is_none() {
@@ -157,8 +169,9 @@ async fn consume(h: Key<Chan>, c: usize) -> Vec<u64> {
     }
 }
 
-#[test]
-fn every_item_is_received_or_dropped_once_under_cancels_and_close() {
+/// One run from `first` on (ids `first..first + PRODUCERS * PER_PRODUCER`): every item is
+/// received or dropped exactly once.
+fn run_once(first: u64) {
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let h = velt_rt_chan_new(1);
@@ -169,7 +182,7 @@ fn every_item_is_received_or_dropped_once_under_cancels_and_close() {
                 .map(|c| tokio::spawn(consume(h, c)))
                 .collect();
             let producers: Vec<_> = (0..PRODUCERS)
-                .map(|p| tokio::spawn(produce(h, p)))
+                .map(|p| tokio::spawn(produce(h, first, p)))
                 .collect();
             for p in producers {
                 p.await.expect("producer");
@@ -184,9 +197,9 @@ fn every_item_is_received_or_dropped_once_under_cancels_and_close() {
         let _ = done_tx.send(received);
     });
     let received = done_rx
-        .recv_timeout(Duration::from_secs(120))
+        .recv_timeout(Duration::from_secs(if cfg!(miri) { 3600 } else { 120 }))
         .expect("hung: a wake was lost");
-    let range = FIRST_ID..FIRST_ID + PRODUCERS * PER_PRODUCER;
+    let range = first..first + PRODUCERS * PER_PRODUCER;
     let dropped: Vec<u64> = DROPPED
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -196,13 +209,13 @@ fn every_item_is_received_or_dropped_once_under_cancels_and_close() {
         .collect();
     let mut seen = vec![0u8; (PRODUCERS * PER_PRODUCER) as usize];
     for id in received.iter().chain(&dropped) {
-        seen[(id - FIRST_ID) as usize] += 1;
+        seen[(id - first) as usize] += 1;
     }
     let wrong: Vec<u64> = seen
         .iter()
         .enumerate()
         .filter(|(_, &n)| n != 1)
-        .map(|(i, _)| FIRST_ID + i as u64)
+        .map(|(i, _)| first + i as u64)
         .take(5)
         .collect();
     assert!(
@@ -212,14 +225,27 @@ fn every_item_is_received_or_dropped_once_under_cancels_and_close() {
         dropped.len()
     );
     assert!(!received.is_empty());
-    assert!(
-        SENDS_GIVEN_UP.load(Ordering::Relaxed) > 0 && RECEIVES_GIVEN_UP.load(Ordering::Relaxed) > 0,
-        "cancels covered: {} sends, {} receives given up",
+}
+
+#[test]
+fn every_item_is_received_or_dropped_once_under_cancels_and_close() {
+    // Which cancels happen depends on how the tasks interleave: runs repeat (each checked) until
+    // every kind was seen.
+    let covered = || {
+        SENDS_GIVEN_UP.load(Ordering::Relaxed) > 0
+            && RECEIVES_GIVEN_UP.load(Ordering::Relaxed) > 0
+            && WOKEN_THEN_GIVEN_UP.load(Ordering::Relaxed) > 0
+    };
+    for run in 0..20 {
+        run_once(FIRST_ID + run * PRODUCERS * PER_PRODUCER);
+        if covered() {
+            return;
+        }
+    }
+    panic!(
+        "cancels not covered in 20 runs: {} sends, {} receives given up, {} after a wake",
         SENDS_GIVEN_UP.load(Ordering::Relaxed),
-        RECEIVES_GIVEN_UP.load(Ordering::Relaxed)
-    );
-    assert!(
-        WOKEN_THEN_GIVEN_UP.load(Ordering::Relaxed) > 0,
-        "no operation was given up after its wake"
+        RECEIVES_GIVEN_UP.load(Ordering::Relaxed),
+        WOKEN_THEN_GIVEN_UP.load(Ordering::Relaxed)
     );
 }

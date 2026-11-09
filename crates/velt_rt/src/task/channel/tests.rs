@@ -10,32 +10,34 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-/// Awaits a channel future and returns its first `N` result bytes.
-struct Await<const N: usize>(SendPtr<VeltFut>);
+/// Awaits a channel future and returns its `N`-byte result: byte 0 (a send's `bool`, a
+/// receive's present flag) and, for a receive that got an item, the item's bytes from `P` on.
+/// The other bytes are left 0: the runtime never writes them (padding, or a null's item).
+struct Await<const N: usize, const P: usize>(SendPtr<VeltFut>);
 
-impl<const N: usize> Future for Await<N> {
+impl<const N: usize, const P: usize> Future for Await<N, P> {
     type Output = [u8; N];
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<[u8; N]> {
         let f = self.0 .0;
-        // SAFETY: an owned, live channel future; freed once READY.
+        // SAFETY: an owned, live channel future; freed once READY. Only bytes it wrote are read.
         unsafe {
             if velt_rt_fut_poll(f, raw_cx(cx).ptr()) == PENDING {
                 return Poll::Pending;
             }
+            let at = (f as *const u8).add(FUT_RESULT_OFFSET);
             let mut out = [0u8; N];
-            std::ptr::copy_nonoverlapping(
-                (f as *const u8).add(FUT_RESULT_OFFSET),
-                out.as_mut_ptr(),
-                N,
-            );
+            out[0] = *at;
+            if N > 1 && out[0] != 0 {
+                std::ptr::copy_nonoverlapping(at.add(P), out.as_mut_ptr().add(P), N - P);
+            }
             velt_rt_fut_drop(f);
             Poll::Ready(out)
         }
     }
 }
 
-fn send(h: Key<Chan>, v: u64) -> Await<1> {
+fn send(h: Key<Chan>, v: u64) -> Await<1, 1> {
     // SAFETY: `h` is live in every test; `v` is an 8-byte item.
     Await(SendPtr(unsafe {
         velt_rt_chan_send(h, &v as *const u64 as *const u8, 8, None)
@@ -45,7 +47,7 @@ fn send(h: Key<Chan>, v: u64) -> Await<1> {
 /// `u64 | null` laid out as `{ present: bool @0, item @8 }` (16 bytes).
 fn receive(h: Key<Chan>) -> impl Future<Output = Option<u64>> + Send {
     // SAFETY: `h` is live in every test.
-    let f = Await::<16>(SendPtr(unsafe { velt_rt_chan_receive(h, 8, 8, 16) }));
+    let f = Await::<16, 8>(SendPtr(unsafe { velt_rt_chan_receive(h, 8, 8, 16) }));
     async move {
         let b = f.await;
         (b[0] != 0).then(|| u64::from_le_bytes(b[8..16].try_into().unwrap_or_default()))
@@ -194,7 +196,7 @@ fn odd_sized_items_cross_a_bounded_channel_whole_and_in_order() {
             loop {
                 // `[u8; 37] | null`: present flag @0, item @1.
                 // SAFETY: `h` is live until closed and drained.
-                let f = Await::<38>(SendPtr(unsafe { velt_rt_chan_receive(h, 37, 1, 38) }));
+                let f = Await::<38, 1>(SendPtr(unsafe { velt_rt_chan_receive(h, 37, 1, 38) }));
                 let b = f.await;
                 if b[0] == 0 {
                     break got;
@@ -207,7 +209,7 @@ fn odd_sized_items_cross_a_bounded_channel_whole_and_in_order() {
         for n in 0..200u8 {
             let v = big_item(n);
             // SAFETY: a 37-byte item; no drop glue.
-            let f = Await::<1>(SendPtr(unsafe {
+            let f = Await::<1, 1>(SendPtr(unsafe {
                 velt_rt_chan_send(h, v.as_ptr(), 37, None)
             }));
             assert_eq!(f.await, [1]);
@@ -293,7 +295,7 @@ fn leftover_items_are_dropped_once_with_the_kept_drop_glue() {
                 // SAFETY: as above, through the `send` future.
                 let f =
                     unsafe { velt_rt_chan_send(h, v.as_ptr() as *const u8, 24, Some(record_drop)) };
-                Await::<1>(SendPtr(f)).await == [1]
+                Await::<1, 1>(SendPtr(f)).await == [1]
             };
             assert!(sent);
         }
