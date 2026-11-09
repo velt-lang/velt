@@ -21,6 +21,13 @@
 //! (`proxy_roots`, `proxy_types`, `proxy_traced`, `proxy_class`). Each lowering finds them again;
 //! they are rare, so they rarely cost a second pass.
 //!
+//! Those sets are built by walking counted types (`close_weak` follows a weak key's fields into
+//! counted classes), seeded ones included, so a class counted only because the seed names it can
+//! still become weak-capable and make a read of it exclusive. So a seeded lowering that ends with
+//! a lock value and any weak or proxy fact is done again without the seed
+//! (`Boxing::locks_may_follow_seed`, `lower_program_seeded`): such programs are rare, and they
+//! only lose the passes the seed would have saved.
+//!
 //! Type keys name a class or interface by its qualified name, and every object literal that
 //! implements interface `I` by one hidden struct name (`hidden_struct_def`), so two of them share a
 //! key and the seed may count another one than the old version did: every hidden struct may be
@@ -54,11 +61,38 @@ impl CountedSeed {
     }
 
     /// Names nothing (the first version's, or a program that counts nothing): nothing to add.
-    fn is_empty(&self) -> bool {
+    pub(in crate::lower) fn is_empty(&self) -> bool {
         self.types.iter().all(BTreeSet::is_empty)
             && self.defs.iter().all(BTreeSet::is_empty)
             && !self.flags.contains(&true)
             && self.any_call_keys.is_empty()
+    }
+}
+
+/// `opts` without a seed: the cold lowering a seeded one falls back to.
+pub(in crate::lower) fn without_seed<'a>(
+    opts: &crate::LowerOptions<'a>,
+) -> crate::LowerOptions<'a> {
+    crate::LowerOptions {
+        counted_seed: None,
+        ..*opts
+    }
+}
+
+impl Boxing {
+    /// Whether an `RwLock` `read` may have been made exclusive by the seed: the program has a
+    /// lock value and a weak or proxy fact, which `close_weak` and `close_proxies` build by
+    /// walking counted types, seeded ones included, and which `lock_reach` turns into an
+    /// exclusive read. A lowering that started from a seed and ends so is done again without it
+    /// (`lower_program_seeded`): rare, and it costs that program the passes the seed saved.
+    pub(in crate::lower) fn locks_may_follow_seed(&self) -> bool {
+        !self.lock_values.is_empty()
+            && (self.weak_object
+                || !self.weak_roots.is_empty()
+                || !self.weak.is_empty()
+                || !self.proxy_roots.is_empty()
+                || !self.proxy_types.is_empty()
+                || self.proxy_class.is_some())
     }
 }
 

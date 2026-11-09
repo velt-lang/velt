@@ -142,3 +142,51 @@ fn a_stale_seed_never_makes_a_read_exclusive() {
         "v2 with v1's seed reads beside others, as cold"
     );
 }
+
+/// A `Config` shared through a second binding (counted), a `WeakRef` of a `Holder` of a
+/// `Config`, and an `RwLock` of a `Config`: the weak walk from `Holder` reaches the counted
+/// `Config`, which becomes weak-capable, so the lock's `read` is exclusive.
+const WALK_V1: &str = "class Config { n: number = 1; }
+class Holder { cfg: Config = new Config(); }
+function main() {
+  const a = new Config();
+  const b = a;
+  b.n = 2;
+  console.log(a.n);
+  const h = new Holder();
+  const w = new WeakRef(h);
+  const lk = new RwLock(new Config());
+  lk.read((x) => console.log(x.n));
+  console.log(w.deref() !== undefined);
+}
+";
+
+/// [`WALK_V1`] after an edit that stops sharing `Config`: not counted, the weak walk stops at
+/// it, and `read` is shared.
+const WALK_V2: &str = "class Config { n: number = 1; }
+class Holder { cfg: Config = new Config(); }
+function main() {
+  const a = new Config();
+  a.n = 2;
+  console.log(a.n);
+  const h = new Holder();
+  const w = new WeakRef(h);
+  const lk = new RwLock(new Config());
+  lk.read((x) => console.log(x.n));
+  console.log(w.deref() !== undefined);
+}
+";
+
+/// A seeded counted class reached by the weak walk would make a read exclusive: a program with a
+/// lock and a weak or proxy fact is lowered again without the seed (`locks_may_follow_seed`).
+#[test]
+fn a_seeded_class_the_weak_walk_reaches_never_makes_a_read_exclusive() {
+    let (v1, seed, _) = lower(WALK_V1, None);
+    assert!(v1.contains("velt_rt_rwlock_write"), "v1 reads exclusively");
+    assert!(seed.names("adt Config"), "v1 counts Config");
+    let (cold, cold_seed, _) = lower(WALK_V2, None);
+    assert!(cold.contains("velt_rt_rwlock_read") && !cold.contains("velt_rt_rwlock_write"));
+    let (warm, warm_seed, _) = lower(WALK_V2, Some(&seed));
+    assert!(warm == cold, "v2 with v1's seed is lowered as without it");
+    assert_eq!(warm_seed, cold_seed);
+}

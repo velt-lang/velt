@@ -27,6 +27,7 @@ use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 use super::Cx;
 
 pub(super) use kinds::ShareKind;
+pub(super) use seed::without_seed;
 pub use seed::CountedSeed;
 
 /// The counted types of one lowering pass.

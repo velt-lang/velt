@@ -8,6 +8,8 @@ import { serve } from "http-server";
 
 class Node {
   v: number = 0;
+  // Read after the drop: freed, a string's bytes are not what they were (a number may be).
+  name: string = "node";
 }
 
 let store: Node[] = [];
@@ -24,8 +26,8 @@ function size(): number {
   return store.length;
 }
 
-function first(): number {
-  return store.length > 0 ? store[0].v : -1;
+function first(): string {
+  return store.length > 0 ? `${store[0].name}${store[0].v}` : "-";
 }
 
 async function main() {

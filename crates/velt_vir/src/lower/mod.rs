@@ -250,12 +250,11 @@ pub(crate) fn lower_program_seeded(
     // string literals of the program).
     let mut next_pass = 0;
     let mut counted_passes = 0;
+    let mut seeded = false;
     while counted_passes < MAX_PASSES {
         let pass = next_pass;
         next_pass += 1;
         lower_profile::start_pass();
-        #[cfg(test)]
-        PASSES.with(|n| n.set(n.get() + 1));
         let pass_start = std::time::Instant::now();
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.value_params = value_params.take();
@@ -274,6 +273,7 @@ pub(crate) fn lower_program_seeded(
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
         cx.debug = (opts.debug_info && cx.locs.is_some()).then(Default::default);
         if let (0, Some(seed)) = (pass, opts.counted_seed) {
+            seeded = !seed.is_empty();
             counted = cx.with_seed(counted, seed);
             cx.boxing = counted.clone();
         }
@@ -298,6 +298,9 @@ pub(crate) fn lower_program_seeded(
         lower_profile::end_pass(pass, pass_start.elapsed());
         cx.shapes_close();
         let next = cx.close_boxing();
+        if next == counted && seeded && next.locks_may_follow_seed() {
+            return lower_program_seeded(hir, &boxing::without_seed(opts), want_seed);
+        }
         if next == counted {
             // The counted types are complete: this pass's functions are the program's, once
             // those left unversioned are versioned.
@@ -362,10 +365,7 @@ pub(crate) fn lower_program_seeded(
 }
 
 #[cfg(test)]
-thread_local! {
-    /// Passes `lower_program` has run on this thread (tests of the counted seed).
-    pub(crate) static PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
+pub(crate) use lower_profile::PASSES;
 
 /// Internal-compiler-error: lowering was handed something sema should never produce.
 fn ice(msg: impl std::fmt::Display) -> ! {

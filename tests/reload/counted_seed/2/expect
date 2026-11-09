@@ -1,5 +1,5 @@
 action: swap
 jit get /drop: dropped 7
-jit get /read: read 1 7
+jit get /read: read 1 node7
 exe get /drop: dropped -1
-exe get /read: read 0 -1
+exe get /read: read 0 -
