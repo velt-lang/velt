@@ -5,6 +5,7 @@
 import { unwrapIo } from "velt/native/result";
 import { TryStream } from "velt/net/byte_stream";
 import { checkIo } from "velt/native/status";
+import { tryWriteTo, writeBytesTo } from "velt/net/bytes";
 import { clampTo, toIndex } from "velt/net/offsets";
 import {
   velt_rt_tcp_abort,
@@ -19,11 +20,9 @@ import {
   velt_rt_tcp_readable_within,
   velt_rt_tcp_shutdown,
   velt_rt_tcp_try_read_into,
-  velt_rt_tcp_try_write,
   velt_rt_tcp_try_write_range,
   velt_rt_tcp_unpark,
   velt_rt_tcp_write,
-  velt_rt_tcp_write_bytes,
   velt_rt_tcp_write_later,
   velt_rt_tcp_write_later_range,
   velt_rt_tcp_write_range,
@@ -150,7 +149,7 @@ export struct TcpStream implements TryStream {
       return;
     }
     if (start === 0 && end == null) {
-      checkIo(await velt_rt_tcp_write_bytes(this.handle, data));
+      checkIo(await writeBytesTo(this.handle, data));
       return;
     }
     const len = data.length as number;
@@ -173,7 +172,7 @@ export struct TcpStream implements TryStream {
       return velt_rt_tcp_try_write_range(this.handle, data.buf.bytes, from, to) as i64;
     }
     if (start === 0 && end == null) {
-      return velt_rt_tcp_try_write(this.handle, data) as i64;
+      return tryWriteTo(this.handle, data);
     }
     const len = data.length as number;
     const from = clampTo(start, len);
