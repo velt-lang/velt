@@ -1,10 +1,13 @@
 //! What `velt dev` remembers about a program version to compare the next one with: per function
 //! key its signature, fingerprint and the pinned functions it refers to; the layouts live data
-//! may have; which keys live data may hold as code addresses; and `main`'s keys.
+//! may have; which keys live data may hold as code addresses; `main`'s keys; and what the
+//! module state looks like.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use velt_vir::vir::{Callee, Const, Function, Program, Rvalue, Stmt, Terminator, Ty};
+use velt_vir::vir::{
+    Callee, Const, Function, Operand, Program, Rvalue, StaticId, Stmt, Terminator, Ty,
+};
 
 use super::roles;
 use velt_vir::fingerprint::{is_state_layout, Canon, Fingerprint, Mode};
@@ -30,6 +33,21 @@ pub(crate) struct Facts {
     pub address_taken: FxHashSet<String>,
     /// `velt_main` and the user `main` functions it starts (already running, never re-run).
     pub main: FxHashSet<String>,
+    /// The program's module state, if it has any.
+    pub module_state: Option<ModuleState>,
+}
+
+/// The module state of a version (module-level `let`s, velt_vir lower/module_state.rs): one
+/// block the runtime keys by the address of the program's descriptor (`ModuleDesc`).
+pub(crate) struct ModuleState {
+    /// The descriptor's index in the program's statics.
+    pub desc: StaticId,
+    /// The descriptor by contents (size, alignment, slot names, which functions initialize and
+    /// drop the block) and the fingerprints of those functions, which spell the block's layout
+    /// and the initializers: two versions with the same key can share one block.
+    pub key: Vec<Fingerprint>,
+    /// Keys of the functions that reach the block (pass the descriptor to the runtime).
+    pub users: Vec<String>,
 }
 
 impl Facts {
@@ -41,6 +59,7 @@ impl Facts {
             layouts: FxHashMap::default(),
             address_taken: FxHashSet::default(),
             main: FxHashSet::default(),
+            module_state: None,
         };
         for (i, layout) in program.aggs.iter().enumerate() {
             if !is_state_layout(&layout.name) {
@@ -83,8 +102,44 @@ impl Facts {
             };
             facts.funcs.insert(func.symbol.clone(), fn_facts);
         }
+        facts.module_state = module_state(program, &canon);
         facts
     }
+}
+
+/// The module state of `program`: its descriptor is the static every function reaching the
+/// block passes to `velt_rt_module_state`.
+fn module_state(program: &Program, canon: &Canon) -> Option<ModuleState> {
+    let state = (program.externs.iter()).position(|e| e.symbol == "velt_rt_module_state")?;
+    let mut desc = None;
+    let mut users = vec![];
+    for func in &program.funcs {
+        let passed = func.blocks.iter().find_map(|b| match &b.term {
+            Terminator::Call {
+                callee: Callee::Extern(e),
+                args,
+                ..
+            } if e.0 as usize == state => match args.first() {
+                Some(Operand::Const(Const::Static(s), _)) => Some(*s),
+                _ => None,
+            },
+            _ => None,
+        });
+        if let Some(s) = passed {
+            desc = Some(s);
+            users.push(func.symbol.clone());
+        }
+    }
+    let desc = desc?;
+    let data = program.statics.get(desc.0 as usize)?;
+    let mut key = vec![canon.static_fingerprint(desc)];
+    for (_, target) in &data.relocs {
+        if let Const::Func(f) = target {
+            key.extend(program.funcs.get(f.0 as usize).map(|f| canon.function(f)));
+        }
+    }
+    users.sort();
+    Some(ModuleState { desc, key, users })
 }
 
 fn symbol(program: &Program, f: u32) -> String {

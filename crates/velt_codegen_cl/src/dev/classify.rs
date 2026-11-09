@@ -13,7 +13,10 @@
 //! Otherwise the version is swapped in. The functions to compile are the changed and new ones,
 //! plus every function that refers to a pinned function being recompiled (a parent poll
 //! embedding a changed child's state, an async function's entry creating its new state, a handler
-//! descriptor), transitively.
+//! descriptor), transitively. Module state carries over when its key is the same
+//! ([`shares_module_state`]); otherwise the new version starts a block of its own, and every
+//! function reaching module state is compiled too, so that unchanged code moves to the new block
+//! with the changed code instead of keeping the old one.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -163,10 +166,24 @@ fn shifted_closures(old: &Facts, new: &Facts) -> Option<String> {
     None
 }
 
+/// Whether `new` keeps the module state block of `old`, the running version: both have module
+/// state with the same layout, slot names and initializers (`facts::ModuleState::key`), so the
+/// values in the block are what `new`'s code would have made of them (#2654). Otherwise `new`'s
+/// code gets a block of its own, initialized by its own initializers when first reached.
+pub(crate) fn shares_module_state(old: &Facts, new: &Facts) -> bool {
+    match (&old.module_state, &new.module_state) {
+        (Some(a), Some(b)) => a.key == b.key,
+        _ => false,
+    }
+}
+
 /// Changed and new functions plus, transitively, the functions referring to a pinned function
 /// that is recompiled.
 fn to_compile(old: &Facts, new: &Facts) -> Vec<String> {
     let mut dirty: FxHashSet<&String> = new.funcs.keys().filter(|k| changed(old, new, k)).collect();
+    if !shares_module_state(old, new) {
+        dirty.extend(new.module_state.iter().flat_map(|m| &m.users));
+    }
     loop {
         let more: Vec<&String> = new
             .funcs
