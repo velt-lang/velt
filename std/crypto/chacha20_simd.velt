@@ -36,11 +36,14 @@ declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, coun
  * XORs `buf[start..end]` in place with the keystream of `state` from block `counter` on
  * (encryption and decryption are the same operation). Four blocks at a time, turned into the
  * blocks' bytes by 4x4 transposes. Throws `CryptoError`, before writing anything, when `end` is
- * past `buf`.
+ * past `buf` or `state` is shorter than 16 words.
  */
 export function chachaXorInPlace(state: u32[], counter: u32, buf: u8[], start: usize, end: usize) {
   if (end > buf.length) {
     throw new CryptoError(`ChaCha20 range is out of bounds: end ${end}, length ${buf.length}`);
+  }
+  if (state.length < 16) {
+    throw new CryptoError(`ChaCha20 state must be 16 words, got ${state.length}`);
   }
   if (end - start <= 128) {
     // One or two blocks: in rows, a block at a time (four in vectors would waste the rest).

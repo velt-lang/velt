@@ -5,6 +5,7 @@
 // (std/crypto/chacha20_simd.velt) would compute blocks nobody uses and the scalar block costs
 // several times more. Constant time: adds, XORs, rotations and shuffles by constants.
 
+import { CryptoError } from "velt/crypto/errors";
 import { inline } from "velt/lang/intrinsics";
 
 // Declared directly, as chacha20_simd.velt does (loading `velt/simd` costs compile time). The
@@ -59,8 +60,14 @@ export struct Rows {
   d: u32x4;
 }
 
-/** The keystream block of `state` (16 words) with the block counter `counter`. */
+/**
+ * The keystream block of `state` (16 words) with the block counter `counter`. Throws
+ * `CryptoError` when `state` is shorter, before the unchecked loads.
+ */
 export function rowsBlock(state: u32[], counter: u32): Rows {
+  if (state.length < 16) {
+    throw new CryptoError(`ChaCha20 state must be 16 words, got ${state.length}`);
+  }
   const a0 = velt_simd_u32x4_load(state, 0);
   const b0 = velt_simd_u32x4_load(state, 4);
   const c0 = velt_simd_u32x4_load(state, 8);
@@ -111,10 +118,14 @@ function xorPart(buf: u8[], at: usize, n: usize, v: u32x4) {
 }
 
 /**
- * XORs `buf[start..end]` (at most 128 bytes, inside `buf`: unchecked) with the keystream of
- * `state` from block `counter` on, a block at a time.
+ * XORs `buf[start..end]` with the keystream of `state` from block `counter` on, a block at a
+ * time (for at most 128 bytes, where it costs less than four blocks in vectors). Throws
+ * `CryptoError`, before writing anything, when `end` is past `buf`.
  */
 export function rowsXor(state: u32[], counter: u32, buf: u8[], start: usize, end: usize) {
+  if (end > buf.length) {
+    throw new CryptoError(`ChaCha20 range is out of bounds: end ${end}, length ${buf.length}`);
+  }
   let block = counter;
   let off = start;
   while (off < end) {

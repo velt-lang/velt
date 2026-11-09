@@ -6,6 +6,7 @@
 import { describe, expect, it } from "velt/test";
 import { tagMatches } from "velt/crypto/aead_tag";
 import { chachaBlock, chachaSetNonce, chachaState } from "velt/crypto/chacha20";
+import { rowsPolyKey, rowsXor } from "velt/crypto/chacha20_rows";
 import { chachaXorInPlace } from "velt/crypto/chacha20_simd";
 import { Poly1305 } from "velt/crypto/poly1305";
 import { hexDecode, hexEncode } from "velt/encoding/hex";
@@ -159,8 +160,15 @@ describe("The checks before the unchecked loads", () => {
       const before = hexEncode(buf);
       expect(() => chachaXorInPlace(state, 1, buf, 0, size + 1)).toThrow(bad);
       expect(() => chachaXorInPlace(state, 1, buf, 0, size + 256)).toThrow(bad);
+      const short = state.slice(0, 15);
+      expect(() => chachaXorInPlace(short, 1, buf, 0, size)).toThrow("ChaCha20 state must be 16");
+      expect(() => rowsXor(short, 1, buf, 0, 1)).toThrow("ChaCha20 state must be 16");
+      expect(() => rowsXor(state, 1, buf, 0, size + 1)).toThrow(bad);
       expect(hexEncode(buf)).toBe(before);
     }
+    expect(() => rowsPolyKey(state.slice(0, 15), Buffer.alloc(32))).toThrow(
+      "ChaCha20 state must be 16",
+    );
   });
 
   it("throws before Poly1305 reads past the message", () => {
