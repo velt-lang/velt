@@ -1,9 +1,10 @@
 //! The async ABI (rt_abi_async.md §1–2) on a current-thread executor.
 //!
 //! Same protocol as velt_rt: compiled state machines `poll(state, cx) -> u32`, heap futures
-//! `VeltFut` with the result slot at offset 16, `cx` = a Rust `&mut Context`. Instead of tokio
-//! the runtime drives everything on the one WebAssembly thread (`executor`): ready tasks run in
-//! FIFO order, and when none is ready it sleeps until the next timer.
+//! `VeltFut` with the result slot at offset 16, `cx` = the await word and a waker in C terms
+//! (velt_rt's task/waker.rs). Instead of tokio the runtime drives everything on the one
+//! WebAssembly thread (`executor`): ready tasks run in FIFO order, and when none is ready it
+//! sleeps until the next timer.
 //!
 //! Pointer-width note: VIR lays out `VeltFut` as two 8-byte slots. On wasm32 a function pointer
 //! is 4 bytes, so each header entry is a [`Wide`] slot (pointer + padding): generated code loads
@@ -24,9 +25,14 @@ pub mod race;
 pub mod shared;
 pub mod spawn;
 pub mod waiters;
+#[path = "../../../velt_rt/src/task/waker.rs"]
+pub mod waker;
 
 use std::ffi::c_void;
 use std::task::Context;
+
+pub(crate) use waker::with_context;
+pub use waker::{RustCx, VeltCx, VeltWakerHeader, VeltWakerVt};
 
 /// Poll result: not finished; the future registered `cx`'s waker.
 pub const PENDING: u32 = 0;
@@ -71,51 +77,25 @@ impl VeltFut {
     }
 }
 
-/// What generated code gets as `cx` (rt_abi_async.md §1): the await word first (generated code
-/// reads it at every `await`: 0 = no other job could observe a microtask step), then the Rust
-/// `Context`. On the one thread the word is the executor's (executor.rs `await_word`).
-#[repr(C)]
-pub(crate) struct RawCx<'a, 'b> {
-    word: *const u32,
-    cx: *mut Context<'b>,
-    _life: std::marker::PhantomData<&'a mut Context<'b>>,
-}
-
-impl RawCx<'_, '_> {
-    /// The opaque pointer (valid while this value lives).
-    pub(crate) fn ptr(&self) -> *mut c_void {
-        self as *const Self as *mut c_void
-    }
-}
-
-/// Recover the Rust `Context` from the opaque `cx` pointer generated code passes through.
-///
-/// # Safety
-/// `cx` must be the pointer the runtime passed into the enclosing poll call.
-pub(crate) unsafe fn context<'a>(cx: *mut c_void) -> &'a mut Context<'a> {
-    &mut *((*(cx as *mut RawCx<'_, 'a>)).cx)
-}
-
-/// `cx` for handing a Rust `Context` to generated code (`.ptr()` is the opaque pointer).
-pub(crate) fn raw_cx<'a, 'b>(cx: &'a mut Context<'b>) -> RawCx<'a, 'b> {
-    RawCx {
-        word: executor::await_word(),
-        cx,
-        _life: std::marker::PhantomData,
-    }
+/// `cx` for handing a Rust `Context` to generated code (`.ptr()` is the opaque pointer): the
+/// executor's await word (executor.rs `await_word`; generated code reads it at every `await`: 0 =
+/// no other job could observe a microtask step) and the waker in C terms (velt_rt's waker.rs).
+#[inline]
+pub(crate) fn raw_cx<'a>(cx: &'a mut Context<'_>) -> RustCx<'a> {
+    RustCx::new(executor::await_word(), cx)
 }
 
 /// The step of an `await` (velt_rt local/micro.rs): 0 to go on, else a ticket to wait for with
 /// [`velt_rt_await_ready`].
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_await_tick(cx: *mut c_void) -> u64 {
-    executor::await_tick(context(cx))
+    with_context(cx, executor::await_tick)
 }
 
 /// Has the microtask queue reached `ticket`? 1 to go on, 0 while it waits.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_await_ready(ticket: u64, cx: *mut c_void) -> u32 {
-    executor::await_ready(ticket, context(cx)) as u32
+    with_context(cx, |c| executor::await_ready(ticket, c)) as u32
 }
 
 /// Poll a heap future: `(f->poll)(f, cx)`. The runtime's own; compiled code calls through the
@@ -140,7 +120,7 @@ pub unsafe fn drop_fut(f: *mut VeltFut) {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_yield_now(cx: *mut c_void) {
     executor::note_yield();
-    context(cx).waker().wake_by_ref();
+    with_context(cx, |c| c.waker().wake_by_ref());
 }
 
 /// `yieldNow()` as a heap future. Result: none.

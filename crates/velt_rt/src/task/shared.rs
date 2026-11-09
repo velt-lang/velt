@@ -43,7 +43,7 @@ use parking_lot::Mutex;
 use crate::panic::ThrowLoc;
 
 use super::all::ResultDropFn;
-use super::{context, raw_cx, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use super::{raw_cx, with_context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 /// Compiled share glue of a result slot: writes another reference to `*src` into `dst`.
 pub type ShareFn = unsafe extern "C-unwind" fn(src: *const u8, dst: *mut u8);
@@ -504,7 +504,7 @@ fn on_its_task(h: &Hub) {
 unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
     on_its_task(h);
     let me = f as usize;
-    let w = context(cx).waker().clone();
+    let w = with_context(cx, |c| c.waker().clone());
     let mut st = h.st.lock();
     if !st.done {
         let first = match st.waiters.iter().position(|(x, ..)| *x == me) {

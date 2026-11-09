@@ -13,7 +13,9 @@ use super::all::ResultDropFn;
 use super::compiled::{with_state_store, Compiled, OwnedStore};
 use super::local::Locals;
 use super::runtime::JoinHandle;
-use super::{context, raw_cx, DropFn, PollFn, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use super::{
+    raw_cx, with_context, DropFn, PollFn, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY,
+};
 use crate::panic::ThrowLoc;
 use std::ffi::c_void;
 use std::future::Future;
@@ -157,7 +159,7 @@ struct JoinObj<const R: usize> {
 
 unsafe extern "C-unwind" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let obj = &mut *(f as *mut JoinObj<R>);
-    match Pin::new(&mut obj.handle).poll(context(cx)) {
+    match with_context(cx, |c| Pin::new(&mut obj.handle).poll(c)) {
         Poll::Pending => PENDING,
         Poll::Ready(Ok(mut out)) => {
             out.result_drop = None;

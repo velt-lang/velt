@@ -32,7 +32,7 @@ use std::task::{Context, Poll, Waker};
 
 use super::set::{self, Driver};
 use super::TaskCx;
-use crate::task::{context, leaf, VeltFut};
+use crate::task::{leaf, with_context, VeltFut};
 
 /// One entry: whom to run when the queue reaches it.
 struct Entry {
@@ -242,7 +242,7 @@ pub unsafe extern "C-unwind" fn velt_rt_await_tick(cx: *mut c_void) -> u64 {
         return 0;
     }
     match queue_or_new() {
-        Some(q) => push(t, q, context(cx).waker().clone(), false),
+        Some(q) => push(t, q, with_context(cx, |c| c.waker().clone()), false),
         None => 0,
     }
 }
@@ -258,10 +258,12 @@ pub unsafe extern "C-unwind" fn velt_rt_await_ready(ticket: u64, cx: *mut c_void
     match q.waiting(ticket) {
         None => 1,
         Some(e) => {
-            let w = context(cx).waker();
-            if !e.waker.as_ref().is_some_and(|x| x.will_wake(w)) {
-                e.waker = Some(w.clone());
-            }
+            with_context(cx, |c| {
+                let w = c.waker();
+                if !e.waker.as_ref().is_some_and(|x| x.will_wake(w)) {
+                    e.waker = Some(w.clone());
+                }
+            });
             0
         }
     }

@@ -12,7 +12,7 @@ use std::task::Poll;
 
 use super::Slot;
 use crate::task::all::ResultDropFn;
-use crate::task::{context, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use crate::task::{with_context, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 type Op = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -130,7 +130,7 @@ unsafe extern "C-unwind" fn op_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let Some(op) = t.op.as_mut() else {
         return READY;
     };
-    match op.as_mut().poll(context(cx)) {
+    match with_context(cx, |c| op.as_mut().poll(c)) {
         Poll::Ready(()) => {
             t.op = None;
             READY

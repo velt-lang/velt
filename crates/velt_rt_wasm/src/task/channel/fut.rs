@@ -6,7 +6,7 @@ use std::ffi::c_void;
 use std::task::{Context, Poll};
 
 use crate::task::all::ResultDropFn;
-use crate::task::{context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use crate::task::{with_context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 /// An item's bytes (16-aligned) owned by a pending send; dropped with `item_drop` unless queued.
 pub(super) struct Item {
@@ -99,7 +99,7 @@ unsafe extern "C" fn op_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
         return READY;
     };
     let slot = (f as *mut u8).add(FUT_RESULT_OFFSET);
-    match op(context(cx), slot) {
+    match with_context(cx, |c| op(c, slot)) {
         Poll::Ready(()) => {
             t.op = None;
             READY

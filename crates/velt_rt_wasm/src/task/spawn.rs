@@ -9,7 +9,7 @@ use std::rc::Rc;
 use super::all::ResultDropFn;
 use super::boxed::velt_rt_fut_box;
 use super::executor::{self, JoinState};
-use super::{context, DropFn, PollFn, VeltFut, PENDING, READY};
+use super::{with_context, DropFn, PollFn, VeltFut, PENDING, READY};
 
 /// Largest result a join handle carries inline (the ABI limit; larger results are boxed).
 const MAX_RESULT: usize = 256;
@@ -27,7 +27,7 @@ unsafe extern "C" fn join_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let h = &mut *(f as *mut JoinHandle);
     let mut j = h.join.borrow_mut();
     if !j.done {
-        j.waiter = Some(context(cx).waker().clone());
+        j.waiter = Some(with_context(cx, |c| c.waker().clone()));
         return PENDING;
     }
     let dst = h.result.as_mut_ptr() as *mut u8;

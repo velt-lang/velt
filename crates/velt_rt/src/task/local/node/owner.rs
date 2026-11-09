@@ -11,7 +11,7 @@ use super::{
     drop_result, head, release, state, Head, ADOPTED, CANCELLED, DETACHED, DONE, NO_MEMBER,
     OWNER_DELIVERED, QUEUED,
 };
-use crate::task::{context, VeltFut, PENDING, READY};
+use crate::task::{with_context, VeltFut, PENDING, READY};
 
 /// The owner awaits a started node: ready once it finished. Awaited from inside the task that
 /// drives it and not woken meanwhile, the owner polls the state itself ("adopts" it, like a
@@ -90,7 +90,7 @@ unsafe fn drive_adopted(set: *mut LocalSet, f: *mut VeltFut, cx: *mut c_void, fl
         // Whoever resumes it from an older registration (a waker taken while it ran on its
         // own) resumes the owner instead (set.rs `resume`); an owner that is adopted in turn
         // is resumed through its own owner.
-        h.awaiter.register(context(cx).waker());
+        with_context(cx, |c| h.awaiter.register(c.waker()));
     }
     (*set).adopting += 1;
     let done = super::super::set::polling(set, f, || {
@@ -123,7 +123,7 @@ unsafe fn wait(f: *mut VeltFut, cx: *mut c_void, fl: u32) -> bool {
     if ready(h) {
         return true;
     }
-    h.awaiter.register(context(cx).waker());
+    with_context(cx, |c| h.awaiter.register(c.waker()));
     ready(h)
 }
 
