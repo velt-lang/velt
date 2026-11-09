@@ -17,10 +17,10 @@ declare function velt_rt_write_str(stream: u32, s: string);
 
 /**
  * Writes `a`, after a minus when `neg`, and the ASCII byte `end` to `stream`, where that is one
- * word: up to 7 bytes, `a` below 10^7, or 10^6 with the minus. Inlined (`inline()`) into the hooks.
+ * word: up to 7 bytes, `a` below 10^7, or 10^6 with the minus. Inlined (`@inline`) into the hooks.
  */
+@inline
 export function oneWord(stream: u32, a: u64, neg: bool, end: u8): void {
-  inline();
   const w = eightWords(a, neg);
   velt_rt_write_str(
     stream,
@@ -33,8 +33,8 @@ export function oneWord(stream: u32, a: u64, neg: bool, end: u8): void {
  * than one word: `a` from 10^7 up, or 10^6 with the minus. One call from the hooks, whichever
  * function writes it.
  */
+@noInline
 export function restWrite(stream: u32, a: u64, neg: bool, end: u8): void {
-  noInline();
   if (a < 100000000) {
     midWrite(stream, a, neg, end);
     return;
@@ -44,8 +44,8 @@ export function restWrite(stream: u32, a: u64, neg: bool, end: u8): void {
 
 // Writes `a` below 10^8, after a minus when `neg`, and `end`, where that is two words: 8 or 9
 // bytes, so `end` is in the second.
+@noInline
 function midWrite(stream: u32, a: u64, neg: bool, end: u8): void {
-  noInline();
   const w = eightWords(a, neg);
   const e = (end as u64) << (((w.len as u64) & 7) * 8);
   velt_rt_write_str(stream, strAsciiWords(w.w0, w.w1 | e, 0, w.len + 1));
@@ -53,8 +53,8 @@ function midWrite(stream: u32, a: u64, neg: bool, end: u8): void {
 
 // Writes `a` from 10^8 up, after a minus when `neg`, and `end`: 9 to 20 bytes, then `end`, which
 // `longWords` places.
+@noInline
 function longWrite(stream: u32, a: u64, neg: bool, end: u8): void {
-  noInline();
   const w = longWords(a, neg, end as u64);
   velt_rt_write_str(stream, strAsciiWords(w.w0, w.w1, w.w2, w.len));
 }
