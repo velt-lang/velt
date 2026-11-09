@@ -1,6 +1,6 @@
-//! Reads of a record viewed with named members (`crate::index_signatures`): a required named
-//! member next to `[key: string]: any` (or `unknown`) reads as its declared type, written
-//! `r.name` or `r["name"]`.
+//! Reads of a record viewed with named members (`crate::index_signatures`): a named member reads
+//! as its declared type (next to `any` or `unknown` values, a required one), written `r.name` or
+//! `r["name"]`.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -103,11 +103,61 @@ impl FnCx<'_, '_> {
                 }
                 let m = self.cx.record_view_member(view, &name.name)?;
                 let h = self.prop_value(name, value, Some(m));
+                let errors = self.cx.diags.len();
                 let h = self.coerce(h, m);
+                if self.cx.diags.len() != errors {
+                    // Reported against the member's type: not again against the values'.
+                    return Some(self.error_expr(h.span));
+                }
                 Some(self.coerce(h, v))
             })
             .collect();
+        self.record_view_missing(view, props, span);
         self.record_literal_with(d, k, v, props, pre, span)
+    }
+
+    /// Reports each required named member of record view `view` that literal `props` leaves
+    /// out, as TypeScript does (TS2741). A literal with a spread may get it from there.
+    fn record_view_missing(&mut self, view: TyId, props: &[ast::ObjectProp], span: Span) {
+        if props.iter().any(|p| {
+            !matches!(
+                p,
+                ast::ObjectProp::KeyValue(..) | ast::ObjectProp::Shorthand(_)
+            )
+        }) {
+            return;
+        }
+        let Some((_, tag)) = self.cx.record_view(view) else {
+            return;
+        };
+        let hir::TyKind::Adt(d, _) = self.cx.ty.kind(tag) else {
+            return;
+        };
+        let required: Vec<String> = match self.cx.adt(*d) {
+            Some(a) => a
+                .fields
+                .iter()
+                .filter(|f| !f.optional)
+                .map(|f| f.name.clone())
+                .collect(),
+            None => return,
+        };
+        let given = |n: &str| {
+            props.iter().any(|p| match p {
+                ast::ObjectProp::KeyValue(k, _) | ast::ObjectProp::Shorthand(k) => k.name == n,
+                _ => false,
+            })
+        };
+        let shown = self.cx.display(view);
+        for name in required.iter().filter(|n| !given(n)) {
+            self.cx.err(
+                format!(
+                    "missing field `{}` in `{shown}` literal",
+                    self.cx.shown_name(name)
+                ),
+                span,
+            );
+        }
     }
 
     /// `obj.name` of a required named member of a record view: its declared type, checked at
@@ -124,8 +174,18 @@ impl FnCx<'_, '_> {
         };
         let obj = self.unview(obj);
         let read = self.record_read(obj, RecordKey::Name(prop), span);
-        let read = self.collapse_dynamic_option(read);
-        Ok(self.cast_dynamic(read, member))
+        if self.cx.ty.has_error(read.ty) || read.ty == member {
+            return Ok(read);
+        }
+        let payload = self.cx.ty.opt_payload(read.ty).unwrap_or(read.ty);
+        if self.cx.dynamic(payload).is_some() {
+            let read = self.collapse_dynamic_option(read);
+            return Ok(self.cast_dynamic(read, member));
+        }
+        // `V | undefined` to the member's narrower type, checked as `read as T` is.
+        Ok(self
+            .narrowing_assertion(read, member, span)
+            .unwrap_or_else(|h| self.cast_dynamic(h, member)))
     }
 }
 

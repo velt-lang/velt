@@ -166,12 +166,26 @@ impl FnCx<'_, '_> {
             h.ty = exp;
             return Ok(h);
         }
+        // A promise stored into a `Promise<T>` site's variable (`throws::promise_vars`).
+        if self.cx.store_into_promise_var(h.ty, exp) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
         let h = match self.union_as_written(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        // A frozen object where its fields could be written: an error once the program writes
+        // one (`object_views::check_frozen`).
         if self.cx.unfreezes(h.ty, exp) {
-            return Err(h);
+            let frozen = crate::object_copies::Frozen {
+                from: h.ty,
+                to: exp,
+                span: h.span,
+                existing: false,
+            };
+            self.cx.object_copies.frozen.push(frozen);
         }
         // A `shared<T>` where a `T` is expected: the value inside, read (`frozen`, #36).
         if matches!(self.cx.ty.kind(h.ty), TyKind::Shared(t) if *t == exp) {

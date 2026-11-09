@@ -8,7 +8,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::hir::{Expr, TyId, TyKind};
-use crate::object_copies::{each_body, holds_by, related, Copy, Seen, Write};
+use crate::object_copies::{each_body, holds_by, related, Copy, Frozen, Seen, Write};
 use crate::visit::{self, VisitMut};
 
 /// Why a conversion can't stay a copy (`check`).
@@ -221,6 +221,64 @@ pub(crate) fn check_frozen_dynamic(cx: &mut Ctx, seen: &[(TyId, Span, Seen)], wr
                 .with_note("Node refuses a write to a frozen object, and Velt can't tell at run time that a value is one: pass it where a `Readonly<T>` is expected"),
             );
         }
+    }
+}
+
+/// Frozen objects seen as a type whose fields can be written (`Copies::frozen`): an
+/// `Object.freeze` result where such a type is expected (`const d: Desc = Object.freeze({ ... })`),
+/// or `Object.freeze(x)` of a value made before. Node throws when a frozen object's field is
+/// written, and Velt has no mark on the object to tell at run time; so each is an error once the
+/// program assigns a field of that name on a value of either type, through an interface or a
+/// type parameter (which may be either), or through `any` when a value holding one becomes an
+/// `any`. `Object.assign` and `Object.defineProperty` onto it are such assignments.
+pub(crate) fn check_frozen(
+    cx: &mut Ctx,
+    frozen: &[Frozen],
+    seen: &[(TyId, Span, Seen)],
+    writes: &[Write],
+) {
+    for f in frozen {
+        let names: Vec<String> = match cx.ty.kind(f.from).clone() {
+            TyKind::Adt(d, _) => (cx.adt(d).into_iter())
+                .flat_map(|a| a.fields.iter().map(|x| x.name.clone()))
+                .collect(),
+            _ => continue,
+        };
+        let mut dynamic: Option<bool> = None;
+        let hit = writes.iter().find(|w| {
+            (w.name.is_empty() || names.contains(&w.name))
+                && w.ty
+                    .is_none_or(|t| related(cx, t, f.from) || related(cx, t, f.to))
+                && (!w.dynamic
+                    || *dynamic.get_or_insert_with(|| {
+                        seen.iter().any(|&(t, _, how)| {
+                            let mut is = |cx: &mut Ctx, x: TyId| {
+                                related(cx, x, f.from) || related(cx, x, f.to)
+                            };
+                            matches!(how, Seen::Dynamic(_))
+                                && holds_by(cx, t, &mut is, &mut FxHashSet::default())
+                        })
+                    }))
+        });
+        let Some(w) = hit else { continue };
+        let what = match w.name.is_empty() {
+            true => "a field whose name it knows only at run time".to_string(),
+            false => format!("field `{}`", cx.shown_name(&w.name)),
+        };
+        let shown = cx.display(f.to);
+        let d = match f.existing {
+            true => Diagnostic::error(
+                format!("`Object.freeze` of a `{shown}`, in a program that assigns {what}, is not supported yet"),
+                f.span,
+            )
+            .with_note("Node throws a `TypeError` when a frozen object's field is written, and Velt can't tell at run time that a value is frozen: freeze an object literal, `Object.freeze({ ... })`, or use a `Readonly<T>` type"),
+            false => Diagnostic::error(
+                format!("an `Object.freeze` result where a `{shown}` is expected, in a program that assigns {what}, is not supported yet"),
+                f.span,
+            )
+            .with_note("Node throws a `TypeError` when a frozen object's field is written, and Velt can't tell at run time that a value is frozen: pass it where a `Readonly<T>` is expected"),
+        };
+        cx.error(d.with_label(w.span, "assigned here"));
     }
 }
 

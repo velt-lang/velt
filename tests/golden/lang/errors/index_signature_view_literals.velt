@@ -1,0 +1,21 @@
+// An object literal of an interface with named members next to an index signature: a required
+// member left out (TypeScript's TS2741) and values of the wrong type, in the literal and in
+// writes (TS2322).
+interface HeadLink {
+  rel: string;
+  href?: string;
+  [key: string]: string | undefined;
+}
+interface HeadScript {
+  async?: boolean;
+  [key: string]: string | boolean | undefined;
+}
+
+function main() {
+  const a: HeadLink = { href: "x" };
+  const b: HeadLink = { rel: 1 };
+  const c: HeadScript = { async: "yes" };
+  c.async = "no";
+  const d: HeadLink = { rel: "r", other: 5 };
+  d.rel = undefined;
+}

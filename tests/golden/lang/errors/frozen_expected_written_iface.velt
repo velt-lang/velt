@@ -1,0 +1,7 @@
+// Node refuses a write to a frozen object, which has no mark at run time here (#2554): a frozen
+// object seen as a type whose fields can be written is refused once the program writes one,
+// here through an interface with a method.
+interface Sig { aborted: boolean; check(): string; }
+const s: Sig = Object.freeze({ aborted: false, check: () => "ok" });
+s.aborted = true;
+console.log(s.aborted);

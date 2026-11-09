@@ -1,0 +1,11 @@
+index_signature_view_literals.velt:15:23: error: missing field `rel` in `HeadLink` literal
+index_signature_view_literals.velt:16:30: error: mismatched types
+  = note: expected string, found f64
+index_signature_view_literals.velt:17:34: error: mismatched types
+  = note: expected boolean | undefined, found string
+index_signature_view_literals.velt:18:13: error: mismatched types
+  = note: expected boolean | undefined, found string
+index_signature_view_literals.velt:19:42: error: mismatched types
+  = note: expected string | undefined, found f64
+index_signature_view_literals.velt:20:11: error: type `undefined` is not assignable to type `string` (TypeScript's TS2322)
+  = note: make the type allow it: `string | undefined`

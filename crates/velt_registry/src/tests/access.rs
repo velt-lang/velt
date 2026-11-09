@@ -59,6 +59,42 @@ fn owner_changes_need_a_valid_token() {
 }
 
 #[test]
+fn revoking_a_token_stops_only_that_token() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (server, url, alice, bob) = registry_with_lib(tmp.path());
+    let root = tmp.path().join("server");
+    for token in ["", "not-a-token"] {
+        assert_eq!(
+            call("DELETE", &url, "token", token).status,
+            401,
+            "`{token}`"
+        );
+    }
+    let revoked = call("DELETE", &url, "token", &alice);
+    assert_eq!(revoked.status, 200);
+    assert_eq!(revoked.body_text(), "revoked this token of `alice`\n");
+    assert_eq!(call("DELETE", &url, "token", &alice).status, 401);
+    assert_eq!(call("PUT", &url, "lib/owners/bob", &alice).status, 401);
+    // alice stays a user and owner; bob's token still works; a new token works again.
+    assert!(auth::is_user(&root, "alice").unwrap());
+    assert_eq!(call("GET", &url, "lib/owners", "").body_text(), "alice\n");
+    assert_eq!(call("PUT", &url, "lib/owners/bob", &bob).status, 403);
+    let fresh = auth::rotate_token(&root, "alice").unwrap();
+    assert_eq!(call("PUT", &url, "lib/owners/bob", &fresh).status, 200);
+    server.stop();
+}
+
+#[test]
+fn an_open_registry_has_no_token_to_revoke() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (server, _) = start(&tmp.path().join("server"), None);
+    let url = format!("http://{}", server.addr());
+    assert_eq!(call("DELETE", &url, "token", "").status, 400);
+    assert!(auth::is_open(&tmp.path().join("server")).unwrap());
+    server.stop();
+}
+
+#[test]
 fn only_owners_add_native_libraries() {
     let target = "x86_64-unknown-linux-gnu";
     let tmp = tempfile::tempdir().unwrap();

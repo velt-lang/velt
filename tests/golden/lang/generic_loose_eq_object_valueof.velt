@@ -1,0 +1,5 @@
+// A generic body's `==` at `T = unknown` reaches the `any` hooks, which read the
+// object's `valueOf` through `any`, in a program whose own code reads no member through `any`.
+function eq<T>(a: T, b: T): boolean { return a == b; }
+const o: unknown = { valueOf: () => 1 };
+console.log(eq<unknown>(o, 1), eq<unknown>(1, "1"), eq<unknown>(o, 2));

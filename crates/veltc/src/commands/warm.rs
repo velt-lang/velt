@@ -7,8 +7,11 @@
 //! target's default CPU (what `velt build` builds for). The build cache then holds std's
 //! functions, so a project's first build compiles little more than its own code; with clang, as
 //! objects optimized by LLVM (`VELT_STD_OBJECT_FILL`, `std_cache::serve`), so its debug builds
-//! run them too. A marker per
-//! toolchain (`<cache>/warm/<key>`) makes later runs return at once; the toolchain installers
+//! run them too; and then each again in release, for the same two CPUs, which stores the objects
+//! of the std functions marked `noInline()` that release builds link (`std_cache::no_inline`).
+//! A marker per
+//! toolchain (`<cache>/warm/<key>`) makes later runs return at once, also after a run where some
+//! programs failed but not all (the marker names them: they would only fail again); the toolchain installers
 //! start `velt cache warm --background` after installing a version, except in CI (`$CI` set),
 //! whose cache goes with the runner, and when `$VELT_CACHE_WARM` is `off`.
 
@@ -56,10 +59,15 @@ pub fn warm_command(background: bool) -> Result<(), String> {
     std::fs::create_dir_all(&out).map_err(|e| format!("cannot create `{}`: {e}", out.display()))?;
     let started = std::time::Instant::now();
     let mut failed = vec![];
-    for cpu in CPUS {
-        for program in &programs {
-            if !compile(program, cpu, &out) {
-                failed.push(program.display().to_string());
+    // Release builds need clang, without which a release build stores nothing.
+    let modes: &[bool] = if clang { &[false, true] } else { &[false] };
+    for &release in modes {
+        for cpu in CPUS {
+            for program in &programs {
+                let name = program.display().to_string();
+                if !compile(program, cpu, release, &out) && !failed.contains(&name) {
+                    failed.push(name);
+                }
             }
         }
     }
@@ -69,15 +77,30 @@ pub fn warm_command(background: bool) -> Result<(), String> {
         programs.len(),
         started.elapsed().as_secs_f64()
     );
+    // The marker is written when some program compiled: one that no longer compiles warms
+    // nothing, but the others did their part, and a run again would only fail on it again, after
+    // building every other program once more (each background warm-up, each install). When none
+    // did, what failed is likely this machine (no linker, no runtime), and a later run retries.
+    if failed.len() < programs.len() {
+        std::fs::write(&marker, marker_text(&failed))
+            .map_err(|e| format!("cannot write `{}`: {e}", marker.display()))?;
+    }
     if !failed.is_empty() {
-        // A program that no longer compiles warms nothing, but the others did their part.
         return Err(format!(
             "some warm-up programs did not compile: {}",
             failed.join(", ")
         ));
     }
-    std::fs::write(&marker, crate::commands::version::version_line())
-        .map_err(|e| format!("cannot write `{}`: {e}", marker.display()))
+    Ok(())
+}
+
+/// What the marker holds: this velt's version line, then the warm-up programs that failed.
+fn marker_text(failed: &[String]) -> String {
+    let mut text = crate::commands::version::version_line();
+    for f in failed {
+        text.push_str(&format!("\nfailed: {f}"));
+    }
+    text
 }
 
 /// Whether the installers' background warm-up should run: not in CI (`$CI`), whose cache is
@@ -88,9 +111,10 @@ fn wanted_in_background() -> bool {
     !set("CI") && !off
 }
 
-/// Build `program` as an executable in `out` for `cpu`, by a child `velt build`, so one program
-/// that fails stops nothing else. The build stamp is off: an unchanged stamp would skip codegen.
-fn compile(program: &Path, cpu: Option<&str>, out: &Path) -> bool {
+/// Build `program` as an executable in `out` for `cpu`, in release or debug, by a child `velt
+/// build`, so one program that fails stops nothing else. The build stamp is off: an unchanged
+/// stamp would skip codegen.
+fn compile(program: &Path, cpu: Option<&str>, release: bool, out: &Path) -> bool {
     let Ok(exe) = std::env::current_exe() else {
         return false;
     };
@@ -107,6 +131,9 @@ fn compile(program: &Path, cpu: Option<&str>, out: &Path) -> bool {
         .stderr(Stdio::null());
     if let Some(cpu) = cpu {
         cmd.args(["--cpu", cpu]);
+    }
+    if release {
+        cmd.arg("--release").env_remove("VELT_STD_OBJECT");
     }
     cmd.status().is_ok_and(|s| s.success())
 }

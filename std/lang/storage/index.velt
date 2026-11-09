@@ -1,0 +1,2 @@
+// velt/lang/storage: Node's `sessionStorage` global (internal; std/prelude/global/storage.velt).
+export { Storage, sessionStorage } from "./storage";

@@ -24,7 +24,11 @@ mod hints;
 mod infer;
 mod inits;
 mod promise_sites;
+mod promise_vars;
+mod recheck;
 mod sets;
+mod union_names;
+mod var_known;
 mod vars;
 
 use rustc_hash::FxHashSet;
@@ -37,6 +41,7 @@ pub(crate) use groups::Groups;
 pub(crate) use infer::infer_all;
 pub(crate) use inits::InitsSeen;
 pub(crate) use promise_sites::written_init_type;
+pub(crate) use recheck::{adds_errors, first_check_only};
 
 use crate::ctx::Ctx;
 use crate::defs::ThrowSrc;

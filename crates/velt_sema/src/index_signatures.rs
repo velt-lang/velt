@@ -1,13 +1,16 @@
 //! Index signatures (https://veltlang.com/docs/reference/types/ "Objects, arrays, tuples and maps"): an object type
 //! or interface with only an index signature, `{ [key: string]: V }`, is `Record<string, V>`, as
 //! the two are interchangeable in TypeScript. `readonly` is not checked yet, as for
-//! `readonly T[]`. Named members next to an index signature whose values are `any` or `unknown`
-//! (`{ children?: JSXChildren; [key: string]: any }`) are keys of that record too: every type is
-//! one the values have, and a named member reads as `any` (or `unknown`) like any other key.
-//! What Velt cannot represent exactly is an error saying it is not supported yet: named members
-//! next to another index signature (a read of `name` would be `V | null`, and an optional one
-//! needs `undefined`, #930) and a key of Velt's integer types. A `number` key is a string key, as
-//! in JavaScript (`[id: number]: V` is `Record<string, V>`; `r[1]` is `r["1"]`).
+//! `readonly T[]`. Named members next to an index signature (`{ name?: string; [key: string]:
+//! string | undefined }`, `{ children?: JSXChildren; [key: string]: any }`) are keys of that
+//! record too, so every key keeps JavaScript's order: the type is the record viewed with the
+//! named members' types (a "record view"). Each named member's type must be assignable to `V`
+//! (TypeScript's TS2411; an optional one with its `undefined`). A named member reads as its
+//! declared type (an optional one with `undefined`), checked at run time because an index write
+//! may store another `V`; next to `any` or `unknown` values only a required one does, and an
+//! optional one reads as `V`. Any other key reads as `V`. A key of Velt's integer types is an
+//! error saying it is not supported yet. A `number` key is a string key, as in JavaScript
+//! (`[id: number]: V` is `Record<string, V>`; `r[1]` is `r["1"]`).
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -56,28 +59,16 @@ impl Ctx<'_> {
                 );
             }
         }
-        // Next to `[key: string]: any` (or `unknown`) every named member's type is one the
-        // values have, so the type is that record, viewed with the named members' types.
-        let dynamic_values = matches!(
-            self.dynamic(v),
-            Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
-        );
+        // Named members: the record viewed with their types (module docs).
         let mut named = None;
-        if dynamic_values && !fields.is_empty() {
+        if let Some(f) = fields.first() {
             let tag = self.resolve_object(fields, env);
-            if tag == self.ty.error {
+            if tag == self.ty.error
+                || (v != self.ty.error && !self.named_members_fit(tag, fields, v))
+            {
                 ok = false;
             }
-            named = Some((tag, fields[0].name.span));
-        } else if let Some(f) = fields.first() {
-            ok = false;
-            self.error(
-                Diagnostic::error(
-                    format!("a named member (`{}`) next to an index signature is not supported yet (#937)", f.name.name),
-                    f.name.span,
-                )
-                .with_note("an object type with only an index signature is a `Record<string, V>`, and so is one with named members next to `[key: string]: any` (or `unknown`); next to other values, each would need its own type (and an optional one `undefined`, #930)"),
-            );
+            named = Some((tag, f.name.span));
         }
         if !ok {
             return self.ty.error;
@@ -128,15 +119,80 @@ impl Ctx<'_> {
         Some((*self.brands.get(d)?, tag))
     }
 
-    /// The declared type of the required (not optional) named member `name` of record view
-    /// `t`; `None` for an optional one or another key (they read as the record's `V`, #930).
-    pub(crate) fn record_view_member(&self, t: TyId, name: &str) -> Option<TyId> {
-        let (_, tag) = self.record_view(t)?;
+    /// The type named member `name` of record view `t` reads as: its declared type, with
+    /// `undefined` for an optional one. `None` for another key, and for an optional member next
+    /// to `any` or `unknown` values (it reads as the record's `V`, #930).
+    pub(crate) fn record_view_member(&mut self, t: TyId, name: &str) -> Option<TyId> {
+        let (base, tag) = self.record_view(t)?;
         let TyKind::Adt(d, _) = self.ty.kind(tag) else {
             return None;
         };
         let f = self.adt(*d)?.fields.iter().find(|f| f.name == name)?;
-        (!f.optional).then_some(f.ty)
+        let (ty, optional) = (f.ty, f.optional);
+        if !optional {
+            return Some(ty);
+        }
+        let TyKind::Adt(_, args) = self.ty.kind(base) else {
+            return None;
+        };
+        let v = *args.get(1)?;
+        if matches!(
+            self.dynamic(v),
+            Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+        ) {
+            return None;
+        }
+        let undefined = self.ty.undefined();
+        Some(self.union_with(&[ty, undefined], None, Span::default()))
+    }
+
+    /// Is every named member of object type `tag` (written as `fields`) assignable to the index
+    /// signature's values `v`? Reports each one that is not (TypeScript's TS2411).
+    fn named_members_fit(&mut self, tag: TyId, fields: &[ast::ObjectTypeField], v: TyId) -> bool {
+        if matches!(
+            self.dynamic(v),
+            Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+        ) {
+            return true;
+        }
+        let TyKind::Adt(d, _) = self.ty.kind(tag) else {
+            return true;
+        };
+        let members: Vec<(String, TyId, bool)> = match self.adt(*d) {
+            Some(a) => a
+                .fields
+                .iter()
+                .map(|f| (f.name.clone(), f.ty, f.optional))
+                .collect(),
+            None => return true,
+        };
+        let mut ok = true;
+        for (name, ty, optional) in members {
+            let read = match optional {
+                true => {
+                    let undefined = self.ty.undefined();
+                    self.union_with(&[ty, undefined], None, Span::default())
+                }
+                false => ty,
+            };
+            if self.ty.has_error(read) || self.form_assignable(read, v) {
+                continue;
+            }
+            ok = false;
+            let span = fields
+                .iter()
+                .find(|f| f.name.name == name)
+                .map_or(fields[0].name.span, |f| f.name.span);
+            let (shown, values) = (self.display(read), self.display(v));
+            self.error(
+                Diagnostic::error(
+                    format!("the member `{name}` of type `{shown}` is not assignable to the index signature's type `{values}`"),
+                    span,
+                )
+                .with_note("every named member is also a key of the index signature, so its type must be one of the values' types (an optional member's includes `undefined`)"),
+            );
+        }
+        ok
     }
 }
 

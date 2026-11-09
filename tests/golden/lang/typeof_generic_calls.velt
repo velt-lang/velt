@@ -1,0 +1,45 @@
+// A field, variable or parameter typed `typeof f` of a generic function keeps its generic
+// signature: each call instantiates it (#2617).
+function signal<T>(v: T): { value: T } { return { value: v }; }
+function make<T>(f: (n: number) => T): { value: T } { return { value: f(2) }; }
+
+interface Ctx { signal: typeof signal; make: typeof make; }
+const ctx: Ctx = { signal, make };
+const a = ctx.signal(1);
+const b = ctx.signal("x");
+console.log(a.value + 1, b.value.length);
+// Explicit type arguments, and an arrow typed by the instantiation.
+console.log(ctx.signal<number>(5).value * 2);
+console.log(ctx.make((n) => n * 2).value, ctx.make((n) => `n=${n}`).value.length);
+console.log(ctx.make<string>((n) => n.toFixed(1)).value);
+
+// Interface members with a generic call signature.
+interface M1 { signal<T>(v: T): { value: T }; }
+interface M2 { signal: <T>(v: T) => { value: T }; }
+const m1: M1 = { signal };
+const m2: M2 = { signal };
+console.log(m1.signal(true).value, m2.signal([1, 2]).value.length);
+
+// A variable, a parameter, a type literal.
+const s: typeof signal = signal;
+console.log(s(7).value, s("seven").value);
+function useIt(make: typeof signal): string {
+  return `${make(1).value}/${make("a").value}`;
+}
+console.log(useIt(signal), useIt(ctx.signal));
+type Holder = { make: typeof signal };
+const h: Holder = { make: ctx.signal };
+console.log(h.make(2.5).value);
+
+// Destructured, passed on, stored in an array.
+const { signal: sig } = ctx;
+console.log(sig({ n: 1 }).value.n);
+const makers: (typeof signal)[] = [signal, ctx.signal, sig];
+let total = 0;
+for (const mk of makers) total += mk(10).value;
+console.log(total);
+class Box { make: typeof signal = signal; }
+console.log(new Box().make("box").value);
+// An object literal with nothing expected: its field keeps the generic signature.
+const lit = { signal, n: 1 };
+console.log(lit.signal(1).value + lit.n, lit.signal("xy").value.length);

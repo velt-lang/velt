@@ -1,0 +1,33 @@
+// A comparator of an `any[]` that returns an `any` or `unknown` (#2577): its result converts to a
+// number as Node's sort converts it (`true` is 1, `"-1"` is -1, `null` is 0, `NaN` is 0).
+const a: any[] = [3, 1, 2];
+a.sort((x: any, y: any): any => x > y);
+console.log(a);
+const b: any[] = [3, 1, 2];
+b.sort((x: any, y: any): any => (x < y ? "-1" : "1"));
+console.log(b);
+const byString = (x: any, y: any): unknown => (x < y ? "-1" : x > y ? "1" : "0");
+const c: any[] = ["b", "a", "c", "a"];
+const sorted = c.toSorted(byString);
+console.log(sorted, c);
+// Equal by `"0"`, `null` and `NaN`: stable.
+const d: any[] = [{ k: 2, i: 0 }, { k: 1, i: 1 }, { k: 2, i: 2 }, { k: 1, i: 3 }];
+d.sort((x: any, y: any): any => (x.k === y.k ? null : x.k < y.k ? -1 : "x"));
+console.log(d.map((v: any) => v.i).join(","));
+// One that throws: the error passes on and the array stays as it was.
+const e: any[] = [3, 1, 2];
+try {
+  e.sort((x: any, y: any): any => {
+    if (x === 1 || y === 1) throw new Error("stop");
+    return x > y;
+  });
+} catch (err: any) {
+  console.log(err.message, e);
+}
+// A function declared to return an `any`.
+function byNumber(x: any, y: any): any {
+  return x > y ? "1" : x < y ? "-1" : false;
+}
+const f: any[] = [3, 1, 2, 1];
+f.sort(byNumber);
+console.log(f);

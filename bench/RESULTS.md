@@ -1583,3 +1583,38 @@ far less; the release build is the outlier, with 2,283 s of codegen at 100k line
 10k (wall clock under different loads, but over 100× for 10× the code). At 10k lines one clang
 process takes 13.7 s of the 13.9 s, the IR is 635,891 lines (63 per source line), and `main` alone is 32,821 lines:
 the inliner merges the units' entries into it.
+
+## `f16x8` arithmetic against Rust and C (`bench/simd/half_arith.sh`, #2049, 2026-11-07)
+
+Instructions retired per element on an Apple M4, 2^20 elements, 100 passes, each run with 0 and
+with 100 passes and subtracted, fewest of 5. Rust nightly is **nightly-2026-09-30**
+(rustc 1.101.0-nightly 5c543b0b8), as stable Rust 1.99 has no f16 NEON intrinsics; the stable rows
+are Rust 1.99 with `half` 2.7.1. C is Apple clang 21, `-O2 -mcpu=apple-m1 -ffp-contract=off`.
+`axpy` is `y = a * x + y`, `act` is `z = max(x * s + b, 0)`, and `dot` has four `f16` accumulators.
+
+With FP16, Velt's default on Apple arm64:
+
+| kernel | Velt | Rust nightly | C | Velt / Rust |
+|---|---:|---:|---:|---:|
+| axpy | 0.88 | 0.88 | 0.88 | 1.00 |
+| act | 1.00 | 1.00 | 1.00 | 1.00 |
+| dot | 0.34 | 0.34 | 0.34 | 1.00 |
+
+Without FP16 (`--cpu cortex-a53`, run on the same M4), against code that widens to `f32`:
+
+| kernel | Velt `mulAdd` | Velt `mulAddFast` | Rust + `half` | C | `mulAddFast` / Rust |
+|---|---:|---:|---:|---:|---:|
+| axpy | 9.25 | 1.75 | 1.87 | 1.75 | 0.94 |
+| act | 9.13 | 2.38 | 2.00 | 1.88 | 1.19 |
+| dot | 9.75 | 1.47 | 1.62 | 1.47 | 0.91 |
+
+The checksums agree within each comparison: all of the first table and Velt's `mulAdd` without FP16
+give the same bits, and `mulAddFast`, Rust with `half` and C widened give the same bits. Those two
+sets are not compared with each other, as an FMA in `f32` rounds twice.
+
+- `mulAdd` without FP16 costs about five times `mulAddFast`, the price of one rounding: `f64` and
+  the sequence that rounds to odd, with no instruction doing it. Without FP16, take `mulAddFast`
+  unless the last bit must match every CPU.
+- `act` is 1.19 times Rust's because `mulAddFast` narrows and `max` widens again, where the Rust and
+  C kernels stay in `f32` between the two.
+- x86 is not in these tables: this machine runs no x86 code. AVX512-FP16 has not been run at all.

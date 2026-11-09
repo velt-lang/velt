@@ -1,0 +1,13 @@
+class HttpError extends Error {
+  status: number;
+  constructor(s: number, m: string) {
+    super(m);
+    this.status = s;
+  }
+}
+
+type Make = () => Promise<string>;
+const make: Make = () => new Promise((resolve, reject) => {
+  reject(new HttpError(1, "x"));
+});
+make().catch((e) => console.log("c"));

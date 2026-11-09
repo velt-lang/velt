@@ -1,0 +1,25 @@
+class E1 extends Error {
+  a: number = 1;
+}
+
+type F = (n: number) => Promise<string>;
+const f2: F = (n) => new Promise((resolve, reject) => {
+  if (n == 0) {
+    reject(new E1("x"));
+  } else if (n == 1) {
+    reject(new Error("plain"));
+  } else {
+    resolve("ok");
+  }
+});
+for (const n of [0, 1, 2]) {
+  try {
+    console.log(await f2(n));
+  } catch (e) {
+    if (e instanceof E1) {
+      console.log("E1 " + e.a);
+    } else {
+      console.log("f2 " + e.message);
+    }
+  }
+}

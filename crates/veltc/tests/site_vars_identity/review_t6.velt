@@ -1,0 +1,21 @@
+class HttpError extends Error {
+  status: number;
+  constructor(s: number, m: string) {
+    super(m);
+    this.status = s;
+  }
+}
+
+type Handler = (path: string) => Promise<string>;
+const h: Handler = async (path) => {
+  if (path == "") {
+    throw new HttpError(400, "empty");
+  }
+  return path;
+};
+await h("").catch((e) => {
+  if (e instanceof HttpError) {
+    console.log(`s ${e.status}`);
+  }
+  return "x";
+});

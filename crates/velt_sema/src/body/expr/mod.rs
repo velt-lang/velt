@@ -76,6 +76,7 @@ mod dynamic_write;
 mod env_globals;
 mod generic_dynamic;
 mod identity_eq;
+mod overload_sets;
 mod proxy_getters;
 mod static_call;
 mod storage_floats;
@@ -274,6 +275,9 @@ impl FnCx<'_, '_> {
         crate::check_work::add_expr_check();
         let outer = std::mem::take(&mut self.call_temps);
         let h = self.expr_kind(e, exp, want);
+        // A value typed by error-set variables (a rejection reason): its set must be known
+        // (`throws::var_known`).
+        self.cx.value_typed_by_vars(h.ty);
         let temps = std::mem::replace(&mut self.call_temps, outer);
         let h = self.with_lets(temps, h);
         // `Object.keys(r).sort()`: the temporary array it sorted (`in_place_chain`).

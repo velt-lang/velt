@@ -386,10 +386,27 @@ mod no_echo {
     pub fn stop() {}
 }
 
-/// `velt logout <url>`: forget the stored token of that registry.
+/// `velt logout <url>`: revoke the stored token of that registry on the registry, then forget it.
+/// It is forgotten even when the registry can't be reached, with a warning saying it may still work.
 pub fn logout_command(url: &str) -> Result<(), String> {
     let key = vpm::credentials::registry_key(url)?;
     let path = vpm::credentials::default_path()?;
+    let stored = vpm::credentials::Credentials::read(&path)?
+        .token(&key)
+        .map(str::to_string);
+    if let Some(token) = stored {
+        use vpm::remote::Revoked;
+        match vpm::remote::revoke_token(&key, &token) {
+            Ok(Revoked::Revoked) => style::status("Revoked", &format!("the token on {key}")),
+            Ok(Revoked::NotValid) => {}
+            Ok(Revoked::Unsupported) => style::warning(&format!(
+                "{key} can't revoke tokens: the token still works there until its administrator removes it"
+            )),
+            Err(e) => style::warning(&format!(
+                "the token was not revoked ({e}): it still works on {key} until revoked there"
+            )),
+        }
+    }
     if vpm::credentials::logout(&path, &key)? {
         style::status("Removed", &format!("the token for {key}"));
     } else {

@@ -19,9 +19,13 @@ use velt_vir::vir;
 use super::{compile, key, select, statics, stats, take_out, Place, KIND};
 use crate::driver::BuildOptions;
 
+/// What a debug build's objects are compiled with: the small functions they call. Calls of the
+/// others stay calls in its code, as Cranelift compiles them.
+const DEPTH: select::Depth = select::Depth::Small;
+
 /// `VELT_STD_OBJECT_FILL`: compile misses with LLVM and store them (`velt cache warm`), where
 /// clang is available.
-fn fill() -> bool {
+pub(super) fn fill() -> bool {
     std::env::var_os("VELT_STD_OBJECT_FILL").is_some() && velt_codegen_llvm::find_clang().is_some()
 }
 
@@ -82,7 +86,12 @@ pub(in crate::driver) fn serve(
     let misses = missing.len();
     let mut compiled = 0;
     if fill {
-        let stored = compile_missing(program, &names, cg, cache, missing);
+        let optimized = velt_codegen_cl::CodegenOptions {
+            target: cg.target.clone(),
+            optimize: true,
+            cpu: None,
+        };
+        let stored = compile_missing(program, &names, &optimized, cache, missing, DEPTH);
         compiled = stored.len();
         found.extend(stored);
     }
@@ -96,39 +105,40 @@ pub(in crate::driver) fn serve(
         }
     }
     taken.sort_unstable();
-    for &i in &taken {
-        let reached = statics::reached(program, &select::inlinable(program, i));
+    // Every set as keyed, before anything is exported: `inlinable` follows internal functions
+    // only, and exporting one would hide it from the sets after.
+    let linked: Vec<(usize, Vec<usize>)> = (taken.iter())
+        .map(|&i| (i, select::inlinable(program, i, DEPTH)))
+        .collect();
+    for (_, set) in &linked {
+        let reached = statics::reached(program, set);
         statics::export(program, &names, &reached);
     }
-    take_out(program, &taken);
+    take_out(program, &linked, DEPTH);
     if stats() {
         eprintln!(
             "velt: std cache: {} found, {compiled} compiled, {} left in the program",
-            taken.len() - compiled,
+            taken.len().saturating_sub(compiled),
             misses - compiled
         );
     }
     objects
 }
 
-/// Compile `missing` on their own and store them: where each stored one is. One that can't be
-/// compiled alone stays in the program.
-fn compile_missing(
+/// Compile `missing` on their own for `cg`, with what `depth` compiles into them, and store them:
+/// where each stored one is. One that can't be compiled alone stays in the program.
+pub(super) fn compile_missing(
     program: &vir::Program,
     names: &statics::Names,
     cg: &velt_codegen_cl::CodegenOptions,
     cache: &Cache,
     missing: Vec<(usize, Key)>,
+    depth: select::Depth,
 ) -> Vec<(usize, PathBuf)> {
-    let optimized = velt_codegen_cl::CodegenOptions {
-        target: cg.target.clone(),
-        optimize: true,
-        cpu: None,
-    };
     let programs = (missing.iter())
-        .map(|&(i, _)| compile::program_of(program, i, names))
+        .map(|&(i, _)| compile::program_of(program, i, names, depth))
         .collect();
-    let objects = compile::each(programs, &optimized);
+    let objects = compile::each(programs, cg);
     (missing.into_iter().zip(objects))
         .filter_map(|((i, key), object)| {
             let path = compile::store(cache, &key, &object.ok()?)?;
@@ -154,7 +164,7 @@ impl Digests {
         inputs: &key::Inputs,
         i: usize,
     ) -> Key {
-        let set = select::inlinable(program, i);
+        let set = select::inlinable(program, i, DEPTH);
         let declared = select::declared(program, &set);
         let code = set.iter().map(|&j| {
             *(self.code)

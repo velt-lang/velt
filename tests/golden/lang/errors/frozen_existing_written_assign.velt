@@ -1,0 +1,8 @@
+// Node refuses a write to a frozen object, which has no mark at run time here (#2554): a frozen
+// object seen as a type whose fields can be written is refused once the program writes one,
+// here a value frozen where it is, written by `Object.assign`.
+interface Config { name: string; port: number; }
+const config: Config = { name: "app", port: 80 };
+Object.freeze(config);
+Object.assign(config, { port: 81 });
+console.log(config.port);

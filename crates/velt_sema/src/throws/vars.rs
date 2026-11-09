@@ -17,24 +17,26 @@
 //!
 //! After inference the sets are solved (a fixpoint over the variables), the functions' error
 //! types are replaced by their solved forms, and every type is replaced by its solved form
-//! before lowering (`crate::readonly::erase`). The constructs that need a solved set while bodies are checked (a
-//! `catch` variable's type, a `finally` block of a generator, a value converted as its type
-//! written without variables) assume the variables they meet are empty; when one is not, or a
-//! function value's error type differs from the site's set it was stored as, the program is
-//! checked again with the solved sets written in, as before (`FnSites::fallback`). When the
-//! check reports errors and two types that differ in more than their variables were compared
-//! where they must be one type, or a variable was outside a bound, the program is checked
-//! again without variables too (`FnSites::doubted`): its errors are then exactly those of a
-//! check without them. A conversion that fails with the variables and as written fails
-//! without them too, and diagnostics show a type with variables as written (a variable as
-//! nothing), so neither raises that doubt.
+//! before lowering (`crate::readonly::erase`). The constructs that need a solved set while
+//! bodies are checked assume a set for the variables they meet: a `catch` variable's type the
+//! set known so far (`var_known`), a value typed by variables (a rejection reason) and an
+//! `instanceof` test of one an empty set when nothing is known (else the program is checked
+//! again), a `finally` block of a generator and a value converted as its type written without
+//! variables an empty set. When an assumption does not hold, or a function value's error type
+//! differs from the site's set it was stored as, the program is checked again with the solved
+//! sets written in, as before (`FnSites::fallback`). A diagnostic shows a variable as nothing,
+//! which a check without variables shows only while its set is empty: when the check reports
+//! anything (an error or a warning, also from the passes after the rounds) and some set is not
+//! empty, the program is checked again (`Ctx::checked_again`), without any variable when it has
+//! errors (`FnSites::doubted`), else with the solved sets written in, and that check's
+//! diagnostics are the program's.
 //!
 //! The comparisons see the variables in the fields of a non-generic anonymous object type
 //! (`{ print: (d: Doc) => string }`): its plain form is the object type of its fields' plain
 //! types, and after solving it is the first def of its solved shape (`solved_anon_twins`). A
 //! generic one (`T & { $set: (v: T) => void }`) keeps its def, since deferred types over it are
-//! reduced only for the instances sema saw; a mismatch where its fields hold a variable raises
-//! the doubt (`anon_vars_may_mismatch`).
+//! reduced only for the instances sema saw; a mismatch where its fields hold a variable is an
+//! error, which a check without variables then decides.
 
 use rustc_hash::FxHashMap;
 
@@ -48,13 +50,18 @@ pub(crate) struct VarSets {
     /// Union-find parent of each variable (by `TyOp::ErrSite` number).
     parent: Vec<u32>,
     /// The error types stored into each variable (its representative's entry counts).
-    members: Vec<Vec<TyId>>,
+    pub(super) members: Vec<Vec<TyId>>,
     /// Variables each one contains (`i ⊇ j`).
-    edges: Vec<Vec<u32>>,
-    /// Variables a check assumed empty (a `catch` variable's type).
-    assumed_empty: Vec<u32>,
-    /// A function value of a known error type stored as a site's: the set must be that type.
-    exact: Vec<(u32, TyId)>,
+    pub(super) edges: Vec<Vec<u32>>,
+    /// What the checked closures created for each one's site throw, found so far: members
+    /// and variables (`var_known`, which `throws::checks` adds once inference is done).
+    pub(super) closures: Vec<(Vec<TyId>, Vec<u32>)>,
+    /// The sets a check assumed variables have (a `catch` variable's type): empty, or what was
+    /// known when it was checked (`var_known`).
+    pub(super) assumed: Vec<(u32, TyId)>,
+    /// A function value of a known error type stored as a site's, or a promise or a rejected
+    /// value retyped as one with a variable (`promise_vars`): the set must be that type.
+    pub(super) exact: Vec<(u32, TyId)>,
     /// `t` with every variable replaced by `never` (the type as written).
     plain: FxHashMap<TyId, TyId>,
     /// The earliest type id each plain or solved type stands for: the id it would have in a
@@ -86,16 +93,17 @@ impl VarSets {
         self.first.insert(t, plain.0);
     }
 
-    fn ensure(&mut self, v: u32) {
+    pub(super) fn ensure(&mut self, v: u32) {
         while self.parent.len() <= v as usize {
             let n = self.parent.len() as u32;
             self.parent.push(n);
             self.members.push(vec![]);
             self.edges.push(vec![]);
+            self.closures.push(Default::default());
         }
     }
 
-    fn find(&mut self, v: u32) -> u32 {
+    pub(super) fn find(&mut self, v: u32) -> u32 {
         self.ensure(v);
         let mut r = v;
         while self.parent[r as usize] != r {
@@ -110,7 +118,7 @@ impl VarSets {
         r
     }
 
-    fn union(&mut self, a: u32, b: u32) {
+    pub(super) fn union(&mut self, a: u32, b: u32) {
         let (a, b) = (self.find(a), self.find(b));
         if a == b {
             return;
@@ -120,6 +128,7 @@ impl VarSets {
         self.members[a as usize].extend(ms);
         let es = std::mem::take(&mut self.edges[b as usize]);
         self.edges[a as usize].extend(es);
+        super::var_known::merge_closures(&mut self.closures, a, b);
     }
 }
 
@@ -165,121 +174,6 @@ impl Ctx<'_> {
         m
     }
 
-    /// Does a generic anonymous object type in `t` have a field type with a variable? The
-    /// comparisons look into the fields of non-generic ones only ([`Ctx::seen_anon`]).
-    pub(crate) fn anon_fields_hold_vars(&mut self, t: TyId) -> bool {
-        if !self.fn_sites.use_vars || self.fn_sites.vars.is_empty() {
-            return false;
-        }
-        let mut seen = rustc_hash::FxHashSet::default();
-        let mut stack = vec![t];
-        while let Some(t) = stack.pop() {
-            if !seen.insert(t) || seen.len() > 4096 {
-                continue;
-            }
-            let k = self.ty.kind(t).clone();
-            stack.extend(crate::types::children(&k));
-            if let TyKind::Adt(d, _) = k {
-                if self.adt(d).is_some_and(|a| a.kind == AdtKind::Anon) {
-                    let fs = self.anon_field_tys(d);
-                    if self.seen_anon(d).is_none() && fs.iter().any(|f| self.mentions_err_var(*f)) {
-                        return true;
-                    }
-                    stack.extend(fs);
-                }
-            }
-        }
-        false
-    }
-
-    /// Could a mismatch between `a` and `b` come from a variable in a field of a generic
-    /// anonymous object type, which the comparisons don't see? Only when one of them has such a field
-    /// and the two have one shape but for their error types: an object type converted to an
-    /// interface it does not implement, or to an object type with other fields, is a mismatch
-    /// without variables too.
-    pub(crate) fn anon_vars_may_mismatch(&mut self, a: TyId, b: TyId) -> bool {
-        (self.anon_fields_hold_vars(a) || self.anon_fields_hold_vars(b))
-            && self.same_but_errors(a, b, 0)
-    }
-
-    /// Are `a` and `b` one type but for their error types (what function types throw, what
-    /// promises reject with), field by field for anonymous object types? True where that is not
-    /// known (deferred types, unions, interface values a type may implement).
-    fn same_but_errors(&mut self, a: TyId, b: TyId, depth: u32) -> bool {
-        if a == b || depth > 32 {
-            return true;
-        }
-        let same = |cx: &mut Self, x: &[TyId], y: &[TyId]| {
-            x.len() == y.len()
-                && x.iter()
-                    .zip(y)
-                    .all(|(p, q)| cx.same_but_errors(*p, *q, depth + 1))
-        };
-        if self.union_def(a).is_some() || self.union_def(b).is_some() {
-            return true;
-        }
-        let anon = |cx: &Self, d: crate::hir::DefId| {
-            cx.adt(d)
-                .is_some_and(|a| a.kind == crate::hir::AdtKind::Anon)
-        };
-        match (self.ty.kind(a).clone(), self.ty.kind(b).clone()) {
-            (TyKind::Op(..), _) | (_, TyKind::Op(..)) | (TyKind::Error, _) | (_, TyKind::Error) => {
-                true
-            }
-            (
-                TyKind::FnPtr {
-                    params: p,
-                    ret: r,
-                    rest: pr,
-                    ..
-                },
-                TyKind::FnPtr {
-                    params: q,
-                    ret: s,
-                    rest: qr,
-                    ..
-                },
-            ) => pr == qr && same(self, &p, &q) && same(self, &[r], &[s]),
-            (TyKind::Promise(x, _), TyKind::Promise(y, _))
-            | (TyKind::Array(x), TyKind::Array(y))
-            | (TyKind::Shared(x), TyKind::Shared(y)) => same(self, &[x], &[y]),
-            (TyKind::Option(x, n), TyKind::Option(y, m)) => n == m && same(self, &[x], &[y]),
-            (TyKind::Map(x, y), TyKind::Map(z, w))
-            | (TyKind::Result(x, y), TyKind::Result(z, w)) => same(self, &[x, y], &[z, w]),
-            (TyKind::Tuple(xs), TyKind::Tuple(ys)) => same(self, &xs, &ys),
-            (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) if d == e => same(self, &xs, &ys),
-            (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) if anon(self, d) && anon(self, e) => {
-                let fields = |cx: &Self, d| {
-                    cx.adt(d)
-                        .map(|a| {
-                            a.fields
-                                .iter()
-                                .map(|f| (f.name.clone(), f.optional, f.ty))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default()
-                };
-                let (fa, fb) = (fields(self, d), fields(self, e));
-                if fa.len() != fb.len() || fa.iter().zip(&fb).any(|(x, y)| x.0 != y.0 || x.1 != y.1)
-                {
-                    return false;
-                }
-                let ta: Vec<TyId> = fa.iter().map(|f| self.subst(f.2, &xs)).collect();
-                let tb: Vec<TyId> = fb.iter().map(|f| self.subst(f.2, &ys)).collect();
-                same(self, &ta, &tb)
-            }
-            // A class instance converted to an object type is copied field by field.
-            (TyKind::Adt(..), TyKind::Adt(..)) => true,
-            // An object type is converted to an interface only by an implementation, which an
-            // anonymous object type does not have.
-            (TyKind::Dyn(..), TyKind::Adt(d, _)) | (TyKind::Adt(d, _), TyKind::Dyn(..)) => {
-                !anon(self, d)
-            }
-            (TyKind::Dyn(..), _) | (_, TyKind::Dyn(..)) => true,
-            _ => false,
-        }
-    }
-
     /// `t` with every variable replaced by `never`: the type as written.
     pub(crate) fn plain_type(&mut self, t: TyId) -> TyId {
         if let Some(&p) = self.fn_sites.var_sets.plain.get(&t) {
@@ -317,8 +211,8 @@ impl Ctx<'_> {
     /// is not generic and does not reach itself? After solving, such a def is the def of its
     /// solved shape ([`Ctx::solved_anon_twins`]). A generic one (`T & { $set: (v: T) => void
     /// }`) is not: deferred types over it are reduced for the instances sema saw, so it keeps
-    /// its def, and a mismatch it may cause is checked again without variables
-    /// ([`Ctx::anon_vars_may_mismatch`]).
+    /// its def, and a mismatch it may cause is an error, which a check without variables then
+    /// decides.
     fn seen_anon(&self, d: DefId) -> Option<()> {
         let a = self.adt(d)?;
         (a.kind == AdtKind::Anon && a.generics.names.is_empty() && !self.reaches_itself(d))
@@ -411,11 +305,7 @@ impl Ctx<'_> {
         if a == b || !self.fn_sites.use_vars {
             return a == b;
         }
-        let same = self.unify_err_vars(a, b);
-        if !same && (self.mentions_err_var(a) || self.mentions_err_var(b)) {
-            self.fn_sites.set_doubt();
-        }
-        same
+        self.unify_err_vars(a, b)
     }
 
     /// Are `a` and `b` pairwise equal but for their variables? Then they are unified.
@@ -498,7 +388,7 @@ impl Ctx<'_> {
     }
 
     /// The variables among the members of error type `t`.
-    fn vars_of(&mut self, t: TyId) -> Vec<u32> {
+    pub(super) fn vars_of(&mut self, t: TyId) -> Vec<u32> {
         let ms = self.error_members(t);
         ms.into_iter().filter_map(|m| self.err_var(m)).collect()
     }
@@ -552,7 +442,7 @@ impl Ctx<'_> {
             return;
         }
         if let Some(v) = self.err_var(t) {
-            self.fn_sites.var_sets.assumed_empty.push(v);
+            self.fn_sites.var_sets.assumed.push((v, self.ty.never));
             return;
         }
         let mut parts = crate::types::children(self.ty.kind(t));
@@ -609,7 +499,7 @@ impl Ctx<'_> {
         for m in self.error_members(t) {
             match self.err_var(m) {
                 Some(v) if self.fn_sites.trap_vars.contains(&v) => {
-                    self.fn_sites.var_sets.assumed_empty.push(v)
+                    self.fn_sites.var_sets.assumed.push((v, self.ty.never))
                 }
                 _ => keep.push(m),
             }
@@ -626,7 +516,7 @@ impl Ctx<'_> {
         let mut keep = vec![];
         for m in self.error_members(t) {
             match self.err_var(m) {
-                Some(v) => self.fn_sites.var_sets.assumed_empty.push(v),
+                Some(v) => self.fn_sites.var_sets.assumed.push((v, self.ty.never)),
                 None => keep.push(m),
             }
         }
@@ -663,7 +553,8 @@ impl Ctx<'_> {
                 break;
             }
         }
-        let mut ok = !self.fn_sites.var_sets.unsupported;
+        let mut ok = !self.fn_sites.var_sets.unsupported && self.fn_sites.reject_values == 0;
+        self.fn_sites.sets_empty = Some(reps.iter().all(|&r| sets[r as usize].is_empty()));
         for (v, &r) in reps.iter().enumerate() {
             let s = self.error_union(&sets[r as usize]).unwrap_or(self.ty.never);
             let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v as u32), vec![]));
@@ -677,13 +568,13 @@ impl Ctx<'_> {
         ok
     }
 
-    /// Are the variables a check assumed empty (a `catch` variable's type) empty?
+    /// Do the variables have the sets a check assumed (empty, or what was known then)?
     pub(crate) fn assumptions_hold(&mut self) -> bool {
-        let never = self.ty.never;
-        let assumed = std::mem::take(&mut self.fn_sites.var_sets.assumed_empty);
-        assumed.into_iter().all(|v| {
+        let assumed = std::mem::take(&mut self.fn_sites.var_sets.assumed);
+        assumed.into_iter().all(|(v, t)| {
             let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v), vec![]));
-            self.fn_sites.solved.get(&var).is_none_or(|s| *s == never)
+            let s = self.fn_sites.solved.get(&var).copied();
+            s.unwrap_or(self.ty.never) == t
         })
     }
 
@@ -768,14 +659,17 @@ impl Ctx<'_> {
     /// The solved sets as seeds for checking the program again (`FnSites::fallback`).
     pub(crate) fn var_seeds(&mut self) {
         self.fn_sites.fallback();
-        let spans = self.fn_sites.vars.clone();
-        for (v, span) in spans.into_iter().enumerate() {
-            let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v as u32), vec![]));
-            let s = self.fn_sites.solved.get(&var).copied();
-            let Some(s) = s.filter(|s| *s != self.ty.never) else {
+        // Every site of a variable: a function type's result `Promise<T>` shares its function
+        // type's (`fn_types`), and a check without variables has a set for each.
+        let mut spans: Vec<(TyId, velt_common::Span)> = (self.fn_sites.var_of.iter())
+            .map(|(s, v)| (*v, *s))
+            .collect();
+        spans.sort_by_key(|(v, s)| (v.0, s.file, s.lo, s.hi));
+        let seeds = self.seed_sets();
+        for (var, span) in spans {
+            let Some(ms) = seeds.get(&var).filter(|ms| !ms.is_empty()).cloned() else {
                 continue;
             };
-            let ms: Vec<_> = self.error_members(s);
             let ps: Vec<_> = ms.into_iter().filter_map(|m| self.port_type(m)).collect();
             self.add_seed(span, ps);
         }

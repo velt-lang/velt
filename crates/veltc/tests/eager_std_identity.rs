@@ -10,6 +10,8 @@
 //! the code loading std on demand changed: `Plan::vir_identity_queue` in crates/xtask/src/plan.rs).
 
 mod no_window;
+#[path = "eager_std_identity/site_vars.rs"]
+mod site_vars;
 mod test_dir;
 
 use std::path::{Path, PathBuf};

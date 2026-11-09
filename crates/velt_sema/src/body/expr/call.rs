@@ -379,11 +379,17 @@ impl FnCx<'_, '_> {
 
     /// Call through a function value (`TyKind::FnPtr`).
     pub(crate) fn call_value(&mut self, f: hir::Expr, args: &[ast::Expr], span: Span) -> hir::Expr {
+        self.cx.reject_called(f.ty);
         let f = match self.dynamic_apply(f, args, span) {
             Ok(h) => return h,
             Err(f) => f,
         };
         let f = self.fn_bound_value(f).unwrap_or_else(|f| f);
+        // An overloaded function's value (`overload_sets`).
+        let f = match self.overload_set_call("", f, &[], args, None, span) {
+            Ok(h) => return h,
+            Err(f) => f,
+        };
         // A generic function value: a call of its interface's one method (`crate::generic_fns`).
         if let Some(g) = self.cx.generic_sig(f.ty) {
             let s = super::iface_call::IfaceSlot {

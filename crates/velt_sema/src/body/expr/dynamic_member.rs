@@ -16,11 +16,16 @@ use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// A member of an `any` is read, called or written here: lowering adds the member slots
-    /// (`Program::dyn_members`). The standard library's own dynamic operations (`Proxy` and
-    /// `Reflect`, std/lang/proxy/index.velt) don't count: they run only in a program whose own
-    /// code constructs a `Proxy` or calls `Reflect`, which counts there (`proxy.rs`).
+    /// (`Program::dyn_members`). Std code counts as a program's own does: its bodies are checked
+    /// once they are live (`lazy_std`), and a std function that reads a member of a value it
+    /// holds as `any` needs the slots as much (#2578). The modules lowering calls into by name
+    /// (`lazy_std::called_by_name`: the `any` hooks, `Proxy` and `Reflect`, the prelude, ...)
+    /// don't count, but their test files do: their dynamic operations run for an operation of
+    /// the program's own code on an `any`, which counts there (`proxy.rs`, `any_text.rs`).
     pub(crate) fn note_dyn_members(&mut self) {
-        if !self.cx.scopes[self.module].is_std {
+        let m = &self.cx.modules[self.module];
+        let by_name = crate::body::lazy_std::called_by_name(&m.path) && !m.path.ends_with(".test");
+        if !m.is_std || !by_name {
             self.cx.note_dyn_members();
         }
     }

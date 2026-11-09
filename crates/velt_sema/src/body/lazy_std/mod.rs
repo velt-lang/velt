@@ -236,9 +236,21 @@ pub(crate) fn plan(cx: &mut Ctx) {
     plan_defs(cx, 0);
 }
 
+/// Is the std module at `path` one lowering calls into by name ([`BY_NAME`], [`HELPERS`])?
+pub(crate) fn called_by_name(path: &str) -> bool {
+    (BY_NAME.iter().chain(HELPERS)).any(|p| in_module(path, p))
+}
+
+/// Is `path` the std module or directory `p`, or inside it (`std/lang/sort` is not in
+/// `std/lang/so`)?
+fn in_module(path: &str, p: &str) -> bool {
+    path.strip_prefix(p)
+        .is_some_and(|rest| rest.is_empty() || p.ends_with('/') || rest.starts_with('/'))
+}
+
 /// How module `m` is checked; `lazy`: the program does not ask for it whole.
 fn mode_of(m: &crate::SourceModule, lazy: bool) -> Mode {
-    let in_list = |list: &[&str]| list.iter().any(|p| m.path.starts_with(p));
+    let in_list = |list: &[&str]| list.iter().any(|p| in_module(&m.path, p));
     Mode {
         whole: !(lazy && m.is_std && crate::module_scripts::script_fns(m).is_empty()),
         named: match m.is_std {

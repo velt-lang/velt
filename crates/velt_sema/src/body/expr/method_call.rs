@@ -126,6 +126,11 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        // A field holding an overloaded function's value (`overload_sets`).
+        let recv = match self.overload_set_field_call(recv, prop, type_args, args, exp, span) {
+            Ok(h) => return h,
+            Err(recv) => recv,
+        };
         // A comparator of `any` values may throw from what it reads: std/prelude/sort.velt.
         let dynamic_sort = self.dynamic_sort_name(recv.ty, prop, args);
         let prop = dynamic_sort.as_ref().unwrap_or(prop);

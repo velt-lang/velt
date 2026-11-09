@@ -218,6 +218,14 @@ pub(super) fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generic
     let (mut ret, ret_span) = match &sig.ret {
         // A decorator's result type says where it may be used (`crate::decorators`): no type.
         Some(t) if sig.is_decorator => (cx.ty.unit, Some(t.span)),
+        // A function's or closure's `Promise<T>` result may get an error-set variable
+        // (`throws::promise_vars`); a method's is compared with the one it implements.
+        Some(t) if matches!(kind, FnKind::Free | FnKind::Closure) => {
+            let outer = cx.fn_sites.promise_var_at.replace(t.span);
+            let r = cx.resolve_async_aware(t, &env, sig.is_async, sig.is_generator);
+            cx.fn_sites.promise_var_at = outer;
+            (r, Some(t.span))
+        }
         Some(t) => (
             cx.resolve_async_aware(t, &env, sig.is_async, sig.is_generator),
             Some(t.span),

@@ -1,0 +1,2 @@
+frozen_existing_written_any.velt:6:1: error: `Object.freeze` of a `Config`, in a program that assigns field `port`, is not supported yet
+frozen_existing_written_any.velt:8:3: assigned here

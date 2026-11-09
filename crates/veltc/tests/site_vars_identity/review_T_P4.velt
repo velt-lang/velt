@@ -1,0 +1,24 @@
+class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+type Handler<T> = (input: T) => Promise<T>;
+type Middleware<T> = (input: T, next: Handler<T>) => Promise<T>;
+
+function wrap<T>(m: Middleware<T>, h: Handler<T>): Handler<T> {
+  return (x) => m(x, h);
+}
+
+const inner: Handler<string> = async (s) => {
+  if (s == "") {
+    throw new HttpError(400, "empty");
+  }
+  return s + "!";
+};
+const outer = wrap<string>(async (s, next) => "<" + (await next(s)) + ">", inner);
+
+console.log(await outer("a"));

@@ -1,0 +1,7 @@
+true 1
+true s
+true { k: 1 }
+true 1
+false 2
+false undefined
+undefined null 1

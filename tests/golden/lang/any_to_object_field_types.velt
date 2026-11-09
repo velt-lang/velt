@@ -1,0 +1,31 @@
+// Converting an `any` holding an object literal to an object type whose fields the literal's own
+// field types differ from (#2554): `unknown`, `any` and `object` fields, unions and nullable
+// fields, and a field the literal holds `undefined` or `null` in. Only the conversion reads the
+// object's members through `any`.
+interface Unknown { a: boolean; v: unknown; }
+const u = { a: true, v: 1 } as unknown as Unknown;
+console.log(u.a, u.v);
+
+interface Any { a: boolean; v: any; }
+const y = { a: true, v: "s" } as unknown as Any;
+console.log(y.a, y.v);
+
+interface Obj { a: boolean; v: object; }
+const o = { a: true, v: { k: 1 } } as unknown as Obj;
+console.log(o.a, o.v);
+
+interface Either { a: boolean; v: number | string; }
+const e = { a: true, v: 1 } as unknown as Either;
+console.log(e.a, e.v);
+
+interface Nullable { a: boolean; v: number | null; }
+const n = { a: false, v: 2 } as unknown as Nullable;
+console.log(n.a, n.v);
+
+interface Reason { aborted: boolean; reason: unknown; }
+const r = { aborted: false, reason: undefined } as unknown as Reason;
+console.log(r.aborted, r.reason);
+
+// The `undefined` and `null` an object literal holds, read through `any`.
+const held: any = { a: 1, v: undefined, w: null };
+console.log(held.v, held.w, held.a);

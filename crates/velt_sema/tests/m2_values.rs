@@ -525,7 +525,10 @@ fn typeof_of_a_function_generic_over_errors_only() {
         func(&p, "main").throws.is_none(),
         "timer errors are uncaught"
     );
-    let r = err_src("function id<T>(x: T): T { return x; } function main() { let f: typeof id; }");
+    // A generic function with a written result: its generic type, as in TypeScript (#2617).
+    ok_src("function id<T>(x: T): T { return x; } function main() { const f: typeof id = id; console.log(f(1)); }");
+    // With an inferred result its type needs the body: not supported yet.
+    let r = err_src("function id<T>(x: T) { return x; } function main() { let f: typeof id; }");
     assert!(
         r.contains("of a generic function is not supported yet"),
         "{r}"

@@ -514,11 +514,13 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "logout",
-        summary: "Forget your token for a registry server",
+        summary: "Revoke and forget your token for a registry server",
         usage: &["logout <registry-url>"],
-        about: "Removes the registry's token from $VELT_HOME/credentials.json.",
+        about: "Revokes the registry's stored token on the registry, so a copy of it stops \
+                working too, and removes it from $VELT_HOME/credentials.json. The token is \
+                removed even when the registry can't revoke it, with a warning.",
         options: &[],
-        examples: &[("velt logout https://registry.example.com", "remove its token")],
+        examples: &[("velt logout https://registry.example.com", "revoke and remove its token")],
     },
     CommandHelp {
         name: "yank",

@@ -1,0 +1,63 @@
+class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+type Handler = (path: string) => Promise<string>;
+
+const byName = new Map<string, Handler>();
+const list: Handler[] = [];
+
+class Router {
+  fallback: Handler;
+  constructor(h: Handler) {
+    this.fallback = h;
+  }
+}
+
+interface Route {
+  path: string;
+  run: Handler;
+}
+
+const routes: Route[] = [];
+
+byName.set("a", async (p) => {
+  if (p == "") {
+    throw new HttpError(400, "map");
+  }
+  return "map " + p;
+});
+list.push(async (p) => {
+  if (p == "") {
+    throw new HttpError(401, "array");
+  }
+  return "array " + p;
+});
+const router = new Router(async (p) => {
+  if (p == "") {
+    throw new HttpError(404, "field");
+  }
+  return "field " + p;
+});
+routes.push({
+  path: "/x",
+  run: async (p) => {
+    if (p == "") {
+      throw new HttpError(500, "object");
+    }
+    return "object " + p;
+  },
+});
+
+async function tryAll(p: string): Promise<void> {
+  const hs: Handler[] = [byName.get("a")!, list[0], router.fallback, routes[0].run];
+  for (const h of hs) {
+    console.log(await h(p));
+  }
+}
+
+await tryAll("/q");

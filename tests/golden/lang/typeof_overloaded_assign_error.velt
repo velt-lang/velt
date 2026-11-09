@@ -1,0 +1,7 @@
+// A function of one signature is not a value of an overloaded function's type (TS2322) (#2617).
+function pick<T extends string>(x: T): T;
+function pick<T extends number>(x: T): T;
+function pick<T>(x: T): T { return x; }
+function other(x: string): string { return x; }
+const p: typeof pick = other;
+console.log(p("a"));

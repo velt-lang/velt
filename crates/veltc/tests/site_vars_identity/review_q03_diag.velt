@@ -1,0 +1,11 @@
+class E1 extends Error {
+  n: number = 4;
+}
+
+type P = () => Promise<number>;
+
+const f: P = async () => {
+  throw new E1("x");
+};
+const k: number = f;
+const k2: string = f();

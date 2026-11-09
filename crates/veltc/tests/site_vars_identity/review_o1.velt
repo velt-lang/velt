@@ -1,0 +1,26 @@
+class E1 extends Error {}
+
+type F = () => void;
+
+const fs: F[] = [];
+
+function a(n: number): void {
+  if (n > 0) {
+    const g = b;
+    g(n - 1);
+  }
+}
+
+function b(n: number): void {
+  fs[0]();
+  a(n);
+}
+
+fs.push(() => {
+  throw new E1("x");
+});
+try {
+  a(2);
+} catch (e) {
+  console.log("caught " + e.message);
+}

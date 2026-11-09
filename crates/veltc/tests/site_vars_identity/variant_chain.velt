@@ -1,0 +1,60 @@
+class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+type Next = () => Promise<string>;
+type Middleware = (path: string, next: Next) => Promise<string>;
+type Handler = (path: string) => Promise<string>;
+
+const middleware: Middleware[] = [];
+let handler: Handler = async (path) => "none " + path;
+
+function use(m: Middleware): void {
+  middleware.push(m);
+}
+
+function route(h: Handler): void {
+  handler = h;
+}
+
+use(async (path, next) => {
+  try {
+    return await next();
+  } catch (e) {
+    if (e instanceof HttpError) {
+      return `error ${e.status}: ${e.message}`;
+    }
+    throw e;
+  }
+});
+use(async (path, next) => {
+  const r = await next();
+  return "[" + r + "]";
+});
+use(async (path, next) => {
+  if (path == "/deny") {
+    throw new HttpError(403, "denied");
+  }
+  return await next();
+});
+route(async (path) => {
+  if (path == "") {
+    throw new HttpError(400, "empty");
+  }
+  return "ok " + path;
+});
+
+async function dispatch(i: number, path: string): Promise<string> {
+  if (i == middleware.length) {
+    return await handler(path);
+  }
+  return await middleware[i](path, () => dispatch(i + 1, path));
+}
+
+for (const p of ["/a", "", "/deny"]) {
+  console.log(await dispatch(0, p));
+}

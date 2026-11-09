@@ -1,7 +1,9 @@
 //! The std cache (#1728 step 3): std's functions compiled once per variant, stored in the build
 //! cache, and linked into every program that compiles the same code (design/std-object.md "The
-//! std cache"). Release builds use it behind `VELT_STD_OBJECT=1`, through [`split`] and [`link`];
-//! debug builds by default, through [`serve::serve`], where a miss stays in the program.
+//! std cache"). Release builds use it by default for the functions std marks `noInline()`,
+//! through [`no_inline::serve`], and for all it serves behind `VELT_STD_OBJECT=1`, through
+//! [`split`] and [`link`]; debug builds by default, through [`serve::serve`]. Outside
+//! `VELT_STD_OBJECT=1`, a miss stays in the program.
 //!
 //! - Std's code is std's own and what std's generators wrote for the program (`select::is_std`).
 //! - After lowering, every std function that may be served (`select`) gets a key (`key`): its
@@ -22,12 +24,14 @@
 
 mod compile;
 mod key;
+mod no_inline;
 mod select;
-pub(super) mod serve;
+mod serve;
+pub(super) mod stage;
 mod statics;
 mod turn;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use velt_build_cache::Key;
@@ -55,8 +59,10 @@ fn min_misses() -> usize {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Use {
     Off,
-    /// [`split`] and [`link`].
+    /// [`split`] and [`link`] (`VELT_STD_OBJECT=1`).
     Release,
+    /// A release build's default, [`no_inline::serve`]: only what std marks `noInline()`.
+    NoInline,
     /// [`serve::serve`].
     Debug,
 }
@@ -66,10 +72,12 @@ pub(super) enum Use {
 /// `--host` build, whose directory holds what the build writes and nothing else
 /// (`commands::host`).
 ///
-/// Release builds: `VELT_STD_OBJECT=1`, by LLVM without debug info (the cached objects carry no
-/// line info, and the cache holds LLVM's code). Debug builds: unless `VELT_STD_OBJECT=0`, with
-/// either backend and with `-g`: stepping stays in the program's own code, as the objects have no
-/// lines to step through. WebAssembly has no objects to find: its programs compile everything.
+/// Release builds: by LLVM without debug info (the cached objects carry no line info, and the
+/// cache holds LLVM's code); with `VELT_STD_OBJECT=1` every function the cache serves, unless
+/// `VELT_STD_OBJECT=0` those std marks `noInline()`. Debug builds: unless `VELT_STD_OBJECT=0`,
+/// with either backend and with `-g`: stepping stays in the program's own code, as the objects
+/// have no lines to step through. WebAssembly has no objects to find: its programs compile
+/// everything (unless `VELT_STD_OBJECT=1`).
 pub(super) fn wanted(opts: &BuildOptions) -> Use {
     if opts.emit != super::Emit::Exe || opts.report_numbers || opts.host.is_some() {
         return Use::Off;
@@ -78,9 +86,15 @@ pub(super) fn wanted(opts: &BuildOptions) -> Use {
     if opts.release {
         let llvm = crate::backend::Backend::resolve(opts.backend, opts.release).0
             == crate::backend::Backend::Llvm;
-        return match !opts.debug_info && llvm && setting.is_ok_and(|v| v == "1") {
-            true => Use::Release,
-            false => Use::Off,
+        if opts.debug_info || !llvm {
+            return Use::Off;
+        }
+        let wasm = velt_codegen_llvm::is_wasm(&opts.target());
+        return match setting.as_deref() {
+            Ok("1") => Use::Release,
+            Ok("0") => Use::Off,
+            _ if wasm => Use::Off,
+            _ => Use::NoInline,
         };
     }
     match setting.is_ok_and(|v| v == "0") || velt_codegen_llvm::is_wasm(&opts.target()) {
@@ -208,19 +222,10 @@ pub(super) fn split(
         return plan;
     }
     let inputs = key::Inputs::of(opts, cg);
+    let mut memo = HashMap::new();
     let looked_up: Vec<(usize, Key, Option<PathBuf>)> = (candidates.iter())
         .map(|&i| {
-            let set = select::inlinable(program, i);
-            let declared = select::declared(program, &set);
-            let code = (set
-                .iter()
-                .map(|&j| key::Code::of(&program.funcs[j], &canon)))
-            .chain(
-                declared
-                    .iter()
-                    .map(|&j| key::Code::declared(&program.funcs[j])),
-            );
-            let key = inputs.key(code);
+            let key = release_key(program, &canon, &inputs, i, DEPTH_ALL, &mut memo);
             (i, key, cache.path_of(KIND, &key))
         })
         .collect();
@@ -237,10 +242,10 @@ pub(super) fn split(
     for (i, key, found) in looked_up {
         let object = match found {
             Some(_) => Object::Found(key),
-            None => Object::Compile(key, compile::program_of(program, i, &names)),
+            None => Object::Compile(key, compile::program_of(program, i, &names, DEPTH_ALL)),
         };
         let symbol = program.funcs[i].symbol.clone();
-        let mut calls: Vec<String> = (select::inlinable(program, i).into_iter())
+        let mut calls: Vec<String> = (select::inlinable(program, i, DEPTH_ALL).into_iter())
             .flat_map(|j| select::referenced(&program.funcs[j]))
             .filter(|c| *c != i && taken.contains(c))
             .map(|c| program.funcs[c].symbol.clone())
@@ -255,8 +260,13 @@ pub(super) fn split(
     }
     let mut taken: Vec<usize> = taken.into_iter().collect();
     taken.sort_unstable();
-    for &i in &taken {
-        let reached = statics::reached(program, &select::inlinable(program, i));
+    // Every set as keyed, before anything is exported: `inlinable` follows internal functions
+    // only, and exporting one would hide it from the sets after.
+    let linked: Vec<(usize, Vec<usize>)> = (taken.iter())
+        .map(|&i| (i, select::inlinable(program, i, DEPTH_ALL)))
+        .collect();
+    for (_, set) in &linked {
+        let reached = statics::reached(program, set);
         statics::export(program, &names, &reached);
     }
     if stats() {
@@ -267,8 +277,44 @@ pub(super) fn split(
             .count();
         eprintln!("velt: std cache: {named} statics named");
     }
-    take_out(program, &taken);
+    take_out(program, &linked, DEPTH_ALL);
     plan
+}
+
+/// What [`split`]'s objects (`VELT_STD_OBJECT=1`) are compiled with: the small functions they
+/// call, as before release builds served `noInline()` functions by default.
+const DEPTH_ALL: select::Depth = select::Depth::Small;
+
+/// A release build's key of std function `i`: at `Depth::Whole` a mark that says so, then its
+/// code and what it is compiled with at `depth` (`select::inlinable`), then what its object
+/// declares (`select::declared`). `memo`: each function's code, worked out once per build (a
+/// function is in the set of everything that reaches it). The mark keeps apart two objects of one
+/// set: at `Depth::Small` the object calls the program's copies of what it doesn't inline, at
+/// `Depth::Whole` its own, which the program then doesn't export.
+fn release_key(
+    program: &vir::Program,
+    canon: &Canon,
+    inputs: &key::Inputs,
+    i: usize,
+    depth: select::Depth,
+    memo: &mut HashMap<usize, key::Code>,
+) -> Key {
+    let set = select::inlinable(program, i, depth);
+    let declared = select::declared(program, &set);
+    let mut code: Vec<key::Code> = vec![];
+    if depth == select::Depth::Whole {
+        code.push(key::Code {
+            symbol: String::new(),
+            text: "own copies of every callee up to noInline()".into(),
+            attrs: String::new(),
+        });
+    }
+    for &j in &set {
+        let of = || key::Code::of(&program.funcs[j], canon);
+        code.push(memo.entry(j).or_insert_with(of).clone());
+    }
+    code.extend((declared.iter()).map(|&j| key::Code::declared(&program.funcs[j])));
+    inputs.key(code)
 }
 
 /// After `program` is optimized: link what it still calls of what [`split`] took out, compiling
@@ -349,37 +395,48 @@ fn link_with(
     Ok(out)
 }
 
-/// Make the functions `linked` declarations, and every function their objects may refer to (what
-/// they refer to, and what the small functions they may inline refer to) visible to them.
-fn take_out(program: &mut vir::Program, linked: &[usize]) {
-    let linked_set: HashSet<usize> = linked.iter().copied().collect();
-    let mut pending: Vec<usize> = linked.to_vec();
-    let mut seen = linked_set.clone();
-    while let Some(i) = pending.pop() {
-        for c in select::referenced(&program.funcs[i]) {
-            if !seen.insert(c) {
-                continue;
-            }
-            let f = &mut program.funcs[c];
-            if f.linkage == Linkage::Internal {
-                f.linkage = Linkage::Export;
-            }
-            if select::inlines(f) {
-                pending.push(c);
-            }
+/// Make the functions `linked` declarations, and every function of the program their objects may
+/// refer to visible to them: what they declare, and what they are compiled with at `depth` but
+/// have no copy of their own of (`compile::own_copies`), whose bodies are the program's. Each
+/// comes with its set (`select::inlinable`) as keyed: worked out before `statics::export` made
+/// any function `Export`, which `inlinable` would no longer follow.
+fn take_out(program: &mut vir::Program, linked: &[(usize, Vec<usize>)], depth: select::Depth) {
+    expose(program, linked, depth);
+    for &(i, _) in linked {
+        declare(&mut program.funcs[i]);
+    }
+}
+
+/// [`take_out`]'s first half: every function of the program the objects of `linked` may refer to
+/// made visible to them (`Export`). Before the program is optimized, so that the optimizer treats
+/// them as having unknown callers (no facts from the program's calls into them).
+fn expose(program: &mut vir::Program, linked: &[(usize, Vec<usize>)], depth: select::Depth) {
+    let linked_set: HashSet<usize> = linked.iter().map(|(i, _)| *i).collect();
+    let mut visible: HashSet<usize> = HashSet::new();
+    for (_, set) in linked {
+        let reached = statics::reached(program, set);
+        let own = compile::own_copies(program, set, &reached, depth);
+        let shared = set.iter().skip(1).filter(|j| !own.contains(j));
+        visible.extend(shared.chain(&select::declared(program, set)));
+    }
+    for c in visible {
+        let f = &mut program.funcs[c];
+        if !linked_set.contains(&c) && f.linkage == Linkage::Internal {
+            f.linkage = Linkage::Export;
         }
     }
-    for &i in linked {
-        let f = &mut program.funcs[i];
-        if stats() {
-            let size: usize = f.blocks.iter().map(|b| b.stmts.len() + 1).sum();
-            eprintln!("velt: std cache: links {} ({size} statements)", f.symbol);
-        }
-        f.blocks.clear();
-        f.locs.clear();
-        f.locals.truncate(f.params.len());
-        f.linkage = Linkage::Import;
+}
+
+/// [`take_out`]'s second half: `f` a declaration (`Import`), its object linked instead.
+fn declare(f: &mut vir::Function) {
+    if stats() {
+        let size: usize = f.blocks.iter().map(|b| b.stmts.len() + 1).sum();
+        eprintln!("velt: std cache: links {} ({size} statements)", f.symbol);
     }
+    f.blocks.clear();
+    f.locs.clear();
+    f.locals.truncate(f.params.len());
+    f.linkage = Linkage::Import;
 }
 
 #[cfg(test)]
@@ -459,6 +516,32 @@ mod tests {
         assert_eq!(std::fs::read(&linked.objects[0]).unwrap(), b"object bytes");
     }
 
+    /// One set compiled at both depths makes two objects (the program's copies of the callees, or
+    /// the object's own), so their keys differ.
+    #[test]
+    fn the_depth_is_in_a_release_key() {
+        let mut f = calling("_V3stdN1f", None, 0);
+        f.inline = vir::Inline::Never;
+        let p = vir::Program {
+            funcs: vec![f],
+            ..vir::Program::default()
+        };
+        let canon = Canon::new(&p, velt_vir::fingerprint::Mode::Link);
+        let inputs = key::Inputs {
+            compiler: velt_build_cache::Key([1; 32]),
+            backend: "clang".into(),
+            opt: "-O3".into(),
+            target: "aarch64-apple-darwin".into(),
+            cpu: None,
+            release: true,
+        };
+        let at = |depth| release_key(&p, &canon, &inputs, 0, depth, &mut HashMap::new());
+        assert_eq!(select::inlinable(&p, 0, select::Depth::Small), [0]);
+        assert_eq!(select::inlinable(&p, 0, select::Depth::Whole), [0]);
+        assert_ne!(at(select::Depth::Small), at(select::Depth::Whole));
+        assert_eq!(at(select::Depth::Whole), at(select::Depth::Whole));
+    }
+
     #[test]
     fn what_linked_code_may_call_is_exported() {
         let mut p = vir::Program {
@@ -470,7 +553,8 @@ mod tests {
             ],
             ..vir::Program::default()
         };
-        take_out(&mut p, &[0]);
+        let set = select::inlinable(&p, 0, select::Depth::Small);
+        take_out(&mut p, &[(0, set)], select::Depth::Small);
         let linkage: Vec<Linkage> = p.funcs.iter().map(|f| f.linkage).collect();
         assert_eq!(
             linkage,

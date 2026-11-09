@@ -1,0 +1,18 @@
+// registry-core (internal): `DELETE /api/v1/token`: the caller's token stops working (`velt
+// logout`), so a token copied off a machine is worth nothing once its owner logs out there.
+
+import { writer } from "./access";
+import { text } from "./answer";
+import { Refusal } from "./refusal";
+import { RegistryStores } from "./registry_stores";
+
+/** `DELETE /api/v1/token`: revokes the token the request carries. */
+export async function revokeToken(stores: RegistryStores, req: Request): Promise<Response> {
+  const user = (await writer(stores, req)).user;
+  const authorization = req.headers.get("authorization");
+  if (user == null || authorization == null) {
+    throw new Refusal(400, "this registry has no users, so it has no tokens to revoke");
+  }
+  await stores.auth.revoke(authorization);
+  return text(200, `revoked this token of \`${user}\`\n`);
+}

@@ -40,6 +40,17 @@ impl Ctx<'_> {
         if !user || span == Span::DUMMY || self.fn_sites.async_ret {
             return self.ty.intern(TyKind::Promise(payload, never));
         }
+        // A check with error-set variables gives the site one where it may have one
+        // (`promise_vars`), interned after the type as written, as for a function type.
+        if self.fn_sites.user_vars && self.fn_sites.promise_var_at == Some(span) {
+            let plain = self.ty.intern(TyKind::Promise(payload, never));
+            if let Some(v) = self.site_var(span, module) {
+                let t = self.ty.intern(TyKind::Promise(payload, v));
+                self.record_fn_site(span, module, t);
+                self.fn_sites.var_sets.note_written(t, plain);
+                return t;
+            }
+        }
         let e = self.site_error(span, module).unwrap_or(never);
         let t = self.ty.intern(TyKind::Promise(payload, e));
         self.record_fn_site(span, module, t);
@@ -256,6 +267,12 @@ impl crate::body::FnCx<'_, '_> {
     /// takes what `reject` is called with ([`Ctx::seed_reject`]). Returns the error type and
     /// whether `reject`'s parameter was registered (the caller pops it after an executor).
     pub(crate) fn open_reject(&mut self, t: TyId, e: TyId, span: Span) -> (TyId, bool) {
+        // Expected as a promise type with an error-set variable: it rejects into that variable
+        // (`promise_vars`).
+        if self.cx.fn_sites.user_vars && self.cx.is_err_var(e) {
+            self.cx.fn_sites.rejects.push((e, span));
+            return (e, true);
+        }
         let own = self.cx.promise_site(t, span, self.module);
         let Some(own_e) = self.cx.ty.promise_error(own) else {
             return (e, false);
@@ -363,7 +380,9 @@ impl Ctx<'_> {
         });
         if let Some(site) = site {
             for e in errs {
-                self.seed_site_with(site, e);
+                if !self.reject_into_site_var(site, e) {
+                    self.seed_site_with(site, e);
+                }
             }
         }
     }

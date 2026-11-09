@@ -1,0 +1,2 @@
+typeof_generic_type_arg_error.velt:6:32: error: mismatched types
+  = note: expected f64, found string

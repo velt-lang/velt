@@ -45,9 +45,14 @@ impl Ctx<'_> {
     }
 
     /// Does a field of type `from` convert to and from an interface field of type `to` through
-    /// `any` (module docs)? Each is a type that goes into an `any` as it is, or an option of one.
+    /// `any` (module docs)? Each is a type that goes into an `any` as it is, or an option of one
+    /// (`undefined` alone too, an option of `never`: `reason: undefined` for `reason: unknown`).
     pub(crate) fn converts_via_any(&self, from: TyId, to: TyId) -> bool {
-        let plain = |t: TyId| self.dynamic(t).is_some() || self.boxes_as_is(t);
+        let plain = |t: TyId| {
+            self.dynamic(t).is_some()
+                || self.boxes_as_is(t)
+                || matches!(self.ty.kind(t), TyKind::Never)
+        };
         let core = |t: TyId| match self.ty.kind(t) {
             TyKind::Option(p, _) => *p,
             _ => t,

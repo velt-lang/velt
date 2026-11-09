@@ -1,10 +1,11 @@
 // velt/simd (internal): `f16x8`, eight `f16` lanes. `widenLow` and `widenHigh` give `f32x4`,
 // `f16x8.narrow` takes them back, and `dotAdd` multiplies two of them into an `f32x4` accumulator.
 // Its lane arithmetic rounds to `f16` as `f32x4`'s rounds to `f32`, to the same bits on every CPU
-// but for which NaN a NaN is: one instruction where the CPU has FP16 (every Apple arm64 CPU, and
-// `--cpu` where the CPU has it), and otherwise computed in `f32`, which rounds the same. Its
-// operators are in ops_floats.velt. The `velt_simd_*` functions below have no runtime
-// implementation, the compiler emits them inline (rt_abi.md "SIMD").
+// but for which NaN a NaN is, `mulAddFast` excepted: one instruction where the CPU has FP16 (every
+// Apple arm64 CPU, and `--cpu` where the CPU has it), and otherwise computed in `f32`, which rounds
+// the same, or for `mulAdd` in `f64`, as a multiply-add in `f32` would round twice. Its operators
+// are in ops_floats.velt. The `velt_simd_*` functions below have no runtime implementation, the
+// compiler emits them inline (rt_abi.md "SIMD").
 
 export type f16x8 = f16x8;
 
@@ -27,6 +28,8 @@ declare function velt_simd_f16x8_add(a: f16x8, b: f16x8): f16x8;
 declare function velt_simd_f16x8_sub(a: f16x8, b: f16x8): f16x8;
 declare function velt_simd_f16x8_mul(a: f16x8, b: f16x8): f16x8;
 declare function velt_simd_f16x8_div(a: f16x8, b: f16x8): f16x8;
+declare function velt_simd_f16x8_mul_add(a: f16x8, b: f16x8, c: f16x8): f16x8;
+declare function velt_simd_f16x8_mul_add_fast(a: f16x8, b: f16x8, c: f16x8): f16x8;
 declare function velt_simd_f16x8_min(a: f16x8, b: f16x8): f16x8;
 declare function velt_simd_f16x8_max(a: f16x8, b: f16x8): f16x8;
 declare function velt_simd_f16x8_neg(v: f16x8): f16x8;
@@ -141,6 +144,25 @@ extend f16x8 {
   /** Lane-wise quotient. */
   div(other: f16x8): f16x8 {
     return velt_simd_f16x8_div(this, other);
+  }
+
+  /**
+   * `this * b + c` lane-wise with one rounding (fused multiply-add), the same bits on every CPU:
+   * one instruction where the CPU has FP16, and elsewhere a multiply and an add in `f64`, which
+   * round as one operation does, with no library call on any CPU, at about five times the
+   * instructions of `mulAddFast`, which is the one to take there where the last bit may vary.
+   */
+  mulAdd(b: f16x8, c: f16x8): f16x8 {
+    return velt_simd_f16x8_mul_add(this, b, c);
+  }
+
+  /**
+   * `this * b + c` lane-wise, fused where the CPU has FP16 and elsewhere computed in `f32` and
+   * narrowed, which rounds twice: always fast, but the last bit may differ between CPUs.
+   * `mulAdd` rounds once.
+   */
+  mulAddFast(b: f16x8, c: f16x8): f16x8 {
+    return velt_simd_f16x8_mul_add_fast(this, b, c);
   }
 
   /** The smaller of each pair of lanes (as `Math.min` and `Math.max`: NaN if either is). */

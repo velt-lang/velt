@@ -1,0 +1,39 @@
+class E1 extends Error {}
+
+class E2 extends Error {}
+
+type F = (n: number) => void;
+
+const fs: F[] = [];
+
+function a(n: number): void {
+  try {
+    fs[n % 2](n);
+  } catch (e) {
+    if (e instanceof E2) {
+      console.log("e2 " + n);
+    } else {
+      console.log("e1 " + n);
+      throw e;
+    }
+  }
+}
+
+fs.push((n) => {
+  if (n > 0) {
+    a(n - 1);
+  }
+  throw new E1("x");
+});
+fs.push((n) => {
+  if (n > 0) {
+    const g = a;
+    g(n - 1);
+  }
+  throw new E2("y");
+});
+try {
+  a(3);
+} catch (e) {
+  console.log("top " + e.message);
+}

@@ -168,12 +168,16 @@ impl Ctx<'_> {
     }
 
     /// What JS `typeof` answers for a (non-null) value of type `t`: every number type is
-    /// `"number"`, closures `"function"`, classes / structs / arrays / maps / … `"object"`.
+    /// `"number"`, closures and overloaded functions' values `"function"`, classes / structs / arrays / maps / … `"object"`.
     pub fn typeof_tag(&self, t: TyId) -> &'static str {
         if let Some(base) = self.brand_base(t) {
             return self.typeof_tag(base);
         }
-        if self.is_callable_object(t) || self.ctor_sig_own(t).is_some() || self.is_generic_fn(t) {
+        if self.is_callable_object(t)
+            || self.ctor_sig_own(t).is_some()
+            || self.is_generic_fn(t)
+            || self.is_overload_set(t)
+        {
             return "function";
         }
         match self.ty.kind(t) {

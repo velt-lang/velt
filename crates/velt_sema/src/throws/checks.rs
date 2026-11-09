@@ -21,6 +21,7 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
         for &d in fns {
             if let Some(decl) = cx.fn_info(d).declared_throws {
                 let own = own_final(cx, d);
+                cx.note_thrown(decl.ty, own);
                 if cx.throw_into_vars(decl.ty, own) {
                     into_vars.insert(d);
                 }
@@ -76,7 +77,11 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     for (d, what) in std::mem::take(&mut cx.iface_generators) {
         iface_generator(cx, d, &what);
     }
-    if vars && !(solved_ok && cx.assumptions_hold()) {
+    // The program is checked again with the solved sets also when this check grew a set
+    // the variables don't hold (a closure's error a site's type can't keep): the next check
+    // has no variables, and starts from what they found.
+    let holds = solved_ok && cx.assumptions_hold();
+    if vars && (!holds || (cx.fn_sites.sites_grew && cx.fn_sites.again())) {
         cx.var_seeds();
     }
 }
@@ -301,15 +306,12 @@ fn generic_group(cx: &mut Ctx, members: &[DefId]) {
 fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     let mut fin = super::infer::srcs_final(cx, &c.srcs);
     let mut obs = cx.canon_error(c.observed);
-    // A `catch` variable's type assumed the variables in it empty (`vars`): that is checked
-    // when the sets are solved; an exact type is compared solved.
+    // A `catch` variable's type assumed the variables in it have the sets known then
+    // (`var_known`): that is checked when the sets are solved, and the types are compared
+    // solved.
     if cx.fn_sites.use_vars {
-        if c.exact {
-            fin = solved(cx, fin);
-            obs = solved(cx, obs);
-        } else {
-            fin = cx.assume_vars_empty(fin);
-        }
+        fin = solved(cx, fin);
+        obs = solved(cx, obs);
     }
     let ok = if c.exact {
         fin == obs

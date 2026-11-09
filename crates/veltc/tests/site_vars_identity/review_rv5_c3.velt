@@ -1,0 +1,47 @@
+class E1 extends Error {
+  n: number = 4;
+}
+
+type P = () => Promise<number>;
+type Q = () => Promise<number, E1>;
+
+const f: P = async () => {
+  throw new E1("x");
+};
+const g: Q = async () => {
+  throw new E1("y");
+};
+
+function mk(): { g: Q } | number {
+  return Math.random() > 2 ? 3 : { g: g };
+}
+
+function mk2(): [Q, number] | number {
+  return Math.random() > 2 ? 3 : [g, 1];
+}
+
+async function main1(): Promise<void> {
+  const o = mk();
+  if (typeof o != "number") {
+    try {
+      console.log(await o.g());
+    } catch (e) {
+      console.log("o");
+    }
+  }
+  const t = mk2();
+  if (typeof t != "number") {
+    try {
+      console.log(await t[0]());
+    } catch (e) {
+      console.log("t");
+    }
+  }
+  try {
+    console.log(await f());
+  } catch (e) {
+    console.log("f");
+  }
+}
+
+await main1();

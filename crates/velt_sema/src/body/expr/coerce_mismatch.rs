@@ -15,11 +15,6 @@ impl FnCx<'_, '_> {
         self.cx.seed_reject(found.ty, expected);
         self.cx.seed_reject_fn(found.ty, expected);
         self.cx.seed_promise_site(found.ty, expected);
-        // The comparisons don't see variables in the fields of anonymous object types yet
-        // (`throws::vars`): such a mismatch may come from them.
-        if self.cx.anon_vars_may_mismatch(expected, found.ty) {
-            self.cx.fn_sites.set_doubt();
-        }
         if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
             return self.unknown_use_error(found.span);
         }
@@ -41,16 +36,6 @@ impl FnCx<'_, '_> {
                 Diagnostic::error("mismatched types", found.span)
                     .with_note(format!("expected {e}, found {f}"))
                     .with_note(note),
-            );
-            return;
-        }
-        if self.cx.unfreezes(found.ty, expected) {
-            self.cx.error(
-                Diagnostic::error(
-                    format!("an `Object.freeze` result where a `{e}` is expected is not supported yet: its fields could be written there"),
-                    found.span,
-                )
-                .with_note("Node throws a `TypeError` when a frozen object's field is written, which Velt checks while compiling: pass it where a `Readonly<T>` is expected"),
             );
             return;
         }

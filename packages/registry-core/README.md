@@ -64,7 +64,8 @@ const manifest = readManifest(text); // ManifestError when vpm would refuse it
 - **The API** (`src/server/`): `Registry.handle(req)` answers `/api/v1/…` as `velt registry
   serve` does: publishing (`PUT /api/v1/<name>/<version>`, checked before anything is stored),
   downloads, the index, yanking, owners and search. Reads are public; writes need a user's
-  token once the registry has users, and an owner for a published package. Beyond what vpm
+  token once the registry has users, and an owner for a published package. `DELETE
+  /api/v1/token` revokes the token it carries (`velt logout`). Beyond what vpm
   checks, a publish is refused for paths a client couldn't unpack faithfully on Windows or
   macOS (twice, out of order, differing only in case, control characters, device names,
   characters Windows refuses, a trailing dot or space), for `target` directories and `.git`
