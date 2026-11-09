@@ -42,7 +42,8 @@ import { promiseAt, slotPut, slotTake } from "velt/lang/intrinsics";
  * `capacity` values (at least 1).
  */
 export struct Channel<T> implements AsyncIterable<T> {
-  private block: usize;
+  /** Its block (channel_block.velt), read on every call: `core` keeps it alive. */
+  private handle: usize;
   private core: shared<ChanCore<T>>;
 
   /**
@@ -51,7 +52,7 @@ export struct Channel<T> implements AsyncIterable<T> {
    */
   async send(value: T): Promise<void> throws ChannelClosed {
     while (true) {
-      const b = this.block;
+      const b = this.handle;
       lock(b);
       if (isClosed(b)) {
         unlock(b);
@@ -72,7 +73,7 @@ export struct Channel<T> implements AsyncIterable<T> {
    * it may be called inside `Mutex.with`.
    */
   trySend(value: T): bool {
-    const b = this.block;
+    const b = this.handle;
     lock(b);
     if (isClosed(b) || !hasRoom(b)) {
       unlock(b);
@@ -85,7 +86,7 @@ export struct Channel<T> implements AsyncIterable<T> {
   /** The oldest value, waiting for one; `null` once the channel is closed and empty. */
   async receive(): Promise<T | null> {
     while (true) {
-      const b = this.block;
+      const b = this.handle;
       lock(b);
       if (count(b) !== 0) {
         return take<T>(b);
@@ -101,7 +102,7 @@ export struct Channel<T> implements AsyncIterable<T> {
 
   /** The oldest value if one is queued, else `null` (never waits). */
   tryReceive(): T | null {
-    const b = this.block;
+    const b = this.handle;
     lock(b);
     if (count(b) === 0) {
       unlock(b);
@@ -129,17 +130,17 @@ export struct Channel<T> implements AsyncIterable<T> {
    * `ChannelClosed`; receivers drain what is queued, then get `null`.
    */
   close() {
-    closeBlock(this.block);
+    closeBlock(this.handle);
   }
 
   /** Whether the channel is closed. */
   get closed(): bool {
-    return isClosed(this.block);
+    return isClosed(this.handle);
   }
 
   /** Number of queued values. */
   get length(): i64 {
-    return count(this.block) as i64;
+    return count(this.handle) as i64;
   }
 }
 
@@ -176,7 +177,7 @@ function wait(b: usize, kind: usize): Promise<void> {
 
 /** The block of `ch` (channel_block.velt), for std's tests of its waits. */
 export function blockOf<T>(ch: Channel<T>): usize {
-  return ch.block;
+  return ch.handle;
 }
 
 /**
@@ -188,5 +189,5 @@ export function channel<T>(capacity: i64 = 0): Channel<T> {
     panic(`channel capacity must not be negative, got ${capacity}`);
   }
   const core = shared(new ChanCore<T>(capacity as usize));
-  return { block: core.block, core: core };
+  return { handle: core.block, core: core };
 }
