@@ -39,7 +39,7 @@ pub struct VeltWakerVt {
     pub drop: unsafe extern "C" fn(w: *const VeltWakerHeader),
 }
 
-/// What `cx` points to (16 bytes): the task's await word first (generated code reads it at
+/// What `cx` points to (two pointers: 16 bytes, 8 on wasm32): the task's await word first (generated code reads it at
 /// every `await`: 0 = no other job could observe a microtask step, go on), then the task's
 /// waker, borrowed for the poll.
 #[repr(C)]

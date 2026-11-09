@@ -30,7 +30,7 @@ typedef struct VeltWakerVt {                         // a waker's C functions
 } VeltWakerVt;
 struct VeltWakerHeader { const VeltWakerVt* vt; /* the waker's own fields follow */ };
 
-typedef struct VeltCx {                              // what `cx` points to (16 bytes)
+typedef struct VeltCx {                              // what `cx` points to (2 pointers)
     const uint32_t*        await_word;               // offset 0: read by generated code
     const VeltWakerHeader* waker;                    // the task's waker, borrowed for the poll
 } VeltCx;

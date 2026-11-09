@@ -213,13 +213,11 @@ mod tests {
                 let opener = opener;
                 velt_rt_latch_open(opener.0)
             });
-            let start = std::time::Instant::now();
-            while n.woken() == 0 {
-                assert!(start.elapsed().as_secs() < 30, "never woken");
-                std::thread::yield_now();
-            }
-            assert_eq!(velt_rt_fut_poll(f, cx), READY);
+            // Opening wakes the waiters before it returns, so after the join the wake has
+            // reached the C table: no waiting loop.
             t.join().unwrap();
+            assert_eq!(n.woken(), 1, "never woken");
+            assert_eq!(velt_rt_fut_poll(f, cx), READY);
             velt_rt_fut_drop(f);
             velt_rt_latch_free(h);
         }
