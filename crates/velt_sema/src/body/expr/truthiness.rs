@@ -55,6 +55,10 @@ enum Test {
 impl FnCx<'_, '_> {
     /// Check `e` as a condition, as a `bool`.
     pub(crate) fn cond(&mut self, e: &ast::Expr) -> hir::Expr {
+        // `if (r.issues)` that only the member decides: a test of the member's tag.
+        if let Some(h) = self.presence_cond(e) {
+            return h;
+        }
         let b = self.cx.ty.bool_;
         let h = self.test_operand(e, Some(b), Want::Borrow);
         self.array_used_in_place(&h);

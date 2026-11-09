@@ -13,7 +13,8 @@ use velt_syntax::ast;
 
 use super::narrow::Fact;
 use super::FnCx;
-use crate::hir::{LitValue, LocalId, Nothing, TyId, TyKind};
+use super::Want;
+use crate::hir::{self, LitValue, LocalId, Nothing, TyId, TyKind};
 
 /// What a member's field says about a test of the field.
 enum Disc {
@@ -161,5 +162,50 @@ impl FnCx<'_, '_> {
         // Where the test fails, the field path itself is not nullish (`eq_facts`).
         f.extend(self.field_token(e).map(Fact::NonNull));
         Some((t, f))
+    }
+
+    /// `if (r.issues)` on a union local whose members' field is a nothing or a truthy object
+    /// (`truthy_discriminant`): the member test itself, `match (r) { V0(_) => true, _ => false
+    /// }`, which reads no field. Only for struct fields (an interface member's is a getter call)
+    /// and a union without a view (`crate::union_views`), whose view may be any member.
+    pub(crate) fn presence_cond(&mut self, e: &ast::Expr) -> Option<hir::Expr> {
+        let (object, prop) = super::expr::member::member_view(e)?;
+        let (l, nullable, discs) = self.field_discs(e)?;
+        let u = self.local_ty(l);
+        let live = || discs.iter().flatten();
+        let presence = live().all(|d| matches!(d, Disc::Nothing(_) | Disc::Object))
+            && live().any(|d| matches!(d, Disc::Nothing(_)));
+        if !presence || nullable || self.cx.union_view(u).is_some() {
+            return None;
+        }
+        let (def, _) = self.cx.union_def(u)?;
+        let members = self.cx.union_members(u)?;
+        if members
+            .iter()
+            .any(|m| self.cx.field_of(*m, &prop.name).is_none())
+        {
+            return None;
+        }
+        // A local narrowed to one member reads as that member: the field read decides.
+        if self.allowed_members(l).is_some_and(|vs| vs.len() < 2) {
+            return None;
+        }
+        let obj = self.expr(object, None, Want::Borrow);
+        if obj.ty != u {
+            return None;
+        }
+        let span = e.span;
+        let mut yes = vec![];
+        for (v, d) in discs.iter().enumerate() {
+            if matches!(d, Some(Disc::Object)) {
+                yes.push(self.variant_pat(def, v as u32, members[v], u, span));
+            }
+        }
+        let pat = match yes.len() {
+            0 => None,
+            1 => yes.pop(),
+            _ => Some(self.pat(hir::PatKind::Or(yes), u, span)),
+        };
+        Some(self.bool_match(obj, pat, span))
     }
 }
