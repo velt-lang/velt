@@ -4,9 +4,10 @@
 // Everything is raw memory (sched_mem.velt), so nothing here is module state (which is per task):
 // - The executor, allocated once, its address in `EXEC`: the inbox (a stack of tasks woken from
 //   other threads, linked through their `next`), the park word, the worker's own queue (first in,
-//   first out), the I/O block (the reactor the worker waits in, sched_io.velt), the live task count, the task being polled, the base of the last microtask
-//   queue's tickets, whether an owner is polling a promise it adopted (sched_node.velt), and the
-//   two waker tables (a task's, a started promise's: sched_node.velt).
+//   first out), the live task count, the task being polled, the last microtask ticket handed out
+//   (sched_micro.velt), whether an owner is polling a promise it adopted (sched_node.velt), the
+//   two waker tables (a task's, a started promise's: sched_node.velt), and the I/O block (the
+//   reactor the worker waits in, sched_io.velt).
 // - A task: the table's address first (a task is its own waker), its reference count (the
 //   executor's until it is done, the join handle's, one per waker clone), its state (IDLE,
 //   SCHEDULED, RUNNING, NOTIFIED, DONE) and flags, the root's poll and drop and its state's
