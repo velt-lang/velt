@@ -1,0 +1,89 @@
+// Named members next to an index signature whose values are not `any` (sigx's `HeadMeta`,
+// `HeadLink`, `HeadScript` and `HeadConfig`), as in TypeScript: each named member reads as its
+// declared type (an optional one with `undefined`), any other key as the values' type, and
+// every key, named or not, keeps JavaScript's order in `Object.keys`, `for...in` and JSON.
+interface HeadMeta {
+  name?: string;
+  content?: string;
+  "http-equiv"?: string;
+  [key: string]: string | undefined;
+}
+
+interface HeadLink {
+  rel: string;
+  href?: string;
+  [key: string]: string | undefined;
+}
+
+interface HeadScript {
+  src?: string;
+  async?: boolean;
+  [key: string]: string | boolean | undefined;
+}
+
+type Counts = { total: number; [k: string]: number };
+
+interface Mixed {
+  n: number;
+  label: string;
+  [k: string]: number | string;
+}
+
+interface HeadConfig {
+  title?: string;
+  htmlAttrs?: { lang?: string; dir?: string; [key: string]: string | undefined };
+  bodyAttrs?: { class?: string; [key: string]: string | undefined };
+}
+
+const m: HeadMeta = { name: "description", "data-x": "y", content: "x" };
+console.log(m.name, m.content, m["http-equiv"], m["data-x"], m.other);
+m.other = "z";
+m["name"] = "n2";
+console.log(Object.keys(m), JSON.stringify(m));
+for (const k in m) {
+  console.log(k, m[k]);
+}
+
+const l: HeadLink = { rel: "stylesheet", href: "/a.css", media: "print" };
+const rel: string = l.rel;
+console.log(rel.toUpperCase(), l.href, l.media);
+const links: HeadLink[] = [{ rel: "icon" }, l];
+console.log(links.map((x) => x.rel).join(","));
+l.rel = "preload";
+console.log(l["rel"], { ...l });
+
+const s: HeadScript = { src: "/a.js", async: true, defer: false };
+const a: boolean | undefined = s.async;
+console.log(a, s.src, s.defer, typeof s.defer);
+s.async = undefined;
+console.log(s.async === undefined, JSON.stringify(s));
+
+const c: Counts = { total: 0 };
+for (const w of ["a", "b", "a"]) {
+  c[w] = (c[w] ?? 0) + 1;
+  c.total += 1;
+}
+console.log(c.total * 2, c.a, c.b, JSON.stringify(c));
+
+function sum(x: Mixed): number {
+  let t = 0;
+  for (const k of Object.keys(x)) {
+    const v = x[k];
+    if (typeof v === "number") {
+      t += v;
+    }
+  }
+  return t + x.n + x.label.length;
+}
+console.log(sum({ n: 1, label: "l", extra: 5, more: "m" }));
+
+const h: HeadConfig = { title: "T", htmlAttrs: { lang: "en" } };
+console.log(h.htmlAttrs?.lang, h.bodyAttrs, JSON.stringify(h));
+const attrs = h.htmlAttrs;
+if (attrs) {
+  attrs["data-theme"] = "dark";
+  attrs.dir = "ltr";
+  console.log(Object.entries(attrs));
+}
+const pages: HeadConfig[] = [{ bodyAttrs: { class: "home" } }, {}];
+console.log(pages.map((p) => p.bodyAttrs?.class ?? "-").join(" "));

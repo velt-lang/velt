@@ -1,0 +1,3 @@
+index_signature_named.velt:4:3: error: the member `x` of type `string | undefined` is not assignable to the index signature's type `string`
+index_signature_named.velt:8:3: error: the member `x` of type `f64` is not assignable to the index signature's type `string`
+index_signature_named.velt:11:12: error: the member `n` of type `boolean` is not assignable to the index signature's type `string | f64`
