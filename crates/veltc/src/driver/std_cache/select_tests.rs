@@ -404,6 +404,12 @@ fn by_default_a_release_build_serves_only_what_is_never_inlined() {
         vec![func("large", 60, &[], None)],
         vec![]
     )));
+    let mut listed = never("listed", 50, &[], None);
+    listed.symbol = velt_vir::mangle::mangle(NEVER_SERVED[0]);
+    assert!(
+        !has_no_inline(&program(vec![listed], vec![])),
+        "nothing a release build serves"
+    );
 }
 
 /// A small `noInline()` function is no part of its callers' code: they call it, and their
@@ -617,4 +623,39 @@ fn what_a_gated_function_would_clone_stays_in_the_program() {
     assert_eq!(simd_checking(&p), [true, true, false, false, false]);
     assert_eq!(no_inline_cands(&p), [3, 4]);
     assert!(no_inline_reasons(&p).contains_key("SIMD dispatch"));
+}
+
+/// A function `NEVER_SERVED` names stays in the program in release builds; the same function under
+/// another name is served.
+#[test]
+fn a_function_never_served_stays_in_the_program() {
+    let mut listed = never("listed", 50, &[], None);
+    listed.symbol = velt_vir::mangle::mangle(NEVER_SERVED[0]);
+    let p = program(vec![listed, never("served", 50, &[], None)], vec![]);
+    assert_eq!(no_inline_cands(&p), [1]);
+    assert_eq!(cands(&p), [1]);
+    let statements = size(&p.funcs[0]);
+    assert_eq!(no_inline_reasons(&p).get("never served"), Some(&statements));
+}
+
+/// Every name `NEVER_SERVED` lists is a function std still defines, not generic (an instance's name
+/// has its type arguments): a renamed or removed one would leave its entry doing nothing.
+#[test]
+fn every_function_never_served_exists() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for entry in NEVER_SERVED {
+        let (module, function) = entry.split_once("::").expect("module::function");
+        let file = root.join(format!("{module}.velt"));
+        let source = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("{entry}: {}: {e}", file.display()));
+        let defined = source.lines().any(|l| {
+            let l = l.trim_start().trim_start_matches("export ");
+            l.starts_with(&format!("function {function}("))
+        });
+        assert!(
+            defined,
+            "{entry}: no `function {function}` in {}",
+            file.display()
+        );
+    }
 }

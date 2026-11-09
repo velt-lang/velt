@@ -24,7 +24,9 @@
 //! - in a release build by default, those the optimizer would clone for a function gated on a CPU
 //!   extension (`velt_opt`'s `gated_clones`), and gated ones whose code calls such a function
 //!   without compiling it: in the program the clone has the extension's check folded away, which
-//!   their object, compiled without it, would not ([`simd_checking`]).
+//!   their object, compiled without it, would not ([`simd_checking`]);
+//! - in a release build, those [`NEVER_SERVED`] names, whose callers pass them constants the
+//!   program folds into them.
 //!
 //! What a served function's object is compiled with ([`Depth`]): the small functions it calls
 //! (and those marked `inline()`), or in a release build by default every function it reaches
@@ -116,9 +118,33 @@ const GENERATED_STD: &str = "<generated>/std/";
 /// generators (`JSON.parse<T>`'s reader of `T`). Generated code is served like a generic
 /// instance: its key is its code, so a program that generates the same code links it.
 fn is_std(f: &vir::Function) -> bool {
-    let name = velt_vir::mangle::demangle(&f.symbol);
-    velt_common::std_modules::is_std(&name) || name.starts_with(GENERATED_STD)
+    is_std_name(&velt_vir::mangle::demangle(&f.symbol))
 }
+
+/// [`is_std`] of a demangled name.
+fn is_std_name(name: &str) -> bool {
+    velt_common::std_modules::is_std(name) || name.starts_with(GENERATED_STD)
+}
+
+/// Whether [`NEVER_SERVED`] names `f`.
+fn never_served(f: &vir::Function) -> bool {
+    NEVER_SERVED.contains(&velt_vir::mangle::demangle(&f.symbol).as_str())
+}
+
+/// The std functions a release build never serves, by name (`<std module>::<function>`, a function
+/// that is neither generic nor a method: the name is matched whole): each stays in the program,
+/// compiled with it, whatever it is marked. Debug builds, which fold no constants, still serve
+/// them. For a `noInline()` function whose
+/// callers, inlined into the program's code, pass it constants: in the program LLVM specializes
+/// it for them, an object compiled once can't. A tool std's authors use deliberately, each entry
+/// with why (design/std-object.md "Never served"); a name that no longer exists in std fails a
+/// test.
+pub(super) const NEVER_SERVED: &[&str] = &[
+    // `toFixed` (std/lang/number/to_fixed) is inlined into its callers and passes their `digits`,
+    // a constant at most call sites (`toFixed(2)`): the power of ten and the point's place fold.
+    // Served, `bench/stdport/to_fixed` ran 3.1 % more instructions.
+    "std/lang/number/fixed::fixedText",
+];
 
 /// Whether `program` has a std function marked `noInline()` that [`Rule::NoInline`] may serve,
 /// by the marker alone: without one, a release build looks no further.
@@ -128,6 +154,7 @@ pub(super) fn has_no_inline(program: &vir::Program) -> bool {
             && f.linkage == Linkage::Internal
             && !f.blocks.is_empty()
             && is_std(f)
+            && !never_served(f)
     })
 }
 
@@ -141,8 +168,15 @@ pub(super) fn candidates(program: &vir::Program, names: &Names, rule: Rule) -> V
 /// Why std function `i` stays in the program; `None` when the cache serves it.
 fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option<&'static str> {
     let f = &program.funcs[i];
-    if !is_std(f) || f.linkage != Linkage::Internal || f.blocks.is_empty() {
+    if f.linkage != Linkage::Internal || f.blocks.is_empty() {
         return Some("not internal");
+    }
+    let name = velt_vir::mangle::demangle(&f.symbol);
+    if !is_std_name(&name) {
+        return Some("not internal");
+    }
+    if rule.release() && NEVER_SERVED.contains(&name.as_str()) {
+        return Some("never served");
     }
     match rule {
         Rule::NoInline { .. } if f.inline != Inline::Never => return Some("inlinable"),

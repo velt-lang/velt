@@ -134,6 +134,21 @@ changes for them. Such a build:
   one address, and so do the `noInline()` functions it calls; the program exports only those
   and what the object declares. What an object can't see is its callers' arguments: the program
   could fold a constant flag into a function it never inlines.
+- **Never served:** leaves in the program the std functions `select::NEVER_SERVED` names
+  (non-generic functions, by their whole name), whatever they are marked; a debug build, which
+  folds no constants, still serves them. It is a tool std's authors use deliberately, beside `noInline()`: for a
+  `noInline()` function whose callers, inlined into the program's code, pass it constants that
+  LLVM specializes it for in the program and an object compiled once can't see. Each entry says
+  why, and a test fails on a name std no longer defines. The first is `fixedText`
+  (std/lang/number/fixed): `toFixed` passes it the caller's `digits`, a constant at most call
+  sites (`toFixed(2)`); served, `bench/stdport/to_fixed` ran 3.1 % more instructions. Constants
+  std itself passes (a flag fixed per entry point) are better fixed in std, with an `inline()`
+  body under `noInline()` entry points, which keeps the object served.
+- sizes velt_opt's inline budget (`Budget::for_program`) as for the program with nothing served:
+  what `take_out` took out of it counts too, as lowered (`velt_opt::TakenOut`). Without it, serving the integer printers that
+  `bench/stdport/brotli_stream_*` calls once at the end shrank the budget, and its hot functions
+  were inlined differently (+3.5 to +6.4 %). What the served functions would have spent of the
+  budget, inlining into themselves, is not charged: that is left to the rest.
 - leaves in the program a function the optimizer would clone for a function gated on a CPU
   extension (`gated_clones`: an ordinary function checking an extension, itself or through what
   it references), and a gated function whose object would call such a function: in the program

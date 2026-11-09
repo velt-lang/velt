@@ -14,6 +14,9 @@ export declare intrinsic function inline(): void;
 /**
  * As the first statement of a std function: calls of it stay calls. For a large path that is
  * rare or slow anyway (a fallback, a long form), whose copy in every caller would only cost
- * build time and code size: the optimizer and the backend never inline it.
+ * build time and code size: the optimizer and the backend never inline it. A release build may link
+ * it from the std cache, compiled once without its callers' arguments; one whose callers pass it
+ * constants worth folding is kept in the program by name instead (veltc's std cache,
+ * `select::NEVER_SERVED`).
  */
 export declare intrinsic function noInline(): void;
