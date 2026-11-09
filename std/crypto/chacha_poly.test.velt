@@ -6,6 +6,7 @@
 import { describe, expect, it } from "velt/test";
 import { tagMatches } from "velt/crypto/aead_tag";
 import { chachaBlock, chachaSetNonce, chachaState } from "velt/crypto/chacha20";
+import { rowsPolyKey, rowsXor } from "velt/crypto/chacha20_rows";
 import { chachaXorInPlace } from "velt/crypto/chacha20_simd";
 import { Poly1305 } from "velt/crypto/poly1305";
 import { hexDecode, hexEncode } from "velt/encoding/hex";
@@ -132,7 +133,6 @@ describe("ChaCha20's four-block path", () => {
   it("matches the scalar block for every length up to 1000, at odd offsets", () => {
     const state = chachaState(noise(32, 7));
     chachaSetNonce(state, noise(12, 9));
-    const x: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     const data = noise(1000 + 16, 11);
     let failures = 0;
     for (let n: usize = 0; n <= 1000; n++) {
@@ -140,7 +140,7 @@ describe("ChaCha20's four-block path", () => {
       const counter: u32 = n % 3 == 0 ? 0xfffffffe : (n as u32);
       const fast = data.slice(0, (start + n + 3) as i64);
       const slow = fast.slice();
-      chachaXorInPlace(state, x, counter, fast, start, start + n);
+      chachaXorInPlace(state, counter, fast, start, start + n);
       xorScalar(state, counter, slow, start, start + n);
       if (hexEncode(fast) != hexEncode(slow)) {
         failures++;
@@ -151,19 +151,24 @@ describe("ChaCha20's four-block path", () => {
 });
 
 describe("The checks before the unchecked loads", () => {
-  it("throws before ChaCha20 writes anything for a range or scratch that does not fit", () => {
+  it("throws before ChaCha20 writes anything for a range that does not fit", () => {
     const state = chachaState(noise(32, 7));
     chachaSetNonce(state, noise(12, 9));
-    const x: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     const bad = "ChaCha20 range is out of bounds";
     for (const size of [10 as usize, 63, 64, 255, 256, 300]) {
       const buf = noise(size, 5);
       const before = hexEncode(buf);
-      expect(() => chachaXorInPlace(state, x, 1, buf, 0, size + 1)).toThrow(bad);
-      expect(() => chachaXorInPlace(state, x, 1, buf, 0, size + 256)).toThrow(bad);
-      expect(() => chachaXorInPlace(state, [0, 0, 0], 1, buf, 0, size)).toThrow(bad);
+      expect(() => chachaXorInPlace(state, 1, buf, 0, size + 1)).toThrow(bad);
+      expect(() => chachaXorInPlace(state, 1, buf, 0, size + 256)).toThrow(bad);
+      const short = state.slice(0, 15);
+      expect(() => chachaXorInPlace(short, 1, buf, 0, size)).toThrow("ChaCha20 state must be 16");
+      expect(() => rowsXor(short, 1, buf, 0, 1)).toThrow("ChaCha20 state must be 16");
+      expect(() => rowsXor(state, 1, buf, 0, size + 1)).toThrow(bad);
       expect(hexEncode(buf)).toBe(before);
     }
+    expect(() => rowsPolyKey(state.slice(0, 15), Buffer.alloc(32))).toThrow(
+      "ChaCha20 state must be 16",
+    );
   });
 
   it("throws before Poly1305 reads past the message", () => {

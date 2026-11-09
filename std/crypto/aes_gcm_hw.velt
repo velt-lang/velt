@@ -12,7 +12,6 @@
 import { inline, noInline } from "velt/lang/intrinsics";
 import { u8x16, u32x4, u64x2 } from "velt/simd";
 import { aesKeyWords } from "velt/crypto/aes_ctr";
-import { load32le } from "velt/crypto/chacha20";
 
 /** The round keys of `key` (16 or 32 bytes) as vectors, 11 or 15 of them. */
 export function aesRoundKeys(key: u8[]): u8x16[] {
@@ -31,6 +30,56 @@ export function aesRoundKeys(key: u8[]): u8x16[] {
   return keys;
 }
 
+/**
+ * The round keys in registers for the blocks taken one at a time: 11 (AES-128) or 15 (AES-256,
+ * `wide`; k11..k14 are zero otherwise), loaded once per message instead of once per round.
+ */
+export struct Rounds {
+  k0: u8x16;
+  k1: u8x16;
+  k2: u8x16;
+  k3: u8x16;
+  k4: u8x16;
+  k5: u8x16;
+  k6: u8x16;
+  k7: u8x16;
+  k8: u8x16;
+  k9: u8x16;
+  k10: u8x16;
+  k11: u8x16;
+  k12: u8x16;
+  k13: u8x16;
+  k14: u8x16;
+  wide: bool;
+}
+
+/** `keys` (`aesRoundKeys`: 11 or 15 of them) as `Rounds`. */
+export function rounds(keys: u8x16[]): Rounds {
+  const wide = keys.length == 15;
+  if (!wide && keys.length != 11) {
+    panic(`ICE: AES-GCM: ${keys.length} round keys`);
+  }
+  const z = u8x16.splat(0);
+  return {
+    k0: keys[0],
+    k1: keys[1],
+    k2: keys[2],
+    k3: keys[3],
+    k4: keys[4],
+    k5: keys[5],
+    k6: keys[6],
+    k7: keys[7],
+    k8: keys[8],
+    k9: keys[9],
+    k10: keys[10],
+    k11: wide ? keys[11] : z,
+    k12: wide ? keys[12] : z,
+    k13: wide ? keys[13] : z,
+    k14: wide ? keys[14] : z,
+    wide: wide,
+  };
+}
+
 /** The block `v` reversed byte for byte: a block as a field element, and back. */
 export function rev(v: u8x16): u8x16 {
   inline();
@@ -42,6 +91,11 @@ export function rev(v: u8x16): u8x16 {
 // function grows with its branches times its locals).
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+// A lane by a constant index: the method's range check stays a call in the gated clones.
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+// The last partial block: `count` is under 16 (16 would be poison in a release build).
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
 
 /** The 16 bytes of `b` from `at`, which the caller knows are there. */
 export function load16(b: u8[], at: usize): u8x16 {
@@ -73,10 +127,10 @@ export function swapHalves(v: u64x2): u64x2 {
  */
 export function reduce(lo: u64x2, mid: u64x2, hi: u64x2): u64x2 {
   inline();
-  let v0 = lo.lane(0);
-  let v1 = lo.lane(1) ^ mid.lane(0);
-  let v2 = hi.lane(0) ^ mid.lane(1);
-  let v3 = hi.lane(1);
+  let v0 = velt_simd_u64x2_lane(lo, 0);
+  let v1 = velt_simd_u64x2_lane(lo, 1) ^ velt_simd_u64x2_lane(mid, 0);
+  let v2 = velt_simd_u64x2_lane(hi, 0) ^ velt_simd_u64x2_lane(mid, 1);
+  let v3 = velt_simd_u64x2_lane(hi, 1);
   v3 = (v3 << 1) | (v2 >> 63);
   v2 = (v2 << 1) | (v1 >> 63);
   v1 = (v1 << 1) | (v0 >> 63);
@@ -173,6 +227,39 @@ function ghash8(y: u64x2, hp: u64x2[], b: u8[], off: usize): u64x2 {
   return reduce(lo, mid, hi);
 }
 
+/**
+ * `ghash8` for four blocks `b[off..off + 64]`: (y + c0) H^4 + c1 H^3 + c2 H^2 + c3 H, one
+ * reduction (the four to seven blocks a short message leaves after the groups of eight).
+ */
+function ghash4(y: u64x2, hp: u64x2[], b: u8[], off: usize): u64x2 {
+  noInline();
+  const x0 = element(b, off).xor(y);
+  const c1 = element(b, off + 16);
+  const c2 = element(b, off + 32);
+  const c3 = element(b, off + 48);
+  const h3 = hp[3];
+  const s3 = hp[11];
+  let lo = x0.clmulLow(h3);
+  let hi = x0.clmulHigh(h3);
+  let mid = x0.clmulLow(s3).xor(x0.clmulHigh(s3));
+  const h2 = hp[2];
+  const s2 = hp[10];
+  lo = lo.xor(c1.clmulLow(h2));
+  hi = hi.xor(c1.clmulHigh(h2));
+  mid = mid.xor(c1.clmulLow(s2)).xor(c1.clmulHigh(s2));
+  const h1 = hp[1];
+  const s1 = hp[9];
+  lo = lo.xor(c2.clmulLow(h1));
+  hi = hi.xor(c2.clmulHigh(h1));
+  mid = mid.xor(c2.clmulLow(s1)).xor(c2.clmulHigh(s1));
+  const h0 = hp[0];
+  const s0 = hp[8];
+  lo = lo.xor(c3.clmulLow(h0));
+  hi = hi.xor(c3.clmulHigh(h0));
+  mid = mid.xor(c3.clmulLow(s0)).xor(c3.clmulHigh(s0));
+  return reduce(lo, mid, hi);
+}
+
 /** The GHASH state `y` after `b[start..end]`, its last block zero-padded. */
 export function ghashBytes(y: u64x2, hp: u64x2[], b: u8[], start: usize, end: usize): u64x2 {
   let s = y;
@@ -180,6 +267,10 @@ export function ghashBytes(y: u64x2, hp: u64x2[], b: u8[], start: usize, end: us
   while (end - off >= 128) {
     s = ghash8(s, hp, b, off);
     off += 128;
+  }
+  if (end - off >= 64) {
+    s = ghash4(s, hp, b, off);
+    off += 64;
   }
   while (end - off >= 16) {
     s = gfmul(s.xor(element(b, off)), hp[0], hp[8]);
@@ -191,19 +282,9 @@ export function ghashBytes(y: u64x2, hp: u64x2[], b: u8[], start: usize, end: us
   return s;
 }
 
-/** The field element of `b[start..end]` (under 16 bytes) zero-padded. */
+/** The field element of `b[start..end]` (under 16 bytes, which the caller knows are there) zero-padded. */
 export function partial(b: u8[], start: usize, end: usize): u64x2 {
-  let hi: u64 = 0;
-  let lo: u64 = 0;
-  for (let i = start; i < end; i++) {
-    const at = (i - start) as u64;
-    if (at < 8) {
-      hi |= (b[i] as u64) << (56 - 8 * at);
-    } else {
-      lo |= (b[i] as u64) << (120 - 8 * at);
-    }
-  }
-  return u64x2.splat(lo).withLane(1, hi);
+  return rev(velt_simd_u8x16_load_partial(b, start as u64, (end - start) as u64)).asU64x2();
 }
 
 /** The lengths block of GCM: the bits of the additional data and of the text. */
@@ -217,18 +298,14 @@ export function counterBlock(base: u32x4, ctr: u32): u8x16 {
   return base.withLane(3, ctr.swapBytes()).asU8x16();
 }
 
-/** The nonce (12 bytes) as a counter block with the counter 0. */
+/** The nonce (12 bytes, which the caller checked) as a counter block with the counter 0. */
 export function counterBase(nonce: u8[]): u32x4 {
-  return u32x4
-    .splat(0)
-    .withLane(0, load32le(nonce, 0))
-    .withLane(1, load32le(nonce, 4))
-    .withLane(2, load32le(nonce, 8));
+  return velt_simd_u8x16_load_partial(nonce, 0, 12).asU32x4();
 }
 
-/** XORs the bytes `buf[start..end]` (under 16) with the keystream block `ks`. */
+/** XORs the bytes `buf[start..end]` (under 16, which the caller knows are there) with the keystream block `ks`. */
 export function xorTail(buf: u8[], start: usize, end: usize, ks: u8x16) {
-  for (let i = start; i < end; i++) {
-    buf[i] ^= ks.lane(i - start);
-  }
+  const n = (end - start) as u64;
+  const v = velt_simd_u8x16_load_partial(buf, start as u64, n).xor(ks);
+  velt_simd_u8x16_store_partial(v, buf, start as u64, n);
 }

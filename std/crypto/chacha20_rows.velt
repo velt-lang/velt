@@ -1,0 +1,154 @@
+// velt/crypto (internal): ChaCha20 one block at a time with the block's four rows in four `u32x4`
+// vectors (the horizontal layout): a round's four quarter rounds run as one, and the diagonal
+// round turns rows into columns with lane rotations. For the one-time Poly1305 key and messages
+// of at most two blocks (a TLS record of a query or a reply), where the four-block path
+// (std/crypto/chacha20_simd.velt) would compute blocks nobody uses and the scalar block costs
+// several times more. Constant time: adds, XORs, rotations and shuffles by constants.
+
+import { CryptoError } from "velt/crypto/errors";
+import { inline } from "velt/lang/intrinsics";
+
+// Declared directly, as chacha20_simd.velt does (loading `velt/simd` costs compile time). The
+// loads and stores are unchecked: the callers check the ranges.
+declare function velt_simd_u32x4_load(from: u32[], at: u64): u32x4;
+declare function velt_simd_u32x4_with_lane(v: u32x4, index: u64, x: u32): u32x4;
+declare function velt_simd_u32x4_add(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_xor(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_or(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_shl(v: u32x4, count: u32): u32x4;
+declare function velt_simd_u32x4_shr(v: u32x4, count: u32): u32x4;
+declare function velt_simd_u32x4_as_u8x16(v: u32x4): u8x16;
+declare function velt_simd_u8x16_as_u32x4(v: u8x16): u32x4;
+declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
+
+function add(a: u32x4, b: u32x4): u32x4 {
+  return velt_simd_u32x4_add(a, b);
+}
+
+function xor(a: u32x4, b: u32x4): u32x4 {
+  return velt_simd_u32x4_xor(a, b);
+}
+
+function rotl(v: u32x4, n: u32): u32x4 {
+  return velt_simd_u32x4_or(velt_simd_u32x4_shl(v, n), velt_simd_u32x4_shr(v, 32 - n));
+}
+
+// Rotations by whole bytes: a byte shuffle (one instruction on NEON and SSSE3).
+function rotl16(v: u32x4): u32x4 {
+  const b = velt_simd_u32x4_as_u8x16(v);
+  return velt_simd_u8x16_as_u32x4(
+    u8x16.shuffle(b, b, 2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13),
+  );
+}
+
+function rotl8(v: u32x4): u32x4 {
+  const b = velt_simd_u32x4_as_u8x16(v);
+  return velt_simd_u8x16_as_u32x4(
+    u8x16.shuffle(b, b, 3, 0, 1, 2, 7, 4, 5, 6, 11, 8, 9, 10, 15, 12, 13, 14),
+  );
+}
+
+/** A block's four rows of keystream, as `rowsBlock` returns them. */
+export struct Rows {
+  a: u32x4;
+  b: u32x4;
+  c: u32x4;
+  d: u32x4;
+}
+
+/**
+ * The keystream block of `state` (16 words) with the block counter `counter`. Throws
+ * `CryptoError` when `state` is shorter, before the unchecked loads.
+ */
+export function rowsBlock(state: u32[], counter: u32): Rows {
+  if (state.length < 16) {
+    throw new CryptoError(`ChaCha20 state must be 16 words, got ${state.length}`);
+  }
+  const a0 = velt_simd_u32x4_load(state, 0);
+  const b0 = velt_simd_u32x4_load(state, 4);
+  const c0 = velt_simd_u32x4_load(state, 8);
+  const d0 = velt_simd_u32x4_with_lane(velt_simd_u32x4_load(state, 12), 0, counter);
+  let a = a0;
+  let b = b0;
+  let c = c0;
+  let d = d0;
+  for (let r = 0; r < 10; r++) {
+    a = add(a, b);
+    d = rotl16(xor(d, a));
+    c = add(c, d);
+    b = rotl(xor(b, c), 12);
+    a = add(a, b);
+    d = rotl8(xor(d, a));
+    c = add(c, d);
+    b = rotl(xor(b, c), 7);
+    // The diagonals into columns: row i rotated left by i lanes, and back after the round.
+    b = u32x4.shuffle(b, b, 1, 2, 3, 0);
+    c = u32x4.shuffle(c, c, 2, 3, 0, 1);
+    d = u32x4.shuffle(d, d, 3, 0, 1, 2);
+    a = add(a, b);
+    d = rotl16(xor(d, a));
+    c = add(c, d);
+    b = rotl(xor(b, c), 12);
+    a = add(a, b);
+    d = rotl8(xor(d, a));
+    c = add(c, d);
+    b = rotl(xor(b, c), 7);
+    b = u32x4.shuffle(b, b, 3, 0, 1, 2);
+    c = u32x4.shuffle(c, c, 2, 3, 0, 1);
+    d = u32x4.shuffle(d, d, 1, 2, 3, 0);
+  }
+  return { a: add(a, a0), b: add(b, b0), c: add(c, c0), d: add(d, d0) };
+}
+
+// `buf[at..at + n] ^=` the first `n` bytes (at most 16) of `v`, unchecked.
+function xorPart(buf: u8[], at: usize, n: usize, v: u32x4) {
+  inline();
+  const k = velt_simd_u32x4_as_u8x16(v);
+  if (n >= 16) {
+    const x = velt_simd_u8x16_xor(velt_simd_u8x16_load(buf, at as u64), k);
+    velt_simd_u8x16_store(x, buf, at as u64);
+  } else if (n > 0) {
+    const x = velt_simd_u8x16_xor(velt_simd_u8x16_load_partial(buf, at as u64, n as u64), k);
+    velt_simd_u8x16_store_partial(x, buf, at as u64, n as u64);
+  }
+}
+
+/**
+ * XORs `buf[start..end]` with the keystream of `state` from block `counter` on, a block at a
+ * time (for at most 128 bytes, where it costs less than four blocks in vectors). Throws
+ * `CryptoError`, before writing anything, when `end` is past `buf`.
+ */
+export function rowsXor(state: u32[], counter: u32, buf: u8[], start: usize, end: usize) {
+  if (end > buf.length) {
+    throw new CryptoError(`ChaCha20 range is out of bounds: end ${end}, length ${buf.length}`);
+  }
+  let block = counter;
+  let off = start;
+  while (off < end) {
+    const k = rowsBlock(state, block);
+    const n = end - off;
+    xorPart(buf, off, n, k.a);
+    xorPart(buf, off + 16, n > 16 ? n - 16 : 0, k.b);
+    xorPart(buf, off + 32, n > 32 ? n - 32 : 0, k.c);
+    xorPart(buf, off + 48, n > 48 ? n - 48 : 0, k.d);
+    block = block + 1;
+    off += n < 64 ? n : 64;
+  }
+}
+
+/**
+ * The one-time Poly1305 key (the first 32 bytes of block 0, RFC 8439 §2.6) into `out[0..32]`;
+ * throws unless `out` has 32 bytes.
+ */
+export function rowsPolyKey(state: u32[], out: u8[]) {
+  if (out.length < 32) {
+    panic(`ICE: ChaCha20 poly key into ${out.length} bytes`);
+  }
+  const k = rowsBlock(state, 0);
+  velt_simd_u8x16_store(velt_simd_u32x4_as_u8x16(k.a), out, 0);
+  velt_simd_u8x16_store(velt_simd_u32x4_as_u8x16(k.b), out, 16);
+}

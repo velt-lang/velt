@@ -28,8 +28,10 @@ import { arrayTruncate } from "velt/lang/intrinsics";
  * (tasks on one thread may share it: no call awaits).
  */
 export class AesGcm implements Aead {
+  // The bitsliced path's key, GHASH and scratch: empty (and null) on the instruction path, which
+  // does not use them, so the object holds and moves (to another thread, with its connection) less.
   private skey: u64[];
-  private ghash: Ghash;
+  private ghash: Ghash | null;
   private q: u64[];
   private ks: u8[];
   private block: u8[];
@@ -55,6 +57,10 @@ export class AesGcm implements Aead {
     if (u8x16.hasAes()) {
       this.keys = aesRoundKeys(key);
       this.hp = hashPowers(h);
+      this.skey = [];
+      this.q = [];
+      this.ks = [];
+      this.ghash = null;
     }
   }
 
@@ -149,6 +155,9 @@ export class AesGcm implements Aead {
   // GHASH(aad, ct, lengths) XORed with E(K, nonce || 1), into `this.block`.
   private tag(nonce: u8[], aad: u8[], ct: u8[], start: usize, end: usize) {
     const g = this.ghash;
+    if (g == null) {
+      panic("ICE: AesGcm on the bitsliced path without its GHASH");
+    }
     g.reset();
     g.update(aad, 0, aad.length);
     g.update(ct, start, end);

@@ -39,10 +39,20 @@ export function chachaState(key: u8[]): u32[] {
 
 /** Sets the nonce words of `state` to the 12-byte `nonce`. */
 export function chachaSetNonce(state: u32[], nonce: u8[]) {
-  for (let i: usize = 0; i < 3; i++) {
-    state[13 + i] = load32le(nonce, 4 * i);
+  if (nonce.length < 12 || state.length < 16) {
+    panic(`ICE: ChaCha20 nonce of ${nonce.length} bytes, state of ${state.length} words`);
   }
+  // One 12-byte load and the three words out of it, the counter word kept.
+  const v = velt_simd_u8x16_as_u32x4(velt_simd_u8x16_load_partial(nonce, 0, 12));
+  state[13] = velt_simd_u32x4_lane(v, 0);
+  state[14] = velt_simd_u32x4_lane(v, 1);
+  state[15] = velt_simd_u32x4_lane(v, 2);
 }
+
+// Declared directly (loading `velt/simd` costs compile time); `chachaSetNonce` checks the lengths.
+declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): u8x16;
+declare function velt_simd_u8x16_as_u32x4(v: u8x16): u32x4;
+declare function velt_simd_u32x4_lane(v: u32x4, index: u64): u32;
 
 function quarter(x: u32[], a: usize, b: usize, c: usize, d: usize) {
   x[a] = x[a] + x[b];
