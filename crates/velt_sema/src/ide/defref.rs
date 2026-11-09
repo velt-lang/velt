@@ -242,7 +242,10 @@ impl Builder<'_, '_, '_> {
             ),
             FnKind::Extern if f.intrinsic.is_some() => (
                 DefKind::ExternFunction,
-                format!("declare intrinsic function {short}{sig}: {ret}"),
+                format!(
+                    "@intrinsic declare {}function {short}{sig}: {ret}",
+                    if f.unsafe_intrinsic { "unsafe " } else { "" }
+                ),
             ),
             FnKind::Extern if f.host.is_some() => (
                 DefKind::ExternFunction,

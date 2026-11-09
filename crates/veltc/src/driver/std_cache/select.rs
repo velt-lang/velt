@@ -2,11 +2,11 @@
 //!
 //! Served: every function defined in std (generic, caller-tracking and frozen instances too)
 //! except
-//! - in a release build, small ones ([`SMALL`]) and those std marks `inline()`, which stay where
+//! - in a release build, small ones ([`SMALL`]) and those std marks `@inline`, which stay where
 //!   callers can inline them; a debug build inlines neither, so it links them too, and keeps only
 //!   the helpers its optimizer level inlines ([`Rule::Debug`]);
 //! - in a release build by default ([`Rule::NoInline`]), every function std does not mark
-//!   `noInline()`: the optimizer may inline or specialize any other into its callers, so only a
+//!   `@noInline`: the optimizer may inline or specialize any other into its callers, so only a
 //!   function it never inlines runs the same from an object;
 //! - renamed duplicates (`$dup`), which are not the same function in every program;
 //! - those whose inlinable set ([`inlinable`]) reaches a static with identity (relocations, or
@@ -29,8 +29,8 @@
 //!   program folds into them.
 //!
 //! What a served function's object is compiled with ([`Depth`]): the small functions it calls
-//! (and those marked `inline()`), or in a release build by default every function it reaches
-//! through functions not marked `noInline()`, as copies of its own.
+//! (and those marked `@inline`), or in a release build by default every function it reaches
+//! through functions not marked `@noInline`, as copies of its own.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -48,7 +48,7 @@ pub(super) enum Rule<'a> {
     /// Those its optimizer may inline ([`inlines`]).
     Release,
     /// A release build's default: as [`Rule::Release`], and every function std does not mark
-    /// `noInline()` (`Inline::Never`). Those are never inlined into a caller, so serving their
+    /// `@noInline` (`Inline::Never`). Those are never inlined into a caller, so serving their
     /// objects changes no caller's code, and their callers' clang no longer compiles them.
     /// `simd`: [`simd_checking`] of the program.
     NoInline { simd: &'a [bool] },
@@ -68,11 +68,11 @@ pub(super) enum Rule<'a> {
 /// which the optimizers may inline into it, and which are in its key).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Depth {
-    /// The small ones and those std marks `inline()`, which an optimized caller inlines whatever
+    /// The small ones and those std marks `@inline`, which an optimized caller inlines whatever
     /// else it knows; the object keeps them as declarations with their bodies, and calls the
     /// program's copy where it doesn't inline one.
     Small,
-    /// Every function it reaches through functions not marked `noInline()`, whatever their size,
+    /// Every function it reaches through functions not marked `@noInline`, whatever their size,
     /// as copies of its own (`compile::own_copies`): in the program velt_opt and LLVM inline
     /// large callees into it too. With the small ones alone, `f64Text`'s object called
     /// `floatText`, and `bench/stdport/float_to_string` ran 5.2% slower.
@@ -80,8 +80,8 @@ pub(super) enum Depth {
 }
 
 /// Whether a function compiled at `depth` has `f`'s body compiled into it (its callers' keys
-/// hold it): small or marked `inline()` (any function at [`Depth::Whole`]), and not marked
-/// `noInline()`: such a function stays a call, so its callers' objects declare it.
+/// hold it): small or marked `@inline` (any function at [`Depth::Whole`]), and not marked
+/// `@noInline`: such a function stays a call, so its callers' objects declare it.
 pub(super) fn inlines(f: &vir::Function, depth: Depth) -> bool {
     let compiled_in = match depth {
         Depth::Small => size(f) < SMALL || f.inline == Inline::Always,
@@ -134,7 +134,7 @@ fn never_served(f: &vir::Function) -> bool {
 /// The std functions a release build never serves, by name (`<std module>::<function>`, a function
 /// that is neither generic nor a method: the name is matched whole): each stays in the program,
 /// compiled with it, whatever it is marked. Debug builds, which fold no constants, still serve
-/// them. For a `noInline()` function whose
+/// them. For a `@noInline` function whose
 /// callers, inlined into the program's code, pass it constants: in the program LLVM specializes
 /// it for them, an object compiled once can't. A tool std's authors use deliberately, each entry
 /// with why (design/std-object.md "Never served"); a name that no longer exists in std fails a
@@ -146,7 +146,7 @@ pub(super) const NEVER_SERVED: &[&str] = &[
     "std/lang/number/fixed::fixedText",
 ];
 
-/// Whether `program` has a std function marked `noInline()` that [`Rule::NoInline`] may serve,
+/// Whether `program` has a std function marked `@noInline` that [`Rule::NoInline`] may serve,
 /// by the marker alone: without one, a release build looks no further.
 pub(super) fn has_no_inline(program: &vir::Program) -> bool {
     (program.funcs.iter()).any(|f| {

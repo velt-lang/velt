@@ -141,7 +141,7 @@ export function g(a: any) {}
 /// std's intrinsics and host functions are documented as functions; other `declare`s are not.
 #[test]
 fn intrinsic_declarations_are_documented() {
-    let src = "/** Swaps two elements. */\nexport declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n\n/** Hidden. */\nexport declare function velt_rt_x(): void;\nexport declare host(\"env\") function now(): f64;\n";
+    let src = "/** Swaps two elements. */\n@intrinsic\nexport declare function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n\n/** Hidden. */\nexport declare function velt_rt_x(): void;\nexport declare host(\"env\") function now(): f64;\n";
     let m = extract("std/lang/intrinsics/array", src);
     let names: Vec<&str> = m.items.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(names, ["arraySwap", "now"]);
@@ -153,7 +153,7 @@ fn intrinsic_declarations_are_documented() {
     assert_eq!(f.kind, Kind::Function);
     assert_eq!(
         f.signature,
-        "declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void"
+        "@intrinsic declare function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void"
     );
     assert_eq!(f.doc, "Swaps two elements.");
 }

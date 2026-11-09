@@ -3,7 +3,7 @@
 // a parameter of a number, `bool` or `symbol` type is copied, any other is borrowed (read where
 // it is, for the call only), and one of these wrappers says otherwise. Each is its type
 // argument itself, so TypeScript and every tool read the declaration as the plain type; the
-// compiler reads the wrapper only on a `declare intrinsic function`'s parameter.
+// compiler reads the wrapper only on an `@intrinsic declare function`'s parameter.
 
 /** The argument is modified in place (a mutable borrow): a variable, field or element passed
  * there must be one the caller may change. */

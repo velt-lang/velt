@@ -1,6 +1,6 @@
 //! The std cache (#1728): std functions compiled once per key, stored in the build cache, linked
 //! into every program that compiles the same code: release builds with `VELT_STD_OBJECT=1` (by
-//! default those marked `noInline()`), debug builds by default, where only `velt cache warm`
+//! default those marked `@noInline`), debug builds by default, where only `velt cache warm`
 //! stores objects.
 
 use std::path::{Path, PathBuf};
@@ -762,7 +762,7 @@ function main() {
     assert!(err.contains("cannot reach the file system"), "{err}");
 }
 
-/// A program reaching std functions marked `noInline()`: number formatting (`pushF64`,
+/// A program reaching std functions marked `@noInline`: number formatting (`pushF64`,
 /// `f64Text`, `fixedText`), beside URL code, which has none.
 const NO_INLINE_PROGRAM: &str = "function main() {
   const x = process.argv.length * 1.5;
@@ -792,7 +792,7 @@ fn release_default(
     o
 }
 
-/// By default a release build links the objects of the `noInline()` std functions that the
+/// By default a release build links the objects of the `@noInline` std functions that the
 /// warm-up stored, and prints what a build compiling all of std prints. A build serving everything
 /// (`VELT_STD_OBJECT=1`) finds none of them: its objects call the program's copies of what they
 /// don't inline, the default's have their own, so their keys differ. It compiles its own.
@@ -871,7 +871,7 @@ fn served_symbols(o: &Output) -> Vec<String> {
         .collect()
 }
 
-/// The functions of `file`'s optimized release VIR, each with whether it is marked `noInline()`.
+/// The functions of `file`'s optimized release VIR, each with whether it is marked `@noInline`.
 fn vir_functions(dir: &Path, file: &str) -> std::collections::HashMap<String, bool> {
     let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     let o = (cmd.args(["build", file, "--release", "--emit", "vir"]))
@@ -889,7 +889,7 @@ fn vir_functions(dir: &Path, file: &str) -> std::collections::HashMap<String, bo
         .collect()
 }
 
-/// Every function a release build serves by default is one std marks `noInline()` (as the
+/// Every function a release build serves by default is one std marks `@noInline` (as the
 /// program's own VIR shows it), and the rest of std stays in the program (`inlinable`).
 #[test]
 fn every_function_a_release_build_serves_is_marked_no_inline() {
@@ -903,7 +903,7 @@ fn every_function_a_release_build_serves_is_marked_no_inline() {
     let err = text(&served.stderr);
     let symbols = served_symbols(&served);
     assert!(!symbols.is_empty(), "{err}");
-    // A function marked `noInline()` stays a function in the optimized program, so each one
+    // A function marked `@noInline` stays a function in the optimized program, so each one
     // served is there; one served by mistake would likely have been inlined away.
     let vir = vir_functions(dir, "a.velt");
     for s in &symbols {
@@ -911,7 +911,7 @@ fn every_function_a_release_build_serves_is_marked_no_inline() {
         assert_eq!(
             marked,
             Some(true),
-            "{s} is served but not marked `noInline()`"
+            "{s} is served but not marked `@noInline`"
         );
     }
     let by_reason = (err.lines()).find(|l| l.contains("by reason"));

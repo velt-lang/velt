@@ -25,7 +25,8 @@
 //! value, `&T` borrowed, `&mut T` borrowed mutably, `move T` owned (the callee drops it). Sema
 //! infers modes and `throws` from a hook's body, so `velt_sema`'s test compares them on a program
 //! checked with every std body (`velt check --std`): lazy std leaves the body of a hook no code
-//! reaches unchecked. A class is `class`.
+//! reaches unchecked. A class is `class`, and a compile-time decorator the compiler acts on
+//! (`declare decorator function`, #2203) is `decorator`.
 //!
 //! ```
 //! use velt_common::hook_sig::{Mode, Sig, T};
@@ -44,11 +45,14 @@
 
 use std::fmt;
 
-/// A hook's signature: a function's, or a class.
+/// A hook's signature: a function's, a class, or a compile-time decorator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sig {
     Fn(FnSig),
     Class,
+    /// A `declare decorator function` the compiler acts on where it is used (`@inline`): its
+    /// declaration says what it takes and where it applies, so the table gives no signature.
+    Decorator,
 }
 
 /// A function hook's signature.
@@ -206,8 +210,10 @@ impl fmt::Display for Param {
 impl fmt::Display for Sig {
     /// As the table writes it, without `sig(…)`: `<A>(&mut ArrayView(A), usize) -> void`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Sig::Fn(s) = self else {
-            return f.write_str("class");
+        let s = match self {
+            Sig::Fn(s) => s,
+            Sig::Class => return f.write_str("class"),
+            Sig::Decorator => return f.write_str("decorator"),
         };
         if s.generics > 0 {
             let names: Vec<String> = (0..s.generics).map(|i| T::Param(i).to_string()).collect();
@@ -234,6 +240,9 @@ impl fmt::Display for Sig {
 macro_rules! hook_sig {
     (class) => {
         $crate::hook_sig::Sig::Class
+    };
+    (decorator) => {
+        $crate::hook_sig::Sig::Decorator
     };
     (sig(< $($g:ident),* > ( $($p:tt)* ) -> $r:tt $(($($ra:tt)*))? $(throws $e:tt $(($($ea:tt)*))?)?)) => {
         $crate::hook_sig::Sig::Fn($crate::hook_sig::FnSig {

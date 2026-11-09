@@ -94,7 +94,7 @@ its reason; the exported class is the safe API.
 ## Declarations
 
 `declare c("<library>") function name(params): R;` is a declaration kind of its own in the AST,
-HIR and VIR (like `declare host("m")`, `declare intrinsic` and `declare generated("m")`). The
+HIR and VIR (like `declare host("m")`, `@intrinsic declare` and `declare generated("m")`). The
 keyword is `c` because it names the ABI, which every language here speaks.
 
 - `<library>` is a **logical name** that the manifest maps to a library per target (below);
@@ -763,7 +763,7 @@ Step 1 lands in layers, each its own pull request:
        `SAFETY:` in the comment lines directly above its line, and each unsafe function such a
        comment or an `Unsafe:` paragraph in its doc comment (what callers must guarantee). It is
        an error. std follows it too, checked by a test rather than at each build.
-     - `addressLoad` is `declare unsafe intrinsic function`: its callers are unsafe code.
+     - `addressLoad` is `@intrinsic declare unsafe function`: its callers are unsafe code.
      - The language server doesn't run these checks yet (builds and `velt check` do).
    - 5c: what the program trusts, in view.
      - `velt check` ends, when it passes, with each package with native code that the program

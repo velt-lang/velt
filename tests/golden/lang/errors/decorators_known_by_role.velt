@@ -1,0 +1,18 @@
+// The compiler acts on std's `@intrinsic`, `@inline` and `@noInline`, which it finds by their
+// roles, never by name: a program's own decorators of those names are data. So this `@inline`
+// is no error on a recursive function, and this `@intrinsic` doesn't make `byteLen` an
+// intrinsic, which only may be declared `unsafe`.
+declare decorator function intrinsic(): FunctionDecorator;
+declare decorator function inline(): FunctionDecorator;
+
+@intrinsic
+declare unsafe function byteLen(s: string): usize;
+
+@inline
+function fact(n: i64): i64 {
+  return n <= 1 ? 1 : n * fact(n - 1);
+}
+
+function main() {
+  console.log(fact(5));
+}

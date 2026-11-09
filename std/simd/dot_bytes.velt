@@ -11,8 +11,8 @@ import { noInline } from "velt/lang/intrinsics";
  * summed in `i32`, wrapping on overflow as `+` on `i32` does (131,072 pairs of -128 already make
  * 2^31 and wrap). Panics with a RangeError when the lengths differ.
  */
+@noInline
 export function dotI8(a: i8[], b: i8[]): i32 {
-  noInline();
   const n: usize = a.length;
   if (n != b.length) {
     panic(`RangeError: dotI8: the arrays have lengths ${n} and ${b.length}`);

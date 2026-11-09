@@ -18,8 +18,8 @@ declare function velt_simd_u32x4_splat(x: u32): u32x4;
 declare function velt_simd_u32x4_as_u8x16(v: u32x4): u8x16;
 
 /** The eight bytes at `at`, little-endian; 16 from it must be inside `d`. */
+@inline
 export function word(d: u8[], at: i64): u64 {
-  inline();
   return velt_simd_u64x2_lane(velt_simd_u8x16_as_u64x2(velt_simd_u8x16_load(d, at as u64)), 0);
 }
 
@@ -57,8 +57,8 @@ export function common(d: u8[], a: i64, b: i64, max: i64): i64 {
 }
 
 /** Writes `value` as a little-endian `u32` at `at`, which must be inside `table`. */
+@inline
 export function put32(table: u8[], at: u64, value: u64) {
-  inline();
   const v = velt_simd_u32x4_as_u8x16(velt_simd_u32x4_splat(value as u32));
   velt_simd_u8x16_store_partial(v, table, at, 4);
 }

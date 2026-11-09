@@ -101,8 +101,8 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// Is `d` an unsafe function or method (`unsafe function`, `unsafe m()`, a C function, `declare
-/// unsafe intrinsic function`)?
+/// Is `d` an unsafe function or method (`unsafe function`, `unsafe m()`, a C function, `@intrinsic
+/// declare unsafe function`)?
 pub(crate) fn unsafe_fn(cx: &Ctx, d: DefId) -> bool {
     let f = cx.fn_info(d);
     f.c.is_some()

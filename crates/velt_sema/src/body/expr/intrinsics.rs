@@ -1,4 +1,4 @@
-//! Intrinsic calls. A call of a function std declares with `declare intrinsic function`
+//! Intrinsic calls. A call of a function std declares with `@intrinsic declare function`
 //! (std/lang/intrinsics, `crate::intrinsic_decls`) is checked against that declaration like any
 //! call and becomes the intrinsic ([`FnCx::intrinsic_call`]). The builtins that are intrinsics
 //! without a declaration (`panic`, `sleep`, `xs.push`, `new Mutex`, …) have their signature here
@@ -77,9 +77,6 @@ impl FnCx<'_, '_> {
             if let Some(&e) = ck.type_args.get(1) {
                 self.throw_src(crate::defs::ThrowSrc::Direct(e, span));
             }
-        }
-        if matches!(i, Intrinsic::Inline | Intrinsic::NoInline) {
-            self.inline_marker(i, span);
         }
         if i == Intrinsic::ArrayCopyBytes {
             if let Some(&t) = ck.type_args.first() {

@@ -35,7 +35,7 @@ pub enum Intrinsic {
     Exit,
     /// `panic(msg: string)` → Never.
     Panic,
-    // M2. Those std calls are declared in std/lang/intrinsics (`declare intrinsic function`, named
+    // M2. Those std calls are declared in std/lang/intrinsics (`@intrinsic declare function`, named
     // in `velt_sema::intrinsic_decls`); some are user-visible too.
     /// `(cap: usize) -> T[]`
     ArrayWithCapacity,
@@ -415,9 +415,6 @@ pub enum Intrinsic {
     /// `(s, at: u64, count: u64)` → u8x16: `count` (below 16) bytes from `at` in the low lanes,
     /// 0 in the others, unchecked (a SIMD `load_partial` of the string's bytes).
     StrLoadPartialU8x16,
-    /// std only: `inline()`, a statement: every call of the function whose body it is in is
-    /// inlined where `velt_opt`'s inliner runs (lowering sets `vir::Inline::Always`). No code.
-    Inline,
     /// std only: `(w0: u64, w1: u64, w2: u64, len: usize)` → string: the inline ASCII string of
     /// `len` (at most 23) bytes, byte `i` in bits `8 * (i % 8)` of word `i / 8`. The bytes past
     /// `len` must be 0 (equality compares the words). No call: the string's inline form
@@ -435,9 +432,6 @@ pub enum Intrinsic {
     /// plain heap builder with room for 8 more bytes gets it stored after its text; anything else
     /// calls `velt_rt_strbuf_push_words` (`StrbufPushAsciiWords` for up to 24).
     StrbufPushAsciiWord,
-    /// std only: `noInline()`, a statement: the function whose body it is in is never inlined
-    /// (#1884; lowering sets `vir::Inline::Never`). No code.
-    NoInline,
     /// `(xs: borrow T[]) -> u64` — address of element 0 (no std declaration calls it now).
     ArrayDataPtr,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a

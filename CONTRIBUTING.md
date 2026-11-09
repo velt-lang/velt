@@ -281,9 +281,9 @@ shrinks.
   element-returning methods clone, iteration and callbacks borrow.
 - Only `export` the public surface; helpers stay module-private. `extend` blocks apply wherever
   their module is loaded (they cannot be exported).
-- Compiler intrinsics are declared in `std/lang/intrinsics/` (`export declare intrinsic function
-  arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`, grouped by area, each with a doc
-  comment) and std code imports them like any function (`import { arraySwap } from
+- Compiler intrinsics are declared in `std/lang/intrinsics/` (`@intrinsic export declare
+  function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`, grouped by area, each with a
+  doc comment) and std code imports them like any function (`import { arraySwap } from
   "velt/lang/intrinsics";`). `velt/lang` is internal, so programs and packages cannot: what they
   legitimately need gets a public API (`xs.reserve(n)`, `xs.truncate(n)`, velt/encoding's
   `utf8ByteAt`). A new intrinsic is a declaration there plus its row in the table of

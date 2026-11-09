@@ -45,8 +45,8 @@ function total(a: f32x4, b: f32x4, c: f32x4, d: f32x4): number {
  * accumulated in `f32` lanes by `f16x8.dotAdd` and summed in `number` at the end, the same number
  * on every CPU. Panics with a RangeError when the lengths differ.
  */
+@noInline
 export function dotF16(a: f16[], b: f16[]): number {
-  noInline();
   const n = sameLength(a.length, b.length, "dotF16");
   let s0 = velt_simd_f32x4_splat(0);
   let s1 = s0;
@@ -103,8 +103,8 @@ export function dotF16(a: f16[], b: f16[]): number {
  * same number on every CPU, with no use of a CPU's bf16 dot product, whose rounding differs (a loop
  * over `bf16x8.dotAddFast` has it). Panics with a RangeError when the lengths differ.
  */
+@noInline
 export function dotBf16(a: bf16[], b: bf16[]): number {
-  noInline();
   const n = sameLength(a.length, b.length, "dotBf16");
   let s0 = velt_simd_f32x4_splat(0);
   let s1 = s0;

@@ -81,6 +81,7 @@ mod console;
 mod cpu_checks;
 mod ctor_init;
 mod debug_vars;
+mod decorators;
 mod deferred_versions;
 mod dispatch;
 mod drops;
@@ -593,8 +594,6 @@ struct FnLower<'c, 'h> {
     glue: bool,
     /// Generating the many-threads check's strict walk (glue/many.rs).
     many_strict: bool,
-    /// The body's marker, `inline()` or `noInline()` (`Function::inline`).
-    inline: crate::vir::Inline,
     locals: Vec<LocalDecl>,
     blocks: Vec<(Vec<vir::Stmt>, Option<Terminator>)>,
     /// The locals that hold an `f16`/`bf16` value (its bits), recorded in debug builds of the

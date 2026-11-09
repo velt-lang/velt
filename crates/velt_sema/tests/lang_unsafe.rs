@@ -201,7 +201,7 @@ fn std_diagnostics(src: &str) -> String {
 
 #[test]
 fn an_unsafe_intrinsic_needs_unsafe_code() {
-    // `declare unsafe intrinsic function addressLoad` (std/lang/intrinsics/address.velt).
+    // `@intrinsic declare unsafe function addressLoad` (std/lang/intrinsics/address.velt).
     let import = "import { addressLoad } from \"velt/lang/intrinsics\";";
     let e = std_diagnostics(&format!(
         "{import} function main() {{ console.log(addressLoad<u8>(8)); }}"

@@ -69,7 +69,7 @@ fn no_inline_reasons(p: &Program) -> BTreeMap<&'static str, usize> {
     reasons(p, &names(p), Rule::NoInline { simd: &simd })
 }
 
-/// [`func`], marked `noInline()`.
+/// [`func`], marked `@noInline`.
 fn never(name: &str, stmts: usize, calls: &[u32], extra: Option<Rvalue>) -> Function {
     let mut f = func(name, stmts, calls, extra);
     f.inline = Inline::Never;
@@ -193,7 +193,7 @@ fn callback_callers_stay_in_the_program() {
     assert!(reasons_of(&p).contains_key("callbacks"));
 }
 
-/// `inline()` makes a function of any size part of what its callers' objects inline, and in a
+/// `@inline` makes a function of any size part of what its callers' objects inline, and in a
 /// release build keeps it in the program, as a small one is.
 #[test]
 fn a_function_marked_inline_counts_as_small_whatever_its_size() {
@@ -364,9 +364,9 @@ fn a_location_is_a_path_a_line_and_a_column() {
     assert_eq!(site_path(&[0xff, b':', b':']), None);
 }
 
-/// A release build's default serves only what std marks `noInline()`, at any size, with the small
+/// A release build's default serves only what std marks `@noInline`, at any size, with the small
 /// functions it calls compiled into it; a large function without the marker, or one marked
-/// `inline()`, stays where the optimizer can inline it. A `noInline()` function is never
+/// `@inline`, stays where the optimizer can inline it. A `@noInline` function is never
 /// inlined, so it is in no other function's inlinable set.
 #[test]
 fn by_default_a_release_build_serves_only_what_is_never_inlined() {
@@ -412,7 +412,7 @@ fn by_default_a_release_build_serves_only_what_is_never_inlined() {
     );
 }
 
-/// A small `noInline()` function is no part of its callers' code: they call it, and their
+/// A small `@noInline` function is no part of its callers' code: they call it, and their
 /// objects declare it (and its key is theirs only through its declaration).
 #[test]
 fn a_small_no_inline_callee_is_declared_not_compiled_in() {
@@ -442,7 +442,7 @@ fn a_small_no_inline_callee_is_declared_not_compiled_in() {
 
 /// A release build's object is compiled with every callee the program would optimize the function
 /// with, whatever its size (velt_opt and LLVM inline large callees too), up to the functions
-/// marked `noInline()`, which stay calls; a debug build's with the small ones. Its copies are its
+/// marked `@noInline`, which stay calls; a debug build's with the small ones. Its copies are its
 /// own, so the program exports only what it declares, and a function whose address is taken
 /// (one address in the program).
 #[test]
@@ -487,7 +487,7 @@ fn a_release_object_is_compiled_with_every_callee_up_to_no_inline_ones() {
 
 /// A release object's program of its own: the served function exported, its own copies internal,
 /// a function whose address is taken a declaration keeping its body (the program's one address),
-/// a `noInline()` callee a declaration.
+/// a `@noInline` callee a declaration.
 #[test]
 fn a_release_objects_program_has_its_own_copies_and_the_programs_addresses() {
     let address_of_4 = Some(Rvalue::Use(Operand::Const(Const::Func(FuncId(4)), Ty::Ptr)));

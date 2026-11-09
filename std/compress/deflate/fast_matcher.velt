@@ -152,8 +152,8 @@ export class FastMatcher extends BlockWriter {
  * code less 257 (5 bits) and the value of its extra bits (5), then the distance's code (5) and
  * the value of its extra bits (13).
  */
+@inline
 function tally(syms: u32[], litFreq: u32[], distFreq: u32[], count: i64, len: i64, dist: i64) {
-  inline();
   const x = (len - MIN_MATCH) as u64;
   let symbol: u64;
   let low: u64 = 0;
@@ -180,33 +180,33 @@ function tally(syms: u32[], litFreq: u32[], distFreq: u32[], count: i64, len: i6
 }
 
 /** Whether a distance from a slot can be used: 0 is the position itself. */
+@inline
 function reaches(dist: i64): bool {
-  inline();
   return ((dist - 1) as u64) < (MAX_DIST as u64);
 }
 
 /** The eight bytes at `at`, little-endian; 16 from it must be inside `w`. */
+@inline
 function load(w: u8[], at: i64): u64 {
-  inline();
   return velt_simd_u64x2_lane(velt_simd_u8x16_as_u64x2(velt_simd_u8x16_load(w, at as u64)), 0);
 }
 
 /** The slot of the low six bytes of `x`. */
+@inline
 function sixSlot(x: u64): i64 {
-  inline();
   return ((x << 16).wrappingMul(SIX_MULTIPLIER) >> (64 - SLOT_BITS)) as i64;
 }
 
 /** The slot of the low three bytes of `x`, above those of six. */
+@inline
 function threeSlot(x: u64): i64 {
-  inline();
   const h = (((x & THREE_BYTES) * THREE_MULTIPLIER) & 0xffffffff) >> (32 - SLOT_BITS);
   return (h | (1 << SLOT_BITS)) as i64;
 }
 
 /** The match of `b` at `a`, with `common258` below `clear`, in input that ends at `fill`. */
+@inline
 function matchLength(w: u8[], a: i64, b: i64, clear: i64, fill: i64): i64 {
-  inline();
   if (b < clear) {
     return common258(w, a, b);
   }
@@ -245,8 +245,8 @@ function common258(w: u8[], a: i64, b: i64): i64 {
  * known to be), at most `max`: 16 at a time while the loads stay inside `w` (bytes past what
  * came in may be compared, but the result is cut to `max`), then one at a time.
  */
+@inline
 export function common(w: u8[], a: i64, b: i64, max: i64): i64 {
-  inline();
   let n: i64 = 2;
   const wide = (w.length as i64) - 16 - b;
   const most = max < wide ? max : wide;

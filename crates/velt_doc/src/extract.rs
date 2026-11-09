@@ -387,16 +387,21 @@ impl Source<'_> {
         let doc = self.doc_before(item.span.lo);
         let p = &self.printer;
         Some(match &item.kind {
-            // std's intrinsics (std/lang/intrinsics) are documented like functions: the
-            // declaration is their signature.
-            ItemKind::ExternFn(s) if s.is_intrinsic => DocItem {
-                signature: format!("declare intrinsic function {}", p.fn_sig(s)),
-                ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
-            },
             ItemKind::ExternFn(s) if s.is_decorator => DocItem {
                 signature: format!(
                     "{}declare decorator function {}",
                     p.decorators(&s.decorators),
+                    p.fn_sig(s)
+                ),
+                ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
+            },
+            // std's intrinsics (std/lang/intrinsics, `@intrinsic declare function`) are documented
+            // like functions: the declaration is their signature.
+            ItemKind::ExternFn(s) if !s.decorators.is_empty() && s.host.is_none() => DocItem {
+                signature: format!(
+                    "{}declare {}function {}",
+                    p.decorators(&s.decorators),
+                    if s.is_unsafe { "unsafe " } else { "" },
                     p.fn_sig(s)
                 ),
                 ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)

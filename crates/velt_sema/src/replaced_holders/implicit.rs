@@ -696,11 +696,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::SharedRead
         | I::StrCharCodeAt
         | I::StrByteAt
-        | I::Inline
         | I::StrAsciiWords
         | I::StrbufPushAsciiWords
         | I::StrbufPushAsciiWord
-        | I::NoInline
         | I::StrLoadU8x16
         | I::StrLoadPartialU8x16
         | I::ArrayDataPtr

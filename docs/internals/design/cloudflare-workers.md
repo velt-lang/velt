@@ -70,7 +70,7 @@ isolate, output is a release build with dead code removed, and CI checks the siz
 ## 1. Host functions (#1735)
 
 `declare host("<module>") function name(params): R;` is a typed WebAssembly import, in the
-family of `declare intrinsic`, `declare system` and `declare generated("m")` functions:
+family of `@intrinsic declare`, `declare system` and `declare generated("m")` functions:
 
 ```ts planned
 import { HostRef } from "velt/host";

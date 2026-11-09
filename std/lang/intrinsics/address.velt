@@ -5,11 +5,13 @@
 
 import type { Ptr } from "velt/ffi/ptr";
 import type { Copied } from "./modes";
+import { intrinsic } from "./decorators";
 
 /**
  * The `T` (a number type or `bool`) at `address`, unchecked. Unsafe: a `T` must be there.
  */
-export declare unsafe intrinsic function addressLoad<T>(address: usize): T;
+@intrinsic
+export declare unsafe function addressLoad<T>(address: usize): T;
 
 /**
  * Writes `value`, a `T` (a number type or `bool`), at `address`, unchecked. Unsafe: the memory

@@ -1,14 +1,14 @@
-//! A release build's default use of the std cache: the std functions marked `noInline()` link
+//! A release build's default use of the std cache: the std functions marked `@noInline` link
 //! objects compiled once, optimized as a release build optimizes them, and everything else goes on
 //! as in any release build.
 //!
-//! The optimizer never inlines a `noInline()` function into a caller, so its object holds the code
+//! The optimizer never inlines a `@noInline` function into a caller, so its object holds the code
 //! the program would have compiled for it, and the program's clang no longer compiles it. Every
 //! other std function stays in the program, where it can be inlined and specialized
 //! (`select::Rule::NoInline`). The object is compiled with copies of its own of every function it
-//! reaches through functions not marked `noInline()` (`select::Depth::Whole`, all in its key), so
+//! reaches through functions not marked `@noInline` (`select::Depth::Whole`, all in its key), so
 //! velt_opt and LLVM optimize it with the callees the program would optimize it with; only the
-//! `noInline()` functions it calls, and those whose address it takes, are the program's. What it
+//! `@noInline` functions it calls, and those whose address it takes, are the program's. What it
 //! can't see is its callers' arguments (constants the program could fold into it).
 //!
 //! As in a debug build (`serve`), a function whose key is in the cache is served, its object placed
@@ -35,7 +35,7 @@ use super::{declare, expose, key, select, serve, statics, stats, Place, KIND};
 use crate::driver::BuildOptions;
 
 /// What a release build's objects are compiled with: copies of their own of every function they
-/// reach through functions not marked `noInline()` (`select::Depth::Whole`).
+/// reach through functions not marked `@noInline` (`select::Depth::Whole`).
 const DEPTH: select::Depth = select::Depth::Whole;
 
 /// What [`serve`] serves: per function, its symbol, the other functions served that its object
@@ -54,7 +54,7 @@ impl Served {
 }
 
 /// Whether a release build of `program` looks in the cache: there is one, it has held objects
-/// (or this build stores them), and `program` has a std function marked `noInline()`. Without
+/// (or this build stores them), and `program` has a std function marked `@noInline`. Without
 /// them a build does nothing it would not do without the cache.
 pub(in crate::driver) fn applies(program: &vir::Program) -> bool {
     let Some(cache) = crate::build_cache::cache() else {
@@ -63,7 +63,7 @@ pub(in crate::driver) fn applies(program: &vir::Program) -> bool {
     (cache.has_files(KIND) || serve::fill()) && select::has_no_inline(program)
 }
 
-/// Serve the `noInline()` std functions the cache holds (lowered, not optimized),
+/// Serve the `@noInline` std functions the cache holds (lowered, not optimized),
 /// placing their objects in `place`; with `VELT_STD_OBJECT_FILL`, compile the others for `cg`
 /// and store them first.
 pub(in crate::driver) fn serve(
@@ -274,7 +274,7 @@ mod tests {
     }
 
     /// The program's code is the same with a function served as without (the brotli shape, #2607):
-    /// `served` (`noInline()`) inlines `helper` 20 times, which spends the inliner's budget before
+    /// `served` (`@noInline`) inlines `helper` 20 times, which spends the inliner's budget before
     /// `entry` inlines `small` at as many of its 100 calls as the budget lasts. Taken out before
     /// optimization, `served` spent nothing and took no room in the budget, and `entry` inlined
     /// `small` at other sites; taken out after, the rest is as without the cache, and what only

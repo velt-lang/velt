@@ -1,1 +1,2 @@
-evil.velt:3:28: error: `declare intrinsic function arrayWithCapacity` is not allowed: only the standard library declares intrinsics
+evil.velt:4:27: error: `velt/lang/intrinsics` is internal to the standard library: the compiler's intrinsics are std's own building blocks
+  = note: use the public API std builds on them (an array's `reserve`, `truncate` and `swap`, velt/encoding's `utf8ByteAt`, …)

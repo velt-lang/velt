@@ -11,7 +11,7 @@ SHA-256 round. Knowing it is what lets the compiler emit one instruction, fold i
 move it out of a loop, or pick the instruction a CPU has.
 
 Velt's front end treats them that way. `std/lang/intrinsics/*.velt` declares each one
-(`declare intrinsic function`), `velt_sema::intrinsic_decls` is the one table from name to
+(`@intrinsic declare function`), `velt_sema::intrinsic_decls` is the one table from name to
 `hir::Intrinsic`, and a test fails on a missing or an extra one (std-layout.md §10). Below HIR
 they were not: lowering turned every intrinsic into the call of an extern whose *name* each
 consumer matched on its own.

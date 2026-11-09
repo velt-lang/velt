@@ -254,6 +254,7 @@ fn differs(p: &Program, qualified: &str, sig: &Sig) -> Option<String> {
     let found = p.defs.iter().find(|d| match d {
         Def::Fn(f) => f.name == qualified,
         Def::Adt(a) => a.name == qualified,
+        Def::ExternFn(x) => x.name == qualified,
         _ => false,
     });
     let Some(d) = found else {
@@ -261,8 +262,16 @@ fn differs(p: &Program, qualified: &str, sig: &Sig) -> Option<String> {
     };
     let (f, s) = match (d, sig) {
         (Def::Adt(_), Sig::Class) => return None,
+        // A `declare decorator function`: what it takes is its own declaration's.
+        (Def::ExternFn(x), Sig::Decorator) => {
+            return (!x.is_decorator).then(|| "not a `declare decorator function`".to_string())
+        }
         (Def::Fn(f), Sig::Fn(s)) => (f, s),
-        _ => return Some("a class where the table has a function, or the reverse".to_string()),
+        _ => {
+            return Some(
+                "a class, function or decorator where the table has another of them".to_string(),
+            )
+        }
     };
     if f.generics != s.generics {
         return Some(format!("{} type parameters", f.generics));

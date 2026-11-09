@@ -3,9 +3,10 @@
 //! supported yet, #2204) when it resolves to anything else. A use is checked against the
 //! declaration like a call, with arguments that must be constants ([`consts`]), and recorded
 //! for its readers in `Program::decorators`. A program without decorators pays one look per
-//! definition here, and nothing later.
+//! definition here, and nothing later. The decorators the compiler acts on itself are [`known`]'s.
 
 mod consts;
+mod known;
 mod scope;
 mod suffixes;
 
@@ -18,6 +19,7 @@ use crate::ctx::{Ctx, Item};
 use crate::defs::{DefInfo, FnInfo, FnKind, FnSource};
 use crate::hir::{self, ConstTree, DecoratorTarget, DefId};
 
+pub(crate) use known::{intrinsics, Inline};
 pub(crate) use scope::Scopes;
 
 /// The result types of a `declare decorator function`: where it may be used, with the bit each
@@ -96,11 +98,13 @@ pub(crate) fn decl_of<'m>(f: &FnInfo<'m>) -> Option<&'m ast::FnSig> {
     f.extern_sig.filter(|s| s.is_decorator)
 }
 
-/// Check every declaration of a decorator, and every use.
-pub(crate) fn check<'m>(cx: &mut Ctx<'m>) {
+/// Check every declaration of a decorator, and every use, of the definitions from `from` on (a
+/// whole program's from 0, std modules added during the check from where they start).
+pub(crate) fn check<'m>(cx: &mut Ctx<'m>, from: u32) {
     let mut seen = FxHashSet::default();
     let mut properties = AbstractProperties::default();
-    for i in 0..cx.info.len() {
+    let roles = known::InlineRoles::find(cx);
+    for i in from as usize..cx.info.len() {
         let d = DefId(i as u32);
         match &cx.info[i] {
             DefInfo::Fn(f) => {
@@ -118,6 +122,7 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>) {
                 if decorated && seen.insert(sig as *const ast::FnSig as usize) {
                     let property = properties.has(cx, d, sig);
                     function_uses(cx, d, module, kind, property, sig);
+                    known::inline_hint(cx, roles, d, sig);
                 }
             }
             DefInfo::Adt(a) => {

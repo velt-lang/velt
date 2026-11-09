@@ -479,7 +479,7 @@ fn math_statements_keep_a_callee_from_being_a_leaf() {
 
 #[test]
 fn no_inline_callee_stays_a_call() {
-    // add(x) { x + 1 }: trivial and called once, so inlined, unless marked `noInline()`
+    // add(x) { x + 1 }: trivial and called once, so inlined, unless marked `@noInline`
     // (`Inline::Never`, #1884); the same function unmarked is inlined.
     for (marker, calls) in [(Inline::Never, 1), (Inline::Default, 0)] {
         let mut pb = ProgramBuilder::new();
@@ -496,7 +496,7 @@ fn no_inline_callee_stays_a_call() {
 #[test]
 fn always_inline_callee_is_inlined_whatever_its_size() {
     // big(x): 500 statements, called three times outside a loop, so it stays a call, unless
-    // marked `inline()` (`Inline::Always`); a marked one is inlined everywhere without charging
+    // marked `@inline` (`Inline::Always`); a marked one is inlined everywhere without charging
     // the budget, so a small callee after it is still inlined.
     for (marker, calls) in [(Inline::Always, 0), (Inline::Default, 3)] {
         let mut pb = ProgramBuilder::new();

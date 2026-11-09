@@ -126,9 +126,9 @@ fn functions_that_never_return_are_cold() {
 
 #[test]
 fn inline_markers_give_their_attributes() {
-    // std's markers (`Function::inline`): `inline()` is `alwaysinline`, `noInline()` is
+    // std's markers (`Function::inline`): `@inline` is `alwaysinline`, `@noInline` is
     // `noinline` without `cold`; a function that never returns stays `cold noinline` even when
-    // marked `inline()` (the attributes conflict).
+    // marked `@inline` (the attributes conflict).
     let mut p = sample();
     for (name, marker, cold) in [
         ("always", Inline::Always, false),

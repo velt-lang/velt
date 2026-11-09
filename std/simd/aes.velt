@@ -77,8 +77,8 @@ export function cpuidHasAes(ecx: u32): bool {
 }
 
 // Out of line: it runs once, and every check would otherwise carry a copy.
+@noInline
 function detect(): u32 {
-  noInline();
   let found: u32 = 1;
   if (disabled()) {
     return found;
