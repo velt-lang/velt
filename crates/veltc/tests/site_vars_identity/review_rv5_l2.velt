@@ -1,0 +1,21 @@
+class E1 extends Error {
+  n: number = 4;
+}
+
+class Outer {
+  n: i64 = 0;
+}
+
+async function main() {
+  const m = shared(new Mutex<Outer>(new Outer()));
+  const fs: ((o: Outer) => Promise<i64>)[] = [
+    async (o: Outer) => {
+      if (o.n > 5) {
+        throw new E1("x");
+      }
+      return o.n;
+    },
+  ];
+  const c = await m.with(fs[0]);
+  console.log(c);
+}

@@ -1,0 +1,21 @@
+// A union of two local classes named `A` in different functions: each is its own member (#2590).
+function mk1() {
+  class A {
+    constructor(public x: i64) {}
+  }
+  return new A(1);
+}
+
+function mk2() {
+  class A {
+    constructor(public y: string) {}
+  }
+  return new A("s");
+}
+
+function main() {
+  for (const first of [true, false]) {
+    const v = first ? mk1() : mk2();
+    console.log(typeof v);
+  }
+}

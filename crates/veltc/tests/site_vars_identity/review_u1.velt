@@ -1,0 +1,28 @@
+class E1 extends Error {}
+
+class E2 extends Error {}
+
+type F = (n: number) => void;
+type G = (n: number) => void;
+const a: F = (n) => {
+  if (n > 0) {
+    throw new E1("a");
+  }
+};
+const b: G = a;
+const c: G = (n) => {
+  if (n > 0) {
+    throw new E2("c");
+  }
+};
+b(0);
+c(0);
+try {
+  a(1);
+} catch (e) {
+  if (e instanceof E2) {
+    console.log("e2");
+  } else {
+    console.log("other " + e.message);
+  }
+}

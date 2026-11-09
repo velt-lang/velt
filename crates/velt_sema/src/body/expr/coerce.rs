@@ -166,6 +166,12 @@ impl FnCx<'_, '_> {
             h.ty = exp;
             return Ok(h);
         }
+        // A promise stored into a `Promise<T>` site's variable (`throws::promise_vars`).
+        if self.cx.store_into_promise_var(h.ty, exp) {
+            let mut h = h;
+            h.ty = exp;
+            return Ok(h);
+        }
         let h = match self.union_as_written(h, exp) {
             Ok(h) => return Ok(h),
             Err(h) => h,

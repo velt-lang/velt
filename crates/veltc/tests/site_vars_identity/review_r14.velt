@@ -1,0 +1,39 @@
+class HttpError extends Error {
+  status: number;
+  constructor(s: number, m: string) {
+    super(m);
+    this.status = s;
+  }
+}
+
+function fail(rej: (e: HttpError) => void): void {
+  rej(new HttpError(500, "esc"));
+}
+
+type Make = () => Promise<string>;
+const make: Make = () => new Promise((resolve, reject) => {
+  fail(reject);
+});
+
+async function g1(n: number): Promise<string> {
+  if (n == 0) {
+    throw new Error("one");
+  }
+  return "g1";
+}
+
+function pick(n: number): Promise<string> {
+  return g1(n);
+}
+
+const p: Promise<string> = pick(1);
+console.log(await p);
+try {
+  console.log(await make());
+} catch (e) {
+  if (e instanceof HttpError) {
+    console.log(`http ${e.status}`);
+  } else {
+    console.log("other");
+  }
+}

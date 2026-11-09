@@ -1,0 +1,24 @@
+class E1 extends Error {
+  a: number = 1;
+}
+
+async function g1(n: number): Promise<string> {
+  if (n == 0) {
+    throw new E1("one");
+  }
+  return "g1";
+}
+
+type F = (n: number) => Promise<string>;
+const w1: F = (n) => new Promise((resolve, reject) => {
+  g1(n).then(resolve, reject);
+});
+const w2: F = (n) => new Promise((resolve, reject) => {
+  g1(n).then(resolve, reject);
+});
+try {
+  console.log(await w1(0));
+} catch (e) {
+  console.log("caught " + e.message);
+}
+console.log(await w2(1));

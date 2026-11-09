@@ -1,0 +1,14 @@
+function opt(x: i64, b: boolean): i64 | undefined {
+  if (b) {
+    return x;
+  }
+  return undefined;
+}
+
+function main() {
+  const r = opt(1, true);
+  if (r === null) {
+    console.log("null");
+  }
+  console.log(r);
+}

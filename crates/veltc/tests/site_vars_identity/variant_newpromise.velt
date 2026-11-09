@@ -1,0 +1,31 @@
+class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function later(ok: boolean): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (ok) {
+      resolve("fine");
+    } else {
+      reject(new HttpError(503, "later"));
+    }
+  });
+}
+
+const p: Promise<string> = new Promise((resolve, reject) => reject(new HttpError(502, "direct")));
+
+try {
+  console.log(await later(true));
+  console.log(await later(false));
+} catch (e) {
+  console.log(`caught ${e}`);
+}
+try {
+  console.log(await p);
+} catch (e) {
+  console.log(`caught ${e}`);
+}

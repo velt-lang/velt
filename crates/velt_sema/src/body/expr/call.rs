@@ -379,6 +379,7 @@ impl FnCx<'_, '_> {
 
     /// Call through a function value (`TyKind::FnPtr`).
     pub(crate) fn call_value(&mut self, f: hir::Expr, args: &[ast::Expr], span: Span) -> hir::Expr {
+        self.cx.reject_called(f.ty);
         let f = match self.dynamic_apply(f, args, span) {
             Ok(h) => return h,
             Err(f) => f,

@@ -1,0 +1,25 @@
+function build(): (n: number) => Promise<string> {
+  class Local extends Error {
+    tag: string = "L";
+  }
+  return (n) => new Promise((resolve, reject) => {
+    if (n == 0) {
+      reject(new Local("local"));
+    } else {
+      resolve("ok");
+    }
+  });
+}
+
+async function main(): Promise<void> {
+  const m = build();
+  for (const n of [0, 1]) {
+    try {
+      console.log(await m(n));
+    } catch (e) {
+      console.log("caught " + e.message);
+    }
+  }
+}
+
+await main();

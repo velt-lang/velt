@@ -1,0 +1,47 @@
+class E1 extends Error {
+  a: number = 1;
+}
+
+class E2 extends Error {
+  b: string = "bee";
+}
+
+type F = (n: number) => Promise<string>;
+type G = (n: number) => Promise<string>;
+
+const g: G = async (n) => {
+  if (n == 0) {
+    throw new E1("async");
+  }
+  return "g";
+};
+const f: F = (n) => {
+  if (n == 0) {
+    throw new E2("sync");
+  }
+  return g(n);
+};
+
+async function main(): Promise<void> {
+  try {
+    console.log(await g(0));
+  } catch (e) {
+    if (e instanceof E2) {
+      console.log("g: E2 " + e.b);
+    } else {
+      console.log("g: not E2 " + e.message);
+    }
+  }
+  try {
+    const p = f(0);
+    console.log(await p);
+  } catch (e) {
+    if (e instanceof E1) {
+      console.log("f: E1 " + e.a);
+    } else {
+      console.log("f: not E1 " + e.message);
+    }
+  }
+}
+
+await main();

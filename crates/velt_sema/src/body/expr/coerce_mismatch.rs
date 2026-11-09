@@ -15,11 +15,6 @@ impl FnCx<'_, '_> {
         self.cx.seed_reject(found.ty, expected);
         self.cx.seed_reject_fn(found.ty, expected);
         self.cx.seed_promise_site(found.ty, expected);
-        // The comparisons don't see variables in the fields of anonymous object types yet
-        // (`throws::vars`): such a mismatch may come from them.
-        if self.cx.anon_vars_may_mismatch(expected, found.ty) {
-            self.cx.fn_sites.set_doubt();
-        }
         if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
             return self.unknown_use_error(found.span);
         }

@@ -157,6 +157,7 @@ impl Ctx<'_> {
             }
             if grew {
                 self.fn_sites.grew = true;
+                self.fn_sites.sites_grew = true;
                 self.fn_sites.indirect.clear();
                 self.fn_sites.indirect_sites.clear();
                 work.extend(self.fn_sites.flows.get(&s).into_iter().flatten().copied());

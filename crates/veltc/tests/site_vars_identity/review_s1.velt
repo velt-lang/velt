@@ -1,0 +1,65 @@
+class E1 extends Error {
+  a: number = 1;
+}
+
+class E2 extends Error {
+  b: string = "two";
+}
+
+async function g1(n: number): Promise<string> {
+  if (n == 0) {
+    throw new E1("one");
+  }
+  return "g1";
+}
+
+async function g2(n: number): Promise<string> {
+  if (n == 1) {
+    throw new E2("two");
+  }
+  return "g2";
+}
+
+function pick(n: number): Promise<string> {
+  if (n % 2 == 0) {
+    return g1(n);
+  }
+  return g2(n);
+}
+
+function pick2(n: number): Promise<string> {
+  return n > 5 ? g1(n) : g2(n);
+}
+
+async function main(): Promise<void> {
+  for (const n of [0, 1, 2, 7]) {
+    try {
+      console.log(await pick(n));
+    } catch (e) {
+      if (e instanceof E1) {
+        console.log("E1 " + e.a);
+      } else if (e instanceof E2) {
+        console.log("E2 " + e.b);
+      } else {
+        console.log("?");
+      }
+    }
+    const v = await pick2(n).catch((e) => {
+      if (e instanceof E2) {
+        return "c2 " + e.b;
+      }
+      return "c?";
+    });
+    console.log(v);
+    const p: Promise<string> = pick(n);
+    try {
+      console.log(await p);
+    } catch (e) {
+      console.log("p " + e.message);
+    }
+  }
+  const all = await Promise.all([pick(2), pick2(9)]);
+  console.log(all.join(","));
+}
+
+await main();

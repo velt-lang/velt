@@ -1,0 +1,37 @@
+class HttpError extends Error {
+  status: number;
+  constructor(s: number, m: string) {
+    super(m);
+    this.status = s;
+  }
+}
+
+type Handler = (path: string) => Promise<string>;
+
+class Router {
+  routes: Handler[] = [];
+  get(h: Handler): void {
+    this.routes.push(h);
+  }
+  dispatch(p: string): Promise<string> {
+    return this.routes[0](p);
+  }
+}
+
+const r = new Router();
+r.get(async (p) => {
+  if (p == "") {
+    throw new HttpError(400, "empty");
+  }
+  return "ok" + p;
+});
+try {
+  console.log(await r.dispatch("a"));
+  console.log(await r.dispatch(""));
+} catch (e) {
+  if (e instanceof HttpError) {
+    console.log(`http ${e.status}`);
+  } else {
+    console.log("?");
+  }
+}

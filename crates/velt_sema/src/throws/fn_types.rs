@@ -83,7 +83,12 @@ pub(crate) struct FnSites {
     pub(super) by_file: FxHashMap<velt_common::FileId, Vec<usize>>,
     /// `seeds` with what this check found added.
     pub(super) found: FnTypeSeeds,
+    /// What a check without variables would have added to `found` for the stores the
+    /// variables took (`promise_vars`): added to it when the program is checked again.
+    pub(super) quiet: FxHashMap<Span, Vec<Portable>>,
     pub(super) grew: bool,
+    /// A site's set grew (not only a hint for the next check).
+    pub(super) sites_grew: bool,
     /// What a call through a function type may throw beyond its type ([`Ctx::indirect_error`]),
     /// for the current `found`.
     pub(super) indirect: FxHashMap<TyId, Option<TyId>>,
@@ -107,6 +112,11 @@ pub(crate) struct FnSites {
     /// The result type of an async function is being resolved: its `Promise<T>` rejects with
     /// what the body throws, so it is no site (`promise_sites`).
     pub async_ret: bool,
+    /// Where a `Promise<T>` that gets an error-set variable is written (`promise_vars`): the
+    /// result of a function type, a function or a closure. Elsewhere (a type argument, a
+    /// method's result, a variable's type) a promise type is compared as written, so the sites
+    /// there take their errors by checking again.
+    pub promise_var_at: Option<Span>,
     /// The result type of a generator function is being resolved: its `Generator<T>` throws
     /// what the body throws, so it is no site (`generator_sites`).
     pub generator_ret: bool,
@@ -150,20 +160,32 @@ pub(crate) struct FnSites {
     /// The variables of std/proxy's trap sites (`ProxyHandler`), by number.
     pub(super) trap_vars: FxHashSet<u32>,
     pub vars: Vec<Span>,
+    /// The anonymous object defs replaced by the def of their solved shape before lowering
+    /// (`Ctx::solved_anon_twins`).
+    pub solved_anons: FxHashSet<DefId>,
     /// Each variable's solved error type, once solved (`never` for an empty set).
     pub solved: FxHashMap<TyId, TyId>,
     /// The constraints on the variables (`throws::vars`).
     pub(crate) var_sets: super::vars::VarSets,
-    /// A type with a variable failed a comparison or a bound: when the check reports errors,
-    /// they may come from the variables ([`FnSites::doubted`]).
-    pub doubt: std::cell::Cell<bool>,
+    /// The members stores added to variables (`promise_vars`), by variable number.
+    pub(crate) stored: Vec<(u32, TyId)>,
+    /// The members closures created for sites' types throw into variables, by variable number:
+    /// a member a store added first is the closure's too ([`Ctx::note_thrown`]).
+    pub(crate) thrown: Vec<(u32, TyId)>,
+    /// How many `reject` values of promises whose rejection type is a variable were checked
+    /// and not called (`var_known`): what they are called with is not counted.
+    pub(crate) reject_values: usize,
+    /// Whether every variable's solved set is empty (`None` before they are solved).
+    pub(crate) sets_empty: Option<bool>,
+    /// The closures created for sites' types found so far (`var_known`).
+    pub(crate) site_closures: super::var_known::SiteClosures,
 }
 
 impl FnSites {
     /// The sites of a check with `seeds`; `last`: the program is not checked again whatever
     /// this check finds.
     pub fn new(seeds: FnTypeSeeds, last: bool) -> Self {
-        let allowed = std::env::var_os("VELT_NO_SITE_VARS").is_none();
+        let allowed = std::env::var_os("VELT_NO_SITE_VARS").is_none_or(|v| v.is_empty());
         let user_vars = seeds.sites.is_empty() && !seeds.no_vars && allowed;
         let trap_vars = allowed && !seeds.exact && !seeds.proxy_sites.is_empty();
         FnSites {
@@ -186,24 +208,31 @@ impl FnSites {
     pub(super) fn fallback(&mut self) {
         self.found.no_vars = true;
         self.grew = true;
+        let quiet = std::mem::take(&mut self.quiet);
+        merge_seeds(&mut self.found, quiet, &self.flows);
     }
 
-    /// The check with error-set variables reported errors, and a type with a variable failed
-    /// a comparison: the sets to check the program with again without variables (as written,
-    /// the sets found by checking again), whose errors are the program's.
-    pub fn doubted(&self, errors: bool) -> Option<FnTypeSeeds> {
-        (self.use_vars && self.doubt.get() && errors).then(|| {
+    /// The check with error-set variables reported errors (`reported`): the sets to check the
+    /// program with again without variables (as written, the sets found by checking again),
+    /// whose diagnostics are the program's (`throws::vars`). Only while some set is not empty
+    /// and the program is not checked again anyway ([`Ctx::checked_again`]).
+    fn doubted(&self, reported: bool) -> Option<FnTypeSeeds> {
+        (reported && self.shows_vars()).then(|| {
             let mut s = self.found.clone();
+            merge_seeds(&mut s, self.quiet.clone(), &self.flows);
             s.no_vars = true;
             s.exact = true;
             s
         })
     }
 
-    /// A type with a variable failed a comparison: the errors are in doubt
-    /// ([`FnSites::doubted`]).
-    pub fn set_doubt(&self) {
-        self.doubt.set(true);
+    /// Does a diagnostic of this check show a variable as nothing where a check without
+    /// variables shows its set: has it variables (a check without any shows none), a set that
+    /// is not empty (or not solved), and is it not checked again anyway with the sets it found
+    /// (without the program's variables)?
+    fn shows_vars(&self) -> bool {
+        let none = self.vars.is_empty() || self.sets_empty == Some(true);
+        self.use_vars && !none && !self.again()
     }
 
     /// Is this the last check, whatever it finds?
@@ -218,6 +247,22 @@ impl FnSites {
 }
 
 impl Ctx<'_> {
+    /// The sets to check the program with again when this check reported diagnostics
+    /// (`reported`) that may show a variable as nothing, where a check without variables shows
+    /// its set (`throws::vars`): with errors, a check without any variable
+    /// ([`FnSites::doubted`]); a program that checks, with the solved sets written in
+    /// (`FnSites::fallback`), which a check without variables ends with.
+    pub(crate) fn checked_again(&mut self, reported: bool) -> Option<FnTypeSeeds> {
+        if !reported || !self.fn_sites.shows_vars() {
+            return None;
+        }
+        if crate::error_count(self) > 0 {
+            return self.fn_sites.doubted(true);
+        }
+        self.var_seeds();
+        self.fn_sites.grown()
+    }
+
     /// `(params) => ret [throws E]`, with `rest`: `(a: A, ...xs: T[]) => R`, whose last parameter
     /// must have an array or tuple type. After a `Promise` result, `throws E` is the promise's
     /// rejection type (calling an async function never throws; awaiting its promise does).
@@ -250,6 +295,7 @@ impl Ctx<'_> {
             }
         }
         let never = self.ty.never;
+        let ret_span = ret.span;
         let throws_clause = throws;
         let err = throws.map(|t| {
             let e = self.resolve_type(t, env);
@@ -265,7 +311,7 @@ impl Ctx<'_> {
                 let e = self.canon_error(Some(e)).unwrap_or(never);
                 self.ty.promise_rejecting(v, e)
             }
-            _ => self.resolve_type(ret, env),
+            _ => self.resolve_promise_var_at(ret, env),
         };
         let inferred = throws.is_none();
         // A trap of std/proxy gets a variable in every check with variables, unless the previous
@@ -274,10 +320,23 @@ impl Ctx<'_> {
             true => self.fn_sites.use_vars && !self.fn_sites.seeds.sites.contains_key(&span),
             false => self.fn_sites.user_vars,
         };
-        let err = match err {
-            Some(e) => self.canon_error(Some(e)),
-            None if gets_var => self.site_var(span, env.module),
-            None => self.site_error(span, env.module),
+        // A `Promise<T>` result written without an error type has a variable of its own
+        // (`promise_sites`): the function type's errors are what its promise rejects with, so
+        // the function type's site shares it.
+        let ret_var = match self.ty.kind(ret) {
+            TyKind::Promise(_, e) if gets_var && self.fn_sites.var_of.get(&ret_span) == Some(e) => {
+                Some(*e)
+            }
+            _ => None,
+        };
+        let err = match (err, ret_var) {
+            (Some(e), _) => self.canon_error(Some(e)),
+            (None, Some(v)) => {
+                self.fn_sites.var_of.insert(span, v);
+                Some(v)
+            }
+            (None, None) if gets_var => self.site_var(span, env.module),
+            (None, None) => self.site_error(span, env.module),
         };
         let var_site = inferred && err.is_some() && gets_var;
         let inferred = inferred && err.is_some() && !gets_var;
@@ -367,7 +426,7 @@ impl Ctx<'_> {
 
     /// The error-set variable of the site at `span` in module `module` (`None` outside user
     /// modules).
-    fn site_var(&mut self, span: Span, module: usize) -> Option<TyId> {
+    pub(super) fn site_var(&mut self, span: Span, module: usize) -> Option<TyId> {
         if !self.site_module(module) || span == Span::DUMMY {
             return None;
         }
@@ -676,6 +735,33 @@ impl Ctx<'_> {
             self.seed_fn_sites(to, have, site);
         }
         Some(false)
+    }
+}
+
+/// Add the sets `more` to `seeds`, and to the sites their values flow to (as
+/// `Ctx::add_to_site` does).
+fn merge_seeds(
+    seeds: &mut FnTypeSeeds,
+    more: FxHashMap<Span, Vec<Portable>>,
+    flows: &FxHashMap<Span, Vec<Span>>,
+) {
+    let mut more: Vec<(Span, Vec<Portable>)> = more.into_iter().collect();
+    more.sort_by_key(|(s, _)| (s.file, s.lo, s.hi));
+    for (s, ms) in more {
+        let mut work = vec![s];
+        while let Some(s) = work.pop() {
+            let set = seeds.sites.entry(s).or_default();
+            let mut grew = false;
+            for m in &ms {
+                if !set.contains(m) {
+                    set.push(m.clone());
+                    grew = true;
+                }
+            }
+            if grew {
+                work.extend(flows.get(&s).into_iter().flatten().copied());
+            }
+        }
     }
 }
 

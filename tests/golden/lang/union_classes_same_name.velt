@@ -1,0 +1,23 @@
+// A union of two classes of one name from different modules: each is its own member (#2590).
+import * as a from "./_union_classes_same_name_a.velt";
+import * as b from "./_union_classes_same_name_b.velt";
+
+function pick(n: i64): a.Foo | b.Foo {
+  if (n > 0) {
+    return new a.Foo(1);
+  }
+  return new b.Foo("s");
+}
+
+function show(v: a.Foo | b.Foo): void {
+  if (v instanceof a.Foo) {
+    console.log(v.x);
+  } else {
+    console.log(v.y);
+  }
+}
+
+function main() {
+  show(pick(1));
+  show(pick(0));
+}

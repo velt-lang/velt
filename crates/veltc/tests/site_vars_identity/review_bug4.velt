@@ -1,0 +1,28 @@
+class HttpError extends Error {
+  status: number;
+  constructor(s: number, m: string) {
+    super(m);
+    this.status = s;
+  }
+}
+
+function report(err: Error): string {
+  return "report " + err.message;
+}
+
+type Handler = (path: string) => Promise<string>;
+const h: Handler = async (path) => {
+  if (path == "") {
+    throw new HttpError(400, "empty");
+  }
+  return path;
+};
+console.log(await h("").catch((e) => report(e)));
+const saved: Error[] = [];
+console.log(
+  await h("").catch((e) => {
+    saved.push(e);
+    return "pushed";
+  }),
+);
+console.log(saved.length + " " + saved[0].message);

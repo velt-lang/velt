@@ -623,14 +623,17 @@ impl Ctx<'_> {
 }
 
 /// `hir::Program::anon_shapes`: every concrete anonymous def lowering sees, by its (erased)
-/// fields. Defs replaced by a twin before lowering (`crate::readonly`) are left out: lowering
+/// fields. Defs replaced by a twin before lowering (`crate::readonly`, also the defs of shapes
+/// with error-set variables, `throws::vars`) are left out: lowering
 /// never sees them, and a shape must not resolve to one of them.
 pub(crate) fn concrete_shapes(cx: &Ctx) -> FxHashMap<Vec<(String, TyId, bool, bool)>, DefId> {
     let mut out = FxHashMap::default();
     for (i, d) in cx.defs.iter().enumerate() {
         let id = DefId(i as u32);
         if let Some(crate::hir::Def::Adt(a)) = d {
-            if a.kind == AdtKind::Anon && a.generics == 0 && !cx.readonly_twins.contains_key(&id) {
+            let replaced =
+                cx.readonly_twins.contains_key(&id) || cx.fn_sites.solved_anons.contains(&id);
+            if a.kind == AdtKind::Anon && a.generics == 0 && !replaced {
                 let key = a
                     .fields
                     .iter()

@@ -1,0 +1,45 @@
+class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+type Handler = (path: string) => Promise<string>;
+type Next = () => Promise<string>;
+type Middleware = (path: string, next: Next) => Promise<string>;
+
+const routes: Handler[] = [];
+const middleware: Middleware[] = [];
+
+function get(h: Handler): void {
+  routes.push(h);
+}
+
+function use(m: Middleware): void {
+  middleware.push(m);
+}
+
+get(async (path) => {
+  if (path == "") {
+    throw new HttpError(400, "empty");
+  }
+  return "ok " + path;
+});
+use(async (path, next) => {
+  const r = await next();
+  return "[" + r + "]";
+});
+
+async function handle(path: string): Promise<string> {
+  const run = async (): Promise<string> => await routes[0](path);
+  return await middleware[0](path, run);
+}
+
+try {
+  console.log(await handle("/a"));
+  console.log(await handle(""));
+} catch (e) {
+  console.log(`caught ${e}`);
+}

@@ -1,0 +1,8 @@
+type Handler = (path: string) => Promise<string>;
+const h: Handler = async (path) => {
+  if (path == "") {
+    throw new Error("empty");
+  }
+  return path;
+};
+console.log(await h("").catch((e) => e.message));

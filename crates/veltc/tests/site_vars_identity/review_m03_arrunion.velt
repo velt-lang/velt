@@ -1,0 +1,16 @@
+class E1 extends Error {
+  n: number = 4;
+}
+
+type G = () => number;
+const g: G = () => {
+  throw new E1("x");
+};
+const u: G[] | string = Math.random() > 2 ? "s" : [g];
+if (typeof u != "string") {
+  try {
+    console.log(u[0]());
+  } catch (e) {
+    console.log("u " + e);
+  }
+}

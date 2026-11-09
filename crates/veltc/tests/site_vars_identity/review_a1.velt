@@ -1,0 +1,47 @@
+class HttpError extends Error {
+  status: number;
+  constructor(s: number, m: string) {
+    super(m);
+    this.status = s;
+  }
+}
+
+type Handler = (path: string) => Promise<string>;
+
+const routes: Handler[] = [];
+
+function get(h: Handler): void {
+  routes.push(h);
+}
+
+get(async (p) => {
+  if (p == "") {
+    throw new HttpError(400, "e");
+  }
+  return "a" + p;
+});
+get(async (p) => {
+  if (p == "") {
+    throw new HttpError(401, "f");
+  }
+  return "b" + p;
+});
+
+async function main(): Promise<void> {
+  const rs = await Promise.allSettled(routes.map((r) => r("")));
+  for (const r of rs) {
+    if (r.status == "rejected") {
+      if (r.reason instanceof HttpError) {
+        console.log(`http ${r.reason.status}`);
+      } else {
+        console.log("other");
+      }
+    } else {
+      console.log(r.value);
+    }
+  }
+  const any = await Promise.any([routes[0]("x"), routes[1]("")]);
+  console.log(any);
+}
+
+await main();

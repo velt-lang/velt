@@ -1,0 +1,50 @@
+class HttpError extends Error {
+  status: number;
+  constructor(s: number, m: string) {
+    super(m);
+    this.status = s;
+  }
+}
+
+class Other extends Error {}
+
+type Handler = (path: string) => Promise<string>;
+
+const routes: Handler[] = [];
+
+function get(h: Handler): void {
+  routes.push(h);
+}
+
+get(async (p) => {
+  if (p == "") {
+    throw new HttpError(400, "e");
+  }
+  return p;
+});
+get(h2);
+
+async function main(): Promise<void> {
+  for (const r of routes) {
+    try {
+      console.log(await r(""));
+    } catch (e) {
+      if (e instanceof HttpError) {
+        console.log(`http ${e.status}`);
+      } else if (e instanceof Other) {
+        console.log("other");
+      } else {
+        console.log("?");
+      }
+    }
+  }
+}
+
+await main();
+
+async function h2(p: string): Promise<string> {
+  if (p == "") {
+    throw new Other("o");
+  }
+  return p;
+}

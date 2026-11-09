@@ -1,0 +1,21 @@
+class E1 extends Error {}
+
+type Next = () => Promise<string>;
+
+async function report(f: () => Promise<string>): Promise<void> {
+  try {
+    console.log(await f());
+  } catch (e) {
+    console.log("caught");
+  }
+}
+
+async function impl(): Promise<string> {
+  throw new E1("impl");
+}
+
+await report(impl);
+const other: Next = async () => {
+  throw new E1("next");
+};
+await report(() => other());

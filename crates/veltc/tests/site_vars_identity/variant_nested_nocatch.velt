@@ -1,0 +1,28 @@
+class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+type Handler = (path: string) => Promise<string>;
+type Factory = (name: string) => Handler;
+
+function make(f: Factory): Handler {
+  return f("n");
+}
+
+const h = make(
+  (name) => async (path) => {
+    const inner = async (): Promise<string> => {
+      if (path == "") {
+        throw new HttpError(400, name);
+      }
+      return name + path;
+    };
+    return await inner();
+  },
+);
+
+console.log(await h("/a"));

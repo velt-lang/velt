@@ -1,0 +1,28 @@
+type Make = (n: number) => Promise<string>;
+
+function build(): Make {
+  class Local extends Error {
+    tag: string = "L";
+  }
+  async function inner(n: number): Promise<string> {
+    if (n == 0) {
+      throw new Local("local");
+    }
+    return "ok";
+  }
+  const m: Make = (n) => inner(n);
+  return m;
+}
+
+async function main(): Promise<void> {
+  const m = build();
+  for (const n of [0, 1]) {
+    try {
+      console.log(await m(n));
+    } catch (e) {
+      console.log("caught " + e.message);
+    }
+  }
+}
+
+await main();
