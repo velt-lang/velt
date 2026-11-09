@@ -399,7 +399,10 @@ impl FnCx<'_, '_> {
                 }
             }
             let owner = self.name_owner(&path[k]);
-            (_, t) = self.cx.field_seen_from(t, &path[k], owner)?;
+            // Through a nullable step (`typeof c?.headers`, tested as `c.headers` where `c` is
+            // known to hold a value: `typeof_split`).
+            let step = self.cx.ty.core(t).unwrap_or(t);
+            (_, t) = self.cx.field_seen_from(step, &path[k], owner)?;
         }
         let token = self.field_token(e)?;
         let nothing = self.cx.ty.nothing_of(t);
@@ -407,6 +410,42 @@ impl FnCx<'_, '_> {
             Some(p) => (token, true, p, nothing),
             None => (token, false, t, nothing),
         })
+    }
+
+    /// `Array.isArray(e)` on a field path (`Array.isArray(g.codec) ? g.codec.slice() : []`).
+    pub(super) fn field_is_array_facts(
+        &mut self,
+        e: &ast::Expr,
+    ) -> (Vec<super::narrow::Fact>, Vec<super::narrow::Fact>) {
+        use super::narrow::Fact;
+        let pred = crate::body::expr::object_builtins::is_array_ty;
+        let Some((token, nullable, u, _)) = self.field_with_members(e) else {
+            // A path whose type only its read tells (a field of a view, `globalThis as
+            // { codec?: H[] }`): a nullable array is not nullish where the test holds.
+            let ty = self.peek_ty(e);
+            let array = ty
+                .and_then(|t| self.cx.ty.core(t))
+                .is_some_and(|c| pred(self.cx, c));
+            return match array.then(|| self.field_token(e)).flatten() {
+                Some(token) => (vec![Fact::NonNull(token)], vec![]),
+                None => (vec![], vec![]),
+            };
+        };
+        if self.cx.union_def(u).is_some() {
+            // A member that depends on a type parameter (`T | string[]`) may be an array
+            // at some instantiations: the field path is not narrowed (the local path's
+            // `generic_member_array_facts` reads such a local through `any`).
+            let mut ps = vec![];
+            crate::types::collect_params(&self.cx.ty, u, &mut ps);
+            if !ps.is_empty() {
+                return (vec![], vec![]);
+            }
+            return self.split_facts(token, nullable, u, &pred, false);
+        }
+        match nullable && pred(self.cx, u) {
+            true => (vec![Fact::NonNull(token)], vec![]),
+            false => (vec![], vec![]),
+        }
     }
 
     /// Assigning field path `e` (or its root local) drops the narrowing of it and every path

@@ -408,6 +408,9 @@ impl FnCx<'_, '_> {
 
     /// Facts of `typeof x === tag`.
     pub(super) fn typeof_split(&mut self, e: &ast::Expr, tag: &str) -> (Vec<Fact>, Vec<Fact>) {
+        if let Some(facts) = self.typeof_optional_chain(e, tag) {
+            return facts;
+        }
         // `any` / `unknown`: read as the primitive type the tag names.
         if let Some(l) = self.own_dynamic_local(e) {
             {
@@ -528,7 +531,7 @@ impl FnCx<'_, '_> {
             };
         }
         let Some((l, nullable, u)) = self.local_with_members(e) else {
-            return (vec![], vec![]);
+            return self.field_is_array_facts(e);
         };
         if let Some(facts) = self.generic_member_array_facts(l, nullable, u) {
             return facts;
@@ -553,7 +556,8 @@ impl FnCx<'_, '_> {
                 (0..members.len() as u32).partition(|&i| pred(self.cx, members[i as usize]));
             t.push(Fact::Members(l, yes));
             f.push(Fact::Members(l, no));
-        } else if self.cx.ty.opt_payload(self.local_ty(l)).is_none()
+        } else if !nullable
+            && self.cx.ty.opt_payload(self.local_ty(l)).is_none()
             && crate::unions::typeof_exact(self.cx, u)
             && pred(self.cx, u)
         {

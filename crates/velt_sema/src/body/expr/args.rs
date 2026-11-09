@@ -135,6 +135,17 @@ impl FnCx<'_, '_> {
         // as an `i32`), but the arguments' own types decide the slots. Error types are not
         // inferred from it (the `Promise<T>` an `await` expects may reject with anything).
         let mut context = slots.clone();
+        // A result expected as `R | undefined` (`topic = createTopic()` into a `Map.get`
+        // result) infers from `R` when the callee's result has no nothing of its own.
+        let exp = exp.map(|e| match self.cx.ty.core(e) {
+            Some(core)
+                if self.cx.ty.core(c.ret).is_none()
+                    && !matches!(self.cx.ty.kind(c.ret), TyKind::Param(_)) =>
+            {
+                core
+            }
+            _ => e,
+        });
         if let Some(e) = exp {
             let e = self.cx.ty.without_error_types(e);
             self.cx.match_context(c.ret, e, &mut context);

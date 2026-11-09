@@ -1,0 +1,43 @@
+// `T | undefined` narrowing that tsc --strict accepts (sigx, #930): a generic call assigned
+// where a `Map.get` result is expected infers from the value type, `typeof a?.b` narrows `a`
+// and `a.b`, and `Array.isArray` narrows a field path.
+interface Topic<T> { name: string; last: T | null }
+function createTopic<T>(o?: { name?: string }): Topic<T> { return { name: o?.name ?? "anon", last: null }; }
+const created = new Map<string, Topic<any>>();
+function getTopic(key: string): Topic<any> {
+    let topic = created.get(key);
+    if (!topic) {
+        topic = createTopic({ name: key });
+        created.set(key, topic);
+    }
+    return topic;
+}
+console.log(getTopic("a").name, getTopic("a") === getTopic("a"), created.size);
+
+interface T { headers?: Record<string, string> | (() => Record<string, string>) }
+function extra(config: T | undefined): void {
+    const extra = typeof config?.headers === "function" ? config.headers() : config?.headers;
+    if (typeof extra === "function") console.log("fn");
+    else console.log(extra);
+}
+interface WireError { message?: string; code?: string }
+function code(wire: WireError | undefined): { code?: string } {
+    return { ...(typeof wire?.code === "string" ? { code: wire.code } : {}) };
+}
+// Where the test fails, `config?.headers` is not the function member.
+function pick(config: T | undefined): Record<string, string> | undefined {
+    return typeof config?.headers === "function" ? config.headers() : config?.headers;
+}
+console.log(pick({ headers: () => ({ p: "1" }) }), pick({ headers: { q: "2" } }));
+extra({ headers: () => ({ a: "1" }) });
+extra({ headers: { b: "2" } });
+console.log(code({ code: "x" }), code(undefined), code({}));
+
+interface H { n: number }
+function next(): H[] {
+    const g = globalThis as { __CODEC__?: H[] };
+    return Array.isArray(g.__CODEC__) ? g.__CODEC__.slice() : [];
+}
+console.log(next().length);
+(globalThis as { __CODEC__?: H[] }).__CODEC__ = [{ n: 1 }];
+console.log(next().length);

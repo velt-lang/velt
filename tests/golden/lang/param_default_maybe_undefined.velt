@@ -1,0 +1,21 @@
+// A parameter of type `T | undefined` whose default may itself be `undefined` stays a
+// `T | undefined` in the body, as in TypeScript; a default of type `T` makes it a `T`.
+interface Cfg { base: string }
+let current: Cfg | undefined = { base: "/x" };
+function resolve(): Cfg | undefined { return current; }
+function claim(base: string, config: Cfg | undefined = resolve()): void {
+    console.log(base, config?.base);
+}
+claim("a");
+claim("b", undefined);
+current = undefined;
+claim("c");
+claim("d", { base: "/d" });
+function scale(x: number | undefined = 2): number {
+    return x * 10;
+}
+console.log(scale(), scale(undefined), scale(3));
+function pick(on: boolean, x: number[] | undefined = on ? [] : undefined): string {
+    return x === undefined ? "none" : `${x.length}`;
+}
+console.log(pick(true), pick(false), pick(false, [1, 2]));
