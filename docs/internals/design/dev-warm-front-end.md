@@ -129,14 +129,12 @@ whose trace holds in the new program; it lowers the rest.
 
 ### Step 3: the body-edit fast path (early cutoff)
 
-The common save while iterating edits a function's body and nothing else. Borrowed from blaze
-(indexable-inc/blaze, a Rust build tool that keeps a project compiled and reports about 20 ms
-from save to running code): every definition has an *interface* (what other code can observe:
-its signature, inferred return type, error set, ownership pass modes, write effects, fresh
-returns) and a *body*. When a body edit leaves the interface the same, nothing that depends on
-the definition is redone. That cut-off replaces most of what 3c below would have to prove pass
-by pass: passes that read other definitions read their interfaces, which are the same by
-construction.
+The common save while iterating edits a function's body and nothing else. Every definition has an
+*interface* (what other code can observe: its signature, inferred return type, error set, ownership
+pass modes, write effects, fresh returns) and a *body*. When a body edit leaves the interface the
+same, nothing that depends on the definition is redone. That cut-off replaces most of what 3c below
+would have to prove pass by pass: passes that read other definitions read their interfaces, which
+are the same by construction.
 
 The fast path, per save:
 1. Parse only the changed files (step 1) and compare each top-level definition with the running
