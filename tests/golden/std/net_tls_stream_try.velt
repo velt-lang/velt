@@ -1,0 +1,104 @@
+// A `TlsStream` behind a `Mutex`, read and written from different tasks: what doesn't wait happens
+// under the lock, and the waiting on the `TcpStream` under it.
+import { connect, listenTls, startTls, TcpStream, TlsStream } from "velt/net";
+import { TEST_CERT, TEST_KEY } from "./_tls";
+
+const SIZE: i64 = 200000;
+
+struct Both {
+  tcp: TcpStream;
+  tls: shared<Mutex<TlsStream>>;
+}
+
+// Reads `want` bytes, however the records fall; their sum.
+async function readAll(s: Both, want: i64): Promise<i64> {
+  const buf: u8[] = Buffer.alloc(4096);
+  let got: i64 = 0;
+  let sum: i64 = 0;
+  while (got < want) {
+    if (!s.tls.with((t) => t.hasBuffered())) {
+      await s.tcp.readable();
+    }
+    const n = s.tls.with((t): number | null | Error => {
+      try {
+        return t.tryRead(buf, 0, 4096);
+      } catch (e) {
+        return e;
+      }
+    });
+    if (n instanceof Error) {
+      throw n;
+    }
+    if (n == null) {
+      break;
+    }
+    for (let i: i64 = 0; i < (n as i64); i++) {
+      sum += buf[i] as i64;
+    }
+    got += n as i64;
+  }
+  return sum;
+}
+
+async function main() {
+  const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  const accepting = l;
+  // The echo reads everything, then sends it back in two writes.
+  const server = spawn(async () => {
+    const conn: TcpStream = await accepting.accept();
+    const all: u8[] = [];
+    while ((all.length as i64) < SIZE) {
+      const b = await conn.read();
+      if (b.length == 0) {
+        break;
+      }
+      for (const x of b) {
+        all.push(x);
+      }
+    }
+    await conn.writeBytes(all, 0, 100);
+    await conn.writeBytes(all, 100);
+    await conn.read();
+    conn.close();
+  });
+  const tcp = await connect(`127.0.0.1:${l.port}`);
+  const tls = await startTls(tcp, { verify: false });
+  const s: Both = { tcp: tcp, tls: shared(new Mutex<TlsStream>(tls)) };
+  const out: u8[] = Buffer.alloc(SIZE as usize);
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < SIZE; i++) {
+    out[i] = (i % 251) as u8;
+    sum += i % 251;
+  }
+  const reader = spawn(readAll(s, SIZE));
+  // In pieces, as a request's bytes are.
+  let at: i64 = 0;
+  while (at < SIZE) {
+    const to = at + 70000 < SIZE ? at + 70000 : SIZE;
+    const from = at as number;
+    const end = to as number;
+    s.tls.with((t) => {
+      try {
+        t.writeBytesLater(out, from, end);
+      } catch (e) {
+        console.log("write failed");
+      }
+    });
+    await s.tcp.drained();
+    at = to;
+  }
+  console.log("echoed", (await reader) == sum);
+  const sent = s.tls.with((t) => {
+    try {
+      return t.tryWrite(out, 0, 5);
+    } catch (e) {
+      return 0 as i64;
+    }
+  });
+  console.log("last", sent);
+  s.tcp.abort();
+  s.tcp.close();
+  await server;
+}
+
+await main();
