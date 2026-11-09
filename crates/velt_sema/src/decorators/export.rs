@@ -282,7 +282,7 @@ fn applies(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, span: Span) -> bool {
 /// What crosses for each parameter of function `d` (signature `sig`) and for its result, as for
 /// a `declare c` function; `None` when something can't, which is reported.
 fn crossing(cx: &mut Ctx, d: DefId, sig: &ast::FnSig) -> Option<(Vec<CTy>, CTy)> {
-    const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, `Ptr<T>` and `Ptr<T> | null` (velt/ffi), as a `declare c` function's do, and `void` as the result";
+    const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, `Ptr<T>` and `Ptr<T> | null` (velt/ffi), as for a `declare c` function, and `void` as the result";
     let tys: Vec<_> = cx.fn_info(d).params.iter().map(|p| p.ty).collect();
     let mut params = Vec::with_capacity(tys.len());
     let mut ok = true;
