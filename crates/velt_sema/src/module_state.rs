@@ -480,7 +480,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
     // the generator bodies a resume may run.
     let weak = crate::replaced_holders::implicit::weak_entries(cx);
     let im = crate::replaced_holders::implicit::Implicit::new(cx, weak);
-    stores::collect(cx, &mut facts);
+    stores::collect(cx, &mut facts, &callbacks);
     let free = stores::store_free(cx, &dispatch, &facts, &im, &callbacks);
     cx.store_free_callbacks = free;
     for f in facts.values_mut() {

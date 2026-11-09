@@ -1,0 +1,41 @@
+// A `Mutex.with` callback that returns part of the locked value copies it out under the
+// lock, and the copy runs the part's own `clone()`, which stores into the locked value a
+// function value that captured a resource without `clone()`: the release checks the value,
+// as it does after a callback that stores one itself, and stops the program.
+class Conn {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+  [Symbol.dispose]() {
+    console.log("close", this.id);
+  }
+}
+function mk(id: i64): () => i64 {
+  const c = new Conn(id);
+  return () => c.id;
+}
+class Part {
+  fs: (() => i64)[] = [];
+  n: i64 = 0;
+  [Symbol.dispose]() {}
+  clone(): Part {
+    this.fs.push(mk(1));
+    const p = new Part();
+    p.n = this.n;
+    return p;
+  }
+}
+class Leaf {
+  part: Part = new Part();
+  k: number = 0;
+}
+function main() {
+  const m = shared(new Mutex(new Leaf()));
+  const p = m.with((l) => l.part);
+  console.log("copied", p.n);
+  m.with((l) => {
+    l.k += 1;
+  });
+  console.log("missed: fn values in the lock =", m.with((l) => l.part.fs.length));
+}

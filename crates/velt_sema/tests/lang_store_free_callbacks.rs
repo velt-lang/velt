@@ -133,3 +133,26 @@ fn a_hook_a_drop_runs_is_followed() {
     ));
     assert_eq!(each_store_free(&p, "f"), vec![true, false]);
 }
+
+#[test]
+fn hooks_of_what_a_callback_returns_are_its_own() {
+    // The result leaves the lock as a copy made under it, which runs `Part.clone()`: that stores
+    // a function into the locked value.
+    let p = ok_src(&format!(
+        "{PRELUDE}
+         class Part {{
+           fs: (() => number)[] = [];
+           n: number = 0;
+           [Symbol.dispose]() {{}}
+           clone(): Part {{ this.fs.push(() => 1); const p = new Part(); p.n = this.n; return p; }}
+         }}
+         class Box2 {{ part: Part = new Part(); n: number = 0; }}
+         function f(m: shared<Mutex<Box2>>) {{
+           m.with((b) => {{ b.n += 1; }});
+           const p = m.with((b) => b.part);
+           console.log(p.n);
+         }}
+         function main() {{ f(shared(new Mutex(new Box2()))); }}"
+    ));
+    assert_eq!(each_store_free(&p, "f"), vec![true, false]);
+}

@@ -203,7 +203,11 @@ fn converting_to(cx: &Ctx, i: DefId) -> Vec<DefId> {
 
 /// Fill in each body's [`StoreFacts`] (`facts` holds every body and initializer node), in a
 /// program with lock callbacks: a walk of its own, so a program without them pays nothing.
-pub(super) fn collect(cx: &mut Ctx, facts: &mut FxHashMap<DefId, Facts>) {
+///
+/// A callback's result, and what it throws, leave the lock through code lowering runs before
+/// the release (a copy of what the value still holds, which runs its `clone()`, and drops):
+/// their types' hooks count as the callback's own.
+pub(super) fn collect(cx: &mut Ctx, facts: &mut FxHashMap<DefId, Facts>, callbacks: &[DefId]) {
     let nodes: Vec<DefId> = facts.keys().copied().collect();
     for d in nodes {
         let st = match cx.defs.get_mut(d.0 as usize).map(Option::take) {
@@ -217,6 +221,11 @@ pub(super) fn collect(cx: &mut Ctx, facts: &mut FxHashMap<DefId, Facts>) {
                     st: StoreFacts::default(),
                 };
                 v.st.drop_tys.extend(f.body.locals.iter().map(|l| l.ty));
+                if callbacks.contains(&d) {
+                    let out: Vec<TyId> = [f.ret].into_iter().chain(f.throws).collect();
+                    v.st.drop_tys.extend(out.iter().copied());
+                    v.st.glue_tys.extend(out);
+                }
                 crate::visit::block(&mut f.body.block, &mut v);
                 let st = v.st;
                 cx.defs[d.0 as usize] = Some(hir::Def::Fn(f));
