@@ -8,12 +8,13 @@
 //! - In the object drop of a class, each field that leads back to the class: through arrays,
 //!   `Map`s, options, structs or other classes, or through drop glue chosen at run time
 //!   (interfaces, classes with subclasses, promises). An empty array or a null field skips the
-//!   bracket (the leaves of a tree pay nothing), and a queued field is moved to a heap box.
+//!   bracket (the leaves of a tree pay nothing), and a queued field is moved to a heap box. A
+//!   null field is a null pointer, or an option whose tag says null (`Side | null`).
 //!   Self fields that `drop_chain.rs` walks in a loop do not count: a plain list or tree needs
 //!   no bracket.
 //! - In the drop of a struct value, each field that leads back to the struct's type (through
 //!   an array, a class or an interface value), as in a class: a null field or an empty array
-//!   skips the bracket, so a struct whose interface-reaching field is null pays nothing. A
+//!   skips the bracket, so a struct whose fields that lead back are null pays nothing. A
 //!   queued field is moved to a heap box of its own (`Glue::QueuedDrop` drops and frees it):
 //!   the value lives in a slot that is freed right after (an array's buffer).
 //! - The drop of an enum value that leads back to its own type, as a whole (queued the same way).
@@ -179,14 +180,18 @@ impl FnLower<'_, '_> {
     }
 
     /// Drop field `fp` (of type `t`) of an object or struct value being dropped, bracketed: an
-    /// empty array or a null pointer drops at once, anything else may be queued (moved to a heap
-    /// box).
+    /// empty array drops at once, a null pointer or option drops nothing, anything else may be
+    /// queued (moved to a heap box).
     pub(super) fn drop_field_bracketed(&mut self, fp: Place, t: TyId) {
         let join = self.new_block();
         if self.cx.ty(t) == Ty::Ptr {
             let v = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(fp.clone())));
             let nn = self.non_null(v);
             self.when(nn, join);
+        } else if matches!(self.cx.kind(t), TyKind::Option(..)) {
+            // Tag and value (an interface value, a function, a struct): a null one drops nothing.
+            let some = self.option_is_some(&fp, t);
+            self.when(some, join);
         } else if matches!(self.cx.kind(t), TyKind::Array(_)) {
             let len = Operand::Copy(proj(&fp, Proj::Field(1)));
             let some = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, len, cint(0, Ty::U64)));

@@ -65,6 +65,61 @@ fn a_null_field_drops_without_the_bracket() {
     assert_eq!(run_src(NULL_FIELD).stdout, "17\n");
 }
 
+/// Structs whose fields that lead back are null (nullable interface values, a nullable class)
+/// and, last, one whose interface field holds a short chain.
+const NULL_FIELDS: &str = "interface Side {
+  id(): i64;
+}
+
+class Node implements Side {
+  next: DynLink | null = null;
+  id(): i64 {
+    return 1;
+  }
+}
+
+struct DynLink {
+  id: i64;
+  a: Side | null;
+  b: Side | null;
+  c: Node | null;
+}
+
+function make(i: i64): DynLink {
+  return { id: i, a: null, b: null, c: null };
+}
+
+function main() {
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < 10; i++) {
+    const l = make(i);
+    sum += l.id;
+  }
+  console.log(`${sum}`);
+}
+";
+
+#[test]
+fn null_fields_drop_without_a_bracket() {
+    // Ten structs, every field that leads back null: not one bracketed drop (the whole-value
+    // bracket made one per struct; a bracket per field without the tag test, two per struct).
+    let out = run_src(NULL_FIELDS);
+    assert_eq!(out.stdout, "45\n");
+    assert_eq!(out.drop_states, 0, "null fields were bracketed");
+    // A field that holds something is bracketed: once for the link's `a`, once for the node's
+    // `next`, whose struct's fields are null again.
+    let src = NULL_FIELDS.replace(
+        "  console.log(`${sum}`);",
+        "  const n = new Node();\n  n.next = make(1);\n  const l: DynLink = { id: 2, a: n, b: null, c: null };\n  console.log(`${sum + l.id}`);",
+    );
+    let out = run_src(&src);
+    assert_eq!(out.stdout, "47\n");
+    assert_eq!(
+        out.drop_states, 2,
+        "a field that holds a value is not bracketed once"
+    );
+}
+
 #[test]
 fn chains_through_struct_fields_drop_from_the_queue() {
     // Through a class field and through an interface value, 200 links each.

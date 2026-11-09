@@ -31,6 +31,8 @@ pub(super) struct Outcome {
     pub live_allocs: usize,
     /// Number of heap blocks freed by `velt_rt_str_drop`.
     pub frees: usize,
+    /// Calls of `velt_rt_drop_state`: the drops bracketed for the depth limit.
+    pub drop_states: usize,
 }
 
 const STACK_BASE: u64 = 1 << 40;
@@ -103,6 +105,7 @@ fn run_in(mut it: Interp) -> Outcome {
         code,
         live_allocs: if normal { it.allocs.len() } else { 0 },
         frees: it.frees,
+        drop_states: it.drops.calls,
     }
 }
 

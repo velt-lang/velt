@@ -14,6 +14,8 @@ const QUEUED: u32 = 1 << 30;
 pub(super) struct Drops {
     state: u64,
     queue: VecDeque<(u64, u64)>,
+    /// Calls of `velt_rt_drop_state` (generated code's, not the queue's own).
+    pub(super) calls: usize,
 }
 
 impl Interp<'_> {
