@@ -31,6 +31,9 @@ impl FnCx<'_, '_> {
                 _ => return,
             };
         }
+        if let H::Match { arms, .. } = &inner.kind {
+            return self.narrow_to_retagged(token, ty, inner.ty, arms);
+        }
         let H::Variant { def, variant, .. } = &inner.kind else {
             return;
         };
@@ -52,6 +55,41 @@ impl FnCx<'_, '_> {
                 s.held.push(token);
             }
         }
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// A union value of some of the members of `token`'s union type, re-tagged as that union
+    /// (`result = await result` of a `R | Promise<R>` where `R` is `A | B`): those members.
+    fn narrow_to_retagged(
+        &mut self,
+        token: LocalId,
+        ty: hir::TyId,
+        vty: hir::TyId,
+        arms: &[hir::Arm],
+    ) {
+        let union = self.cx.ty.core(ty).unwrap_or(ty);
+        let Some((udef, _)) = self.cx.union_def(union) else {
+            return;
+        };
+        if vty != union || self.token_path(token).is_some() || self.token_global_ty(token).is_some()
+        {
+            return;
+        }
+        let view = self.cx.union_view(union).map(|(_, v, _)| v);
+        let mut vs = vec![];
+        for a in arms {
+            match &a.body.kind {
+                H::Variant { def, variant, .. } if *def == udef && Some(*variant) != view => {
+                    vs.push(*variant)
+                }
+                _ if self.cx.ty.is_bottom(a.body.ty) => {}
+                _ => return,
+            }
+        }
+        vs.sort_unstable();
+        vs.dedup();
+        self.narrow(&Fact::Members(token, vs));
     }
 }
 

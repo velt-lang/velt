@@ -106,24 +106,18 @@ impl FnCx<'_, '_> {
                 Some(class) => self.class_facts(rhs, class),
                 None => self.key_in_facts(lhs, rhs),
             },
-            // `if (r.done)` on a union discriminated by a `bool` literal field.
+            // `if (r.done)` on a union discriminated by a field (`crate::discriminants`).
             ast::ExprKind::Member {
                 optional: false, ..
             }
             | ast::ExprKind::Index {
                 optional: false, ..
-            } if self.bool_discriminant(cond) => {
-                let t = ast::SignedLit {
-                    lit: ast::Lit::Bool(true),
-                    negative: false,
-                };
-                self.discriminant_facts(cond, &t).unwrap_or_default()
-            }
+            } => match self.truthy_discriminant(cond) {
+                Some(facts) => facts,
+                None => (self.truthy_facts(cond), vec![]),
+            },
             ast::ExprKind::Ident(_)
             | ast::ExprKind::Member { .. }
-            | ast::ExprKind::Index {
-                optional: false, ..
-            }
             | ast::ExprKind::Assign { op: None, .. } => (self.truthy_facts(cond), vec![]),
             _ => (vec![], vec![]),
         }
@@ -331,6 +325,10 @@ impl FnCx<'_, '_> {
             if strict && self.lacks_nothing(other, word) {
                 return (vec![], vec![]);
             }
+            // `r.issues === undefined` on `{ issues: E[] } | { value: T; issues?: undefined }`.
+            if let Some(facts) = self.nothing_discriminant(other, word, strict) {
+                return facts;
+            }
             // `x === null` / `x === undefined` on a `T | null | undefined` rules out one
             // nothing when false; both ruled out narrow the local to its value.
             if strict && self.three_state_operand(other) {
@@ -390,47 +388,6 @@ impl FnCx<'_, '_> {
             t.push(Fact::NonNull(l));
         }
         (t, vec![])
-    }
-
-    /// Facts of `x.kind == lit` on a discriminated union local `x`: the members whose
-    /// discriminant is `lit` / the others.
-    fn discriminant_facts(
-        &mut self,
-        e: &ast::Expr,
-        lit: &ast::SignedLit,
-    ) -> Option<(Vec<Fact>, Vec<Fact>)> {
-        let (object, prop) = super::expr::member::member_view(e)?;
-        let l = self.named_local(object)?;
-        let ty = self.local_ty(l);
-        let nullable = self.cx.ty.opt_payload(ty).is_some();
-        let u = self.cx.ty.core(ty).unwrap_or(ty);
-        let values = self.cx.discriminant_values(u, &prop.name)?;
-        let (yes, no): (Vec<u32>, Vec<u32>) = (0..values.len() as u32)
-            .partition(|v| crate::literals::lit_matches(&values[*v as usize], lit));
-        let mut t = vec![Fact::Members(l, yes)];
-        if nullable {
-            // `x.kind` could only be read once `x` was known to be non-null.
-            t.push(Fact::NonNull(l));
-        }
-        Some((t, vec![Fact::Members(l, no)]))
-    }
-
-    /// Is `e` (`x.done`) a discriminant of a union local whose values are `bool` literals?
-    fn bool_discriminant(&mut self, e: &ast::Expr) -> bool {
-        let Some((object, prop)) = super::expr::member::member_view(e) else {
-            return false;
-        };
-        let Some(l) = self.named_local(object) else {
-            return false;
-        };
-        let ty = self.local_ty(l);
-        let u = self.cx.ty.core(ty).unwrap_or(ty);
-        self.cx
-            .discriminant_values(u, &prop.name)
-            .is_some_and(|vs| {
-                vs.iter()
-                    .all(|v| matches!(v, crate::hir::LitValue::Bool(_)))
-            })
     }
 
     /// Facts of `typeof x === tag`.

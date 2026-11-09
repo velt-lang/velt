@@ -1,0 +1,2 @@
+union_presence_wrong_member.velt:5:28: error: no field `value` on type `{ issues: string[] }`
+union_presence_wrong_member.velt:10:30: error: no field `error` on type `{ ok: true; value: f64 }`

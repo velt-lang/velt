@@ -45,6 +45,7 @@ mod const_borrow;
 mod consume;
 mod ctor;
 pub(crate) mod defaults;
+mod discriminant_facts;
 mod driver;
 pub(crate) mod expr;
 mod field_narrow;

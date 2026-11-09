@@ -1,0 +1,49 @@
+// A union narrowed by a field that some members leave `undefined` (Standard Schema's result:
+// `{ issues } | { value; issues?: undefined }`), by a `bool` field after another test ruled out
+// a member without it, and by assigning the awaited value of its `Promise` member.
+type Issue = { message: string };
+type Result = { issues: Issue[] } | { value: number; issues?: undefined };
+
+function check(r: Result): string {
+    if (r.issues) return `issues ${r.issues.length} ${r.issues[0].message}`;
+    return `value ${r.value + 1}`;
+}
+console.log(check({ value: 1 }), check({ issues: [{ message: "bad" }] }));
+
+function strictTest(r: Result): string {
+    if (r.issues !== undefined) return `issues ${r.issues.length}`;
+    return `value ${r.value}`;
+}
+function looseTest(r: Result): string {
+    if (r.issues == null) return `value ${r.value}`;
+    return `issues ${r.issues.length}`;
+}
+console.log(strictTest({ value: 2 }), strictTest({ issues: [] }));
+console.log(looseTest({ value: 3 }), looseTest({ issues: [{ message: "x" }] }));
+
+function validate(x: unknown): Result | Promise<Result> {
+    if (typeof x === "number") return { value: x };
+    const r: Result = { issues: [{ message: `not a number: ${x}` }] };
+    return Promise.resolve<Result>(r);
+}
+async function run(x: unknown): Promise<string> {
+    let result = validate(x);
+    if (result instanceof Promise) result = await result;
+    if (result.issues) return result.issues[0].message;
+    return `ok ${result.value}`;
+}
+console.log(await run(41), await run("s"));
+
+const RESOLVING = Symbol("resolving");
+type Cell = { ok: true; value: number } | { ok: false; error: string };
+function read(cell: Cell | typeof RESOLVING): number {
+    if (cell === RESOLVING) return -1;
+    if (!cell.ok) throw new Error(cell.error);
+    return cell.value;
+}
+console.log(read({ ok: true, value: 5 }), read(RESOLVING));
+try {
+    read({ ok: false, error: "boom" });
+} catch (e) {
+    console.log((e as Error).message);
+}
