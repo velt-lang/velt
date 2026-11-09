@@ -50,5 +50,6 @@ cc = "1.5.1"
 # The native-package SDK: its table and value layouts must match `native/`, and its async I/O
 # runs against the runtime in `native/aio_tests.rs`.
 velt_native = { path = "../velt_native", features = ["tokio"] }
-# examples/native_strings.rs writes rows into a `StrBuf` (the SDK's writer).
-velt_text = { path = "../velt_text", features = ["sdk"] }
+# examples/native_strings.rs writes rows into a `StrBuf` (the SDK's writer); the tests check
+# string invariants (`wtf8::check_canonical`) in release builds too.
+velt_text = { path = "../velt_text", features = ["sdk", "invariants"] }

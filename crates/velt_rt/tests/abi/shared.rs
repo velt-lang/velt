@@ -213,6 +213,7 @@ fn holders_await_and_drop_in_any_order() {
 }
 
 /// Set in the child process of [`holders_under_the_checking_allocator`].
+#[cfg(debug_assertions)]
 const CHILD: &str = "VELT_RT_SHARED_PROMISE_CHILD";
 
 /// The same sequences with `VELT_RT_DEBUG_ALLOC=1`: every handle and result is allocated and

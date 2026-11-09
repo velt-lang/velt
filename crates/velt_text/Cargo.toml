@@ -13,3 +13,6 @@ velt_native = { path = "../velt_native", optional = true }
 [features]
 # `Out` for `velt_native::StrBuf`: std's drivers write rows into the Velt string itself.
 sdk = ["dep:velt_native"]
+# `wtf8::check_canonical` in every profile, for the runtime's own tests: release test builds
+# have no `debug_assertions`, and `cfg(test)` is only this crate's.
+invariants = []
