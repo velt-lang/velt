@@ -122,9 +122,14 @@ impl FnCx<'_, '_> {
         if !bools && !presence {
             return None;
         }
-        Some(Self::split_discs(discs, |d| {
+        let (mut t, f) = Self::split_discs(discs, |d| {
             matches!(d, Disc::Lit(LitValue::Bool(true)) | Disc::Object)
-        }))
+        });
+        // The field path itself is not nullish there either (`truthy_facts`).
+        if presence {
+            t.extend(self.truthy_facts(e));
+        }
+        Some((t, f))
     }
 
     /// Facts of `x.prop === undefined` (`word`; `==` when not `strict`) on a union local whose
@@ -152,6 +157,9 @@ impl FnCx<'_, '_> {
         if strict && live().any(|d| matches!(d, Disc::Nothing(n) if *n != tested)) {
             return None;
         }
-        Some(Self::split_discs(discs, |d| matches!(d, Disc::Nothing(_))))
+        let (t, mut f) = Self::split_discs(discs, |d| matches!(d, Disc::Nothing(_)));
+        // Where the test fails, the field path itself is not nullish (`eq_facts`).
+        f.extend(self.field_token(e).map(Fact::NonNull));
+        Some((t, f))
     }
 }
