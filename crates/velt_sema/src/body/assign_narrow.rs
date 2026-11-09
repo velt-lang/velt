@@ -76,11 +76,13 @@ impl FnCx<'_, '_> {
         {
             return;
         }
-        let view = self.cx.union_view(union).map(|(_, v, _)| v);
+        // A union with a view (`crate::union_views`, a variant after the members) may hold the
+        // view whatever is assigned.
+        let n = self.cx.union_members(union).map_or(0, |ms| ms.len() as u32);
         let mut vs = vec![];
         for a in arms {
             match &a.body.kind {
-                H::Variant { def, variant, .. } if *def == udef && Some(*variant) != view => {
+                H::Variant { def, variant, .. } if *def == udef && *variant < n => {
                     vs.push(*variant)
                 }
                 _ if self.cx.ty.is_bottom(a.body.ty) => {}

@@ -1,0 +1,90 @@
+// A union view (#1410) assigned whole to a variable of its union, then read: the variable may
+// hold the view, so assigning does not narrow it to the members the conversion lists.
+type StateName = "idle" | "pending" | "ready" | "errored";
+
+interface Base<T> {
+  refresh(): number;
+}
+
+interface Idle<T> extends Base<T> {
+  readonly state: "idle";
+  readonly value: null;
+  readonly hasValue: false;
+  readonly error: null;
+}
+
+interface Pending<T> extends Base<T> {
+  readonly state: "pending";
+  readonly value: null;
+  readonly hasValue: false;
+  readonly error: null;
+}
+
+interface Ready<T> extends Base<T> {
+  readonly state: "ready";
+  readonly value: T;
+  readonly hasValue: true;
+  readonly error: null;
+}
+
+type Presence<T> =
+  | { readonly value: T; readonly hasValue: true }
+  | { readonly value: null; readonly hasValue: false };
+type Errored<T> = Base<T> & { readonly state: "errored"; readonly error: Error } & Presence<T>;
+type State<T> = Idle<T> | Pending<T> | Ready<T> | Errored<T>;
+
+interface Impl<T> {
+  readonly state: StateName;
+  readonly value: T | null;
+  readonly hasValue: boolean;
+  readonly error: Error | null;
+  refresh(): number;
+}
+
+interface Handle<T> {
+  cell: State<T>;
+  set(st: StateName, v: T | null, has: boolean, e: Error | null): void;
+}
+
+function cell<T>(): Handle<T> {
+  let st: StateName = "idle";
+  let data: T | null = null;
+  let has = false;
+  let err: Error | null = null;
+  let n = 0;
+  const impl: Impl<T> = {
+    get state() {
+      return st;
+    },
+    get value() {
+      return data;
+    },
+    get hasValue() {
+      return has;
+    },
+    get error() {
+      return err;
+    },
+    refresh() {
+      n++;
+      return n;
+    },
+  };
+  return {
+    cell: impl as State<T>,
+    set(s: StateName, v: T | null, h: boolean, e: Error | null): void {
+      st = s;
+      data = v;
+      has = h;
+      err = e;
+    },
+  };
+}
+
+const h = cell<number>();
+let one: State<number> = h.cell;
+console.log(one.state, one.hasValue);
+h.set("ready", 2, true, null);
+console.log(one.state, one.value);
+one = h.cell;
+console.log(one.state);
