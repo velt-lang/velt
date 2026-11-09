@@ -57,6 +57,11 @@ export function enterCatch(): bool {
   return true;
 }
 
+/** Whether `catchUnwind` catches in this program (its `velt_eh_try` has a landing pad). */
+export function catchesPanics(): bool {
+  return velt_eh_catches() != 0;
+}
+
 /** The `catchUnwind` that `enterCatch` announced (and returned true for) ended. */
 export function leaveCatch(): void {
   CATCHING.set(CATCHING.get() - 1);

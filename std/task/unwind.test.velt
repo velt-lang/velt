@@ -3,7 +3,7 @@
 // exception passes through is veltc's `unwinding` test: the test runner polls tests in a task
 // whose Rust frames would claim it (and abort) before the end of the stack.
 import { describe, expect, it } from "velt/test";
-import { catchVeltPanic } from "velt/task/unwind";
+import { canCatchPanics, catchVeltPanic } from "velt/task/unwind";
 
 declare function velt_rt_xfer_suspend(): u32;
 declare function velt_rt_xfer_resume(depth: u32): void;
@@ -58,6 +58,10 @@ describe("catchVeltPanic", () => {
   });
 
   it("catches panic(msg) with its message", () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
     const msg = catchVeltPanic(() => {
       panic("boom");
     });
@@ -65,6 +69,10 @@ describe("catchVeltPanic", () => {
   });
 
   it("catches an index out of bounds deep in calls, and the process goes on", () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
     let after = 0;
     const msg = catchVeltPanic(() => {
       deep(20, [1, 2, 3]);
@@ -76,6 +84,10 @@ describe("catchVeltPanic", () => {
   });
 
   it("nests: the inner catch takes the panic", () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
     let inner: string | null = null;
     const outer = catchVeltPanic(() => {
       inner = catchVeltPanic(() => {
@@ -87,6 +99,10 @@ describe("catchVeltPanic", () => {
   });
 
   it("closes a transfer the panic left open", async () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
     const keep = new V(7);
     const msg = catchVeltPanic(() => {
       spawn(run(mk(keep)));

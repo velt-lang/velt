@@ -8,7 +8,10 @@
 export function raise(msg: string): void {}
 
 /**
- * Never called with an exception (`catchUnwind` returns 0 here). Unsafe, as the Itanium one is.
+ * Never called with an exception (`catchUnwind` returns 0 here).
+ *
+ * Unsafe: the same contract as the Itanium one, `e` must be an exception `catchUnwind` returned,
+ * taken once.
  */
 export unsafe function takePanic(e: usize): string {
   return "";

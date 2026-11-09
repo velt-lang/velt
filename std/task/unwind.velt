@@ -3,13 +3,21 @@
 // `catchPanic`.
 
 import { catchUnwind } from "velt/lang/intrinsics/unwind";
-import { enterCatch, leaveCatch, takePanic } from "velt/lang/hooks/unwind";
+import { catchesPanics, enterCatch, leaveCatch, takePanic } from "velt/lang/hooks/unwind";
 import { processEnv } from "velt/lang/hooks/process";
 
 declare function velt_rt_xfer_suspend(): u32;
 declare function velt_rt_xfer_resume(depth: u32): void;
 declare function velt_rt_xfer_end(): void;
 declare function velt_rt_write_str(stream: u32, s: string);
+
+/**
+ * Whether `catchVeltPanic` catches here: false where generated code doesn't catch (WebAssembly,
+ * Windows for now, the `velt dev` JIT), where a panic in `f` ends the process.
+ */
+export function canCatchPanics(): bool {
+  return catchesPanics();
+}
 
 /**
  * Calls `f`; returns null when it returns, or the panic's message when a Velt panic unwound out
