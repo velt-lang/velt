@@ -5,7 +5,7 @@ use std::ffi::c_void;
 use std::mem::MaybeUninit;
 use std::task::{Context, Poll};
 
-use super::{context, VeltFut, PENDING, READY};
+use super::{with_context, VeltFut, PENDING, READY};
 
 #[repr(C)]
 struct Leaf<R, F> {
@@ -47,7 +47,7 @@ where
     let Some(op) = leaf.op.as_mut() else {
         return READY;
     };
-    match op(context(cx)) {
+    match with_context(cx, |c| op(c)) {
         Poll::Ready(r) => {
             leaf.result.write(r);
             leaf.op = None;

@@ -11,7 +11,8 @@
 //! timer holds its own keep-alive reference) does not: what it waits for keeps the process alive
 //! or nothing does. It costs nothing extra.
 
-use super::{context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use super::waker::context_or_repoll;
+use super::{VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 use std::ffi::c_void;
 use std::future::Future;
 use std::mem::MaybeUninit;
@@ -71,8 +72,13 @@ unsafe extern "C-unwind" fn leaf_poll<R, F: Future<Output = R>>(
     let Some(fut) = leaf.fut.as_mut() else {
         return READY; // already completed: polling again is harmless
     };
+    // A waker of another table: this leaf is polled again with a Rust one.
+    let c = match context_or_repoll(cx, f, leaf_poll::<R, F>) {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     // SAFETY: the future lives inside a heap box that never moves until `leaf_drop`.
-    match Pin::new_unchecked(fut).poll(context(cx)) {
+    match Pin::new_unchecked(fut).poll(c) {
         Poll::Pending => PENDING,
         Poll::Ready(v) => {
             leaf.result.write(v);

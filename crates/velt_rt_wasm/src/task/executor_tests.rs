@@ -32,7 +32,10 @@ fn waiter(f: *mut VeltFut, name: &'static str) -> *mut VeltFut {
 /// so it is polled first while both timers are due.
 unsafe extern "C" fn overtake_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = s as *mut i64;
-    let cx = crate::task::context(cx);
+    crate::task::with_context(cx, |cx| overtake_step(st, cx))
+}
+
+unsafe fn overtake_step(st: *mut i64, cx: &mut Context<'_>) -> u32 {
     match *st.add(1) {
         0 => {
             ROOT_WAKER.with(|w| *w.borrow_mut() = Some(cx.waker().clone()));

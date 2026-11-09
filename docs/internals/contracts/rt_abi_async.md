@@ -20,6 +20,20 @@ typedef struct VeltFut {                             // every runtime-owned futu
     uint32_t (*poll)(struct VeltFut* self, void* cx);
     void     (*drop)(struct VeltFut* self);
 } VeltFut;                                           // result slot at byte offset 16
+
+typedef struct VeltWakerHeader VeltWakerHeader;     // a block starting with its table
+typedef struct VeltWakerVt {                         // a waker's C functions
+    const VeltWakerHeader* (*clone)(const VeltWakerHeader* w); // one more reference
+    void (*wake)(const VeltWakerHeader* w);          // wakes, gives a reference back
+    void (*wake_by_ref)(const VeltWakerHeader* w);   // wakes, keeps the reference
+    void (*drop)(const VeltWakerHeader* w);          // gives a reference back
+} VeltWakerVt;
+struct VeltWakerHeader { const VeltWakerVt* vt; /* the waker's own fields follow */ };
+
+typedef struct VeltCx {                              // what `cx` points to (16 bytes)
+    const uint32_t*        await_word;               // offset 0: read by generated code
+    const VeltWakerHeader* waker;                    // the task's waker, borrowed for the poll
+} VeltCx;
 ```
 
 **Compiled `async function`** (emitted by lowering):
@@ -35,9 +49,26 @@ typedef struct VeltFut {                             // every runtime-owned futu
 - Before the first poll a state may be moved/copied bytewise (the runtime copies initial states
   into tasks); it must not contain pointers into itself until it has been polled. After the first
   poll it never moves.
-- `cx` points to the runtime's `{ const uint32_t* word; Context* cx; }`: the task's **await
-  word**, then the Rust `&mut Context`. Generated code passes `cx` on and reads only the word
-  (below, "Awaiting").
+- `cx` points to a `VeltCx`: the task's **await word**, then its **waker**, one pointer to a
+  header whose first word is its table (#2649; tokio lays out its task headers the same way). A
+  task header starts with it; a C library's waker is any block that starts with its own table.
+  Generated code passes `cx` on and reads only the word (below, "Awaiting"). The waker contract,
+  for every table:
+  - The waker in `cx` is borrowed for the poll call: a callee may `clone` it and `wake_by_ref`
+    it, never `wake` or `drop` it. A reference from `clone` ends in exactly one `wake` or `drop`.
+  - All four functions may be called from any thread, including threads Velt did not start
+    (tokio's, a GPU driver's callback): on the borrowed waker during the poll, on a reference
+    from `clone` at any time.
+  - The reference count is atomic.
+  - A wake after the task finished is harmless: the count keeps the header alive until the last
+    reference is given back.
+
+  The Rust executors pass a header (on the stack, beside the `VeltCx`) with the runtime's own
+  table and their `&mut Context`; runtime leaves recognize the table and use that `Context`
+  as it is (velt_rt `task/waker.rs`). A `clone` through that table returns a boxed header
+  owning a Rust `Waker`. For any other table a leaf's Rust waker is `RawWaker::new(header,
+  &FORWARD)`, whose entries call the header's table: nothing is allocated on a clone. Before
+  #2649 the second field was a Rust `&mut Context`.
 - Generators (`function*`) reuse this state-machine shape without the runtime: their poll
   function is called with a null `cx` and returns 0 (done), 1 (a value is in the result slot)
   or 2 (the slot holds the `Err`), and `$drop` closes a suspended generator (it runs `finally`
@@ -475,6 +506,8 @@ A JS host's thread belongs to its event loop, so nothing waits on it (velt_rt_wa
 `host_turn.rs`), and nothing unwinds through the module: every call from the host returns
 normally, with the executor's state on the heap. On `wasm32-unknown-unknown`, `velt_main` does not
 call `velt_rt_block_on`: it hands `main`'s root task to the runtime and returns.
+On both wasm targets `cx` is the same `VeltCx` with 32-bit pointers (the word at offset 0, the
+waker at 4; a header's table at its offset 0); velt_rt_wasm compiles velt_rt's `task/waker.rs`.
 
 - `velt_rt_host_main(PollFn poll, const void* state, u64 size, u64 align, int32_t (*finish)(void*
   state))`: moves the root's unpolled state (`size` bytes, `align`) to the heap and runs the first

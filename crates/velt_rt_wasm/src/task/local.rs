@@ -14,7 +14,7 @@ use std::task::{Context, Poll, Waker};
 use super::all::ResultDropFn;
 use super::boxed::{self, state, trailer};
 use super::leaf::new_leaf;
-use super::{context, executor, raw_cx, VeltFut, Wide, PENDING, READY};
+use super::{executor, raw_cx, with_context, VeltFut, Wide, PENDING, READY};
 
 /// What a started promise's owner and its driving task share.
 pub struct Started {
@@ -282,7 +282,7 @@ unsafe extern "C" fn started_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
         s.delivered = true;
         return READY;
     }
-    s.waiter = Some(context(cx).waker().clone());
+    s.waiter = Some(with_context(cx, |c| c.waker().clone()));
     PENDING
 }
 

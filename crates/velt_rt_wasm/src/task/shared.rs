@@ -18,7 +18,7 @@ use std::rc::Rc;
 use std::task::Waker;
 
 use super::all::ResultDropFn;
-use super::{context, FutDropFn, FutPollFn, VeltFut, Wide, FUT_RESULT_OFFSET, PENDING, READY};
+use super::{with_context, FutDropFn, FutPollFn, VeltFut, Wide, FUT_RESULT_OFFSET, PENDING, READY};
 
 /// Compiled share glue of a result slot: writes another reference to `*src` into `dst`.
 pub type ShareFn = unsafe extern "C" fn(src: *const u8, dst: *mut u8);
@@ -341,7 +341,7 @@ fn on_its_task(h: &HubRef) {
 unsafe fn poll_holder(h: &HubRef, f: *mut VeltFut, cx: *mut c_void) -> u32 {
     on_its_task(h);
     let me = f as usize;
-    let w = context(cx).waker().clone();
+    let w = with_context(cx, |c| c.waker().clone());
     if !h.borrow().done {
         let first = {
             let mut s = h.borrow_mut();

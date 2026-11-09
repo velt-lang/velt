@@ -118,4 +118,29 @@ mod tests {
             velt_rt_latch_free(h);
         }
     }
+
+    /// A latch wait driven by an executor whose waker is a C table (an executor in Velt):
+    /// opening the latch wakes through the C table, and every clone is given back.
+    #[test]
+    fn a_wait_wakes_a_foreign_c_waker() {
+        use crate::task::waker::tests::TestHeader;
+        let n = TestHeader::new();
+        let word = 0u32;
+        let mut cx = n.cx(&word);
+        let cx = &mut cx as *mut crate::task::VeltCx as *mut std::ffi::c_void;
+        let h = velt_rt_latch_new();
+        // SAFETY: `h` is live until freed; the future is owned here; `cx` outlives the polls.
+        unsafe {
+            let f = velt_rt_latch_wait(h);
+            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+            assert_eq!(n.woken(), 0);
+            velt_rt_latch_open(h);
+            assert_eq!(n.woken(), 1);
+            assert_eq!(velt_rt_fut_poll(f, cx), READY);
+            velt_rt_fut_drop(f);
+            velt_rt_latch_free(h);
+        }
+        assert!(n.balanced(), "every reference a clone took given back");
+    }
 }
