@@ -138,7 +138,7 @@ impl FnLower<'_, '_> {
                 let done = self.new_block();
                 let nn = self.non_null(f.clone());
                 self.when(nn, done);
-                self.call_rt(Rt::FutDrop, vec![f], None);
+                self.fut_drop_call(vec![f]);
                 self.goto(done);
                 self.switch_to(done);
             }

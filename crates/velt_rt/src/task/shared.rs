@@ -292,7 +292,7 @@ unsafe fn slot(f: *mut VeltFut) -> *mut u8 {
 /// `poll` of every holder, the original future and the handles alike.
 unsafe extern "C-unwind" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     if let Some((p, size)) = forwarded(f) {
-        if super::velt_rt_fut_poll(p, cx) != READY {
+        if super::poll_fut(p, cx) != READY {
             return PENDING;
         }
         std::ptr::copy_nonoverlapping(slot(p), slot(f), size);
@@ -309,7 +309,7 @@ unsafe extern "C-unwind" fn holder_drop(f: *mut VeltFut) {
         .and_then(|m| m.remove(&(f as usize)));
     if let Some(fwd) = fwd {
         // Handed to this task: its holder role went to the proxy on the promise's own task.
-        super::velt_rt_fut_drop(fwd.proxy);
+        super::drop_fut(fwd.proxy);
         match fwd.orig.into_inner() {
             Some((poll, orig_drop)) => {
                 // The original future outlived its hub for this pointer (`release`).
@@ -397,7 +397,7 @@ pub(crate) unsafe fn hand_over(f: *mut VeltFut, transfer: Option<ResultDropFn>) 
         {
             w.proxy = next;
         }
-        super::velt_rt_fut_drop(p);
+        super::drop_fut(p);
         return;
     }
     let h = hub(f);
@@ -455,18 +455,18 @@ unsafe fn new_proxy(h: Arc<Hub>, transfer: Option<ResultDropFn>) -> *mut VeltFut
 /// Poll of a proxy ([`hand_over`]): awaits its role, then moves the result into its state.
 unsafe extern "C-unwind" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
     let role = *(state as *mut *mut VeltFut);
-    if super::velt_rt_fut_poll(role, cx) != READY {
+    if super::poll_fut(role, cx) != READY {
         return PENDING;
     }
     let size = handle_hub(role).size;
     std::ptr::copy_nonoverlapping(slot(role), state, size);
-    super::velt_rt_fut_drop(role);
+    super::drop_fut(role);
     READY
 }
 
 /// Drop of a proxy that has not settled: its role goes away.
 unsafe extern "C-unwind" fn proxy_drop(state: *mut u8) {
-    super::velt_rt_fut_drop(*(state as *mut *mut VeltFut));
+    super::drop_fut(*(state as *mut *mut VeltFut));
 }
 
 /// Stop the program when the promise of `h` is used on another task than the one it is shared

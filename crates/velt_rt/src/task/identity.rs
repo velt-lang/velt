@@ -136,7 +136,7 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_alias(
         .get_or_insert_with(HashMap::new)
         .insert(w as usize, Alias { holder, hub, quiet });
     match old {
-        Some(stale) if !stale.holder.is_null() => super::velt_rt_fut_drop(stale.holder),
+        Some(stale) if !stale.holder.is_null() => super::drop_fut(stale.holder),
         Some(_) => {}
         None => {
             COUNT.fetch_add(1, Ordering::Relaxed);
@@ -182,7 +182,7 @@ pub(crate) unsafe fn forget(f: *mut VeltFut) {
         .map(|a| std::mem::replace(&mut a.holder, std::ptr::null_mut()));
     if let Some(h) = holder.filter(|h| !h.is_null()) {
         // No lock held: dropping the last holder runs the promise's own drop.
-        super::velt_rt_fut_drop(h);
+        super::drop_fut(h);
     }
 }
 

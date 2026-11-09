@@ -100,7 +100,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.assign(proj(&base, Proj::Field(2)), Rvalue::Use(cint(1, Ty::U8)));
         let r = lw.temp(Ty::U32);
         let args = vec![inner.clone(), Operand::Copy(Place::local(cxl))];
-        lw.call_rt(Rt::FutPoll, args, Some(Place::local(r)));
+        lw.fut_poll_call(args, Place::local(r));
         let (pend, ready) = (lw.new_block(), lw.new_block());
         let pending = lw.rvalue_temp(
             Ty::Bool,
@@ -116,7 +116,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         );
         let src = lw.operand_place(src, Ty::Ptr);
         lw.widen_slot(&src, &proj(&base, Proj::Field(0)), from, to);
-        lw.call_rt(Rt::FutDrop, vec![inner], None);
+        lw.fut_drop_call(vec![inner]);
         lw.terminate(Terminator::Return(cint(1, Ty::U32)));
         let sym = format!(
             "_Gwiden_poll_{}_{}",
@@ -208,7 +208,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.goto(done);
         lw.switch_to(done);
         let inner = Operand::Copy(proj(&base, Proj::Field(1)));
-        lw.call_rt(Rt::FutDrop, vec![inner], None);
+        lw.fut_drop_call(vec![inner]);
         lw.terminate(Terminator::Return(unit()));
         let sym = format!(
             "_Gwiden_drop_{}_{}",

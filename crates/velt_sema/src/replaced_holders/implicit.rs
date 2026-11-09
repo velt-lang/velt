@@ -578,7 +578,10 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyDelete
         // Reading an entry runs an object literal's getter; a hook is a method.
         | I::AnyReflectValue
-        | I::AnyReflectHook => true,
+        | I::AnyReflectHook
+        // A heap future's poll and drop functions run any code of its body.
+        | I::FutPoll
+        | I::FutDrop => true,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
@@ -602,6 +605,13 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::StrLen
         | I::StrByteLen
         | I::AddressLoad
+        | I::AddressStore
+        | I::AtomicAddress
+        | I::PtrAtomicLoad
+        | I::PtrAtomicStore
+        | I::PtrAtomicRmw
+        | I::PtrAtomicCas
+        | I::PtrAtomicCasWeak
         | I::Exit
         | I::Panic
         | I::ArrayWithCapacity

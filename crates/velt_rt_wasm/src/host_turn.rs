@@ -167,7 +167,7 @@ pub fn main_returned(code: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, PENDING, READY};
+    use crate::task::{drop_fut, poll_fut, PENDING, READY};
     use std::ffi::c_void;
 
     /// A root that awaits `sleep(0)` then `sleep(60_000)`: state `{ step, fut }`.
@@ -179,10 +179,10 @@ mod tests {
                 *st.add(1) = crate::task::velt_rt_sleep(ms) as usize;
             }
             let f = *st.add(1) as *mut crate::task::VeltFut;
-            if velt_rt_fut_poll(f, cx) == PENDING {
+            if poll_fut(f, cx) == PENDING {
                 return PENDING;
             }
-            velt_rt_fut_drop(f);
+            drop_fut(f);
             *st.add(1) = 0;
             *st += 1;
         }
@@ -216,10 +216,10 @@ mod tests {
         if (*f).is_null() {
             *f = crate::host_promise::velt_rt_host_promise(5);
         }
-        if velt_rt_fut_poll(*f, cx) == PENDING {
+        if poll_fut(*f, cx) == PENDING {
             return PENDING;
         }
-        velt_rt_fut_drop(*f);
+        drop_fut(*f);
         *(s as *mut usize) = 2;
         READY
     }

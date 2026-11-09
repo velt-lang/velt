@@ -89,13 +89,13 @@ pub extern "C-unwind" fn velt_rt_group_free(g: Key<Group>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, PENDING, READY};
+    use crate::task::{drop_fut, poll_fut, raw_cx, PENDING, READY};
     use std::task::{Context, Waker};
 
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
-        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
+        unsafe { poll_fut(f, raw_cx(&mut cx).ptr()) }
     }
 
     #[test]
@@ -122,7 +122,7 @@ mod tests {
         assert_eq!(poll(w), READY);
         assert!(!velt_rt_group_enter(g), "the scope is closing");
         // SAFETY: owned future.
-        unsafe { velt_rt_fut_drop(w) };
+        unsafe { drop_fut(w) };
         velt_rt_group_free(g);
         assert!(!velt_rt_group_enter(g), "the scope ended");
     }

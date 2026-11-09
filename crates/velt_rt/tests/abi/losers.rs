@@ -10,7 +10,7 @@ use crate::task::local::{
     velt_rt_await_ready, velt_rt_await_tick, velt_rt_fut_box, velt_rt_fut_detach,
 };
 use crate::task::runtime::velt_rt_block_on;
-use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, velt_rt_yield_now, VeltFut, PENDING, READY};
+use crate::task::{drop_fut, poll_fut, velt_rt_yield_now, VeltFut, PENDING, READY};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -25,10 +25,10 @@ struct Waiter {
 
 unsafe extern "C-unwind" fn waiter_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Waiter);
-    if velt_rt_fut_poll(st.wait, cx) == PENDING {
+    if poll_fut(st.wait, cx) == PENDING {
         return PENDING;
     }
-    velt_rt_fut_drop(st.wait);
+    drop_fut(st.wait);
     st.tag = 1;
     (*st.done).fetch_add(1, Ordering::SeqCst);
     READY
@@ -37,7 +37,7 @@ unsafe extern "C-unwind" fn waiter_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 unsafe extern "C-unwind" fn waiter_drop(s: *mut u8) {
     let st = &mut *(s as *mut Waiter);
     if st.tag == 0 {
-        velt_rt_fut_drop(st.wait);
+        drop_fut(st.wait);
     }
 }
 
@@ -84,7 +84,7 @@ unsafe extern "C-unwind" fn loop_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         st[1] += 1;
         let latch = velt_rt_latch_new();
         let w = waiter(velt_rt_latch_wait(latch), &FINISHED);
-        assert_eq!(velt_rt_fut_poll(w, cx), PENDING);
+        assert_eq!(poll_fut(w, cx), PENDING);
         velt_rt_latch_open(latch);
         velt_rt_fut_detach(w, None);
         velt_rt_latch_free(latch);
@@ -124,7 +124,7 @@ unsafe extern "C-unwind" fn yielded_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         velt_rt_yield_now(cx);
         let latch = velt_rt_latch_new();
         let w = waiter(velt_rt_latch_wait(latch), &YIELDED_FINISHED);
-        assert_eq!(velt_rt_fut_poll(w, cx), PENDING);
+        assert_eq!(poll_fut(w, cx), PENDING);
         velt_rt_latch_open(latch);
         velt_rt_fut_detach(w, None);
         velt_rt_latch_free(latch);

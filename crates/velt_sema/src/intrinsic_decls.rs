@@ -54,6 +54,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("arrayTruncate", Op(I::ArrayTruncate)),
     ("arrayWithCapacity", Op(I::ArrayWithCapacity)),
     // atomic.velt
+    ("atomicAddress", Op(I::AtomicAddress)),
     ("atomicCas", Op(I::AtomicCas)),
     ("atomicCasWeak", Op(I::AtomicCasWeak)),
     ("atomicFence", Op(I::AtomicFence)),
@@ -112,6 +113,15 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("targetFeature", TargetFeature),
     // address.velt
     ("addressLoad", Op(I::AddressLoad)),
+    ("addressStore", Op(I::AddressStore)),
+    ("ptrAtomicCas", Op(I::PtrAtomicCas)),
+    ("ptrAtomicCasWeak", Op(I::PtrAtomicCasWeak)),
+    ("ptrAtomicLoad", Op(I::PtrAtomicLoad)),
+    ("ptrAtomicRmw", Op(I::PtrAtomicRmw)),
+    ("ptrAtomicStore", Op(I::PtrAtomicStore)),
+    // future.velt
+    ("futDrop", Op(I::FutDrop)),
+    ("futPoll", Op(I::FutPoll)),
     // string.velt
     ("strAsciiWords", Op(I::StrAsciiWords)),
     ("strByteAt", Op(I::StrByteAt)),

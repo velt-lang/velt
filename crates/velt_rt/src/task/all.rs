@@ -251,7 +251,7 @@ mod tests {
 
     use super::*;
     use crate::task::leaf::new_leaf;
-    use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, PENDING};
+    use crate::task::{drop_fut, poll_fut, PENDING};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -265,10 +265,10 @@ mod tests {
         fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
             // SAFETY: an owned, live heap future; freed once READY.
             unsafe {
-                if velt_rt_fut_poll(self.0 .0, raw_cx(cx).ptr()) == PENDING {
+                if poll_fut(self.0 .0, raw_cx(cx).ptr()) == PENDING {
                     return Poll::Pending;
                 }
-                velt_rt_fut_drop(self.0 .0);
+                drop_fut(self.0 .0);
             }
             Poll::Ready(())
         }

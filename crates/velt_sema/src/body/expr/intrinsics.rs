@@ -86,7 +86,10 @@ impl FnCx<'_, '_> {
                 self.bytes_elem_check(t, span);
             }
         }
-        let e = self.intrinsic(i, ck.args, ck.ret, span);
+        let Some(args) = self.raw_memory_args(i, &ck.type_args, ck.args, span) else {
+            return self.error_expr(span);
+        };
+        let e = self.intrinsic(i, args, ck.ret, span);
         if i == Intrinsic::SpawnHandled {
             self.spawned_promises(&e);
         }

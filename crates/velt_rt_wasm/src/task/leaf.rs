@@ -65,7 +65,7 @@ unsafe extern "C" fn leaf_drop<R, F>(f: *mut VeltFut) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, FUT_RESULT_OFFSET};
+    use crate::task::{drop_fut, poll_fut, FUT_RESULT_OFFSET};
     use std::task::Waker;
 
     #[test]
@@ -75,11 +75,11 @@ mod tests {
         let raw_cx = crate::task::raw_cx(&mut cx);
         let raw = raw_cx.ptr();
         unsafe {
-            assert_eq!(velt_rt_fut_poll(f, raw), READY);
+            assert_eq!(poll_fut(f, raw), READY);
             let v = *((f as *const u8).add(FUT_RESULT_OFFSET) as *const i64);
             assert_eq!(v, 42);
-            assert_eq!(velt_rt_fut_poll(f, raw), READY, "polling again is harmless");
-            velt_rt_fut_drop(f);
+            assert_eq!(poll_fut(f, raw), READY, "polling again is harmless");
+            drop_fut(f);
         }
     }
 }

@@ -43,6 +43,15 @@ export declare intrinsic function atomicCasWeak<T>(
   failure: u8,
 ): bool;
 
+/**
+ * The address of the word of `a`, an `Atomic` of a 32- or 64-bit integer type that cannot move:
+ * a module `const` initialized with `new Atomic<T>(literal)` (a static atomic, whose word is in
+ * the program's data), or a field (of a field…) of the value of a `shared` box, read in place.
+ * For a `shared` one, the address stays valid while the box lives: the caller keeps a reference
+ * to it. For `futex`, `__ulock_wait` and their wakes (docs/internals/design/intrinsics.md).
+ */
+export declare intrinsic function atomicAddress<T>(a: Atomic<T>): usize;
+
 /** A memory fence of ordering `order` (never relaxed). */
 export declare intrinsic function atomicFence(order: u8): void;
 

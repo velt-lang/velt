@@ -55,8 +55,6 @@ pub(super) enum Rt {
     DropQueue,
     DropDrain,
     // M3: futures and tasks (rt_abi_async.md §1, §2, §8, §9)
-    FutPoll,
-    FutDrop,
     FutPeek,
     /// Another holder of a promise (shared promises, #212).
     FutShare,
@@ -258,8 +256,6 @@ impl Rt {
         use Ty::*;
         let f = |s, params, ret| (s, params, ret, false);
         match self {
-            Rt::FutPoll => f("velt_rt_fut_poll", vec![Ptr, Ptr], U32),
-            Rt::FutDrop => f("velt_rt_fut_drop", vec![Ptr], Unit),
             Rt::FutPeek => f("velt_rt_fut_peek", vec![Ptr], U8),
             Rt::FutShare => f("velt_rt_fut_share", vec![Ptr, U64, Ptr, Ptr], Ptr),
             Rt::FutId => f("velt_rt_fut_id", vec![Ptr], U64),

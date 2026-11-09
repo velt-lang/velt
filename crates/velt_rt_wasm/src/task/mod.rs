@@ -118,15 +118,20 @@ pub unsafe extern "C" fn velt_rt_await_ready(ticket: u64, cx: *mut c_void) -> u3
     executor::await_ready(ticket, context(cx)) as u32
 }
 
-/// Poll a heap future: `(f->poll)(f, cx)`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+/// Poll a heap future: `(f->poll)(f, cx)`. The runtime's own; compiled code calls through the
+/// header itself (rt_abi_async.md §1).
+///
+/// # Safety
+/// `f` is a live heap future that has not completed, `cx` the poll's context.
+pub unsafe fn poll_fut(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     ((*f).poll.0)(f, cx)
 }
 
 /// Drop a heap future: `(f->drop)(f)`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_drop(f: *mut VeltFut) {
+///
+/// # Safety
+/// `f` is a live heap future, not used after.
+pub unsafe fn drop_fut(f: *mut VeltFut) {
     ((*f).drop.0)(f)
 }
 

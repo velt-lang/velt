@@ -1,7 +1,70 @@
 // velt/lang/intrinsics (internal): memory at an address, for velt/ffi's raw reads of C memory
-// (docs/internals/design/c-ffi.md). The public surface is velt/ffi's unsafe functions.
+// (docs/internals/design/c-ffi.md) and std's own runtime code (the async executor,
+// docs/internals/design/intrinsics.md "Memory at an address"). The public surface is velt/ffi's
+// unsafe functions.
+
+import type { Ptr } from "velt/ffi/ptr";
+import type { Copied } from "./modes";
 
 /**
  * The `T` (a number type or `bool`) at `address`, unchecked. Unsafe: a `T` must be there.
  */
 export declare unsafe intrinsic function addressLoad<T>(address: usize): T;
+
+/**
+ * Writes `value`, a `T` (a number type or `bool`), at `address`, unchecked. Unsafe: the memory
+ * must be writable and hold a `T` nothing else reads or writes meanwhile.
+ */
+export declare unsafe intrinsic function addressStore<T>(address: usize, value: Copied<T>): void;
+
+/**
+ * The integer at `p`, read atomically with ordering `order` (as `Atomic.load`). Unsafe: an
+ * aligned `T` must be there, and every thread must change it atomically.
+ */
+export declare unsafe intrinsic function ptrAtomicLoad<T>(
+  p: Ptr<T>,
+  order: "relaxed" | "acquire" | "seqcst",
+): T;
+
+/** Makes `value` the integer at `p` atomically (as `Atomic.store`). Unsafe: as `ptrAtomicLoad`. */
+export declare unsafe intrinsic function ptrAtomicStore<T>(
+  p: Ptr<T>,
+  value: Copied<T>,
+  order: "relaxed" | "release" | "seqcst",
+): void;
+
+/**
+ * The read-modify-write `op` of the integer at `p` with `value` (as the `Atomic` method of that
+ * name: add and sub wrap, max and min compare as `T` does); returns the previous value.
+ * Unsafe: as `ptrAtomicLoad`.
+ */
+export declare unsafe intrinsic function ptrAtomicRmw<T>(
+  p: Ptr<T>,
+  op: "exchange" | "add" | "sub" | "and" | "or" | "xor" | "max" | "min",
+  value: Copied<T>,
+  order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst",
+): T;
+
+/**
+ * Makes `value` the integer at `p` if it is `expected`; returns the previous value (as
+ * `Atomic.compareExchange`). Unsafe: as `ptrAtomicLoad`.
+ */
+export declare unsafe intrinsic function ptrAtomicCas<T>(
+  p: Ptr<T>,
+  expected: Copied<T>,
+  value: Copied<T>,
+  order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst",
+  failure: "relaxed" | "acquire" | "seqcst",
+): T;
+
+/**
+ * As `ptrAtomicCas`, whether it made the change, which may fail spuriously (as
+ * `Atomic.compareExchangeWeak`). Unsafe: as `ptrAtomicLoad`.
+ */
+export declare unsafe intrinsic function ptrAtomicCasWeak<T>(
+  p: Ptr<T>,
+  expected: Copied<T>,
+  value: Copied<T>,
+  order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst",
+  failure: "relaxed" | "acquire" | "seqcst",
+): bool;

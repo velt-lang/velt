@@ -28,7 +28,7 @@ use crate::task::VeltFut;
 /// rejection handler runs before the timers and events that woke it). A started promise keeps
 /// running (see [`give_up`]). Either way its outcome is handled: `quiet_drop` disposes of its
 /// result (null if nothing to drop). Anything else (a runtime leaf, a join handle) is dropped as
-/// by `velt_rt_fut_drop`.
+/// by `drop_fut`.
 #[no_mangle]
 pub unsafe extern "C-unwind" fn velt_rt_fut_detach(
     f: *mut VeltFut,
@@ -61,7 +61,7 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_detach(
     give_up_inner(f, fresh);
 }
 
-/// A combinator that settled gives up loser `f` (as `velt_rt_fut_drop`: a started promise keeps
+/// A combinator that settled gives up loser `f` (as `drop_fut`: a started promise keeps
 /// running). A started promise created during this poll of the task that is ready to go on
 /// (queued: woken by this poll's own code, by a promise it settled, say) runs once now, before
 /// the awaiter's continuation, like its JS microtask, which was queued before the combinator's
@@ -74,7 +74,7 @@ pub(crate) unsafe fn give_up(f: *mut VeltFut) {
 unsafe fn give_up_inner(f: *mut VeltFut, fresh: bool) {
     let tcx = CURRENT.with(Cell::get);
     let Some(tcx) = tcx.as_ref() else {
-        return crate::task::velt_rt_fut_drop(f);
+        return crate::task::drop_fut(f);
     };
     let set = *tcx.set;
     let candidate = !set.is_null()
@@ -83,11 +83,11 @@ unsafe fn give_up_inner(f: *mut VeltFut, fresh: bool) {
         && node::created_in(f, tcx.turn)
         && !tcx.yielded.get();
     if !candidate {
-        return crate::task::velt_rt_fut_drop(f);
+        return crate::task::drop_fut(f);
     }
     // The handle's reference goes with the drop; this one keeps `f` for the run.
     node::retain(f);
-    crate::task::velt_rt_fut_drop(f);
+    crate::task::drop_fut(f);
     // Dropping an adopted node queues it (its leaves held the owner's waker).
     if node::running_in(f, &(*set).shared) && (fresh || node::is_queued(f)) {
         set::run_now(set, tcx, f);

@@ -1,6 +1,6 @@
 use super::*;
 use crate::task::leaf::new_leaf;
-use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, velt_rt_sleep, PENDING};
+use crate::task::{drop_fut, poll_fut, velt_rt_sleep, PENDING};
 use std::ffi::c_void;
 
 thread_local! {
@@ -16,11 +16,11 @@ fn waiter(f: *mut VeltFut, name: &'static str) -> *mut VeltFut {
             B_WAKER.with(|w| *w.borrow_mut() = Some(cx.waker().clone()));
         }
         // SAFETY: `f` is a live sleep owned by this task until it completes.
-        if unsafe { velt_rt_fut_poll(f, raw_cx(cx).ptr()) } == PENDING {
+        if unsafe { poll_fut(f, raw_cx(cx).ptr()) } == PENDING {
             return Poll::Pending;
         }
         // SAFETY: as above; not used again.
-        unsafe { velt_rt_fut_drop(f) };
+        unsafe { drop_fut(f) };
         LOG.with(|l| l.borrow_mut().push(name));
         ROOT_WAKER.with(|w| w.borrow().as_ref().map(Waker::wake_by_ref));
         Poll::Ready(())

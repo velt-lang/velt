@@ -12,7 +12,7 @@ use crate::task::local::{
 };
 use crate::task::race::velt_rt_race;
 use crate::task::runtime::{runtime, velt_rt_block_on};
-use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, VeltFut, PENDING, READY};
+use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
 use crate::timer::velt_rt_sleep;
 use std::ffi::c_void;
 use std::future::Future;
@@ -112,10 +112,10 @@ unsafe extern "C-unwind" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         };
         st.tag = 1;
     }
-    if velt_rt_fut_poll(st.sleep, cx) == PENDING {
+    if poll_fut(st.sleep, cx) == PENDING {
         return PENDING;
     }
-    velt_rt_fut_drop(st.sleep);
+    drop_fut(st.sleep);
     log(st.id, "end");
     st.result = st.id;
     st.tag = 2;
@@ -130,7 +130,7 @@ unsafe extern "C-unwind" fn job_drop(s: *mut u8) {
     let st = &mut *(s as *mut Job);
     if st.tag == 1 {
         JOB_CANCELS[st.id as usize].fetch_add(1, Ordering::SeqCst);
-        velt_rt_fut_drop(st.sleep);
+        drop_fut(st.sleep);
     }
 }
 
@@ -175,11 +175,11 @@ struct Main {
 }
 
 unsafe fn take(f: *mut VeltFut, cx: *mut c_void) -> Option<i64> {
-    if velt_rt_fut_poll(f, cx) == PENDING {
+    if poll_fut(f, cx) == PENDING {
         return None;
     }
     let v = *((f as *const u8).add(16) as *const i64);
-    velt_rt_fut_drop(f);
+    drop_fut(f);
     Some(v)
 }
 
@@ -194,10 +194,10 @@ unsafe extern "C-unwind" fn main_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         st.tag = 1;
     }
     if st.tag == 1 {
-        if velt_rt_fut_poll(st.sleep, cx) == PENDING {
+        if poll_fut(st.sleep, cx) == PENDING {
             return PENDING;
         }
-        velt_rt_fut_drop(st.sleep);
+        drop_fut(st.sleep);
         log(0, "slept");
         st.tag = 2;
     }
@@ -245,7 +245,7 @@ fn started_promises_run_now_and_progress_while_the_creator_waits() {
 
 // async function fire() { job(10, GATED) is started and dropped at once; return 0; }
 unsafe extern "C-unwind" fn fire_poll(s: *mut u8, _: *mut c_void) -> u32 {
-    velt_rt_fut_drop(started_job(10, GATED));
+    drop_fut(started_job(10, GATED));
     *(s as *mut i64) = 0;
     READY
 }
@@ -283,7 +283,7 @@ unsafe extern "C-unwind" fn count_quiet_drop(slot: *mut u8) {
 unsafe extern "C-unwind" fn lose_poll(s: *mut u8, _: *mut c_void) -> u32 {
     let f = started_job(11, 20);
     velt_rt_futs_handled(&f, 1, Some(count_quiet_drop));
-    velt_rt_fut_drop(f);
+    drop_fut(f);
     *(s as *mut i64) = 0;
     READY
 }
@@ -316,7 +316,7 @@ unsafe extern "C-unwind" fn count_detached_drop(slot: *mut u8) {
 // up without cancelling it (a sibling rejected) and goes on.
 unsafe extern "C-unwind" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let f = job(40, 5);
-    assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+    assert_eq!(poll_fut(f, cx), PENDING);
     velt_rt_fut_detach(f, Some(count_detached_drop));
     log(39, "owner goes on");
     *(s as *mut i64) = 0;
@@ -361,7 +361,7 @@ unsafe extern "C-unwind" fn hold_poll(s: *mut u8, _: *mut c_void) -> u32 {
 }
 
 unsafe extern "C-unwind" fn hold_drop(s: *mut u8) {
-    velt_rt_fut_drop((*(s as *mut [*mut VeltFut; 2]))[1]);
+    drop_fut((*(s as *mut [*mut VeltFut; 2]))[1]);
 }
 
 #[test]

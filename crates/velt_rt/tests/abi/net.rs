@@ -7,17 +7,17 @@ use crate::result::{code_name, IoResult, VeltErr};
 use crate::str::VeltStr;
 use crate::task::runtime::velt_rt_block_on;
 use crate::task::spawn::velt_rt_spawn;
-use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, VeltFut, PENDING, READY};
+use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
 use std::ffi::c_void;
 use std::ptr::null_mut;
 
 /// Await `st.fut`; on READY move its result out and drop it. `None` ⇒ return PENDING.
 unsafe fn await_fut<R>(fut: &mut *mut VeltFut, cx: *mut c_void) -> Option<R> {
-    if velt_rt_fut_poll(*fut, cx) == PENDING {
+    if poll_fut(*fut, cx) == PENDING {
         return None;
     }
     let r = fut_result::<R>(*fut);
-    velt_rt_fut_drop(*fut);
+    drop_fut(*fut);
     *fut = null_mut();
     Some(r)
 }
@@ -77,7 +77,7 @@ unsafe extern "C-unwind" fn echo_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 unsafe extern "C-unwind" fn echo_drop(s: *mut u8) {
     let st = &mut *(s as *mut Echo);
     if !st.fut.is_null() {
-        velt_rt_fut_drop(st.fut);
+        drop_fut(st.fut);
     }
 }
 

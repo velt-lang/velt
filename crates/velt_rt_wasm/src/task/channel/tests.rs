@@ -1,7 +1,7 @@
 //! Unit tests of the channel operations on the host.
 
 use super::*;
-use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, FUT_RESULT_OFFSET, PENDING, READY};
+use crate::task::{drop_fut, poll_fut, raw_cx, FUT_RESULT_OFFSET, PENDING, READY};
 use std::cell::Cell;
 
 thread_local! {
@@ -15,7 +15,7 @@ unsafe extern "C" fn count_drop(item: *mut u8) {
 fn poll(f: *mut VeltFut) -> u32 {
     let mut cx = Context::from_waker(Waker::noop());
     // SAFETY: a live channel future.
-    unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
+    unsafe { poll_fut(f, raw_cx(&mut cx).ptr()) }
 }
 
 /// The `bool` result of a finished send (freed).
@@ -24,7 +24,7 @@ fn sent(f: *mut VeltFut) -> bool {
     // SAFETY: a finished send future with its result at +16.
     unsafe {
         let ok = *(f as *const u8).add(FUT_RESULT_OFFSET) != 0;
-        velt_rt_fut_drop(f);
+        drop_fut(f);
         ok
     }
 }
@@ -46,7 +46,7 @@ fn received(f: *mut VeltFut) -> Option<u64> {
     unsafe {
         let slot = (f as *const u8).add(FUT_RESULT_OFFSET);
         let v = (*slot != 0).then(|| *(slot.add(8) as *const u64));
-        velt_rt_fut_drop(f);
+        drop_fut(f);
         v
     }
 }
@@ -87,7 +87,7 @@ fn a_refused_or_cancelled_send_drops_its_item() {
     let cancelled = send(h, 10);
     assert_eq!(poll(cancelled), PENDING);
     // SAFETY: an owned, unfinished send future.
-    unsafe { velt_rt_fut_drop(cancelled) };
+    unsafe { drop_fut(cancelled) };
     velt_rt_chan_close(h);
     assert!(!sent(send(h, 100)));
     assert_eq!(

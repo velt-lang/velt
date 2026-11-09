@@ -111,11 +111,12 @@
 //! (`async_fn/spill/`); locals never needed at the same time share bytes (interference, first
 //! fit). `await` of a direct call to a compiled async function embeds the child's state in
 //! the parent's (no allocation); other promises (rt leaf futures, join handles, boxed
-//! promises) are polled with `velt_rt_fut_poll`. `spawn` of a direct call or an async closure
-//! literal copies its initial state into the task (`velt_rt_spawn`). `await Promise.all([…])`
-//! of an array literal polls its children in place (done flags in the state); any other
-//! `Promise.all(ps)` wraps `velt_rt_all[_with_drop]` in a small compiled future whose result
-//! is the `T[]`. Each call of an async closure clones its owned captures into the new state.
+//! promises) are polled through their header (`f->poll(f, cx)`, inline). `spawn` of a direct
+//! call or an async closure literal copies its initial state into the task (`velt_rt_spawn`).
+//! `await Promise.all([…])` of an array literal polls its children in place (done flags in the
+//! state); any other `Promise.all(ps)` wraps `velt_rt_all[_with_drop]` in a small compiled
+//! future whose result is the `T[]`. Each call of an async closure clones its owned captures
+//! into the new state.
 //! `async main`: `velt_main` builds the state on its stack and calls `velt_rt_block_on`.
 //!
 //! # Source locations (`lower_with`)

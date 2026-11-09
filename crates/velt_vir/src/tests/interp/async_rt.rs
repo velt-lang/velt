@@ -95,9 +95,12 @@ impl Interp<'_> {
             .expect("interp: expected a function pointer") as usize
     }
 
-    /// A new heap future object with `size` result/state bytes.
+    /// A new heap future object with `size` result/state bytes; its header holds the entries
+    /// compiled code polls and drops it through.
     pub(super) fn new_fut(&mut self, size: u64, kind: Fut) -> u64 {
         let f = self.heap_alloc(16 + size);
+        self.write_bytes(f, &super::FUT_POLL_ENTRY.to_le_bytes());
+        self.write_bytes(f + 8, &super::FUT_DROP_ENTRY.to_le_bytes());
         self.exec.futs.insert(f, kind);
         f
     }
@@ -106,8 +109,6 @@ impl Interp<'_> {
     /// reader); `None` if `sym` is not one of them.
     pub(super) fn rt_async(&mut self, sym: &str, a: &[u64]) -> Option<Result<u64, i32>> {
         Some(Ok(match sym {
-            "velt_rt_fut_poll" => return Some(self.fut_poll(a[0])),
-            "velt_rt_fut_drop" => return Some(self.fut_drop(a[0]).map(|_| 0)),
             "velt_rt_fut_box" => {
                 let (poll, drop) = (self.func_id(a[0]), self.func_id(a[1]));
                 assert!(a[4] <= 16, "interp: state alignment {}", a[4]);

@@ -75,6 +75,58 @@ edge values and pseudo-random inputs.
 
 The families are internal: programs use `Math`, `velt/simd`, `Atomic` and the integer methods.
 
+## Memory at an address
+
+std's runtime code in Velt (the async executor of #2649, tracking #2196) needs what the runtime
+did in Rust: read and write raw memory, change a word atomically where C or the OS can see it,
+and call a heap future's poll and drop functions. These are std-only intrinsics
+(`std/lang/intrinsics/address.velt`, `atomic.velt`, `future.velt`); programs and packages reach
+none of them, and the ones that touch raw memory are `declare unsafe intrinsic function`, so
+their callers are unsafe code with a `// SAFETY:` comment, as for `addressLoad` and `Ptr.at`.
+
+- `addressStore<T>(address: usize, value: T)` is `addressLoad`'s write: one VIR assignment to
+  `*(T*)address`, so every backend (LLVM, Cranelift, and wasm through LLVM) emits a plain store.
+  Sema holds `T` of both to a number type or `bool`, and refuses a type parameter (an instance
+  with a class would move an owned reference as raw bytes): nothing that owns memory or holds a
+  reference crosses as raw bytes. (The `ptrAtomic*` ones accept a type parameter, since their
+  lowering checks each instance is an integer.)
+- `ptrAtomicLoad`, `ptrAtomicStore`, `ptrAtomicRmw`, `ptrAtomicCas`, `ptrAtomicCasWeak` take a
+  `Ptr<T>` for an integer `T` and do what `Atomic<T>`'s methods do, on the integer it points to:
+  the same `velt_atomic_*` operations (velt_vir `atomic.rs`), so the same single instructions
+  with the ordering the call names. The orderings, and `ptrAtomicRmw`'s operation (`"add"`,
+  `"exchange"`, …), are string literal parameters as on `Atomic`; the declaration's union types
+  reject an ordering the operation cannot have, and sema turns the literals into the integer
+  literals the atomic intrinsics take (a value that is not a literal is an error). The `Ptr` is
+  the caller's promise that an aligned `T` is there and that every thread changes it atomically.
+- `atomicAddress(a: Atomic<T>): usize` gives the address of an `Atomic`'s word for the OS's
+  wait and wake calls (`futex`, `__ulock_wait`, `WaitOnAddress`). An address is only useful
+  while the word stays where it is, so sema accepts two places and nothing else, by the shape of
+  the argument: a *static atomic* (a module `const` made by `new Atomic<T>(literal)`, whose
+  word is in the program's writable data for the whole run, velt_vir `static_atomic.rs`), and a
+  field (of a field…) of the value of a `shared` box read in place (`s.state`,
+  `s.inner.waiters`) from a box that outlives the statement (a local, parameter, capture,
+  global, or a field of one): a box never moves, and its value is immutable apart from its atomics, so
+  nothing replaces the field. A local, an object field reached otherwise, an array element (an
+  array may grow and move its elements) and a module `let` or computed `const` (module state is
+  per task) are errors, and so is a temporary box (`mk().n`, `shared(new C()).n`), freed at
+  the end of the statement. The box's lifetime stays the caller's: the address is valid while it
+  holds a reference to the `shared` value, so a box kept in a mutable field (`h.s.n`) or a `let`
+  reassigned after the call is accepted and must stay alive while the address is used. `T` is a 32- or 64-bit integer type, the widths the
+  OS calls take. Getting the address is safe; using it is unsafe (`Ptr.at`).
+- `futPoll(f: usize, cx: usize): u32` and `futDrop(f: usize)` call through a heap future's
+  header (rt_abi_async.md §1): the entry at offset 0 or 8 is loaded and called indirectly
+  (`vir::Callee::Ptr`) with the C calling convention, as the runtime called it. Lowering's own
+  polls and drops of heap futures (awaiting a promise value, `Promise.all`'s children, the drop
+  glue of a `Promise<T>`) use the same code (velt_vir `lower/raw_memory.rs`), so
+  `velt_rt_fut_poll` and `velt_rt_fut_drop` are gone from the runtime. A header entry is an
+  8-byte slot on every target (wasm32 keeps the table index in its low half), so the
+  `{ poll, drop }` aggregate is 16 bytes everywhere. The calls do not count as calls of an
+  unknown function value in a `read` callback (`Boxing::read_indirect`), as the runtime call did
+  not.
+
+What is left for the executor is starting a thread with a C callback, which waits for a decision
+on how Velt hands a function to C.
+
 ## Adding an intrinsic
 
 1. **Declare it** in `std/lang/intrinsics/<family>.velt` with a doc comment, or, for one that

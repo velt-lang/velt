@@ -8,8 +8,7 @@ use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start, TimerLeaf};
 use crate::task::runtime::velt_rt_block_on;
 use crate::task::spawn::{velt_rt_spawn, velt_rt_spawn_detached, velt_rt_spawn_fut};
 use crate::task::{
-    velt_rt_fut_drop, velt_rt_fut_poll, velt_rt_yield_now, velt_rt_yield_now_fut, VeltFut, PENDING,
-    READY,
+    drop_fut, poll_fut, velt_rt_yield_now, velt_rt_yield_now_fut, VeltFut, PENDING, READY,
 };
 use crate::timer::velt_rt_sleep;
 use std::ffi::c_void;
@@ -37,10 +36,10 @@ unsafe extern "C-unwind" fn add_after_poll(s: *mut u8, cx: *mut c_void) -> u32 {
                 st.tag = 1;
             }
             1 => {
-                if velt_rt_fut_poll(st.sleep, cx) == PENDING {
+                if poll_fut(st.sleep, cx) == PENDING {
                     return PENDING;
                 }
-                velt_rt_fut_drop(st.sleep);
+                drop_fut(st.sleep);
                 st.result = st.a + 1;
                 st.tag = 2;
                 return READY;
@@ -56,7 +55,7 @@ unsafe extern "C-unwind" fn add_after_drop(s: *mut u8) {
     let st = &mut *(s as *mut AddAfter);
     ADD_AFTER_DROPS.fetch_add(1, Ordering::SeqCst);
     if st.tag == 1 {
-        velt_rt_fut_drop(st.sleep);
+        drop_fut(st.sleep);
     }
 }
 
@@ -178,11 +177,11 @@ pub unsafe extern "C-unwind" fn fanout_poll(s: *mut u8, cx: *mut c_void) -> u32 
     }
     while st.next < st.handles.len() {
         let h = st.handles[st.next];
-        if velt_rt_fut_poll(h, cx) == PENDING {
+        if poll_fut(h, cx) == PENDING {
             return PENDING;
         }
         st.result += fut_result::<i64>(h);
-        velt_rt_fut_drop(h);
+        drop_fut(h);
         st.next += 1;
     }
     READY
@@ -229,10 +228,10 @@ unsafe extern "C-unwind" fn sleeper_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         st.sleep = new_leaf(TimerLeaf::new(at));
         st.tag = 1;
     }
-    if velt_rt_fut_poll(st.sleep, cx) == PENDING {
+    if poll_fut(st.sleep, cx) == PENDING {
         return PENDING;
     }
-    velt_rt_fut_drop(st.sleep);
+    drop_fut(st.sleep);
     ORDER.lock().unwrap().push(st.ms);
     st.tag = 2;
     READY
@@ -241,7 +240,7 @@ unsafe extern "C-unwind" fn sleeper_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 unsafe extern "C-unwind" fn sleeper_drop(s: *mut u8) {
     let st = &mut *(s as *mut Sleeper);
     if st.tag == 1 {
-        velt_rt_fut_drop(st.sleep);
+        drop_fut(st.sleep);
     }
 }
 
@@ -279,10 +278,10 @@ unsafe extern "C-unwind" fn deadlines_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     }
     while st.next < st.sleepers.len() {
         let f = st.sleepers[st.next];
-        if velt_rt_fut_poll(f, cx) == PENDING {
+        if poll_fut(f, cx) == PENDING {
             return PENDING;
         }
-        velt_rt_fut_drop(f);
+        drop_fut(f);
         st.next += 1;
     }
     READY
@@ -341,7 +340,7 @@ fn detached_tasks_and_dropped_join_handles_keep_running() {
             None,
         )
     };
-    unsafe { velt_rt_fut_drop(h) };
+    unsafe { drop_fut(h) };
     let t = Instant::now();
     while DETACHED_DONE.load(Ordering::SeqCst) < 101 {
         assert!(t.elapsed().as_secs() < 60, "detached tasks did not finish");
@@ -382,8 +381,8 @@ struct PollOnce {
 
 unsafe extern "C-unwind" fn poll_once_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut PollOnce);
-    st.result = velt_rt_fut_poll(st.fut, cx);
-    velt_rt_fut_drop(st.fut);
+    st.result = poll_fut(st.fut, cx);
+    drop_fut(st.fut);
     READY
 }
 
@@ -463,17 +462,17 @@ struct CancelAll {
 unsafe extern "C-unwind" fn cancel_all_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut CancelAll);
     if st.tag == 0 {
-        st.result[0] = velt_rt_fut_poll(st.all, cx);
+        st.result[0] = poll_fut(st.all, cx);
         st.sleep = velt_rt_sleep(100);
         st.tag = 1;
     }
-    if velt_rt_fut_poll(st.sleep, cx) == PENDING {
+    if poll_fut(st.sleep, cx) == PENDING {
         return PENDING;
     }
-    velt_rt_fut_drop(st.sleep);
+    drop_fut(st.sleep);
     // The two fast children finished meanwhile; this poll moves their results into the buffer.
-    st.result[1] = velt_rt_fut_poll(st.all, cx);
-    velt_rt_fut_drop(st.all);
+    st.result[1] = poll_fut(st.all, cx);
+    drop_fut(st.all);
     READY
 }
 
@@ -533,11 +532,11 @@ struct Counted {
 unsafe extern "C-unwind" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Counted);
     st.polls.fetch_add(1, Ordering::Relaxed);
-    if velt_rt_fut_poll(st.inner, cx) == PENDING {
+    if poll_fut(st.inner, cx) == PENDING {
         return PENDING;
     }
     st.result = fut_result::<i64>(st.inner);
-    velt_rt_fut_drop(st.inner);
+    drop_fut(st.inner);
     st.inner = null_mut();
     READY
 }
@@ -545,7 +544,7 @@ unsafe extern "C-unwind" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 unsafe extern "C-unwind" fn counted_drop(s: *mut u8) {
     let st = &mut *(s as *mut Counted);
     if !st.inner.is_null() {
-        velt_rt_fut_drop(st.inner);
+        drop_fut(st.inner);
     }
 }
 
