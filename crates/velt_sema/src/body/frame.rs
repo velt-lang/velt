@@ -101,8 +101,13 @@ pub(crate) struct Frame {
     /// `new C()` assigned through `any` with `??=`, `||=` or `&&=` takes its type arguments from
     /// it (`dynamic_write`).
     pub assign_hint: Option<TyId>,
-    /// Where this function reads an open record's key (`record_value_as`).
-    pub record_reads: rustc_hash::FxHashSet<velt_common::Span>,
+    /// Where this function reads an open record's key, with the record's value type `V`
+    /// (`record_value_as`, `record_present`); also each read of a `trusted_locals` local.
+    pub record_reads: FxHashMap<velt_common::Span, TyId>,
+    /// Locals TypeScript types `V` that may hold `undefined`: one declared without a type from
+    /// an open record's read (`const e = r[k]`), and a parameter whose `any` default may be
+    /// `undefined` (#2666). Each read is a record read (`record_reads`) of this `V`.
+    pub trusted_locals: FxHashMap<LocalId, TyId>,
     /// The read-only local a method call written `(x as T).m()` may change (`T` not read-only;
     /// `readonly_arrays.rs`).
     pub readonly_exempt: Option<LocalId>,
@@ -260,6 +265,7 @@ impl Frame {
             local_marks: Default::default(),
             assign_hint: None,
             record_reads: Default::default(),
+            trusted_locals: Default::default(),
             readonly_exempt: None,
             readonly_cast_recv: false,
             as_const_tuples: Default::default(),

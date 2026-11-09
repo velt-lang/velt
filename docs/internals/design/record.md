@@ -37,7 +37,7 @@ needed.
 
 | Expression | `K = string` | `K` a literal union / string enum |
 |---|---|---|
-| `r[k]` | `V \| null`: the key may be missing (TS `noUncheckedIndexedAccess`) | `V`: every key is always present |
+| `r[k]` | `V`, as in TypeScript; a missing key gives `undefined` (a `V \| undefined` underneath), and a use as a `V` checks presence: a member read, a call or an index throws Node's `TypeError` (#930 phase 3) | `V`: every key is always present |
 | `r.name` (an identifier key) | same as `r["name"]` | same, and only for members of `K` (a typo is an error); for a string enum, the member whose value is `"name"` |
 | `r[k] = v` | insert or replace | replace |
 | `r[k] += 1`, `r[k]++` | an error: the key may be missing (fix-it `r[k] = (r[k] ?? 0) + 1`); `r[k] ??= v` sets a missing key | replace |
@@ -106,7 +106,7 @@ methods are internal: calling one outside the prelude is an error.
 
 ## Decisions
 
-1. `r[k]` on a `string`-keyed record is `V | null` (sound); literal-key records give `V`.
+1. `r[k]` on a `string`-keyed record is `V` (#930 phase 3, option (c)): `undefined` for a missing key, tested by `=== undefined`, `??` and `?.` as in Node, and checked where it is used as a `V`; literal-key records give `V`.
 2. `delete r[k]` removes a key (only on `string`-keyed records).
 3. `r.name` is `r["name"]` on every record.
 4. Compound assignment (`r[k] += 1`, `r[k]++`, …) on an open record is an error with the fix-it

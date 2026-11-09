@@ -397,12 +397,29 @@ impl FnCx<'_, '_> {
         keep: bool,
         span: Span,
     ) -> hir::Expr {
+        let msg = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Lit(ast::Lit::Str(msg.into())),
+            span,
+        };
+        self.checked_present_with(h, msg, exp, keep, span)
+    }
+
+    /// [`checked_present`](Self::checked_present) with the message computed by `msg` (a string
+    /// expression, evaluated only when `h` is nullish).
+    pub(crate) fn checked_present_with(
+        &mut self,
+        h: hir::Expr,
+        msg: ast::Expr,
+        exp: Option<TyId>,
+        keep: bool,
+        span: Span,
+    ) -> hir::Expr {
         let mk = |kind| ast::Expr {
             id: ast::NodeId(u32::MAX),
             kind,
             span,
         };
-        let msg = mk(ast::ExprKind::Lit(ast::Lit::Str(msg.into())));
         let panic = mk(ast::ExprKind::Call {
             callee: Box::new(mk(ast::ExprKind::Ident(ast::Ident {
                 name: "panic".into(),

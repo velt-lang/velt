@@ -108,7 +108,7 @@ impl FnCx<'_, '_> {
         key: RecordKey<'_>,
         span: Span,
     ) -> hir::Expr {
-        let (k, _) = self
+        let (k, v) = self
             .record_args(obj.ty)
             .expect("ICE: record read on a non-record");
         let closed = self.record_keys(k).is_some();
@@ -123,7 +123,7 @@ impl FnCx<'_, '_> {
             velt_common::std_key!(record_get)
         };
         if !closed {
-            self.f.record_reads.insert(span);
+            self.f.record_reads.insert(span, v);
         }
         self.record_call_keyed(obj, method, key, &[], span)
     }

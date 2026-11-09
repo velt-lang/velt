@@ -116,6 +116,7 @@ impl FnCx<'_, '_> {
                     ast::ExprKind::Paren(inner) => self.immediate_closure(inner),
                     _ => self.receiver_expr(callee),
                 };
+                let f = self.record_present_callee(f, callee);
                 self.call_value_with(f, type_args, args, exp, span)
             }
         }
@@ -589,6 +590,7 @@ impl FnCx<'_, '_> {
                 recv
             }
         };
+        let recv = self.record_present_member(recv, &prop.name);
         if self.record_internal_call(&recv, prop) {
             self.check_args_loose(args);
             return self.error_expr(span);
