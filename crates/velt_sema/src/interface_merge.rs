@@ -7,9 +7,12 @@
 //! then each later one's, augmentations in the driver's module order. That is one layout for the
 //! whole program.
 //!
-//! Rules (TypeScript's where it has them): type parameters must agree in number and names
-//! (TS2428); `extends` lists are joined; a member declared in two declarations is an error (a
-//! field of the same type is allowed in TypeScript, and a method there becomes an overload).
+//! Rules (TypeScript's): each declaration names the same type parameters, in order, and may
+//! leave out those with defaults (TS2428); `extends` lists are joined. A field declared again
+//! must have the same type: written alike it is one field, written otherwise collection
+//! compares the resolved types (TS2717). A method declared again is an overload, the later
+//! declaration's signatures first (`crate::iface_overloads` makes the set one method). A field
+//! and a method of one name are an error.
 //! The types an augmentation's members name are the augmenting module's (`augment_scope`).
 
 use rustc_hash::FxHashMap;
@@ -258,8 +261,7 @@ fn find_in(
 
 /// Adds the members of `from` (a later declaration of the same interface) to `into`.
 fn merge(into: &mut ast::InterfaceDecl, from: ast::InterfaceDecl, diags: &mut Vec<Diagnostic>) {
-    let names = |g: &[ast::GenericParam]| g.iter().map(|p| p.name.name.clone()).collect::<Vec<_>>();
-    if names(&into.generics) != names(&from.generics) {
+    if !merge_generics(&mut into.generics, &from.generics) {
         // TypeScript's TS2428.
         diags.push(
             Diagnostic::error(
@@ -269,38 +271,97 @@ fn merge(into: &mut ast::InterfaceDecl, from: ast::InterfaceDecl, diags: &mut Ve
                 ),
                 from.name.span,
             )
-            .with_label(into.name.span, "the first declaration"),
+            .with_label(into.name.span, "the first declaration")
+            .with_note("a declaration may leave out type parameters that have defaults; those it names must have the same names, in the same order"),
         );
         return;
     }
     into.extends.extend(from.extends);
     into.call_sigs.extend(from.call_sigs);
-    let taken = |into: &ast::InterfaceDecl, n: &str| {
-        into.fields
-            .iter()
-            .find(|f| f.name.name == n)
-            .map(|f| f.name.span)
-            .or_else(|| {
-                into.methods
-                    .iter()
-                    .find(|m| m.sig.name.name == n && !m.is_getter && !m.is_setter)
-                    .map(|m| m.sig.name.span)
-            })
-    };
     for f in from.fields {
-        if taken(into, &f.name.name).is_some() {
+        let method = into
+            .methods
+            .iter()
+            .find(|m| m.sig.name.name == f.name.name && !m.is_setter)
+            .map(|m| m.sig.name.span);
+        if method.is_some() {
             twice(&from.name.name, &f.name, diags);
             continue;
         }
-        into.fields.push(f);
+        // A field declared again: the same type is one field (TypeScript's merge); a type
+        // written differently stays, and collection compares the resolved types (TS2717).
+        let same = into.fields.iter().any(|g| {
+            g.name.name == f.name.name
+                && g.optional == f.optional
+                && crate::overloads::same_type(&g.ty, &f.ty)
+        });
+        if !same {
+            into.fields.push(f);
+        }
     }
+    // A method declared again is an overload. The later declaration's signatures come first,
+    // as in TypeScript; each declaration keeps its own order.
+    let mut groups: Vec<(String, Vec<ast::InterfaceMethod>)> = vec![];
     for m in from.methods {
-        if !m.is_getter && !m.is_setter && taken(into, &m.sig.name.name).is_some() {
+        let name = m.sig.name.name.clone();
+        if into.fields.iter().any(|f| f.name.name == name) {
             twice(&from.name.name, &m.sig.name, diags);
             continue;
         }
-        into.methods.push(m);
+        if m.is_getter || m.is_setter {
+            into.methods.push(m);
+            continue;
+        }
+        match groups.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, g)) => g.push(m),
+            None => groups.push((name, vec![m])),
+        }
     }
+    for (name, group) in groups {
+        let first = into
+            .methods
+            .iter()
+            .position(|o| o.sig.name.name == name && !o.is_getter && !o.is_setter);
+        match first {
+            Some(at) => {
+                into.methods.splice(at..at, group);
+            }
+            None => into.methods.extend(group),
+        }
+    }
+}
+
+/// Joins the type parameters of a later declaration, `from`, into `into`'s, as TypeScript
+/// does: each declaration names a prefix of the merged list (at least every parameter without
+/// a default), with the same names in the same order; a longer list adds its parameters, and a
+/// default or bound one declaration gives is the merged parameter's. `false` when they don't
+/// agree (TS2428).
+fn merge_generics(into: &mut Vec<ast::GenericParam>, from: &[ast::GenericParam]) -> bool {
+    if into
+        .iter()
+        .zip(from)
+        .any(|(a, b)| a.name.name != b.name.name)
+    {
+        return false;
+    }
+    let own = into.len();
+    for (a, b) in into.iter_mut().zip(from) {
+        if a.default.is_none() {
+            a.default = b.default.clone();
+        }
+        if a.bounds.is_empty() {
+            a.bounds = b.bounds.clone();
+        }
+    }
+    if from.len() > into.len() {
+        into.extend(from[into.len()..].iter().cloned());
+    }
+    // Every declaration names at least the parameters up to the last without a default.
+    let required = into
+        .iter()
+        .rposition(|p| p.default.is_none())
+        .map_or(0, |i| i + 1);
+    from.len() >= required && own >= required
 }
 
 /// An interface with `what` (at `span`) in a `declare global` (`global`) or `declare module`
@@ -319,16 +380,17 @@ fn unsupported_in_block(what: &str, span: Span, global: bool) -> Diagnostic {
     )
 }
 
-/// Reports member `member` of interface `iface` declared in two merged declarations.
+/// Reports member `member` of interface `iface`: a field in one merged declaration and a method
+/// in another (TypeScript's TS2300).
 fn twice(iface: &str, member: &ast::Ident, diags: &mut Vec<Diagnostic>) {
     diags.push(
         Diagnostic::error(
             format!(
-                "`{}` is declared in two declarations of the interface `{iface}`",
+                "`{}` is a field in one declaration of the interface `{iface}` and a method in another",
                 member.name
             ),
             member.span,
         )
-        .with_note("merged interface declarations each add their own members: declare each member once (TypeScript allows a repeated field of the same type, and makes a repeated method an overload)"),
+        .with_note("merged interface declarations may repeat a field with the same type, or a method (an overload), but not use one name for both"),
     );
 }

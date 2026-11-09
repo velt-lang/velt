@@ -1,0 +1,30 @@
+// Merged interface declarations that TypeScript rejects: a field declared again with another
+// type (TS2717), type parameters that are not a prefix of the others' (TS2428), and a name that
+// is a field in one declaration and a method in another.
+interface A {
+  x: number;
+  y?: string;
+}
+interface A {
+  x: string;
+  y?: string;
+}
+interface A {
+  y: string;
+}
+
+interface B<T, U = number> {
+  v: T;
+}
+interface B {
+  w: number;
+}
+
+interface C {
+  m: number;
+}
+interface C {
+  m(): number;
+}
+
+function main() {}
