@@ -8,8 +8,10 @@
 // the result's drop glue, the task driving it (a started node holds a reference to it, so a wake
 // from another thread never touches a freed task), its link in that task's woken stack (other
 // threads push on it), the waker of whoever awaits it, the `cx` its polls get (its task's await
-// word, itself), and its link in the list of woken nodes the task took to run (its own, so a node
-// woken again while it waits there is pushed without breaking that list).
+// word, itself), its link in the list of woken nodes the task took to run (its own, so a node
+// woken again while it waits there is pushed without breaking that list), and its link in the
+// task's list of rejections nobody handled (its own too: a node woken while it ran from a
+// microtask is still on the woken stack when it finishes there, and that stack must stay whole).
 //
 // The flags change only through atomic or/and: a wake on another thread sets QUEUED while the
 // worker sets and clears the others.
@@ -36,6 +38,7 @@ const N_NEXT: usize = 56;
 const N_AWAITER: usize = 64;
 const N_CX: usize = 80;
 const N_TAKEN_NEXT: usize = 96;
+const N_UNHANDLED_NEXT: usize = 104;
 
 // A node's flags: started; its state finished; its owner dropped the handle (the task drops the
 // result); among its task's woken nodes; it can reject; its owner took the result.
@@ -71,6 +74,7 @@ export function boxed(
   m.st(n + N_CX, 0);
   m.st(n + N_CX + 8, n);
   m.st(n + N_TAKEN_NEXT, 0);
+  m.st(n + N_UNHANDLED_NEXT, 0);
   const f = n + N_HEAD;
   m.st(f, hdrPoll);
   m.st(f + 8, hdrDrop);
@@ -176,7 +180,7 @@ function dropResult(n: usize): void {
   const e = t.exec();
   if ((m.load32(n + N_FLAGS) & REJECTING) !== 0 && task !== 0 && m.ld(e + t.E_CURRENT) === task) {
     m.inc(n + N_REFS);
-    m.st(n + N_NEXT, m.ld(task + t.T_UNHANDLED));
+    m.st(n + N_UNHANDLED_NEXT, m.ld(task + t.T_UNHANDLED));
     m.st(task + t.T_UNHANDLED, n);
     return;
   }
@@ -358,14 +362,14 @@ export function report(task: usize): void {
   m.st(task + t.T_UNHANDLED, 0);
   let rev: usize = 0;
   while (n !== 0) {
-    const next = m.ld(n + N_NEXT);
-    m.st(n + N_NEXT, rev);
+    const next = m.ld(n + N_UNHANDLED_NEXT);
+    m.st(n + N_UNHANDLED_NEXT, rev);
     rev = n;
     n = next;
   }
   while (rev !== 0) {
-    const next = m.ld(rev + N_NEXT);
-    m.st(rev + N_NEXT, 0);
+    const next = m.ld(rev + N_UNHANDLED_NEXT);
+    m.st(rev + N_UNHANDLED_NEXT, 0);
     dropNow(rev);
     release(rev);
     rev = next;

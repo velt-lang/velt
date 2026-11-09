@@ -281,6 +281,54 @@ fn promises_woken_while_queued_keep_their_task_s_woken_stack_whole() {
     );
 }
 
+/// A rejected promise nobody handles that finishes in a microtask while it also waits on its
+/// task's woken stack goes on the task's list of unhandled rejections through a link of its own:
+/// sharing the stack's link cut the stack there, and the promises below it (a timer's callback)
+/// kept their queued flag without being on it, so they never ran again and the program hung once
+/// `main` was done (3 of 10 runs of the golden). Run 20 times; each must end within 20 seconds.
+#[test]
+fn a_rejection_finishing_while_woken_keeps_the_woken_stack_whole() {
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let src = include_str!("../../../tests/golden/lang/promise_combinators_kept_array.velt");
+    let want = include_str!("../../../tests/golden/lang/promise_combinators_kept_array.out");
+    let (out, _) = build_and_run(dir.path(), "kept_array", src, true, 0);
+    assert_eq!(out, want);
+    let exe = dir.path().join(format!(
+        "kept_array_std{}",
+        if cfg!(windows) { ".exe" } else { "" }
+    ));
+    for run in 0..20 {
+        let mut child = command(&exe)
+            .env("VELT_THREADS", "1")
+            .env_remove("VELT_SCHEDULER")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let id = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let status = child.wait();
+            let _ = tx.send(());
+            status
+        });
+        if rx.recv_timeout(std::time::Duration::from_secs(20)).is_err() {
+            // The waiting thread owns the child: kill it by its id.
+            let _ = command(if cfg!(windows) { "taskkill" } else { "kill" })
+                .args(if cfg!(windows) {
+                    vec!["/F".to_string(), "/PID".to_string(), id.to_string()]
+                } else {
+                    vec!["-9".to_string(), id.to_string()]
+                })
+                .status();
+            let _ = waiter.join();
+            panic!("run {run} of the golden did not end (parked with work left)");
+        }
+        let status = waiter.join().unwrap().unwrap();
+        assert!(status.success(), "run {run}: {status}");
+    }
+}
+
 /// WASI has no thread to wake the worker and no OS wait to park it in: `VELT_SCHEDULER=std`
 /// does nothing there, and `main`'s root stays the runtime's.
 #[test]
