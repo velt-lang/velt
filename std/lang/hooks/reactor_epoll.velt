@@ -8,6 +8,7 @@
 // `struct epoll_event` is packed on x86-64 (12 bytes, data at 4) and natural elsewhere (16, data
 // at 8): the block records which at `open`.
 
+import { Ptr } from "velt/ffi/ptr";
 import { velt_rt_os_arch } from "velt/os/rt";
 import * as m from "./sched_mem";
 
@@ -60,13 +61,15 @@ declare c("c") function epoll_wait(ep: i32, events: usize, max: i32, timeout: i3
 declare c("c") function eventfd(initval: u32, flags: i32): i32;
 declare c("c") function read$io(fd: i32, buf: usize, n: usize): isize;
 declare c("c") function write$io(fd: i32, buf: usize, n: usize): isize;
-declare c("c") function __errno_location(): usize;
+// The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
+// C symbol has one signature in a program.
+declare c("c") function __errno_location(): Ptr<i32>;
 declare c("c") function accept4(fd: i32, addr: usize, len: usize, flags: i32): i32;
 
 /** The calling thread's `errno`. */
 export function errno(): i32 {
   // SAFETY: `__errno_location` returns the thread's errno slot.
-  return m.ld32(unsafe { __errno_location() }) as i32;
+  return m.ld32(Ptr.addressOf(unsafe { __errno_location() })) as i32;
 }
 
 /** A new reactor: its block, or 0 when the OS refused an epoll or eventfd. */

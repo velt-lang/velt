@@ -116,9 +116,20 @@ function resolve(addr: string, passive: bool): IoResult<usize> {
   const hints = m.zeroed(64);
   m.st32(hints, passive ? (AI_PASSIVE as u32) : 0);
   m.st32(hints + 8, SOCK_STREAM as u32);
+  // A name holding a NUL is no address (as the runtime's parse says): caught here, so these
+  // functions throw nothing, as the runtime's (std/net/rt.velt) don't.
+  let hostC: CString;
+  let portC: CString;
+  try {
+    hostC = new CString(host);
+    portC = new CString(parts[1]);
+  } catch (e) {
+    m.release(hints);
+    return failed({ code: 4, message: "invalid socket address" }, 0);
+  }
   const res = m.zeroed(16);
   // SAFETY: NUL-terminated host and port, hints and a result word in raw memory.
-  const e = unsafe { getaddrinfo(new CString(host), new CString(parts[1]), hints, res) };
+  const e = unsafe { getaddrinfo(hostC, portC, hints, res) };
   const list = m.ld(res);
   m.release(hints);
   m.release(res);

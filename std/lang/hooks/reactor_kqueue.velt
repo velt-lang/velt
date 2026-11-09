@@ -10,6 +10,7 @@
 // ones, so the declaration below passes the flag both third (x86-64 reads it there) and ninth,
 // after eight register parameters, in the first stack slot (where Apple arm64 reads it).
 
+import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
 
 /** Does this OS have the reactor? (The default variant has not: sockets stay the runtime's.) */
@@ -80,14 +81,16 @@ declare c("c") function fcntl$io(
   stacked: i64,
 ): i32;
 declare c("c") function setsockopt$io(fd: i32, level: i32, name: i32, value: usize, len: u32): i32;
-declare c("c") function __error(): usize;
+// The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
+// C symbol has one signature in a program.
+declare c("c") function __error(): Ptr<i32>;
 declare c("c") function accept$io(fd: i32, addr: usize, len: usize): i32;
 declare c("c") function close$io(fd: i32): i32;
 
 /** The calling thread's `errno`. */
 export function errno(): i32 {
   // SAFETY: `__error` returns the thread's errno slot.
-  return m.ld32(unsafe { __error() }) as i32;
+  return m.ld32(Ptr.addressOf(unsafe { __error() })) as i32;
 }
 
 /** A new reactor: its block, or 0 when the OS refused a kqueue. */

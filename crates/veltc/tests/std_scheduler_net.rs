@@ -262,3 +262,104 @@ async function main() {
         "ECONNREFUSED\nEBADF\n0\n",
     );
 }
+
+/// The `.velt` files under `dir` (recursively) that use velt/net or the http-server package.
+fn net_users(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            net_users(&path, out);
+        } else if path.extension().is_some_and(|e| e == "velt") {
+            let src = std::fs::read_to_string(&path).unwrap();
+            if ["\"velt/net\"", "\"velt/net/", "\"http-server\""]
+                .iter()
+                .any(|n| src.contains(n))
+            {
+                out.push(path);
+            }
+        }
+    }
+}
+
+/// `velt check` of `file` (from its folder, so a golden finds its package), with
+/// `VELT_SCHEDULER=std` when `std`, or `velt build` into `out` when given (lowering finds what
+/// checking doesn't, such as two signatures of one C symbol): whether it passed, and its
+/// diagnostics.
+fn check(file: &Path, std: bool, out: Option<&Path>) -> (bool, String) {
+    let mut c = command(env!("CARGO_BIN_EXE_velt"));
+    match out {
+        Some(o) => c
+            .arg("build")
+            .arg(file.file_name().unwrap())
+            .arg("-o")
+            .arg(o),
+        None => c.arg("check").arg(file.file_name().unwrap()),
+    };
+    c.current_dir(file.parent().unwrap())
+        .env_remove("VELT_SCHEDULER");
+    if std {
+        c.env("VELT_SCHEDULER", "std");
+    }
+    let o = c.output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    (o.status.success(), text)
+}
+
+/// The `std-scheduler` variants of velt/net (std/net/tcp_sched.velt, the reactors) keep the
+/// default's signatures, error types included: every velt/net user among the goldens (the
+/// http-server package's included, and the ones that must fail to compile) compiles the same
+/// with and without `VELT_SCHEDULER=std`. A variant whose function threw `TypeError` failed
+/// `serve`'s `throws` clause; a C declaration of errno's location with another signature than
+/// the compiler's clashed in every program reading `lastOsError()`.
+#[test]
+fn velt_net_users_compile_the_same_on_both_executors() {
+    runtime_support::build_native_runtime(manifest());
+    let golden = manifest().join("../../tests/golden");
+    let mut files = vec![];
+    net_users(&golden, &mut files);
+    files.sort();
+    // Programs reading `lastOsError()`, built: the compiler declares errno's location then.
+    let dir = test_dir::TestDir::new();
+    for name in [
+        "system_function_errno_await",
+        "system_function_subarray_owner",
+    ] {
+        let f = golden.join(format!("lang/{name}.velt"));
+        let exe = |tag: &str| {
+            dir.path()
+                .join(format!("{name}{tag}{}", std::env::consts::EXE_SUFFIX))
+        };
+        let rt = check(&f, false, Some(&exe("")));
+        let std = check(&f, true, Some(&exe("_std")));
+        assert_eq!((rt.0, std.0), (true, true), "{name}:\n{}\n{}", rt.1, std.1);
+    }
+    assert!(files.len() > 50, "{} velt/net users found", files.len());
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get().min(8));
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let differ = std::sync::Mutex::new(vec![]);
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(f) = files.get(i) else { break };
+                let (rt, std) = (check(f, false, None), check(f, true, None));
+                if rt != std {
+                    differ.lock().unwrap().push(format!(
+                        "{}:\n  default ({}): {}\n  std ({}): {}",
+                        f.display(),
+                        rt.0,
+                        rt.1.trim(),
+                        std.0,
+                        std.1.trim()
+                    ));
+                }
+            });
+        }
+    });
+    let differ = differ.into_inner().unwrap();
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
