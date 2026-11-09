@@ -771,6 +771,24 @@ describe("reads and writes that don't wait", () => {
     expect(openAt(n, t.written, then)[0]).toBe("0017");
   });
 
+  it("starts a KeyUpdate at the limit inside a last message", async () => {
+    const t = new Playback(hexDecode(flight()));
+    const e = await handshaken(t);
+    e.out.writeLimit = 1;
+    const s = new TlsStream(e);
+    const size: usize = 16384 + 1;
+    expect(s.tryWrite(payload(size))).toBe(size as i64);
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    const [first, at] = openAt(c, t.written, 259);
+    expect(first).toBe(hexEncode(payload(size).slice(0, 16384)) + "17");
+    const [update, then] = openAt(c, t.written, at);
+    expect(update).toBe("180000010016");
+    const n = new RecordCipher(0x1301, updated(CLIENT_AP_SECRET));
+    const [second, end] = openAt(n, t.written, then);
+    expect(second).toBe(hexEncode(payload(size).slice(16384)) + "17");
+    expect(end).toBe(t.written.length);
+  });
+
   it("writes a last message whole, and queues what a short write leaves", async () => {
     const [t, s] = await ready("");
     expect(s.tryWrite([1, 2])).toBe(2);
@@ -817,6 +835,13 @@ describe("reads and writes that don't wait", () => {
     const [t, s] = await ready(odd + sealedAfter(SERVER_AP_SECRET, 2, [7, 23]));
     t.arrived = 1000000;
     expect(() => s.tryRead(Buffer.alloc(4))).toThrow("unexpected record type 255");
+  });
+
+  it("refuses a record header that is too long, without waiting for its body", async () => {
+    // 16641 bytes: one past the longest protected record, with nothing behind the header.
+    const [t, s] = await ready("1703034101");
+    t.arrived = 1000000;
+    expect(() => s.tryRead(Buffer.alloc(4))).toThrow("a record of 16641 bytes");
   });
 
   it("refuses a transport that must wait", async () => {

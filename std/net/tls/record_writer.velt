@@ -165,13 +165,21 @@ export class RecordWriter {
       return 0;
     }
     try {
-      let update: u8[] = [];
-      if (writer.seq >= this.writeLimit || this.updateOwed) {
-        update = this.protect(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]);
-        writer = this.nextWriter();
+      // Record by record, as `writeLater` seals them: a KeyUpdate goes before the first record
+      // past the write key's limit, wherever in the message that is.
+      const limit = this.writeLimit;
+      let out: u8[] = [];
+      let off = from;
+      while (off < to) {
+        if (writer.seq >= limit || this.updateOwed) {
+          out = out.concat(this.protect(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]));
+          writer = this.nextWriter();
+        }
+        const n = this.seal(writer, bytes, off, to);
+        off += this.sealedPlain;
+        const sealed = this.buf.slice(0, n as i64);
+        out = out.length == 0 ? sealed : out.concat(sealed);
       }
-      const data = this.protect(APPLICATION_DATA, bytes.slice(from as i64, to as i64));
-      const out = update.length == 0 ? data : update.concat(data);
       const sent = t.tryWrite(out, 0);
       if ((sent as usize) < out.length) {
         t.writeBytesLater(out, sent as number);
