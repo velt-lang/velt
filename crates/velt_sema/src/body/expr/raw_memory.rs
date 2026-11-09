@@ -48,12 +48,16 @@ impl FnCx<'_, '_> {
     }
 
     /// Can a raw read or write move a `T`: a number type or `bool` (an integer type, for an
-    /// atomic one)? A type parameter of a generic std function passes: sema checks the body once,
-    /// and lowering checks each instance (another type is an ICE there).
+    /// atomic one)? A type parameter passes only for the atomic ones, whose lowering checks each
+    /// instance (another type is an ICE there, `ptr_word`). `addressLoad` / `addressStore` refuse
+    /// it: an instance with a class would move an owned reference as raw bytes.
     fn raw_value_ty(&self, t: TyId, int_only: bool) -> bool {
         let ty = &self.cx.ty;
-        if ty.is_bottom(t) || matches!(ty.kind(t), TyKind::Param(_) | TyKind::Error) {
+        if ty.is_bottom(t) || matches!(ty.kind(t), TyKind::Error) {
             return true;
+        }
+        if matches!(ty.kind(t), TyKind::Param(_)) {
+            return int_only;
         }
         match int_only {
             true => matches!(ty.kind(t), TyKind::Int(_)),
@@ -133,8 +137,11 @@ impl FnCx<'_, '_> {
     /// Checks that `a`, the argument of `atomicAddress`, is an `Atomic` of a 32- or 64-bit
     /// integer that cannot move: a static atomic (a module `const` made by
     /// `new Atomic<T>(literal)`, whose word is in the program's data), or a field (of a field…)
-    /// of the value in a `shared` box, read in place (the box is not freed while a reference to
-    /// it lives, and nothing in it moves).
+    /// of the value in a `shared` box, read in place from a box that outlives the call (a local,
+    /// parameter, capture, global, or a field of one: the box is not freed while a reference to
+    /// it lives, and nothing in it moves; keeping that reference while the address is in use is
+    /// the caller's job). A temporary box (`mk().n`, `shared(new C()).n`) is freed at the end of
+    /// the statement, so its address would dangle.
     fn stable_atomic(&mut self, a: &hir::Expr, span: Span) -> Option<()> {
         let t = self.cx.atomic_value(a.ty);
         let wide =
@@ -158,7 +165,7 @@ impl FnCx<'_, '_> {
         }
         self.cx.error(
             Diagnostic::error("`atomicAddress` needs an `Atomic` that cannot move", a.span).with_note(
-                "a module `const` made by `new Atomic<T>(literal)`, or a field of the value of a `shared` box (`s.state`); a local, an object or an array moves or is freed while its address is in use",
+                "a module `const` made by `new Atomic<T>(literal)`, or a field of the value of a `shared` box held in a variable (`s.state`); a local, an object, an array or a temporary box moves or is freed while its address is in use. The box must stay alive (not reassigned or dropped) while the address is used",
             ),
         );
         None
@@ -184,16 +191,28 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// Is `a` a field (of a field…) of the value of a `shared` box, read in place?
+/// Is `a` a field (of a field…) of the value of a `shared` box read in place, from a box that
+/// outlives the call ([`lasting`])?
 fn in_shared_box(a: &hir::Expr) -> bool {
     match &a.kind {
         H::Field { base, .. } => match &base.kind {
             H::Call {
                 callee: hir::Callee::Intrinsic(Intrinsic::SharedRead),
-                ..
-            } => true,
+                args,
+            } => args.first().is_some_and(lasting),
             _ => in_shared_box(base),
         },
+        _ => false,
+    }
+}
+
+/// Does the box `e` outlive the statement: a local (a parameter or capture too), a global, a
+/// field of one, or a choice between such? A call's result or a new box is a temporary.
+fn lasting(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Local(..) | H::Global(_) => true,
+        H::Field { base, .. } => lasting(base),
+        H::If { then, els, .. } => lasting(then) && lasting(els),
         _ => false,
     }
 }

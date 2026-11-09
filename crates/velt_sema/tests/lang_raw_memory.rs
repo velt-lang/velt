@@ -87,6 +87,20 @@ fn address_load_and_store_move_only_numbers_and_bools() {
         e.contains("`addressLoad<T>` needs a number type or `bool`"),
         "{e}"
     );
+    // A type parameter: an instance with a class would move an owned reference as bytes.
+    let e = std_err(
+        "function st<T>(a: usize, v: T) { unsafe { addressStore<T>(a, v); } }
+         function ld<T>(a: usize): T { return unsafe { addressLoad<T>(a) }; }
+         function main() {}",
+    );
+    assert!(
+        e.contains("`addressStore<T>` needs a number type or `bool` for `T`, found `T`"),
+        "{e}"
+    );
+    assert!(
+        e.contains("`addressLoad<T>` needs a number type or `bool` for `T`, found `T`"),
+        "{e}"
+    );
 }
 
 #[test]
@@ -133,6 +147,24 @@ fn atomic_address_takes_only_an_atomic_that_cannot_move() {
          function main() { const s = shared(new C()); console.log(atomicAddress(s.xs[0])); }",
     );
     assert!(array.contains("cannot move"), "{array}");
+    // A temporary box is freed at the end of the statement: its address would dangle.
+    let call = std_err(
+        "class C { n: Atomic<u64> = new Atomic<u64>(0); }
+         function mk(): shared<C> { return shared(new C()); }
+         function main() { console.log(atomicAddress(mk().n)); }",
+    );
+    assert!(call.contains("cannot move"), "{call}");
+    let fresh = std_err(
+        "class C { n: Atomic<u64> = new Atomic<u64>(0); }
+         function main() { console.log(atomicAddress(shared(new C()).n)); }",
+    );
+    assert!(fresh.contains("cannot move"), "{fresh}");
+    // A box in a variable or parameter outlives the call.
+    std_ok(
+        "class C { n: Atomic<u64> = new Atomic<u64>(0); }
+         function f(s: shared<C>): usize { return atomicAddress(s.n); }
+         function main() { const s = shared(new C()); console.log(atomicAddress(s.n) == f(s)); }",
+    );
     // Module state is per task: a module `let` is not a static atomic.
     let state = std_err(
         "let A = new Atomic<u64>(0);
