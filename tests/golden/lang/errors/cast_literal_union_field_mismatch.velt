@@ -1,0 +1,6 @@
+// A literal's value whose type does not compare with the field's type is not asserted (TS2352).
+interface P { id: string; ok: boolean; }
+function f(u: string | number): P {
+    return { id: "a", ok: u } as P;
+}
+console.log(f(1));

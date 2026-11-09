@@ -1,0 +1,24 @@
+// An object literal asserted to an object type takes values whose types only compare with the
+// fields' types (TS2352's comparable relation): `string | number` values for `string` and
+// `number` fields, as sigx's storefront catalog builds its products from rows.
+interface Product {
+    id: string;
+    name: string;
+    price: number;
+}
+
+const products = [
+    ["fern", "Fern", 18],
+    ["rose", "Rose", 11],
+].map(([id, name, price]) => ({ id, name, price }) as Product);
+for (const p of products) console.log(p.id, p.name.toUpperCase(), p.price + 1);
+
+function tagged(id: string | number, price: number | null): { id: string; price: number | null } {
+    return { id, price } as { id: string; price: number | null };
+}
+console.log(tagged("a", null), tagged("b", 2).id.length);
+
+// Nested literals are asserted only where they are written under the assertion.
+const row: (string | number)[] = ["moss", 3];
+const nested = { item: { id: row[0], price: row[1] } as { id: string; price: number } };
+console.log(nested.item.id, nested.item.price * 2);

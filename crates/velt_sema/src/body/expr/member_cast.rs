@@ -113,7 +113,12 @@ impl FnCx<'_, '_> {
             && matches!(self.cx.ty.kind(target), TyKind::FnPtr { .. });
         let outer = std::mem::replace(&mut self.asserted_fn, asserted.then_some(arrow.span));
         let hint = self.assertion_hint(arrow, target);
+        // `{ id, price } as Product` with `id: string | number`: each value is asserted to its
+        // field's type, as TypeScript compares the literal's type with `Product` (TS2352).
+        let lit = matches!(arrow.kind, ast::ExprKind::Object(..)).then_some(arrow.span);
+        let outer_lit = std::mem::replace(&mut self.asserted_lit, lit);
         let inner = self.expr(expr, Some(hint), want);
+        self.asserted_lit = outer_lit;
         // An `object | null` converts as the `object` holding its nothing (#2144).
         let inner = match inner.ty == target {
             true => inner,
