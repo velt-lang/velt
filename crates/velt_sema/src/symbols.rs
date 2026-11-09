@@ -41,7 +41,7 @@ pub(crate) enum KnownSymbol {
 }
 
 /// Key names given out so far: one per symbol, distinct for distinct symbols.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct KeyNames {
     names: FxHashMap<KnownSymbol, String>,
     taken: FxHashMap<String, KnownSymbol>,

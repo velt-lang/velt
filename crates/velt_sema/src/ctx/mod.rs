@@ -19,7 +19,7 @@ pub(crate) enum Item {
     Alias(u32),
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ModuleScope {
     /// Own items and imports.
     pub items: FxHashMap<String, Item>,
@@ -46,6 +46,7 @@ pub(crate) struct ModuleScope {
 /// (`Ctx::classes_below`).
 pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
 
+#[derive(Clone)]
 pub(crate) struct Ctx<'m> {
     /// The program's modules, then the generated ones added during the check (`add_module`).
     pub modules: Vec<&'m SourceModule>,

@@ -159,7 +159,17 @@ What it needs, as separate pull requests, each falling back to the cold front en
   computed after the check, compared between versions.
 - **C. A kept checking context** (`velt_sema`, dev only): the host keeps the running version's
   `Ctx` and modules; a body is checked again in it, with its closures' definitions replaced and
-  its diagnostics its own.
+  its diagnostics its own. The checked `Ctx` is consumed and changed by the finishing steps
+  (`program.rs`: layouts merged, readonly types erased, the definitions moved into the
+  program), so the host keeps a clone made before them. In three pull requests:
+  - *C1:* `Ctx: Clone` (derives only: no state in it is shared through an `Rc<RefCell>`), and
+    `VELT_SEMA_CLONE_CHECK=1`, which builds every program also from a clone and compares the
+    two field by field (an `ICE` on a difference). Every golden passes with it on. A clone of
+    `http_hello`'s checked context (5,600 definitions) takes 11–15 ms in a debug compiler.
+  - *C2:* an owning kept check: the rewritten modules a `Ctx<'m>` borrows (`check_timed`'s
+    source rewrites), the loader's modules and the generator's, moved with the clone into one
+    value the dev host keeps; measured for memory.
+  - *C3:* a body checked again in a clone of the kept context.
 - **D. Per-function passes** (`velt_sema`): the passes after `check_bodies` run for a set of
   functions with the rest fixed.
 - **E. Splicing into the lowering** (`velt_vir`, dev only): the running version's lowering

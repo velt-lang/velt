@@ -51,7 +51,7 @@ pub(crate) type FamilyKey = String;
 pub(crate) type Families = FxHashSet<FamilyKey>;
 
 /// The union views of a program.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct UnionViews {
     by_def: FxHashMap<DefId, Option<ViewInfo>>,
     keys: FxHashMap<DefId, Option<FamilyKey>>,

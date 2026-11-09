@@ -25,7 +25,7 @@ use crate::visit;
 
 /// The types one function body (or one type's field initializers) mentions, and the
 /// definitions it instantiates.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Uses {
     /// Every type mentioned (expressions, locals, type arguments), with its first span.
     pub types: Vec<(TyId, Span)>,

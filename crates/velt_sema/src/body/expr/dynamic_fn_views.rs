@@ -25,7 +25,7 @@ use crate::resolve::TyEnv;
 
 /// The function types lowering may convert a dynamic value to inside another conversion, and
 /// their conversion functions (module docs).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct FnViews {
     /// Each function type seen, with its conversion function once made (`None`: it has none,
     /// lowering keeps the exact check).

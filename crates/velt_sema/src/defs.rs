@@ -405,6 +405,7 @@ pub(crate) struct Redefined {
     pub throws: Vec<ThrowSrc>,
 }
 
+#[derive(Clone)]
 pub(crate) struct AdtInfo<'m> {
     pub name: String,
     pub qual_name: String,
@@ -443,6 +444,7 @@ pub(crate) struct VariantInfo {
     pub str_value: Option<String>,
 }
 
+#[derive(Clone)]
 pub(crate) struct EnumInfo<'m> {
     pub name: String,
     pub qual_name: String,
@@ -476,6 +478,7 @@ pub(crate) struct IfaceMethod {
     pub throws: Option<DeclaredThrows>,
 }
 
+#[derive(Clone)]
 pub(crate) struct IfaceInfo<'m> {
     pub name: String,
     pub qual_name: String,
@@ -491,6 +494,7 @@ pub(crate) struct IfaceInfo<'m> {
     pub decl: Option<&'m ast::InterfaceDecl>,
 }
 
+#[derive(Clone)]
 pub(crate) struct GlobalInfo<'m> {
     pub name: String,
     pub qual_name: String,
@@ -511,6 +515,7 @@ pub(crate) struct GlobalInfo<'m> {
 }
 
 /// Source of a constant: a module-level `const`, or a `static readonly` field of a type.
+#[derive(Clone)]
 pub(crate) struct GlobalSrc<'m> {
     pub ann: Option<&'m ast::TypeExpr>,
     pub init: Option<&'m ast::Expr>,
@@ -522,6 +527,7 @@ pub(crate) struct GlobalSrc<'m> {
     pub c_const: bool,
 }
 
+#[derive(Clone)]
 pub(crate) enum DefInfo<'m> {
     Fn(Box<FnInfo<'m>>),
     Adt(Box<AdtInfo<'m>>),
@@ -531,6 +537,7 @@ pub(crate) enum DefInfo<'m> {
 }
 
 /// A type alias `type X<T> = ...` (expanded where it is used).
+#[derive(Clone)]
 pub(crate) struct AliasInfo<'m> {
     pub module: usize,
     pub decl: &'m ast::TypeAlias,
@@ -545,6 +552,7 @@ pub(crate) struct AliasInfo<'m> {
 }
 
 /// An `extend<G> Target { methods }` block.
+#[derive(Clone)]
 pub(crate) struct Extension {
     pub generics: Generics,
     /// Target type pattern (uses `Param(0..generics)`).

@@ -50,7 +50,7 @@ pub(super) const UNKNOWN: u32 = INFER_BASE - 2;
 pub(super) const MAX_TEMPLATE_MEMBERS: usize = 10_000;
 
 /// The state of type-level evaluation, kept in `Ctx`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct State {
     /// While an alias is expanded: the outermost use of an alias, as written, where a
     /// type-level form that can't be evaluated is reported.

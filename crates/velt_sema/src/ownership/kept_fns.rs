@@ -47,7 +47,7 @@ use crate::hir::{
 use crate::visit;
 
 /// Program-wide state of the rules above.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct KeptFns {
     /// Some function with fixed modes keeps a borrowed function value.
     pub on: bool,

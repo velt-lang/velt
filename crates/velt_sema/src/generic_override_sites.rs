@@ -319,7 +319,7 @@ pub(crate) fn check_adapters(cx: &mut Ctx) {
 
 /// The generic interface methods the program calls with type arguments of their own through
 /// interface values (#943), for the checks above and `hir::Program::generic_dyn_methods`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct GenericCalls {
     /// The interface and method of each call on an interface value.
     pub on: FxHashSet<(DefId, String)>,

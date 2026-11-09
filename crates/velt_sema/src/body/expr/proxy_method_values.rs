@@ -58,7 +58,7 @@ pub(crate) const ARRAY_METHODS: [&str; 18] = [
 ];
 
 /// What sema saw while checking bodies.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct MethodFacts {
     /// The program's reads by a computed key.
     reads: Vec<Span>,

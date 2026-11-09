@@ -46,6 +46,7 @@ use crate::hir::{TyId, TyKind};
 use crate::object_views::Why;
 
 /// One conversion that copied the fields `fields` of a `from` value into a new `to`.
+#[derive(Clone)]
 pub(crate) struct Copy {
     pub from: TyId,
     pub to: TyId,
@@ -73,6 +74,7 @@ pub(crate) struct Copy {
 /// An assignment to field `name` of a value of type `ty` (`None`: a type parameter's, which may
 /// be any object type, or one written through `any`; an empty `name`: a key known only at run
 /// time, which may name any field).
+#[derive(Clone)]
 pub(crate) struct Write {
     pub ty: Option<TyId>,
     pub name: String,
@@ -109,7 +111,7 @@ pub(crate) enum Seen {
 }
 
 /// The conversions, field writes and looks seen so far.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Copies {
     pub copies: Vec<Copy>,
     pub writes: Vec<Write>,
@@ -144,6 +146,7 @@ pub(crate) struct Copies {
 
 /// An object `Object.freeze` froze, seen as type `to` whose fields can be written: an error once
 /// the program writes one of them (`object_views::check_frozen`), as Node throws there.
+#[derive(Clone)]
 pub(crate) struct Frozen {
     /// The frozen object's type: an `Object.freeze` result's readonly type, or the type of the
     /// value an `Object.freeze(x)` froze (`existing`).

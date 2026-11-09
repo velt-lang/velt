@@ -31,7 +31,7 @@ pub fn parse(text: &str) -> Option<(String, u32)> {
 }
 
 /// The types handles name in this check: per instance fingerprint, its walk's types.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Handles {
     pub walks: FxHashMap<String, Vec<TyId>>,
 }

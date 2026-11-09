@@ -36,7 +36,7 @@ use crate::hir::{Def, DefId, ExprKind as H, ImplDef, PassMode, StmtKind, TyId, T
 use crate::iface_writes::SetterSrc;
 
 /// The implementations made so far and the conversions through `any` (module docs).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ObjectImpls {
     /// By (object type definition, interface, interface arguments, made for a conversion
     /// through `any`); `None`: it does not fit.

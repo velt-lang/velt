@@ -20,6 +20,7 @@ use crate::hir::{
 use crate::visit::{self, VisitMut};
 
 /// A widened call result, valid if every function in `callees` returns fresh values.
+#[derive(Clone)]
 pub(crate) struct FreshCheck {
     pub callees: Vec<DefId>,
     pub span: Span,
