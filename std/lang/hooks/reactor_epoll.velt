@@ -56,15 +56,18 @@ const R_EVENTS: usize = 64;
 const R_SIZE: usize = 64 + 64 * 16;
 
 declare c("c") function epoll_create1(flags: i32): i32;
-declare c("c") function epoll_ctl(ep: i32, op: i32, fd: i32, event: usize): i32;
-declare c("c") function epoll_wait(ep: i32, events: usize, max: i32, timeout: i32): i32;
+// Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
+// symbols (`declare system function read(fd: i32, buf: u8[]): isize` passes a pointer and a
+// `size_t`): one C symbol has one signature in a program. Addresses become `Ptr`s with `m.ptr`.
+declare c("c") function epoll_ctl(ep: i32, op: i32, fd: i32, event: Ptr<u8>): i32;
+declare c("c") function epoll_wait(ep: i32, events: Ptr<u8>, max: i32, timeout: i32): i32;
 declare c("c") function eventfd(initval: u32, flags: i32): i32;
-declare c("c") function read$io(fd: i32, buf: usize, n: usize): isize;
-declare c("c") function write$io(fd: i32, buf: usize, n: usize): isize;
+declare c("c") function read$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
+declare c("c") function write$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
 // The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
 // C symbol has one signature in a program.
 declare c("c") function __errno_location(): Ptr<i32>;
-declare c("c") function accept4(fd: i32, addr: usize, len: usize, flags: i32): i32;
+declare c("c") function accept4(fd: i32, addr: Ptr<u8>, len: Ptr<u8>, flags: i32): i32;
 
 /** The calling thread's `errno`. */
 export function errno(): i32 {
@@ -100,7 +103,7 @@ function ctl(r: usize, fd: i32, events: u32, data: usize): i32 {
   m.st32(at, (data & 0xffffffff) as u32);
   m.st32(at + 4, (data >> 32) as u32);
   // SAFETY: one event in the block.
-  const n = unsafe { epoll_ctl(m.ld(r + R_EP) as i32, EPOLL_CTL_ADD, fd, c) };
+  const n = unsafe { epoll_ctl(m.ld(r + R_EP) as i32, EPOLL_CTL_ADD, fd, m.ptr(c)) };
   return n < 0 ? errno() : 0;
 }
 
@@ -116,7 +119,8 @@ export function add(r: usize, fd: i32, source: usize): i32 {
 export function wait(r: usize, timeoutMs: i64): usize {
   const t = timeoutMs < 0 ? -1 : timeoutMs > 0x7fffffff ? 0x7fffffff : timeoutMs;
   // SAFETY: the block has room for MAX_EVENTS events of the largest size.
-  const n = unsafe { epoll_wait(m.ld(r + R_EP) as i32, r + R_EVENTS, MAX_EVENTS as i32, t as i32) };
+  const n =
+    unsafe { epoll_wait(m.ld(r + R_EP) as i32, m.ptr(r + R_EVENTS), MAX_EVENTS as i32, t as i32) };
   if (n <= 0) {
     return 0;
   }
@@ -124,7 +128,7 @@ export function wait(r: usize, timeoutMs: i64): usize {
     if (source(r, i) === 0) {
       // SAFETY: an 8-byte read of the eventfd's counter into the block.
       unsafe {
-        read$io(m.ld(r + R_EVFD) as i32, r + R_WORD, 8);
+        read$io(m.ld(r + R_EVFD) as i32, m.ptr(r + R_WORD), 8);
       }
     }
   }
@@ -162,7 +166,7 @@ export function wake(r: usize): void {
   m.st(one, 1);
   // SAFETY: an 8-byte write of 1 to the eventfd.
   unsafe {
-    write$io(m.ld(r + R_EVFD) as i32, one, 8);
+    write$io(m.ld(r + R_EVFD) as i32, m.ptr(one), 8);
   }
   m.release(one);
 }
@@ -170,7 +174,7 @@ export function wake(r: usize): void {
 /** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */
 export function accept(fd: i32, addr: usize, len: usize): i32 {
   // SAFETY: `addr` holds the `socklen_t` at `len` bytes.
-  return unsafe { accept4(fd, addr, len, SOCKET_FLAGS) };
+  return unsafe { accept4(fd, m.ptr(addr), m.ptr(len), SOCKET_FLAGS) };
 }
 
 /** Nothing more to set on Linux (`SOCKET_FLAGS`, `SEND_FLAGS`); 0. */

@@ -11,6 +11,7 @@
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { CString } from "velt/ffi/c_string";
+import { Ptr } from "velt/ffi/ptr";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { addressLoad, promiseAt } from "velt/lang/intrinsics";
 import * as r from "#reactor";
@@ -31,19 +32,37 @@ const AI_PROTOCOL: usize = 12;
 /** A `sockaddr_storage` and its length word. */
 const SA_SIZE: usize = 128;
 
-declare c("c") function getaddrinfo(host: CString, port: CString, hints: usize, res: usize): i32;
-declare c("c") function freeaddrinfo(ai: usize): void;
-declare c("c") function gai_strerror(e: i32): usize;
+// Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
+// signature in a program. Addresses become `Ptr`s with `m.ptr` (0 passes `NULL`).
+declare c("c") function getaddrinfo(
+  host: CString,
+  port: CString,
+  hints: Ptr<u8>,
+  res: Ptr<u8>,
+): i32;
+declare c("c") function freeaddrinfo(ai: Ptr<u8>): void;
+declare c("c") function gai_strerror(e: i32): Ptr<u8>;
 declare c("c") function socket(family: i32, kind: i32, protocol: i32): i32;
-declare c("c") function connect$net(fd: i32, addr: usize, len: u32): i32;
-declare c("c") function bind(fd: i32, addr: usize, len: u32): i32;
+declare c("c") function connect$net(fd: i32, addr: Ptr<u8>, len: u32): i32;
+declare c("c") function bind(fd: i32, addr: Ptr<u8>, len: u32): i32;
 declare c("c") function listen(fd: i32, backlog: i32): i32;
-declare c("c") function getsockopt(fd: i32, level: i32, name: i32, value: usize, len: usize): i32;
-declare c("c") function setsockopt(fd: i32, level: i32, name: i32, value: usize, len: u32): i32;
-declare c("c") function getsockname(fd: i32, addr: usize, len: usize): i32;
-declare c("c") function getpeername(fd: i32, addr: usize, len: usize): i32;
-declare c("c") function inet_ntop(family: i32, src: usize, dst: usize, size: u32): usize;
-declare c("c") function strerror(e: i32): usize;
+declare c("c") function getsockopt(
+  fd: i32,
+  level: i32,
+  name: i32,
+  value: Ptr<u8>,
+  len: Ptr<u8>,
+): i32;
+declare c("c") function setsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: u32): i32;
+declare c("c") function getsockname(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32;
+declare c("c") function getpeername(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32;
+declare c("c") function inet_ntop(
+  family: i32,
+  src: Ptr<u8>,
+  dst: Ptr<u8>,
+  size: u32,
+): Ptr<u8> | null;
+declare c("c") function strerror(e: i32): Ptr<u8>;
 declare c("c") function close$net(fd: i32): i32;
 
 /** The NUL-terminated text at `p` (a message of the C library, an address inet_ntop wrote). */
@@ -69,7 +88,7 @@ export function ok(): IoStatus {
 /** The status of failure `errno`, as Rust words it. */
 export function osError(errno: i32): IoStatus {
   // SAFETY: strerror returns a NUL-terminated message.
-  const text = cText(unsafe { strerror(errno) });
+  const text = cText(Ptr.addressOf(unsafe { strerror(errno) }));
   return { code: sys.codeOf(errno), message: `${text} (os error ${errno})` };
 }
 
@@ -129,13 +148,13 @@ function resolve(addr: string, passive: bool): IoResult<usize> {
   }
   const res = m.zeroed(16);
   // SAFETY: NUL-terminated host and port, hints and a result word in raw memory.
-  const e = unsafe { getaddrinfo(hostC, portC, hints, res) };
+  const e = unsafe { getaddrinfo(hostC, portC, m.ptr(hints), m.ptr(res)) };
   const list = m.ld(res);
   m.release(hints);
   m.release(res);
   if (e !== 0) {
     // SAFETY: gai_strerror returns a NUL-terminated message.
-    const why = cText(unsafe { gai_strerror(e) });
+    const why = cText(Ptr.addressOf(unsafe { gai_strerror(e) }));
     return failed({ code: 99, message: `failed to lookup address information: ${why}` }, 0);
   }
   return value(list);
@@ -147,7 +166,7 @@ function setOn(fd: i32, level: i32, name: i32): void {
   m.st32(one, 1);
   // SAFETY: an int option in `one`.
   unsafe {
-    setsockopt(fd, level, name, one, 4);
+    setsockopt(fd, level, name, m.ptr(one), 4);
   }
   m.release(one);
 }
@@ -185,7 +204,7 @@ export async function connect(addr: string): Promise<IoResult<u64>> {
     if (r1.code === 0) {
       // SAFETY: the list getaddrinfo made, freed once.
       unsafe {
-        freeaddrinfo(list);
+        freeaddrinfo(m.ptr(list));
       }
       return r1;
     }
@@ -194,7 +213,7 @@ export async function connect(addr: string): Promise<IoResult<u64>> {
   }
   // SAFETY: as above.
   unsafe {
-    freeaddrinfo(list);
+    freeaddrinfo(m.ptr(list));
   }
   return failed(last, 0);
 }
@@ -215,7 +234,7 @@ async function connectOne(ai: usize): Promise<IoResult<u64>> {
   }
   setOn(fd, IPPROTO_TCP, TCP_NODELAY);
   // SAFETY: the address and its length from getaddrinfo's entry.
-  const rc = unsafe { connect$net(fd, m.ld(ai + sys.AI_ADDR), m.ld32(ai + AI_ADDRLEN)) };
+  const rc = unsafe { connect$net(fd, m.ptr(m.ld(ai + sys.AI_ADDR)), m.ld32(ai + AI_ADDRLEN)) };
   if (rc === 0) {
     return adopt(fd, 0, io.READ | io.WRITE);
   }
@@ -240,7 +259,7 @@ async function connectOne(ai: usize): Promise<IoResult<u64>> {
   m.st32(word + 8, 4);
   // SAFETY: an int option and its length word.
   unsafe {
-    getsockopt(fd, sys.SOL_SOCKET, sys.SO_ERROR, word, word + 8);
+    getsockopt(fd, sys.SOL_SOCKET, sys.SO_ERROR, m.ptr(word), m.ptr(word + 8));
   }
   const err = m.ld32(word) as i32;
   m.release(word);
@@ -278,7 +297,7 @@ export async function listenOn(addr: string): Promise<IoResult<u64>> {
     // SAFETY: the address and its length from getaddrinfo's entry; a backlog.
     if (prep !== 0) {
       st = osError(prep);
-    } else if (unsafe { bind(fd, m.ld(ai + sys.AI_ADDR), m.ld32(ai + AI_ADDRLEN)) } !== 0) {
+    } else if (unsafe { bind(fd, m.ptr(m.ld(ai + sys.AI_ADDR)), m.ld32(ai + AI_ADDRLEN)) } !== 0) {
       st = osError(r.errno());
     } else if (unsafe { listen(fd, 1024) } !== 0) {
       st = osError(r.errno());
@@ -286,7 +305,7 @@ export async function listenOn(addr: string): Promise<IoResult<u64>> {
   }
   // SAFETY: the list getaddrinfo made, freed once.
   unsafe {
-    freeaddrinfo(ai);
+    freeaddrinfo(m.ptr(ai));
   }
   if (st.code !== 0) {
     if (fd >= 0) {
@@ -330,7 +349,7 @@ export function portOf(l: u64): u32 {
   m.st32(sa + SA_SIZE, SA_SIZE as u32);
   // SAFETY: a sockaddr_storage and its length word.
   unsafe {
-    getsockname(m.ld(s + io.S_FD) as i32, sa, sa + SA_SIZE);
+    getsockname(m.ld(s + io.S_FD) as i32, m.ptr(sa), m.ptr(sa + SA_SIZE));
   }
   const port = ((m.ld32(sa) >> 16) & 0xffff) as u32;
   m.release(sa);
@@ -354,14 +373,14 @@ export function peerOf(h: u64): string {
   const sa = m.zeroed(SA_SIZE + 8);
   m.st32(sa + SA_SIZE, SA_SIZE as u32);
   // SAFETY: a sockaddr_storage and its length word.
-  const rc = unsafe { getpeername(m.ld(s + io.S_FD) as i32, sa, sa + SA_SIZE) };
+  const rc = unsafe { getpeername(m.ld(s + io.S_FD) as i32, m.ptr(sa), m.ptr(sa + SA_SIZE)) };
   let out = "";
   if (rc === 0) {
     const v6 = sys.familyOf(sa) === sys.AF_INET6;
     const text = m.zeroed(64);
     // SAFETY: the address bytes of the sockaddr (at 8 for v6, 4 for v4), 64 bytes of text room.
     unsafe {
-      inet_ntop(v6 ? sys.AF_INET6 : 2, sa + (v6 ? 8 : 4), text, 64);
+      inet_ntop(v6 ? sys.AF_INET6 : 2, m.ptr(sa + (v6 ? 8 : 4)), m.ptr(text), 64);
     }
     const ip = cText(text);
     m.release(text);

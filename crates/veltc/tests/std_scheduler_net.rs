@@ -83,10 +83,15 @@ fn same_on_both(name: &str, src: &str, want: &str) {
         // Windows has no reactor in Velt yet: its sockets stay the runtime's in both builds.
         return;
     }
-    runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let (rt, rt_bin) = build_and_run(dir.path(), name, src, false);
-    let (std, std_bin) = build_and_run(dir.path(), name, src, true);
+    same_on_both_in(dir.path(), name, src, want);
+}
+
+/// [`same_on_both`] in folder `dir` (which may hold packages the program uses).
+fn same_on_both_in(dir: &Path, name: &str, src: &str, want: &str) {
+    runtime_support::build_native_runtime(manifest());
+    let (rt, rt_bin) = build_and_run(dir, name, src, false);
+    let (std, std_bin) = build_and_run(dir, name, src, true);
     assert_eq!(rt, want, "{name}: the runtime's sockets");
     assert_eq!(std, want, "{name}: sockets on the reactor in Velt");
     assert!(
@@ -393,5 +398,102 @@ async function main() {
 }
 ",
         "main done\nconnected\naccepted hi\n",
+    );
+}
+
+/// A program's own declarations of C symbols the reactor and velt/net's sockets call (`read`,
+/// `write` and `fcntl` as system functions; `accept4` or `accept`, `malloc`, `free` and
+/// `getsockname` in a package of its own): one C symbol has one signature in a program, so the
+/// std variants declare them as a program does, pointers as `Ptr` and `size_t` as `usize`. With
+/// addresses as `usize` the std build failed to compile ("C function `write` has two
+/// signatures"), as `lang/system_function_subarray_owner` did on Linux.
+#[test]
+fn a_program_declaring_the_reactors_c_functions_compiles_on_both_executors() {
+    if !cfg!(unix) {
+        return;
+    }
+    let accept = if cfg!(target_os = "linux") {
+        "declare c(\"c\") function accept4(fd: i32, addr: Ptr<u8> | null, len: Ptr<u32> | null, flags: i32): i32;
+
+export function acceptBad(): i32 {
+  // SAFETY: no address; a descriptor that is none.
+  return unsafe { accept4(-1, null, null, 0) };
+}
+"
+    } else {
+        "declare c(\"c\") function accept(fd: i32, addr: Ptr<u8> | null, len: Ptr<u32> | null): i32;
+
+export function acceptBad(): i32 {
+  // SAFETY: no address; a descriptor that is none.
+  return unsafe { accept(-1, null, null) };
+}
+"
+    };
+    let lib = format!(
+        "import {{ Ptr }} from \"velt/ffi\";
+
+declare c(\"c\") function malloc(n: usize): Ptr<u8> | null;
+declare c(\"c\") function free(p: Ptr<u8> | null): void;
+declare c(\"c\") function getsockname(fd: i32, addr: Ptr<u8> | null, len: Ptr<u32> | null): i32;
+{accept}
+export function nameBad(): i32 {{
+  // SAFETY: no address; a descriptor that is none.
+  return unsafe {{ getsockname(-1, null, null) }};
+}}
+
+export function allocates(): bool {{
+  // SAFETY: malloc has no precondition.
+  const p = unsafe {{ malloc(16) }};
+  // SAFETY: free takes what malloc returned.
+  unsafe {{
+    free(p);
+  }}
+  return p !== null;
+}}
+"
+    );
+    let dir = test_dir::TestDir::new();
+    let pkg = dir.path().join("cdecl");
+    std::fs::create_dir_all(pkg.join("src")).unwrap();
+    std::fs::write(
+        pkg.join("package.velt"),
+        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"cdecl\", version: \"0.1.0\", native: { c: { c: { unchecked: true } } } };\n",
+    )
+    .unwrap();
+    std::fs::write(pkg.join("src/lib.velt"), lib).unwrap();
+    std::fs::write(
+        dir.path().join("package.velt"),
+        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = {\n  name: \"app\",\n  version: \"0.1.0\",\n  allowNative: [\"cdecl\"],\n  dependencies: { cdecl: { path: \"./cdecl\" } },\n};\n",
+    )
+    .unwrap();
+    same_on_both_in(
+        dir.path(),
+        "own_c_declarations",
+        "import { connect, listen } from \"velt/net\";
+import { acceptBad, allocates, nameBad } from \"cdecl\";
+
+declare system function read(fd: i32, buf: u8[]): isize;
+declare system function write(fd: i32, buf: readonly u8[]): isize;
+declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
+
+async function main() {
+  const buf: u8[] = Buffer.alloc(4);
+  console.log(read(-1, buf), write(-1, buf), fcntl(-1, 1, 0), acceptBad(), nameBad());
+  console.log(allocates());
+  const l = await listen(\"127.0.0.1:0\");
+  const server = spawn((async () => {
+    const s = await l.accept();
+    s.writeLater(await s.readString());
+    s.close();
+  })());
+  const c = await connect(`127.0.0.1:${l.port}`);
+  await c.write(\"echo\");
+  console.log(await c.readString());
+  c.close();
+  await server;
+  l.close();
+}
+",
+        "-1 -1 -1 -1 -1\ntrue\necho\n",
     );
 }

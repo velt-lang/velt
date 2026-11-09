@@ -13,6 +13,7 @@
 // - A failure to send is kept (`S_ERR`): the stream sends nothing more, and its next operation
 //   reports it. A shutdown or close asked for while bytes are buffered happens once they are sent.
 
+import { Ptr } from "velt/ffi/ptr";
 import { inline, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as io from "./sched_io";
@@ -22,7 +23,7 @@ import * as wt from "./sched_io_wait";
 /** The most of a sent buffer's capacity kept for the next poll's bytes. */
 const KEEP: usize = 64 * 1024;
 
-declare c("c") function send$io(fd: i32, buf: usize, n: usize, flags: i32): isize;
+declare c("c") function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
 declare c("c") function shutdown$io(fd: i32, how: i32): i32;
 declare c("c") function close$io(fd: i32): i32;
 
@@ -75,12 +76,12 @@ function reserve(s: usize, n: usize): void {
   m.st(s + io.S_CAP, next);
 }
 
-declare c("c") function memmove$io(dst: usize, src: usize, n: usize): usize;
+declare c("c") function memmove$io(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
 
 function memmove(dst: usize, src: usize, n: usize): void {
   // SAFETY: both ranges are in one buffer of the source.
   unsafe {
-    memmove$io(dst, src, n);
+    memmove$io(m.ptr(dst), m.ptr(src), n);
   }
 }
 
@@ -106,7 +107,7 @@ export function sendNow(s: usize, p: usize, n: usize): usize {
 function sendSome(s: usize, p: usize, n: usize): isize {
   while (true) {
     // SAFETY: `p` holds `n` bytes; the descriptor is the source's, open.
-    const k = unsafe { send$io(m.ld(s + io.S_FD) as i32, p, n, r.SEND_FLAGS) };
+    const k = unsafe { send$io(m.ld(s + io.S_FD) as i32, m.ptr(p), n, r.SEND_FLAGS) };
     if (k > 0) {
       return k;
     }

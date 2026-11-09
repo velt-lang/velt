@@ -17,16 +17,34 @@ import {
   stateDrop,
 } from "velt/lang/intrinsics";
 
-declare c("c") function malloc$sched(n: usize): usize;
-declare c("c") function calloc$sched(n: usize, size: usize): usize;
-declare c("c") function free$sched(p: usize): void;
-declare c("c") function memcpy$sched(dst: usize, src: usize, n: usize): usize;
+// Pointers are `Ptr`s, as in every other C declaration of these symbols (a program's own, velt/
+// ffi's `memcpy`): one C symbol has one signature in a program, and a pointer is `Ptr` there.
+declare c("c") function malloc$sched(n: usize): Ptr<u8> | null;
+declare c("c") function calloc$sched(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$sched(p: Ptr<u8> | null): void;
+declare c("c") function memcpy$sched(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
+
+/** Address `a` as a C pointer argument; 0 passes `NULL`. */
+@inline
+export function ptr(a: usize): Ptr<u8> {
+  // SAFETY: only passed to a C function, whose call site states what is at `a`.
+  return unsafe { Ptr.at<u8>(a) };
+}
+
+/** The address a C function returned; 0 for `NULL`. */
+@inline
+export function addr(p: Ptr<u8> | null): usize {
+  if (p === null) {
+    return 0;
+  }
+  return Ptr.addressOf(p);
+}
 
 /** `n` bytes, aligned to 16. */
 @inline
 export function alloc(n: usize): usize {
   // SAFETY: malloc has no precondition; its result is checked.
-  const p = unsafe { malloc$sched(n) };
+  const p = addr(unsafe { malloc$sched(n) });
   if (p === 0) {
     panic("out of memory");
   }
@@ -36,7 +54,7 @@ export function alloc(n: usize): usize {
 /** `n` bytes set to 0, aligned to 16. */
 export function zeroed(n: usize): usize {
   // SAFETY: calloc has no precondition; its result is checked.
-  const p = unsafe { calloc$sched(1, n) };
+  const p = addr(unsafe { calloc$sched(1, n) });
   if (p === 0) {
     panic("out of memory");
   }
@@ -47,7 +65,7 @@ export function zeroed(n: usize): usize {
 export function release(p: usize): void {
   // SAFETY: `p` came from malloc and is not used after.
   unsafe {
-    free$sched(p);
+    free$sched(ptr(p));
   }
 }
 
@@ -55,7 +73,7 @@ export function release(p: usize): void {
 export function copy(dst: usize, src: usize, n: usize): void {
   // SAFETY: both hold `n` bytes; a task's slot or state and the state lowering handed over.
   unsafe {
-    memcpy$sched(dst, src, n);
+    memcpy$sched(ptr(dst), ptr(src), n);
   }
 }
 

@@ -4,10 +4,13 @@
 // program, #2613); a take moves it out once; a slot dropped while it holds a value drops it.
 // One owner at a time: the hand-off keeps the atomic state that says who may take.
 
+import { Ptr } from "velt/ffi/ptr";
 import { slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
 
-declare c("c") function malloc$slot(n: usize): usize;
-declare c("c") function free$slot(p: usize): void;
+// Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
+// signature in a program.
+declare c("c") function malloc$slot(n: usize): Ptr<u8> | null;
+declare c("c") function free$slot(p: Ptr<u8>): void;
 
 /** Room for one `T`. */
 export class Slot<T> {
@@ -19,10 +22,10 @@ export class Slot<T> {
     const n = slotSize<T>();
     // SAFETY: malloc has no precondition; its result is checked.
     const p = unsafe { malloc$slot(n === 0 ? 16 : n) };
-    if (p === 0) {
+    if (p === null) {
       panic("out of memory");
     }
-    this.at = p;
+    this.at = Ptr.addressOf(p);
   }
 
   /** Whether it holds a value. */
@@ -61,7 +64,7 @@ export class Slot<T> {
     }
     // SAFETY: `at` came from malloc and is not used after.
     unsafe {
-      free$slot(this.at);
+      free$slot(Ptr.at<u8>(this.at));
     }
   }
 }

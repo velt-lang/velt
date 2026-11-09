@@ -5,6 +5,7 @@
 // into the I/O block's timer list, sorted by deadline, which the worker's wait looks at. The
 // block counts the linked waits: pending I/O keeps the process alive (sched_end.velt).
 
+import { Ptr } from "velt/ffi/ptr";
 import { inline, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as io from "./sched_io";
@@ -159,14 +160,14 @@ export function waitDrop(f: usize): void {
 
 // ---- Deadlines. ----
 
-declare c("c") function clock_gettime$io(clock: i32, ts: usize): i32;
+declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<u8>): i32;
 
 /** The monotonic clock, in nanoseconds. */
 export function now(): u64 {
   const ts = m.alloc(16);
   // SAFETY: a timespec in `ts`.
   unsafe {
-    clock_gettime$io(r.MONOTONIC, ts);
+    clock_gettime$io(r.MONOTONIC, m.ptr(ts));
   }
   const ns = (m.ld(ts) as u64) * 1000000000 + (m.ld(ts + 8) as u64);
   m.release(ts);

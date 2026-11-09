@@ -8,6 +8,7 @@ import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { arrayTruncate, promiseAt, strByteLen } from "velt/lang/intrinsics";
 import { StrBytes } from "velt/ffi";
+import { Ptr } from "velt/ffi/ptr";
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding/utf8";
 import * as r from "#reactor";
 import * as io from "velt/lang/hooks/sched_io";
@@ -17,20 +18,22 @@ import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as wr from "velt/lang/hooks/sched_io_write";
 import { aborted, closed, failed, ok, osError, value } from "velt/net/fd_socket";
 
-declare c("c") function recv$net(fd: i32, buf: usize, n: usize, flags: i32): isize;
+// Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
+// signature in a program.
+declare c("c") function recv$net(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
 declare c("c") function shutdown$net(fd: i32, how: i32): i32;
 /**
  * The address of `data`'s first byte (`memset` of nothing returns its destination): a stand-in
  * until `declare c` can take a pointer into an array (#2187).
  */
-declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): usize;
-/** `memcpy` from a string's bytes (`memcpy` itself is declared for addresses, one signature). */
-declare c("c") function bcopy$text(src: StrBytes, dst: usize, n: usize): void;
+declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
+/** Copies a string's bytes to an address. */
+declare c("c") function bcopy$text(src: StrBytes, dst: Ptr<u8>, n: usize): void;
 
 /** The address of byte `at` of `data` (which has it). */
 function addressOf(data: u8[], at: u64): usize {
   // SAFETY: a copy of nothing; `data` is borrowed for the call.
-  return unsafe { memset$bytes(data, 0, 0) } + (at as usize);
+  return Ptr.addressOf(unsafe { memset$bytes(data, 0, 0) }) + (at as usize);
 }
 
 /** The state of stream `s` before an operation: closed, aborted, failed, or fine. */
@@ -63,7 +66,7 @@ export function tryReadInto(h: u64, data: u8[], start: u64, end: u64): IoResult<
   const p = addressOf(data, start);
   while (true) {
     // SAFETY: `data` holds `end - start` bytes at `p`; the descriptor is open.
-    const n = unsafe { recv$net(m.ld(s + io.S_FD) as i32, p, (end - start) as usize, 0) };
+    const n = unsafe { recv$net(m.ld(s + io.S_FD) as i32, m.ptr(p), (end - start) as usize, 0) };
     if (n >= 0) {
       return value(n as i64);
     }
@@ -268,7 +271,7 @@ export function writeLaterText(h: u64, data: string): IoResult<u64> {
     const at = wr.room(s, n);
     // SAFETY: the buffer has `n` bytes of room at `at`; the string's bytes are borrowed.
     unsafe {
-      bcopy$text(data, at, n);
+      bcopy$text(data, m.ptr(at), n);
     }
     wr.commit(s, n);
     io.due(s);
