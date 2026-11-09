@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use std::collections::{HashMap, HashSet};
 use velt_common::{FileId, Span};
+use velt_sema::interface::Change;
 use velt_syntax::ast;
 
 /// The program's own files, as [`classify`] compares them.
@@ -190,6 +191,35 @@ pub fn classify(old: &Snapshot, new: &Snapshot) -> Edit {
     }
 }
 
+/// What the interface summaries (velt_sema `interface`, design step 3 "B") of the running and
+/// the new version say of a body edit: whether everything but the edited functions' bodies kept
+/// its interface, which is when the fast path would have been sound. Closures of an edited
+/// function are its own: their interfaces may change. `None` for any other edit.
+pub fn cutoff(edit: &Edit, changes: &[Change]) -> Option<String> {
+    let Edit::Bodies(edited) = edit else {
+        return None;
+    };
+    let names = |n: &str, e: &str| n == e || n.strip_suffix(e).is_some_and(|m| m.ends_with("::"));
+    let own_closure = |name: &str| {
+        name.find("::{closure#")
+            .is_some_and(|at| edited.iter().any(|e| names(&name[..at], e)))
+    };
+    let left: Vec<String> = (changes.iter())
+        .filter(|c| !matches!(c, Change::Fn(name) if own_closure(name)))
+        .map(|c| c.to_string())
+        .collect();
+    const SHOWN: usize = 6;
+    Some(match left.len() {
+        0 => "the same interfaces: a body-edit fast path applies".to_string(),
+        n if n <= SHOWN => format!("interfaces changed: {}", left.join(", ")),
+        n => format!(
+            "interfaces changed: {} and {} more",
+            left[..SHOWN].join(", "),
+            n - SHOWN
+        ),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +298,24 @@ function main() {
         let one = Snapshot::of([(p, V1)]);
         let two = Snapshot::of([(p, V1), (q, "export function helper() { return 1; }")]);
         assert!(matches!(classify(&one, &two), Edit::Other(_)));
+    }
+
+    #[test]
+    fn a_body_edit_keeps_interfaces_unless_the_summaries_differ() {
+        let edit = Edit::Bodies(vec!["twice".into(), "User.greet".into()]);
+        let f = |n: &str| Change::Fn(n.to_string());
+        let same = cutoff(
+            &edit,
+            &[f("twice::{closure#0}"), f("app::User.greet::{closure#2}")],
+        );
+        assert!(same.unwrap().starts_with("the same interfaces"));
+        let changed = cutoff(&edit, &[f("twice"), f("thrice::{closure#0}")]).unwrap();
+        assert_eq!(changed, "interfaces changed: twice, thrice::{closure#0}");
+        let fact = cutoff(&edit, &[Change::Fact("declarations")]).unwrap();
+        assert_eq!(fact, "interfaces changed: the program's declarations");
+        let many: Vec<Change> = (0..8).map(|i| f(&format!("g{i}"))).collect();
+        assert!(cutoff(&edit, &many).unwrap().ends_with("and 2 more"));
+        assert_eq!(cutoff(&Edit::None, &[]), None);
+        assert_eq!(cutoff(&Edit::Other("x".into()), &[]), None);
     }
 }

@@ -70,15 +70,18 @@ struct Report {
     details: bool,
 }
 
-/// Build the current sources and take them into the running program if possible.
 /// What a reload takes from the running version, and leaves for the next one.
 pub struct Carried {
     /// Lowering's counted types (velt_vir `lower_seeded`).
     pub seed: Option<velt_vir::CountedSeed>,
     /// The program's own definitions (`super::edits`): what the next save changed.
     pub own: Option<super::edits::Snapshot>,
+    /// The checked program's interfaces (velt_sema `interface`), kept with `-v` to say whether
+    /// a body edit kept everything else's.
+    pub interfaces: Option<velt_sema::interface::Summary>,
 }
 
+/// Build the current sources and take them into the running program if possible.
 /// `carried`: what the running version leaves, replaced by the new version's when it builds.
 fn reload(
     session: &mut DevSession,
@@ -93,14 +96,23 @@ fn reload(
     // Moved in and back out: lowering replaces it only when it lowers the new version, so a
     // build that fails before or in lowering hands the running version's seed back unchanged.
     sess.counted_seed = Some(seed.take().unwrap_or_default());
+    sess.interfaces = verbose.then(Default::default);
     let program = driver::compile(&mut sess, opts);
     *seed = sess.counted_seed.take();
     if program.is_ok() {
         let own = super::edits::Snapshot::of_build(&sess, &opts.input);
+        let interfaces = sess.interfaces.take();
         if let (true, Some(before)) = (verbose, &carried.own) {
-            eprintln!("velt dev: edit: {}", super::edits::classify(before, &own));
+            let edit = super::edits::classify(before, &own);
+            eprintln!("velt dev: edit: {edit}");
+            if let (Some(a), Some(b)) = (&carried.interfaces, &interfaces) {
+                if let Some(said) = super::edits::cutoff(&edit, &a.changes(b)) {
+                    eprintln!("velt dev: {said}");
+                }
+            }
         }
         carried.own = Some(own);
+        carried.interfaces = interfaces;
     }
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
