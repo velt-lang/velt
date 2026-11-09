@@ -11,7 +11,7 @@
 //! woken send likewise while there is room), so a cancelled operation never swallows a wake-up
 //! meant for another.
 
-use std::sync::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use std::task::{Poll, Waker};
 
 use super::line::{wake, Line, WaitCell, WOKEN};
@@ -80,10 +80,10 @@ impl Chan {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        // A panic while holding the lock exits the process (panic hook), so poisoning never
-        // reaches here; recover the guard anyway rather than panicking twice.
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    /// The channel's lock (`parking_lot`'s: no poisoning to check on every operation; a panic
+    /// while holding it exits the process anyway).
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock()
     }
 
     /// Append the `size` bytes at `src` unless the channel is full or closed; `item_drop` is the

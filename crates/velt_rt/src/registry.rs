@@ -15,9 +15,10 @@
 //! objects one worker creates and uses (an HTTP request and its response, on the worker that runs
 //! the handler) never wait for another worker's lock.
 
+use parking_lot::{const_mutex, Mutex, MutexGuard};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 use crate::result::{code, IoResult, VeltErr};
 use crate::task::leaf::new_leaf;
@@ -107,7 +108,7 @@ impl<T> Registry<T> {
     pub const fn new() -> Self {
         Registry {
             shards: [const {
-                Shard(Mutex::new(Table {
+                Shard(const_mutex(Table {
                     slots: Vec::new(),
                     free: Vec::new(),
                 }))
@@ -116,9 +117,10 @@ impl<T> Registry<T> {
     }
 
     fn lock(&self, shard: usize) -> Option<MutexGuard<'_, Table<T>>> {
-        // A poisoned lock only means a panic elsewhere (which ends the process anyway).
+        // `parking_lot`'s lock: no poisoning to check on every lookup (a panic elsewhere ends
+        // the process anyway).
         let table = self.shards.get(shard)?;
-        Some(table.0.lock().unwrap_or_else(|e| e.into_inner()))
+        Some(table.0.lock())
     }
 
     /// Register a new object; the table holds one reference until [`remove`](Self::remove).

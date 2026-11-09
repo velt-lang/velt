@@ -79,9 +79,13 @@ pub(super) fn slot(f: *mut VeltFut) -> *mut u8 {
 /// writes the result, or gives it an [`Op`] to run with [`start`].
 pub(super) fn new_op(slot_size: usize) -> *mut VeltFut {
     let l = layout(slot_size);
-    // SAFETY: a fresh allocation of `l`, initialized before it is handed out.
+    // SAFETY: a block of `l` (fresh, or one a finished operation of this size left this thread),
+    // initialized before it is handed out.
     unsafe {
-        let base = std::alloc::alloc(l);
+        let base = match Spare::take(l) {
+            Some(b) => b,
+            None => std::alloc::alloc(l),
+        };
         if base.is_null() {
             std::alloc::handle_alloc_error(l);
         }
@@ -96,6 +100,71 @@ pub(super) fn new_op(slot_size: usize) -> *mut VeltFut {
             drop: op_drop,
         });
         f
+    }
+}
+
+/// Blocks of finished operations kept by the thread that dropped them, for its next
+/// operations of the same size: a task that waits on a channel again and again (a pool's
+/// waiter) reuses one block instead of a heap allocation and free each time.
+struct Spare {
+    /// `(size, block)`; size 0: empty.
+    blocks: [(usize, *mut u8); SPARE_BLOCKS],
+}
+
+const SPARE_BLOCKS: usize = 4;
+
+thread_local! {
+    static SPARE: std::cell::RefCell<Spare> =
+        const { std::cell::RefCell::new(Spare { blocks: [(0, std::ptr::null_mut()); SPARE_BLOCKS] }) };
+}
+
+impl Spare {
+    /// A kept block of layout `l`, if this thread has one.
+    fn take(l: Layout) -> Option<*mut u8> {
+        SPARE
+            .try_with(|s| {
+                let mut s = s.try_borrow_mut().ok()?;
+                let b = s.blocks.iter_mut().find(|b| b.0 == l.size())?;
+                b.0 = 0;
+                Some(b.1)
+            })
+            .ok()
+            .flatten()
+    }
+
+    /// Keep `block` (of layout `l`) for this thread's next operation, or free it.
+    ///
+    /// # Safety
+    /// `block` was allocated with `l` and is not used any more.
+    unsafe fn give(block: *mut u8, l: Layout) {
+        let kept = SPARE
+            .try_with(|s| {
+                let Ok(mut s) = s.try_borrow_mut() else {
+                    return false;
+                };
+                match s.blocks.iter_mut().find(|b| b.0 == 0) {
+                    Some(b) => {
+                        *b = (l.size(), block);
+                        true
+                    }
+                    None => false,
+                }
+            })
+            .unwrap_or(false);
+        if !kept {
+            std::alloc::dealloc(block, l);
+        }
+    }
+}
+
+impl Drop for Spare {
+    fn drop(&mut self) {
+        for &(size, block) in &self.blocks {
+            if size != 0 {
+                // SAFETY: kept by `give` with this size (align 16).
+                unsafe { std::alloc::dealloc(block, Layout::from_size_align_unchecked(size, 16)) };
+            }
+        }
     }
 }
 
@@ -196,7 +265,7 @@ unsafe extern "C-unwind" fn op_drop(f: *mut VeltFut) {
     }
     let l = layout((*t).slot_size);
     std::ptr::drop_in_place(t);
-    std::alloc::dealloc(t as *mut u8, l);
+    Spare::give(t as *mut u8, l);
 }
 
 /// An item's bytes (16-aligned, so drop glue may run on them) owned until they are queued;
@@ -283,5 +352,35 @@ mod tests {
             TAIL + std::mem::size_of::<VeltFut>() + 4000,
             "large ones as they are"
         );
+    }
+
+    #[test]
+    fn a_finished_operations_block_is_reused_by_the_next_on_its_thread() {
+        std::thread::spawn(|| {
+            let l = layout(16);
+            // SAFETY: blocks of `l`, freed or kept as `op_drop` does, used as new operations.
+            unsafe {
+                let first = new_op(16);
+                op_drop(first);
+                // An allocation of the same size between: it would get a block that was freed.
+                let other = std::alloc::alloc(l);
+                let second = new_op(16);
+                assert_eq!(second, first, "the kept block comes back");
+                assert_eq!((*tail(second)).slot_size, 16);
+                assert!(matches!((*tail(second)).op, Op::Done), "made new");
+                op_drop(second);
+                std::alloc::dealloc(other, l);
+            }
+            // Only a few are kept: the rest are freed.
+            let ops: Vec<_> = (0..SPARE_BLOCKS + 3).map(|_| new_op(16)).collect();
+            for f in ops {
+                // SAFETY: as above.
+                unsafe { op_drop(f) };
+            }
+            let kept = SPARE.with(|s| s.borrow().blocks.iter().filter(|b| b.0 != 0).count());
+            assert_eq!(kept, SPARE_BLOCKS);
+        })
+        .join()
+        .expect("test thread");
     }
 }

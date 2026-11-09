@@ -174,6 +174,9 @@ static BACKEND: OnceLock<Backend> = OnceLock::new();
 thread_local! {
     /// This thread's worker index in per-core mode (`usize::MAX`: not a worker thread).
     static WORKER: Cell<usize> = const { Cell::new(usize::MAX) };
+    /// What `currentWorker()` reports on this worker thread, once asked (`usize::MAX`: not yet,
+    /// or not a worker thread).
+    static REPORTED: Cell<usize> = const { Cell::new(usize::MAX) };
     /// The worker the next [`spawn`] from this thread pins its task to
     /// ([`velt_rt_spawn_target`]); taken by that spawn.
     static SPAWN_TARGET: Cell<Option<usize>> = const { Cell::new(None) };
@@ -214,11 +217,19 @@ pub extern "C-unwind" fn velt_rt_worker_count() -> u64 {
 /// thread, which a task may leave at any `await`.
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_current_worker() -> u64 {
+    // A worker thread's answer never changes: worked out once, then one thread-local read.
+    let known = REPORTED.with(Cell::get);
+    if known != usize::MAX {
+        return known as u64;
+    }
     if let Some(i) = current_worker() {
-        if backend() == Backend::Velt {
-            return velt::reported_worker(i) as u64;
-        }
-        return i as u64;
+        let r = if backend() == Backend::Velt {
+            velt::reported_worker(i)
+        } else {
+            i
+        };
+        REPORTED.with(|c| c.set(r));
+        return r as u64;
     }
     if is_per_core() {
         return 0;
@@ -263,6 +274,7 @@ pub fn is_velt() -> bool {
 /// Marks this thread as worker `i` (a backend's worker thread calls it when it starts).
 pub(super) fn set_worker(i: usize) {
     WORKER.with(|w| w.set(i));
+    REPORTED.with(|r| r.set(usize::MAX));
 }
 
 /// The per-core worker this thread runs (`None` on other threads and with the stealing
@@ -419,6 +431,21 @@ mod tests {
         buffer_output();
         keep_alive_release();
         assert!(published());
+    }
+
+    #[test]
+    fn a_worker_reports_its_index_and_a_new_index_once_set_again() {
+        std::thread::spawn(|| {
+            let n = velt_rt_worker_count() as usize;
+            for i in [0, 1, n + 2] {
+                set_worker(i);
+                let want = if is_velt() { i % n.max(1) } else { i } as u64;
+                assert_eq!(velt_rt_current_worker(), want, "worker {i}");
+                assert_eq!(velt_rt_current_worker(), want, "worker {i}, asked again");
+            }
+        })
+        .join()
+        .expect("worker thread");
     }
 
     #[test]
