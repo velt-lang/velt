@@ -9,6 +9,8 @@ use std::process::Output;
 mod no_window;
 mod runtime_support;
 mod test_dir;
+#[path = "std_cache/warm.rs"]
+mod warm;
 
 /// A program whose std code the cache serves: URL parsing and serialization.
 const PROGRAM: &str = "function main() {
@@ -699,33 +701,6 @@ fn a_thread_local_is_shared_between_objects_and_the_program() {
     assert_eq!(run(dir, "partly"), expected);
 }
 
-/// `velt cache warm` is what stores objects for debug builds; a build of the same program then
-/// compiles none of them.
-#[test]
-fn the_warm_up_stores_what_debug_builds_link() {
-    let tmp = test_dir::TestDir::new();
-    let dir = tmp.path();
-    let cache = dir.join("cache");
-    let share = dir.join("share");
-    std::fs::create_dir_all(share.join("warm")).unwrap();
-    std::fs::write(share.join("warm/a.velt"), PROGRAM).unwrap();
-    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
-    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
-    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
-    let warm = (cmd.args(["cache", "warm"]))
-        .current_dir(dir)
-        .env("VELT_BUILD_CACHE", &cache)
-        .env("VELT_SHARE", &share)
-        .output()
-        .unwrap();
-    assert!(warm.status.success(), "{}", text(&warm.stderr));
-    assert!(!entries(&cache).is_empty(), "{}", text(&warm.stderr));
-    let built = debug_build(dir, "a.velt", "a", &cache, &[]);
-    let (found, compiled) = counts(&built);
-    assert!(found > 0 && compiled == 0, "{}", text(&built.stderr));
-    assert_eq!(run(dir, "a"), OUTPUT);
-}
-
 /// The same in a debug build, which is one by default.
 #[test]
 fn what_a_served_function_reaches_counts_as_reached_in_a_debug_build() {
@@ -960,32 +935,4 @@ fn a_default_release_build_links_after_one_serving_everything() {
     let default = release_default(dir, "a.velt", "default", &cache, &[]);
     assert_eq!(counts(&default).0, 0, "{}", text(&default.stderr));
     assert_eq!(run(dir, "default"), NO_INLINE_OUTPUT);
-}
-
-/// `velt cache warm` stores what release builds link too: a release build of a warm-up program
-/// then finds its `noInline()` functions and leaves none in the program.
-#[test]
-fn the_warm_up_stores_what_release_builds_link() {
-    let tmp = test_dir::TestDir::new();
-    let dir = tmp.path();
-    let cache = dir.join("cache");
-    let share = dir.join("share");
-    std::fs::create_dir_all(share.join("warm")).unwrap();
-    std::fs::write(share.join("warm/a.velt"), NO_INLINE_PROGRAM).unwrap();
-    std::fs::write(dir.join("a.velt"), NO_INLINE_PROGRAM).unwrap();
-    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
-    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
-    let warm = (cmd.args(["cache", "warm"]))
-        .current_dir(dir)
-        .env("VELT_BUILD_CACHE", &cache)
-        .env("VELT_SHARE", &share)
-        .env_remove("VELT_STD_OBJECT")
-        .output()
-        .unwrap();
-    assert!(warm.status.success(), "{}", text(&warm.stderr));
-    let built = release_default(dir, "a.velt", "a", &cache, &[]);
-    let (found, compiled) = counts(&built);
-    assert!(found > 0 && compiled == 0, "{}", text(&built.stderr));
-    assert_eq!(left(&built), 0, "{}", text(&built.stderr));
-    assert_eq!(run(dir, "a"), NO_INLINE_OUTPUT);
 }

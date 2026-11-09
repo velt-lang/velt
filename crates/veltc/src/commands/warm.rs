@@ -10,7 +10,8 @@
 //! run them too; and then each again in release, for the same two CPUs, which stores the objects
 //! of the std functions marked `noInline()` that release builds link (`std_cache::no_inline`).
 //! A marker per
-//! toolchain (`<cache>/warm/<key>`) makes later runs return at once; the toolchain installers
+//! toolchain (`<cache>/warm/<key>`) makes later runs return at once, also after a run where some
+//! programs failed but not all (the marker names them: they would only fail again); the toolchain installers
 //! start `velt cache warm --background` after installing a version, except in CI (`$CI` set),
 //! whose cache goes with the runner, and when `$VELT_CACHE_WARM` is `off`.
 
@@ -76,15 +77,30 @@ pub fn warm_command(background: bool) -> Result<(), String> {
         programs.len(),
         started.elapsed().as_secs_f64()
     );
+    // The marker is written when some program compiled: one that no longer compiles warms
+    // nothing, but the others did their part, and a run again would only fail on it again, after
+    // building every other program once more (each background warm-up, each install). When none
+    // did, what failed is likely this machine (no linker, no runtime), and a later run retries.
+    if failed.len() < programs.len() {
+        std::fs::write(&marker, marker_text(&failed))
+            .map_err(|e| format!("cannot write `{}`: {e}", marker.display()))?;
+    }
     if !failed.is_empty() {
-        // A program that no longer compiles warms nothing, but the others did their part.
         return Err(format!(
             "some warm-up programs did not compile: {}",
             failed.join(", ")
         ));
     }
-    std::fs::write(&marker, crate::commands::version::version_line())
-        .map_err(|e| format!("cannot write `{}`: {e}", marker.display()))
+    Ok(())
+}
+
+/// What the marker holds: this velt's version line, then the warm-up programs that failed.
+fn marker_text(failed: &[String]) -> String {
+    let mut text = crate::commands::version::version_line();
+    for f in failed {
+        text.push_str(&format!("\nfailed: {f}"));
+    }
+    text
 }
 
 /// Whether the installers' background warm-up should run: not in CI (`$CI`), whose cache is
