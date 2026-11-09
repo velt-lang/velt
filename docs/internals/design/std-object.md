@@ -117,7 +117,7 @@ changes for them. Such a build:
   same keys: the CPU the program is built for (`--cpu`, `VELT_CPU`, `build.cpu`), clang, and the code a release
   build lowered. A key says whether a release or a debug build links it, so a debug build's object
   never serves a release build, nor the other way round.
-- links what it finds, placed before the function comes out, as a debug build does: a miss stays
+- links what it finds, placed before the program is optimized, as a debug build does: a miss stays
   in the program, and no clang starts for it. After optimization it links the objects of what the
   program still calls, closed over what those objects call, and removes the others from their
   place. `velt cache warm` builds its programs in release too, for the same two CPUs, which stores
@@ -144,11 +144,18 @@ changes for them. Such a build:
   sites (`toFixed(2)`); served, `bench/stdport/to_fixed` ran 3.1 % more instructions. Constants
   std itself passes (a flag fixed per entry point) are better fixed in std, with an `inline()`
   body under `noInline()` entry points, which keeps the object served.
-- sizes velt_opt's inline budget (`Budget::for_program`) as for the program with nothing served:
-  what `take_out` took out of it counts too, as lowered (`velt_opt::TakenOut`). Without it, serving the integer printers that
-  `bench/stdport/brotli_stream_*` calls once at the end shrank the budget, and its hot functions
-  were inlined differently (+3.5 to +6.4 %). What the served functions would have spent of the
-  budget, inlining into themselves, is not charged: that is left to the rest.
+- takes a served function out of the program after velt_opt has optimized it, not before
+  (`Served::take_out`): it is never inlined, so its callers keep their calls of it, but
+  while velt_opt runs it takes room in the inliner's program-wide budget (`Budget::for_program`)
+  and spends some of it, inlining its own callees. Taken out before, both went to the rest of the
+  program, which was inlined differently: serving the integer printers that
+  `bench/stdport/brotli_stream_*` calls once at the end moved a large drop glue into
+  `Decoder.run` (+3.5 to +6.6 %). Taken out after, the program's code is the same as without the
+  cache, but for the functions its object calls, made `Export` before velt_opt runs so that it
+  takes no facts about them from the program's calls; the cost is velt_opt's work on a body that
+  is then dropped (clang never sees it). Then what only the served functions called is removed.
+  A clone velt_opt makes of a served function (`const_fields` for a known closure, `null_exits`)
+  is the program's own, compiled with it as without the cache.
 - leaves in the program a function the optimizer would clone for a function gated on a CPU
   extension (`gated_clones`: an ordinary function checking an extension, itself or through what
   it references), and a gated function whose object would call such a function: in the program

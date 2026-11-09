@@ -1,5 +1,6 @@
-//! The std cache around the optimizer: std functions out of the program before it is optimized,
-//! their objects linked after (`super`'s module docs).
+//! The std cache around the optimizer: std functions out of the program before it is optimized
+//! (debug builds, `VELT_STD_OBJECT=1`), or after (a release build's `noInline()` functions), their
+//! objects linked after (`super`'s module docs).
 
 use std::time::Instant;
 
@@ -45,12 +46,11 @@ pub(in crate::driver) fn optimize(
         Use::NoInline => {
             let served = no_inline::serve(program, opts, &cg, &place);
             sess.record("std cache", t);
-            if served.is_empty() {
-                // Nothing hides behind a declaration: what the program reaches is worked out
-                // after optimization, as in a build without the cache.
-                sess.reaches = None;
-            }
             optimize_stage(sess, opts, program)?;
+            // The served functions are still in the program: what it reaches is worked out as in
+            // a build without the cache, before they become declarations.
+            sess.reaches = (!served.is_empty()).then(|| outside::reaches(program));
+            served.take_out(program);
             sess.std_objects = served.linked(program);
             Ok(())
         }

@@ -401,6 +401,16 @@ fn link_with(
 /// comes with its set (`select::inlinable`) as keyed: worked out before `statics::export` made
 /// any function `Export`, which `inlinable` would no longer follow.
 fn take_out(program: &mut vir::Program, linked: &[(usize, Vec<usize>)], depth: select::Depth) {
+    expose(program, linked, depth);
+    for &(i, _) in linked {
+        declare(&mut program.funcs[i]);
+    }
+}
+
+/// [`take_out`]'s first half: every function of the program the objects of `linked` may refer to
+/// made visible to them (`Export`). Before the program is optimized, so that the optimizer treats
+/// them as having unknown callers (no facts from the program's calls into them).
+fn expose(program: &mut vir::Program, linked: &[(usize, Vec<usize>)], depth: select::Depth) {
     let linked_set: HashSet<usize> = linked.iter().map(|(i, _)| *i).collect();
     let mut visible: HashSet<usize> = HashSet::new();
     for (_, set) in linked {
@@ -415,17 +425,18 @@ fn take_out(program: &mut vir::Program, linked: &[(usize, Vec<usize>)], depth: s
             f.linkage = Linkage::Export;
         }
     }
-    for &(i, _) in linked {
-        let f = &mut program.funcs[i];
-        if stats() {
-            let size: usize = f.blocks.iter().map(|b| b.stmts.len() + 1).sum();
-            eprintln!("velt: std cache: links {} ({size} statements)", f.symbol);
-        }
-        f.blocks.clear();
-        f.locs.clear();
-        f.locals.truncate(f.params.len());
-        f.linkage = Linkage::Import;
+}
+
+/// [`take_out`]'s second half: `f` a declaration (`Import`), its object linked instead.
+fn declare(f: &mut vir::Function) {
+    if stats() {
+        let size: usize = f.blocks.iter().map(|b| b.stmts.len() + 1).sum();
+        eprintln!("velt: std cache: links {} ({size} statements)", f.symbol);
     }
+    f.blocks.clear();
+    f.locs.clear();
+    f.locals.truncate(f.params.len());
+    f.linkage = Linkage::Import;
 }
 
 #[cfg(test)]
