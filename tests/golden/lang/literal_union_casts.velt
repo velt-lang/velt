@@ -36,3 +36,20 @@ function fromInfo(info: Info): Rec {
     return info.strategy === "only" ? { hydrate: "load", flush: "skip" } : { hydrate: info.strategy };
 }
 console.log(fromInfo({ strategy: "visible" }), fromInfo({ strategy: "only" }), fromInfo({}));
+
+// A nullable literal union asserted to another: its value, checked to be there.
+function maybe(s: Strategy | undefined): Hydrate {
+    return s as Hydrate;
+}
+console.log(maybe("idle"), maybe("visible"));
+
+// `!==` on a local already narrowed to `"idle" | "visible"` leaves only `"visible"`.
+function rest(s: Strategy): string {
+    if (s === "load" || s === "only") return "-";
+    if (s !== "idle") {
+        const v: "visible" = s;
+        return v;
+    }
+    return s;
+}
+console.log(rest("load"), rest("idle"), rest("visible"));

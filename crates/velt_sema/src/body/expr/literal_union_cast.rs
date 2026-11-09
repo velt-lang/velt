@@ -3,8 +3,9 @@
 //! compares string literal types through `string`) and keeps the string. Velt's literal union
 //! is an enum of its literals, so the value is tested against each literal of the target it may
 //! be, in the target's order, and becomes that member; a value that is none of them stops with
-//! a `TypeError`, as other failed assertions do (Node goes on with the string). A `string` source
-//! (`path as Route`) stays an error until #1410 settles it.
+//! a `TypeError`, as other failed assertions do (Node goes on with the string). A nullable
+//! source is checked to hold a value first (`!`), as other assertions to a type without `null`
+//! are. A `string` source (`path as Route`) stays an error until #1410 settles it.
 
 use velt_common::Span;
 
@@ -25,7 +26,24 @@ impl FnCx<'_, '_> {
         let Some(values) = self.string_literals(target) else {
             return Err(h);
         };
-        let source = self.cx.ty.core(h.ty).map_or(h.ty, |_| self.cx.ty.error);
+        // A `T | null` / `T | undefined` of a literal union: its value, checked to be there with
+        // `!` (a nothing stops, as `x as T` of a `null` does), then asserted.
+        if let Some(core) = self.cx.ty.core(h.ty) {
+            if self.string_literals(core).is_none() {
+                return Err(h);
+            }
+            self.push_scope();
+            let mut stmts = vec![];
+            let id = self.temp_ident("#lit", h, &mut stmts);
+            let present = synth(velt_syntax::ast::ExprKind::NonNull(Box::new(id)), span);
+            let inner = self.expr(&present, None, Want::Move);
+            let out = self
+                .literal_union_cast(inner, target, span)
+                .unwrap_or_else(|h| h);
+            self.pop_scope();
+            return Ok(self.with_temps_value(stmts, out));
+        }
+        let source = h.ty;
         // A `string` (`path as Route`) is not asserted: `ROUTES.includes(path as Route)` tests a
         // string no member may hold, which Node answers with `false` (#1410).
         let held = match self.string_literals(source) {

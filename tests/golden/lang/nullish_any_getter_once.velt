@@ -1,0 +1,14 @@
+// `(v as T) ?? d` of an `any` path reads `v` once: a getter behind it runs once, as in Node.
+interface HostNode { id: number }
+let reads = 0;
+class VNode {
+    get dom(): unknown {
+        reads++;
+        return reads === 1 ? null : { id: reads };
+    }
+}
+const v: any = new VNode();
+const first = (v.dom as HostNode) ?? null;
+console.log(first, reads);
+const second = (v.dom as HostNode) ?? null;
+console.log(second, reads);

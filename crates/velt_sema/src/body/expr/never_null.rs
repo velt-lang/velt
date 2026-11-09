@@ -238,7 +238,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `(v as T) ?? rhs` of an `any` / `unknown` path `v` (`(vnode.dom as HostNode) ?? null`):
-    /// `v == null ? rhs : (v as T)`. JavaScript tests the value the assertion keeps, so a
+    /// `t == null ? rhs : (t as T)` with `t` holding `v`. JavaScript tests the value the assertion keeps, so a
     /// nullish `v` gives `rhs` instead of failing the assertion.
     pub(super) fn asserted_dynamic_nullish(
         &mut self,
@@ -256,21 +256,36 @@ impl FnCx<'_, '_> {
         }
         let t = self.peek_ty(inner)?;
         self.cx.dynamic(t)?;
+        // `v` is read once (a getter through the `any` runs once, as in Node): into a temporary
+        // that the test and the assertion both read.
+        self.push_scope();
+        let mut stmts = vec![];
+        let h = self.expr(inner, None, Want::Move);
+        let id = self.temp_ident("#nullish", h, &mut stmts);
         let null = mk(E::Lit(ast::Lit::Null), span);
         let test = mk(
             E::Binary {
                 op: B::Eq,
-                lhs: inner.clone(),
+                lhs: Box::new(id.clone()),
                 rhs: Box::new(null),
             },
             span,
         );
+        let cast = mk(
+            E::Cast {
+                expr: Box::new(id),
+                ty: ty.clone(),
+            },
+            lhs.span,
+        );
         let cond = E::Cond {
             cond: Box::new(test),
             then: Box::new(rhs.clone()),
-            els: Box::new(lhs.clone()),
+            els: Box::new(cast),
         };
-        Some(self.expr(&mk(cond, span), exp, Want::Move))
+        let out = self.expr(&mk(cond, span), exp, Want::Move);
+        self.pop_scope();
+        Some(self.with_temps_value(stmts, out))
     }
 
     /// Does `ty` hold neither `null` nor `undefined` (and is not an `any`)?
