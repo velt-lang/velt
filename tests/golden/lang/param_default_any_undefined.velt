@@ -1,0 +1,13 @@
+// A parameter default of type `any` that holds `undefined` keeps it, as in Node: TypeScript types
+// the parameter `number`, and a member read of the `undefined` is Node's `TypeError` (#2666).
+let z: any = undefined;
+function m(x: number | undefined = z): string {
+  console.log(x);
+  return x.toFixed(1);
+}
+let d: any = 3;
+function p(x: number | undefined = d): number {
+  return x + 1;
+}
+console.log(m(2), p(), p(4));
+console.log(m());
