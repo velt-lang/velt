@@ -466,6 +466,7 @@ macro_rules! builders {
     };
     (@emit no $f:ident $c:ident $name:ident $s:tt) => {};
     (@emit yes $f:ident $c:ident $name:ident [class]) => {};
+    (@emit yes $f:ident $c:ident $name:ident [decorator]) => {};
     (@emit yes $f:ident $c:ident $name:ident [sig(<$g0:ident> $($sig:tt)*)]) => {
         builders!(@sig [$f $c] $name [targs: [TyId; 1],] [targs.to_vec()] $($sig)*);
     };

@@ -1,0 +1,32 @@
+// velt/lang/intrinsics (internal): the compile-time decorators the compiler acts on (#2203). The
+// compiler finds each through its role in `velt_common::std_hooks` (`decorator_inline`, …), never by
+// the name a use is written with, and records every use in `Program::decorators`: none of them
+// compiles to code.
+
+/**
+ * On a std function or method: every call of it is inlined, whatever its size, in release builds
+ * (debug builds keep their calls; `vir::Function::inline` carries it to the optimizer and the
+ * backend). For a small entry point whose callers are hot, which the inliner's size limits would
+ * otherwise leave a call. Not on a recursive function, directly or through others, nor on a
+ * generator or an async function: sema reports them.
+ */
+export declare decorator function inline(): FunctionDecorator | MethodDecorator;
+
+/**
+ * On a std function or method: calls of it stay calls. For a large path that is rare or slow
+ * anyway (a fallback, a long form), whose copy in every caller would only cost build time and code
+ * size: the optimizer and the backend never inline it. A release build may link it from the std
+ * cache, compiled once without its callers' arguments; one whose callers pass it constants worth
+ * folding is kept in the program by name instead (veltc's std cache, `select::NEVER_SERVED`). Not
+ * on a generator or an async function: sema reports it.
+ */
+export declare decorator function noInline(): FunctionDecorator | MethodDecorator;
+
+/**
+ * On a `declare function` of std/lang/intrinsics: an operation the compiler emits itself, which
+ * no Velt code can express (std-layout.md §10). The declaration is the signature calls are checked
+ * against (modes.velt says how arguments are passed); velt_sema's table (`intrinsic_decls.rs`)
+ * maps its name to the operation. `@intrinsic export declare unsafe function` declares one whose
+ * callers must be unsafe code.
+ */
+export declare decorator function intrinsic(): FunctionDecorator;

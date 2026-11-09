@@ -207,7 +207,8 @@ pub(super) fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generic
         cx.fn_info_mut(d).this = Some(method_this(ty, false, resumable));
     }
     let mut ps = params(cx, &sig.params, &env);
-    if sig.is_intrinsic {
+    let intrinsic = cx.fn_info(d).intrinsic.is_some();
+    if intrinsic {
         crate::intrinsic_decls::param_modes(cx, module, sig, &mut ps);
     }
     if let Some(f) = cx.sigq.filling_sigs.last_mut().filter(|f| f.0 == d) {
@@ -259,7 +260,7 @@ pub(super) fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generic
             sig.generics[0].name.span,
         );
     }
-    super::c_sig::extern_struct_params(cx, (kind, module), sig, &mut ps);
+    super::c_sig::extern_struct_params(cx, (kind, module), sig, intrinsic, &mut ps);
     super::c_sig::foreign_imports(cx, (d, kind, module), sig, &ps, &mut ret);
     let f = cx.fn_info_mut(d);
     if kind == FnKind::Extern && sig.is_system {

@@ -17,7 +17,7 @@
 //! - a function that can grow past that limit by itself is `noinline` (every call of it would be).
 //!
 //! Only calls LLVM would inline count: of a small callee (LLVM's ordinary inlining), of std's
-//! `inline()` functions, and of an internal function called from this one site, whose address no
+//! `@inline` functions, and of an internal function called from this one site, whose address no
 //! one takes and that no other unit calls (the bonus above). A larger callee called from several
 //! sites stays a call in LLVM anyway, so it takes no room under the limit: counted, such calls
 //! kept `parseWith` (one call from `main` in bench/json/parse_value, its constant arguments then

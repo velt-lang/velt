@@ -16,10 +16,10 @@
 //! Functions that never return normally (panic helpers, and `never` functions that throw) are
 //! never inlined: their calls are cold.
 //!
-//! std's markers override the rules (`Function::inline`): a function marked `noInline()`
-//! (`Inline::Never`, #1884) is never inlined, and one marked `inline()` (`Inline::Always`) is
+//! std's markers override the rules (`Function::inline`): a function marked `@noInline`
+//! (`Inline::Never`, #1884) is never inlined, and one marked `@inline` (`Inline::Always`) is
 //! inlined at every call site, whatever its size and the caller's, without charging the budget:
-//! std puts it only on small entry points whose callers are hot. Sema rejects `inline()` on a
+//! std puts it only on small entry points whose callers are hot. Sema rejects `@inline` on a
 //! recursive function; should one reach here, the recursion rules below still apply to it. A gated
 //! function (`Function::target`) is never inlined into a function of another target, or into an
 //! ordinary one; an ordinary function may be inlined into a gated one.

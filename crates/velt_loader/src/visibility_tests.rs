@@ -154,7 +154,7 @@ fn std_tree(t: &Tree) -> PathBuf {
     );
     t.write(
         "std/lang/intrinsics/string.velt",
-        "export declare intrinsic function strLen(s: string): usize;\n",
+        "@intrinsic\nexport declare function strLen(s: string): usize;\n",
     );
     t.path("std")
 }

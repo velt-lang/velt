@@ -60,7 +60,7 @@ world and a program, and adopting the world's would box `f64[]` and `u8[]` in ev
 Cached one by one, keyed by their code, std functions serve 82-89% of it, and what a program links
 is exactly what it would have compiled (measurements on #1728). So step 3 is a cache of std
 functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds behind
-`VELT_STD_OBJECT=1` (`crates/veltc/src/driver/std_cache/`; by default those marked `noInline()`,
+`VELT_STD_OBJECT=1` (`crates/veltc/src/driver/std_cache/`; by default those marked `@noInline`,
 below):
 
 - Std's code includes what std's generators write for a program (`<generated>/std/…` in the
@@ -100,9 +100,9 @@ line info. The key also covers clang's optimization flag and, for every function
 object calls without compiling it, the signature and parameter attributes it is declared with,
 which are whole-program facts the caller is optimized against.
 
-### Release builds: the functions std marks `noInline()`
+### Release builds: the functions std marks `@noInline`
 
-A release build reads the cache by default for the std functions marked `noInline()`
+A release build reads the cache by default for the std functions marked `@noInline`
 (`std_cache/no_inline.rs`, the owner's decision on #2405 and #2404). The optimizer never inlines
 such a function into a caller, so its object holds the code the program would have compiled for
 it, and the program's clang no longer compiles it: the HTML escaper's `escapeFrom` and
@@ -111,7 +111,7 @@ other std function stays in the program, where it can be inlined and specialized
 changes for them. Such a build:
 
 - looks in the cache only when it has held a `stdfn` entry and the program has a std function
-  marked `noInline()`; else it does nothing a build without the cache would not do.
+  marked `@noInline`; else it does nothing a build without the cache would not do.
 - serves those as `VELT_STD_OBJECT=1` serves anything (the same rules: not reaching statics with
   identity that can't be named, no calls through a function pointer, a `$dup` stays), under the
   same keys: the CPU the program is built for (`--cpu`, `VELT_CPU`, `build.cpu`), clang, and the code a release
@@ -125,28 +125,28 @@ changes for them. Such a build:
   program still calls, closed over what those objects call, and removes the others from their
   place. `velt cache warm` builds its programs in release too, for the same two CPUs, which stores
   them (`VELT_STD_OBJECT_FILL`).
-- `noInline()` is never inlined into an object either: a small function marked so is served
+- `@noInline` is never inlined into an object either: a small function marked so is served
   itself, not compiled into its callers.
 - compiles each object with copies of its own (internal to it) of every function the served
-  function reaches through functions not marked `noInline()`, whatever their size, all in its key
+  function reaches through functions not marked `@noInline`, whatever their size, all in its key
   (`select::Depth::Whole`): velt_opt and LLVM inline large callees into it in the program too.
   Compiled with the small ones alone, as `VELT_STD_OBJECT=1` and debug builds compile theirs, the
   objects called back into the program for the rest: `f64Text`'s object called `floatText`
   (`float_to_string` +5.2% on arm64) and `escapeFrom`'s called `block` once per 16-byte block
   (`html_escape` +13% on x86-64). A function whose address is taken stays the program's, with
-  one address, and so do the `noInline()` functions it calls; the program exports only those
+  one address, and so do the `@noInline` functions it calls; the program exports only those
   and what the object declares. What an object can't see is its callers' arguments: the program
   could fold a constant flag into a function it never inlines.
 - **Never served:** leaves in the program the std functions `select::NEVER_SERVED` names
   (non-generic functions, by their whole name), whatever they are marked; a debug build, which
-  folds no constants, still serves them. It is a tool std's authors use deliberately, beside `noInline()`: for a
-  `noInline()` function whose callers, inlined into the program's code, pass it constants that
+  folds no constants, still serves them. It is a tool std's authors use deliberately, beside `@noInline`: for a
+  `@noInline` function whose callers, inlined into the program's code, pass it constants that
   LLVM specializes it for in the program and an object compiled once can't see. Each entry says
   why, and a test fails on a name std no longer defines. The first is `fixedText`
   (std/lang/number/fixed): `toFixed` passes it the caller's `digits`, a constant at most call
   sites (`toFixed(2)`); served, `bench/stdport/to_fixed` ran 3.1 % more instructions. Constants
-  std itself passes (a flag fixed per entry point) are better fixed in std, with an `inline()`
-  body under `noInline()` entry points, which keeps the object served.
+  std itself passes (a flag fixed per entry point) are better fixed in std, with an `@inline`
+  body under `@noInline` entry points, which keeps the object served.
 - takes a served function out of the program after velt_opt has optimized it, not before
   (`Served::take_out`): it is never inlined, so its callers keep their calls of it, but
   while velt_opt runs it takes room in the inliner's program-wide budget (`Budget::for_program`)
@@ -183,9 +183,9 @@ compiled optimized, once, and so is what the cache holds. A debug build
   ReadyToRun images do: the install has them, and code without one is compiled.
 - serves more than a release build does. A debug build inlines only the helpers
   `velt_opt::debug_inlined` names, which stay in the program, so small functions and those marked
-  `inline()` are linked as well; and it specializes no closures, so functions that call through a
+  `@inline` are linked as well; and it specializes no closures, so functions that call through a
   pointer are too. In every build, a function compiled alone inlines what is small or marked
-  `inline()`, which is therefore in its key.
+  `@inline`, which is therefore in its key.
 - leaves in the program what shows a place in its own files: a caller-tracking instance per call
   site (`m.set(...)` in `app.velt`), and what would inline one. The location is in the object's
   key, an absolute path, so no other program could link it, whereas Cranelift's key leaves data out
@@ -235,17 +235,16 @@ a build by reason):
 |---|---|---|
 | Generic (`function f<T>`, methods of generic classes) | Program, one instance per type, as today | Instances depend on the program's types |
 | Caller-tracking (`track_caller.rs`: small ones get an instance per call site, larger ones take the caller's location as a parameter) | Program | An instance per call site is the point of the small ones |
-| Marked as a fast path (`inline()`, below) | Program (a debug build, which does not inline it: object) | Callers must be able to inline it, such as the integer path of number printing |
+| Marked as a fast path (`@inline`, below) | Program (a debug build, which does not inline it: object) | Callers must be able to inline it, such as the integer path of number printing |
 | Optimized cost ≤ `SMALL_COST` (40, `inline/mod.rs`) | Both: the object has it, the program keeps its body to inline it | Inlining a small function usually shrinks the caller |
 | Every other non-generic function | Object | The cost this note removes |
 | One whose VIR in this program differs from the object's (next section) | Program, as today | The object's code would be wrong for this program |
 
-A fast path is marked with a statement at the top of its body, as gated functions use
-`__intrinsic_target("sha-arm")` (`std/crypto/sha256_simd.velt`):
+A fast path is marked with a decorator (a statement at the top of its body until #2203 step 3):
 
 ```text
+@inline                            // std only: compiled into each program, inlinable
 export function numberToString(x: number): string {
-  inline();                        // std only: compiled into each program, inlinable
   if (isSmallInteger(x)) return intToString(x);
   return formatDouble(x);          // large: called in the std object
 }
@@ -642,7 +641,8 @@ head, with interleaved runs:
 - `velt_vir`'s lowering entry: a root set instead of `main` for the object build, the class id
   and header tables from the manifest, and the fingerprint (`Canon`, in `velt_vir::fingerprint`
   with a link mode since #1828).
-- HIR: the `inline()` intrinsic (hir_encodings.md).
+- HIR: the `inline()` intrinsic (hir_encodings.md); since #2203 step 3 the `@inline` decorator
+  in `Program::decorators`.
 - cli.md: `VELT_STD_OBJECT`, `VELT_STD_OBJECT_DIR`, `VELT_CACHE_DIR`, `velt clean --cache`;
   `--emit vir|llvm` show declarations for linked std functions.
 - rt_abi.md: nothing changes. The object calls the runtime as programs do.
@@ -680,7 +680,7 @@ head, with interleaved runs:
 3. The std cache ("The std cache" above), behind `VELT_STD_OBJECT=1`; on by default for release
    builds in a separate change once the measurements hold on all three OSes.
 4. Statics with symbols and linkage in VIR, so code reaching statics with identity is served too
-   (done, #2189); `inline()` for fast paths where measurements ask for one.
+   (done, #2189); `@inline` for fast paths where measurements ask for one.
 5. Prebuilt objects in `scripts/package.sh` and target packs.
 6. Later: statics with identity in the object, the JIT host keeping std compiled, a cheaper
    fingerprint if lowering std shows up in profiles.
@@ -722,6 +722,6 @@ head, with interleaved runs:
 7. **The marker's name and form.** `__intrinsic_inline()` as a statement now, or wait for
    decorators (#1664) and write `@inline`? **Recommendation:** the intrinsic now, since only the
    number formatter needs it at first, and a decorator later replaces it mechanically.
-   **Decided:** `inline()`, with its twin `noInline()` (#1884), in
-   `std/lang/intrinsics/inline.velt`, carried by `vir::Function::inline` (contracts README
-   "Inlining markers"); both become `@inline` / `@noInline` with #1664.
+   **Decided:** `inline()`, with its twin `noInline()` (#1884), carried by
+   `vir::Function::inline`; since #2203 step 3 they are the decorators `@inline` / `@noInline`
+   (`std/lang/intrinsics/decorators.velt`, contracts README "Inlining decorators").

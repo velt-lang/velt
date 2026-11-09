@@ -373,7 +373,7 @@ The fix, as Rust's `#[rustc_intrinsic]` and Swift's `Builtin` do it:
 
 - `std/lang/intrinsics/` declares every intrinsic in Velt, grouped by area (`array.velt`,
   `string.velt`, `atomic.velt`, `types.velt` for the compile-time type facts, `simd.velt`, …), with
-  a doc comment and named, typed parameters: `export declare intrinsic function
+  a doc comment and named, typed parameters: `@intrinsic export declare function
   arraySwap<T>(xs: T[], i: i64, j: i64): void;`. The declaration is the signature sema checks.
 - std code imports them like anything else (`import { arraySwap } from
   "velt/lang/intrinsics/array"`); `lang/` is never importable from user code, so the "std only"
@@ -387,7 +387,8 @@ The fix, as Rust's `#[rustc_intrinsic]` and Swift's `Builtin` do it:
 
 Done: `std/lang/intrinsics/` declares the 83 intrinsics std calls in 18 files by area (`array`,
 `string`, `simd`, `types`, `compare`, `atomic`, `generator`, `json`, `db`, …; `index.velt`
-re-exports them), with `declare intrinsic function` (`ast::FnSig::is_intrinsic`, additive). A
+re-exports them), with `declare intrinsic function` (`ast::FnSig::is_intrinsic`, additive;
+since #2203 step 3 `@intrinsic declare function`, the decorator found by its hook role). A
 declaration's parameters are borrowed or copied by their type as a function's start out;
 `Mut<T>`, `Owned<T>` and `Copied<T>` (aliases of `T` in `modes.velt`) mark the ones the
 intrinsic modifies, takes over or copies. `crates/velt_sema/src/intrinsic_decls.rs` is the one
@@ -396,7 +397,7 @@ itself); a call is checked against the declaration (errors say `` intrinsic `arr
 becomes the same `Call { Intrinsic(..) }` as before, so lowering did not change (the VIR of
 every golden and bench program is identical). A declaration the table lacks is an ICE-level
 error, and a test reads std's declarations and fails on a missing or an extra one. The
-`__intrinsic_` prefix is gone: in user code it is an unknown name, `declare intrinsic function`
+`__intrinsic_` prefix is gone: in user code it is an unknown name, an intrinsic's declaration
 outside std is an error, and importing `velt/lang/intrinsics` is the loader's visibility error.
 The builtins that are intrinsics without a std declaration (`panic`, `sleep`, `xs.push`, `new
 Mutex`, …) keep their signatures in `body/expr/intrinsics.rs`. Packages already had public APIs

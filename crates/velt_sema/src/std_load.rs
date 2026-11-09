@@ -2,7 +2,7 @@
 //! "Loading on demand"). When [`crate::body::lazy_std::reach`] finds a hook needed whose module the
 //! program has not loaded ([`Ctx::demand_std`]), it asks the driver's load callback ([`LoadFn`]),
 //! runs the source rewrites on what comes back ([`rewrite`]), and adds it to the check: declared,
-//! collected ([`crate::collect::collect_added`]) and its eager bodies checked
+//! collected ([`crate::collect::collect_added`]), its decorators checked and its eager bodies checked
 //! ([`crate::body::check_added`]), as if it had been there from the start.
 //!
 //! The modules outlive every `Ctx` ([`StdLoads`]), and every check of the program: the driver's
@@ -271,6 +271,7 @@ impl<'m> Ctx<'m> {
         }
         let ms: Vec<usize> = (first..self.modules.len()).collect();
         let from = crate::collect::collect_added(self, &ms);
+        crate::decorators::check(self, from.defs);
         crate::body::lazy_std::plan_added(self, &ms, from.defs);
         crate::body::check_added(self, from);
     }

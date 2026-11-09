@@ -1,6 +1,6 @@
 //! The std cache (#1728 step 3): std's functions compiled once per variant, stored in the build
 //! cache, and linked into every program that compiles the same code (design/std-object.md "The
-//! std cache"). Release builds use it by default for the functions std marks `noInline()`,
+//! std cache"). Release builds use it by default for the functions std marks `@noInline`,
 //! through [`no_inline::serve`], and for all it serves behind `VELT_STD_OBJECT=1`, through
 //! [`split`] and [`link`]; debug builds by default, through [`serve::serve`]. Outside
 //! `VELT_STD_OBJECT=1`, a miss stays in the program.
@@ -61,7 +61,7 @@ pub(super) enum Use {
     Off,
     /// [`split`] and [`link`] (`VELT_STD_OBJECT=1`).
     Release,
-    /// A release build's default, [`no_inline::serve`]: only what std marks `noInline()`.
+    /// A release build's default, [`no_inline::serve`]: only what std marks `@noInline`.
     NoInline,
     /// [`serve::serve`].
     Debug,
@@ -74,7 +74,7 @@ pub(super) enum Use {
 ///
 /// Release builds: by LLVM without debug info (the cached objects carry no line info, and the
 /// cache holds LLVM's code); with `VELT_STD_OBJECT=1` every function the cache serves, unless
-/// `VELT_STD_OBJECT=0` those std marks `noInline()`. Debug builds: unless `VELT_STD_OBJECT=0`,
+/// `VELT_STD_OBJECT=0` those std marks `@noInline`. Debug builds: unless `VELT_STD_OBJECT=0`,
 /// with either backend and with `-g`: stepping stays in the program's own code, as the objects
 /// have no lines to step through. WebAssembly has no objects to find: its programs compile
 /// everything (unless `VELT_STD_OBJECT=1`).
@@ -282,7 +282,7 @@ pub(super) fn split(
 }
 
 /// What [`split`]'s objects (`VELT_STD_OBJECT=1`) are compiled with: the small functions they
-/// call, as before release builds served `noInline()` functions by default.
+/// call, as before release builds served `@noInline` functions by default.
 const DEPTH_ALL: select::Depth = select::Depth::Small;
 
 /// A release build's key of std function `i`: at `Depth::Whole` a mark that says so, then its
@@ -305,7 +305,7 @@ fn release_key(
     if depth == select::Depth::Whole {
         code.push(key::Code {
             symbol: String::new(),
-            text: "own copies of every callee up to noInline()".into(),
+            text: "own copies of every callee up to @noInline".into(),
             attrs: String::new(),
         });
     }

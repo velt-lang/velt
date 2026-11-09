@@ -105,6 +105,8 @@ pub(crate) struct Added {
 
 /// Phases 2 to 5 of the module docs, for what starts at `from`.
 fn collect_items(cx: &mut Ctx, items: &ItemDefs, from: Added) {
+    // Before signatures: an intrinsic's parameters take their modes from its declaration.
+    crate::decorators::intrinsics(cx, from.defs);
     cx.name_symbol_keys();
     field_only::declare(cx, from.defs);
     crate::type_defaults::check_from(cx, from);

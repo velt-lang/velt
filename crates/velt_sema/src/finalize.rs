@@ -55,7 +55,12 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
         }
         let def = match &cx.info[i] {
             DefInfo::Fn(f) => Some(Def::ExternFn(ExternFnDef {
-                name: f.name.clone(),
+                // A decorator's is qualified, as a function's: the name lowering finds the
+                // decorators the compiler acts on by (hir_encodings.md "Decorators").
+                name: match crate::decorators::decl_of(f) {
+                    Some(_) => format!("{}::{}", cx.modules[f.module].path, f.name),
+                    None => f.name.clone(),
+                },
                 symbol: f.name.clone(),
                 params: f.params.iter().map(|p| p.ty).collect(),
                 ret: f.ret,

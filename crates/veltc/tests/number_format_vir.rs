@@ -1,6 +1,6 @@
 //! Numbers as text in std's Velt code (#1982): `tests/golden/std/number_format.velt` checks that
 //! the output stays Node's; this checks the release build's shape: no call into the runtime's
-//! formatters, and the float path is one function marked `noInline()` (#1884) that every `${x}`
+//! formatters, and the float path is one function marked `@noInline` (#1884) that every `${x}`
 //! calls instead of a copy at each site.
 
 use std::path::Path;

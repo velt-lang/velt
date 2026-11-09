@@ -229,9 +229,7 @@ pub(super) fn pure_intrinsic(i: hir::Intrinsic) -> bool {
             | I::StrCharCodeAt
             | I::StrByteAt
             | I::AddressLoad
-            | I::Inline
             | I::StrAsciiWords
-            | I::NoInline
             | I::StrLoadU8x16
             | I::StrLoadPartialU8x16
             | I::Sqrt

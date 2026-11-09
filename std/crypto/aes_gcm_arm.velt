@@ -27,14 +27,14 @@ declare function velt_simd_u8x16_aese(state: u8x16, key: u8x16): u8x16;
 declare function velt_simd_u8x16_aesmc(a: u8x16): u8x16;
 
 // One round: AESE (the key XORed in first) and AESMC.
+@inline
 function round(s: u8x16, k: u8x16): u8x16 {
-  inline();
   return velt_simd_u8x16_aesmc(velt_simd_u8x16_aese(s, k));
 }
 
 // E(K, block) with the round keys `k`.
+@inline
 function encryptBlock(k: Rounds, block: u8x16): u8x16 {
-  inline();
   let s = round(round(round(round(round(block, k.k0), k.k1), k.k2), k.k3), k.k4);
   s = round(round(round(round(s, k.k5), k.k6), k.k7), k.k8);
   if (!k.wide) {

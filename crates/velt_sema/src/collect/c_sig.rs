@@ -382,9 +382,10 @@ pub(super) fn extern_struct_params(
     cx: &Ctx,
     (kind, module): (FnKind, usize),
     sig: &ast::FnSig,
+    intrinsic: bool,
     ps: &mut [ParamSig],
 ) {
-    if kind != FnKind::Extern || sig.is_intrinsic {
+    if kind != FnKind::Extern || intrinsic {
         return;
     }
     if !sig.is_system && cx.scopes[module].is_std {

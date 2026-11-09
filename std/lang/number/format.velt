@@ -2,7 +2,7 @@
 // back as the double (velt/lang/number/shortest), laid out as ECMAScript's Number::toString
 // lays them out in four words (velt/lang/number/text), at most 25 bytes
 // (`-0.0000012345678901234567`), stored as an inline string or appended as words. Out of line
-// (`noInline()`), and checked only in programs that convert a value that may hold a float to
+// (`@noInline`), and checked only in programs that convert a value that may hold a float to
 // text (velt_common `std_hooks::ON_DEMAND`).
 
 import { noInline, strAsciiWords, strbufPushAsciiWords } from "velt/lang/intrinsics";
@@ -105,8 +105,8 @@ function floatText(x: f64): FloatText {
  * `String(x)` of a float that is not a whole number below 2^53 (those are `i64Text`'s). Kept
  * out of its callers: a copy at every `${x}` would cost more build time than the call costs.
  */
+@noInline
 export function f64Text(x: f64): string {
-  noInline();
   const f = floatText(x);
   const t = f.t;
   if (f.len <= 23) {
@@ -122,8 +122,8 @@ export function f64Text(x: f64): string {
  * Appends `String(x)` of a float that is not a whole number below 2^53 to the builder `buf`. Out
  * of its callers, as `f64Text`.
  */
+@noInline
 export function pushF64(buf: string, x: f64): void {
-  noInline();
   const f = floatText(x);
   pushText(buf, f.t, f.len);
 }

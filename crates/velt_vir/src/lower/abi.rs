@@ -210,7 +210,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             targs,
             glue: false,
             many_strict: false,
-            inline: crate::vir::Inline::Default,
             locals: vec![],
             blocks: vec![],
             half_locals: Default::default(),
@@ -462,7 +461,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // A `never` function (a throw helper such as `corrupt(what): never`) returns only
         // through its error, if at all: its calls are cold (`Function::cold`).
         let cold = lw.cx.is_never(ret);
-        let inline = lw.inline;
+        let inline = lw.cx.inline_of(def);
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
         func.cold = cold;

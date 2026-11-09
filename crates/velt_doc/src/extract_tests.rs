@@ -141,7 +141,7 @@ export function g(a: any) {}
 /// std's intrinsics and host functions are documented as functions; other `declare`s are not.
 #[test]
 fn intrinsic_declarations_are_documented() {
-    let src = "/** Swaps two elements. */\nexport declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n\n/** Hidden. */\nexport declare function velt_rt_x(): void;\nexport declare host(\"env\") function now(): f64;\n";
+    let src = "/** Swaps two elements. */\n@intrinsic\nexport declare function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n\n/** Hidden. */\nexport declare function velt_rt_x(): void;\nexport declare host(\"env\") function now(): f64;\n";
     let m = extract("std/lang/intrinsics/array", src);
     let names: Vec<&str> = m.items.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(names, ["arraySwap", "now"]);
@@ -153,9 +153,23 @@ fn intrinsic_declarations_are_documented() {
     assert_eq!(f.kind, Kind::Function);
     assert_eq!(
         f.signature,
-        "declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void"
+        "@intrinsic declare function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void"
     );
     assert_eq!(f.doc, "Swaps two elements.");
+}
+
+/// A decorated `declare system` or `declare c("lib")` function is no intrinsic: it is left out
+/// like an undecorated one, not documented as a `declare function` without its `system` / `c`.
+#[test]
+fn decorated_system_and_c_declarations_are_not_intrinsics() {
+    let src = "declare decorator function mark(): FunctionDecorator;\n\n/** System. */\n@mark\nexport declare system function strlen(s: string): usize;\n\n/** Native. */\n@mark\nexport declare c(\"m\") function cos(x: f64): f64;\n\n/** Shown. */\n@mark\nexport declare function marked(n: i64): i64;\n";
+    let m = extract("std/lang/intrinsics/probe", src);
+    let names: Vec<&str> = m.items.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(names, ["marked"]);
+    assert_eq!(
+        m.items[0].signature,
+        "@mark declare function marked(n: i64): i64"
+    );
 }
 
 #[test]

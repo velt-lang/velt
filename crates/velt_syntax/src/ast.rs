@@ -91,7 +91,8 @@ pub enum ItemKind {
     Extend(ExtendDecl),
     /// `declare function name(a: i64): void;` — external C-ABI symbol (used by std for rt FFI);
     /// `declare system function pread(...)` (`FnSig::is_system`) binds the platform's C library;
-    /// `declare intrinsic function f(...)` (`FnSig::is_intrinsic`) declares a compiler intrinsic;
+    /// `@intrinsic declare function f(...)` declares a compiler intrinsic (sema knows the
+    /// decorator by its hook role);
     /// `declare host("m") function f(...)` (`FnSig::host`) declares a function the JS host
     /// provides; `declare decorator function f(...)` (`FnSig::is_decorator`) declares a
     /// compile-time decorator.
@@ -177,17 +178,13 @@ pub struct FnSig {
     pub throws: Option<TypeExpr>,
     pub is_async: bool,
     /// `unsafe function f()` / `unsafe m()`: calling it needs an `unsafe` block or function, and
-    /// its body is one (docs/internals/design/c-ffi.md). Additive.
+    /// its body is one (docs/internals/design/c-ffi.md); `declare unsafe function`, allowed only
+    /// on an `@intrinsic` declaration, likewise. Additive.
     pub is_unsafe: bool,
     /// `declare system function`: a function of the platform's C library, checked against the
     /// compiler's table of system functions (https://veltlang.com/docs/reference/system-functions/). Always `false`
     /// for anything but a `declare` item.
     pub is_system: bool,
-    /// `declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`: an
-    /// operation the compiler emits itself, declared in std/lang/intrinsics (only there) so that
-    /// calls are checked against this signature (docs/internals/design/std-layout.md §10).
-    /// Always `false` for anything but a `declare` item. Additive.
-    pub is_intrinsic: bool,
     /// `declare decorator function name(key: string): FieldDecorator;`: a compile-time decorator,
     /// data that is never called (https://github.com/velt-lang/velt/issues/2203). Always `false`
     /// for anything but a `declare` item. Additive.

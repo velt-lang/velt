@@ -91,8 +91,8 @@ function scaled(a: f64, digits: i64): u64 {
  * tie away from zero; `String(x)` from 1e21 up and for NaN and the infinities. A call, not a
  * copy at each use.
  */
+@noInline
 export function fixedText(x: f64, digits: i64): string {
-  noInline();
   const neg = x < 0;
   const a = neg ? -x : x;
   if (!(a < 1e21)) {

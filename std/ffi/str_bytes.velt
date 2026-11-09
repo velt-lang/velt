@@ -36,8 +36,8 @@ export function strBytesOf(s: string): string {
 }
 
 /** `s` with U+FFFD for each lone surrogate (the same byte length). */
+@noInline
 function wellFormedCopy(s: string): string {
-  noInline();
   let out = "";
   const n = s.length as i64;
   let i: i64 = 0;

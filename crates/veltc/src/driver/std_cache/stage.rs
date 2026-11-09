@@ -1,5 +1,5 @@
 //! The std cache around the optimizer: std functions out of the program before it is optimized
-//! (debug builds, `VELT_STD_OBJECT=1`), or after (a release build's `noInline()` functions), their
+//! (debug builds, `VELT_STD_OBJECT=1`), or after (a release build's `@noInline` functions), their
 //! objects linked after (`super`'s module docs).
 
 use std::time::Instant;

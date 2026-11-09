@@ -624,7 +624,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("script_tdz::check", || script_tdz::check(cx));
     timings::pass("collect::collect", || collect::collect(cx));
     cx.collected_defs = cx.defs.len();
-    timings::pass("decorators::check", || decorators::check(cx));
+    timings::pass("decorators::check", || decorators::check(cx, 0));
     timings::pass("global_this::declare", || global_this::declare(cx));
     timings::pass("build_fill_bodies", || {
         body::expr::virtual_defaults::build_fill_bodies(cx, 0)

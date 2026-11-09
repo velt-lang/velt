@@ -1,6 +1,7 @@
 //! Decorator uses (part of the HIR contract, hir_encodings.md "Decorators"): what sema recorded
 //! for every compile-time decorator of a program, in `Program::decorators`. Nothing runs at run
-//! time, and lowering reads none of it yet.
+//! time; lowering reads only `@inline` and `@noInline`, by their hook roles (`velt_vir`
+//! `lower/decorators.rs`).
 
 use velt_common::Span;
 

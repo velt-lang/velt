@@ -3,10 +3,13 @@
 // (the compiler checks it): lowering never evaluates it, but names the value by that constant
 // and reads the starting value from the literal.
 
+import { intrinsic } from "./decorators";
 import type { Copied } from "./modes";
 
 /** This thread's value. */
-export declare intrinsic function threadLocalGet<T>(tl: ThreadLocal<T>): T;
+@intrinsic
+export declare function threadLocalGet<T>(tl: ThreadLocal<T>): T;
 
 /** Makes `value` this thread's value. */
-export declare intrinsic function threadLocalSet<T>(tl: ThreadLocal<T>, value: Copied<T>): void;
+@intrinsic
+export declare function threadLocalSet<T>(tl: ThreadLocal<T>, value: Copied<T>): void;

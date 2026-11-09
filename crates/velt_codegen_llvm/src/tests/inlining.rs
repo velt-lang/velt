@@ -103,7 +103,7 @@ fn large_functions_are_noinline() {
     assert!(ir.contains("call void @\"fits\"()\n"));
 }
 
-/// Small callees and std's `inline()` functions are inlined into a caller at the limit all
+/// Small callees and std's `@inline` functions are inlined into a caller at the limit all
 /// the same; a callee past the limit is not.
 #[test]
 fn small_and_marked_callees_are_inlined_into_large_callers() {

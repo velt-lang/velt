@@ -304,8 +304,8 @@ export class FeP256 {
   }
 
   /** All ones when register `a` is zero, else 0, without a branch. */
+  @noInline
   isZero(a: usize): u64 {
-    noInline();
     // Out of line so that the caller cannot see the mask is one comparison: LLVM would make
     // `blend` a select of two loads, and the backend a load through a selected pointer, whose
     // address depends on the secret. crates/veltc/tests/p256_masks.rs reads the optimized IR. For

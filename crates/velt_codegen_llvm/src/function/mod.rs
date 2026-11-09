@@ -357,9 +357,9 @@ impl Emitter<'_> {
 /// "its body is cold": a hot `for (;;)` worker loop that ends in `process.exit` gets these too.
 /// Only its call sites are affected (without a profile LLVM does not shrink a cold body).
 ///
-/// Otherwise std's markers (`Function::inline`): `noInline()` gives `noinline` alone (its calls
-/// are not rare, so not `cold`), and `inline()` gives `alwaysinline`. A function that never
-/// returns stays `cold noinline` even when marked `inline()`: the two attributes conflict, and its
+/// Otherwise std's markers (`Function::inline`): `@noInline` gives `noinline` alone (its calls
+/// are not rare, so not `cold`), and `@inline` gives `alwaysinline`. A function that never
+/// returns stays `cold noinline` even when marked `@inline`: the two attributes conflict, and its
 /// calls are rare.
 ///
 /// An unmarked function that can grow too large to inline (`inlining::Caps`) gets `noinline`.

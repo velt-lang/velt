@@ -134,14 +134,6 @@ impl FnLower<'_, '_> {
                 let i = self.expr(i);
                 self.str_byte_at(v, i)
             }
-            (I::Inline, []) => {
-                self.inline = crate::vir::Inline::Always;
-                unit()
-            }
-            (I::NoInline, []) => {
-                self.inline = crate::vir::Inline::Never;
-                unit()
-            }
             (I::StrLoadU8x16, [s, at]) => {
                 let v = self.projection_base(s, BoxHold::No);
                 let at = self.expr(at);

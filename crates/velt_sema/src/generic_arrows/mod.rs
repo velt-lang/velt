@@ -238,7 +238,6 @@ fn lifted_arrow(v: &ast::VarDecl, rest: bool) -> Option<ast::FnDecl> {
         is_async: *is_async,
         is_unsafe: false,
         is_system: false,
-        is_intrinsic: false,
         is_decorator: false,
         decorators: vec![],
         generator: None,

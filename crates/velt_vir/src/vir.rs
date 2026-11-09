@@ -260,21 +260,21 @@ pub struct Function {
     /// lowering; `velt_opt` keeps it on clones. False promises nothing.
     pub cold: bool,
     /// Whether optimizers and backends must inline it, must not, or decide for themselves: the
-    /// std markers `inline()` and `noInline()` (std/lang/intrinsics/inline.velt). Set by
+    /// std decorators `@inline` and `@noInline` (std/lang/intrinsics/decorators.velt). Set by
     /// lowering; `velt_opt` keeps it on clones.
     pub inline: Inline,
 }
 
-/// A function's inlining, as std's markers set it (`vir::Function::inline`).
+/// A function's inlining, as std's decorators set it (`vir::Function::inline`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Inline {
-    /// No marker: the optimizer's and the backend's own heuristics decide.
+    /// Neither decorator: the optimizer's and the backend's own heuristics decide.
     #[default]
     Default,
-    /// `inline()`: every call is inlined wherever `velt_opt`'s inliner runs, whatever the
+    /// `@inline`: every call is inlined wherever `velt_opt`'s inliner runs, whatever the
     /// callee's size (LLVM `alwaysinline`). Sema rejects it on a recursive function.
     Always,
-    /// `noInline()` (#1884): every call stays a call (LLVM `noinline`, without `cold`).
+    /// `@noInline` (#1884): every call stays a call (LLVM `noinline`, without `cold`).
     Never,
 }
 

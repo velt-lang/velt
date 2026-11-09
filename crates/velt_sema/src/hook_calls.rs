@@ -332,6 +332,7 @@ impl<R> Call<R, hir::Expr> {
 /// The builders, from the table's entries (`std_hook_table!`): one per function hook.
 macro_rules! builders {
     (@emit $name:ident [class]) => {};
+    (@emit $name:ident [decorator]) => {};
     (@emit $name:ident [sig(<$g0:ident> $($sig:tt)*)]) => {
         builders!(@sig $name [targs: E::TyArgs<1>,] [E::ty_args(targs)] $($sig)*);
     };

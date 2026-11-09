@@ -202,10 +202,12 @@ impl<'a> Parser<'a> {
 
     /// `declare [async] function name(...): R;`, `declare system function name(...): R;`
     /// (`declare async system function` too, which the system function check rejects)
-    /// (`system` is a word only there: a function of the platform's C library) or
-    /// `declare [unsafe] intrinsic function name(...): R;` (`intrinsic` likewise: a compiler
-    /// intrinsic) or `declare decorator function name(...): Target;` (`decorator` likewise; `async`
-    /// parses, so sema can say why it is not one).
+    /// (`system` is a word only there: a function of the platform's C library),
+    /// `declare unsafe function name(...): R;` (`unsafe` likewise: calling it needs unsafe code,
+    /// which sema allows only on an `@intrinsic` declaration) or `declare decorator function
+    /// name(...): Target;` (`decorator` likewise; `async` parses, so sema can say why it is not
+    /// one). The old `declare [unsafe] intrinsic function` is an error naming its new form,
+    /// `@intrinsic declare function` (#2203), and parses as that would.
     fn parse_declare(&mut self, lo: u32) -> PResult<FnSig> {
         // `declare async system function` parses, so the check can say why it is not one.
         self.bump(); // declare
@@ -217,22 +219,26 @@ impl<'a> Parser<'a> {
         if is_system {
             self.bump(); // system
         }
-        // `declare unsafe intrinsic function`: calling it needs unsafe code (std only, as every
-        // intrinsic).
+        let old_intrinsic = |p: &mut Self, k: usize| {
+            p.nth_word(k, "intrinsic") && p.nth(k + 1) == Tok::Kw(Kw::Function)
+        };
         let is_unsafe = !is_system
             && self.at_word("unsafe")
-            && self.nth_word(1, "intrinsic")
-            && self.nth(2) == Tok::Kw(Kw::Function);
+            && (self.nth(1) == Tok::Kw(Kw::Function) || old_intrinsic(self, 1));
         if is_unsafe {
             self.bump(); // unsafe
         }
-        let is_intrinsic =
-            !is_system && self.at_word("intrinsic") && self.nth(1) == Tok::Kw(Kw::Function);
-        if is_intrinsic {
+        if !is_system && old_intrinsic(self, 0) {
+            let unsafe_ = if is_unsafe { "unsafe " } else { "" };
+            let at = self.cur_span();
+            self.error(
+                format!("`declare {unsafe_}intrinsic function` is written `@intrinsic declare {unsafe_}function` now, with the decorator std/lang/intrinsics declares"),
+                at,
+            );
             self.bump(); // intrinsic
         }
         let is_decorator = !is_system
-            && !is_intrinsic
+            && !is_unsafe
             && self.at_word("decorator")
             && matches!(self.nth(1), Tok::Kw(Kw::Function | Kw::Async));
         if is_decorator {
@@ -241,7 +247,6 @@ impl<'a> Parser<'a> {
         is_async |= self.eat_kw(Kw::Async);
         let mut sig = self.parse_fn_sig(lo, is_async)?;
         sig.is_system = is_system;
-        sig.is_intrinsic = is_intrinsic;
         sig.is_unsafe = is_unsafe;
         sig.is_decorator = is_decorator;
         if sig.is_generator {
@@ -446,7 +451,6 @@ impl<'a> Parser<'a> {
             is_async,
             is_unsafe: false,
             is_system: false,
-            is_intrinsic: false,
             is_decorator: false,
             decorators: vec![],
             generator: None,

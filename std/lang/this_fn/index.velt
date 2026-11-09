@@ -62,8 +62,8 @@ export class ThisFn {
   }
 
   // A list to read, or to copy for a body that uses `arguments`.
+  @noInline
   #listOf(args: any): any[] {
-    noInline();
     const list = anyArgList(args);
     return this.#ownsArguments ? list.slice() : list;
   }

@@ -127,9 +127,11 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   members (and an interface's bases).
 
 ## Declared intrinsics (additive AST extension)
-- `FnSig::is_intrinsic` (`ast.rs`): `declare intrinsic function name<T>(…): R;`, an
-  `ItemKind::ExternFn` like `declare system function` (`intrinsic` is a word only between
-  `declare` and `function`; never `async`). Only std declares them, in `std/lang/intrinsics/`
+- `@intrinsic declare function name<T>(…): R;` (#2203 step 3; before it `declare intrinsic
+  function`, `FnSig::is_intrinsic`, which is gone): an `ItemKind::ExternFn` with the
+  compile-time decorator std declares in `std/lang/intrinsics/decorators.velt`, which sema finds
+  by its hook role (`std_hooks`: `decorator_intrinsic`), never by name; `declare unsafe function`
+  (`FnSig::is_unsafe`) only with it. Only std declares them, in `std/lang/intrinsics/`
   (`std_modules`: `lang_intrinsics`); elsewhere sema reports the declaration. A call is checked
   against the declaration and is the same HIR `Call { Intrinsic(..) }` as before
   (hir_encodings.md); the name maps to the `Intrinsic` in `velt_sema::intrinsic_decls`, whose
@@ -260,15 +262,16 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   single call); the LLVM backend marks it `cold noinline` (as it does the helpers that never return, such as
   `_Goob_u64`); Cranelift ignores it.
 
-## Inlining markers (additive VIR extension)
-- `vir::Function::inline: vir::Inline` (`Default`, `Always`, `Never`): a std function's own
-  statement `inline()` (`Always`) or `noInline()` (`Never`, #1884), declared in
-  `std/lang/intrinsics/inline.velt` (`hir::Intrinsic::Inline` / `NoInline`, which lower to no
-  code). One field, so "both" cannot be represented. Sema rejects a marker that is not the first
-  statement of a declared function's or method's body, or is in a closure, a generator or an
-  async function (whose body lowering compiles into a resume function), so a function has at
-  most one; and `inline()` on a function on a cycle of direct calls. `Function::new` sets
-  `Default`; lowering sets it from the body; `velt_opt` keeps it on clones.
+## Inlining decorators (additive VIR extension)
+- `vir::Function::inline: vir::Inline` (`Default`, `Always`, `Never`): a std function's or
+  method's decorator `@inline` (`Always`) or `@noInline` (`Never`, #1884), declared in
+  `std/lang/intrinsics/decorators.velt` and found by their hook roles (`std_hooks`:
+  `decorator_inline`, `decorator_no_inline`) in `hir::Program::decorators` (#2203 step 3; they
+  were the statements `inline()` / `noInline()` before). One field, so "both" cannot be
+  represented. Sema rejects both on one function, either on a `declare function`, a generator or
+  an async function (whose body lowering compiles into a resume function), and `@inline` on a
+  function on a cycle of direct calls. `Function::new` sets `Default`; lowering sets it from the
+  decorators; `velt_opt` keeps it on clones.
 - `velt_opt`'s inliner inlines an `Always` function at every direct call site, whatever its
   size and the caller's, without charging the program's growth budget (the recursion and
   gated-target rules still apply), and never inlines a `Never` one. A debug build runs only the
@@ -323,5 +326,5 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   symbol and defines only the `Export` one.
 - `fingerprint` (both modes) prints a named static's symbol and linkage with its contents.
 - Lowering never names a static; only the std cache does (release builds that find objects of
-  `noInline()` functions in it or set `VELT_STD_OBJECT=1`, and debug builds that find objects in
+  `@noInline` functions in it or set `VELT_STD_OBJECT=1`, and debug builds that find objects in
   it), so builds without it are unchanged.

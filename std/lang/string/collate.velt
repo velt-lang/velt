@@ -70,8 +70,8 @@ function classOf(cp: u64): u64 {
  * 0 for no element; and the character's length in bytes, less 1, in bits 62..64. One function
  * with no calls on the common paths, as a debug build calls each function it doesn't inline.
  */
+@noInline
 function elementsAt(s: string, i: u64, level: i64): u64 {
-  noInline();
   const lead = strByteAt(s, i) as u64;
   let size: u64 = 0;
   let cp = lead;
@@ -143,8 +143,8 @@ function elementsAt(s: string, i: u64, level: i64): u64 {
  * call to `elementsAt` per mark. It tests `level` itself: a test in `orderAt`'s loop would have
  * LLVM copy that loop per level, which costs every release build that uses `localeCompare`.
  */
+@noInline
 function afterMarks(s: string, i: u64, end: u64, level: i64): u64 {
-  noInline();
   if (level != 0) {
     return i;
   }
@@ -156,8 +156,8 @@ function afterMarks(s: string, i: u64, end: u64, level: i64): u64 {
 }
 
 /** The order of `a` and `b` at `level`, both read from byte `from`. */
+@noInline
 function orderAt(a: string, b: string, from: u64, level: i64): i64 {
-  noInline();
   const aEnd = strByteLen(a) as u64;
   const bEnd = strByteLen(b) as u64;
   let i = from;
@@ -204,8 +204,8 @@ function orderAt(a: string, b: string, from: u64, level: i64): i64 {
  * start with alike weighs alike at every level, so the levels read only what follows. Out of
  * line, so that a caller such as a sort's comparator stays small.
  */
+@noInline
 export function localeOrder(a: string, b: string): i64 {
-  noInline();
   const aEnd = strByteLen(a) as u64;
   const bEnd = strByteLen(b) as u64;
   const end = aEnd < bEnd ? aEnd : bEnd;

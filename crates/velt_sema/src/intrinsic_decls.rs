@@ -1,6 +1,7 @@
 //! The compiler's intrinsics as std declares them (docs/internals/design/std-layout.md §10):
-//! `std/lang/intrinsics/*.velt` writes each one as `export declare intrinsic function
-//! arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`, and [`TABLE`] maps the declared name
+//! `std/lang/intrinsics/*.velt` writes each one as `@intrinsic export declare function
+//! arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;` (the decorator found by its hook role,
+//! `decorators::known`), and [`TABLE`] maps the declared name
 //! to what the compiler does for a call. The declaration is the signature calls are checked
 //! against (`body::expr::intrinsic_call`); this table holds no types. std imports the functions
 //! like any other, and since `velt/lang` is internal, no program or package can.
@@ -21,7 +22,7 @@ pub(crate) enum DeclaredIntrinsic {
     /// `anyToPrimitive(value, hint, at)` in the hook `anyPrimitive`: the per-class
     /// dispatch sema writes out (`body::expr::any_prim`).
     AnyToPrimitive,
-    /// A `declare intrinsic function` that names none, or one outside std/lang/intrinsics: the
+    /// An `@intrinsic declare function` that names none, or one outside std/lang/intrinsics: the
     /// declaration was reported, and calls of it check their arguments and are errors.
     Invalid,
 }
@@ -101,8 +102,6 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("isTypedProxy", Op(I::IsTypedProxy)),
     ("toAny", Op(I::ToAny)),
     // inline.velt
-    ("inline", Op(I::Inline)),
-    ("noInline", Op(I::NoInline)),
     // report.velt
     ("errorText", Op(I::ErrorText)),
     ("inspect", Op(I::Inspect)),
@@ -161,7 +160,7 @@ pub(crate) fn declared(name: &str) -> Option<DeclaredIntrinsic> {
     TABLE.iter().find(|(n, _)| *n == name).map(|&(_, d)| d)
 }
 
-/// What the `declare intrinsic function` `sig` in module `m` declares, after reporting a
+/// What the `@intrinsic declare function` `sig` in module `m` declares, after reporting a
 /// declaration that is not allowed there or names no intrinsic.
 pub(crate) fn declare(
     cx: &mut crate::ctx::Ctx,
@@ -172,7 +171,7 @@ pub(crate) fn declare(
     if !cx.scopes[m].is_std {
         cx.error(
             velt_common::Diagnostic::error(
-                format!("`declare intrinsic function {name}` is not allowed: only the standard library declares intrinsics"),
+                format!("`@intrinsic declare function {name}` is not allowed: only the standard library declares intrinsics"),
                 sig.name.span,
             )
             .with_note("an intrinsic is an operation of the compiler itself; std implements its public API with them, which is what programs and packages use"),
@@ -248,7 +247,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
-    use velt_syntax::ast::ItemKind;
+    use velt_syntax::ast::{ExprKind, ItemKind};
 
     use super::TABLE;
 
@@ -267,7 +266,8 @@ mod tests {
         }
     }
 
-    /// The `declare intrinsic function` names of every std file, by file below `std/`.
+    /// The `@intrinsic declare function` names of every std file, by file below `std/` (the
+    /// decorator by the name std imports it with: this reads source text, not a check).
     fn declarations() -> Vec<(String, String, bool)> {
         let root = std_root();
         let mut files = vec![];
@@ -282,7 +282,9 @@ mod tests {
             assert!(errors.is_empty(), "std/{rel} does not parse: {errors:?}");
             for item in &module.items {
                 if let ItemKind::ExternFn(sig) = &item.kind {
-                    if sig.is_intrinsic {
+                    if sig.decorators.iter().any(
+                        |d| matches!(&d.expr.kind, ExprKind::Ident(id) if id.name == "intrinsic"),
+                    ) {
                         out.push((rel.clone(), sig.name.name.clone(), item.exported));
                     }
                 }

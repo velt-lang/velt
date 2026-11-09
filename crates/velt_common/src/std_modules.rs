@@ -109,8 +109,10 @@ table! {
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_hooks_tuple_elements => "lang/hooks/tuple_elements",
     lang_import_meta => "lang/import_meta",
-    /// The compiler's intrinsics, declared (`declare intrinsic function`; std-layout.md §10).
+    /// The compiler's intrinsics, declared (`@intrinsic declare function`; std-layout.md §10).
     lang_intrinsics => "lang/intrinsics",
+    /// The compile-time decorators the compiler acts on (`@inline`, `@intrinsic`; #2203).
+    lang_intrinsics_decorators => "lang/intrinsics/decorators",
     lang_proxy => "lang/proxy",
     lang_proxy_array => "lang/proxy/array",
     lang_proxy_array_apply => "lang/proxy/array_apply",

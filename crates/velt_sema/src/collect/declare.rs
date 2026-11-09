@@ -225,10 +225,6 @@ pub(super) fn new_def<'m>(
                 FnKind::Extern,
                 None,
             );
-            if s.is_intrinsic {
-                info.intrinsic = Some(crate::intrinsic_decls::declare(cx, m, s));
-                info.unsafe_intrinsic = s.is_unsafe;
-            }
             info.extern_sig = Some(s);
             (&s.name, DefInfo::Fn(Box::new(info)))
         }
