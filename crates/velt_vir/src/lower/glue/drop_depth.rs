@@ -8,12 +8,16 @@
 //! - In the object drop of a class, each field that leads back to the class: through arrays,
 //!   `Map`s, options, structs or other classes, or through drop glue chosen at run time
 //!   (interfaces, classes with subclasses, promises). An empty array or a null field skips the
-//!   bracket (the leaves of a tree pay nothing), and a queued field is moved to a heap box.
+//!   bracket (the leaves of a tree pay nothing), and a queued field is moved to a heap box. A
+//!   null field is a null pointer, or an option whose tag says null (`Side | null`).
 //!   Self fields that `drop_chain.rs` walks in a loop do not count: a plain list or tree needs
 //!   no bracket.
-//! - The drop of a struct or enum value that leads back to its own type (through an array).
-//!   The value lives in a slot that is freed right after (an array's buffer), so a queued value
-//!   is moved to a heap box of its own first (`Glue::QueuedDrop` drops and frees it).
+//! - In the drop of a struct value, each field that leads back to the struct's type (through
+//!   an array, a class or an interface value), as in a class: a null field or an empty array
+//!   skips the bracket, so a struct whose fields that lead back are null pays nothing. A
+//!   queued field is moved to a heap box of its own (`Glue::QueuedDrop` drops and frees it):
+//!   the value lives in a slot that is freed right after (an array's buffer).
+//! - The drop of an enum value that leads back to its own type, as a whole (queued the same way).
 //! - The drop of a boxed object type that leads back to itself (`interface Node { next?: Node
 //!   }`): the bracket is in the branch that releases the last reference, and the box itself is
 //!   queued, still holding that reference (`Glue::QueuedDrop` releases it again).
@@ -66,6 +70,12 @@ impl Cx<'_> {
         parts
             .into_iter()
             .any(|p| self.leads_to(p, Some(ty), false, &mut seen))
+    }
+
+    /// Can dropping part `t` of a struct value of `ty` nest another drop of a `ty` value (or
+    /// run glue chosen at run time)?
+    fn part_drop_reenters(&mut self, ty: TyId, t: TyId) -> bool {
+        self.leads_to(t, Some(ty), false, &mut FxHashSet::default())
     }
 
     /// Can dropping a value of `t` run drop glue chosen at run time, a function value's
@@ -169,14 +179,19 @@ impl FnLower<'_, '_> {
         self.bracket(|lw| lw.call_rt(Rt::DropQueue, vec![obj, glue], None), body);
     }
 
-    /// Drop field `fp` (of type `t`) of an object being dropped, bracketed: an empty array or
-    /// a null pointer drops at once, anything else may be queued (moved to a heap box).
+    /// Drop field `fp` (of type `t`) of an object or struct value being dropped, bracketed: an
+    /// empty array drops at once, a null pointer or option drops nothing, anything else may be
+    /// queued (moved to a heap box).
     pub(super) fn drop_field_bracketed(&mut self, fp: Place, t: TyId) {
         let join = self.new_block();
         if self.cx.ty(t) == Ty::Ptr {
             let v = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(fp.clone())));
             let nn = self.non_null(v);
             self.when(nn, join);
+        } else if matches!(self.cx.kind(t), TyKind::Option(..)) {
+            // Tag and value (an interface value, a function, a struct): a null one drops nothing.
+            let some = self.option_is_some(&fp, t);
+            self.when(some, join);
         } else if matches!(self.cx.kind(t), TyKind::Array(_)) {
             let len = Operand::Copy(proj(&fp, Proj::Field(1)));
             let some = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, len, cint(0, Ty::U64)));
@@ -205,6 +220,8 @@ impl FnLower<'_, '_> {
             self.drop_expand(&place, ty);
         } else if self.cx.boxed(ty) {
             self.drop_boxed_bracketed(&place, ty);
+        } else if !self.is_enum(ty) {
+            self.drop_struct_bracketed(&place, ty);
         } else {
             let at = place.clone();
             self.bracket(|lw| lw.queue_value(at, ty), |lw| lw.drop_expand(&place, ty));
@@ -214,6 +231,26 @@ impl FnLower<'_, '_> {
             self.switch_to(done);
         }
         self.terminate(Terminator::Return(unit()));
+    }
+
+    /// The drop of the struct `ty` value at `place`, one field after the other
+    /// (`[Symbol.dispose]()` first), each bracketed when it can lead back to a `ty` value: a null
+    /// or empty field drops without the bracket.
+    fn drop_struct_bracketed(&mut self, place: &Place, ty: TyId) {
+        let this = self.addr(place.clone());
+        self.call_dispose(this, ty);
+        let tys = self.cx.part_types(ty);
+        for (i, t) in tys.into_iter().enumerate() {
+            if !self.cx.needs_drop(t) {
+                continue;
+            }
+            let fp = self.field_place(place, ty, i as u32);
+            if self.cx.part_drop_reenters(ty, t) {
+                self.drop_field_bracketed(fp, t);
+            } else {
+                self.drop_glue(fp, t);
+            }
+        }
     }
 
     /// The drop of the boxed `ty` value at `place` (the box pointer), bracketed in the branch
