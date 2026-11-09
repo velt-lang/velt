@@ -28,12 +28,30 @@ export function turn(e: usize): void {
     m.st(e + t.E_TAIL, 0);
   }
   run(e, k);
-  // What the poll queued with `writeLater` is sent now; a busy worker looks at the reactor.
-  const b = m.ld(e + t.E_IO);
+  // One word for the I/O, counting down: it reaches 0 every 64 polls of a busy worker, or after
+  // this one when the poll queued bytes with `writeLater` (sched_io.velt `due` set it to 1).
+  const n = m.ld(e + t.E_TICK) - 1;
+  m.st(e + t.E_TICK, n);
+  if (n === 0) {
+    m.st(e + t.E_TICK, io.TICKS);
+    ioTick(m.ld(e + t.E_IO));
+  }
+}
+
+/**
+ * The I/O at the end of a poll whose tick reached 0: what is due is sent; with
+ * sockets registered, the reactor's ready events and passed deadlines are delivered without
+ * waiting, and what they made due is sent.
+ */
+function ioTick(b: usize): void {
+  noInline();
   if (m.ld(b + io.IO_DUE) !== 0) {
     w.flushDue(b);
   }
-  io.poll(b);
+  if (m.ld(b + io.IO_LIVE) === 0) {
+    return;
+  }
+  io.look(b);
   if (m.ld(b + io.IO_DUE) !== 0) {
     w.flushDue(b);
   }

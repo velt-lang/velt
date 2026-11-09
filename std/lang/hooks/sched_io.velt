@@ -7,7 +7,8 @@
 //   waking a task through its C waker, sched_task.velt `schedule`) is the reactor's own wake (an
 //   `EVFILT_USER` trigger, an eventfd write), so one wait covers sockets and wakes. There are no
 //   timers in Velt yet (Rust's wake the worker like any other thread), so the wait has no
-//   timeout. A busy worker looks at the reactor without waiting every 64 polls (`poll`).
+//   timeout. A busy worker looks at the reactor without waiting every 64 polls (`look`, from
+//   sched_run.velt `turn`).
 // - A source is registered once, for both directions, edge-triggered: an event sets its
 //   readiness bits and wakes its waiters; an operation that finds the socket not ready (EAGAIN)
 //   clears the bit, so the next edge sets it again. Its waiters are heap futures
@@ -34,8 +35,9 @@ import * as wt from "./sched_io_wait";
 /** The I/O block's address (0 until the executor starts). */
 const IO = new Atomic<u64>(0);
 
-// The I/O block: the reactor, the due list, the handle table (sched_io_table.velt), polls since
-// the last look at the reactor, the waiters' poll and drop.
+// The I/O block: the reactor, the due list, the handle table (sched_io_table.velt), the
+// address of the executor's I/O tick (sched_task.velt `E_TICK`, set to 1 when a write is due),
+// the waiters' poll and drop.
 export const IO_REACTOR: usize = 0;
 export const IO_DUE: usize = 8;
 export const IO_TABLE: usize = 16;
@@ -43,7 +45,9 @@ export const IO_CAP: usize = 24;
 export const IO_LEN: usize = 32;
 export const IO_FREE: usize = 40;
 export const IO_LIVE: usize = 48;
-const IO_TICK: usize = 56;
+export const IO_TICK_AT: usize = 56;
+/** The polls of a busy worker between two looks at the reactor. */
+export const TICKS: usize = 64;
 export const IO_WAIT_POLL: usize = 64;
 export const IO_WAIT_DROP: usize = 72;
 export const IO_TIMERS: usize = 80;
@@ -95,9 +99,11 @@ export function io(): usize {
   return IO.load("relaxed") as usize;
 }
 
-/** Makes the I/O block: the reactor, an empty table. */
-export function open(): usize {
+/** Makes the I/O block: the reactor, an empty table; `tickAt` is the executor's I/O tick. */
+export function open(tickAt: usize): usize {
   const b = m.zeroed(IO_SIZE);
+  m.st(b + IO_TICK_AT, tickAt);
+  m.st(tickAt, TICKS);
   m.st(b + IO_REACTOR, r.open());
   m.st(b + IO_WAIT_POLL, fnAddress(wt.waitPoll));
   m.st(b + IO_WAIT_DROP, fnAddress(wt.waitDrop));
@@ -131,18 +137,8 @@ export function park(b: usize): void {
   }
 }
 
-/** Every 64 polls of a busy worker: the events ready now and deadlines passed, without waiting. */
-@inline
-export function poll(b: usize): void {
-  const n = m.ld(b + IO_TICK) + 1;
-  m.st(b + IO_TICK, n);
-  if ((n & 63) === 0 && m.ld(b + IO_LIVE) !== 0) {
-    look(b);
-  }
-}
-
-@noInline
-function look(b: usize): void {
+/** The events ready now and deadlines passed, delivered without waiting (a busy worker's look). */
+export function look(b: usize): void {
   wait(b, 0);
   if (m.ld(b + IO_TIMERS) !== 0) {
     wt.expire(b);
@@ -185,6 +181,8 @@ export function due(s: usize): void {
     const b = io();
     m.st(s + S_DUE_NEXT, m.ld(b + IO_DUE));
     m.st(b + IO_DUE, s);
+    // The poll's end looks at the I/O block (the tick's next count is 0).
+    m.st(m.ld(b + IO_TICK_AT), 1);
   }
 }
 

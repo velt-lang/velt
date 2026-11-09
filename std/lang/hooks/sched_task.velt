@@ -6,8 +6,10 @@
 //   other threads, linked through their `next`), the park word, the worker's own queue (first in,
 //   first out), the live task count, the task being polled, the last microtask ticket handed out
 //   (sched_micro.velt), whether an owner is polling a promise it adopted (sched_node.velt), the
-//   two waker tables (a task's, a started promise's: sched_node.velt), and the I/O block (the
-//   reactor the worker waits in, sched_io.velt).
+//   two waker tables (a task's, a started promise's: sched_node.velt), the I/O block (the
+//   reactor the worker waits in, sched_io.velt), and the I/O tick: the polls left until the
+//   worker looks at the reactor again, set to 1 when a deferred write is due, so the end of a
+//   poll checks one word for both (sched_run.velt `turn`).
 // - A task: the table's address first (a task is its own waker), its reference count (the
 //   executor's until it is done, the join handle's, one per waker clone), its state (IDLE,
 //   SCHEDULED, RUNNING, NOTIFIED, DONE) and flags, the root's poll and drop and its state's
@@ -42,6 +44,7 @@ export const E_ADOPTING: usize = 56;
 export const E_VT: usize = 64;
 export const E_NODE_VT: usize = 96;
 export const E_IO: usize = 128;
+export const E_TICK: usize = 136;
 export const E_SIZE: usize = 144;
 
 // A task's fields.
