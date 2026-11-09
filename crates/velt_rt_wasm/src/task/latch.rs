@@ -132,13 +132,13 @@ mod tests {
         // SAFETY: `h` is live until freed; the future is owned here; `cx` outlives the polls.
         unsafe {
             let f = velt_rt_latch_wait(h);
-            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
-            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
             assert_eq!(n.woken(), 0);
             velt_rt_latch_open(h);
             assert_eq!(n.woken(), 1);
-            assert_eq!(velt_rt_fut_poll(f, cx), READY);
-            velt_rt_fut_drop(f);
+            assert_eq!(poll_fut(f, cx), READY);
+            drop_fut(f);
             velt_rt_latch_free(h);
         }
         assert!(n.balanced(), "every reference a clone took given back");

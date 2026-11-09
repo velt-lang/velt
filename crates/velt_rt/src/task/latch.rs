@@ -205,8 +205,8 @@ mod tests {
         unsafe {
             let f = velt_rt_latch_wait(h);
             // The executor's loop: poll, sleep until woken, poll again.
-            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
-            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
             assert_eq!(n.woken(), 0);
             let opener = SendHandle(h);
             let t = std::thread::spawn(move || {
@@ -217,8 +217,8 @@ mod tests {
             // reached the C table: no waiting loop.
             t.join().unwrap();
             assert_eq!(n.woken(), 1, "never woken");
-            assert_eq!(velt_rt_fut_poll(f, cx), READY);
-            velt_rt_fut_drop(f);
+            assert_eq!(poll_fut(f, cx), READY);
+            drop_fut(f);
             velt_rt_latch_free(h);
         }
         assert!(n.balanced(), "every reference a clone took given back");
@@ -237,8 +237,8 @@ mod tests {
         // SAFETY: `h` is live until freed; the future is owned here; `cx` outlives the poll.
         unsafe {
             let f = velt_rt_latch_wait(h);
-            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
-            velt_rt_fut_drop(f);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            drop_fut(f);
             assert!(n.balanced(), "the cancelled wait gave its reference back");
             let before = n.get();
             let opener = SendHandle(h);
@@ -267,10 +267,10 @@ mod tests {
         // SAFETY: as above.
         unsafe {
             let f = velt_rt_latch_wait(h);
-            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
             velt_rt_latch_open(h);
             assert_eq!(n.woken(), 1);
-            velt_rt_fut_drop(f);
+            drop_fut(f);
             velt_rt_latch_free(h);
         }
         assert!(n.balanced());

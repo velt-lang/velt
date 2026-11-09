@@ -188,7 +188,7 @@ mod tests {
     /// is the same across polls (`will_wake`), so a future that registers once clones once.
     #[test]
     fn a_leaf_polled_with_a_foreign_cx_registers_its_waker_once() {
-        use crate::task::{velt_rt_fut_drop, velt_rt_fut_poll, PENDING, READY};
+        use crate::task::{drop_fut, poll_fut, PENDING, READY};
         let t = crate::task::waker::tests::TestHeader::new();
         let word = 0u32;
         let mut cx = t.cx(&word);
@@ -196,12 +196,12 @@ mod tests {
         let f = super::new_inner_leaf(Registers { polls: 0, w: None });
         // SAFETY: the future is owned here; `cx` outlives the polls.
         unsafe {
-            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
-            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
-            assert_eq!(velt_rt_fut_poll(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
             assert_eq!(t.get()[0], 1, "one clone over three pending polls");
-            assert_eq!(velt_rt_fut_poll(f, cx), READY);
-            velt_rt_fut_drop(f);
+            assert_eq!(poll_fut(f, cx), READY);
+            drop_fut(f);
         }
         assert!(t.balanced());
     }
