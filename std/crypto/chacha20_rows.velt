@@ -5,6 +5,8 @@
 // (std/crypto/chacha20_simd.velt) would compute blocks nobody uses and the scalar block costs
 // several times more. Constant time: adds, XORs, rotations and shuffles by constants.
 
+import { inline } from "velt/lang/intrinsics";
+
 // Declared directly, as chacha20_simd.velt does (loading `velt/simd` costs compile time). The
 // loads and stores are unchecked: the callers check the ranges.
 declare function velt_simd_u32x4_load(from: u32[], at: u64): u32x4;
@@ -97,6 +99,7 @@ export function rowsBlock(state: u32[], counter: u32): Rows {
 
 // `buf[at..at + n] ^=` the first `n` bytes (at most 16) of `v`, unchecked.
 function xorPart(buf: u8[], at: usize, n: usize, v: u32x4) {
+  inline();
   const k = velt_simd_u32x4_as_u8x16(v);
   if (n >= 16) {
     const x = velt_simd_u8x16_xor(velt_simd_u8x16_load(buf, at as u64), k);
