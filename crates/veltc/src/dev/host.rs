@@ -50,6 +50,8 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
     let mut symbols = velt_rt_host::abi_symbols::symbol_table();
     symbols.extend(natives.iter().map(|(n, a)| (n.as_str(), *a as *const u8)));
     let mut session = DevSession::new(&symbols);
+    // Lowering's counted types, carried from each version to the next (dev-warm-front-end.md).
+    sess.counted_seed = Some(velt_vir::CountedSeed::default());
     session.set_debug_info(std::env::var_os(DEBUG_INFO_ENV).is_none_or(|v| v != "0"));
     let loaded = compile_and_load(&mut sess, &opts, &mut session);
     // A host started ahead of need stays quiet: the running version reports the same build.
@@ -66,7 +68,8 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
             velt_rt_host::dev::handover::report_build(socket.as_ref(), loaded.is_ok(), &files);
         match ready {
             Ok(Some(channel)) => {
-                super::swap::serve_reloads(channel, opts.clone(), session, &args.build)
+                let seed = sess.counted_seed.take();
+                super::swap::serve_reloads(channel, opts.clone(), session, seed, &args.build)
             }
             Ok(None) => {}
             Err(e) => {

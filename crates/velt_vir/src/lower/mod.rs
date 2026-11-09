@@ -67,6 +67,7 @@ mod attempt;
 mod bits;
 mod boxes;
 mod boxing;
+pub use boxing::CountedSeed;
 mod c_call;
 mod call;
 mod callee;
@@ -222,6 +223,21 @@ pub(crate) fn lower_program(
     hir: &hir::Program,
     opts: &LowerOptions,
 ) -> (vir::Program, Vec<velt_common::Diagnostic>) {
+    let (program, diags, _) = lower_program_seeded(hir, opts, false);
+    (program, diags)
+}
+
+/// [`lower_program`], starting from `opts.counted_seed` and returning the final counted types
+/// as a seed when `want_seed` (boxing/seed.rs).
+pub(crate) fn lower_program_seeded(
+    hir: &hir::Program,
+    opts: &LowerOptions,
+    want_seed: bool,
+) -> (
+    vir::Program,
+    Vec<velt_common::Diagnostic>,
+    Option<CountedSeed>,
+) {
     let mut types = hir.types.clone();
     let mut counted = boxing::Boxing::initial(hir);
     let mut no_await_steps = false;
@@ -238,6 +254,8 @@ pub(crate) fn lower_program(
         let pass = next_pass;
         next_pass += 1;
         lower_profile::start_pass();
+        #[cfg(test)]
+        PASSES.with(|n| n.set(n.get() + 1));
         let pass_start = std::time::Instant::now();
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.value_params = value_params.take();
@@ -255,6 +273,10 @@ pub(crate) fn lower_program(
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
         cx.debug = (opts.debug_info && cx.locs.is_some()).then(Default::default);
+        if let (0, Some(seed)) = (pass, opts.counted_seed) {
+            counted = cx.with_seed(counted, seed);
+            cx.boxing = counted.clone();
+        }
         cx.seed_functions();
         while let Some((fid, work)) = cx.queue.pop_front() {
             cx.build_now(fid, &work);
@@ -317,6 +339,7 @@ pub(crate) fn lower_program(
             diags.extend(cx.unavailable_diagnostics());
             diags.extend(cx.unreduced_diagnostics());
             cx.unfreeze_module_reach();
+            let seed = want_seed.then(|| cx.seed(&next));
             let types_now = cx.types.clone();
             let program = cx.finish();
             if !no_await_steps && async_fn::await_order::unobservable(&program) {
@@ -326,7 +349,7 @@ pub(crate) fn lower_program(
                 counted_passes += 1;
                 continue;
             }
-            return (program, diags);
+            return (program, diags, seed);
         }
         value_params = cx.value_params.take();
         types = cx.types;
@@ -336,6 +359,12 @@ pub(crate) fn lower_program(
         counted = next;
     }
     ice("the counted types did not converge")
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Passes `lower_program` has run on this thread (tests of the counted seed).
+    pub(crate) static PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Internal-compiler-error: lowering was handed something sema should never produce.

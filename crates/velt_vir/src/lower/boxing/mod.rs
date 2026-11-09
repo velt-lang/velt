@@ -12,6 +12,7 @@ mod kinds;
 mod locks;
 mod module_reach;
 mod replay;
+mod seed;
 mod transfers;
 mod tuples;
 mod weak;
@@ -26,6 +27,7 @@ use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 use super::Cx;
 
 pub(super) use kinds::ShareKind;
+pub use seed::CountedSeed;
 
 /// The counted types of one lowering pass.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

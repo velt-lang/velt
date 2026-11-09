@@ -25,6 +25,7 @@ pub fn serve_reloads(
     channel: Stream,
     opts: BuildOptions,
     mut session: DevSession,
+    mut seed: Option<velt_vir::CountedSeed>,
     args: &BuildArgs,
 ) {
     let flags = Report {
@@ -47,7 +48,7 @@ pub fn serve_reloads(
                         files: source_files(opts.packages.as_ref()),
                     }
                 } else {
-                    reload(&mut session, &opts, flags)
+                    reload(&mut session, &opts, flags, &mut seed)
                 };
                 if reply_reload(&channel, &reply).is_err() {
                     break;
@@ -70,11 +71,24 @@ struct Report {
 }
 
 /// Build the current sources and take them into the running program if possible.
-fn reload(session: &mut DevSession, opts: &BuildOptions, flags: Report) -> Reloaded {
+/// `seed`: lowering's counted types of the running version, replaced by the new version's when
+/// it builds.
+fn reload(
+    session: &mut DevSession,
+    opts: &BuildOptions,
+    flags: Report,
+    seed: &mut Option<velt_vir::CountedSeed>,
+) -> Reloaded {
     let verbose = flags.verbose;
     let mut sess = Session::new();
     sess.show_details = flags.details;
+    sess.counted_seed = seed
+        .clone()
+        .or_else(|| Some(velt_vir::CountedSeed::default()));
     let program = driver::compile(&mut sess, opts);
+    if program.is_ok() {
+        *seed = sess.counted_seed.take();
+    }
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
     let program = program.and_then(|p| {
