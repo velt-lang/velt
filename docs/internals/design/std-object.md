@@ -116,7 +116,10 @@ changes for them. Such a build:
   identity that can't be named, no calls through a function pointer, a `$dup` stays), under the
   same keys: the CPU the program is built for (`--cpu`, `VELT_CPU`, `build.cpu`), clang, and the code a release
   build lowered. A key says whether a release or a debug build links it, so a debug build's object
-  never serves a release build, nor the other way round.
+  never serves a release build, nor the other way round. `--cpu native` is keyed as the word, not
+  the host's CPU, so a cache shared between machines (copied, or on a network) can link objects
+  another machine built for its `native`; the LLVM unit cache has the same limitation
+  (`-march=native`).
 - links what it finds, placed before the program is optimized, as a debug build does: a miss stays
   in the program, and no clang starts for it. After optimization it links the objects of what the
   program still calls, closed over what those objects call, and removes the others from their

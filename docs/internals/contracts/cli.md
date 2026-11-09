@@ -491,8 +491,10 @@ break makes a stamp that never matches). The objects it names
   debug build's says debug, so neither serves the other). Its object has internal copies of its
   own of those functions, except those whose address it or a static it reaches takes, which are
   declarations keeping their bodies, and the program exports only those and what the object
-  declares. A found entry is placed and makes the function an `Import` declaration
-  before optimization; a miss stays in the program, and no clang starts for it, except with
+  declares. A found entry is placed before optimization; the function keeps its body through
+  velt_opt and becomes an `Import` declaration afterwards (`Served::take_out`), and what only it
+  called is removed (`velt_opt::remove_unused_functions`), so every other function is optimized as
+  without the cache; a miss stays in the program, and no clang starts for it, except with
   `VELT_STD_OBJECT_FILL` set and clang found (misses compiled alone for the program's CPU, at
   `Speed`, and stored). After optimization the objects of the functions still declared, closed
   over what those objects call, are linked; the others are removed from `<object stem>.std/`.
@@ -682,8 +684,11 @@ break makes a stamp that never matches). The objects it names
   writes the marker `<cache>/warm/<hex>` (BLAKE3 of the version line and the executable's size
   and time; `<hex>-objects` with clang found, whose builds store objects) and prints `velt: warmed the build cache with <n> programs in <s>s`. With the marker
   present it prints that the cache is warm and does nothing; one run per marker at a time
-  (`<marker>.lock`). A program that fails to build is reported (exit 1, no marker) after the
-  others ran. `--background` starts `velt cache warm` detached (own process group, lowest
+  (`<marker>.lock`). A program that fails to build is reported (exit 1) after the others ran; the
+  marker is still written, naming the failed programs, unless every program failed. `--cpu
+  native` is keyed as the word, not the host's CPU: a cache shared between machines (copied, or on
+  a network) can link objects another machine built for its `native`, as the LLVM unit cache can
+  for `-march=native`. `--background` starts `velt cache warm` detached (own process group, lowest
   priority; on Windows `CREATE_NO_WINDOW`, `IDLE_PRIORITY_CLASS`) and returns; it does nothing
   when `$CI` is set (non-empty) or `$VELT_CACHE_WARM` is `off`. The cache off →
   a note, exit 0; no warm-up directory → error. The launcher runs `velt cache warm --background`
