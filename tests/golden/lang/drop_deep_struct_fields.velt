@@ -1,8 +1,13 @@
 // check: no leaks
-// Long chains that run through struct fields (a class field holding the next struct, an
-// interface value, a `shared` box) drop without overflowing the stack (#543): each struct field
-// that can lead back to the struct is bracketed for the depth limit, as a class's field is, and
-// a null one drops at once.
+// Long chains that run through struct fields (an array of the struct itself, a class field
+// holding the next struct, an interface value, a `shared` box) drop without overflowing the
+// stack (#543): each struct field that can lead back to the struct is bracketed for the depth
+// limit, as a class's field is, and a null one drops at once.
+
+struct Tree {
+  id: i64;
+  kids: Tree[];
+}
 
 interface Side {
   id(): i64;
@@ -51,6 +56,15 @@ struct SharedLink {
   next: shared<Mutex<Cell>> | null;
 }
 
+// Struct inside struct, through the array: no class on the way to bracket it.
+function trees(n: i64): Tree {
+  let h: Tree = { id: 0, kids: [] };
+  for (let i: i64 = 1; i < n; i++) {
+    h = { id: i, kids: [h] };
+  }
+  return h;
+}
+
 function links(n: i64): Link {
   let head: Link = { id: 0, node: null };
   for (let i: i64 = 1; i < n; i++) {
@@ -78,6 +92,10 @@ function sharedLinks(n: i64): SharedLink {
 }
 
 function scopeEnd() {
+  {
+    const t = trees(1000000);
+    console.log("trees", t.id, t.kids[0].id);
+  }
   const a = links(1000000);
   const d = dynLinks(1000000);
   const s = sharedLinks(1000000);

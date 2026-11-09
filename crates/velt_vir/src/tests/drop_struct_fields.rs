@@ -170,3 +170,37 @@ function main() {
 ";
     assert_eq!(run_src(src).stdout, "199 199 199\n");
 }
+
+#[test]
+fn a_chain_of_structs_through_their_own_array_drops_from_the_queue() {
+    // Struct inside struct through an array, with no class on the way: only the struct's own
+    // bracket bounds the nesting. 200 links, depth limit 4: most of them are queued.
+    let src = "struct Tree {
+  id: i64;
+  kids: Tree[];
+}
+
+function trees(n: i64): Tree {
+  let h: Tree = { id: 0, kids: [] };
+  for (let i: i64 = 1; i < n; i++) {
+    h = { id: i, kids: [h] };
+  }
+  return h;
+}
+
+function main() {
+  {
+    const t = trees(200);
+    console.log(`${t.id}`);
+  }
+  console.log(\"ok\");
+}
+";
+    let out = run_src(src);
+    assert_eq!(out.stdout, "199\nok\n");
+    assert!(
+        out.drop_states >= 199,
+        "the links are not bracketed: {} bracketed drops",
+        out.drop_states
+    );
+}
