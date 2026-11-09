@@ -8,6 +8,7 @@
 //! | `GET  <url>/api/v1/<name>/<version>/native/<triple>` | a native bundle ([`crate::native::bundle`]) |
 //! | `PUT  <url>/api/v1/<name>/<version>/native/<triple>` | add a native bundle to a published version (same headers; never replaces one) |
 //! | `PUT` / `DELETE <url>/api/v1/<name>/<version>/yank` | yank / unyank a version ([`crate::yank`]) |
+//! | `GET` / `PUT <url>/api/v1/<name>/<version>/readme` | a published version's README (UTF-8 text, not part of the package's files); an owner may replace it |
 //! | `GET  <url>/api/v1/<name>/owners` | the package's owners, one per line |
 //! | `PUT` / `DELETE <url>/api/v1/<name>/owners/<user>` | add / remove an owner |
 //! | `GET  <url>/api/v1/search?q=<text>` | packages whose name contains the text ([`crate::search`]), as JSON |
@@ -145,6 +146,43 @@ pub fn publish_native(
 pub fn publish(url: &str, root: &Path, name: &str, entry: &IndexEntry) -> Result<(), String> {
     let body = archive::pack(root)?;
     put(url, &api(url, name, &entry.version), &entry.checksum, &body)
+}
+
+/// What `PUT /api/v1/<name>/<version>/readme` did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReadmeSent {
+    /// The registry stored it.
+    Stored,
+    /// The registry has no such request (an older server, or `velt registry serve`).
+    Unsupported,
+}
+
+/// Sends `text` as the README of the published `name` `version`.
+pub fn publish_readme(
+    url: &str,
+    name: &str,
+    version: &str,
+    text: &str,
+) -> Result<ReadmeSent, String> {
+    check_names(&[name], &[])?;
+    let target = api(url, name, &format!("{version}/readme"));
+    match write(
+        url,
+        "PUT",
+        &target,
+        &[("Content-Type", "text/markdown; charset=utf-8")],
+        text.as_bytes(),
+    ) {
+        Ok(_) => Ok(ReadmeSent::Stored),
+        // Right after its publish, the version exists: a 404 or 405 is a server without READMEs.
+        Err(e)
+            if e.starts_with(&format!("registry {url}: 404:"))
+                || e.starts_with(&format!("registry {url}: 405:")) =>
+        {
+            Ok(ReadmeSent::Unsupported)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn put(url: &str, target: &str, checksum: &str, body: &[u8]) -> Result<(), String> {
@@ -344,6 +382,14 @@ mod tests {
                 ("GET", "/api/v1/scopes/acme/owners") => Response::text(200, "alice\nbob\n"),
                 ("PUT" | "DELETE", "/api/v1/scopes/acme/owners/bob") => Response::text(200, "ok"),
                 (_, "/api/v1/scopes/acme/owners/carol") => Response::text(403, "not an owner"),
+                ("PUT", "/api/v1/lib/1.0.0/readme") => match req.body.as_slice() {
+                    b"# lib\n"
+                        if req.header("content-type") == Some("text/markdown; charset=utf-8") =>
+                    {
+                        Response::text(200, "stored")
+                    }
+                    _ => Response::text(413, "the upload is larger than 8 bytes"),
+                },
                 _ => Response::text(404, "no scope"),
             }
         });
@@ -395,6 +441,27 @@ mod tests {
                 "PUT /api/v1/scopes/acme/owners/carol",
             ]
         );
+        server.stop();
+    }
+
+    #[test]
+    fn a_readme_is_sent_with_put_and_an_older_server_is_told_apart() {
+        use super::{publish_readme, ReadmeSent};
+        let (server, log) = registry();
+        let url = format!("http://{}", server.addr());
+        assert_eq!(
+            publish_readme(&url, "lib", "1.0.0", "# lib\n").unwrap(),
+            ReadmeSent::Stored
+        );
+        let refused = publish_readme(&url, "lib", "1.0.0", "# a longer one\n").unwrap_err();
+        assert!(refused.contains("413: the upload is larger"), "{refused}");
+        // A server without the request answers 404 for a version just published.
+        assert_eq!(
+            publish_readme(&url, "other", "1.0.0", "# x\n").unwrap(),
+            ReadmeSent::Unsupported
+        );
+        assert!(publish_readme(&url, "../x", "1.0.0", "").is_err());
+        assert_eq!(log.lock().unwrap().len(), 3);
         server.stop();
     }
 }
