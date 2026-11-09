@@ -1,0 +1,367 @@
+// velt/sync (internal): the memory of a `Channel<T>` (channel.velt, #2649), in raw memory, and the
+// waits on it. channel.velt moves the values in and out (it knows `T`); everything here only
+// sees bytes and addresses.
+//
+// The block: a count (the channel's core and each wait hold one, so a wait outliving the last
+// handle reads live memory), a spin lock, the closed flag, the capacity (0: unbounded), the ring
+// of items (`len` of them from `head`, each `stride` bytes, 16-aligned, growing as needed) and
+// the two lines of waiting tasks, receives waiting for an item and sends waiting for room. All of
+// it changes under the lock; `length` and `closed` read it without.
+//
+// A wait is a heap future (rt_abi_async.md §1) that is also the waiter's place in its line
+// (channel_wait.velt): it joins the line's back with a clone of its poll's waker, and leaves in
+// constant time when it is dropped (a race's loser, a cancelled task). A push wakes the first
+// receive, a pop of a bounded channel the first send: the woken task leaves the line and looks
+// again when it runs (the item stays queued until it takes it, so `length` counts it). A woken
+// wait dropped before it looked hands the wake on while what it waited for is there, so a
+// cancelled wait never swallows a wake meant for another. Wakers are woken and dropped after the
+// lock is let go: a waker may hold the last reference to a task whose state owns a wait on this
+// channel.
+
+import {
+  inline,
+  addressLoad,
+  addressStore,
+  ptrAtomicCas,
+  ptrAtomicLoad,
+  ptrAtomicRmw,
+  ptrAtomicStore,
+  rawAlloc,
+  rawFree,
+} from "velt/lang/intrinsics";
+import { Ptr } from "velt/ffi/ptr";
+import { Backoff } from "velt/sync/backoff";
+import { wakeOwned } from "#sync-chan-word";
+
+// The block.
+const B_REFS: usize = 0;
+const B_LOCK: usize = 8;
+const B_CLOSED: usize = 12;
+const B_CAP: usize = 16;
+const B_LEN: usize = 24;
+const B_HEAD: usize = 32;
+const B_SLOTS: usize = 40;
+const B_RING: usize = 48;
+const B_STRIDE: usize = 56;
+// The lines: first and last waiter, receives then sends.
+const B_LINES: usize = 64;
+const BLOCK: usize = 96;
+
+/** A wait for an item (or the close). */
+export const RECV: usize = 0;
+/** A wait for room (or the close). */
+export const SEND: usize = 1;
+
+// A wait: the heap future's header, the block, its line, its state, its waker, its neighbours.
+export const F_BLOCK: usize = 16;
+export const F_KIND: usize = 24;
+export const F_STATE: usize = 32;
+export const F_WAKER: usize = 40;
+export const F_PREV: usize = 48;
+export const F_NEXT: usize = 56;
+export const CELL: usize = 64;
+
+// A wait's states: not in line; in line; taken out of line by a wake, not polled since; done.
+export const IDLE: u32 = 0;
+export const QUEUED: u32 = 1;
+export const WOKEN: u32 = 2;
+export const DONE: u32 = 3;
+
+export function ld(a: usize): usize {
+  inline();
+  // SAFETY: a word of a block or wait this module allocated.
+  return unsafe { addressLoad<usize>(a) };
+}
+
+export function st(a: usize, v: usize): void {
+  inline();
+  // SAFETY: as `ld`.
+  unsafe {
+    addressStore<usize>(a, v);
+  }
+}
+
+/** A word other threads read without the lock. */
+function load(a: usize): usize {
+  inline();
+  // SAFETY: as `ld`; written with `publish`.
+  return unsafe { ptrAtomicLoad(Ptr.at<usize>(a), "relaxed") };
+}
+
+function publish(a: usize, v: usize): void {
+  inline();
+  // SAFETY: as `ld`.
+  unsafe {
+    ptrAtomicStore(Ptr.at<usize>(a), v, "relaxed");
+  }
+}
+
+export function load32(a: usize): u32 {
+  inline();
+  // SAFETY: as `ld`.
+  return unsafe { ptrAtomicLoad(Ptr.at<u32>(a), "acquire") };
+}
+
+export function store32(a: usize, v: u32): void {
+  inline();
+  // SAFETY: as `ld`.
+  unsafe {
+    ptrAtomicStore(Ptr.at<u32>(a), v, "release");
+  }
+}
+
+// ---- The block. ----
+
+/** A new channel's block: `capacity` items at most (0: unbounded) of `size` bytes each. */
+export function newBlock(capacity: usize, size: usize): usize {
+  const b = rawAlloc(BLOCK);
+  let at: usize = 0;
+  while (at < BLOCK) {
+    st(b + at, 0);
+    at += 8;
+  }
+  st(b + B_REFS, 1);
+  st(b + B_CAP, capacity);
+  st(b + B_STRIDE, size <= 16 ? 16 : (size + 15) & ~(15 as usize));
+  return b;
+}
+
+/** Gives back one count of block `b`; the last frees it (its items were taken out first). */
+export function release(b: usize): void {
+  // SAFETY: the count, changed atomically by every holder.
+  const was = unsafe { ptrAtomicRmw(Ptr.at<usize>(b + B_REFS), "sub", 1, "acqrel") };
+  if (was === 1) {
+    const ring = ld(b + B_RING);
+    if (ring !== 0) {
+      // SAFETY: the ring, of `slots * stride` bytes, freed once (the last count).
+      unsafe {
+        rawFree(ring, ld(b + B_SLOTS) * ld(b + B_STRIDE));
+      }
+    }
+    // SAFETY: the block, freed once.
+    unsafe {
+      rawFree(b, BLOCK);
+    }
+  }
+}
+
+/** Takes the lock of block `b`. */
+export function lock(b: usize): void {
+  inline();
+  // SAFETY: the lock word, changed atomically.
+  if (unsafe { ptrAtomicCas(Ptr.at<u32>(b + B_LOCK), 0, 1, "acquire", "relaxed") } !== 0) {
+    lockSlow(b);
+  }
+}
+
+function lockSlow(b: usize): void {
+  const k = Backoff.create();
+  while (true) {
+    k.snooze();
+    if (
+      load32(b + B_LOCK) === 0 &&
+      // SAFETY: as `lock`.
+      unsafe { ptrAtomicCas(Ptr.at<u32>(b + B_LOCK), 0, 1, "acquire", "relaxed") } === 0
+    ) {
+      return;
+    }
+  }
+}
+
+/** Lets go of the lock of block `b`. */
+export function unlock(b: usize): void {
+  inline();
+  store32(b + B_LOCK, 0);
+}
+
+/** Whether block `b` is closed (read without the lock: a closed block stays closed). */
+export function isClosed(b: usize): bool {
+  inline();
+  return load32(b + B_CLOSED) !== 0;
+}
+
+/** The number of items queued in block `b`. */
+export function count(b: usize): usize {
+  inline();
+  return load(b + B_LEN);
+}
+
+/** Whether block `b` takes one more item. Under the lock. */
+export function hasRoom(b: usize): bool {
+  inline();
+  const cap = ld(b + B_CAP);
+  return cap === 0 || ld(b + B_LEN) < cap;
+}
+
+/** Whether block `b` is bounded (a pop makes room a send may wait for). */
+export function bounded(b: usize): bool {
+  inline();
+  return ld(b + B_CAP) !== 0;
+}
+
+/** Where a new item goes at the back of block `b`'s ring (grown if full). Under the lock. */
+export function pushAt(b: usize): usize {
+  inline();
+  const len = ld(b + B_LEN);
+  if (len === ld(b + B_SLOTS)) {
+    grow(b);
+  }
+  const slots = ld(b + B_SLOTS);
+  let i = ld(b + B_HEAD) + len;
+  if (i >= slots) {
+    i -= slots;
+  }
+  publish(b + B_LEN, len + 1);
+  return ld(b + B_RING) + i * ld(b + B_STRIDE);
+}
+
+/** Where block `b`'s oldest item is; it leaves the ring. Under the lock, with an item queued. */
+export function popAt(b: usize): usize {
+  inline();
+  const head = ld(b + B_HEAD);
+  let next = head + 1;
+  if (next === ld(b + B_SLOTS)) {
+    next = 0;
+  }
+  st(b + B_HEAD, next);
+  publish(b + B_LEN, ld(b + B_LEN) - 1);
+  return ld(b + B_RING) + head * ld(b + B_STRIDE);
+}
+
+/** Doubles the ring of block `b` (at most to its capacity), its items moved in order. */
+function grow(b: usize): void {
+  const slots = ld(b + B_SLOTS);
+  const cap = ld(b + B_CAP);
+  let more = slots === 0 ? 4 : slots * 2;
+  if (cap !== 0 && more > cap) {
+    more = cap;
+  }
+  const stride = ld(b + B_STRIDE);
+  const ring = rawAlloc(more * stride);
+  const old = ld(b + B_RING);
+  if (old !== 0) {
+    // The items are full (`len == slots`): from `head` to the end, then from the start.
+    const head = ld(b + B_HEAD);
+    const first = (slots - head) * stride;
+    copy(ring, old + head * stride, first);
+    copy(ring + first, old, head * stride);
+    // SAFETY: the old ring, whose items moved out.
+    unsafe {
+      rawFree(old, slots * stride);
+    }
+  }
+  st(b + B_RING, ring);
+  st(b + B_SLOTS, more);
+  st(b + B_HEAD, 0);
+}
+
+/** Copies `n` bytes (a multiple of 8) from `src` to `dst`, which do not overlap. */
+function copy(dst: usize, src: usize, n: usize): void {
+  let at: usize = 0;
+  while (at < n) {
+    st(dst + at, ld(src + at));
+    at += 8;
+  }
+}
+
+// ---- The lines. ----
+
+/** The first waiter of `kind`'s line in block `b`, taken out (woken): its waker, or 0. Locked. */
+export function wakeFirst(b: usize, kind: usize): usize {
+  inline();
+  const line = b + B_LINES + kind * 16;
+  const c = ld(line);
+  if (c === 0) {
+    return 0;
+  }
+  return takeFirst(line, c);
+}
+
+function takeFirst(line: usize, c: usize): usize {
+  const n = ld(c + F_NEXT);
+  st(line, n);
+  if (n === 0) {
+    st(line + 8, 0);
+  } else {
+    st(n + F_PREV, 0);
+  }
+  store32(c + F_STATE, WOKEN);
+  const w = ld(c + F_WAKER);
+  st(c + F_WAKER, 0);
+  return w;
+}
+
+/** Closes block `b` (once) and wakes every waiter: receives drain it, sends fail. */
+export function closeBlock(b: usize): void {
+  lock(b);
+  if (load32(b + B_CLOSED) !== 0) {
+    unlock(b);
+    return;
+  }
+  store32(b + B_CLOSED, 1);
+  while (true) {
+    let line = b + B_LINES;
+    if (ld(line) === 0) {
+      line += 16;
+    }
+    const c = ld(line);
+    if (c === 0) {
+      unlock(b);
+      return;
+    }
+    const w = takeFirst(line, c);
+    unlock(b);
+    if (w !== 0) {
+      wakeOwned(w);
+    }
+    lock(b);
+  }
+}
+
+/** Whether a wait of `kind` on block `b` has what it waits for. Under the lock. */
+export function ready(b: usize, kind: usize): bool {
+  if (load32(b + B_CLOSED) !== 0) {
+    return true;
+  }
+  return kind === RECV ? ld(b + B_LEN) !== 0 : hasRoom(b);
+}
+
+/** Takes wait `f` out of `kind`'s line in block `b`. Under the lock. */
+export function leave(b: usize, f: usize, kind: usize): void {
+  const line = b + B_LINES + kind * 16;
+  const prev = ld(f + F_PREV);
+  const next = ld(f + F_NEXT);
+  if (prev === 0) {
+    st(line, next);
+  } else {
+    st(prev + F_NEXT, next);
+  }
+  if (next === 0) {
+    st(line + 8, prev);
+  } else {
+    st(next + F_PREV, prev);
+  }
+}
+
+/** Wait `f` joins the back of `kind`'s line in block `b`. Under the lock. */
+export function join(b: usize, f: usize, kind: usize): void {
+  const line = b + B_LINES + kind * 16;
+  const tail = ld(line + 8);
+  st(f + F_PREV, tail);
+  st(f + F_NEXT, 0);
+  if (tail === 0) {
+    st(line, f);
+  } else {
+    st(tail + F_NEXT, f);
+  }
+  st(line + 8, f);
+  store32(f + F_STATE, QUEUED);
+}
+
+/** One more count of block `b`, for a wait. */
+export function retain(b: usize): void {
+  // SAFETY: the count, changed atomically by every holder.
+  unsafe {
+    ptrAtomicRmw(Ptr.at<usize>(b + B_REFS), "add", 1, "relaxed");
+  }
+}

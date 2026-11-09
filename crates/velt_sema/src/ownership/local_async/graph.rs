@@ -632,7 +632,7 @@ impl Walk<'_, '_> {
             }
             Intrinsic::SharedNew => Some(Boundary::Shared),
             Intrinsic::MutexNew | Intrinsic::RwLockNew => Some(Boundary::Mutex),
-            Intrinsic::ChanSend | Intrinsic::ChanTrySend => Some(Boundary::Channel),
+            Intrinsic::SlotPut => Some(Boundary::Channel),
             Intrinsic::Transfer => Some(Boundary::Settle),
             _ => None,
         };

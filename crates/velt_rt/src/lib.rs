@@ -33,7 +33,6 @@ pub mod fmt;
 pub mod fn_props;
 pub mod freed;
 pub mod fs;
-pub mod global;
 pub mod handle;
 pub mod hash;
 pub mod hazard;

@@ -63,11 +63,6 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("atomicRmw", Op(I::AtomicRmw)),
     ("atomicSpinHint", Op(I::AtomicSpinHint)),
     ("atomicStore", Op(I::AtomicStore)),
-    // channel.velt
-    ("chanReceive", Op(I::ChanReceive)),
-    ("chanSend", Op(I::ChanSend)),
-    ("chanTryReceive", Op(I::ChanTryReceive)),
-    ("chanTrySend", Op(I::ChanTrySend)),
     // compare.velt
     ("hash", Op(I::Hash)),
     ("includesEq", Op(I::IncludesEq)),

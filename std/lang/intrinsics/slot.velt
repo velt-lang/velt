@@ -1,9 +1,9 @@
 // velt/lang/intrinsics (internal): an owned value moved into and out of raw memory, for std's
-// one-shot hand-off and, later, its channel in Velt (#2649). The memory and the state that says
-// whether it holds a value are the caller's; these move the value's bytes with the ownership
-// accounting the compiler does for any move. `slotSize<T>()` says how many bytes a `T` takes;
-// `rawAlloc` and `rawFree` give out and take back such memory on every target. That memory is
-// aligned to 8 bytes, enough for every type: the compiler aligns a value to at most 8 bytes.
+// one-shot hand-off and its channel (#2649). The memory and the state that says whether it holds
+// a value are the caller's; these move the value's bytes with the ownership accounting the
+// compiler does for any move. `slotSize<T>()` says how many bytes a `T` takes; `rawAlloc` and
+// `rawFree` give out and take back such memory on every target. That memory is aligned to 8
+// bytes, enough for every type: the compiler aligns a value to at most 8 bytes.
 
 import { inline, intrinsic } from "./decorators";
 import type { Owned } from "./modes";

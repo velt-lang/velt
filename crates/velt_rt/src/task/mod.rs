@@ -14,7 +14,6 @@
 
 pub mod abort;
 pub mod all;
-pub mod channel;
 pub mod compiled;
 pub mod coop;
 pub mod group;

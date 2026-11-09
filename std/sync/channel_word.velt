@@ -1,0 +1,42 @@
+// velt/sync (internal): the channel's view of a poll's `cx` and of a waker's table
+// (rt_abi_async.md §1) where a pointer takes 8 bytes: the waker is `cx`'s second word, and the
+// table's entries (clone, wake, wake_by_ref, drop) are 8 bytes apart. std/imports.velt picks
+// channel_word_wasm.velt on WebAssembly, whose pointers take 4.
+
+import { addressCall, addressLoad, inline, stateDrop } from "velt/lang/intrinsics";
+
+/** The waker header of the poll whose `cx` is at `cx`, borrowed for the poll. */
+export function wakerOf(cx: usize): usize {
+  inline();
+  // SAFETY: `cx` is a poll's context: its await word, then its waker.
+  return unsafe { addressLoad<usize>(cx + 8) };
+}
+
+/** Entry `i` of waker `w`'s table. */
+function entry(w: usize, i: usize): usize {
+  inline();
+  // SAFETY: `w` is a waker header: its first word is its table of four functions.
+  return unsafe { addressLoad<usize>(addressLoad<usize>(w) + i * 8) };
+}
+
+/** One more reference to waker `w`. */
+export function wakerClone(w: usize): usize {
+  // SAFETY: entry 0 is `clone`, which takes the header and returns one.
+  return unsafe { addressCall(entry(w, 0), w) };
+}
+
+/** Wakes waker `w`, giving its reference back. */
+export function wakeOwned(w: usize): void {
+  // SAFETY: entry 1 is `wake`, which takes the header.
+  unsafe {
+    stateDrop(entry(w, 1), w);
+  }
+}
+
+/** Gives waker `w`'s reference back. */
+export function wakerDrop(w: usize): void {
+  // SAFETY: entry 3 is `drop`, which takes the header.
+  unsafe {
+    stateDrop(entry(w, 3), w);
+  }
+}

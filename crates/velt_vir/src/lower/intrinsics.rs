@@ -444,11 +444,7 @@ impl FnLower<'_, '_> {
                 | I::RwLockNew
                 | I::LockRead
                 | I::PromiseWiden
-                | I::PromiseSame
-                | I::ChanSend
-                | I::ChanReceive
-                | I::ChanTrySend
-                | I::ChanTryReceive,
+                | I::PromiseSame,
                 _,
             ) => self.async_intrinsic(i, args, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),

@@ -264,19 +264,6 @@ pub enum Intrinsic {
     /// std only: `firstFulfilled(ps: Promise<T, E>[]): Promise<T, E>` — the first to
     /// fulfill, or the last rejection when all reject (std/prelude/promise.velt `promiseAny`).
     PromiseAny,
-    /// std only (std/sync/channel.velt): `chanSend<T>(ch: u64, value: T):
-    /// Promise<bool>` — moves `value` into the channel; false (and `value` dropped) if it is
-    /// closed.
-    ChanSend,
-    /// std only: `chanReceive<T>(ch: u64): Promise<T | null>` — the oldest value,
-    /// or null once the channel is closed and drained.
-    ChanReceive,
-    /// std only: `chanTrySend<T>(ch: u64, value: T): bool` — moves `value` into
-    /// the channel if it has room; false (and `value` dropped) if it is full or closed.
-    ChanTrySend,
-    /// std only: `chanTryReceive<T>(ch: u64): T | null` — the oldest value if one
-    /// is queued.
-    ChanTryReceive,
     /// Compiler-internal (no source syntax): the location of the call's span as a string,
     /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.velt).
     SourceLocation,

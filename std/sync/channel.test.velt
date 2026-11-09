@@ -1,0 +1,176 @@
+// velt/sync (tests): `Channel<T>` in Velt (channel.velt, channel_block.velt): values come out
+// in the order they went in; a bounded channel holds at most its capacity and `length` counts
+// what is queued; a closed channel wakes every waiter; a wait dropped while in line leaves it,
+// and one woken and dropped before it looked hands the wake on; every value is dropped exactly
+// once.
+import { describe, expect, it } from "velt/test";
+import { blockOf, Channel, channel } from "./channel";
+import { RECV } from "./channel_block";
+import { newCell } from "./channel_wait";
+import { dropAddress, pollAddress } from "#sync-chan-entry";
+import { promiseAt } from "velt/lang/intrinsics";
+
+const DROPS = new Atomic<i64>(0);
+
+class Item {
+  id: i64;
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    DROPS.add(1);
+  }
+}
+
+async function receiveOne(ch: Channel<i64>): Promise<i64> {
+  return (await ch.receive()) ?? -1;
+}
+
+async function sendAll(ch: Channel<i64>, n: i64): Promise<i64> {
+  for (let i: i64 = 0; i < n; i++) {
+    await ch.send(i);
+  }
+  return n;
+}
+
+async function sendOrFail(ch: Channel<i64>, v: i64): Promise<i64> {
+  try {
+    await ch.send(v);
+    return 1;
+  } catch (e) {
+    return 0;
+  }
+}
+
+async function firstOf(a: Promise<void>, b: Promise<void>): Promise<void> {
+  await Promise.race<void>([a, b]);
+}
+
+async function yieldThenSend(ch: Channel<i64>, v: i64): Promise<bool> {
+  await yieldNow();
+  return ch.trySend(v);
+}
+
+/** A raw wait for an item of `ch`, as a receive makes when the channel is empty. */
+function waitIn(ch: Channel<i64>): Promise<void> {
+  // SAFETY: a heap future of the channel's block, given up to the promise.
+  return unsafe { promiseAt<void>(newCell(blockOf(ch), RECV, pollAddress(), dropAddress())) };
+}
+
+describe("velt/sync Channel", () => {
+  it("keeps the order of what is sent, across a grown ring", async () => {
+    const ch = channel<i64>();
+    for (let i: i64 = 0; i < 100; i++) {
+      expect(ch.trySend(i)).toBe(true);
+    }
+    expect(ch.length).toBe(100);
+    for (let i: i64 = 0; i < 50; i++) {
+      expect(ch.tryReceive()).toBe(i);
+    }
+    // Wraps around the ring's end before it grows again.
+    for (let i: i64 = 100; i < 300; i++) {
+      ch.trySend(i);
+    }
+    for (let i: i64 = 50; i < 300; i++) {
+      expect(await ch.receive()).toBe(i);
+    }
+    expect(ch.tryReceive()).toBe(null);
+  });
+
+  it("holds at most its capacity, and a send waits for room", async () => {
+    const ch = channel<i64>(2);
+    expect(ch.trySend(1)).toBe(true);
+    expect(ch.trySend(2)).toBe(true);
+    expect(ch.trySend(3)).toBe(false);
+    expect(ch.length).toBe(2);
+    const sender = spawn(sendAll(ch, 5));
+    await yieldNow();
+    expect(ch.length <= 2).toBe(true);
+    let sum: i64 = 0;
+    for (let i: i64 = 0; i < 7; i++) {
+      sum += (await ch.receive()) ?? 100;
+      expect(ch.length <= 2).toBe(true);
+    }
+    expect(await sender).toBe(5);
+    expect(sum).toBe(1 + 2 + 0 + 1 + 2 + 3 + 4);
+  });
+
+  it("close wakes every waiting receive and send", async () => {
+    const empty = channel<i64>();
+    const receivers: Promise<i64>[] = [];
+    for (let i: i64 = 0; i < 8; i++) {
+      receivers.push(spawn(receiveOne(empty)));
+    }
+    const full = channel<i64>(1);
+    full.trySend(0);
+    const senders: Promise<i64>[] = [];
+    for (let i: i64 = 0; i < 8; i++) {
+      senders.push(spawn(sendOrFail(full, i)));
+    }
+    await yieldNow();
+    empty.close();
+    full.close();
+    for (const r of receivers) {
+      expect(await r).toBe(-1);
+    }
+    let sent: i64 = 0;
+    for (const s of senders) {
+      sent += await s;
+    }
+    expect(sent).toBe(0);
+    expect(full.tryReceive()).toBe(0);
+    expect(await full.receive()).toBe(null);
+  });
+
+  it("a wait dropped while in line leaves it", async () => {
+    for (let round = 0; round < 50; round++) {
+      const ch = channel<i64>();
+      const w = waitIn(ch);
+      const sender = spawn(yieldThenSend(ch, round));
+      // The wait joins the line, then the race drops it (the yield finishes first).
+      await Promise.race<void>([yieldNow(), w]);
+      const receiver = spawn(receiveOne(ch));
+      expect(await sender).toBe(true);
+      expect(await receiver).toBe(round);
+    }
+  });
+
+  it("a wait woken and dropped before it looked hands the wake on", async () => {
+    for (let round = 0; round < 50; round++) {
+      const ch = channel<i64>();
+      const gate = channel<i64>();
+      // The race's two waits join their lines (the one on `ch` first there), and a receive in
+      // a task of its own joins behind it. The gate opens, then the send wakes the first wait
+      // on `ch`: the race finishes with the gate and drops that wait before it looked, so the
+      // wake goes on to the receive (polled only when its own task is woken).
+      const raced = firstOf(waitIn(gate), waitIn(ch));
+      const receiver = spawn(receiveOne(ch));
+      await yieldNow();
+      gate.trySend(0);
+      expect(ch.trySend(round)).toBe(true);
+      await raced;
+      expect(await receiver).toBe(round);
+    }
+  });
+
+  it("drops every value exactly once: received, refused, or left in the channel", async () => {
+    const before = DROPS.load();
+    {
+      const ch = channel<Item>(3);
+      ch.trySend(new Item(1));
+      ch.trySend(new Item(2));
+      ch.trySend(new Item(3));
+      // Full: refused and dropped.
+      expect(ch.trySend(new Item(4))).toBe(false);
+      expect(ch.tryReceive()?.id).toBe(1);
+      ch.close();
+      // Closed: refused and dropped.
+      expect(ch.trySend(new Item(5))).toBe(false);
+      expect(DROPS.load() - before).toBe(3);
+      // Items 2 and 3 are dropped with the channel's last copy.
+    }
+    expect(DROPS.load() - before).toBe(5);
+  });
+});

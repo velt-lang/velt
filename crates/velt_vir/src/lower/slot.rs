@@ -1,10 +1,10 @@
 //! The std-only slot intrinsics (std/lang/intrinsics/slot.velt): an owned value moved into and
 //! out of raw memory, with the ownership accounting of any move, for std's one-shot hand-off
-//! and, later, its channel in Velt (#2649). `slotPut` transfers the value as a channel send does
+//! and its channel (#2649). `slotPut` transfers the value as a spawn argument is
 //! (`transfer_value`: moved when this task held the only reference, else copied; a resource
 //! still shared stops the program, #2613); `slotTake` hands an owned value out; `promiseAt`
-//! owns a heap future made by std's executor; `rawAlloc`/`rawFree` give std that raw memory on
-//! every target, from the allocator compiled code uses.
+//! owns a heap future made by std; `rawAlloc`/`rawFree` give std that raw memory on every
+//! target, from the allocator compiled code uses.
 
 use velt_sema::hir::{self, TyId};
 

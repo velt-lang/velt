@@ -51,7 +51,6 @@ export {
   atomicSpinHint,
   atomicStore,
 } from "velt/lang/intrinsics/atomic";
-export { chanReceive, chanSend, chanTryReceive, chanTrySend } from "velt/lang/intrinsics/channel";
 export { hash, includesEq, keyEq } from "velt/lang/intrinsics/compare";
 export {
   addressCall,

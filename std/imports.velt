@@ -46,5 +46,18 @@ export const imports: Imports = {
     linux: "./net/sys_linux.velt",
     default: "./net/sys_none.velt",
   },
+  // velt/sync's channel (std/sync/channel_block.velt): how its waits read a poll's `cx` and a
+  // waker's table, and the C functions of their heap futures, by the size of a pointer
+  // (WebAssembly's take 4 bytes).
+  "#sync-chan-word": {
+    wasi: "./sync/channel_word_wasm.velt",
+    js: "./sync/channel_word_wasm.velt",
+    default: "./sync/channel_word.velt",
+  },
+  "#sync-chan-entry": {
+    wasi: "./sync/channel_entry_wasm.velt",
+    js: "./sync/channel_entry_wasm.velt",
+    default: "./sync/channel_entry.velt",
+  },
   "#net-tcp": { "std-scheduler": "./net/tcp_sched.velt", default: "./net/rt.velt" },
 };

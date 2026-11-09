@@ -239,10 +239,9 @@ HPACK fields; `FieldList` keeps them as the HTTP/1.1 `Head` does, bytes plus off
 - **One session per origin, shared by every task.** A session is a task of its own that owns
   the connection (`ClientSession`). Requests reach it on a channel (`H2Call`), each with a
   channel of its own for the response (`H2Event`: head, body pieces, end, error). Sessions are
-  found by origin in a map kept in the runtime slot std assigns to them (rt_abi_async.md §2.2,
-  slot 1, as velt/net/websocket's topics use slot 0): not module state, which would make every
-  task that fetches take the module lock at each poll, and not an `Atomic` of a `shared` map,
-  whose epoch bookkeeping outlives the program and fails std's leak checks. The first request
+  found by origin in a map kept in a static atomic (an `Atomic<shared<T> | null>` module
+  constant, released at exit for the leak counters; velt/net/websocket's topics do the same):
+  not module state, which would make every task that fetches take the module lock at each poll. The first request
   to an origin claims the entry before it connects, so requests started meanwhile queue on the
   same session instead of opening connections; if ALPN says HTTP/1.1 they are told to retry and
   take the HTTP/1.1 path.
