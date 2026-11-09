@@ -2,14 +2,28 @@
 //! when the compiler starts (velt_common `std_hooks::std_scheduler`), lowering calls its hooks
 //! where it would call the runtime's executor: `velt_main`'s root (`velt_rt_block_on`), a spawn
 //! from an initial state (`velt_rt_spawn`, `velt_rt_spawn_transfer`), `await yieldNow()`
-//! (`velt_rt_yield_now`), and at the end of `velt_main` the tasks still alive. The choice is made
-//! here, at compile time: a program pays no branch for it when it runs. Everything else (started
-//! promises, `spawn` of a promise value, combinators, timers' order) still goes to the runtime,
+//! (`velt_rt_yield_now`), boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`,
+//! `_start_rejecting`), the microtask step of `await` (`velt_rt_await_tick`, `_ready`), the
+//! prelude's microtasks (`velt_rt_microtask`), and at the end of `velt_main` the tasks still
+//! alive. The choice is made
+//! here, at compile time: a program pays no branch for it when it runs. Everything else (`spawn`
+//! of a promise value, combinators, `new Promise`'s latch, timers' order) still goes to the runtime,
 //! whose leaves wake the Velt executor's tasks through their C waker.
 
 use super::hook_calls::{self as hooks, ty, HookTy};
+use super::rt::Rt;
 use super::FnLower;
-use crate::vir::{Operand, Rvalue, Ty};
+use crate::vir::{Const, Operand, Place, Rvalue, Ty};
+
+/// The externs std declares whose jobs the executor in Velt does: the prelude's microtasks
+/// (std/prelude/promise.velt) and `new Promise`'s latch (std/lang/promise/settle.velt).
+pub(super) const EXTERNS: &[&str] = &[
+    "velt_rt_microtask",
+    "velt_rt_latch_new",
+    "velt_rt_latch_free",
+    "velt_rt_latch_open",
+    "velt_rt_latch_wait",
+];
 
 impl FnLower<'_, '_> {
     /// Does this program run on the executor in Velt? Not on a JS host, whose turns the host
@@ -32,6 +46,7 @@ impl FnLower<'_, '_> {
     /// `spawn(f(...))` from an initial state: `velt_rt_spawn`'s arguments (a transfer function
     /// after them is left out: the task runs on this thread), the join handle.
     pub(super) fn sched_spawn(&mut self, args: Vec<Operand>) -> Operand {
+        self.cx.sched_tasks = true;
         let [poll, drop, state, size, align, rsize, rdrop] =
             <[Operand; 7]>::try_from(args.into_iter().take(7).collect::<Vec<_>>())
                 .unwrap_or_else(|_| super::ice("a spawn takes seven arguments"));
@@ -57,10 +72,144 @@ impl FnLower<'_, '_> {
         hooks::sched_yield(self, ty::USize::arg(cx)).emit(self);
     }
 
-    /// The end of `velt_main`: the tasks still alive run to completion.
-    pub(super) fn sched_finish(&mut self) {
+    /// The end of `velt_main` with exit code `code`: when it is 0, the tasks still alive run to
+    /// completion.
+    pub(super) fn sched_finish(&mut self, code: &Operand) {
         if self.std_sched() {
-            hooks::sched_finish(self).emit(self);
+            let code = self.rvalue_temp(Ty::I32, Rvalue::Use(code.clone()));
+            hooks::sched_finish(self, ty::I32::arg(code)).emit(self);
         }
+    }
+
+    /// Runtime call `r` with `args` (result into `dest`) as the executor in Velt's hook, when it
+    /// has one; else `args` and `dest` back.
+    pub(super) fn sched_rt(
+        &mut self,
+        r: Rt,
+        args: Vec<Operand>,
+        dest: Option<Place>,
+    ) -> Result<(), (Vec<Operand>, Option<Place>)> {
+        if !matches!(
+            r,
+            Rt::FutBox
+                | Rt::FutStart
+                | Rt::FutStartRejecting
+                | Rt::FutDetach
+                | Rt::FutsHandled
+                | Rt::AwaitTick
+                | Rt::AwaitReady
+        ) || !self.std_sched()
+        {
+            return Err((args, dest));
+        }
+        let ret = r.sig().2;
+        if matches!(r, Rt::FutStart | Rt::FutStartRejecting | Rt::FutDetach) {
+            self.cx.sched_tasks = true;
+        }
+        let v = match (r, <[Operand; 5]>::try_from(args.clone())) {
+            (Rt::FutBox, Ok([poll, drop, state, size, align])) => {
+                let [poll, drop, state] = [poll, drop, state].map(|o| self.as_usize(o));
+                let c = hooks::sched_box(
+                    self,
+                    ty::USize::arg(poll),
+                    ty::USize::arg(drop),
+                    ty::USize::arg(state),
+                    ty::U64::arg(size),
+                    ty::U64::arg(align),
+                );
+                Some(c.emit(self).op())
+            }
+            _ => match (r, args.as_slice()) {
+                (Rt::FutStart | Rt::FutStartRejecting, [f, rdrop]) => {
+                    let (f, rdrop) = (self.as_usize(f.clone()), self.as_usize(rdrop.clone()));
+                    let rejecting =
+                        Operand::Const(Const::Bool(r == Rt::FutStartRejecting), Ty::Bool);
+                    hooks::sched_start(
+                        self,
+                        ty::USize::arg(f),
+                        ty::USize::arg(rdrop),
+                        ty::Bool::arg(rejecting),
+                    )
+                    .emit(self);
+                    None
+                }
+                (Rt::FutDetach, [f, qdrop]) => {
+                    let (f, qdrop) = (self.as_usize(f.clone()), self.as_usize(qdrop.clone()));
+                    hooks::sched_detach(self, ty::USize::arg(f), ty::USize::arg(qdrop)).emit(self);
+                    None
+                }
+                (Rt::FutsHandled, [futs, n, qdrop]) => {
+                    let (futs, qdrop) = (self.as_usize(futs.clone()), self.as_usize(qdrop.clone()));
+                    let n = n.clone();
+                    let c = hooks::sched_handled(
+                        self,
+                        ty::USize::arg(futs),
+                        ty::U64::arg(n),
+                        ty::USize::arg(qdrop),
+                    );
+                    c.emit(self);
+                    None
+                }
+                (Rt::AwaitTick, [cx]) => {
+                    let cx = self.as_usize(cx.clone());
+                    Some(
+                        hooks::sched_await_tick(self, ty::USize::arg(cx))
+                            .emit(self)
+                            .op(),
+                    )
+                }
+                (Rt::AwaitReady, [ticket, cx]) => {
+                    let (ticket, cx) = (ticket.clone(), self.as_usize(cx.clone()));
+                    let c =
+                        hooks::sched_await_ready(self, ty::U64::arg(ticket), ty::USize::arg(cx));
+                    Some(c.emit(self).op())
+                }
+                _ => super::ice("a runtime call of the executor with other arguments"),
+            },
+        };
+        if let (Some(v), Some(d)) = (v, dest) {
+            self.assign(d, Rvalue::Cast(v, ret));
+        }
+        Ok(())
+    }
+
+    /// A call of extern `symbol` (one of [`EXTERNS`]) with `args`, of result type `ret`, as the
+    /// executor in Velt's hook.
+    pub(super) fn sched_extern(
+        &mut self,
+        symbol: &str,
+        args: &[velt_sema::hir::Expr],
+        ret: velt_sema::hir::TyId,
+    ) -> Operand {
+        let arg = |lw: &mut Self| match args {
+            [a] => lw.expr(a),
+            _ => super::ice("a latch call takes the latch"),
+        };
+        let fut = match symbol {
+            "velt_rt_microtask" => hooks::sched_microtask(self).emit(self).op(),
+            "velt_rt_latch_wait" => {
+                let l = arg(self);
+                hooks::sched_latch_wait(self, ty::U64::arg(l))
+                    .emit(self)
+                    .op()
+            }
+            "velt_rt_latch_new" => return hooks::sched_latch_new(self).emit(self).op(),
+            "velt_rt_latch_free" => {
+                let l = arg(self);
+                return hooks::sched_latch_free(self, ty::U64::arg(l))
+                    .emit(self)
+                    .op();
+            }
+            _ => {
+                let l = arg(self);
+                return hooks::sched_latch_open(self, ty::U64::arg(l))
+                    .emit(self)
+                    .op();
+            }
+        };
+        let d = self.temp(Ty::Ptr);
+        self.assign(Place::local(d), Rvalue::Cast(fut, Ty::Ptr));
+        let rt = self.sub(ret);
+        self.owned_result(Some(d), rt)
     }
 }

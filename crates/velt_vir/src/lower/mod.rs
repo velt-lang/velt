@@ -476,6 +476,7 @@ struct Cx<'h> {
     /// (static_atomic.rs).
     static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
     fut_header: Option<crate::vir::AggId>, // a heap future's header (raw_memory.rs `fut_header`)
+    sched_tasks: bool, // the executor in Velt's hooks start promises or spawn tasks (sched.rs)
     /// The class id number of each `struct` type with an interface table (class_test.rs
     /// `VALUE_IDS`), in the order the tables are made.
     value_ids: FxHashMap<TyId, u64>,

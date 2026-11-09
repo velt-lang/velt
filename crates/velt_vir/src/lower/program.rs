@@ -71,6 +71,7 @@ impl<'h> Cx<'h> {
             module_desc: None,
             static_atomics: FxHashMap::default(),
             fut_header: None,
+            sched_tasks: false,
             value_ids: FxHashMap::default(),
             reassigned_slots: None,
             assigned_fields: None,
@@ -397,9 +398,11 @@ impl<'h> Cx<'h> {
     /// Whether the code built so far starts promises or tasks (a synchronous `main` then runs as a
     /// task, entry.rs).
     pub(super) fn reaches_tasks(&self) -> bool {
-        self.extern_map
-            .keys()
-            .any(|s| s.starts_with("velt_rt_fut_start") || s.starts_with("velt_rt_spawn"))
+        self.sched_tasks
+            || self
+                .extern_map
+                .keys()
+                .any(|s| s.starts_with("velt_rt_fut_start") || s.starts_with("velt_rt_spawn"))
     }
 
     /// [`func_for`](Self::func_for), called directly from code that is `checked` or not.

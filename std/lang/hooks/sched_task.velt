@@ -1,0 +1,206 @@
+// velt/lang/hooks (internal): the tasks of the executor in Velt (sched.velt, #2649): the
+// executor's and a task's layout, waking a task (its C waker's table) and the worker's queues.
+//
+// Everything is raw memory (sched_mem.velt), so nothing here is module state (which is per task):
+// - The executor, allocated once, its address in `EXEC`: the inbox (a stack of tasks woken from
+//   other threads, linked through their `next`), the park word, the worker's own queue (first in,
+//   first out), the live task count, the task being polled, the base of the last microtask
+//   queue's tickets, whether an owner is polling a promise it adopted (sched_node.velt), and the
+//   two waker tables (a task's, a started promise's: sched_node.velt).
+// - A task: the table's address first (a task is its own waker), its reference count (the
+//   executor's until it is done, the join handle's, one per waker clone), its state (IDLE,
+//   SCHEDULED, RUNNING, NOTIFIED, DONE) and flags, the root's poll and drop and its state's
+//   address, the result's size and drop glue, the waker of the task awaiting it, the `cx` its
+//   polls get and its await word, the started promises woken (a stack other threads push on),
+//   how many it drives that are unfinished, its microtask queue (sched_micro.velt; 0 until the
+//   first entry), the rejected promises nobody handled, reported once its microtasks are drained
+//   (sched_node.velt `report`), the join handle (a heap future, rt_abi_async.md §1) whose result slot follows,
+//   then the initial state copied in: one allocation per spawn.
+//
+// One worker (VELT_THREADS=1 scope): the live count and a task's join slot and flags are plain
+// memory the worker alone changes; they become atomics in the multi-worker step (#2649 step 3).
+
+import { inline } from "velt/lang/intrinsics";
+import { parkWake } from "#sched-park";
+import * as m from "./sched_mem";
+
+/** The executor's address (0 until it starts). */
+const EXEC = new Atomic<u64>(0);
+/** Is this thread the worker? */
+const ON_WORKER = new ThreadLocal<bool>(false);
+
+// The executor's fields.
+export const E_INBOX: usize = 0;
+export const E_PARK: usize = 8;
+export const E_HEAD: usize = 16;
+export const E_TAIL: usize = 24;
+export const E_LIVE: usize = 32;
+export const E_CURRENT: usize = 40;
+export const E_TICKET: usize = 48;
+export const E_ADOPTING: usize = 56;
+export const E_VT: usize = 64;
+export const E_NODE_VT: usize = 96;
+export const E_SIZE: usize = 128;
+
+// A task's fields.
+export const T_REFS: usize = 8;
+export const T_STATE: usize = 16;
+export const T_FLAGS: usize = 20;
+export const T_NEXT: usize = 24;
+export const T_POLL: usize = 32;
+export const T_DROP: usize = 40;
+export const T_ROOT: usize = 48;
+export const T_RESULT_DROP: usize = 56;
+export const T_RESULT_SIZE: usize = 64;
+export const T_JOINER: usize = 72;
+export const T_CX: usize = 80;
+export const T_WORD: usize = 96;
+export const T_WOKEN: usize = 104;
+export const T_LOCALS: usize = 112;
+export const T_MICRO: usize = 120;
+export const T_UNHANDLED: usize = 128;
+export const T_JOIN: usize = 144;
+export const T_SLOT: usize = 160;
+
+// A task's states.
+export const IDLE: u32 = 0;
+export const SCHEDULED: u32 = 1;
+export const RUNNING: u32 = 2;
+export const NOTIFIED: u32 = 3;
+export const DONE: u32 = 4;
+
+// A task's flags: its join handle is alive; the handle took the result; the root of `main`; it
+// started a promise (check the woken ones); its root finished (its result is in the slot); it
+// counts as live (the root of `main` with promises left running); the microtask being run is a
+// waiter's step already (sched_micro.velt).
+export const HANDLE: u32 = 1;
+export const CLAIMED: u32 = 2;
+export const ROOT: u32 = 4;
+export const LOCALS: u32 = 8;
+export const ROOT_DONE: u32 = 16;
+export const COUNTED: u32 = 64;
+export const CREDIT: u32 = 128;
+
+/** The executor (started by sched.velt before anything here runs). */
+@inline
+export function exec(): usize {
+  return EXEC.load("relaxed") as usize;
+}
+
+/** Makes `e` the executor, with this thread its worker. */
+export function install(e: usize): void {
+  ON_WORKER.set(true);
+  EXEC.store(e as u64, "release");
+}
+
+/** Is this thread the worker? */
+@inline
+export function onWorker(): bool {
+  return ON_WORKER.get();
+}
+
+/** Adds `d` to the word at `a`, which only the worker changes. */
+@inline
+export function bump(a: usize, d: usize): void {
+  m.st(a, m.ld(a) + d);
+}
+
+/** Changes the flags of task `t`: `set` on, `clear` off (worker only). */
+@inline
+export function flags(t: usize, set: u32, clear: u32): void {
+  m.st32(t + T_FLAGS, (m.ld32(t + T_FLAGS) | set) & ~clear);
+}
+
+/** Has task `t` flag `f`? */
+@inline
+export function has(t: usize, f: u32): bool {
+  return (m.ld32(t + T_FLAGS) & f) !== 0;
+}
+
+// ---- A task's waker table: C calls these, from any thread. ----
+
+export function wakerClone(w: usize): usize {
+  m.inc(w + T_REFS);
+  return w;
+}
+
+export function wakerWake(w: usize): void {
+  wake(w);
+  release(w);
+}
+
+export function wakerWakeByRef(w: usize): void {
+  wake(w);
+}
+
+export function wakerDrop(w: usize): void {
+  release(w);
+}
+
+/** Wakes task `t`: queued once if idle, polled again if running. */
+export function wake(t: usize): void {
+  let s = m.load32(t + T_STATE);
+  while (true) {
+    if (s === IDLE) {
+      const was = m.cas32(t + T_STATE, IDLE, SCHEDULED);
+      if (was === IDLE) {
+        schedule(exec(), t);
+        return;
+      }
+      s = was;
+    } else if (s === RUNNING) {
+      const was = m.cas32(t + T_STATE, RUNNING, NOTIFIED);
+      if (was === RUNNING) {
+        return;
+      }
+      s = was;
+    } else {
+      return;
+    }
+  }
+}
+
+/** Gives back one reference to task `t`: the last frees it. */
+export function release(t: usize): void {
+  if (m.dec(t + T_REFS) === 1) {
+    m.release(t);
+  }
+}
+
+/** Queues scheduled task `t`: on the worker's own queue, or from another thread its inbox. */
+export function schedule(e: usize, t: usize): void {
+  if (ON_WORKER.get()) {
+    push(e, t);
+    return;
+  }
+  m.pushStack(e + E_INBOX, t, T_NEXT);
+  if (m.load32(e + E_PARK) === 1) {
+    m.store32(e + E_PARK, 0);
+    parkWake(e + E_PARK);
+  }
+}
+
+/** Appends `t` to the worker's own queue. */
+export function push(e: usize, t: usize): void {
+  m.st(t + T_NEXT, 0);
+  const tail = m.ld(e + E_TAIL);
+  if (tail === 0) {
+    m.st(e + E_HEAD, t);
+  } else {
+    m.st(tail + T_NEXT, t);
+  }
+  m.st(e + E_TAIL, t);
+}
+
+/** The task a waker header belongs to (a task, or a promise one drives); 0 for another table. */
+export function taskOf(w: usize): usize {
+  const e = exec();
+  const vt = m.ld(w);
+  if (vt === e + E_VT) {
+    return w;
+  }
+  if (vt === e + E_NODE_VT) {
+    return m.ld(w + 48);
+  }
+  return 0;
+}

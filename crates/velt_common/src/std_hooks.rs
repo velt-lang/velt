@@ -250,18 +250,34 @@ hooks! {
     /// replaces its calls by the runtime's (`async_fn/suspend.rs`).
     top_level_await_at => lang_hooks_process, "topLevelAwaitAt", sig((&string) -> void), lowered;
 
-    // sched.velt: the executor in Velt (#2649 step 3.1), which lowering calls instead of the
-    // runtime's in a program compiled with `VELT_SCHEDULER=std` ([`std_scheduler`]), which is when
-    // sema demands their module (`velt_sema` `lazy_std`); not loaded otherwise, nor up front.
-    /// `velt_main`'s root task (`velt_rt_block_on`'s job): `(poll, state)`.
+    // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
+    /// `velt_rt_block_on`'s job: `(poll, state)`.
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize) -> void), lowered;
-    /// `spawn(f(...))` (`velt_rt_spawn`'s job): `(poll, drop, state, size, align, result_size,
-    /// result_drop)`, the join handle.
+    /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
     sched_spawn => lang_hooks_sched, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize) -> usize), lowered;
-    /// `await yieldNow()` (`velt_rt_yield_now`'s job): `(cx)`.
+    /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code, which runs
+    /// the tasks left when it is 0.
     sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
-    /// The end of `velt_main`: the tasks still alive run to completion.
-    sched_finish => lang_hooks_sched, "schedFinish", sig(() -> void), lowered;
+    sched_finish => lang_hooks_sched, "schedFinish", sig((i32) -> void), lowered;
+    /// `velt_rt_fut_box`'s: `(poll, drop, state, size, align)`, the lazy boxed promise.
+    sched_box => lang_hooks_sched, "schedBox", sig((usize, usize, usize, u64, u64) -> usize), lowered;
+    /// `velt_rt_fut_start`'s and `_start_rejecting`'s: `(f, result_drop, rejecting)`; then
+    /// `velt_rt_fut_detach`'s: `(f, quiet_drop)`.
+    sched_start => lang_hooks_sched, "schedStart", sig((usize, usize, bool) -> void), lowered;
+    sched_detach => lang_hooks_sched, "schedDetach", sig((usize, usize) -> void), lowered;
+    /// `velt_rt_futs_handled`'s: `(futs, n, quiet_drop)`.
+    sched_handled => lang_hooks_sched, "schedHandled", sig((usize, u64, usize) -> void), lowered;
+    /// `velt_rt_await_tick`'s: `(cx)`, the ticket; then `velt_rt_await_ready`'s: `(ticket, cx)`.
+    sched_await_tick => lang_hooks_sched, "schedAwaitTick", sig((usize) -> u64), lowered;
+    sched_await_ready => lang_hooks_sched, "schedAwaitReady", sig((u64, usize) -> u32), lowered;
+    /// `velt_rt_microtask`'s (std/prelude/promise.velt's extern): the heap future.
+    sched_microtask => lang_hooks_sched, "schedMicrotask", sig(() -> usize), lowered;
+    /// `velt_rt_latch_new`'s, `_free`'s, `_open`'s and `_wait`'s (std/lang/promise/settle.velt's
+    /// externs): a latch is its address; a wait is a heap future.
+    sched_latch_new => lang_hooks_sched, "schedLatchNew", sig(() -> u64), lowered;
+    sched_latch_free => lang_hooks_sched, "schedLatchFree", sig((u64) -> void), lowered;
+    sched_latch_open => lang_hooks_sched, "schedLatchOpen", sig((u64) -> void), lowered;
+    sched_latch_wait => lang_hooks_sched, "schedLatchWait", sig((u64) -> usize), lowered;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
@@ -754,15 +770,8 @@ mod deleted;
 pub use deleted::DELETED;
 mod scheduler;
 pub use scheduler::{std_scheduler, SCHEDULER_ENV};
-
-/// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).
-pub fn find(qualified: &str) -> Option<&'static Hook> {
-    let (module, item) = qualified.rsplit_once("::")?;
-    let rel = module.strip_prefix(crate::std_modules::CANONICAL_PREFIX)?;
-    HOOKS
-        .iter()
-        .find(|h| h.item == item && crate::std_modules::rel(h.module_entry) == Some(rel))
-}
+mod lookup;
+pub use lookup::{find, is_lowered, on_demand};
 
 /// Lowered hooks that sema checks only once the program's own code converts a value that may hold
 /// a float to text (`velt_sema` `lazy_std`), by their entries' names: the float hooks, whose whole
@@ -782,29 +791,6 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_float",
     "std/lang/hooks/any_record",
 ];
-
-/// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).
-pub fn on_demand(names: &'static [&'static str]) -> impl Iterator<Item = String> {
-    HOOKS
-        .iter()
-        .filter(move |h| names.contains(&h.name))
-        .map(Hook::qualified)
-}
-
-/// Is the definition with qualified name `qualified` a hook lowering calls by name?
-pub fn is_lowered(qualified: &str) -> bool {
-    static LOWERED: std::sync::OnceLock<std::collections::HashSet<String>> =
-        std::sync::OnceLock::new();
-    LOWERED
-        .get_or_init(|| {
-            HOOKS
-                .iter()
-                .filter(|h| h.lowered)
-                .map(Hook::qualified)
-                .collect()
-        })
-        .contains(qualified)
-}
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]

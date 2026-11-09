@@ -49,7 +49,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if f.is_async {
             lw.push_scope(ScopeKind::Block);
             let code = lw.run_async_main(def);
-            lw.sched_finish();
+            lw.sched_finish(&code);
             lw.register_statics_drop();
             lw.terminate(Terminator::Return(code));
             lw.scopes.clear();
@@ -69,7 +69,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             match lw.run_root(root, s) {
                 Some(_) => {
                     let code = lw.sync_main_tail(s, ret, throws);
-                    lw.sched_finish();
+                    lw.sched_finish(&code);
                     code
                 }
                 None => cint(0, Ty::I32),

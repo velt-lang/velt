@@ -17,8 +17,9 @@ fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// `src` built (with `VELT_SCHEDULER=std` when `std`) and run: its stdout, and its binary.
-fn build_and_run(dir: &Path, name: &str, src: &str, std: bool) -> (String, Vec<u8>) {
+/// `src` built (with `VELT_SCHEDULER=std` when `std`) and run, which must exit with `code`: its
+/// stdout, and its binary.
+fn build_and_run(dir: &Path, name: &str, src: &str, std: bool, code: i32) -> (String, Vec<u8>) {
     let file = dir.join(format!("{name}.velt"));
     std::fs::write(&file, src).unwrap();
     let exe = dir.join(format!(
@@ -48,8 +49,9 @@ fn build_and_run(dir: &Path, name: &str, src: &str, std: bool) -> (String, Vec<u
         .env_remove("VELT_SCHEDULER")
         .output()
         .unwrap();
-    assert!(
-        o.status.success(),
+    assert_eq!(
+        o.status.code(),
+        Some(code),
         "{name} (std: {std}): {}{}",
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
@@ -64,10 +66,15 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 
 /// Builds and runs `src` both ways: each prints `want`, and only the std build has the executor.
 fn same_on_both(name: &str, src: &str, want: &str) {
+    same_on_both_exiting(name, src, want, 0);
+}
+
+/// [`same_on_both`] for a program that exits with `code`.
+fn same_on_both_exiting(name: &str, src: &str, want: &str, code: i32) {
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let (rt, rt_bin) = build_and_run(dir.path(), name, src, false);
-    let (std, std_bin) = build_and_run(dir.path(), name, src, true);
+    let (rt, rt_bin) = build_and_run(dir.path(), name, src, false, code);
+    let (std, std_bin) = build_and_run(dir.path(), name, src, true, code);
     assert_eq!(rt, want, "{name}: the runtime's executor");
     assert_eq!(std, want, "{name}: the executor in Velt");
     assert!(
@@ -182,5 +189,82 @@ async function main() {
 }
 ",
         "text 3, text 4\nmain done\nlate task done\n",
+    );
+}
+
+#[test]
+fn started_promises_run_at_once_and_microtasks_keep_node_order() {
+    // A stored promise runs until its first `await` when it is created; `await` steps, `then`
+    // and `queueMicrotask` take turns in one queue; a `resolve` called later queues its waiter.
+    same_on_both(
+        "started_micro",
+        "async function f(n: i64): Promise<i64> {
+  console.log(`f${n} start`);
+  await yieldNow();
+  console.log(`f${n} resumed`);
+  return n * 10;
+}
+
+async function g(tag: string): Promise<void> {
+  console.log(tag, 1);
+  await null;
+  console.log(tag, 2);
+  await Promise.resolve();
+  console.log(tag, 3);
+}
+
+async function main() {
+  const p = f(1);
+  const q = f(2);
+  console.log(\"after starts\");
+  console.log(await p + await q);
+  const { promise, resolve } = Promise.withResolvers<i64>();
+  const w = promise.then((v) => console.log(\"then\", v));
+  const gx = g(\"x\");
+  queueMicrotask(() => console.log(\"qm\"));
+  resolve(5);
+  const gy = g(\"y\");
+  console.log(\"sync end\");
+  await w;
+  await gx;
+  await gy;
+}
+",
+        "f1 start\nf2 start\nafter starts\nf1 resumed\nf2 resumed\n30\nx 1\ny 1\nsync end\nx 2\nqm\nthen 5\ny 2\nx 3\ny 3\n",
+    );
+}
+
+#[test]
+fn a_combinators_losers_are_handled_and_an_exit_code_ends_at_once() {
+    // A rejected promise handed to `Promise.all` is handled by it (no uncaught report after the
+    // rejection is caught); `main` returning 3 does not wait for the sleeping loser.
+    same_on_both_exiting(
+        "handled_exit",
+        "class Failed extends Error {}
+
+async function fail(ms: i64): Promise<i64> throws Failed {
+  await sleep(ms);
+  throw new Failed(`failed after ${ms}`);
+}
+
+async function slow(): Promise<i64> {
+  await sleep(3000);
+  console.log(\"the loser finished\");
+  return 1;
+}
+
+async function main(): Promise<i32> {
+  try {
+    await Promise.all([fail(5), fail(30)]);
+  } catch (e) {
+    console.log(\"caught\", e.message);
+  }
+  const p = slow();
+  console.log(\"returning\");
+  return 3;
+}
+",
+        "caught failed after 5\nreturning\n",
+        3,
     );
 }

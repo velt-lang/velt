@@ -210,6 +210,10 @@ impl FnLower<'_, '_> {
         let hir::Def::ExternFn(x) = self.cx.hir.def(def) else {
             ice("not an extern")
         };
+        if super::sched::EXTERNS.contains(&x.symbol.as_str()) && self.std_sched() {
+            let (symbol, ret) = (x.symbol.clone(), x.ret);
+            return self.sched_extern(&symbol, args, ret);
+        }
         let foreign = x
             .params
             .iter()
