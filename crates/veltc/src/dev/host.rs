@@ -69,7 +69,11 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
         match ready {
             Ok(Some(channel)) => {
                 let seed = sess.counted_seed.take();
-                super::swap::serve_reloads(channel, opts.clone(), session, seed, &args.build)
+                let own = loaded
+                    .is_ok()
+                    .then(|| super::edits::Snapshot::of_build(&sess, &opts.input));
+                let state = super::swap::Carried { seed, own };
+                super::swap::serve_reloads(channel, opts.clone(), session, state, &args.build)
             }
             Ok(None) => {}
             Err(e) => {

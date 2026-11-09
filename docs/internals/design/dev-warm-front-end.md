@@ -127,7 +127,55 @@ whose trace holds in the new program; it lowers the rest.
 - The debug optimizer then runs only on lowered (not reused) functions: its passes are per
   function in the debug pipeline (−18 ms).
 
-### Step 3: warm sema (expected −170 ms)
+### Step 3: the body-edit fast path (early cutoff)
+
+The common save while iterating edits a function's body and nothing else. Borrowed from blaze
+(indexable-inc/blaze, a Rust build tool that keeps a project compiled and reports about 20 ms
+from save to running code): every definition has an *interface* (what other code can observe:
+its signature, inferred return type, error set, ownership pass modes, write effects, fresh
+returns) and a *body*. When a body edit leaves the interface the same, nothing that depends on
+the definition is redone. That cut-off replaces most of what 3c below would have to prove pass
+by pass: passes that read other definitions read their interfaces, which are the same by
+construction.
+
+The fast path, per save:
+1. Parse only the changed files (step 1) and compare each top-level definition with the running
+   version's, by its source text: unchanged, a function whose body alone changed, or anything
+   else (a signature, a type, an import, a definition added or removed), which takes the cold
+   front end as today.
+2. Check only the changed bodies, in the running version's checking context kept by the host
+   (sema's `Ctx`, with the modules it borrows), with every other definition's results fixed:
+   the per-function parts of the passes after `check_bodies` (ownership patching, moves,
+   exclusive access, the lock and thread checks) run for those functions alone.
+3. Recompute their interfaces. Unchanged: lower them in the running version's lowering context,
+   splice them into its VIR, and hand that to the JIT (which already compiles only what
+   changed). Changed: the cold front end.
+4. Definitions after an edited one in the same file keep their code but not their positions: the
+   source locations they carry (panic messages, line tables) are shifted by the edit's change
+   in length.
+
+What it needs, as separate pull requests, each falling back to the cold front end when unsure:
+- **A. Change detection** (`veltc` dev host): per-definition source hashes and the edit's kind,
+  reported by `velt dev -v`. No behavior change; the gate for the rest.
+- **B. Interface summaries** (`velt_sema`): a hash per function of what other code observes,
+  computed after the check, compared between versions.
+- **C. A kept checking context** (`velt_sema`, dev only): the host keeps the running version's
+  `Ctx` and modules; a body is checked again in it, with its closures' definitions replaced and
+  its diagnostics its own.
+- **D. Per-function passes** (`velt_sema`): the passes after `check_bodies` run for a set of
+  functions with the rest fixed.
+- **E. Splicing into the lowering** (`velt_vir`, dev only): the running version's lowering
+  context lowers the changed functions (and instances they newly reach) into the kept VIR;
+  locations after an edit shift.
+- **F. Verification:** `VELT_DEV_VERIFY=1` also runs the cold front end and compares the
+  swapped functions' VIR fingerprints and the diagnostics; the reload tests run in this mode in
+  CI.
+
+Expected for a body edit of `http_hello`'s handler: parse ~5 ms, check and passes a few ms,
+lowering a few ms, JIT and swap ~15 ms: about 20–40 ms from save to the new response, against
+about 450 ms now. Edits that change an interface keep today's path until 3a–3c below grow.
+
+### Step 3a–3c: warm sema for every edit (expected −170 ms)
 
 The most work and the biggest share. Sema checks the program in one `Ctx`, in rounds; its
 whole-program passes (ownership modes, throws, moves, exclusive access) iterate over every body.
@@ -196,6 +244,7 @@ package-cache.md is their counterpart, and steps 1–2 share its building blocks
 
 ## Order of work and risk
 
+0. Step 3's fast path A–F: the body edit, the common save, first.
 1. Step 1 (warm parse): small, contained in `velt_loader` and the dev host; measurable alone
    (its `Words` fix for every build is in).
 2. Step 2a (done), then the `Facts` interface and recorder (package-cache.md step 1) and

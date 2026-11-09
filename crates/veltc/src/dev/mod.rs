@@ -13,6 +13,7 @@
 //!   it before exiting; on Windows `job` also ties programs to the supervisor.
 
 mod child;
+mod edits;
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod fault;
 mod host;
