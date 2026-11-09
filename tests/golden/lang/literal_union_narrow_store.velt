@@ -11,3 +11,10 @@ function k(z: "b" | "c", c: boolean) { if (c) return 1; return z; }
 console.log(k("c", true), k("b", false));
 function m(z: "b" | "c", c: boolean) { if (c) return "A"; return z; }
 console.log(m("c", true), m("b", false));
+// The narrowed member returned twice, from a nested function, and before the string.
+function twice(x: Lit) { if (x === "a") return "A"; if (x === "b") return x; return x; }
+console.log(twice("a"), twice("b"), twice("c"));
+function outer(x: Lit) { function inner(y: Lit) { if (y !== "a") return y; return "none"; } return inner(x) + "!"; }
+console.log(outer("a"), outer("c"));
+function first(x: "b" | "c") { if (x === "b") return x; return "A"; }
+console.log(first("b"), first("c"));
