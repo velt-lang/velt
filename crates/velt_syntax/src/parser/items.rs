@@ -245,7 +245,18 @@ impl<'a> Parser<'a> {
             self.bump(); // decorator
         }
         is_async |= self.eat_kw(Kw::Async);
-        let mut sig = self.parse_fn_sig(lo, is_async)?;
+        // `declare decorator function export(…)`: the one place, beside a decorator's head, where
+        // the keyword `export` is a name (#2203 step 5).
+        let mut sig =
+            match is_decorator && self.at_kw(Kw::Function) && self.nth(1) == Tok::Kw(Kw::Export) {
+                true => {
+                    self.bump(); // function
+                    let name = self.take_ident();
+                    self.decorated_params = true;
+                    self.parse_sig_rest(lo, name, is_async, false)?
+                }
+                false => self.parse_fn_sig(lo, is_async)?,
+            };
         sig.is_system = is_system;
         sig.is_unsafe = is_unsafe;
         sig.is_decorator = is_decorator;

@@ -612,6 +612,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::PtrAtomicRmw
         | I::PtrAtomicCas
         | I::PtrAtomicCasWeak
+        | I::ExportedAddress
         | I::Exit
         | I::Panic
         | I::ArrayWithCapacity

@@ -148,6 +148,7 @@ table! {
     ffi_c_string => "ffi/c_string",
     ffi_out => "ffi/out",
     ffi_out_ptr => "ffi/out_ptr",
+    ffi_export => "ffi/export",
     /// `velt/host`: `HostRef`, the handle to a JS value host functions pass (https://veltlang.com/docs/reference/host-functions/).
     host => "host",
     host_host_ref => "host/host_ref",

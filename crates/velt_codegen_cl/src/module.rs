@@ -212,7 +212,11 @@ fn compile_function(
         Translation::NeedsLib(lib) => return Ok(Outcome::NeedsLib(lib)),
     };
     let hit = compile_one(target.isa(), &mut ctx, &func.symbol, cache)?;
-    let unwind = unwind_info(target.isa(), id, &ctx, &func.symbol)?;
+    // A function C calls has none, so an unwind can't pass it (`Function::stops_unwind`).
+    let unwind = match func.stops_unwind {
+        true => None,
+        false => unwind_info(target.isa(), id, &ctx, &func.symbol)?,
+    };
     let lines = match program.files.is_empty() {
         true => None,
         false => FunctionLines::new(id, func, &ctx, &srclocs),

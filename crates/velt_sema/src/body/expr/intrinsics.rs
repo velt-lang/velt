@@ -51,6 +51,9 @@ impl FnCx<'_, '_> {
         };
         let what = format!("intrinsic `{}`", self.cx.fn_info(d).name);
         self.check_unsafe_call(d, &what, span);
+        if i == Intrinsic::ExportedAddress {
+            return self.exported_address(args, span);
+        }
         let f = self.cx.fn_info(d);
         let c = Callable {
             what,
@@ -91,6 +94,41 @@ impl FnCx<'_, '_> {
             self.spawned_promises(&e);
         }
         e
+    }
+
+    /// `exportedAddress(f)`: `f` names an `@export` function (`decorators::export`); the call
+    /// is the intrinsic with the index of its `hir::CExport` as its argument, which lowering
+    /// turns into the address of the C function it builds for it.
+    fn exported_address(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
+        let usize_ty = self.cx.ty.intern(TyKind::Int(hir::IntTy::USize));
+        let path = match args {
+            [a] => crate::decorators::path_of(a).map(|p| (p, a.span)),
+            _ => None,
+        };
+        let found = path.and_then(|(path, at)| {
+            let last = path.last()?.span;
+            match self.cx.lookup_path_at(self.module, &path, last) {
+                Some(crate::ctx::Item::Def(d)) => {
+                    let i = self.cx.c_exports.iter().position(|e| e.def == d)?;
+                    Some((i, at))
+                }
+                _ => None,
+            }
+        });
+        let Some((index, at)) = found else {
+            let at = args.first().map_or(span, |a| a.span);
+            self.cx.error(
+                Diagnostic::error("`exportedAddress` takes the name of an `@export` function", at)
+                    .with_note("its address is the C function's, which only an `@export(\"c_name\")` function has"),
+            );
+            return self.error_expr(span);
+        };
+        let lit = self.mk(
+            hir::ExprKind::Lit(hir::Lit::Int(index as u128)),
+            usize_ty,
+            at,
+        );
+        self.intrinsic(Intrinsic::ExportedAddress, vec![lit], usize_ty, span)
     }
 
     /// `arrayCopyBytes<T>` writes raw bytes as `T`s, so `T` must be a number type or `bool`: a

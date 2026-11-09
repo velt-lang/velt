@@ -33,6 +33,7 @@ fn func(locals: usize, blocks: Vec<BasicBlock>) -> Function {
         cold: false,
         target: None,
         inline: crate::vir::Inline::Default,
+        stops_unwind: false,
     }
 }
 

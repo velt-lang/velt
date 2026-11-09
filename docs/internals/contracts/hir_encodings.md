@@ -1728,3 +1728,15 @@ each found by its `def`'s qualified name from the hook table (`std_hooks`, `deco
 and `@noInline` on a `Def(f)` set `vir::Function::inline` (contracts README "Inlining
 decorators"); `@intrinsic` is sema's alone. A TC39 run-time decorator
 is an error until #2204, so it never gets here.
+
+`@export("c_name")` (velt/ffi, `std_hooks` `decorator_export`, #2203 step 5) is read through its
+own side table, `Program::c_exports: Vec<CExport>`, in the order sema checked them (empty without
+any). `CExport { def, name, params: Vec<CTy>, ret: CTy, span }`: `def` is a top-level `Def::Fn`
+that is neither generic, async nor a generator and throws nothing (`throws` is `None` or
+`never`); `name` a C identifier no other export, `declare c` function, the runtime (`velt_…`) or
+C (`__…`, `_X…`, `main`, keywords, the common C library names) has; `params` and `ret` what
+crosses for each parameter and the result, as for a `declare c` function by value (integers,
+`F32`, `F64`, `Bool`, `Ptr`, and `Void` for the result). Lowering builds a C function for each
+(docs/internals/design/c-ffi.md "Exported functions"). `Intrinsic::ExportedAddress` (std only,
+`exportedAddress(f)`) has one argument, a `Lit::Int`: the index of `f`'s `CExport` there; its
+value is the C function's address as a `usize`.

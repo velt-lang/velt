@@ -10,6 +10,7 @@
 export {
   addressLoad,
   addressStore,
+  exportedAddress,
   ptrAtomicCas,
   ptrAtomicCasWeak,
   ptrAtomicLoad,

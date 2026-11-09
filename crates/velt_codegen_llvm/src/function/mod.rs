@@ -22,7 +22,9 @@ use velt_vir::vir::{self, Ty};
 
 use crate::debug::{DebugInfo, FnDebug};
 use crate::inlining::Caps;
-use crate::module::{define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS};
+use crate::module::{
+    define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS, STOP_UNWIND_ATTRS,
+};
 use crate::statics::StaticNames;
 use crate::target::Target;
 use crate::tbaa::Access;
@@ -193,8 +195,12 @@ pub(crate) fn emit_function(
             None => "",
         },
     };
+    let attrs = match function.stops_unwind {
+        true => STOP_UNWIND_ATTRS,
+        false => FN_ATTRS,
+    };
     Ok(format!(
-        "{} {}({}) {FN_ATTRS}{}{features}{define_dbg} {{\n{}}}\n",
+        "{} {}({}) {attrs}{}{features}{define_dbg} {{\n{}}}\n",
         define_prefix(function, how)?,
         global_name(&function.symbol),
         definition_params(function)?,

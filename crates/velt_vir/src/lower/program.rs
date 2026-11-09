@@ -236,6 +236,7 @@ impl<'h> Cx<'h> {
                 | Work::Main
                 | Work::ModuleInit(..)
                 | Work::StaticsDrop
+                | Work::CExport(_)
                 | Work::ArrayGrow
                 | Work::ArrayTooLong
                 | Work::Oob(_)

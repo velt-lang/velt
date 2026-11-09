@@ -1,0 +1,85 @@
+// velt/ffi (tests): white-box tests of `@export("c_name")` (#2203 step 5), run by `velt test std/`.
+//
+// The C library calls exported Velt functions through their addresses (`exportedAddress`):
+// `qsort` and `bsearch` call a comparator for every step.
+import { describe, expect, it } from "velt/test";
+import { Ptr } from "velt/ffi";
+import * as ffi from "velt/ffi";
+import { export as cExport } from "velt/ffi";
+import { addressLoad, exportedAddress } from "velt/lang/intrinsics";
+
+declare c("c") function qsort(base: i32[], n: usize, size: usize, compare: Ptr<void>): void;
+declare c("c") function bsearch(
+  key: i32[],
+  base: i32[],
+  n: usize,
+  size: usize,
+  compare: Ptr<void>,
+): Ptr<i32> | null;
+
+/** The `i32` `p` points at. */
+function read(p: Ptr<i32>): i32 {
+  // SAFETY: the C library passes pointers to elements of the arrays it was given.
+  return unsafe { addressLoad<i32>(Ptr.addressOf(p)) };
+}
+
+@ffi.export("std_ffi_test_ascending")
+function ascending(a: Ptr<i32>, b: Ptr<i32>): i32 {
+  const x = read(a);
+  const y = read(b);
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+@cExport("std_ffi_test_descending")
+function descending(a: Ptr<i32>, b: Ptr<i32>): i32 {
+  return ascending(b, a);
+}
+
+/** The address C calls `f` at. */
+function comparator(ascendingOrder: boolean): Ptr<void> {
+  // SAFETY: both functions take two pointers to `i32`s and return an `int`, as `qsort` and
+  // `bsearch` call them.
+  return unsafe { Ptr.at<void>(
+    ascendingOrder ? exportedAddress(ascending) : exportedAddress(descending),
+  ) };
+}
+
+describe("@export", () => {
+  it("C calls an exported function through its address", () => {
+    const xs: i32[] = [5, -3, 9, 0, 9, 2];
+    // SAFETY: `xs` holds six 4-byte elements, which the comparator reads.
+    unsafe {
+      qsort(xs, 6, 4, comparator(true));
+    }
+    expect(xs.join(",")).toBe("-3,0,2,5,9,9");
+    // SAFETY: as above.
+    unsafe {
+      qsort(xs, 6, 4, comparator(false));
+    }
+    expect(xs.join(",")).toBe("9,9,5,2,0,-3");
+  });
+
+  it("its result crosses back: a pointer from C, and NULL", () => {
+    const xs: i32[] = [1, 4, 9, 16, 25];
+    // SAFETY: `xs` is sorted for the comparator, and both arrays hold 4-byte elements.
+    const found = unsafe { bsearch([16], xs, 5, 4, comparator(true)) };
+    expect(found === null).toBe(false);
+    if (found !== null) {
+      expect(read(found)).toBe(16);
+    }
+    // SAFETY: as above.
+    const missing = unsafe { bsearch([5], xs, 5, 4, comparator(true)) };
+    expect(missing === null).toBe(true);
+  });
+
+  it("the function stays a Velt function for Velt callers", () => {
+    const xs: i32[] = [7, 8];
+    expect(xs.length).toBe(2);
+    expect(exportedAddressNonZero()).toBe(true);
+  });
+});
+
+function exportedAddressNonZero(): boolean {
+  // SAFETY: the address is only compared, never called.
+  return unsafe { exportedAddress(ascending) } != 0;
+}

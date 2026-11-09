@@ -1,0 +1,13 @@
+export_decorator.velt:5:1: error: `velt_main` can't be the C name of an `@export` function
+  = note: names starting with `velt_` are the Velt runtime's
+
+export_decorator.velt:8:1: error: `@export` doesn't apply to a generic function: C calls one function, with one signature
+  = note: C calls an exported function directly, with the C calling convention
+
+export_decorator.velt:14:15: error: parameter `s` of an `@export` function has type `string`, which can't cross from C
+  = note: C passes integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, `Ptr<T>` and `Ptr<T> | null` (velt/ffi), as a `declare c` function's do, and `void` as the result
+
+export_decorator.velt:21:1: error: two functions are exported to C as `lib_twice`
+
+export_decorator.velt:24:1: error: the `@export` function `lib_throws` may throw `Error`, which can't reach C
+  = note: C has no exceptions: catch the error in the function and return a result C can read

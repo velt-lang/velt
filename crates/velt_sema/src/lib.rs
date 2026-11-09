@@ -571,6 +571,7 @@ fn check_timed(
         any_fn_views,
         generated: generated.into_iter().collect(),
         decorators: std::mem::take(&mut cx.decorator_uses).into_iter().collect(),
+        c_exports: std::mem::take(&mut cx.c_exports),
     };
     (
         (Some(Checked::Program(Box::new(program))), diags),
@@ -703,6 +704,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         return;
     }
     timings::pass("hooks::check_throws", || hooks::check_throws(cx));
+    decorators::export_throws(cx);
     let uses = timings::pass("record_keys::check_instantiations", || {
         record_keys::check_instantiations(cx)
     });

@@ -1,0 +1,17 @@
+// velt/ffi (internal): `@export("c_name")`, a Velt function C calls (#2203 step 5,
+// docs/internals/design/c-ffi.md "Exported functions"). The compiler finds the decorator through
+// its role in `velt_common::std_hooks` (`decorator_export`), never by its name.
+
+/**
+ * On a top-level function: C calls it as `name`, an unmangled symbol with the target's C calling
+ * convention. Its parameters and result cross as a `declare c` function's do (integers, `f32`,
+ * `f64`, `bool`, `Ptr<T>`, `Ptr<T> | null`, and `void` as the result); it is not generic, async or
+ * a generator, and throws nothing. `name` is a C identifier, unique in the program, outside the
+ * names the runtime and C reserve (`velt_…`, `__…`, `main`). A panic that reaches it ends the
+ * process there: nothing unwinds into C. The function stays an ordinary Velt function for Velt
+ * callers.
+ *
+ * `export` is a keyword, so a module imports it under another name (`import { export as cExport }
+ * from "velt/ffi"`) or through a namespace (`@ffi.export("name")`).
+ */
+export declare decorator function export(name: string): FunctionDecorator;

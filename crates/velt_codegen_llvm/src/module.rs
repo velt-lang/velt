@@ -21,6 +21,10 @@ use crate::CodegenResult;
 
 /// Attribute group of defined functions.
 pub(crate) const FN_ATTRS: &str = "#0";
+/// Attribute group of the functions C calls (`vir::Function::stops_unwind`): those of
+/// [`FN_ATTRS`] with `nounwind` for `uwtable`, so they get no unwind information and an unwind
+/// can't pass them into C.
+pub(crate) const STOP_UNWIND_ATTRS: &str = "#10";
 /// Attribute group of ordinary externs (C functions and the Rust runtime do not unwind into
 /// Velt code: Rust `extern "C"` aborts on panic).
 const EXTERN_ATTRS: &str = "#1";
@@ -194,6 +198,14 @@ pub(crate) fn emit_unit_capped(
         out,
         "\nattributes {FN_ATTRS} = {{ {} }}",
         target.function_attributes().join(" ")
+    );
+    let stop: Vec<&str> = (target.function_attributes().into_iter())
+        .map(|a| if a == "uwtable" { "nounwind" } else { a })
+        .collect();
+    let _ = writeln!(
+        out,
+        "attributes {STOP_UNWIND_ATTRS} = {{ {} }}",
+        stop.join(" ")
     );
     let _ = writeln!(out, "attributes {EXTERN_ATTRS} = {{ \"velt-extern\" }}");
     let _ = writeln!(out, "attributes {NORETURN_ATTRS} = {{ noreturn }}");

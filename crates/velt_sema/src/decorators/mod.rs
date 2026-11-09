@@ -3,9 +3,11 @@
 //! supported yet, #2204) when it resolves to anything else. A use is checked against the
 //! declaration like a call, with arguments that must be constants ([`consts`]), and recorded
 //! for its readers in `Program::decorators`. A program without decorators pays one look per
-//! definition here, and nothing later. The decorators the compiler acts on itself are [`known`]'s.
+//! definition here, and nothing later. The decorators the compiler acts on itself are [`known`]'s
+//! and [`export`]'s.
 
 mod consts;
+mod export;
 mod known;
 mod scope;
 mod suffixes;
@@ -19,6 +21,8 @@ use crate::ctx::{Ctx, Item};
 use crate::defs::{DefInfo, FnInfo, FnKind, FnSource};
 use crate::hir::{self, ConstTree, DecoratorTarget, DefId};
 
+pub(crate) use consts::path_of;
+pub(crate) use export::throws as export_throws;
 pub(crate) use known::{intrinsics, Inline};
 pub(crate) use scope::Scopes;
 
@@ -104,6 +108,7 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>, from: u32) {
     let mut seen = FxHashSet::default();
     let mut properties = AbstractProperties::default();
     let roles = known::Roles::find(cx);
+    let export_role = export::role(cx);
     for i in from as usize..cx.info.len() {
         let d = DefId(i as u32);
         match &cx.info[i] {
@@ -124,6 +129,7 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>, from: u32) {
                     function_uses(cx, d, module, kind, property, sig);
                     let is_abstract = properties.is_abstract(cx, d, sig);
                     known::function_hints(cx, roles, d, sig, is_abstract);
+                    export::check(cx, export_role, d, sig);
                 }
             }
             DefInfo::Adt(a) => {

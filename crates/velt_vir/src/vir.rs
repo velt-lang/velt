@@ -263,6 +263,12 @@ pub struct Function {
     /// std decorators `@inline` and `@noInline` (std/lang/intrinsics/decorators.velt). Set by
     /// lowering; `velt_opt` keeps it on clones.
     pub inline: Inline,
+    /// A function C calls (`@export("c_name")`, lowering's c_export.rs): backends emit it without
+    /// unwind information (LLVM: `nounwind`, no `uwtable`), so an unwind started below it (a
+    /// Velt panic that a `catchPanic` further up would stop) can't pass it into C frames: the
+    /// unwinder finds no way past it and the process aborts. Never on Windows, whose unwinder
+    /// takes a function without unwind information for a leaf. False for every other function.
+    pub stops_unwind: bool,
 }
 
 /// A function's inlining, as std's decorators set it (`vir::Function::inline`).
@@ -328,6 +334,7 @@ impl Function {
             target: None,
             cold: false,
             inline: Inline::Default,
+            stops_unwind: false,
         }
     }
 

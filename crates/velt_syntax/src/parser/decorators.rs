@@ -36,7 +36,12 @@ impl<'a> Parser<'a> {
 
     fn decorator_chain(&mut self) -> PResult<Expr> {
         let lo = self.cur_lo();
-        let head = self.parse_ident()?;
+        // `@export("c_name")` (#2203 step 5): `export` is a keyword everywhere else, a decorator's
+        // name here, since a decorator is never a value.
+        let head = match self.at_kw(Kw::Export) {
+            true => self.take_ident(),
+            false => self.parse_ident()?,
+        };
         let span = head.span;
         let mut expr = self.mk_expr(ExprKind::Ident(head), span);
         while self.eat(Tok::Dot) {

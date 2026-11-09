@@ -358,3 +358,37 @@ fn a_functions_decorators_are_its_implementations() {
     );
     refuses("function f(x: string): string; @a const y = 1;", "");
 }
+
+/// `export` (#2203 step 5) is a keyword, and a name in three places only: a decorator's head, a
+/// `declare decorator function`'s name, and an import or re-export specifier before `as` (or a
+/// re-export's own).
+#[test]
+fn export_is_a_decorator_name() {
+    let m = parse_ok(
+        "import { export as cExport } from \"velt/ffi\";
+         export { export } from \"./export\";
+         export declare decorator function export(name: string): FunctionDecorator;
+         @export(\"a\") function a() {}
+         @cExport(\"b\") @ffi.export(\"c\") function b() {}",
+    );
+    let ItemKind::ExternFn(s) = &m.items[2].kind else {
+        panic!()
+    };
+    assert!(s.is_decorator && s.name.name == "export");
+    let ItemKind::Function(f) = &m.items[3].kind else {
+        panic!()
+    };
+    assert_eq!(names(&f.sig.decorators), ["export"]);
+    let ItemKind::Function(f) = &m.items[4].kind else {
+        panic!()
+    };
+    assert_eq!(names(&f.sig.decorators), ["cExport", "ffi.export"]);
+    refuses(
+        "import { export } from \"velt/ffi\";",
+        "`export` is a keyword: import it under another name",
+    );
+    // Nowhere else: not as a function's name, nor a value.
+    refuses("function export() {}", "expected identifier");
+    refuses("declare function export(): void;", "expected identifier");
+    refuses("const x = export;", "expected");
+}

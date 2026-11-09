@@ -335,6 +335,8 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         number_text::reach_hooks(cx, texts, &mut found);
+        // A std function C calls (`@export`) is live though no checked code refers to it.
+        found.extend(cx.c_exports.iter().map(|e| e.def));
         let mut checked = false;
         for d in found {
             checked |= live::mark(cx, d);

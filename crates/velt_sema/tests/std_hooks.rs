@@ -24,6 +24,7 @@ const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/recor
     import \"velt/lang/hooks/tuple_elements\";\n\
     import \"velt/test/registry\";\nimport \"velt/test/run\";\nimport \"velt/host/promise\";\n\
     import \"velt/ffi/ptr\";\nimport \"velt/ffi/str_bytes\";\nimport \"velt/ffi/c_string\";\n\
+    import \"velt/ffi/export\";\n\
     import \"velt/lang/hooks/locale_compare\";\n\
     function main() {\n  const p = new Proxy({}, {});\n  const s = new Set<number>();\n  \
     const b = new Uint8Array(1);\n  const r = new RegExp(\"a\");\n  \
@@ -381,7 +382,10 @@ fn a_throws_on_a_hook_no_code_reaches_differs() {
 
 #[test]
 fn no_program_can_name_a_hook() {
-    let mut names: Vec<&str> = HOOKS.iter().map(|h| h.item).collect();
+    // `export` (velt/ffi's decorator) is a keyword, which no expression can name anyway.
+    let mut names: Vec<&str> = (HOOKS.iter().map(|h| h.item))
+        .filter(|n| *n != "export")
+        .collect();
     names.sort();
     names.dedup();
     let uses: String = names

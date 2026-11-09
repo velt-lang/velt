@@ -239,7 +239,7 @@ impl Ctx<'_> {
 }
 
 /// What crosses for a value of type `ty` (`None`: nothing can).
-fn value_ty(cx: &Ctx, ty: TyId) -> Option<CTy> {
+pub(crate) fn value_ty(cx: &Ctx, ty: TyId) -> Option<CTy> {
     match cx.ty.kind(ty) {
         TyKind::Int(i) => Some(CTy::Int(*i)),
         TyKind::Float(FloatTy::F32) => Some(CTy::F32),

@@ -20,7 +20,7 @@ const MAX_DEPTH: u32 = 64;
 const MAX_NODES: u32 = 1 << 16;
 
 /// The dotted path `e` is (`a`, `a.b.c`), or `None`.
-pub(super) fn path_of(e: &ast::Expr) -> Option<Vec<ast::Ident>> {
+pub(crate) fn path_of(e: &ast::Expr) -> Option<Vec<ast::Ident>> {
     match &e.kind {
         ast::ExprKind::Ident(id) => Some(vec![id.clone()]),
         ast::ExprKind::Member {

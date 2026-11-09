@@ -574,8 +574,8 @@ jobs:
             }
 
   # `declare c` against C headers, C constants and C `sources` through the pinned zig, for every
-  # target from this one Linux job (crates/veltc/tests/c_headers.rs, c_constants.rs and
-  # c_sources.rs, which VELT_ZIG_TESTS turns on and makes fail without VELT_ZIG; the other jobs'
+  # target from this one Linux job (crates/veltc/tests/c_headers.rs, c_constants.rs,
+  # c_sources.rs and c_export.rs, which VELT_ZIG_TESTS turns on and makes fail without VELT_ZIG; the other jobs'
   # tests leave them out, crates/xtask/src/c_headers.rs's TESTS). It runs only when the
   # change touches what it checks (crates/xtask/src/c_headers.rs), in pull requests and in
   # the queue: anything else doesn't download zig. The nightly runs it whatever changed.
@@ -598,7 +598,7 @@ jobs:
       - name: declarations against headers, C constants and sources, every target
         env:
           VELT_ZIG_TESTS: "1"
-        run: cargo test --workspace --test c_headers --test c_constants --test c_sources -- --nocapture
+        run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export -- --nocapture
 
   ci:
     if: always()

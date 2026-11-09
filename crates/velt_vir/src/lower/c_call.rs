@@ -14,10 +14,10 @@ use crate::system;
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty, STR_AGG};
 
 /// std's hooks that turn a `Ptr` into its address and back (std/ffi/ptr.velt).
-const PTR_OF: &str = velt_common::std_hook!(ffi_ptr_of);
-const PTR_OR_NULL: &str = velt_common::std_hook!(ffi_ptr_or_null);
-const PTR_ADDRESS: &str = velt_common::std_hook!(ffi_ptr_address);
-const PTR_ADDRESS_OR_ZERO: &str = velt_common::std_hook!(ffi_ptr_address_or_zero);
+pub(super) const PTR_OF: &str = velt_common::std_hook!(ffi_ptr_of);
+pub(super) const PTR_OR_NULL: &str = velt_common::std_hook!(ffi_ptr_or_null);
+pub(super) const PTR_ADDRESS: &str = velt_common::std_hook!(ffi_ptr_address);
+pub(super) const PTR_ADDRESS_OR_ZERO: &str = velt_common::std_hook!(ffi_ptr_address_or_zero);
 const STR_BYTES_OF: &str = velt_common::std_hook!(ffi_str_bytes_of);
 const C_STRING_BYTES: &str = velt_common::std_hook!(ffi_c_string_bytes);
 
@@ -305,7 +305,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The `T` of `Ptr<T>` or `Ptr<T> | null` (type `t`).
-    fn ptr_target(&mut self, t: TyId) -> TyId {
+    pub(super) fn ptr_target(&mut self, t: TyId) -> TyId {
         let t = self.sub(t);
         let t = match self.cx.kind(t) {
             TyKind::Option(inner, _) => inner,
@@ -318,7 +318,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The definition of std hook `qualified`.
-    fn ffi_hook(&mut self, qualified: &'static str) -> DefId {
+    pub(super) fn ffi_hook(&mut self, qualified: &'static str) -> DefId {
         if let Some(&d) = self.cx.ffi_hooks.get(qualified) {
             return d;
         }
@@ -337,7 +337,7 @@ pub(super) fn wasi(target: &str) -> bool {
 }
 
 /// A 32-bit WebAssembly target, where C's `size_t` and pointers are 32 bits.
-fn wasm32(target: &str) -> bool {
+pub(super) fn wasm32(target: &str) -> bool {
     target.trim().starts_with("wasm32")
 }
 
@@ -348,7 +348,7 @@ fn narrow(t: CTy, wasm32: bool) -> bool {
 
 /// The VIR type a C type `t` crosses as; on wasm32 (`wasm32`), `usize`/`isize` are C's 32-bit `size_t`
 /// and `ssize_t`.
-fn c_vir(t: CTy, wasm32: bool) -> Ty {
+pub(super) fn c_vir(t: CTy, wasm32: bool) -> Ty {
     match t {
         CTy::Int(IntTy::USize) if wasm32 => Ty::U32,
         CTy::Int(IntTy::ISize) if wasm32 => Ty::I32,

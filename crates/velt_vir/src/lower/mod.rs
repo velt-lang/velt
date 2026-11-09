@@ -69,6 +69,7 @@ mod boxes;
 mod boxing;
 pub use boxing::CountedSeed;
 mod c_call;
+mod c_export;
 mod call;
 mod callee;
 mod caller_aliases;
@@ -284,6 +285,8 @@ pub(crate) fn lower_program_seeded(
             cx.build_now(fid, &work);
         }
         cx.build_iface_glues();
+        // The functions C calls (`@export`), which no Velt code needs to reach.
+        cx.seed_c_exports();
         // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
         cx.func(Work::Main);
         while let Some((fid, work)) = cx.queue.pop_front() {

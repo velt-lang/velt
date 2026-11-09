@@ -262,6 +262,14 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   single call); the LLVM backend marks it `cold noinline` (as it does the helpers that never return, such as
   `_Goob_u64`); Cranelift ignores it.
 
+## Functions C calls (additive VIR extension)
+- `vir::Function::stops_unwind: bool`: the function lowering builds for an `@export("c_name")`
+  (`hir::Program::c_exports`, #2203 step 5), with `Linkage::Export`, the symbol `c_name` and the C
+  signature. Backends give it no unwind information (LLVM: attribute group `nounwind` in place of
+  `uwtable`; Cranelift: no unwind entry), so an unwind started below it can't pass it into C and
+  the process aborts. Never set on Windows (its unwinder takes such a function for a leaf).
+  `Function::new` sets `false`.
+
 ## Inlining decorators (additive VIR extension)
 - `vir::Function::inline: vir::Inline` (`Default`, `Always`, `Never`): a std function's or
   method's decorator `@inline` (`Always`) or `@noInline` (`Never`, #1884), declared in
