@@ -531,27 +531,7 @@ impl FnCx<'_, '_> {
             };
         }
         let Some((l, nullable, u)) = self.local_with_members(e) else {
-            // A field path (`Array.isArray(g.codec) ? g.codec.slice() : []`).
-            let pred = crate::body::expr::object_builtins::is_array_ty;
-            let Some((token, nullable, u, _)) = self.field_with_members(e) else {
-                // A path whose type only its read tells (a field of a view, `globalThis as
-                // { codec?: H[] }`): a nullable array is not nullish where the test holds.
-                let ty = self.peek_ty(e);
-                let array = ty
-                    .and_then(|t| self.cx.ty.core(t))
-                    .is_some_and(|c| pred(self.cx, c));
-                return match array.then(|| self.field_token(e)).flatten() {
-                    Some(token) => (vec![Fact::NonNull(token)], vec![]),
-                    None => (vec![], vec![]),
-                };
-            };
-            if self.cx.union_def(u).is_some() {
-                return self.split_facts(token, nullable, u, &pred, false);
-            }
-            return match nullable && pred(self.cx, u) {
-                true => (vec![Fact::NonNull(token)], vec![]),
-                false => (vec![], vec![]),
-            };
+            return self.field_is_array_facts(e);
         };
         if let Some(facts) = self.generic_member_array_facts(l, nullable, u) {
             return facts;
@@ -576,7 +556,8 @@ impl FnCx<'_, '_> {
                 (0..members.len() as u32).partition(|&i| pred(self.cx, members[i as usize]));
             t.push(Fact::Members(l, yes));
             f.push(Fact::Members(l, no));
-        } else if self.cx.ty.opt_payload(self.local_ty(l)).is_none()
+        } else if !nullable
+            && self.cx.ty.opt_payload(self.local_ty(l)).is_none()
             && crate::unions::typeof_exact(self.cx, u)
             && pred(self.cx, u)
         {

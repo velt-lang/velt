@@ -4,3 +4,7 @@ undefined_narrowing_paths_refused.velt:11:52: error: no method named `headers` f
   = note: the value may be undefined: use `?.headers(...)` or check `!= null` first
 undefined_narrowing_paths_refused.velt:15:37: error: value of type `f64[] | undefined` may be undefined
   = note: use `?.length` or check `!= null` first
+undefined_narrowing_paths_refused.velt:21:22: error: mismatched types
+  = note: expected U, found U | undefined
+undefined_narrowing_paths_refused.velt:30:34: error: mismatched types
+  = note: expected Box<string> | undefined, found Box<f64>

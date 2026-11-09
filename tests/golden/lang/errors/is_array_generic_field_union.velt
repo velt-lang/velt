@@ -1,0 +1,8 @@
+// `Array.isArray(o.f)` on a field whose union has a member that depends on a type parameter
+// (`T | string[]`) does not narrow the field yet: `T` may be an array too. tsc accepts this.
+interface W<T> { f: T | string[] }
+function g<T>(o: W<T>): number {
+    return Array.isArray(o.f) ? o.f.length : -1;
+}
+const a: W<number[]> = { f: [1, 2, 3] };
+console.log(g(a));

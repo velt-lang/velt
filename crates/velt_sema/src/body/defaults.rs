@@ -223,8 +223,19 @@ impl super::FnCx<'_, '_> {
             // stays a `T | undefined`, as in TypeScript.
             let (ty, then, value) = match undefined_only(self.cx, ty) {
                 Some(inner) => {
-                    let d = self.expr(e, Some(inner), Want::Move);
-                    match self.try_coerce(d, inner) {
+                    // Checked against the parameter's own type (`c ? [] : undefined` is one),
+                    // then narrowed only when the value has no `undefined`.
+                    let d = self.expr(e, Some(ty), Want::Move);
+                    let may_be_undefined = self
+                        .cx
+                        .ty
+                        .nothing_of(d.ty)
+                        .is_some_and(|n| n.has_undefined());
+                    let narrowed = match may_be_undefined {
+                        true => Err(d),
+                        false => self.try_coerce(d, inner),
+                    };
+                    match narrowed {
                         Ok(then) => {
                             let value = synth(ast::ExprKind::NonNull(Box::new(param())));
                             (inner, then, value)

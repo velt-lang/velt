@@ -281,8 +281,11 @@ impl FnCx<'_, '_> {
         };
         // Where it fails, `a.b` (when `a` has a value) is not of the tag's type: those facts are
         // about `a.b`'s token, which a read only reaches once `a` is known to have a value.
-        let (mut t, f) = self.typeof_split(&plain, tag);
+        let (mut t, mut f) = self.typeof_split(&plain, tag);
         t.extend(self.truthy_facts(object));
+        // The test also fails when `a` has no value: a fact that no member is left (a test
+        // every value of `a.b` passes) does not hold there.
+        f.retain(|fact| !matches!(fact, Fact::Members(_, vs) if vs.is_empty()));
         Some((t, f))
     }
 }

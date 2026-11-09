@@ -1,0 +1,2 @@
+is_array_generic_field_union.velt:5:37: error: no field `length` on type `string[] | T`
+  = note: `string[] | T` is a union: narrow it to one member first with `switch`, `typeof`, `instanceof` or `==`

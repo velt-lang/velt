@@ -15,3 +15,7 @@ function scale(x: number | undefined = 2): number {
     return x * 10;
 }
 console.log(scale(), scale(undefined), scale(3));
+function pick(on: boolean, x: number[] | undefined = on ? [] : undefined): string {
+    return x === undefined ? "none" : `${x.length}`;
+}
+console.log(pick(true), pick(false), pick(false, [1, 2]));

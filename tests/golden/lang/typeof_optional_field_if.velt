@@ -1,0 +1,39 @@
+// `typeof a?.b === "string"` and `typeof o.b === "string"` on an optional field, as an `if`
+// with no `else`: where it fails, `a` may be `undefined` or `b` absent, so the rest runs.
+interface S { b?: string }
+function f(a: S | undefined): number {
+    if (typeof a?.b === "string") {
+        return 1;
+    }
+    return -1;
+}
+console.log(f({}), f(undefined), f({ b: "abc" }));
+
+interface S2 { b?: string; n: number }
+function f2(a: S2 | undefined): number {
+    if (typeof a?.b === "string") return a.b.length;
+    return -1;
+}
+console.log(f2({ n: 1 }), f2({ n: 1, b: "xy" }), f2(undefined));
+
+interface N { c: { d?: string } | undefined }
+function f3(a: N): number {
+    if (typeof a.c?.d === "string") return a.c.d.length;
+    return -1;
+}
+console.log(f3({ c: {} }), f3({ c: undefined }), f3({ c: { d: "qrs" } }));
+
+function plain(o: { b?: string }): number {
+    if (typeof o.b === "string") {
+        return 1;
+    }
+    return -1;
+}
+console.log(plain({}), plain({ b: "z" }));
+
+// sigx `server/src/client/index.ts:198`.
+interface WireError { message?: string; code?: string }
+function code(wire: WireError | undefined): { code?: string } {
+    return { ...(typeof wire?.code === "string" ? { code: wire.code } : {}) };
+}
+console.log(code({ code: "x" }), code(undefined), code({}));
