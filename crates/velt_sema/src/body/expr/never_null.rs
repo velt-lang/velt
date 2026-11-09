@@ -39,8 +39,11 @@ impl FnCx<'_, '_> {
             let e = self.coerce(e, ty);
             return self.with_temps_value(stmts, e);
         }
-        // `rhs` is checked but never runs: `s` is not nullish.
-        self.expr(rhs, Some(ty), Want::Move);
+        // `rhs` is checked but never runs: `s` is not nullish. A `null` there (`(n as Node) ??
+        // null`, typed `Node | null` in TypeScript) has nothing to check.
+        if !crate::body::narrow::only_nothings(rhs) {
+            self.expr(rhs, Some(ty), Want::Move);
+        }
         let mut s = s;
         if is_place(&s) {
             let mode = self.use_mode(ty, Want::Move);
@@ -232,6 +235,42 @@ impl FnCx<'_, '_> {
         let span = h.span;
         self.bind_temp(&name, h, stmts);
         mk(E::Ident(ast::Ident { name, span }), span)
+    }
+
+    /// `(v as T) ?? rhs` of an `any` / `unknown` path `v` (`(vnode.dom as HostNode) ?? null`):
+    /// `v == null ? rhs : (v as T)`. JavaScript tests the value the assertion keeps, so a
+    /// nullish `v` gives `rhs` instead of failing the assertion.
+    pub(super) fn asserted_dynamic_nullish(
+        &mut self,
+        lhs: &ast::Expr,
+        rhs: &ast::Expr,
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let lhs = super::object_builtins::strip_parens(lhs);
+        let E::Cast { expr: inner, ty } = &lhs.kind else {
+            return None;
+        };
+        if super::member::is_as_const(ty) || !super::method_value::is_path(inner) {
+            return None;
+        }
+        let t = self.peek_ty(inner)?;
+        self.cx.dynamic(t)?;
+        let null = mk(E::Lit(ast::Lit::Null), span);
+        let test = mk(
+            E::Binary {
+                op: B::Eq,
+                lhs: inner.clone(),
+                rhs: Box::new(null),
+            },
+            span,
+        );
+        let cond = E::Cond {
+            cond: Box::new(test),
+            then: Box::new(rhs.clone()),
+            els: Box::new(lhs.clone()),
+        };
+        Some(self.expr(&mk(cond, span), exp, Want::Move))
     }
 
     /// Does `ty` hold neither `null` nor `undefined` (and is not an `any`)?

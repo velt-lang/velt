@@ -1,0 +1,16 @@
+// `x ?? null` on a value whose type has no `null` (`(vnode.dom as HostNode) ?? null` in sigx's
+// renderer): TypeScript types it `HostNode | null`; the `null` is never evaluated, and the
+// value converts to the nullable type it is returned or stored as.
+interface HostNode { id: number }
+interface VNode { dom: unknown; sub: VNode | null }
+
+function first(v: VNode): HostNode | null {
+    return (v.dom as HostNode) ?? null;
+}
+function deep(v: VNode): HostNode | null {
+    return (v.sub ? first(v.sub) : null) ?? ((v.dom as HostNode) ?? null);
+}
+const leaf: VNode = { dom: { id: 1 }, sub: null };
+console.log(first(leaf), deep({ dom: { id: 2 }, sub: leaf }), deep({ dom: { id: 3 }, sub: null }));
+const kept: HostNode | undefined = (leaf.dom as HostNode) ?? undefined;
+console.log(kept);
