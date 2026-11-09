@@ -936,3 +936,60 @@ fn a_default_release_build_links_after_one_serving_everything() {
     assert_eq!(counts(&default).0, 0, "{}", text(&default.stderr));
     assert_eq!(run(dir, "default"), NO_INLINE_OUTPUT);
 }
+
+/// A program calling std's `@noInline` `localeOrder` (`localeCompare`), with `string` params.
+const LOCALE_PROGRAM: &str = "function main() {
+  const a = process.argv.length > 5 ? \"zebra\" : \"apple\";
+  console.log(a.localeCompare(\"Banana\"), \"b\".localeCompare(a));
+}
+";
+
+/// The same, in a program that sorts an array of a class holding a string with a comparator: its
+/// `string` params lose `readonly frozen` (the strings are borrowed inside counted objects), whole-
+/// program parameter attributes that its code doesn't show.
+const LOCALE_SORTING_PROGRAM: &str = "class Row {
+  constructor(public id: i64, public name: string) {}
+}
+function main() {
+  const rows: Row[] = [new Row(1, \"pear\"), new Row(2, \"fig\"), new Row(3, \"apple\")];
+  rows.sort((x, y) => x.name.compareTo(y.name));
+  const a = process.argv.length > 5 ? \"zebra\" : rows[0].name;
+  console.log(a.localeCompare(\"Banana\"), \"b\".localeCompare(a), rows[2].id);
+}
+";
+
+/// The warm-up stores a `@noInline` function twice where its parameter attributes depend on the
+/// whole program (#2672): with the filling program's, and without those, compiled with none of
+/// them. A program whose attributes differ (one that sorts: here none of them hold) finds the
+/// second, which is right in any program, and prints what a build compiling all of std prints;
+/// the filling program itself links the first, with its own attributes.
+#[test]
+fn a_program_with_other_whole_program_attributes_links_the_object_that_assumes_none() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    std::fs::write(dir.join("a.velt"), LOCALE_PROGRAM).unwrap();
+    std::fs::write(dir.join("sorts.velt"), LOCALE_SORTING_PROGRAM).unwrap();
+    let off = [("VELT_STD_OBJECT", "0")];
+    release_default(dir, "sorts.velt", "sorts_off", &cache, &off);
+    let expected = run(dir, "sorts_off");
+    assert_eq!(expected, "-1 1 1\n");
+    let fill = [("VELT_STD_OBJECT_FILL", "1")];
+    let filled = release_default(dir, "a.velt", "filled", &cache, &fill);
+    let (_, compiled) = counts(&filled);
+    assert!(compiled > 0, "{}", text(&filled.stderr));
+    // With their `string` params `readonly frozen`, and without.
+    assert!(entries(&cache).len() > compiled, "{}", text(&filled.stderr));
+    let served = release_default(dir, "a.velt", "served", &cache, &[]);
+    assert_eq!(counts(&served), (compiled, 0), "{}", text(&served.stderr));
+    let sorts = release_default(dir, "sorts.velt", "sorts", &cache, &[]);
+    let err = text(&sorts.stderr);
+    assert_eq!(counts(&sorts), (compiled, 0), "{err}");
+    assert!(
+        served_symbols(&sorts)
+            .iter()
+            .any(|s| s.contains("localeOrder")),
+        "{err}"
+    );
+    assert_eq!(run(dir, "sorts"), expected);
+}

@@ -19,18 +19,24 @@
 //! inlining its callees into itself, and the room it takes in that budget, would otherwise go to
 //! the rest of the program, which would be inlined differently for it (`bench/stdport/brotli_stream_*`
 //! +3.5 to +6.6 % with it taken out before). So the program's code is the same as without the
-//! cache, but for the functions made visible to the objects. The functions its object calls are made visible to it (`Export`) before, so that the
-//! optimizer takes no facts about them from the program's calls. Then the program links the objects
-//! of what it still calls ([`Served::linked`]), as [`super::link`] does.
-//! The keys are [`super::split`]'s: the CPU the program is built for, clang, and a release build's
-//! code, so a debug build's object never serves a release build.
+//! cache, but for the functions made visible to the objects. The optimizer leaves the served bodies
+//! to the inliner (`velt_opt::optimize_served`): no per-function pass works on code that is dropped.
+//! A served function has two keys ([`Keys`]): with the program's parameter attributes, and without
+//! those that depend on the whole program, under which an object right in any program is stored.
+//! The functions its object calls are made visible to it (`Export`) before, so that the optimizer
+//! takes no facts about them from the program's calls. Then the program links the objects of what
+//! it still calls ([`Served::linked`]), as [`super::link`] does. The keys are [`super::split`]'s:
+//! the CPU the program is built for, clang, and a release build's code, so a debug build's object
+//! never serves a release build.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use velt_build_cache::{Cache, Key};
 use velt_vir::fingerprint::{Canon, Mode};
 use velt_vir::vir::{self, Linkage};
 
+use super::key::Assumed;
 use super::{declare, expose, key, select, serve, statics, stats, Place, KIND};
 use crate::driver::BuildOptions;
 
@@ -50,6 +56,12 @@ impl Served {
     /// Whether nothing is served.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// The symbols of the functions served, which the optimizer leaves to the inliner
+    /// (`velt_opt::optimize_served`): their bodies are dropped once it is done.
+    pub fn symbols(&self) -> HashSet<String> {
+        (self.entries.iter()).map(|(s, _, _)| s.clone()).collect()
     }
 }
 
@@ -87,20 +99,27 @@ pub(in crate::driver) fn serve(
     }
     let inputs = key::Inputs::of(opts, cg);
     let mut found: Vec<(usize, PathBuf)> = vec![];
-    let mut missing = vec![];
+    let mut missing: Vec<(usize, Keys)> = vec![];
+    let mut conservative = 0;
     let mut memo = HashMap::new();
+    let filling = serve::fill();
     for i in select::candidates(program, &names, rule) {
-        let key = super::release_key(program, &canon, &inputs, i, DEPTH, &mut memo);
-        match cache.path_of(KIND, &key) {
-            Some(path) => found.push((i, path)),
-            None => missing.push((i, key)),
+        let keys = Keys::of(program, &canon, &inputs, i, &mut memo);
+        match keys.find(cache) {
+            // A filling build stores its own too, which programs like it then link.
+            Some((_, Assumed::Conservative)) if filling => missing.push((i, keys)),
+            Some((path, assumed)) => {
+                conservative += usize::from(assumed == Assumed::Conservative);
+                found.push((i, path));
+            }
+            None => missing.push((i, keys)),
         }
     }
     drop(canon);
     let misses = missing.len();
     let mut compiled = 0;
     if serve::fill() {
-        let stored = serve::compile_missing(program, &names, cg, cache, missing, DEPTH);
+        let stored = fill(program, &names, cg, cache, missing);
         compiled = stored.len();
         found.extend(stored);
     }
@@ -141,8 +160,73 @@ pub(in crate::driver) fn serve(
             linked.len().saturating_sub(compiled),
             misses - compiled
         );
+        if conservative > 0 {
+            eprintln!("velt: std cache: {conservative} found without whole-program attributes");
+        }
     }
     served
+}
+
+/// A function's two keys ([`Assumed`]): with the program's parameter attributes, and without
+/// those that depend on the whole program. The same key when it has none of those.
+struct Keys {
+    program: Key,
+    conservative: Key,
+}
+
+impl Keys {
+    fn of(
+        program: &vir::Program,
+        canon: &Canon,
+        inputs: &key::Inputs,
+        i: usize,
+        memo: &mut HashMap<usize, String>,
+    ) -> Keys {
+        let mut at = |assumed| super::release_key(program, canon, inputs, i, DEPTH, assumed, memo);
+        Keys {
+            program: at(Assumed::Program),
+            conservative: at(Assumed::Conservative),
+        }
+    }
+
+    /// The object to link and what it assumes: the one compiled with this program's attributes,
+    /// else the one compiled without the whole-program ones, which is right in any program.
+    fn find(&self, cache: &Cache) -> Option<(PathBuf, Assumed)> {
+        let at = |key, assumed| cache.path_of(KIND, key).map(|p| (p, assumed));
+        at(&self.program, Assumed::Program)
+            .or_else(|| at(&self.conservative, Assumed::Conservative))
+    }
+}
+
+/// `VELT_STD_OBJECT_FILL`: compile and store each of `missing` with this program's attributes,
+/// which this build links, and, where those differ and the cache lacks it, also without the
+/// whole-program ones, which a program with other attributes then finds. Where the object this
+/// build links is, for each it has one of: its own, else the one without (stored before, or now).
+fn fill(
+    program: &vir::Program,
+    names: &statics::Names,
+    cg: &velt_codegen_cl::CodegenOptions,
+    cache: &Cache,
+    missing: Vec<(usize, Keys)>,
+) -> Vec<(usize, PathBuf)> {
+    let mut each = vec![];
+    let mut stored_before = vec![];
+    for (i, keys) in missing {
+        each.push((i, keys.program, Assumed::Program));
+        if keys.conservative == keys.program {
+            continue;
+        }
+        match cache.path_of(KIND, &keys.conservative) {
+            Some(path) => stored_before.push((i, path)),
+            None => each.push((i, keys.conservative, Assumed::Conservative)),
+        }
+    }
+    let mut stored = serve::compile_missing(program, names, cg, cache, each, DEPTH);
+    // A function's own first (stored in the order given), then the one without.
+    stored.extend(stored_before);
+    stored.sort_by_key(|(i, _)| *i);
+    stored.dedup_by_key(|(i, _)| *i);
+    stored
 }
 
 impl Served {
@@ -273,17 +357,42 @@ mod tests {
             .collect()
     }
 
+    /// `x = 7` into a new local of `f` that nothing reads, in its entry block: what `dce` removes.
+    fn dead_store(f: &mut vir::Function) {
+        let dead = vir::Local(f.locals.len() as u32);
+        f.locals.push(vir::LocalDecl::new(vir::Ty::I64, None));
+        f.blocks[0].stmts.push(vir::Stmt::Assign(
+            vir::Place::local(dead),
+            vir::Rvalue::Use(vir::Operand::Const(vir::Const::Int(7), vir::Ty::I64)),
+        ));
+    }
+
+    /// Whether the function named `name` still has [`dead_store`]'s store, and how many calls.
+    fn shape(p: &vir::Program, name: &str) -> (bool, usize) {
+        let f = p.funcs.iter().find(|f| f.symbol == name).unwrap();
+        let seven = vir::Rvalue::Use(vir::Operand::Const(vir::Const::Int(7), vir::Ty::I64));
+        let store = (f.blocks.iter().flat_map(|b| &b.stmts))
+            .any(|s| matches!(s, vir::Stmt::Assign(_, rv) if *rv == seven));
+        let calls = (f.blocks.iter())
+            .filter(|b| matches!(b.term, vir::Terminator::Call { .. }))
+            .count();
+        (store, calls)
+    }
+
     /// The program's code is the same with a function served as without (the brotli shape, #2607):
     /// `served` (`@noInline`) inlines `helper` 20 times, which spends the inliner's budget before
     /// `entry` inlines `small` at as many of its 100 calls as the budget lasts. Taken out before
     /// optimization, `served` spent nothing and took no room in the budget, and `entry` inlined
     /// `small` at other sites; taken out after, the rest is as without the cache, and what only
-    /// `served` called is removed.
+    /// `served` called is removed. Optimized as served (`velt_opt::optimize_served`, #2672), its body
+    /// gets no per-function pass (its dead store stays until it is taken out), yet `helper` is still
+    /// inlined into it, so the rest is the same again.
     #[test]
     fn a_function_taken_out_after_optimization_leaves_the_rest_as_without_the_cache() {
         let served_calls: Vec<usize> = [1; 20].into_iter().chain([4]).collect();
         let mut served_fn = func("served", 0, &served_calls, Linkage::Internal);
         served_fn.inline = vir::Inline::Never;
+        dead_store(&mut served_fn);
         let entry_calls: Vec<usize> = std::iter::once(0).chain([2; 100]).collect();
         // Called by `served` alone and never inlined: in the program only for it. Last, so that
         // removing it renumbers nothing else.
@@ -307,9 +416,21 @@ mod tests {
         let served = Served {
             entries: vec![("served".into(), vec![], PathBuf::from("0.o"))],
         };
+        let mut skipped = program.clone();
         let mut with = program;
         velt_opt::optimize(&mut with, velt_opt::OptLevel::Speed);
+        // `helper` inlined at its 20 sites: only `only_served` is still called.
+        assert_eq!(shape(&with, "served"), (false, 1), "optimized");
         served.take_out(&mut with);
+        let mut timings = velt_opt::PassTimings::new();
+        let level = velt_opt::OptLevel::Speed;
+        velt_opt::optimize_served(&mut skipped, level, &mut timings, &served.symbols());
+        assert_eq!(
+            shape(&skipped, "served"),
+            (true, 1),
+            "inlined into, no pass after"
+        );
+        served.take_out(&mut skipped);
         let calls = |p: &vir::Program| {
             let small = p.funcs.iter().position(|f| f.symbol == "small");
             let entry = p.funcs.iter().find(|f| f.symbol == "entry").unwrap();
@@ -326,6 +447,16 @@ mod tests {
         );
         assert_eq!(calls(&with), calls(&without), "sites of `small` left");
         assert!(rest(&with) == rest(&without), "the rest's code differs");
+        assert_eq!(
+            calls(&skipped),
+            calls(&without),
+            "sites of `small` left, served skipped"
+        );
+        assert!(
+            rest(&skipped) == rest(&without),
+            "the rest's code differs, served skipped"
+        );
+        assert_eq!(skipped.funcs.len(), with.funcs.len());
         let declared = with.funcs.iter().find(|f| f.symbol == "served").unwrap();
         assert!(declared.blocks.is_empty() && declared.linkage == Linkage::Import);
         assert!(without.funcs.iter().any(|f| f.symbol == "only_served"));
