@@ -41,6 +41,8 @@ pub(crate) struct Returns {
     /// An async body returns a promise: its value type counts (`promise_value`), and the
     /// promise converts to the result.
     promises: bool,
+    /// A value's type was widened (`"b" | "c"` recorded as `string`): its `return` converts.
+    widened: bool,
 }
 
 #[derive(Clone)]
@@ -367,8 +369,13 @@ impl FnCx<'_, '_> {
             }
             None => h.ty,
         };
-        let ty = self.cx.widened(ty);
-        self.f.returns.values.push(Value { ty, span: h.span });
+        let wide = self.cx.widened(ty);
+        // A literal union is an enum (a lone literal is stored as its base already).
+        self.f.returns.widened |= wide != ty && self.cx.union_members(ty).is_some();
+        self.f.returns.values.push(Value {
+            ty: wide,
+            span: h.span,
+        });
         Some(h)
     }
 
@@ -398,7 +405,7 @@ impl FnCx<'_, '_> {
         self.undefined_returns(&mut r, block);
         let ty = self.common_ret(&r, block);
         self.f.ret = Some(ty);
-        if r.promises || !r.nulls.is_empty() || r.values.iter().any(|v| v.ty != ty) {
+        if r.promises || r.widened || !r.nulls.is_empty() || r.values.iter().any(|v| v.ty != ty) {
             visit::block(block, &mut CoerceReturns { fcx: self, to: ty });
         }
         ty

@@ -1,0 +1,11 @@
+// Narrowing by presence where the other member's field is `null` or absent (`issues?: null`,
+// tested with `!= null`), and on a field path three levels deep.
+type R = { issues: string[] } | { value: number; issues?: null };
+function a(r: R): number { if (r.issues != null) return r.issues.length; return r.value; }
+console.log(a({ issues: ["x"] }), a({ value: 0 }));
+type Res = { issues: string[] } | { value: number; issues?: undefined };
+interface B { b: Res }
+interface A { b: B }
+interface O { a: A }
+function deep(o: O): number { if (o.a.b.b.issues) return o.a.b.b.issues.length; else return o.a.b.b.value; }
+console.log(deep({ a: { b: { b: { issues: ["p", "q"] } } } }), deep({ a: { b: { b: { value: 7 } } } }));
