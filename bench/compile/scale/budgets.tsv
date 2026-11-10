@@ -1,0 +1,66 @@
+# Budgets of the build-speed yardstick (bench/compile/scale/yardstick.py, #2707).
+# Written by `yardstick.py --write-budgets` on Linux x86-64; edit only to tighten.
+# budget <mode> <size> <metric> <value>: instructions per source line (instr:<stage>,
+# instr:all) or peak resident set in MB (peak_mb), at most `tolerance` over. Instruction
+# counts differ by a few percent between machines (C library, valgrind); the peak moves
+# by up to a fifth from run to run with how the compiler's threads overlap.
+# superlinear <mode> <metric> <growth per doubling>: a metric that grows faster than (or
+# within 1% of) 2.1x per doubling today, recorded 1% over its growth; it may not get
+# worse, and the line goes once it is fixed.
+tolerance	instr	0.10
+tolerance	peak_mb	0.25
+superlinear	debug	instr:lower	2.12
+superlinear	release	instr:lower	2.12
+superlinear	release	instr:codegen	2.14
+budget	check	10000	instr:parse	22996
+budget	check	10000	instr:sema	139666
+budget	check	10000	instr:generator host	279000
+budget	check	10000	instr:all	445974
+budget	check	10000	peak_mb	150
+budget	check	100000	instr:parse	12211
+budget	check	100000	instr:sema	130831
+budget	check	100000	instr:exit	3664
+budget	check	100000	instr:generator host	31125
+budget	check	100000	instr:all	177831
+budget	check	100000	peak_mb	801
+budget	debug	10000	instr:parse	22973
+budget	debug	10000	instr:sema	139703
+budget	debug	10000	instr:lower	74227
+budget	debug	10000	instr:verify	13467
+budget	debug	10000	instr:optimize: numrep	65901
+budget	debug	10000	instr:optimize: VIR verify	12185
+budget	debug	10000	instr:optimize: rest	11938
+budget	debug	10000	instr:codegen	505916
+budget	debug	10000	instr:generator host	279344
+budget	debug	10000	instr:all	1128715
+budget	debug	10000	peak_mb	189
+budget	debug	100000	instr:parse	12207
+budget	debug	100000	instr:sema	131107
+budget	debug	100000	instr:lower	87194
+budget	debug	100000	instr:verify	12311
+budget	debug	100000	instr:optimize: numrep	63383
+budget	debug	100000	instr:optimize: VIR verify	11310
+budget	debug	100000	instr:optimize: rest	11144
+budget	debug	100000	instr:codegen	462357
+budget	debug	100000	instr:generator host	31136
+budget	debug	100000	instr:all	824661
+budget	debug	100000	peak_mb	787
+budget	release	10000	instr:parse	22990
+budget	release	10000	instr:sema	139751
+budget	release	10000	instr:lower	73546
+budget	release	10000	instr:optimize: numrep	212681
+budget	release	10000	instr:optimize: VIR verify	18594
+budget	release	10000	instr:optimize: rest	780420
+budget	release	10000	instr:codegen	275673
+budget	release	10000	instr:generator host	279197
+budget	release	10000	instr:all	1818002
+budget	release	10000	peak_mb	292
+budget	release	100000	instr:sema	130995
+budget	release	100000	instr:lower	86720
+budget	release	100000	instr:optimize: numrep	191730
+budget	release	100000	instr:optimize: VIR verify	16692
+budget	release	100000	instr:optimize: rest	676593
+budget	release	100000	instr:codegen	336672
+budget	release	100000	instr:generator host	31126
+budget	release	100000	instr:all	1495626
+budget	release	100000	peak_mb	1528

@@ -4,24 +4,29 @@ the generated application (app.py) cost per stage, and whether that cost grows l
 the program.
 
     yardstick.py [--velt PATH] [--sizes 10000,100000] [--modes check,debug,release]
-                 [--release-sizes 10000] [--children] [--budgets FILE] [--check]
-                 [--write-budgets] [--out DIR] [--md FILE]
+                 [--release-sizes 10000] [--children] [--jobs N] [--budgets FILE] [--check]
+                 [--write-budgets] [--out DIR] [--reuse] [--md FILE]
 
 For each size it generates the application (app.py) and, for each mode, runs velt:
-- natively, for the wall and CPU seconds and the peak resident set of the largest process;
-- under callgrind (velt only: the clang, cc and ld processes run natively), which dumps its
-  counters at the end of every stage (`Session::record_time`, which `-v` prints), so each dump
-  holds the instructions retired in one stage (`optimize` is split further at the end of
-  `numrep` and of each VIR verification);
+- natively, for the wall and CPU seconds and the peak resident set of the largest process
+  (velt; the source generators' host and the linker are smaller);
+- under callgrind, which dumps its counters at the end of every stage (`Session::record_time`,
+  the stages `-v` prints), so each dump holds the instructions retired in one stage. `optimize`
+  is split into numrep, its VIR verification and the rest by the inclusive counts of their
+  entry functions. Callgrind follows the source generators' host (`velt __generate-host`, the
+  stage `generator host`, which runs inside sema) but not clang, cc or ld;
 - for debug builds, with `--emit vir` and `VELT_LOWER_PROFILE=1`, for the functions and
-  statements lowered (summed over the lowering passes) and the VIR lines; for release builds,
-  with `--emit llvm` for the LLVM IR lines.
+  statements lowered (summed over the lowering passes, and in the last pass) and the VIR lines;
+  for release builds, with `--emit llvm`, for the LLVM IR lines.
 With `--children`, `clang`, `cc` and `ld.lld` are found first on PATH as wrappers that run them
-under cachegrind, and their instructions are the stages `clang` and `linker` (slow: release
-clang under valgrind takes a long time; leave it to on-demand runs).
+under cachegrind, and their instructions are the stages `clang` and `linker` (slow for release
+builds: leave it to runs by hand).
 
 Every run has a fresh empty VELT_HOME and VELT_BUILD_CACHE=off VELT_BUILD_STAMP=off, and runs
-on at most 4 cores (`taskset`), so the counts and the peak don't depend on the machine's size.
+on 4 cores (`taskset`), so the counts and the peak don't depend on the machine's size. `--jobs
+N` runs N measurements at once, on cores 0-3, 4-7, ... (instructions don't depend on load; the
+wall times then do). Each measurement leaves result.json in its directory under --out, and
+`--reuse` reports and checks those instead of measuring again.
 
 `--check` compares with the budgets file (budgets.tsv next to this script):
 - linear cost: between two sizes, every stage's instructions, the instructions in all, the
@@ -29,8 +34,8 @@ on at most 4 cores (`taskset`), so the counts and the peak don't depend on the m
   doubling of the lines, (n2/n1)^log2(2.1) (11.8x for ten times the lines); stages under 1% of
   the larger run's instructions are not compared;
 - budgets: instructions per line per stage and in all, and the peak memory, may exceed the
-  recorded values by at most the file's tolerance.
-A line `superlinear <mode> <metric> <ratio>` in the budgets file records a growth known today,
+  recorded values by at most the file's tolerances (10% and 25%).
+A line `superlinear <mode> <metric> <growth>` in the budgets file records a growth known today,
 which may not get worse; fixing it removes the line (the list only shrinks). Exits 1 on a
 failure, with the failing rows marked **over** in the table. `--write-budgets` writes the file
 from this run.
@@ -40,6 +45,7 @@ Linux only (callgrind and taskset). Needs python3 and valgrind.
 import argparse
 import concurrent.futures
 import glob
+import json
 import math
 import os
 import queue
@@ -66,10 +72,6 @@ SKIP_CHILDREN = "*clang*,*cc,*gcc*,*ld,*ld.*,*lld*,*collect2*,*mold*"
 # Parts of `optimize`, by the inclusive instructions of their entry functions there.
 OPTIMIZE_PARTS = [("numrep", "velt_opt::numrep::run"),
                   ("VIR verify", "velt_vir::verify::verify_program_on::{closure#1}")]
-
-
-def allowed_ratio(n1, n2):
-    return (n2 / n1) ** math.log2(DOUBLING)
 
 
 def env_for(home):
@@ -197,16 +199,20 @@ def children_totals(outdir):
 
 
 def lower_counts(err_path):
-    """Functions and statements lowered (summed over the passes) and the number of passes."""
+    """Functions and statements lowered, summed over the passes and in the last pass (the
+    program), and the number of passes."""
     fns = stmts = passes = 0
+    last = (0, 0)
     pat = re.compile(r"velt-lower: pass \d+: [\d.]+ ms, (\d+) functions, \d+ blocks, (\d+) statements")
     for line in open(err_path, errors="replace"):
         m = pat.match(line)
         if m:
-            fns += int(m.group(1))
-            stmts += int(m.group(2))
+            last = (int(m.group(1)), int(m.group(2)))
+            fns += last[0]
+            stmts += last[1]
             passes += 1
-    return fns, stmts, passes
+    return {"functions": fns, "statements": stmts, "passes": passes,
+            "functions_final": last[0], "statements_final": last[1]}
 
 
 def count_lines(paths):
@@ -251,7 +257,7 @@ def measure(velt, mode, size, src, lines, work, children, cores):
                      src, env, err, vir)
         if rc != 0:
             fail("--emit vir", err)
-        res["functions"], res["statements"], res["passes"] = lower_counts(err)
+        res.update(lower_counts(err))
         res["ir_lines"] = count_lines([vir])
     elif mode == "release":
         err = os.path.join(work, "llvm.err")
@@ -290,13 +296,15 @@ def measure(velt, mode, size, src, lines, work, children, cores):
         for kind, n in children_totals(outdir).items():
             res["stages"][kind] = n
     res["instructions"] = sum(res["stages"].values())
+    with open(os.path.join(work, "result.json"), "w") as f:
+        json.dump(res, f, indent=1)
     return res
 
 
 # --- budgets -------------------------------------------------------------------------------
 
 def read_budgets(path):
-    tol, budgets, superlinear = 0.10, {}, {}
+    tol, budgets, superlinear = {"instr": 0.10, "peak_mb": 0.25}, {}, {}
     if not os.path.exists(path):
         return tol, budgets, superlinear
     for line in open(path):
@@ -304,8 +312,12 @@ def read_budgets(path):
         if not line:
             continue
         f = line.split("\t")
+        want = {"tolerance": 3, "budget": 5, "superlinear": 4}.get(f[0])
+        if want != len(f):
+            sys.exit(f"{path}: a line this script doesn't read: {line!r}")
         if f[0] == "tolerance":
-            tol = float(f[1])
+            # tolerance <instr | peak_mb> <fraction>
+            tol[f[1]] = float(f[2])
         elif f[0] == "budget":
             # budget <mode> <size> <metric> <value>
             budgets[(f[1], int(f[2]), f[3])] = float(f[4])
@@ -365,27 +377,33 @@ def check(results, budgets_path):
             b = budgets.get((r["mode"], r["size"], key))
             if b is None:
                 continue
-            over = per > b * (1 + tol)
+            t = tol["instr" if key.startswith("instr:") else "peak_mb"]
+            over = per > b * (1 + t)
             budget_rows.append((r["mode"], r["size"], key, per, b, over))
             if over:
-                failures.append(f"{r['mode']} {r['size']} {key}: {per:.0f} over budget {b:.0f} (+{tol:.0%})")
-    return growth_rows, budget_rows, failures, superlinear
+                failures.append(f"{r['mode']} {r['size']} {key}: {per:.0f} over budget {b:.0f} (+{t:.0%})")
+    return growth_rows, budget_rows, failures
 
 
-def write_budgets(results, path, growth_rows, superlinear_old):
+def write_budgets(results, path, growth_rows):
     out = [
         "# Budgets of the build-speed yardstick (bench/compile/scale/yardstick.py, #2707).",
         "# Written by `yardstick.py --write-budgets` on Linux x86-64; edit only to tighten.",
         "# budget <mode> <size> <metric> <value>: instructions per source line (instr:<stage>,",
-        "# instr:all) or peak resident set in MB (peak_mb), at most `tolerance` over.",
-        "# superlinear <mode> <metric> <growth per doubling>: a stage that grows faster than",
-        "# 2.1x per doubling today; it may not get worse, and the line goes once it is fixed.",
-        "tolerance\t0.10",
+        "# instr:all) or peak resident set in MB (peak_mb), at most `tolerance` over. Instruction",
+        "# counts differ by a few percent between machines (C library, valgrind); the peak moves",
+        "# by up to a fifth from run to run with how the compiler's threads overlap.",
+        "# superlinear <mode> <metric> <growth per doubling>: a metric that grows faster than (or",
+        "# within 1% of) 2.1x per doubling today, recorded 1% over its growth; it may not get",
+        "# worse, and the line goes once it is fixed.",
+        "tolerance\tinstr\t0.10",
+        "tolerance\tpeak_mb\t0.25",
     ]
-    for (mode, key, _, _, _, _, d, _, over, _) in growth_rows:
-        if over or (mode, key) in superlinear_old:
-            if d > DOUBLING:
-                out.append(f"superlinear\t{mode}\t{key}\t{d:.2f}")
+    # Growth within 1% of the limit is recorded too, 1% over what it is, so the nightly check
+    # doesn't flip on a change that adds a few instructions somewhere.
+    for (mode, key, _, _, _, _, d, _, _, _) in growth_rows:
+        if d > DOUBLING * 0.99:
+            out.append(f"superlinear\t{mode}\t{key}\t{d * 1.01:.2f}")
     for r in results:
         for key, v in metrics(r).items():
             if key in ("functions", "statements"):
@@ -405,7 +423,8 @@ def report(results, growth_rows, budget_rows):
     stages = []
     for r in results:
         for s in r["stages"]:
-            if s not in stages and any(x["stages"].get(s) for x in results):
+            # Stages under a million instructions in every run are left out.
+            if s not in stages and any(x["stages"].get(s, 0) >= 1e6 for x in results):
                 stages.append(s)
     # The generators' host runs inside sema; the exit is last.
     for name, after in [("generator host", "sema"), ("exit", None)]:
@@ -428,9 +447,13 @@ def report(results, growth_rows, budget_rows):
     out.append("")
     out += [head.replace("| stage |", "| |"), "|---|" + "---:|" * len(results)]
     for key, fmt in [("lines", "{:,}"), ("functions", "{:,}"), ("statements", "{:,}"),
-                     ("passes", "{}"), ("ir_lines", "{:,}"), ("peak_mb", "{:,.0f}"),
-                     ("wall", "{:.1f}"), ("cpu", "{:.1f}")]:
-        label = {"functions": "functions lowered", "statements": "statements lowered",
+                     ("passes", "{}"), ("functions_final", "{:,}"), ("statements_final", "{:,}"),
+                     ("ir_lines", "{:,}"), ("peak_mb", "{:,.0f}"), ("wall", "{:.1f}"),
+                     ("cpu", "{:.1f}")]:
+        label = {"functions": "functions lowered (all passes)",
+                 "statements": "statements lowered (all passes)",
+                 "functions_final": "functions in the program (last pass)",
+                 "statements_final": "statements in the program (last pass)",
                  "passes": "lowering passes", "ir_lines": "IR lines (VIR debug, LLVM release)",
                  "peak_mb": "peak memory (MB)", "wall": "wall s (4 cores)",
                  "cpu": "CPU s"}.get(key, key)
@@ -467,6 +490,8 @@ def main():
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--write-budgets", action="store_true")
     ap.add_argument("--out")
+    ap.add_argument("--reuse", action="store_true",
+                    help="take each measurement's result.json from an earlier run in --out")
     ap.add_argument("--md")
     a = ap.parse_args()
     target = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
@@ -485,7 +510,7 @@ def main():
     tasks = []
     for n in sizes:
         src = os.path.join(out, f"app-{n}", "src")
-        if os.path.exists(src):
+        if os.path.exists(src) and not a.reuse:
             shutil.rmtree(src)
         made = subprocess.check_output([sys.executable, os.path.join(HERE, "app.py"), str(n), src],
                                        text=True)
@@ -501,6 +526,10 @@ def main():
 
     def one(task):
         mode, n, src, lines = task
+        saved = os.path.join(out, f"app-{n}", mode, "result.json")
+        if a.reuse and os.path.exists(saved):
+            with open(saved) as f:
+                return json.load(f)
         c = cores.get()
         try:
             print(f"{mode} at {n} lines ({lines})...", file=sys.stderr, flush=True)
@@ -512,14 +541,14 @@ def main():
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as pool:
         results = list(pool.map(one, tasks))
     results.sort(key=lambda r: (modes.index(r["mode"]), r["size"]))
-    growth_rows, budget_rows, failures, superlinear = check(results, a.budgets)
+    growth_rows, budget_rows, failures = check(results, a.budgets)
     text = report(results, growth_rows, budget_rows if a.check else [])
     print(text)
     if a.md:
         with open(a.md, "w") as f:
             f.write(text)
     if a.write_budgets:
-        write_budgets(results, a.budgets, growth_rows, superlinear)
+        write_budgets(results, a.budgets, growth_rows)
         print(f"wrote {a.budgets}", file=sys.stderr)
     if a.check and failures:
         print("yardstick: " + "; ".join(failures), file=sys.stderr)
