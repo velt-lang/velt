@@ -238,7 +238,7 @@ function unrefDrop(f: usize): void {
   if (w !== 0) {
     m.wakerDrop(w);
   }
-  m.release(f);
+  m.release(f, U_SIZE);
 }
 
 /** Takes question `f` out of the executor's list. */

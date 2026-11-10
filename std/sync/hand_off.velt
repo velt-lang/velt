@@ -19,7 +19,8 @@
 // Its block in raw memory, shared by the hand-off and every wait on it (each holds a count, so a
 // wait outliving the hand-off reads live memory): the count, the state word, the waker word and
 // the waiter's waker (an AtomicWaker: a registering poll and a waking giver on two threads never
-// both touch it), the count of `wait()`s and whether the hand-off is gone, then the item. Givers
+// both touch it), the count of `wait()`s and whether the hand-off is gone, the block's size, then
+// the item. Givers
 // race only through the state word: a giver claims the item (EMPTY or WAITING → FILLING) before it
 // writes it. An item nobody took is dropped by whichever of the hand-off and the `wait()`s goes
 // last (`dropLeft`; both are generic, so they know the item's type: a park future is not, and
@@ -56,7 +57,8 @@ const B_WAKE: usize = 12;
 const B_WAKER: usize = 16;
 const B_WAITS: usize = 24;
 const B_GONE: usize = 28;
-const B_ITEM: usize = 32;
+const B_BYTES: usize = 32;
+const B_ITEM: usize = 48;
 
 /** One value handed from a giver to one waiting task, once. */
 export class HandOff<T> {
@@ -64,8 +66,10 @@ export class HandOff<T> {
 
   constructor() {
     const n = slotSize<T>();
-    const b = m.zeroed(B_ITEM + (n === 0 ? 16 : n));
+    const bytes = B_ITEM + (n === 0 ? 16 : n);
+    const b = m.zeroed(bytes);
     m.st(b + B_REFS, 1);
+    m.st(b + B_BYTES, bytes);
     this.block = b;
   }
 
@@ -245,7 +249,7 @@ function release(b: usize): void {
     if (w !== 0) {
       m.wakerDrop(w);
     }
-    m.release(b);
+    m.release(b, m.ld(b + B_BYTES));
   }
 }
 
@@ -341,6 +345,6 @@ function parkDrop(f: usize): void {
       m.cas32(b + B_STATE, GIVEN, RETURNED);
     }
   }
-  m.release(f);
+  m.release(f, 32);
   release(b);
 }

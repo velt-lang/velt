@@ -1,7 +1,9 @@
 // velt/lang/intrinsics (internal): an owned value moved into and out of raw memory, for std's
 // one-shot hand-off and, later, its channel in Velt (#2649). The memory and the state that says
 // whether it holds a value are the caller's; these move the value's bytes with the ownership
-// accounting the compiler does for any move. `slotSize<T>()` says how many bytes a `T` takes.
+// accounting the compiler does for any move. `slotSize<T>()` says how many bytes a `T` takes;
+// `rawAlloc` and `rawFree` give out and take back such memory on every target. That memory is
+// aligned to 16 bytes, enough for every type: the compiler aligns a value to at most 8 bytes.
 
 import { inline, intrinsic } from "./decorators";
 import type { Owned } from "./modes";
@@ -43,3 +45,14 @@ export declare unsafe function slotTake<T>(at: usize): T;
  */
 @intrinsic
 export declare unsafe function promiseAt<T>(f: usize): Promise<T>;
+
+/**
+ * `n` bytes, aligned to 16, from the allocator compiled code uses (on every target; the leak
+ * counters count it). Panics when memory runs out.
+ */
+@intrinsic
+export declare function rawAlloc(n: usize): usize;
+
+/** Gives back the block `rawAlloc(n)` returned. Unsafe: `p` is such a block, freed once. */
+@intrinsic
+export declare unsafe function rawFree(p: usize, n: usize): void;

@@ -40,7 +40,7 @@ export function latchFree(l: u64): void {
   const n = m.ld(a + L_REFS) - 1;
   m.st(a + L_REFS, n);
   if (n === 0) {
-    m.release(a);
+    m.release(a, 24);
   }
 }
 
@@ -132,5 +132,5 @@ export function waitDrop(w: usize): void {
     m.wakerDrop(k);
   }
   latchFree(a as u64);
-  m.release(w);
+  m.release(w, W_SIZE);
 }

@@ -3,11 +3,13 @@
 //! and, later, its channel in Velt (#2649). `slotPut` transfers the value as a channel send does
 //! (`transfer_value`: moved when this task held the only reference, else copied; a resource
 //! still shared stops the program, #2613); `slotTake` hands an owned value out; `promiseAt`
-//! owns a heap future made by std's executor.
+//! owns a heap future made by std's executor; `rawAlloc`/`rawFree` give std that raw memory on
+//! every target, from the allocator compiled code uses.
 
 use velt_sema::hir::{self, TyId};
 
 use super::operand::proj;
+use super::rt::Rt;
 use super::{cint, ice, unit, FnLower};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
 
@@ -68,5 +70,26 @@ impl FnLower<'_, '_> {
         let tmp = self.temp(Ty::Ptr);
         self.assign(Place::local(tmp), Rvalue::Cast(addr, Ty::Ptr));
         self.owned_result(Some(tmp), t)
+    }
+
+    /// `rawAlloc(n)`: `n` bytes aligned to 16 from `velt_rt_alloc` (the allocator generated code
+    /// uses, on every target), as an address of type `ty` (`usize`).
+    pub(super) fn raw_alloc(&mut self, n: &hir::Expr, ty: TyId) -> Operand {
+        let n = self.expr(n);
+        let n = self.rvalue_temp(Ty::U64, Rvalue::Cast(n, Ty::U64));
+        let p = self.temp(Ty::Ptr);
+        self.call_rt(Rt::Alloc, vec![n, cint(16, Ty::U64)], Some(Place::local(p)));
+        let t = self.vty(ty);
+        self.rvalue_temp(t, Rvalue::Cast(Operand::Copy(Place::local(p)), t))
+    }
+
+    /// `rawFree(p, n)`: gives `rawAlloc(n)`'s block back (`velt_rt_free`).
+    pub(super) fn raw_free(&mut self, p: &hir::Expr, n: &hir::Expr) -> Operand {
+        let p = self.expr(p);
+        let p = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(p, Ty::Ptr));
+        let n = self.expr(n);
+        let n = self.rvalue_temp(Ty::U64, Rvalue::Cast(n, Ty::U64));
+        self.call_rt(Rt::Free, vec![p, n, cint(16, Ty::U64)], None);
+        unit()
     }
 }

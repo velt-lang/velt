@@ -42,7 +42,7 @@ function exec(): usize {
 
 @noInline
 function start(): usize {
-  const e = m.zeroed(t.E_SIZE);
+  const e = m.lastingZeroed(t.E_SIZE);
   // Stand-ins for `exportedAddress` (#2203 step 5): C calls each with the C convention.
   m.st(e + t.E_VT, fnAddress(t.wakerClone));
   m.st(e + t.E_VT + 8, fnAddress(t.wakerWake));
@@ -74,7 +74,8 @@ function task(
   size: u64,
   refs: u64,
 ): usize {
-  const k = m.alloc(stateAt(rsize) + (size as usize));
+  const bytes = stateAt(rsize) + (size as usize);
+  const k = m.alloc(bytes);
   m.st(k, e + t.E_VT);
   m.st(k + t.T_REFS, refs as usize);
   m.st32(k + t.T_STATE, t.SCHEDULED);
@@ -93,6 +94,7 @@ function task(
   m.st(k + t.T_LOCALS, 0);
   m.st(k + t.T_MICRO, 0);
   m.st(k + t.T_UNHANDLED, 0);
+  m.st(k + t.T_BYTES, bytes);
   m.st(k + t.T_JOIN, fnAddress(run.joinPoll));
   m.st(k + t.T_JOIN + 8, fnAddress(run.joinDrop));
   return k;
@@ -352,5 +354,5 @@ function microPoll(f: usize, cx: usize): u32 {
 }
 
 function microDrop(f: usize): void {
-  m.release(f);
+  m.release(f, 24);
 }

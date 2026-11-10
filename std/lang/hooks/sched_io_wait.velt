@@ -155,7 +155,7 @@ export function waitDrop(f: usize): void {
   if (k !== 0) {
     m.wakerDrop(k);
   }
-  m.release(f);
+  m.release(f, W_SIZE);
 }
 
 // ---- Deadlines. ----
@@ -170,7 +170,7 @@ export function now(): u64 {
     clock_gettime$io(r.MONOTONIC, m.ptr(ts));
   }
   const ns = (m.ld(ts) as u64) * 1000000000 + (m.ld(ts + 8) as u64);
-  m.release(ts);
+  m.release(ts, 16);
   return ns;
 }
 

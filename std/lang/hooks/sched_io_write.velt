@@ -69,7 +69,7 @@ function reserve(s: usize, n: usize): void {
   const nb = m.alloc(next);
   if (buf !== 0) {
     m.copy(nb, buf + off, len);
-    m.release(buf);
+    m.release(buf, cap);
   }
   m.st(s + io.S_BUF, nb);
   m.st(s + io.S_OFF, 0);
@@ -168,7 +168,7 @@ export function flush(s: usize): void {
 @inline
 function settled(s: usize): void {
   if (m.ld(s + io.S_CAP) > KEEP) {
-    m.release(m.ld(s + io.S_BUF));
+    m.release(m.ld(s + io.S_BUF), m.ld(s + io.S_CAP));
     m.st(s + io.S_BUF, 0);
     m.st(s + io.S_CAP, 0);
   }

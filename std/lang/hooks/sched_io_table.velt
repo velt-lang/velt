@@ -45,11 +45,11 @@ export function handleOf(s: usize): u64 {
 function grow(b: usize): void {
   const cap = m.ld(b + io.IO_CAP);
   const next = cap === 0 ? 64 : cap * 2;
-  const t = m.zeroed(next * 16);
+  const t = m.lastingZeroed(next * 16);
   const old = m.ld(b + io.IO_TABLE);
   if (old !== 0) {
     m.copy(t, old, cap * 16);
-    m.release(old);
+    m.lastingRelease(old);
   }
   m.st(b + io.IO_TABLE, t);
   m.st(b + io.IO_CAP, next);
