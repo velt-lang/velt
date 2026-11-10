@@ -6,6 +6,11 @@
 //! (`R_*_PREL32`) and arm64 Mach-O (`SUBTRACTOR` + `UNSIGNED`); x86_64 Mach-O gets the same pair
 //! spelled out here, because `object` picks `X86_64_RELOC_SIGNED`, which ld64 rejects in
 //! `__eh_frame`.
+//!
+//! `velt_eh_try` (crate::eh) gets a CIE of its own naming the personality routine and an LSDA
+//! pointer in its FDE. The personality is indirect: on ELF through a pointer in data (as
+//! compilers' `DW.ref.*`), on Mach-O through the GOT (`ARM64_RELOC_POINTER_TO_GOT`,
+//! `X86_64_RELOC_GOT`), which is the only personality relocation ld64 reads.
 
 use cranelift_codegen::gimli::write::{Address, EhFrame, EndianVec, FrameTable, Writer};
 use cranelift_codegen::gimli::{self, RunTimeEndian};
@@ -28,12 +33,14 @@ pub(super) fn add_eh_frame(
     product: &mut ObjectProduct,
     isa: &dyn TargetIsa,
     infos: &[FunctionUnwind],
+    eh: Option<crate::eh::EhSymbols>,
 ) -> CodegenResult<()> {
     let systemv: Vec<_> = infos
         .iter()
         .filter_map(|(id, _, info)| match info {
             Unwind::Cranelift(UnwindInfo::SystemV(info)) => {
-                Some((product.function_symbol(*id), info))
+                let catching = eh.filter(|e| e.try_fn == *id);
+                Some((product.function_symbol(*id), info, catching))
             }
             _ => None,
         })
@@ -43,16 +50,44 @@ pub(super) fn add_eh_frame(
     };
     cie.fde_address_encoding = gimli::DwEhPe(gimli::DW_EH_PE_pcrel.0 | gimli::DW_EH_PE_sdata4.0);
     let mut table = FrameTable::default();
-    let cie_id = table.add_cie(cie);
     // `Address::Symbol` indexes into `symbols`; the writer turns it into a relocation.
-    let mut symbols = Vec::with_capacity(systemv.len());
-    for (symbol, info) in systemv {
-        let address = Address::Symbol {
-            symbol: symbols.len(),
+    let mut symbols = Vec::with_capacity(systemv.len() + 2);
+    let symbol_address = |symbols: &mut Vec<SymbolId>, s: SymbolId| {
+        symbols.push(s);
+        Address::Symbol {
+            symbol: symbols.len() - 1,
             addend: 0,
+        }
+    };
+    // The CIE of `velt_eh_try`: the plain one plus the personality and the LSDA's encoding.
+    let macho = product.object.format() == BinaryFormat::MachO;
+    let catching_cie = eh.map(|e| {
+        let mut c = cie.clone();
+        let target = match macho {
+            true => product.function_symbol(e.personality),
+            false => product.data_symbol(e.personality_ref),
         };
-        symbols.push(symbol);
-        table.add_fde(cie_id, info.to_fde(address));
+        let pointer = symbol_address(&mut symbols, target);
+        let indirect_pcrel4 =
+            gimli::DW_EH_PE_indirect.0 | gimli::DW_EH_PE_pcrel.0 | gimli::DW_EH_PE_sdata4.0;
+        c.personality = Some((gimli::DwEhPe(indirect_pcrel4), pointer));
+        c.lsda_encoding = Some(gimli::DwEhPe(
+            gimli::DW_EH_PE_pcrel.0 | gimli::DW_EH_PE_sdata4.0,
+        ));
+        (table.add_cie(c), product.data_symbol(e.lsda))
+    });
+    let cie_id = table.add_cie(cie);
+    for (symbol, info, catching) in systemv {
+        let address = symbol_address(&mut symbols, symbol);
+        let mut fde = info.to_fde(address);
+        let cie = match (catching, catching_cie) {
+            (Some(_), Some((id, lsda))) => {
+                fde.lsda = Some(symbol_address(&mut symbols, lsda));
+                id
+            }
+            _ => cie_id,
+        };
+        table.add_fde(cie, fde);
     }
 
     let endian = match isa.endianness() {
@@ -68,12 +103,15 @@ pub(super) fn add_eh_frame(
     let obj = &mut product.object;
     let section = obj.section_id(StandardSection::EhFrame);
     let base = obj.append_section_data(section, data.slice(), 8);
-    let macho_x86_64 =
-        obj.format() == BinaryFormat::MachO && obj.architecture() == Architecture::X86_64;
+    let macho_x86_64 = macho && obj.architecture() == Architecture::X86_64;
     if macho_x86_64 {
         return add_macho_x86_64_relocs(obj, section, base, &relocs, &symbols);
     }
     for reloc in relocs {
+        if macho && reloc.got {
+            add_macho_got_reloc(obj, section, base + reloc.offset, symbols[reloc.symbol])?;
+            continue;
+        }
         let relocation = Relocation {
             offset: base + reloc.offset,
             symbol: symbols[reloc.symbol],
@@ -113,6 +151,10 @@ fn add_macho_x86_64_relocs(
         flags: SymbolFlags::None,
     });
     for reloc in relocs.iter().rev() {
+        if reloc.got {
+            add_macho_got_reloc(obj, section, base + reloc.offset, symbols[reloc.symbol])?;
+            continue;
+        }
         if reloc.kind != RelocationKind::Relative || reloc.size != 4 {
             return Err("codegen: unsupported eh_frame relocation for x86_64 Mach-O".into());
         }
@@ -143,13 +185,41 @@ fn add_macho_x86_64_relocs(
     Ok(())
 }
 
-/// A relocation recorded while writing: `symbol` indexes the caller's symbol list.
+/// Mach-O: the 32-bit field at `offset` is the pc-relative address of `symbol`'s GOT slot (a
+/// personality pointer, `DW_EH_PE_indirect | pcrel | sdata4`).
+fn add_macho_got_reloc(
+    obj: &mut Object,
+    section: SectionId,
+    offset: u64,
+    symbol: SymbolId,
+) -> CodegenResult<()> {
+    let r_type = match obj.architecture() {
+        Architecture::Aarch64 => macho::ARM64_RELOC_POINTER_TO_GOT,
+        _ => macho::X86_64_RELOC_GOT,
+    };
+    let relocation = Relocation {
+        offset,
+        symbol,
+        addend: 0,
+        flags: RelocationFlags::MachO {
+            r_type,
+            r_pcrel: true,
+            r_length: 2,
+        },
+    };
+    obj.add_relocation(section, relocation)
+        .map_err(|e| format!("codegen: eh_frame relocation: {e}"))
+}
+
+/// A relocation recorded while writing: `symbol` indexes the caller's symbol list; `got`: an
+/// indirect pointer (`DW_EH_PE_indirect`), through the GOT on Mach-O.
 struct PendingReloc {
     offset: u64,
     symbol: usize,
     addend: i64,
     size: u8,
     kind: RelocationKind,
+    got: bool,
 }
 
 /// gimli writer that leaves zeros for symbol addresses and records a relocation for each.
@@ -172,6 +242,7 @@ impl RelocWriter {
         addend: i64,
         size: u8,
         kind: RelocationKind,
+        got: bool,
     ) -> gimli::write::Result<()> {
         self.relocs.push(PendingReloc {
             offset: self.data.len() as u64,
@@ -179,6 +250,7 @@ impl RelocWriter {
             addend,
             size,
             kind,
+            got,
         });
         self.write_udata(0, size)
     }
@@ -207,7 +279,7 @@ impl Writer for RelocWriter {
         match address {
             Address::Constant(value) => self.write_udata(value, size),
             Address::Symbol { symbol, addend } => {
-                self.reloc(symbol, addend, size, RelocationKind::Absolute)
+                self.reloc(symbol, addend, size, RelocationKind::Absolute, false)
             }
         }
     }
@@ -224,7 +296,8 @@ impl Writer for RelocWriter {
         match (eh_pe.application(), eh_pe.format()) {
             (gimli::DW_EH_PE_absptr, _) => self.write_address(address, size),
             (gimli::DW_EH_PE_pcrel, gimli::DW_EH_PE_sdata4) => {
-                self.reloc(symbol, addend, 4, RelocationKind::Relative)
+                let got = eh_pe.0 & gimli::DW_EH_PE_indirect.0 != 0;
+                self.reloc(symbol, addend, 4, RelocationKind::Relative, got)
             }
             _ => Err(gimli::write::Error::UnsupportedPointerEncoding(eh_pe)),
         }

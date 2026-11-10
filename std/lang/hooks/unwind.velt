@@ -1,0 +1,68 @@
+// velt/lang/hooks (internal): the panic path in std and Velt's exception
+// (docs/internals/design/unwinding.md). Loaded only in a program that calls `catchUnwind`: then
+// lowering calls `panicRaise` for every panic instead of `velt_rt_panic`.
+//
+// How the exception is raised and taken depends on the target (`#unwind-raise`, std/imports.velt):
+// with the Itanium unwinder (macOS, Linux) unwind_itanium.velt raises it with
+// `_Unwind_RaiseException`; elsewhere (Windows until its structured exceptions are built,
+// WebAssembly) unwind_none.velt raises nothing and names no unwinder function, and `catchUnwind`
+// is a plain call there.
+
+import { raise } from "#unwind-raise";
+
+export { takePanic } from "#unwind-raise";
+
+declare function velt_rt_panic(msg: string): never;
+declare function velt_rt_exit(code: i32): never;
+declare function velt_rt_flush(): void;
+declare function velt_rt_write_str(stream: u32, s: string);
+/** 1 where `catchUnwind` catches (its `velt_eh_try` has a landing pad), 0 where it is a plain
+ * call (the JIT, Windows, WebAssembly): defined by the backend (`velt_vir::eh::CATCHES`). */
+declare function velt_eh_catches(): u8;
+
+/**
+ * How many `catchUnwind`s that catch are running on this thread (`enterCatch` / `leaveCatch`).
+ * Above 0, a `velt_eh_try` frame with a landing pad is live on this stack, so a raised exception
+ * is claimed by it: only then does `panicRaise` raise.
+ */
+const CATCHING = new ThreadLocal<u32>(0);
+
+/**
+ * Every panic of a program that calls `catchUnwind`: with a catch running on this thread, prints
+ * the message as `velt_rt_panic` does and raises Velt's exception; otherwise `velt_rt_panic`,
+ * which ends the process (or unwinds to a runtime `catchPanic`) as in any other program.
+ */
+export function panicRaise(msg: string): never {
+  if (CATCHING.get() != 0) {
+    velt_rt_flush();
+    velt_rt_write_str(2, "panic: " + msg + "\n");
+    raise(msg);
+    // Not claimed: only possible when a frame between the raise and the catch ended the search
+    // (the design's "hole", a runtime `catchPanic` polled inside `catchUnwind`, aborts in Rust
+    // before this) or the allocation failed. End as an uncaught panic, whose message is printed.
+    velt_rt_exit(101);
+  }
+  velt_rt_panic(msg);
+}
+
+/**
+ * Whether a `catchUnwind` starting now catches; if so, panics raise Velt's exception until the
+ * matching `leaveCatch`. Where it doesn't catch, nothing changes: a panic takes `velt_rt_panic`.
+ */
+export function enterCatch(): bool {
+  if (velt_eh_catches() == 0) {
+    return false;
+  }
+  CATCHING.set(CATCHING.get() + 1);
+  return true;
+}
+
+/** Whether `catchUnwind` catches in this program (its `velt_eh_try` has a landing pad). */
+export function catchesPanics(): bool {
+  return velt_eh_catches() != 0;
+}
+
+/** The `catchUnwind` that `enterCatch` announced (and returned true for) ended. */
+export function leaveCatch(): void {
+  CATCHING.set(CATCHING.get() - 1);
+}

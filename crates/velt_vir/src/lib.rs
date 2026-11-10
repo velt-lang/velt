@@ -167,6 +167,7 @@ pub const STR_TEXT_AGG_NAME: &str = "string text";
 pub const OBJECT_AGG_SUFFIX: &str = " object";
 
 pub mod atomic;
+pub mod eh;
 pub mod fingerprint;
 mod lower;
 

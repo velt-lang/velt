@@ -4,6 +4,7 @@
 mod atomics;
 #[cfg(unix)]
 mod debug_info;
+mod eh;
 mod entry;
 mod frames;
 mod half;

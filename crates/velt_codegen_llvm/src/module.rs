@@ -143,6 +143,7 @@ pub(crate) fn emit_unit_capped(
         unit_defines_main(program, unit),
     ));
     out.push_str(&extern_declarations(program)?);
+    out.push_str(&crate::eh::definitions(program, target));
     for &i in &unit.declares {
         out.push_str(&function_declaration(program, i)?);
     }
@@ -288,7 +289,9 @@ fn extern_declarations(program: &vir::Program) -> CodegenResult<String> {
         {
             continue;
         }
-        if velt_vir::tls::TlsCall::of_symbol(&e.symbol).is_some() {
+        if velt_vir::tls::TlsCall::of_symbol(&e.symbol).is_some()
+            || velt_vir::eh::is_backend_defined(&e.symbol)
+        {
             continue;
         }
         let decl = match Allocator::of(&e.symbol, &e.params, e.ret) {
