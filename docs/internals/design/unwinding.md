@@ -502,7 +502,18 @@ program with and without pads); a program built with it leaks as before #2667.
   since a call's result is owned only after the call). The inliner wires an inlined body into
   the call's edge: the callee's calls that may unwind and have no edge get the call's, and its
   `velt_eh_resume` calls become jumps to the call's pad; a call without an edge inlines the
-  body as it is. Nothing else in `velt_opt` changes meaning.
+  body as it is.
+- **Memory kept in locals across calls.** A pass that keeps a pointee's fields in locals and
+  stores them back later must also store them where an unwind leaves the frame, since a frame
+  further out may own that memory and its pad drops it by what memory says. `noalias` promotion
+  stores the written fields in a block on each unwind edge of a call that doesn't receive the
+  param (reloading them on the edge of one that does, which may change them), and gives a call
+  without an edge one to a block that stores them and resumes, once the program has pads (it
+  declares `velt_eh_resume`). `frame_slots` stores a poll function's written slots before
+  `velt_eh_resume` as before a `return`. The normal path is unchanged; programs that don't catch
+  get the same code. The other passes read memory once (`frozen`, `invariant_reads`, which
+  arrives at pads with the pre-call state) or stop at a call with a pad (`fresh`, so
+  `dead_fills`); `heap_sroa` only replaces objects no other frame sees.
 
 ### Backends
 

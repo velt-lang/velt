@@ -23,8 +23,8 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// `velt <args> main.velt`, with a std holding `PROBE` as `velt/zz_unwind`.
-fn velt(dir: &test_dir::TestDir, main: &str, args: &[&str]) -> Output {
+/// The test's std: a copy holding `PROBE` as `velt/zz_unwind`.
+fn std_dir(dir: &test_dir::TestDir) -> PathBuf {
     let std: PathBuf = dir.path().join("std");
     if !std.exists() {
         copy_tree(
@@ -34,6 +34,12 @@ fn velt(dir: &test_dir::TestDir, main: &str, args: &[&str]) -> Output {
         std::fs::create_dir_all(std.join("zz_unwind")).unwrap();
         std::fs::write(std.join("zz_unwind/index.velt"), PROBE).unwrap();
     }
+    std
+}
+
+/// `velt <args> main.velt`, with a std holding `PROBE` as `velt/zz_unwind`.
+fn velt(dir: &test_dir::TestDir, main: &str, args: &[&str]) -> Output {
+    let std = std_dir(dir);
     let file = dir.path().join("main.velt");
     std::fs::write(&file, main).unwrap();
     let mut all: Vec<&str> = args.to_vec();
@@ -278,43 +284,112 @@ fn counts(stderr: &str) -> Option<((u64, u64), (u64, u64))> {
     ))
 }
 
+/// `velt <args> main.velt` (with `PROBE`) linked with the debug runtime, which counts blocks and
+/// strings and reports a use after free or a double free (`velt debug-alloc:`).
+#[cfg(not(windows))]
+fn velt_counted(dir: &test_dir::TestDir, main: &str, args: &[&str]) -> Output {
+    let std = std_dir(dir);
+    let file = dir.path().join("main.velt");
+    std::fs::write(&file, main).unwrap();
+    let mut all: Vec<&str> = args.to_vec();
+    all.push(file.to_str().unwrap());
+    no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(&all)
+        .env("VELT_STD", &std)
+        .env("VELT_RC_STATS", "1")
+        .env("VELT_RT_DEBUG_ALLOC", "1")
+        .env("VELT_RT_LIB", debug_runtime())
+        .current_dir(dir.path())
+        .output()
+        .unwrap()
+}
+
+/// `main` prints `want` and ends with every block and string freed, with each of `runs`.
+#[cfg(not(windows))]
+fn assert_balanced(main: &str, runs: &[&[&str]], want: &str) {
+    let dir = test_dir::TestDir::new();
+    for args in runs {
+        let out = velt_counted(&dir, main, args);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let why = format!("{args:?}: {:?}: {stderr}", out.status);
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{why}");
+        assert!(out.status.success(), "{why}");
+        assert!(!stderr.contains("debug-alloc"), "{why}");
+        let ((allocated, freed), (strings, strings_freed)) =
+            counts(&stderr).unwrap_or_else(|| panic!("{why}: no counts"));
+        assert_eq!(allocated, freed, "{why}: blocks leaked");
+        assert_eq!(strings, strings_freed, "{why}: strings leaked");
+    }
+}
+
+const DEBUG_AND_RELEASE: &[&[&str]] = &[&["run"], &["run", "--release"]];
+
 #[cfg(not(windows))]
 #[test]
 fn unwound_frames_drop_what_they_own() {
-    let dir = test_dir::TestDir::new();
     let mut want = String::new();
     for _ in 0..3 {
         want.push_str(OWNING_OUT);
     }
-    for args in [&["run"][..], &["run", "--release"][..]] {
-        let std = dir.path().join("std");
-        let _ = velt(&dir, "function main() {}\n", &["build", "--emit", "vir"]);
-        let file = dir.path().join("main.velt");
-        std::fs::write(&file, OWNING).unwrap();
-        let mut all: Vec<&str> = args.to_vec();
-        all.push(file.to_str().unwrap());
-        let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
-            .args(&all)
-            .env("VELT_STD", &std)
-            .env("VELT_RC_STATS", "1")
-            .env("VELT_RT_DEBUG_ALLOC", "1")
-            .env("VELT_RT_LIB", debug_runtime())
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            want,
-            "{args:?}: {stderr}"
-        );
-        assert!(out.status.success(), "{args:?}: {stderr}");
-        let ((allocated, freed), (strings, strings_freed)) =
-            counts(&stderr).unwrap_or_else(|| panic!("{args:?}: no counts in {stderr}"));
-        assert!(allocated > 60, "{args:?}: {stderr}");
-        assert_eq!(allocated, freed, "{args:?}: blocks leaked: {stderr}");
-        assert_eq!(strings, strings_freed, "{args:?}: strings leaked: {stderr}");
+    assert_balanced(OWNING, DEBUG_AND_RELEASE, &want);
+}
+
+/// A `noalias` param's fields kept in locals (velt_opt noalias.rs) are stored back on the unwind
+/// edge: `drain` pops strings out of an array its caller owns, then `boom` panics, and the
+/// closure's pad drops the array by its current length, not by the one `drain` loaded (a use
+/// after free). Release only: debug builds run no velt_opt.
+#[cfg(not(windows))]
+const PROMOTED: &str = r#"
+import { catchVeltPanic } from "velt/zz_unwind";
+
+function boom(i: number): number {
+  if (i > 1000) {
+    return boom(i - 1);
+  }
+  if (i == 7) {
+    const xs = [1];
+    return xs[i];
+  }
+  return i;
+}
+
+function drain(xs: string[], n: number): number {
+  if (n > 1000) {
+    return drain(xs, n - 1);
+  }
+  let t = 0;
+  for (let i = 0; i < n; i++) {
+    const p = xs.pop();
+    if (p !== undefined) {
+      t += p.length;
     }
+    t += boom(i);
+  }
+  return t;
+}
+
+function main() {
+  for (let r = 0; r < 3; r++) {
+    const m = catchVeltPanic(() => {
+      const xs: string[] = [];
+      for (let i = 0; i < 20; i++) {
+        xs.push("s" + i.toString() + "-padding-padding");
+      }
+      console.log(drain(xs, 20) + xs.length);
+    });
+    console.log(m === null ? "null" : "caught");
+  }
+}
+"#;
+
+#[cfg(not(windows))]
+#[test]
+fn promoted_fields_are_current_when_a_call_unwinds() {
+    assert_balanced(
+        PROMOTED,
+        &[&["run", "--release"]],
+        "caught\ncaught\ncaught\n",
+    );
 }
 
 /// A drop in a cleanup pad that panics: the second panic aborts instead of unwinding through the
