@@ -11,8 +11,11 @@
 //! entry is one glue function for every wrapper ([`Work::FnWrapperClone`]), which calls the
 //! wrapper's own clone (as velt_rt's function identities mark themselves by their clone entry),
 //! and the wrapped function value follows the header: the wrapper's one capture, or the named
-//! function's value. The comparison follows the wrapped function while the environment's clone
-//! entry is the marker ([`FnLower::fn_root`]). Other programs are unchanged.
+//! function's value. A wrapper of an `any` (a dynamic value converted to a function type) has a
+//! marker of its own and holds the `any`, whose table says `FN_VALUE_ID` in its class id word
+//! when it holds a function value. The comparison follows the wrapped function while the
+//! environment's clone entry is a marker ([`FnLower::fn_root`]), and two `any`s of two function
+//! types compare the functions they lead to (any_eq.rs). Other programs are unchanged.
 
 use velt_sema::hir::{DefId, FnWrapped, PassMode, TyId, TyKind};
 
@@ -25,11 +28,24 @@ const OWN_CLONE: u32 = 3;
 /// The field of a wrapper's environment holding the function value it wraps.
 const WRAPPED: u32 = 4;
 
+/// The class id word of the `any` table of a function type in a program whose wrappers keep the
+/// identity: its values are `{ code, env }`.
+pub(in crate::lower) const FN_VALUE_ID: u64 = u64::MAX - 3;
+
+// The reserved class id words are distinct.
+const _: () = assert!(
+    FN_VALUE_ID != super::super::adapters::ASK_INNER
+        && FN_VALUE_ID != super::super::class_test::ASK_OBJECT
+        && FN_VALUE_ID != super::super::any_set_site::ARRAY_ID
+);
+
 /// What a wrapper's environment holds after its header.
 #[derive(Clone, Debug)]
 pub(in crate::lower) enum Wrapper {
     /// Its one capture, the function value it calls.
     Captured,
+    /// Its one capture, the `any` it calls.
+    CapturedAny,
     /// The value of the module-level function it calls by name (not a capture).
     Named(DefId, Vec<TyId>),
 }
@@ -49,12 +65,14 @@ impl Cx<'_> {
                     return None;
                 };
                 let local = &f.body.locals[c.inner.0 as usize];
-                let held = matches!(
-                    self.kind(local.ty),
-                    TyKind::FnPtr { .. } | TyKind::Closure(_)
-                );
-                (c.outer == *l && c.mode == PassMode::Owned && !local.boxed && held)
-                    .then_some(Wrapper::Captured)
+                if c.outer != *l || c.mode != PassMode::Owned || local.boxed {
+                    return None;
+                }
+                match self.kind(local.ty) {
+                    TyKind::FnPtr { .. } | TyKind::Closure(_) => Some(Wrapper::Captured),
+                    _ if self.is_dynamic(local.ty) => Some(Wrapper::CapturedAny),
+                    _ => None,
+                }
             }
             FnWrapped::Fn(d, targs) => f
                 .captures
@@ -103,9 +121,15 @@ impl Cx<'_> {
         a
     }
 
-    /// The marker clone entry of every wrapper's environment.
-    fn wrapper_mark(&mut self) -> Operand {
-        cfunc(self.func(Work::FnWrapperClone))
+    /// The marker clone entry of every wrapper's environment (`any`: of a wrapper of an `any`).
+    fn wrapper_mark(&mut self, any: bool) -> Operand {
+        cfunc(self.func(Work::FnWrapperClone(any)))
+    }
+
+    /// The class id word of the `any` table of `ty`, when it is a function type (`FN_VALUE_ID`).
+    pub(in crate::lower) fn fn_value_id(&self, ty: TyId) -> Option<u64> {
+        let f = matches!(self.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_));
+        (self.boxing.fn_wrappers && f).then_some(FN_VALUE_ID)
     }
 }
 
@@ -126,7 +150,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         let targs = self.targs.clone();
         let own = cfunc(self.cx.func(Work::EnvClone(def, targs)));
-        let mark = self.cx.wrapper_mark();
+        let mark = self.cx.wrapper_mark(matches!(w, Wrapper::CapturedAny));
         self.assign(proj(base, Proj::Field(1)), Rvalue::Use(mark));
         self.assign(proj(base, Proj::Field(OWN_CLONE)), Rvalue::Use(own));
         if let Wrapper::Named(d, targs) = w {
@@ -146,7 +170,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let ca = self.cx.closure_agg();
         let wa = self.cx.wrapper_env_agg();
-        let mark = self.cx.wrapper_mark();
+        let (mark, mark_any) = (self.cx.wrapper_mark(false), self.cx.wrapper_mark(true));
         let cur = Place::local(self.temp(Ty::Agg(ca)));
         self.assign(cur.clone(), Rvalue::Use(Operand::Copy(place.clone())));
         let (head, test, body, done) = (
@@ -155,6 +179,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.new_block(),
             self.new_block(),
         );
+        let (test_any, held, body_any) = (self.new_block(), self.new_block(), self.new_block());
         self.goto(head);
         self.switch_to(head);
         let env = self.rvalue_temp(
@@ -168,19 +193,66 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let base = proj(&ep, Proj::Deref(Ty::Agg(wa)));
         let clone = Operand::Copy(proj(&base, Proj::Field(1)));
         let clone = self.rvalue_temp(Ty::Ptr, Rvalue::Use(clone));
-        let wraps = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, clone, mark));
-        self.branch(wraps, body, done);
+        let wraps = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, clone.clone(), mark));
+        self.branch(wraps, body, test_any);
         self.switch_to(body);
         let inner = Operand::Copy(proj(&base, Proj::Field(WRAPPED)));
+        self.assign(cur.clone(), Rvalue::Use(inner));
+        self.goto(head);
+        // A wrapper of an `any`: the function value the `any` holds, if it holds one.
+        self.switch_to(test_any);
+        let wraps = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, clone, mark_any));
+        self.branch(wraps, held, done);
+        self.switch_to(held);
+        let any = proj(&base, Proj::Field(WRAPPED));
+        let table = Operand::Copy(proj(&any, Proj::Field(1)));
+        let id = self.vtable_class_id(table);
+        let f = cint(FN_VALUE_ID as i128, Ty::U64);
+        let is_fn = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, id, f));
+        self.branch(is_fn, body_any, done);
+        self.switch_to(body_any);
+        let data = Operand::Copy(proj(&any, Proj::Field(0)));
+        let data = self.rvalue_temp(Ty::Ptr, Rvalue::Use(data));
+        let dp = self.operand_place(data, Ty::Ptr);
+        let inner = Operand::Copy(proj(&dp, Proj::Deref(Ty::Agg(ca))));
         self.assign(cur.clone(), Rvalue::Use(inner));
         self.goto(head);
         self.switch_to(done);
         cur
     }
 
+    /// Do the `any` tables `xa` and `xb` both hold function values (`FN_VALUE_ID`)?
+    pub(in crate::lower) fn any_both_fns(&mut self, xa: &Operand, xb: &Operand) -> Operand {
+        let f = cint(FN_VALUE_ID as i128, Ty::U64);
+        let ia = self.vtable_class_id(xa.clone());
+        let ib = self.vtable_class_id(xb.clone());
+        let fa = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, ia, f.clone()));
+        let fb = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, ib, f));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, fa, fb))
+    }
+
+    /// `===` of the function values at the data pointers `da` and `db` of two `any`s: the
+    /// functions their wrappers lead to.
+    pub(in crate::lower) fn fn_values_same(&mut self, da: &Operand, db: &Operand) -> Operand {
+        let ca = self.cx.closure_agg();
+        let root = |lw: &mut Self, d: &Operand| {
+            let d = lw.rvalue_temp(Ty::Ptr, Rvalue::Use(d.clone()));
+            let p = lw.operand_place(d, Ty::Ptr);
+            lw.fn_root(&proj(&p, Proj::Deref(Ty::Agg(ca))))
+        };
+        let (a, b) = (root(self, da), root(self, db));
+        let w = |lw: &mut Self, k: u32| {
+            let (x, y) = (proj(&a, Proj::Field(k)), proj(&b, Proj::Field(k)));
+            let (x, y) = (Operand::Copy(x), Operand::Copy(y));
+            lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
+        };
+        let (code, env) = (w(self, 0), w(self, 1));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env))
+    }
+
     /// `(env: ptr) -> ptr`, the marker clone entry of every wrapper's environment: the
     /// wrapper's own clone entry, called.
-    pub(in crate::lower) fn build_wrapper_clone(cx: &'c mut Cx<'h>) -> Function {
+    pub(in crate::lower) fn build_wrapper_clone(cx: &'c mut Cx<'h>, any: bool) -> Function {
         let mut lw = FnLower::bare(cx, vec![]);
         let env = lw.new_local(Ty::Ptr, Some("env".into()));
         let wa = lw.cx.wrapper_env_agg();
@@ -190,6 +262,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let ev = Operand::Copy(Place::local(env));
         let new = lw.call_entry(own, vec![ev], vec![Ty::Ptr], Ty::Ptr);
         lw.terminate(Terminator::Return(new));
-        lw.finish("_Gfn_wrapper_clone".into(), vec![Ty::Ptr], Ty::Ptr)
+        let sym = match any {
+            true => "_Gfn_wrapper_any_clone",
+            false => "_Gfn_wrapper_clone",
+        };
+        lw.finish(sym.into(), vec![Ty::Ptr], Ty::Ptr)
     }
 }

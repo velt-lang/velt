@@ -432,19 +432,22 @@ the comparison of function values:
 
 ### Function wrappers (#2688)
 `Program::fn_wrappers` (additive) maps the closures sema makes around a function value to fit
-another function type (velt_sema `callback.rs` `wrap`, `iface_adapt.rs` `adapt_fn`: fewer or
-more parameters, a wider parameter, a default or rest parameter, a dropped result, a function
-that doesn't throw where one may) to a `FnWrapped` (`hir/fresh.rs`), the function it stands for:
-- `Local(l)`: the function value in local `l` of the function making the wrapper, which the
-  wrapper captures (`{ const f = value; (p…) => f(p…) }`);
+another function type (velt_sema `callback.rs` `wrap`, `iface_adapt.rs` `adapt_fn`,
+`generic_conversions.rs` `forwarding`: fewer or more parameters, a wider parameter, a default or
+rest parameter, a dropped result, a function that doesn't throw where one may, an `any`
+converted to a function type) to a `FnWrapped` (`hir/fresh.rs`), the function it stands for:
+- `Local(l)`: the value in local `l` of the function making the wrapper, which the wrapper
+  captures (`{ const f = value; (p…) => f(p…) }`): a function value, or an `any` holding one;
 - `Fn(def, type_args)`: the module-level function the wrapper calls by name.
 
 In JavaScript the converted function is the same object, so a program comparing function values
 gives such a wrapper (one capturing only `l`, by move, or a named one capturing nothing; not
 async) an environment whose clone entry is one marker function for all wrappers, followed by the
-wrapper's own clone entry and the wrapped function value. `===`, `Object.is`, `includes` and
-`Set` / `Map` keys, also of `any` values of one function type, follow wrappers to the function
-they wrap. Programs that compare no function values are lowered as before.
+wrapper's own clone entry and the wrapped value (a wrapper of an `any` has a marker of its own,
+and the `any` table of a function type says so in its class id word). `===`, `Object.is`,
+`includes`, `Set` / `Map` keys and function properties, also through `any` values of two
+function types, follow wrappers to the function they wrap. `===` of two function types
+converts one to the other. Programs that compare no function values are lowered as before.
 
 A `const` holding a named generic function (`const g: G = id`, also through a chain of
 constants) is not one of these where a function type of fixed types is expected: sema gives the

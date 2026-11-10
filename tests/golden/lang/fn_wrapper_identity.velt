@@ -130,10 +130,26 @@ set.clear();
 // `===` of two function types.
 console.log("cross", stored === d, d === stored, w1 === a, a !== w1, w1 === b);
 
+// An `any` holding a function of another type, converted to the type.
+const h: any = (e: any, n: any) => {
+  console.log("h", e.type, n);
+};
+add(h);
+add(h);
+console.log("any held", set.size, has(h));
+set.clear();
+
+// `any` values of two function types.
+dyn.add(a);
+addAny(a);
+console.log("any cross", dyn.size, dyn.has(a));
+dyn.clear();
+
 // The wrappers still call the functions they wrap.
 add(a);
 add(d);
 add(r);
 add(z);
 add(named);
+add(h);
 for (const l of set) l(new Ev("x"));

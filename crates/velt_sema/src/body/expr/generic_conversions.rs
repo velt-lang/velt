@@ -508,7 +508,9 @@ impl FnCx<'_, '_> {
             body: ast::ArrowBody::Expr(Box::new(call)),
             is_async: false,
         });
-        let value = make(self, &arrow, exp);
+        let mut value = make(self, &arrow, exp);
+        // The wrapper of a dynamic value stands for the function it holds (lowering looks).
+        self.mark_wraps(&mut value, hir::FnWrapped::Local(l));
         self.pop_scope();
         let value = self.coerce(value, exp);
         let block = hir::Block {

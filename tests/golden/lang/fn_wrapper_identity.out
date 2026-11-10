@@ -33,8 +33,11 @@ nested === true false
 nested has true true 1
 stored 1 true false true
 cross true true true false false
+any held 1 true
+any cross 1 true
 a x
 d x
 r 1
 z
 named x
+h x undefined
