@@ -40,7 +40,7 @@ needed.
 | `r[k]` | `V`, as in TypeScript; a missing key gives `undefined` (a `V \| undefined` underneath), and a use as a `V` checks presence: a member read, a call or an index throws Node's `TypeError` (#930 phase 3) | `V`: every key is always present |
 | `r.name` (an identifier key) | same as `r["name"]` | same, and only for members of `K` (a typo is an error); for a string enum, the member whose value is `"name"` |
 | `r[k] = v` | insert or replace | replace |
-| `r[k] += 1`, `r[k]++` | as in JavaScript: a missing number is `NaN` (#930 phase 3); an error only when `V` holds `null` or `undefined` itself (fix-it `r[k] = (r[k] ?? 0) + 1`); `r[k] ??= v` sets a missing key | replace |
+| `r[k] += 1`, `r[k]++` | as in JavaScript: a missing number is `NaN` (#930 phase 3); an error for any other `V` (fix-it `r[k] = (r[k] ?? 0) + 1`); `r[k] ??= v` sets a missing key | replace |
 | `k in r` | presence test (needs the `in` operator from #18) | always true; a warning |
 
 **Construction.** An object literal can be used wherever a `Record` is expected:
@@ -111,5 +111,5 @@ methods are internal: calling one outside the prelude is an error.
 3. `r.name` is `r["name"]` on every record.
 4. Compound assignment (`r[k] += 1`, `r[k]++`, …) on an open record reads `r[k]` as a `V`, as in
    JavaScript: a missing number is `NaN` and a missing string `"undefined"` (#930 phase 3; it was
-   an error, issue #230). It stays an error with the fix-it `r[k] = (r[k] ?? 0) + 1` when `V`
-   holds `null` or `undefined` itself. Closed records keep it.
+   an error, issue #230). It stays an error with the fix-it `r[k] = (r[k] ?? 0) + 1` for any other
+   `V` (an `i64` has no `NaN`; a `V` that holds `null` or `undefined`). Closed records keep it.

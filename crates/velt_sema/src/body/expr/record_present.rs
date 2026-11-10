@@ -207,10 +207,10 @@ impl FnCx<'_, '_> {
         self.checked_present(h, msg, Some(v), true, span)
     }
 
-    /// Does `r[k] op= v` / `r[k]++` on an open record with values `v` read `r[k]` as a `V`
-    /// (`v` holds no nothing of its own and is not dynamic)?
+    /// Does `r[k] op= v` / `r[k]++` on an open record with values `v` read `r[k]` as a `V`: a
+    /// `number` (a missing one is `NaN`) or a `string` (`"undefined"`), as in JavaScript?
     pub(super) fn open_compound_reads(&self, v: TyId) -> bool {
-        self.cx.ty.nothing_of(v).is_none() && self.cx.dynamic(v).is_none()
+        v == self.cx.ty.f64 || v == self.cx.ty.str_
     }
 
     /// `obj.prop` as the place an assignment writes (`field_access`): a missing record value
