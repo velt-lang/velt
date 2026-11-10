@@ -107,6 +107,12 @@ const NATIVE: &str = "ntdll: { system: { default: \"ntdll\" }, unchecked: true }
 #[cfg(windows)]
 const EXPECTED: &str = "code page true errno 34";
 
+/// A library `NATIVE` maps, to declare a variable it doesn't have.
+#[cfg(unix)]
+const MISSING_FROM: &str = "c";
+#[cfg(windows)]
+const MISSING_FROM: &str = "ntdll";
+
 const MAIN: &str =
     "import { report } from \"cvars\";\n\nfunction main() {\n  console.log(report());\n}\n";
 
@@ -140,7 +146,9 @@ fn velt_dev_reaches_c_variables_and_reports_a_missing_one() {
     drop(dev);
     let missing = LIB.replace(
         "export function report",
-        "declare c(\"c\") let no_such_var_r2722: i32;\n\nexport function report",
+        &format!(
+            "declare c(\"{MISSING_FROM}\") let no_such_var_r2722: i32;\n\nexport function report"
+        ),
     );
     let missing = missing.replace(
         "  return out;",
