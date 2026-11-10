@@ -20,6 +20,7 @@ import {
   MAX_PLAIN,
 } from "velt/net/tls/record_reader";
 import { Turns } from "velt/net/tls/turns";
+import { arrayMove } from "velt/lang/intrinsics/array";
 
 // Records sealed per transport write, and the room each takes.
 const BATCH: usize = 4;
@@ -112,9 +113,7 @@ export class RecordWriter {
     let n: usize = 0;
     for (let r: usize = 0; r < BATCH && off < to && writer.seq < limit; r++) {
       const len = to - off < MAX_PLAIN ? to - off : MAX_PLAIN;
-      for (let i: usize = 0; i < len; i++) {
-        buf[n + HEADER + i] = bytes[off + i];
-      }
+      arrayMove(buf, n + HEADER, bytes, off, len);
       buf[n + HEADER + len] = APPLICATION_DATA;
       n += writer.seal(buf, n, len + 1);
       off += len;
@@ -317,9 +316,7 @@ export class RecordWriter {
     let off: usize = 0;
     while (off < content.length || n == start) {
       const len = content.length - off < MAX_PLAIN ? content.length - off : MAX_PLAIN;
-      for (let i: usize = 0; i < len; i++) {
-        buf[n + HEADER + i] = content[off + i];
-      }
+      arrayMove(buf, n + HEADER, content, off, len);
       buf[n + HEADER + len] = type;
       n += writer.seal(buf, n, len + 1);
       off += len;
