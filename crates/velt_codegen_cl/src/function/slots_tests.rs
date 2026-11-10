@@ -23,6 +23,7 @@ fn program() -> Program {
                 noreturn: false,
                 host: None,
                 c_decl: None,
+                variadic: false,
             },
             // 1: keep(ptr) -> ptr (returns its argument)
             ExternFn {
@@ -32,6 +33,7 @@ fn program() -> Program {
                 noreturn: false,
                 host: None,
                 c_decl: None,
+                variadic: false,
             },
         ],
         funcs: vec![callee("ret.out"), callee("s")],

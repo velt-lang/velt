@@ -112,7 +112,7 @@ keyword is `c` because it names the ABI, which every language here speaks.
   a non-blocking one when it has a `Completion<R>` parameter (see "Async").
 - Variadic functions are declared with their fixed parameters and `...args: CVarArgs` (scalars
   and `Ptr`s, C's default promotions, the target's variadic convention: Apple arm64 passes them
-  on the stack, unlike AAPCS64).
+  on the stack, unlike AAPCS64; "Variadic functions" below).
 - A declaration is allowed on every target; a reachable call where the manifest maps no library
   for the target is an error naming the target and the caller, so portable code chooses per
   platform with conditional imports.
@@ -175,7 +175,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 | `Ptr<T>`, `Ptr<T> \| null` | `T *` | an address; `null` is `NULL` (same word) |
 | `NativeHandle<T>` (argument for a `Ptr<T>` parameter) | `T *` | holds an in-flight reference for the call (below) |
 | `null` (as a parameter type) | any pointer | always `NULL` |
-| `readonly u8[]`, `u8[]`, typed arrays, views (#1718) | `const T *` / `T *` | the first element's address, borrowed for the call; the binding passes the length |
+| `readonly u8[]`, `u8[]`, typed arrays, views (#1718) | `const T *` / `T *` | the first element's address (element `begin`'s for `xs.subarray(begin, end)`), borrowed for the call; the binding passes the length |
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
 | `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, one allocation, reusable) |
 | `CStr` (callback parameters only) | `const char *` | copied into a `string` by the trampoline |
@@ -219,6 +219,137 @@ never need it, and capture is a call and a store per C call. SQLite's range sele
 costs 9% more with it, 1.04× the Rust crate it replaces against 0.94× without. A check of whether the
 whole program reads `lastOsError()` was rejected: what a `declare c` call does must not depend on
 code elsewhere.
+
+### Variadic functions
+
+C's `...` (`fcntl`, `open`, `ioctl`, `syscall`, `printf`) is the declaration's last parameter,
+`...args: CVarArgs`, a type of velt/ffi that means only this:
+
+```ts
+import { CVarArgs } from "velt/ffi";
+
+declare c("c") function fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i32;
+
+// SAFETY: `fd` is open; F_SETFL takes an `int`.
+unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
+```
+
+- **What a call passes.** The fixed parameters are checked as any C call's. Each further argument
+  is passed as what it is: an integer, `f32`, `f64`, `bool`, `Ptr<T>`, `Ptr<T> | null` or `null`
+  (`NULL`). Anything else is an error naming its type (a `string`, an array, a struct; a spread
+  `...xs`: C's `...` has no array). A number literal there has no type of its own, so it is an
+  error with the fix (`0 as i32`, `1.5 as f64`): C reads the bits as the format or the command
+  says, and a guessed `f64` where C reads an `int` is a wrong value, not a conversion.
+- **C's default argument promotions** happen in lowering, as a C compiler does them: an integer
+  narrower than `int` (`i8`, `u8`, `i16`, `u16`) and `bool` pass as an `int` (sign- or
+  zero-extended by its own type), an `f32` as a `double`; `isize`/`usize` stay `ssize_t`/`size_t`
+  (32 bits on wasm32). VIR gets them promoted: a variadic `vir::ExternFn` has its fixed
+  parameters, and a call's further arguments are `I32`, `U32`, `I64`, `U64`, `F64` or `Ptr`.
+- **Each backend calls it with the target's variadic convention.** LLVM declares the function
+  `(…, ...)` and calls it with its type, so it places the arguments itself (on the stack on Apple
+  arm64, `%al` on SysV x86-64, a `double` in an integer register on Windows). Cranelift has no
+  variadic calls, so each call is an ordinary one whose signature puts the arguments there
+  (rustc_codegen_cranelift does the same): on AAPCS64 (Linux arm64) and SysV x86-64 they go where
+  named ones would; on Apple arm64 zeros fill the 8 integer registers (and the 8 float ones when a
+  `double` follows) and each variadic argument is 64 bits, so they land in their stack slots in
+  order; on Windows a variadic `double` passes its bits as an integer (on arm64 every float of
+  the call does). **SysV x86-64 also wants `%al` to bound the vector registers used, which
+  Cranelift can't set**: a callee reads it only to decide whether to save them, so integers and
+  pointers are right whatever it holds, but a `double` isn't. A debug build (Cranelift) on x86-64
+  Linux or macOS refuses a call with a float variadic argument, naming the declaration and
+  `--release` (LLVM) as the way; LLVM builds and every other target pass it. `velt dev` is
+  Cranelift too.
+- **`declare system`'s variadic forms** (`fcntl`, `open` in the compiler's table) are variadic
+  externs the same way, so a program that calls std's file functions and declares `fcntl`
+  itself links one symbol with one signature; the zeros lowering used to add before them on
+  Apple arm64 are now the Cranelift backend's, and LLVM calls them as variadic.
+- **Header check.** A declaration with `...args: CVarArgs` matches a variadic prototype and one
+  without it a fixed one, each way an error with the fix (`C function \`fcntl\` is variadic in
+  fcntl.h:…`, note: declare its `...` last); the fixed parameters compare as any function's.
+  `c-headers.json` records a variadic declaration's digest with its `...`, and nothing changes
+  for the others, so records already published still match.
+- **Cost.** None at run time beyond the call: the promotions are the casts a C compiler makes.
+  At compile time a declaration's last parameter is compared with one alias.
+
+Rejected: `CVarArg` values made by a constructor (`new CVarArg.int(1)`), Swift's
+`CVarArg`/`withVaList` route: an allocation per argument for what is a register move, and
+nothing it checks that the argument's own type doesn't already say. `va_list` parameters
+(`vprintf`) aren't declared yet: a `va_list` is target-specific storage C code fills, a C struct
+of layer 3.
+
+### One C function, several declarations
+
+One C function is often declared more than once in a program: velt/ffi's `readCString` declares
+`memcpy(dst: u8[], src: Ptr<u8>, n: usize): Ptr<u8>` and the scheduler's ring buffer
+`memcpy$sched(dst: usize, src: usize, n: usize): usize`. They link one symbol, so they must pass
+the same C signature; they don't have to name the same Velt types.
+
+- **Same C signature** is decided on the C type each Velt type crosses as (the "What crosses"
+  table), by class, the same on every target:
+  - **a machine word**: every pointer form (`Ptr<T>`, `Ptr<T> | null`, `null`, `StrBytes`,
+    `CString`, arrays and views, `Out<T>`, `OutPtr<T>`) and `isize`/`usize`. A pointer and
+    `size_t`/`ssize_t` are one register class and width on every target Velt compiles for
+    (64 bits natively, 32 on wasm32), so C reads one where the other was passed;
+  - each other integer by width **and** signedness (`i8` and `u8` differ: a caller extends
+    them, by sign or by zero, and C reads the extended register; `i32`/`u32` and `i64`/`u64`
+    are kept apart too, as the header check does);
+  - `bool` (`_Bool`), `f32`, `f64`, and `void` for a result.
+  Two declarations are the same C signature when they have as many fixed parameters, both or
+  neither end with `...args: CVarArgs`, and each parameter and the result is of one class.
+- **What lowering does**: the symbol's first call fixes the extern's VIR signature; a call
+  through another declaration of the same C signature casts each argument whose VIR type
+  differs (a `usize` to a `Ptr`, a `Ptr` to a `u64`: the same bits) and the result back, so the
+  extern has one signature and no backend sees two. A program that never mixes them compiles
+  exactly as before.
+- **A real mismatch is still an error**, once per declaration that differs, at that
+  declaration and naming the other one with where it is: `C function \`abs\` has two
+  signatures: \`abs$u8(u8): i32\` here, and \`abs$i8(i8): i32\` at src/lib.velt:1:1`, with a note
+  naming the first position that differs (`parameter 1 is \`u8\` here and \`i8\` there`) and
+  the rule.
+- **Not a check against headers**: declaring a pointer `usize` still fails the header check
+  where there is one (`usize` matches `size_t`). This rule is about two declarations agreeing
+  with each other, which the linker can't see; the header check is what says either is right.
+
+Rejected: requiring the same Velt types (today's rule): std and packages can't be loaded
+together when they spell one C function differently, though each is right. Merging by VIR type
+alone: `usize` is `u64` natively but `u32` on wasm32, so a program would compile for one target
+and not another.
+
+### A position in an array
+
+C often wants the address of an element, not of the array: `recv(fd, buf + filled, room)`,
+`memcpy(ring + tail, data + start, n)`, `cblas_daxpy(n, a, x + i, 1, y + i, 1)`. A number array
+argument crosses as the address of its first element, borrowed for the call; the address of
+element `begin` is that array's `subarray(begin, end)`:
+
+```ts
+declare c("c") function recv(fd: i32, buf: u8[], n: usize, flags: i32): isize;
+declare c("cblas") function cblas_daxpy(n: i32, a: f64, x: readonly f64[], incx: i32, y: f64[], incy: i32): void;
+
+// SAFETY: `data` has `end` bytes; recv writes at most `end - filled` of them.
+const got = unsafe { recv(fd, data.subarray(filled, end), (end - filled) as usize, 0) };
+// SAFETY: both arrays have `i + n` elements.
+unsafe { cblas_daxpy(n, 2.0, xs.subarray(i, i + n), 1, ys.subarray(i, i + n), 1) };
+```
+
+- **What it is.** In a `declare c` call, `xs.subarray(begin, end)` of a `T[]` (`T` a number type)
+  for a parameter `T[]` or `readonly T[]` passes the address of element `begin`, clamped as JS's
+  `subarray` clamps (negative from the end, past the end the end), read at the call like the
+  whole array's. No object is made and nothing is copied. A `u8[]` parameter had it already (with
+  views of bytes, #1718); now every number array has it, with the element size scaling the
+  offset. Outside a C call an array has no `subarray` (a typed array has its own).
+- **Lending.** Exactly the array's own rule: borrowed for the call, so the array can't grow,
+  shrink or move while C holds the address, and C may not keep it (a `u8[]` parameter not written
+  `readonly` is a mutable borrow, refused for a read-only array). The binding passes the length,
+  as for the whole array; `end` bounds nothing C sees and is there for the reader and to match
+  JS.
+- **Why not an address.** `addressOf(xs, i): Ptr<T>` (unsafe) would hand Velt code a raw address
+  into an array that a later `push` may move; the reactor's stand-in did exactly that, keeping
+  `memset(data, 0, 0)`'s result across calls and an `await`. A pointer that outlives the call
+  is a `PinnedBuffer`'s lease (step 6), whose lifetime the ownership checker sees. The stand-in
+  existed because one C symbol had one signature: with "One C function, several declarations"
+  the reactor declares `recv$bytes(fd: i32, buf: u8[], …)` next to `recv$io(fd: i32, buf: usize,
+  …)` and passes `data.subarray(start, end)` at each call.
 
 ### C structs
 
@@ -564,7 +695,18 @@ native: {
   `allowNative` and listing. Users never need a C compiler or cargo. Release builds link
   statically, debug builds the shared library, the dev JIT `dlopen`s it.
 - **`c`, the C library**, is predefined: libc, libSystem, or the UCRT on Windows; WASI's libc on
-  `wasm32-wasip1` where system functions exist today.
+  `wasm32-wasip1` where system functions exist today. Since Visual Studio 2015 the UCRT defines
+  `printf`, `snprintf`, `sprintf`, `fprintf`, `vsnprintf` and the rest of the stdio family inline
+  in `<stdio.h>`, and `ucrt.lib` exports none of them: a declaration only names the symbol, so a
+  program that declares a function from `c` and targets `*-windows-msvc` also links
+  `legacy_stdio_definitions.lib`, their out-of-line copies: such a declaration puts the marker
+  `platform:c` among the program's C libraries (`native::c_decls::links`, kept by the build's
+  stamp), which the link turns into that library with MSVC and into nothing elsewhere. Only
+  then, not for every Windows link: a static library adds only what a program calls, so it
+  costs nothing unused, but it is one more file for `link.exe` to read in every build of every
+  program. It is no DLL, so `velt dev` loads nothing for the marker, and its JIT finds these
+  functions in no module on Windows yet; the bundled linker's kit has no such library either, so
+  they link with the system linker only.
 
 ### Fetched archives (#2367)
 
@@ -787,8 +929,9 @@ Step 1 lands in layers, each its own pull request:
    until step 2 captures the CRT's `errno`), calls
    only in unsafe code. Until the trust boundary layer, a C declaration is allowed in std and in
    any file with a package (not a lone file), the only library is `"c"`, the platform's C
-   library, and a call on WebAssembly is an error. One symbol has one signature: a second one
-   (another `$suffix`, another package) is an error until calls through C function pointers.
+   library, and a call on WebAssembly is an error. One symbol has one C signature: a second
+   declaration (another `$suffix`, another package) may name other Velt types for the same C
+   types, and one of another C signature is an error (layer 9).
    Under `velt dev` a C function no loaded library has is an error naming its declaration.
    Step 1 is complete only with layers 5 (the trust boundary) and 6 (the header check): until layer
    6, declarations are unchecked.
@@ -883,8 +1026,8 @@ Step 1 lands in layers, each its own pull request:
      - zig's `zig cc -###` gives the clang command for the target; that command with
        `-ast-dump=json` in place of the object parses the headers (`zig cc -fsyntax-only` still
        renames an object it never made).
-     - Each declaration must name a function the headers declare, with as many parameters, not
-       variadic, and each parameter and the result must match per the table above (typedefs
+     - Each declaration must name a function the headers declare, with as many parameters,
+       variadic exactly when it ends with `...args: CVarArgs` (layer 9), and each parameter and the result must match per the table above (typedefs
        resolved, `long` per the target's data model, clang's predefined `__size_t`). Windows
        targets read zig's MinGW headers, which have MSVC's type sizes. An enum is as wide as
        its fixed type or its widest constant; a packed enum, one with `mode(...)`, and one whose
@@ -903,7 +1046,7 @@ Step 1 lands in layers, each its own pull request:
        package's files among them are build-stamp inputs, so a changed header rebuilds (and so
        checks) a program whose sources didn't change.
      - Not yet: headers per build condition (frameworks: zig has no macOS SDK), structs,
-       function pointers (other than as `Ptr<void>`, 6c-1), variadics.
+       function pointers (other than as `Ptr<void>`, 6c-1).
    - 6b: what installs check.
      - A C library a package declares functions of lists its `headers` or says
        `unchecked: true`; `c`, the platform's C library, too (`c: { c: { headers:
@@ -1042,6 +1185,24 @@ Step 1 lands in layers, each its own pull request:
        pointer, so they get their own storage, the address with `NULL` as `null`.
      - Structs by value in `declare c` signatures, `Out<S>` and `Ref<S>` (the shared
        classifier, both backends); the header check of structs; the differential ABI test.
+9. What the scheduler's reactor in Velt (#2649) needed of `declare c`, each its own commit:
+   - Variadic functions ("Variadic functions" above): `...args: CVarArgs` (std/ffi/c_var_args.velt,
+     an alias of `never[]` sema knows by its declaration, as `StrBytes`); `hir::CImport::variadic`
+     and `vir::ExternFn::variadic` (additive); sema checks the further arguments
+     (`body/expr/c_varargs.rs`), lowering promotes them (`lower/c_call.rs`), LLVM declares and
+     calls `(…, ...)`, Cranelift places them per target (`function/variadic.rs`), and the
+     header check matches variadic prototypes. `declare system`'s variadic forms became variadic
+     externs too.
+   - One C function, several declarations ("One C function, several declarations" above): the
+     symbol's first call fixes the extern's VIR signature, and a call through another declaration
+     of the same C signature (`CSig`, by `CClass` per position, `lower/c_call.rs`) casts its
+     arguments and result to it; another C signature is an error naming both declarations and
+     what differs.
+   - A position in an array ("A position in an array" above): sema's `system_view_arg` takes
+     `xs.subarray(begin, end)` for a C parameter of any number array type, not only `u8[]`, and
+     lowering scales `begin` by the element's size (`subarray_bytes`). The memset stand-in for
+     an array's address goes: a declaration taking the array (with the address-taking one beside
+     it, now that both agree) and `subarray` at each call.
 
 9. `@export("c_name")` (#2203 step 5): "Exported functions" above, with
    `exportedAddress`. Tested: veltc's c_export.rs (C sources calling exports by name, a thread
@@ -1067,3 +1228,11 @@ Step 1 lands in layers, each its own pull request:
   (#2203 step 5, decided while the owner was away, open to revisit).
 - User-set build conditions: a separate change. A result-returning callback with no active C
   call stops the program until step 9.
+- C's `...` is `...args: CVarArgs`; a number literal passed to it says its C type; Cranelift on
+  SysV x86-64 refuses a float variadic argument (no way to set `%al`) rather than pass it wrong
+  (layer 9, made while the owner was away, for review).
+- Two declarations of one C function agree when their C types are of one class per position
+  (pointers, `usize` and `isize` one machine word), not when their Velt types are the same
+  (layer 9, as above).
+- A position in an array is `xs.subarray(begin, end)` at the call, for every number array; no
+  `addressOf(xs, i)`: an address that outlives the call is a lease (layer 9, as above).

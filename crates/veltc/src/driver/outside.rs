@@ -322,6 +322,7 @@ mod tests {
             noreturn: false,
             host: None,
             c_decl: None,
+            variadic: false,
         };
         let r0 = func(
             "_V12____velt__r0",

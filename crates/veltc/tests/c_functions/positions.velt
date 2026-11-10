@@ -1,0 +1,42 @@
+import { Ptr, readBytes } from "velt/ffi";
+
+declare c("c") function memset(buf: u8[], c: i32, n: usize): Ptr<u8>;
+declare c("c") function memcpy$f64(dst: f64[], src: readonly f64[], n: usize): Ptr<f64>;
+declare c("c") function memcpy$i16(dst: i16[], src: readonly i16[], n: usize): Ptr<i16>;
+// The scheduler's way to copy part of an array into C memory: by its address, as `usize`, from
+// `subarray` (velt/ffi declares `memcpy` with other types for the same C ones).
+declare c("c") function memcpy$out(dst: usize, src: readonly u8[], n: usize): usize;
+declare c("c") function malloc(n: usize): Ptr<u8> | null;
+declare c("c") function free(p: Ptr<u8> | null): void;
+
+/** Elements of number arrays at a position, each through `subarray`. */
+export function positions(): string {
+  const bytes: u8[] = [1, 2, 3, 4, 5, 6];
+  // SAFETY: bytes 2 and 3 exist.
+  unsafe { memset(bytes.subarray(2, 4), 9, 2) };
+  const xs: f64[] = [1, 2, 3, 4, 5];
+  const ys: f64[] = [10, 20, 30];
+  // SAFETY: two doubles from element 1 of `ys` into element 2 of `xs`; both have them.
+  unsafe { memcpy$f64(xs.subarray(2, 4), ys.subarray(1), 16) };
+  const hs: i16[] = [1, 2, 3, 4];
+  const ks: i16[] = [-7, -8];
+  // SAFETY: one `short` into the last element (from the end, as JS's `subarray`).
+  unsafe { memcpy$i16(hs.subarray(-1), ks.subarray(1, 2), 2) };
+  return `${bytes.join(",")} ${xs.join(",")} ${hs.join(",")}`;
+}
+
+/** Bytes 2..5 of `data` copied into C memory, and read back. */
+export function copiedOut(data: u8[]): string {
+  // SAFETY: a block of 3 bytes, freed below.
+  const block = unsafe { malloc(3) };
+  if (block === null) {
+    return "no memory";
+  }
+  // SAFETY: the block holds 3 bytes, and `data` has bytes 2..5.
+  unsafe { memcpy$out(Ptr.addressOf(block), data.subarray(2, 5), 3) };
+  // SAFETY: the block's 3 bytes were just written; it is freed once.
+  const back = unsafe { readBytes(block, 3) };
+  // SAFETY: `block` came from `malloc`.
+  unsafe { free(block) };
+  return back.join(",");
+}

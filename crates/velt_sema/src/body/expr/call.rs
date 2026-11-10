@@ -354,6 +354,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.as_type_call(d, type_args, args, span) {
             return h;
         }
+        if self.cx.fn_info(d).c.as_ref().is_some_and(|c| c.variadic) {
+            return self.c_variadic_call(d, name, args, exp, span);
+        }
         let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];

@@ -239,7 +239,7 @@ fn compile_function(
 }
 
 /// Declarations of everything, plus the ids of the function code this module defines.
-fn declare_all<M: Module>(
+pub(crate) fn declare_all<M: Module>(
     module: &mut M,
     program: &vir::Program,
     naming: &Naming,

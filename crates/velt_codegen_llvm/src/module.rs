@@ -329,8 +329,14 @@ fn function_declaration(program: &vir::Program, index: usize) -> CodegenResult<S
 
 /// `declare` line of an ordinary extern.
 fn plain_declaration(e: &vir::ExternFn) -> CodegenResult<String> {
-    let params = signature_params(&e.params)
+    let mut params = signature_params(&e.params)
         .map_err(|err| format!("codegen: extern `{}`: {err}", e.symbol))?;
+    // A variadic C function: LLVM passes the further arguments with the target's variadic
+    // convention (on the stack on Apple arm64, `%al` on x86-64, floats in integer registers on
+    // Windows).
+    if e.variadic {
+        params.push_str(if e.params.is_empty() { "..." } else { ", ..." });
+    }
     let attrs = match (e.noreturn, runtime::effects(&e.symbol)) {
         (true, _) => NORETURN_ATTRS,
         (false, Effects::None) => PURE_ATTRS,

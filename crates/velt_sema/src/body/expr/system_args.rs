@@ -7,6 +7,10 @@
 //! - `xs.subarray(begin, end)` of a `u8[]` `xs`, which becomes `Intrinsic::Subarray`: those
 //!   bytes of `xs`, borrowed for the call, with no copy and no object (`Buffer.subarray` in
 //!   Node).
+//!
+//! A C function's parameter of another number array type (`f64[]`, `readonly i32[]`) takes
+//! `xs.subarray(begin, end)` of an array of that type the same way, the address of element
+//! `begin` (docs/internals/design/c-ffi.md "A position in an array"), and no views.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -53,7 +57,13 @@ impl FnCx<'_, '_> {
         pty: TyId,
         want: Want,
     ) -> Option<hir::Expr> {
-        if !self.is_byte_array(pty) {
+        let bytes = self.is_byte_array(pty);
+        // A C function's array of other numbers takes `xs.subarray(…)` of its own type too.
+        let elem = self.cx.ty.array_elem(pty);
+        let numbers = !bytes
+            && self.c_args
+            && elem.is_some_and(|t| self.cx.ty.is_int(t) || self.cx.ty.is_float(t));
+        if !bytes && !numbers {
             return None;
         }
         let inner = strip_parens(e);
@@ -72,7 +82,10 @@ impl FnCx<'_, '_> {
             {
                 if prop.name == "subarray" {
                     let mut recv = self.expr(object, None, want);
-                    if !self.is_byte_array(recv.ty) {
+                    if numbers && self.cx.ty.array_elem(recv.ty) != elem {
+                        return Some(self.other_subarray(&recv, pty, e.span));
+                    }
+                    if bytes && !self.is_byte_array(recv.ty) {
                         let call = self.method_call_on(recv, prop, type_args, args, None, e.span);
                         return Some(call);
                     }
@@ -84,11 +97,13 @@ impl FnCx<'_, '_> {
                 }
             }
         }
-        // A literal takes its element type from the parameter.
-        if matches!(
-            inner.kind,
-            ast::ExprKind::Array(_) | ast::ExprKind::NumArray(_)
-        ) {
+        // Views are of bytes; a literal takes its element type from the parameter.
+        if numbers
+            || matches!(
+                inner.kind,
+                ast::ExprKind::Array(_) | ast::ExprKind::NumArray(_)
+            )
+        {
             return None;
         }
         let h = self.expr(e, None, want);
@@ -96,6 +111,24 @@ impl FnCx<'_, '_> {
             self.written_readonly_arg(&h);
         }
         Some(h)
+    }
+
+    /// The error for `xs.subarray(…)` (`recv` being `xs`) passed for a C function's parameter of
+    /// array type `pty` that `xs` isn't.
+    fn other_subarray(&mut self, recv: &hir::Expr, pty: TyId, span: Span) -> hir::Expr {
+        if recv.ty != self.cx.ty.error {
+            let (have, want) = (self.cx.display(recv.ty), self.cx.display(pty));
+            self.cx.error(
+                Diagnostic::error(
+                    format!("`subarray` of a `{have}` can't be passed for a `{want}` parameter"),
+                    span,
+                )
+                .with_note(format!(
+                    "a C function's array parameter takes `xs.subarray(begin, end)` of an array of its own type: a `{want}`"
+                )),
+            );
+        }
+        self.error_expr(span)
     }
 
     /// An error when `h`, the argument (or the `subarray` receiver) of a buffer the system

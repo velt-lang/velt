@@ -176,6 +176,15 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   loads them for a module declaring one. On JS hosts `velt_main` hands `main`'s root to
   `velt_rt_host_main` with the code after it (VIR `Work::MainFinish`) instead of calling
   `velt_rt_block_on` (rt_abi_async.md §2.5).
+- Variadic C functions (#2187, docs/internals/design/c-ffi.md "Variadic functions"):
+  `hir::CImport::variadic` (additive) marks a `declare c` function ending with `...args:
+  CVarArgs`; its `CImport::params` and `ExternFnDef::params` are the fixed parameters, and a
+  call's `args` are those followed by the variadic arguments (integers, `f32`, `f64`, `bool`,
+  `Ptr<T>`, `Ptr<T> | null`, `null`). `vir::ExternFn::variadic` (additive) marks the extern:
+  `params` are the fixed ones, and a call passes further scalars of type `I32`, `U32`, `I64`,
+  `U64`, `F64` or `Ptr`, C's default argument promotions done (the verifier checks both).
+  Backends call it with the target's variadic convention; `declare system`'s variadic forms are
+  such externs too.
 - std's own host functions (#1785): the import modules `velt:fetch`
   (std/net/http/fetch/client/transport/js_host.velt), `fetch`'s transport on JS hosts, and
   `velt:random` (std/lang/random/seed_js.velt), `Math.random()`'s seed, which the glue provides

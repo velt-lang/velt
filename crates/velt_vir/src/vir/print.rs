@@ -39,7 +39,10 @@ impl fmt::Display for Program {
         }
         for (i, e) in self.externs.iter().enumerate() {
             let nr = if e.noreturn { " noreturn" } else { "" };
-            let (sym, params) = (&e.symbol, fmt_tys(&e.params));
+            let (sym, mut params) = (&e.symbol, fmt_tys(&e.params));
+            if e.variadic {
+                params.push_str(if e.params.is_empty() { "..." } else { ", ..." });
+            }
             let host = e
                 .host
                 .as_ref()
