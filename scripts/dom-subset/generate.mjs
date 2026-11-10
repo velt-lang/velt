@@ -28,6 +28,12 @@
 //   what they extend, as `tsc` does by their members (`HTMLElement` doesn't convert to
 //   `HTMLAnchorElement`);
 // - a std global a declaration names (`AbortSignal`, `URL`) is imported from its defining file;
+// - an interface that extends a std class (`Event`) declares the listed members of the class
+//   itself, since a Velt interface extends only interfaces;
+// - `EventTarget` is the interface of std's class's members (`FIXED`), which the class implements
+//   and the interfaces of nodes and windows extend: `e.target` is one, and `e.target as
+//   HTMLInputElement` an interface cast. It isn't a global (the class is), so it is left out of
+//   the globals and the index;
 // - an index signature next to members, a `this` parameter, conditional, mapped and template
 //   literal types are left out, and any other type that std declares itself is `any`.
 import { createRequire } from "node:module";
@@ -67,7 +73,32 @@ const STD = new Set(
 const STD_FILES = new Map([
   ["AbortSignal", "velt/task/signal"],
   ["URL", "velt/net/url/url"],
+  ["Event", "velt/lang/event/event"],
+  ["EventInit", "velt/lang/event/event"],
+  ["EventListener", "velt/lang/event/event_target"],
+  ["EventListenerObject", "velt/lang/event/event_target"],
+  ["EventListenerOrEventListenerObject", "velt/lang/event/event_target"],
+  ["EventListenerOptions", "velt/lang/event/event_target"],
+  ["AddEventListenerOptions", "velt/lang/event/event_target"],
+  ["CustomEvent", "velt/lang/event/custom_event"],
+  ["CustomEventInit", "velt/lang/event/custom_event"],
 ]);
+// Of those, the classes an interface of `lib.dom` extends (`interface UIEvent extends Event`): a
+// Velt interface extends only interfaces, so such an interface declares the members of the class
+// that the list asks for itself.
+const STD_CLASSES = new Set(["Event"]);
+// Interfaces written here, as std's classes declare them: `EventTarget`'s methods are std's
+// class's (std/lang/event/event_target.velt), which take a listener at its own error type and
+// with or without its parameter. Neither a global nor in the index (`INTERNAL`).
+const LISTENER = "((evt: Event) => void throws E) | (() => void throws E) | EventListenerObject | null";
+const FIXED = new Map([
+  ["EventTarget", `export interface EventTarget {
+  addEventListener<E = never>(type: string, callback: ${LISTENER}, options?: AddEventListenerOptions | boolean): void;
+  removeEventListener<E = never>(type: string, callback: ${LISTENER}, options?: EventListenerOptions | boolean): void;
+  dispatchEvent(event: Event): boolean throws Error;
+}`],
+]);
+const INTERNAL = new Set(FIXED.keys());
 
 const sf = ts.createSourceFile(libFile, fs.readFileSync(libFile, "utf8"), ts.ScriptTarget.Latest, true);
 const ifaces = new Map(); // name -> [InterfaceDeclaration]
@@ -309,7 +340,7 @@ const emitted = new Map();
 for (let changed = true; changed; ) {
   changed = false;
   for (const t of [...want.keys()]) {
-    if (emitted.has(t)) continue;
+    if (emitted.has(t) || STD.has(t)) continue;
     changed = true;
     emitted.set(t, null);
   }
@@ -334,6 +365,7 @@ function emittedBases(t, seen = new Set()) {
   return [...new Set(out)];
 }
 function emit(t) {
+  if (FIXED.has(t)) return FIXED.get(t);
   if (aliases.has(t)) {
     const a = aliases.get(t);
     const scope = new Set();
@@ -371,6 +403,14 @@ function emit(t) {
     if (!isMethod && inherited.has(m)) { note("field a base declares: left to the base"); continue; }
     const line = memberOf(t, m, scope);
     if (line) lines.push(line);
+  }
+  for (const b of bases(t)) {
+    if (!STD_CLASSES.has(b)) continue;
+    note("members of a std class an interface extends: declared on the interface");
+    for (const m of want.get(b) ?? []) {
+      const line = memberOf(b, m, scope);
+      if (line) lines.push(line);
+    }
   }
   return { tp, lines };
 }
@@ -423,6 +463,9 @@ const header = (mod) =>
 // scripts/dom-subset/names.txt: do not edit, change the list and run the script.
 // ${LICENCE}
 `;
+// The globals load for a name in code only (velt_loader `globals/code_only.rs`): `Node`, `Text`,
+// `Range` and `Window` are everyday words in comments.
+const CODE_ONLY = "// load for: a name in code, not in a comment";
 const files = new Map();
 let bytes = "";
 const index = [];
@@ -446,14 +489,14 @@ for (const [g, what] of GROUPS) {
   ].join("");
   const body = names.map((t) => textOf.get(t)).join(NL);
   bytes += body;
-  const list = names.map((t) => `  ${t},`).join(NL);
+  const list = names.filter((t) => !INTERNAL.has(t)).map((t) => `  ${t},`).join(NL);
   files.set(`std/lang/dom/${g}.velt`, header(`// velt/lang/dom (internal): the types of TypeScript's \`lib.dom\` that code shared between server and${NL}// browser names: ${what}.${NL}// Velt has no DOM, so no value of these types is made here: they describe what such code reads${NL}// on a value that comes from elsewhere.`) + NL + imp + (imp ? NL : "") + body + NL);
   const global = g === "types" ? "dom" : `dom_${g}`;
-  files.set(`std/prelude/global/${global}.velt`, header(`// Global (loaded when a module names one of these): the types of TypeScript's \`lib.dom\` that code${NL}// shared between server and browser names: ${what}. Types only: Velt has no DOM.`) + `${NL}export {${NL}${list}${NL}} from "velt/lang/dom/${g}";${NL}`);
+  files.set(`std/prelude/global/${global}.velt`, header(`// Global (loaded when a module names one of these in code): the types of TypeScript's \`lib.dom\`${NL}// that code shared between server and browser names: ${what}. Types only: Velt has no DOM.`) + `${CODE_ONLY}${NL}${NL}export {${NL}${list}${NL}} from "velt/lang/dom/${g}";${NL}`);
   index.push(`export {${NL}${list}${NL}} from "velt/lang/dom/${g}";${NL}`);
 }
 files.set("std/lang/dom/index.velt", header("// velt/lang/dom: the types of TypeScript's `lib.dom` that code shared with the browser names.") + NL + index.join(""));
-const values = order.filter((t) => vars.has(t));
+const values = order.filter((t) => vars.has(t) && !INTERNAL.has(t));
 files.set("crates/velt_sema/src/body/expr/dom_values.rs", `//! Generated by scripts/dom-subset/generate.mjs from TypeScript ${ts.version}'s lib.dom.d.ts: do not edit.${NL}//! ${LICENCE}${NL}//! The types of std/lang/dom that \`lib.dom\` also declares as values (\`declare var\`).${NL}${NL}/// The names, sorted.${NL}pub(crate) const DOM_VALUES: [&str; ${values.length}] = [${NL}${values.map((v) => `    "${v}",`).join(NL)}${NL}];${NL}`);
 
 // The emitted interfaces with no property of their own in `lib.dom` (only the event-map forms of

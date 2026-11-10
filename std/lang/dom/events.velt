@@ -6,11 +6,31 @@
 // scripts/dom-subset/names.txt: do not edit, change the list and run the script.
 // Derived from TypeScript's lib.dom.d.ts, Copyright (c) Microsoft Corporation, Apache-2.0; see NOTICE.
 
-import { Event } from "velt/lang/dom/types";
+import { EventTarget } from "velt/lang/dom/types";
 
-export interface AnimationEvent extends Event {}
+export interface AnimationEvent {
+  readonly type: string;
+  readonly target: EventTarget | null;
+  readonly currentTarget: EventTarget | null;
+  readonly defaultPrevented: boolean;
+  preventDefault(): void;
+  stopPropagation(): void;
+  stopImmediatePropagation(): void;
+  readonly bubbles: boolean;
+  cancelBubble: boolean;
+}
 
-export interface ClipboardEvent extends Event {}
+export interface ClipboardEvent {
+  readonly type: string;
+  readonly target: EventTarget | null;
+  readonly currentTarget: EventTarget | null;
+  readonly defaultPrevented: boolean;
+  preventDefault(): void;
+  stopPropagation(): void;
+  stopImmediatePropagation(): void;
+  readonly bubbles: boolean;
+  cancelBubble: boolean;
+}
 
 export interface CompositionEvent extends UIEvent {}
 
@@ -24,8 +44,17 @@ export interface KeyboardEvent extends UIEvent {
   readonly key: string;
 }
 
-export interface MediaQueryListEvent extends Event {
+export interface MediaQueryListEvent {
   readonly matches: boolean;
+  readonly type: string;
+  readonly target: EventTarget | null;
+  readonly currentTarget: EventTarget | null;
+  readonly defaultPrevented: boolean;
+  preventDefault(): void;
+  stopPropagation(): void;
+  stopImmediatePropagation(): void;
+  readonly bubbles: boolean;
+  cancelBubble: boolean;
 }
 
 export interface MouseEvent extends UIEvent {}
@@ -34,8 +63,28 @@ export interface PointerEvent extends MouseEvent {}
 
 export interface TouchEvent extends UIEvent {}
 
-export interface TransitionEvent extends Event {}
+export interface TransitionEvent {
+  readonly type: string;
+  readonly target: EventTarget | null;
+  readonly currentTarget: EventTarget | null;
+  readonly defaultPrevented: boolean;
+  preventDefault(): void;
+  stopPropagation(): void;
+  stopImmediatePropagation(): void;
+  readonly bubbles: boolean;
+  cancelBubble: boolean;
+}
 
-export interface UIEvent extends Event {}
+export interface UIEvent {
+  readonly type: string;
+  readonly target: EventTarget | null;
+  readonly currentTarget: EventTarget | null;
+  readonly defaultPrevented: boolean;
+  preventDefault(): void;
+  stopPropagation(): void;
+  stopImmediatePropagation(): void;
+  readonly bubbles: boolean;
+  cancelBubble: boolean;
+}
 
 export interface WheelEvent extends MouseEvent {}

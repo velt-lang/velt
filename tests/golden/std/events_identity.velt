@@ -1,0 +1,51 @@
+// `removeEventListener` and a second `addEventListener` find a listener by the function or
+// object passed, as in Node (#2378): closures with and without the event parameter, one that
+// throws, a declared function, a handler object, and a value typed `EventListener`.
+const t = new EventTarget();
+const zero = () => console.log("zero");
+const one = (e: Event) => console.log("one", e.type);
+const throws = (e: Event) => {
+  if (e.type === "never") {
+    throw new Error("no");
+  }
+  console.log("throws", e.type);
+};
+function declared(e: Event) {
+  console.log("declared", e.type);
+}
+const obj = {
+  handleEvent(e: Event) {
+    console.log("obj", e.type);
+  },
+};
+const typed: EventListener = (e) => console.log("typed", e.type);
+for (let i = 0; i < 2; i++) {
+  t.addEventListener("x", zero);
+  t.addEventListener("x", one);
+  t.addEventListener("x", throws);
+  t.addEventListener("x", declared);
+  t.addEventListener("x", obj);
+  t.addEventListener("x", typed);
+}
+t.dispatchEvent(new Event("x"));
+console.log("--");
+function off() {
+  t.removeEventListener("x", zero);
+  t.removeEventListener("x", throws);
+  t.removeEventListener("x", obj);
+}
+off();
+t.dispatchEvent(new Event("x"));
+console.log("--");
+const later = () => {
+  t.removeEventListener("x", one);
+  t.removeEventListener("x", declared);
+  t.removeEventListener("x", typed);
+};
+later();
+console.log(t.dispatchEvent(new Event("x")));
+// A different closure with the same code is another listener.
+const make = () => () => console.log("made");
+t.addEventListener("y", make());
+t.addEventListener("y", make());
+t.dispatchEvent(new Event("y"));
