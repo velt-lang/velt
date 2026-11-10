@@ -99,8 +99,8 @@ function block(s: string, i: usize, n: usize): u8x16 {
 // plain run after it. Each byte becomes at most six and the bytes before `first` stay one each,
 // so with ten bytes to spare every store fits, even at the last byte. Compiled into its two
 // entry points, `escapeFromPlain` and `escapeFromHex`, each with `hexApos` fixed.
+@inline
 function escapeFrom(s: string, first: usize, n: usize, hexApos: bool): string {
-  inline();
   const room = first + (n - first) * 6 + 10;
   const buf: u8[] = arrayWithCapacity(room);
   arraySetLen(buf, room);
@@ -165,21 +165,21 @@ function entityWord(b: u8, hexApos: bool): u64 {
 // `escapeFrom` with `'` as `&#39;`. Out of line (as are the other entry points): each caller would
 // otherwise compile its own copy of the loops. One per apostrophe, so that each is compiled with
 // its flag fixed, also where its object is compiled once for every program (the std cache).
+@noInline
 function escapeFromPlain(s: string, first: usize, n: usize): string {
-  noInline();
   return escapeFrom(s, first, n, false);
 }
 
 // `escapeFrom` with `'` as `&#x27;`.
+@noInline
 function escapeFromHex(s: string, first: usize, n: usize): string {
-  noInline();
   return escapeFrom(s, first, n, true);
 }
 
 // `s` with its bytes to escape replaced; `s` itself, shared, when it has none. The share keeps
 // `s` borrowed (returning `s` would move it, and callers would copy a field they pass in).
+@inline
 function escapeEntities(s: string, hexApos: bool): string {
-  inline();
   const n = strByteLen(s);
   const first = nextSpecial(s, 0, n);
   if (first == n) {
@@ -193,13 +193,13 @@ function escapeEntities(s: string, hexApos: bool): string {
  * safe inside element content and in single- or double-quoted attribute values. Other
  * characters (including non-ASCII) are kept as they are.
  */
+@noInline
 export function escapeHtml(s: string): string {
-  noInline();
   return escapeEntities(s, false);
 }
 
 /** As `escapeHtml`, with `'` as `&#x27;`, as react-dom writes it (std/jsx). */
+@noInline
 export function escapeHtmlHexApos(s: string): string {
-  noInline();
   return escapeEntities(s, true);
 }
