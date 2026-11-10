@@ -1,0 +1,1 @@
+typeof_function_field_ifaces.velt:8:10: error: this `typeof` test is always false: no member of `Factory | { default: Factory }` is a "function"

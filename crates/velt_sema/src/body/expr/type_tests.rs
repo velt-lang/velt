@@ -180,12 +180,8 @@ impl FnCx<'_, '_> {
         }
         let pred = |cx: &Ctx, t: TyId| cx.typeof_tag(t) == tag;
         let null_is_object = |n: Nothing| tag == "object" && n == Nothing::Null;
-        // An interface without a call signature may name a function in TypeScript, which
-        // narrows it (`typeof mod === "function"` of a `Factory | { default: Factory }`, #2655);
-        // a Velt value of such a type is an object, so the test is false without an error.
-        let iface_fn = tag == "function" && self.cx.has_iface_member(s.ty);
         let test = self.type_test(s, &pred, &null_is_object, span);
-        if let Some(what) = test.never_msg.filter(|_| !iface_fn) {
+        if let Some(what) = test.never_msg {
             self.cx.err(
                 format!("this `typeof` test is always false: no member of {what} is a \"{tag}\""),
                 span,

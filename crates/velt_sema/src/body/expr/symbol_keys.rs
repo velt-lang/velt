@@ -216,11 +216,6 @@ impl FnCx<'_, '_> {
             }
         }
         let s = self.type_test_operand(rhs);
-        // A value narrowed to no member (`typeof f === "function" && "k" in f` of objects,
-        // #2655) is never there: the test is never reached either.
-        if s.ty == self.cx.ty.never {
-            return s;
-        }
         if self.cx.ty.is_bottom(s.ty) {
             return self.error_expr(span);
         }
