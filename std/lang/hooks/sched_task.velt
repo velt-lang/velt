@@ -104,7 +104,7 @@ export const DONE: u32 = 4;
  * counts as live (the root of `main` with promises left running); the microtask being run is a
  * waiter's step already (sched_micro.velt); sleeps of it are due to fire (sched_sleep.velt); its
  * poll took a timer's turn, and the next turn waits for the poll's end (sched_order.velt); its
- * root was polled as a microtask's job or by a due sleep in this poll (sched_run.velt `runWoken`).
+ * root was polled as a microtask's job or by a due sleep (sched_run.velt `runWoken` reads it).
  */
 export const HANDLE: u32 = 1;
 export const CLAIMED: u32 = 2;

@@ -11,10 +11,10 @@
 //   number); most come in that order, so the place is found from the end.
 // - When the worker looks (its park, or every I/O tick of a busy worker: `expire`), the sleeps
 //   whose deadline passed move, in order, to their task's due list (a circular list whose first
-//   entry is the task's `T_TIMERS`) and the task is woken with flag `TIMED`. Its next poll fires
-//   them one at a time, in order: each resumes its waiter at once (the root, or a promise of the
-//   task) and the task's microtasks run before the next (sched_run.velt `fireDue`), as Node's
-//   timer phase runs them. A waiter that polls several of them (`Promise.all` over sleeps) sees
+//   entry is the task's `T_TIMERS`) and the task is woken with flag `TIMED` (and `LOCALS`). Its
+//   next poll fires them one at a time, in order: each resumes its waiter at once (the root, or a
+//   promise of the task) and the task's microtasks run before the next (sched_run.velt
+//   `fireDue`), as Node's timer phase runs them. A waiter that polls several of them (`Promise.all` over sleeps) sees
 //   only those fired so far ready, so they finish in timer order whoever polls them; and a due
 //   sleep polled while it is first on its task's due list fires itself, once every sleep fired
 //   before it was seen and no microtask is queued or running (the runtime's rule: no earlier
@@ -295,7 +295,8 @@ export function expire(b: usize, now: u64): u64 {
       m.wakeOwned(w);
     } else {
       pushDue(k, f);
-      t.flags(k, t.TIMED, 0);
+      // With `LOCALS`, so a poll checks one flag for both (sched_run.velt `run`).
+      t.flags(k, t.TIMED | t.LOCALS, 0);
       t.wake(k);
     }
     f = m.ld(b + TM_FIRST);
