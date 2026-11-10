@@ -258,7 +258,9 @@ declare c("tiny") const version_number: u32;
   (packages link theirs, the CRT is the dynamic one), and a DLL's variable is reached through the
   import library's `__imp_<name>` pointer, so lowering takes that symbol and loads the address
   from it; no backend needs `dllimport`. `velt dev` finds the variable among the loaded
-  libraries, or says it is missing, as for a function.
+  libraries, or says it is missing, as for a function: the driver lowers for the JIT
+  (`LowerOptions::jit`), which names the variable itself on every target, since only a linker
+  makes `__imp_<name>` and the host resolves `<name>` to the variable's address.
 - **Header check**: the headers must declare a variable of that name with external linkage, of
   the C type the declaration's type maps to (the "What crosses" table, as a function's result is
   compared); a `let` of a `const` C variable is an error, and so is a `static` one (no link

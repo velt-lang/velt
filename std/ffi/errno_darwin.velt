@@ -1,4 +1,4 @@
-// velt/ffi (internal): where the calling thread's `errno` is with Apple's C library and the BSDs':
+// velt/ffi (internal): where the calling thread's `errno` is with Apple's C library:
 // `__error()` (`#errno-location`, errno.velt).
 
 import { Ptr } from "velt/ffi/ptr";

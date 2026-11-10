@@ -396,15 +396,26 @@ fn sema_stage(
 
 /// Front half of the pipeline: source file → verified VIR. Stops after the first stage with errors.
 pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, BuildError> {
-    compile_to_vir_linking(sess, opts, false)
+    compile_to_vir_linking(sess, opts, VirFor::Other)
 }
 
-/// [`compile_to_vir`]; `link_std`: the program goes on to the link, so std functions may be left
-/// to the std cache's objects. Whatever else takes the VIR (the JIT host, a check) has no link.
+/// Where the VIR [`compile_to_vir_linking`] makes goes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VirFor {
+    /// The link: std functions may be left to the std cache's objects.
+    Link,
+    /// The JIT in this process (`velt dev`): no link, and C variables by their own names
+    /// (`LowerOptions::jit`).
+    Jit,
+    /// Anything else (a check, a test of the VIR): no link.
+    Other,
+}
+
+/// [`compile_to_vir`] for `dest`.
 fn compile_to_vir_linking(
     sess: &mut Session,
     opts: &BuildOptions,
-    link_std: bool,
+    dest: VirFor,
 ) -> Result<vir::Program, BuildError> {
     let scope = CheckScope {
         require_main: true,
@@ -445,6 +456,7 @@ fn compile_to_vir_linking(
         shapes: !opts.release,
         no_cpu_extensions: Backend::of_build(opts) == Backend::Cranelift,
         counted_seed: sess.counted_seed.as_ref(),
+        jit: dest == VirFor::Jit,
     };
     let lowered = match sess.counted_seed.is_some() {
         true => velt_vir::lower_seeded(&hir, &lower_opts).map(|(p, seed)| (p, Some(seed))),
@@ -485,7 +497,7 @@ fn compile_to_vir_linking(
 
     // The std cache (#1728), around the optimizer. A generator host stays whole:
     // `check_generator_host` looks through its code.
-    let std_use = match link_std && !sess.generator_build {
+    let std_use = match dest == VirFor::Link && !sess.generator_build {
         true => std_cache::wanted(opts),
         false => std_cache::Use::Off,
     };
@@ -554,6 +566,15 @@ pub fn build(sess: &mut Session, opts: &BuildOptions) -> Result<Artifact, BuildE
 /// `velt dev` to check a new version before replacing the running one.
 pub fn compile(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, BuildError> {
     on_pipeline_thread(|| compile_to_vir(sess, opts))
+}
+
+/// [`compile`] for the dev JIT, which runs the program in this process: what differs is how it
+/// reaches C variables (`velt_vir::LowerOptions::jit`).
+pub fn compile_for_jit(
+    sess: &mut Session,
+    opts: &BuildOptions,
+) -> Result<vir::Program, BuildError> {
+    on_pipeline_thread(|| compile_to_vir_linking(sess, opts, VirFor::Jit))
 }
 
 /// Parse + sema only (`velt check`), on a large-stack thread: every diagnostic the front end

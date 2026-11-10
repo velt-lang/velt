@@ -111,7 +111,7 @@ fn reload_with(
     let running = carried.seed.take().unwrap_or_default();
     sess.counted_seed = Some(running.clone());
     sess.interfaces = verbose.then(Default::default);
-    let program = driver::compile(&mut sess, opts);
+    let program = driver::compile_for_jit(&mut sess, opts);
     let next = sess.counted_seed.take();
     // Values the running code made that the new code would count, free or call differently
     // (a class that is counted in one version only, #2653): only a restart is safe.

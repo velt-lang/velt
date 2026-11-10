@@ -1,8 +1,10 @@
 //! C variables (`declare c("lib") let name: T;`, docs/internals/design/c-ffi.md "C variables"):
 //! a read loads the variable from C memory, through its link symbol, at each use; an assignment
 //! stores it there. The symbol is an `Import` static with no contents (`StaticData::c_global`).
-//! On Windows every C library is a DLL, whose variables a program reaches through the import
-//! library's `__imp_<name>` pointer, so the address is loaded from there first. A target that
+//! On Windows every C library is a DLL, whose variables a linked program reaches through the
+//! import library's `__imp_<name>` pointer, so the address is loaded from there first; under the
+//! JIT (`LowerOptions::jit`) the host resolves the variable's own name to its address, as it does
+//! on every other target ([`c_global_symbol`]). A target that
 //! can't call the library's functions (WebAssembly) can't reach its variables either: an error
 //! once lowering is done, as for a C function.
 
@@ -12,21 +14,28 @@ use super::c_call::{c_vir, narrow, wasm32, PTR_ADDRESS, PTR_ADDRESS_OR_ZERO, PTR
 use super::{cint, unit, Cx, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
 
+/// The link symbol of C variable `name` on `target`, and whether it holds the variable's address
+/// rather than being the variable: a program linked for Windows reaches a DLL's variable through
+/// the import library's `__imp_<name>` pointer, which only the linker makes; under the JIT
+/// (`jit`) the host resolves `<name>` itself (`GetProcAddress`, `dlsym`).
+pub(crate) fn c_global_symbol(name: &str, target: &str, jit: bool) -> (String, bool) {
+    match target.contains("-windows") && !jit {
+        true => (format!("__imp_{name}"), true),
+        false => (name.to_string(), false),
+    }
+}
+
 impl Cx<'_> {
-    /// The static of C variable `symbol` (aligned to `align`), one per symbol; on Windows the
-    /// import library's pointer to it (`windows`).
-    fn c_global_static(&mut self, symbol: &str, align: u32, windows: bool) -> StaticId {
-        let symbol = match windows {
-            true => format!("__imp_{symbol}"),
-            false => symbol.to_string(),
-        };
+    /// The static of link symbol `symbol` (aligned to `align`), one per symbol; `pointer`: it
+    /// holds the variable's address ([`c_global_symbol`]).
+    fn c_global_static(&mut self, symbol: String, align: u32, pointer: bool) -> StaticId {
         if let Some(&id) = self.c_globals.get(&symbol) {
             return id;
         }
         let id = StaticId(self.statics.len() as u32);
         self.statics.push(StaticData {
             bytes: vec![],
-            align: if windows { 8 } else { align },
+            align: if pointer { 8 } else { align },
             symbol: Some(symbol.clone()),
             linkage: vir::Linkage::Import,
             c_global: true,
@@ -174,12 +183,12 @@ impl FnLower<'_, '_> {
         }
         let ct = c_vir(c.ty, wasm32(&self.cx.target));
         let align = ct.scalar_align().unwrap_or(8);
-        let windows = self.cx.target.contains("-windows");
-        let id = self.cx.c_global_static(&c.symbol, align, windows);
+        let (symbol, pointer) = c_global_symbol(&c.symbol, &self.cx.target, self.cx.jit);
+        let id = self.cx.c_global_static(symbol, align, pointer);
         let mut p = self.temp(Ty::Ptr);
         let addr = Operand::Const(vir::Const::Static(id), Ty::Ptr);
         self.assign(Place::local(p), Rvalue::Use(addr));
-        if windows {
+        if pointer {
             let imp = Place {
                 local: p,
                 proj: vec![Proj::Deref(Ty::Ptr)],

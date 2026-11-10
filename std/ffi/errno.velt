@@ -9,7 +9,8 @@ import { addressLoad, addressStore } from "velt/lang/intrinsics/address";
 /**
  * The calling thread's C `errno` now. A C function's error is read right after its call with
  * `lastOsError()` and `{ errno: true }`; this is the live value, which any C call (and the
- * runtime) may change. 0 on a target without a C library.
+ * runtime) may change: drops between a call and this read may run `free`. 0 on a target without
+ * a C library.
  *
  * Unsafe: raw access to the C library's state, for code that saves and restores it.
  */

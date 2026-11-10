@@ -32,6 +32,15 @@ const PATHS: &[&str] = &[
     "crates/vpm/src/manifest/read/native.rs",
     "std/ffi/",
     ".github/actions/zig/",
+    // C variables (`declare c("lib") let`, tests/c_sources.rs): their lowering, the backends'
+    // data imports, the dev JIT's lookup, the optimizer's and the std cache's handling of them.
+    "crates/velt_vir/src/lower/c_global.rs",
+    "crates/velt_codegen_llvm/src/statics.rs",
+    "crates/velt_codegen_cl/src/module.rs",
+    "crates/velt_codegen_cl/src/c_libraries.rs",
+    "crates/velt_codegen_cl/src/win_symbols.rs",
+    "crates/velt_opt/src/interp/mod.rs",
+    "crates/veltc/src/driver/std_cache/statics.rs",
 ];
 
 /// Whether the check depends on `path`.
@@ -79,6 +88,14 @@ mod tests {
         assert!(!on(Some(OsStr::new("0"))));
         assert!(!on(Some(OsStr::new(""))));
         assert!(!on(None));
+    }
+
+    #[test]
+    fn c_variable_lowering_runs_the_check() {
+        assert!(depends_on("crates/velt_vir/src/lower/c_global.rs"));
+        assert!(depends_on("crates/velt_codegen_llvm/src/statics.rs"));
+        assert!(depends_on("crates/velt_codegen_cl/src/c_libraries.rs"));
+        assert!(!depends_on("crates/velt_vir/src/lower/expr.rs"));
     }
 
     #[test]
