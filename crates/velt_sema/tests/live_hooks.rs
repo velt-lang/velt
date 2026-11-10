@@ -9,11 +9,22 @@ use common::programs::ok_src;
 use velt_common::std_hooks::{hook_index, HOOKS};
 use velt_sema::hir::{Def, Program};
 
-const INT: [usize; 4] = [
+const INT: [usize; 6] = [
     hook_index::int_text,
     hook_index::uint_text,
     hook_index::int_push,
     hook_index::uint_push,
+    hook_index::int_write,
+    hook_index::uint_write,
+];
+
+const INT_NAMES: [&str; 6] = [
+    "int_text",
+    "uint_text",
+    "int_push",
+    "uint_push",
+    "int_write",
+    "uint_write",
 ];
 
 fn main_of(body: &str) -> Program {
@@ -79,7 +90,9 @@ fn each_construct_demands_its_hooks() {
         // TextUint.
         ("  const n: u32 = 7;\n  console.log(String(n));", &["uint_text", "uint_push"]),
         // Format: `console.log` of an integer.
-        ("  const n: i32 = 7;\n  console.log(n);", &["int_push", "uint_push"]),
+        ("  const n: i32 = 7;\n  console.log(n);", &["int_push", "uint_push", "int_write"]),
+        // Format: `console.log` of an unsigned integer.
+        ("  const n: u64 = 7;\n  console.log(n);", &["uint_write"]),
         // IndexCheck: the out-of-bounds message of an index.
         ("  const xs = [\"a\"];\n  const i: i64 = 0;\n  const s = xs[i];\n  if (s == \"b\") {\n    return;\n  }", &["int_text", "uint_text"]),
         // Dynamic: numeric keys of an `any`.
@@ -89,10 +102,7 @@ fn each_construct_demands_its_hooks() {
         let got = demanded(&p);
         for w in want {
             assert!(got.contains(w), "{w} not demanded by\n{body}\n(demanded: {got:?})");
-            let i = INT[["int_text", "uint_text", "int_push", "uint_push"]
-                .iter()
-                .position(|n| n == w)
-                .unwrap()];
+            let i = INT[INT_NAMES.iter().position(|n| n == w).unwrap()];
             assert!(checked(&p, i), "{w} demanded but not checked:\n{body}");
         }
     }
@@ -146,8 +156,9 @@ fn a_class_converted_to_any_demands_its_format_slot() {
 }
 
 /// The integer hooks act as one bit, which is what makes the demand sound (velt_common
-/// `hook_demand.rs`): any one construct in a program demands and checks all four, through the std
-/// code of the first. If this fails, live code must first cover what lowering builds (#2161).
+/// `hook_demand.rs`): any one construct in a program demands and checks all of them,
+/// `console.log`'s integer writers included, through the std code of the first. If this fails,
+/// live code must first cover what lowering builds (#2161).
 #[test]
 fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
     for src in [
@@ -165,13 +176,56 @@ fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
         "function main() {\n  const a: any = \"s\";\n}\n",
     ] {
         let p = ok_src(src);
-        assert_eq!(
-            demanded(&p),
-            ["int_text", "uint_text", "int_push", "uint_push"],
-            "{src}"
-        );
+        assert_eq!(demanded(&p), INT_NAMES, "{src}");
         for i in INT {
             assert!(checked(&p, i), "{} is not checked:\n{src}", HOOKS[i].name);
         }
     }
+}
+
+/// `console.log` of a float checks its writers (`numberWrite` and `wholeNumberWrite`, velt_common
+/// `ON_DEMAND_WRITE`), but demands no integer hook and checks no integer printing: neither the
+/// integer writer, which `numberWrite` doesn't hold (numrep calls it for a whole number only where
+/// the program has it), nor the text hooks. A program that prints no float leaves the float
+/// writers unchecked (`velt_lsp`'s `demand` test: nor does it load their module).
+#[test]
+fn a_float_printed_checks_its_writer_and_no_integer_hook() {
+    let number_write = hook_index::number_write;
+    for body in [
+        "  const x: f64 = 0.5;\n  console.log(x);",
+        "  const x: f32 = 0.5;\n  console.error(\"x\", x);",
+    ] {
+        let p = main_of(body);
+        assert_eq!(demanded(&p), Vec::<&str>::new(), "{body}");
+        assert!(
+            checked(&p, number_write),
+            "numberWrite is not checked:\n{body}"
+        );
+        assert!(
+            checked(&p, hook_index::whole_number_write),
+            "wholeNumberWrite is not checked:\n{body}"
+        );
+        for i in [
+            hook_index::int_write,
+            hook_index::uint_write,
+            hook_index::int_text,
+            hook_index::uint_text,
+            hook_index::int_push,
+        ] {
+            assert!(!checked(&p, i), "{} is checked:\n{body}", HOOKS[i].name);
+        }
+    }
+    let p = main_of("  const n: i64 = 7;\n  console.log(n);");
+    assert!(
+        !checked(&p, number_write),
+        "numberWrite is checked for an integer"
+    );
+    // A type parameter's value may be a float.
+    let p = ok_src(
+        "function show<T>(x: T) {\n  console.log(x);\n}\nfunction main() {\n  show(0.5);\n}\n",
+    );
+    assert!(
+        checked(&p, number_write),
+        "numberWrite is not checked for a `T`"
+    );
 }

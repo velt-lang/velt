@@ -143,6 +143,10 @@ const PROGRAMS: &[(&str, &[&str])] = &[
         &["std/lang/hooks/number_text"],
     ),
     (
+        "function main() {\n  const x: f64 = 0.5;\n  console.log(x);\n}\n",
+        &["std/lang/hooks/number_write"],
+    ),
+    (
         "function show(x: number): string {\n  return `x=${x}`;\n}\nfunction main() {\n  console.log(show(1.5));\n}\n",
         &["std/lang/hooks/number_text", "std/lang/hooks/number_float"],
     ),
@@ -184,6 +188,30 @@ fn each_program_demands_what_it_needs() {
         assert!(
             want.is_subset(&modules),
             "{src}: {modules:?}, wanted {want:?}"
+        );
+    }
+}
+
+/// `console.log`'s float writer has a module of its own: a program that prints no float doesn't
+/// load it, and one that prints only a float loads no integer printing with it.
+#[test]
+fn only_a_float_printed_loads_the_float_writer() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("main.velt");
+    let (writer, integers) = ("std/lang/hooks/number_write", "std/lang/hooks/number_text");
+    for (body, loads, loads_integers) in [
+        ("  const x: f64 = 0.5;\n  console.log(x);", true, false),
+        ("  console.log(0.5);", true, false),
+        ("  const n: i64 = 7;\n  console.log(n);", false, true),
+    ] {
+        let src = format!("function main() {{\n{body}\n}}\n");
+        let overlay = HashMap::from([(root.clone(), src)]);
+        let (_, modules) = command_line(&real_std(), &root, &overlay);
+        assert_eq!(modules.contains(writer), loads, "{body}: {modules:?}");
+        assert_eq!(
+            modules.contains(integers),
+            loads_integers,
+            "{body}: {modules:?}"
         );
     }
 }

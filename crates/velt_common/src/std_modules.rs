@@ -102,6 +102,7 @@ table! {
     lang_hooks_number => "lang/hooks/number",
     lang_hooks_number_float => "lang/hooks/number_float",
     lang_hooks_number_text => "lang/hooks/number_text",
+    lang_hooks_number_write => "lang/hooks/number_write",
     lang_hooks_process => "lang/hooks/process",
     lang_hooks_proxy => "lang/hooks/proxy",
     lang_hooks_record => "lang/hooks/record",
