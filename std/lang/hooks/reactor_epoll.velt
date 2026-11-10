@@ -118,9 +118,9 @@ export function add(r: usize, fd: i32, source: usize): i32 {
  */
 export function wait(r: usize, timeoutMs: i64): usize {
   const t = timeoutMs < 0 ? -1 : timeoutMs > 0x7fffffff ? 0x7fffffff : timeoutMs;
+  const ep = m.ld(r + R_EP) as i32;
   // SAFETY: the block has room for MAX_EVENTS events of the largest size.
-  const n =
-    unsafe { epoll_wait(m.ld(r + R_EP) as i32, m.ptr(r + R_EVENTS), MAX_EVENTS as i32, t as i32) };
+  const n = unsafe { epoll_wait(ep, m.ptr(r + R_EVENTS), MAX_EVENTS as i32, t as i32) };
   if (n <= 0) {
     return 0;
   }

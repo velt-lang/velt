@@ -8,10 +8,11 @@ import type { Owned } from "./modes";
 
 /**
  * The bytes the first type argument of the enclosing generic function's instance (or its
- * class's) takes (0 for none); outside one, an internal compiler error. Only `slotSize` calls it.
+ * class's) takes (0 for none); outside one, an internal compiler error. Exported as every
+ * intrinsic is; call `slotSize<T>()` instead, which names the type.
  */
 @intrinsic
-declare function slotSizeOfFirst(): usize;
+export declare function slotSizeOfFirst(): usize;
 
 /** The bytes a `T` takes in a slot (0 for none). */
 @inline

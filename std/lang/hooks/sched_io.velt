@@ -35,9 +35,11 @@ import * as wt from "./sched_io_wait";
 /** The I/O block's address (0 until the executor starts). */
 const IO = new Atomic<u64>(0);
 
-// The I/O block: the reactor, the due list, the handle table (sched_io_table.velt), the
-// address of the executor's I/O tick (sched_task.velt `E_TICK`, set to 1 when a write is due),
-// the waiters' poll and drop.
+/**
+ * The I/O block: the reactor, the due list, the handle table (sched_io_table.velt), the
+ * address of the executor's I/O tick (sched_task.velt `E_TICK`, set to 1 when a write is due),
+ * the waiters' poll and drop.
+ */
 export const IO_REACTOR: usize = 0;
 export const IO_DUE: usize = 8;
 export const IO_TABLE: usize = 16;
@@ -55,7 +57,7 @@ export const IO_TIMERS: usize = 80;
 export const IO_WAITING: usize = 88;
 const IO_SIZE: usize = 96;
 
-// A source's fields.
+/** A source's fields. */
 export const S_FD: usize = 0;
 export const S_READY: usize = 8;
 export const S_FLAGS: usize = 12;
@@ -73,14 +75,16 @@ export const S_CARRY: usize = 96;
 export const S_CARRY_LEN: usize = 100;
 export const S_SIZE: usize = 112;
 
-// Readiness bits (the reactor's).
+/** Readiness bits (the reactor's). */
 export const READ: u32 = 1;
 export const WRITE: u32 = 2;
 export const HUP: u32 = 4;
 export const ERR: u32 = 8;
 
-// A source's flags: on the due list; shut down writing once the buffer is sent (and done so);
-// close the descriptor once the buffer is sent; aborted; a listener.
+/**
+ * A source's flags: on the due list; shut down writing once the buffer is sent (and done so);
+ * close the descriptor once the buffer is sent; aborted; a listener.
+ */
 export const F_DUE: u32 = 1;
 export const F_SHUT: u32 = 2;
 export const F_SHUT_DONE: u32 = 4;
@@ -88,8 +92,10 @@ export const F_CLOSING: u32 = 8;
 export const F_ABORTED: u32 = 16;
 export const F_LISTENER: u32 = 32;
 
-// What a waiter waits for: readable, writable (a connect), its bytes written (`arg`: the count
-// of bytes queued in all that must have been sent), at most `arg` bytes still to send.
+/**
+ * What a waiter waits for: readable, writable (a connect), its bytes written (`arg`: the count
+ * of bytes queued in all that must have been sent), at most `arg` bytes still to send.
+ */
 export const K_READ: u32 = 0;
 export const K_WRITE: u32 = 1;
 export const K_WRITTEN: u32 = 2;

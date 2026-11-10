@@ -37,7 +37,7 @@ const EXEC = new Atomic<u64>(0);
 /** Is this thread the worker? */
 const ON_WORKER = new ThreadLocal<bool>(false);
 
-// The executor's fields.
+/** The executor's fields. */
 export const E_INBOX: usize = 0;
 export const E_PARK: usize = 8;
 export const E_HEAD: usize = 16;
@@ -62,7 +62,7 @@ export const E_TLA: usize = 240;
 export const E_PINNED: usize = 272;
 export const E_SIZE: usize = 280;
 
-// A task's fields.
+/** A task's fields. */
 export const T_REFS: usize = 8;
 export const T_STATE: usize = 16;
 export const T_FLAGS: usize = 20;
@@ -82,17 +82,19 @@ export const T_UNHANDLED: usize = 128;
 export const T_JOIN: usize = 144;
 export const T_SLOT: usize = 160;
 
-// A task's states.
+/** A task's states. */
 export const IDLE: u32 = 0;
 export const SCHEDULED: u32 = 1;
 export const RUNNING: u32 = 2;
 export const NOTIFIED: u32 = 3;
 export const DONE: u32 = 4;
 
-// A task's flags: its join handle is alive; the handle took the result; the root of `main`; it
-// started a promise (check the woken ones); its root finished (its result is in the slot); it
-// counts as live (the root of `main` with promises left running); the microtask being run is a
-// waiter's step already (sched_micro.velt).
+/**
+ * A task's flags: its join handle is alive; the handle took the result; the root of `main`; it
+ * started a promise (check the woken ones); its root finished (its result is in the slot); it
+ * counts as live (the root of `main` with promises left running); the microtask being run is a
+ * waiter's step already (sched_micro.velt).
+ */
 export const HANDLE: u32 = 1;
 export const CLAIMED: u32 = 2;
 export const ROOT: u32 = 4;

@@ -141,16 +141,10 @@ export function wait(r: usize, timeoutMs: i64): usize {
     m.st(ts, (timeoutMs / 1000) as usize);
     m.st(ts + 8, ((timeoutMs % 1000) * 1000000) as usize);
   }
+  const kq = m.ld(r + R_KQ) as i32;
+  const events = m.ptr(r + R_EVENTS);
   // SAFETY: the block has room for MAX_EVENTS events and the timespec.
-  const n =
-    unsafe { kevent(
-      m.ld(r + R_KQ) as i32,
-      m.ptr(0),
-      0,
-      m.ptr(r + R_EVENTS),
-      MAX_EVENTS as i32,
-      m.ptr(ts),
-    ) };
+  const n = unsafe { kevent(kq, m.ptr(0), 0, events, MAX_EVENTS as i32, m.ptr(ts)) };
   return n < 0 ? 0 : n as usize;
 }
 

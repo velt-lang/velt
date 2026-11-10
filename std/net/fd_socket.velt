@@ -221,9 +221,9 @@ export async function connect(addr: string): Promise<IoResult<u64>> {
 /** Connects to the address of `addrinfo` `ai`: the handle, or the failure. */
 async function connectOne(ai: usize): Promise<IoResult<u64>> {
   const family = m.ld32(ai + AI_FAMILY) as i32;
+  const protocol = m.ld32(ai + AI_PROTOCOL) as i32;
   // SAFETY: no precondition.
-  const fd =
-    unsafe { socket(family, SOCK_STREAM | r.SOCKET_FLAGS, m.ld32(ai + AI_PROTOCOL) as i32) };
+  const fd = unsafe { socket(family, SOCK_STREAM | r.SOCKET_FLAGS, protocol) };
   if (fd < 0) {
     return failed(osError(r.errno()), 0);
   }
@@ -294,13 +294,15 @@ export async function listenOn(addr: string): Promise<IoResult<u64>> {
   } else {
     const prep = r.prepare(fd);
     setOn(fd, sys.SOL_SOCKET, sys.SO_REUSEADDR);
-    // SAFETY: the address and its length from getaddrinfo's entry; a backlog.
     if (prep !== 0) {
       st = osError(prep);
-    } else if (unsafe { bind(fd, m.ptr(m.ld(ai + sys.AI_ADDR)), m.ld32(ai + AI_ADDRLEN)) } !== 0) {
-      st = osError(r.errno());
-    } else if (unsafe { listen(fd, 1024) } !== 0) {
-      st = osError(r.errno());
+    } else {
+      // SAFETY: the address and its length from getaddrinfo's entry.
+      const bound = unsafe { bind(fd, m.ptr(m.ld(ai + sys.AI_ADDR)), m.ld32(ai + AI_ADDRLEN)) };
+      // SAFETY: a socket bound above; a backlog.
+      if (bound !== 0 || unsafe { listen(fd, 1024) } !== 0) {
+        st = osError(r.errno());
+      }
     }
   }
   // SAFETY: the list getaddrinfo made, freed once.
