@@ -12,6 +12,7 @@ import * as w from "./sched_io_write";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as node from "./sched_node";
+import * as off from "./sched_off";
 import * as order from "./sched_order";
 import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
@@ -393,6 +394,9 @@ function park(e: usize): void {
   if (m.load(e + t.E_INBOX) !== 0 || m.ld(e + t.E_HEAD) !== 0 || !end.mayPark(e)) {
     m.store32(e + t.E_PARK, 0);
     return;
+  }
+  if (m.ld(e + t.E_PINNED) !== 0) {
+    off.flush();
   }
   io.park(b, timeout);
   m.store32(e + t.E_PARK, 0);

@@ -29,7 +29,8 @@ import * as t from "./sched_task";
 
 /**
  * The timer block's fields: the pending sleeps (first, last), the last sleep number, the sleeps
- * fired from a due list whose leaf has not seen it yet.
+ * fired from a due list whose leaf has not seen it yet; after the order's fields, the sleeps on
+ * due lists (a Node timer's turn waits for them: sched_order.velt `step`).
  */
 export const TM_FIRST: usize = 0;
 export const TM_LAST: usize = 8;
@@ -37,7 +38,8 @@ export const TM_SEQ: usize = 16;
 export const TM_UNSEEN: usize = 24;
 /** Node's timer order (sched_order.velt) owns the fields from here on. */
 export const TM_ORDER: usize = 32;
-export const TM_SIZE: usize = 264;
+export const TM_DUE: usize = 264;
+export const TM_SIZE: usize = 272;
 
 // A sleep: its deadline (nanoseconds), number, waker, links (the pending list, or its task's due
 // list), state, and the task whose due list holds it.
@@ -228,6 +230,8 @@ function pushDue(k: usize, f: usize): void {
   }
   m.st(f + S_TASK, k);
   m.st(f + S_STATE, DUE);
+  const b = m.ld(t.exec() + t.E_TIMERS);
+  m.st(b + TM_DUE, m.ld(b + TM_DUE) + 1);
 }
 
 function unlinkDue(k: usize, f: usize): void {
@@ -244,6 +248,8 @@ function unlinkDue(k: usize, f: usize): void {
   }
   m.st(f + S_TASK, 0);
   m.st(f + S_STATE, NEW);
+  const b = m.ld(t.exec() + t.E_TIMERS);
+  m.st(b + TM_DUE, m.ld(b + TM_DUE) - 1);
 }
 
 /** The first sleep on task `k`'s due list, or 0. */
@@ -270,6 +276,12 @@ export function fire(k: usize, f: usize): usize {
   const w = m.ld(f + S_WAKER);
   m.st(f + S_WAKER, 0);
   return w;
+}
+
+/** Are sleeps of block `b` on due lists, not fired yet? */
+@inline
+export function due(b: usize): bool {
+  return m.ld(b + TM_DUE) !== 0;
 }
 
 /** Are sleeps pending in block `b`? */

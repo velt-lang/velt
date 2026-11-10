@@ -7,7 +7,7 @@
 //
 // The worker drives the loop: one timer's turn at a time. When nothing holds the loop (no turn
 // handed out and not taken yet, no poll under way that took the last one), it looks for the
-// timer that comes next (`advance`: at its park, at each I/O tick of a busy worker, and at the end
+// timer that comes next (`step`: at its park, at each I/O tick of a busy worker, and at the end
 // of the poll that took the last turn); if its time has come it gets its turn (its turn's waker
 // is woken), else the worker's wait lasts until then at most. A turn's future completes once its
 // turn has come: the callback runs then, as a promise of the task that created the timer, and the
@@ -150,45 +150,59 @@ function turnDrop(f: usize): void {
 }
 
 /**
- * The loop moves on, unless something holds it (a turn handed out, or the poll that took the last
- * one under way): the timer that comes next gets its turn if its time has come; else `O_WAKE_AT`
- * says when the worker must look again (0: no timer waits for a time).
+ * Due sleeps go to their tasks' due lists and the loop moves on, in one order (a sleep is a timer
+ * too, as Node's `new Promise(r => setTimeout(r, ms))`): the timer that comes next gets its turn
+ * if its time has come and no sleep due before it is left to fire; those sleeps go first. Nothing
+ * moves while something holds the loop (a turn handed out, or the poll that took the last one
+ * under way), except at a park (`all`: every due sleep goes then). `O_WAKE_AT` says when the
+ * worker must look again (0: no timer waits for a time); the deadline of the first sleep left
+ * pending (0: none).
  */
-function advance(b: usize): void {
+function step(b: usize, now: u64, all: bool): u64 {
   if (m.ld(b + l.O_GRANTED) !== 0 || m.ld(b + l.O_HOLDER) !== 0) {
-    return;
+    return all && sl.pending(b) ? sl.expire(b, now) : 0;
   }
   m.st(b + l.O_WAKE_AT, 0);
   if (m.ld(b + l.O_QUEUED) === 0) {
-    return;
+    return sl.pending(b) ? sl.expire(b, now) : 0;
   }
   p.look(b);
   const h = m.ld(b + p.P_NEXT);
-  if (h !== 0) {
-    const at = m.ld(h + l.H_AT);
-    if ((sl.clock() as usize) < at) {
-      // Due by the clock in whole milliseconds; its turn also waits for the whole delay.
-      m.st(b + l.O_WAKE_AT, at);
-      return;
+  if (h === 0) {
+    // Nothing due: the lists the look passed over get their new places, and the loop wakes at
+    // the first list's expiry, as Node's does.
+    p.loopWoke(b);
+    const first = m.ld(b + l.O_FIRST);
+    if (first !== 0) {
+      m.st(b + l.O_WAKE_AT, m.ld(first + l.L_EXPIRY) * 1000000);
     }
-    p.commit(b);
-    l.take(b, h);
-    m.st(h + l.H_STATE, l.GRANTED);
-    m.st(b + l.O_GRANTED, h);
-    const w = m.ld(h + l.H_WAKER);
-    if (w !== 0) {
-      m.st(h + l.H_WAKER, 0);
-      m.wakeOwned(w);
-    }
-    return;
+    return sl.pending(b) ? sl.expire(b, now) : 0;
   }
-  // Nothing due: the lists the look passed over get their new places, and the loop wakes at the
-  // first list's expiry, as Node's does.
-  p.loopWoke(b);
-  const first = m.ld(b + l.O_FIRST);
-  if (first !== 0) {
-    m.st(b + l.O_WAKE_AT, m.ld(first + l.L_EXPIRY) * 1000000);
+  const at = m.ld(h + l.H_AT);
+  if ((sl.clock() as usize) < at) {
+    // Due by the clock in whole milliseconds; its turn also waits for the whole delay.
+    m.st(b + l.O_WAKE_AT, at);
+    return sl.pending(b) ? sl.expire(b, now) : 0;
   }
+  // In a timers pass, the sleeps due by the timer's time fire before it (the check phase's
+  // immediates come before the sleeps that came due meanwhile, as before the next pass).
+  const pass = m.ld(b + p.P_PHASE) === p.PASS;
+  const d = sl.pending(b) ? sl.expire(b, pass ? at as u64 : now) : 0;
+  if (pass && sl.due(b)) {
+    // Its turn comes once they fired (the worker looks again at once).
+    m.st(b + l.O_WAKE_AT, at);
+    return d;
+  }
+  p.commit(b);
+  l.take(b, h);
+  m.st(h + l.H_STATE, l.GRANTED);
+  m.st(b + l.O_GRANTED, h);
+  const w = m.ld(h + l.H_WAKER);
+  if (w !== 0) {
+    m.st(h + l.H_WAKER, 0);
+    m.wakeOwned(w);
+  }
+  return d;
 }
 
 /** The poll of task `k` that took the last turn ended (its microtasks too): the loop moves on. */
@@ -198,18 +212,14 @@ export function released(e: usize, k: usize): void {
   const b = m.ld(e + t.E_TIMERS);
   if (m.ld(b + l.O_HOLDER) === k) {
     m.st(b + l.O_HOLDER, 0);
-    advance(b);
+    step(b, sl.clock(), false);
   }
 }
 
 /** A busy worker's look (every I/O tick): due sleeps fire, and the loop moves on. */
 @noInline
 export function tick(e: usize): void {
-  const b = m.ld(e + t.E_TIMERS);
-  if (sl.pending(b)) {
-    sl.expire(b, sl.clock());
-  }
-  advance(b);
+  step(m.ld(e + t.E_TIMERS), sl.clock(), false);
 }
 
 /**
@@ -220,8 +230,7 @@ export function tick(e: usize): void {
 export function next(e: usize): i64 {
   const b = m.ld(e + t.E_TIMERS);
   const now = sl.clock();
-  let d = sl.pending(b) ? sl.expire(b, now) : 0;
-  advance(b);
+  let d = step(b, now, true);
   const w = m.ld(b + l.O_WAKE_AT) as u64;
   if (w !== 0 && (d === 0 || w < d)) {
     d = w;

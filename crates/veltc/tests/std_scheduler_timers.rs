@@ -7,6 +7,8 @@
 //! Delays are longer than the busy waits before them, so a loaded machine cannot change the order.
 
 use std::path::Path;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use no_window::command;
 
@@ -14,9 +16,21 @@ mod no_window;
 mod runtime_support;
 mod test_dir;
 
-/// `src` built (with `VELT_SCHEDULER=std` when `std`) and run, which must exit with `code`: its
-/// stdout, and its binary.
+/// `src` built (with `VELT_SCHEDULER=std` when `std`) and run with `VELT_THREADS=1`, which must
+/// exit with `code`: its stdout, and its binary.
 fn build_and_run(dir: &Path, name: &str, src: &str, std: bool, code: i32) -> (String, Vec<u8>) {
+    build_and_run_on(dir, name, src, std, code, "1")
+}
+
+/// [`build_and_run`] with `VELT_THREADS=threads`.
+fn build_and_run_on(
+    dir: &Path,
+    name: &str,
+    src: &str,
+    std: bool,
+    code: i32,
+    threads: &str,
+) -> (String, Vec<u8>) {
     let file = dir.join(format!("{name}.velt"));
     std::fs::write(&file, src).unwrap();
     let suffix = if cfg!(windows) { ".exe" } else { "" };
@@ -35,19 +49,33 @@ fn build_and_run(dir: &Path, name: &str, src: &str, std: bool, code: i32) -> (St
     let o = build.output().unwrap();
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert!(o.status.success(), "{name}: {stderr}");
-    let o = command(&exe)
-        .env("VELT_THREADS", "1")
+    let out = run_exe(&exe, threads, code, &format!("{name} (std: {std})"));
+    (out, std::fs::read(&exe).unwrap())
+}
+
+/// Runs `exe` with `VELT_THREADS=threads`, which must exit with `code` within a minute: its stdout.
+fn run_exe(exe: &Path, threads: &str, code: i32, what: &str) -> String {
+    let mut child = command(exe)
+        .env("VELT_THREADS", threads)
         .env_remove("VELT_SCHEDULER")
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
+    // A watchdog, not a synchronization: a timer that never fires would hang the test run.
+    let start = Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() > Duration::from_secs(60) {
+            child.kill().unwrap();
+            panic!("{what}: still running after a minute");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let o = child.wait_with_output().unwrap();
     let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
     let stderr = String::from_utf8_lossy(&o.stderr);
-    assert_eq!(
-        o.status.code(),
-        Some(code),
-        "{name} (std: {std}): {out}{stderr}"
-    );
-    (out, std::fs::read(&exe).unwrap())
+    assert_eq!(o.status.code(), Some(code), "{what}: {out}{stderr}");
+    out
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
@@ -302,4 +330,98 @@ async function main() {{
 b\na\n[ 'a', 'b' ]\nfirst\nsecond\nfirst after yieldNow\n[ 'first', 'second' ]\nmain\ntheirs\n",
         0,
     );
+}
+
+/// A sleep and a Node timer due together run in timer order across both kinds: the sleep due at 2
+/// ms before the timeout due at 10, which Node prints too (`sleep = ms => new
+/// Promise(r => setTimeout(r, ms))`: `sleep 2|timeout 10|spawned sleep 2|timeout 8`). The rest
+/// differs from Node: the spawned task's body runs once `main` lets go, so with one worker its
+/// sleep is created after `busy` and comes due after the timeout of 8 (Node runs the body before
+/// `busy`; #1332's case). The executor in Velt keeps timer order there; the runtime's executor
+/// runs the spawned task on another thread meanwhile, and its sleeps and timers interleave by
+/// when it looks: only its first line is compared there.
+#[test]
+fn sleeps_and_timers_due_together_run_in_one_order() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let src = format!(
+        "{BUSY}
+async function main() {{
+  setTimeout(() => console.log(\"timeout 10\"), 10);
+  const s = sleep(2);
+  busy(30);
+  await s;
+  console.log(\"sleep 2\");
+  const p = spawn(async () => {{
+    await sleep(2);
+    console.log(\"spawned sleep 2\");
+    return 0;
+  }});
+  setTimeout(() => console.log(\"timeout 8\"), 8);
+  busy(30);
+  await p;
+  await sleep(20);
+}}
+"
+    );
+    let (rt, _) = build_and_run(dir.path(), "sleep_timer", &src, false, 0);
+    let (std, std_bin) = build_and_run(dir.path(), "sleep_timer", &src, true, 0);
+    let mut lines: Vec<&str> = rt.lines().collect();
+    assert_eq!(
+        lines.first(),
+        Some(&"sleep 2"),
+        "the runtime's executor: {rt}"
+    );
+    lines.sort_unstable();
+    assert_eq!(
+        lines,
+        ["sleep 2", "spawned sleep 2", "timeout 10", "timeout 8"],
+        "the runtime's executor: {rt}"
+    );
+    assert_eq!(
+        std, "sleep 2\ntimeout 10\ntimeout 8\nspawned sleep 2\n",
+        "the executor in Velt"
+    );
+    assert!(contains(&std_bin, b"schedSleep"));
+}
+
+/// A task pinned to a worker of the runtime runs its timers there: the callback that resolves its
+/// promise, and one nothing awaits, both run (std: the runtime boxes and starts the callbacks'
+/// promises off the worker, sched_off.velt), and the worker's timer prints between them and the
+/// pinned task's sleep (std: the worker writes its stdout out before it waits). Two threads, 20
+/// runs of each build.
+#[test]
+fn a_pinned_spawn_runs_its_timers() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let src = "async function pinned(): Promise<i64> {
+  await new Promise<void>((resolve) => setTimeout(() => resolve(), 5));
+  console.log(\"pinned timeout fired\");
+  setTimeout(() => console.log(\"pinned fire-and-forget\"), 5);
+  await sleep(120);
+  console.log(\"pinned slept 120\");
+  return 2;
+}
+
+async function main() {
+  setTimeout(() => console.log(\"worker timeout 60\"), 60);
+  const n = await spawn(pinned(), { worker: 1 });
+  console.log(n);
+}
+";
+    let want =
+        "pinned timeout fired\npinned fire-and-forget\nworker timeout 60\npinned slept 120\n2\n";
+    for std in [false, true] {
+        let (out, _) = build_and_run_on(dir.path(), "pinned_timer", src, std, 0, "2");
+        assert_eq!(out, want, "std: {std}");
+        let suffix = if cfg!(windows) { ".exe" } else { "" };
+        let exe = dir.path().join(format!(
+            "pinned_timer{}{suffix}",
+            if std { "_std" } else { "" }
+        ));
+        for run in 0..19 {
+            let out = run_exe(&exe, "2", 0, &format!("std: {std}, run {run}"));
+            assert_eq!(out, want, "std: {std}, run {run}");
+        }
+    }
 }
