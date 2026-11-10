@@ -81,7 +81,8 @@ export function tlaAt(e: usize, site: string): void {
     // SAFETY: the slot holds a string (the flag says so), taken once and dropped here.
     const old = unsafe { slotTake<string>(e + t.E_TLA) };
   }
-  // SAFETY: the slot has room for a string, aligned to 8 (rawAlloc), and holds none now.
+  // SAFETY: the slot has room for a string, in the executor block (`lastingZeroed`, calloc:
+  // 16-aligned), and holds none now.
   unsafe {
     // A copy: the caller lends `site` (the hook borrows it).
     slotPut<string>(e + t.E_TLA, site.slice(0));
