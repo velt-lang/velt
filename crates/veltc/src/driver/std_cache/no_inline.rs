@@ -105,9 +105,7 @@ pub(in crate::driver) fn serve(
     let filling = serve::fill();
     for i in select::candidates(program, &names, rule) {
         let keys = Keys::of(program, &canon, &inputs, i, &mut memo);
-        match keys.find(cache) {
-            // A filling build stores its own too, which programs like it then link.
-            Some((_, Assumed::Conservative)) if filling => missing.push((i, keys)),
+        match keys.linked(cache, filling) {
             Some((path, assumed)) => {
                 conservative += usize::from(assumed == Assumed::Conservative);
                 found.push((i, path));
@@ -118,7 +116,7 @@ pub(in crate::driver) fn serve(
     drop(canon);
     let misses = missing.len();
     let mut compiled = 0;
-    if serve::fill() {
+    if filling {
         let stored = fill(program, &names, cg, cache, missing);
         compiled = stored.len();
         found.extend(stored);
@@ -169,6 +167,7 @@ pub(in crate::driver) fn serve(
 
 /// A function's two keys ([`Assumed`]): with the program's parameter attributes, and without
 /// those that depend on the whole program. The same key when it has none of those.
+#[derive(Clone, Copy)]
 struct Keys {
     program: Key,
     conservative: Key,
@@ -196,6 +195,16 @@ impl Keys {
         at(&self.program, Assumed::Program)
             .or_else(|| at(&self.conservative, Assumed::Conservative))
     }
+
+    /// The object this build links, if it links one it doesn't compile: [`Keys::find`]'s, but
+    /// none for the one without the whole-program attributes in a filling build, which compiles
+    /// and stores its own for programs like it.
+    fn linked(&self, cache: &Cache, filling: bool) -> Option<(PathBuf, Assumed)> {
+        match self.find(cache)? {
+            (_, Assumed::Conservative) if filling => None,
+            found => Some(found),
+        }
+    }
 }
 
 /// `VELT_STD_OBJECT_FILL`: compile and store each of `missing` with this program's attributes,
@@ -209,6 +218,23 @@ fn fill(
     cache: &Cache,
     missing: Vec<(usize, Keys)>,
 ) -> Vec<(usize, PathBuf)> {
+    let (each, stored_before) = to_compile(cache, missing);
+    let mut stored = serve::compile_missing(program, names, cg, cache, each, DEPTH);
+    // A function's own first (stored in the order given), then the one without.
+    stored.extend(stored_before);
+    stored.sort_by_key(|(i, _)| *i);
+    stored.dedup_by_key(|(i, _)| *i);
+    stored
+}
+
+/// Functions to compile and store: each one's index, the key it is stored under, and the
+/// attributes its object is compiled with.
+type ToCompile = Vec<(usize, Key, Assumed)>;
+
+/// What [`fill`] compiles of `missing`, each key with the attributes its object is compiled with
+/// (the key every other program looks up never with this program's), and, of those it doesn't
+/// compile, where the cache has the object without the whole-program attributes.
+fn to_compile(cache: &Cache, missing: Vec<(usize, Keys)>) -> (ToCompile, Vec<(usize, PathBuf)>) {
     let mut each = vec![];
     let mut stored_before = vec![];
     for (i, keys) in missing {
@@ -221,12 +247,7 @@ fn fill(
             None => each.push((i, keys.conservative, Assumed::Conservative)),
         }
     }
-    let mut stored = serve::compile_missing(program, names, cg, cache, each, DEPTH);
-    // A function's own first (stored in the order given), then the one without.
-    stored.extend(stored_before);
-    stored.sort_by_key(|(i, _)| *i);
-    stored.dedup_by_key(|(i, _)| *i);
-    stored
+    (each, stored_before)
 }
 
 impl Served {
@@ -285,6 +306,7 @@ impl Served {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driver::std_cache::compile;
 
     /// After optimization, the objects linked are those of the functions still declared and of
     /// what their objects call; the others leave their place.
@@ -464,5 +486,146 @@ mod tests {
             with.funcs.iter().all(|f| f.symbol != "only_served"),
             "what only it called is gone"
         );
+    }
+
+    /// `name(p)`, with `noalias readonly frozen` on `p` where `whole`: calls each of `calls` (by
+    /// index) with `p`.
+    fn assuming(name: &str, calls: &[usize], inline: vir::Inline, whole: bool) -> vir::Function {
+        use vir::{BasicBlock, BlockId, Callee, Const, FuncId, Local, Operand, Place};
+        let mut f = vir::Function::new(
+            name.into(),
+            vec![vir::Ty::Ptr],
+            vir::Ty::I64,
+            Linkage::Internal,
+        );
+        f.inline = inline;
+        f.param_attrs = vec![vir::ParamAttrs {
+            noalias: whole,
+            readonly: whole,
+            frozen: whole,
+            nonnull: true,
+            dereferenceable: 8,
+        }];
+        f.locals.push(vir::LocalDecl::new(vir::Ty::I64, None));
+        let result = || Place::local(Local(1));
+        f.blocks = (calls.iter().enumerate())
+            .map(|(n, &c)| BasicBlock {
+                stmts: vec![],
+                term: vir::Terminator::Call {
+                    callee: Callee::Func(FuncId(c as u32)),
+                    args: vec![Operand::Copy(Place::local(Local(0)))],
+                    dest: Some(result()),
+                    next: BlockId(n as u32 + 1),
+                },
+            })
+            .collect();
+        f.blocks.push(BasicBlock {
+            stmts: vec![vir::Stmt::Assign(
+                result(),
+                vir::Rvalue::Use(Operand::Const(Const::Int(0), vir::Ty::I64)),
+            )],
+            term: vir::Terminator::Return(Operand::Copy(result())),
+        });
+        f
+    }
+
+    /// `served`, its helper and `other` (`@noInline`), with `noalias readonly frozen` on their
+    /// `p` where `whole`.
+    fn with_attrs(whole: bool) -> vir::Program {
+        vir::Program {
+            funcs: vec![
+                assuming("served", &[1, 2], vir::Inline::Never, whole),
+                assuming("helper", &[], vir::Inline::Default, whole),
+                assuming("other", &[], vir::Inline::Never, whole),
+            ],
+            ..vir::Program::default()
+        }
+    }
+
+    /// The key every program looks up (without the whole-program attributes) only ever stores an
+    /// object compiled without them. Here `served`, its own copy of `helper` and `other`,
+    /// declared, have `noalias readonly frozen` on `p`; an object compiled with them may read
+    /// `p`'s pointee once in a program where it changes during the call. A filling build that
+    /// finds the object without them still compiles and stores its own, with this program's
+    /// attributes, which programs like it then link.
+    #[test]
+    fn the_key_without_whole_program_attributes_stores_only_an_object_without_them() {
+        let program = with_attrs(true);
+        let canon = Canon::new(&program, Mode::Link);
+        let names = statics::Names::new(&program, &canon);
+        let inputs = key::Inputs {
+            compiler: Key([1; 32]),
+            backend: "clang a".into(),
+            opt: "-O3".into(),
+            target: "aarch64-apple-darwin".into(),
+            cpu: None,
+            release: true,
+        };
+        let keys_of = |p: &vir::Program| {
+            let canon = Canon::new(p, Mode::Link);
+            Keys::of(p, &canon, &inputs, 0, &mut HashMap::new())
+        };
+        let keys = keys_of(&program);
+        assert_ne!(keys.program, keys.conservative);
+        // A program where the three don't hold looks up this key, and its own is another.
+        let other = keys_of(&with_attrs(false));
+        assert_eq!(
+            other.conservative, keys.conservative,
+            "every program looks it up"
+        );
+        assert_eq!(other.program, other.conservative);
+        assert_ne!(other.program, keys.program);
+        let attrs = |assumed| {
+            let alone = compile::program_of(&program, 0, &names, DEPTH, assumed);
+            assert_eq!(alone.funcs.len(), 3, "served, its helper, other declared");
+            (alone.funcs.iter())
+                .flat_map(|f| &f.param_attrs)
+                .map(|a| (a.noalias, a.readonly, a.frozen))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(attrs(Assumed::Program), [(true, true, true); 3]);
+
+        // An empty cache: both compiled, each with what its key says.
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path(), u64::MAX);
+        assert!(keys.linked(&cache, true).is_none());
+        let (each, stored_before) = to_compile(&cache, vec![(0, keys)]);
+        assert!(stored_before.is_empty());
+        assert_eq!(
+            each,
+            [
+                (0, keys.program, Assumed::Program),
+                (0, keys.conservative, Assumed::Conservative),
+            ]
+        );
+        let (_, _, assumed) = each[1];
+        let none = [(false, false, false); 3];
+        assert_eq!(
+            attrs(assumed),
+            none,
+            "on no function, under the key without"
+        );
+
+        // The one without found: a build that doesn't fill links it, one that fills compiles
+        // and stores its own, and links the one found if its own fails to compile.
+        let without = compile::store(&cache, &keys.conservative, b"object").unwrap();
+        let found = keys.linked(&cache, false);
+        assert_eq!(found, Some((without.clone(), Assumed::Conservative)));
+        assert!(
+            keys.linked(&cache, true).is_none(),
+            "a filling build compiles"
+        );
+        let (each, stored_before) = to_compile(&cache, vec![(0, keys)]);
+        assert_eq!(each, [(0, keys.program, Assumed::Program)]);
+        assert_eq!(stored_before, [(0, without)]);
+
+        // Its own stored too: every build links it.
+        let own = compile::store(&cache, &keys.program, b"object").unwrap();
+        for filling in [false, true] {
+            assert_eq!(
+                keys.linked(&cache, filling),
+                Some((own.clone(), Assumed::Program))
+            );
+        }
     }
 }

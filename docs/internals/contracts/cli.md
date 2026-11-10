@@ -504,7 +504,11 @@ break makes a stamp that never matches). The objects it names
   over what those objects call, are linked; the others are removed from `<object stem>.std/`.
   `VELT_STD_OBJECT_STATS=1` prints the reasons (`inlinable` for the functions not marked), then
   `velt: std cache: <n> found, <m> compiled, <k> left in the program`, `velt: std cache: <n> found
-  without whole-program attributes` when any were, and `velt: std cache: <n> no longer called`. The stamp's `outside` line is worked out before functions become declarations
+  without whole-program attributes` when any were, each `velt: std cache: links <symbol> (<n>
+  statements)` as its function becomes a declaration (`<n>`: its body as velt_opt left it, inlined
+  into as the budget allowed but with no per-function pass after the first, so larger than its
+  optimized code), and
+  `velt: std cache: <n> no longer called`. The stamp's `outside` line is worked out before functions become declarations
   when one does, else after optimization, as without the cache.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).
