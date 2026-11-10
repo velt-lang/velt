@@ -31,6 +31,16 @@ fn calls(vir: &str, name: &str) -> usize {
         .count()
 }
 
+/// The body of `velt_main` in `vir`, where the writers' calls are once inlined (the writers'
+/// own bodies call the runtime's printer too).
+fn main_body(vir: &str) -> &str {
+    let start = vir
+        .find("export velt_main(")
+        .unwrap_or_else(|| panic!("no velt_main:\n{vir}"));
+    let rest = &vir[start..];
+    rest.find("\nfn#").map_or(rest, |end| &rest[..end])
+}
+
 /// The JS loop: a whole `number` (`i`) printed, and nothing else.
 const LOOP: &str = "function main() {
   for (let i = 0; i < 1000; i++) {
@@ -53,15 +63,17 @@ const BOTH: &str = "function main() {
 #[test]
 fn a_whole_number_takes_the_integer_writer_where_the_program_has_it() {
     let vir = vir_of(BOTH);
-    assert_eq!(calls(&vir, "velt_rt_write_f64"), 0, "{vir}");
+    let main = main_body(&vir);
+    assert_eq!(calls(main, "velt_rt_write_f64"), 0, "{vir}");
     assert_eq!(calls(&vir, "wholeNumberWrite("), 0, "{vir}");
-    assert_eq!(calls(&vir, "digitsWrite("), 2, "{vir}");
+    assert_eq!(calls(main, "digitsWrite("), 2, "{vir}");
 }
 
 #[test]
 fn the_js_loop_alone_takes_the_whole_number_writer() {
     let vir = vir_of(LOOP);
-    assert_eq!(calls(&vir, "velt_rt_write_f64"), 0, "{vir}");
-    assert_eq!(calls(&vir, "wholeNumberWrite("), 1, "{vir}");
+    let main = main_body(&vir);
+    assert_eq!(calls(main, "velt_rt_write_f64"), 0, "{vir}");
+    assert_eq!(calls(main, "wholeNumberWrite("), 1, "{vir}");
     assert_eq!(calls(&vir, "digitsWrite("), 0, "{vir}");
 }
