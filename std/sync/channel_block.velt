@@ -4,9 +4,9 @@
 //
 // The block: a count (the channel's core and each wait hold one, so a wait outliving the last
 // handle reads live memory), a spin lock, the closed flag, the capacity (0: unbounded), the ring
-// of items (`len` of them from `head`, each `stride` bytes, 16-aligned, growing as needed) and
-// the two lines of waiting tasks, receives waiting for an item and sends waiting for room. All of
-// it changes under the lock; `length` and `closed` read it without.
+// of items (`len` of them from `head`, each `stride` bytes, a multiple of 16, growing as needed)
+// and the two lines of waiting tasks, receives waiting for an item and sends waiting for room. All
+// of it changes under the lock; `length` and `closed` read it without.
 //
 // A wait is a heap future (rt_abi_async.md §1) that is also the waiter's place in its line
 // (channel_wait.velt): it joins the line's back with a clone of its poll's waker, and leaves in

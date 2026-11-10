@@ -68,12 +68,12 @@ impl FnLower<'_, '_> {
         unit()
     }
 
-    /// The slot type `t` as a VIR type: its alignment fits `rawAlloc`'s 16 bytes (VIR aligns
+    /// The slot type `t` as a VIR type: its alignment fits `rawAlloc`'s 8 bytes (VIR aligns
     /// scalars to at most 8, so an aggregate never needs more).
     fn slot_ty(&mut self, t: TyId) -> Ty {
         let vt = self.cx.ty(t);
-        if vt != Ty::Unit && self.cx.size_align(vt).1 > 16 {
-            ice("a slot's value is aligned to more than 16 bytes")
+        if vt != Ty::Unit && i128::from(self.cx.size_align(vt).1) > RAW_ALIGN {
+            ice("a slot's value is aligned to more than 8 bytes")
         }
         vt
     }
