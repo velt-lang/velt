@@ -94,10 +94,7 @@ impl FnLower<'_, '_> {
     fn share_closure(&mut self, src: &Place, dst: &Place) {
         let hdr = self.cx.closure_agg();
         self.assign(dst.clone(), Rvalue::Use(Operand::Copy(src.clone())));
-        let env = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(src, Proj::Field(1)))),
-        );
+        let (env, bit) = self.closure_env(src);
         let done = self.new_block();
         let nn = self.non_null(env.clone());
         self.when(nn, done);
@@ -121,6 +118,7 @@ impl FnLower<'_, '_> {
         let has = self.non_null(clone_fn.clone());
         self.when(has, done);
         let new = self.call_entry(clone_fn, vec![env], vec![Ty::Ptr], Ty::Ptr);
+        let new = self.retag_env(new, bit);
         self.assign(proj(dst, Proj::Field(1)), Rvalue::Use(new));
         self.goto(done);
         self.switch_to(done);

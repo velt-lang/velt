@@ -213,6 +213,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         self.fill_env(def, env.clone(), drop_fn, clone_fn);
         let t = self.temp(Ty::Agg(ca));
+        let env = self.tag_wrapper_env(def, env);
         self.assign(Place::local(t), Rvalue::Aggregate(ca, vec![code, env]));
         let ty = self.sub(ty);
         self.own_temp(t, ty);
@@ -238,6 +239,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.fill_env(def, env.clone(), drop_fn, clone_fn);
         let ca = self.cx.closure_agg();
         let t = self.temp(Ty::Agg(ca));
+        let env = self.tag_wrapper_env(def, env);
         self.assign(Place::local(t), Rvalue::Aggregate(ca, vec![code, env]));
         if !borrowed {
             let ty = self.sub(ty);

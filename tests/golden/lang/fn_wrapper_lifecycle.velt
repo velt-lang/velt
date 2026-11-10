@@ -1,0 +1,69 @@
+// check: no leaks
+// check: also with VELT_THREADS=4
+// Functions wrapped for a type conversion in a program that compares functions (#2688): each
+// wrapper is called, kept, copied, dropped, held as `any` and sent to other tasks, and still
+// reaches the function it wraps and frees what it holds.
+type Listener = (evt: string) => number;
+
+const set = new Set<Listener>();
+const kept: Listener[] = [];
+function add(l: Listener): void {
+  set.add(l);
+  kept.push(l);
+}
+
+let calls = 0;
+const counter = { n: 0 };
+const a = (e: any): number => {
+  counter.n++;
+  calls++;
+  return String(e).length;
+};
+const label = "x".repeat(40);
+const b = (e: string, extra?: string): number => {
+  calls++;
+  return e.length + label.length + (extra === undefined ? 0 : 1);
+};
+function named(e: any): number {
+  calls++;
+  return 7;
+}
+
+for (let i = 0; i < 50; i++) {
+  add(a);
+  add(b);
+  add(named);
+}
+console.log("kept", set.size, kept.length);
+
+// Call every kept copy, then drop most of them.
+let sum = 0;
+for (const l of kept) sum += l("hey");
+console.log("sum", sum, calls);
+kept.length = 3;
+for (const l of kept) sum += l("hi");
+console.log("after drop", sum, kept.length, set.has(a), set.has(b), set.has(named));
+
+// Copies through an object, an array copy and `any`.
+const box = { f: kept[0] };
+const copy = [...kept];
+const dyn: any = kept[1];
+console.log("copies", box.f === kept[0], copy[1] === kept[1], dyn === kept[1], dyn("abc"), box.f("z"));
+
+// Sent to other tasks, called there.
+async function run(l: Listener, n: number): Promise<number> {
+  let s = 0;
+  for (let i = 0; i < n; i++) s += l("task");
+  return s;
+}
+async function main(): Promise<void> {
+  const ps: Promise<number>[] = [];
+  for (const l of kept) ps.push(spawn(run(l, 100)));
+  let total = 0;
+  for (const p of ps) total += await p;
+  console.log("tasks", total);
+  set.clear();
+  kept.length = 0;
+  console.log("cleared", set.size, counter.n > 0);
+}
+await main();

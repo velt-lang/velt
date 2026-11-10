@@ -6,29 +6,33 @@
 //! it stands for, through every wrapper in a chain.
 //!
 //! In a program that compares function values (`Boxing::fn_identity`) and makes a wrapper
-//! (`Boxing::fn_wrappers`), a wrapper's environment is
-//! `{ drop, clone: the marker, transfer, its own clone, kind, the wrapped value, … }`: the clone
-//! entry is one glue function for every wrapper ([`Work::FnWrapperClone`]), which calls the
-//! wrapper's own clone (as velt_rt's function identities mark themselves by their clone entry).
-//! The wrapped value follows the kind word: the wrapper's one capture, or the named function's
-//! value (`KIND_FN`), or the `any` a dynamic value converted to a function type holds
-//! (`KIND_ANY`), whose table says `FN_VALUE_ID` in its class id word when it holds a function
-//! value. The comparison follows the wrapped function while the environment's clone entry is the
-//! marker ([`FnLower::fn_root`]), and two `any`s of two function types compare the functions
-//! they lead to (any_eq.rs). Other programs are unchanged.
+//! (`Boxing::fn_wrappers`), a wrapper's value has the low bit of its environment pointer set
+//! (environments are aligned to 8), and its environment is
+//! `{ drop, clone, transfer, kind, the wrapped value, … }`. The wrapped value is the wrapper's
+//! one capture, or the named function's value (`KIND_FN`), or the `any` a dynamic value
+//! converted to a function type holds (`KIND_ANY`), whose table says `FN_VALUE_ID` in its class
+//! id word when it holds a function value.
+//!
+//! What reads an environment through a function value takes the bit off first
+//! ([`FnLower::closure_env`]): the drop, clone, share, transfer and many-threads glue of
+//! function values, which put it back on the copy they make, and a wrapper's own code
+//! (abi.rs). `===` of two values neither of which has the bit compares their words as before;
+//! one with it follows the wrapped values to the function they lead to ([`FnLower::fn_root`]),
+//! and so does the hash of a key. Two `any`s of two function types compare the functions they
+//! lead to (any_eq.rs). Other programs are unchanged.
 
 use velt_sema::hir::{DefId, FnWrapped, PassMode, TyId, TyKind};
 
 use super::super::operand::proj;
 use super::super::{cfunc, cint, Cx, FnLower, ThunkKind, Work};
-use crate::vir::{AggId, BinOp, Const, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
+use crate::vir::{
+    AggId, BinOp, Callee, Function, Inline, Local, Operand, Place, Proj, Rvalue, Terminator, Ty,
+};
 
-/// The field of a wrapper's environment holding its own clone entry.
-const OWN_CLONE: u32 = 3;
 /// The field of a wrapper's environment saying what the wrapped value is (`KIND_*`).
-const KIND: u32 = 4;
+const KIND: u32 = 3;
 /// The field of a wrapper's environment holding the value it wraps.
-const WRAPPED: u32 = 5;
+const WRAPPED: u32 = 4;
 /// The wrapped value is a function value.
 const KIND_FN: i128 = 0;
 /// The wrapped value is an `any`.
@@ -97,7 +101,7 @@ impl Cx<'_> {
     }
 
     /// The header fields of closure `def`'s environment in front of its captures: drop, clone
-    /// and transfer entries, and a marked wrapper's own clone entry and kind.
+    /// and transfer entries, and a marked wrapper's kind.
     pub(in crate::lower) fn env_header(&self, def: DefId) -> u32 {
         match self.marked_wrapper(def) {
             Some(_) => WRAPPED,
@@ -123,15 +127,10 @@ impl Cx<'_> {
             return a;
         }
         let ca = Ty::Agg(self.closure_agg());
-        let fields = [Ty::Ptr, Ty::Ptr, Ty::Ptr, Ty::Ptr, Ty::Ptr, ca];
+        let fields = [Ty::Ptr, Ty::Ptr, Ty::Ptr, Ty::Ptr, ca];
         let a = self.new_agg("fn wrapper env".into(), &fields);
         self.lay.fn_wrapper_env = Some(a);
         a
-    }
-
-    /// The marker clone entry of every wrapper's environment.
-    fn wrapper_mark(&mut self) -> Operand {
-        cfunc(self.func(Work::FnWrapperClone))
     }
 
     /// The class id word of the `any` table of `ty`, when it is a function type (`FN_VALUE_ID`).
@@ -142,6 +141,18 @@ impl Cx<'_> {
 }
 
 impl<'c, 'h> FnLower<'c, 'h> {
+    /// The env parameter `env` of closure `def`'s code, the wrapper bit taken off when `def` is
+    /// a marked wrapper (its values have it).
+    pub(in crate::lower) fn wrapper_own_env(&mut self, def: DefId, env: Local) -> Local {
+        if self.cx.marked_wrapper(def).is_none() {
+            return env;
+        }
+        let bare = self.untag_env(Operand::Copy(Place::local(env)));
+        let l = self.new_local(Ty::Ptr, Some("env".into()));
+        self.assign(Place::local(l), Rvalue::Use(bare));
+        l
+    }
+
     /// Record that closure `def` is made, when it is a wrapper (`Boxing::fn_wrappers`).
     pub(in crate::lower) fn note_wrapper_made(&mut self, def: DefId) {
         if self.cx.fn_wrapper(def).is_some() {
@@ -149,18 +160,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// The header fields a marked wrapper `def` adds to its environment at `base` (whose drop,
-    /// clone and transfer entries are written): the marker as its clone entry, its own after
-    /// the transfer entry, the kind, and a named function's value.
+    /// The header field a marked wrapper `def` adds to its environment at `base`, its kind, and
+    /// a named function's value.
     pub(in crate::lower) fn fill_wrapper_header(&mut self, def: DefId, base: &Place) {
         let Some(w) = self.cx.marked_wrapper(def) else {
             return;
         };
-        let targs = self.targs.clone();
-        let own = cfunc(self.cx.func(Work::EnvClone(def, targs)));
-        let mark = self.cx.wrapper_mark();
-        self.assign(proj(base, Proj::Field(1)), Rvalue::Use(mark));
-        self.assign(proj(base, Proj::Field(OWN_CLONE)), Rvalue::Use(own));
         let kind = match w {
             Wrapper::CapturedAny => KIND_ANY,
             _ => KIND_FN,
@@ -178,10 +183,64 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
+    /// The environment pointer `env` of a new value of closure `def`, with the wrapper bit when
+    /// `def` is a marked wrapper.
+    pub(in crate::lower) fn tag_wrapper_env(&mut self, def: DefId, env: Operand) -> Operand {
+        match self.cx.marked_wrapper(def) {
+            Some(_) => self.rvalue_temp(
+                Ty::Ptr,
+                Rvalue::Binary(BinOp::PtrAdd, env, cint(1, Ty::I64)),
+            ),
+            None => env,
+        }
+    }
+
+    /// The wrapper bit of the environment pointer `env`, as an `i64` (0 or 1).
+    fn env_bit(&mut self, env: Operand) -> Operand {
+        let w = self.cast_to(env, Ty::Ptr, Ty::U64);
+        let b = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, w, cint(1, Ty::U64)));
+        self.cast_to(b, Ty::U64, Ty::I64)
+    }
+
+    /// `env` without the wrapper bit, which is `bit` (`env_bit`).
+    fn env_without(&mut self, env: Operand, bit: Operand) -> Operand {
+        let neg = self.rvalue_temp(Ty::I64, Rvalue::Binary(BinOp::Sub, cint(0, Ty::I64), bit));
+        self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, env, neg))
+    }
+
+    /// The environment pointer `env` with the wrapper bit taken off (in a program whose
+    /// wrappers keep the identity; as it is in any other).
+    pub(in crate::lower) fn untag_env(&mut self, env: Operand) -> Operand {
+        if !self.cx.boxing.fn_wrappers {
+            return env;
+        }
+        let bit = self.env_bit(env.clone());
+        self.env_without(env, bit)
+    }
+
+    /// The environment of the function value at `place`, the wrapper bit taken off, and the bit
+    /// (`None` in a program without wrapper bits) to put back on a copy made of it.
+    pub(in crate::lower) fn closure_env(&mut self, place: &Place) -> (Operand, Option<Operand>) {
+        let env = Operand::Copy(proj(place, Proj::Field(1)));
+        let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(env));
+        if !self.cx.boxing.fn_wrappers {
+            return (env, None);
+        }
+        let bit = self.env_bit(env.clone());
+        let bare = self.env_without(env, bit.clone());
+        (bare, Some(bit))
+    }
+
+    /// `env` (a new environment) with the wrapper bit `bit` of the one it was made from.
+    pub(in crate::lower) fn retag_env(&mut self, env: Operand, bit: Option<Operand>) -> Operand {
+        match bit {
+            Some(b) => self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, env, b)),
+            None => env,
+        }
+    }
+
     /// `===` of the function values at `a` and `b` whose words compare as `same`: the same
-    /// value, or two that lead to one function (module docs). Two values that differ are told
-    /// apart by a look at a clone entry, without following anything, unless one is a wrapper:
-    /// at one code (one closure) both are wrappers or neither is, so a look at `a`'s does.
+    /// value, or, when either has the wrapper bit, two that lead to one function.
     pub(in crate::lower) fn fn_same_through_wrappers(
         &mut self,
         a: &Place,
@@ -191,37 +250,168 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if !self.cx.boxing.fn_wrappers {
             return same;
         }
+        let _ = same;
+        let word = |lw: &mut Self, p: &Place, k: u32| {
+            let w = Operand::Copy(proj(p, Proj::Field(k)));
+            lw.cast_to(w, Ty::Ptr, Ty::U64)
+        };
+        let (ca, cb, ea, eb) = (
+            word(self, a, 0),
+            word(self, b, 0),
+            word(self, a, 1),
+            word(self, b, 1),
+        );
         let out = Place::local(self.temp(Ty::Bool));
-        self.assign(out.clone(), Rvalue::Use(same.clone()));
-        let (differ, one_code, two_codes) = (self.new_block(), self.new_block(), self.new_block());
-        let (follow, done) = (self.new_block(), self.new_block());
-        self.branch(same, done, differ);
-        self.switch_to(differ);
-        let (ca, cb) = (proj(a, Proj::Field(0)), proj(b, Proj::Field(0)));
-        let codes = Rvalue::Binary(BinOp::Eq, Operand::Copy(ca), Operand::Copy(cb));
-        let codes = self.rvalue_temp(Ty::Bool, codes);
+        let no = Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
+        self.assign(out.clone(), Rvalue::Use(no));
+        let (one_code, two_codes, envs_differ) =
+            (self.new_block(), self.new_block(), self.new_block());
+        let (b_plain, yes, follow, done) = (
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+            self.new_block(),
+        );
+        let codes = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, ca, cb));
         self.branch(codes, one_code, two_codes);
+        // One code: the same value, or two values of one closure, both wrappers or neither, so
+        // `b`'s bit says (`b` is the value looked for in `indexOf`, `includes` and a key lookup:
+        // a test the optimizer can take out of the loop).
         self.switch_to(one_code);
-        let wa = self.is_fn_wrapper(a);
-        self.branch(wa, follow, done);
+        let envs = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, ea.clone(), eb.clone()));
+        self.branch(envs, yes, envs_differ);
+        self.switch_to(envs_differ);
+        let tb = self.low_bit(eb.clone());
+        self.branch(tb, follow, done);
+        // Two codes: equal only through a wrapper on either side.
         self.switch_to(two_codes);
-        let wa = self.is_fn_wrapper(a);
-        let wb = self.is_fn_wrapper(b);
-        let either = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, wa, wb));
-        self.branch(either, follow, done);
+        let tb = self.low_bit(eb);
+        self.branch(tb, follow, b_plain);
+        self.switch_to(b_plain);
+        let ta = self.low_bit(ea);
+        self.branch(ta, follow, done);
+        self.switch_to(yes);
+        let t = Operand::Const(crate::vir::Const::Bool(true), Ty::Bool);
+        self.assign(out.clone(), Rvalue::Use(t));
+        self.goto(done);
         self.switch_to(follow);
-        let r = self.fn_roots_same(a, b);
-        self.assign(out.clone(), Rvalue::Use(r));
+        // `a` by its address (an element, where the loops of `indexOf` and of a key lookup
+        // read it, so its words are compared in place), `b` by value (the value looked for: an
+        // address would keep it in memory).
+        let f = cfunc(self.cx.func(Work::FnSame));
+        let w = |p: &Place, k: u32| Operand::Copy(proj(p, Proj::Field(k)));
+        let pa = self.addr(a.clone());
+        let args = vec![pa, w(b, 0), w(b, 1)];
+        let callee = Callee::Ptr {
+            target: f,
+            params: vec![Ty::Ptr; 3],
+            ret: Ty::Bool,
+        };
+        self.call(callee, args, Some(out.clone()), false);
         self.goto(done);
         self.switch_to(done);
         Operand::Copy(out)
     }
 
+    /// Is the low bit of the word `w` set?
+    fn low_bit(&mut self, w: Operand) -> Operand {
+        let bit = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::BitAnd, w, cint(1, Ty::U64)));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bit, cint(0, Ty::U64)))
+    }
+
+    /// The root of the function value at `place`, from the out-of-line [`Work::FnRoot`].
+    fn fn_root_call(&mut self, place: &Place) -> Place {
+        let ca = self.cx.closure_agg();
+        let out = Place::local(self.temp(Ty::Agg(ca)));
+        let f = cfunc(self.cx.func(Work::FnRoot));
+        let w = |k: u32| Operand::Copy(proj(place, Proj::Field(k)));
+        let dst = self.addr(out.clone());
+        let callee = Callee::Ptr {
+            target: f,
+            params: vec![Ty::Ptr, Ty::Ptr, Ty::Ptr],
+            ret: Ty::Unit,
+        };
+        self.call(callee, vec![w(0), w(1), dst], None, false);
+        out
+    }
+
+    /// The function value at `place`, or, when it has the wrapper bit, the function it leads
+    /// to (out of line): what a key's hash sees, the words of any value that is no wrapper.
+    pub(in crate::lower) fn fn_root_out_of_line(&mut self, place: &Place) -> Place {
+        if !self.cx.boxing.fn_wrappers {
+            return place.clone();
+        }
+        let ca = self.cx.closure_agg();
+        let out = Place::local(self.temp(Ty::Agg(ca)));
+        self.assign(out.clone(), Rvalue::Use(Operand::Copy(place.clone())));
+        let env = Operand::Copy(proj(place, Proj::Field(1)));
+        let bit = self.env_bit(env);
+        let tagged = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, bit, cint(0, Ty::I64)));
+        let (slow, done) = (self.new_block(), self.new_block());
+        self.branch(tagged, slow, done);
+        self.switch_to(slow);
+        let r = self.fn_root_call(place);
+        self.assign(out.clone(), Rvalue::Use(Operand::Copy(r)));
+        self.goto(done);
+        self.switch_to(done);
+        out
+    }
+
+    /// `(a: ptr, b_code, b_env) -> bool`: [`Work::FnSame`], kept out of line so comparisons
+    /// stay short.
+    pub(in crate::lower) fn build_fn_same(cx: &'c mut Cx<'h>) -> Function {
+        let mut lw = FnLower::bare(cx, vec![]);
+        let ws: Vec<Local> = ["a", "b_code", "b_env"]
+            .iter()
+            .map(|n| lw.new_local(Ty::Ptr, Some((*n).into())))
+            .collect();
+        let ca = lw.cx.closure_agg();
+        let pa = proj(&Place::local(ws[0]), Proj::Deref(Ty::Agg(ca)));
+        let (c, e) = (
+            Operand::Copy(Place::local(ws[1])),
+            Operand::Copy(Place::local(ws[2])),
+        );
+        let pb = Place::local(lw.temp(Ty::Agg(ca)));
+        lw.assign(pb.clone(), Rvalue::Aggregate(ca, vec![c, e]));
+        let r = lw.fn_roots_same(&pa, &pb);
+        lw.terminate(Terminator::Return(r));
+        let mut func = lw.finish("_Gfn_same".into(), vec![Ty::Ptr; 3], Ty::Bool);
+        func.inline = Inline::Never;
+        func
+    }
+
+    /// `(code, env, out: ptr)`: [`Work::FnRoot`], kept out of line so hashes stay short.
+    pub(in crate::lower) fn build_fn_root(cx: &'c mut Cx<'h>) -> Function {
+        let mut lw = FnLower::bare(cx, vec![]);
+        let code = lw.new_local(Ty::Ptr, Some("code".into()));
+        let env = lw.new_local(Ty::Ptr, Some("env".into()));
+        let out = lw.new_local(Ty::Ptr, Some("out".into()));
+        let ca = lw.cx.closure_agg();
+        let src = Place::local(lw.temp(Ty::Agg(ca)));
+        let words = vec![
+            Operand::Copy(Place::local(code)),
+            Operand::Copy(Place::local(env)),
+        ];
+        lw.assign(src.clone(), Rvalue::Aggregate(ca, words));
+        let root = lw.fn_root(&src);
+        let dst = proj(&Place::local(out), Proj::Deref(Ty::Agg(ca)));
+        lw.assign(dst, Rvalue::Use(Operand::Copy(root)));
+        lw.terminate(Terminator::Return(super::super::unit()));
+        let mut func = lw.finish("_Gfn_root".into(), vec![Ty::Ptr; 3], Ty::Unit);
+        func.inline = Inline::Never;
+        func
+    }
+
     /// `===` of the functions the values at `a` and `b` lead to.
     fn fn_roots_same(&mut self, a: &Place, b: &Place) -> Operand {
         let (ra, rb) = (self.fn_root(a), self.fn_root(b));
+        self.roots_same(&ra, &rb)
+    }
+
+    /// `===` of two function values that are no wrappers (roots).
+    fn roots_same(&mut self, ra: &Place, rb: &Place) -> Operand {
         let w = |lw: &mut Self, k: u32| {
-            let (x, y) = (proj(&ra, Proj::Field(k)), proj(&rb, Proj::Field(k)));
+            let (x, y) = (proj(ra, Proj::Field(k)), proj(rb, Proj::Field(k)));
             let (x, y) = (Operand::Copy(x), Operand::Copy(y));
             lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
         };
@@ -229,59 +419,38 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env))
     }
 
-    /// Is the function value at `place` a wrapper (its environment's clone entry the marker)?
-    fn is_fn_wrapper(&mut self, place: &Place) -> Operand {
-        let wa = self.cx.wrapper_env_agg();
-        let mark = self.cx.wrapper_mark();
-        let out = Place::local(self.temp(Ty::Bool));
-        let no = Operand::Const(Const::Bool(false), Ty::Bool);
-        self.assign(out.clone(), Rvalue::Use(no));
-        let env = Operand::Copy(proj(place, Proj::Field(1)));
-        let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(env));
-        let (look, done) = (self.new_block(), self.new_block());
-        let nn = self.non_null(env.clone());
-        self.branch(nn, look, done);
-        self.switch_to(look);
-        let ep = self.operand_place(env, Ty::Ptr);
-        let clone = Operand::Copy(proj(&proj(&ep, Proj::Deref(Ty::Agg(wa))), Proj::Field(1)));
-        self.assign(out.clone(), Rvalue::Binary(BinOp::Eq, clone, mark));
-        self.goto(done);
-        self.switch_to(done);
-        Operand::Copy(out)
-    }
-
     /// The function value at `place` (a closure aggregate), or the one the wrappers around it
-    /// stand for (module docs): what `===` and a key's hash see.
+    /// stand for (module docs): what `===` and a key's hash see. Its environment never has the
+    /// wrapper bit.
     pub(in crate::lower) fn fn_root(&mut self, place: &Place) -> Place {
         if !self.cx.boxing.fn_wrappers {
             return place.clone();
         }
         let ca = self.cx.closure_agg();
         let wa = self.cx.wrapper_env_agg();
-        let mark = self.cx.wrapper_mark();
         let cur = Place::local(self.temp(Ty::Agg(ca)));
         self.assign(cur.clone(), Rvalue::Use(Operand::Copy(place.clone())));
-        let (head, test, wraps_bb, body, done) = (
-            self.new_block(),
+        let (head, wraps_bb, body, done) = (
             self.new_block(),
             self.new_block(),
             self.new_block(),
             self.new_block(),
         );
-        let (held, body_any) = (self.new_block(), self.new_block());
+        let (held, body_any, strip) = (self.new_block(), self.new_block(), self.new_block());
         self.goto(head);
         self.switch_to(head);
         let env = Operand::Copy(proj(&cur, Proj::Field(1)));
         let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(env));
-        let nn = self.non_null(env.clone());
-        self.branch(nn, test, done);
-        self.switch_to(test);
-        let ep = self.operand_place(env, Ty::Ptr);
-        let base = proj(&ep, Proj::Deref(Ty::Agg(wa)));
-        let clone = Operand::Copy(proj(&base, Proj::Field(1)));
-        let wraps = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, clone, mark));
+        let bit = self.env_bit(env.clone());
+        let wraps = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, bit.clone(), cint(0, Ty::I64)),
+        );
         self.branch(wraps, wraps_bb, done);
         self.switch_to(wraps_bb);
+        let bare = self.env_without(env, bit);
+        let ep = self.operand_place(bare.clone(), Ty::Ptr);
+        let base = proj(&ep, Proj::Deref(Ty::Agg(wa)));
         let kind = Operand::Copy(proj(&base, Proj::Field(KIND)));
         let any = cint(KIND_ANY, Ty::Ptr);
         let is_any = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, kind, any));
@@ -297,7 +466,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let id = self.vtable_class_id(table);
         let f = cint(FN_VALUE_ID as i128, Ty::U64);
         let is_fn = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, id, f));
-        self.branch(is_fn, body_any, done);
+        self.branch(is_fn, body_any, strip);
+        // An `any` holding another callable: the wrapper is its own function, without the bit,
+        // so nothing reads its environment through a tagged pointer.
+        self.switch_to(strip);
+        self.assign(proj(&cur, Proj::Field(1)), Rvalue::Use(bare));
+        self.goto(done);
         self.switch_to(body_any);
         let data = Operand::Copy(proj(&any, Proj::Field(0)));
         let data = self.rvalue_temp(Ty::Ptr, Rvalue::Use(data));
@@ -330,20 +504,5 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         let (a, b) = (at(self, da), at(self, db));
         self.fn_roots_same(&a, &b)
-    }
-
-    /// `(env: ptr) -> ptr`, the marker clone entry of every wrapper's environment: the
-    /// wrapper's own clone entry, called.
-    pub(in crate::lower) fn build_wrapper_clone(cx: &'c mut Cx<'h>) -> Function {
-        let mut lw = FnLower::bare(cx, vec![]);
-        let env = lw.new_local(Ty::Ptr, Some("env".into()));
-        let wa = lw.cx.wrapper_env_agg();
-        let base = proj(&Place::local(env), Proj::Deref(Ty::Agg(wa)));
-        let own = Operand::Copy(proj(&base, Proj::Field(OWN_CLONE)));
-        let own = lw.rvalue_temp(Ty::Ptr, Rvalue::Use(own));
-        let ev = Operand::Copy(Place::local(env));
-        let new = lw.call_entry(own, vec![ev], vec![Ty::Ptr], Ty::Ptr);
-        lw.terminate(Terminator::Return(new));
-        lw.finish("_Gfn_wrapper_clone".into(), vec![Ty::Ptr], Ty::Ptr)
     }
 }

@@ -277,10 +277,7 @@ impl FnLower<'_, '_> {
     /// `{ code, env }`: a heap env is checked by its transfer entry (`build_env_transfer`).
     fn many_check_closure(&mut self, place: &Place) {
         let hdr = self.cx.closure_agg();
-        let env = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(place, Proj::Field(1)))),
-        );
+        let (env, _) = self.closure_env(place);
         let done = self.new_block();
         let nn = self.non_null(env.clone());
         self.when(nn, done);
