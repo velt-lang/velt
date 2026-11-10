@@ -766,7 +766,8 @@ fn a_panic_during_a_cleanup_aborts() {
 }
 
 /// A program that doesn't catch has no unwind edges; one that catches has them where frames own
-/// values.
+/// values, on the Itanium targets only: Windows (no structured exceptions yet) and WebAssembly
+/// get none. Each target is named, so the result doesn't depend on the host running the test.
 #[test]
 fn only_a_program_that_catches_gets_cleanup_pads() {
     let dir = test_dir::TestDir::new();
@@ -774,20 +775,30 @@ fn only_a_program_that_catches_gets_cleanup_pads() {
         "function f(n: number): string { const s = n.toString() + \"x\"; return g(s) + s; }\n\
                  function g(s: string): string { return s + \"y\"; }\n\
                  console.log(f(3));\n";
-    let out = velt(&dir, plain, &["build", "--emit", "vir"]);
-    let vir = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        !vir.contains(" unwind bb") && !vir.contains("velt_eh_resume"),
-        "{vir}"
-    );
     let catching = format!(
         "import {{ catchVeltPanic }} from \"velt/zz_unwind\";\n{plain}\
          console.log(catchVeltPanic(() => {{ console.log(f(4)); }}));\n"
     );
-    let out = velt(&dir, &catching, &["build", "--emit", "vir"]);
-    let vir = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        vir.contains(" unwind bb") && vir.contains("velt_eh_resume"),
-        "{vir}"
-    );
+    let targets = [
+        ("x86_64-unknown-linux-gnu", true),
+        ("aarch64-apple-darwin", true),
+        ("x86_64-pc-windows-msvc", false),
+        ("aarch64-pc-windows-msvc", false),
+        ("wasm32-wasip1", false),
+    ];
+    for (target, itanium) in targets {
+        for (main, catches) in [(plain, false), (catching.as_str(), true)] {
+            let out = velt(&dir, main, &["build", "--emit", "vir", "--target", target]);
+            let vir = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "{target}: {stderr}");
+            assert!(vir.contains("fn#"), "{target}: no VIR\n{stderr}");
+            let pads = vir.contains(" unwind bb") || vir.contains("velt_eh_resume");
+            assert_eq!(
+                pads,
+                itanium && catches,
+                "{target}, catches: {catches}\n{vir}"
+            );
+        }
+    }
 }
