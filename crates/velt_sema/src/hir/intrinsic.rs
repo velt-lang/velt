@@ -441,7 +441,7 @@ pub enum Intrinsic {
     /// std only: `promiseAt<T>(f: usize) -> Promise<T>`: the heap future at `f` as an owned
     /// promise. Additive.
     PromiseAt,
-    /// std only: `rawAlloc(n: usize) -> usize`: `n` bytes (aligned to 16) from the allocator
+    /// std only: `rawAlloc(n: usize) -> usize`: `n` bytes (aligned to 8) from the allocator
     /// generated code uses (`velt_rt_alloc`), on every target. Additive.
     RawAlloc,
     /// std only: `rawFree(p: usize, n: usize)`: gives back what `rawAlloc(n)` returned

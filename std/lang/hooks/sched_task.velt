@@ -192,6 +192,7 @@ export function release(t: usize): void {
 }
 
 /** Queues scheduled task `t`: on the worker's own queue, or from another thread its inbox. */
+@inline
 export function schedule(e: usize, t: usize): void {
   if (ON_WORKER.get()) {
     push(e, t);

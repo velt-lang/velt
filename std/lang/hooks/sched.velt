@@ -139,8 +139,8 @@ export function schedFinish(code: i32): void {
 }
 
 /**
- * `spawn(f(...))`: a task from the initial state at `state` (`size` bytes, aligned to at most 16,
- * moved in), scheduled now; its join handle, a heap future whose slot gets `rsize` bytes. A
+ * `spawn(f(...))`: a task from the initial state at `state` (`size` bytes, aligned to at most 8 as
+ * every value the compiler lays out, which the task's block is; moved in), scheduled now; its join handle, a heap future whose slot gets `rsize` bytes. A
  * result the handle never claims is dropped with `rdrop` (0: nothing to drop).
  */
 export function schedSpawn(
@@ -152,6 +152,9 @@ export function schedSpawn(
   rsize: u64,
   rdrop: usize,
 ): usize {
+  if (align > 8) {
+    panic("ICE: a task's state aligned to more than 8 bytes");
+  }
   const e = exec();
   // The executor's reference and the handle's.
   const k = task(e, poll, drop, rsize, rdrop, size, 2);

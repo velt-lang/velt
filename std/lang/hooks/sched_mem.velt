@@ -44,13 +44,13 @@ export function addr(p: Ptr<u8> | null): usize {
   return Ptr.addressOf(p);
 }
 
-/** `n` (> 0) bytes, aligned to 16; `release(p, n)` gives them back. */
+/** `n` (> 0) bytes, aligned to 8 (every value's alignment); `release(p, n)` gives them back. */
 @inline
 export function alloc(n: usize): usize {
   return rawAlloc(n);
 }
 
-/** `n` (> 0) bytes set to 0, aligned to 16; `release(p, n)` gives them back. */
+/** `n` (> 0) bytes set to 0, aligned to 8; `release(p, n)` gives them back. */
 @inline
 export function zeroed(n: usize): usize {
   const p = rawAlloc(n);
@@ -61,8 +61,11 @@ export function zeroed(n: usize): usize {
   return p;
 }
 
-/** Gives back the `n` bytes at `p`, which `alloc(n)` or `zeroed(n)` gave and nothing uses after. */
-@inline
+/**
+ * Gives back the `n` bytes at `p`, which `alloc(n)` or `zeroed(n)` gave and nothing uses after. A
+ * call, not inlined: a free is the cold end of every reference count's release, which stays
+ * small enough to inline where it is hot (a task's waker wake and drop).
+ */
 export function release(p: usize, n: usize): void {
   // SAFETY: as the doc says.
   unsafe {
