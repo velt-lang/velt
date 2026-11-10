@@ -757,6 +757,7 @@ impl FnCx<'_, '_> {
         let arrow = undefined_after(arrow, undefined, span);
         let mut w = self.closure(&arrow, Some(exp), true);
         self.mark_converts(&mut w, h.ty, exp);
+        self.mark_wraps(&mut w, hir::FnWrapped::Local(local));
         self.pop_scope();
         let mut h = h;
         self.force_move(&mut h);

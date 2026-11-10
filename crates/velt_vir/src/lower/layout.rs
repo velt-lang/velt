@@ -35,6 +35,8 @@ pub(super) struct Layouts {
     pub(super) class_ids: Option<FxHashMap<DefId, (u64, u64)>>,
     /// Whether the program has interface adapters (adapters.rs, found once).
     pub(super) adapters: Option<bool>,
+    /// The layout every function wrapper's environment starts with (closure/fn_wrappers.rs).
+    pub(super) fn_wrapper_env: Option<AggId>,
     boxes: FxHashMap<TyId, AggId>,
     envs: FxHashMap<(DefId, Vec<TyId>), AggId>,
     in_progress: FxHashSet<TyId>,
@@ -387,8 +389,10 @@ impl Cx<'_> {
             })
             .collect();
         let name = format!("{} env", f.name);
-        // closure.rs `ENV_HEADER`: drop, clone and transfer entries.
-        let mut tys = vec![Ty::Ptr, Ty::Ptr, Ty::Ptr];
+        // closure.rs `ENV_HEADER`: drop, clone and transfer entries (and a marked function
+        // wrapper's own clone entry, with a named function's value after the captures:
+        // closure/fn_wrappers.rs).
+        let (mut tys, after) = self.wrapper_env_fields(def);
         for (mode, t) in caps {
             let t = self.subst(t, targs);
             self.note_capture(t);
@@ -400,6 +404,7 @@ impl Cx<'_> {
                 _ => self.ty(t),
             });
         }
+        tys.extend(after);
         let a = self.new_agg(name, &tys);
         self.lay.envs.insert(key, a);
         a

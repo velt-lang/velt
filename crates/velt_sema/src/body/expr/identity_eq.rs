@@ -25,7 +25,11 @@ impl FnCx<'_, '_> {
                 Ok(r) | Err(r) => (l, r),
             };
         }
-        if l.ty == r.ty || !object(self, l.ty) || !object(self, r.ty) {
+        // Two function types: one converts to the other, and the wrapper the conversion makes
+        // is the function it wraps (`hir::Program::fn_wrappers`), as in JavaScript.
+        let func = |s: &Self, t: TyId| matches!(s.cx.ty.kind(t), TyKind::FnPtr { .. });
+        let funcs = func(self, l.ty) && func(self, r.ty);
+        if l.ty == r.ty || !(funcs || object(self, l.ty) && object(self, r.ty)) {
             return (l, r);
         }
         let to = l.ty;

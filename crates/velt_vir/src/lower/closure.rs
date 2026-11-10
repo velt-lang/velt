@@ -25,6 +25,8 @@ use crate::vir::{BinOp, Function, Local, Operand, Place, Proj, Rvalue, Terminato
 /// entries (module docs).
 pub(super) const ENV_HEADER: u32 = 3;
 
+mod fn_wrappers;
+
 impl super::Cx<'_> {
     /// Heap env unless the closure borrows a variable without owning any capture.
     pub(super) fn closure_env_is_heap(&self, def: DefId) -> bool {
@@ -116,6 +118,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// [`borrowed_arg`](Self::borrowed_arg)), so value captures may stay in a frame env too.
     fn closure_value(&mut self, def: DefId, ty: TyId, borrowed: bool) -> Operand {
         self.note_closure_made(def);
+        self.note_wrapper_made(def);
         let f = self.cx.fn_def(def);
         let targs = self.targs.clone();
         let ca = self.cx.closure_agg();
@@ -210,6 +213,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         self.fill_env(def, env.clone(), drop_fn, clone_fn);
         let t = self.temp(Ty::Agg(ca));
+        let env = self.tag_wrapper_env(def, env);
         self.assign(Place::local(t), Rvalue::Aggregate(ca, vec![code, env]));
         let ty = self.sub(ty);
         self.own_temp(t, ty);
@@ -235,6 +239,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.fill_env(def, env.clone(), drop_fn, clone_fn);
         let ca = self.cx.closure_agg();
         let t = self.temp(Ty::Agg(ca));
+        let env = self.tag_wrapper_env(def, env);
         self.assign(Place::local(t), Rvalue::Aggregate(ca, vec![code, env]));
         if !borrowed {
             let ty = self.sub(ty);
@@ -279,6 +284,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             false => cint(0, Ty::Ptr),
         };
         self.assign(proj(&base, Proj::Field(2)), Rvalue::Use(transfer));
+        self.fill_wrapper_header(def, &base);
+        let header = self.cx.env_header(def);
         for (k, c) in f.captures.iter().enumerate() {
             let mut c = *c;
             if from_own {
@@ -288,7 +295,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let Some(outer) = self.local_target(c.outer) else {
                 continue;
             };
-            let slot = proj(&base, Proj::Field(ENV_HEADER + k as u32));
+            let slot = proj(&base, Proj::Field(header + k as u32));
             if self.info[c.outer.0 as usize].cell
                 && c.mode != PassMode::Borrow
                 && c.mode != PassMode::BorrowMut
@@ -347,9 +354,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let targs = self.targs.clone();
         let ea = self.cx.env_agg(def, &targs);
         let base = proj(&Place::local(env), Proj::Deref(Ty::Agg(ea)));
+        let header = self.cx.env_header(def);
         for (k, c) in f.captures.iter().enumerate() {
             let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
-            let slot = proj(&base, Proj::Field(ENV_HEADER + k as u32));
+            let slot = proj(&base, Proj::Field(header + k as u32));
             let cell = f.body.locals[c.inner.0 as usize].boxed;
             let vir = (self.cx.ty(ty) != Ty::Unit).then(|| {
                 let name = f.body.locals[c.inner.0 as usize].name.clone();
@@ -379,12 +387,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// concrete type: what a `with` callback took along into the lock.
     pub(super) fn moved_captures(&mut self, def: DefId) -> Vec<(u32, TyId)> {
         let f = self.cx.fn_def(def);
+        let header = self.cx.env_header(def);
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
             let cell = f.body.locals[c.inner.0 as usize].boxed;
             let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
             if c.mode == PassMode::Owned && !c.share && !cell && self.cx.ty(ty) != Ty::Unit {
-                out.push((ENV_HEADER + k as u32, ty));
+                out.push((header + k as u32, ty));
             }
         }
         out
@@ -394,6 +403,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// cells are `cell_captures`).
     pub(super) fn value_captures(&mut self, def: DefId) -> Vec<(u32, PassMode, TyId)> {
         let f = self.cx.fn_def(def);
+        let header = self.cx.env_header(def);
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
             let cell = f.body.locals[c.inner.0 as usize].boxed;
@@ -402,7 +412,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 && !cell
                 && self.cx.ty(ty) != Ty::Unit
             {
-                out.push((ENV_HEADER + k as u32, c.mode, ty));
+                out.push((header + k as u32, c.mode, ty));
             }
         }
         out
@@ -515,6 +525,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.assign(proj(&dst, Proj::Field(1)), Rvalue::Use(clone));
         let transfer = cfunc(lw.cx.func(Work::EnvTransfer(def, targs.to_vec())));
         lw.assign(proj(&dst, Proj::Field(2)), Rvalue::Use(transfer));
+        lw.fill_wrapper_header(def, &dst);
         let caps = lw.value_captures(def);
         let uncopyable = caps
             .iter()
@@ -549,12 +560,13 @@ impl FnLower<'_, '_> {
     /// `LocalDef::boxed` variable): env field index and the variable's concrete type.
     pub(super) fn cell_captures(&mut self, def: DefId) -> Vec<(u32, TyId)> {
         let f = self.cx.fn_def(def);
+        let header = self.cx.env_header(def);
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
             let cell = f.body.locals[c.inner.0 as usize].boxed;
             if cell && matches!(c.mode, PassMode::Copy | PassMode::Owned) {
                 let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
-                out.push((ENV_HEADER + k as u32, ty));
+                out.push((header + k as u32, ty));
             }
         }
         out
