@@ -558,6 +558,14 @@ program with and without pads); a program built with it leaks as before #2667.
   both phases, so its unwinding runs no Velt cleanup (unchanged: compiled frames are not
   reached by foreign exceptions today). `velt_eh_try` keeps its LSDA; the general reader finds
   its one entry.
+- **A function C calls** (`Function::stops_unwind`, `@export`) gets no cleanups: an unwind
+  that reaches it ends the process, so they could only run before the `abort`, and a function
+  has one personality. With LLVM its calls, those with an unwind edge too, are `invoke`s of its
+  abort pad (`function/stop_unwind.rs`, Rust's personality, which lands at the pad for any class
+  in the cleanup phase); with Cranelift it has no unwind entry, so its edges stay plain calls and
+  the search ends at it (`raise` returns, `panicRaise` exits). Its pad blocks are unreachable and
+  `velt_eh_resume` there is `unreachable` (a trap). An edge appears in one when an inlined callee
+  brings its pads.
 
 ### A panic during a cleanup
 
