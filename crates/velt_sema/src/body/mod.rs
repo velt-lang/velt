@@ -405,6 +405,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The conditional initializing a declaration (`const m = c ? ("a" as const) : …`), whose
     /// `as const` arms keep their literals (`ternary`).
     pub kept_arms: Option<Span>,
+    /// That declaration is a `const`: arms that are plain string literals keep them too
+    /// (`const m = c ? "a" : "b"` is `"a" | "b"`; a `let` widens to `string`, as in TypeScript).
+    pub kept_plain_arms: bool,
     /// The fixed parameters at a rest position the next `forwarding` passes (`fn_value_as_generic`).
     pub forwarding_items: std::cell::Cell<usize>,
     /// The next generic function value's call is `generic_as_generic`'s forwarding one.
@@ -453,6 +456,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             asserted_fn: None,
             asserted_lit: None,
             kept_arms: None,
+            kept_plain_arms: false,
             forwarding_items: Default::default(),
             forward_unbounded: Default::default(),
             dynamic_raw: None,
