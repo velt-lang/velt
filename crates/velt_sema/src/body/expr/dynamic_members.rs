@@ -1,6 +1,9 @@
 //! A dynamic value converted to a union (`FnCx::dynamic_to_members`), and which members it is
 //! told apart by: the one interface or object type member with no test of its own, and the one
-//! function type member, told by `typeof`.
+//! function type member, told by `typeof`. Of several function type members (`((e: Event) =>
+//! void) | (() => void)`, std's listeners), a function converts to the one with the most
+//! parameters: it is called through the `any` it came from, which passes the arguments a
+//! function without them leaves alone, as in JavaScript.
 
 use velt_common::{Diagnostic, Span};
 
@@ -52,7 +55,12 @@ impl FnCx<'_, '_> {
             // `Array.isArray` tells one array member from the others, not two arrays apart.
             let tested = match self.cx.ty.kind(m) {
                 TyKind::Array(_) if arrays > 1 => None,
-                TyKind::FnPtr { .. } if self.fn_members(&members) > 1 => None,
+                TyKind::FnPtr { .. } if self.fn_members(&members) > 1 => {
+                    match self.widest_fn_member(&members) == Some(m) {
+                        true => self.member_test(tmp, dty, m, span),
+                        false => continue,
+                    }
+                }
                 // A promise is never held as `any` (it has one owner): no value is one.
                 TyKind::Promise(..) => continue,
                 // `typeof K` (a `unique symbol`): a symbol that is `K`.
@@ -98,6 +106,22 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), exp, span)
     }
 
+    /// The function type member of `members` with the most parameters (the first of those),
+    /// when none takes a rest parameter.
+    fn widest_fn_member(&self, members: &[TyId]) -> Option<TyId> {
+        let mut best: Option<(TyId, usize)> = None;
+        for &m in members {
+            match self.cx.ty.kind(m) {
+                TyKind::FnPtr { rest: true, .. } => return None,
+                TyKind::FnPtr { params, .. } if best.is_none_or(|b| params.len() > b.1) => {
+                    best = Some((m, params.len()));
+                }
+                _ => {}
+            }
+        }
+        best.map(|b| b.0)
+    }
+
     /// The one member of `members` that [`Self::member_test`] has no test for, when every other
     /// member has one and it is an interface or object type (which `AnyTo` checks). A promise
     /// is never held as `any`, so it needs none.
@@ -110,7 +134,9 @@ impl FnCx<'_, '_> {
                     true
                 }
                 TyKind::Array(_) => arrays == 1,
-                TyKind::FnPtr { rest: false, .. } => fns == 1,
+                TyKind::FnPtr { rest: false, .. } => {
+                    fns == 1 || self.widest_fn_member(members).is_some()
+                }
                 TyKind::Promise(..) => true,
                 // `typeof K` (a `unique symbol`): `=== K`.
                 _ if self.cx.unique_symbols.values().any(|&u| u == m) => true,
