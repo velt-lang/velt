@@ -52,7 +52,10 @@ fn a_whole_number_takes_the_integer_writer_where_the_program_has_it() {
 
 #[test]
 fn a_program_that_prints_only_numbers_keeps_the_float_writer() {
-    let src = BOTH.replace("console.log(n);", "const m = n + 1;\n  console.log(0.5, m > 0);");
+    let src = BOTH.replace(
+        "console.log(n);",
+        "const m = n + 1;\n  console.log(0.5, m > 0);",
+    );
     let vir = vir_of(&src);
     assert_eq!(calls(&vir, "velt_rt_write_f64"), 2, "{vir}");
     assert_eq!(calls(&vir, "Write("), 0, "{vir}");
