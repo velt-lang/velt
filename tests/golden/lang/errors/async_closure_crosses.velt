@@ -1,7 +1,8 @@
 // An async closure that modifies what it captured must stay on the task that created it
 // (#208). Each error names the modification and where the closure leaves its task: a spawned
 // call, a parameter that a helper spawns, an object that crosses holding it, a channel, a
-// function value that may keep it, and `shared(...)`.
+// function value that spawns it (a call through a function value is no boundary itself, #2726),
+// and `shared(...)`.
 import { channel } from "velt/sync";
 
 class Jobs {
@@ -44,9 +45,11 @@ async function main() {
   });
 
   let e = 0;
-  const take = (g: () => Promise<void>): void => {};
-  take(async (): Promise<void> => {
-    e += 1;
+  const take = (g: (n: i64) => Promise<void>): void => {
+    spawn(g(1));
+  };
+  take(async (n: i64): Promise<void> => {
+    e += n;
   });
 
   const counts = [0];

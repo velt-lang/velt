@@ -250,9 +250,38 @@ the returned object still shares are deep-copied, and one that is not a new obje
 spawned capture that is still used afterwards, and one passed through a function value,
 vtable or interface (ownership/boundary.rs); a copy that only turns out to be needed at run
 time panics. A borrow-ABI argument of a call through a function value, vtable or interface
-(the caller keeps its reference) is always copied. Async closures that may reach another thread (all but local ones, #208) copy what they capture per
-call (deep copies of shared captures, `validate`), since an HTTP handler runs them
-concurrently (#8, #208); a capture owning a resource without `clone()` is shared with the call
+(the caller keeps its reference) is always copied.
+
+**The task-creation rule (#2726).** A call of an async closure is a started promise on the
+caller's task, which never runs at the same time as that task's other code, so a call is never a
+thread boundary, whoever makes it. Code runs on another thread only in a task created, or a value
+handed over, at one of these places, each of which goes through the transfer glue (a value still
+shared is copied there, a unique one moves):
+- `spawn(...)` and `spawn(..., { worker })` (`Intrinsic::Spawn`, `SpawnHandled`), with a task
+  scope's `spawn`, and a spawn inside a library the program hands the callback to (`serve`'s
+  handler): the spawned promise's callee, arguments and result;
+- a channel send (`ChanSend`, `ChanTrySend`) and a value that settles a promise another task awaits
+  (`Intrinsic::Transfer`);
+- `shared(...)`, `new Mutex(...)` and `new RwLock(...)`, whose value every thread may reach, and an
+  HTTP handler's environment;
+- a native thread's entry (`NativeCallback`), an explicit boundary of its own.
+
+Timers run their callback as a promise of the task that created them (std/prelude/timers.velt), and
+a promise sent to another task is driven by the task that made it (#160). A new std API that keeps
+a callback and runs it on another thread must reach it through one of these places, never through
+a runtime hook of its own. So a closure passed to a function value, an interface method or an
+overridden method (an unknown callee) is not a boundary: what the callee keeps, it keeps in the
+heap, and sema's heap rule (ownership/local_async/types.rs) decides whether the closure crosses, by
+whether a value that crosses holds its function type. A closure literal's own parameters hold
+values of unknown origin of their declared types, so a callback that spawns its argument makes the
+closures passed to such calls cross. Where the analysis does not follow a path, the transfer at the
+boundary still copies what is shared, and the many-threads check catches the rest.
+
+Async closures that may reach another thread (all but local ones, #208, #2726) copy what they
+capture per call (deep copies of shared captures, `validate`), since an HTTP handler runs them
+concurrently (#8, #208); a local async closure in `shared(...)` is instead called on a copy of its
+environment, as a sync function is (lower/callee.rs `shared_call_env`, glue/transfer_env.rs
+`answer_call_copy`), a stopgap until shared state stops being copied per call (#2726); a capture owning a resource without `clone()` is shared with the call
 instead (`validate` `share_uncopyable`, async_fn/ctor.rs `take_capture`), and a call spawned
 through a function value first copies the closure for the task (callee.rs `call_indirect`), so
 such a capture still referenced by the caller panics in the transfer (a soft move of the callee,

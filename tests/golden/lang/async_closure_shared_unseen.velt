@@ -1,0 +1,29 @@
+// check: no leaks
+// An async closure that reaches `shared(...)` by a path the compiler doesn't follow (a generic
+// function, called through a function value, shares its argument) stays local: it shares what it
+// captured with its calls, which may change it. In `shared(...)` each call runs on a copy of its
+// environment instead (#2726's stopgap), as a sync function's does, where the many-threads check
+// used to stop the program. The output is Node's.
+
+class Box {
+  n: i64 = 41;
+}
+
+type F = () => Promise<i64>;
+
+function keep<T>(x: T): shared<T> {
+  return shared(x);
+}
+
+async function main() {
+  const b = new Box();
+  let calls = 0;
+  const count = async (): Promise<i64> => {
+    calls++;
+    return calls;
+  };
+  await count();
+  const k: (f: F) => shared<F> = keep;
+  const s = k(async (): Promise<i64> => b.n + 1);
+  console.log(await s(), await s(), b.n, calls);
+}

@@ -64,12 +64,12 @@ fn mutex_with_updates_scalar_value() {
 }
 
 /// `const xs = ["a"]; const f = async () => { console.log(xs.length); }; const s = shared(f);`
-/// with `f` a local async closure (`FnDef::shares_captures`, which sema never sets for a closure
-/// that reaches `shared`): its calls would share the counted `xs` from several threads, so the
-/// many-threads check panics (glue/transfer_env.rs). The same closure copying its captures per
-/// call is fine.
+/// with `f` a local async closure (`FnDef::shares_captures`, set where sema doesn't follow it to
+/// `shared`): a call in `shared(...)` runs on a copy of its environment (glue/transfer_env.rs
+/// `answer_call_copy`, #2726), so the many-threads check lets it through, as it does the same
+/// closure copying its captures per call.
 #[test]
-fn shared_local_async_closure_panics() {
+fn shared_local_async_closure_is_called_on_a_copy() {
     for shares in [true, false] {
         let mut pb = PB::new();
         let t = pb.t;
@@ -106,21 +106,11 @@ fn shared_local_async_closure_panics() {
         ];
         pb.add_main(f.build_async(body));
         let out = run(&pb.finish());
-        if shares {
-            assert_eq!(out.code, 101, "{}", out.stderr);
-            assert!(
-                out.stderr
-                    .contains("an async closure that changes or shares what it captured"),
-                "{}",
-                out.stderr
-            );
-        } else {
-            assert_eq!(
-                (out.stdout.as_str(), out.code),
-                ("1\n", 0),
-                "{}",
-                out.stderr
-            );
-        }
+        assert_eq!(
+            (out.stdout.as_str(), out.code),
+            ("1\n", 0),
+            "shares={shares}: {}",
+            out.stderr
+        );
     }
 }
