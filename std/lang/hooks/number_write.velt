@@ -36,17 +36,16 @@ export function numberWrite(stream: u32, x: f64, end: u8): void {
 }
 
 /**
- * Writes `x`, a whole number below 2^53 in magnitude other than `-0`, and `end` to `stream`, in
- * one write: at most 16 digits, a minus and `end`, built in up to three words, so with no
- * allocation.
- * Its own digits (eight at a time below 10^8, one at a time above), so that it needs none of
- * std's integer printing; out of line (`@noInline`), so that each call site is a call and the std
- * cache serves its object.
+ * Writes `x`, a whole number below 2^53 in magnitude other than `-0`, and `end` to `stream`: up to
+ * 8 digits, the minus and `end` built in two words and written at once, with no allocation, by
+ * digits of its own (eight at a time), so that it needs none of std's integer printing; larger
+ * numbers by the runtime's printer. Out of line (`@noInline`), so that each call site is a call
+ * and the std cache serves its object.
  */
 @noInline
 export function wholeNumberWrite(stream: u32, x: f64, end: u8): void {
   const neg = x < 0.0;
-  let a = (neg ? -x : x) as u64;
+  const a = (neg ? -x : x) as u64;
   if (a < 100000000) {
     // Up to 8 digits: all eight with their leading zeros, the zeros shifted out, then the minus
     // before them and `end` after them, in two words.
@@ -69,41 +68,9 @@ export function wholeNumberWrite(stream: u32, x: f64, end: u8): void {
     velt_rt_write_str(stream, strAsciiWords(w0, w1, 0, (len + 1) as usize));
     return;
   }
-  // The text's length: the digits, and the minus.
-  let n: u64 = neg ? 2 : 1;
-  let t = a;
-  while (t >= 10) {
-    t = t / 10;
-    n = n + 1;
-  }
-  // From the last byte (`end`, at `n`) down to the first, byte `i` in bits `8 * (i % 8)` of
-  // word `i / 8`.
-  let w0: u64 = 0;
-  let w1: u64 = 0;
-  let w2: u64 = 0;
-  let i = n;
-  let b = end as u64;
-  while (true) {
-    const s = (i & 7) * 8;
-    if (i < 8) {
-      w0 = w0 | (b << s);
-    } else if (i < 16) {
-      w1 = w1 | (b << s);
-    } else {
-      w2 = w2 | (b << s);
-    }
-    if (i == 0) {
-      break;
-    }
-    i = i - 1;
-    if (neg && i == 0) {
-      b = 0x2d;
-    } else {
-      b = 0x30 + a % 10;
-      a = a / 10;
-    }
-  }
-  velt_rt_write_str(stream, strAsciiWords(w0, w1, w2, (n + 1) as usize));
+  // 10^8 and up: rare, and the runtime's text is the same.
+  velt_rt_write_f64(stream, x);
+  velt_rt_write_byte(stream, end);
 }
 
 // The eight ASCII digits of `x` (below 10^8), leading zeros included, the first in the low byte,
