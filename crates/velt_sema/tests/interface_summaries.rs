@@ -322,3 +322,32 @@ fn a_std_module_loaded_for_one_version_only_is_reached_std() {
         "{found:?}"
     );
 }
+
+#[test]
+fn calling_a_generators_throw_changes_the_flags() {
+    // `Program::generator_throw`: resume functions then handle an error thrown in at each yield.
+    let program = |body: &str| {
+        format!(
+            "function* g(): Generator<number> {{ yield 1; }}
+             function f() {{ const it = g(); {body} }}
+             function main() {{ f(); }}"
+        )
+    };
+    let before = program("console.log(it.next().value);");
+    let after = program("try { it.throw(new Error(\"x\")); } catch (e) { console.log(e); }");
+    assert_eq!(changes(&before, &after), vec![Change::Fact("flags")]);
+}
+
+#[test]
+fn the_first_any_in_a_body_adds_an_implementation() {
+    // `impl<T> any for T` (`Program::any_impl`) exists once the program uses `any`; the other
+    // facts it brings along (the std `any` reaches) are not what this test is about.
+    let main = "function main() { f(); }";
+    let before = format!("function f() {{ const x = 1; console.log(x); }}\n{main}");
+    let after = format!("function f() {{ const x: any = 1; console.log(x); }}\n{main}");
+    let found = changes(&before, &after);
+    assert!(
+        found.contains(&Change::Fact("implementations")),
+        "{found:?}"
+    );
+}

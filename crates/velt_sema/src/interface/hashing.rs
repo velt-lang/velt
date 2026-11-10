@@ -166,7 +166,9 @@ impl<'p> Hashing<'p> {
             hir::FreshClosure::Converts { from, to } => (2, self.ty(from), self.ty(to)),
         });
         fresh.hash(&mut s);
-        // What a wrapper sema made stands for: one of its own locals (a capture), or a function.
+        // What a wrapper sema made stands for: a local of the function making the wrapper (which
+        // the wrapper captures; the wrapper is that function's own closure, excused when it is
+        // edited), or a module-level function at type arguments.
         let wraps = p.fn_wrappers.get(&d).map(|w| match w {
             hir::FnWrapped::Local(l) => (0u8, l.0 as u64, None, vec![]),
             hir::FnWrapped::Fn(f, args) => (1, 0, Some(self.name(*f)), self.tys(args)),
@@ -217,6 +219,8 @@ impl<'p> Hashing<'p> {
                 } = f;
                 let sig = (self.tys(params), self.ty(*ret), is_async, is_decorator);
                 // `CImport` and `HostImport` hold no ids: their `Debug` text is their content.
+                // (HIR contract types without `Hash`: if one gains a `TyId` or `DefId`, hash it
+                // here by structure instead. The same holds for `CTy`, `CValue` and `HookSet`.)
                 let how = (system, format!("{host:?}"), format!("{c:?}"));
                 (name.clone(), finish((0u8, symbol, sig, how)))
             }
