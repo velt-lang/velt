@@ -840,3 +840,50 @@ fn declarations_of_other_c_signatures_clash() {
         "{out}"
     );
 }
+
+const POSITIONS: &str = include_str!("c_functions/positions.velt");
+
+/// `xs.subarray(begin, end)` of a number array passes the address of element `begin` (scaled by
+/// the element's size, from the end when negative) for a C parameter of that array type, in
+/// debug and release builds; a part of a `u8[]` crosses into C memory by its address this way,
+/// with no stand-in for the array's address.
+#[test]
+fn a_subarray_passes_the_address_of_an_element() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        POSITIONS,
+        "import { positions, copiedOut } from \"cmath\";\n\nfunction main() {\n  console.log(positions());\n  console.log(copiedOut([10, 11, 12, 13, 14, 15]));\n}\n",
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "1,2,9,9,5,6 1,2,20,30,5 1,2,3,-8\n12,13,14\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}
+
+/// `subarray` passes only for a parameter of its own array type, and a read-only array's never
+/// for one C writes.
+#[test]
+fn a_subarray_of_another_type_or_a_read_only_array_is_refused() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "declare c(\"c\") function memcpy(dst: f64[], src: readonly f64[], n: usize): usize;\n\nconst FIXED: readonly f64[] = [1, 2];\n\nexport function f(xs: i32[], ys: f64[]): usize {\n  // SAFETY: none of these compile.\n  return unsafe { memcpy(ys.subarray(0), xs.subarray(1), 4) + memcpy(FIXED.subarray(1), ys, 8) };\n}\n",
+        "import { f } from \"cmath\";\n\nfunction main() {\n  console.log(f([1], [2]));\n}\n",
+    );
+    let out = check(dir.path());
+    assert!(
+        out.contains("`subarray` of a `i32[]` can't be passed for a `f64[]` parameter"),
+        "{out}"
+    );
+    assert!(
+        out.contains("a read-only array cannot be passed for a buffer the C function writes"),
+        "{out}"
+    );
+}

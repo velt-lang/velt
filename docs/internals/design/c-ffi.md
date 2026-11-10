@@ -175,7 +175,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 | `Ptr<T>`, `Ptr<T> \| null` | `T *` | an address; `null` is `NULL` (same word) |
 | `NativeHandle<T>` (argument for a `Ptr<T>` parameter) | `T *` | holds an in-flight reference for the call (below) |
 | `null` (as a parameter type) | any pointer | always `NULL` |
-| `readonly u8[]`, `u8[]`, typed arrays, views (#1718) | `const T *` / `T *` | the first element's address, borrowed for the call; the binding passes the length |
+| `readonly u8[]`, `u8[]`, typed arrays, views (#1718) | `const T *` / `T *` | the first element's address (element `begin`'s for `xs.subarray(begin, end)`), borrowed for the call; the binding passes the length |
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
 | `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, one allocation, reusable) |
 | `CStr` (callback parameters only) | `const char *` | copied into a `string` by the trampoline |
@@ -314,6 +314,42 @@ Rejected: requiring the same Velt types (today's rule): std and packages can't b
 together when they spell one C function differently, though each is right. Merging by VIR type
 alone: `usize` is `u64` natively but `u32` on wasm32, so a program would compile for one target
 and not another.
+
+### A position in an array
+
+C often wants the address of an element, not of the array: `recv(fd, buf + filled, room)`,
+`memcpy(ring + tail, data + start, n)`, `cblas_daxpy(n, a, x + i, 1, y + i, 1)`. A number array
+argument crosses as the address of its first element, borrowed for the call; the address of
+element `begin` is that array's `subarray(begin, end)`:
+
+```ts
+declare c("c") function recv(fd: i32, buf: u8[], n: usize, flags: i32): isize;
+declare c("cblas") function cblas_daxpy(n: i32, a: f64, x: readonly f64[], incx: i32, y: f64[], incy: i32): void;
+
+// SAFETY: `data` has `end` bytes; recv writes at most `end - filled` of them.
+const got = unsafe { recv(fd, data.subarray(filled, end), (end - filled) as usize, 0) };
+// SAFETY: both arrays have `i + n` elements.
+unsafe { cblas_daxpy(n, 2.0, xs.subarray(i, i + n), 1, ys.subarray(i, i + n), 1) };
+```
+
+- **What it is.** In a `declare c` call, `xs.subarray(begin, end)` of a `T[]` (`T` a number type)
+  for a parameter `T[]` or `readonly T[]` passes the address of element `begin`, clamped as JS's
+  `subarray` clamps (negative from the end, past the end the end), read at the call like the
+  whole array's. No object is made and nothing is copied. A `u8[]` parameter had it already (with
+  views of bytes, #1718); now every number array has it, with the element size scaling the
+  offset. Outside a C call an array has no `subarray` (a typed array has its own).
+- **Lending.** Exactly the array's own rule: borrowed for the call, so the array can't grow,
+  shrink or move while C holds the address, and C may not keep it (a `u8[]` parameter not written
+  `readonly` is a mutable borrow, refused for a read-only array). The binding passes the length,
+  as for the whole array; `end` bounds nothing C sees and is there for the reader and to match
+  JS.
+- **Why not an address.** `addressOf(xs, i): Ptr<T>` (unsafe) would hand Velt code a raw address
+  into an array that a later `push` may move; the reactor's stand-in did exactly that, keeping
+  `memset(data, 0, 0)`'s result across calls and an `await`. A pointer that outlives the call
+  is a `PinnedBuffer`'s lease (step 6), whose lifetime the ownership checker sees. The stand-in
+  existed because one C symbol had one signature: with "One C function, several declarations"
+  the reactor declares `recv$bytes(fd: i32, buf: u8[], …)` next to `recv$io(fd: i32, buf: usize,
+  …)` and passes `data.subarray(start, end)` at each call.
 
 ### C structs
 
@@ -1151,6 +1187,11 @@ Step 1 lands in layers, each its own pull request:
      of the same C signature (`CSig`, by `CClass` per position, `lower/c_call.rs`) casts its
      arguments and result to it; another C signature is an error naming both declarations and
      what differs.
+   - A position in an array ("A position in an array" above): sema's `system_view_arg` takes
+     `xs.subarray(begin, end)` for a C parameter of any number array type, not only `u8[]`, and
+     lowering scales `begin` by the element's size (`subarray_bytes`). The memset stand-in for
+     an array's address goes: a declaration taking the array (with the address-taking one beside
+     it, now that both agree) and `subarray` at each call.
 
 9. `@export("c_name")` (#2203 step 5): "Exported functions" above, with
    `exportedAddress`. Tested: veltc's c_export.rs (C sources calling exports by name, a thread
@@ -1182,3 +1223,5 @@ Step 1 lands in layers, each its own pull request:
 - Two declarations of one C function agree when their C types are of one class per position
   (pointers, `usize` and `isize` one machine word), not when their Velt types are the same
   (layer 9, as above).
+- A position in an array is `xs.subarray(begin, end)` at the call, for every number array; no
+  `addressOf(xs, i)`: an address that outlives the call is a lease (layer 9, as above).
