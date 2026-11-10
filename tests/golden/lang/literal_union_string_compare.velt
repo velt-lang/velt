@@ -55,3 +55,16 @@ const picked: Route | null = urls.length > 1 ? '/forms' : null;
 console.log(maybe === (urls[0] as Route), picked === (urls[0] as Route), picked !== (typed as Route));
 const p: string = '/forms';
 console.log(picked === (p as Route), (p as Route) !== picked, picked == ('/zz' as string as Route), picked !== ('/zz' as string as Route));
+
+// Both operands asserted from calls, and a receiver of `string` elements: compared as strings.
+function nope(): string { return '/nope'; }
+function about(): string { return '/counter'; }
+console.log((nope() as Route) === (nope() as Route), (nope() as Route) !== (nope() as Route));
+console.log((urls[1] as Route) === (nope() as Route), (about() as Route) === (nope() as Route));
+function listed(path: string): void {
+    const a: string[] = ['/x'];
+    console.log(a.includes(path as Route), a.indexOf(path as Route), ['/', '/counter'].includes(path as Route));
+}
+listed('/x');
+listed('/nope');
+listed('/counter');

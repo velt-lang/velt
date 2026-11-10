@@ -16,3 +16,8 @@ false
 home counter not found not found
 false true true
 true false false true
+true false
+false false
+true 0 false
+false -1 false
+false -1 true

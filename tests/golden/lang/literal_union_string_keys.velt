@@ -1,0 +1,22 @@
+// A `string` asserted to a union of string literals as the key of `Set.has`, `Map.has` and
+// `Map.get` only compares the string, as `includes` does (#1410): an unknown value is not
+// there (`false` / `undefined`), and nothing throws.
+type Route = '/' | '/counter' | '/forms';
+const visited = new Set<Route>(['/', '/forms']);
+const titles = new Map<Route, string>([['/', 'Home'], ['/counter', 'Counter']]);
+const names = new Map<string, number>([['/x', 1]]);
+const plain = new Set<string>(['/x']);
+
+function look(path: string): void {
+    console.log(visited.has(path as Route), titles.has(path as Route), titles.get(path as Route));
+    console.log(plain.has(path as Route), names.has(path as Route), names.get(path as Route));
+}
+look('/');
+look('/counter');
+look('/nope');
+look('/x');
+
+// The receiver is evaluated before the key, once each.
+function routes(): Set<Route> { console.log('set'); return visited; }
+function key(): string { console.log('key'); return '/elsewhere'; }
+console.log(routes().has(key() as Route));

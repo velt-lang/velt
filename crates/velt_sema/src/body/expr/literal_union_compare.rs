@@ -1,11 +1,11 @@
 //! `s as Route` for a `string` `s` and a union of string literals `Route`, used as a comparison
 //! (#1410). TypeScript accepts the assertion and keeps the string, so `ROUTES.includes(path as
-//! Route)` tests a string that may be none of the literals, and Node answers `false`. As an
-//! argument of `includes` / `indexOf` / `lastIndexOf` on an array of the literal union, as an
-//! operand of `===` / `!==` / `==` / `!=`, and as a `switch` discriminant, the assertion only
-//! compares the string: an unknown value is not found (`false` / `-1`), unequal, or `default`'s,
-//! and nothing throws. Anywhere else it is the
-//! checked conversion of `literal_union_cast`, which throws a `TypeError` on a miss.
+//! Route)` tests a string that may be none of the literals, and Node answers `false`. As the
+//! argument of `includes` / `indexOf` / `lastIndexOf` on an array, of `has` on a `Set`, of
+//! `has` / `get` on a `Map`, as an operand of `===` / `!==` / `==` / `!=`, and as a `switch`
+//! discriminant, the assertion only compares the string: an unknown value is not found
+//! (`false` / `-1` / `undefined`), unequal, or `default`'s, and nothing throws. Anywhere else
+//! it is the checked conversion of `literal_union_cast`, which throws a `TypeError` on a miss.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -105,10 +105,30 @@ impl FnCx<'_, '_> {
         self.cond(&test)
     }
 
-    /// `xs.includes(s as Route)` / `indexOf` / `lastIndexOf` on an array of a literal union
-    /// (module docs): `s` is tested against the literals first, and a miss is `false` / `-1`
-    /// without converting. The receiver is evaluated before the argument, as in JS. `Err(recv)`
-    /// for any other call.
+    /// The key type a search or key method compares its first argument with: an array's
+    /// element for `includes` / `indexOf` / `lastIndexOf`, a `Set`'s value for `has`, a
+    /// `Map`'s key for `has` / `get`.
+    fn search_key(&mut self, recv: TyId, method: &str) -> Option<TyId> {
+        let key = match method {
+            "includes" | "indexOf" | "lastIndexOf" => self.cx.ty.array_elem(recv),
+            "has" | "get" => match self.cx.ty.kind(recv).clone() {
+                TyKind::Adt(d, a) if Some(d) == self.cx.prelude_adt("Map") => a.first().copied(),
+                TyKind::Adt(d, a) if Some(d) == self.cx.prelude_adt("Set") && method == "has" => {
+                    a.first().copied()
+                }
+                _ => None,
+            },
+            _ => None,
+        }?;
+        Some(self.cx.ty.core(key).unwrap_or(key))
+    }
+
+    /// `xs.includes(s as Route)`, `indexOf` / `lastIndexOf`, `set.has(s as Route)`,
+    /// `map.has(s as Route)` / `map.get(s as Route)` (module docs). Against keys of the literal
+    /// union, `s` is tested against the literals first, and a miss is `false` / `-1` /
+    /// `undefined` without converting; against `string` keys (a `string[]`, an array literal),
+    /// `s` is passed as it is. The receiver is evaluated before the argument, as in JS.
+    /// `Err(recv)` for any other call.
     pub(super) fn literal_search(
         &mut self,
         recv: hir::Expr,
@@ -118,14 +138,11 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
-        if !matches!(prop.name.as_str(), "includes" | "indexOf" | "lastIndexOf") {
-            return Err(recv);
-        }
-        let Some(elem) = self.cx.ty.array_elem(recv.ty) else {
+        let Some(key) = self.search_key(recv.ty, &prop.name) else {
             return Err(recv);
         };
-        let elem = self.cx.ty.core(elem).unwrap_or(elem);
-        if self.string_literals(elem).is_none() {
+        let plain_key = key == self.cx.ty.str_;
+        if !plain_key && self.string_literals(key).is_none() {
             return Err(recv);
         }
         let Some((first, rest)) = args.split_first() else {
@@ -147,15 +164,18 @@ impl FnCx<'_, '_> {
         let a = self.expr(inner, None, Want::Borrow);
         let string = a.ty == self.cx.ty.str_;
         let s = self.temp_ident("<str>", a, &mut stmts);
-        let cast = synth(
-            ast::ExprKind::Cast {
-                expr: Box::new(s.clone()),
-                ty: ty.clone(),
-            },
-            span,
-        );
-        let call_args: Vec<ast::Expr> = std::iter::once(cast).chain(rest.iter().cloned()).collect();
-        if !string {
+        let arg = match string && plain_key {
+            true => s.clone(),
+            false => synth(
+                ast::ExprKind::Cast {
+                    expr: Box::new(s.clone()),
+                    ty: ty.clone(),
+                },
+                span,
+            ),
+        };
+        let call_args: Vec<ast::Expr> = std::iter::once(arg).chain(rest.iter().cloned()).collect();
+        if !string || plain_key {
             let call = self.method_call_on(recv, prop, type_args, &call_args, exp, span);
             return Ok(self.with_temps_value(stmts, call));
         }
@@ -171,6 +191,7 @@ impl FnCx<'_, '_> {
                 };
                 self.mk(kind, call.ty, span)
             }
+            TyKind::Option(..) => self.mk(H::Lit(hir::Lit::Null), call.ty, span),
             _ => return Ok(self.with_temps_value(stmts, call)),
         };
         let ty = call.ty;
@@ -219,11 +240,30 @@ impl FnCx<'_, '_> {
         let mut stmts = Vec::new();
         let plain =
             |e: &ast::Expr| is_path(e) || matches!(strip_parens(e).kind, ast::ExprKind::Lit(_));
-        let other = |cx: &mut Self, e: &ast::Expr, stmts: &mut Vec<hir::Stmt>| match plain(e) {
-            true => e.clone(),
-            false => {
-                let h = cx.expr(e, None, Want::Borrow);
-                cx.temp_ident("<operand>", h, stmts)
+        // The other operand; a `string` asserted to literals there compares as it is too
+        // (`(a() as Route) === (b() as Route)`).
+        let other = |cx: &mut Self, e: &ast::Expr, stmts: &mut Vec<hir::Stmt>| {
+            if let Some((inner, ty, _, _)) = cx.string_as_literals(e) {
+                let h = cx.expr(inner, None, Want::Borrow);
+                let string = h.ty == cx.cx.ty.str_;
+                let t = cx.temp_ident("<operand>", h, stmts);
+                return match string {
+                    true => t,
+                    false => synth(
+                        ast::ExprKind::Cast {
+                            expr: Box::new(t),
+                            ty: ty.clone(),
+                        },
+                        e.span,
+                    ),
+                };
+            }
+            match plain(e) {
+                true => e.clone(),
+                false => {
+                    let h = cx.expr(e, None, Want::Borrow);
+                    cx.temp_ident("<operand>", h, stmts)
+                }
             }
         };
         let left = (!cast_left).then(|| other(self, lhs, &mut stmts));
