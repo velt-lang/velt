@@ -21,7 +21,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// or one without a transfer entry (a frame env, closure.rs) has nothing of its own to move.
     pub(super) fn transfer_closure(&mut self, place: &Place) {
         let envp = proj(place, Proj::Field(1));
-        let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(envp.clone())));
+        let (env, bit) = self.closure_env(place);
         let done = self.new_block();
         let nn = self.non_null(env.clone());
         self.when(nn, done);
@@ -31,6 +31,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let has = self.non_null(f.clone());
         self.when(has, done);
         let new = self.call_entry(f, vec![env], vec![Ty::Ptr], Ty::Ptr);
+        let new = self.retag_env(new, bit);
         self.assign(envp, Rvalue::Use(new));
         self.goto(done);
         self.switch_to(done);

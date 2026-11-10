@@ -109,6 +109,10 @@ impl Cx<'_> {
                 if self.is_any_impl(index) {
                     self.note_dyn_type(ty);
                     entries.extend(self.any_entries(ty));
+                    // A function value (closure/fn_wrappers.rs).
+                    if let Some(f) = self.fn_value_id(ty) {
+                        id = f;
+                    }
                     if matches!(self.kind(ty), TyKind::Array(_) | TyKind::Tuple(_)) {
                         // `Array.isArray` (any_set_site.rs).
                         id = super::super::any_set_site::ARRAY_ID;

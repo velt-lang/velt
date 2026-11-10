@@ -75,7 +75,7 @@ impl FnCx<'_, '_> {
                 if self.reject_getter_assign(obj.ty, prop) {
                     return None;
                 }
-                let place = self.field_access(obj, prop, Want::BorrowMut, target.span)?;
+                let place = self.written_field(obj, prop, target.span)?;
                 if self.temp_tuple_write(&place, target.span) {
                     return None;
                 }

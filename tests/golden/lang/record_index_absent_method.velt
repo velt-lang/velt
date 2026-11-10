@@ -1,0 +1,4 @@
+// `r.f()` on a record of functions without `f` is Node's `TypeError` (#930).
+const fns: Record<string, () => number> = { g: () => 1 };
+console.log("before", fns.g());
+console.log(fns.f());

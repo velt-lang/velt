@@ -26,13 +26,16 @@ const OUT_PTR: &str = velt_common::std_item!(ffi_out_ptr, "OutPtr");
 /// std's pointer into C memory (std/ffi/ptr.velt).
 const PTR: &str = velt_common::std_item!(ffi_ptr, "Ptr");
 
+/// The module of velt/ffi's `CVarArgs`, the type of C's `...` (std/ffi/c_var_args.velt).
+const C_VAR_ARGS_MODULE: &str = velt_common::std_module!(ffi_c_var_args);
+
 /// The imports of extern function `d` (`kind`, declared in `module`) with signature `sig`:
 /// a host function's (`host_sig`) or a C function's, recorded on its `FnInfo`.
 pub(super) fn foreign_imports(
     cx: &mut Ctx,
     (d, kind, module): (DefId, FnKind, usize),
     sig: &ast::FnSig,
-    ps: &[ParamSig],
+    ps: &mut Vec<ParamSig>,
     ret: &mut TyId,
 ) {
     if kind != FnKind::Extern {
@@ -46,6 +49,11 @@ pub(super) fn foreign_imports(
         errno: lib.errno,
         ..c_import(cx, module, (&lib.library, lib.span), sig, ps, *ret)
     });
+    // C's `...` is no parameter of the function: a call passes the fixed ones, then any number
+    // of variadic arguments (`body::expr::c_varargs`).
+    if c.as_ref().is_some_and(|c| c.variadic) {
+        ps.pop();
+    }
     let f = cx.fn_info_mut(d);
     f.host = host;
     f.c = c;
@@ -88,8 +96,13 @@ fn c_import(
             .with_note("async C calls (on the library's pool, or with a `Completion`) come in a later step of #2187"),
         );
     }
-    let params = sig
+    // `...args: CVarArgs` last: C's `...`, not a parameter that crosses.
+    let variadic = sig
         .params
+        .last()
+        .is_some_and(|p| p.rest && is_c_var_args(cx, module, &p.ty));
+    let fixed = sig.params.len() - usize::from(variadic);
+    let params = sig.params[..fixed]
         .iter()
         .zip(ps)
         .map(|(p, s)| param(cx, module, name, p, s.ty))
@@ -119,14 +132,24 @@ fn c_import(
         library: library.to_string(),
         params,
         ret,
+        variadic,
     }
 }
 
 /// What crosses for parameter `p` (type `ty`) of C function `name`.
 fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> CTy {
-    let what = if p.rest {
-        Some("a rest parameter (C's `...` is declared `...args: CVarArgs`, coming later)")
-    } else if p.optional || p.default.is_some() {
+    if p.rest {
+        let shown = cx.display(ty);
+        cx.error(
+            Diagnostic::error(
+                format!("C function `{name}` cannot have a rest parameter of type `{shown}`"),
+                p.span,
+            )
+            .with_note("C's `...` is declared last as `...args: CVarArgs` (velt/ffi)"),
+        );
+        return CTy::Void;
+    }
+    let what = if p.optional || p.default.is_some() {
         Some("an optional parameter")
     } else if p.pattern.is_some() {
         Some("a destructured parameter")
@@ -258,6 +281,23 @@ pub(crate) fn value_ty(cx: &Ctx, ty: TyId) -> Option<CTy> {
 /// (`StrBytes`, imported) or through a namespace (`ffi.StrBytes`)? A look-alike alias of
 /// `string` does not.
 fn is_str_bytes(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> bool {
+    names_ffi_alias(cx, module, t, ("StrBytes", STR_BYTES_MODULE))
+}
+
+/// Does the written type `t` (in `module`) name velt/ffi's `CVarArgs`, as `StrBytes` is named
+/// ([`is_str_bytes`])?
+pub(crate) fn is_c_var_args(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> bool {
+    names_ffi_alias(cx, module, t, ("CVarArgs", C_VAR_ARGS_MODULE))
+}
+
+/// Does the written type `t` (in `module`) name the std alias `alias` declared in std module
+/// `defining`, directly or through a namespace? A look-alike alias does not.
+fn names_ffi_alias(
+    cx: &Ctx,
+    module: usize,
+    t: &ast::TypeExpr,
+    (alias_name, defining): (&str, &str),
+) -> bool {
     let ast::TypeExprKind::Named { path, args } = &t.kind else {
         return false;
     };
@@ -278,9 +318,9 @@ fn is_str_bytes(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> bool {
         Some(crate::ctx::Item::Alias(a)) => {
             let alias = &cx.aliases[a as usize];
             let m = alias.module;
-            alias.decl.name.name == "StrBytes"
+            alias.decl.name.name == alias_name
                 && cx.modules[m].is_std
-                && cx.modules[m].path == STR_BYTES_MODULE
+                && cx.modules[m].path == defining
         }
         _ => false,
     }
@@ -365,7 +405,7 @@ fn is_ptr(cx: &Ctx, ty: TyId) -> bool {
 }
 
 /// Is `ty` the type `null` (an option of nothing)?
-fn is_null(cx: &Ctx, ty: TyId) -> bool {
+pub(crate) fn is_null(cx: &Ctx, ty: TyId) -> bool {
     matches!(cx.ty.kind(ty), TyKind::Option(inner, Nothing::Null) if *inner == cx.ty.never)
 }
 

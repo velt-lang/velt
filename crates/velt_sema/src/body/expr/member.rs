@@ -52,6 +52,19 @@ impl FnCx<'_, '_> {
             return None;
         }
         let obj = self.without_trap_vars(obj);
+        // An open record's read (`r[k].value`, also as a test's operand or a write's target):
+        // its `V`, checked (`record_present`).
+        let obj = match want {
+            _ if self.trusted_value(&obj).is_none() => obj,
+            Want::BorrowMut if self.f.write_target && !self.f.update_target => {
+                let msg = format!(
+                    "TypeError: Cannot set properties of undefined (setting '{}')",
+                    prop.name
+                );
+                self.record_present(obj, &msg)
+            }
+            _ => self.record_present_member(obj, &prop.name),
+        };
         if self.cx.ty.opt_payload(obj.ty).is_some() {
             let tn = self.cx.display(obj.ty);
             // `null` for a `T | null`, `undefined` for a `T | undefined`.
@@ -234,6 +247,7 @@ impl FnCx<'_, '_> {
         self.view_receiver = want != Want::BorrowMut && is_name(object);
         let obj = self.receiver_expr(object);
         self.view_receiver = false;
+        let obj = self.record_present_member(obj, &prop.name);
         if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
             if self.stored_method_read(object, prop, obj.ty, span) {
                 return self.error_expr(span);
@@ -351,6 +365,7 @@ impl FnCx<'_, '_> {
             return h;
         }
         let obj = self.receiver_expr(object);
+        let obj = self.record_present_index(obj, index);
         if want != Want::BorrowMut {
             self.array_used_in_place(&obj);
         }

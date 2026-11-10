@@ -4,6 +4,7 @@
 mod atomics;
 #[cfg(unix)]
 mod debug_info;
+mod eh;
 mod entry;
 mod frames;
 mod half;
@@ -17,6 +18,7 @@ mod parallel;
 mod rounding;
 mod static_atomic;
 mod tls;
+mod variadic;
 mod winx64_unwind;
 
 use velt_vir::vir::*;
@@ -189,6 +191,7 @@ impl ProgramBuilder {
             noreturn,
             host: None,
             c_decl: None,
+            variadic: false,
         });
         ExternId(self.p.externs.len() as u32 - 1)
     }

@@ -105,6 +105,14 @@ impl Translator<'_, '_> {
             values.push(v);
             types.push(ty);
         }
+        if let Callee::Extern(id) = callee {
+            let variadic = (self.program.externs.get(id.0 as usize)).is_some_and(|e| e.variadic);
+            if variadic && types.len() >= params.len() && params == types[..params.len()] {
+                let inst = self.variadic_call(*id, &values, &types, params.len())?;
+                let result = self.builder.inst_results(inst).first().copied();
+                return self.call_result(dest, ret, result, next);
+            }
+        }
         if params != types {
             bail!("call argument types {types:?} do not match parameters {params:?}");
         }
@@ -120,6 +128,17 @@ impl Translator<'_, '_> {
                 self.builder.inst_results(inst).first().copied()
             }
         };
+        self.call_result(dest, ret, result, next)
+    }
+
+    /// Store call `result` (of type `ret`) at `dest` and continue at `next`.
+    fn call_result(
+        &mut self,
+        dest: Option<&Place>,
+        ret: Ty,
+        result: Option<ir::Value>,
+        next: BlockId,
+    ) -> CodegenResult<()> {
         if let (Some(dest), Some(result)) = (dest, result) {
             let loc = self.place(dest)?;
             if loc.ty() != ret && loc.ty() != Ty::Unit {

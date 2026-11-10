@@ -1,0 +1,68 @@
+import { CString, CVarArgs, Ptr } from "velt/ffi";
+
+declare c("c") function snprintf(buf: u8[], n: usize, format: CString, ...args: CVarArgs): i32;
+declare c("c") function fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i32;
+declare c("c") function dup(fd: i32): i32;
+declare c("c") function close(fd: i32): i32;
+declare c("c") function strchr(s: CString, c: i32): Ptr<u8> | null;
+
+/** The first `n` bytes `buf` holds, as text (ASCII). */
+function text(buf: u8[], n: i32): string {
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    s += String.fromCharCode(buf[i]);
+  }
+  return s;
+}
+
+/**
+ * Integers of every width through `...`: those narrower than `int` (and `bool`) promoted by
+ * their own sign, more of them than there are registers, so some go on the stack.
+ */
+export function ints(): string {
+  const buf: u8[] = new Array<u8>(256).fill(0);
+  const f = new CString("%d %d %d %u %lld %d %zu|%d %d %d %d %d");
+  const small: i8 = -5;
+  const big: u8 = 250;
+  const wide: u16 = 65535;
+  const u: u32 = 4000000000;
+  const l: i64 = -9000000000;
+  const n: usize = 12345;
+  // SAFETY: the buffer has 256 bytes; the format reads these arguments as these types.
+  const k = unsafe {
+    snprintf(buf, 256, f, small, big, wide, u, l, true, n, 1 as i32, 2 as i32, 3 as i32, 4 as i32, 5 as i32)
+  };
+  return text(buf, k);
+}
+
+/**
+ * Floats through `...` (an `f32` promoted to `double`), mixed with integers, more of them than
+ * there are float registers, and a pointer.
+ */
+export function floats(): string {
+  const buf: u8[] = new Array<u8>(256).fill(0);
+  const f = new CString("%.2f %g %d %.1f %d %.4f %.1f %.1f %.1f %.1f %.1f %.1f %s");
+  const half: f32 = 1.5;
+  const cs = new CString("hello world");
+  let k: i32 = 0;
+  // SAFETY: the format reads these arguments as these types; `p` points into `cs`, which lives
+  // past the call.
+  unsafe {
+    const p = strchr(cs, 119);
+    k = snprintf(buf, 256, f, half, 2.25 as f64, 7 as i32, 0.5 as f64, -1 as i32, 3.0625 as f64, 1.0 as f64, 2.0 as f64, 3.0 as f64, 4.0 as f64, 5.0 as f64, 6.0 as f64, p);
+  }
+  return text(buf, k);
+}
+
+/** `fcntl`'s `F_SETFD` with an `int` and `F_GETFD` with nothing after the command. */
+export function closeOnExec(): i32 {
+  let flags: i32 = -1;
+  // SAFETY: a descriptor of our own, closed after; F_SETFD (2) takes an `int`, F_GETFD (1) none.
+  unsafe {
+    const fd = dup(1);
+    fcntl(fd, 2 as i32, 1 as i32);
+    flags = fcntl(fd, 1 as i32);
+    close(fd);
+  }
+  return flags;
+}

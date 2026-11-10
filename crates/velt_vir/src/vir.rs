@@ -398,6 +398,11 @@ pub struct ExternFn {
     /// A C function (`declare c`, additive): where it is declared (`path:line:col`), for the
     /// dev JIT's error when the symbol is in no loaded library. `None` for every other extern.
     pub c_decl: Option<String>,
+    /// A variadic C function (`...` in C; additive): `params` are its fixed parameters, and a
+    /// call passes at least as many arguments, the further ones scalars of type `I32`, `U32`,
+    /// `I64`, `U64`, `F64` or `Ptr` (C's default argument promotions already applied). Backends
+    /// call it with the target's variadic convention. `false` for every other extern.
+    pub variadic: bool,
 }
 
 /// Read-only data (string literal bytes, vtables, …), or a word the program writes.

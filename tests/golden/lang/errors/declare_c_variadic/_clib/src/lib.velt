@@ -1,0 +1,19 @@
+// What C's `...` (`...args: CVarArgs`) takes: each argument by itself, as an integer, a float,
+// a `bool`, a pointer or `null`, a number literal with its C type said.
+import { CString, CVarArgs } from "velt/ffi";
+
+declare c("c") function printf(format: CString, ...args: CVarArgs): i32;
+declare c("c") function rest(...xs: i32[]): i32;
+
+export function show(xs: i32[]): void {
+  const format = new CString("%d\n");
+  // SAFETY: none of these compile.
+  unsafe {
+    printf(format, 1);
+    printf(format, "text");
+    printf(format, ...xs);
+    printf(format, xs);
+    printf();
+    printf(format, 1 as i32, 2.5 as f32, null, true);
+  }
+}

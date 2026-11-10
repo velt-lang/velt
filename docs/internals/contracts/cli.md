@@ -491,16 +491,24 @@ break makes a stamp that never matches). The objects it names
   debug build's says debug, so neither serves the other). Its object has internal copies of its
   own of those functions, except those whose address it or a static it reaches takes, which are
   declarations keeping their bodies, and the program exports only those and what the object
-  declares. A found entry is placed before optimization; the function keeps its body through
-  velt_opt and becomes an `Import` declaration afterwards (`Served::take_out`), and what only it
-  called is removed (`velt_opt::remove_unused_functions`), so every other function is optimized as
-  without the cache; a miss stays in the program, and no clang starts for it, except with
-  `VELT_STD_OBJECT_FILL` set and clang found (misses compiled alone for the program's CPU, at
-  `Speed`, and stored). After optimization the objects of the functions still declared, closed
+  declares. Each function has two keys: with the program's parameter attributes, and without
+  `noalias`, `readonly` and `frozen` (whole-program facts) for an object compiled with none of
+  them; the first found is linked. A found entry is placed before optimization; the function
+  keeps its body through velt_opt, which inlines into it but runs no per-function pass on it after
+  the first (`velt_opt::optimize_served`), and becomes an `Import` declaration afterwards
+  (`Served::take_out`), and what only it called is removed (`velt_opt::remove_unused_functions`),
+  so every other function is optimized as without the cache; a miss stays in the program, and no
+  clang starts for it, except with `VELT_STD_OBJECT_FILL` set and clang found (misses compiled
+  alone for the program's CPU, at `Speed`, and stored under both keys where they differ). After
+  optimization the objects of the functions still declared, closed
   over what those objects call, are linked; the others are removed from `<object stem>.std/`.
   `VELT_STD_OBJECT_STATS=1` prints the reasons (`inlinable` for the functions not marked), then
-  `velt: std cache: <n> found, <m> compiled, <k> left in the program` and `velt: std cache: <n> no
-  longer called`. The stamp's `outside` line is worked out before functions become declarations
+  `velt: std cache: <n> found, <m> compiled, <k> left in the program`, `velt: std cache: <n> found
+  without whole-program attributes` when any were, each `velt: std cache: links <symbol> (<n>
+  statements)` as its function becomes a declaration (`<n>`: its body as velt_opt left it, inlined
+  into as the budget allowed but with no per-function pass after the first, so larger than its
+  optimized code), and
+  `velt: std cache: <n> no longer called`. The stamp's `outside` line is worked out before functions become declarations
   when one does, else after optimization, as without the cache.
 - The launcher (additive, #948; crates/velt_launcher, binary `velt-launcher`, installed as
   `<root>/bin/velt[.exe]`; `<root>` is the launcher's grandparent directory, else it exits 1).

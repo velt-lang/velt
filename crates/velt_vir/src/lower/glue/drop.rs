@@ -256,10 +256,7 @@ impl FnLower<'_, '_> {
     /// `{ code, env }`: call the env's drop function (heap envs only; stack envs have none).
     fn drop_closure(&mut self, place: &Place) {
         let hdr = self.cx.closure_agg();
-        let env = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(place, Proj::Field(1)))),
-        );
+        let (env, _) = self.closure_env(place);
         let done = self.new_block();
         let nn = self.non_null(env.clone());
         self.when(nn, done);

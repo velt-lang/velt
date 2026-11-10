@@ -372,6 +372,37 @@ fn enums_are_as_wide_as_their_types() {
     }
 }
 
+/// A declaration ending with `...args: CVarArgs` matches a variadic prototype, and only such a
+/// one: each mismatch is an error with the fix. The fixed parameters compare as any function's.
+#[test]
+fn variadic_declarations_match_variadic_prototypes() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let files = [("native/v.h", "int vf(int a, ...);\nint fixed(int a);\n")];
+    let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, v: { system: { default: \"v\" }, headers: [\"native/v.h\"] } } }";
+    let lib = |decls: &str| {
+        format!("import {{ CVarArgs }} from \"velt/ffi\";\n{decls}{DECLS_STRLEN}{LEN}")
+    };
+    let args = ["check", "--target", "aarch64-apple-darwin"];
+    let right = "declare c(\"v\") function vf(a: i32, ...args: CVarArgs): i32;\ndeclare c(\"v\") function fixed(a: i32): i32;\n";
+    project(dir.path(), native, &lib(right), &files, ALLOW);
+    let o = velt(dir.path(), &home, &args);
+    assert!(o.status.success(), "{}", output(&o));
+    let wrong = "declare c(\"v\") function vf(a: i32): i32;\ndeclare c(\"v\") function fixed(a: i64, ...args: CVarArgs): i32;\n";
+    project(dir.path(), native, &lib(wrong), &files, ALLOW);
+    let o = velt(dir.path(), &home, &args);
+    let out = output(&o);
+    assert!(!o.status.success(), "{out}");
+    for e in [
+        "C function `vf` is variadic in v.h:1\n  = note: declare its `...` last: `...args: CVarArgs` (velt/ffi)",
+        "C function `fixed` is not variadic in v.h:2\n  = note: leave out `...args: CVarArgs`",
+    ] {
+        assert!(out.contains(e), "{e}:\n{out}");
+    }
+    assert_eq!(out.matches("error:").count(), 2, "{out}");
+}
+
 /// `declare c` calls with the target's C calling convention: a function with another is
 /// refused, and Windows' own (`ms_abi`) or every other target's (`sysv_abi`) is that convention.
 #[test]

@@ -1,0 +1,44 @@
+// check: no leaks
+// A function that doesn't throw, converted to a function type that may throw, is still the same
+// function (#2688): the conversion wraps it, and `===` and `Set` keys see the function it wraps,
+// as for the same program without `throws` in Node.
+type L = (e: string) => void throws unknown;
+const set = new Set<L>();
+let last: L | null = null;
+function add(l: L): void {
+  set.add(l);
+}
+function same(l: L): boolean {
+  const r = last === l;
+  last = l;
+  return r;
+}
+
+const b = (e: string) => {
+  console.log("b", e);
+};
+add(b);
+add(b);
+console.log("closure size", set.size);
+same(b);
+console.log("closure same", same(b));
+
+function nb(e: string): void {
+  console.log("nb", e);
+}
+add(nb);
+add(nb);
+console.log("named size", set.size);
+
+const c: L = b;
+const d: L = b;
+console.log("const ===", c === d, c !== d);
+
+// Wider and throwing at once.
+const w = (e: any) => {
+  console.log("w", e);
+};
+add(w);
+add(w);
+console.log("wide size", set.size);
+for (const l of set) l("x");

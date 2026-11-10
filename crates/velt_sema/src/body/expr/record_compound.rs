@@ -1,9 +1,11 @@
 //! Compound assignment (`r[k] += v`, `r[k]++`) on an *open* record (`Record<string, V>`, or a
-//! type-parameter key): reading a key that may be missing gives `V | null`, and JavaScript's
-//! `undefined + 1` (`NaN`) has no counterpart, so these are errors with a fix-it that says what
-//! a missing key starts from: `r[k] = (r[k] ?? 0) + 1`. `r[k] ??= v`, `||=` and `&&=` stay
-//! allowed (they are defined for a missing key: `record_logical.rs`). Closed records always have
-//! every key and keep the compound forms.
+//! type-parameter key) whose values are not a `number` or a `string`, or may be `null` or
+//! `undefined` themselves: a missing key has no value to start from (an `i64` has no `NaN`), so
+//! these are errors with a fix-it that says what it starts from: `r[k] = (r[k] ?? 0) + 1`. A
+//! `number` or `string` value reads as itself (`record_present`, #930), and a missing number is
+//! `NaN`, a missing string `"undefined"`, as in Node.
+//! `r[k] ??= v`, `||=` and `&&=` stay allowed (they are defined for a missing key:
+//! `record_logical.rs`). Closed records always have every key and keep the compound forms.
 //!
 //! Also the other record misuse whose fix-it names the record as written: `for...of` over a
 //! record, which TypeScript code writes over `Object.keys(r)` or `Object.entries(r)`.

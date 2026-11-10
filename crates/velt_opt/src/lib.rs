@@ -94,6 +94,8 @@
 //! `interp` (feature `interp`) is a reference interpreter used to check that optimization
 //! preserves behaviour.
 
+use std::collections::HashSet;
+
 use velt_vir::vir;
 
 mod addr_forward;
@@ -181,6 +183,27 @@ fn with_bodies(funcs: &mut [vir::Function]) -> impl Iterator<Item = &mut vir::Fu
     funcs.iter_mut().filter(|f| !f.blocks.is_empty())
 }
 
+/// The functions whose bodies the per-function passes leave alone ([`optimize_served`]): by
+/// symbol, as functions are renumbered and cloned while the program is optimized.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Served<'a>(Option<&'a HashSet<String>>);
+
+impl<'s> Served<'s> {
+    /// Whether the per-function passes optimize `f`'s body.
+    pub(crate) fn optimizes(self, f: &vir::Function) -> bool {
+        self.0.is_none_or(|served| !served.contains(&f.symbol))
+    }
+
+    /// The functions of `funcs` with code ([`with_bodies`]) that the per-function passes
+    /// optimize.
+    fn bodies<'f>(
+        self,
+        funcs: &'f mut [vir::Function],
+    ) -> impl Iterator<Item = &'f mut vir::Function> + use<'f, 's> {
+        with_bodies(funcs).filter(move |f| self.optimizes(f))
+    }
+}
+
 /// Remove the internal functions nothing exported reaches any more (`dead_funcs`), renumbering
 /// the others: after functions were made declarations once optimized (veltc's std cache), what
 /// only they called. Returns whether any were removed.
@@ -209,6 +232,29 @@ pub fn optimize(program: &mut vir::Program, level: OptLevel) {
 
 /// [`optimize`], adding each pass's time to `t` (for `velt build --timings`).
 pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassTimings) {
+    optimize_with(program, level, t, Served::default());
+}
+
+/// [`optimize_timed`] of a program whose functions `served` names become declarations once it is
+/// optimized, their code linked from elsewhere (veltc's std cache: a release build's `@noInline`
+/// std functions). Their bodies stay in the program for what the rest of it sees of them: the
+/// inliner still inlines their callees into them, which spends its program-wide budget as without
+/// them served, their calls count, and they keep alive what they call. The first per-function
+/// pass, before inlining, works on them too (their bodies are small then, and the inliner's budget
+/// starts from the sizes it leaves); after that none does (no `constfold`, `sroa`, `dce`,
+/// `bounds`, …), as that work would be on code that is dropped. A clone made of one (`null_exits`,
+/// `const_fields`) is the program's own, made from the body as it is then.
+pub fn optimize_served(
+    program: &mut vir::Program,
+    level: OptLevel,
+    t: &mut PassTimings,
+    served: &HashSet<String>,
+) {
+    optimize_with(program, level, t, Served(Some(served)));
+}
+
+/// [`optimize_timed`], leaving the bodies of `served` to the inliner alone.
+fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTimings, served: Served) {
     match level {
         OptLevel::None => {
             numrep::declare_formatters(&mut program.externs);
@@ -250,6 +296,8 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             let signatures = t.time("signatures", || callgraph::signatures(program));
             let fold = constfold::Program::of(&signatures);
             let aggs = &program.aggs;
+            // Served bodies too: they are small before inlining, and the budget starts from the
+            // sizes this pass leaves (`optimize_served`).
             each_function(with_bodies(&mut program.funcs), t, |t, func| {
                 if t.time("numrep", || numrep::run(&env, func)) {
                     numrep_cleanup(aggs, func, t);
@@ -268,7 +316,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             let mut budget = inline::Budget::for_program(program);
             let mut specs = const_fields::Specializations::default();
             for _ in 0..MAX_ROUNDS {
-                if !speed_round(program, &mut budget, &mut specs, t) {
+                if !speed_round(program, &mut budget, &mut specs, served, t) {
                     break;
                 }
             }
@@ -277,11 +325,15 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             let paired = t.time("fits_pair", || fits_pair::run(program));
             for f in paired {
                 let func = &mut program.funcs[f];
+                if !served.optimizes(func) {
+                    continue;
+                }
                 t.time("simplify_cfg", || simplify_cfg::run(func));
                 t.time("dce", || dce::run(&program.aggs, func));
             }
             let borrowed = t.time("borrowed_copies", || borrowed_copies::counted::run(program));
-            for (func, _) in program.funcs.iter_mut().zip(borrowed).filter(|(_, b)| *b) {
+            let changed = (program.funcs.iter_mut().zip(borrowed)).filter(|(_, b)| *b);
+            for (func, _) in changed.filter(|(f, _)| served.optimizes(f)) {
                 // The releases' tests now branch to one block either way.
                 t.time("simplify_cfg", || simplify_cfg::run(func));
                 t.time("copyprop", || copyprop::run(func));
@@ -299,7 +351,7 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 &program.statics,
             );
             let aggs = &program.aggs;
-            each_function(with_bodies(&mut program.funcs), t, |t, func| {
+            each_function(served.bodies(&mut program.funcs), t, |t, func| {
                 if t.time("module_state", || module_state::run(lookups, func)) {
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
@@ -322,10 +374,10 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 t.time("dead_fills", || dead_fills::run(aggs, allocator, func));
                 false
             });
-            promote_memory(program, t);
+            promote_memory(program, served, t);
             let kinds = invariant_reads::Kinds::of(&program.aggs, &program.externs);
             let aggs = &program.aggs;
-            each_function(with_bodies(&mut program.funcs), t, |t, func| {
+            each_function(served.bodies(&mut program.funcs), t, |t, func| {
                 if t.time("invariant_reads", || {
                     invariant_reads::run(aggs, &kinds, func)
                 }) {
@@ -334,7 +386,8 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 false
             });
             let no_return = cold_calls::NoReturn::find(program);
-            each_function(program.funcs.iter_mut(), t, |t, func| {
+            let funcs = program.funcs.iter_mut().filter(|f| served.optimizes(f));
+            each_function(funcs, t, |t, func| {
                 if t.time("cold_calls", || cold_calls::run(&no_return, func)) {
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
@@ -381,11 +434,11 @@ fn numrep_cleanup(aggs: &[vir::AggLayout], func: &mut vir::Function, t: &mut Pas
 
 /// Promote `noalias` and `frozen` pointees and async frame slots (after inlining settled which
 /// bodies they live in), then clean up the loads and stores it moved.
-fn promote_memory(program: &mut vir::Program, t: &mut PassTimings) {
+fn promote_memory(program: &mut vir::Program, served: Served, t: &mut PassTimings) {
     let signatures = t.time("signatures", || callgraph::signatures(program));
     let fold = constfold::Program::of(&signatures);
     let aggs = &program.aggs;
-    each_function(with_bodies(&mut program.funcs), t, |t, func| {
+    each_function(served.bodies(&mut program.funcs), t, |t, func| {
         let mut changed = t.time("noalias", || noalias::run(aggs, func));
         changed |= t.time("frozen", || frozen::run(aggs, func));
         changed |= t.time("frame_slots", || frame_slots::run(aggs, func));
@@ -404,9 +457,10 @@ fn speed_round(
     program: &mut vir::Program,
     budget: &mut inline::Budget,
     specs: &mut const_fields::Specializations,
+    served: Served,
     t: &mut PassTimings,
 ) -> bool {
-    let mut changed = t.time("inline", || inline::run(program, budget));
+    let mut changed = t.time("inline", || inline::run(program, budget, served));
     changed |= t.time("const_fields", || const_fields::run(program, specs));
     let signatures = t.time("signatures", || callgraph::signatures(program));
     let fold = constfold::Program::of(&signatures);
@@ -414,7 +468,8 @@ fn speed_round(
     // A function inlining left without callers (one called once, now in its caller) is removed
     // at the end: optimizing it again would only double the work on its body.
     let live = t.time("dead_funcs", || dead_funcs::live_functions(program));
-    let funcs = (program.funcs.iter_mut().zip(live)).filter(|(f, l)| *l && !f.blocks.is_empty());
+    let funcs = (program.funcs.iter_mut().zip(live))
+        .filter(|(f, l)| *l && !f.blocks.is_empty() && served.optimizes(f));
     let (aggs, statics) = (&program.aggs, &program.statics);
     changed |= each_function(funcs.map(|(f, _)| f), t, |t, func| {
         let mut changed = t.time("vtable_loads", || {

@@ -127,6 +127,7 @@ impl ProgramBuilder {
             noreturn,
             host: None,
             c_decl: None,
+            variadic: false,
         });
         ExternId(self.p.externs.len() as u32 - 1)
     }

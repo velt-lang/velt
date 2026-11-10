@@ -2,7 +2,8 @@
 //! `body/expr/system_args.rs`): the address and the length of the bytes, with no copy.
 //!
 //! - `xs.subarray(begin, end)` of a `u8[]` (`Intrinsic::Subarray`): the bytes between JS's
-//!   `subarray` positions of `begin` and `end` (negative counts from the end, clamped).
+//!   `subarray` positions of `begin` and `end` (negative counts from the end, clamped). A C
+//!   function's array of other numbers (`f64[]`) takes it too: the address of element `begin`.
 //! - A typed array or a `DataView` (a class extending std's `BufferView`, which holds its
 //!   `ArrayBuffer` `buf`, the byte offset `off` and the length `len` in elements): the bytes
 //!   `off..off + byteLength` of the buffer's `u8[]`, whose header is read when the C arguments
@@ -155,6 +156,15 @@ impl FnLower<'_, '_> {
         self.assign(n.clone(), Rvalue::Use(cint(0, Ty::U64)));
         self.goto(join);
         self.switch_to(join);
+        // Element `from`: a C function's array of wider numbers (`f64[]`) scales it.
+        let size = match self.cx.kind(t) {
+            hir::TyKind::Array(e) => self.cx.ty(e).scalar_size().unwrap_or(1),
+            _ => 1,
+        };
+        let from = match size {
+            1 => from,
+            size => self.u64_op(BinOp::Mul, from, cint(i128::from(size), Ty::U64)),
+        };
         let ptr = self.rvalue_temp(Ty::Ptr, Rvalue::Binary(BinOp::PtrAdd, data, from));
         (ptr, Operand::Copy(n))
     }

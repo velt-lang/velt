@@ -1,0 +1,11 @@
+_clib/src/lib.velt:6:30: error: C function `rest` cannot have a rest parameter of type `i32[]`
+  = note: C's `...` is declared last as `...args: CVarArgs` (velt/ffi)
+_clib/src/lib.velt:12:20: error: a number literal passed to C function `printf`'s `...` needs its C type
+  = note: C reads a variadic argument as the type the format or command says, so say which: `0 as i32`, `1.5 as f64`
+_clib/src/lib.velt:13:20: error: `string` can't be passed to C function `printf`'s `...`
+  = note: a variadic argument is an integer (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, `Ptr<T>`, `Ptr<T> | null` or `null`
+_clib/src/lib.velt:14:20: error: C function `printf` takes its variadic arguments one by one, not spread
+  = note: C's `...` has no array: write each argument
+_clib/src/lib.velt:15:20: error: `i32[]` can't be passed to C function `printf`'s `...`
+  = note: a variadic argument is an integer (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, `Ptr<T>`, `Ptr<T> | null` or `null`
+_clib/src/lib.velt:16:5: error: C function `printf` takes at least 1 argument before its `...`, but 0 were supplied

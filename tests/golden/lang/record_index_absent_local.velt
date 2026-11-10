@@ -1,0 +1,11 @@
+// A local declared from an open record's read is a `V` that may hold `undefined`: printing it
+// gives `undefined`, and a member read of it is Node's `TypeError` (#930).
+type S = { chunkUrl: string };
+const manifest: { [name: string]: S } = {};
+function k(s: string): string {
+  return s;
+}
+const entry = manifest[k("z")];
+console.log("before", entry);
+const chunk = { url: entry.chunkUrl };
+console.log(chunk);

@@ -18,6 +18,11 @@ export { byteLength } from "velt/ffi/str_bytes";
 /** A NUL-terminated copy of a string's UTF-8, for a C function taking `const char *`. */
 export { CString } from "velt/ffi/c_string";
 
+/**
+ * C's `...`, the last parameter of a variadic C function: `...args: CVarArgs`.
+ */
+export { CVarArgs } from "velt/ffi/c_var_args";
+
 /** A number a C function writes through a pointer parameter. */
 export { Out } from "velt/ffi/out";
 

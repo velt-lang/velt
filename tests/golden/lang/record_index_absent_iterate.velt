@@ -1,0 +1,10 @@
+// Iterating a missing key's `undefined` is Node's `TypeError` (#930).
+const lists: Record<string, number[]> = {};
+function k(s: string): string {
+  return s;
+}
+const key = k("z");
+console.log("before");
+for (const x of lists[key]) {
+  console.log(x);
+}

@@ -117,6 +117,7 @@ impl PB {
             generic_dyn_methods: Default::default(),
             arg_free_generic_fns: Default::default(),
             fresh_closures: Default::default(),
+            fn_wrappers: Default::default(),
         }
     }
 }

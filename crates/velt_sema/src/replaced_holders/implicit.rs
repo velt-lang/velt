@@ -704,6 +704,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::StrLoadPartialU8x16
         | I::ArrayDataPtr
         | I::Attempt
+        | I::CatchUnwind
         | I::Yield
         | I::GeneratorResume
         | I::GeneratorValue

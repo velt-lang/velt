@@ -20,4 +20,13 @@ export const imports: Imports = {
     js: "./lang/random/seed_js.velt",
     default: "./lang/random/seed_native.velt",
   },
+  // How a Velt panic under `catchUnwind` is raised and taken (docs/internals/design/unwinding.md):
+  // with `_Unwind_RaiseException` where generated code catches it (the Itanium unwinder); on
+  // Windows (structured exceptions, not built yet) and WebAssembly nothing is raised and no
+  // unwinder function is named.
+  "#unwind-raise": {
+    win32: "./lang/hooks/unwind_none.velt",
+    native: "./lang/hooks/unwind_itanium.velt",
+    default: "./lang/hooks/unwind_none.velt",
+  },
 };

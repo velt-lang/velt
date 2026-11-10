@@ -284,6 +284,16 @@ impl FnLower<'_, '_> {
         // an interface value) is itself; numbers of two widths compare by value; `==` also
         // converts.
         self.switch_to(other_bb);
+        // Two function types: the functions they lead to (closure/fn_wrappers.rs).
+        if self.cx.boxing.fn_wrappers {
+            let fns = self.any_both_fns(&xa, &xb);
+            let (fns_bb, more_bb) = (self.new_block(), self.new_block());
+            self.branch(fns, fns_bb, more_bb);
+            self.switch_to(fns_bb);
+            let r = self.fn_values_same(&da, &db);
+            set(self, r);
+            self.switch_to(more_bb);
+        }
         let tag_a = self.any_tag_of(xa.clone());
         let tag_b = self.any_tag_of(xb.clone());
         let obj = cint(TAG_OBJECT as i128, Ty::U64);

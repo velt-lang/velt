@@ -36,6 +36,7 @@ mod cpu;
 mod cpu_names;
 mod debug_info;
 mod dev;
+mod eh;
 mod entry;
 mod function;
 mod isa;
@@ -180,7 +181,7 @@ fn emit_object_from(
     let program = program.get();
     let start = Instant::now();
     let mut product = module.finish();
-    unwind::add_unwind_info(&mut product, &*isa, &built.unwind)?;
+    unwind::add_unwind_info(&mut product, &*isa, &built.unwind, built.eh)?;
     debug_info::object::add_debug_info(&mut product, program, &built.lines)?;
     let obj = product
         .emit()

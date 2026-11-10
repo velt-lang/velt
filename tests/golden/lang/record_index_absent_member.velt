@@ -1,0 +1,9 @@
+// A member read of a missing key's `undefined` is Node's `TypeError`, at the same read (#930).
+type S = { value: number };
+const rec: Record<string, S> = {};
+function k(s: string): string {
+  return s;
+}
+console.log("before");
+console.log(rec[k("z")].value);
+console.log("after");

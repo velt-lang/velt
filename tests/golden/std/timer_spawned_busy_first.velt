@@ -1,38 +1,72 @@
 // A spawned task that runs on without a pause and created its timer first holds back no timer
-// of `main` created later: `main` computes until the spawned task has started its spin (it runs
-// on another worker meanwhile), and its timer still ends the spin.
-class Flag {
+// of `main` created later: the spawned task creates its timer, says it has started its spin, and
+// spins; `main` creates its timer only once it has seen that (the spawned task then runs on
+// another worker), and its timer still ends the spin. The order comes from these signals, not
+// from how long anything takes: the spawned task ends once its own timer has run, and the
+// callbacks record their lines under the lock that hands the flag over, for `main` to print at
+// the end (lines logged on two workers around a hand-off through shared state may reach stdout
+// in either order).
+class State {
+  started: boolean;
   set: boolean;
+  fired: boolean;
+  lines: string[];
   constructor() {
+    this.started = false;
     this.set = false;
+    this.fired = false;
+    this.lines = [];
   }
 }
 
 async function main() {
-  const flag = shared(new Mutex<Flag>(new Flag()));
-  const f2 = flag.clone();
+  const state = shared(new Mutex<State>(new State()));
+  const s2 = state.clone();
   const h = spawn(async () => {
-    setTimeout(() => console.log("spawned timer"), 1);
+    setTimeout(() => {
+      s2.with((v) => {
+        v.lines.push("spawned timer");
+        v.fired = true;
+      });
+    }, 1);
+    s2.with((v) => {
+      v.started = true;
+    });
     const s = Date.now();
-    while (!f2.with((v) => v.set)) {
+    while (!s2.with((v) => v.set)) {
       if (Date.now() - s > 10000) {
-        console.log("spin gave up");
+        s2.with((v) => {
+          v.lines.push("spin gave up");
+        });
         return 0;
       }
     }
-    // Paused: its timer runs now.
-    await sleep(5);
+    // Paused: its timer runs now, after `main`'s.
+    while (!s2.with((v) => v.fired)) {
+      await sleep(1);
+    }
     return 0;
   });
+  // Busy until the spawned task has started its spin: it runs on another worker meanwhile.
   const t0 = Date.now();
-  while (Date.now() - t0 < 30) {}
+  while (!state.with((v) => v.started)) {
+    if (Date.now() - t0 > 10000) {
+      console.log("spawned task never started");
+      break;
+    }
+  }
   setTimeout(() => {
-    console.log("main timer sets the flag");
-    flag.with((v) => {
+    state.with((v) => {
+      v.lines.push("main timer sets the flag");
       v.set = true;
     });
   }, 20);
   await h;
+  state.with((v) => {
+    for (const line of v.lines) {
+      console.log(line);
+    }
+  });
   console.log("spawned task done");
 }
 

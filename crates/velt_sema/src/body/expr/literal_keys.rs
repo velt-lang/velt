@@ -179,6 +179,10 @@ impl FnCx<'_, '_> {
         value: &ast::Expr,
         span: Span,
     ) -> Option<hir::Expr> {
+        // `w += 1` on a local that holds an open record's read (`record_present`).
+        if let Some(h) = self.trusted_compound(op, target, value, span) {
+            return Some(h);
+        }
         let ast::ExprKind::Index {
             object,
             index,

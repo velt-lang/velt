@@ -1,0 +1,17 @@
+// velt/lang/intrinsics (internal): catching a Velt panic that unwinds
+// (docs/internals/design/unwinding.md). The public surface is velt/task's `catchPanic` and the
+// executor's catch at a started promise. Not re-exported from the folder's index, which every
+// program loads: std imports it from this file.
+
+import { intrinsic } from "./decorators";
+
+/**
+ * Calls `f` and returns 0 when it returns, or the address of the Velt panic's exception object
+ * when a Velt panic unwound out of it. Only Velt's own exception class is caught; any other
+ * exception (a C++ or a foreign one) passes through. Nothing `f` was doing is dropped: its frames
+ * are abandoned. Unsafe: the caller owns the exception object and frees it, and must not touch
+ * what `f` left half made. Where nothing unwinds (WebAssembly), a panic ends the process and this
+ * always returns 0.
+ */
+@intrinsic
+export declare unsafe function catchUnwind(f: () => void): usize;

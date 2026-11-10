@@ -113,7 +113,13 @@ impl Emitter<'_> {
             raw.push(v);
             types.push(ty);
         }
-        if params != types {
+        let variadic = self.variadic(callee);
+        let fixed = if variadic {
+            params.len().min(types.len())
+        } else {
+            types.len()
+        };
+        if params != types[..fixed] {
             bail!("call argument types {types:?} do not match parameters {params:?}");
         }
         let inline = match (self.atomic_call(callee), self.tls_call(callee)) {
@@ -158,7 +164,20 @@ impl Emitter<'_> {
                 None => self.call_target(callee)?,
             },
         };
-        let mut text = format!("call {} {target}({})", abi_ret(ret)?, values.join(", "));
+        // A variadic callee's call states its function type: the fixed parameters and `...`.
+        let fn_ty = match variadic {
+            true => {
+                let mut ps: Vec<&str> = params.iter().map(|&t| scalar_type(t)).collect();
+                ps.push("...");
+                format!(" ({})", ps.join(", "))
+            }
+            false => String::new(),
+        };
+        let mut text = format!(
+            "call {}{fn_ty} {target}({})",
+            abi_ret(ret)?,
+            values.join(", ")
+        );
         let kept = self.kept_calls.binary_search(&self.block).is_ok();
         if kept || self.enters_gated(callee) {
             text.push_str(" noinline");
@@ -231,6 +250,11 @@ impl Emitter<'_> {
                 if (self.function.target.is_some_and(|t| t.covers(ext)) || self.baseline_has(ext))
                     && crate::simd::has_ext(self.simd, ext)
         )
+    }
+
+    /// Is `callee` a variadic C function (`vir::ExternFn::variadic`)?
+    fn variadic(&self, callee: &Callee) -> bool {
+        matches!(callee, Callee::Extern(id) if self.program.externs.get(id.0 as usize).is_some_and(|e| e.variadic))
     }
 
     fn callee_signature(&self, callee: &Callee) -> CodegenResult<(Vec<Ty>, Ty)> {

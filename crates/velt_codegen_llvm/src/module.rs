@@ -143,6 +143,7 @@ pub(crate) fn emit_unit_capped(
         unit_defines_main(program, unit),
     ));
     out.push_str(&extern_declarations(program)?);
+    out.push_str(&crate::eh::definitions(program, target));
     for &i in &unit.declares {
         out.push_str(&function_declaration(program, i)?);
     }
@@ -288,7 +289,9 @@ fn extern_declarations(program: &vir::Program) -> CodegenResult<String> {
         {
             continue;
         }
-        if velt_vir::tls::TlsCall::of_symbol(&e.symbol).is_some() {
+        if velt_vir::tls::TlsCall::of_symbol(&e.symbol).is_some()
+            || velt_vir::eh::is_backend_defined(&e.symbol)
+        {
             continue;
         }
         let decl = match Allocator::of(&e.symbol, &e.params, e.ret) {
@@ -329,8 +332,14 @@ fn function_declaration(program: &vir::Program, index: usize) -> CodegenResult<S
 
 /// `declare` line of an ordinary extern.
 fn plain_declaration(e: &vir::ExternFn) -> CodegenResult<String> {
-    let params = signature_params(&e.params)
+    let mut params = signature_params(&e.params)
         .map_err(|err| format!("codegen: extern `{}`: {err}", e.symbol))?;
+    // A variadic C function: LLVM passes the further arguments with the target's variadic
+    // convention (on the stack on Apple arm64, `%al` on x86-64, floats in integer registers on
+    // Windows).
+    if e.variadic {
+        params.push_str(if e.params.is_empty() { "..." } else { ", ..." });
+    }
     let attrs = match (e.noreturn, runtime::effects(&e.symbol)) {
         (true, _) => NORETURN_ATTRS,
         (false, Effects::None) => PURE_ATTRS,

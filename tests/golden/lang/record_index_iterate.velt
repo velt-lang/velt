@@ -1,0 +1,11 @@
+// An open record's read iterates, spreads and is taken apart as its `V` (#930).
+const lists: Record<string, number[]> = { a: [3, 1, 2] };
+function k(s: string): string {
+  return s;
+}
+for (const x of lists[k("a")]) {
+  console.log("of", x);
+}
+console.log([...lists[k("a")]], Math.max(...lists[k("a")]));
+const [p, q] = lists[k("a")];
+console.log(p, q);

@@ -1,0 +1,8 @@
+// Indexing a missing key's `undefined` is Node's `TypeError`, naming the key's value (#930).
+const nums: { [k: string]: number[] } = { a: [1] };
+function k(s: string): string {
+  return s;
+}
+const i = 0;
+console.log("before", nums[k("a")][i]);
+console.log(nums[k("z")][i]);

@@ -1,0 +1,29 @@
+// check: no leaks
+// A property written on a function through `any` after a conversion wrapped it is the
+// function's own property (#2688): the wrapper is the function it wraps, as in Node.
+type Listener = (evt: string) => void;
+
+function tag(l: Listener, v: string): void {
+  (l as any).tag = v;
+}
+function read(l: Listener): any {
+  return (l as any).tag;
+}
+
+const a = (e: any) => {
+  console.log("a", e);
+};
+tag(a, "first");
+console.log((a as any).tag, read(a));
+
+function named(e: any): void {
+  console.log("named", e);
+}
+tag(named, "second");
+console.log((named as any).tag, read(named));
+
+const plain: Listener = (e: string) => {
+  console.log("plain", e);
+};
+tag(plain, "third");
+console.log((plain as any).tag, read(plain));
