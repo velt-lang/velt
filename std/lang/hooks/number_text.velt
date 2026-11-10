@@ -12,7 +12,7 @@
 
 import { trunc } from "velt/lang/intrinsics";
 import { i64Text, pushI64, pushU64, u64Text } from "velt/lang/number/integer";
-import { oneWord, restWrite } from "velt/lang/number/integer_write";
+import { digitsWrite } from "velt/lang/number/integer_write";
 
 declare function velt_rt_str_from_f64(x: f64): string;
 declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
@@ -45,22 +45,12 @@ export function uintPush(buf: string, v: u64): void {
  */
 export function intWrite(stream: u32, v: i64, end: u8): void {
   const neg = v < 0;
-  const a = neg ? ~(v as u64) + 1 : v as u64;
-  // -999999 to 9999999: at most 7 bytes.
-  if (a < (neg ? 1000000 : 10000000)) {
-    oneWord(stream, a, neg, end);
-    return;
-  }
-  restWrite(stream, a, neg, end);
+  digitsWrite(stream, neg ? ~(v as u64) + 1 : v as u64, neg, end);
 }
 
 /** Writes `String(v)` of an unsigned integer and `end` to `stream`, as `intWrite`. */
 export function uintWrite(stream: u32, v: u64, end: u8): void {
-  if (v < 10000000) {
-    oneWord(stream, v, false, end);
-    return;
-  }
-  restWrite(stream, v, false, end);
+  digitsWrite(stream, v, false, end);
 }
 
 /** Is `x` a whole number below 2^53 in magnitude (`-0` included)? Its text is the integer's. */

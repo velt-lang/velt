@@ -1,14 +1,15 @@
 // velt/lang/number (internal): an integer and the byte after it written as one text:
 // `console.log`'s argument and the space or newline that follows it (velt/lang/hooks/number_text),
 // so that they are one write to the stream and not two. The text is at most 21 bytes: 20 digits,
-// or a minus and 19, then the byte. Up to 7 bytes and the byte are one word, built in the writer,
-// which is inlined into the hook: no call and no stack frame between the hook and the write.
-// Longer text is written out of line (`restWrite`), by one of two functions for both signs, each
-// making the write itself, so that the hook's call is its last and nothing comes back through
-// memory: below 10^8 (`midWrite`, one group of digits) and from there up (`longWrite`, three).
-// Two, so that the shorter numbers don't pay for the registers and constants of the three groups.
-// Every copy of the digit code is compiled in each program that prints an integer, so there are
-// few, and the hooks hold the short path themselves.
+// or a minus and 19, then the byte. One function out of line writes it (`digitsWrite`), so that
+// a program's call sites are each a call: inlined into every `console.log` of an integer, its
+// digit code had clang's loop strength reduction take most of a release build of 50 of them in
+// a loop.
+// Up to 7 bytes and the byte are one word, built in it, with no further call before the write.
+// Longer text is written by one of two functions for both signs, each making the write itself,
+// so that nothing comes back through memory: below 10^8 (`midWrite`, one group of digits) and
+// from there up (`longWrite`, three). Two, so that the shorter numbers don't pay for the
+// registers and constants of the three groups.
 
 import { inline, noInline, strAsciiWords } from "velt/lang/intrinsics";
 import { eightWords, longWords } from "velt/lang/number/integer";
@@ -16,30 +17,32 @@ import { eightWords, longWords } from "velt/lang/number/integer";
 declare function velt_rt_write_str(stream: u32, s: string);
 
 /**
- * Writes `a`, after a minus when `neg`, and the ASCII byte `end` to `stream`, where that is one
- * word: up to 7 bytes, `a` below 10^7, or 10^6 with the minus. Inlined (`@inline`) into the hooks.
- */
-@inline
-export function oneWord(stream: u32, a: u64, neg: bool, end: u8): void {
-  const w = eightWords(a, neg);
-  velt_rt_write_str(
-    stream,
-    strAsciiWords(w.w0 | ((end as u64) << ((w.len as u64) * 8)), 0, 0, w.len + 1),
-  );
-}
-
-/**
- * Writes `a`, after a minus when `neg`, and the ASCII byte `end` to `stream`, where that is more
- * than one word: `a` from 10^7 up, or 10^6 with the minus. One call from the hooks, whichever
- * function writes it.
+ * Writes `a`, after a minus when `neg`, and the ASCII byte `end` to `stream`: the hooks' one call
+ * (`intWrite`, `uintWrite`). Out of line (`@noInline`), so the std cache serves its object.
  */
 @noInline
-export function restWrite(stream: u32, a: u64, neg: bool, end: u8): void {
+export function digitsWrite(stream: u32, a: u64, neg: bool, end: u8): void {
+  // -999999 to 9999999: at most 7 bytes, one word with `end`.
+  if (a < (neg ? 1000000 : 10000000)) {
+    oneWord(stream, a, neg, end);
+    return;
+  }
   if (a < 100000000) {
     midWrite(stream, a, neg, end);
     return;
   }
   longWrite(stream, a, neg, end);
+}
+
+// Writes `a`, after a minus when `neg`, and `end`, where that is one word: up to 7 bytes, `a`
+// below 10^7, or 10^6 with the minus.
+@inline
+function oneWord(stream: u32, a: u64, neg: bool, end: u8): void {
+  const w = eightWords(a, neg);
+  velt_rt_write_str(
+    stream,
+    strAsciiWords(w.w0 | ((end as u64) << ((w.len as u64) * 8)), 0, 0, w.len + 1),
+  );
 }
 
 // Writes `a` below 10^8, after a minus when `neg`, and `end`, where that is two words: 8 or 9
