@@ -73,10 +73,12 @@ fn reaching_more_of_std_is_a_program_wide_change() {
 
 #[test]
 fn an_inferred_return_type_is_part_of_the_interface() {
+    // `main` prints the same in both versions: printing a number and a string reach
+    // different std hooks, which is another change.
     let before = "function f() { return 1; }
-                  function main() { console.log(f()); }";
+                  function main() { f(); console.log(\"x\"); }";
     let after = "function f() { return \"one\"; }
-                 function main() { console.log(f()); }";
+                 function main() { f(); console.log(\"x\"); }";
     assert_eq!(changes(before, after), vec![changed_fn("f")]);
 }
 
@@ -298,7 +300,8 @@ fn a_std_module_loaded_for_one_version_only_is_reached_std() {
     // Even where lazy std checks every function of the new module, so the unchecked set
     // doesn't tell: the second version's unchecked set is made the first one's here.
     let main = "function main() { f(); }";
-    let before = ok_src(&format!("function f() {{ console.log(1); }}\n{main}"));
+    // Both print a boolean: printing a number reaches other std hooks.
+    let before = ok_src(&format!("function f() {{ console.log(1 > 0); }}\n{main}"));
     let mut after = ok_src(&format!(
         "function f() {{ console.log(import.meta.url.length > 0); }}\n{main}"
     ));
