@@ -142,7 +142,7 @@ export class EventTarget implements Target {
         last = l;
       }
     }
-    last.next = new Listener(key, callable(callback, key), capture, once, passive, signal);
+    last.next = new Listener(key, callable(callback), capture, once, passive, signal);
   }
 
   /** Removes `callback` for events of `type` and the same `capture`, if it was added. */
@@ -242,20 +242,17 @@ export class EventTarget implements Target {
   }
 }
 
-// What `dispatchEvent` calls for `callback` (`key`: the same value, as an `any`): the function,
-// one that drops the event for a function without the parameter, or the object.
+// What `dispatchEvent` calls for `callback`: the function, one that drops the event for a
+// function without the parameter, or the object.
 function callable<E>(
   callback: ((evt: Event) => void throws E) | (() => void throws E) | EventListenerObject,
-  key: any,
 ): EventListenerOrEventListenerObject {
   if (typeof callback !== "function") {
     return callback;
   }
-  if (key.length === 0) {
-    const f = callback as () => void throws E;
-    return (evt: Event) => f();
-  }
-  return callback as (evt: Event) => void throws E;
+  // Each member converts as its type says (one without the parameter is called without it).
+  const f: EventListener = callback;
+  return f;
 }
 
 // Takes `l` out of the list that starts at `head`; `l` keeps its `next` (see `Listener`).
