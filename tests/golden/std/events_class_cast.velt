@@ -13,3 +13,9 @@ t.addEventListener("cart:add", onAdd);
 t.dispatchEvent(new CustomEvent("cart:add", { detail: { price: 3 } }));
 t.removeEventListener("cart:add", onAdd);
 t.dispatchEvent(new CustomEvent("cart:add", { detail: { price: 4 } }));
+// The local stays usable after the cast, as after `instanceof`.
+class A2 { a = 1 }
+class B2 extends A2 { b = 2 }
+const x2: A2 = new B2();
+const y2 = x2 as B2;
+console.log(y2.b, x2.a, x2 instanceof B2);

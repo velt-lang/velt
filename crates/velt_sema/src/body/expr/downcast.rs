@@ -8,10 +8,10 @@
 //! `class Derived<T> extends Base<T>` is a `Derived<i64>`. A generic class whose type
 //! arguments do not follow from the tested type cannot be narrowed to, except where those it
 //! leaves open are *erased* ([`FnCx::erased_args`]): each has a default, and no field, base or
-//! override depends on it, so every instantiation of the class has one layout and one vtable,
-//! and an instance of any of them reads safely as the class at the defaults (std's
-//! `CustomEvent<T = any>`, which keeps its `detail` as an `any`: `e instanceof CustomEvent` on
-//! an `Event` is a `CustomEvent<any>`, as under `tsc`).
+//! override depends on them, so every instantiation of the class has one layout and one vtable, and an instance of
+//! any of them reads safely as the class at `any`, as `tsc` narrows (std's `CustomEvent<T>`,
+//! which keeps its `detail` as an `any`: `e instanceof CustomEvent` on an `Event` is a
+//! `CustomEvent<any>`).
 
 use velt_common::{Diagnostic, Span};
 
@@ -115,7 +115,13 @@ impl FnCx<'_, '_> {
         }
         let test = self.expr(expr, None, crate::body::Want::Borrow);
         let cond = self.class_test(test, class, span)?;
-        let value = self.expr(expr, None, want);
+        // The local stays usable after the cast, as after `instanceof`: a value taken is a
+        // share of it, not a move.
+        let value = self.expr(expr, None, crate::body::Want::Borrow);
+        let value = match want {
+            crate::body::Want::Move => self.share_if_place(value),
+            _ => value,
+        };
         let then = self.mk(hir::ExprKind::Downcast(Box::new(value)), target, span);
         let name = self.cx.display(target);
         let msg = format!("TypeError: type assertion failed: the value is not of type `{name}`");
@@ -131,10 +137,11 @@ impl FnCx<'_, '_> {
     }
 
     /// Fills the open `slots` of class `class` (narrowed from a value of class `from`, its
-    /// direct base) with their defaults, when each such parameter is erased: it has a default
-    /// without parameters, and neither a field `class` declares nor its base type mentions it,
-    /// and no subclass overrides a method of `class` (a method may take or give a `T`). Every
-    /// instantiation then has the same layout and vtable, so the narrowed value is sound at any.
+    /// direct base) with `any`, as `tsc` does, when each such parameter is erased: it has a
+    /// default (`class Box<T = number>`), neither a field `class` declares nor its base type
+    /// mentions it, and no subclass overrides a method
+    /// of `class` (a method may take or give a `T`). Every instantiation then has the same
+    /// layout and vtable, so the narrowed value is sound at any.
     fn erased_args(
         &mut self,
         class: DefId,
@@ -171,20 +178,20 @@ impl FnCx<'_, '_> {
         if overridden {
             return false;
         }
+        let Some(any) = self.any_ty() else {
+            return false;
+        };
         let defaults = self.cx.adt_param_defaults(class);
         for (i, slot) in slots.iter_mut().enumerate() {
             if slot.is_some() {
                 continue;
             }
-            let Some(Some(dflt)) = defaults.get(i).copied() else {
-                return false;
-            };
-            let mut ps = vec![];
-            crate::types::collect_params(&self.cx.ty, dflt, &mut ps);
-            if mentioned.contains(&(i as u32)) || !ps.is_empty() || self.cx.ty.has_error(dflt) {
+            // Only a parameter with a default: one without stays an error to fix (the test of
+            // a class that is not generic, or one that passes its parameters on).
+            if mentioned.contains(&(i as u32)) || !matches!(defaults.get(i), Some(Some(_))) {
                 return false;
             }
-            *slot = Some(dflt);
+            *slot = Some(any);
         }
         true
     }
