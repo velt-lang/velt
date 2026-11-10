@@ -523,7 +523,7 @@ fn formatted(x_is: Printed, with_int: bool) -> Program {
     let int_write = (velt_common::std_hook!(int_write), Ty::I64);
     let float_writers = [
         (velt_common::std_hook!(number_write), Ty::F64),
-        (velt_common::std_hook!(whole_number_write), Ty::F64),
+        (velt_common::std_hook!(whole_number_write), Ty::I64),
     ];
     for (hook, ty) in float_writers
         .into_iter()
@@ -588,18 +588,18 @@ fn whole_numbers_format_through_the_integer_formatters() {
 }
 
 /// `numberWrite` holds no integer writer: a program that prints only `number`s has no `intWrite`
-/// to switch to, and writes a whole number by `wholeNumberWrite`, of the number itself.
+/// to switch to, and writes a whole number by `wholeNumberWrite`, of `x as i64`.
 #[test]
 fn a_whole_number_takes_the_whole_number_writer_without_the_integer_one() {
     let whole = velt_vir::mangle::mangle(velt_common::std_hook!(whole_number_write));
     let number_write = velt_vir::mangle::mangle(velt_common::std_hook!(number_write));
     let q = narrowed(&formatted(Printed::Whole, false));
     assert_eq!(callees(&q), [whole]);
-    // Passed `x`, the `f64`: no cast to an integer before the call.
+    // Passed `x as i64`, as the integer twin is.
     let casts = (q.funcs[0].blocks.iter().flat_map(|b| &b.stmts))
         .filter(|s| matches!(s, Stmt::Assign(_, Rvalue::Cast(_, Ty::I64))))
         .count();
-    assert_eq!(casts, 0, "{:?}", q.funcs[0]);
+    assert_eq!(casts, 1, "{:?}", q.funcs[0]);
     let q = narrowed(&formatted(Printed::Half, false));
     assert_eq!(callees(&q), std::slice::from_ref(&number_write));
     let q = narrowed(&formatted(Printed::Zero, false));

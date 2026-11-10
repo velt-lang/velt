@@ -237,9 +237,10 @@ hooks! {
     /// `int_write` where the program has that, else of `whole_number_write`.
     number_write => lang_hooks_number_write, "numberWrite", sig((u32, f64, u8) -> void), lowered,
         fallback, replaces("velt_rt_write_f64");
-    /// A whole number below 2^53 other than `-0` and the byte after it, as `number_write` writes
-    /// it, by a digit loop of its own (no integer hook): `number_write`'s and numrep's.
-    whole_number_write => lang_hooks_number_write, "wholeNumberWrite", sig((u32, f64, u8) -> void),
+    /// A whole number below 2^53 other than `-0`, as an `i64`, and the byte after it, as
+    /// `number_write` writes the float, by digits of its own (no integer hook): `number_write`'s
+    /// and numrep's.
+    whole_number_write => lang_hooks_number_write, "wholeNumberWrite", sig((u32, i64, u8) -> void),
         lowered, fallback;
     /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
     /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
