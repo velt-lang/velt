@@ -155,6 +155,9 @@ impl FnCx<'_, '_> {
             .record_args(obj.ty)
             .expect("ICE: record write on a non-record");
         let named = self.record_view_key(obj.ty, &key);
+        // An open record's value without a nothing of its own reads as a `V` (`record_present`):
+        // a missing number is `NaN` there, as in JavaScript (`r[k] += 1`).
+        let named = named || self.open_compound_reads(v);
         if let (Some(bop), None, false) = (op, self.record_keys(k), named) {
             let sym = format!("{}=", super::ops::op_str(bop));
             self.open_record_compound(obj.ty, v, target, &sym, bop, Some(value));
@@ -180,6 +183,23 @@ impl FnCx<'_, '_> {
         let value = match op {
             None => value.clone(),
             Some(op) => {
+                if let (true, false, RecordKey::Index(e)) =
+                    (side_effect_free(object), key.side_effect_free(), &key)
+                {
+                    // `r[f()] += 1`: the key once, into a temporary.
+                    let mut stmts = vec![];
+                    let id = self.bind_hoisted(e, &mut stmts);
+                    let kind = ast::ExprKind::Index {
+                        object: Box::new(object.clone()),
+                        index: Box::new(id.clone()),
+                        more: vec![],
+                        optional: false,
+                    };
+                    let t = synth(kind, target.span);
+                    let key = RecordKey::Index(&id);
+                    let h = self.record_assign(obj, object, key, Some(op), &t, value, span);
+                    return self.with_temps_value(stmts, h);
+                }
                 if !side_effect_free(object) || !key.side_effect_free() {
                     self.cx.err(
                         "compound assignment to a `Record` key needs a variable receiver and a variable or literal key",
@@ -235,7 +255,7 @@ impl FnCx<'_, '_> {
         let (_, key) = record_parts(target);
         let named = self.record_view_key(obj.ty, &key);
         if let Some((k, v)) = self.record_args(obj.ty) {
-            if self.record_keys(k).is_none() && !named {
+            if self.record_keys(k).is_none() && !named && !self.open_compound_reads(v) {
                 self.open_record_compound(obj.ty, v, target, opname, bop, None);
                 return self.error_expr(span);
             }

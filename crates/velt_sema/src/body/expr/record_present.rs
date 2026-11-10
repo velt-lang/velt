@@ -87,36 +87,112 @@ impl FnCx<'_, '_> {
         self.record_present(f, &msg)
     }
 
-    /// `h`, an operand of an arithmetic or ordering operator, as its `V` (a string's read stays
-    /// as it is: `"k" + r[k]` writes a missing value as `undefined`). Node computes `NaN` or
-    /// `false` from a missing value; Velt stops, as at a conversion (`record_value_as`).
+    /// `h`, an operand of an arithmetic, bitwise or ordering operator, as its `V`. A number's
+    /// missing value is `NaN`, as JavaScript converts `undefined` (`r[k] + 1` is `NaN`, `~r[k]`
+    /// is `-1`, `r[k] < 5` is `false`). Any other `V` stops, as at a conversion
+    /// (`record_value_as`): `s[k] + 1` of a string can't hold Node's `NaN`.
     pub(super) fn record_operand(&mut self, h: hir::Expr) -> hir::Expr {
-        match self.trusted_value(&h) {
-            Some(v) if v != self.cx.ty.str_ => {
-                self.record_present(h, "TypeError: the record has no value at this key")
-            }
-            _ => h,
+        let Some(v) = self.trusted_value(&h) else {
+            return h;
+        };
+        if v != self.cx.ty.f64 {
+            return self.record_present(h, "TypeError: the record has no value at this key");
         }
+        let span = h.span;
+        let nan = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Ident(ast::Ident {
+                name: "NaN".into(),
+                span,
+            }),
+            span,
+        };
+        self.present_or_expr(h, &nan, Some(v), true, span)
+    }
+
+    /// `l op r` with `op` an ordering (`<`, `<=`, `>`, `>=`) where a side is a string's read:
+    /// `false` when its value is missing, as `undefined < "c"` is in JavaScript. `Err` gives
+    /// the operands back when neither is one, or when skipping the other side would skip what
+    /// it does (it is not a variable, a literal or a read).
+    pub(super) fn record_ordering(
+        &mut self,
+        op: ast::BinaryOp,
+        l: hir::Expr,
+        r: hir::Expr,
+        span: Span,
+    ) -> Result<hir::Expr, Box<(hir::Expr, hir::Expr)>> {
+        let str_ = self.cx.ty.str_;
+        let lt = self.trusted_value(&l) == Some(str_);
+        let rt = self.trusted_value(&r) == Some(str_);
+        let pure = |s: &Self, h: &hir::Expr| {
+            matches!(h.kind, hir::ExprKind::Lit(_) | hir::ExprKind::Local(..))
+                || s.trusted_value(h).is_some()
+        };
+        if !(lt || rt) || (lt && !pure(self, &r)) || (rt && !pure(self, &l)) {
+            return Err(Box::new((l, r)));
+        }
+        let no = |s: &mut Self| {
+            s.mk(
+                hir::ExprKind::Lit(hir::Lit::Bool(false)),
+                s.cx.ty.bool_,
+                span,
+            )
+        };
+        let none = no(self);
+        Ok(match (lt, rt) {
+            (true, true) => self.present_match(
+                l,
+                |s, lv| {
+                    let none = no(s);
+                    s.present_match(r, |s, rv| s.binary_checked(op, lv, rv, span), none, span)
+                },
+                none,
+                span,
+            ),
+            (true, false) => {
+                self.present_match(l, |s, lv| s.binary_checked(op, lv, r, span), none, span)
+            }
+            _ => self.present_match(r, |s, rv| s.binary_checked(op, l, rv, span), none, span),
+        })
+    }
+
+    /// `h` iterated (`for…of`, a spread): Node's `TypeError: e is not iterable`, with `suffix`.
+    pub(crate) fn record_present_iter(
+        &mut self,
+        h: hir::Expr,
+        e: &ast::Expr,
+        suffix: &str,
+    ) -> hir::Expr {
+        if self.trusted_value(&h).is_none() {
+            return h;
+        }
+        let msg = format!(
+            "TypeError: {} is not iterable{suffix}",
+            node_text_as(e, false)
+        );
+        self.record_present(h, &msg)
     }
 
     /// `e`, taken apart by the pattern `p` of a declaration without a type: the payload of a
     /// narrowed value (`checked_copies`), and an open record's read as its `V`, checked with
-    /// Node's `Cannot destructure property 'a' of 'e' as it is undefined.`
+    /// Node's `Cannot destructure property 'a' of 'e' as it is undefined.` (an array pattern:
+    /// `undefined is not iterable …`).
     pub(crate) fn pattern_init(&mut self, e: &ast::Expr, p: &ast::Pattern) -> hir::Expr {
         let init = self.payload_expr(e, None, crate::body::Want::Borrow);
-        let ast::PatternKind::Object { fields, .. } = &p.kind else {
-            return init;
-        };
         if self.trusted_value(&init).is_none() {
             return init;
         }
         let text = node_text(e);
-        let msg = match fields.first() {
-            Some((name, _)) => format!(
-                "TypeError: Cannot destructure property '{}' of '{text}' as it is undefined.",
-                name.name
-            ),
-            None => format!("TypeError: Cannot destructure '{text}' as it is undefined."),
+        let msg = match &p.kind {
+            ast::PatternKind::Object { fields, .. } => match fields.first() {
+                Some((name, _)) => format!(
+                    "TypeError: Cannot destructure property '{}' of '{text}' as it is undefined.",
+                    name.name
+                ),
+                None => format!("TypeError: Cannot destructure '{text}' as it is undefined."),
+            },
+            ast::PatternKind::Array { .. } => "TypeError: undefined is not iterable (cannot read property Symbol(Symbol.iterator))".to_string(),
+            _ => return init,
         };
         self.record_present(init, &msg)
     }
@@ -129,6 +205,27 @@ impl FnCx<'_, '_> {
         };
         let span = h.span;
         self.checked_present(h, msg, Some(v), true, span)
+    }
+
+    /// Does `r[k] op= v` / `r[k]++` on an open record with values `v` read `r[k]` as a `V`
+    /// (`v` holds no nothing of its own and is not dynamic)?
+    pub(super) fn open_compound_reads(&self, v: TyId) -> bool {
+        self.cx.ty.nothing_of(v).is_none() && self.cx.dynamic(v).is_none()
+    }
+
+    /// `obj.prop` as the place an assignment writes (`field_access`): a missing record value
+    /// there is Node's `Cannot set properties …` for `=`, and `Cannot read …` for an update,
+    /// which reads first.
+    pub(super) fn written_field(
+        &mut self,
+        obj: hir::Expr,
+        prop: &ast::Ident,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let outer = std::mem::replace(&mut self.f.write_target, true);
+        let place = self.field_access(obj, prop, crate::body::Want::BorrowMut, span);
+        self.f.write_target = outer;
+        place
     }
 
     /// Marks the local `l`, declared with the annotation `ann` from `init`, as a trusted local
@@ -161,24 +258,32 @@ fn str_expr(s: &str, span: Span) -> ast::Expr {
     }
 }
 
-/// How Node names an expression in a `TypeError` (`… is not a function`): `f`, `o.f`, `o[k]`, `o.f` for `o["f"]`,
-/// `f(...)` for a call, `(intermediate value)` for anything else.
+/// How Node names an expression in a `TypeError` (`… is not a function`): `f`, `o.f`, `o[k]`,
+/// `o.f` for `o["f"]`, `f(...)` for a call, `(intermediate value)` for anything else.
 fn node_text(e: &ast::Expr) -> String {
+    node_text_as(e, true)
+}
+
+/// [`node_text`]; without `calls`, a call is named by its callee alone, as `… is not iterable`
+/// names `r[k("a")]` `r[k]`.
+fn node_text_as(e: &ast::Expr, calls: bool) -> String {
     use ast::ExprKind as A;
+    let text = |e: &ast::Expr| node_text_as(e, calls);
     match &e.kind {
         A::Ident(id) => id.name.clone(),
         A::This => "this".to_string(),
-        A::Paren(x) => node_text(x),
-        A::Member { object, prop, .. } => format!("{}.{}", node_text(object), prop.name),
+        A::Paren(x) => text(x),
+        A::Member { object, prop, .. } => format!("{}.{}", text(object), prop.name),
         A::Index { object, index, .. } => {
-            let o = node_text(object);
+            let o = text(object);
             match &index.kind {
                 A::Lit(ast::Lit::Str(s)) => format!("{o}.{s}"),
                 A::Lit(ast::Lit::Int { value, .. }) => format!("{o}[{value}]"),
-                _ => format!("{o}[{}]", node_text(index)),
+                _ => format!("{o}[{}]", text(index)),
             }
         }
-        A::Call { callee, .. } => format!("{}(...)", node_text(callee)),
+        A::Call { callee, .. } if calls => format!("{}(...)", text(callee)),
+        A::Call { callee, .. } => text(callee),
         _ => "(intermediate value)".to_string(),
     }
 }

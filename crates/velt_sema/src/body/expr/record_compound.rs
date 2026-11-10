@@ -1,9 +1,10 @@
 //! Compound assignment (`r[k] += v`, `r[k]++`) on an *open* record (`Record<string, V>`, or a
-//! type-parameter key): reading a key that may be missing gives `V | null`, and JavaScript's
-//! `undefined + 1` (`NaN`) has no counterpart, so these are errors with a fix-it that says what
-//! a missing key starts from: `r[k] = (r[k] ?? 0) + 1`. `r[k] ??= v`, `||=` and `&&=` stay
-//! allowed (they are defined for a missing key: `record_logical.rs`). Closed records always have
-//! every key and keep the compound forms.
+//! type-parameter key) whose values may be `null` or `undefined` themselves, or are dynamic: a
+//! read of the key can't tell a missing key from a stored nothing, so these are errors with a
+//! fix-it that says what a missing key starts from: `r[k] = (r[k] ?? 0) + 1`. With any other
+//! `V` the read is a `V` (`record_present`, #930), and a missing number is `NaN`, as in Node.
+//! `r[k] ??= v`, `||=` and `&&=` stay allowed (they are defined for a missing key:
+//! `record_logical.rs`). Closed records always have every key and keep the compound forms.
 //!
 //! Also the other record misuse whose fix-it names the record as written: `for...of` over a
 //! record, which TypeScript code writes over `Object.keys(r)` or `Object.entries(r)`.
@@ -26,11 +27,7 @@ impl FnCx<'_, '_> {
         bop: ast::BinaryOp,
         value: Option<&ast::Expr>,
     ) {
-        let (rn, mut vn) = (self.cx.display(rec), self.cx.display(v));
-        // A missing key reads as `null`, which a `V` that has a nothing value already names.
-        if self.cx.ty.nothing_of(v).is_none() {
-            vn.push_str(" | null");
-        }
+        let (rn, vn) = (self.cx.display(rec), self.cx.display(v));
         let place = expr_text(target).unwrap_or_else(|| "r[k]".to_string());
         let rhs = value
             .and_then(expr_text)

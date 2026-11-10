@@ -108,6 +108,11 @@ pub(crate) struct Frame {
     /// an open record's read (`const e = r[k]`), and a parameter whose `any` default may be
     /// `undefined` (#2666). Each read is a record read (`record_reads`) of this `V`.
     pub trusted_locals: FxHashMap<LocalId, TyId>,
+    /// Checking a compound assignment or an update (`x.a += 1`, `x.a++`), which reads its
+    /// target before it writes it (`field_access`).
+    pub update_target: bool,
+    /// Checking the member an assignment writes (`field_access`).
+    pub write_target: bool,
     /// The read-only local a method call written `(x as T).m()` may change (`T` not read-only;
     /// `readonly_arrays.rs`).
     pub readonly_exempt: Option<LocalId>,
@@ -266,6 +271,8 @@ impl Frame {
             assign_hint: None,
             record_reads: Default::default(),
             trusted_locals: Default::default(),
+            update_target: false,
+            write_target: false,
             readonly_exempt: None,
             readonly_cast_recv: false,
             as_const_tuples: Default::default(),

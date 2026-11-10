@@ -56,7 +56,7 @@ impl FnCx<'_, '_> {
         // its `V`, checked (`record_present`).
         let obj = match want {
             _ if self.trusted_value(&obj).is_none() => obj,
-            Want::BorrowMut => {
+            Want::BorrowMut if self.f.write_target && !self.f.update_target => {
                 let msg = format!(
                     "TypeError: Cannot set properties of undefined (setting '{}')",
                     prop.name

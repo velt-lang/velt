@@ -460,6 +460,10 @@ impl FnCx<'_, '_> {
         let (l, r) = match op {
             B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq => (l, r),
             _ if text => (l, r),
+            B::Lt | B::LtEq | B::Gt | B::GtEq => match self.record_ordering(op, l, r, span) {
+                Ok(h) => return h,
+                Err(lr) => (self.record_operand(lr.0), self.record_operand(lr.1)),
+            },
             _ => (self.record_operand(l), self.record_operand(r)),
         };
         // Literal types take part in operators as their base type (`c.kind + "!"`).
