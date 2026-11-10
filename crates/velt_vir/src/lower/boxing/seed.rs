@@ -57,6 +57,13 @@ pub struct CountedSeed {
     /// [`Boxing`]'s flags, likewise.
     flags: Vec<bool>,
     any_call_keys: BTreeSet<String>,
+    /// The sets never seeded but compared ([`CountedSeed::representation_change`]): live values
+    /// carry them too (a weak-capable object's flag, a tagged proxy pointer). Weak-capable
+    /// types and class hierarchies, then the types and hierarchies that may hold a proxy.
+    unseeded_types: Vec<BTreeSet<String>>,
+    unseeded_defs: Vec<BTreeSet<String>>,
+    /// `weak_object`.
+    unseeded_flags: Vec<bool>,
     /// Every type key and definition name the program has, counted or not: a name whose
     /// counting differs between two versions matters only when both have it (a new class has no
     /// live objects yet).
@@ -83,6 +90,9 @@ const DEF_SETS: [&str; 4] = [
     "carrying its `any` table",
     "counted under an `RwLock`",
 ];
+
+/// Likewise for [`CountedSeed::unseeded_types`] and [`CountedSeed::unseeded_defs`].
+const UNSEEDED_SETS: [&str; 2] = ["weak-capable", "a possible proxy"];
 
 /// What each of [`CountedSeed::flags`] decides, program-wide, about live values or the tables
 /// they point at.
@@ -119,7 +129,23 @@ impl CountedSeed {
         let both = |name: &&String| self.known.contains(*name) && next.known.contains(*name);
         let sets = (self.types.iter().zip(&next.types).zip(TYPE_SETS))
             .filter_map(|((a, b), what)| Some((a, b, what?)))
-            .chain((self.defs.iter().zip(&next.defs).zip(DEF_SETS)).map(|((a, b), w)| (a, b, w)));
+            .chain((self.defs.iter().zip(&next.defs).zip(DEF_SETS)).map(|((a, b), w)| (a, b, w)))
+            .chain(
+                (self
+                    .unseeded_types
+                    .iter()
+                    .zip(&next.unseeded_types)
+                    .zip(UNSEEDED_SETS))
+                .map(|((a, b), w)| (a, b, w)),
+            )
+            .chain(
+                (self
+                    .unseeded_defs
+                    .iter()
+                    .zip(&next.unseeded_defs)
+                    .zip(UNSEEDED_SETS))
+                .map(|((a, b), w)| (a, b, w)),
+            );
         for (before, after, what) in sets {
             let mut changed: Vec<&String> =
                 before.symmetric_difference(after).filter(both).collect();
@@ -131,6 +157,9 @@ impl CountedSeed {
                     false => format!("{shown} is no longer {what}"),
                 });
             }
+        }
+        if self.unseeded_flags != next.unseeded_flags {
+            return Some("whether `object` values can be held weakly changed".to_string());
         }
         (self.flags.iter().zip(&next.flags).zip(FLAGS))
             .find(|((a, b), _)| a != b)
@@ -199,14 +228,15 @@ impl Cx<'_> {
             transferred,
             // Not seeded: whether a class or type is weak-capable or may hold a proxy decides
             // whether an `RwLock` read of it is exclusive (locks.rs `lock_reach`), which is
-            // behavior (module docs). Each lowering finds them again.
-            weak_roots: _,
-            weak: _,
-            weak_object: _,
+            // behavior (module docs). Each lowering finds them again; the seed records them only
+            // to compare versions (`unseeded_types`).
+            weak_roots,
+            weak,
+            weak_object,
             dyn_types: _,
             dyn_to_any,
-            proxy_roots: _,
-            proxy_types: _,
+            proxy_roots,
+            proxy_types,
             proxy_class: _,
             proxy_traced: _,
             array_views,
@@ -253,6 +283,9 @@ impl Cx<'_> {
                 *any_members,
             ],
             any_call_keys: any_call_keys.clone(),
+            unseeded_types: vec![types(&mut weak.iter()), types(&mut proxy_types.iter())],
+            unseeded_defs: vec![defs(&mut weak_roots.iter()), defs(&mut proxy_roots.iter())],
+            unseeded_flags: vec![*weak_object],
             known: self.known_names(),
         }
     }

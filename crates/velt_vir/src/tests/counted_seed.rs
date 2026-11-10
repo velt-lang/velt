@@ -259,3 +259,29 @@ fn closures_that_get_an_identity_are_a_representation_change() {
         Some("the identity of function values changed")
     );
 }
+
+/// A `Config` a `WeakRef` points at: counted and weak-capable.
+const WEAKREF_V1: &str = "class Config { n: number = 1; }
+function main() {
+  const c = new Config();
+  const w = new WeakRef(c);
+  console.log(c.n, w.deref() !== undefined);
+}
+";
+
+/// [`WEAKREF_V1`] after an edit that drops the `WeakRef`: `Config` stays counted (the seed), but
+/// is no longer weak-capable.
+const WEAKREF_V2: &str = "class Config { n: number = 1; }
+function main() {
+  const c = new Config();
+  console.log(c.n);
+}
+";
+
+/// Weak-capable sets are never seeded, but live objects carry the flag: an edit that drops the
+/// `WeakRef` changes how `Config`'s objects are released.
+#[test]
+fn a_class_that_stops_being_weak_capable_is_a_representation_change() {
+    let reason = change(WEAKREF_V1, WEAKREF_V2).expect("a change");
+    assert!(reason.ends_with("is no longer weak-capable"), "{reason}");
+}
