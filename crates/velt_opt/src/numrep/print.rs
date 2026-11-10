@@ -1,6 +1,6 @@
 //! Numbers printed as integers. std's float formatters pair up with twins for whole numbers: a
 //! call of the hook `numberWrite` (`console.log(x)`), `numberText`, `numberPush`, `floatText` or
-//! `floatPush` of a whole `x` below 2^53 becomes one of its twin of `x as i64`: `intWrite`,
+//! `floatPush` of a whole `x` below 2^53 becomes a call of its twin with `x as i64`: `intWrite`,
 //! `intText` or `intPush`, or for `numberWrite` in a program without `intWrite`,
 //! `wholeNumberWrite`. No conversion to `f64` once `x` is an integer, and no test in the
 //! formatter.

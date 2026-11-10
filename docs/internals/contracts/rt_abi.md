@@ -863,8 +863,8 @@ through `any` never call them.
 except that a number is written by std's hooks (velt/lang/hooks/number_text and number_write,
 #2197) in one call with the byte after it: `intWrite(1, a, ' ')`, `uintWrite` (integers, extended
 to 64-bit; their text through `write_str`) and `numberWrite` (floats, `f32` converted to `f64`:
-a whole number below 10^8 other than `-0` by `wholeNumberWrite`, through `write_str`, anything
-else through `write_f64`; `velt_opt` numrep calls `intWrite` in its place for a known whole
+a whole number below 2^53 other than `-0` by `wholeNumberWrite` (through `write_str` below 10^8,
+`write_f64` above), anything else through `write_f64`; `velt_opt` numrep calls `intWrite` in its place for a known whole
 number where the program has `intWrite`, else `wholeNumberWrite`).
 
 ## Memory [M1]
