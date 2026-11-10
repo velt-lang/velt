@@ -1,8 +1,8 @@
-//! `console.log` of a whole `number` in a release build (#2197): `velt_opt` numrep calls the
-//! integer writer `intWrite` in place of the float writer `numberWrite` where it proves the number
-//! whole and not `-0`, but only where the program has `intWrite`. `numberWrite` holds no integer
-//! printing, so a program that prints only `number`s has none, and keeps the float writer (the
-//! runtime's printer: golden `console_log_floats_alone`).
+//! `console.log` of a whole `number` in a release build (#2197): `velt_opt` numrep calls a twin of
+//! the float writer `numberWrite` where it proves the number whole, below 2^53 and not `-0`. The
+//! twin is the integer writer `intWrite` where the program has it, and else `wholeNumberWrite`,
+//! `numberWrite`'s own (std/lang/hooks/number_write): `numberWrite` holds no integer printing, so
+//! a program that prints only `number`s has no `intWrite`.
 
 mod no_window;
 mod test_dir;
@@ -31,9 +31,16 @@ fn calls(vir: &str, name: &str) -> usize {
         .count()
 }
 
-/// A whole `number` (`i`) and an `i64` (`n`) printed. The writers are inlined into `main` by the
-/// time the VIR is written: `intWrite`'s call is one of `digitsWrite`, `numberWrite`'s one of
-/// the runtime's `velt_rt_write_f64`.
+/// The JS loop: a whole `number` (`i`) printed, and nothing else.
+const LOOP: &str = "function main() {
+  for (let i = 0; i < 1000; i++) {
+    console.log(i);
+  }
+}
+";
+
+/// The JS loop and an `i64` (`n`) printed. The writers are inlined into `main` by the time the
+/// VIR is written: `intWrite`'s call is one of `digitsWrite`.
 const BOTH: &str = "function main() {
   for (let i = 0; i < 1000; i++) {
     console.log(i);
@@ -47,16 +54,14 @@ const BOTH: &str = "function main() {
 fn a_whole_number_takes_the_integer_writer_where_the_program_has_it() {
     let vir = vir_of(BOTH);
     assert_eq!(calls(&vir, "velt_rt_write_f64"), 0, "{vir}");
+    assert_eq!(calls(&vir, "wholeNumberWrite("), 0, "{vir}");
     assert_eq!(calls(&vir, "digitsWrite("), 2, "{vir}");
 }
 
 #[test]
-fn a_program_that_prints_only_numbers_keeps_the_float_writer() {
-    let src = BOTH.replace(
-        "console.log(n);",
-        "const m = n + 1;\n  console.log(0.5, m > 0);",
-    );
-    let vir = vir_of(&src);
-    assert_eq!(calls(&vir, "velt_rt_write_f64"), 2, "{vir}");
-    assert_eq!(calls(&vir, "Write("), 0, "{vir}");
+fn the_js_loop_alone_takes_the_whole_number_writer() {
+    let vir = vir_of(LOOP);
+    assert_eq!(calls(&vir, "velt_rt_write_f64"), 0, "{vir}");
+    assert_eq!(calls(&vir, "wholeNumberWrite("), 1, "{vir}");
+    assert_eq!(calls(&vir, "digitsWrite("), 0, "{vir}");
 }

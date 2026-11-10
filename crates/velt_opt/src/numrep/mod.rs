@@ -100,8 +100,8 @@ pub(crate) struct Env<'p> {
     field_tys: std::sync::Arc<[Vec<Ty>]>,
     /// Facts about parameters that every call passes a constant (`params`).
     params: params::ParamFacts,
-    /// Number formatters and their integer twins (`print`).
-    formatters: Vec<(Callee, Callee, bool, usize)>,
+    /// Number formatters and their twins (`print`).
+    formatters: Vec<print::Formatter>,
 }
 
 impl<'p> Env<'p> {

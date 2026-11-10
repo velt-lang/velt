@@ -1,19 +1,80 @@
-// velt/lang/hooks (internal): the compiler's hook for a float written by `console.log` or
+// velt/lang/hooks (internal): the compiler's hooks for a float written by `console.log` or
 // `console.error` with the space or newline after it (velt_vir `console.rs`). Out of
-// velt/lang/hooks/number_text, and holding none of its integer hooks, so that a program that
-// prints a float checks no integer printing: it waits for live code that prints a float
-// (velt_common `ON_DEMAND_WRITE`), and lowering calls the runtime's printer while it is unchecked.
-// Loaded then (`ON_DEMAND_MODULES`). Where `x` is known to be a whole number other than `-0`,
-// `velt_opt` numrep calls the integer writer `intWrite` in its place, if the program has it.
+// velt/lang/hooks/number_text, and holding none of its integer printing, so that a program that
+// prints a float checks no integer hook: they wait for live code that prints a float (velt_common
+// `ON_DEMAND_WRITE`), and lowering calls the runtime's printer while they are unchecked. Loaded
+// then (`ON_DEMAND_MODULES`). A whole number has a writer of its own here, `wholeNumberWrite`,
+// which `velt_opt` numrep calls in `numberWrite`'s place where it knows `x` is one, unless the
+// program has the integer writer `intWrite`, which it calls then.
+
+import { noInline, strAsciiWords, trunc } from "velt/lang/intrinsics";
 
 declare function velt_rt_write_f64(stream: u32, x: f64);
 declare function velt_rt_write_byte(stream: u32, b: u8);
+declare function velt_rt_write_str(stream: u32, s: string);
 
 /**
- * Writes a float as `console.log` prints it (`1`, `-0`, `0.5`, `1e+21`, `NaN`), by the runtime's
- * printer, and `end` to `stream`.
+ * Writes a float as `console.log` prints it and `end` to `stream`: a whole number below 2^53
+ * other than `-0` by `wholeNumberWrite`, anything else (`-0`, `0.5`, `1e+21`, `NaN`) by the
+ * runtime's printer.
  */
 export function numberWrite(stream: u32, x: f64, end: u8): void {
+  if (
+    x == trunc(x) &&
+    x < 9007199254740992.0 &&
+    x > -9007199254740992.0 &&
+    (x != 0.0 || 1.0 / x > 0.0)
+  ) {
+    wholeNumberWrite(stream, x, end);
+    return;
+  }
   velt_rt_write_f64(stream, x);
   velt_rt_write_byte(stream, end);
+}
+
+/**
+ * Writes `x`, a whole number below 2^53 in magnitude other than `-0`, and `end` to `stream`, in
+ * one write: at most 16 digits, a minus and `end`, built in three words, so with no allocation.
+ * Its own digit loop, so that it needs none of std's integer printing; out of line (`@noInline`),
+ * so that each call site is a call and the std cache serves its object.
+ */
+@noInline
+export function wholeNumberWrite(stream: u32, x: f64, end: u8): void {
+  const neg = x < 0.0;
+  let a = (neg ? -x : x) as u64;
+  // The text's length: the digits, and the minus.
+  let n: u64 = neg ? 2 : 1;
+  let t = a;
+  while (t >= 10) {
+    t = t / 10;
+    n = n + 1;
+  }
+  // From the last byte (`end`, at `n`) down to the first, byte `i` in bits `8 * (i % 8)` of
+  // word `i / 8`.
+  let w0: u64 = 0;
+  let w1: u64 = 0;
+  let w2: u64 = 0;
+  let i = n;
+  let b = end as u64;
+  while (true) {
+    const s = (i & 7) * 8;
+    if (i < 8) {
+      w0 = w0 | (b << s);
+    } else if (i < 16) {
+      w1 = w1 | (b << s);
+    } else {
+      w2 = w2 | (b << s);
+    }
+    if (i == 0) {
+      break;
+    }
+    i = i - 1;
+    if (neg && i == 0) {
+      b = 0x2d;
+    } else {
+      b = 0x30 + a % 10;
+      a = a / 10;
+    }
+  }
+  velt_rt_write_str(stream, strAsciiWords(w0, w1, w2, (n + 1) as usize));
 }

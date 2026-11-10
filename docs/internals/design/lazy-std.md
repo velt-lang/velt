@@ -196,9 +196,10 @@ more with `Format` assumed (`too_late`). Live code is a superset of what lowerin
 own and the std code it reaches (`velt_sema` `body/lazy_std/live.rs`), std's own conversions
 included, so hello world checks none of std's integer printing. The integer hooks (`console.log`'s
 integer writers among them) act as one bit: a program demands none of them or all of them
-(`live_constructs.rs` `demanded_for`). `console.log`'s float writer is not one of them: it waits
-for live code that prints a float (`ON_DEMAND_WRITE`, `number_text.rs`), and holds no integer
-printing, so a program that prints only floats loads none.
+(`live_constructs.rs` `demanded_for`). `console.log`'s float writers are not among them: they wait
+for live code that prints a float (`ON_DEMAND_WRITE`, `number_text.rs`), and hold no integer
+printing (whole numbers have a writer of their own), so a program that prints only floats loads
+none.
 
 `host_async` is not moved: `velt/host/promise` loads `velt/io/error`, whose `IoError` extends the
 prelude's `Error`, which the rule excludes. It keeps its trigger below until (a2) (#2161 step 4).
