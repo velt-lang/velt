@@ -1,0 +1,19 @@
+// A standard timer calls its callback with no arguments, as in Node: a function whose
+// parameters all admit `undefined` is passed as it is, and gets `undefined` for each
+// (#2490). `new Promise((resolve) => setTimeout(resolve, ms))`, the sleep idiom, passes the
+// promise's `resolve: (value: unknown) => void`.
+async function sleep(ms: number): Promise<string> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+  await new Promise((r) => setTimeout(r, 5));
+  await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  return `slept ${ms}`;
+}
+function log(v?: string): void {
+  console.log("logged", v);
+}
+function show(v: string | undefined): void {
+  console.log("shown", v);
+}
+setTimeout(log, 1);
+setTimeout(show, 2);
+sleep(10).then((s) => console.log(s));
