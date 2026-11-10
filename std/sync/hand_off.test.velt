@@ -1,0 +1,194 @@
+// velt/sync (tests): `HandOff<T>`: a value given to the task waiting for it, once; a waiter that
+// leaves first gets nothing and the giver its item back; an item given to a waiter dropped before
+// it resumed comes back through `takeBack`, once; `end` resumes the waiter with null. A waiter
+// leaves by dropping its `park()` (here a `Promise.race` loser).
+import { describe, expect, it } from "velt/test";
+import { HandOff } from "./hand_off";
+
+class Conn {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+}
+
+/** How many `Res` were dropped. */
+const DROPPED = new Atomic<i64>(0);
+
+class Res {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+
+  [Symbol.dispose]() {
+    DROPPED.add(1, "seqcst");
+  }
+}
+
+async function parked(p: Promise<void>): Promise<i64> {
+  await p;
+  return 1;
+}
+
+async function giveOne(h: shared<HandOff<Conn>>, i: i64): Promise<i64> {
+  return h.give(new Conn(i)) == null ? 0 : 1;
+}
+
+async function yields(n: i64): Promise<void> {
+  for (let i: i64 = 0; i < n; i++) {
+    await yieldNow();
+  }
+}
+
+async function parkAndClaim(h: shared<HandOff<Conn>>): Promise<i64> {
+  // The park is polled again on every yield of the other branch, while a giver gives.
+  await Promise.all<void>([h.park(), yields(20)]);
+  return h.claim()?.id ?? -1;
+}
+
+async function waitFor(h: shared<HandOff<Conn>>): Promise<i64> {
+  const c = await h.wait();
+  return c?.id ?? -1;
+}
+
+describe("velt/sync HandOff", () => {
+  it("hands a value to the task that waits for it", async () => {
+    const h = shared(new HandOff<Conn>());
+    const waiter = spawn(waitFor(h));
+    await yieldNow();
+    expect(h.give(new Conn(7))).toBe(null);
+    expect(await waiter).toBe(7);
+    // Given once: a second give gets its item back.
+    expect(h.give(new Conn(8))?.id).toBe(8);
+  });
+
+  it("a value given before the wait is there when it starts", async () => {
+    const h = shared(new HandOff<Conn>());
+    expect(h.give(new Conn(3))).toBe(null);
+    expect(await waitFor(h)).toBe(3);
+  });
+
+  it("ends: the waiter resumes with null and a later give gets its item back", async () => {
+    const h = shared(new HandOff<Conn>());
+    const waiter = spawn(waitFor(h));
+    await yieldNow();
+    h.end();
+    expect(await waiter).toBe(-1);
+    expect(h.give(new Conn(4))?.id).toBe(4);
+  });
+
+  it(
+    "a waiter that leaves gets nothing; one dropped after its give leaves the item behind",
+    async () => {
+      const h = shared(new HandOff<Conn>());
+      // The race drops the wait it did not pick.
+      await Promise.race<void>([h.park(), yieldNow()]);
+      expect(h.give(new Conn(5))?.id).toBe(5);
+      const g = shared(new HandOff<Conn>());
+      // The wait is given its item, then dropped before it resumes.
+      {
+        const parked = g.park();
+        expect(g.give(new Conn(6))).toBe(null);
+      }
+      expect(g.takeBack()?.id).toBe(6);
+      expect(g.takeBack()).toBe(null);
+    },
+  );
+
+  it("two parks held at once each leave on their own", async () => {
+    // The first park takes the hand-off's own future; the second, alive at the same time, gets
+    // one of its own. The second sees the give and finishes; the first, dropped after the give
+    // without seeing it, leaves the item behind.
+    const h = shared(new HandOff<Conn>());
+    {
+      const first = h.park();
+      const second = h.park();
+      expect(h.give(new Conn(11))).toBe(null);
+      await second;
+    }
+    expect(h.takeBack()?.id).toBe(11);
+    // Both gone: the next park uses the hand-off's own future again and is given its item.
+    const g = shared(new HandOff<Conn>());
+    {
+      const gone = g.park();
+    }
+    const waiter = spawn(parkAndClaim(g));
+    expect(await spawn(giveOne(g, 12))).toBe(0);
+    expect(await waiter).toBe(12);
+  });
+
+  it("a wait outlives a hand-off dropped while it waits, and resumes at its end", async () => {
+    // A temporary: the hand-off is gone before the race polls its park.
+    const p = new HandOff<string>().park();
+    await Promise.race<void>([p, yieldNow()]);
+    let t: Promise<i64>;
+    {
+      const h = new HandOff<Conn>();
+      t = spawn(parked(h.park()));
+      await yieldNow();
+    }
+    expect(await t).toBe(1);
+  });
+
+  it("a wait given its item resumes with it after the hand-off is dropped", async () => {
+    // The giver holds the only hand-off; the waiter holds only its `wait()`.
+    let p: Promise<Conn | null> | null = null;
+    let back: Conn | null = null;
+    {
+      const h = shared(new HandOff<Conn>());
+      p = h.wait();
+      back = h.give(new Conn(7));
+    }
+    expect(back == null).toBe(true);
+    const c = await p!;
+    expect(c?.id ?? -1).toBe(7);
+    // Given, then both the wait and the hand-off dropped untaken: the wait (a started promise,
+    // which goes on) resumes with the item, which is dropped with its result, once.
+    const before = DROPPED.load("seqcst");
+    {
+      const h = shared(new HandOff<Res>());
+      const q = h.wait();
+      expect(h.give(new Res(9))).toBe(null);
+    }
+    await yields(3);
+    expect(DROPPED.load("seqcst") - before).toBe(1);
+    // A park dropped after its give, then the hand-off: the item left behind is dropped, once.
+    {
+      const h = shared(new HandOff<Res>());
+      {
+        const parked = h.park();
+        expect(h.give(new Res(10))).toBe(null);
+      }
+    }
+    expect(DROPPED.load("seqcst") - before).toBe(2);
+  });
+
+  it("many givers at once: one gives, the others get their item back", async () => {
+    for (let round = 0; round < 200; round++) {
+      const h = shared(new HandOff<Conn>());
+      const waiter = spawn(waitFor(h));
+      const givers: Promise<i64>[] = [];
+      for (let i: i64 = 0; i < 16; i++) {
+        givers.push(spawn(giveOne(h, i)));
+      }
+      let back: i64 = 0;
+      for (const g of givers) {
+        back += await g;
+      }
+      expect(back).toBe(15);
+      const got = await waiter;
+      expect(got >= 0 && got < 16).toBe(true);
+    }
+  });
+
+  it("a park polled again while a give lands gets the item", async () => {
+    for (let round = 0; round < 200; round++) {
+      const h = shared(new HandOff<Conn>());
+      const waiter = spawn(parkAndClaim(h));
+      const giver = spawn(giveOne(h, round));
+      expect(await giver).toBe(0);
+      expect(await waiter).toBe(round);
+    }
+  });
+});

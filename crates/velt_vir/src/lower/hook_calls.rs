@@ -550,7 +550,7 @@ macro_rules! builders {
 // Builders lowering does not call yet (hooks it reaches by name: track_caller.rs, numrep) are
 // generated too, so each lowered hook has one. Next to each builder, a module of its name holds
 // its argument types (`args::int_push::Args`), public for the doctest of `velt_vir::hook_args`.
-#[allow(dead_code, non_snake_case)]
+#[allow(dead_code, non_snake_case, clippy::too_many_arguments)]
 pub mod args {
     use super::{ty, Arg, Call, Construct, FnLower, Mode, Own, TyId};
     velt_common::std_hook_table!(builders);

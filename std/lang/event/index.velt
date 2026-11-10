@@ -1,0 +1,12 @@
+// velt/lang/event: Node's `Event`, `EventTarget` and `CustomEvent` globals (internal;
+// std/prelude/global/events.velt).
+export { Event, EventInit } from "./event";
+export {
+  AddEventListenerOptions,
+  EventListener,
+  EventListenerObject,
+  EventListenerOptions,
+  EventListenerOrEventListenerObject,
+  EventTarget,
+} from "./event_target";
+export { CustomEvent, CustomEventInit } from "./custom_event";

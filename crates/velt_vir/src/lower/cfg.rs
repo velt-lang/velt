@@ -163,6 +163,10 @@ impl FnLower<'_, '_> {
         if matches!(r, Rt::Panic) && self.panic_in_std(&args) {
             return;
         }
+        // The executor in Velt does some of their jobs (sched.rs).
+        let Err((args, dest)) = self.sched_rt(r, args, dest) else {
+            return;
+        };
         let id = self.cx.rt(r);
         self.call(vir::Callee::Extern(id), args, dest, r.sig().3);
     }

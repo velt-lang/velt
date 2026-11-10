@@ -1,0 +1,136 @@
+// velt/lang/hooks (internal): one-shot latches in the executor in Velt (sched.velt, #2649):
+// `velt_rt_latch_new` / `_free` / `_open` / `_wait`'s jobs, the waking half of `new Promise`
+// (std/lang/promise/settle.velt keeps the settled value). Opening queues a waiter of the task
+// being polled in its microtask queue at once, with credit (sched_micro.velt), as Node queues a
+// promise's reactions inside `resolve`; other waiters are woken.
+//
+// A latch: its reference count (the handle, each wait), whether it is open, and its waits (a
+// list linked through them). A wait is a heap future (rt_abi_async.md §1): its header, then its
+// latch, its waiter's waker (0 when none), its ticket once queued at the opening, and its link.
+// One worker (VELT_THREADS=1 scope): a latch is opened on the worker; it becomes atomic in the
+// multi-worker step.
+
+import * as m from "./sched_mem";
+import * as micro from "./sched_micro";
+import * as t from "./sched_task";
+
+const L_REFS: usize = 0;
+const L_OPEN: usize = 8;
+const L_WAITS: usize = 16;
+
+const W_LATCH: usize = 16;
+const W_WAKER: usize = 24;
+const W_TICKET: usize = 32;
+const W_NEXT: usize = 40;
+/** A wait that is not in its latch's list. */
+const W_SIZE: usize = 48;
+
+/** A closed latch, its handle's reference held. */
+export function latchNew(): u64 {
+  const l = m.alloc(24);
+  m.st(l + L_REFS, 1);
+  m.st(l + L_OPEN, 0);
+  m.st(l + L_WAITS, 0);
+  return l as u64;
+}
+
+/** Gives a reference to latch `l` back: the last frees it. */
+export function latchFree(l: u64): void {
+  const a = l as usize;
+  const n = m.ld(a + L_REFS) - 1;
+  m.st(a + L_REFS, n);
+  if (n === 0) {
+    m.release(a, 24);
+  }
+}
+
+/** A wait of latch `l`, with header entries `poll` and `drop`. */
+export function latchWait(l: u64, poll: usize, drop: usize): usize {
+  const a = l as usize;
+  m.st(a + L_REFS, m.ld(a + L_REFS) + 1);
+  const w = m.alloc(W_SIZE);
+  m.st(w, poll);
+  m.st(w + 8, drop);
+  m.st(w + W_LATCH, a);
+  m.st(w + W_WAKER, 0);
+  m.st(w + W_TICKET, 0);
+  m.st(w + W_NEXT, 1);
+  return w;
+}
+
+/** Opens latch `l` (once): each waiter queued on the task being polled, or woken. */
+export function latchOpen(l: u64): void {
+  const a = l as usize;
+  if (m.ld(a + L_OPEN) !== 0) {
+    return;
+  }
+  m.st(a + L_OPEN, 1);
+  const e = t.exec();
+  const current = e === 0 ? 0 : m.ld(e + t.E_CURRENT);
+  let w = m.ld(a + L_WAITS);
+  m.st(a + L_WAITS, 0);
+  while (w !== 0) {
+    const next = m.ld(w + W_NEXT);
+    m.st(w + W_NEXT, 1);
+    const k = m.ld(w + W_WAKER);
+    m.st(w + W_WAKER, 0);
+    if (k !== 0) {
+      if (current !== 0 && t.taskOf(k) === current) {
+        m.st(w + W_TICKET, micro.enqueue(current, k, true) as usize);
+      } else {
+        m.wakeOwned(k);
+      }
+    }
+    w = next;
+  }
+}
+
+/** A wait's poll: ready once the latch is open (and its queued step reached). */
+export function waitPoll(w: usize, cx: usize): u32 {
+  const a = m.ld(w + W_LATCH);
+  const waker = m.ld(cx + 8);
+  if (m.ld(a + L_OPEN) !== 0) {
+    const ticket = m.ld(w + W_TICKET) as u64;
+    if (ticket === 0) {
+      return 1;
+    }
+    const k = t.exec() === 0 ? 0 : t.taskOf(waker);
+    if (k === 0 || micro.reached(k, ticket, waker)) {
+      m.st(w + W_TICKET, 0);
+      return 1;
+    }
+    return 0;
+  }
+  const old = m.ld(w + W_WAKER);
+  if (old !== waker) {
+    m.st(w + W_WAKER, m.wakerClone(waker));
+    if (old !== 0) {
+      m.wakerDrop(old);
+    }
+  }
+  if (m.ld(w + W_NEXT) === 1) {
+    m.st(w + W_NEXT, m.ld(a + L_WAITS));
+    m.st(a + L_WAITS, w);
+  }
+  return 0;
+}
+
+/** A wait's drop: out of its latch's list, its waker and its reference to the latch given back. */
+export function waitDrop(w: usize): void {
+  const a = m.ld(w + W_LATCH);
+  if (m.ld(w + W_NEXT) !== 1) {
+    let at = a + L_WAITS;
+    while (m.ld(at) !== 0 && m.ld(at) !== w) {
+      at = m.ld(at) + W_NEXT;
+    }
+    if (m.ld(at) === w) {
+      m.st(at, m.ld(w + W_NEXT));
+    }
+  }
+  const k = m.ld(w + W_WAKER);
+  if (k !== 0) {
+    m.wakerDrop(k);
+  }
+  latchFree(a as u64);
+  m.release(w, W_SIZE);
+}

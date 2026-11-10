@@ -257,7 +257,6 @@ pub fn optimize_served(
 fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTimings, served: Served) {
     match level {
         OptLevel::None => {
-            numrep::declare_formatters(&mut program.externs);
             let helpers = debug_inlined(&program.funcs);
             if helpers.contains(&true) {
                 t.time("inline", || inline::run_helpers(program, &helpers));
@@ -283,7 +282,6 @@ fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTiming
         OptLevel::Speed => {
             t.time("dead_funcs", || dead_funcs::run(program));
             t.time("gated_clones", || gated_clones::run(program));
-            numrep::declare_formatters(&mut program.externs);
             // Once before inlining as well: an array is still one value there, whose length
             // bounds the index loops over it (`numrep` knows a length is below 2^53); after
             // inlining, `sroa` splits it into locals the length fact no longer reaches.

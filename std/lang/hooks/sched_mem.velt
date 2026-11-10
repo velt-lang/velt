@@ -1,0 +1,246 @@
+// velt/lang/hooks (internal): the raw memory of the executor in Velt (sched.velt, #2649): words
+// read and written at an address, atomically where other threads read them too, the allocator
+// compiled code uses (`rawAlloc`, mimalloc in a release runtime; the debug runtime checks every
+// block's size when it is freed), the C library's for the blocks that live as long as the
+// worker (which the leak counters would otherwise report), and the calls through a waker's table (rt_abi_async.md §1: clone, wake,
+// wake_by_ref, drop at offsets 0, 8, 16, 24 of the table the header's first word points to).
+// Every address passed here is one the executor allocated, or a waker header from a `cx`.
+
+import { Ptr } from "velt/ffi";
+import {
+  addressCall,
+  addressLoad,
+  addressStore,
+  inline,
+  ptrAtomicCas,
+  ptrAtomicLoad,
+  ptrAtomicRmw,
+  ptrAtomicStore,
+  rawAlloc,
+  rawFree,
+  stateDrop,
+} from "velt/lang/intrinsics";
+
+// Pointers are `Ptr`s, as in every other C declaration of these symbols (a program's own, velt/
+// ffi's `memcpy`): one C symbol has one signature in a program, and a pointer is `Ptr` there.
+declare c("c") function calloc$sched(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$sched(p: Ptr<u8> | null): void;
+declare c("c") function memcpy$sched(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
+declare c("c") function memset$sched(dst: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
+
+/** Address `a` as a C pointer argument; 0 passes `NULL`. */
+@inline
+export function ptr(a: usize): Ptr<u8> {
+  // SAFETY: only passed to a C function, whose call site states what is at `a`.
+  return unsafe { Ptr.at<u8>(a) };
+}
+
+/** The address a C function returned; 0 for `NULL`. */
+@inline
+export function addr(p: Ptr<u8> | null): usize {
+  if (p === null) {
+    return 0;
+  }
+  return Ptr.addressOf(p);
+}
+
+/** `n` (> 0) bytes, aligned to 8 (every value's alignment); `release(p, n)` gives them back. */
+@inline
+export function alloc(n: usize): usize {
+  return rawAlloc(n);
+}
+
+/** `n` (> 0) bytes set to 0, aligned to 8; `release(p, n)` gives them back. */
+@inline
+export function zeroed(n: usize): usize {
+  const p = rawAlloc(n);
+  // SAFETY: `p` holds `n` bytes.
+  unsafe {
+    memset$sched(ptr(p), 0, n);
+  }
+  return p;
+}
+
+/**
+ * Gives back the `n` bytes at `p`, which `alloc(n)` or `zeroed(n)` gave and nothing uses after. A
+ * call, not inlined: a free is the cold end of every reference count's release, which stays
+ * small enough to inline where it is hot (a task's waker wake and drop).
+ */
+export function release(p: usize, n: usize): void {
+  // SAFETY: as the doc says.
+  unsafe {
+    rawFree(p, n);
+  }
+}
+
+/**
+ * `n` bytes set to 0, aligned to 16, from the C library: for a block that lives as long as the
+ * worker (the executor, its I/O block, reactor and handle table), freed with `lastingRelease`.
+ */
+export function lastingZeroed(n: usize): usize {
+  // SAFETY: calloc has no precondition; its result is checked.
+  const p = addr(unsafe { calloc$sched(1, n) });
+  if (p === 0) {
+    panic("out of memory");
+  }
+  return p;
+}
+
+/** Frees what `lastingZeroed` gave. */
+export function lastingRelease(p: usize): void {
+  // SAFETY: `p` came from calloc and is not used after.
+  unsafe {
+    free$sched(ptr(p));
+  }
+}
+
+/** Copies `n` bytes from `src` to `dst` (which do not overlap). */
+export function copy(dst: usize, src: usize, n: usize): void {
+  // SAFETY: both hold `n` bytes; a task's slot or state and the state lowering handed over.
+  unsafe {
+    memcpy$sched(ptr(dst), ptr(src), n);
+  }
+}
+
+/** The word at `a`, which only the worker writes. */
+@inline
+export function ld(a: usize): usize {
+  // SAFETY: an executor or task field (module docs).
+  return unsafe { addressLoad<usize>(a) };
+}
+
+@inline
+export function st(a: usize, v: usize): void {
+  // SAFETY: as `ld`.
+  unsafe {
+    addressStore<usize>(a, v);
+  }
+}
+
+@inline
+export function ld32(a: usize): u32 {
+  // SAFETY: as `ld`.
+  return unsafe { addressLoad<u32>(a) };
+}
+
+@inline
+export function st32(a: usize, v: u32): void {
+  // SAFETY: as `ld`.
+  unsafe {
+    addressStore<u32>(a, v);
+  }
+}
+
+/** The word at `a`, read atomically: other threads change it. */
+@inline
+export function load(a: usize): usize {
+  // SAFETY: an aligned word every thread changes atomically.
+  return unsafe { ptrAtomicLoad(Ptr.at<usize>(a), "seqcst") };
+}
+
+@inline
+export function load32(a: usize): u32 {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicLoad(Ptr.at<u32>(a), "seqcst") };
+}
+
+@inline
+export function store32(a: usize, v: u32): void {
+  // SAFETY: as `load`.
+  unsafe {
+    ptrAtomicStore(Ptr.at<u32>(a), v, "seqcst");
+  }
+}
+
+/** Makes the `u32` at `a` `v` if it is `expected`; the value it had. */
+@inline
+export function cas32(a: usize, expected: u32, v: u32): u32 {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicCas(Ptr.at<u32>(a), expected, v, "seqcst", "seqcst") };
+}
+
+/** Adds 1 to the count at `a`; the count before. */
+@inline
+export function inc(a: usize): usize {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicRmw(Ptr.at<usize>(a), "add", 1, "relaxed") };
+}
+
+/** Takes 1 from the count at `a`; the count before. */
+@inline
+export function dec(a: usize): usize {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicRmw(Ptr.at<usize>(a), "sub", 1, "acqrel") };
+}
+
+/** Sets the bits `v` in the `u32` at `a`; the word before. */
+@inline
+export function or32(a: usize, v: u32): u32 {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicRmw(Ptr.at<u32>(a), "or", v, "seqcst") };
+}
+
+/** Clears the bits not in `v` in the `u32` at `a`; the word before. */
+@inline
+export function and32(a: usize, v: u32): u32 {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicRmw(Ptr.at<u32>(a), "and", v, "seqcst") };
+}
+
+/** Makes the word at `a` `v`; the word before. */
+@inline
+export function swap(a: usize, v: usize): usize {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicRmw(Ptr.at<usize>(a), "exchange", v, "seqcst") };
+}
+
+/** Pushes `t` on the stack whose head is at `head`, linked through `t + next`. */
+export function pushStack(head: usize, t: usize, next: usize): void {
+  let h = load(head);
+  while (true) {
+    st(t + next, h);
+    // SAFETY: as `load`.
+    const was = unsafe { ptrAtomicCas(Ptr.at<usize>(head), h, t, "seqcst", "seqcst") };
+    if (was === h) {
+      return;
+    }
+    h = was;
+  }
+}
+
+/** Takes the whole stack whose head is at `head`: its top. */
+@inline
+export function takeStack(head: usize): usize {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicRmw(Ptr.at<usize>(head), "exchange", 0, "seqcst") };
+}
+
+/** One more reference to waker `w`. */
+export function wakerClone(w: usize): usize {
+  // SAFETY: `w` is a waker header; its table's first entry is `clone`.
+  return unsafe { addressCall(ld(ld(w)), w) };
+}
+
+/** Wakes waker `w`, giving its reference back. */
+export function wakeOwned(w: usize): void {
+  // SAFETY: as `wakerClone`; entry 1 is `wake`.
+  unsafe {
+    stateDrop(ld(ld(w) + 8), w);
+  }
+}
+
+/** Wakes waker `w`, keeping its reference. */
+export function wakeByRef(w: usize): void {
+  // SAFETY: as `wakerClone`; entry 2 is `wake_by_ref`.
+  unsafe {
+    stateDrop(ld(ld(w) + 16), w);
+  }
+}
+
+/** Gives waker `w`'s reference back. */
+export function wakerDrop(w: usize): void {
+  // SAFETY: as `wakerClone`; entry 3 is `drop`.
+  unsafe {
+    stateDrop(ld(ld(w) + 24), w);
+  }
+}

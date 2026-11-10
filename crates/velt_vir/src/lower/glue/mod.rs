@@ -36,6 +36,7 @@
 //! the whole `Dog`.
 
 mod clone;
+mod demand;
 mod drop;
 mod drop_chain;
 mod drop_depth;
@@ -57,6 +58,7 @@ mod transfer;
 mod transfer_env;
 pub(in crate::lower) mod vtable;
 
+pub(super) use demand::demand_off;
 pub(super) use generic_slots::{GenericSlot, SlotKey};
 #[cfg(test)]
 pub(crate) use literals::{inspect_key, inspect_quote};

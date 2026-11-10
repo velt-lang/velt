@@ -1,0 +1,257 @@
+// velt/lang/hooks (internal): waits on a source of the executor's reactor (sched_io.velt, #2649
+// step 2): heap futures (rt_abi_async.md §1: poll, drop; no result) that complete once their
+// source is ready for what they wait for, or their deadline passed. A pending wait is linked into
+// its source (any number per source; dropped, it leaves in constant time) and, with a deadline,
+// into the I/O block's timer list, sorted by deadline, which the worker's wait looks at. The
+// block counts the linked waits: pending I/O keeps the process alive (sched_end.velt).
+
+import { Ptr } from "velt/ffi/ptr";
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as r from "#reactor";
+import * as io from "./sched_io";
+import * as m from "./sched_mem";
+import * as tb from "./sched_io_table";
+
+// A waiter: its source's handle, what it waits for, its place in the source's list, its waker,
+// the source it is linked into (0: none), its deadline (monotonic nanoseconds, 0: none), its
+// place in the timer list, whether it is there, whether its deadline passed.
+const W_SOURCE: usize = 16;
+const W_KIND: usize = 24;
+const W_ARG: usize = 32;
+const W_PREV: usize = 40;
+const W_NEXT: usize = 48;
+const W_WAKER: usize = 56;
+const W_LINKED: usize = 64;
+const W_DEADLINE: usize = 72;
+const W_TNEXT: usize = 80;
+const W_TPREV: usize = 88;
+const W_TIMED: usize = 96;
+const W_EXPIRED: usize = 104;
+const W_SIZE: usize = 112;
+
+/** Wakes every waiter of source `s`; each polls again and waits again when it must. */
+export function wakeAll(s: usize): void {
+  let w = m.ld(s + io.S_WAITERS);
+  m.st(s + io.S_WAITERS, 0);
+  while (w !== 0) {
+    const next = m.ld(w + W_NEXT);
+    waiting(-1);
+    m.st(w + W_LINKED, 0);
+    m.st(w + W_PREV, 0);
+    m.st(w + W_NEXT, 0);
+    const k = m.ld(w + W_WAKER);
+    if (k !== 0) {
+      m.st(w + W_WAKER, 0);
+      m.wakeOwned(k);
+    }
+    w = next;
+  }
+}
+
+/**
+ * A wait on the source of `handle` for `kind` with `arg`, until `deadline` (monotonic
+ * nanoseconds, `now()`; 0: none): a heap future, for `promiseAt<void>`. It finds the source again
+ * by its handle on each poll, so a closed one completes it.
+ */
+export function waitFor(handle: u64, kind: u32, arg: u64, deadline: u64): usize {
+  const b = io.io();
+  const f = m.alloc(W_SIZE);
+  m.st(f, m.ld(b + io.IO_WAIT_POLL));
+  m.st(f + 8, m.ld(b + io.IO_WAIT_DROP));
+  m.st(f + W_SOURCE, handle as usize);
+  m.st32(f + W_KIND, kind);
+  m.st(f + W_ARG, arg as usize);
+  m.st(f + W_PREV, 0);
+  m.st(f + W_NEXT, 0);
+  m.st(f + W_WAKER, 0);
+  m.st(f + W_LINKED, 0);
+  m.st(f + W_DEADLINE, deadline as usize);
+  m.st(f + W_TIMED, 0);
+  m.st(f + W_EXPIRED, 0);
+  return f;
+}
+
+/** Does `s` satisfy a wait for `kind` with `arg`? An error or abort ends every wait. */
+export function satisfied(s: usize, kind: u32, arg: usize): bool {
+  if (m.ld32(s + io.S_ERR) !== 0 || (m.ld32(s + io.S_FLAGS) & io.F_ABORTED) !== 0) {
+    return true;
+  }
+  const rd = m.ld32(s + io.S_READY);
+  if (kind === io.K_READ) {
+    return (rd & (io.READ | io.HUP | io.ERR)) !== 0;
+  }
+  if (kind === io.K_WRITE) {
+    return (rd & (io.WRITE | io.HUP | io.ERR)) !== 0;
+  }
+  if (kind === io.K_WRITTEN) {
+    return m.ld(s + io.S_WRITTEN) >= arg;
+  }
+  return m.ld(s + io.S_QUEUED) - m.ld(s + io.S_WRITTEN) <= arg;
+}
+
+export function waitPoll(f: usize, cx: usize): u32 {
+  const s = tb.lookup(m.ld(f + W_SOURCE) as u64);
+  if (s === 0 || satisfied(s, m.ld32(f + W_KIND), m.ld(f + W_ARG)) || expired(f)) {
+    unlink(f);
+    untime(f);
+    return 1;
+  }
+  const w = m.ld(cx + 8);
+  const old = m.ld(f + W_WAKER);
+  if (old !== w) {
+    m.st(f + W_WAKER, m.wakerClone(w));
+    if (old !== 0) {
+      m.wakerDrop(old);
+    }
+  }
+  if (m.ld(f + W_LINKED) === 0) {
+    const head = m.ld(s + io.S_WAITERS);
+    m.st(f + W_NEXT, head);
+    m.st(f + W_PREV, 0);
+    if (head !== 0) {
+      m.st(head + W_PREV, f);
+    }
+    m.st(s + io.S_WAITERS, f);
+    m.st(f + W_LINKED, s);
+    waiting(1);
+  }
+  if (m.ld(f + W_DEADLINE) !== 0 && m.ld(f + W_TIMED) === 0) {
+    time(f);
+  }
+  return 0;
+}
+
+/** Takes waiter `f` out of its source's list (constant time). */
+function unlink(f: usize): void {
+  const s = m.ld(f + W_LINKED);
+  if (s === 0) {
+    return;
+  }
+  const prev = m.ld(f + W_PREV);
+  const next = m.ld(f + W_NEXT);
+  if (prev === 0) {
+    m.st(s + io.S_WAITERS, next);
+  } else {
+    m.st(prev + W_NEXT, next);
+  }
+  if (next !== 0) {
+    m.st(next + W_PREV, prev);
+  }
+  m.st(f + W_LINKED, 0);
+  waiting(-1);
+}
+
+/** One more (`d` 1) or one fewer (-1) wait linked into a source: the I/O block's count. */
+@inline
+function waiting(d: isize): void {
+  const b = io.io();
+  m.st(b + io.IO_WAITING, ((m.ld(b + io.IO_WAITING) as isize) + d) as usize);
+}
+
+export function waitDrop(f: usize): void {
+  unlink(f);
+  untime(f);
+  const k = m.ld(f + W_WAKER);
+  if (k !== 0) {
+    m.wakerDrop(k);
+  }
+  m.release(f, W_SIZE);
+}
+
+// ---- Deadlines. ----
+
+declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<u8>): i32;
+
+/** The monotonic clock, in nanoseconds. */
+export function now(): u64 {
+  const ts = m.alloc(16);
+  // SAFETY: a timespec in `ts`.
+  unsafe {
+    clock_gettime$io(r.MONOTONIC, m.ptr(ts));
+  }
+  const ns = (m.ld(ts) as u64) * 1000000000 + (m.ld(ts + 8) as u64);
+  m.release(ts, 16);
+  return ns;
+}
+
+/** Has waiter `f`'s deadline passed (the timer list said so, or the clock does now)? */
+@inline
+function expired(f: usize): bool {
+  const d = m.ld(f + W_DEADLINE);
+  if (d === 0) {
+    return false;
+  }
+  return m.ld(f + W_EXPIRED) !== 0 || now() >= (d as u64);
+}
+
+/** Puts waiter `f` in the timer list, sorted by deadline (the first is the soonest). */
+@noInline
+function time(f: usize): void {
+  const b = io.io();
+  const d = m.ld(f + W_DEADLINE);
+  let prev: usize = 0;
+  let at = m.ld(b + io.IO_TIMERS);
+  while (at !== 0 && m.ld(at + W_DEADLINE) <= d) {
+    prev = at;
+    at = m.ld(at + W_TNEXT);
+  }
+  m.st(f + W_TPREV, prev);
+  m.st(f + W_TNEXT, at);
+  if (prev === 0) {
+    m.st(b + io.IO_TIMERS, f);
+  } else {
+    m.st(prev + W_TNEXT, f);
+  }
+  if (at !== 0) {
+    m.st(at + W_TPREV, f);
+  }
+  m.st(f + W_TIMED, 1);
+}
+
+/** Takes waiter `f` out of the timer list. */
+@inline
+function untime(f: usize): void {
+  if (m.ld(f + W_TIMED) === 0) {
+    return;
+  }
+  const b = io.io();
+  const prev = m.ld(f + W_TPREV);
+  const next = m.ld(f + W_TNEXT);
+  if (prev === 0) {
+    m.st(b + io.IO_TIMERS, next);
+  } else {
+    m.st(prev + W_TNEXT, next);
+  }
+  if (next !== 0) {
+    m.st(next + W_TPREV, prev);
+  }
+  m.st(f + W_TIMED, 0);
+}
+
+/**
+ * The milliseconds until the first deadline (rounded up), wakes the waiters whose deadline
+ * passed first; -1 when there is none.
+ */
+export function expire(b: usize): i64 {
+  let f = m.ld(b + io.IO_TIMERS);
+  if (f === 0) {
+    return -1;
+  }
+  const t = now();
+  while (f !== 0 && (m.ld(f + W_DEADLINE) as u64) <= t) {
+    const next = m.ld(f + W_TNEXT);
+    untime(f);
+    m.st(f + W_EXPIRED, 1);
+    unlink(f);
+    const k = m.ld(f + W_WAKER);
+    if (k !== 0) {
+      m.st(f + W_WAKER, 0);
+      m.wakeOwned(k);
+    }
+    f = next;
+  }
+  if (f === 0) {
+    return -1;
+  }
+  return ((((m.ld(f + W_DEADLINE) as u64) - t) + 999999) / 1000000) as i64;
+}

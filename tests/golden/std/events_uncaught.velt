@@ -1,0 +1,11 @@
+// An error a listener throws doesn't stop the other listeners or `dispatchEvent`, which returns
+// as usual; it is uncaught afterwards and ends the process, as in Node (#2378). Node throws it
+// from `process.nextTick`, before callbacks queued earlier; Velt after them.
+const t = new EventTarget();
+t.addEventListener("ex", () => {
+  console.log("ex1");
+  throw new Error("boom");
+});
+t.addEventListener("ex", () => console.log("ex2"));
+console.log("ret", t.dispatchEvent(new Event("ex")));
+console.log("after");

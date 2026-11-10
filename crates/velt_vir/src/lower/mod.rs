@@ -98,6 +98,8 @@ mod foreign;
 mod frame_envs;
 mod lower_profile;
 mod raw_memory;
+mod sched;
+mod slot;
 mod state;
 use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
 mod fn_shapes;
@@ -269,6 +271,7 @@ pub(crate) fn lower_program_seeded(
         cx.cpu_checks.no_extensions = opts.no_cpu_extensions;
         cx.no_await_steps = no_await_steps;
         cx.facts_only = facts_only;
+        cx.glue_slots.keep_all = want_seed || glue::demand_off();
         cx.shapes.wanted = shape::wanted(opts.shapes);
         cx.shapes.on = cx.shapes.wanted;
         cx.locs = opts
@@ -468,13 +471,12 @@ struct Cx<'h> {
     /// The prelude's top-level `await` mark and what it forwards to (async_fn/suspend.rs).
     tla_marks: Option<[Option<hir::DefId>; 2]>,
     static_map: FxHashMap<(Vec<u8>, u32), StaticId>,
-    /// The stored elements of each module constant table read so far (`table_read`): the data
-    /// and the length, or `None` for a constant that is not one.
+    /// Each module constant table's stored elements (`table_read`): data and length, else `None`.
     tables: FxHashMap<hir::DefId, Option<(StaticId, usize)>>,
-    /// The data of each static atomic used so far, `None` for a global that is not one
-    /// (static_atomic.rs).
+    /// Each static atomic's data so far, `None` for a global that is not one (static_atomic.rs).
     static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
     fut_header: Option<crate::vir::AggId>, // a heap future's header (raw_memory.rs `fut_header`)
+    sched_tasks: bool, // the executor in Velt's hooks start promises or spawn tasks (sched.rs)
     /// The class id number of each `struct` type with an interface table (class_test.rs
     /// `VALUE_IDS`), in the order the tables are made.
     value_ids: FxHashMap<TyId, u64>,
@@ -581,8 +583,7 @@ struct Cx<'h> {
     shared_locks: rustc_hash::FxHashSet<TyId>,
     /// The shared type each type `close_boxing` reached through shared values came from.
     share_from: rustc_hash::FxHashMap<TyId, TyId>,
-    /// Non-zero while the field types of a prelude `Map` are substituted (types.rs
-    /// `keeps_nothings_apart`).
+    /// Non-zero while a prelude `Map`'s field types are substituted (`keeps_nothings_apart`).
     map_fields: u32,
 }
 

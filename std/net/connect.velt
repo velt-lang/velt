@@ -1,7 +1,7 @@
 // velt/net (internal): `connect` and `connectTls`, which open a `TcpStream`.
 
 import { unwrapIo } from "velt/native/result";
-import { velt_rt_tcp_connect, velt_rt_tcp_connect_tls } from "velt/net/rt";
+import { velt_rt_tcp_connect, velt_rt_tcp_connect_tls } from "#net-tcp";
 import { TcpStream } from "velt/net/tcp_stream";
 
 /** Connects to "host:port". */

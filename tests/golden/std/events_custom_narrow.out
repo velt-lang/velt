@@ -1,0 +1,5 @@
+inst 5
+inst { n: 1 }
+inst null
+plain m
+inst s

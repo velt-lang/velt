@@ -3,10 +3,12 @@
 // another thread, and `VersionLatch`, the latch word of optimistic lock coupling, which a
 // concurrent tree keeps in every node (bbtree's `NodeLatch`). Both are plain Velt on the
 // public `Atomic` API: any package can write its own. `Atom<T>`, a shared value threads read,
-// replace and update, and `Channel<T>`, a typed queue between tasks (https://veltlang.com/docs/std/sync/channel/).
+// replace and update, `Channel<T>`, a typed queue between tasks (https://veltlang.com/docs/std/sync/channel/),
+// and `HandOff<T>`, one value handed to one waiting task.
 
 export { Atom } from "velt/sync/atom";
 export { Backoff, SPIN_ROUNDS } from "velt/sync/backoff";
 export { Channel, channel } from "velt/sync/channel";
 export { ChannelClosed } from "velt/sync/errors";
+export { HandOff } from "velt/sync/hand_off";
 export { VersionLatch } from "velt/sync/version_latch";

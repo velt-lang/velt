@@ -109,9 +109,8 @@ export async function connection<E>(
         while (open && parser.next(req.head)) {
           // The next head, if any, starts arriving now.
           headStart = -1;
-          req.begin(now);
           res.begin(req.head.keepAlive, req.head.http11, req.isMethod("HEAD"));
-          req.watch.begin(res);
+          req.begin(now, res);
           // A body still to come: the responses before it go out first, so a client waiting
           // for them (or for `100 Continue` after them) sends it.
           if (
@@ -126,7 +125,7 @@ export async function connection<E>(
             await catchPanic(() => {
               // Storing the promise runs the handler up to its first wait.
               const answer = handler(req, res);
-              req.watch.handlerWaits();
+              req.watch.handlerWaits(res);
               return answer;
             });
           } catch (e) {

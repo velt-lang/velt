@@ -49,6 +49,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if f.is_async {
             lw.push_scope(ScopeKind::Block);
             let code = lw.run_async_main(def);
+            lw.sched_finish(&code);
             lw.register_statics_drop();
             lw.terminate(Terminator::Return(code));
             lw.scopes.clear();
@@ -66,7 +67,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let s = lw.temp(sync_root_ty(abi.ret, abi.out, throws));
             let root = super::cfunc(lw.cx.func(Work::SyncMainRoot));
             match lw.run_root(root, s) {
-                Some(_) => lw.sync_main_tail(s, ret, throws),
+                Some(_) => {
+                    let code = lw.sync_main_tail(s, ret, throws);
+                    lw.sched_finish(&code);
+                    code
+                }
                 None => cint(0, Ty::I32),
             }
         } else {
@@ -137,6 +142,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `None` (the runtime runs the code after it, `MainFinish`; module docs).
     fn run_root(&mut self, poll: Operand, s: vir::Local) -> Option<Operand> {
         let a = self.addr(Place::local(s));
+        if self.std_sched() {
+            self.sched_block_on(poll, a.clone());
+            return Some(a);
+        }
         if !super::host::js_host(&self.cx.target) {
             self.call_rt(Rt::BlockOn, vec![poll, a.clone()], None);
             return Some(a);

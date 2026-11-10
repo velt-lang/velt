@@ -416,6 +416,37 @@ pub enum Intrinsic {
     /// out of it (docs/internals/design/unwinding.md). Lowered to a call of `velt_eh_try`, which
     /// the backend defines (`velt_vir::eh`). Additive.
     CatchUnwind,
+    /// std only: `statePoll(poll: usize, state: usize, cx: usize) -> u32`: the call of the
+    /// compiled poll function at address `poll` with `(state, cx)` (rt_abi_async.md §1), for
+    /// std's executor (#2649). Additive.
+    StatePoll,
+    /// std only: `stateDrop(drop: usize, at: usize)`: the call of the C function at address
+    /// `drop` with `at` (a state's drop function, a result's drop glue). Additive.
+    StateDrop,
+    /// std only: `addressCall(f: usize, a: usize) -> usize`: the call of the C function at
+    /// address `f` with `a`, both pointer-sized (a waker table's `clone`). Additive.
+    AddressCall,
+    /// std only: `fnAddress(f) -> usize`: the address of module-level function `f` (a `FnRef`
+    /// with no type arguments; sema checks it is not async or throwing and passes only numbers
+    /// and `bool`), callable from C with the C calling convention (#2649). Additive.
+    FnAddress,
+    /// std only: `slotSizeOfFirst() -> usize`, behind std's `slotSize<T>()`: the size of the
+    /// enclosing instance's first type argument (std/lang/intrinsics/slot.velt). Additive.
+    SlotSize,
+    /// std only: `slotPut<T>(at: usize, value: T)`: `value` moved to `*(T*)at`, transferred as
+    /// a channel send's value is. Additive.
+    SlotPut,
+    /// std only: `slotTake<T>(at: usize) -> T`: the value at `at`, moved out. Additive.
+    SlotTake,
+    /// std only: `promiseAt<T>(f: usize) -> Promise<T>`: the heap future at `f` as an owned
+    /// promise. Additive.
+    PromiseAt,
+    /// std only: `rawAlloc(n: usize) -> usize`: `n` bytes (aligned to 8) from the allocator
+    /// generated code uses (`velt_rt_alloc`), on every target. Additive.
+    RawAlloc,
+    /// std only: `rawFree(p: usize, n: usize)`: gives back what `rawAlloc(n)` returned
+    /// (`velt_rt_free`). Additive.
+    RawFree,
     /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
     /// range against `StrByteLen`). The bytes are read where the string keeps them.
     StrByteAt,

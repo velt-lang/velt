@@ -69,8 +69,8 @@ pub struct Hook {
     /// counts is that the compiler no longer calls it in the hook's place.
     pub replaces: &'static [&'static str],
     /// Lowering calls the runtime instead when the hook is missing or left unchecked (it is
-    /// one of [`ON_DEMAND_FLOAT`]): its `velt_vir` builder returns an `Option`. Every other
-    /// lowered hook missing is an internal compiler error.
+    /// one of [`ON_DEMAND_FLOAT`] or [`ON_DEMAND_WRITE`]): its `velt_vir` builder returns an
+    /// `Option`. Every other lowered hook missing is an internal compiler error.
     pub fallback: bool,
     /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.velt`)
     /// that measures this hook against the Rust it replaced, if one does.
@@ -221,6 +221,27 @@ hooks! {
     uint_push => lang_hooks_number_text, "uintPush", sig((&mut string, u64) -> void), lowered,
         replaces("velt_rt_strbuf_push_u64"), bench("int_to_string"),
         constructs(TextUint, Format, Dynamic);
+    /// A signed integer and the byte after it (a space or the newline) written to a stream in one
+    /// write: a `console.log` argument (`velt_vir` `console.rs`). `Format`, like `int_push`, which
+    /// prints it when the line isn't all scalars: the same demand, not a narrower one
+    /// (`hook_demand.rs`).
+    int_write => lang_hooks_number_text, "intWrite", sig((u32, i64, u8) -> void), lowered,
+        replaces("velt_rt_write_i64"), constructs(Format);
+    /// An unsigned integer and the byte after it, as `int_write`.
+    uint_write => lang_hooks_number_text, "uintWrite", sig((u32, u64, u8) -> void), lowered,
+        replaces("velt_rt_write_u64"), constructs(Format);
+    /// A float as `console.log` prints it and the byte after it: a whole number below 2^53 other
+    /// than `-0` by `whole_number_write`, anything else by the runtime's printer, which lowering
+    /// calls while this is unchecked ([`ON_DEMAND_WRITE`]). It holds no integer hook, so a printed
+    /// float checks no integer printing. numrep turns a call with such an `x` into one of
+    /// `int_write` where the program has that, else of `whole_number_write`.
+    number_write => lang_hooks_number_write, "numberWrite", sig((u32, f64, u8) -> void), lowered,
+        fallback, replaces("velt_rt_write_f64");
+    /// A whole number below 2^53 other than `-0`, as an `i64`, and the byte after it, as
+    /// `number_write` writes the float, by digits of its own (no integer hook): `number_write`'s
+    /// and numrep's.
+    whole_number_write => lang_hooks_number_write, "wholeNumberWrite", sig((u32, i64, u8) -> void),
+        lowered, fallback;
     /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
     /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
     /// whole `x` into one of `int_text`.
@@ -256,6 +277,45 @@ hooks! {
     /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
+    // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
+    /// `velt_rt_block_on`'s job: `(poll, state)`.
+    sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize) -> void), lowered;
+    /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
+    sched_spawn => lang_hooks_sched, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize) -> usize), lowered;
+    /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code, which runs
+    /// the tasks left when it is 0.
+    sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
+    sched_finish => lang_hooks_sched, "schedFinish", sig((i32) -> void), lowered;
+    /// `velt_rt_fut_box`'s: `(poll, drop, state, size, align)`, the lazy boxed promise.
+    sched_box => lang_hooks_sched, "schedBox", sig((usize, usize, usize, u64, u64) -> usize), lowered;
+    /// `velt_rt_fut_start`'s and `_start_rejecting`'s: `(f, result_drop, rejecting)`; then
+    /// `velt_rt_fut_detach`'s: `(f, quiet_drop)`.
+    sched_start => lang_hooks_sched, "schedStart", sig((usize, usize, bool) -> void), lowered;
+    sched_detach => lang_hooks_sched, "schedDetach", sig((usize, usize) -> void), lowered;
+    /// `velt_rt_futs_handled`'s: `(futs, n, quiet_drop)`.
+    sched_handled => lang_hooks_sched, "schedHandled", sig((usize, u64, usize) -> void), lowered;
+    /// `velt_rt_await_tick`'s: `(cx)`, the ticket; then `velt_rt_await_ready`'s: `(ticket, cx)`.
+    sched_await_tick => lang_hooks_sched, "schedAwaitTick", sig((usize) -> u64), lowered;
+    sched_await_ready => lang_hooks_sched, "schedAwaitReady", sig((u64, usize) -> u32), lowered;
+    /// `velt_rt_microtask`'s (std/prelude/promise.velt's extern): the heap future.
+    sched_microtask => lang_hooks_sched, "schedMicrotask", sig(() -> usize), lowered;
+    /// `velt_rt_latch_new`'s, `_free`'s, `_open`'s and `_wait`'s (std/lang/promise/settle.velt's
+    /// externs): a latch is its address; a wait is a heap future.
+    sched_latch_new => lang_hooks_sched, "schedLatchNew", sig(() -> u64), lowered;
+    sched_latch_free => lang_hooks_sched, "schedLatchFree", sig((u64) -> void), lowered;
+    sched_latch_open => lang_hooks_sched, "schedLatchOpen", sig((u64) -> void), lowered;
+    sched_latch_wait => lang_hooks_sched, "schedLatchWait", sig((u64) -> usize), lowered;
+    /// The process lifetime's (std/prelude/timers.velt's externs): `velt_rt_keep_alive_acquire`'s
+    /// and `_release`'s (a ref'd timer), `velt_rt_timer_unref_due`'s (a heap future: is the process
+    /// ending?); then `velt_rt_tla_at`'s: the top-level `await` that suspended last.
+    sched_keep_alive_acquire => lang_hooks_sched, "schedKeepAliveAcquire", sig(() -> void), lowered;
+    sched_keep_alive_release => lang_hooks_sched, "schedKeepAliveRelease", sig(() -> void), lowered;
+    sched_unref_due => lang_hooks_sched, "schedUnrefDue", sig(() -> usize), lowered;
+    sched_tla_at => lang_hooks_sched, "schedTlaAt", sig((&string) -> void), lowered;
+    /// `velt_rt_spawn_fut`'s: `(f, result_size, result_drop)`, the handle; then
+    /// `velt_rt_spawn_target`'s (`(worker)`: the next spawn is pinned, and stays the runtime's).
+    sched_spawn_fut => lang_hooks_sched, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
+    sched_pinned => lang_hooks_sched, "schedPinned", sig((i64) -> void), lowered;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
@@ -620,58 +680,12 @@ mod keys;
 pub use keys::{Key, KEYS};
 mod deleted;
 pub use deleted::DELETED;
-
-/// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).
-pub fn find(qualified: &str) -> Option<&'static Hook> {
-    let (module, item) = qualified.rsplit_once("::")?;
-    let rel = module.strip_prefix(crate::std_modules::CANONICAL_PREFIX)?;
-    HOOKS
-        .iter()
-        .find(|h| h.item == item && crate::std_modules::rel(h.module_entry) == Some(rel))
-}
-
-/// Lowered hooks that sema checks only once the program's own code converts a value that may hold
-/// a float to text (`velt_sema` `lazy_std`), by their entries' names: the float hooks, whose whole
-/// numbers take std's integer printing, and, where the program loaded it, std's float printing
-/// (velt/lang/number/format, `shortest`, the table of powers of ten). Lowering calls the runtime's
-/// printer where one is unchecked. The integer hooks have no fallback (#2197): sema checks them
-/// where live code has one of their `constructs` ([`crate::hook_demand`]).
-pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
-
-/// The std modules of hooks no program needs by default: not loaded with the prelude. Sema demands
-/// each when it finds the hook needed, during the check (#2161 (a1): `velt_sema` `std_load`), so
-/// each follows the rule of `velt_loader::std_index`. `VELT_EAGER_STD=1` loads them all up front,
-/// in this order. A check given no load callback adds none of them: those its program did not load
-/// stay out, and their hooks are not checked (`velt_sema::ide::check_for_ide`).
-pub const ON_DEMAND_MODULES: &[&str] = &[
-    "std/lang/hooks/number_text",
-    "std/lang/hooks/number_float",
-    "std/lang/hooks/any_record",
-    "std/lang/hooks/unwind",
-];
-
-/// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).
-pub fn on_demand(names: &'static [&'static str]) -> impl Iterator<Item = String> {
-    HOOKS
-        .iter()
-        .filter(move |h| names.contains(&h.name))
-        .map(Hook::qualified)
-}
-
-/// Is the definition with qualified name `qualified` a hook lowering calls by name?
-pub fn is_lowered(qualified: &str) -> bool {
-    static LOWERED: std::sync::OnceLock<std::collections::HashSet<String>> =
-        std::sync::OnceLock::new();
-    LOWERED
-        .get_or_init(|| {
-            HOOKS
-                .iter()
-                .filter(|h| h.lowered)
-                .map(Hook::qualified)
-                .collect()
-        })
-        .contains(qualified)
-}
+mod scheduler;
+pub use scheduler::{std_scheduler, SCHEDULER_ENV};
+mod lookup;
+pub use lookup::{find, is_lowered};
+mod on_demand;
+pub use on_demand::{on_demand, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE};
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]

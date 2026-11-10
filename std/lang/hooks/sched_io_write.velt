@@ -1,0 +1,227 @@
+// velt/lang/hooks (internal): sending on a source of the executor's reactor (sched_io.velt,
+// #2649 step 2): a source's buffer of bytes still to send, and the due list.
+//
+// - `writeLater` appends to the buffer and puts the source on the due list once; the worker
+//   sends every due source's buffer at the end of each poll of a task and before it waits
+//   (`flushDue`, sched_run.velt), one `send` per stream for all a poll queued.
+// - What the socket does not take stays in the buffer: the source's next writable event puts it
+//   on the due list again (sched_io.velt `ready`).
+// - A `write` while bytes are buffered goes after them; one with an empty buffer sends at once
+//   from the caller's bytes and buffers only the rest (`sendNow`).
+// - The counts of bytes queued in all and sent in all tell a waiter when its bytes are out
+//   (`K_WRITTEN`) and how many are still to send (`K_DRAINED`).
+// - A failure to send is kept (`S_ERR`): the stream sends nothing more, and its next operation
+//   reports it. A shutdown or close asked for while bytes are buffered happens once they are sent.
+
+import { Ptr } from "velt/ffi/ptr";
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as r from "#reactor";
+import * as io from "./sched_io";
+import * as m from "./sched_mem";
+import * as wt from "./sched_io_wait";
+
+/** The most of a sent buffer's capacity kept for the next poll's bytes. */
+const KEEP: usize = 64 * 1024;
+
+declare c("c") function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
+declare c("c") function shutdown$io(fd: i32, how: i32): i32;
+declare c("c") function close$io(fd: i32): i32;
+
+/** Appends the `n` bytes at `p` to source `s`'s buffer. */
+export function append(s: usize, p: usize, n: usize): void {
+  m.copy(room(s, n), p, n);
+  commit(s, n);
+}
+
+/** Where `n` more bytes go in source `s`'s buffer (made room for); `commit` counts them. */
+@inline
+export function room(s: usize, n: usize): usize {
+  const len = m.ld(s + io.S_LEN);
+  if (m.ld(s + io.S_OFF) + len + n > m.ld(s + io.S_CAP)) {
+    reserve(s, n);
+  }
+  return m.ld(s + io.S_BUF) + m.ld(s + io.S_OFF) + len;
+}
+
+/** Counts `n` bytes written at `room` as buffered and queued. */
+@inline
+export function commit(s: usize, n: usize): void {
+  m.st(s + io.S_LEN, m.ld(s + io.S_LEN) + n);
+  m.st(s + io.S_QUEUED, m.ld(s + io.S_QUEUED) + n);
+}
+
+/** Room for `n` more bytes after the buffered ones (moved to the front, or a bigger buffer). */
+@noInline
+function reserve(s: usize, n: usize): void {
+  const len = m.ld(s + io.S_LEN);
+  const off = m.ld(s + io.S_OFF);
+  const cap = m.ld(s + io.S_CAP);
+  const buf = m.ld(s + io.S_BUF);
+  if (len + n <= cap) {
+    memmove(buf, buf + off, len);
+    m.st(s + io.S_OFF, 0);
+    return;
+  }
+  let next = cap === 0 ? 4096 : cap * 2;
+  while (next < len + n) {
+    next = next * 2;
+  }
+  const nb = m.alloc(next);
+  if (buf !== 0) {
+    m.copy(nb, buf + off, len);
+    m.release(buf, cap);
+  }
+  m.st(s + io.S_BUF, nb);
+  m.st(s + io.S_OFF, 0);
+  m.st(s + io.S_CAP, next);
+}
+
+declare c("c") function memmove$io(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
+
+function memmove(dst: usize, src: usize, n: usize): void {
+  // SAFETY: both ranges are in one buffer of the source.
+  unsafe {
+    memmove$io(m.ptr(dst), m.ptr(src), n);
+  }
+}
+
+/**
+ * Sends what the socket takes of the `n` bytes at `p` now, for a source with nothing buffered:
+ * how many it took (counted as queued and sent). EAGAIN clears writable; a failure is kept.
+ */
+export function sendNow(s: usize, p: usize, n: usize): usize {
+  let done: usize = 0;
+  while (done < n) {
+    const k = sendSome(s, p + done, n - done);
+    if (k <= 0) {
+      break;
+    }
+    done = done + (k as usize);
+  }
+  m.st(s + io.S_QUEUED, m.ld(s + io.S_QUEUED) + done);
+  m.st(s + io.S_WRITTEN, m.ld(s + io.S_WRITTEN) + done);
+  return done;
+}
+
+/** One `send`: the bytes taken, 0 when the socket takes none now (or it failed: `S_ERR`). */
+function sendSome(s: usize, p: usize, n: usize): isize {
+  while (true) {
+    // SAFETY: `p` holds `n` bytes; the descriptor is the source's, open.
+    const k = unsafe { send$io(m.ld(s + io.S_FD) as i32, m.ptr(p), n, r.SEND_FLAGS) };
+    if (k > 0) {
+      return k;
+    }
+    const e = r.errno();
+    if (k < 0 && e === r.EINTR) {
+      continue;
+    }
+    if (k < 0 && e === r.EAGAIN) {
+      io.notReady(s, io.WRITE);
+      return 0;
+    }
+    fail(s, k === 0 ? r.EAGAIN : e);
+    return 0;
+  }
+}
+
+/** Sending on `s` failed with `errno`: kept, the buffer dropped, waiters woken. */
+export function fail(s: usize, errno: i32): void {
+  if (m.ld32(s + io.S_ERR) === 0) {
+    m.st32(s + io.S_ERR, errno as u32);
+  }
+  m.st(s + io.S_OFF, 0);
+  m.st(s + io.S_LEN, 0);
+  wt.wakeAll(s);
+}
+
+/** Sends source `s`'s buffer as far as the socket takes it; then a shutdown or close asked for. */
+export function flush(s: usize): void {
+  let len = m.ld(s + io.S_LEN);
+  let sent: usize = 0;
+  if (len !== 0 && (m.ld32(s + io.S_READY) & io.WRITE) !== 0) {
+    const buf = m.ld(s + io.S_BUF);
+    let off = m.ld(s + io.S_OFF);
+    while (len !== 0) {
+      const k = sendSome(s, buf + off, len);
+      if (k <= 0) {
+        break;
+      }
+      off = off + (k as usize);
+      len = len - (k as usize);
+      sent = sent + (k as usize);
+    }
+    if (m.ld32(s + io.S_ERR) === 0) {
+      m.st(s + io.S_OFF, len === 0 ? 0 : off);
+      m.st(s + io.S_LEN, len);
+    }
+    m.st(s + io.S_WRITTEN, m.ld(s + io.S_WRITTEN) + sent);
+  }
+  if (m.ld(s + io.S_LEN) === 0) {
+    settled(s);
+  }
+  if (sent !== 0) {
+    wt.wakeAll(s);
+  }
+}
+
+/** Source `s` has nothing more to send: a big buffer given back, a pending shutdown or close. */
+@inline
+function settled(s: usize): void {
+  if (m.ld(s + io.S_CAP) > KEEP) {
+    m.release(m.ld(s + io.S_BUF), m.ld(s + io.S_CAP));
+    m.st(s + io.S_BUF, 0);
+    m.st(s + io.S_CAP, 0);
+  }
+  const fl = m.ld32(s + io.S_FLAGS);
+  if ((fl & (io.F_SHUT | io.F_CLOSING)) !== 0) {
+    finish(s, fl);
+  }
+}
+
+@noInline
+function finish(s: usize, fl: u32): void {
+  const fd = m.ld(s + io.S_FD) as i32;
+  if ((fl & io.F_SHUT) !== 0 && (fl & io.F_SHUT_DONE) === 0) {
+    m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_SHUT_DONE);
+    // SAFETY: the source's descriptor, open.
+    unsafe {
+      shutdown$io(fd, 1);
+    }
+  }
+  if ((fl & io.F_CLOSING) !== 0 && (m.ld32(s + io.S_FLAGS) & io.F_DUE) === 0) {
+    // SAFETY: the source's descriptor, closed once: the source goes with it.
+    unsafe {
+      close$io(fd);
+    }
+    io.free(s);
+  }
+}
+
+/** Sends every due source's buffer (the end of a poll, before the worker waits). */
+@noInline
+export function flushDue(b: usize): void {
+  while (true) {
+    let s = m.ld(b + io.IO_DUE);
+    if (s === 0) {
+      return;
+    }
+    m.st(b + io.IO_DUE, 0);
+    while (s !== 0) {
+      const next = m.ld(s + io.S_DUE_NEXT);
+      m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) & ~io.F_DUE);
+      flush(s);
+      s = next;
+    }
+  }
+}
+
+/**
+ * Asks to shut down writing on `s` (`how` 1) once its buffer is sent, or closes its descriptor
+ * then (`close`): at once when nothing is buffered.
+ */
+export function endSource(s: usize, close: bool): void {
+  m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | (close ? io.F_CLOSING : io.F_SHUT));
+  if (m.ld(s + io.S_LEN) === 0 && (m.ld32(s + io.S_FLAGS) & io.F_DUE) === 0) {
+    settled(s);
+  }
+}

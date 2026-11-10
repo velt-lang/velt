@@ -107,7 +107,10 @@ impl FnLower<'_, '_> {
                 let f = self.share_promise(Operand::Copy(s.clone()), ty);
                 self.assign(d.clone(), Rvalue::Use(f));
             }
-            TyKind::Dyn(..) => self.clone_dyn(s, d),
+            TyKind::Dyn(..) => {
+                self.note_dyn_glue(SLOT_CLONE, ty);
+                self.clone_dyn(s, d)
+            }
             _ => self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone()))),
         }
     }

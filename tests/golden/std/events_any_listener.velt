@@ -1,0 +1,9 @@
+// A listener held as an `any` converts to the function member of `addEventListener`'s listener
+// union with the event parameter (#2378), and is found again by `removeEventListener`.
+const t = new EventTarget();
+const w: any = (e: Event) => console.log("any", e.type);
+t.addEventListener("x", w);
+t.dispatchEvent(new Event("x"));
+t.removeEventListener("x", w);
+t.dispatchEvent(new Event("x"));
+console.log("end");

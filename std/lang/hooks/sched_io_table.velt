@@ -1,0 +1,81 @@
+// velt/lang/hooks (internal): the handles of the executor's reactor's sources (sched_io.velt,
+// #2649 step 2): velt/net holds a socket by a handle with the top bit set, its slot and
+// generation in a table of the I/O block, so a handle used after `close` finds nothing (EBADF)
+// rather than freed memory, and a slot is reused with the next generation.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as io from "./sched_io";
+import * as m from "./sched_mem";
+
+// The table: entries of { source (or the next free slot + 1), generation }.
+
+/** The top bit: a handle of this table, not one of the runtime's. */
+export const TAG: u64 = 0x8000000000000000;
+
+/** Is `h` a handle of this table? */
+@inline
+export function ours(h: u64): bool {
+  return (h & TAG) !== 0;
+}
+
+/** A handle for source `s`. */
+export function handleOf(s: usize): u64 {
+  const b = io.io();
+  let slot = m.ld(b + io.IO_FREE);
+  if (slot !== 0) {
+    slot = slot - 1;
+    m.st(b + io.IO_FREE, m.ld(m.ld(b + io.IO_TABLE) + slot * 16));
+  } else {
+    slot = m.ld(b + io.IO_LEN);
+    if (slot === m.ld(b + io.IO_CAP)) {
+      grow(b);
+    }
+    m.st(b + io.IO_LEN, slot + 1);
+  }
+  const at = m.ld(b + io.IO_TABLE) + slot * 16;
+  const gen = (m.ld(at + 8) + 1) & 0x7fffffff;
+  m.st(at, s);
+  m.st(at + 8, gen);
+  const h = TAG | ((gen as u64) << 32) | ((slot + 1) as u64);
+  m.st(s + io.S_HANDLE, h as usize);
+  return h;
+}
+
+@noInline
+function grow(b: usize): void {
+  const cap = m.ld(b + io.IO_CAP);
+  const next = cap === 0 ? 64 : cap * 2;
+  const t = m.lastingZeroed(next * 16);
+  const old = m.ld(b + io.IO_TABLE);
+  if (old !== 0) {
+    m.copy(t, old, cap * 16);
+    m.lastingRelease(old);
+  }
+  m.st(b + io.IO_TABLE, t);
+  m.st(b + io.IO_CAP, next);
+}
+
+/** The source of handle `h`, or 0 when it is closed (or not this table's). */
+@inline
+export function lookup(h: u64): usize {
+  const slot = ((h & 0xffffffff) as usize) - 1;
+  const b = io.io();
+  if (b === 0 || slot >= m.ld(b + io.IO_LEN)) {
+    return 0;
+  }
+  const at = m.ld(b + io.IO_TABLE) + slot * 16;
+  if (m.ld(at + 8) !== (((h >> 32) & 0x7fffffff) as usize)) {
+    return 0;
+  }
+  return m.ld(at);
+}
+
+/** Closes handle `h`: later lookups find nothing; its slot is reused with the next generation. */
+export function forget(h: u64): void {
+  const slot = ((h & 0xffffffff) as usize) - 1;
+  const b = io.io();
+  const at = m.ld(b + io.IO_TABLE) + slot * 16;
+  m.st(at, m.ld(b + io.IO_FREE));
+  m.st(at + 8, (m.ld(at + 8) + 1) & 0x7fffffff);
+  m.st(b + io.IO_FREE, slot + 1);
+}

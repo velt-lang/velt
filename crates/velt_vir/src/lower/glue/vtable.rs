@@ -187,8 +187,10 @@ impl Cx<'_> {
         });
         let id = StaticId(self.statics.len() as u32 - 1);
         self.lay.vtables.insert(key, id);
-        if let VtableKey::Class(cls) = key {
-            self.note_class_table(id, cls);
+        match key {
+            VtableKey::Class(cls) => self.note_class_table(id, cls),
+            VtableKey::Impl(index, ty) => self.defer_iface_glue(id, index, ty),
+            _ => {}
         }
         // Its `any` table, made with its entries, points back at it.
         if let VtableKey::Closure(index, inst) = key {
@@ -332,10 +334,12 @@ impl Cx<'_> {
             entries.push((slot as i128, self.self_entry(m, targs)));
         }
         entries.push((SLOT_DROP, self.func(Work::Glue(Glue::DynDrop, ty))));
-        entries.push((SLOT_CLONE, self.func(Work::Glue(Glue::DynClone, ty))));
-        entries.push((SLOT_FORMAT, self.func(Work::Glue(Glue::DynFormat, ty))));
-        entries.push((SLOT_SHARE, self.func(Work::Glue(Glue::DynShare, ty))));
-        entries.push((SLOT_TRANSFER, self.func(Work::Glue(Glue::DynTransfer, ty))));
+        // Clone, format, share and transfer once something dispatches them (demand.rs).
+        for (slot, g) in super::demand::ON_DEMAND {
+            if self.iface_glue_now(index, slot) {
+                entries.push((slot, self.func(Work::Glue(g, ty))));
+            }
+        }
         let mut entries: Vec<(i128, Const)> = entries
             .into_iter()
             .map(|(slot, f)| (slot, Const::Func(f)))

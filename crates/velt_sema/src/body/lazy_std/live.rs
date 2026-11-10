@@ -87,6 +87,8 @@ pub(crate) struct Live {
     demanded: ConstructSet,
     /// Per type: may its text or format print an integer ([`may_print_int`])?
     int_text: FxHashMap<TyId, bool>,
+    /// Live code prints a float: `console.log`'s float writer is needed (`number_text.rs`).
+    pub(super) prints_float: bool,
 }
 
 impl Live {
@@ -126,6 +128,8 @@ struct Walk {
     into_any: Vec<(TyId, TyId)>,
     /// Values formatted as `console.log` prints them.
     formats: Vec<TyId>,
+    /// `console.log` or `console.error` of a float.
+    prints_float: bool,
     /// The interfaces whose methods it calls on a type parameter's value.
     ifaces: Vec<DefId>,
     /// The kinds ([`kind_bit`]) of its scalar types, which are not recorded as types.
@@ -543,7 +547,18 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             args,
         } => w.texts.extend(args.iter().map(|a| a.ty)),
         E::Call {
-            callee: Callee::Intrinsic(I::Print | I::PrintErr | I::Inspect | I::ErrorText),
+            callee: Callee::Intrinsic(I::Print | I::PrintErr),
+            args,
+        } => {
+            // A float is written by `numberWrite`, which waits for this (`number_text.rs`); a
+            // type parameter's instance may be one.
+            let float =
+                |k: &TyKind| matches!(k, TyKind::Float(_) | TyKind::Param(_) | TyKind::Op(..));
+            w.prints_float |= (args.iter()).any(|a| float(ty.kind(a.ty)));
+            w.formats.extend(args.iter().map(|a| a.ty));
+        }
+        E::Call {
+            callee: Callee::Intrinsic(I::Inspect | I::ErrorText),
             args,
         } => w.formats.extend(args.iter().map(|a| a.ty)),
         E::Call {

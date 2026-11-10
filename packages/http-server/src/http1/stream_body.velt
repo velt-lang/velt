@@ -24,7 +24,7 @@ export async function writeStreamBody(
     writeHead(r, -1, t, -1);
   }
   // A client going away must reach the source, also with nothing to write.
-  r.watch.listen();
+  r.watch.listen(r);
   const source = body[Symbol.asyncIterator]();
   const hold = new SourceHold(source);
   r.source = hold;

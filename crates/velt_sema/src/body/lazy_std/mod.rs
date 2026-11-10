@@ -18,9 +18,9 @@
 //! ([`BY_NAME`]), and in the prelude ([`HELPERS`]) the compiler's helpers ([`is_helper`]). Two
 //! kinds of hook lowering can do without stay unchecked until the program needs them:
 //! [`RECORD_HOOKS`], for a conversion to a record ([`record_hooks_needed`]), and the float hooks,
-//! for a text conversion in the program's own code (`number_text.rs`). The hooks whose table entry
-//! lists constructs (velt_common `hook_demand.rs`) are demanded by the constructs of live code,
-//! and `hir::Program::hooks_demanded` tells lowering.
+//! for a text conversion in the program's own code or a float printed (`number_text.rs`). The
+//! hooks whose table entry lists constructs (velt_common `hook_demand.rs`) are demanded by the
+//! constructs of live code, and `hir::Program::hooks_demanded` tells lowering.
 //!
 //! All of std is checked with laziness off (`VELT_CHECK_ALL_STD=1`), as `velt check --std` and
 //! veltc's `all_of_std_checks_without_diagnostics` do. The editor's analysis checks everything.
@@ -111,7 +111,7 @@ pub(crate) fn is_helper(qualified: &str) -> bool {
     let name = qualified.rsplit(['.', ':']).next().unwrap_or(qualified);
     (velt_common::std_hooks::is_lowered(qualified)
         && velt_common::std_hooks::find(qualified).is_some_and(|h| {
-            !velt_common::std_hooks::ON_DEMAND_FLOAT.contains(&h.name) && h.constructs.is_empty()
+            !h.fallback && h.constructs.is_empty() && !SCHED_HOOKS.contains(&qualified)
         }))
         || HELPER_NAMES.contains(&name)
         || name
@@ -171,9 +171,14 @@ pub(crate) struct Lazy {
     record_conversion: bool,
     /// Have [`RECORD_HOOKS`] been reached?
     record_hooks: bool,
+    /// Have [`SCHED_HOOKS`] been reached?
+    sched_hooks: bool,
     /// The program's code converts a value that may hold a float to text: the float hooks are
     /// reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
     float_text: bool,
+    /// Live code prints a float: `console.log`'s float writer is reached
+    /// (`velt_common::std_hooks::ON_DEMAND_WRITE`).
+    float_write: bool,
     /// The live definitions, and the hooks their constructs demand ([`live`]).
     live: live::Live,
 }
@@ -195,7 +200,9 @@ impl Lazy {
             generic_any: false,
             record_conversion: false,
             record_hooks: false,
+            sched_hooks: false,
             float_text: false,
+            float_write: false,
             live: live::Live::new(),
         }
     }
@@ -336,8 +343,10 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         number_text::reach_hooks(cx, texts, &mut found);
+        number_text::reach_writer(cx, &mut found);
         // A std function C calls (`@export`) is live though no checked code refers to it.
         found.extend(cx.c_exports.iter().map(|e| e.def));
+        sched_hooks(cx, &mut found);
         let mut checked = false;
         for d in found {
             checked |= live::mark(cx, d);
@@ -348,6 +357,44 @@ pub(crate) fn reach(cx: &mut Ctx) {
             break;
         }
     }
+}
+
+/// The executor in Velt's hooks (velt_common `std_hooks.rs`, `sched_*`), which lowering calls in
+/// place of the runtime's executor when the compiler was started with `VELT_SCHEDULER=std`:
+/// their module is loaded and they are live then, whatever the program does, and never
+/// otherwise.
+const SCHED_HOOKS: &[&str] = &[
+    velt_common::std_hook!(sched_block_on),
+    velt_common::std_hook!(sched_spawn),
+    velt_common::std_hook!(sched_yield),
+    velt_common::std_hook!(sched_finish),
+    velt_common::std_hook!(sched_box),
+    velt_common::std_hook!(sched_start),
+    velt_common::std_hook!(sched_detach),
+    velt_common::std_hook!(sched_handled),
+    velt_common::std_hook!(sched_await_tick),
+    velt_common::std_hook!(sched_await_ready),
+    velt_common::std_hook!(sched_microtask),
+    velt_common::std_hook!(sched_latch_new),
+    velt_common::std_hook!(sched_latch_free),
+    velt_common::std_hook!(sched_latch_open),
+    velt_common::std_hook!(sched_latch_wait),
+    velt_common::std_hook!(sched_keep_alive_acquire),
+    velt_common::std_hook!(sched_keep_alive_release),
+    velt_common::std_hook!(sched_unref_due),
+    velt_common::std_hook!(sched_tla_at),
+    velt_common::std_hook!(sched_spawn_fut),
+    velt_common::std_hook!(sched_pinned),
+];
+
+/// Adds [`SCHED_HOOKS`] to `found` the first time, when the executor in Velt is selected.
+fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
+    if cx.lazy.sched_hooks || cx.lazy.live.finishing || !velt_common::std_hooks::std_scheduler() {
+        return;
+    }
+    cx.lazy.sched_hooks = true;
+    cx.demand_std(velt_common::std_module!(lang_hooks_sched));
+    found.extend(SCHED_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
 }
 
 /// Check the definition `d` if it is deferred and unchecked: whether it did.

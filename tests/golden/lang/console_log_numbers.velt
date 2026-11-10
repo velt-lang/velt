@@ -1,0 +1,36 @@
+// console.log of numbers as plain arguments (the direct path: no builder): every integer width at
+// its bounds, through std's `intWrite` / `uintWrite`, and floats through `numberWrite` (the
+// runtime's printer), or `intWrite` where the optimizer proves one whole and not `-0`, as the
+// loop's `i` and `x`, since this program has it: a whole float prints its integer digits either
+// way, `-0` stays `-0`, and the 2^53 boundaries, `1e21`, `NaN` and infinities keep the float
+// text (#2197).
+const a: i8 = -128;
+const b: u8 = 255;
+const c: i16 = -32768;
+const d: u16 = 65535;
+const e: i32 = -2147483648;
+const f: u32 = 4294967295;
+const g: i64 = -9223372036854775807 - 1;
+const h: u64 = 18446744073709551615;
+const i64max: i64 = 9223372036854775807;
+const zero: i64 = 0;
+const small: i8 = 127;
+console.log(a, b, c, d, e, f, g, h, i64max, zero, small);
+console.log(-1, 0, 7, 10, 99, 100, 9999, 10000, 99999999, 100000000, -100000000);
+console.error(g, h, -1, 0.5);
+const nz = -0.0;
+console.log(nz, 0.0, 1.5, -2.25, 1e21, 1e-7, NaN, Infinity, -Infinity);
+console.log(
+  9007199254740991,
+  9007199254740992,
+  9007199254740993,
+  -9007199254740991,
+  -9007199254740992,
+);
+let x = 0;
+for (let i = 0; i < 3; i++) {
+  x = x - 1;
+  console.log(i, x, x * 0, x * 0.5);
+}
+const w: f32 = 3.0;
+console.log(w, w * 0.5, w - w, -(w - w));

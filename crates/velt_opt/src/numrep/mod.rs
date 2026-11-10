@@ -57,7 +57,6 @@ use crate::locals::Usage;
 use crate::visit::rvalue_operands;
 use flow::Flow;
 
-pub(crate) use print::declare as declare_formatters;
 pub use report::{Unnarrowed, Why};
 pub(crate) use simplify::self_comparisons;
 
@@ -101,8 +100,8 @@ pub(crate) struct Env<'p> {
     field_tys: std::sync::Arc<[Vec<Ty>]>,
     /// Facts about parameters that every call passes a constant (`params`).
     params: params::ParamFacts,
-    /// Number formatters and their integer twins (`print`).
-    formatters: Vec<(Callee, Callee, bool, usize)>,
+    /// Number formatters and their twins (`print`).
+    formatters: Vec<print::Formatter>,
 }
 
 impl<'p> Env<'p> {
@@ -129,7 +128,7 @@ impl<'p> Env<'p> {
             array,
             field_tys,
             params: params::of(funcs, statics),
-            formatters: print::pairs(externs, funcs),
+            formatters: print::pairs(funcs),
         }
     }
 
