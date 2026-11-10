@@ -52,19 +52,29 @@ export const RECV: usize = 0;
 /** A wait for room (or the close). */
 export const SEND: usize = 1;
 
-// A wait: the heap future's header, the block, its line, its state, its waker, its neighbours.
+// A wait: the heap future's header (16 bytes), then the fields below.
+/** A wait's block. */
 export const F_BLOCK: usize = 16;
+/** A wait's line (RECV or SEND). */
 export const F_KIND: usize = 24;
+/** A wait's state (IDLE, QUEUED, WOKEN, DONE). */
 export const F_STATE: usize = 32;
+/** A wait's waker (a clone of its last poll's), or 0. */
 export const F_WAKER: usize = 40;
+/** The wait before it in its line, or 0. */
 export const F_PREV: usize = 48;
+/** The wait after it in its line, or 0. */
 export const F_NEXT: usize = 56;
+/** A wait's size. */
 export const CELL: usize = 64;
 
-// A wait's states: not in line; in line; taken out of line by a wake, not polled since; done.
+/** A wait's state: not in line. */
 export const IDLE: u32 = 0;
+/** A wait's state: in line. */
 export const QUEUED: u32 = 1;
+/** A wait's state: taken out of line by a wake, not polled since. */
 export const WOKEN: u32 = 2;
+/** A wait's state: done. */
 export const DONE: u32 = 3;
 
 export function ld(a: usize): usize {
