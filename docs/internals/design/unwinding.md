@@ -483,6 +483,12 @@ resume of the unwind.
   reached yet, so a disposer that panics doesn't leak the entries before it. The old value of a
   reassigned local (`drop_old`) is left out of the pads of its own drop, and the new value,
   which no scope owns until it is stored, is in them.
+- **A transfer that panics.** A value going to another thread (`spawn`'s arguments, a channel,
+  `shared(...)`) is off the scopes once consumed, and its transfer glue can panic (a weak
+  collection in a captured environment). `transfer_value` registers the temporary holding it
+  for the glue's call and takes it back after, so the pad drops it as far as it was transferred
+  (its copies; the originals they replaced are the transfer's deferred releases, which the
+  catch's `caught()` releases). Test: `a_value_whose_transfer_panics_is_dropped`.
 - **Pads are shared.** A pad is a chain of links, one per drop entry, innermost first, each
   ending in a jump to the pad of the entries outside it; the empty pad is one block calling
   `velt_eh_resume`. Links are cached per function by the entries and the states they read, so

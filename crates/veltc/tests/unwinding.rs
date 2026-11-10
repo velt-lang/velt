@@ -322,6 +322,7 @@ fn assert_balanced(main: &str, runs: &[&[&str]], want: &str) {
     }
 }
 
+#[cfg(not(windows))]
 const DEBUG_AND_RELEASE: &[&[&str]] = &[&["run"], &["run", "--release"]];
 
 #[cfg(not(windows))]
@@ -562,6 +563,52 @@ E true
 #[test]
 fn pads_on_exit_edges_drop_only_what_the_edge_has_not() {
     assert_balanced(EXIT_EDGES, DEBUG_AND_RELEASE, EXIT_EDGES_OUT);
+}
+
+/// A value whose transfer panics (a function value that captured a weak collection, going to
+/// `spawn`): the frame owns it while the transfer glue runs, so the pad drops it, as far as it
+/// was transferred (`keep`'s copy, the collection, the environment).
+#[cfg(not(windows))]
+const TRANSFER: &str = r#"
+import { catchVeltPanic } from "velt/zz_unwind";
+
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Cache extends WeakMap<V, V> {}
+
+function mk(keep: V): () => number {
+  const c = new Cache();
+  c.set(keep, keep);
+  return () => {
+    const x = c.get(keep);
+    return x === undefined ? -1 : x.n;
+  };
+}
+
+async function run(f: () => number): Promise<number> {
+  return f();
+}
+
+async function main() {
+  const keep = new V(7);
+  for (let i = 0; i < 2; i++) {
+    const msg = catchVeltPanic(() => {
+      spawn(run(mk(keep)));
+    });
+    console.log(msg !== null && msg.includes("WeakMap"), keep.n);
+  }
+}
+"#;
+
+#[cfg(not(windows))]
+#[test]
+fn a_value_whose_transfer_panics_is_dropped() {
+    assert_balanced(TRANSFER, DEBUG_AND_RELEASE, "true 7\ntrue 7\n");
 }
 
 /// A drop in a cleanup pad that panics: the second panic aborts instead of unwinding through the
