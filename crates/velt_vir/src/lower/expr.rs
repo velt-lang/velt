@@ -558,6 +558,8 @@ impl FnLower<'_, '_> {
                 args,
             } => {
                 let t = self.sub(args.first()?.ty);
+                // A shared body (shape/): the shape key holds these answers.
+                let t = self.cx.ph_rep(t);
                 Some(matches!(
                     self.cx.kind(t),
                     velt_sema::hir::TyKind::Option(..)
@@ -568,6 +570,8 @@ impl FnLower<'_, '_> {
                 args,
             } => {
                 let t = self.sub(args.first()?.ty);
+                // A shared body (shape/): the shape key holds these answers.
+                let t = self.cx.ph_rep(t);
                 Some(!self.cx.object_only(t))
             }
             hir::ExprKind::Call {
@@ -575,6 +579,8 @@ impl FnLower<'_, '_> {
                 args,
             } => {
                 let t = self.sub(args.first()?.ty);
+                // A shared body (shape/): the shape key holds these answers.
+                let t = self.cx.ph_rep(t);
                 Some(self.cx.holds_dynamic(t))
             }
             hir::ExprKind::Call {
@@ -582,6 +588,8 @@ impl FnLower<'_, '_> {
                 args,
             } => {
                 let t = self.sub(args.first()?.ty);
+                // A shared body (shape/): the shape key holds these answers.
+                let t = self.cx.ph_rep(t);
                 Some(self.cx.holds_dynamic_or_class(t))
             }
             hir::ExprKind::Unary {

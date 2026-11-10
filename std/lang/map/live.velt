@@ -1,7 +1,8 @@
 // velt/lang/map (internal): the prelude `Map`'s live entries (std/prelude/map.velt): which entries
 // are live when a value may be null, its keys, values and entries in order, and deep equality.
 
-import { arrayWithCapacity, hash, holdsNull, nullAs, share } from "velt/lang/intrinsics";
+import { arrayWithCapacity, holdsNull, nullAs, share } from "velt/lang/intrinsics";
+import { keyHash } from "velt/lang/map/key";
 import { MAP_LIVE_AT, MAP_LIVE_POSITIONS } from "velt/lang/hooks/keys";
 import { equalByContent, equalByFields } from "velt/lang/equal/generated";
 import { bitAt, pushEntry, pushNullEntry, pushShared } from "velt/lang/map/slots";
@@ -87,7 +88,7 @@ export function mapLiveDeepEquals<K, V>(m: Map<K, V>, other: Map<K, V>, deep: bo
   const live = mapLiveBits(m);
   for (let e: usize = 0; e < m.entryKeys.length; e++) {
     if (m.entryValues[e] != null || bitAt(live, e)) {
-      const o = other.lookup(m.entryKeys[e], hash(m.entryKeys[e]) * FIB);
+      const o = other.lookup(m.entryKeys[e], keyHash(m.entryKeys[e]) * FIB);
       if (o < 0) {
         return mapDeepEqualsByContent(m, other, deep);
       }
@@ -113,7 +114,7 @@ export function mapLiveNull<K, V>(m: Map<K, V>, e: usize): bool {
   }
   const mask = m.slots.length - 1;
   const want = e as u64 + 1;
-  const p = hash(m.entryKeys[e]) * FIB;
+  const p = keyHash(m.entryKeys[e]) * FIB;
   let s = (p >> m.shift) as usize;
   let dist: usize = 0;
   while (true) {
@@ -145,7 +146,7 @@ export function mapDeepEqualsByContent<K, V>(m: Map<K, V>, other: Map<K, V>, dee
   const misses: usize[] = [];
   for (let e: usize = 0; e < m.entryKeys.length; e++) {
     if (m[MAP_LIVE_AT](e)) {
-      const o = other.lookup(m.entryKeys[e], hash(m.entryKeys[e]) * FIB);
+      const o = other.lookup(m.entryKeys[e], keyHash(m.entryKeys[e]) * FIB);
       if (o < 0) {
         misses.push(e);
       } else if (valuesEqual<V>(m.entryValues[e], other.entryValues[o as usize], deep)) {
@@ -269,7 +270,7 @@ export function mapDeepEquals<K, V>(m: Map<K, V>, other: Map<K, V>, deep: bool):
   }
   for (let e: usize = 0; e < m.entryKeys.length; e++) {
     if (holdsNull(nullAs<V>()) || m.entryValues[e] != null) {
-      const p = hash(m.entryKeys[e]) * FIB;
+      const p = keyHash(m.entryKeys[e]) * FIB;
       const o = other.lookup(m.entryKeys[e], p);
       if (o < 0) {
         return mapDeepEqualsByContent(m, other, deep);

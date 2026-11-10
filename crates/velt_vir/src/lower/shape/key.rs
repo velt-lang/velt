@@ -147,6 +147,11 @@ impl Cx<'_> {
         if matches!(self.ty(t), Ty::Unit | Ty::V128) {
             return None;
         }
+        // Parts a share would copy are counted per type where a call may change them
+        // (stabilize.rs `in_place_parts`), which a shared body can't say for its placeholder.
+        if !self.in_place_parts(t).is_empty() {
+            return None;
+        }
         let share = self.share_kind(t) as u8;
         let half = self.half(t).map(|f| format!("{f:?}"));
         let answers = (self.footprint(t).into_iter())
@@ -226,6 +231,17 @@ impl Cx<'_> {
             self.holds_mutex(t, 0, true),
             self.holds_mutex(t, 0, false),
             self.array_view(t),
+            // Map and Set keys (step 4): compared and hashed by content, not identity.
+            self.value_struct(t),
+            self.c_struct(t),
+            self.holds_atomic(t, &mut FxHashSet::default()),
+            matches!(self.kind(t), TyKind::Option(..)),
+            // The compile-time type tests std's `Map` code folds (`const_cond`).
+            self.object_only(t),
+            // `holds_dynamic_or_class` is this or `is_class`, both rows.
+            self.holds_dynamic(t),
+            self.holds_union_view(t),
+            !self.in_place_parts(self.ph_rep(t)).is_empty(),
         ];
         answers
             .iter()

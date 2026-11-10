@@ -132,7 +132,18 @@ impl FnLower<'_, '_> {
             true => LkMode::Deferred,
             false => self.mode,
         };
-        let fid = self.cx.func_direct(work, mode);
+        // Shared by shape (shape/): a plain instance, or one taking its caller's location.
+        let shared = match &work {
+            Work::Fn(..) => self.cx.shared_call(def, &targs, mode),
+            Work::Tracked(_, _, at) if *at == arg_loc => {
+                self.cx.shared_call_at(def, &targs, mode, Some(arg_loc))
+            }
+            _ => None,
+        };
+        let fid = match shared {
+            Some((f, _)) => f,
+            None => self.cx.func_direct(work, mode),
+        };
         // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
         let sup = std::mem::take(&mut self.super_call);
         if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() && !sup {
@@ -174,6 +185,10 @@ impl FnLower<'_, '_> {
         let changed = std::mem::replace(&mut self.changed_args, changed);
         argv.extend(self.lower_args(args, &modes, how, Some(def)));
         self.changed_args = changed;
+        // The dictionary follows the user's arguments, before the location (`Inst::trailing`).
+        if let Some((_, dict)) = shared {
+            argv.push(Operand::Const(vir::Const::Static(dict), vir::Ty::Ptr));
+        }
         argv.extend(loc_arg);
         let handed = std::mem::replace(&mut self.kept_handed, handed);
         let drops = std::mem::replace(&mut self.kept_drops, drops);

@@ -43,7 +43,8 @@ impl<'h> Cx<'h> {
         // `TyTable::intern` makes an option of an option one option; a `U | null` of a `U`
         // that allows `undefined` would lose one nothing (issue #930): report it.
         if let TyKind::Option(e, n) = &k {
-            if matches!(self.raw_kind(*e), TyKind::Option(_, m) if n.has_null() && m.has_undefined() && m != n)
+            if !self.is_ph(*e)
+                && matches!(self.raw_kind(*e), TyKind::Option(_, m) if n.has_null() && m.has_undefined() && m != n)
                 && !self.keeps_nothings_apart()
             {
                 self.nothing_clashes.push(self.cur_def);
@@ -662,7 +663,7 @@ impl<'h> Cx<'h> {
     }
 
     pub(super) fn is_never(&self, t: TyId) -> bool {
-        matches!(self.raw_kind(t), TyKind::Never)
+        matches!(self.types.kind(self.ph_rep(t)), TyKind::Never)
     }
 
     /// A concrete error type, `None` when nothing can be thrown: `Never`, or a union (built by

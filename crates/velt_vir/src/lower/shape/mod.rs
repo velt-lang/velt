@@ -38,6 +38,15 @@ use crate::vir::{FuncId, StaticId};
 
 pub(super) use key::Key;
 
+/// The functions shared `Map` code calls for its key type's hash and comparison (intrinsics.rs
+/// `ph_key_call`): never shared themselves, since their bodies are the key type's own code.
+pub(super) const KEY_HASH: &str = "std/lang/map/key::keyHash";
+pub(super) const KEY_SAME: &str = "std/lang/map/key::keySame";
+
+/// Functions of the `Map` family kept per type: the key functions themselves, and those writing a
+/// key's text (`${key}`), which needs the type's format code.
+const MAP_PER_TYPE: &[&str] = &[KEY_HASH, KEY_SAME, "::mapKeyNames", "mapNewestKeyDigit"];
+
 /// Placeholder types are `TyKind::Param(SHAPE_BASE + i)`.
 pub(super) const SHAPE_BASE: u32 = 1 << 30;
 /// Pseudo function ids: entry `i` of `Shapes::pseudo` is `FuncId(PSEUDO_BASE + i)`.
@@ -134,6 +143,10 @@ impl Shapes {
         let per_type = self.insts.values().map(|i| i.dicts.len()).sum();
         (self.insts.len(), per_type)
     }
+}
+
+fn maps_wanted() -> bool {
+    std::env::var_os("VELT_SHAPES_MAPS").is_some()
 }
 
 /// Whether `VELT_SHAPES` turns sharing off (`off`) or on in every build (`all`); unset, the
@@ -261,14 +274,34 @@ impl Cx<'_> {
         targs: &[TyId],
         mode: LkMode,
     ) -> Option<(FuncId, StaticId)> {
-        if !self.shapes.on || !self.shares(def) || targs.iter().any(|&t| self.mentions_ph(t)) {
+        self.shared_call_at(def, targs, mode, None)
+    }
+
+    /// [`shared_call`](Self::shared_call) of a caller-tracking function that takes its
+    /// caller's location as a parameter (`at`: `srcloc::ARG_LOC`, track_caller.rs).
+    pub(super) fn shared_call_at(
+        &mut self,
+        def: DefId,
+        targs: &[TyId],
+        mode: LkMode,
+        at: Option<crate::vir::SrcLoc>,
+    ) -> Option<(FuncId, StaticId)> {
+        if !self.shapes.on
+            || targs.is_empty()
+            || !self.shares(def)
+            || targs.iter().any(|&t| self.mentions_ph(t))
+        {
             return None;
         }
         let mut phs = Vec::with_capacity(targs.len());
         for (i, &t) in targs.iter().enumerate() {
             phs.push(self.placeholder(t, i as u32)?);
         }
-        let f = self.func_direct(Work::Fn(def, phs), mode);
+        let work = match at {
+            Some(at) => Work::Tracked(def, phs, at),
+            None => Work::Fn(def, phs),
+        };
+        let f = self.func_direct(work, mode);
         let dict = self.dict_for(f, targs.to_vec());
         Some((f, dict))
     }
@@ -281,7 +314,13 @@ impl Cx<'_> {
     /// Is `def` one of the functions shared in this step?
     fn shares(&self, def: DefId) -> bool {
         match self.hir.def(def) {
-            velt_sema::hir::Def::Fn(f) => SHARED.contains(&f.name.as_str()),
+            velt_sema::hir::Def::Fn(f) => {
+                SHARED.contains(&f.name.as_str())
+                    || (maps_wanted()
+                        && !MAP_PER_TYPE.iter().any(|n| f.name.contains(n))
+                        && (f.name.starts_with("std/lang/map/")
+                            || f.name.starts_with("std/prelude/map::Map.")))
+            }
             _ => false,
         }
     }
@@ -325,7 +364,7 @@ impl Cx<'_> {
                     .iter()
                     .any(|(k, &p)| p == t && k.1 == i as u32)
         });
-        (self.shares(*d) && canonical).then(|| (*d, targs.clone()))
+        (!targs.is_empty() && self.shares(*d) && canonical).then(|| (*d, targs.clone()))
     }
 
     /// Whether `work` is a shared instance (`register_inst` then records it).
