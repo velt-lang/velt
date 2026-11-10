@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use super::{fmt_tys, Linkage, Program};
+use super::{fmt_tys, Callee, Linkage, Program, Terminator};
 
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -123,6 +123,70 @@ fn write_static_bytes(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
     }
     let hex = String::from_utf8(hex).expect("ICE: hex digits are ASCII");
     write!(f, "hex\"{hex}\"")
+}
+
+impl Program {
+    fn fmt_callee(&self, c: &Callee) -> String {
+        match c {
+            Callee::Func(id) => match self.funcs.get(id.0 as usize) {
+                Some(func) => format!("fn#{} {}", id.0, func.symbol),
+                None => format!("fn#{}", id.0),
+            },
+            Callee::Extern(id) => match self.externs.get(id.0 as usize) {
+                Some(e) => format!("extern#{} {}", id.0, e.symbol),
+                None => format!("extern#{}", id.0),
+            },
+            Callee::Ptr {
+                target,
+                params,
+                ret,
+            } => format!("({target}: fn({}) -> {ret})", fmt_tys(params)),
+        }
+    }
+
+    fn fmt_term(&self, t: &Terminator) -> String {
+        match t {
+            Terminator::Goto(b) => format!("goto bb{}", b.0),
+            Terminator::Branch { cond, then, els } => {
+                format!("branch {cond}, bb{}, bb{}", then.0, els.0)
+            }
+            Terminator::Switch {
+                value,
+                cases,
+                default,
+            } => {
+                let cs: Vec<String> = cases
+                    .iter()
+                    .map(|(v, b)| format!("{v} => bb{}", b.0))
+                    .collect();
+                format!(
+                    "switch {value} [{}], default bb{}",
+                    cs.join(", "),
+                    default.0
+                )
+            }
+            Terminator::Return(o) => format!("return {o}"),
+            Terminator::Call {
+                callee,
+                args,
+                dest,
+                next,
+                unwind,
+            } => {
+                let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+                let call = format!("call {}({})", self.fmt_callee(callee), args.join(", "));
+                let pad = match unwind {
+                    Some(p) => format!(" unwind bb{}", p.0),
+                    None => String::new(),
+                };
+                match dest {
+                    Some(d) => format!("{d} = {call} -> bb{}{pad}", next.0),
+                    None => format!("{call} -> bb{}{pad}", next.0),
+                }
+            }
+            Terminator::Unreachable => "unreachable".into(),
+        }
+    }
 }
 
 #[cfg(test)]
