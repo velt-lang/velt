@@ -6,15 +6,15 @@
 import { addressCall, addressLoad, inline, stateDrop } from "velt/lang/intrinsics";
 
 /** The waker header of the poll whose `cx` is at `cx`, borrowed for the poll. */
+@inline
 export function wakerOf(cx: usize): usize {
-  inline();
   // SAFETY: `cx` is a poll's context: its await word, then its waker.
   return unsafe { addressLoad<u32>(cx + 4) } as usize;
 }
 
 /** Entry `i` of waker `w`'s table. */
+@inline
 function entry(w: usize, i: usize): usize {
-  inline();
   // SAFETY: `w` is a waker header: its first word is its table of four functions.
   const table = unsafe { addressLoad<u32>(w) } as usize;
   // SAFETY: as above.

@@ -37,14 +37,16 @@ export declare unsafe function slotPut<T>(at: usize, value: Owned<T>): void;
  * same move or copy, the same #2613 stop, and the same compile-time checks of a channel send),
  * so the caller can do that work before it takes a lock and store the result with `slotStore`.
  */
-export declare intrinsic function slotTransfer<T>(value: Owned<T>): T;
+@intrinsic
+export declare function slotTransfer<T>(value: Owned<T>): T;
 
 /**
  * Moves `value`, which `slotTransfer` returned, into the memory at `at` as it is (no transfer).
  * Unsafe: as `slotPut`'s memory, and a value not from `slotTransfer` would share objects
  * between tasks.
  */
-export declare unsafe intrinsic function slotStore<T>(at: usize, value: Owned<T>): void;
+@intrinsic
+export declare unsafe function slotStore<T>(at: usize, value: Owned<T>): void;
 
 /**
  * Moves the value out of the memory at `at`, which then holds none: the caller owns it (and
