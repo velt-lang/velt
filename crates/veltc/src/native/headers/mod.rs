@@ -42,6 +42,8 @@ struct Decl {
     name: String,
     params: Vec<Shape>,
     ret: Shape,
+    /// It ends with `...args: CVarArgs`: `params` are its fixed parameters.
+    variadic: bool,
     span: Span,
 }
 
@@ -107,6 +109,7 @@ pub fn check(
                 .map(|(&t, &ct)| shape(p, t, ct))
                 .collect(),
             ret: shape(p, f.ret, c.ret),
+            variadic: c.variadic,
             span: f.span,
         };
         groups
@@ -302,14 +305,21 @@ fn check_decl(d: &Decl, h: &Headers, headers: &[String], windows: bool, diags: &
         ));
         return;
     };
-    if c.variadic {
-        diags.push(Diagnostic::error(
-            format!(
-                "C function `{}` is variadic in {}, which `declare c` can't declare yet",
-                d.name, c.at
+    if c.variadic != d.variadic {
+        let (what, note) = match c.variadic {
+            true => ("is variadic", "declare its `...` last: `...args: CVarArgs` (velt/ffi)"),
+            false => (
+                "is not variadic",
+                "leave out `...args: CVarArgs`: a variadic call passes its arguments where this function doesn't look",
             ),
-            d.span,
-        ));
+        };
+        diags.push(
+            Diagnostic::error(
+                format!("C function `{}` {what} in {}", d.name, c.at),
+                d.span,
+            )
+            .with_note(note),
+        );
         return;
     }
     if let Some(convention) = compare::foreign_convention(&c.attributes, windows) {

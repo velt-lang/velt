@@ -166,6 +166,11 @@ fn declaration_digest(d: &Decl) -> String {
     }
     h.update([1]);
     h.update(compare::describe(&d.ret));
+    // Only a variadic one adds anything, so the records of the others stay as they were.
+    if d.variadic {
+        h.update([2]);
+        h.update("...");
+    }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -219,6 +224,7 @@ mod tests {
             name: name.into(),
             params,
             ret: Shape::Scalar(int),
+            variadic: false,
             span: Span::DUMMY,
         }
     }
@@ -230,6 +236,11 @@ mod tests {
         assert_ne!(base, declaration_digest(&decl("g", vec![Shape::Text])));
         assert_ne!(base, declaration_digest(&decl("f", vec![Shape::Null])));
         assert_ne!(base, declaration_digest(&decl("f", vec![])));
+        let variadic = Decl {
+            variadic: true,
+            ..decl("f", vec![Shape::Text])
+        };
+        assert_ne!(base, declaration_digest(&variadic));
     }
 
     #[test]

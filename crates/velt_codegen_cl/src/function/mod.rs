@@ -40,6 +40,7 @@ mod storage_tests;
 mod target;
 mod terminator;
 mod tls;
+mod variadic;
 
 use rustc_hash::FxHashMap;
 

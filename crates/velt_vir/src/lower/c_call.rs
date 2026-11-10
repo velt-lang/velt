@@ -61,7 +61,16 @@ impl FnLower<'_, '_> {
         let laters = self.later_each(args);
         let callee = format!("C function `{}`", base_symbol(&symbol));
         let wasm = wasm32(&self.cx.target);
-        for (k, ((a, t), later)) in args.iter().zip(&c.params).zip(laters).enumerate() {
+        // A variadic function's further arguments, each as what it is (sema checked it is a
+        // scalar or a pointer C's `...` takes).
+        let types: Vec<CTy> = (c.params.iter().copied())
+            .chain(
+                args[c.params.len().min(args.len())..]
+                    .iter()
+                    .map(|a| self.vararg_cty(a.ty)),
+            )
+            .collect();
+        for (k, ((a, t), later)) in args.iter().zip(&types).zip(laters).enumerate() {
             ctys.push(c_vir(*t, wasm));
             if let CTy::Buf { .. } = t {
                 let name = format!("argument {}", k + 1);
@@ -132,8 +141,19 @@ impl FnLower<'_, '_> {
                     }
                 }
             };
+            // C's default argument promotions, for a variadic argument.
+            let v = match (k >= c.params.len(), promoted(*t, wasm)) {
+                (true, Some(pt)) => {
+                    *ctys
+                        .last_mut()
+                        .unwrap_or_else(|| ice("a C argument's type")) = pt;
+                    self.rvalue_temp(pt, Rvalue::Cast(v, pt))
+                }
+                _ => v,
+            };
             vals.push(CArg::Ready(v));
         }
+        let fixed = c.params.len();
         let mut cargs = vec![];
         for v in vals {
             cargs.push(match v {
@@ -161,7 +181,7 @@ impl FnLower<'_, '_> {
         let clash = self
             .cx
             .extern_signature(link)
-            .is_some_and(|s| s != (&ctys[..], cret));
+            .is_some_and(|s| s != (&ctys[..fixed], cret, c.variadic));
         if clash {
             // Reported once per declaration, naming the other one (or the runtime's use).
             if self.cx.c_clashes_reported.insert(def) {
@@ -190,7 +210,8 @@ impl FnLower<'_, '_> {
                 at: decl.clone(),
                 shown,
             });
-        let id = self.cx.extern_sym(link, ctys, cret, false);
+        ctys.truncate(fixed);
+        let id = self.cx.extern_sym_c(link, ctys, cret, c.variadic);
         self.cx.externs[id.0 as usize].c_decl = Some(decl);
         let dest = (cret != Ty::Unit).then(|| self.temp(cret));
         self.call(
@@ -231,6 +252,20 @@ impl FnLower<'_, '_> {
                 self.rvalue_temp(wide, Rvalue::Cast(result, wide))
             }
             _ => result,
+        }
+    }
+
+    /// What a variadic argument of type `t` crosses as (sema allowed only these).
+    fn vararg_cty(&mut self, t: TyId) -> CTy {
+        let t = self.sub(t);
+        match self.cx.kind(t) {
+            TyKind::Int(i) => CTy::Int(i),
+            TyKind::Float(hir::FloatTy::F32) => CTy::F32,
+            TyKind::Float(_) => CTy::F64,
+            TyKind::Bool => CTy::Bool,
+            TyKind::Option(inner, _) if matches!(self.cx.kind(inner), TyKind::Never) => CTy::Null,
+            TyKind::Option(..) => CTy::Ptr { nullable: true },
+            _ => CTy::Ptr { nullable: false },
         }
     }
 
@@ -376,9 +411,23 @@ pub(super) fn c_vir(t: CTy, wasm32: bool) -> Ty {
     }
 }
 
+/// The type a variadic argument crossing as `t` is passed as, when C's default argument
+/// promotions change it: an integer narrower than `int` and `_Bool` become an `int`, a `float`
+/// a `double` (`size_t` stays itself, 32 bits on wasm32).
+fn promoted(t: CTy, wasm32: bool) -> Option<Ty> {
+    match c_vir(t, wasm32) {
+        Ty::I8 | Ty::I16 | Ty::U8 | Ty::U16 | Ty::Bool => Some(Ty::I32),
+        Ty::F32 => Some(Ty::F64),
+        _ => None,
+    }
+}
+
 /// How a C function's declaration reads, for messages: `abs$u8(u8): i32`.
 fn shown_signature(declared: &str, c: &hir::CImport) -> String {
-    let ps: Vec<&str> = c.params.iter().map(|t| c_name(*t)).collect();
+    let mut ps: Vec<&str> = c.params.iter().map(|t| c_name(*t)).collect();
+    if c.variadic {
+        ps.push("...");
+    }
     format!("{declared}({}): {}", ps.join(", "), c_name(c.ret))
 }
 

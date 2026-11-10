@@ -419,10 +419,37 @@ impl<'h> Cx<'h> {
 
     /// Intern an extern by symbol; the same symbol must always have the same signature.
     /// The signature extern `symbol` has so far, if it has one.
-    pub(super) fn extern_signature(&self, symbol: &str) -> Option<(&[Ty], Ty)> {
+    /// The parameters, result and `variadic` of the extern `symbol`, if there is one yet.
+    pub(super) fn extern_signature(&self, symbol: &str) -> Option<(&[Ty], Ty, bool)> {
         let id = self.extern_map.get(symbol)?;
         let e = &self.externs[id.0 as usize];
-        Some((&e.params[..], e.ret))
+        Some((&e.params[..], e.ret, e.variadic))
+    }
+
+    /// [`Self::extern_sym`] of a C function, `variadic` (`params` its fixed parameters) or not:
+    /// the caller checked the symbol has no other signature yet (c_call.rs, system.rs).
+    pub(super) fn extern_sym_c(
+        &mut self,
+        symbol: &str,
+        params: Vec<Ty>,
+        ret: Ty,
+        variadic: bool,
+    ) -> ExternId {
+        if !variadic {
+            return self.extern_sym(symbol, params, ret, false);
+        }
+        if let Some(&id) = self.extern_map.get(symbol) {
+            let e = &self.externs[id.0 as usize];
+            if e.params != params || e.ret != ret || !e.variadic {
+                ice(format_args!(
+                    "variadic extern `{symbol}` declared with two different signatures"
+                ));
+            }
+            return id;
+        }
+        let id = self.extern_sym(symbol, params, ret, false);
+        self.externs[id.0 as usize].variadic = true;
+        id
     }
 
     pub(super) fn extern_sym(
@@ -439,7 +466,7 @@ impl<'h> Cx<'h> {
         }
         if let Some(&id) = self.extern_map.get(symbol) {
             let e = &self.externs[id.0 as usize];
-            if e.params != params || e.ret != ret {
+            if e.params != params || e.ret != ret || e.variadic {
                 if let Some(c) = self.c_symbols.get(symbol) {
                     // The program declared it as a C function first (c_call.rs).
                     self.c_clashes.push(velt_common::Diagnostic::error(
@@ -465,6 +492,7 @@ impl<'h> Cx<'h> {
             noreturn,
             host: None,
             c_decl: None,
+            variadic: false,
         });
         self.extern_map.insert(symbol.to_string(), id);
         id

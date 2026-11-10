@@ -28,6 +28,7 @@ mod attempt;
 mod await_union;
 mod brand_members;
 mod builtins;
+mod c_varargs;
 mod call;
 mod call_apply;
 mod callables;

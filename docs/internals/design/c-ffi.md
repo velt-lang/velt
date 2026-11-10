@@ -112,7 +112,7 @@ keyword is `c` because it names the ABI, which every language here speaks.
   a non-blocking one when it has a `Completion<R>` parameter (see "Async").
 - Variadic functions are declared with their fixed parameters and `...args: CVarArgs` (scalars
   and `Ptr`s, C's default promotions, the target's variadic convention: Apple arm64 passes them
-  on the stack, unlike AAPCS64).
+  on the stack, unlike AAPCS64; "Variadic functions" below).
 - A declaration is allowed on every target; a reachable call where the manifest maps no library
   for the target is an error naming the target and the caller, so portable code chooses per
   platform with conditional imports.
@@ -219,6 +219,63 @@ never need it, and capture is a call and a store per C call. SQLite's range sele
 costs 9% more with it, 1.04× the Rust crate it replaces against 0.94× without. A check of whether the
 whole program reads `lastOsError()` was rejected: what a `declare c` call does must not depend on
 code elsewhere.
+
+### Variadic functions
+
+C's `...` (`fcntl`, `open`, `ioctl`, `syscall`, `printf`) is the declaration's last parameter,
+`...args: CVarArgs`, a type of velt/ffi that means only this:
+
+```ts
+import { CVarArgs } from "velt/ffi";
+
+declare c("c") function fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i32;
+
+// SAFETY: `fd` is open; F_SETFL takes an `int`.
+unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
+```
+
+- **What a call passes.** The fixed parameters are checked as any C call's. Each further argument
+  is passed as what it is: an integer, `f32`, `f64`, `bool`, `Ptr<T>`, `Ptr<T> | null` or `null`
+  (`NULL`). Anything else is an error naming its type (a `string`, an array, a struct; a spread
+  `...xs`: C's `...` has no array). A number literal there has no type of its own, so it is an
+  error with the fix (`0 as i32`, `1.5 as f64`): C reads the bits as the format or the command
+  says, and a guessed `f64` where C reads an `int` is a wrong value, not a conversion.
+- **C's default argument promotions** happen in lowering, as a C compiler does them: an integer
+  narrower than `int` (`i8`, `u8`, `i16`, `u16`) and `bool` pass as an `int` (sign- or
+  zero-extended by its own type), an `f32` as a `double`; `isize`/`usize` stay `ssize_t`/`size_t`
+  (32 bits on wasm32). VIR gets them promoted: a variadic `vir::ExternFn` has its fixed
+  parameters, and a call's further arguments are `I32`, `U32`, `I64`, `U64`, `F64` or `Ptr`.
+- **Each backend calls it with the target's variadic convention.** LLVM declares the function
+  `(…, ...)` and calls it with its type, so it places the arguments itself (on the stack on Apple
+  arm64, `%al` on SysV x86-64, a `double` in an integer register on Windows). Cranelift has no
+  variadic calls, so each call is an ordinary one whose signature puts the arguments there
+  (rustc_codegen_cranelift does the same): on AAPCS64 (Linux arm64) and SysV x86-64 they go where
+  named ones would; on Apple arm64 zeros fill the 8 integer registers (and the 8 float ones when a
+  `double` follows) and each variadic argument is 64 bits, so they land in their stack slots in
+  order; on Windows a variadic `double` passes its bits as an integer (on arm64 every float of
+  the call does). **SysV x86-64 also wants `%al` to bound the vector registers used, which
+  Cranelift can't set**: a callee reads it only to decide whether to save them, so integers and
+  pointers are right whatever it holds, but a `double` isn't. A debug build (Cranelift) on x86-64
+  Linux or macOS refuses a call with a float variadic argument, naming the declaration and
+  `--release` (LLVM) as the way; LLVM builds and every other target pass it. `velt dev` is
+  Cranelift too.
+- **`declare system`'s variadic forms** (`fcntl`, `open` in the compiler's table) are variadic
+  externs the same way, so a program that calls std's file functions and declares `fcntl`
+  itself links one symbol with one signature; the zeros lowering used to add before them on
+  Apple arm64 are now the Cranelift backend's, and LLVM calls them as variadic.
+- **Header check.** A declaration with `...args: CVarArgs` matches a variadic prototype and one
+  without it a fixed one, each way an error with the fix (`C function \`fcntl\` is variadic in
+  fcntl.h:…`, note: declare its `...` last); the fixed parameters compare as any function's.
+  `c-headers.json` records a variadic declaration's digest with its `...`, and nothing changes
+  for the others, so records already published still match.
+- **Cost.** None at run time beyond the call: the promotions are the casts a C compiler makes.
+  At compile time a declaration's last parameter is compared with one alias.
+
+Rejected: `CVarArg` values made by a constructor (`new CVarArg.int(1)`), Swift's
+`CVarArg`/`withVaList` route: an allocation per argument for what is a register move, and
+nothing it checks that the argument's own type doesn't already say. `va_list` parameters
+(`vprintf`) aren't declared yet: a `va_list` is target-specific storage C code fills, a C struct
+of layer 3.
 
 ### C structs
 
@@ -883,8 +940,8 @@ Step 1 lands in layers, each its own pull request:
      - zig's `zig cc -###` gives the clang command for the target; that command with
        `-ast-dump=json` in place of the object parses the headers (`zig cc -fsyntax-only` still
        renames an object it never made).
-     - Each declaration must name a function the headers declare, with as many parameters, not
-       variadic, and each parameter and the result must match per the table above (typedefs
+     - Each declaration must name a function the headers declare, with as many parameters,
+       variadic exactly when it ends with `...args: CVarArgs` (layer 9), and each parameter and the result must match per the table above (typedefs
        resolved, `long` per the target's data model, clang's predefined `__size_t`). Windows
        targets read zig's MinGW headers, which have MSVC's type sizes. An enum is as wide as
        its fixed type or its widest constant; a packed enum, one with `mode(...)`, and one whose
@@ -903,7 +960,7 @@ Step 1 lands in layers, each its own pull request:
        package's files among them are build-stamp inputs, so a changed header rebuilds (and so
        checks) a program whose sources didn't change.
      - Not yet: headers per build condition (frameworks: zig has no macOS SDK), structs,
-       function pointers (other than as `Ptr<void>`, 6c-1), variadics.
+       function pointers (other than as `Ptr<void>`, 6c-1).
    - 6b: what installs check.
      - A C library a package declares functions of lists its `headers` or says
        `unchecked: true`; `c`, the platform's C library, too (`c: { c: { headers:
@@ -1042,6 +1099,14 @@ Step 1 lands in layers, each its own pull request:
        pointer, so they get their own storage, the address with `NULL` as `null`.
      - Structs by value in `declare c` signatures, `Out<S>` and `Ref<S>` (the shared
        classifier, both backends); the header check of structs; the differential ABI test.
+9. What the scheduler's reactor in Velt (#2649) needed of `declare c`, each its own commit:
+   - Variadic functions ("Variadic functions" above): `...args: CVarArgs` (std/ffi/c_var_args.velt,
+     an alias of `never[]` sema knows by its declaration, as `StrBytes`); `hir::CImport::variadic`
+     and `vir::ExternFn::variadic` (additive); sema checks the further arguments
+     (`body/expr/c_varargs.rs`), lowering promotes them (`lower/c_call.rs`), LLVM declares and
+     calls `(…, ...)`, Cranelift places them per target (`function/variadic.rs`), and the
+     header check matches variadic prototypes. `declare system`'s variadic forms became variadic
+     externs too.
 
 9. `@export("c_name")` (#2203 step 5): "Exported functions" above, with
    `exportedAddress`. Tested: veltc's c_export.rs (C sources calling exports by name, a thread

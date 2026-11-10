@@ -705,3 +705,69 @@ fn a_c_string_s_bytes_are_read_only() {
     let out = check(dir.path());
     assert!(out.matches("read-only").count() >= 2, "{out}");
 }
+
+const VARIADIC: &str = include_str!("c_functions/variadic.velt");
+
+/// C's `...` (`...args: CVarArgs`): integers of every width, promoted as C promotes them (a
+/// negative `i8` stays negative, a `u8` above 127 positive), more than the registers hold, in
+/// debug (Cranelift: on Apple arm64 they go on the stack) and release (LLVM) builds; `fcntl`
+/// with an `int` after the command and with nothing.
+#[test]
+fn variadic_functions_take_integers() {
+    let dir = test_dir::TestDir::new();
+    let unix = cfg!(unix);
+    let main = if unix {
+        "import { ints, closeOnExec } from \"cmath\";\n\nfunction main() {\n  console.log(ints());\n  console.log(closeOnExec());\n}\n"
+    } else {
+        "import { ints } from \"cmath\";\n\nfunction main() {\n  console.log(ints());\n}\n"
+    };
+    project(dir.path(), VARIADIC, main);
+    let want = format!(
+        "-5 250 65535 4000000000 -9000000000 1 12345|1 2 3 4 5\n{}",
+        if unix { "1\n" } else { "" }
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            want,
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}
+
+/// Floats through `...` (an `f32` promoted to `double`), mixed with integers and a pointer, more
+/// than the float registers hold. Cranelift can't set SysV x86-64's `%al`, so a debug build
+/// there refuses the call, naming the declaration and `--release`.
+#[test]
+fn variadic_functions_take_floats() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        VARIADIC,
+        "import { floats } from \"cmath\";\n\nfunction main() {\n  console.log(floats());\n}\n",
+    );
+    let sysv_x86 = cfg!(all(target_arch = "x86_64", not(windows)));
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        if sysv_x86 && args.len() == 1 {
+            assert!(!o.status.success(), "{stderr}");
+            assert!(
+                stderr.contains("C function `snprintf` (declared at ")
+                    && stderr.contains("is passed a float variadic argument")
+                    && stderr.contains("--release"),
+                "{stderr}"
+            );
+            continue;
+        }
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "1.50 2.25 7 0.5 -1 3.0625 1.0 2.0 3.0 4.0 5.0 6.0 world\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}

@@ -29,6 +29,7 @@ pub(super) fn insert(program: &mut Program, required: u32) {
         noreturn: false,
         host: None,
         c_decl: None,
+        variadic: false,
     });
     let f = &mut program.funcs[main];
     let moved = BlockId(f.blocks.len() as u32);

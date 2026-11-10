@@ -2,7 +2,8 @@
 //! arguments become the C function's, as the table of the target states them. A buffer gives
 //! its data pointer and its length (an array's, or a view's: system_views.rs), a path is checked to end with 0, a struct goes through a
 //! temporary of the C layout (copied back after the call), guarded integers are checked, and
-//! on Apple arm64 the variadic arguments go on the stack (see [`APPLE_VARIADIC_REGS`]).
+//! a variadic function (`fcntl`) is a variadic extern, which each backend calls with the
+//! target's variadic convention, as a variadic `declare c` function (c_call.rs).
 
 use velt_sema::hir::{self, DefId, TyId};
 
@@ -12,12 +13,6 @@ use super::{cint, ice, FnLower};
 use crate::system::{self, After, Func, Guard, Int, Param, Ret, Struct};
 use crate::tls::TlsCall;
 use crate::vir::{self, AggLayout, BinOp, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty};
-
-/// Apple's arm64 ABI passes variadic arguments on the stack, in 8-byte slots, where other
-/// arguments fill the 8 integer registers first. Calling with exactly 8 integer arguments
-/// before them (padding with zeros) puts them where the C function looks, without a variadic
-/// call in VIR; Linux and x86-64 pass them like any other argument.
-const APPLE_VARIADIC_REGS: usize = 8;
 
 /// `ERROR_IO_PENDING`.
 const ERROR_IO_PENDING: i128 = 997;
@@ -110,9 +105,10 @@ impl FnLower<'_, '_> {
         let mut structs: Vec<(Place, TyId, Place, &'static Struct)> = vec![];
         let mut by_param: Vec<Option<Operand>> = vec![];
         let mut vals = vals.into_iter();
+        let mut fixed = None;
         for (i, p) in func.params.iter().enumerate() {
             if i == func.variadic {
-                self.variadic_padding(&mut cargs, &mut ctys);
+                fixed = Some(cargs.len());
             }
             let variadic = i >= func.variadic;
             let first = cargs.len();
@@ -154,8 +150,8 @@ impl FnLower<'_, '_> {
             }
             by_param.push(cargs.get(first).cloned());
             if variadic {
-                // Variadic integers are promoted to 64 bits and pointers passed as integers,
-                // so every form of a function (`fcntl`'s) has one signature.
+                // Variadic integers are promoted to 64 bits and pointers passed as integers:
+                // C reads an `int` or a pointer from such a slot (every target is 64-bit).
                 for k in first..cargs.len() {
                     let t = ctys[k];
                     if t != Ty::I64 {
@@ -170,7 +166,13 @@ impl FnLower<'_, '_> {
             Ret::Int { ty, .. } => ty.vir(),
             Ret::Errno => Ty::Ptr,
         };
-        let id = self.cx.extern_sym(func.symbol, ctys, cret, false);
+        let id = match fixed {
+            Some(n) => {
+                ctys.truncate(n);
+                self.cx.extern_sym_c(func.symbol, ctys, cret, true)
+            }
+            None => self.cx.extern_sym(func.symbol, ctys, cret, false),
+        };
         let dest = self.temp(cret);
         self.call(
             vir::Callee::Extern(id),
@@ -317,20 +319,6 @@ impl FnLower<'_, '_> {
             false,
         );
         Operand::Copy(Place::local(out))
-    }
-
-    /// Zeros before the variadic arguments on Apple arm64 (`APPLE_VARIADIC_REGS`).
-    fn variadic_padding(&mut self, cargs: &mut Vec<Operand>, ctys: &mut Vec<Ty>) {
-        let apple_arm = matches!(
-            system::target_os(&self.cx.target),
-            Some((system::Os::MacOs, true))
-        );
-        if !apple_arm {
-            return;
-        }
-        while cargs.len() < APPLE_VARIADIC_REGS {
-            push(cargs, ctys, cint(0, Ty::I64), Ty::I64);
-        }
     }
 
     /// The data pointer and length (`u64`) of a buffer argument: an array's or a view's.
