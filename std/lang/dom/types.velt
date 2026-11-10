@@ -6,15 +6,14 @@
 // scripts/dom-subset/names.txt: do not edit, change the list and run the script.
 // Derived from TypeScript's lib.dom.d.ts, Copyright (c) Microsoft Corporation, Apache-2.0; see NOTICE.
 
-import { AbortSignal } from "velt/task/signal";
+import { Event } from "velt/lang/event/event";
+import {
+  AddEventListenerOptions,
+  EventListenerOptions,
+  EventListenerOrEventListenerObject,
+} from "velt/lang/event/event_target";
 
 export interface ARIAMixin {}
-
-export interface AddEventListenerOptions extends EventListenerOptions {
-  once?: boolean;
-  passive?: boolean;
-  signal?: AbortSignal;
-}
 
 export interface Animatable {}
 
@@ -32,10 +31,6 @@ export interface CSSStyleDeclaration {
 
 export interface ChildNode extends Node {
   remove(): void;
-}
-
-export interface CustomEvent<T = any> extends Event {
-  readonly detail: T;
 }
 
 export type DOMStringMap = Record<string, string | undefined>;
@@ -71,26 +66,6 @@ export interface ElementContentEditable {
   readonly isContentEditable: boolean;
 }
 
-export interface Event {
-  readonly type: string;
-  readonly target: EventTarget | null;
-  readonly currentTarget: EventTarget | null;
-  readonly defaultPrevented: boolean;
-  preventDefault(): void;
-  stopPropagation(): void;
-  stopImmediatePropagation(): void;
-  readonly bubbles: boolean;
-  cancelBubble: boolean;
-}
-
-export type EventListener = (evt: Event) => void throws unknown;
-
-export interface EventListenerOptions {
-  capture?: boolean;
-}
-
-export type EventListenerOrEventListenerObject = EventListener;
-
 export interface EventTarget {
   addEventListener(
     type: string,
@@ -102,7 +77,7 @@ export interface EventTarget {
     callback: EventListenerOrEventListenerObject | null,
     options?: EventListenerOptions | boolean,
   ): void;
-  dispatchEvent(event: Event): boolean;
+  dispatchEvent(event: Event): boolean throws Error;
 }
 
 export interface FocusOptions {

@@ -323,12 +323,15 @@ impl Loader<'_, '_> {
         let ast = &self.modules[index].ast;
         let own = globals::bound_names(ast);
         let words = globals::Words::of(src);
+        let mut stripped = None;
         let (wanted, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.globals)
             .into_iter()
             .partition(|g| {
-                g.names
-                    .iter()
-                    .any(|n| !own.contains(n.as_str()) && globals::names_global(&words, ast, n))
+                g.names.iter().any(|n| {
+                    !own.contains(n.as_str())
+                        && globals::names_global(&words, ast, n)
+                        && (!g.code_only || globals::in_code(src, ast, n, &mut stripped))
+                })
             });
         self.globals = rest;
         let Some(std) = self.opts.std_root.clone() else {

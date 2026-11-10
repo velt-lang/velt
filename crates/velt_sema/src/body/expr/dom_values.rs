@@ -3,7 +3,7 @@
 //! The types of std/lang/dom that `lib.dom` also declares as values (`declare var`).
 
 /// The names, sorted.
-pub(crate) const DOM_VALUES: [&str; 167] = [
+pub(crate) const DOM_VALUES: [&str; 164] = [
     "AbstractRange",
     "AnimationEvent",
     "CSSStyleDeclaration",
@@ -12,14 +12,11 @@ pub(crate) const DOM_VALUES: [&str; 167] = [
     "Comment",
     "CompositionEvent",
     "CustomElementRegistry",
-    "CustomEvent",
     "DOMStringMap",
     "Document",
     "DocumentFragment",
     "DragEvent",
     "Element",
-    "Event",
-    "EventTarget",
     "FocusEvent",
     "HTMLAnchorElement",
     "HTMLAreaElement",

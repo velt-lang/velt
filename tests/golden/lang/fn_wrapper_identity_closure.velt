@@ -1,0 +1,24 @@
+// A function wrapped for a type conversion inside a closure's body keeps its identity, as at
+// the top level (#2700): two wrappers made in one closure each lead to their own function.
+type L = (e: string) => void;
+const ls: L[] = [];
+function idx(l: L | null): number {
+  if (l === null) {
+    return -2;
+  }
+  for (let i = 0; i < ls.length; i++) {
+    if (ls[i] === l) {
+      return i;
+    }
+  }
+  return -1;
+}
+const wide = (e: any) => console.log("wide", e);
+const zero = () => console.log("zero");
+ls.push(wide);
+ls.push(zero);
+const inClosure = () => {
+  console.log(idx(wide), idx(zero));
+};
+inClosure();
+console.log(idx(wide), idx(zero));

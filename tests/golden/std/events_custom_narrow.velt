@@ -1,0 +1,10 @@
+// `e instanceof CustomEvent` on an `Event` narrows to `CustomEvent<any>` (its type parameter is
+// erased: std keeps `detail` as an `any`), also for a subclass of a `CustomEvent<string>` (#2378).
+const t = new EventTarget();
+t.addEventListener("m", (ev) => { if (ev instanceof CustomEvent) { console.log("inst", ev.detail); } else { console.log("plain", ev.type); } });
+t.dispatchEvent(new CustomEvent("m", { detail: 5 }));
+t.dispatchEvent(new CustomEvent("m", { detail: { n: 1 } }));
+t.dispatchEvent(new CustomEvent("m"));
+t.dispatchEvent(new Event("m"));
+class Big extends CustomEvent<string> { extra = 1 }
+t.dispatchEvent(new Big("m", { detail: "s" }));

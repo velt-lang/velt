@@ -1,0 +1,120 @@
+// Event, EventTarget and CustomEvent as Node's global classes (#2378): the listeners' order,
+// `once`, removal and addition during a dispatch, capture, handler objects, `signal`, the flags,
+// and a class that extends EventTarget. Checked against Node 26.
+const t = new EventTarget();
+const b = () => console.log("b");
+const c = () => console.log("c");
+const a = () => {
+  console.log("a");
+  t.removeEventListener("x", b);
+  t.addEventListener("x", c);
+};
+t.addEventListener("x", a);
+t.addEventListener("x", b);
+// `b` is removed before its turn; `c`, added after it, is not reached (Node's list).
+console.log(t.dispatchEvent(new Event("x")));
+console.log(t.dispatchEvent(new Event("x")));
+
+// A listener added during a dispatch runs in it when the list goes on past it.
+const t1 = new EventTarget();
+t1.addEventListener("x", () => {
+  console.log("a1");
+  t1.addEventListener("x", c);
+});
+t1.addEventListener("x", () => console.log("b1"));
+t1.dispatchEvent(new Event("x"));
+
+// Capture is part of a listener's identity; the order is the order of adding.
+t.addEventListener("y", null);
+t.addEventListener("y", b, true);
+t.addEventListener("y", b, false);
+t.addEventListener("y", b);
+t.dispatchEvent(new Event("y"));
+t.removeEventListener("y", b, { capture: true });
+t.dispatchEvent(new Event("y"));
+
+const e = new Event("z", { cancelable: true });
+console.log(e.type, e.bubbles, e.cancelable, e.composed, e.defaultPrevented, e.isTrusted);
+console.log(e.eventPhase, e.target === null, e.currentTarget === null, typeof e.timeStamp);
+console.log(e.returnValue, e.cancelBubble, e.srcElement === null, e.composedPath().length);
+t.addEventListener("z", (ev) => {
+  console.log("in", ev.eventPhase, ev.target === t, ev.currentTarget === t);
+  console.log(ev.composedPath().length, ev.srcElement === t);
+  ev.preventDefault();
+});
+console.log(t.dispatchEvent(e), e.defaultPrevented, e.returnValue, e.eventPhase);
+console.log(e.target === t, e.currentTarget === null);
+
+// A handler object, `once`, and `stopImmediatePropagation`, which also holds for a later
+// dispatch of the same event.
+const e2 = new Event("w");
+t.addEventListener("w", {
+  handleEvent(ev: Event) {
+    console.log("obj", ev.type);
+    ev.preventDefault();
+  },
+}, { once: true });
+t.addEventListener("w", (ev) => {
+  console.log("w2");
+  ev.stopImmediatePropagation();
+});
+t.addEventListener("w", () => console.log("w3"));
+console.log(t.dispatchEvent(e2), e2.defaultPrevented, e2.cancelBubble);
+console.log(t.dispatchEvent(new Event("w")));
+t.dispatchEvent(e2);
+console.log("again");
+
+// Dispatching an event that is being dispatched throws.
+const r = new Event("r");
+t.addEventListener("r", () => {
+  try {
+    t.dispatchEvent(r);
+  } catch (err) {
+    console.log("recursion:", (err as Error).message);
+  }
+});
+t.dispatchEvent(r);
+
+const ce = new CustomEvent("c", { detail: { n: 1 } });
+console.log(ce.detail.n, new CustomEvent("c").detail, ce.type);
+console.log(ce instanceof Event, ce instanceof CustomEvent, t instanceof EventTarget);
+
+// An aborted signal removes the listener, and keeps a new one from being added.
+const ac = new AbortController();
+t.addEventListener("s", () => console.log("sig"), { signal: ac.signal });
+t.dispatchEvent(new Event("s"));
+ac.abort();
+t.dispatchEvent(new Event("s"));
+t.addEventListener("s", () => console.log("sig2"), { signal: ac.signal });
+t.dispatchEvent(new Event("s"));
+console.log(Event.NONE, Event.CAPTURING_PHASE, Event.AT_TARGET, Event.BUBBLING_PHASE);
+
+class Store extends EventTarget {
+  fire(): boolean {
+    return this.dispatchEvent(new CustomEvent("m", { detail: 5 }));
+  }
+}
+const m = new Store();
+m.addEventListener("m", (ev) => console.log("m", ev.type, ev.target === m));
+console.log(m.fire());
+
+const s = new Event("q");
+s.stopPropagation();
+console.log(s.cancelBubble);
+t.addEventListener("q", () => console.log("q runs"));
+t.dispatchEvent(s);
+const s2 = new Event("q2");
+s2.cancelBubble = true;
+console.log(s2.cancelBubble);
+
+// `preventDefault()` in a passive listener does nothing.
+const pv = new Event("p", { cancelable: true });
+t.addEventListener("p", (ev) => {
+  ev.preventDefault();
+  console.log(ev.defaultPrevented);
+}, { passive: true });
+console.log(t.dispatchEvent(pv));
+const rv = new Event("rv", { cancelable: true });
+rv.returnValue = false;
+console.log(rv.defaultPrevented);
+console.log(new EventTarget());

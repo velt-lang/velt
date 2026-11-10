@@ -1,0 +1,16 @@
+// Global (loaded when a module names one of these in code): Node's `Event`, `EventTarget` and
+// `CustomEvent`, and the types of their options and listeners
+// (https://veltlang.com/docs/reference/globals/).
+// load for: a name in code, not in a comment
+export {
+  AddEventListenerOptions,
+  CustomEvent,
+  CustomEventInit,
+  Event,
+  EventInit,
+  EventListener,
+  EventListenerObject,
+  EventListenerOptions,
+  EventListenerOrEventListenerObject,
+  EventTarget,
+} from "velt/lang/event";
