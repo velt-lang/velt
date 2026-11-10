@@ -111,9 +111,9 @@ impl FnCx<'_, '_> {
     }
 
     /// `l op r` with `op` an ordering (`<`, `<=`, `>`, `>=`) where a side is a string's read:
-    /// `false` when its value is missing, as `undefined < "c"` is in JavaScript. `Err` gives
-    /// the operands back when neither is one, or when skipping the other side would skip what
-    /// it does (it is not a variable, a literal or a read).
+    /// `false` when its value is missing, as `undefined < "c"` is in JavaScript. A side that
+    /// does something (`side()`) is bound to a temporary first, both in order, so it runs
+    /// either way. `Err` gives the operands back when neither side is a string's read.
     pub(super) fn record_ordering(
         &mut self,
         op: ast::BinaryOp,
@@ -128,8 +128,18 @@ impl FnCx<'_, '_> {
             matches!(h.kind, hir::ExprKind::Lit(_) | hir::ExprKind::Local(..))
                 || s.trusted_value(h).is_some()
         };
-        if !(lt || rt) || (lt && !pure(self, &r)) || (rt && !pure(self, &l)) {
+        if !(lt || rt) {
             return Err(Box::new((l, r)));
+        }
+        if (lt && !pure(self, &r)) || (rt && !pure(self, &l)) {
+            let mut stmts = vec![];
+            let l = self.ordering_temp(l, &mut stmts);
+            let r = self.ordering_temp(r, &mut stmts);
+            let h = self
+                .record_ordering(op, l, r, span)
+                .map_err(|_| ())
+                .expect("ICE: ordering of bound operands");
+            return Ok(self.with_temps_value(stmts, h));
         }
         let no = |s: &mut Self| {
             s.mk(
@@ -154,6 +164,21 @@ impl FnCx<'_, '_> {
             }
             _ => self.present_match(r, |s, rv| s.binary_checked(op, l, rv, span), none, span),
         })
+    }
+
+    /// `h` bound to a temporary (appended to `stmts`) and read from it, as the same read.
+    fn ordering_temp(&mut self, h: hir::Expr, stmts: &mut Vec<hir::Stmt>) -> hir::Expr {
+        let (ty, span) = (h.ty, h.span);
+        let l = self.new_local("<ordering>", ty, false, span, crate::body::LocalKind::Temp);
+        stmts.push(hir::Stmt {
+            kind: hir::StmtKind::Let {
+                local: l,
+                init: Some(h),
+            },
+            span,
+        });
+        let mode = self.use_mode(ty, crate::body::Want::Move);
+        self.mk(hir::ExprKind::Local(l, mode), ty, span)
     }
 
     /// `h` iterated (`for…of`, a spread): Node's `TypeError: e is not iterable`, with `suffix`.
@@ -211,6 +236,43 @@ impl FnCx<'_, '_> {
     /// `number` (a missing one is `NaN`) or a `string` (`"undefined"`), as in JavaScript?
     pub(super) fn open_compound_reads(&self, v: TyId) -> bool {
         v == self.cx.ty.f64 || v == self.cx.ty.str_
+    }
+
+    /// `w op= v` where `w` is a trusted local of a `number` or a `string` (`let w = r[k]`):
+    /// `w = w op v`, whose read of `w` is the record read it holds (a missing number is `NaN`,
+    /// as in JavaScript). `None` for any other assignment.
+    pub(super) fn trusted_compound(
+        &mut self,
+        op: Option<ast::BinaryOp>,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        use ast::BinaryOp as B;
+        let op = op.filter(|op| !matches!(op, B::And | B::Or | B::Nullish))?;
+        let mut inner = target;
+        while let ast::ExprKind::Paren(x) = &inner.kind {
+            inner = x;
+        }
+        let ast::ExprKind::Ident(id) = &inner.kind else {
+            return None;
+        };
+        let l = self.declared_local(&id.name)?;
+        let v = *self.f.trusted_locals.get(&l)?;
+        if !self.open_compound_reads(v) {
+            return None;
+        }
+        let kind = ast::ExprKind::Binary {
+            op,
+            lhs: Box::new(inner.clone()),
+            rhs: Box::new(value.clone()),
+        };
+        let rhs = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind,
+            span,
+        };
+        Some(self.assign(None, inner, &rhs, span))
     }
 
     /// `obj.prop` as the place an assignment writes (`field_access`): a missing record value
