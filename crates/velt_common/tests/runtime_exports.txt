@@ -177,7 +177,6 @@ velt_rt velt_rt_group_new
 velt_rt velt_rt_group_wait
 velt_rt velt_rt_host_clone
 velt_rt velt_rt_host_release
-velt_rt velt_rt_html_escape
 velt_rt velt_rt_i64_to_radix
 velt_rt velt_rt_isatty
 velt_rt velt_rt_json_enter
@@ -230,7 +229,6 @@ velt_rt velt_rt_json_value_push
 velt_rt velt_rt_json_value_set
 velt_rt velt_rt_json_value_set_at
 velt_rt velt_rt_json_value_stringify
-velt_rt velt_rt_jsx_escape
 velt_rt velt_rt_keep_alive_acquire
 velt_rt velt_rt_keep_alive_release
 velt_rt velt_rt_latch_free
@@ -511,9 +509,7 @@ velt_rt velt_rt_worker_count
 velt_rt velt_rt_write_bool
 velt_rt velt_rt_write_byte
 velt_rt velt_rt_write_f64
-velt_rt velt_rt_write_i64
 velt_rt velt_rt_write_str
-velt_rt velt_rt_write_u64
 velt_rt velt_rt_xfer_begin
 velt_rt velt_rt_xfer_defer
 velt_rt velt_rt_xfer_end
@@ -696,9 +692,7 @@ velt_rt_wasm velt_rt_worker_count
 velt_rt_wasm velt_rt_write_bool
 velt_rt_wasm velt_rt_write_byte
 velt_rt_wasm velt_rt_write_f64
-velt_rt_wasm velt_rt_write_i64
 velt_rt_wasm velt_rt_write_str
-velt_rt_wasm velt_rt_write_u64
 velt_rt_wasm velt_rt_xfer_keep_shared
 velt_rt_wasm velt_rt_yield_now
 velt_rt_wasm velt_rt_yield_now_fut

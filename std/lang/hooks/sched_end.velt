@@ -1,0 +1,262 @@
+// velt/lang/hooks (internal): the process lifetime under the executor in Velt (sched.velt,
+// #2649), as the runtime's (velt_rt task/quiet.rs) and Node's: the program runs while something
+// can still happen, and ends when the worker would park with nothing left that can wake it:
+// - no task queued (the worker's queue and its inbox are empty: it is about to park);
+// - no keep-alive reference (a ref'd timer: std/prelude/timers.velt's externs route here);
+// - no wait linked into a source of the Velt reactor (a socket read, an accept, a deadline);
+// - no runtime leaf outstanding: a Rust leaf polled `PENDING` that waits for a timer or I/O
+//   counts until it is ready or dropped. The runtime counts those itself (leaf.rs `External`,
+//   child processes, native futures); the executor asks it with the runtime's own question of a
+//   due `unref()`'d timer (`velt_rt_timer_unref_due`, quiet.rs `UnrefDue`: ready with 0 when a
+//   leaf is pending, a keep-alive reference held or a task queued in the runtime; pending when
+//   nothing of that is left), polled once with a waker that does nothing and dropped. No new
+//   runtime entry, nothing per poll: only a park reads any of this.
+// Tasks that wait only for each other (a promise nobody settles, a channel nobody sends on) can
+// never be woken then. With `main` still running, the program ends as the runtime's
+// `exit_unfinished`: a top-level `await` waiting (the last `velt_rt_tla_at`) writes Node's warning
+// and exits with 13, anything else exits with 0 (stdout flushed). After `main`, the tasks left
+// are given up and the program's normal end follows (sched.velt `schedFinish`).
+//
+// A due `unref()`'d timer asks whether the process is ending (`schedUnrefDue`): when something
+// else can still happen (a keep-alive reference, pending I/O or leaf, a queued task) its callback
+// runs at once; otherwise it waits for the next park, which ends the process (the callback never
+// runs, as in Node) or finds something pending and wakes it to ask again. A worker that never
+// parks (code that keeps yielding) wakes it every I/O tick, and after a second it runs, as the
+// runtime's patience does.
+
+import { fnAddress, futDrop, futPoll, noInline, slotPut, slotTake } from "velt/lang/intrinsics";
+import * as io from "./sched_io";
+import * as wt from "./sched_io_wait";
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+
+/** The runtime's question of a due `unref()`'d timer, asked as a probe (a heap future). */
+declare c("c") function velt_rt_timer_unref_due$probe(): usize;
+
+/** How long a due `unref()`'d timer waits for the worker to park, in nanoseconds. */
+const PATIENCE: u64 = 1000000000;
+
+// A due unref()'d timer's question (a heap future, rt_abi_async.md §1): its answer (a bool at
+// the result slot), its waker, its place in the executor's list, whether it is there, when it
+// first asked (monotonic nanoseconds, 0: not yet).
+const U_RESULT: usize = 16;
+const U_WAKER: usize = 24;
+const U_NEXT: usize = 32;
+const U_PREV: usize = 40;
+const U_LINKED: usize = 48;
+const U_SINCE: usize = 56;
+const U_SIZE: usize = 64;
+
+/** Sets up the probe's waker (a table whose entries do nothing) and `cx` in executor `e`. */
+export function open(e: usize): void {
+  m.st(e + t.E_PROBE_VT, fnAddress(probeClone));
+  m.st(e + t.E_PROBE_VT + 8, fnAddress(probeNothing));
+  m.st(e + t.E_PROBE_VT + 16, fnAddress(probeNothing));
+  m.st(e + t.E_PROBE_VT + 24, fnAddress(probeNothing));
+  m.st(e + t.E_PROBE, e + t.E_PROBE_VT);
+  m.st(e + t.E_PROBE_WORD, 0);
+  m.st(e + t.E_PROBE_CX, e + t.E_PROBE_WORD);
+  m.st(e + t.E_PROBE_CX + 8, e + t.E_PROBE);
+}
+
+function probeClone(w: usize): usize {
+  return w;
+}
+
+function probeNothing(w: usize): void {}
+
+/** A keep-alive reference taken (`velt_rt_keep_alive_acquire`). */
+export function keepAcquire(e: usize): void {
+  m.inc(e + t.E_KEEP);
+}
+
+/** A keep-alive reference given back (`velt_rt_keep_alive_release`). */
+export function keepRelease(e: usize): void {
+  m.dec(e + t.E_KEEP);
+}
+
+/** The top-level `await` at `site` (`path:line:col`) suspends: kept in the executor's slot. */
+export function tlaAt(e: usize, site: string): void {
+  if (m.ld(e + t.E_TLA_SET) !== 0) {
+    // SAFETY: the slot holds a string (the flag says so), taken once and dropped here.
+    const old = unsafe { slotTake<string>(e + t.E_TLA) };
+  }
+  // SAFETY: the slot has room for a string, in the executor block (`lastingZeroed`, calloc:
+  // 16-aligned), and holds none now.
+  unsafe {
+    // A copy: the caller lends `site` (the hook borrows it).
+    slotPut<string>(e + t.E_TLA, site.slice(0));
+  }
+  m.st(e + t.E_TLA_SET, 1);
+}
+
+/** Has the runtime nothing outstanding: no pending leaf, keep-alive reference or queued task? */
+function runtimeQuiet(e: usize): bool {
+  // SAFETY: the runtime's entry takes nothing and returns a new heap future, owned here.
+  const f = unsafe { velt_rt_timer_unref_due$probe() };
+  // SAFETY: `f` is a live heap future; the probe's `cx` lives in the executor.
+  const r = unsafe { futPoll(f, e + t.E_PROBE_CX) };
+  // The probe's contract (quiet.rs `UnrefDue`): pending while the runtime may be quiet, ready
+  // with 1 when it saw its own end (quiet too), ready with 0 when something is outstanding.
+  const quiet = r === 0 || (m.ld(f + U_RESULT) & 255) !== 0;
+  // SAFETY: owned, polled no more.
+  unsafe {
+    futDrop(f);
+  }
+  return quiet;
+}
+
+/** Can something still happen besides the code running now (module docs)? */
+function busy(e: usize): bool {
+  if (m.load(e + t.E_KEEP) !== 0 || m.ld(e + t.E_HEAD) !== 0 || m.load(e + t.E_INBOX) !== 0) {
+    return true;
+  }
+  if (m.ld(e + t.E_PINNED) !== 0) {
+    // A task on the runtime's executor (a pinned spawn) may be running: the runtime counts only
+    // its queued ones, so the program's end is not decided here (sched.velt `schedPinned`).
+    return true;
+  }
+  if (m.ld(m.ld(e + t.E_IO) + io.IO_WAITING) !== 0) {
+    return true;
+  }
+  // The runtime first, the inbox again after: a leaf counts until its task polled it ready, and
+  // its wake reaches the inbox before that.
+  return !runtimeQuiet(e) || m.load(e + t.E_INBOX) !== 0;
+}
+
+/**
+ * The worker is about to park (its queue and inbox empty, its park word up): true when it may.
+ * When nothing can happen any more, the program ends here while `main` runs (never returns), or
+ * after `main` the tasks left are given up (false: the worker's loop ends).
+ */
+@noInline
+export function mayPark(e: usize): bool {
+  if (!busy(e)) {
+    const root = m.ld(e + t.E_ROOT);
+    if (root !== 0 && !t.has(root, t.ROOT_DONE)) {
+      unfinished(e);
+    }
+    // `schedFinish` runs while tasks are live: none of them can run again.
+    m.st(e + t.E_LIVE, 0);
+    return false;
+  }
+  if (m.ld(e + t.E_UNREF) !== 0) {
+    // Something can still happen: the due unref()'d timers run.
+    wakeUnref(e);
+    return false;
+  }
+  return true;
+}
+
+/** `main` can never finish: the runtime's `exit_unfinished` (module docs). */
+function unfinished(e: usize): never {
+  if (m.ld(e + t.E_TLA_SET) === 0) {
+    process.exit(0);
+  }
+  // SAFETY: the slot holds a string (the flag says so); the process ends after this.
+  const site = unsafe { slotTake<string>(e + t.E_TLA) };
+  // `path:line:col`: Node names the line.
+  let at = site;
+  const colon = site.lastIndexOf(":");
+  if (colon > 0 && ((colon + 1) as usize) < site.length && allDigits(site, (colon + 1) as usize)) {
+    at = site.slice(0, colon);
+  }
+  console.error(`Warning: Detected unsettled top-level await at ${at}`);
+  process.exit(13);
+}
+
+function allDigits(s: string, from: usize): bool {
+  for (let i = from; i < s.length; i++) {
+    const c = s.charCodeAt(i as i64);
+    if (c < 48 || c > 57) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Wakes the due unref()'d timers waiting for a park; each asks again. */
+@noInline
+export function wakeUnref(e: usize): void {
+  let f = m.ld(e + t.E_UNREF);
+  m.st(e + t.E_UNREF, 0);
+  while (f !== 0) {
+    const next = m.ld(f + U_NEXT);
+    m.st(f + U_LINKED, 0);
+    const w = m.ld(f + U_WAKER);
+    m.st(f + U_WAKER, 0);
+    if (w !== 0) {
+      m.wakeOwned(w);
+    }
+    f = next;
+  }
+}
+
+/** `velt_rt_timer_unref_due`: a heap future whose result says whether the process is ending. */
+export function unrefDue(): usize {
+  const f = m.zeroed(U_SIZE);
+  m.st(f, fnAddress(unrefPoll));
+  m.st(f + 8, fnAddress(unrefDrop));
+  return f;
+}
+
+function unrefPoll(f: usize, cx: usize): u32 {
+  const e = t.exec();
+  unlink(e, f);
+  // Never true here: an end the executor sees exits the process (`mayPark`).
+  m.st(f + U_RESULT, 0);
+  if (busy(e)) {
+    return 1;
+  }
+  const now = wt.now();
+  const since = m.ld(f + U_SINCE) as u64;
+  if (since === 0) {
+    m.st(f + U_SINCE, now as usize);
+  } else if (now - since >= PATIENCE) {
+    return 1;
+  }
+  const w = m.ld(cx + 8);
+  const old = m.ld(f + U_WAKER);
+  if (old !== w) {
+    m.st(f + U_WAKER, m.wakerClone(w));
+    if (old !== 0) {
+      m.wakerDrop(old);
+    }
+  }
+  const head = m.ld(e + t.E_UNREF);
+  m.st(f + U_NEXT, head);
+  m.st(f + U_PREV, 0);
+  if (head !== 0) {
+    m.st(head + U_PREV, f);
+  }
+  m.st(e + t.E_UNREF, f);
+  m.st(f + U_LINKED, 1);
+  return 0;
+}
+
+function unrefDrop(f: usize): void {
+  unlink(t.exec(), f);
+  const w = m.ld(f + U_WAKER);
+  if (w !== 0) {
+    m.wakerDrop(w);
+  }
+  m.release(f, U_SIZE);
+}
+
+/** Takes question `f` out of the executor's list. */
+function unlink(e: usize, f: usize): void {
+  if (m.ld(f + U_LINKED) === 0) {
+    return;
+  }
+  const prev = m.ld(f + U_PREV);
+  const next = m.ld(f + U_NEXT);
+  if (prev === 0) {
+    m.st(e + t.E_UNREF, next);
+  } else {
+    m.st(prev + U_NEXT, next);
+  }
+  if (next !== 0) {
+    m.st(next + U_PREV, prev);
+  }
+  m.st(f + U_LINKED, 0);
+}

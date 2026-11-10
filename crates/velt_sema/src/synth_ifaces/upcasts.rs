@@ -645,6 +645,14 @@ impl Ctx<'_> {
         })
     }
 
+    /// Is `d` a class of std's `lib.dom` subset (`KeyboardEvent`, std/lang/dom/events.velt)?
+    pub(crate) fn std_dom_class(&self, d: DefId) -> bool {
+        self.adt(d).is_some_and(|a| {
+            let m = &self.modules[a.module];
+            m.is_std && m.path.starts_with("std/lang/dom/")
+        })
+    }
+
     /// Does interface `d` extend `base`, directly or through others?
     pub(crate) fn iface_extends_def(&self, d: DefId, base: DefId, depth: u32) -> bool {
         let Some(i) = self.iface(d) else {

@@ -313,7 +313,11 @@ impl FnLower<'_, '_> {
     /// `await yieldNow()`: let other ready tasks run, resume on the next poll.
     fn await_yield(&mut self) -> Operand {
         let cx = self.poll_cx();
-        self.call_rt(Rt::YieldNow, vec![cx], None);
+        if self.std_sched() {
+            self.sched_yield(cx);
+        } else {
+            self.call_rt(Rt::YieldNow, vec![cx], None);
+        }
         let (k, resume) = self.suspension();
         self.tla_suspends();
         self.set_tag(k);

@@ -1,0 +1,235 @@
+// velt/lang/hooks (internal): the I/O of the executor in Velt (#2649 step 2): the reactor
+// (`#reactor`: kqueue on macOS, epoll on Linux) the worker waits in when it has nothing to run,
+// and the sources registered with it, one per non-blocking descriptor velt/net opened
+// (std/net/tcp_sched.velt).
+//
+// - The worker's idle wait is the reactor's (`park`): a wake from another thread (a Rust leaf
+//   waking a task through its C waker, sched_task.velt `schedule`) is the reactor's own wake (an
+//   `EVFILT_USER` trigger, an eventfd write), so one wait covers sockets and wakes. There are no
+//   timers in Velt yet (Rust's wake the worker like any other thread), so the wait has no
+//   timeout. A busy worker looks at the reactor without waiting every 64 polls (`look`, from
+//   sched_run.velt `turn`).
+// - A source is registered once, for both directions, edge-triggered: an event sets its
+//   readiness bits and wakes its waiters; an operation that finds the socket not ready (EAGAIN)
+//   clears the bit, so the next edge sets it again. Its waiters are heap futures
+//   (sched_io_wait.velt), linked into the source while they wait, so any number of tasks can wait on one
+//   socket and a dropped wait leaves in constant time. Completion sources are general: anything
+//   that holds a source can `ready` it (C code included), as the reactor does for descriptors.
+// - Handles: velt/net holds a source by a handle with the top bit set (the runtime's are
+//   `generation << 32 | slot`, generations far below 2^31), its slot and generation in a table,
+//   so a closed handle is EBADF, never freed memory (sched_io_table.velt).
+// - Waits (sched_io_wait.velt) may have a deadline (`readableWithin`): the worker's wait then
+//   lasts until the first one at most; these are the only timers in Velt yet.
+// - Deferred writes (`writeLater`) collect in the source's buffer and wait on the executor's due
+//   list, sent at the end of each poll of a task and before the worker waits
+//   (sched_io_write.velt).
+//
+// One worker (VELT_THREADS=1 scope): sources, their waiters and the table are plain memory the
+// worker alone changes; only the wake crosses threads.
+
+import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
+import * as r from "#reactor";
+import * as m from "./sched_mem";
+import * as wt from "./sched_io_wait";
+
+/** The I/O block's address (0 until the executor starts). */
+const IO = new Atomic<u64>(0);
+
+/**
+ * The I/O block: the reactor, the due list, the handle table (sched_io_table.velt), the
+ * address of the executor's I/O tick (sched_task.velt `E_TICK`, set to 1 when a write is due),
+ * the waiters' poll and drop.
+ */
+export const IO_REACTOR: usize = 0;
+export const IO_DUE: usize = 8;
+export const IO_TABLE: usize = 16;
+export const IO_CAP: usize = 24;
+export const IO_LEN: usize = 32;
+export const IO_FREE: usize = 40;
+export const IO_LIVE: usize = 48;
+export const IO_TICK_AT: usize = 56;
+/** The polls of a busy worker between two looks at the reactor. */
+export const TICKS: usize = 64;
+export const IO_WAIT_POLL: usize = 64;
+export const IO_WAIT_DROP: usize = 72;
+export const IO_TIMERS: usize = 80;
+/** Waits linked into a source: pending I/O, which keeps the process alive (sched_end.velt). */
+export const IO_WAITING: usize = 88;
+const IO_SIZE: usize = 96;
+
+/** A source's fields. */
+export const S_FD: usize = 0;
+export const S_READY: usize = 8;
+export const S_FLAGS: usize = 12;
+export const S_WAITERS: usize = 16;
+export const S_BUF: usize = 24;
+export const S_OFF: usize = 32;
+export const S_LEN: usize = 40;
+export const S_CAP: usize = 48;
+export const S_QUEUED: usize = 56;
+export const S_WRITTEN: usize = 64;
+export const S_DUE_NEXT: usize = 72;
+export const S_ERR: usize = 80;
+export const S_HANDLE: usize = 88;
+export const S_CARRY: usize = 96;
+export const S_CARRY_LEN: usize = 100;
+export const S_SIZE: usize = 112;
+
+/** Readiness bits (the reactor's). */
+export const READ: u32 = 1;
+export const WRITE: u32 = 2;
+export const HUP: u32 = 4;
+export const ERR: u32 = 8;
+
+/**
+ * A source's flags: on the due list; shut down writing once the buffer is sent (and done so);
+ * close the descriptor once the buffer is sent; aborted; a listener.
+ */
+export const F_DUE: u32 = 1;
+export const F_SHUT: u32 = 2;
+export const F_SHUT_DONE: u32 = 4;
+export const F_CLOSING: u32 = 8;
+export const F_ABORTED: u32 = 16;
+export const F_LISTENER: u32 = 32;
+
+/**
+ * What a waiter waits for: readable, writable (a connect), its bytes written (`arg`: the count
+ * of bytes queued in all that must have been sent), at most `arg` bytes still to send.
+ */
+export const K_READ: u32 = 0;
+export const K_WRITE: u32 = 1;
+export const K_WRITTEN: u32 = 2;
+export const K_DRAINED: u32 = 3;
+
+/** The I/O block, made by the executor at its start (0 before, and on a JS host). */
+@inline
+export function io(): usize {
+  return IO.load("relaxed") as usize;
+}
+
+/** Makes the I/O block: the reactor, an empty table; `tickAt` is the executor's I/O tick. */
+export function open(tickAt: usize): usize {
+  const b = m.lastingZeroed(IO_SIZE);
+  m.st(b + IO_TICK_AT, tickAt);
+  m.st(tickAt, TICKS);
+  m.st(b + IO_REACTOR, r.open());
+  m.st(b + IO_WAIT_POLL, fnAddress(wt.waitPoll));
+  m.st(b + IO_WAIT_DROP, fnAddress(wt.waitDrop));
+  IO.store(b as u64, "release");
+  return b;
+}
+
+/** Do sockets run on the reactor (an OS with one, and it opened)? */
+export function supported(): bool {
+  const b = io();
+  return r.SUPPORTED && b !== 0 && m.ld(b + IO_REACTOR) !== 0;
+}
+
+/** Wakes the worker waiting in `park` (from any thread). */
+export function wake(b: usize): void {
+  r.wake(m.ld(b + IO_REACTOR));
+}
+
+/**
+ * The worker has nothing to run (its park word is up, sched_run.velt): waits for events or a
+ * wake, until the first deadline of a wait at most, and delivers the events.
+ */
+@noInline
+export function park(b: usize): void {
+  if (m.ld(b + IO_REACTOR) === 0) {
+    panic("the executor's reactor did not open: it has nothing to wait in");
+  }
+  wait(b, wt.expire(b));
+  if (m.ld(b + IO_TIMERS) !== 0) {
+    wt.expire(b);
+  }
+}
+
+/** The events ready now and deadlines passed, delivered without waiting (a busy worker's look). */
+export function look(b: usize): void {
+  wait(b, 0);
+  if (m.ld(b + IO_TIMERS) !== 0) {
+    wt.expire(b);
+  }
+}
+
+/** Waits up to `timeoutMs` (-1: no limit) and delivers the events. */
+function wait(b: usize, timeoutMs: i64): void {
+  const rb = m.ld(b + IO_REACTOR);
+  if (rb === 0) {
+    return;
+  }
+  const n = r.wait(rb, timeoutMs);
+  for (let i: usize = 0; i < n; i++) {
+    const s = r.source(rb, i);
+    if (s !== 0) {
+      ready(s, r.bits(rb, i));
+    }
+  }
+}
+
+/**
+ * Source `s` became ready for `bits`: its waiters are woken; a writable one with bytes to send
+ * goes on the due list, which the worker sends after the wait (sched_io_write.velt).
+ */
+export function ready(s: usize, bits: u32): void {
+  m.st32(s + S_READY, m.ld32(s + S_READY) | bits);
+  if ((bits & (WRITE | ERR | HUP)) !== 0 && m.ld(s + S_LEN) !== 0) {
+    due(s);
+  }
+  wt.wakeAll(s);
+}
+
+/** Puts source `s` on the due list, once. */
+@inline
+export function due(s: usize): void {
+  const fl = m.ld32(s + S_FLAGS);
+  if ((fl & F_DUE) === 0) {
+    m.st32(s + S_FLAGS, fl | F_DUE);
+    const b = io();
+    m.st(s + S_DUE_NEXT, m.ld(b + IO_DUE));
+    m.st(b + IO_DUE, s);
+    // The poll's end looks at the I/O block (the tick's next count is 0).
+    m.st(m.ld(b + IO_TICK_AT), 1);
+  }
+}
+
+/**
+ * Registers descriptor `fd` with `flags`, ready for `ready` until an operation finds otherwise
+ * (the first read or write of a connected socket tries at once): its source, or 0 with `errno`
+ * set (the reactor refused it).
+ */
+export function register(fd: i32, flags: u32, ready: u32): usize {
+  const s = m.zeroed(S_SIZE);
+  m.st(s + S_FD, fd as usize);
+  m.st32(s + S_READY, ready);
+  m.st32(s + S_FLAGS, flags);
+  const b = io();
+  const e = r.add(m.ld(b + IO_REACTOR), fd, s);
+  if (e !== 0) {
+    m.release(s, S_SIZE);
+    return 0;
+  }
+  m.st(b + IO_LIVE, m.ld(b + IO_LIVE) + 1);
+  return s;
+}
+
+/** Frees source `s` (its descriptor closed, nothing waiting, nothing to send). */
+export function free(s: usize): void {
+  const b = io();
+  m.st(b + IO_LIVE, m.ld(b + IO_LIVE) - 1);
+  wt.wakeAll(s);
+  const buf = m.ld(s + S_BUF);
+  if (buf !== 0) {
+    m.release(buf, m.ld(s + S_CAP));
+  }
+  m.release(s, S_SIZE);
+}
+
+/** Clears readiness `bit` of `s`: an operation found the socket not ready (EAGAIN). */
+@inline
+export function notReady(s: usize, bit: u32): void {
+  m.st32(s + S_READY, m.ld32(s + S_READY) & ~bit);
+}
+
+/** Wakes every waiter of `s`; each polls again and waits again when it must. */

@@ -21,7 +21,8 @@
 //! type, not per function: its call site's construct must be listed in the table and found on
 //! the type, which the builder's assertion above checks. Today's table doesn't exercise this:
 //! sema takes one construct present as all of them, so a program demands none of the integer
-//! hooks or all four (`velt_sema`'s `live_hooks` test).
+//! hooks or all of them (`velt_sema`'s `live_hooks` test). `console.log`'s integer writers
+//! (`int_write`, `uint_write`) list `Format` alone.
 //!
 //! ```
 //! use velt_common::std_hooks::{hook_index, Construct, HookSet, HOOKS};
@@ -159,17 +160,23 @@ mod tests {
 
     #[test]
     fn the_integer_hooks_are_demanded_by_their_constructs() {
-        use crate::std_hooks::hook_index::{int_push, int_text, uint_push, uint_text};
+        use crate::std_hooks::hook_index::{int_push, int_text, int_write};
+        use crate::std_hooks::hook_index::{uint_push, uint_text, uint_write};
         // Every entry of the table, and that nothing else demands these hooks.
         for (c, hooks) in [
             (Construct::TextInt, &[int_text, int_push][..]),
             (Construct::TextUint, &[uint_text, uint_push]),
-            (Construct::Format, &[int_push, uint_push]),
+            (
+                Construct::Format,
+                &[int_push, uint_push, int_write, uint_write],
+            ),
             (Construct::IndexCheck, &[int_text, uint_text]),
             (Construct::Dynamic, &[uint_text, int_push, uint_push]),
         ] {
             let by = HookSet::demanded_by(c.bit());
-            for hook in [int_text, uint_text, int_push, uint_push] {
+            for hook in [
+                int_text, uint_text, int_push, uint_push, int_write, uint_write,
+            ] {
                 assert_eq!(by.contains(hook), hooks.contains(&hook), "{}", c.name());
             }
         }

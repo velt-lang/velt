@@ -157,10 +157,19 @@ not a reason for another round.
   fails and opens, or comments on, the issue "nightly benchmarks regressed" with the benchmarks
   over the limit and the commits since the baseline; a second table in the job summary marks the
   benchmarks that take longer than their Node version, by wall time, which doesn't fail the
-  job); fix failures first ("A red nightly" below).
+  job), and the build-speed yardstick (`bench/compile/scale/yardstick.py`: `velt check` and
+  debug builds of a generated application at 10k and 100k lines, a release build at 10k with
+  clang and the linker counted, and its LLVM IR lines at 100k, by instructions per stage; a
+  stage, the functions or statements lowered, the IR lines or the peak memory growing more than
+  2.1x per doubling of the lines, or anything past its budget in
+  `bench/compile/scale/budgets.tsv` (instructions per line +3%, peak memory +10%, counts of the
+  code +1%), fails on `main` and opens, or comments on, the issue "nightly build-speed yardstick
+  failed"; the budgets are written from the job's `yardstick` artifact with `yardstick.py
+  --reuse --write-budgets`); fix failures first ("A red nightly" below). A dispatch on a branch
+  files no issue for either guard.
   An intended slowdown is accepted with `gh workflow run nightly -f only=bench -f
   bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f only=stress` (or
-  `gate`, `oracle`, `workerd`, `bench`, `wasm`).
+  `gate`, `oracle`, `workerd`, `bench`, `yardstick`, `wasm`).
 - macOS has its own rule (`macos_reason`, `MACOS_PATHS` in `crates/xtask/src/os.rs`), for the queue
   and for the pull request's `lint (macos-latest)`: the runtime, linking and the toolchain, code
   generation, the parts of the standard library that talk to the OS, and the few other files with

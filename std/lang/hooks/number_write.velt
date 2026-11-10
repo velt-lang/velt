@@ -1,0 +1,95 @@
+// velt/lang/hooks (internal): the compiler's hooks for a float written by `console.log` or
+// `console.error` with the space or newline after it (velt_vir `console.rs`). Out of
+// velt/lang/hooks/number_text, and holding none of its integer printing, so that a program that
+// prints a float checks no integer hook: they wait for live code that prints a float (velt_common
+// `ON_DEMAND_WRITE`), and lowering calls the runtime's printer while they are unchecked. Loaded
+// then (`ON_DEMAND_MODULES`). A whole number has a writer of its own here, `wholeNumberWrite`,
+// which `velt_opt` numrep calls (with `x as i64`) in `numberWrite`'s place where it knows `x` is
+// one, unless the program has the integer writer `intWrite`, which it calls then.
+
+import { inline, noInline, strAsciiWords, trunc } from "velt/lang/intrinsics";
+
+declare function velt_rt_write_f64(stream: u32, x: f64);
+declare function velt_rt_write_byte(stream: u32, b: u8);
+declare function velt_rt_write_str(stream: u32, s: string);
+declare function velt_rt_math_ctz64(x: u64): u64;
+
+/**
+ * Writes a float as `console.log` prints it and `end` to `stream`: a whole number below 2^53
+ * other than `-0` by `wholeNumberWrite`, anything else (`-0`, `0.5`, `1e+21`, `NaN`) by the
+ * runtime's printer. Out of line (`@noInline`): one call at each `console.log` of a float, not
+ * its tests and both writers' calls.
+ */
+@noInline
+export function numberWrite(stream: u32, x: f64, end: u8): void {
+  if (
+    x == trunc(x) &&
+    x < 9007199254740992.0 &&
+    x > -9007199254740992.0 &&
+    (x != 0.0 || 1.0 / x > 0.0)
+  ) {
+    wholeNumberWrite(stream, x as i64, end);
+    return;
+  }
+  velt_rt_write_f64(stream, x);
+  velt_rt_write_byte(stream, end);
+}
+
+/**
+ * Writes `v`, a whole number below 2^53 in magnitude (`x as i64` of a float that is one, other
+ * than `-0`), and `end` to `stream`, as `numberWrite` writes the float: up to 8 digits, the minus
+ * and `end` built in at most two words and written at once, with no allocation, by digits of its
+ * own (eight at a time), so that it needs none of std's integer printing; larger numbers by the
+ * runtime's printer. It takes the integer, as numrep passes it, so that no float is converted in
+ * it (x86-64 has no conversion of a float to `u64`). Out of line (`@noInline`), so that each call
+ * site is a call and the std cache serves its object.
+ */
+@noInline
+export function wholeNumberWrite(stream: u32, v: i64, end: u8): void {
+  const neg = v < 0;
+  const a = neg ? ~(v as u64) + 1 : v as u64;
+  if (a >= 100000000) {
+    // 10^8 and up: rare, and the runtime's text is the same (`v` is below 2^53, so exact).
+    velt_rt_write_f64(stream, v as f64);
+    velt_rt_write_byte(stream, end);
+    return;
+  }
+  // All eight digits with their leading zeros, then the zeros shifted out.
+  const all = digits8(a);
+  const z = velt_rt_math_ctz64((all ^ 0x3030303030303030) | 0x0100000000000000) & 56;
+  const d = all >> z;
+  const n = 8 - (z >> 3);
+  const e = end as u64;
+  if (!neg) {
+    // The common case: the digits and `end`, one word below 10^7.
+    if (n < 8) {
+      velt_rt_write_str(stream, strAsciiWords(d | (e << (n * 8)), 0, 0, (n + 1) as usize));
+      return;
+    }
+    velt_rt_write_str(stream, strAsciiWords(d, e, 0, 9));
+    return;
+  }
+  // The minus before the digits, as velt/lang/number/integer's `eightWords` places it.
+  const m = (d << 8) | 0x2d;
+  if (n < 7) {
+    velt_rt_write_str(stream, strAsciiWords(m | (e << ((n + 1) * 8)), 0, 0, (n + 2) as usize));
+    return;
+  }
+  velt_rt_write_str(
+    stream,
+    strAsciiWords(m, (d >> 56) | (e << ((n - 7) * 8)), 0, (n + 2) as usize),
+  );
+}
+
+// The eight ASCII digits of `x` (below 10^8), leading zeros included, the first in the low byte,
+// every split one multiply over all lanes at once: velt/lang/number/integer's `digits8`, copied
+// so that a printed float loads none of std's integer printing.
+@inline
+function digits8(x: u64): u64 {
+  const hundreds = ((x % 10000) << 32) | (x / 10000);
+  const high = ((hundreds * 10486) >> 20) & 0x0000007f0000007f;
+  const tens = ((hundreds - high * 100) << 16) | high;
+  const tenHigh = ((tens * 103) >> 10) & 0x000f000f000f000f;
+  const digits = ((tens - tenHigh * 10) << 8) | tenHigh;
+  return digits | 0x3030303030303030;
+}

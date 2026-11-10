@@ -4,14 +4,18 @@
 import { describe, expect, it } from "velt/test";
 import { Ptr } from "velt/ffi";
 import {
+  addressCall,
   addressLoad,
   addressStore,
   atomicAddress,
+  fnAddress,
   ptrAtomicCas,
   ptrAtomicCasWeak,
   ptrAtomicLoad,
   ptrAtomicRmw,
   ptrAtomicStore,
+  stateDrop,
+  statePoll,
 } from "velt/lang/intrinsics";
 
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
@@ -22,6 +26,21 @@ declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 
 /** A static atomic: its word is in the program's data. */
 const WORD = new Atomic<u32>(7);
+
+/** What `bump` added, through its address. */
+const BUMPED = new Atomic<u64>(0);
+
+function double(x: usize): usize {
+  return x * 2;
+}
+
+function bump(x: usize): void {
+  BUMPED.add(x as u64);
+}
+
+function fakePoll(state: usize, cx: usize): u32 {
+  return (state * 10 + cx) as u32;
+}
 
 class Counters {
   state: Atomic<u64> = new Atomic<u64>(40);
@@ -149,5 +168,20 @@ describe("velt/lang/intrinsics memory at an address", () => {
       memset(Ptr.at<u8>(inner), 0xff, 4);
     }
     expect(s.inner.waiters.load()).toBe(-1);
+  });
+
+  it("fnAddress gives a function C calls, and the calls through an address reach it", () => {
+    const f = fnAddress(double);
+    expect(f !== 0).toBe(true);
+    expect(f === fnAddress(double)).toBe(true);
+    expect(f !== fnAddress(bump)).toBe(true);
+    // SAFETY: each address is of a function taking and returning what the call passes.
+    unsafe {
+      expect(addressCall(f, 21)).toBe(42);
+      stateDrop(fnAddress(bump), 5);
+      stateDrop(fnAddress(bump), 2);
+      expect(statePoll(fnAddress(fakePoll), 3, 4)).toBe(34);
+    }
+    expect(BUMPED.load()).toBe(7);
   });
 });

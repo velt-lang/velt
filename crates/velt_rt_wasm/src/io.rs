@@ -72,18 +72,6 @@ pub unsafe extern "C" fn velt_rt_write_str(stream: u32, s: *const VeltStr) {
     emit(stream, |b| (*s).extend_utf8(b));
 }
 
-/// `console.log` of an `i64` (decimal).
-#[no_mangle]
-pub extern "C" fn velt_rt_write_i64(stream: u32, v: i64) {
-    emit(stream, |b| fmt::push_i64(b, v));
-}
-
-/// `console.log` of a `u64` (decimal).
-#[no_mangle]
-pub extern "C" fn velt_rt_write_u64(stream: u32, v: u64) {
-    emit(stream, |b| fmt::push_u64(b, v));
-}
-
 /// `console.log` of an `f64` (node's formatting: `-0` is `-0`).
 #[no_mangle]
 pub extern "C" fn velt_rt_write_f64(stream: u32, v: f64) {
@@ -165,10 +153,6 @@ mod tests {
         let out = capture::run(|| {
             unsafe { velt_rt_write_str(1, &s) };
             velt_rt_write_byte(1, b' ');
-            velt_rt_write_i64(1, -42);
-            velt_rt_write_byte(1, b' ');
-            velt_rt_write_u64(1, 7);
-            velt_rt_write_byte(1, b' ');
             velt_rt_write_f64(1, 0.1 + 0.2);
             velt_rt_write_byte(1, b' ');
             velt_rt_write_bool(1, 1);
@@ -176,6 +160,6 @@ mod tests {
             velt_rt_write_f64(2, f64::NAN);
             velt_rt_flush();
         });
-        assert_eq!(out, "x = -42 7 0.30000000000000004 true\n[err]NaN");
+        assert_eq!(out, "x = 0.30000000000000004 true\n[err]NaN");
     }
 }

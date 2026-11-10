@@ -90,6 +90,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             TyKind::Promise(..) => self.transfer_promise(place, ty),
             TyKind::FnPtr { .. } | TyKind::Closure(_) => self.transfer_closure(place),
             TyKind::Dyn(..) => {
+                self.note_dyn_glue(SLOT_TRANSFER, ty);
                 let data = proj(place, Proj::Field(0));
                 let vt = Operand::Copy(proj(place, Proj::Field(1)));
                 if !self.cx.has_proxies() {

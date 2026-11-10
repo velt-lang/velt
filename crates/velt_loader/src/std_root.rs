@@ -9,9 +9,14 @@ use velt_common::std_modules;
 /// `<repo>/target/<profile>/velt`), its `std/`; else `<exe dir>/std`. `None` if none of these
 /// exists (last resort for dev builds: the compiling checkout's `std/`). Stopping at the first workspace keeps a git worktree nested in another checkout from
 /// picking up the outer checkout's std.
+///
+/// The path is absolute, without `.` or `..` components, like the paths the loader gives std's
+/// files: lowering tells std's files from the program's by this prefix (velt_vir's `LocMap`), and
+/// a root of `crates/velt_loader/../../std` matched none of them, so on WebAssembly std's own C
+/// calls were refused as a package's.
 pub fn std_root() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("VELT_STD").filter(|s| !s.is_empty()) {
-        return Some(PathBuf::from(p));
+        return Some(vpm::relpath::absolute(Path::new(&p)));
     }
     std_root_for_exe(&std::env::current_exe().ok()?)
 }
@@ -39,7 +44,8 @@ fn std_root_for_exe(exe: &Path) -> Option<PathBuf> {
     }
     // Dev builds whose target dir lives outside the checkout (`CARGO_TARGET_DIR` elsewhere):
     // fall back to the std of the source tree this binary was compiled from.
-    let source_std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let source_std =
+        vpm::relpath::normalize(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"));
     source_std.is_dir().then_some(source_std)
 }
 
@@ -141,5 +147,20 @@ mod tests {
         let flat = root.join("flat");
         std::fs::create_dir_all(flat.join("std")).unwrap();
         assert_eq!(std_root_for_exe(&flat.join("velt")), Some(flat.join("std")));
+
+        // A target dir outside any checkout: the std this crate was compiled from, without the
+        // `..` that kept its files from matching the loader's paths.
+        let outside = root.join("outside/debug");
+        std::fs::create_dir_all(&outside).unwrap();
+        let std = std_root_for_exe(&outside.join("velt")).expect("the source tree's std");
+        assert!(
+            std.components().all(|c| !matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )),
+            "{}",
+            std.display()
+        );
+        assert!(std.join("prelude").is_dir(), "{}", std.display());
     }
 }

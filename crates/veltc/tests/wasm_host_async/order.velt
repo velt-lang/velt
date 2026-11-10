@@ -24,10 +24,13 @@ async function main() {
   console.log(await Promise.all([a, b]));
   setTimeout(() => console.log("timeout 1"), 0);
   await new Promise<void>((resolve) => {
-    setTimeout(async () => {
-      console.log("timeout 2");
-      resolve();
-    }, 0);
+    setTimeout(
+      async () => {
+        console.log("timeout 2");
+        resolve();
+      },
+      0,
+    );
   });
   await yieldNow();
   console.log("yielded");

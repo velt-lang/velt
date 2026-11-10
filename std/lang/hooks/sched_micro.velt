@@ -1,0 +1,167 @@
+// velt/lang/hooks (internal): a task's microtask queue in the executor in Velt (sched.velt,
+// #2649): the steps of `await` (`velt_rt_await_tick` / `_ready`'s job), the callbacks of `then`,
+// `catch` and `finally` and `queueMicrotask` (`velt_rt_microtask`'s job, std/prelude/promise.velt),
+// first in, first out, drained at every job boundary of the task (sched.velt `drain`). A task
+// that queues nothing has none: the queue is allocated on its first entry.
+//
+// Each entry holds the waker to resume (a reference of its own) and its ticket, from one 64-bit
+// count of the executor's (which never wraps), so tickets rise along every queue and no two
+// entries anywhere share one: a waiter's turn came when its task's queue holds no entry with its
+// ticket (it is past it, or the ticket is another queue's), found by a binary search over the
+// queue (almost always its first entry or none). The task's
+// await word (generated code reads it at every `await`) counts the queued entries and the
+// synchronous runs under way (a started promise's first run): 0 means nothing could observe a
+// step, so `await` goes straight on.
+//
+// The queue: its entries' buffer (16 bytes each: waker, ticket), their capacity, the index of the
+// first one, how many there are.
+
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+
+const Q_BUF: usize = 0;
+const Q_CAP: usize = 8;
+const Q_HEAD: usize = 16;
+const Q_LEN: usize = 24;
+
+/** Task `task`'s queue, made on first use. */
+function queue(task: usize): usize {
+  let q = m.ld(task + t.T_MICRO);
+  if (q === 0) {
+    q = m.zeroed(32);
+    m.st(q + Q_BUF, m.alloc(16 * 8));
+    m.st(q + Q_CAP, 8);
+    m.st(task + t.T_MICRO, q);
+  }
+  return q;
+}
+
+/** The bit of an entry's ticket that says it is a waiter's step already (`credit`). */
+const CREDIT: u64 = 1 << 63;
+
+/**
+ * Queues waker `w` (a reference the queue takes) on task `task`: its ticket. A `credit` entry is
+ * the waiter's step already (a promise settled by `resolve`, which Node queues at once): the
+ * waiter's next step goes on (`takeCredit`).
+ */
+export function enqueue(task: usize, w: usize, credit: bool): u64 {
+  const q = queue(task);
+  let cap = m.ld(q + Q_CAP);
+  let len = m.ld(q + Q_LEN);
+  if (len === cap) {
+    // Unwrap into a buffer twice the size.
+    const old = m.ld(q + Q_BUF);
+    const head = m.ld(q + Q_HEAD);
+    const buf = m.alloc(32 * cap);
+    for (let i: usize = 0; i < len; i++) {
+      const from = old + 16 * ((head + i) % cap);
+      m.st(buf + 16 * i, m.ld(from));
+      m.st(buf + 16 * i + 8, m.ld(from + 8));
+    }
+    m.release(old, 16 * cap);
+    m.st(q + Q_BUF, buf);
+    m.st(q + Q_HEAD, 0);
+    cap = cap * 2;
+    m.st(q + Q_CAP, cap);
+  }
+  const e = t.exec();
+  const ticket = m.ld(e + t.E_TICKET) + 1;
+  m.st(e + t.E_TICKET, ticket);
+  const at = m.ld(q + Q_BUF) + 16 * ((m.ld(q + Q_HEAD) + len) % cap);
+  m.st(at, w);
+  m.st(at + 8, credit ? ticket | (CREDIT as usize) : ticket);
+  m.st(q + Q_LEN, len + 1);
+  m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
+  return ticket as u64;
+}
+
+/**
+ * Has task `task`'s queue reached `ticket`? If not, the entry resumes the waker `w` now (the
+ * one polling: a clone is taken, the old reference given back).
+ */
+export function reached(task: usize, ticket: u64, w: usize): bool {
+  const q = m.ld(task + t.T_MICRO);
+  if (q === 0) {
+    return true;
+  }
+  const k = ticket as usize;
+  const len = m.ld(q + Q_LEN);
+  if (len === 0 || k < ticketAt(q, 0) || k > ticketAt(q, len - 1)) {
+    return true;
+  }
+  // The entry with ticket `k`, if this queue has it (else it is another queue's).
+  let lo: usize = 0;
+  let hi: usize = len;
+  while (lo < hi) {
+    const mid = (lo + hi) / 2;
+    if (ticketAt(q, mid) < k) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  if (lo >= len || ticketAt(q, lo) !== k) {
+    return true;
+  }
+  const at = entryAt(q, lo);
+  const old = m.ld(at);
+  if (old !== w) {
+    m.st(at, m.wakerClone(w));
+    m.wakerDrop(old);
+  }
+  return false;
+}
+
+/**
+ * The first entry's waker (the queue's reference, which the caller takes), or 0 when empty. A
+ * credit entry gives the waiter its step while other entries wait (task flag `CREDIT`).
+ */
+export function pop(task: usize): usize {
+  const q = m.ld(task + t.T_MICRO);
+  if (q === 0) {
+    return 0;
+  }
+  const len = m.ld(q + Q_LEN);
+  if (len === 0) {
+    return 0;
+  }
+  const head = m.ld(q + Q_HEAD);
+  const at = m.ld(q + Q_BUF) + 16 * head;
+  const w = m.ld(at);
+  const credit = ((m.ld(at + 8) as u64) & CREDIT) !== 0;
+  m.st(q + Q_HEAD, (head + 1) % m.ld(q + Q_CAP));
+  m.st(q + Q_LEN, len - 1);
+  const word = m.ld32(task + t.T_WORD) - 1;
+  m.st32(task + t.T_WORD, word);
+  // The credit is for the step the waiter takes on resuming, only while the word is not 0.
+  t.flags(task, credit && word !== 0 ? t.CREDIT : 0, credit && word !== 0 ? 0 : t.CREDIT);
+  return w;
+}
+
+/** Entry `i` (from the first) of queue `q`. */
+function entryAt(q: usize, i: usize): usize {
+  return m.ld(q + Q_BUF) + 16 * ((m.ld(q + Q_HEAD) + i) % m.ld(q + Q_CAP));
+}
+
+/** The ticket of entry `i` of queue `q` (without the credit bit). */
+function ticketAt(q: usize, i: usize): usize {
+  return m.ld(entryAt(q, i) + 8) & ~(CREDIT as usize);
+}
+
+/** Frees task `task`'s queue (it is empty: the task is done). */
+export function free(task: usize): void {
+  const q = m.ld(task + t.T_MICRO);
+  if (q !== 0) {
+    m.release(m.ld(q + Q_BUF), 16 * m.ld(q + Q_CAP));
+    m.release(q, 32);
+  }
+}
+
+/** Takes task `task`'s credit: true when the waiter's step is taken already. */
+export function takeCredit(task: usize): bool {
+  if (t.has(task, t.CREDIT)) {
+    t.flags(task, 0, t.CREDIT);
+    return true;
+  }
+  return false;
+}

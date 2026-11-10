@@ -18,3 +18,37 @@ export declare unsafe function futPoll(f: usize, cx: usize): u32;
  */
 @intrinsic
 export declare unsafe function futDrop(f: usize): void;
+
+/**
+ * Polls the compiled state machine at `state` with its poll function `poll` (the address
+ * lowering hands a task's spawn, rt_abi_async.md §1): `poll(state, cx)`, 1 when it is ready (its
+ * result at `state + 0`), 0 while pending. Unsafe: `poll` must be the poll function of the state
+ * at `state`, which has not completed, and `cx` the context of the task polling it.
+ */
+@intrinsic
+export declare unsafe function statePoll(poll: usize, state: usize, cx: usize): u32;
+
+/**
+ * Calls the C function `drop` at its address with `at`: a compiled state's drop function on its
+ * state (it drops the live locals of the current suspension point), or a result's drop glue on
+ * its slot. Unsafe: `drop` must be such a function and `at` what it takes.
+ */
+@intrinsic
+export declare unsafe function stateDrop(drop: usize, at: usize): void;
+
+/**
+ * Calls the C function `f` at its address with `a` and returns its result, both pointer-sized
+ * (a waker table's `clone`, rt_abi_async.md §1). Unsafe: `f` must take and return one
+ * pointer-sized value, and `a` be what it takes.
+ */
+@intrinsic
+export declare unsafe function addressCall(f: usize, a: usize): usize;
+
+/**
+ * The address of the module-level function `f`, which C code may call with the C calling
+ * convention: a waker's table entries, a heap future's header (rt_abi_async.md §1). `f` is named
+ * directly, is not generic, async or throwing, and takes and returns only numbers and `bool`
+ * (sema checks it).
+ */
+@intrinsic
+export declare function fnAddress<F>(f: F): usize;

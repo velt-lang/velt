@@ -33,8 +33,9 @@ pub(crate) const USERS: &[Users] = &[
         // (`bench_programs` compiles them), the documentation (`docs` compiles its snippets
         // against the packages without native code, and reads packages/http-server's README and
         // docs), and tests that write manifests depending on it: hot reload's servers (`reload`)
-        // and the `api` and `websocket` templates' projects (`templates`), and the `--host` builds
-        // of `serve` (`workers`).
+        // and the `api` and `websocket` templates' projects (`templates`), the `--host` builds
+        // of `serve` (`workers`), and a kept-alive connection served under the executor in Velt
+        // (`std_scheduler_net`).
         binaries: &[
             "std_tests",
             "bench_programs",
@@ -45,6 +46,7 @@ pub(crate) const USERS: &[Users] = &[
             // fixtures).
             "workers",
             "workerd",
+            "std_scheduler_net",
         ],
     },
     // `--host` builds (`workers`, `cloudflare` and `workerd` copy it beside their fixtures) and

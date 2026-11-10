@@ -53,8 +53,6 @@ pub mod host;
 pub mod host_promise;
 #[cfg(any(test, all(target_family = "wasm", target_os = "unknown")))]
 pub mod host_turn;
-#[path = "../../velt_rt/src/html.rs"]
-pub mod html;
 #[path = "../../velt_rt/src/inspect.rs"]
 pub mod inspect;
 #[path = "../../velt_rt/src/inspect_cycles.rs"]

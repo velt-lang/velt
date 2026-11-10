@@ -123,10 +123,10 @@ attributes only.
 A release build reads the cache by default for the std functions marked `@noInline`
 (`std_cache/no_inline.rs`, the owner's decision on #2405 and #2404). The optimizer never inlines
 such a function into a caller, so its object holds the code the program would have compiled for
-it, and the program's clang no longer compiles it: the HTML escaper's `escapeFrom` and
-`escapeEntities` cost every release build that used them +178M instructions of clang. Every
-other std function stays in the program, where it can be inlined and specialized, so nothing
-changes for them. Such a build:
+it, and the program's clang no longer compiles it: the HTML escaper's entry points
+(`escapeHtml`, `escapeHtmlHexApos`, `escapeFromPlain` and `escapeFromHex`) cost every release
+build that used them +178M instructions of clang. Every other std function stays in the
+program, where it can be inlined and specialized, so nothing changes for them. Such a build:
 
 - looks in the cache only when it has held a `stdfn` entry and the program has a std function
   marked `@noInline`; else it does nothing a build without the cache would not do.

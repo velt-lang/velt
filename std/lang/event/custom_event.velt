@@ -1,0 +1,33 @@
+// velt/lang/event (internal): `CustomEvent`, a global class as in Node: an `Event` that carries a
+// value of the program's.
+
+import { Event, EventInit } from "velt/lang/event/event";
+
+/** The options of `new CustomEvent(type, options)`: `Event`'s, and the `detail` it carries. */
+export interface CustomEventInit<T = any> extends EventInit {
+  detail?: T;
+}
+
+/** An event that carries `detail` (a global, as in Node): `null` when it was made without one. */
+export class CustomEvent<T = any> extends Event {
+  // An `any`, so that `null` (no detail) is one at every `T`.
+  private value: any;
+
+  /** An event of `type` with `eventInitDict`'s flags and `detail`. */
+  constructor(type: string, eventInitDict?: CustomEventInit<T>) {
+    super(type, eventInitDict);
+    this.value = null;
+    const detail = eventInitDict?.detail;
+    if (detail !== undefined) {
+      this.value = detail;
+    }
+  }
+
+  /**
+   * The value it was made with, or `null` without one. Read as a `T` that has no `null` (a
+   * `CustomEvent<number>` made without a detail), the `null` is a `TypeError`.
+   */
+  get detail(): T {
+    return this.value as T;
+  }
+}

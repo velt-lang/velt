@@ -495,39 +495,80 @@ fn remainders_of_doubles_that_may_be_negative_stay_doubles() {
     }
 }
 
-/// `f(a: i32, out: ptr)`: `console.log(x)` of `x = a as f64` (or of `x * 0.5`).
-fn formatted_program(half: bool) -> Program {
-    let mut pb = ProgramBuilder::new();
-    let write = pb.ext("velt_rt_write_f64", &[Ty::U32, Ty::F64], Ty::Unit, false);
-    let mut fb = FuncBuilder::export("f", &[Ty::I32, Ty::Ptr], Ty::Unit);
-    let a = fb.param(0);
-    let (af, x) = (fb.local(Ty::F64), fb.local(Ty::F64));
-    let b0 = fb.block();
-    fb.assign(b0, af, Rvalue::Cast(copy_local(a), Ty::F64));
-    // `console.log` prints `-0` as `-0`: the whole `x` must not be one (an `i32` as `f64` is not).
-    let value = match half {
-        true => bin(BinOp::Mul, copy_local(af), float(0.5, Ty::F64)),
-        false => Rvalue::Use(copy_local(af)),
-    };
-    fb.assign(b0, x, value);
-    let args = vec![int(1, Ty::U32), copy_local(x)];
-    let b1 = fb.call(b0, Callee::Extern(write), args, None);
-    fb.ret(b1, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
-    pb.add(fb.finish());
-    let mut p = as_intrinsics(pb.finish());
-    print::declare(&mut p.externs);
-    p
+/// How `formatted_program` computes the `x` it prints from `a as f64`.
+#[derive(Clone, Copy)]
+enum Printed {
+    /// `a as f64`: whole, never `-0`.
+    Whole,
+    /// `a as f64 * 0.5`: not whole.
+    Half,
+    /// `a as f64 * 0`: whole, `-0` for a negative `a`.
+    Zero,
 }
 
+/// `f(a: i32)`: `console.log(x)` of `x` (`Printed`) through std's `numberWrite`, with its twins
+/// `wholeNumberWrite` and the integer `intWrite` in the program (bodies left empty: only the
+/// calls matter).
+fn formatted_program(x_is: Printed) -> Program {
+    formatted(x_is, true)
+}
+
+/// `formatted_program`, with `intWrite` in the program or not (`wholeNumberWrite` always is: it
+/// is in `numberWrite`'s module, and `numberWrite` calls it).
+fn formatted(x_is: Printed, with_int: bool) -> Program {
+    let mut pb = ProgramBuilder::new();
+    // `f` is the first function, as `callees` reads it; the hooks follow it.
+    let f_id = pb.reserve();
+    let mut hooks = Vec::new();
+    let int_write = (velt_common::std_hook!(int_write), Ty::I64);
+    let float_writers = [
+        (velt_common::std_hook!(number_write), Ty::F64),
+        (velt_common::std_hook!(whole_number_write), Ty::I64),
+    ];
+    for (hook, ty) in float_writers
+        .into_iter()
+        .chain(with_int.then_some(int_write))
+    {
+        let symbol = velt_vir::mangle::mangle(hook);
+        let mut h = FuncBuilder::internal(&symbol, &[Ty::U32, ty, Ty::U8], Ty::Unit);
+        let b = h.block();
+        h.ret(b, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
+        hooks.push((symbol, pb.add(h.finish())));
+    }
+    let number_write = velt_vir::mangle::mangle(velt_common::std_hook!(number_write));
+    let write = hooks
+        .iter()
+        .find(|(symbol, _)| *symbol == number_write)
+        .map(|&(_, id)| id)
+        .expect("numberWrite is in the program");
+    let mut f = FuncBuilder::export("f", &[Ty::I32], Ty::Unit);
+    let a = f.param(0);
+    let (af, x) = (f.local(Ty::F64), f.local(Ty::F64));
+    let b0 = f.block();
+    f.assign(b0, af, Rvalue::Cast(copy_local(a), Ty::F64));
+    let value = match x_is {
+        Printed::Whole => Rvalue::Use(copy_local(af)),
+        Printed::Half => bin(BinOp::Mul, copy_local(af), float(0.5, Ty::F64)),
+        Printed::Zero => bin(BinOp::Mul, copy_local(af), float(0.0, Ty::F64)),
+    };
+    f.assign(b0, x, value);
+    let args = vec![int(1, Ty::U32), copy_local(x), int(10, Ty::U8)];
+    let b1 = f.call(b0, Callee::Func(write), args, None);
+    f.ret(b1, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
+    pb.set(f_id, f.finish());
+    as_intrinsics(pb.finish())
+}
+
+/// The functions `p`'s first function calls, by symbol.
 fn callees(p: &Program) -> Vec<String> {
     p.funcs[0]
         .blocks
         .iter()
         .filter_map(|b| match &b.term {
             Terminator::Call {
-                callee: Callee::Extern(id),
+                callee: Callee::Func(id),
                 ..
-            } => Some(p.externs[id.0 as usize].symbol.clone()),
+            } => Some(p.funcs[id.0 as usize].symbol.clone()),
             _ => None,
         })
         .collect()
@@ -535,10 +576,34 @@ fn callees(p: &Program) -> Vec<String> {
 
 #[test]
 fn whole_numbers_format_through_the_integer_formatters() {
-    let q = narrowed(&formatted_program(false));
-    assert_eq!(callees(&q), ["velt_rt_write_i64"]);
-    let q = narrowed(&formatted_program(true));
-    assert_eq!(callees(&q), ["velt_rt_write_f64"]);
+    let int_write = velt_vir::mangle::mangle(velt_common::std_hook!(int_write));
+    let number_write = velt_vir::mangle::mangle(velt_common::std_hook!(number_write));
+    let q = narrowed(&formatted_program(Printed::Whole));
+    assert_eq!(callees(&q), [int_write]);
+    let q = narrowed(&formatted_program(Printed::Half));
+    assert_eq!(callees(&q), std::slice::from_ref(&number_write));
+    // `console.log` prints `-0` as `-0`, which the integer cannot.
+    let q = narrowed(&formatted_program(Printed::Zero));
+    assert_eq!(callees(&q), [number_write]);
+}
+
+/// `numberWrite` holds no integer writer: a program that prints only `number`s has no `intWrite`
+/// to switch to, and writes a whole number by `wholeNumberWrite`, of `x as i64`.
+#[test]
+fn a_whole_number_takes_the_whole_number_writer_without_the_integer_one() {
+    let whole = velt_vir::mangle::mangle(velt_common::std_hook!(whole_number_write));
+    let number_write = velt_vir::mangle::mangle(velt_common::std_hook!(number_write));
+    let q = narrowed(&formatted(Printed::Whole, false));
+    assert_eq!(callees(&q), [whole]);
+    // Passed `x as i64`, as the integer twin is.
+    let casts = (q.funcs[0].blocks.iter().flat_map(|b| &b.stmts))
+        .filter(|s| matches!(s, Stmt::Assign(_, Rvalue::Cast(_, Ty::I64))))
+        .count();
+    assert_eq!(casts, 1, "{:?}", q.funcs[0]);
+    let q = narrowed(&formatted(Printed::Half, false));
+    assert_eq!(callees(&q), std::slice::from_ref(&number_write));
+    let q = narrowed(&formatted(Printed::Zero, false));
+    assert_eq!(callees(&q), [number_write]);
 }
 
 /// `f(p: f64, n: u32 or u64)`: `k = 0; while (p < 1e18) { i = k as u64; t = i; if (!(t < n))

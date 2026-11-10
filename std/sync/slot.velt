@@ -1,0 +1,70 @@
+// velt/sync (internal): `Slot<T>`, room for one owned value in raw memory, the building block of
+// std's one-shot hand-off (`HandOff<T>`) and, later, its channel in Velt (#2649). A put moves the
+// value in (transferred as a channel send's value is: a resource still shared here stops the
+// program, #2613); a take moves it out once; a slot dropped while it holds a value drops it.
+// One owner at a time: the hand-off keeps the atomic state that says who may take.
+
+import { Ptr } from "velt/ffi/ptr";
+import { slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
+
+// Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
+// signature in a program.
+declare c("c") function malloc$slot(n: usize): Ptr<u8> | null;
+declare c("c") function free$slot(p: Ptr<u8>): void;
+
+/** Room for one `T`. */
+export class Slot<T> {
+  /** The value's memory (`malloc`, 16-aligned), allocated with the slot. */
+  private readonly at: usize;
+  private full: bool = false;
+
+  constructor() {
+    const n = slotSize<T>();
+    // SAFETY: malloc has no precondition; its result is checked.
+    const p = unsafe { malloc$slot(n === 0 ? 16 : n) };
+    if (p === null) {
+      panic("out of memory");
+    }
+    this.at = Ptr.addressOf(p);
+  }
+
+  /** Whether it holds a value. */
+  get holds(): bool {
+    return this.full;
+  }
+
+  /** Moves `value` in; false (and `value` dropped) when it holds one already. */
+  put(value: T): bool {
+    if (this.full) {
+      return false;
+    }
+    // SAFETY: `at` has room for a `T` and holds none.
+    unsafe {
+      slotPut<T>(this.at, value);
+    }
+    this.full = true;
+    return true;
+  }
+
+  /** Moves the value out; null when it holds none. */
+  take(): T | null {
+    if (!this.full) {
+      return null;
+    }
+    this.full = false;
+    // SAFETY: `at` holds a `T`, taken once (`full` is clear now).
+    return unsafe { slotTake<T>(this.at) };
+  }
+
+  [Symbol.dispose]() {
+    if (this.full) {
+      this.full = false;
+      // SAFETY: as `take`; the value is dropped at the end of this block.
+      const v = unsafe { slotTake<T>(this.at) };
+    }
+    // SAFETY: `at` came from malloc and is not used after.
+    unsafe {
+      free$slot(Ptr.at<u8>(this.at));
+    }
+  }
+}

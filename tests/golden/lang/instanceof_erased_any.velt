@@ -1,0 +1,12 @@
+// `b instanceof Box` on a `Base` narrows to `Box<any>` when `Box`'s type parameter is erased
+// (no field, base or override depends on it), as `tsc` narrows: the default `number` isn't used.
+class Base { name = "base" }
+class Box<T = number> extends Base {
+  v: any;
+  constructor(v: T) { super(); this.v = v; }
+  get(): T { return this.v as T; }
+}
+const b: Base = new Box<string>("hi");
+if (b instanceof Box) {
+  console.log(b.get());
+}

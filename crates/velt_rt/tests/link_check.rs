@@ -17,8 +17,6 @@ const PRELUDE: &str = r#"
 #include <stdint.h>
 typedef struct { uint8_t* ptr; uint64_t len; uint64_t cap; } VeltStr;
 void velt_rt_write_str(uint32_t, const VeltStr*);
-void velt_rt_write_i64(uint32_t, int64_t);
-void velt_rt_write_u64(uint32_t, uint64_t);
 void velt_rt_write_f64(uint32_t, double);
 void velt_rt_write_bool(uint32_t, uint8_t);
 void velt_rt_write_byte(uint32_t, uint8_t);
@@ -36,6 +34,18 @@ int64_t velt_rt_pow_i64(int64_t, int64_t);
 double velt_rt_pow_f64(double, double);
 // An ASCII literal: `w1` packs the UTF-16 length (high half) and the byte length (low half).
 #define LIT(s) { (uint8_t*)(s), ((uint64_t)(sizeof(s) - 1) << 32) | (sizeof(s) - 1), 0 }
+// An integer's decimal digits through `velt_rt_write_str`, as std's `intWrite` writes them (the
+// runtime prints no integer, #2197).
+static inline void write_u64(uint32_t stream, uint64_t v) {
+    char b[20]; int n = 20;
+    do { b[--n] = (char)('0' + v % 10); v /= 10; } while (v);
+    VeltStr t = { (uint8_t*)b + n, ((uint64_t)(20 - n) << 32) | (uint64_t)(20 - n), 0 };
+    velt_rt_write_str(stream, &t);
+}
+static inline void write_i64(uint32_t stream, int64_t v) {
+    if (v < 0) { VeltStr m = LIT("-"); velt_rt_write_str(stream, &m); }
+    write_u64(stream, v < 0 ? 0 - (uint64_t)v : (uint64_t)v);
+}
 typedef struct VeltFut { uint32_t (*poll)(struct VeltFut*, void*); void (*drop)(struct VeltFut*); } VeltFut;
 typedef uint32_t (*PollFn)(void*, void*);
 typedef void (*DropFn)(void*);
@@ -51,12 +61,12 @@ int32_t velt_main(void) {
     velt_rt_str_append(&c, &b);
     velt_rt_write_str(1, &c); velt_rt_write_byte(1, '\n');
     velt_rt_str_drop(&c);
-    velt_rt_write_i64(1, -42); velt_rt_write_byte(1, ' ');
-    velt_rt_write_u64(1, 18446744073709551615ull); velt_rt_write_byte(1, ' ');
+    write_i64(1, -42); velt_rt_write_byte(1, ' ');
+    write_u64(1, 18446744073709551615ull); velt_rt_write_byte(1, ' ');
     velt_rt_write_f64(1, 0.1 + 0.2); velt_rt_write_byte(1, ' ');
     velt_rt_write_f64(1, velt_rt_pow_f64(10.0, 21.0)); velt_rt_write_byte(1, ' ');
     velt_rt_write_bool(1, 1); velt_rt_write_byte(1, ' ');
-    velt_rt_write_i64(1, velt_rt_pow_i64(2, 62)); velt_rt_write_byte(1, '\n');
+    write_i64(1, velt_rt_pow_i64(2, 62)); velt_rt_write_byte(1, '\n');
     velt_rt_str_from_f64(1.5e-7, &f);
     velt_rt_write_str(1, &f); velt_rt_write_byte(1, '\n');
     velt_rt_str_drop(&f);
@@ -80,7 +90,7 @@ int32_t velt_main(void) {
 const EXIT: &str = r#"
 int32_t velt_main(void) {
     int i;
-    for (i = 0; i < 20000; i++) { velt_rt_write_i64(1, i); velt_rt_write_byte(1, '\n'); }
+    for (i = 0; i < 20000; i++) { write_i64(1, i); velt_rt_write_byte(1, '\n'); }
     velt_rt_exit(7);
     return 0;
 }
@@ -97,7 +107,7 @@ typedef struct { int32_t result; uint32_t tag; VeltFut* f; } Main;
 static uint32_t main_poll(void* s, void* cx) {
     Main* m = s;
     for (;;) switch (m->tag) {
-    case 0: velt_rt_write_i64(1, 1); velt_rt_write_byte(1, 10); m->f = velt_rt_sleep(10); m->tag = 1; break;
+    case 0: write_i64(1, 1); velt_rt_write_byte(1, 10); m->f = velt_rt_sleep(10); m->tag = 1; break;
     case 1: {
         Square q = { 0, 7 };
         if (!m->f->poll(m->f, cx)) return 0;
@@ -111,7 +121,7 @@ static uint32_t main_poll(void* s, void* cx) {
         if (!m->f->poll(m->f, cx)) return 0;
         r = *(int64_t*)((char*)m->f + 16);
         m->f->drop(m->f);
-        velt_rt_write_i64(1, r); velt_rt_write_byte(1, '\n');
+        write_i64(1, r); velt_rt_write_byte(1, '\n');
         m->result = 5;
         return 1;
     }
@@ -360,7 +370,7 @@ int32_t velt_main(void) {
     velt_rt_json_reader_free(r);
     if (!velt_rt_json_parse_value(&src, &v, &err)) return 1;
     cv = velt_rt_json_value_get(v, &c);
-    velt_rt_write_i64(1, velt_rt_json_value_kind(cv)); velt_rt_write_byte(1, '\n');
+    write_i64(1, velt_rt_json_value_kind(cv)); velt_rt_write_byte(1, '\n');
     velt_rt_json_value_free(cv);
     velt_rt_json_value_stringify(v, &s);
     velt_rt_json_value_free(v);
@@ -448,10 +458,10 @@ static uint32_t printer_poll(void* s, void* cx) {
         VeltStr t = LIT("t="), l = LIT(" l="), sp = LIT(" ");
         int64_t n = (p->id * 7 + p->line * 13) % 120;
         VeltStr pad = { (uint8_t*)PAD, (uint64_t)n, 0 };
-        velt_rt_write_str(1, &t); velt_rt_write_i64(1, p->id);
-        velt_rt_write_str(1, &l); velt_rt_write_i64(1, p->line);
+        velt_rt_write_str(1, &t); write_i64(1, p->id);
+        velt_rt_write_str(1, &l); write_i64(1, p->line);
         velt_rt_write_str(1, &sp); velt_rt_write_str(1, &pad);
-        velt_rt_write_str(1, &sp); velt_rt_write_i64(1, n); velt_rt_write_byte(1, '\n');
+        velt_rt_write_str(1, &sp); write_i64(1, n); velt_rt_write_byte(1, '\n');
         p->line++;
         if (p->line % ((p->id & 1) ? 1000 : 100) == 0) { velt_rt_yield_now(cx); return 0; }
     }

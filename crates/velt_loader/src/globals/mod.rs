@@ -20,6 +20,13 @@
 //! whose result type lives in modules that most users of the class never need. A word written
 //! `.name` matches only a read of the property (`res.body`, `res["body"]`, `const { body } =
 //! res`; not `{ body: … }`).
+//!
+//! A global marked **code only** (`code_only`: `lib.dom`'s groups, the event classes) loads for
+//! a name only where the name appears outside the module's comments.
+
+mod code_only;
+
+pub(super) use code_only::in_code;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -36,6 +43,8 @@ pub(super) struct Global {
     /// A conditional global's `// load when <module> uses: <words>` line: the std module
     /// (canonical path) and the words.
     pub when: Option<(String, Vec<String>)>,
+    /// Loads only for a name in code, not in a comment (`code_only`).
+    pub code_only: bool,
 }
 
 /// The global modules under `<std>/prelude/global/`, sorted by file name (empty if none).
@@ -64,7 +73,13 @@ pub(super) fn global_modules(std_root: &Path, parser: &StdParser) -> Vec<Global>
                 );
             }
             let when = load_when(&src);
-            Some(Global { file, names, when })
+            let code_only = src.contains(code_only::CODE_ONLY_LINE);
+            Some(Global {
+                file,
+                names,
+                when,
+                code_only,
+            })
         })
         .collect()
 }

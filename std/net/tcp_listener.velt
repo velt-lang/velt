@@ -1,7 +1,7 @@
 // velt/net (internal): `TcpListener`, a bound listening socket (`listen`, `listenTls`).
 
 import { unwrapIo } from "velt/native/result";
-import { velt_rt_tcp_accept, velt_rt_tcp_listener_close } from "velt/net/rt";
+import { velt_rt_tcp_accept, velt_rt_tcp_listener_close } from "#net-tcp";
 import { TcpStream } from "velt/net/tcp_stream";
 
 /** A bound listening socket. */
