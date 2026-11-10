@@ -449,7 +449,8 @@ an environment through a function value (drop, clone, share, transfer, the many-
 and the wrapper's own code take the bit off; copies get it back. `===`, `Object.is`, `includes`,
 `Set` / `Map` keys and function properties, also through `any` values of two function types,
 follow a value with the bit to the function it leads to; values without it compare and hash by
-their words as before. `===` of two function types converts one to the other. Programs that compare no function values are lowered as before.
+their words as before. `===` of two function types converts one to the other. Programs that neither compare function values nor write properties of
+functions through `any` (which needs their identity too) are lowered as before.
 
 A `const` holding a named generic function (`const g: G = id`, also through a chain of
 constants) is not one of these where a function type of fixed types is expected: sema gives the

@@ -38,6 +38,26 @@ fn vir(src: &str) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// The size of the environment aggregate of a closure of `main` that holds an `any` (a `dyn`
+/// aggregate): `agg#5 main::{closure#1} env size=48 align=8 { …, agg#2@32 }`.
+fn env_holding_any(v: &str) -> Option<u64> {
+    let dyn_agg = v
+        .lines()
+        .find(|l| l.starts_with("agg#") && l.contains(" dyn size="))?
+        .split_whitespace()
+        .next()?
+        .to_string();
+    let field = format!("{dyn_agg}@");
+    let env = v.lines().find(|l| {
+        l.starts_with("agg#")
+            && l.contains(" main::{closure#")
+            && l.contains(" env size=")
+            && l.contains(&field)
+    })?;
+    let size = env.split("size=").nth(1)?.split_whitespace().next()?;
+    size.parse().ok()
+}
+
 /// A function's blocks: name → its statement lines (the terminator last).
 fn blocks(body: &str) -> Vec<(String, Vec<String>)> {
     let mut out: Vec<(String, Vec<String>)> = vec![];
@@ -80,8 +100,17 @@ fn a_function_of_exactly_the_type_is_called_without_the_closure() {
             .map(|(n, _)| n.clone())
             .collect()
     };
-    // The closure's environment: header (drop, clone, transfer) and the `any` it calls.
-    let envs: HashSet<String> = has("velt_rt_alloc(48_u64").into_iter().collect();
+    // The closure's environment: the aggregate of a closure of `main` whose environment holds
+    // the `any` it calls (its header's size depends on the program), allocated with the count
+    // word in front of it.
+    let size = env_holding_any(&v).unwrap_or_else(|| {
+        panic!(
+            "no environment holding an `any`:
+{v}"
+        )
+    });
+    let alloc = format!("velt_rt_alloc({}_u64", size + 8);
+    let envs: HashSet<String> = has(&alloc).into_iter().collect();
     assert!(
         !envs.is_empty(),
         "no closure environment in `main`:\n{body}"

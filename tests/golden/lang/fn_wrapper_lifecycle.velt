@@ -56,7 +56,13 @@ async function run(l: Listener, n: number): Promise<number> {
   for (let i = 0; i < n; i++) s += l("task");
   return s;
 }
+// A wrapper of a named function sent to a task is still that function there: the copy the
+// transfer makes keeps the wrapper bit.
+async function isNamed(l: Listener): Promise<boolean> {
+  return l === named;
+}
 async function main(): Promise<void> {
+  console.log("task same", await spawn(isNamed(kept[2])), await spawn(isNamed(kept[0])));
   const ps: Promise<number>[] = [];
   for (const l of kept) ps.push(spawn(run(l, 100)));
   let total = 0;

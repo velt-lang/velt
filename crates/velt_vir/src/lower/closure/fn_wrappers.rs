@@ -5,7 +5,8 @@
 //! object, so `===`, `Object.is` and `Set` / `Map` keys look through the wrapper at the function
 //! it stands for, through every wrapper in a chain.
 //!
-//! In a program that compares function values (`Boxing::fn_identity`) and makes a wrapper
+//! In a program that compares function values or writes properties of functions through `any`
+//! (`Boxing::fn_identity`) and makes a wrapper
 //! (`Boxing::fn_wrappers`), a wrapper's value has the low bit of its environment pointer set
 //! (environments are aligned to 8), and its environment is
 //! `{ drop, clone, transfer, kind, the wrapped value, … }`. The wrapped value is the wrapper's
