@@ -6,7 +6,12 @@
 //!
 //! The narrowed type keeps the static type's type arguments: a `Base<i64>` tested for
 //! `class Derived<T> extends Base<T>` is a `Derived<i64>`. A generic class whose type
-//! arguments do not follow from the tested type cannot be narrowed to.
+//! arguments do not follow from the tested type cannot be narrowed to, except where those it
+//! leaves open are *erased* ([`FnCx::erased_args`]): each has a default, and no field, base or
+//! override depends on it, so every instantiation of the class has one layout and one vtable,
+//! and an instance of any of them reads safely as the class at the defaults (std's
+//! `CustomEvent<T = any>`, which keeps its `detail` as an `any`: `e instanceof CustomEvent` on
+//! an `Event` is a `CustomEvent<any>`, as under `tsc`).
 
 use velt_common::{Diagnostic, Span};
 
@@ -39,11 +44,13 @@ impl FnCx<'_, '_> {
         }
         let params: Vec<TyId> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();
         let own = self.cx.ty.intern(TyKind::Adt(class, params));
+        let mut from_class = None;
         let pattern = match self.cx.ty.kind(t).clone() {
             TyKind::Adt(d, _) if self.cx.class_of(t).is_some() => {
                 if !self.cx.class_extends(class, d) {
                     return Ok(Instance::No);
                 }
+                from_class = Some(d);
                 self.ancestor_type(own, d)
             }
             TyKind::Dyn(i, _) => {
@@ -67,10 +74,69 @@ impl FnCx<'_, '_> {
         if !self.cx.match_ty(pattern, t, &mut slots) {
             return Ok(Instance::No);
         }
-        if slots.iter().any(Option::is_none) {
+        if slots.iter().any(Option::is_none) && !self.erased_args(class, from_class, &mut slots) {
             return Err(());
         }
         Ok(Instance::Maybe(self.cx.subst_known(own, &slots)))
+    }
+
+    /// Fills the open `slots` of class `class` (narrowed from a value of class `from`, its
+    /// direct base) with their defaults, when each such parameter is erased: it has a default
+    /// without parameters, and neither a field `class` declares nor its base type mentions it,
+    /// and no subclass overrides a method of `class` (a method may take or give a `T`). Every
+    /// instantiation then has the same layout and vtable, so the narrowed value is sound at any.
+    fn erased_args(
+        &mut self,
+        class: DefId,
+        from: Option<DefId>,
+        slots: &mut [Option<TyId>],
+    ) -> bool {
+        let Some(a) = self.cx.adt(class) else {
+            return false;
+        };
+        let base = a.base;
+        if from.is_none() || base.and_then(|b| self.cx.class_of(b)).map(|c| c.0) != from {
+            return false;
+        }
+        let mut mentioned = vec![];
+        for f in &a.fields[a.own_fields_start..] {
+            crate::types::collect_params(&self.cx.ty, f.ty, &mut mentioned);
+        }
+        if let Some(b) = base {
+            crate::types::collect_params(&self.cx.ty, b, &mut mentioned);
+        }
+        let methods: Vec<(String, DefId)> = (a.methods.iter())
+            .filter(|(_, m)| !m.is_static)
+            .map(|(k, m)| (k.clone(), m.def))
+            .collect();
+        let overridden = (0..self.cx.info.len() as u32).map(DefId).any(|d| {
+            d != class
+                && self.cx.class_extends(d, class)
+                && self.cx.adt(d).is_some_and(|s| {
+                    methods
+                        .iter()
+                        .any(|(k, def)| s.methods.get(k).is_some_and(|m| m.def != *def))
+                })
+        });
+        if overridden {
+            return false;
+        }
+        let defaults = self.cx.adt_param_defaults(class);
+        for (i, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() {
+                continue;
+            }
+            let Some(Some(dflt)) = defaults.get(i).copied() else {
+                return false;
+            };
+            let mut ps = vec![];
+            crate::types::collect_params(&self.cx.ty, dflt, &mut ps);
+            if mentioned.contains(&(i as u32)) || !ps.is_empty() || self.cx.ty.has_error(dflt) {
+                return false;
+            }
+            *slot = Some(dflt);
+        }
+        true
     }
 
     /// The type of the class `ancestor` in the base chain of class type `t`.
