@@ -49,6 +49,7 @@ pub(super) fn facts(h: &mut Hashing) -> Vec<(&'static str, u64)> {
         generated,              // "generated instances"
         decorators,             // "decorators"
         c_exports,              // "decorators"
+        fn_wrappers: _,         // Per function.
     } = h.p;
     let declarations = (defs.iter()).filter_map(|d| h.declaration(d)).collect();
     let declarations = unordered(declarations);

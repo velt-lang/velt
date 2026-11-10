@@ -166,6 +166,12 @@ impl<'p> Hashing<'p> {
             hir::FreshClosure::Converts { from, to } => (2, self.ty(from), self.ty(to)),
         });
         fresh.hash(&mut s);
+        // What a wrapper sema made stands for: one of its own locals (a capture), or a function.
+        let wraps = p.fn_wrappers.get(&d).map(|w| match w {
+            hir::FnWrapped::Local(l) => (0u8, l.0 as u64, None, vec![]),
+            hir::FnWrapped::Fn(f, args) => (1, 0, Some(self.name(*f)), self.tys(args)),
+        });
+        wraps.hash(&mut s);
         p.lock_free_callbacks.contains(&d).hash(&mut s);
         p.cpu_targets.get(&d).hash(&mut s);
         let shape = p.fn_shapes.get(span);
