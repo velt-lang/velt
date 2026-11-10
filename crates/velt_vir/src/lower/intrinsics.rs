@@ -41,6 +41,8 @@ impl FnLower<'_, '_> {
             (I::FnAddress, [f]) => self.fn_address(f, ty),
             (I::SlotSize, []) => self.slot_size(ty),
             (I::SlotPut, [at, v]) => self.slot_put(at, v),
+            (I::SlotTransfer, [v]) => self.slot_transfer(v),
+            (I::SlotStore, [at, v]) => self.slot_store(at, v),
             (I::SlotTake, [at]) => self.slot_take(at, ty),
             (I::PromiseAt, [f]) => self.promise_at(f, ty),
             (I::RawAlloc, [n]) => self.raw_alloc(n, ty),

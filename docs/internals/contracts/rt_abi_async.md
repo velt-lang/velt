@@ -426,8 +426,8 @@ keeps the settled value in Velt code). Thread-safe; no callbacks are stored (§1
 `velt_rt_chan_*` functions and the process-wide slots `velt_rt_global_*` built on them are
 removed). A channel is a handle struct around a `shared` core whose block is raw memory from
 `velt_rt_alloc` (the std-only intrinsics `rawAlloc`/`rawFree`): the items in a ring, moved in and
-out with `slotPut`/`slotTake` (so a sent value is transferred like a `spawn` argument), under a
-spin lock, and the tasks waiting in two intrusive lines (receives, sends). A wait is a heap future
+out with `slotStore`/`slotTake` under a spin lock (a sent value is transferred like a `spawn`
+argument by `slotTransfer` before the lock is taken, so a deep copy never runs under it), and the tasks waiting in two intrusive lines (receives, sends). A wait is a heap future
 (§1) std makes (`fnAddress` for its poll and drop): it holds a clone of its poll's waker (§1's
 C waker, on every executor), joins and leaves its line in constant time, and is woken after the
 lock is let go. Values still queued when the last copy of a channel is dropped are dropped with

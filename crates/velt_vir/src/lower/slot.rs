@@ -2,7 +2,8 @@
 //! out of raw memory, with the ownership accounting of any move, for std's one-shot hand-off
 //! and its channel (#2649). `slotPut` transfers the value as a spawn argument is
 //! (`transfer_value`: moved when this task held the only reference, else copied; a resource
-//! still shared stops the program, #2613); `slotTake` hands an owned value out; `promiseAt`
+//! still shared stops the program, #2613); `slotTransfer` and `slotStore` split it in two, so
+//! the channel transfers before it takes its lock; `slotTake` hands an owned value out; `promiseAt`
 //! owns a heap future made by std; `rawAlloc`/`rawFree` give std that raw memory on every
 //! target, from the allocator compiled code uses.
 
@@ -23,7 +24,7 @@ impl FnLower<'_, '_> {
         let Some(&t) = self.targs.first() else {
             ice("slotSize outside a generic std class")
         };
-        let vt = self.cx.ty(t);
+        let vt = self.slot_ty(t);
         let size = match vt {
             Ty::Unit => 0,
             _ => self.cx.size_align(vt).0,
@@ -41,21 +42,58 @@ impl FnLower<'_, '_> {
             return unit();
         }
         let val = self.transfer_value(val, t);
-        let vt = self.cx.ty(t);
-        if vt == Ty::Unit {
+        self.store_at(addr, val, t);
+        unit()
+    }
+
+    /// `slotTransfer(value)`: `value` consumed and transferred (the same transfer as
+    /// `slotPut`'s, the #2613 check included), as an owned value for `slotStore`.
+    pub(super) fn slot_transfer(&mut self, v: &hir::Expr) -> Operand {
+        let t = self.sub(v.ty);
+        let val = self.consume(v);
+        let val = self.transfer_value(val, t);
+        self.own_value(val, t)
+    }
+
+    /// `slotStore(at, value)`: `value` (transferred by `slotTransfer`) consumed and written at
+    /// `at` as it is.
+    pub(super) fn slot_store(&mut self, at: &hir::Expr, v: &hir::Expr) -> Operand {
+        let addr = self.expr(at);
+        let t = self.sub(v.ty);
+        let val = self.consume(v);
+        if self.dead() {
             return unit();
+        }
+        self.store_at(addr, val, t);
+        unit()
+    }
+
+    /// The slot type `t` as a VIR type: its alignment fits `rawAlloc`'s 16 bytes (VIR aligns
+    /// scalars to at most 8, so an aggregate never needs more).
+    fn slot_ty(&mut self, t: TyId) -> Ty {
+        let vt = self.cx.ty(t);
+        if vt != Ty::Unit && self.cx.size_align(vt).1 > 16 {
+            ice("a slot's value is aligned to more than 16 bytes")
+        }
+        vt
+    }
+
+    /// Writes `val` (type `t`) to `*(T*)addr`.
+    fn store_at(&mut self, addr: Operand, val: Operand, t: TyId) {
+        let vt = self.slot_ty(t);
+        if vt == Ty::Unit {
+            return;
         }
         let p = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
         let place = proj(&self.operand_place(p, Ty::Ptr), Proj::Deref(vt));
         self.assign(place, Rvalue::Use(val));
-        unit()
     }
 
     /// `slotTake<T>(at)`: the value at `at` moved into a temporary the caller owns.
     pub(super) fn slot_take(&mut self, at: &hir::Expr, ty: TyId) -> Operand {
         let addr = self.expr(at);
         let t = self.sub(ty);
-        let vt = self.cx.ty(t);
+        let vt = self.slot_ty(t);
         if vt == Ty::Unit {
             return unit();
         }

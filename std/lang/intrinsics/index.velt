@@ -66,7 +66,9 @@ export {
   rawFree,
   slotPut,
   slotSize,
+  slotStore,
   slotTake,
+  slotTransfer,
 } from "velt/lang/intrinsics/slot";
 export {
   asyncGeneratorDispose,

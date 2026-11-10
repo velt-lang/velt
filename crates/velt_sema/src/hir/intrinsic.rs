@@ -423,6 +423,13 @@ pub enum Intrinsic {
     /// std only: `slotPut<T>(at: usize, value: T)`: `value` moved to `*(T*)at`, transferred as
     /// a channel send's value is. Additive.
     SlotPut,
+    /// std only: `slotTransfer<T>(value: T) -> T`: `value` made the receiving task's, as
+    /// `SlotPut` does before it stores it (and the same channel boundary), so std can transfer
+    /// a value before it takes a lock and store it with `SlotStore` under the lock. Additive.
+    SlotTransfer,
+    /// std only: `slotStore<T>(at: usize, value: T)`: `value` (already transferred with
+    /// `SlotTransfer`) moved to `*(T*)at` as it is. Additive.
+    SlotStore,
     /// std only: `slotTake<T>(at: usize) -> T`: the value at `at`, moved out. Additive.
     SlotTake,
     /// std only: `promiseAt<T>(f: usize) -> Promise<T>`: the heap future at `f` as an owned

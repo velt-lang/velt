@@ -35,7 +35,7 @@ import {
 import { newCell } from "velt/sync/channel_wait";
 import { wakeOwned } from "#sync-chan-word";
 import { dropAddress, pollAddress } from "#sync-chan-entry";
-import { promiseAt, slotPut, slotTake } from "velt/lang/intrinsics";
+import { promiseAt, slotStore, slotTake, slotTransfer } from "velt/lang/intrinsics";
 
 /**
  * A channel of `T` values. `channel<T>()` is unbounded; `channel<T>(capacity)` holds at most
@@ -51,6 +51,8 @@ export struct Channel<T> implements AsyncIterable<T> {
    * `value`) if the channel is closed, also while waiting.
    */
   async send(value: T): Promise<void> throws ChannelClosed {
+    // Made the receiver's before the lock: a deep copy never runs while others spin on it.
+    const v = slotTransfer<T>(value);
     while (true) {
       const b = this.handle;
       lock(b);
@@ -59,7 +61,7 @@ export struct Channel<T> implements AsyncIterable<T> {
         throw new ChannelClosed();
       }
       if (hasRoom(b)) {
-        put<T>(b, value);
+        put<T>(b, v);
         return;
       }
       unlock(b);
@@ -73,13 +75,14 @@ export struct Channel<T> implements AsyncIterable<T> {
    * it may be called inside `Mutex.with`.
    */
   trySend(value: T): bool {
+    const v = slotTransfer<T>(value);
     const b = this.handle;
     lock(b);
     if (isClosed(b) || !hasRoom(b)) {
       unlock(b);
       return false;
     }
-    put<T>(b, value);
+    put<T>(b, v);
     return true;
   }
 
@@ -144,11 +147,15 @@ export struct Channel<T> implements AsyncIterable<T> {
   }
 }
 
-/** Queues `value` in block `b` (locked, with room), wakes the first waiting receive, unlocks. */
+/**
+ * Queues `value` (from `slotTransfer`) in block `b` (locked, with room), wakes the first waiting
+ * receive, unlocks.
+ */
 function put<T>(b: usize, value: T): void {
-  // SAFETY: the lock is held and the ring has room: the new slot holds nothing.
+  // SAFETY: the lock is held and the ring has room: the new slot holds nothing; `value` was
+  // transferred.
   unsafe {
-    slotPut<T>(pushAt(b), value);
+    slotStore<T>(pushAt(b), value);
   }
   const w = wakeFirst(b, RECV);
   unlock(b);

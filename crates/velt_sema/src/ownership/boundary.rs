@@ -6,7 +6,8 @@
 //! (`Intrinsic::Share`, the variable is used again) and a shared capture of a spawned async
 //! closure literal (or of one called at once). A value sent on a channel crosses the same way
 //! (`ch.send(x)`, `ch.trySend(x)`: a function that hands its parameter to `Intrinsic::SlotPut`,
-//! which moves it into the channel's raw memory; std's `HandOff.give` too), so the same rule
+//! which moves it into the channel's raw memory, or to `Intrinsic::SlotTransfer`, which makes
+//! it the receiver's before the channel stores it; std's `HandOff.give` too), so the same rule
 //! applies to the value it is given.
 //! A share inside an object, array, tuple or union literal built for the crossing is copied
 //! too. Values that only turn out to be shared at run time (another reference made
@@ -127,9 +128,9 @@ pub(crate) fn check_boundaries(cx: &mut Ctx) {
 
 /// The functions among `fns` that hand a parameter to a channel, with the indices of those
 /// parameters (`this` is parameter 0, as in the call's arguments): `Channel.send` and
-/// `Channel.trySend` pass it on to `Intrinsic::SlotPut`, and a function that
-/// passes its parameter on to one of those (`enqueue(ch, x)` calling `ch.send(x)`) hands it
-/// over too. A parameter the body assigns (`c = new Conn(…)`) may send another value, so it
+/// `Channel.trySend` pass it on to `Intrinsic::SlotTransfer` (`HandOff.give` to
+/// `Intrinsic::SlotPut`), and a function that passes its parameter on to one of those
+/// (`enqueue(ch, x)` calling `ch.send(x)`) hands it over too. A parameter the body assigns (`c = new Conn(…)`) may send another value, so it
 /// is left out (`LocalDef::mutable` would also cover a parameter whose contents change).
 fn channel_senders(cx: &mut Ctx, fns: &[DefId]) -> FxHashMap<DefId, Vec<usize>> {
     let mut out: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
@@ -155,6 +156,10 @@ fn channel_senders(cx: &mut Ctx, fns: &[DefId]) -> FxHashMap<DefId, Vec<usize>> 
                 callee: Callee::Intrinsic(Intrinsic::SlotPut),
                 args,
             } => sent.extend(param(args.get(1))),
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::SlotTransfer),
+                args,
+            } => sent.extend(param(args.first())),
             E::Call {
                 callee: Callee::Def(g, _),
                 args,
