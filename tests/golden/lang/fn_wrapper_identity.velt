@@ -1,0 +1,139 @@
+// check: no leaks
+// A function converted to another function type is still the same function (#2688): Velt wraps
+// it to fit the type (a wider parameter, a default or rest parameter, fewer parameters), and
+// `===`, `Object.is`, `includes`, `indexOf` and `Set` / `Map` keys see the function it wraps,
+// as Node does, through a wrapper of a wrapper too.
+class Ev {
+  type: string;
+  constructor(t: string) {
+    this.type = t;
+  }
+}
+type Listener = (evt: Ev) => void;
+
+const set = new Set<Listener>();
+const map = new Map<Listener, string>();
+const list: Listener[] = [];
+const dyn = new Set<any>();
+let last: Listener | null = null;
+function add(l: Listener): void {
+  set.add(l);
+}
+function has(l: Listener): boolean {
+  return set.has(l);
+}
+function del(l: Listener): boolean {
+  return set.delete(l);
+}
+function keep(l: Listener): void {
+  last = l;
+}
+function same(l: Listener): string {
+  return `${last === l} ${last !== l} ${last !== null && Object.is(last, l)}`;
+}
+function put(l: Listener, v: string): void {
+  map.set(l, v);
+}
+function get(l: Listener): string {
+  return map.get(l) ?? "none";
+}
+function push(l: Listener): void {
+  list.push(l);
+}
+function find(l: Listener): string {
+  return `${list.includes(l)} ${list.indexOf(l)}`;
+}
+function addAny(l: Listener): void {
+  dyn.add(l);
+}
+
+function check(name: string, l: Listener, again: Listener): void {
+  add(l);
+  add(again);
+  console.log(name, "size", set.size, has(again));
+  keep(l);
+  console.log(name, "same", same(again));
+  put(l, name);
+  console.log(name, "get", get(again));
+  push(l);
+  console.log(name, "find", find(again));
+  addAny(l);
+  addAny(again);
+  console.log(name, "any", dyn.size);
+  console.log(name, "del", del(again), set.size);
+  set.clear();
+  map.clear();
+  list.length = 0;
+  dyn.clear();
+}
+
+// A parameter wider than the type's.
+const a = (e: any) => {
+  console.log("a", e.type);
+};
+check("any", a, a);
+
+// A default parameter.
+const d = (e: Ev | null = null) => {
+  console.log("d", e === null ? "none" : e.type);
+};
+check("default", d, d);
+
+// A rest parameter.
+const r = (...args: any[]) => {
+  console.log("r", args.length);
+};
+check("rest", r, r);
+
+// Fewer parameters.
+const z = () => {
+  console.log("z");
+};
+check("fewer", z, z);
+
+// A named function.
+function named(e: any): void {
+  console.log("named", e.type);
+}
+check("named", named, named);
+
+// Two different functions stay different.
+const b = (e: any) => {
+  console.log("b", e.type);
+};
+add(a);
+add(b);
+add(a);
+console.log("two", set.size, has(a), has(b));
+set.clear();
+
+// A wrapper of a wrapper: `twice` converts its own converted parameter again.
+type Loose = (evt: any) => void;
+function twice(l: Loose): Listener {
+  return l;
+}
+const w1 = twice(a);
+const w2 = twice(a);
+console.log("nested ===", w1 === w2, w1 !== w2);
+add(w1);
+console.log("nested has", has(w2), has(a), set.size);
+set.clear();
+
+// A function stored at the type, then passed again.
+const stored: Listener = d;
+add(stored);
+add(d);
+keep(d);
+console.log("stored", set.size, same(stored));
+set.clear();
+
+// `===` of two function types.
+console.log("cross", stored === d, d === stored, w1 === a, a !== w1, w1 === b);
+
+// The wrappers still call the functions they wrap.
+add(a);
+add(d);
+add(r);
+add(z);
+add(named);
+for (const l of set) l(new Ev("x"));

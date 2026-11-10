@@ -1,0 +1,40 @@
+any size 1 true
+any same true false true
+any get any
+any find true 0
+any any 1
+any del true 0
+default size 1 true
+default same true false true
+default get default
+default find true 0
+default any 1
+default del true 0
+rest size 1 true
+rest same true false true
+rest get rest
+rest find true 0
+rest any 1
+rest del true 0
+fewer size 1 true
+fewer same true false true
+fewer get fewer
+fewer find true 0
+fewer any 1
+fewer del true 0
+named size 1 true
+named same true false true
+named get named
+named find true 0
+named any 1
+named del true 0
+two 2 true true
+nested === true false
+nested has true true 1
+stored 1 true false true
+cross true true true false false
+a x
+d x
+r 1
+z
+named x

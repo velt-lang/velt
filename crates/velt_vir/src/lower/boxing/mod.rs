@@ -50,6 +50,10 @@ pub(super) struct Boxing {
     /// The program compares function values: every evaluation of a closure without captures
     /// gets an environment of its own as its identity (closure.rs).
     fn_identity: bool,
+    /// The program compares function values and makes a closure wrapping another function
+    /// value to fit a function type: wrappers lead to the function they wrap
+    /// (closure/fn_wrappers.rs).
+    pub(super) fn_wrappers: bool,
     /// The program holds a generic closure as `unknown` (glue/vtable.rs `ClosureAny`): every
     /// function's `any` table has the slots that carry its table back.
     pub(super) generic_any: bool,
@@ -260,6 +264,8 @@ pub(super) struct Facts {
     transfers: FxHashSet<TyId>,
     /// Function values are compared (or hashed) somewhere.
     fn_compared: bool,
+    /// A function wrapper is made (`Boxing::fn_wrappers`).
+    fn_wrapper: bool,
     /// The types of the function values compared (fresh_fns.rs).
     pub(in crate::lower) fn_compared_keys: FxHashSet<FnKey>,
     /// The generic function types whose values are held as `unknown` (fresh_fns.rs).
@@ -384,6 +390,11 @@ impl Cx<'_> {
     /// Record that function values are compared by identity.
     pub(super) fn note_fn_identity(&mut self) {
         self.facts.fn_compared = true;
+    }
+
+    /// Record that a function wrapper is made (`Boxing::fn_wrappers`).
+    pub(super) fn note_fn_wrapper(&mut self) {
+        self.facts.fn_wrapper = true;
     }
 
     /// Record that a member is written through `any`.
@@ -582,6 +593,7 @@ impl Cx<'_> {
             && (self.facts.dyn_types.iter())
                 .any(|t| matches!(self.kind(*t), TyKind::FnPtr { .. } | TyKind::Closure(_)));
         next.fn_identity |= self.facts.fn_compared || fn_props;
+        next.fn_wrappers |= next.fn_identity && self.facts.fn_wrapper;
         next.fn_props |= fn_props;
         next.generic_any |= self.facts.generic_any;
         next.any_identity |= self.facts.any_identity;
@@ -751,6 +763,7 @@ impl Boxing {
             identity_dyns,
             any_identity,
             fn_identity,
+            fn_wrappers,
             generic_any,
             any_writes,
             any_members,

@@ -107,6 +107,7 @@ impl Cx<'_> {
             identity_dyns,
             any_identity,
             fn_identity,
+            fn_wrappers,
             generic_any,
             any_writes,
             any_members,
@@ -174,6 +175,7 @@ impl Cx<'_> {
                 *any_number,
                 *read_indirect,
                 *any_members,
+                *fn_wrappers,
             ],
             any_call_keys: any_call_keys.clone(),
         }
@@ -214,7 +216,7 @@ impl Cx<'_> {
         b.recursive.extend(d(1));
         b.dyn_to_any.extend(d(2));
         b.lock_roots.extend(d(3));
-        let flags: [&mut bool; 13] = [
+        let flags: [&mut bool; 14] = [
             &mut b.any_identity,
             &mut b.fn_identity,
             &mut b.generic_any,
@@ -228,6 +230,7 @@ impl Cx<'_> {
             &mut b.any_number,
             &mut b.read_indirect,
             &mut b.any_members,
+            &mut b.fn_wrappers,
         ];
         for (flag, &seeded) in flags.into_iter().zip(&seed.flags) {
             *flag |= seeded;

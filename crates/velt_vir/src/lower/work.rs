@@ -24,6 +24,9 @@ pub(super) enum Work {
     /// `(env: ptr) -> ptr`: the environment of closure `(def, targs)` made safe for another
     /// thread (glue/transfer.rs).
     EnvTransfer(DefId, Vec<TyId>),
+    /// `(env: ptr) -> ptr`: the clone entry of every function wrapper's environment, which marks
+    /// it as one (closure/fn_wrappers.rs).
+    FnWrapperClone,
     /// `(len: u64, index: i64|u64, at: ptr)`: index-out-of-bounds panic (true = signed index;
     /// `at` points to the ` at <location>` string suffix).
     Oob(bool),

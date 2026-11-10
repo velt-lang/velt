@@ -430,6 +430,22 @@ the comparison of function values:
 - `Converts { from, to }`: a closure sema makes to convert a function value of type `from` to
   type `to`. A `New` value converted by one counts as compared where values of `to` are.
 
+### Function wrappers (#2688)
+`Program::fn_wrappers` (additive) maps the closures sema makes around a function value to fit
+another function type (velt_sema `callback.rs` `wrap`, `iface_adapt.rs` `adapt_fn`: fewer or
+more parameters, a wider parameter, a default or rest parameter, a dropped result, a function
+that doesn't throw where one may) to a `FnWrapped` (`hir/fresh.rs`), the function it stands for:
+- `Local(l)`: the function value in local `l` of the function making the wrapper, which the
+  wrapper captures (`{ const f = value; (p…) => f(p…) }`);
+- `Fn(def, type_args)`: the module-level function the wrapper calls by name.
+
+In JavaScript the converted function is the same object, so a program comparing function values
+gives such a wrapper (one capturing only `l`, by move, or a named one capturing nothing; not
+async) an environment whose clone entry is one marker function for all wrappers, followed by the
+wrapper's own clone entry and the wrapped function value. `===`, `Object.is`, `includes` and
+`Set` / `Map` keys, also of `any` values of one function type, follow wrappers to the function
+they wrap. Programs that compare no function values are lowered as before.
+
 A `const` holding a named generic function (`const g: G = id`, also through a chain of
 constants) is not one of these where a function type of fixed types is expected: sema gives the
 function itself there, instantiated (`FnRef`), so the values compare equal to each other and to

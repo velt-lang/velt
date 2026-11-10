@@ -199,6 +199,8 @@ impl FnLower<'_, '_> {
             return self.dyn_values_same(&a, &b, ty, same);
         }
         self.note_fn_compared(ty);
+        // A wrapper is the function it wraps (closure/fn_wrappers.rs).
+        let (a, b) = (&self.fn_root(a), &self.fn_root(b));
         let code = self.word_eq(a, b, 0);
         let env = self.word_eq(a, b, 1);
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env))
