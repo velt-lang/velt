@@ -173,6 +173,7 @@ impl<'a> Parser<'a> {
             Some(Kw::Declare) if self.at_c_type() => ItemKind::Class(self.parse_c_type()?),
             Some(Kw::Declare) if self.at_c_struct() => ItemKind::Struct(self.parse_c_struct()?),
             Some(Kw::Declare) if self.at_c_const() => ItemKind::Var(self.parse_c_const(lo)?),
+            Some(Kw::Declare) if self.at_c_global() => ItemKind::Var(self.parse_c_global(lo)?),
             Some(Kw::Declare) if self.at_c_decl() => ItemKind::ExternFn(self.parse_c_decl(lo)?),
             Some(Kw::Declare) if self.nth_word(1, "host") && self.nth(2) == Tok::LParen => {
                 ItemKind::ExternFn(self.parse_host_decl(lo)?)
@@ -792,6 +793,7 @@ impl<'a> Parser<'a> {
             init,
             span: self.span_from(lo),
             c_const: false,
+            c_global: None,
         })
     }
 }

@@ -392,7 +392,8 @@ pub(crate) fn declare_all<M: Module>(
                     vir::Linkage::Import => Linkage::Import,
                     _ => Linkage::Hidden,
                 };
-                module.declare_data(sym, linkage, mutable.is_some(), false)
+                // A C variable (vir `StaticData::c_global`): the program writes it too.
+                module.declare_data(sym, linkage, mutable.is_some() || s.c_global, false)
             }
             (mutable, _, None) => module.declare_anonymous_data(mutable.is_some(), false),
         };

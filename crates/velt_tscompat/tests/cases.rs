@@ -342,6 +342,19 @@ fn a_c_constant_is_reported() {
 }
 
 #[test]
+fn a_c_variable_is_reported() {
+    let src = "declare c(\"c\") let opterr: number;\n";
+    let findings = lint_syntax(Path::new("c.velt"), src);
+    let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+    assert_eq!(codes, ["declare-fn"]);
+    assert!(
+        findings[0].message.contains("names a C library's variable"),
+        "{}",
+        findings[0].message
+    );
+}
+
+#[test]
 fn a_c_struct_is_reported_once() {
     let src = "declare c struct CGPoint { x: number; y: number; }\n";
     let findings = lint_syntax(Path::new("c.velt"), src);

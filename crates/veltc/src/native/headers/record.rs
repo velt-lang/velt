@@ -67,7 +67,8 @@ pub(super) fn compare_record(
             diags.push(
                 Diagnostic::error(
                     format!(
-                        "C function `{}` in package `{name}` is not declared as its author checked against C library `{library}`'s headers for {zig_target}",
+                        "C {} `{}` in package `{name}` is not declared as its author checked against C library `{library}`'s headers for {zig_target}",
+                        if d.variable.is_some() { "variable" } else { "function" },
                         d.name
                     ),
                     d.span,
@@ -171,6 +172,12 @@ fn declaration_digest(d: &Decl) -> String {
         h.update([2]);
         h.update("...");
     }
+    // A variable's type is `ret`; whether the program may assign it counts too.
+    match d.variable {
+        Some(true) => h.update([3, b'l']),
+        Some(false) => h.update([3, b'c']),
+        None => {}
+    }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -225,6 +232,7 @@ mod tests {
             params,
             ret: Shape::Scalar(int),
             variadic: false,
+            variable: None,
             span: Span::DUMMY,
         }
     }
@@ -241,6 +249,16 @@ mod tests {
             ..decl("f", vec![Shape::Text])
         };
         assert_ne!(base, declaration_digest(&variadic));
+        // A variable `f: int` is not the function `f(): int`, and `let` is not `const`.
+        let function = declaration_digest(&decl("f", vec![]));
+        let variable = |writable| Decl {
+            variable: Some(writable),
+            ..decl("f", vec![])
+        };
+        let (var, constant) = (variable(true), variable(false));
+        assert_ne!(function, declaration_digest(&var));
+        assert_ne!(declaration_digest(&var), declaration_digest(&constant));
+        assert_ne!(function, declaration_digest(&constant));
     }
 
     #[test]

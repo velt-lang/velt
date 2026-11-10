@@ -82,6 +82,7 @@ fn expand(item: ast::Item) -> Vec<ast::Item> {
         ty: v.ty.clone(),
         init: Some(init.clone()),
         c_const: false,
+        c_global: None,
         span,
     };
     let result = names
@@ -138,6 +139,7 @@ fn expand(item: ast::Item) -> Vec<ast::Item> {
                 ty: None,
                 init: Some(read),
                 c_const: false,
+                c_global: None,
                 span,
             }),
             exported: item.exported,
@@ -156,6 +158,7 @@ fn constant(name: &ast::Ident, init: ast::Expr, span: Span, item: Span) -> ast::
             ty: None,
             init: Some(init),
             c_const: false,
+            c_global: None,
             span,
         }),
         exported: false,

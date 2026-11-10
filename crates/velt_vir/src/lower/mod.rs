@@ -70,6 +70,7 @@ mod boxing;
 pub use boxing::CountedSeed;
 mod c_call;
 mod c_export;
+mod c_global;
 mod call;
 mod callee;
 mod caller_aliases;
@@ -421,6 +422,8 @@ struct Cx<'h> {
     /// The symbols C functions declared (c_call.rs): a later extern of the same symbol with
     /// another signature is that clash, reported, not an internal error.
     c_symbols: FxHashMap<String, c_call::CDecl>,
+    /// The statics of C variables (c_global.rs), by link symbol.
+    c_globals: FxHashMap<String, StaticId>,
     /// The C declarations whose signature clash is reported (once each).
     c_clashes_reported: rustc_hash::FxHashSet<DefId>,
     /// velt/ffi's hooks found so far (c_call.rs): each is looked up once per program.

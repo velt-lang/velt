@@ -1,0 +1,8 @@
+// A package's C variables (`declare c("c") let name: T;`) are used only in unsafe code, a
+// `const` one is only read, and their types are those C has; the errors are the package's,
+// reported before the program runs.
+import { show } from "clib";
+
+function main() {
+  show();
+}

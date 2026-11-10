@@ -287,6 +287,7 @@ impl FnCx<'_, '_> {
                 init: Some(value),
                 span,
                 c_const: false,
+                c_global: None,
             };
             stmts.push(stmt(ast::StmtKind::Var(decl), span));
         }

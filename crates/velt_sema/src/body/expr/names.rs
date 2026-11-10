@@ -438,6 +438,8 @@ impl FnCx<'_, '_> {
                     false => lit,
                 }
             }
+            // A C variable: read from C memory at each use, so never narrowed.
+            DefInfo::Global(g) if g.src.c_global.is_some() => self.global_read(d, want, span),
             DefInfo::Global(_) => match self
                 .named_generic_instance(d, id, exp)
                 .or_else(|| self.narrowed_global(d, exp, want, span))
@@ -483,6 +485,12 @@ impl FnCx<'_, '_> {
 
     pub(crate) fn global_read(&mut self, d: DefId, want: Want, span: Span) -> hir::Expr {
         crate::body::driver::ensure_global(self.cx, d);
+        let g = self.cx.global(d).expect("ICE: global");
+        if g.src.c_global.is_some() {
+            let name = g.name.clone();
+            self.check_unsafe_c_global(&name, span);
+            return self.mk(H::Global(d), g_ty(self.cx, d), span);
+        }
         let g = self.cx.global(d).expect("ICE: global");
         let (ty, mutable) = (g.ty, g.stored);
         // A constant whose value is taken over is the one object Node evaluates once.
@@ -728,4 +736,9 @@ impl FnCx<'_, '_> {
             rest,
         })
     }
+}
+
+/// The type of global `d`, once checked.
+fn g_ty(cx: &crate::ctx::Ctx, d: DefId) -> TyId {
+    cx.global(d).map_or(cx.ty.error, |g| g.ty)
 }

@@ -1,0 +1,18 @@
+// What a C variable may be and where it may be used.
+import { Ptr } from "velt/ffi";
+
+declare c("c") let environ: Ptr<Ptr<u8> | null>;
+declare c("c") let opterr: i32;
+declare c("c") const optind: i32;
+declare c("c") let optarg: string;
+
+export function show(): void {
+  console.log(opterr);
+  opterr = 0;
+  // SAFETY: none of these compile.
+  unsafe {
+    optind = 1;
+    optind += 1;
+    console.log(optarg, Ptr.addressOf(environ));
+  }
+}

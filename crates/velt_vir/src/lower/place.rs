@@ -450,9 +450,11 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `place = value`: evaluate the target's indices, then the new value; drop the old one,
-    /// store.
+    /// `place = value`: evaluate the target's indices, then the new value; drop the old, store.
     pub(super) fn assign_expr(&mut self, place: &hir::Expr, value: &hir::Expr) -> Operand {
+        if let Some((d, c)) = self.c_global_of(place) {
+            return self.c_global_assign(d, &c, value);
+        }
         if let hir::ExprKind::Field { base, index, .. } = &place.kind {
             let bty = self.sub(base.ty);
             if self.cx.proxiable(bty) && !self.is_unit_field(bty, *index) {
@@ -615,6 +617,9 @@ impl FnLower<'_, '_> {
         place: &hir::Expr,
         value: &hir::Expr,
     ) -> Operand {
+        if let Some((d, c)) = self.c_global_of(place) {
+            return self.c_global_compound(d, &c, (op, place.ty), value);
+        }
         if let hir::ExprKind::Field { base, index, .. } = &place.kind {
             let bty = self.sub(base.ty);
             if self.cx.proxiable(bty) && !self.is_unit_field(bty, *index) {

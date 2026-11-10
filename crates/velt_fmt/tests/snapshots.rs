@@ -597,6 +597,14 @@ fn c_constants() {
 }
 
 #[test]
+fn c_variables() {
+    assert_fmt(
+        "declare  c( 'c' )  let environ:Ptr<Ptr<u8>|null>\nexport declare c(\"m\") const version : u32;\n",
+        "declare c(\"c\") let environ: Ptr<Ptr<u8> | null>;\nexport declare c(\"m\") const version: u32;\n",
+    );
+}
+
+#[test]
 fn c_structs() {
     assert_fmt(
         "declare  c  struct CGPoint {x:f64;y:f64}\nexport declare c struct CGRect { origin: CGPoint; size: [f64, f64] }\n",

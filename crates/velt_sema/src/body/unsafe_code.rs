@@ -83,6 +83,44 @@ impl FnCx<'_, '_> {
         );
     }
 
+    /// A use of C variable `name` at `span` (`declare c("lib") let`): C may change it at any
+    /// time and nothing checks what a pointer in it points to, so it needs an unsafe context.
+    pub(crate) fn check_unsafe_c_global(&mut self, name: &str, span: Span) {
+        if self.in_unsafe_code() {
+            return;
+        }
+        self.cx.error(
+            Diagnostic::error(
+                format!("using C variable `{name}` needs an `unsafe` block or function"),
+                span,
+            )
+            .with_note(
+                "wrap the use in `unsafe { … }`, with a `// SAFETY:` comment before it saying why it is sound (no other thread writes it meanwhile, and what it points to is alive)",
+            ),
+        );
+    }
+
+    /// A write (`what`) whose place `e` has C variable `d` at its root: `Some(allowed)`, with
+    /// an error reported when it isn't, or `None` for a global that is not a C variable. Only a
+    /// `let` one can be assigned, and only as a whole (`x = v`, `x += v`).
+    pub(crate) fn c_global_write(&mut self, d: DefId, e: &hir::Expr, what: &str) -> Option<bool> {
+        let g = self.cx.global(d)?;
+        let (_, writable) = g.src.c_global?;
+        let name = g.name.clone();
+        let whole = matches!(e.kind, hir::ExprKind::Global(_)) && what == "assign to";
+        if whole && writable {
+            return Some(true);
+        }
+        let note = match writable {
+            false => "a C variable declared `const` is only read: declare it with `let` if C lets the program assign it",
+            true => "a C variable is assigned as a whole: `x = v`",
+        };
+        self.cx.error(
+            Diagnostic::error(format!("cannot {what} C variable `{name}`"), e.span).with_note(note),
+        );
+        Some(false)
+    }
+
     /// Unsafe function `d` used as a value (not called): an error, since a function type
     /// can't say it is unsafe, so a call through the value would not need an unsafe context.
     /// True when it reported one.

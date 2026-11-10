@@ -95,6 +95,7 @@ impl<'a> Parser<'a> {
                 init: Some(init),
                 span,
                 c_const: false,
+                c_global: None,
             }),
             exported: false,
             span,

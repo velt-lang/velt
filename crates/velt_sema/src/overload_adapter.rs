@@ -316,6 +316,7 @@ fn default_let(
             init: Some(value),
             span,
             c_const: false,
+            c_global: None,
         }),
         span,
     }

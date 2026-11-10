@@ -1,6 +1,7 @@
 //! C declarations (docs/internals/design/c-ffi.md): `declare c("<library>") function name(…): R;`,
 //! a function of a native library, called through the C ABI from `unsafe` code; `declare c type`,
-//! `declare c struct` and `declare c const`. `c` is a word only there.
+//! `declare c struct`, `declare c const` and C variables, `declare c("<library>") let name: T;`.
+//! `c` is a word only there.
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
@@ -73,6 +74,7 @@ impl<'a> Parser<'a> {
             init: None,
             span: self.span_from(lo),
             c_const: true,
+            c_global: None,
         })
     }
 
@@ -120,6 +122,74 @@ impl<'a> Parser<'a> {
         self.expect(Tok::RBrace)?;
         self.eat(Tok::Comma);
         Ok(true)
+    }
+
+    /// At `declare c("<library>") let` or `const`: the closing parenthesis follows the
+    /// library's name (a C variable takes no options).
+    pub(super) fn at_c_global(&mut self) -> bool {
+        self.at_c_decl()
+            && matches!(self.nth(3), Tok::Str(_))
+            && self.nth(4) == Tok::RParen
+            && matches!(self.nth(5), Tok::Kw(Kw::Let | Kw::Const))
+    }
+
+    /// `declare c("<library>") let name: T;` or `const` (the caller checked
+    /// [`Self::at_c_global`]): a variable of a C library, which `unsafe` code reads (and, for
+    /// `let`, writes) in place. It has a type and never an initializer: C defines it.
+    pub(super) fn parse_c_global(&mut self, lo: u32) -> PResult<VarDecl> {
+        self.bump(); // declare
+        self.bump(); // c
+        self.bump(); // (
+        let Tok::Str(idx) = self.peek() else {
+            self.error_expected("the C library's name as a string");
+            return Err(Fail);
+        };
+        let c = CLibrary {
+            library: self.payload_text(idx),
+            errno: false,
+            span: self.cur_span(),
+        };
+        self.bump();
+        self.expect(Tok::RParen)?;
+        let kind = match self.eat_kw(Kw::Let) {
+            true => VarKind::Let,
+            false => {
+                self.expect(Tok::Kw(Kw::Const))?;
+                VarKind::Const
+            }
+        };
+        let name = self.parse_binding_ident()?;
+        let span = name.span;
+        let pattern = self.mk_pat(PatternKind::Ident(name), span);
+        if !self.at(Tok::Colon) {
+            self.error(
+                "a C variable says its type: `declare c(\"<library>\") let name: T;`",
+                span,
+            );
+            return Err(Fail);
+        }
+        self.bump();
+        let ty = self.parse_type()?;
+        if self.at(Tok::Eq) {
+            let at = self.cur_span();
+            self.error(
+                "a C variable is defined by its C library: it has no initializer",
+                at,
+            );
+            return Err(Fail);
+        }
+        if !self.eat_signature_end() {
+            self.expect_semi()?;
+        }
+        Ok(VarDecl {
+            kind,
+            pattern,
+            ty: Some(ty),
+            init: None,
+            span: self.span_from(lo),
+            c_const: false,
+            c_global: Some(c),
+        })
     }
 
     /// `declare c("<library>"[, { errno: true }]) [async] function name(…): R;` (the caller

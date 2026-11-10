@@ -24,6 +24,14 @@ export const imports: Imports = {
   // with `_Unwind_RaiseException` where generated code catches it (the Itanium unwinder); on
   // Windows (structured exceptions, not built yet) and WebAssembly nothing is raised and no
   // unwinder function is named.
+  // Where the calling thread's C `errno` is (velt/ffi's `errno` and `setErrno`): each C library
+  // gives its address through a function of its own; a target without one has none.
+  "#errno-location": {
+    darwin: "./ffi/errno_darwin.velt",
+    linux: "./ffi/errno_linux.velt",
+    win32: "./ffi/errno_windows.velt",
+    default: "./ffi/errno_none.velt",
+  },
   "#unwind-raise": {
     win32: "./lang/hooks/unwind_none.velt",
     native: "./lang/hooks/unwind_itanium.velt",

@@ -300,6 +300,7 @@ fn decl(kind: VarKind, name: &str, t: Option<&str>, init: Option<Expr>) -> Stmt 
         init,
         span: D,
         c_const: false,
+        c_global: None,
     }))
 }
 

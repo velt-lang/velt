@@ -33,6 +33,24 @@ pub struct GlobalDef {
     /// `declare c const` (docs/internals/design/c-ffi.md): `init` is a placeholder, and lowering
     /// reads the value the C headers gave. Additive.
     pub c_const: Option<CConst>,
+    /// `declare c("<library>") let name: T;` (or `const`; docs/internals/design/c-ffi.md "C
+    /// variables"): `init` is a placeholder, and lowering reads (and assigns) the C library's
+    /// variable in place, through its link symbol. Additive.
+    pub c_global: Option<CGlobal>,
+}
+
+/// A variable of a C library: `Global(d)` reads it from memory at each use, and an assignment
+/// writes it there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CGlobal {
+    /// The logical library name of `declare c("<library>")`; `"c"` is the platform's C library.
+    pub library: String,
+    /// The link symbol: the declared name.
+    pub symbol: String,
+    /// What its value crosses as: an integer, `f32`, `f64`, `bool` or a pointer.
+    pub ty: CTy,
+    /// Declared with `let`: the program may assign it (`const`: only read).
+    pub writable: bool,
 }
 
 /// A C constant: what it crosses as, and its value on the build's target, which the compiler

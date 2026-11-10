@@ -103,6 +103,15 @@ pub(crate) fn static_data(
     how: StaticDefinition,
     wide_pointer_slots: bool,
 ) -> CodegenResult<String> {
+    // A C variable: a C library defines it, with default visibility, and nothing is known of
+    // its contents. Every unit that uses it declares it.
+    if data.c_global {
+        return Ok(format!(
+            "{} = external global i8, align {}\n",
+            names[index],
+            data.align.max(1)
+        ));
+    }
     // A named static (vir invariant 13) is the link's one copy: another object refers to it
     // (`Export`) or defines it (`Import`, whose contents are here for reading only).
     let how = match data.linkage {

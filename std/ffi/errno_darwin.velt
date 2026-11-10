@@ -1,0 +1,12 @@
+// velt/ffi (internal): where the calling thread's `errno` is with Apple's C library and the BSDs':
+// `__error()` (`#errno-location`, errno.velt).
+
+import { Ptr } from "velt/ffi/ptr";
+
+declare c("c") function __error(): Ptr<i32>;
+
+/** The address of the calling thread's `errno`. */
+export function errnoLocation(): Ptr<i32> | null {
+  // SAFETY: `__error` takes nothing and returns the address of this thread's `errno`.
+  return unsafe { __error() };
+}

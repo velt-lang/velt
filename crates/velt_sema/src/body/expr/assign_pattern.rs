@@ -298,6 +298,7 @@ impl FnCx<'_, '_> {
                 init: Some(value.clone()),
                 span,
                 c_const: false,
+                c_global: None,
             }),
             span,
         };

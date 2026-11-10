@@ -74,7 +74,7 @@ structs! {
     FnDecl { sig, body, overloads }
     TypeExpr { kind, span }
     Block { stmts, span }
-    VarDecl { kind, pattern, ty, init, span, c_const }
+    VarDecl { kind, pattern, ty, init, span, c_const, c_global }
     Stmt { kind, span }
     SwitchCase { test, body, span }
     Expr { id, kind, span }

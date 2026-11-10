@@ -40,26 +40,80 @@ pub(super) fn check(
     diags: &mut Diagnostics,
 ) {
     let name = velt_vir::system::base_name(&f.symbol);
-    if std_files.contains(&f.span.file) {
-        if c.library != C_LIBRARY {
+    let what = What {
+        keyword: " function",
+        noun: "function",
+        verb: "called",
+    };
+    let at = (std_files, target);
+    check_in_library(
+        (name, &c.library, f.span),
+        what,
+        sm,
+        graph,
+        at,
+        checked,
+        diags,
+    );
+}
+
+/// Check C variable `g` (`declare c("lib") let`, with `c`) as [`check`] does a C function.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn check_global(
+    g: &hir::GlobalDef,
+    c: &hir::CGlobal,
+    sm: &SourceMap,
+    graph: Option<&PackageGraph>,
+    std_files: &HashSet<FileId>,
+    target: &str,
+    checked: &mut Checked,
+    diags: &mut Diagnostics,
+) {
+    let what = What {
+        keyword: "(…) let",
+        noun: "variable",
+        verb: "used",
+    };
+    let at = (std_files, target);
+    check_in_library(
+        (&c.symbol, &c.library, g.span),
+        what,
+        sm,
+        graph,
+        at,
+        checked,
+        diags,
+    );
+}
+
+/// Check C declaration `name` of C library `library` at `span` (a `what`): where it is, that
+/// the program allows its package's native code, and the library, which a build for `target`
+/// must link.
+fn check_in_library(
+    (name, library, span): (&str, &str, Span),
+    what: What,
+    sm: &SourceMap,
+    graph: Option<&PackageGraph>,
+    (std_files, target): (&HashSet<FileId>, &str),
+    checked: &mut Checked,
+    diags: &mut Diagnostics,
+) {
+    if std_files.contains(&span.file) {
+        if library != C_LIBRARY {
             diags.push(Diagnostic::error(
-                format!("ICE: the standard library declares `{name}` in C library `{}`; std names only `c`", c.library),
-                f.span,
+                format!("ICE: the standard library declares `{name}` in C library `{library}`; std names only `c`"),
+                span,
             ));
         }
         return;
     }
-    let what = What {
-        keyword: "function",
-        noun: "function",
-    };
-    let Some(package) = allowed_package(what, name, f.span, sm, graph, checked, diags) else {
+    let Some(package) = allowed_package(what, name, span, sm, graph, checked, diags) else {
         return;
     };
-    if c.library == C_LIBRARY {
+    if library == C_LIBRARY {
         return;
     }
-    let Some(lib) = package.c_libraries.get(&c.library) else {
+    let Some(lib) = package.c_libraries.get(library) else {
         let known: Vec<String> = package
             .c_libraries
             .keys()
@@ -72,12 +126,12 @@ pub(super) fn check(
         };
         diags.push(
             Diagnostic::error(
-                format!("C library `{}` is not in package.velt's `native.c`: {listed}", c.library),
-                f.span,
+                format!("C library `{}` is not in package.velt's `native.c`: {listed}", library),
+                span,
             )
             .with_note(format!(
                 "say where it comes from on each target: `native: {{ c: {{ {}: {{ system: {{ default: \"{}\" }} }} }} }}`",
-                c.library, c.library
+                library, library
             )),
         );
         return;
@@ -86,10 +140,10 @@ pub(super) fn check(
         diags.push(
             Diagnostic::error(
                 format!(
-                    "C library `{}` of package `{}` has no `system` entry for target `{target}`, so `{name}` can't be called there",
-                    c.library, package.name
+                    "C library `{library}` of package `{}` has no `system` entry for target `{target}`, so `{name}` can't be {} there",
+                    package.name, what.verb
                 ),
-                f.span,
+                span,
             )
             .with_note("add a condition the target has (`native`, `darwin`, `linux`, `win32` or `default`) to its `system` object"),
         );
@@ -99,10 +153,12 @@ pub(super) fn check(
 /// How a kind of C declaration reads in the errors.
 #[derive(Clone, Copy)]
 struct What {
-    /// `declare c <keyword>`.
+    /// `declare c<keyword>` (a space first, but before `(…)`).
     keyword: &'static str,
     /// `C <noun>`.
     noun: &'static str,
+    /// What a use of one does: `called`.
+    verb: &'static str,
 }
 
 /// The package of the C declaration `name` at `at` (outside std), when it may be there: in a
@@ -116,7 +172,7 @@ fn allowed_package<'g>(
     checked: &mut Checked,
     diags: &mut Diagnostics,
 ) -> Option<&'g GraphPackage> {
-    let What { keyword, noun } = what;
+    let What { keyword, noun, .. } = what;
     let file = &sm.get(at.file).path;
     let Some(package) = graph.and_then(|g| g.package_of(file)) else {
         let around = graph.and_then(|g| g.enclosing_package(file));
@@ -129,7 +185,7 @@ fn allowed_package<'g>(
         };
         diags.push(
             Diagnostic::error(
-                format!("`declare c {keyword} {name}` is only allowed in a package: {why}"),
+                format!("`declare c{keyword} {name}` is only allowed in a package: {why}"),
                 at,
             )
             .with_note(
@@ -197,8 +253,9 @@ pub(super) fn check_const<'g>(
         return None;
     }
     let what = What {
-        keyword: "const",
+        keyword: " const",
         noun: "constant",
+        verb: "read",
     };
     allowed_package(what, name, at, sm, graph, checked, diags)
 }
@@ -220,16 +277,15 @@ pub fn links(
     let Some(graph) = graph else {
         return seen;
     };
-    for def in &program.defs {
-        let hir::Def::ExternFn(f) = def else { continue };
-        let Some(c) = f.c.as_ref().filter(|c| c.library != C_LIBRARY) else {
+    for (library, span) in program.defs.iter().filter_map(c_library_of) {
+        if library == C_LIBRARY {
             continue;
-        };
-        let file = &sm.get(f.span.file).path;
+        }
+        let file = &sm.get(span.file).path;
         let Some(package) = graph.package_of(file) else {
             continue;
         };
-        let Some(lib) = package.c_libraries.get(&c.library) else {
+        let Some(lib) = package.c_libraries.get(library) else {
             continue;
         };
         let link = if lib.sources.is_empty() {
@@ -238,7 +294,7 @@ pub fn links(
             };
             system.to_string()
         } else {
-            super::c_sources::entry(&package.name, &c.library)
+            super::c_sources::entry(&package.name, library)
         };
         if !seen.contains(&link) {
             seen.push(link);
@@ -247,11 +303,18 @@ pub fn links(
     seen
 }
 
-/// Whether `defs` declare a function of the platform's C library.
+/// The C library `def` declares a function or a variable of, and where.
+fn c_library_of(def: &hir::Def) -> Option<(&str, Span)> {
+    match def {
+        hir::Def::ExternFn(f) => f.c.as_ref().map(|c| (c.library.as_str(), f.span)),
+        hir::Def::Global(g) => g.c_global.as_ref().map(|c| (c.library.as_str(), g.span)),
+        _ => None,
+    }
+}
+
+/// Whether `defs` declare a function or a variable of the platform's C library.
 fn declares_c(defs: &[hir::Def]) -> bool {
-    defs.iter().any(|def| {
-        matches!(def, hir::Def::ExternFn(f) if f.c.as_ref().is_some_and(|c| c.library == C_LIBRARY))
-    })
+    (defs.iter().filter_map(c_library_of)).any(|(library, _)| library == C_LIBRARY)
 }
 
 /// What a build for `target` links when the program declares a function of the platform's C

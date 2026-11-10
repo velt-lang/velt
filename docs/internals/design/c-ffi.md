@@ -108,6 +108,9 @@ keyword is `c` because it names the ABI, which every language here speaks.
 - **`declare c const NAME: T;`**: a constant whose value comes from the headers per target (a
   macro or an enumerator, evaluated by clang), never written by the binding: a wrong flag is as
   unsafe as a wrong signature (`SQLITE_STATIC` for `SQLITE_TRANSIENT` is a use-after-free).
+- **`declare c("<library>") let name: T;`** (or `const`, read-only): a variable the C library
+  defines (`environ`, a library's `extern int verbosity;`), read and written in place from
+  `unsafe` code ("C variables" below).
 - `declare c("m") async function` returns a `Promise`: a blocking call on the library's pool, or
   a non-blocking one when it has a `Completion<R>` parameter (see "Async").
 - Variadic functions are declared with their fixed parameters and `...args: CVarArgs` (scalars
@@ -219,6 +222,66 @@ never need it, and capture is a call and a store per C call. SQLite's range sele
 costs 9% more with it, 1.04× the Rust crate it replaces against 0.94× without. A check of whether the
 whole program reads `lastOsError()` was rejected: what a `declare c` call does must not depend on
 code elsewhere.
+
+### C variables
+
+A C library's variable (`extern char **environ;`, a library's `extern int sqlite3_temp_directory`)
+is declared like a function of the library, with `let` (the program may assign it) or `const`
+(only read):
+
+```ts
+declare c("c") let environ: Ptr<Ptr<u8> | null>;
+declare c("tiny") let verbosity: i32;
+declare c("tiny") const version_number: u32;
+```
+
+- **Syntax**: `declare c("<library>") let|const name: T;`, a module-level declaration; the
+  library is named as for a function (it decides what links), the name is the link symbol, and
+  there is no initializer (C defines it) and no options. `declare c const NAME` stays the
+  header's *compile-time* value (a macro, an enumerator); `declare c("lib") const` is a variable
+  in the library's memory, read at run time. The parenthesized library is the difference, as
+  between `declare c const` and `declare c("lib") function`.
+- **Types**: what a `declare c const` can be: an integer, `f32`, `f64`, `bool`, `Ptr<T>` or
+  `Ptr<T> | null`. Structs and arrays by value wait for C structs' later layers.
+- **Use**: reading it is a load from C memory at each use (never narrowed, never folded), and
+  `x = v` or `x op= v` stores there; both need an unsafe context, as a C call does: C or another
+  thread may change it at any time, and nothing checks what a pointer in it points to. A `const`
+  one can't be assigned, and nothing is assigned through it (no fields). A `Ptr<T>` one that
+  holds NULL stops the program at the read, as a `Ptr<T>` result does. An imported C variable is
+  assigned where it is imported too (it is C's, not a module binding).
+- **Where**: only where a C function may be declared (std, and packages that say they have native
+  code and that the program allows); std names only `c`. A target that can't call the library
+  (WebAssembly) can't reach it: a reachable use is an error once lowering is done.
+- **Lowering**: one `Import` static per symbol, with no contents (`vir::StaticData::c_global`,
+  additive): LLVM declares `external global` (default visibility, reached through the GOT where
+  the target needs it), Cranelift a writable data import. **Windows**: every C library is a DLL
+  (packages link theirs, the CRT is the dynamic one), and a DLL's variable is reached through the
+  import library's `__imp_<name>` pointer, so lowering takes that symbol and loads the address
+  from it; no backend needs `dllimport`. `velt dev` finds the variable among the loaded
+  libraries, or says it is missing, as for a function.
+- **Header check**: the headers must declare a variable of that name with external linkage, of
+  the C type the declaration's type maps to (the "What crosses" table, as a function's result is
+  compared); a `let` of a `const` C variable is an error, and so is a `static` one (no link
+  symbol) or a thread-local one (`_Thread_local`, `__thread`: each thread has its own, which a
+  symbol doesn't name; `errno` is one, reached through its function below). `c-headers.json`
+  records a variable's digest with what marks it as one (and whether it is `let`).
+
+Rejected: `declare c("lib") var` (Velt has no `var`); an address-only form
+(`declare c("lib") symbol environ: Ptr<…>` giving `&environ`), which every use would read
+through `addressLoad` by hand; making `declare c const` with a library mean a run-time read,
+which would make one word decide between a compile-time and a run-time value.
+
+### Setting `errno`
+
+`lastOsError()` reads what a `{ errno: true }` call left. Code that must restore the live
+`errno` (a signal handler returns with the `errno` it found, or the interrupted code sees the
+handler's) reads and writes the C library's own: velt/ffi's `unsafe` `errno()` and
+`setErrno(value)`. They are std code over `declare c`, no compiler work: each C library gives
+the address of the calling thread's `errno` through a function of its own (`__error()` on Apple
+platforms, `__errno_location()` with glibc and musl, `_errno()` in the Universal CRT), chosen by
+the conditional import `#errno-location` (std/imports.velt); elsewhere (WebAssembly, JS hosts)
+there is none, `errno()` is 0 and `setErrno` does nothing. `errno` itself is a thread-local
+variable, which a C variable declaration can't name (above).
 
 ### Variadic functions
 
@@ -1236,3 +1299,7 @@ Step 1 lands in layers, each its own pull request:
   (layer 9, as above).
 - A position in an array is `xs.subarray(begin, end)` at the call, for every number array; no
   `addressOf(xs, i)`: an address that outlives the call is a lease (layer 9, as above).
+- C variables are `declare c("lib") let|const name: T;`, used in unsafe code, lowered to an
+  `Import` static without contents and `__imp_<name>` on Windows; thread-local and `static` ones
+  are refused by the header check; `errno` is set through velt/ffi's `setErrno`, std code over
+  each C library's errno function (#2187 follow-up, made while the owner was away, for review).
