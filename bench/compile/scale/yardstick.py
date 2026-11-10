@@ -445,7 +445,7 @@ def check(results, budgets_path):
 def write_budgets(results, path, growth_rows):
     out = [
         "# Budgets of the build-speed yardstick (bench/compile/scale/yardstick.py, #2707).",
-        "# Written by `yardstick.py --write-budgets` on Linux x86-64; edit only to tighten.",
+        "# Written by `yardstick.py --write-budgets`; edit only to tighten.",
         "# Written from the nightly runner's results (the job's `yardstick` artifact, then",
         "# `--reuse --write-budgets`): instruction counts differ by 1-2% between machines.",
         "# budget <mode> <size> <metric> <value>: instructions per source line (instr:<stage>,",
