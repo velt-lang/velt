@@ -107,3 +107,44 @@ fn a_variadic_call_without_its_fixed_arguments_is_an_error() {
         "{e}"
     );
 }
+
+/// A package's `fcntl` or `open` of another C signature than std's system calls (velt/fs's
+/// `openSync` and `fsyncSync` reach them), its call lowered first: an error at the declaration,
+/// each the way it differs.
+#[test]
+fn declarations_that_differ_from_std_s_system_calls_are_errors() {
+    for (decl, call, shown, note) in [
+        (
+            "fcntl(fd: i32, cmd: i32, arg: i32): i32",
+            "fcntl(1, 1, 0)",
+            "fcntl(i32, i32, i32): i32` here, and the variadic signature",
+            "it is not variadic here and variadic there",
+        ),
+        (
+            "fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i64",
+            "fcntl(1, 1) as i32",
+            "fcntl(i32, i32, ...): i64` here, and the signature",
+            "the compiler's runtime calls this C function itself",
+        ),
+        (
+            "open(path: CString, ...args: CVarArgs): i32",
+            "open(new CString(\"x\"))",
+            "open(CString, ...): i32` here, and the signature",
+            "the compiler's runtime calls this C function itself",
+        ),
+    ] {
+        let src = format!(
+            "import {{ CString, CVarArgs }} from \"velt/ffi\";\n\
+             import {{ fsyncSync, openSync }} from \"velt/fs\";\n\
+             declare c(\"c\") function {decl};\n\
+             function main() {{\n  // SAFETY: a test of lowering only; never run.\n  \
+             const a: i32 = unsafe {{ {call} }};\n  \
+             const fd = openSync(\"x\", \"r\");\n  fsyncSync(fd);\n  console.log(a);\n}}\n"
+        );
+        let (p, sm) = check(&src);
+        let e = lower_checked_for(&p, &sm, TARGET).expect_err(&src);
+        assert!(e.contains(shown), "{decl}:\n{e}");
+        assert!(e.contains(note), "{decl}:\n{e}");
+        assert_eq!(e.matches("has two signatures").count(), 1, "{decl}:\n{e}");
+    }
+}

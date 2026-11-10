@@ -419,7 +419,7 @@ struct Cx<'h> {
     c_clashes: Vec<velt_common::Diagnostic>,
     /// The symbols C functions declared (c_call.rs): a later extern of the same symbol with
     /// another signature is that clash, reported, not an internal error.
-    c_symbols: FxHashMap<String, CDecl>,
+    c_symbols: FxHashMap<String, c_call::CDecl>,
     /// The C declarations whose signature clash is reported (once each).
     c_clashes_reported: rustc_hash::FxHashSet<DefId>,
     /// velt/ffi's hooks found so far (c_call.rs): each is looked up once per program.
@@ -787,16 +787,4 @@ struct FnLower<'c, 'h> {
     /// conversion (`any_record_fill`, `any_object_fill`): a member is filled the same way up to
     /// `any_record::FILL_DEPTH` deep, so a type that contains itself ends.
     record_fill: u32,
-}
-
-/// The first C declaration of a symbol (c_call.rs): where it is and how it reads, for the error
-/// of a second signature.
-pub(super) struct CDecl {
-    pub span: velt_common::Span,
-    /// `path:line:col`.
-    pub at: String,
-    /// `abs$i8(i8): i32`.
-    pub shown: String,
-    /// Its C signature, which every other declaration of the symbol must pass.
-    pub sig: c_call::CSig,
 }

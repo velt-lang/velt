@@ -87,3 +87,37 @@ fn a_float_variadic_argument_is_refused_only_on_sysv_x86_64() {
         }
     }
 }
+
+/// The refusal stops translating the function half-way; the worker's builder context must be
+/// reusable for its next function (it panicked in cranelift-frontend: `func_ctx.is_empty()`).
+#[test]
+fn a_refused_call_leaves_the_builder_context_reusable() {
+    use cranelift_codegen::ir::{self, UserFuncName};
+    use cranelift_frontend::FunctionBuilderContext;
+    use cranelift_module::default_libcall_names;
+    use cranelift_object::{ObjectBuilder, ObjectModule};
+
+    let program = calls_printf(&[Ty::I32, Ty::F64]);
+    let isa = crate::isa::make_isa("x86_64-unknown-linux-gnu", None, false, false).unwrap();
+    let builder = ObjectBuilder::new(isa.clone(), "velt", default_libcall_names()).unwrap();
+    let mut module = ObjectModule::new(builder);
+    let (decls, _) =
+        crate::module::declare_all(&mut module, &program, &crate::module::Naming::Program).unwrap();
+    let target = crate::function::Target::of(&*isa, &module);
+    let mut builder_ctx = FunctionBuilderContext::new();
+    // `f` (refused) first, then `main` on the same context.
+    for (i, f) in program.funcs.iter().enumerate() {
+        let mut func = ir::Function::new();
+        func.signature = crate::abi::make_signature(decls.call_conv, &f.params, f.ret).unwrap();
+        func.name = UserFuncName::user(0, i as u32);
+        let r = crate::function::translate_function(
+            &target,
+            &program,
+            &decls,
+            f,
+            &mut func,
+            &mut builder_ctx,
+        );
+        assert_eq!(r.is_err(), f.symbol == "f", "{}", f.symbol);
+    }
+}

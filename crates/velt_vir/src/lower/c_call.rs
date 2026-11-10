@@ -34,6 +34,18 @@ enum CArg {
     Field(Place, TyId, &'static str),
 }
 
+/// The first C declaration of a symbol: where it is and how it reads, for the error of a second
+/// signature.
+pub(super) struct CDecl {
+    pub span: velt_common::Span,
+    /// `path:line:col`.
+    pub at: String,
+    /// `abs$i8(i8): i32`.
+    pub shown: String,
+    /// Its C signature, which every other declaration of the symbol must pass.
+    pub sig: CSig,
+}
+
 impl FnLower<'_, '_> {
     /// A call of the C function `def` (an `ExternFnDef` with `c`).
     pub(super) fn c_call(&mut self, def: DefId, args: &[hir::Expr]) -> Operand {
@@ -254,15 +266,12 @@ impl FnLower<'_, '_> {
                 cargs[k] = self.rvalue_temp(*want, Rvalue::Cast(v, *want));
             }
         }
-        self.cx
-            .c_symbols
-            .entry(link.to_string())
-            .or_insert(super::CDecl {
-                span: x.span,
-                at: decl.clone(),
-                shown,
-                sig,
-            });
+        self.cx.c_symbols.entry(link.to_string()).or_insert(CDecl {
+            span: x.span,
+            at: decl.clone(),
+            shown,
+            sig,
+        });
         let id = self.cx.extern_sym_c(link, vparams, vret, c.variadic);
         self.cx.externs[id.0 as usize].c_decl = Some(decl);
         let dest = (vret != Ty::Unit).then(|| self.temp(vret));
