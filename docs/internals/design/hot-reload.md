@@ -128,10 +128,15 @@ Designed in [dev-warm-front-end.md](dev-warm-front-end.md) (#2621).
    version whose module state has the same key as the running one (the descriptor's contents:
    size, slot names, init and drop functions; and the fingerprints of those functions, which spell
    the layout and the initializers) imports the running descriptor, so swapped-in code reads and
-   writes the live values (#2654). An edit to a module-level declaration (a new `let`, another
-   type or initializer) gives the version a descriptor of its own: its code gets a fresh block
-   from its own initializers, and every function reaching module state is recompiled, changed or
-   not, so all new calls use the new block
+   writes the live values (#2654): every edit that leaves the module-level declarations alone.
+   An edit that changes an initializer but keeps the block's layout also swaps, into a fresh
+   block: the version gets a descriptor of its own, its code a block
+   initialized by its own initializers, and every function reaching module state is recompiled,
+   changed or not, so all new calls use the new block. An edit that changes the layout (a
+   module-level `let` added or removed, a slot whose type changes) restarts (`module state gained
+   a slot`, `module state lost a slot`, `the type of a module state slot changed`), and so does a
+   renamed slot: the descriptor holds the slot names, and `main` reaches the descriptor (`main
+   changed (it already ran)`)
    ([the Reference](https://veltlang.com/docs/reference/variables/#module-state)). State in `shared(...)` or
    class instances owned by `main` or handlers carries over. So does a static atomic
    (`const X = new Atomic<T>(literal)`, not module state) and a `ThreadLocal`'s key: the
@@ -177,14 +182,17 @@ its code that does not depend on ids (async state aggregates are fingerprinted b
 embedding a child's state is recompiled through its reference to the child's pinned `poll`
 instead). The restart rules, in order, each with its message: an ambiguous key changed; a layout
 lost a structure and gained another (`Point gained a field`, `the captures of
-main::{closure#0} changed`); a signature changed (`the signature of greet changed`); a value of
+main::{closure#0} changed`); the module state's layout changed (`module state gained a slot`); a
+signature changed (`the signature of greet changed`); a value of
 the running version is represented differently, which veltc's host decides before this from
-lowering's counted types (`CountedSeed::representation_change`: `class Node is now counted`,
-`the identity of function values changed`); one of
+lowering's counted types and the weak and proxy sets it records only for this comparison
+(`CountedSeed::representation_change`: `class Node is now counted`, `the identity of function
+values changed`); one of
 `main`'s keys changed (`main changed (it already ran)`); a key whose address was taken
 disappeared; closures were added or reordered while an existing one changed. Otherwise the
 changed and new keys are compiled, plus every function that refers to a recompiled pinned
-function, plus every function reaching module state when its key changed. After 200 swaps the host restarts to reclaim memory.
+function, plus every function reaching module state when its key changed (its layout did not:
+a changed layout restarts, see decision 2). After 200 swaps the host restarts to reclaim memory.
 
 **Supervisor and host** ([rt_abi_async.md §13](../contracts/rt_abi_async.md)): after `go`, the
 host keeps its build-report connection; on a change the supervisor sends `reload` there, the

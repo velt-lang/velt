@@ -140,6 +140,50 @@ fn main_and_closure_capture_changes_restart() {
     assert_eq!(reason, "the captures of main::{closure#0} changed");
 }
 
+#[test]
+fn module_state_edits_swap_unless_the_layout_changes() {
+    // `a` is written (`grow`), so it is a slot of the module state, not a constant.
+    let items = |lets: &str, slot: &str, show: &str| {
+        format!(
+            "{lets}
+             function grow(): void {{ {slot} = {slot} + {slot}; }}
+             function label(n: number): string {{ grow(); return `${{n}} ${{{show}}}`; }}
+             async function tick() {{ await sleep(1); }}"
+        )
+    };
+    let before = program(&items("let a = 1;", "a", "a"), MAIN);
+    // A body edit keeps the key: the block is shared, only `label` is compiled.
+    assert_eq!(
+        swaps(&before, &program(&items("let a = 1;", "a", "a + 1"), MAIN)),
+        1
+    );
+    // An initializer edit keeps the layout: a block of its own, every user recompiled.
+    assert!(swaps(&before, &program(&items("let a = 2;", "a", "a"), MAIN)) >= 3);
+    // A rename changes the descriptor's slot names, which `main` reaches.
+    let renamed = program(&items("let b = 1;", "b", "b"), MAIN);
+    assert_eq!(restarts(&before, &renamed), "main changed (it already ran)");
+    let more = items("let a = 1; let b = 2;", "a", "a + b");
+    assert_eq!(
+        restarts(&before, &program(&more, MAIN)),
+        "module state gained a slot"
+    );
+    // An initializer that builds a value (an array) is no layout change either.
+    let list = |init: &str| {
+        program(
+            &format!(
+                "let s: string[] = {init};
+                 function label(n: number): string {{ s.push(\"a\"); return `${{n}} ${{s.length}}`; }}
+                 async function tick() {{ await sleep(1); }}"
+            ),
+            MAIN,
+        )
+    };
+    assert!(swaps(&list("[]"), &list("[\"x\"]")) >= 2);
+    let text = items("let a = \"1\";", "a", "a");
+    let reason = restarts(&before, &program(&text, MAIN));
+    assert_eq!(reason, "the type of a module state slot changed");
+}
+
 /// `Node` is not counted: each one is handed over to the array.
 const UNCOUNTED: &str = "class Node { v: number = 0; }
 let saved: Node[] = [];

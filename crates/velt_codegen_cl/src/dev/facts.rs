@@ -6,7 +6,8 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_vir::vir::{
-    Callee, Const, Function, Operand, Program, Rvalue, StaticId, Stmt, Terminator, Ty,
+    AggId, Callee, Const, Function, Operand, Place, Program, Proj, Rvalue, StaticId, Stmt,
+    Terminator, Ty,
 };
 
 use super::roles;
@@ -46,8 +47,12 @@ pub(crate) struct ModuleState {
     /// drop the block) and the fingerprints of those functions, which spell the block's layout
     /// and the initializers: two versions with the same key can share one block.
     pub key: Vec<Fingerprint>,
-    /// Keys of the functions that reach the block (pass the descriptor to the runtime).
+    /// Keys of the functions that reach the block (pass the descriptor to the runtime: a slot's
+    /// address, or the whole block's).
     pub users: Vec<String>,
+    /// The block's layout (the state tuple's structural spelling) and its slot count, read from
+    /// the descriptor's init or drop function; `None` if neither shows it.
+    pub layout: Option<(String, usize)>,
 }
 
 impl Facts {
@@ -110,7 +115,12 @@ impl Facts {
 /// The module state of `program`: its descriptor is the static every function reaching the
 /// block passes to `velt_rt_module_state`.
 fn module_state(program: &Program, canon: &Canon) -> Option<ModuleState> {
-    let state = (program.externs.iter()).position(|e| e.symbol == "velt_rt_module_state")?;
+    // `velt_rt_module_state(desc, slot)` for a slot, `velt_rt_module_block(desc)` for the block.
+    let reaches = |e: usize| {
+        (program.externs.get(e)).is_some_and(|e| {
+            e.symbol == "velt_rt_module_state" || e.symbol == "velt_rt_module_block"
+        })
+    };
     let mut desc = None;
     let mut users = vec![];
     for func in &program.funcs {
@@ -119,7 +129,7 @@ fn module_state(program: &Program, canon: &Canon) -> Option<ModuleState> {
                 callee: Callee::Extern(e),
                 args,
                 ..
-            } if e.0 as usize == state => match args.first() {
+            } if reaches(e.0 as usize) => match args.first() {
                 Some(Operand::Const(Const::Static(s), _)) => Some(*s),
                 _ => None,
             },
@@ -139,7 +149,64 @@ fn module_state(program: &Program, canon: &Canon) -> Option<ModuleState> {
         }
     }
     users.sort();
-    Some(ModuleState { desc, key, users })
+    // The descriptor's `init` (its word at offset 16) and `rest` (offset 40, the root file's
+    // slots) write the block as the state tuple; its `drop` (offset 24) reads it so when a slot
+    // has something to drop.
+    let at = |offset: u32| {
+        (data.relocs.iter()).find_map(|(at, t)| match t {
+            Const::Func(f) if *at == offset => program.funcs.get(f.0 as usize),
+            _ => None,
+        })
+    };
+    let state_agg = [16, 40, 24]
+        .into_iter()
+        .find_map(|o| at(o).and_then(deref_agg));
+    let layout = state_agg.map(|a| {
+        let fields = program.aggs.get(a.0 as usize).map_or(0, |l| l.fields.len());
+        (canon.agg(a).to_string(), fields)
+    });
+    Some(ModuleState {
+        desc,
+        key,
+        users,
+        layout,
+    })
+}
+
+/// The aggregate `func` reads or writes its first parameter (the block) as.
+fn deref_agg(func: &Function) -> Option<AggId> {
+    let of = |p: &Place| match p.proj.first() {
+        Some(Proj::Deref(Ty::Agg(a))) if p.local.0 == 0 => Some(*a),
+        _ => None,
+    };
+    let operand = |o: &Operand| match o {
+        Operand::Copy(p) => of(p),
+        Operand::Const(..) => None,
+    };
+    for block in &func.blocks {
+        for stmt in &block.stmts {
+            let found = match stmt {
+                Stmt::Assign(lhs, rv) => of(lhs).or_else(|| match rv {
+                    Rvalue::AddrOf(p) => of(p),
+                    _ => stmt_operands(stmt).into_iter().find_map(operand),
+                }),
+                _ => stmt_operands(stmt).into_iter().find_map(operand),
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        if let Terminator::Call { args, dest, .. } = &block.term {
+            if let Some(a) = args
+                .iter()
+                .find_map(operand)
+                .or_else(|| dest.as_ref().and_then(of))
+            {
+                return Some(a);
+            }
+        }
+    }
+    None
 }
 
 fn symbol(program: &Program, f: u32) -> String {

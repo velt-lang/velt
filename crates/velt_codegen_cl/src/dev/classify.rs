@@ -2,6 +2,8 @@
 //! "Which edits hot-swap").
 //!
 //! A restart is needed when live state could meet code built for another shape of it:
+//! - the module state's layout changed (a module-level `let` added or removed, or a slot's type
+//!   changed): unchanged functions would read the running block by the old layout;
 //! - a layout live data may have changed (a struct/class gained or lost a field, a closure's
 //!   captures changed): some layout name lost a structure *and* gained another;
 //! - a function's signature changed (frames on the stack would call it with the old ABI);
@@ -14,9 +16,12 @@
 //! plus every function that refers to a pinned function being recompiled (a parent poll
 //! embedding a changed child's state, an async function's entry creating its new state, a handler
 //! descriptor), transitively. Module state carries over when its key is the same
-//! ([`shares_module_state`]); otherwise the new version starts a block of its own, and every
+//! ([`shares_module_state`]): every edit that leaves the module-level declarations alone. An edit
+//! that keeps the block's layout but changes an initializer also swaps:
+//! the new version starts a block of its own, initialized by its own initializers, and every
 //! function reaching module state is compiled too, so that unchanged code moves to the new block
-//! with the changed code instead of keeping the old one.
+//! with the changed code instead of keeping the old one. An edit that changes the layout
+//! restarts (`module_state_change`).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -37,6 +42,7 @@ pub(crate) fn classify(old: &Facts, new: &Facts) -> Decision {
     let checks = [
         ambiguous_change,
         layout_change,
+        module_state_change,
         signature_change,
         main_change,
         removed_entry_point,
@@ -69,6 +75,21 @@ fn ambiguous_change(old: &Facts, new: &Facts) -> Option<String> {
         .map(|k| format!("`{}` has an ambiguous name", roles::display(k)))
 }
 
+/// `module state gained a slot`, … when the state tuple's layout changed ([`layout_change`]
+/// leaves it out: it would call it an anonymous `tuple`).
+fn module_state_change(old: &Facts, new: &Facts) -> Option<String> {
+    let before = old.module_state.as_ref()?.layout.as_ref()?;
+    let after = new.module_state.as_ref()?.layout.as_ref()?;
+    if before.0 == after.0 {
+        return None;
+    }
+    Some(match after.1.cmp(&before.1) {
+        std::cmp::Ordering::Greater => "module state gained a slot".to_string(),
+        std::cmp::Ordering::Less => "module state lost a slot".to_string(),
+        std::cmp::Ordering::Equal => "the type of a module state slot changed".to_string(),
+    })
+}
+
 fn layout_change(old: &Facts, new: &Facts) -> Option<String> {
     let mut names: Vec<&String> = old.layouts.keys().collect();
     names.sort();
@@ -76,13 +97,23 @@ fn layout_change(old: &Facts, new: &Facts) -> Option<String> {
         let (Some(before), Some(after)) = (old.layouts.get(name), new.layouts.get(name)) else {
             continue;
         };
-        let lost = before.keys().find(|s| !after.contains_key(*s));
-        let gained = after.keys().find(|s| !before.contains_key(*s));
+        let lost = before
+            .keys()
+            .find(|s| !after.contains_key(*s) && !is_state(old, s));
+        let gained = after
+            .keys()
+            .find(|s| !before.contains_key(*s) && !is_state(new, s));
         if let (Some(lost), Some(gained)) = (lost, gained) {
             return Some(describe_layout_change(name, before[lost], after[gained]));
         }
     }
     None
+}
+
+/// Is `spelling` the layout of `facts`' module state (`module_state_change`)?
+fn is_state(facts: &Facts, spelling: &str) -> bool {
+    (facts.module_state.as_ref())
+        .is_some_and(|m| m.layout.as_ref().is_some_and(|l| l.0 == spelling))
 }
 
 /// `Point gained a field`, `the captures of main::{closure#0} changed`, … (from the field
