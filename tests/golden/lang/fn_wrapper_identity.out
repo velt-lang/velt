@@ -33,6 +33,9 @@ nested === true false
 nested has true true 1
 stored 1 true false true
 cross true true true false false
+cross fewer true true true true
+cross named true true
+cross optional true
 any held 1 true
 any cross 1 true
 a x

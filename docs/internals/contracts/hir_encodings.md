@@ -443,8 +443,8 @@ converted to a function type) to a `FnWrapped` (`hir/fresh.rs`), the function it
 In JavaScript the converted function is the same object, so a program comparing function values
 gives such a wrapper (one capturing only `l`, by move, or a named one capturing nothing; not
 async) an environment whose clone entry is one marker function for all wrappers, followed by the
-wrapper's own clone entry and the wrapped value (a wrapper of an `any` has a marker of its own,
-and the `any` table of a function type says so in its class id word). `===`, `Object.is`,
+wrapper's own clone entry, a kind word and the wrapped value (a function value, or an `any`
+whose table says in its class id word when it holds a function value). `===`, `Object.is`,
 `includes`, `Set` / `Map` keys and function properties, also through `any` values of two
 function types, follow wrappers to the function they wrap. `===` of two function types
 converts one to the other. Programs that compare no function values are lowered as before.

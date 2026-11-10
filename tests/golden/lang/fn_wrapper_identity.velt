@@ -129,6 +129,19 @@ set.clear();
 
 // `===` of two function types.
 console.log("cross", stored === d, d === stored, w1 === a, a !== w1, w1 === b);
+type Takes = (x: number) => void;
+type Bare = () => void;
+const zt: Takes = z;
+const zb: Bare = z;
+console.log("cross fewer", zt === zb, zb === zt, zt === z, z === zt);
+function nothing(): void {}
+const nt: Takes = nothing;
+console.log("cross named", nt === nothing, nothing === nt);
+const opt = (x: number, y?: string) => {
+  console.log("opt", x, y);
+};
+const ot: Takes = opt;
+console.log("cross optional", ot === opt);
 
 // An `any` holding a function of another type, converted to the type.
 const h: any = (e: any, n: any) => {

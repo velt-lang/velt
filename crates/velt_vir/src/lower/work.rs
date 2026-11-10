@@ -25,8 +25,8 @@ pub(super) enum Work {
     /// thread (glue/transfer.rs).
     EnvTransfer(DefId, Vec<TyId>),
     /// `(env: ptr) -> ptr`: the clone entry of every function wrapper's environment, which marks
-    /// it as one, of a wrapper of an `any` with `true` (closure/fn_wrappers.rs).
-    FnWrapperClone(bool),
+    /// it as one (closure/fn_wrappers.rs).
+    FnWrapperClone,
     /// `(len: u64, index: i64|u64, at: ptr)`: index-out-of-bounds panic (true = signed index;
     /// `at` points to the ` at <location>` string suffix).
     Oob(bool),
