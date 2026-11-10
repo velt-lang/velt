@@ -64,6 +64,13 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
+/// Whether a `VELT_SCHEDULER=std` program builds here: the executor in Velt waits in an epoll or
+/// kqueue reactor, and Windows has no reactor in Velt yet (#2649 step 4), so its build would not
+/// link. The tests compare the two executors only where both exist.
+fn std_builds_here() -> bool {
+    cfg!(unix)
+}
+
 /// Builds and runs `src` both ways: each prints `want`, and only the std build has the executor.
 fn same_on_both(name: &str, src: &str, want: &str) {
     same_on_both_exiting(name, src, want, 0);
@@ -71,6 +78,9 @@ fn same_on_both(name: &str, src: &str, want: &str) {
 
 /// [`same_on_both`] for a program that exits with `code`.
 fn same_on_both_exiting(name: &str, src: &str, want: &str, code: i32) {
+    if !std_builds_here() {
+        return;
+    }
     let dir = test_dir::TestDir::new();
     same_on_both_in(dir.path(), name, src, want, code);
 }
@@ -82,6 +92,9 @@ fn same_on_both_exiting(name: &str, src: &str, want: &str, code: i32) {
 /// task's result (an unclaimed one in the task's slot, a claimed one as the share the handle's
 /// copies hold).
 fn same_on_both_freeing_all(name: &str, src: &str, want: &str) {
+    if !std_builds_here() {
+        return;
+    }
     let dir = test_dir::TestDir::new();
     same_on_both_in(dir.path(), name, src, want, 0);
     let exe = dir.path().join(format!(
@@ -506,6 +519,9 @@ fn promises_woken_while_queued_keep_their_task_s_woken_stack_whole() {
 /// `main` was done (3 of 10 runs of the golden). Run 20 times; each must end within 20 seconds.
 #[test]
 fn a_rejection_finishing_while_woken_keeps_the_woken_stack_whole() {
+    if !std_builds_here() {
+        return;
+    }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
     let src = include_str!("../../../tests/golden/lang/promise_combinators_kept_array.velt");
