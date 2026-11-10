@@ -14,8 +14,10 @@
 //! class or one of its bases. The glue itself dispatches on the classes of its fields, so a slot
 //! the walk reaches can make more slots needed; the walk repeats until none is added. The
 //! entries not followed become null, and `velt_opt`'s `dead_funcs` drops the glue no one else
-//! calls. Interface and `any` tables keep all their entries: the runtime reads some of them
-//! (`velt_rt::fn_props`).
+//! calls. Interface tables get their clone, format, share and transfer entries while lowering,
+//! when something dispatches them (demand.rs), so that glue is never lowered at all; `any` tables
+//! keep all their entries: the runtime reads some of them (`velt_rt::fn_props`). A `velt dev`
+//! version keeps every entry of every table (`GlueSlots::keep_all`).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_sema::hir::{DefId, TyId, TyKind};
@@ -42,6 +44,12 @@ pub(in crate::lower) struct GlueSlots {
     building: Vec<FuncId>,
     /// Every class table, with its class.
     tables: Vec<(StaticId, TyId)>,
+    /// Every table keeps every entry: a `velt dev` version, whose live objects keep their tables
+    /// when later versions' code (which may dispatch more) is swapped in, or
+    /// `VELT_GLUE_DEMAND=off`.
+    pub(in crate::lower) keep_all: bool,
+    /// Interface tables' glue entries made on demand (demand.rs).
+    pub(super) iface: super::demand::IfaceDemand,
 }
 
 impl GlueSlots {
@@ -81,7 +89,11 @@ impl Cx<'_> {
     pub(in crate::lower) fn prune_glue_slots(&mut self) {
         // The pruned entries: (table, byte offset) -> (slot, the class and its bases).
         let mut candidates: FxHashMap<(u32, u32), (i128, Vec<DefId>)> = FxHashMap::default();
-        for (id, cls) in std::mem::take(&mut self.glue_slots.tables) {
+        let tables = std::mem::take(&mut self.glue_slots.tables);
+        if self.glue_slots.keep_all {
+            return;
+        }
+        for (id, cls) in tables {
             let chain = self.class_chain(cls);
             for slot in PRUNED {
                 candidates.insert((id.0, (8 * (slot + HIDDEN)) as u32), (slot, chain.clone()));

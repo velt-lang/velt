@@ -327,6 +327,7 @@ impl FnLower<'_, '_> {
                 lw.format_promise(buf, place, ty, &child)
             }),
             TyKind::Dyn(..) => {
+                self.note_dyn_glue(SLOT_FORMAT, ty);
                 let vt = Operand::Copy(proj(place, Proj::Field(1)));
                 let f = self.dispatch(vt, SLOT_FORMAT);
                 let data = Operand::Copy(proj(place, Proj::Field(0)));

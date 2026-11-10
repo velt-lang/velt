@@ -269,6 +269,7 @@ pub(crate) fn lower_program_seeded(
         cx.cpu_checks.no_extensions = opts.no_cpu_extensions;
         cx.no_await_steps = no_await_steps;
         cx.facts_only = facts_only;
+        cx.glue_slots.keep_all = want_seed || glue::demand_off();
         cx.shapes.wanted = shape::wanted(opts.shapes);
         cx.shapes.on = cx.shapes.wanted;
         cx.locs = opts
