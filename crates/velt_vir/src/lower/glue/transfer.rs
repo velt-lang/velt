@@ -14,7 +14,7 @@ use velt_sema::hir::{DefId, TyId, TyKind};
 use super::{Glue, SLOT_TRANSFER};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{cfunc, cint, unit, FnLower, Work};
+use crate::lower::{cfunc, cint, unit, FnLower, ScopeKind, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// What velt_rt's `velt_rt_xfer_find` returns outside a transfer.
@@ -175,11 +175,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.assign(Place::local(out), Rvalue::Use(copy));
                 lw.goto(done);
             });
+            // Settled inside `copy`, before the original's release is deferred: a settle that
+            // panics leaves the original owned once, by its holder (see `shared_copy`).
             let new = self.shared_copy(o.clone(), ty, true, |lw, v| {
-                lw.call_glue(Glue::ObjClone, ty, vec![v])
+                let new = lw.call_glue(Glue::ObjClone, ty, vec![v]);
+                let new = lw.settle_copy(new, ty);
+                lw.settle_shared(new, ty, keep)
             });
-            let new = self.settle_copy(new, ty);
-            let new = self.settle_shared(new, ty, keep);
             self.assign(Place::local(out), Rvalue::Use(new));
             self.goto(done);
             self.switch_to(unique);
@@ -256,12 +258,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.assign(place.clone(), Rvalue::Use(copy));
             lw.goto(done);
         });
+        // Settled inside `copy`, before the original's release is deferred (see `shared_copy`).
         let new = self.shared_copy(p.clone(), ty, true, |lw, v| {
             let c = lw.clone_value(v, ty);
-            lw.rvalue_temp(Ty::Ptr, Rvalue::Use(c))
+            let new = lw.rvalue_temp(Ty::Ptr, Rvalue::Use(c));
+            let new = lw.settle_copy(new, ty);
+            lw.settle_shared(new, ty, keep)
         });
-        let new = self.settle_copy(new, ty);
-        let new = self.settle_shared(new, ty, keep);
         self.assign(place.clone(), Rvalue::Use(new));
         self.goto(done);
         self.switch_to(unique);
@@ -291,7 +294,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// (a fresh, unique graph), after which the sender's reference is released (the count is
     /// above 1: only decremented). With `defer` (`v` is a `ty`, not a cell holding one), a
     /// transfer under way releases it when it ends instead (`defer_release`). A resource
-    /// without `clone()` panics instead.
+    /// without `clone()` panics instead. `copy` returns the copy finished: nothing that can
+    /// panic may run between the release (or its deferral) and the caller storing the copy,
+    /// since a cleanup pad then drops the holder's original (the frame owns the transfer's
+    /// temporary) and the transfer's end would release it a second time. The copy being
+    /// settled is owned by the frame meanwhile (`transfer_owned`), so a pad drops it too.
     pub(super) fn shared_copy(
         &mut self,
         v: Operand,
@@ -605,7 +612,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 let (settle, join) = (lw.new_block(), lw.new_block());
                 lw.branch(s, settle, join);
                 lw.switch_to(settle);
-                lw.transfer_in_place(at, ty);
+                lw.transfer_owned(&at, ty);
                 lw.goto(join);
                 lw.switch_to(join);
             },
@@ -693,13 +700,28 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 "`{name}.clone()` returned an object that is still referenced elsewhere (`this`, or one it also stored); a copy for another task must be a new object"
             ));
             let at = self.operand_addr(msg, Ty::Agg(vir::STR_AGG));
+            // The copy's reference goes first (others hold it: only decremented), so a caught
+            // panic leaks nothing.
+            let p = self.operand_place(new.clone(), Ty::Ptr);
+            self.drop_glue(p, ty);
             self.call_rt(Rt::Panic, vec![at], None);
             self.goto(ok);
             self.switch_to(ok);
         }
         let t = Place::local(self.copy_to_temp(new, Ty::Ptr));
-        self.transfer_in_place(t.clone(), ty);
+        self.transfer_owned(&t, ty);
         Operand::Copy(t)
+    }
+
+    /// `transfer_in_place` of the fresh copy in the temporary `t`, which this frame owns while
+    /// it runs: a transfer that panics leaves it to the cleanup pad (in a program that
+    /// catches), which drops it as far as it was transferred.
+    fn transfer_owned(&mut self, t: &Place, ty: TyId) {
+        self.push_scope(ScopeKind::Block);
+        self.own_place(t.clone(), ty);
+        self.transfer_in_place(t.clone(), ty);
+        self.take_temp(t);
+        self.pop_scope();
     }
 
     /// Continue in a fresh block when `cond` is false, else jump to `skip`.

@@ -611,6 +611,121 @@ fn a_value_whose_transfer_panics_is_dropped() {
     assert_balanced(TRANSFER, DEBUG_AND_RELEASE, "true 7\ntrue 7\n");
 }
 
+/// A resource whose own `clone()` makes a copy holding a function value that captured a weak
+/// collection: settling the copy (transferring it in turn) panics after the copy was made. The
+/// original's release is deferred only once the copy is settled, so the panic leaves it owned
+/// once, by `W`'s temporary, and the pad drops it once (no double release with the transfer's
+/// end in `caught()`); the half-settled copy is owned by the glue's frame, so its pad drops it.
+#[cfg(not(windows))]
+const SETTLE: &str = r#"
+import { catchVeltPanic } from "velt/zz_unwind";
+
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Cache extends WeakMap<V, V> {}
+
+class R {
+  n: number;
+  f: (() => number) | null = null;
+  constructor(n: number) {
+    this.n = n;
+  }
+  clone(): R {
+    const r = new R(this.n);
+    const c = new Cache();
+    const k = new V(this.n);
+    c.set(k, k);
+    r.f = () => {
+      const x = c.get(k);
+      return x === undefined ? -1 : x.n;
+    };
+    return r;
+  }
+  [Symbol.dispose]() {}
+}
+
+class W {
+  r: R;
+  constructor(r: R) {
+    this.r = r;
+  }
+}
+
+async function run(w: W): Promise<number> {
+  return w.r.n;
+}
+
+async function main() {
+  const r = new R(5);
+  for (let i = 0; i < 2; i++) {
+    const msg = catchVeltPanic(() => {
+      spawn(run(new W(r)));
+    });
+    console.log(msg !== null && msg.includes("WeakMap"), r.n);
+  }
+}
+"#;
+
+/// A resource whose own `clone()` returns an object it also stored (`this.saved`): the check
+/// after the copy panics, with the original still in its holder; it must not also be in the
+/// transfer's deferred list. The copy's reference is released before the panic.
+#[cfg(not(windows))]
+const SHARED_CLONE: &str = r#"
+import { catchVeltPanic } from "velt/zz_unwind";
+
+class R {
+  n: number;
+  saved: R | null = null;
+  constructor(n: number) {
+    this.n = n;
+  }
+  clone(): R {
+    const r = new R(this.n);
+    this.saved = r;
+    return r;
+  }
+  [Symbol.dispose]() {}
+}
+
+class W {
+  r: R;
+  constructor(r: R) {
+    this.r = r;
+  }
+}
+
+async function run(w: W): Promise<number> {
+  return w.r.n;
+}
+
+async function main() {
+  const r = new R(3);
+  for (let i = 0; i < 2; i++) {
+    const msg = catchVeltPanic(() => {
+      spawn(run(new W(r)));
+    });
+    console.log(msg !== null && msg.includes("still referenced elsewhere"), r.n);
+  }
+}
+"#;
+
+#[cfg(not(windows))]
+#[test]
+fn a_copy_whose_settling_panics_releases_the_original_once() {
+    assert_balanced(SETTLE, DEBUG_AND_RELEASE, "true 5\ntrue 5\n");
+}
+
+#[cfg(not(windows))]
+#[test]
+fn a_clone_returning_a_stored_object_releases_the_original_once() {
+    assert_balanced(SHARED_CLONE, DEBUG_AND_RELEASE, "true 3\ntrue 3\n");
+}
+
 /// A drop in a cleanup pad that panics: the second panic aborts instead of unwinding through the
 /// frame whose cleanup is running (which would drop again what it is dropping).
 #[cfg(not(windows))]

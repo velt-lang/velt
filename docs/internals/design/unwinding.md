@@ -488,7 +488,18 @@ resume of the unwind.
   collection in a captured environment). `transfer_value` registers the temporary holding it
   for the glue's call and takes it back after, so the pad drops it as far as it was transferred
   (its copies; the originals they replaced are the transfer's deferred releases, which the
-  catch's `caught()` releases). Test: `a_value_whose_transfer_panics_is_dropped`.
+  catch's `caught()` releases). An original's release is deferred only once its copy is
+  finished (`shared_copy` settles the copy first: a class's own `clone()` checked and its copy
+  transferred in turn), so a panic while settling leaves the original in its holder alone,
+  owned once by the temporary, and the pad and `caught()` don't both release it. The copy being
+  settled is the glue frame's temporary meanwhile (`transfer_owned`), so the glue's pad drops it,
+  and a `clone()` whose result others still reference has that reference released before its
+  panic. Tests: `a_value_whose_transfer_panics_is_dropped`,
+  `a_copy_whose_settling_panics_releases_the_original_once`,
+  `a_clone_returning_a_stored_object_releases_the_original_once`. The pads run while the
+  transfer is still open (its depth above 0, its copies map live): a pad that frees a copy leaves
+  the copy's address in the map until `caught()`, so only a transfer started from inside a pad
+  (a `[Symbol.dispose]` that spawns) could look up a stale address.
 - **Pads are shared.** A pad is a chain of links, one per drop entry, innermost first, each
   ending in a jump to the pad of the entries outside it; the empty pad is one block calling
   `velt_eh_resume`. Links are cached per function by the entries and the states they read, so
