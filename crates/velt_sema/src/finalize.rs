@@ -65,7 +65,6 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
                 params: f.params.iter().map(|p| p.ty).collect(),
                 ret: f.ret,
                 is_async: f.is_async,
-                system: f.system.clone(),
                 host: f.host.clone(),
                 c: f.c.clone(),
                 is_decorator: crate::decorators::decl_of(f).is_some(),

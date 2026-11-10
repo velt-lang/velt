@@ -183,7 +183,7 @@ impl Collector<'_, '_> {
                 self.direct(then, direct, nested);
                 self.direct(els, direct, nested);
             }
-            // `xs.subarray(begin, end)` passed to a system function's buffer: the place is the
+            // `xs.subarray(begin, end)` passed to a C or host function's buffer: the place is the
             // receiver `xs`, used with the receiver's own mode (`BorrowMut` for a written
             // buffer), and `begin` / `end` are evaluated while the argument is.
             E::Call {

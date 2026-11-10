@@ -1275,6 +1275,61 @@ Step 1 lands in layers, each its own pull request:
    `catchPanic`), std/ffi/export.test.velt (`qsort` and `bsearch` through `exportedAddress`, both
    backends), velt_sema's lang_export.rs and the golden `lang/errors/export_decorator`.
 
+10. Step 2, libc (#2187): std's `declare system` uses are `declare c("c")`, and the compiler's
+    table (`velt_vir/src/system/`, `lower/system.rs`, veltc's `native/system.rs`) is gone.
+    - **std**: the `#fd-system` conditional import (std/imports.velt) picks
+      `std/fs/fd/darwin.velt` or `linux.velt`, which export safe functions over the
+      declarations in `posix.velt` (`open`, `close`, `read`, `write`, `pread`, `pwrite`,
+      `fsync`, `fcntl`, `ftruncate`, `fstat`, `unlink`, `malloc`, `free`; `fdatasync` in
+      linux.velt, which macOS's headers lack), all `{ errno: true }` but `malloc` and `free`.
+      Elsewhere (Windows, WebAssembly) `unsupported.velt` exports the same functions failing
+      with ENOSYS, so `openSync` there throws `ENOSYS: function not implemented, open` where it
+      used to be a compile error naming the system function (std has no Windows file-descriptor
+      functions to fold in: the table's kernel32 entries were only ever called by goldens).
+      `velt/fs`'s public API is unchanged.
+    - **The guards** are Velt beside each `unsafe` call, with `SAFETY` comments: a path ends
+      with its only 0 byte (`checkPath`, before `open` and `unlink`); a buffer range is inside
+      the array and C gets its length (`checkRange`; the table took both from the array);
+      `fcntl` takes only the commands whose argument is an `int` (`fcntlInt`, macOS's and
+      Linux's sets); `struct stat` is a 144-byte `malloc` that `fstat` fills and std reads at
+      the target's offsets (x86-64 macOS's plain `fstat` is the 32-bit-inode one: its layout,
+      not `fstat$INODE64`'s; offsets checked with zig against each target's headers).
+      `CreateFileW` without `FILE_FLAG_OVERLAPPED` has no caller in std: when std's Windows
+      file functions come, their wrapper refuses the flag. Variadic padding is #2695's.
+      Each guard (std/fs/fd/guards.velt) panics, a bug in std, never input; guards.test.velt
+      breaks each.
+    - **`errno`**: `lastOsError()` is std's `ThreadLocal<i32>` `OS_ERROR` (std/os/rt.velt), and
+      lowering stores into its storage after a `{ errno: true }` call (`c_abi::ERRNO_SLOT`, the
+      name lower/thread_local.rs gives that constant): `*__error()` on macOS,
+      `*__errno_location()` on Linux, and now on Windows the C runtime's `*_errno()` for library
+      `c` (`GetLastError()` for any other library), so `lastOsError()` after a Windows C call is
+      its `errno` (c_functions.rs's Windows test changed with it). The accessor per target is
+      velt_vir's `c_abi`, the one fact of the C library lowering keeps.
+    - **Header check**: std has no package.velt, so `velt native headers --std` checks std's
+      declarations on every target with the headers `native::headers::std_headers` lists
+      (`<errno.h>`, `<fcntl.h>`, `<stdlib.h>`, `<string.h>`, `<sys/stat.h>`, `<unistd.h>`,
+      `<unwind.h>`; Windows only `<errno.h>`, `<stdlib.h>` and `<string.h>`), each target
+      loading its own `#fd-system`, `#errno-location` and `#unwind-raise` variants (std's
+      `_Unwind_RaiseException` takes a `Ptr<void>` for the header's `struct _Unwind_Exception *`). CI's `c-headers`
+      job runs it (tests/c_headers.rs, which also breaks `pread`'s declaration); builds take
+      std's declarations as checked, as before.
+    - **Cost** (Linux arm64 VM, one machine, base origin/main 582cc8f3f): `bench/` VIR identical
+      for all 217 programs, debug and `--release`, but `fs/pread/pread.velt` (the fd API); its
+      instructions under cachegrind 20.73 M against 19.95 M (+3.9%, about 4 per `readSync`: the
+      range guard the table folded into its length and one branch), wall-clock rows within the
+      machine's noise (best of 15 interleaved: random 4 KiB 0.99, sequential 64 KiB 0.98,
+      pwrite + fsync 1.09 with medians 0.89). `readSync` is `@inline`: with two C calls behind it
+      the inliner left it a call, and Node's checks of its constant arguments no longer folded
+      (3.3× the instructions until then). `velt check` of hello 182.2 M either way (−0.04%); of
+      a program calling the fd API +2.7% (the variant files it compares).
+    - **`declare system`** was public (the reference's system-functions page, user goldens), so
+      it stays a parse error naming `declare c("c")` (golden `lang/errors/declare_system_removed`)
+      rather than a silent unknown word; `ast::FnSig::is_system` (`AST_FORMAT` 15) and
+      `hir::ExternFnDef::system` are removed, and velt_fmt, velt_doc, velt_lsp and tscompat
+      lose their `system` forms. The goldens of the table (`lang/system_function*`) are gone
+      with it: `declare c` has its own tests (c_functions.rs and the rest), and a lone file
+      can't declare C functions.
+
 ## Decisions
 
 - `declare c("lib")` (it names the ABI); one way to call native code, Rust included; `declare
@@ -1305,3 +1360,9 @@ Step 1 lands in layers, each its own pull request:
   `Import` static without contents and `__imp_<name>` on Windows; thread-local and `static` ones
   are refused by the header check; `errno` is set through velt/ffi's `setErrno`, std code over
   each C library's errno function (#2187 follow-up, made while the owner was away, for review).
+- Step 2 (made while the owner was away, for review): `declare system` is a parse error naming
+  `declare c("c")`, not just gone, since the reference documented it; std's fd API on Windows
+  and WebAssembly throws ENOSYS instead of failing to compile; std's C declarations are
+  header-checked by `velt native headers --std` with a header list in veltc (std has no
+  manifest), not at each build; `lastOsError()` reads a std `ThreadLocal` the compiler stores
+  `errno` into, and Windows captures the C runtime's `errno` for library `c`.

@@ -432,8 +432,8 @@ pub(crate) fn is_null(cx: &Ctx, ty: TyId) -> bool {
 }
 
 /// A `struct` an extern takes is the caller's storage, never a copy of it (#641): the runtime or
-/// the C function fills a runtime layout through it (a system function writes one not written
-/// `readonly`, in `fill_sig`; a runtime function one it names `out` or `slot`).
+/// the C function fills a runtime layout through it (a runtime function writes one it names
+/// `out` or `slot`).
 ///
 /// A runtime function std declares writes the `string` it takes as `out` or `buf`: a string
 /// builder it appends to, or the slot it puts its result in (https://veltlang.com/docs/reference/modules/
@@ -443,14 +443,13 @@ pub(crate) fn is_null(cx: &Ctx, ty: TyId) -> bool {
 pub(super) fn extern_struct_params(
     cx: &Ctx,
     (kind, module): (FnKind, usize),
-    sig: &ast::FnSig,
     intrinsic: bool,
     ps: &mut [ParamSig],
 ) {
     if kind != FnKind::Extern || intrinsic {
         return;
     }
-    if !sig.is_system && cx.scopes[module].is_std {
+    if cx.scopes[module].is_std {
         for p in &mut *ps {
             let written = p.name == "out" || p.name == "buf";
             if written && p.mode == PassMode::Borrow && matches!(cx.ty.kind(p.ty), TyKind::Str) {
@@ -460,7 +459,7 @@ pub(super) fn extern_struct_params(
     }
     for p in ps {
         if p.mode == PassMode::Copy && cx.declared_struct(p.ty) {
-            let written = !sig.is_system && (p.name == "out" || p.name == "slot");
+            let written = p.name == "out" || p.name == "slot";
             p.mode = if written {
                 PassMode::BorrowMut
             } else {

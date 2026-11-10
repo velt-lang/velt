@@ -229,8 +229,9 @@ pub enum Command {
     /// `velt native build [--target <triple>]`: build the package's native library bundle.
     NativeBuild { target: Option<String> },
     /// `velt native headers`: check the package's C declarations against their headers on every
-    /// target and record the result in `c-headers.json`.
-    NativeHeaders,
+    /// target and record the result in `c-headers.json`; `--std` (`std`): the standard library's
+    /// own, recording nothing.
+    NativeHeaders { std: bool },
     /// `velt manifest [--json]`: check the package's manifest, or (`json`) print it as JSON for
     /// other tools.
     Manifest { json: bool },

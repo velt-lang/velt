@@ -204,7 +204,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             ("--std", "check all of the standard library ($VELT_STD), every definition"),
             (
                 "--target <triple>",
-                "check for this target: the variants of `#name` imports it selects, the system \
+                "check for this target: the variants of `#name` imports it selects, the C \
                  functions it has (default: the host)",
             ),
             LOCKED,
@@ -411,15 +411,15 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "native",
         summary: "Build the package's native library, or check its C headers",
-        usage: &["native build [--target <triple>]", "native headers"],
+        usage: &["native build [--target <triple>]", "native headers [--std]"],
         about: "build: the `native` crate (needs Rust), or the C `sources` of `native.c` (with the \
                 pinned zig, for any target), into the bundle `velt publish` uploads. headers: \
                 `declare c` against C headers on every target, into c-headers.json.",
-        options: &[("--target <triple>", "the target to build for (default: this machine)")],
-        examples: &[(
-            "velt native build --target aarch64-apple-darwin",
-            "the macOS arm64 library",
-        )],
+        options: &[
+            ("--target <triple>", "the target to build for (default: this machine)"),
+            ("--std", "headers: check std's own `declare c` ($VELT_STD), recording nothing"),
+        ],
+        examples: &[("velt native build --target aarch64-apple-darwin", "for macOS arm64")],
     },
     CommandHelp {
         name: "target",

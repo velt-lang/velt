@@ -37,7 +37,6 @@ impl FnLower<'_, '_> {
                     self.after_super_inits(*def);
                     v
                 }
-                hir::Def::ExternFn(x) if x.system.is_some() => self.system_call(*def, args),
                 hir::Def::ExternFn(x) if x.host.is_some() => self.host_call(*def, args),
                 hir::Def::ExternFn(x) if x.c.is_some() => self.c_call(*def, args),
                 hir::Def::ExternFn(_) => self.extern_call(*def, args),

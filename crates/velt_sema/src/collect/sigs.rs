@@ -84,7 +84,7 @@ pub(crate) fn fill_pending(cx: &mut Ctx, d: DefId) {
 }
 
 /// A parameter type written `readonly T[]` (parsed as `ReadonlyArray<T>`, which is `T[]` from
-/// here on): a `declare system function` buffer the C function only reads.
+/// here on): a host or C function's buffer it only reads.
 pub(super) fn written_readonly(t: &ast::TypeExpr) -> bool {
     matches!(&t.kind, ast::TypeExprKind::Named { path, .. }
         if path.len() == 1 && path[0].name == "ReadonlyArray")
@@ -254,26 +254,17 @@ pub(super) fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generic
         );
         throws = None;
     }
-    if kind == FnKind::Extern && sig.is_system && !sig.generics.is_empty() {
-        cx.err(
-            "a system function has no type parameters: its C signature fixes every type",
-            sig.generics[0].name.span,
-        );
-    }
-    super::c_sig::extern_struct_params(cx, (kind, module), sig, intrinsic, &mut ps);
+    super::c_sig::extern_struct_params(cx, (kind, module), intrinsic, &mut ps);
     super::c_sig::foreign_imports(cx, (d, kind, module), sig, &mut ps, &mut ret);
     let f = cx.fn_info_mut(d);
-    if kind == FnKind::Extern && sig.is_system {
-        f.system = Some(sig.params.iter().map(|p| written_readonly(&p.ty)).collect());
-    }
     f.declared_throws = throws;
     f.is_async = sig.is_async && !sig.is_generator;
     f.is_generator = sig.is_generator;
     f.is_async_gen = sig.is_async && sig.is_generator;
     f.generics = generics;
     f.params = ps;
-    // A system function writes every buffer and struct not written `readonly`
-    // (https://veltlang.com/docs/reference/system-functions/), a host function every `u8[]`: its argument is a
+    // A host or C function writes every buffer not written `readonly` (and a C function its
+    // out-parameters): its argument is a
     // mutable borrow from the start, so the call is checked as one (a read-only array is
     // rejected, a module constant is not copied, another argument may not reach it).
     if let Some(readonly) = f.buffer_params() {

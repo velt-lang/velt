@@ -128,7 +128,7 @@ fn declare_decorator_function() {
     let ItemKind::ExternFn(s) = &m.items[0].kind else {
         panic!()
     };
-    assert!(s.is_decorator && !s.is_system && !s.is_unsafe && m.items[0].exported);
+    assert!(s.is_decorator && !s.is_unsafe && m.items[0].exported);
     let ItemKind::ExternFn(s) = &m.items[1].kind else {
         panic!()
     };

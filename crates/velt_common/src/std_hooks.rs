@@ -693,7 +693,7 @@ hooks! {
     record_entries_of => lang_hooks_record, "recordEntriesOf", sig(<A, B>(&Record(A, B)) -> Map(A, B));
 
     // lang/typed_array/buffer_view.velt: the bytes of a typed array.
-    /// The bytes a typed array or `DataView` passed to a system function views (`system_views.rs`).
+    /// The bytes a typed array or `DataView` passed to a C or host function views (`system_views.rs`).
     view_bytes => lang_typed_array_buffer_view, "viewBytes", sig((&BufferView) -> usize), lowered;
 
     // ffi/ptr.velt: a `Ptr` from and to a C function (velt_vir's lower/c_call.rs).

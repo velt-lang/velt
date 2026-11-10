@@ -93,11 +93,9 @@ fn item_named(analysis: &Analysis, item: &ast::Item, name: &str) -> String {
     }
 }
 
-/// `declare [system | host(m) | decorator | unsafe] function …`, without its decorators.
+/// `declare [host(m) | decorator | unsafe] function …`, without its decorators.
 fn extern_fn(analysis: &Analysis, sig: &ast::FnSig) -> String {
-    if sig.is_system {
-        format!("declare system {}", function(analysis, sig))
-    } else if let Some(h) = &sig.host {
+    if let Some(h) = &sig.host {
         format!(
             "declare host({}) {}",
             analysis.snippet(h.span),

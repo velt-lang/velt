@@ -411,12 +411,12 @@ async function main() {
     );
 }
 
-/// A program's own declarations of C symbols the reactor and velt/net's sockets call (`read`,
-/// `write` and `fcntl` as system functions; `accept4` or `accept`, `malloc`, `free` and
-/// `getsockname` in a package of its own): one C symbol has one signature in a program, so the
+/// A program's own declarations of C symbols the reactor, velt/fs and velt/net's sockets call
+/// (`read`, `write`, `fcntl`, `accept4` or `accept`, `malloc`, `free` and `getsockname`, in a
+/// package of its own): one C symbol has one signature in a program, so the
 /// std variants declare them as a program does, pointers as `Ptr` and `size_t` as `usize`. With
 /// addresses as `usize` the std build failed to compile ("C function `write` has two
-/// signatures"), as `lang/system_function_subarray_owner` did on Linux.
+/// signatures").
 #[test]
 fn a_program_declaring_the_reactors_c_functions_compiles() {
     if !cfg!(unix) {
@@ -441,8 +441,11 @@ export function acceptBad(): i32 {
 "
     };
     let lib = format!(
-        "import {{ Ptr }} from \"velt/ffi\";
+        "import {{ CVarArgs, Ptr }} from \"velt/ffi\";
 
+declare c(\"c\") function read(fd: i32, buf: u8[], n: usize): isize;
+declare c(\"c\") function write(fd: i32, buf: readonly u8[], n: usize): isize;
+declare c(\"c\") function fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i32;
 declare c(\"c\") function malloc(n: usize): Ptr<u8> | null;
 declare c(\"c\") function free(p: Ptr<u8> | null): void;
 declare c(\"c\") function getsockname(fd: i32, addr: Ptr<u8> | null, len: Ptr<u32> | null): i32;
@@ -450,6 +453,12 @@ declare c(\"c\") function getsockname(fd: i32, addr: Ptr<u8> | null, len: Ptr<u3
 export function nameBad(): i32 {{
   // SAFETY: no address; a descriptor that is none.
   return unsafe {{ getsockname(-1, null, null) }};
+}}
+
+export function ioBad(buf: u8[]): string {{
+  // SAFETY: the lengths are the buffer's; a descriptor that is none; F_GETFL (3) takes no
+  // argument.
+  return unsafe {{ `${{read(-1, buf, buf.length)}} ${{write(-1, buf, buf.length)}} ${{fcntl(-1, 3)}}` }};
 }}
 
 export function allocates(): bool {{
@@ -481,15 +490,11 @@ export function allocates(): bool {{
         dir.path(),
         "own_c_declarations",
         "import { connect, listen } from \"velt/net\";
-import { acceptBad, allocates, nameBad } from \"cdecl\";
-
-declare system function read(fd: i32, buf: u8[]): isize;
-declare system function write(fd: i32, buf: readonly u8[]): isize;
-declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
+import { acceptBad, allocates, ioBad, nameBad } from \"cdecl\";
 
 async function main() {
   const buf: u8[] = Buffer.alloc(4);
-  console.log(read(-1, buf), write(-1, buf), fcntl(-1, 1, 0), acceptBad(), nameBad());
+  console.log(ioBad(buf), acceptBad(), nameBad());
   console.log(allocates());
   const l = await listen(\"127.0.0.1:0\");
   const server = spawn((async () => {

@@ -1,41 +1,23 @@
 // velt/fs (internal): flushing, truncating and describing an open file (`fsyncSync`,
 // `fdatasyncSync`, `ftruncateSync`, `fstatSync`).
 
-import {
-  fcntl,
-  fdatasync,
-  fstat,
-  fsync,
-  ftruncate,
-  isMac,
-  lastOsError,
-  Stat,
-} from "velt/fs/fd/system";
+import { Stat } from "velt/fs/fd/system";
+import { fstatFd, lastError, syncAll, syncData, truncateFd } from "#fd-system";
 import { descriptor, integer, MAX_SAFE } from "velt/fs/fd/args";
 import { osError } from "velt/fs/errors";
 import { Stats } from "velt/fs/stats";
 
-// macOS: `F_FULLFSYNC` (to the disk itself), else `F_BARRIERFSYNC`, else `fsync`, as libuv.
-function fullSync(f: i32): i32 {
-  if (fcntl(f, 51, 0) == 0 || fcntl(f, 85, 0) == 0) {
-    return 0;
-  }
-  return fsync(f);
-}
-
 /** Flushes the file's data and metadata to the disk (Node's `fs.fsyncSync`). */
 export function fsyncSync(fd: number) {
-  const f = descriptor(fd);
-  if ((isMac() ? fullSync(f) : fsync(f)) != 0) {
-    throw osError(lastOsError(), "fsync");
+  if (syncAll(descriptor(fd)) != 0) {
+    throw osError(lastError(), "fsync");
   }
 }
 
 /** Flushes the file's data to the disk (Node's `fs.fdatasyncSync`). */
 export function fdatasyncSync(fd: number) {
-  const f = descriptor(fd);
-  if ((isMac() ? fullSync(f) : fdatasync(f)) != 0) {
-    throw osError(lastOsError(), "fdatasync");
+  if (syncData(descriptor(fd)) != 0) {
+    throw osError(lastError(), "fdatasync");
   }
 }
 
@@ -43,8 +25,8 @@ export function fdatasyncSync(fd: number) {
 export function ftruncateSync(fd: number, len: number = 0) {
   const f = descriptor(fd);
   const n = integer("len", len, -MAX_SAFE, MAX_SAFE);
-  if (ftruncate(f, n < 0 ? 0 : n) != 0) {
-    throw osError(lastOsError(), "ftruncate");
+  if (truncateFd(f, n < 0 ? 0 : n) != 0) {
+    throw osError(lastError(), "ftruncate");
   }
 }
 
@@ -54,10 +36,11 @@ export function ftruncateSync(fd: number, len: number = 0) {
  */
 export function fstatSync(fd: number): Stats {
   const f = descriptor(fd);
-  const st: Stat = { st_mode: 0, st_size: 0, st_mtime: 0, st_mtime_nsec: 0 };
-  if (fstat(f, st) != 0) {
-    throw osError(lastOsError(), "fstat");
+  const got = fstatFd(f);
+  if (got == null) {
+    throw osError(lastError(), "fstat");
   }
+  const st: Stat = got;
   const kind = st.st_mode & 0o170000;
   return {
     size: st.st_size as u64,

@@ -882,3 +882,56 @@ fn a_package_without_c_functions_has_no_record() {
     );
     assert!(!bind.join(vpm::c_headers::FILE).exists());
 }
+
+/// std's own `declare c("c")` functions (velt/fs's file descriptors, std/fs/fd/posix.velt) are
+/// checked against each target's C library headers by `velt native headers --std`, as each
+/// target's build loads them; a declaration that differs from the headers fails it.
+#[test]
+fn std_s_c_declarations_match_every_target_s_headers() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let std = dir.path().join("std");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
+        &std,
+    );
+    let run = || {
+        no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["native", "headers", "--std"])
+            .current_dir(dir.path())
+            .env("NO_COLOR", "1")
+            .env("VELT_HOME", &home)
+            .env("VELT_STD", &std)
+            .output()
+            .unwrap()
+    };
+    let o = run();
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(output(&o).contains("on 8 targets"), "{}", output(&o));
+    // `pread`'s offset is an `off_t`, 64 bits: a declaration of it with an `i32` there (never
+    // called, so it changes no Velt types) is refused on every POSIX target.
+    let posix = std.join("fs/fd/posix.velt");
+    let mut text = std::fs::read_to_string(&posix).unwrap();
+    text.push_str("\ndeclare c(\"c\") function pread$wrong(fd: i32, buf: u8[], nbyte: usize, offset: i32): isize;\n");
+    std::fs::write(&posix, text).unwrap();
+    let o = run();
+    assert!(!o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("parameter 4 of C function `pread`"),
+        "{}",
+        output(&o)
+    );
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            copy_tree(&path, &to.join(entry.file_name()));
+        } else {
+            std::fs::copy(&path, to.join(entry.file_name())).unwrap();
+        }
+    }
+}

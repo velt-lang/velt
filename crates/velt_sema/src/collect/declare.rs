@@ -120,7 +120,6 @@ pub(crate) fn fn_placeholder<'m>(
         local_kinds: vec![],
         owner: None,
         is_async: false,
-        system: None,
         host: None,
         c: None,
         intrinsic: None,

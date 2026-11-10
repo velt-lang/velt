@@ -223,7 +223,7 @@ impl FnCx<'_, '_> {
             let site = self.arg_site(p, h.span);
             self.flow_into(&h, site);
             let outer_target = self.set_target(site);
-            // A view for a system function's byte buffer (`system_args.rs`), as it is.
+            // A view for a C or host function's byte buffer (`system_args.rs`), as it is.
             let mut h = if system && self.is_byte_array(target) && self.is_byte_view(h.ty) {
                 h
             } else if weak_key && hargs.is_empty() {

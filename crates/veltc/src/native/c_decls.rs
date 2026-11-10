@@ -39,7 +39,7 @@ pub(super) fn check(
     checked: &mut Checked,
     diags: &mut Diagnostics,
 ) {
-    let name = velt_vir::system::base_name(&f.symbol);
+    let name = velt_vir::c_abi::base_name(&f.symbol);
     let what = What {
         keyword: " function",
         noun: "function",
@@ -384,7 +384,6 @@ mod tests {
             params: Vec::new(),
             ret: hir::TyId(0),
             is_async: false,
-            system: None,
             host: None,
             c: Some(hir::CImport {
                 library: library.into(),

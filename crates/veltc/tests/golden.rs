@@ -23,8 +23,8 @@
 //!   environment variables are set (for tests needing a database or other external service).
 //! - A golden whose first lines contain `// requires: symlinks` is skipped where this process
 //!   cannot create symbolic links (Windows without Developer Mode or administrator rights);
-//!   `// requires: unix` is skipped on Windows (POSIX system functions, `velt/fs`'s fd API), and
-//!   `// requires: windows` everywhere else (Windows system functions).
+//!   `// requires: unix` is skipped on Windows (POSIX C functions, `velt/fs`'s fd API), and
+//!   `// requires: windows` everywhere else (Windows-only functions).
 //! - A golden whose first lines contain `// check: no leaks` must free every block it allocates
 //!   (`VELT_RC_STATS=1` with the debug runtime: `blocks=A/F` with A = F) in its debug run. Tasks
 //!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
@@ -711,10 +711,10 @@ fn missing_capability(file: &Path, work: &Path) -> Option<&'static str> {
         return Some("symlinks: on Windows, Developer Mode or administrator rights");
     }
     if wants("unix") && cfg!(windows) {
-        return Some("unix: POSIX system functions");
+        return Some("unix: POSIX C functions");
     }
     if wants("windows") && !cfg!(windows) {
-        return Some("windows: Windows system functions");
+        return Some("windows: Windows-only functions");
     }
     None
 }
