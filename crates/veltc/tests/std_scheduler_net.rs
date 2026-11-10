@@ -322,6 +322,11 @@ fn check(file: &Path, std: bool, out: Option<&Path>) -> (bool, String) {
 /// the compiler's clashed in every program reading `lastOsError()`.
 #[test]
 fn velt_net_users_compile_the_same_on_both_executors() {
+    if !cfg!(unix) {
+        // Windows has no reactor in Velt yet, so its two builds are the same program; and some
+        // of these goldens use POSIX system functions Windows doesn't have.
+        return;
+    }
     runtime_support::build_native_runtime(manifest());
     let golden = manifest().join("../../tests/golden");
     let mut files = vec![];
