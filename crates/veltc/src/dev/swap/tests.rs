@@ -251,3 +251,61 @@ fn a_version_that_failed_after_lowering_is_not_the_baseline() {
         other => panic!("{other:?}"),
     }
 }
+
+/// A `velt dev` version keeps every glue entry of its tables, also those nothing in it
+/// dispatches (velt_vir `glue/demand.rs`, `slot_uses.rs`): a value it made keeps its table, and a
+/// later version swapped in may clone, log or send that value through it.
+#[test]
+fn a_dev_version_keeps_every_glue_entry() {
+    const SOURCE: &str = "
+interface Shape {
+  area(): number;
+}
+class Animal {
+  legs: number[] = [4];
+  speak(): number {
+    return 1;
+  }
+}
+class Dog extends Animal implements Shape {
+  override speak(): number {
+    return 2;
+  }
+  area(): number {
+    return this.legs[0];
+  }
+}
+const s: Shape = new Dog();
+const a: Animal = new Dog();
+console.log(s.area() + a.speak());
+";
+    let symbols = |seed: Option<velt_vir::CountedSeed>| -> Vec<String> {
+        let mut sess = Session::new();
+        sess.counted_seed = seed;
+        let opts = BuildOptions {
+            input: PathBuf::from("main.velt"),
+            root_source: Some(SOURCE.to_string()),
+            ..BuildOptions::default()
+        };
+        let p = driver::compile(&mut sess, &opts).expect("compiles");
+        p.funcs.iter().map(|f| f.symbol.clone()).collect()
+    };
+    let has = |syms: &[String], prefix: &str| syms.iter().any(|s| s.starts_with(prefix));
+    let glue = [
+        "_Gdynclone_3Dog",
+        "_Gdynformat_3Dog",
+        "_Gdynshare_3Dog",
+        "_Gdyntransfer_3Dog",
+        "_Gobjclone_3Dog",
+        "_Gobjtransfer_3Dog",
+    ];
+    let plain = symbols(None);
+    let dev = symbols(Some(velt_vir::CountedSeed::default()));
+    for g in glue {
+        // Class glue is lowered and dropped later (`dead_funcs`); interface glue is never lowered.
+        if g.starts_with("_Gdyn") {
+            assert!(!has(&plain, g), "{g} in a plain build");
+        }
+        assert!(has(&dev, g), "{g} missing from a dev version");
+    }
+}

@@ -65,7 +65,10 @@ impl FnLower<'_, '_> {
                 }
             }
             ShareKind::Closure => self.share_closure(&src, &dst),
-            ShareKind::Dyn => self.share_dyn(&src, &dst),
+            ShareKind::Dyn => {
+                self.note_dyn_glue(SLOT_SHARE, ty);
+                self.share_dyn(&src, &dst)
+            }
             // `shared<T>` counts atomically in its clone glue; promises cannot be copied (the
             // clone glue panics: sema never shares them).
             ShareKind::Shared | ShareKind::Promise => self.clone_into(src, dst, ty),
