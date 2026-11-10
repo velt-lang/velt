@@ -2,9 +2,9 @@
 // `console.log`'s argument and the space or newline that follows it (velt/lang/hooks/number_text),
 // so that they are one write to the stream and not two. The text is at most 21 bytes: 20 digits,
 // or a minus and 19, then the byte. One function out of line writes it (`digitsWrite`), so that
-// a program's call sites are each a call: inlined into every `console.log` of an integer, its
-// digit code had clang's loop strength reduction take most of a release build of 50 of them in
-// a loop.
+// each of a program's `console.log`s of an integer is a call and the std cache serves its object:
+// inlined at every one, its digit code would make LLVM's loop strength reduction most of a
+// release build with many of them in a loop.
 // Up to 7 bytes and the byte are one word, built in it, with no further call before the write.
 // Longer text is written by one of two functions for both signs, each making the write itself,
 // so that nothing comes back through memory: below 10^8 (`midWrite`, one group of digits) and
@@ -18,7 +18,7 @@ declare function velt_rt_write_str(stream: u32, s: string);
 
 /**
  * Writes `a`, after a minus when `neg`, and the ASCII byte `end` to `stream`: the hooks' one call
- * (`intWrite`, `uintWrite`). Out of line (`@noInline`), so the std cache serves its object.
+ * (`intWrite`, `uintWrite`). Out of line (`@noInline`), as the header says.
  */
 @noInline
 export function digitsWrite(stream: u32, a: u64, neg: bool, end: u8): void {
