@@ -14,14 +14,13 @@ use crate::{DevSession, Reload};
 thread_local! {
     /// The descriptors `velt_rt_module_state` was called with, in order.
     static DESCS: RefCell<Vec<usize>> = const { RefCell::new(vec![]) };
+    /// The block every call returns, one per test thread: the test programs never read it.
+    static SLOT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
-
-/// A slot for every call: the test programs never read it.
-static mut SLOT: [u64; 1] = [0];
 
 extern "C" fn module_state(desc: *const u8, _slot: u64) -> *mut u8 {
     DESCS.with(|d| d.borrow_mut().push(desc as usize));
-    std::ptr::addr_of_mut!(SLOT).cast()
+    SLOT.with(|s| s.as_ptr().cast())
 }
 
 /// One version: what `read` returns (an edit of a function using module state) and what the
