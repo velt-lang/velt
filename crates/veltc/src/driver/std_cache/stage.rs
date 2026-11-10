@@ -7,7 +7,9 @@ use std::time::Instant;
 use velt_vir::vir;
 
 use super::{no_inline, serve, Use};
-use crate::driver::{optimize_stage, outside, BuildError, BuildOptions, OutputPaths, Session};
+use crate::driver::{
+    optimize_serving, optimize_stage, outside, BuildError, BuildOptions, OutputPaths, Session,
+};
 
 /// Optimize `program` (lowered and verified, for `target`), using the std cache as `wanted` says.
 /// `VELT_STD_OBJECT=1` keeps the program as lowered to fall back on.
@@ -46,7 +48,7 @@ pub(in crate::driver) fn optimize(
         Use::NoInline => {
             let served = no_inline::serve(program, opts, &cg, &place);
             sess.record("std cache", t);
-            optimize_stage(sess, opts, program)?;
+            optimize_serving(sess, opts, program, &served.symbols())?;
             // The served functions are still in the program: what it reaches is worked out as in
             // a build without the cache, before they become declarations.
             sess.reaches = (!served.is_empty()).then(|| outside::reaches(program));
