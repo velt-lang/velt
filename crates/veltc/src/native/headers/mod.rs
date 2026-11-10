@@ -18,6 +18,7 @@ mod ctype;
 mod probe;
 mod record;
 mod shape;
+mod std_check;
 mod variables;
 
 use std::collections::{BTreeMap, HashSet};
@@ -37,6 +38,7 @@ use record::{compare_record, library_record};
 use shape::shape;
 
 pub use constants::{read as read_constants, Constants};
+pub use std_check::check_std;
 
 /// One `declare c` function to check: its name in C, what it passes, where it is.
 struct Decl {
@@ -148,7 +150,7 @@ fn decl_of<'p>(p: &'p hir::Program, def: &'p Def) -> Option<(&'p str, Decl)> {
         Def::ExternFn(f) => {
             let c = f.c.as_ref()?;
             let decl = Decl {
-                name: velt_vir::system::base_name(&f.symbol).to_string(),
+                name: velt_vir::c_abi::base_name(&f.symbol).to_string(),
                 params: (f.params.iter().zip(&c.params))
                     .map(|(&t, &ct)| shape(p, t, ct))
                     .collect(),

@@ -1,0 +1,55 @@
+// velt/fs (internal): what makes a call of the C library's file-descriptor functions sound
+// (posix.velt calls them before each `unsafe` call). Each stops the program: a failed one is a
+// bug in velt/fs, never a user's input, which velt/fs/fd/args checks with Node's errors first.
+// The check is a comparison at each call; the panic and its message are out of line, so the
+// guard keeps the calls of Node's API small enough to inline (their constant arguments fold).
+
+import { noInline } from "velt/lang/intrinsics";
+
+/**
+ * Stops the program unless `path` ends with its only 0 byte: C reads up to the first 0, which then
+ * is the end of the array, and the path is the one the caller built (`"a\0../b"` would reach C
+ * as `"a"`).
+ */
+export function checkPath(what: string, path: readonly u8[]) {
+  const n = path.length as i64;
+  if (n == 0 || path.indexOf(0) != n - 1) {
+    badPath(what);
+  }
+}
+
+@noInline
+function badPath(what: string) {
+  panic(`${what}: the path must end with its only 0 byte`);
+}
+
+/**
+ * Stops the program unless `start..end` is a range of the `n` elements of an array: C gets the
+ * address of element `start` and the length `end - start`, and reads or writes that many.
+ */
+export function checkRange(what: string, start: usize, end: usize, n: usize) {
+  if (start > end || end > n) {
+    badRange(what, start, end, n);
+  }
+}
+
+@noInline
+function badRange(what: string, start: usize, end: usize, n: usize) {
+  panic(`${what}: bytes ${start}..${end} are outside the buffer of ${n}`);
+}
+
+/**
+ * Stops the program unless `cmd` is one of `commands`: the commands whose argument C reads as an
+ * `int` (another command of `fcntl` reads its argument as a pointer, `F_GETLK`'s
+ * `struct flock *`).
+ */
+export function checkCommand(what: string, cmd: i32, commands: readonly i32[]) {
+  if (!commands.includes(cmd)) {
+    badCommand(what, cmd);
+  }
+}
+
+@noInline
+function badCommand(what: string, cmd: i32) {
+  panic(`${what}: command ${cmd} does not take an int argument`);
+}

@@ -92,8 +92,8 @@ pub enum Intrinsic {
     /// bounds-checked): the bits of two elements, nothing copied or dropped, also between two
     /// inner arrays, which one call may not otherwise change both of. Additive.
     ArraySwapNested,
-    /// `xs.subarray(begin, end)` of a `u8[]` as the argument of a `declare system function`'s
-    /// buffer parameter (https://veltlang.com/docs/reference/system-functions/): `(xs: u8[] (borrowed, modified
+    /// `xs.subarray(begin, end)` of an array as the argument of a C or host function's buffer
+    /// parameter (docs/internals/design/c-ffi.md "A position in an array"): `(xs: u8[] (borrowed, modified
     /// for a buffer the function writes), begin, end)`, of type `u8[]`, the bytes
     /// `begin..end` of `xs` with JS's `subarray` positions (negative counts from the end,
     /// clamped to the array); a position is an `i64`, or a `usize` when it is never negative.

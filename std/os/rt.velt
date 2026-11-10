@@ -1,5 +1,5 @@
-// velt/os (internal): the runtime functions velt/os calls (rt_abi_async.md §14), and the
-// system function `lastOsError`.
+// velt/os (internal): the runtime functions velt/os calls (rt_abi_async.md §14), and
+// `lastOsError`, the error a C call left.
 
 export declare function velt_rt_os_platform(): string;
 export declare function velt_rt_os_arch(): string;
@@ -8,8 +8,17 @@ export declare function velt_rt_os_tmpdir(): string;
 export declare function velt_rt_os_hostname(): string;
 
 /**
- * The error number the last failed system function call on this thread left (`errno`;
- * `GetLastError()` on Windows), for code that calls system functions itself
- * (https://veltlang.com/docs/reference/system-functions/). Read it right after the call that failed.
+ * This thread's error slot: lowering stores `errno` here right after each call of a C function
+ * whose declaration asks (`declare c("c", { errno: true })`; crates/velt_vir/src/c_abi.rs
+ * `ERRNO_SLOT` names this constant, which must keep its module, name and type).
  */
-export declare system function lastOsError(): i32;
+const OS_ERROR = new ThreadLocal<i32>(0);
+
+/**
+ * The error number the last failed call of a C function on this thread left, for a declaration
+ * that asks for it (`declare c("c", { errno: true })`: `errno`, the C library's on Windows too).
+ * Read it right after the call that failed; a call that doesn't ask leaves it alone.
+ */
+export function lastOsError(): i32 {
+  return OS_ERROR.get();
+}

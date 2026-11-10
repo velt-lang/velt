@@ -520,7 +520,7 @@ impl Checker<'_, '_> {
         if args.len() + uses.len() < 2 {
             return;
         }
-        // A system function's buffer is a view of bytes, not a value held by reference: a later
+        // A C or host function's buffer is a view of bytes, not a value held by reference: a later
         // argument that changes the array (`h.b.length = 0` beside `h.b.subarray(0, 8)`) would
         // free bytes the view covers, so its arguments keep the strict rule.
         let system = matches!(callee, Some(Callee::Def(d, _))

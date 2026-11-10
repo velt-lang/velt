@@ -1,25 +1,12 @@
-// velt/fs (internal): the system functions of Node's file-descriptor API (`openSync`,
-// `readSync`, ...) and the C layout they fill. Each call of the API is one call of the C library,
-// with nothing in between (https://veltlang.com/docs/reference/system-functions/). On macOS and Linux; calling it for
-// another target is a compile error that names the system function it lacks.
+// velt/fs (internal): what the C library's file-descriptor functions share across targets: the
+// fields of `struct stat` `fstatSync` reads, `EINTR` and the platform check. The functions
+// themselves are the `#fd-system` variant of the target (std/imports.velt): posix.velt's
+// `declare c("c")` declarations behind darwin.velt's and linux.velt's safe wrappers, or
+// unsupported.velt where the C library has no such functions.
 
 import { platform } from "velt/os/machine";
 
-export declare system function open(path: readonly u8[], oflag: i32, mode: u32): i32;
-export declare system function close(fd: i32): i32;
-export declare system function read(fd: i32, buf: u8[]): isize;
-export declare system function write(fd: i32, buf: readonly u8[]): isize;
-export declare system function pread(fd: i32, buf: u8[], offset: i64): isize;
-export declare system function pwrite(fd: i32, buf: readonly u8[], offset: i64): isize;
-export declare system function fsync(fd: i32): i32;
-export declare system function fdatasync(fd: i32): i32;
-export declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
-export declare system function ftruncate(fd: i32, length: i64): i32;
-export declare system function fstat(fd: i32, st: Stat): i32;
-export declare system function unlink(path: readonly u8[]): i32;
-export declare system function lastOsError(): i32;
-
-/** The fields of `struct stat` `fstatSync` reads (the table maps them per target). */
+/** The fields of `struct stat` `fstatSync` reads (the `#fd-system` variant reads them per target). */
 export struct Stat {
   st_mode: u32;
   st_size: i64;

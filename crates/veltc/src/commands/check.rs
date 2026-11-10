@@ -194,6 +194,20 @@ pub(super) fn check_package_for(sess: &mut Session, target: &str) -> Result<(), 
     check_input_or_package(sess, &args)
 }
 
+/// std as a build for `target` loads it, with std's own C declarations checked against the C
+/// library's headers (`velt native headers --std`): every public module (each `index.velt`) and
+/// what it imports, with the `#name` variants the target selects. Not every file, as `velt check
+/// --std` takes: a file only another target's variant imports (std/fs/fd/posix.velt on Windows)
+/// declares functions this target's C library doesn't have.
+pub(super) fn check_std_headers_for(sess: &mut Session, target: &str) -> Result<(), BuildError> {
+    let (mut opts, mut scope, _) = std_scope(false, Some(target.to_string()))?;
+    scope
+        .extra_roots
+        .retain(|f| f.file_name().is_some_and(|n| n == "index.velt"));
+    opts.std_c_headers = true;
+    driver::check_with(sess, &opts, &scope)
+}
+
 /// `velt check [<file>]`: the file and its imports, or the current package.
 fn check_input_or_package(sess: &mut Session, args: &CheckArgs) -> Result<(), BuildError> {
     resolve(args).and_then(|(opts, scope, same_path)| {

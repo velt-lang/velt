@@ -50,6 +50,7 @@ pub(super) fn parse(name: &str, rest: Vec<OsString>) -> Result<Command, String> 
                 flags.native_artifacts = Some(PathBuf::from(dir));
             }
             ("publish", "--native-only") => flags.native_only = true,
+            ("native", "--std") => flags.std = true,
             ("native", "--target") => {
                 flags.target = Some(take_value(inline.as_deref(), &mut it, "--target")?)
             }
@@ -100,6 +101,7 @@ struct Flags {
     native_artifacts: Option<PathBuf>,
     native_only: bool,
     target: Option<String>,
+    std: bool,
 }
 
 fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Command, String> {
@@ -190,11 +192,11 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             Some("build") => Ok(Command::NativeBuild {
                 target: flags.target,
             }),
-            Some("headers") => Ok(Command::NativeHeaders),
+            Some("headers") => Ok(Command::NativeHeaders { std: flags.std }),
             Some(other) => Err(format!(
-                "unknown `velt native` command `{other}` (usage: velt native build [--target <triple>] | velt native headers)"
+                "unknown `velt native` command `{other}` (usage: velt native build [--target <triple>] | velt native headers [--std])"
             )),
-            None => Err("usage: velt native build [--target <triple>] | velt native headers".into()),
+            None => Err("usage: velt native build [--target <triple>] | velt native headers [--std]".into()),
         },
         "test" if flags.json && !flags.no_run => {
             Err("`--json` goes with `--no-run` (`velt test --no-run --json`)".into())
@@ -400,7 +402,14 @@ mod tests {
             p(&["native", "build"]).unwrap(),
             Command::NativeBuild { target: None }
         );
-        assert_eq!(p(&["native", "headers"]).unwrap(), Command::NativeHeaders);
+        assert_eq!(
+            p(&["native", "headers"]).unwrap(),
+            Command::NativeHeaders { std: false }
+        );
+        assert_eq!(
+            p(&["native", "headers", "--std"]).unwrap(),
+            Command::NativeHeaders { std: true }
+        );
         assert!(p(&["native"])
             .unwrap_err()
             .contains("usage: velt native build"));

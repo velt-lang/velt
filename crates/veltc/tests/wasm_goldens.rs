@@ -54,12 +54,6 @@ const UNSUPPORTED: &[&str] = &[
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
 
-/// Does the program declare a system function? WebAssembly has none (declaring one is a
-/// compile error there), so such a golden never runs on it.
-fn declares_system_functions(path: &Path) -> bool {
-    std::fs::read_to_string(path).is_ok_and(|s| s.contains("declare system function"))
-}
-
 fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
     // `VELT_GOLDEN` as in tests/golden.rs: substrings separated by `,`, any of them matches.
     let filter = std::env::var("VELT_GOLDEN").unwrap_or_default();
@@ -81,7 +75,6 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
             p.extension().is_some_and(|e| e == "velt")
                 && p.with_extension("out").exists()
                 && !skip.contains(&stem.as_ref())
-                && !declares_system_functions(p)
                 && {
                     // The path in the checkout, as in tests/golden.rs.
                     let rel = p.strip_prefix(root).unwrap_or(p);

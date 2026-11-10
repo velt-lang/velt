@@ -411,15 +411,6 @@ fn early_use_of_a_later_declaration_formats() {
 }
 
 #[test]
-fn system_function_declarations() {
-    holds(
-        "declare system function pwrite(fd: i32, buf: readonly u8[], start: usize, end: usize, offset: i64): isize;
-export declare system function lastOsError(): i32;
-declare function velt_rt_x(): void;",
-    );
-}
-
-#[test]
 fn host_function_declarations() {
     holds(
         "declare host(\"app\") function greet(name: string, buf: readonly u8[]): string;

@@ -86,8 +86,8 @@ fn velt_class(ty: &str) -> String {
     }
 }
 
-/// `symbol -> (params, result)` of every `declare function` under `std/` (not `declare system
-/// function`).
+/// `symbol -> (params, result)` of every `declare function` under `std/` (not `declare c`,
+/// `declare host` and the compiler's own).
 fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
     let mut paths = vec![];
     files(&repo().join("std"), "velt", &mut paths);
@@ -116,13 +116,11 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
             if decorated && decl.starts_with("declare ") {
                 continue;
             }
-            // A system function binds the C library, not the runtime
-            // (https://veltlang.com/docs/reference/system-functions/), an intrinsic and a decorator are the compiler's
+            // An intrinsic and a decorator are the compiler's
             // (std/lang/intrinsics), a generated function's body is a source generator's and a
             // host function is the JS host's (a WebAssembly import, rt_abi.md "Host values"), and
             // a C function or C type a C library's (docs/internals/design/c-ffi.md).
             if [
-                "declare system ",
                 "declare decorator ",
                 "declare generated(",
                 "declare host(",

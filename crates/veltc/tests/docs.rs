@@ -262,9 +262,6 @@ fn compile(root: &Path, program: &str) -> Result<(), (bool, String)> {
         input: dir.join("__doc_snippet.velt"),
         root_source: Some(program.to_string()),
         emit: Emit::Vir,
-        // An example that calls system functions calls POSIX ones (`declare system function`),
-        // which a Windows target lacks: there they are checked for Linux.
-        target: cfg!(windows).then(|| "x86_64-unknown-linux-gnu".to_string()),
         ..Default::default()
     };
     let mut sess = Session::new();

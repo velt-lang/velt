@@ -1,5 +1,5 @@
-//! Arguments of a `declare system function`'s byte buffer parameters (`u8[]`, `readonly u8[]`;
-//! https://veltlang.com/docs/reference/system-functions/). Besides a `u8[]`, such a parameter takes a view of bytes
+//! Arguments of a C or host function's byte buffer parameters (`u8[]`, `readonly u8[]`;
+//! docs/internals/design/c-ffi.md "What crosses"). Besides a `u8[]`, such a parameter takes a view of bytes
 //! (#1718):
 //!
 //! - a typed array or a `DataView` (a class extending std's `BufferView`), passed as it is:
@@ -47,7 +47,7 @@ impl FnCx<'_, '_> {
         false
     }
 
-    /// The argument `e` of a system function's parameter of type `pty`, when it is a byte
+    /// The argument `e` of a C or host function's parameter of type `pty`, when it is a byte
     /// parameter and `e` is a view: `xs.subarray(...)` (of a `u8[]`: `Intrinsic::Subarray`; of
     /// a typed array: its method), or a value of a view type. `None` leaves `e` to the ordinary
     /// checks (a `u8[]`, an array literal, anything else).
@@ -131,7 +131,7 @@ impl FnCx<'_, '_> {
         self.error_expr(span)
     }
 
-    /// An error when `h`, the argument (or the `subarray` receiver) of a buffer the system
+    /// An error when `h`, the argument (or the `subarray` receiver) of a buffer the C or host
     /// function writes, is a read-only array: a variable or parameter declared `readonly u8[]`,
     /// a module constant or a class field of that type, or a call of a function returning one
     /// (TypeScript's TS4104 for the `u8[]` parameter).
@@ -141,7 +141,7 @@ impl FnCx<'_, '_> {
                 Diagnostic::error(
                     match self.c_args {
                         true => "a read-only array cannot be passed for a buffer the C function writes",
-                        false => "a read-only array cannot be passed for a buffer the system function writes",
+                        false => "a read-only array cannot be passed for a buffer the host function writes",
                     },
                     h.span,
                 )

@@ -91,9 +91,9 @@ pub(crate) const MACOS_PATHS: &[&str] = &[
     // Code generation: Mach-O objects, symbol names, thread locals, unwinding, the arm64 ABI.
     "crates/velt_codegen_cl/",
     "crates/velt_codegen_llvm/",
-    // The system functions' tables per OS and their arm64 lowering, and arm64's vector code.
-    "crates/velt_vir/src/system/",
-    "crates/velt_vir/src/lower/system.rs",
+    // Where each OS's C library keeps `errno`, C calls' arm64 lowering, and arm64's vector code.
+    "crates/velt_vir/src/c_abi.rs",
+    "crates/velt_vir/src/lower/c_call.rs",
     "crates/velt_vir/src/simd/",
     "crates/velt_text/src/json_escape.rs",
     "std/simd/",
@@ -119,8 +119,6 @@ pub(crate) const MACOS_PATHS: &[&str] = &[
     "std/task/",
     "std/time/",
     "tests/std/",
-    // Goldens with a macOS branch (`system_functions`, `system_function_views`, ...).
-    "tests/golden/lang/system_function",
     // Packages with a macOS branch, or tests of file paths: `/tmp` and `/var` are symbolic links
     // on macOS, so `realpath` answers differently from Linux there.
     "packages/http-server/src/files/",

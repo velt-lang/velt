@@ -186,12 +186,16 @@ fn ty_name(p: &hir::Program, t: TyId) -> String {
 
 /// Check every `declare function` outside the standard library (`std_files`: the files of std
 /// modules) against the native library of its own package (`graph`, `None` for a program without
-/// packages), and every `declare system function` against the table of system functions of
-/// `target` (system.rs); see the module docs. Reports errors into `diags`, and returns the C
-/// libraries that passed the header check with their records, for [`note_checked`].
+/// packages), and every `declare c` function's library (c_decls.rs) and headers; see the
+/// module docs. With `check_std` (std's root), std's own C declarations are checked against
+/// the C library's headers too (`velt native headers --std`). Reports errors into `diags`, and
+/// returns the C libraries that passed the header check with their records, for
+/// [`note_checked`].
+#[allow(clippy::too_many_arguments)]
 pub fn check_declares(
     p: &hir::Program,
     sm: &SourceMap,
+    check_std: Option<&Path>,
     std_root: Option<&Path>,
     graph: Option<&PackageGraph>,
     std_files: &HashSet<FileId>,
@@ -211,10 +215,6 @@ pub fn check_declares(
         if f.is_decorator {
             continue;
         }
-        if f.system.is_some() {
-            system::check(p, f, target, diags);
-            continue;
-        }
         // The JS host provides it (sema checked what crosses; lowering, the target).
         if f.host.is_some() {
             continue;
@@ -229,11 +229,7 @@ pub fn check_declares(
         let file = &sm.get(f.span.file).path;
         let pkg = graph.and_then(|g| g.package_of(file));
         let Some(lib) = pkg.and_then(|p| p.native.as_ref()) else {
-            let mut d = not_native(f, pkg.map(|p| p.name.as_str()), graph);
-            if let Some(h) = system::hint(f) {
-                d = d.with_note(h);
-            }
-            diags.push(d);
+            diags.push(not_native(f, pkg.map(|p| p.name.as_str()), graph));
             continue;
         };
         let what = format!("`{} {}`", lib.meta.package, lib.meta.version);
@@ -266,6 +262,9 @@ pub fn check_declares(
             ),
             Err(why) => diags.push(Diagnostic::error(why, f.span)),
         }
+    }
+    if let Some(root) = check_std {
+        headers::check_std(p, root, std_files, target, diags);
     }
     headers::check(p, sm, graph, std_files, target, diags)
 }
@@ -375,7 +374,6 @@ pub use headers::{
 };
 pub use report::note_checked;
 mod report;
-mod system;
 pub use report::{json as native_json, render as render_native, NativePackage};
 mod trust;
 mod unsafe_sites;

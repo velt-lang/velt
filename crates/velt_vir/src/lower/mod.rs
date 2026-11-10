@@ -109,6 +109,7 @@ mod sched;
 mod slot;
 mod state;
 use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
+mod extern_args;
 mod fn_shapes;
 mod fresh_fns;
 mod frozen;
@@ -168,7 +169,6 @@ mod strbuf;
 mod stringify;
 mod strings;
 mod symbols;
-mod system;
 mod system_views;
 mod template;
 mod this_fn;
@@ -251,11 +251,11 @@ struct Cx<'h> {
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
     cell_checks: bool,
-    /// The target triple, for system and host functions (`LowerOptions::target`).
+    /// The target triple, for C and host functions (`LowerOptions::target`).
     target: String,
     /// CPU checks known while lowering (cpu_checks.rs).
     cpu_checks: cpu_checks::CpuChecks,
-    /// Calls of system and host functions the target lacks: (the declaration, the calling function, the
+    /// Calls of C and host functions the target lacks: (the declaration, the calling function, the
     /// user code being lowered then, `user_site`).
     unavailable: Vec<(DefId, Option<DefId>, velt_common::Span)>,
     /// Deferred types an instantiation met that sema didn't reduce (`types.rs` `reduce_op`).
@@ -274,10 +274,8 @@ struct Cx<'h> {
     /// velt/ffi's hooks found so far (c_call.rs): each is looked up once per program.
     ffi_hooks: FxHashMap<&'static str, DefId>,
     /// Per user call site of a standard-library function, that function (call.rs): what an
-    /// unavailable system function deep in std is reported as, at the user's call.
+    /// unavailable C function deep in std is reported as, at the user's call.
     std_calls: FxHashMap<velt_common::Span, DefId>,
-    /// The aggregates of C structs (system.rs), by the table's struct.
-    system_aggs: FxHashMap<usize, vir::AggId>,
     /// The 16-byte slot a `struct` returned in a register passes through (abi.rs `RegRet`).
     reg_slot_agg: Option<vir::AggId>,
     /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and

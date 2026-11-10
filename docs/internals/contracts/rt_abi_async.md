@@ -568,20 +568,14 @@ declaration in `std/` with velt_rt's and velt_rt_wasm's definitions.
 WebAssembly import the JS glue provides, called with the signature velt_vir's `vir/host.rs`
 states (rt_abi.md "Host values").
 
-`declare system function` (https://veltlang.com/docs/reference/system-functions/) is not this ABI: it binds a C
-library function, not the runtime, and lowering (velt_vir `lower/system.rs`) calls it with the
-C signature the table of system functions (velt_vir `system/`) states for the target. Integers
-are passed as themselves; a `u8[]` / `readonly u8[]` parameter is two C arguments, its `ptr`
-and `len` (or `ptr + start` and `end - start` for a declared range, checked); a path is its
-`ptr`, after checking that the last element is 0; a struct is the address of a zeroed temporary
-in the C layout, filled from the Velt struct's fields by name and copied back after the call;
-a parameter the declaration leaves out is `NULL`. Variadic arguments are 64-bit integers
-(pointers converted) passed to a variadic extern (`vir::ExternFn::variadic`), which each backend
-calls with the target's variadic convention (on Apple arm64 they land in the stack slots a
-variadic callee reads). Right after each system call, the `int`
-that `__error()` (macOS) or `__errno_location()` (Linux) points to is stored into a
-thread-local value (`velt_tls_*_32_0` of `velt/os::lastOsError:I32`, crate::tls), and
-`lastOsError()` reads that value; on Windows it is a call of `GetLastError`. The forms of `fcntl` are one variadic extern, as a `declare c` declaration of it is.
+`declare c("lib") function` (docs/internals/design/c-ffi.md) is not this ABI either: it binds a C
+library function, not the runtime, called with the target's C convention as the declaration
+types it (velt_vir `lower/c_call.rs`). After a call of one declared with `{ errno: true }`, the
+`int` that `__error()` (macOS), `__errno_location()` (Linux) or `_errno()` (Windows' C runtime;
+`GetLastError()` for another Windows library) gives is stored into the thread-local value
+`velt_tls_*_32_0` of std's `std/os/rt::OS_ERROR:I32` (crate::tls, velt_vir `c_abi::ERRNO_SLOT`),
+which `lastOsError()` reads (`OS_ERROR.get()`). std's file-descriptor functions are such
+declarations (std/fs/fd/posix.velt), with the guards a C call needs in Velt beside them.
 
 ### 3.2 Object handles
 

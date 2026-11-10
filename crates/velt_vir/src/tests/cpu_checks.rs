@@ -17,7 +17,6 @@ fn program() -> velt_sema::hir::Program {
             params: vec![],
             ret: pb.t.bool,
             is_async: false,
-            system: None,
             host: None,
             c: None,
             is_decorator: false,

@@ -1,6 +1,6 @@
 //! C functions whose calls don't fit: a variadic declaration and a plain one of one symbol (the
-//! program's and std's system call), and a call lowering meets without its fixed arguments (sema
-//! reported it): errors, never an ICE.
+//! program's and std's, std/fs/fd/posix.velt), and a call lowering meets without its fixed
+//! arguments (sema reported it): errors, never an ICE.
 
 use velt_sema::hir::{self, Callee, ExprKind, StmtKind};
 
@@ -8,8 +8,8 @@ use super::c_wasi::{check, lower_checked_for};
 
 const TARGET: &str = "aarch64-apple-darwin";
 
-/// The program's `fcntl` without `...`, called in `main` (`first`) or after `fsyncSync`'s system
-/// call of std's variadic `fcntl` is lowered.
+/// The program's `fcntl` without `...`, called in `main` (`first`) or after `fsyncSync`'s call
+/// of std's variadic `fcntl` is lowered.
 fn plain_fcntl(first: bool) -> String {
     let own = "unsafe { fcntl(1, 1) }";
     let (call_main, call_later) = if first { (own, "0") } else { ("0", own) };
@@ -23,15 +23,16 @@ fn plain_fcntl(first: bool) -> String {
 }
 
 #[test]
-fn a_plain_declaration_of_a_variadic_system_call_is_an_error_either_way() {
+fn a_plain_declaration_of_std_s_variadic_function_is_an_error_either_way() {
     for first in [true, false] {
         let src = plain_fcntl(first);
         let (p, sm) = check(&src);
         let e = lower_checked_for(&p, &sm, TARGET).expect_err(&src);
-        let want = "C function `fcntl` has two signatures: `fcntl(i32, i32): i32` here, and the variadic signature the compiler's runtime calls it with";
+        // Reported once, at std's declaration (std/fs/fd/posix.velt), naming the program's.
+        let want = "C function `fcntl` has two signatures: `fcntl(i32, i32, ...): i32` here, and `fcntl(i32, i32): i32` at ";
         assert!(e.contains(want), "first: {first}\n{e}");
         assert!(
-            e.contains("it is not variadic here and variadic there"),
+            e.contains("main.velt:2:1") && e.contains("it is variadic here and not there"),
             "first: {first}\n{e}"
         );
         assert_eq!(e.matches("has two signatures").count(), 1, "{e}");
@@ -54,8 +55,13 @@ fn a_variadic_declaration_with_other_parameters_is_an_error_either_way() {
             );
         let (p, sm) = check(&src);
         let e = lower_checked_for(&p, &sm, TARGET).expect_err(&src);
-        let want = "C function `fcntl` has two signatures: `fcntl(i32, u64, ...): i32` here, and the signature the compiler's runtime calls it with";
-        assert!(e.contains(want), "first: {first}\n{e}");
+        assert!(
+            e.contains("C function `fcntl` has two signatures")
+                && e.contains("`fcntl(i32, u64, ...): i32`")
+                && e.contains("`fcntl(i32, i32, ...): i32`"),
+            "first: {first}\n{e}"
+        );
+        assert!(e.contains("parameter 2 is `"), "{e}");
         assert!(!e.contains("variadic here"), "{e}");
     }
 }
@@ -108,29 +114,29 @@ fn a_variadic_call_without_its_fixed_arguments_is_an_error() {
     );
 }
 
-/// A package's `fcntl` or `open` of another C signature than std's system calls (velt/fs's
-/// `openSync` and `fsyncSync` reach them), its call lowered first: an error at the declaration,
-/// each the way it differs.
+/// A package's `fcntl` or `open` of another C signature than std's (velt/fs's `openSync` and
+/// `fsyncSync` reach them, std/fs/fd/posix.velt), its call lowered first: an error at std's
+/// declaration, naming the program's, each the way it differs.
 #[test]
-fn declarations_that_differ_from_std_s_system_calls_are_errors() {
+fn declarations_that_differ_from_std_s_are_errors() {
     for (decl, call, shown, note) in [
         (
             "fcntl(fd: i32, cmd: i32, arg: i32): i32",
             "fcntl(1, 1, 0)",
-            "fcntl(i32, i32, i32): i32` here, and the variadic signature",
-            "it is not variadic here and variadic there",
+            "and `fcntl(i32, i32, i32): i32` at ",
+            "it takes 2 parameters here and 3 there",
         ),
         (
             "fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i64",
             "fcntl(1, 1) as i32",
-            "fcntl(i32, i32, ...): i64` here, and the signature",
-            "the compiler's runtime calls this C function itself",
+            "and `fcntl(i32, i32, ...): i64` at ",
+            "result",
         ),
         (
             "open(path: CString, ...args: CVarArgs): i32",
             "open(new CString(\"x\"))",
-            "open(CString, ...): i32` here, and the signature",
-            "the compiler's runtime calls this C function itself",
+            "and `open(CString, ...): i32` at ",
+            "it takes 2 parameters here and 1 there",
         ),
     ] {
         let src = format!(

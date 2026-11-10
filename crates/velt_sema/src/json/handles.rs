@@ -32,9 +32,8 @@ impl Ctx<'_> {
     /// function is one of a C library's, whose handles it keeps just the same. Either marks a
     /// dependency. The program itself is marked only by a `declare function`: `declare c` is the
     /// general FFI, and one in a program must not change what `JSON.stringify` does with all its
-    /// classes (Node writes their `private` fields). A `declare system function` (the C
-    /// library's, through the compiler's table) or `declare host` function (the JS host's) marks
-    /// nothing.
+    /// classes (Node writes their `private` fields). A `declare host` function (the JS host's)
+    /// marks nothing.
     fn in_native_library(&self, m: usize) -> bool {
         let libs = self.native_libraries.get_or_init(|| {
             let mut libs = NativeLibraries::default();
@@ -46,9 +45,7 @@ impl Ctx<'_> {
                     .items
                     .iter()
                     .filter_map(|i| match &i.kind {
-                        ItemKind::ExternFn(s) if !s.is_system && s.host.is_none() => {
-                            Some(s.c.is_none())
-                        }
+                        ItemKind::ExternFn(s) if s.host.is_none() => Some(s.c.is_none()),
                         _ => None,
                     })
                     .reduce(|a, b| a || b);

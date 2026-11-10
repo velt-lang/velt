@@ -134,9 +134,8 @@ fn only_a_declaration_that_asks_captures_errno() {
 }
 
 /// `errno` is captured right after a C call that asks for it, so `lastOsError()` reads the call's
-/// error even with code between them (here a string built and printed). Windows reads
-/// `GetLastError()` there, which the C library's functions don't set: its capture of the CRT's
-/// `errno` comes with std's move onto `declare c("c")` (#2187 step 2).
+/// error even with code between them (here a string built and printed). Windows has its own
+/// test below (`close(-1)` there calls the invalid parameter handler).
 #[cfg(unix)]
 #[test]
 fn errno_is_captured_after_a_c_call() {
@@ -240,22 +239,28 @@ fn one_symbol_has_one_signature() {
     assert!(!out.contains("ICE:") && !out.contains("[U8]"), "{out}");
 }
 
-/// On Windows `lastOsError()` reads `GetLastError()`, which the C library's functions don't set:
-/// after a C call it is whatever the thread last set, not the call's `errno`. Pinned here so
-/// the capture of the CRT's `errno` (#2187 step 2) has to change it.
+/// On Windows a C call that asks captures the C runtime's `errno` (`*_errno()`), not
+/// `GetLastError()`, which the C library's functions don't set (#2187 step 2): `strtol` out of
+/// range sets ERANGE (34) whatever `SetLastError` left.
 #[cfg(windows)]
 #[test]
-fn windows_last_os_error_is_not_the_c_library_s_errno_yet() {
+fn windows_last_os_error_is_the_c_library_s_errno() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "import { lastOsError } from \"velt/os\";\n\ndeclare c(\"c\") function SetLastError(code: u32): void;\ndeclare c(\"c\") function exp(x: f64): f64;\n\nexport function f(): i32 {\n  // SAFETY: plain values; exp overflows to infinity with ERANGE.\n  unsafe { SetLastError(5); exp(1000); }\n  return lastOsError();\n}\n",
+        "import { lastOsError } from \"velt/os\";\nimport { CString } from \"velt/ffi\";\n\ndeclare c(\"c\") function SetLastError(code: u32): void;\ndeclare c(\"c\", { errno: true }) function strtol(s: CString, end: null, base: i32): i32;\n\nexport function f(): i32 {\n  const big = new CString(\"99999999999999999999\");\n  // SAFETY: plain values and a NUL-terminated string; strtol reports the overflow in errno.\n  unsafe { SetLastError(5); strtol(big, null, 10); }\n  return lastOsError();\n}\n",
         "import { f } from \"cmath\";\n\nfunction main() {\n  console.log(f());\n}\n",
     );
-    let o = velt(dir.path(), &["run"]);
-    let stderr = String::from_utf8_lossy(&o.stderr);
-    assert!(o.status.success(), "{stderr}");
-    assert_eq!(String::from_utf8_lossy(&o.stdout), "5\n", "{stderr}");
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?}: {stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "34\n",
+            "velt {args:?}: {stderr}"
+        );
+    }
 }
 
 #[test]

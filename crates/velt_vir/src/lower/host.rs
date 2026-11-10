@@ -1,10 +1,10 @@
 //! Calls of host functions (`declare host("m") function`, https://veltlang.com/docs/reference/host-functions/):
 //! the call of the WebAssembly import the declaration names, with each argument in the form
 //! the JS glue converts (`vir::HostImport`'s module docs). A byte buffer gives its data pointer
-//! and length (an array's or a view's, as for system functions: system_views.rs), a string the
+//! and length (an array's or a view's, as for C functions: system_views.rs), a string the
 //! address of its value, a `HostRef` its slot (std's hooks in std/host/host_ref.velt read and
 //! make them). On a target without a JS host a call is an error, reported once lowering is done
-//! (system.rs `unavailable_diagnostics`).
+//! (extern_args.rs `unavailable_diagnostics`).
 //!
 //! The call of an async host function is the import, which calls the JS function and returns the
 //! id of its promise, then the promise leaf of that id (`velt_rt_host_promise`), which yields
@@ -13,9 +13,9 @@
 
 use velt_sema::hir::{self, DefId, HostTy, IntTy, TyId, TyKind};
 
+use super::extern_args::Arg;
 use super::hook_calls::{self as hooks, ty, HookTy};
 use super::rt::Rt;
-use super::system::Arg;
 use super::{ice, unit, Cx, FnLower};
 use crate::vir::{self, HostImport, HostValue, Operand, Place, Rvalue, Ty};
 
