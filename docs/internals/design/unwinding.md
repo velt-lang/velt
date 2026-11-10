@@ -473,6 +473,16 @@ resume of the unwind.
   flag, a cell). A frame that owns nothing at a call gets no edge, and a function that never
   owns anything at a call is unchanged. Arguments the call takes are already off the scopes
   (`take_temp` before the call, as for `throw`), so the callee drops them, never both.
+- **Calls on exit edges.** `return`, `break`, `continue` and `throw` emit the drops (and
+  `finally` blocks) of the scopes they leave without popping them, and an async cancel path
+  emits every scope's drops. A call there (drop glue running a `[Symbol.dispose]()`, a call in
+  a `finally`) gets a pad without what the edge has dropped or is dropping: each scope keeps a
+  count of the entries pads still drop (`Scope::pad_keep`), lowered to the index of the entry
+  being dropped as the edge goes and to 0 once the scope is done, and restored after the edge.
+  `pop_scope` pops first; while it drops the popped entries, a pad drops the ones it hasn't
+  reached yet, so a disposer that panics doesn't leak the entries before it. The old value of a
+  reassigned local (`drop_old`) is left out of the pads of its own drop, and the new value,
+  which no scope owns until it is stored, is in them.
 - **Pads are shared.** A pad is a chain of links, one per drop entry, innermost first, each
   ending in a jump to the pad of the entries outside it; the empty pad is one block calling
   `velt_eh_resume`. Links are cached per function by the entries and the states they read, so

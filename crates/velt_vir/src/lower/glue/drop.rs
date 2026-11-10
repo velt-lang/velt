@@ -7,7 +7,7 @@ use velt_sema::hir::{TyId, TyKind};
 use super::{Glue, SLOT_DROP};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{cint, unit, FnLower};
+use crate::lower::{cint, unit, DropEntry, FnLower};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
@@ -298,7 +298,11 @@ impl FnLower<'_, '_> {
             self.obj_drop_chain_body(obj, ty, chain);
         } else {
             let p = Place::local(obj);
+            // A dispose that panics leaves the fields and the memory to the pad (cleanup.rs).
+            let held = self.pads.popped.len();
+            self.pads.popped.push(DropEntry::Disposing(p.clone(), ty));
             self.call_dispose(Operand::Copy(p.clone()), ty);
+            self.pads.popped.truncate(held);
             let tys = self.cx.adt_field_tys(ty);
             for (i, t) in tys.into_iter().enumerate() {
                 self.drop_field(&p, ty, i as u32, t, None);

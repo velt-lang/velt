@@ -460,6 +460,110 @@ fn a_panic_in_a_generator_body_is_caught() {
     }
 }
 
+/// Drops on exit edges whose disposer panics: the pad of a drop on an edge drops only what that
+/// edge hasn't dropped yet. A `return` dropping two locals (the second's dispose panics), a
+/// block ending normally the same way (the first is still dropped), a reassignment whose old
+/// value's dispose panics, a `finally` that panics after the `return` in its `try` dropped the
+/// `try`'s locals, and one on a `break`.
+#[cfg(not(windows))]
+const EXIT_EDGES: &str = r#"
+import { catchVeltPanic } from "velt/zz_unwind";
+
+function boom(i: number): number { if (i > 5) { const xs = [1]; return xs[i]; } return i; }
+
+class Noisy {
+  n: number;
+  s: string;
+  constructor(n: number) { this.n = n; this.s = "noisy" + n.toString(); }
+  [Symbol.dispose]() {
+    console.log("dispose " + this.n.toString());
+    if (this.n == 2) { boom(9); }
+  }
+}
+
+function early(c: boolean): number {
+  const a = new Noisy(1);
+  const b = new Noisy(2);
+  if (c) {
+    return 5;
+  }
+  return 6;
+}
+
+function block(n: number): number {
+  const s = "block" + n.toString();
+  {
+    const a = new Noisy(1);
+    const b = new Noisy(2);
+  }
+  return s.length;
+}
+
+function reassign(n: number): number {
+  let x = new Noisy(2);
+  x = new Noisy(n);
+  return x.n;
+}
+
+function fin(n: number): number {
+  const s = "fin" + n.toString();
+  try {
+    const a = new Noisy(3);
+    const t = "inner" + n.toString();
+    return a.n + t.length;
+  } finally {
+    console.log("finally " + s);
+    boom(n);
+  }
+}
+
+function brk(n: number): number {
+  let t = 0;
+  for (let i = 0; i < 3; i++) {
+    const b = new Noisy(4);
+    try {
+      if (i == 1) { break; }
+      t += b.n;
+    } finally {
+      t += boom(n + i);
+    }
+  }
+  return t;
+}
+
+function main() {
+  console.log("A", catchVeltPanic(() => { console.log(early(true)); }) !== null);
+  console.log("B", catchVeltPanic(() => { console.log(block(1)); }) !== null);
+  console.log("C", catchVeltPanic(() => { console.log(reassign(5)); }) !== null);
+  console.log("D", catchVeltPanic(() => { console.log(fin(9)); }) !== null);
+  console.log("E", catchVeltPanic(() => { console.log(brk(5)); }) !== null);
+}
+"#;
+
+#[cfg(not(windows))]
+const EXIT_EDGES_OUT: &str = "dispose 2
+dispose 1
+A true
+dispose 2
+dispose 1
+B true
+dispose 2
+dispose 5
+C true
+dispose 3
+finally fin9
+D true
+dispose 4
+dispose 4
+E true
+";
+
+#[cfg(not(windows))]
+#[test]
+fn pads_on_exit_edges_drop_only_what_the_edge_has_not() {
+    assert_balanced(EXIT_EDGES, DEBUG_AND_RELEASE, EXIT_EDGES_OUT);
+}
+
 /// A drop in a cleanup pad that panics: the second panic aborts instead of unwinding through the
 /// frame whose cleanup is running (which would drop again what it is dropping).
 #[cfg(not(windows))]

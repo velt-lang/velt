@@ -9,6 +9,7 @@
 //! and a new temporary adds one link.
 
 use rustc_hash::FxHashMap;
+use velt_sema::hir::LocalId;
 
 use super::state::{DropEntry, LState};
 use super::FnLower;
@@ -27,6 +28,12 @@ pub(super) struct Pads {
     gen_resume: Option<BlockId>,
     /// While a pad is lowered: its calls get no unwind edge.
     inside: bool,
+    /// What the frame owns outside the scopes while a drop is emitted, innermost: the entries
+    /// of the scope `pop_scope` is dropping that are not dropped yet (it pops the scope first),
+    /// and the new value of a local whose old value `drop_old` is dropping.
+    pub(super) popped: Vec<DropEntry>,
+    /// The locals whose old value `drop_old` is dropping: a pad doesn't drop them again.
+    pub(super) dropping: Vec<LocalId>,
     /// Each link of a poll function: (its first block, the next link), for the spill pass,
     /// which bypasses the links touching the state (async_fn/spill).
     pub(super) links: Vec<(BlockId, BlockId)>,
@@ -67,8 +74,11 @@ impl FnLower<'_, '_> {
         if self.pads.inside || self.dead() || !eh::may_unwind(callee) || !self.cx.unwind_pads() {
             return None;
         }
+        // What the frame owns now: what an exit edge being emitted has dropped is not
+        // (`Scope::pad_keep`), what `pop_scope` has not dropped yet still is (`popped`).
         let entries: Vec<DropEntry> = (self.scopes.iter())
-            .flat_map(|s| s.drops.iter())
+            .flat_map(|s| s.drops.iter().take(s.pad_keep))
+            .chain(&self.pads.popped)
             .filter(|d| self.drops_something(d))
             .cloned()
             .collect();
@@ -145,6 +155,7 @@ impl FnLower<'_, '_> {
     /// a drop flag or is statically initialized; every other entry always.
     fn drops_something(&self, d: &DropEntry) -> bool {
         match d {
+            DropEntry::Local(id) if self.pads.dropping.contains(id) => false,
             DropEntry::Local(id) => {
                 let i = &self.info[id.0 as usize];
                 i.cell || i.flag.is_some() || i.state == LState::Init
@@ -170,6 +181,7 @@ impl FnLower<'_, '_> {
             }
             DropEntry::Temp(p, ty) => format!("T{p}:{}", ty.0),
             DropEntry::HalfBuilt(p, ty) => format!("H{p}:{}", ty.0),
+            DropEntry::Disposing(p, ty) => format!("D{p}:{}", ty.0),
             DropEntry::Flagged(p, ty, flag) => format!("F{p}:{}:{}", ty.0, flag.0),
             DropEntry::Rest(p, ty, pat) => {
                 format!("R{p}:{}:{:p}", ty.0, std::rc::Rc::as_ptr(pat))

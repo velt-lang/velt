@@ -15,6 +15,7 @@ impl FnLower<'_, '_> {
         self.scopes.push(Scope {
             kind,
             drops: vec![],
+            pad_keep: usize::MAX,
         });
     }
 
@@ -28,9 +29,14 @@ impl FnLower<'_, '_> {
         while self.str_datas.last().is_some_and(|d| d.2 > open) {
             self.str_datas.pop();
         }
-        for d in s.drops.iter().rev() {
+        // A pad in the drop of an entry still drops the entries before it (cleanup.rs).
+        let base = self.pads.popped.len();
+        self.pads.popped.extend(s.drops.iter().cloned());
+        for (j, d) in s.drops.iter().enumerate().rev() {
+            self.pads.popped.truncate(base + j);
             self.drop_entry(d);
         }
+        self.pads.popped.truncate(base);
         if let ScopeKind::Finally(Some(b)) = s.kind {
             self.finally_body(&b);
         }
@@ -38,23 +44,50 @@ impl FnLower<'_, '_> {
 
     /// Emit (without popping) the cleanup of every scope at index `>= depth`, innermost first.
     /// Used by `return`/`break`/`continue`/`throw`, which leave several scopes at once.
+    /// A cleanup pad emitted on that edge drops only what the edge hasn't dropped yet: the
+    /// entries before the one being dropped, and in a `finally` it runs none of the scopes it
+    /// left (`Scope::pad_keep`, restored once the edge is emitted).
     pub(super) fn emit_drops_from(&mut self, depth: usize) {
+        let kept = self.pad_kept(depth);
         for i in (depth..self.scopes.len()).rev() {
-            let drops = self.scopes[i].drops.clone();
-            for d in drops.iter().rev() {
-                self.drop_entry(d);
-            }
+            self.emit_scope_drops(i);
             self.run_finally(i);
         }
+        self.restore_pad_kept(depth, kept);
     }
 
     /// The drops of every scope, innermost first, without `finally` blocks: the cleanup of an
     /// async function cancelled at a suspension point (dropping a future never runs user code).
     pub(super) fn emit_cancel_drops(&mut self) {
+        let kept = self.pad_kept(0);
         for i in (0..self.scopes.len()).rev() {
-            let drops = self.scopes[i].drops.clone();
-            for d in drops.iter().rev() {
-                self.drop_entry(d);
+            self.emit_scope_drops(i);
+        }
+        self.restore_pad_kept(0, kept);
+    }
+
+    /// The drops of scope `i` on an exit edge, innermost first; its pads keep only the entries
+    /// not dropped yet.
+    fn emit_scope_drops(&mut self, i: usize) {
+        let drops = self.scopes[i].drops.clone();
+        for (j, d) in drops.iter().enumerate().rev() {
+            let s = &mut self.scopes[i];
+            s.pad_keep = s.pad_keep.min(j);
+            self.drop_entry(d);
+        }
+        self.scopes[i].pad_keep = 0;
+    }
+
+    /// `Scope::pad_keep` of the scopes from `depth` on, before an exit edge changes them.
+    fn pad_kept(&self, depth: usize) -> Vec<usize> {
+        let scopes = self.scopes.get(depth..).unwrap_or_default();
+        scopes.iter().map(|s| s.pad_keep).collect()
+    }
+
+    fn restore_pad_kept(&mut self, depth: usize, kept: Vec<usize>) {
+        if let Some(scopes) = self.scopes.get_mut(depth..) {
+            for (s, k) in scopes.iter_mut().zip(kept) {
+                s.pad_keep = k;
             }
         }
     }
@@ -139,21 +172,24 @@ impl FnLower<'_, '_> {
     /// constructor shared (`this` stored elsewhere) only loses this reference.
     fn drop_half_built(&mut self, p: &Place, ty: TyId) {
         let obj = Operand::Copy(p.clone());
-        let free = |lw: &mut Self| {
-            for (i, t) in lw.cx.adt_field_tys(ty).into_iter().enumerate() {
-                if lw.cx.needs_drop(t) {
-                    let fp = lw.field_place(p, ty, i as u32);
-                    lw.drop_glue(fp, t);
-                }
-            }
-            lw.object_free(Operand::Copy(p.clone()), ty);
-        };
+        let free = |lw: &mut Self| lw.drop_fields_and_free(p, ty);
         if self.cx.counted(ty) {
             let weak = self.cx.weak_capable(ty);
             self.release_of(obj, ty, weak, free);
         } else {
             free(self);
         }
+    }
+
+    /// Drop the fields of the class object at `p` and free it, without its `[Symbol.dispose]()`.
+    fn drop_fields_and_free(&mut self, p: &Place, ty: TyId) {
+        for (i, t) in self.cx.adt_field_tys(ty).into_iter().enumerate() {
+            if self.cx.needs_drop(t) {
+                let fp = self.field_place(p, ty, i as u32);
+                self.drop_glue(fp, t);
+            }
+        }
+        self.object_free(Operand::Copy(p.clone()), ty);
     }
 
     /// Register "drop what the pattern did not move out of `place`" in the innermost scope.
@@ -194,6 +230,7 @@ impl FnLower<'_, '_> {
                 self.switch_to(join);
             }
             DropEntry::HalfBuilt(p, ty) => self.drop_half_built(p, *ty),
+            DropEntry::Disposing(p, ty) => self.drop_fields_and_free(p, *ty),
             DropEntry::Local(id) => self.drop_local(*id),
             DropEntry::Rest(p, ty, pat) => self.drop_rest(p.clone(), *ty, pat),
             DropEntry::ConsumedArray { arr, next, elem } => self.drop_consumed(arr, *next, *elem),
@@ -303,8 +340,8 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Drop the current value of a local that is about to be overwritten.
-    pub(super) fn drop_old(&mut self, id: LocalId) {
+    /// Drop the current value of a local that is about to be overwritten with `new`.
+    pub(super) fn drop_old(&mut self, id: LocalId, new: &Operand) {
         let info = &self.info[id.0 as usize];
         let ty = info.ty;
         if !self.cx.needs_drop(ty) {
@@ -312,7 +349,16 @@ impl FnLower<'_, '_> {
         }
         let info = &self.info[id.0 as usize];
         if info.droppable && !info.cell {
+            // A pad in the old value's drop doesn't drop it again, but drops the new value,
+            // which no scope owns until it is stored.
+            let held = self.pads.popped.len();
+            if let Operand::Copy(p) = new {
+                self.pads.popped.push(DropEntry::Temp(p.clone(), ty));
+            }
+            self.pads.dropping.push(id);
             self.drop_entry(&DropEntry::Local(id));
+            self.pads.dropping.pop();
+            self.pads.popped.truncate(held);
         } else if info.indirect {
             // Borrowed param written in place (`Mutex.with` callback): the caller's value is
             // always initialized. In read mode (a variable a `read` callback captured): the
