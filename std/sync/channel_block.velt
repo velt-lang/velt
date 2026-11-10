@@ -358,6 +358,19 @@ export function join(b: usize, f: usize, kind: usize): void {
   store32(f + F_STATE, QUEUED);
 }
 
+/** How many waits are in `kind`'s line in block `b` (std's tests of the lines). */
+export function waiting(b: usize, kind: usize): usize {
+  lock(b);
+  let n: usize = 0;
+  let c = ld(b + B_LINES + kind * 16);
+  while (c !== 0) {
+    n += 1;
+    c = ld(c + F_NEXT);
+  }
+  unlock(b);
+  return n;
+}
+
 /** One more count of block `b`, for a wait. */
 export function retain(b: usize): void {
   // SAFETY: the count, changed atomically by every holder.
