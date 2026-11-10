@@ -53,8 +53,13 @@ async function parent() {
   console.log("exit", await p.wait(), p.exitCode ?? -1);
   p.close();
 
+  // The lookup uses the PATH given to the child (as in Node), so a PATH of only a missing
+  // directory makes this ENOENT on every machine (a PATH entry the lookup may not search would
+  // make it EACCES, in Node too).
+  const noPath = new Map<string, string>();
+  noPath.set("PATH", "velt-no-such-dir");
   try {
-    const missing = await exec("velt-no-such-program");
+    const missing = await exec("velt-no-such-program", [], { env: noPath });
     console.log(missing.code);
   } catch (err) {
     console.log(err.code, err.message.startsWith("spawn velt-no-such-program: "));

@@ -133,7 +133,11 @@ fn runtime_lib() -> PathBuf {
         "libvelt_rt.a"
     };
     let p = target_dir().join(name);
-    assert!(p.exists(), "staticlib not found at {}", p.display());
+    assert!(
+        p.exists(),
+        "staticlib not found at {} (build it first: `cargo build -p velt_rt`, with `--release` for a release test run)",
+        p.display()
+    );
     p
 }
 

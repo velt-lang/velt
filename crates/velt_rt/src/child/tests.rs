@@ -7,6 +7,16 @@ use crate::str_array::VeltStrArray;
 use std::mem::MaybeUninit;
 
 fn spec(program: &'static str, args: &[&'static str], stdio: u32) -> VeltCommand {
+    spec_env(program, args, stdio, &[("VELT_T", "42")])
+}
+
+/// A spec adding `env` to the inherited environment.
+fn spec_env(
+    program: &'static str,
+    args: &[&'static str],
+    stdio: u32,
+    env: &[(&str, &str)],
+) -> VeltCommand {
     VeltCommand {
         program: VeltStr::from_static(program.as_bytes()),
         args: VeltStrArray::from_vec(
@@ -15,10 +25,12 @@ fn spec(program: &'static str, args: &[&'static str], stdio: u32) -> VeltCommand
                 .collect(),
         ),
         cwd: VeltStr::empty(),
-        env: VeltStrArray::from_vec(vec![
-            VeltStr::from_static(b"VELT_T"),
-            VeltStr::from_static(b"42"),
-        ]),
+        env: VeltStrArray::from_vec(
+            env.iter()
+                .flat_map(|(name, value)| [name, value])
+                .map(|s| VeltStr::from_bytes(s.as_bytes()))
+                .collect(),
+        ),
         stdio,
         clear_env: 0,
     }
@@ -68,13 +80,6 @@ fn output_sync_collects_everything() {
         );
     }
     inputs.iter_mut().for_each(|i| unsafe { i.release() });
-    let missing = spec("velt-no-such-program", &[], 0);
-    let (code, message) = output_sync(&missing, &VeltStr::empty()).unwrap_err();
-    assert_eq!(code, crate::result::code::NOT_FOUND);
-    assert!(
-        message.starts_with("spawn velt-no-such-program: "),
-        "{message}"
-    );
 }
 
 #[cfg(unix)]
@@ -103,4 +108,75 @@ fn spawned_child_is_reaped_and_killable() {
         assert_eq!(velt_rt_child_exit_code(child), 128 + libc::SIGTERM as i64);
         velt_rt_child_close(child);
     }
+}
+
+/// A fresh directory for one test (its mode decides what the lookup may see in it).
+#[cfg(unix)]
+fn test_dir(name: &str, mode: u32) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("velt-child-{name}-{}", std::process::id()));
+    let _ = std::fs::create_dir(&dir);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).expect("chmod");
+    dir
+}
+
+#[cfg(unix)]
+fn remove_test_dir(dir: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    let _ = std::fs::remove_dir(dir);
+}
+
+/// A program missing from every `PATH` entry is `ENOENT`. The lookup uses the `PATH` given to
+/// the child, as in Node, so the test doesn't depend on the machine's `PATH` (an entry the
+/// lookup may not search would make it `EACCES`, see below).
+#[cfg(unix)]
+#[test]
+fn missing_program_is_enoent() {
+    let empty = test_dir("empty", 0o700);
+    let path = format!("{}:/velt-no-such-dir", empty.display());
+    let missing = spec_env("velt-no-such-program", &[], 0, &[("PATH", &path)]);
+    let missing = output_sync(&missing, &VeltStr::empty());
+    remove_test_dir(&empty);
+    let (code, message) = missing.unwrap_err();
+    assert_eq!(code, crate::result::code::NOT_FOUND, "{message}");
+    assert!(
+        message.starts_with("spawn velt-no-such-program: "),
+        "{message}"
+    );
+}
+
+/// A program in an entry after one the lookup may not search is still found. A missing program
+/// is then what the platform's lookup says: on Linux `EACCES`, as in Node there (`spawn x
+/// EACCES`: like `execvp`, the lookup remembers the denied entry); on macOS `ENOENT` (its
+/// lookup skips the entry).
+#[cfg(unix)]
+#[test]
+fn unsearchable_path_entry_reports_as_the_platform_does() {
+    // SAFETY: no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        return; // root may search any directory
+    }
+    let closed = test_dir("closed", 0o000);
+    let empty = test_dir("closed-empty", 0o700);
+    let path = format!("{}:{}", closed.display(), empty.display());
+    let missing = spec_env("velt-no-such-program", &[], 0, &[("PATH", &path)]);
+    let missing = output_sync(&missing, &VeltStr::empty());
+    let path = format!("{}:/bin:/usr/bin", closed.display());
+    let found = spec_env("sh", &["-c", "exit 4"], 0, &[("PATH", &path)]);
+    let found = output_sync(&found, &VeltStr::empty());
+    remove_test_dir(&closed);
+    remove_test_dir(&empty);
+    let (code, message) = missing.unwrap_err();
+    let expected = if cfg!(target_os = "linux") {
+        crate::result::code::PERMISSION_DENIED
+    } else {
+        crate::result::code::NOT_FOUND
+    };
+    assert_eq!(code, expected, "{message}");
+    assert!(
+        message.starts_with("spawn velt-no-such-program: "),
+        "{message}"
+    );
+    assert_eq!(found, Ok((4, String::new(), String::new())));
 }
