@@ -1,0 +1,4 @@
+NaN NaN NaN NaN NaN NaN NaN NaN
+-1 0 0 false false NaN false 2
+false true false false b1 kundefined undefinedx
+{ one: 5, z: NaN, y: 2, w: NaN } { b: 'b', z: 'undefinedx' }

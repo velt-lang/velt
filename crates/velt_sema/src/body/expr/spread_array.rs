@@ -84,6 +84,7 @@ impl FnCx<'_, '_> {
                 _ => None,
             };
             let mut h = self.payload_expr(inner, hint, Want::Borrow);
+            h = self.record_present_iter(h, inner, "");
             h = self.read_shared(h);
             // `[...x]` of an `any`: an array, converted as `x as any[]` is (what `for...of`
             // through `any` iterates). Another value is a `TypeError` (#924).

@@ -397,12 +397,29 @@ impl FnCx<'_, '_> {
         keep: bool,
         span: Span,
     ) -> hir::Expr {
+        let msg = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Lit(ast::Lit::Str(msg.into())),
+            span,
+        };
+        self.checked_present_with(h, msg, exp, keep, span)
+    }
+
+    /// [`checked_present`](Self::checked_present) with the message computed by `msg` (a string
+    /// expression, evaluated only when `h` is nullish).
+    pub(crate) fn checked_present_with(
+        &mut self,
+        h: hir::Expr,
+        msg: ast::Expr,
+        exp: Option<TyId>,
+        keep: bool,
+        span: Span,
+    ) -> hir::Expr {
         let mk = |kind| ast::Expr {
             id: ast::NodeId(u32::MAX),
             kind,
             span,
         };
-        let msg = mk(ast::ExprKind::Lit(ast::Lit::Str(msg.into())));
         let panic = mk(ast::ExprKind::Call {
             callee: Box::new(mk(ast::ExprKind::Ident(ast::Ident {
                 name: "panic".into(),
@@ -414,6 +431,58 @@ impl FnCx<'_, '_> {
         });
         let keep = keep && is_place(&h) && self.cx.dynamic(h.ty).is_none();
         self.nullish_checked_keeping(h, &panic, exp, keep, span)
+    }
+
+    /// `h ?? rhs` for an `rhs` written as an expression; with `keep`, a place is borrowed.
+    pub(crate) fn present_or_expr(
+        &mut self,
+        h: hir::Expr,
+        rhs: &ast::Expr,
+        exp: Option<TyId>,
+        keep: bool,
+        span: Span,
+    ) -> hir::Expr {
+        let keep = keep && is_place(&h) && self.cx.dynamic(h.ty).is_none();
+        self.nullish_checked_keeping(h, rhs, exp, keep, span)
+    }
+
+    /// `match s { present v => f(v), nothing => none }` for an option `s`, borrowing a place.
+    pub(crate) fn present_match(
+        &mut self,
+        mut s: hir::Expr,
+        f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
+        none: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let payload = self
+            .present_payload(s.ty)
+            .expect("ICE: present_match of a value that is never nothing");
+        let (l, mode) = self.option_binding(&s, payload, "<present>", false);
+        if mode == UseMode::Move {
+            self.force_move(&mut s);
+        }
+        let v = self.mk(H::Local(l, mode), payload, span);
+        let body = f(self, v);
+        let (ty, sty) = (body.ty, s.ty);
+        let some = self.pat(P::Binding(l, mode), payload, span);
+        let (guard, rest) = self.present_guard(sty, l, payload, span);
+        let arms = vec![
+            hir::Arm {
+                pat: self.present_pat(some, sty, span),
+                guard,
+                body,
+            },
+            hir::Arm {
+                pat: rest,
+                guard: None,
+                body: none,
+            },
+        ];
+        let kind = H::Match {
+            scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, ty, span)
     }
 
     pub(crate) fn nullish(

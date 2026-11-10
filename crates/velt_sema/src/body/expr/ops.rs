@@ -161,6 +161,7 @@ impl FnCx<'_, '_> {
                     _ => self.payload_expr(operand, num_exp, Want::Borrow),
                 };
                 let inner = self.unbrand(inner);
+                let inner = self.record_operand(inner);
                 if self.cx.maybe_dynamic(inner.ty) {
                     return self.dynamic_unary(op, inner, span);
                 }
@@ -188,6 +189,7 @@ impl FnCx<'_, '_> {
             ast::UnaryOp::Plus => {
                 let mut inner = self.payload_expr(operand, num_exp, Want::Borrow);
                 inner = self.unbrand(inner);
+                inner = self.record_operand(inner);
                 if self.cx.maybe_dynamic(inner.ty) {
                     return self.dynamic_unary(op, inner, span);
                 }
@@ -206,6 +208,7 @@ impl FnCx<'_, '_> {
                 let int_exp = exp.filter(|t| self.cx.ty.is_int(*t));
                 let inner = self.payload_expr(operand, int_exp, Want::Borrow);
                 let inner = self.unbrand(inner);
+                let inner = self.record_operand(inner);
                 if self.cx.maybe_dynamic(inner.ty) {
                     return self.dynamic_unary(op, inner, span);
                 }
@@ -451,6 +454,18 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         use ast::BinaryOp as B;
+        // An open record's read is its `V` in arithmetic and ordering (`record_present`).
+        // Text (`"k" + r[k]`) writes a missing value as `undefined`, as in Node.
+        let text = op == B::Add && (l.ty == self.cx.ty.str_ || r.ty == self.cx.ty.str_);
+        let (l, r) = match op {
+            B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq => (l, r),
+            _ if text => (l, r),
+            B::Lt | B::LtEq | B::Gt | B::GtEq => match self.record_ordering(op, l, r, span) {
+                Ok(h) => return h,
+                Err(lr) => (self.record_operand(lr.0), self.record_operand(lr.1)),
+            },
+            _ => (self.record_operand(l), self.record_operand(r)),
+        };
         // Literal types take part in operators as their base type (`c.kind + "!"`).
         let (l, r) = if l.ty != r.ty || self.cx.lit_value(l.ty).is_some() {
             (self.widen_value(l), self.widen_value(r))
