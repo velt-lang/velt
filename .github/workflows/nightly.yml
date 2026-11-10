@@ -339,7 +339,8 @@ jobs:
           path: bench-baseline.tsv
           key: bench-baseline-${{ github.run_id }}-${{ github.sha }}
       - name: report the failure
-        if: failure() && steps.bench.outcome == 'failure'
+        # Only a run on main speaks for main: a dispatch on a branch files nothing.
+        if: failure() && steps.bench.outcome == 'failure' && github.ref == 'refs/heads/main'
         uses: actions/github-script@v7
         env:
           BASELINE_KEY: ${{ steps.baseline.outputs.cache-matched-key }}
@@ -389,8 +390,9 @@ jobs:
                   'Fix that and the next run compares every benchmark; the baseline stays where it was.',
                 ]
             ).join('\n\n');
-            const open = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 });
-            const existing = open.data.find(i => i.title === title && !i.pull_request);
+            // Every open issue: the first page reaches back only a few days.
+            const open = await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: 'open', per_page: 100 });
+            const existing = open.find(i => i.title === title && !i.pull_request);
             if (existing) {
               await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
             } else {
@@ -399,18 +401,20 @@ jobs:
 
   # The build-speed yardstick (bench/compile/scale/yardstick.py, #2707): `velt check`, a debug and
   # a release build of a generated application (one service of N features), by instructions per
-  # stage (callgrind, so load doesn't matter), with the functions and statements lowered and the
-  # peak memory. Between 10k and 100k lines nothing may grow faster than 2.1x per doubling of the
-  # lines, and every stage stays within its instructions per line in
-  # bench/compile/scale/budgets.tsv. A failure opens (or comments on) the issue "nightly
+  # stage (callgrind, so load doesn't matter; clang and the linker through cachegrind wrappers,
+  # `--children`), with the functions and statements lowered, the IR lines and the peak memory
+  # (the median of three runs). Check and debug run at 10k and 100k lines, release in full at 10k
+  # and its LLVM IR lines at 100k. Between the sizes nothing may grow faster than 2.1x per
+  # doubling of the lines, and everything stays within bench/compile/scale/budgets.tsv
+  # (instructions per line +3%, peak memory +10%, counts of the code +1%), which is written from
+  # this job's `yardstick` artifact. A failure on main opens (or comments on) the issue "nightly
   # build-speed yardstick failed", or "nightly build-speed yardstick failed to run" when nothing was
-  # compared. Release builds run at 10k only here (clang uncounted, as for every size: `--children`
-  # counts it on demand), and 1M lines is on demand too: `bench/compile/scale/yardstick.py --sizes
-  # 100000,1000000`. Same fixed image as `bench`, for the same reason.
+  # compared. Release in full at 100k and 1M lines are on demand: `bench/compile/scale/yardstick.py
+  # --sizes 100000,1000000 --children`. Same fixed image as `bench`, for the same reason.
   yardstick:
     if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'yardstick')
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 90
     permissions:
       contents: read
       issues: write
@@ -426,7 +430,16 @@ jobs:
         run: |
           set -o pipefail
           python3 bench/compile/scale/yardstick.py --check --sizes 10000,100000 \
-            --release-sizes 10000 --out "$RUNNER_TEMP/yardstick" --md "$RUNNER_TEMP/yardstick.md"
+            --release-sizes 10000 --children --out "$RUNNER_TEMP/yardstick" \
+            --md "$RUNNER_TEMP/yardstick.md"
+      # Each measurement's result.json: `yardstick.py --reuse --write-budgets` on these sets the
+      # budgets from this runner's counts.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: yardstick
+          path: ${{ runner.temp }}/yardstick/app-*/*/result.json
+          if-no-files-found: ignore
       - name: summary
         if: always()
         run: |
@@ -439,7 +452,8 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: report the failure
-        if: failure() && steps.yardstick.outcome == 'failure'
+        # Only a run on main speaks for main: a dispatch on a branch files nothing.
+        if: failure() && steps.yardstick.outcome == 'failure' && github.ref == 'refs/heads/main'
         uses: actions/github-script@v7
         with:
           script: |
@@ -463,8 +477,9 @@ jobs:
                   'The log of its step has the error (a build of the generated application that failed, or a callgrind dump count that no longer matches the stages).',
                 ]
             ).join('\n\n');
-            const open = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 });
-            const existing = open.data.find(i => i.title === title && !i.pull_request);
+            // Every open issue: the first page reaches back only a few days.
+            const open = await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: 'open', per_page: 100 });
+            const existing = open.find(i => i.title === title && !i.pull_request);
             if (existing) {
               await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
             } else {
