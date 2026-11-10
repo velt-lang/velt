@@ -12,3 +12,9 @@ typed x
 true
 made
 made
+default x
+rest 1
+any param x
+held zero
+held one x
+true

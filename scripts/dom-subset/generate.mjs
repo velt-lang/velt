@@ -91,13 +91,13 @@ const STD_FILES = new Map([
 // that the list asks for itself.
 const STD_CLASSES = new Set(["Event"]);
 // Interfaces written here, as std's classes declare them: `EventTarget`'s methods are std's
-// class's (std/lang/event/event_target.velt), which take a listener at its own error type and
-// with or without its parameter. Neither a global nor in the index (`INTERNAL`).
-const LISTENER = "((evt: Event) => void throws E) | (() => void throws E) | EventListenerObject | null";
+// class's (std/lang/event/event_target.velt), whose `dispatchEvent` may throw. Neither a global
+// nor in the index (`INTERNAL`).
+const LISTENER = "EventListenerOrEventListenerObject | null";
 const FIXED = new Map([
   ["EventTarget", `export interface EventTarget {
-  addEventListener<E = never>(type: string, callback: ${LISTENER}, options?: AddEventListenerOptions | boolean): void;
-  removeEventListener<E = never>(type: string, callback: ${LISTENER}, options?: EventListenerOptions | boolean): void;
+  addEventListener(type: string, callback: ${LISTENER}, options?: AddEventListenerOptions | boolean): void;
+  removeEventListener(type: string, callback: ${LISTENER}, options?: EventListenerOptions | boolean): void;
   dispatchEvent(event: Event): boolean throws Error;
 }`],
 ]);

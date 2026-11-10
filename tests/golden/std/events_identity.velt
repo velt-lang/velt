@@ -1,6 +1,6 @@
 // `removeEventListener` and a second `addEventListener` find a listener by the function or
 // object passed, as in Node (#2378): closures with and without the event parameter, one that
-// throws, a declared function, a handler object, and a value typed `EventListener`.
+// throws, a declared function, a handler object, a value typed `EventListener`, and the shapes below.
 const t = new EventTarget();
 const zero = () => console.log("zero");
 const one = (e: Event) => console.log("one", e.type);
@@ -49,3 +49,26 @@ const make = () => () => console.log("made");
 t.addEventListener("y", make());
 t.addEventListener("y", make());
 t.dispatchEvent(new Event("y"));
+// A default parameter, a rest parameter, an `any` parameter, and a function held as an `any`
+// (with and without the parameter): each is found again (#2700 keeps a converted function's
+// identity).
+const t2 = new EventTarget();
+const dflt = (e: Event | null = null) => console.log("default", e === null ? "none" : e.type);
+const rest = (...args: any[]) => console.log("rest", args.length);
+const anyParam = (e: any) => console.log("any param", e.type);
+const held: any = () => console.log("held zero");
+const heldOne: any = (e: Event) => console.log("held one", e.type);
+for (let i = 0; i < 2; i++) {
+  t2.addEventListener("x", dflt);
+  t2.addEventListener("x", rest);
+  t2.addEventListener("x", anyParam);
+  t2.addEventListener("x", held);
+  t2.addEventListener("x", heldOne);
+}
+t2.dispatchEvent(new Event("x"));
+t2.removeEventListener("x", dflt);
+t2.removeEventListener("x", rest);
+t2.removeEventListener("x", anyParam);
+t2.removeEventListener("x", held);
+t2.removeEventListener("x", heldOne);
+console.log(t2.dispatchEvent(new Event("x")));

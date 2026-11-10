@@ -25,6 +25,7 @@ t1.addEventListener("x", () => console.log("b1"));
 t1.dispatchEvent(new Event("x"));
 
 // Capture is part of a listener's identity; the order is the order of adding.
+t.addEventListener("y", null);
 t.addEventListener("y", b, true);
 t.addEventListener("y", b, false);
 t.addEventListener("y", b);

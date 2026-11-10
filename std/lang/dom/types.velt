@@ -9,8 +9,8 @@
 import { Event } from "velt/lang/event/event";
 import {
   AddEventListenerOptions,
-  EventListenerObject,
   EventListenerOptions,
+  EventListenerOrEventListenerObject,
 } from "velt/lang/event/event_target";
 
 export interface ARIAMixin {}
@@ -67,14 +67,14 @@ export interface ElementContentEditable {
 }
 
 export interface EventTarget {
-  addEventListener<E = never>(
+  addEventListener(
     type: string,
-    callback: ((evt: Event) => void throws E) | (() => void throws E) | EventListenerObject | null,
+    callback: EventListenerOrEventListenerObject | null,
     options?: AddEventListenerOptions | boolean,
   ): void;
-  removeEventListener<E = never>(
+  removeEventListener(
     type: string,
-    callback: ((evt: Event) => void throws E) | (() => void throws E) | EventListenerObject | null,
+    callback: EventListenerOrEventListenerObject | null,
     options?: EventListenerOptions | boolean,
   ): void;
   dispatchEvent(event: Event): boolean throws Error;

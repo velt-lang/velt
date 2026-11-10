@@ -38,13 +38,10 @@ export interface AddEventListenerOptions extends EventListenerOptions {
 // Node's list does: a listener added during a dispatch is called in it, unless the one the
 // dispatch would reach next was the last and was removed.
 //
-// `key` is the function or object the program passed, as an `any`, which keeps its identity:
-// `removeEventListener` and a second `addEventListener` find it by that. The methods take the
-// function at its own error type and with or without the event parameter, so passing it
-// converts nothing (a conversion to another function type would wrap it, a new function each
-// time); `callback` is what `dispatchEvent` calls, made once when the listener is added.
+// `removeEventListener` and a second `addEventListener` find a listener by the function or
+// object passed: a function converted to `EventListener` (a closure that doesn't throw, takes
+// `any` or no parameter) keeps its identity, so the one passed again is the same.
 class Listener {
-  key: any;
   callback: EventListenerOrEventListenerObject | null;
   capture: boolean;
   once: boolean;
@@ -54,14 +51,12 @@ class Listener {
   next: Listener | null = null;
 
   constructor(
-    key: any,
     callback: EventListenerOrEventListenerObject | null,
     capture: boolean,
     once: boolean,
     passive: boolean,
     signal: AbortSignal | null,
   ) {
-    this.key = key;
     this.callback = callback;
     this.capture = capture;
     this.once = once;
@@ -69,9 +64,17 @@ class Listener {
     this.signal = signal;
   }
 
-  // Whether this is the listener of `key` (the function or object passed) for `capture`.
-  same(key: any, capture: boolean): boolean {
-    return this.callback !== null && this.capture === capture && this.key === key;
+  // Whether this is the listener of `callback` for `capture`: the same function, or the same
+  // object.
+  same(callback: EventListenerOrEventListenerObject, capture: boolean): boolean {
+    const c = this.callback;
+    if (c === null || this.capture !== capture) {
+      return false;
+    }
+    if (typeof c === "function") {
+      return typeof callback === "function" && c === callback;
+    }
+    return typeof callback !== "function" && c === callback;
   }
 
   // Whether its signal was aborted since it was added (then it is removed).
@@ -96,15 +99,14 @@ export class EventTarget implements Target {
    * Adds `callback` for events of `type`, unless it is `null` or already added for the same
    * `capture` (`options === true` is `{ capture: true }`), or `options.signal` is aborted.
    */
-  addEventListener<E = never>(
+  addEventListener(
     type: string,
-    callback: ((evt: Event) => void throws E) | (() => void throws E) | EventListenerObject | null,
+    callback: EventListenerOrEventListenerObject | null,
     options?: AddEventListenerOptions | boolean,
   ): void {
     if (callback === null) {
       return;
     }
-    const key: any = callback;
     let capture = false;
     let once = false;
     let passive = false;
@@ -122,7 +124,7 @@ export class EventTarget implements Target {
     }
     let head = this.lists.get(type);
     if (head === undefined) {
-      const h = new Listener(null, null, false, false, false, null);
+      const h = new Listener(null, false, false, false, null);
       this.lists.set(type, h);
       head = h;
     }
@@ -132,7 +134,7 @@ export class EventTarget implements Target {
       if (l === null) {
         break;
       }
-      if (l.same(key, capture) && !l.aborted()) {
+      if (l.same(callback, capture) && !l.aborted()) {
         return;
       }
       if (l.aborted()) {
@@ -142,19 +144,18 @@ export class EventTarget implements Target {
         last = l;
       }
     }
-    last.next = new Listener(key, callable(callback), capture, once, passive, signal);
+    last.next = new Listener(callback, capture, once, passive, signal);
   }
 
   /** Removes `callback` for events of `type` and the same `capture`, if it was added. */
-  removeEventListener<E = never>(
+  removeEventListener(
     type: string,
-    callback: ((evt: Event) => void throws E) | (() => void throws E) | EventListenerObject | null,
+    callback: EventListenerOrEventListenerObject | null,
     options?: EventListenerOptions | boolean,
   ): void {
     if (callback === null) {
       return;
     }
-    const key: any = callback;
     let capture = false;
     if (typeof options === "boolean") {
       capture = options;
@@ -167,7 +168,7 @@ export class EventTarget implements Target {
     }
     let cur = head.next;
     while (cur !== null) {
-      if (cur.same(key, capture)) {
+      if (cur.same(callback, capture)) {
         unlink(head, cur);
         return;
       }
@@ -240,19 +241,6 @@ export class EventTarget implements Target {
   [INSPECT]() {
     return {};
   }
-}
-
-// What `dispatchEvent` calls for `callback`: the function, one that drops the event for a
-// function without the parameter, or the object.
-function callable<E>(
-  callback: ((evt: Event) => void throws E) | (() => void throws E) | EventListenerObject,
-): EventListenerOrEventListenerObject {
-  if (typeof callback !== "function") {
-    return callback;
-  }
-  // Each member converts as its type says (one without the parameter is called without it).
-  const f: EventListener = callback;
-  return f;
 }
 
 // Takes `l` out of the list that starts at `head`; `l` keeps its `next` (see `Listener`).
