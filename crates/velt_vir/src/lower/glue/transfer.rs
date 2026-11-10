@@ -2,7 +2,7 @@
 //! thread safe there, in place. A counted object the sender holds the only reference to (a
 //! count of 1) stays, and its parts are transferred in turn; one that is still shared is replaced by a
 //! deep copy (made by the clone glue, so a resource is copied by its own `clone()`, whose result
-//! is transferred in turn: `settle_copy`) and the sender's reference released. Values that cannot reach a counted object are left alone.
+//! is transferred in turn: `settle_copy`, transfer_settle.rs) and the sender's reference released. Values that cannot reach a counted object are left alone.
 //!
 //! Class objects in a hierarchy with a vtable and interface values transfer through their
 //! vtable (`SLOT_TRANSFER`), closures through their environment's transfer entry
@@ -14,7 +14,7 @@ use velt_sema::hir::{DefId, TyId, TyKind};
 use super::{Glue, SLOT_TRANSFER};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{cfunc, cint, unit, FnLower, ScopeKind, Work};
+use crate::lower::{cfunc, cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// What velt_rt's `velt_rt_xfer_find` returns outside a transfer.
@@ -679,65 +679,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.call_rt(Rt::XferRecord, vec![p, new], None);
         self.goto(skip);
         self.switch_to(skip);
-    }
-
-    /// The fresh copy `new` (a counted pointer of type `ty`) made safe for the other thread
-    /// when a class's own `clone()` made part of it: that method may keep sharing parts of the
-    /// original (a shallow copy), so the copy is transferred in turn, and parts it still shares
-    /// are deep-copied. A `clone()` that returns an object referenced elsewhere (`this`, or one
-    /// it also stored) is a bug in the program: it panics, as the copy cannot be moved.
-    fn settle_copy(&mut self, new: Operand, ty: TyId) -> Operand {
-        if !self.cx.reaches_own_clone(ty) {
-            return new;
-        }
-        let new = self.rvalue_temp(Ty::Ptr, Rvalue::Use(new));
-        if self.cx.own_clone(ty).is_some() {
-            let ok = self.new_block();
-            let one = self.count_is_one(new.clone());
-            self.when_not(one, ok);
-            let name = self.cx.type_name(ty);
-            let msg = self.str_lit(&format!(
-                "`{name}.clone()` returned an object that is still referenced elsewhere (`this`, or one it also stored); a copy for another task must be a new object"
-            ));
-            let at = self.operand_addr(msg, Ty::Agg(vir::STR_AGG));
-            // The copy's reference goes first (others hold it: only decremented), so a caught
-            // panic leaks nothing.
-            let p = self.operand_place(new.clone(), Ty::Ptr);
-            self.drop_glue(p, ty);
-            self.call_rt(Rt::Panic, vec![at], None);
-            self.goto(ok);
-            self.switch_to(ok);
-        }
-        let t = Place::local(self.copy_to_temp(new, Ty::Ptr));
-        self.transfer_owned(&t, ty);
-        Operand::Copy(t)
-    }
-
-    /// `transfer_in_place` of the fresh copy in the temporary `t`, which this frame owns while
-    /// it runs: a transfer that panics leaves it to the cleanup pad (in a program that
-    /// catches), which drops it as far as it was transferred.
-    fn transfer_owned(&mut self, t: &Place, ty: TyId) {
-        self.push_scope(ScopeKind::Block);
-        self.own_place(t.clone(), ty);
-        self.transfer_in_place(t.clone(), ty);
-        self.take_temp(t);
-        self.pop_scope();
-    }
-
-    /// Continue in a fresh block when `cond` is false, else jump to `skip`.
-    fn when_not(&mut self, cond: Operand, skip: vir::BlockId) {
-        let then = self.new_block();
-        self.branch(cond, skip, then);
-        self.switch_to(then);
-    }
-
-    /// `count(p) == 1` for the counted object `p`.
-    pub(super) fn count_is_one(&mut self, p: Operand) -> Operand {
-        let c = self.count_place(p);
-        self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(c), cint(1, Ty::U64)),
-        )
     }
 
     fn transfer_variants(&mut self, place: &Place, ty: TyId) {
