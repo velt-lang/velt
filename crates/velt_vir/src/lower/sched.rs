@@ -56,8 +56,11 @@ impl FnLower<'_, '_> {
     }
 
     /// `spawn(f(...))` from an initial state: `velt_rt_spawn`'s arguments (a transfer function
-    /// after them is left out: the task runs on this thread), the join handle.
-    pub(super) fn sched_spawn(&mut self, args: Vec<Operand>) -> Operand {
+    /// after them is left out: the task runs on this thread); its join handle, of promise type
+    /// `ty`, owned by this expression like the runtime's (`rt_value`): a use moves it and an
+    /// unused one is dropped, where a plain temporary would be shared at its use and never
+    /// dropped itself.
+    pub(super) fn sched_spawn(&mut self, args: Vec<Operand>, ty: velt_sema::hir::TyId) -> Operand {
         self.cx.sched_tasks = true;
         let [poll, drop, state, size, align, rsize, rdrop] =
             <[Operand; 7]>::try_from(args.into_iter().take(7).collect::<Vec<_>>())
@@ -75,7 +78,10 @@ impl FnLower<'_, '_> {
         )
         .emit(self)
         .op();
-        self.rvalue_temp(Ty::Ptr, Rvalue::Cast(h, Ty::Ptr))
+        let d = self.temp(Ty::Ptr);
+        self.assign(Place::local(d), Rvalue::Cast(h, Ty::Ptr));
+        let ty = self.sub(ty);
+        self.owned_result(Some(d), ty)
     }
 
     /// `spawn(p)` of a heap future `fut` (`velt_rt_spawn_fut`'s arguments): a task on this

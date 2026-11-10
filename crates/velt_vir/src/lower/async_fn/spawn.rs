@@ -97,7 +97,7 @@ impl FnLower<'_, '_> {
             // promises it started (which may still use the result's objects) are on its thread.
             if self.std_sched() && worker.is_none() {
                 // One worker: the result stays on this thread, nothing to transfer.
-                return self.sched_spawn(args);
+                return self.sched_spawn(args, ty);
             }
             if !detached && self.cx.transfers(slot) {
                 args.push(cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot))));

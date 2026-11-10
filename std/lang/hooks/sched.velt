@@ -222,6 +222,8 @@ export function schedStart(f: usize, rdrop: usize, rejecting: bool): void {
 export function schedDetach(f: usize, qdrop: usize): void {
   const e = exec();
   if (m.ld(f) !== fnAddress(node.nodePoll)) {
+    // A spawned task's join handle: the task runs on, its rejection handled.
+    joinHandled(f, qdrop);
     // SAFETY: the caller owns `f`, a heap future, and gives it up.
     unsafe {
       futDrop(f);
@@ -234,13 +236,29 @@ export function schedDetach(f: usize, qdrop: usize): void {
 
 /**
  * `velt_rt_futs_handled`: the `n` promises at `futs` go to a combinator, which handles their
- * rejections: a started one's result nobody claims is dropped with `qdrop`, quietly.
+ * rejections: a started one's or a spawned task's result nobody claims is dropped with `qdrop`,
+ * quietly.
  */
 export function schedHandled(futs: usize, n: u64, qdrop: usize): void {
   const poll = fnAddress(node.nodePoll);
   for (let i: usize = 0; i < (n as usize); i++) {
-    node.handled(m.ld(futs + 8 * i), qdrop, poll);
+    const f = m.ld(futs + 8 * i);
+    if (!joinHandled(f, qdrop)) {
+      node.handled(f, qdrop, poll);
+    }
   }
+}
+
+/**
+ * When `f` is a spawned task's join handle (its header is the task's `T_JOIN`): the task's
+ * result nobody claims is dropped with `qdrop`, quietly (true).
+ */
+function joinHandled(f: usize, qdrop: usize): bool {
+  if (f === 0 || m.ld(f) !== fnAddress(run.joinPoll)) {
+    return false;
+  }
+  m.st(f - t.T_JOIN + t.T_RESULT_DROP, qdrop);
+  return true;
 }
 
 /** `velt_rt_await_tick`: the step of an `await` whose word is not 0; its ticket (0: go on). */

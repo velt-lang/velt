@@ -71,10 +71,51 @@ fn same_on_both(name: &str, src: &str, want: &str) {
 
 /// [`same_on_both`] for a program that exits with `code`.
 fn same_on_both_exiting(name: &str, src: &str, want: &str, code: i32) {
-    runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let (rt, rt_bin) = build_and_run(dir.path(), name, src, false, code);
-    let (std, std_bin) = build_and_run(dir.path(), name, src, true, code);
+    same_on_both_in(dir.path(), name, src, want, code);
+}
+
+/// [`same_on_both`], then the std build run again with the debug runtime's block counters
+/// (`VELT_RT_DEBUG_ALLOC=1 VELT_RC_STATS=1`): every block allocated through the runtime must be
+/// freed by the end. The programs return objects from their tasks, which the counters see
+/// wherever the executor takes its task blocks from: a join handle never dropped keeps its
+/// task's result (an unclaimed one in the task's slot, a claimed one as the share the handle's
+/// copies hold).
+fn same_on_both_freeing_all(name: &str, src: &str, want: &str) {
+    let dir = test_dir::TestDir::new();
+    same_on_both_in(dir.path(), name, src, want, 0);
+    let exe = dir.path().join(format!(
+        "{name}_std{}",
+        if cfg!(windows) { ".exe" } else { "" }
+    ));
+    let o = command(&exe)
+        .env("VELT_THREADS", "1")
+        .env("VELT_RT_DEBUG_ALLOC", "1")
+        .env("VELT_RC_STATS", "1")
+        .env_remove("VELT_SCHEDULER")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{name} (counted): {stderr}");
+    let Some(stats) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
+        // Only the debug runtime counts (a `--release` test run links the release one).
+        if cfg!(debug_assertions) {
+            panic!("{name}: no rc stats in:\n{stderr}");
+        }
+        return;
+    };
+    let blocks = stats
+        .split_whitespace()
+        .find_map(|w| w.strip_prefix("blocks="))
+        .and_then(|b| b.split_once('/'))
+        .unwrap_or_else(|| panic!("{name}: no block counts in {stats}"));
+    assert_eq!(blocks.0, blocks.1, "{name}: blocks left unfreed ({stats})");
+}
+
+fn same_on_both_in(dir: &Path, name: &str, src: &str, want: &str, code: i32) {
+    runtime_support::build_native_runtime(manifest());
+    let (rt, rt_bin) = build_and_run(dir, name, src, false, code);
+    let (std, std_bin) = build_and_run(dir, name, src, true, code);
     assert_eq!(rt, want, "{name}: the runtime's executor");
     assert_eq!(std, want, "{name}: the executor in Velt");
     assert!(
@@ -189,6 +230,183 @@ async function main() {
 }
 ",
         "text 3, text 4\nmain done\nlate task done\n",
+    );
+}
+
+#[test]
+fn a_dropped_spawn_handle_frees_its_task() {
+    // The join handle of `spawn(f())` is the task's last reference once it is done: dropped at
+    // once (a statement) or at the end of its block (a stored handle never awaited), the task's
+    // block and the object it returned are freed.
+    same_on_both_freeing_all(
+        "spawn_dropped",
+        "class Tag {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+async function tag(n: i64): Promise<Tag> {
+  await yieldNow();
+  return new Tag(n);
+}
+
+async function main() {
+  spawn(tag(1));
+  {
+    const h = spawn(tag(2));
+  }
+  await yieldNow();
+  await yieldNow();
+  console.log(\"done\");
+}
+",
+        "done\n",
+    );
+}
+
+#[test]
+fn an_awaited_spawn_handle_frees_its_task() {
+    // Awaiting a join handle, stored or not, consumes it, fulfilled or rejected (caught): the
+    // task's block and the object it returned are freed.
+    same_on_both_freeing_all(
+        "spawn_awaited",
+        "class Failed extends Error {}
+
+class Tag {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+async function tag(n: i64): Promise<Tag> {
+  await yieldNow();
+  return new Tag(n);
+}
+
+async function fail(): Promise<Tag> throws Failed {
+  await yieldNow();
+  throw new Failed(\"failed\");
+}
+
+async function main() {
+  const h = spawn(tag(1));
+  console.log((await h).n);
+  console.log((await spawn(tag(2))).n);
+  try {
+    await spawn(fail());
+  } catch (e) {
+    console.log(\"caught\", e.message);
+  }
+}
+",
+        "1\n2\ncaught failed\n",
+    );
+}
+
+#[test]
+fn raced_spawn_handles_free_their_tasks() {
+    // `Promise.race` takes the handles: the winner's and the loser's tasks are both freed (the
+    // loser runs to its end after `main`).
+    same_on_both_freeing_all(
+        "spawn_raced",
+        "class Tag {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+async function now(): Promise<Tag> {
+  return new Tag(1);
+}
+
+async function later(): Promise<Tag> {
+  await yieldNow();
+  await yieldNow();
+  await yieldNow();
+  return new Tag(2);
+}
+
+async function main() {
+  console.log((await Promise.race([spawn(now()), spawn(later())])).n);
+}
+",
+        "1\n",
+    );
+}
+
+#[test]
+fn a_combinator_s_spawned_losers_reject_quietly() {
+    // The handles a rejected `Promise.all` leaves behind (inline: given up to the task) and the
+    // losers of a `Promise.race` over a stored array are handled: their tasks reject later,
+    // after the handles were dropped, without an uncaught report, and are freed.
+    same_on_both_freeing_all(
+        "spawn_losers",
+        "import { Channel, channel } from \"velt/sync\";
+
+class Failed extends Error {}
+
+async function failNow(): Promise<i64> {
+  throw new Failed(\"now\");
+}
+
+async function failLater(go: Channel<i64>): Promise<i64> {
+  await go.receive();
+  throw new Failed(\"later\");
+}
+
+async function value(): Promise<i64> {
+  return 5;
+}
+
+async function main() {
+  const go = channel<i64>();
+  try {
+    await Promise.all([spawn(failNow()), spawn(failLater(go))]);
+  } catch (e) {
+    console.log(\"all:\", e.message);
+  }
+  const racers: Promise<i64, Failed>[] = [spawn(value()), spawn(failLater(go))];
+  console.log(\"race:\", await Promise.race(racers));
+  go.close();
+  await yieldNow();
+  await yieldNow();
+  console.log(\"done\");
+}
+",
+        "all: now\nrace: 5\ndone\n",
+    );
+}
+
+#[test]
+fn a_spawn_handle_dropped_after_its_task_rejected_reports_it() {
+    // The handle dropped after the task rejected reports the rejection as uncaught and exits
+    // with 1 (#148); a handle never dropped would leave it unreported until the guard sleep,
+    // which must never end, ends.
+    same_on_both_exiting(
+        "spawn_dropped_after_reject",
+        "class Failed extends Error {}
+
+async function fail(): Promise<i64> throws Failed {
+  throw new Failed(\"lost\");
+}
+
+async function main() {
+  {
+    const h = spawn(fail());
+    await yieldNow();
+    await yieldNow();
+    console.log(\"dropping the handle\");
+  }
+  await sleep(2000);
+  console.log(\"unreachable\");
+}
+",
+        "dropping the handle\n",
+        1,
     );
 }
 
