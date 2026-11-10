@@ -201,17 +201,18 @@ pub(super) fn check_const<'g>(
 
 /// The system libraries (`sqlite3`, `framework:Accelerate`) of the C libraries `program`'s
 /// declarations name, for `target`, and those built from `sources` ([`super::c_sources`]): each
-/// once, in declaration order. The platform's C library is linked anyway.
+/// once, in declaration order. The platform's C library is linked anyway, but a declaration
+/// from it may need [`c_library_links`] beside it.
 pub fn links(
     program: &hir::Program,
     sm: &SourceMap,
     graph: Option<&PackageGraph>,
     target: &str,
 ) -> Vec<String> {
+    let mut seen = platform_links(&program.defs, target);
     let Some(graph) = graph else {
-        return Vec::new();
+        return seen;
     };
-    let mut seen: Vec<String> = Vec::new();
     for def in &program.defs {
         let hir::Def::ExternFn(f) = def else { continue };
         let Some(c) = f.c.as_ref().filter(|c| c.library != C_LIBRARY) else {
@@ -239,6 +240,33 @@ pub fn links(
     seen
 }
 
+/// [`c_library_links`] when `defs` declare a function of the platform's C library.
+fn platform_links(defs: &[hir::Def], target: &str) -> Vec<String> {
+    let declares_c = defs.iter().any(|def| {
+        matches!(def, hir::Def::ExternFn(f) if f.c.as_ref().is_some_and(|c| c.library == C_LIBRARY))
+    });
+    let links = if declares_c {
+        c_library_links(target)
+    } else {
+        &[]
+    };
+    links.iter().map(|l| l.to_string()).collect()
+}
+
+/// What a build for `target` links when the program declares a function of the platform's C
+/// library (`declare c("c")`). With MSVC, `legacy_stdio_definitions`: since Visual Studio 2015 the
+/// UCRT's `<stdio.h>` defines `printf`, `snprintf`, `sprintf`, `fprintf`, `vsnprintf` and the rest
+/// of the family inline, so `ucrt.lib` exports none of them, and a declaration that only names
+/// the symbol links against the library's out-of-line copies. A static library adds only the
+/// functions a program calls, so it costs nothing when unused.
+fn c_library_links(target: &str) -> &'static [&'static str] {
+    if target.contains("-windows-msvc") {
+        &["legacy_stdio_definitions"]
+    } else {
+        &[]
+    }
+}
+
 /// The linker arguments of `systems` ([`links`]) for `target`: `-lsqlite3`, `-framework
 /// Accelerate`; `sqlite3.lib` with MSVC. A manifest has a framework only under `darwin`: another
 /// target's linker would open its name as an input file.
@@ -260,7 +288,9 @@ pub fn link_args(systems: &[String], target: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::link_args;
+    use super::{link_args, platform_links};
+    use velt_common::Span;
+    use velt_sema::hir;
 
     fn args(systems: &[&str], target: &str) -> Vec<String> {
         let systems: Vec<String> = systems.iter().map(|s| s.to_string()).collect();
@@ -273,6 +303,54 @@ mod tests {
         assert_eq!(mac, ["-lz", "-framework", "Accelerate"]);
         assert_eq!(args(&["z"], "x86_64-unknown-linux-gnu"), ["-lz"]);
         assert_eq!(args(&["z"], "x86_64-pc-windows-msvc"), ["z.lib"]);
+    }
+
+    /// `declare c("<library>") function snprintf(…)`.
+    fn snprintf_from(library: &str) -> hir::Def {
+        hir::Def::ExternFn(hir::ExternFnDef {
+            name: "snprintf".into(),
+            symbol: "snprintf".into(),
+            params: Vec::new(),
+            ret: hir::TyId(0),
+            is_async: false,
+            system: None,
+            host: None,
+            c: Some(hir::CImport {
+                library: library.into(),
+                errno: false,
+                params: Vec::new(),
+                ret: hir::CTy::Int(hir::IntTy::I32),
+                variadic: true,
+            }),
+            is_decorator: false,
+            span: Span::DUMMY,
+        })
+    }
+
+    /// A `declare c("c")` binding of `snprintf` links on Windows: the UCRT defines the stdio
+    /// family inline in `<stdio.h>`, so MSVC's link needs `legacy_stdio_definitions.lib`.
+    /// Other targets, and programs that declare nothing from `c`, link nothing more.
+    #[test]
+    fn the_c_library_brings_the_out_of_line_stdio_with_msvc() {
+        let link = |defs: &[hir::Def], target: &str| {
+            let links = platform_links(defs, target);
+            link_args(&links, target)
+        };
+        let c = [snprintf_from("c")];
+        let other_library = [snprintf_from("sqlite3")];
+        for msvc in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
+            assert_eq!(link(&c, msvc), ["legacy_stdio_definitions.lib"]);
+            assert!(link(&other_library, msvc).is_empty());
+            assert!(link(&[], msvc).is_empty());
+        }
+        for other in [
+            "aarch64-apple-darwin",
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-musl",
+            "wasm32-wasip1",
+        ] {
+            assert!(link(&c, other).is_empty(), "{other}: {:?}", link(&c, other));
+        }
     }
 
     #[test]

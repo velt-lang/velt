@@ -695,7 +695,15 @@ native: {
   `allowNative` and listing. Users never need a C compiler or cargo. Release builds link
   statically, debug builds the shared library, the dev JIT `dlopen`s it.
 - **`c`, the C library**, is predefined: libc, libSystem, or the UCRT on Windows; WASI's libc on
-  `wasm32-wasip1` where system functions exist today.
+  `wasm32-wasip1` where system functions exist today. Since Visual Studio 2015 the UCRT defines
+  `printf`, `snprintf`, `sprintf`, `fprintf`, `vsnprintf` and the rest of the stdio family inline
+  in `<stdio.h>`, and `ucrt.lib` exports none of them: a declaration only names the symbol, so a
+  program that declares a function from `c` and targets `*-windows-msvc` also links
+  `legacy_stdio_definitions.lib`, their out-of-line copies (`native::c_decls::links`). Only then,
+  not for every Windows link: a static library adds only what a program calls, so it costs
+  nothing unused, but it is one more file for `link.exe` to read in every build of every program.
+  The bundled linker's kit has no such library yet, so those functions link with the system
+  linker only.
 
 ### Fetched archives (#2367)
 
