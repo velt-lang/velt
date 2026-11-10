@@ -1,14 +1,17 @@
-// `"k" in v` on a union with a function member (#2655, sigx's useData): a function has
-// `length`, `name` and `Function.prototype`'s members, and no others, so `"__sigx" in fn` is
-// false; a callable interface answers from its declared members.
+// `"k" in v` on a function value (#2655): a function has `length`, `name` and
+// `Function.prototype`'s members, known while compiling; a callable interface answers from its
+// declared members (sigx's useData, where the server function is the interface member).
 interface DataRef { (...args: []): unknown; __sigxKey: string }
-type Key = string | (() => string | null) | DataRef;
+type Key = string | DataRef;
 function classify(k: Key): string {
-    if (typeof k === "function" && ("__sigx" in k || "__sigxKey" in k)) return "stamped";
-    if (typeof k === "function") return "getter " + ("length" in k) + " " + ("call" in k) + " " + ("toString" in k);
+    if (typeof k === "function" && "__sigxKey" in k) return "stamped " + k.__sigxKey;
     return "static";
 }
 const ref: DataRef = Object.assign(() => 1, { __sigxKey: "a/b" });
-console.log(classify("x"), classify(() => null), classify(ref));
+console.log(classify("x"), classify(ref));
 const f = (x: number): number => x + 1;
-console.log("name" in f, "bind" in f, "apply" in f, "missing" in f);
+console.log("name" in f, "bind" in f, "apply" in f, "length" in f, "call" in f, "toString" in f);
+function getter(g: (() => string) | string): string {
+    return typeof g === "function" && "call" in g ? "callable " + g() : "text";
+}
+console.log(getter(() => "v"), getter("t"));

@@ -115,19 +115,19 @@ impl FnCx<'_, '_> {
             };
         }
         // A function value has `length` and `name` of its own and `Function.prototype`'s
-        // members; a Velt function gains no others (`"__sigx" in fn` is false, #2655). Whether
-        // it has a `prototype` depends on how it was written, which its type doesn't say.
-        if matches!(
-            self.cx.ty.kind(t),
-            TyKind::FnPtr { .. } | TyKind::Closure(_)
-        ) {
-            match name {
-                "length" | "name" | "call" | "apply" | "bind" | "arguments" | "caller" => {
-                    return Some(Presence::Yes)
-                }
-                "prototype" => {}
-                _ => return Some(Presence::No),
-            }
+        // members (#2655). Other keys stay unknown: a function may have gained fields that its
+        // type doesn't show (`Object.assign(fn, { tag })` passed as a `() => R`).
+        let fn_member = matches!(
+            name,
+            "length" | "name" | "call" | "apply" | "bind" | "arguments" | "caller"
+        );
+        if fn_member
+            && matches!(
+                self.cx.ty.kind(t),
+                TyKind::FnPtr { .. } | TyKind::Closure(_)
+            )
+        {
+            return Some(Presence::Yes);
         }
         let declared = self.cx.declared_presence(t, name);
         if declared.is_none() && report {
