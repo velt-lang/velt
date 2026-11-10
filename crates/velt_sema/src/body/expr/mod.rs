@@ -240,6 +240,7 @@ mod union_view;
 mod unique_symbol_eq;
 pub(crate) mod virtual_defaults;
 mod widen_fresh;
+pub(crate) mod widening_consts;
 mod written_order;
 
 use velt_common::Span;

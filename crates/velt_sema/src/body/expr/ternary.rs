@@ -5,6 +5,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use super::ops::untyped;
+use super::widening_consts::plain_str;
 use crate::body::narrow::{nothing_word, only_nothings};
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, Nothing, TyId};
@@ -27,7 +28,12 @@ impl FnCx<'_, '_> {
                       hint: Option<TyId>| {
             s.push_scope();
             narrow.iter().for_each(|f| s.narrow(f));
-            let h = s.expr(e, hint, Want::Move);
+            // `` `a` `` kept as its literal is checked as `"a"`.
+            let lit = hint.and(plain_str(e)).map(|t| ast::Expr {
+                kind: ast::ExprKind::Lit(ast::Lit::Str(t.to_string())),
+                ..e.clone()
+            });
+            let h = s.expr(lit.as_ref().unwrap_or(e), hint, Want::Move);
             s.pop_scope();
             h
         };
@@ -108,9 +114,18 @@ impl FnCx<'_, '_> {
         let init = v.init.as_ref().map(super::object_builtins::strip_parens);
         let cond = init.filter(|e| matches!(e.kind, ast::ExprKind::Cond { .. }));
         let outer = std::mem::replace(&mut self.kept_arms, cond.map(|e| e.span));
-        let plain = std::mem::replace(&mut self.kept_plain_arms, v.kind == ast::VarKind::Const);
-        self.simple_decl(v, name, ann, span, out);
+        // A hidden temporary (an element of `const [e] = [c ? "a" : "b"]`) widens, as an array
+        // literal's element does in TypeScript.
+        let keep = v.kind == ast::VarKind::Const && !name.name.starts_with('#');
+        let plain = std::mem::replace(&mut self.kept_plain_arms, keep);
+        // `let w = a` of such a constant `a` is a `string` (`widening_consts`).
+        let widened = (v.kind == ast::VarKind::Let && ann.is_none())
+            .then(|| init.filter(|e| self.widening_ref(e)))
+            .flatten()
+            .map(|_| self.cx.ty.str_);
+        self.simple_decl(v, name, ann.or(widened), span, out);
         (self.kept_arms, self.kept_plain_arms) = (outer, plain);
+        self.note_widening_const(v, name);
     }
 
     /// The literal type of an arm written `"a" as const`, or `"a"` (`None` for a nested
@@ -118,8 +133,9 @@ impl FnCx<'_, '_> {
     fn as_const_literal(&mut self, e: &ast::Expr) -> Option<TyId> {
         match &e.kind {
             ast::ExprKind::Paren(inner) => self.as_const_literal(inner),
-            ast::ExprKind::Lit(ast::Lit::Str(s)) => {
-                Some(self.cx.lit_type(hir::LitValue::Str(s.clone())))
+            _ if plain_str(e).is_some() => {
+                let s = plain_str(e).unwrap_or_default().to_string();
+                Some(self.cx.lit_type(hir::LitValue::Str(s)))
             }
             ast::ExprKind::Cast { expr, .. } => {
                 match &super::object_builtins::strip_parens(expr).kind {
@@ -240,14 +256,13 @@ fn written_nothings(e: &ast::Expr) -> Option<Nothing> {
     }
 }
 
-/// Is `e` written `x as const`, or a conditional whose arms both are?
 /// An arm that keeps its literal: `"a" as const`, or with `plain` (a `const`'s conditional) a
-/// string literal `"a"`; a nested conditional of such arms.
-fn kept_arm(e: &ast::Expr, plain: bool) -> bool {
+/// string literal `"a"` or `` `a` `` (`plain_str`); a nested conditional of such arms.
+pub(super) fn kept_arm(e: &ast::Expr, plain: bool) -> bool {
     match &e.kind {
         ast::ExprKind::Paren(inner) => kept_arm(inner, plain),
         ast::ExprKind::Cast { ty, .. } => super::member::is_as_const(ty),
-        ast::ExprKind::Lit(ast::Lit::Str(_)) => plain,
+        _ if plain_str(e).is_some() => plain,
         ast::ExprKind::Cond { then, els, .. } => kept_arm(then, plain) && kept_arm(els, plain),
         _ => false,
     }
