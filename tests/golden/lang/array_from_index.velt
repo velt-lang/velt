@@ -1,0 +1,12 @@
+// `includes`, `indexOf` and `lastIndexOf` with a `fromIndex` (#2685), as in Node: a negative
+// one counts from the end, a fraction rounds toward 0, `NaN` is 0, and `includes` finds `NaN`.
+const xs: string[] = ["/", "/about"];
+console.log(xs.includes("/about", 1), xs.indexOf("/", 1));
+const ns = [1, 2, NaN, 3, 2, 1];
+console.log(ns.indexOf(2, -2), ns.indexOf(2, -100), ns.indexOf(2, 100), ns.indexOf(2, 1.7), ns.indexOf(2, NaN));
+console.log(ns.includes(NaN, 2), ns.includes(NaN, 3), ns.includes(NaN, -4), ns.includes(1, -1));
+console.log(ns.includes(1, Infinity), ns.includes(1, -Infinity));
+console.log(ns.lastIndexOf(2), ns.lastIndexOf(2, 3), ns.lastIndexOf(2, -3), ns.lastIndexOf(2, -100));
+console.log(ns.lastIndexOf(1, 100), ns.lastIndexOf(1, NaN), ns.lastIndexOf(1, -Infinity));
+const empty: number[] = [];
+console.log(empty.indexOf(1, -1), empty.lastIndexOf(1, 0), empty.includes(1, 0));

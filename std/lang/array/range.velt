@@ -13,6 +13,35 @@ export function clampPosition(pos: i64, len: usize): usize {
   return pos > n ? len : pos as usize;
 }
 
+/**
+ * Where `indexOf` and `includes` start for `fromIndex`, in [0, len]: as JS reads it, a whole
+ * number (`NaN` is 0, a fraction rounded toward 0), counted from the end when negative.
+ */
+export function searchStart(fromIndex: number, len: usize): usize {
+  if (fromIndex !== fromIndex) {
+    return 0;
+  }
+  const k = Math.trunc(fromIndex);
+  const n = len as number;
+  if (k >= 0) {
+    return k >= n ? len : k as usize;
+  }
+  return n + k <= 0 ? 0 : (n + k) as usize;
+}
+
+/**
+ * Where `lastIndexOf` searches down from for `fromIndex`, plus one, in [0, len] (0: nowhere):
+ * read as `searchStart` reads it, a position past the end being the last element.
+ */
+export function lastSearchEnd(fromIndex: number, len: usize): usize {
+  const k = fromIndex !== fromIndex ? 0 : Math.trunc(fromIndex);
+  const n = len as number;
+  if (k >= 0) {
+    return k >= n ? len : (k as usize) + 1;
+  }
+  return n + k < 0 ? 0 : ((n + k) as usize) + 1;
+}
+
 /** Reverses `xs[lo..hi)` in place. */
 export function reverseRange<T>(xs: T[], lo: usize, hi: usize) {
   if (hi - lo < 2) {
