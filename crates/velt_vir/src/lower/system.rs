@@ -151,7 +151,9 @@ impl FnLower<'_, '_> {
             by_param.push(cargs.get(first).cloned());
             if variadic {
                 // Variadic integers are promoted to 64 bits and pointers passed as integers:
-                // C reads an `int` or a pointer from such a slot (every target is 64-bit).
+                // C reads an `int` or a pointer from such a slot. Only 64-bit targets have
+                // system functions (`system::target_os`: none on wasm32 or other 32-bit
+                // targets), so a pointer is 64 bits wide here.
                 for k in first..cargs.len() {
                     let t = ctys[k];
                     if t != Ty::I64 {

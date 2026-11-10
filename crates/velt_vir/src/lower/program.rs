@@ -426,8 +426,9 @@ impl<'h> Cx<'h> {
         Some((&e.params[..], e.ret, e.variadic))
     }
 
-    /// [`Self::extern_sym`] of a C function, `variadic` (`params` its fixed parameters) or not:
-    /// the caller checked the symbol has no other signature yet (c_call.rs, system.rs).
+    /// [`Self::extern_sym`] of a C function, `variadic` (`params` its fixed parameters) or not.
+    /// c_call.rs checked its declaration against the symbol's extern so far; a system call
+    /// (system.rs) of a symbol the program declared otherwise is an error at that declaration.
     pub(super) fn extern_sym_c(
         &mut self,
         symbol: &str,
@@ -441,6 +442,9 @@ impl<'h> Cx<'h> {
         if let Some(&id) = self.extern_map.get(symbol) {
             let e = &self.externs[id.0 as usize];
             if e.params != params || e.ret != ret || !e.variadic {
+                if self.c_declared_clash(symbol, true) {
+                    return id;
+                }
                 ice(format_args!(
                     "variadic extern `{symbol}` declared with two different signatures"
                 ));
@@ -467,15 +471,8 @@ impl<'h> Cx<'h> {
         if let Some(&id) = self.extern_map.get(symbol) {
             let e = &self.externs[id.0 as usize];
             if e.params != params || e.ret != ret || e.variadic {
-                if let Some(c) = self.c_symbols.get(symbol) {
-                    // The program declared it as a C function first (c_call.rs).
-                    self.c_clashes.push(velt_common::Diagnostic::error(
-                        format!(
-                            "C function `{symbol}` (`{}`) is a symbol the compiler's runtime calls with another signature",
-                            c.shown
-                        ),
-                        c.span,
-                    ));
+                // The program declared it as a C function first (c_call.rs).
+                if self.c_declared_clash(symbol, false) {
                     return id;
                 }
                 ice(format_args!(

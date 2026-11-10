@@ -9,7 +9,7 @@
 use velt_sema::hir::{self, CTy, DefId, IntTy, TyId, TyKind};
 
 use super::system::Arg;
-use super::{cint, ice, unit, FnLower};
+use super::{cint, ice, unit, Cx, FnLower};
 use crate::system;
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty, STR_AGG};
 
@@ -48,6 +48,32 @@ impl FnLower<'_, '_> {
             self.cx
                 .unavailable
                 .push((def, self.cx.cur_def, self.cx.user_site));
+            for a in args {
+                self.system_arg_effects(a);
+            }
+            return match self.cx.ty(ret) {
+                Ty::Unit => unit(),
+                vt => Operand::Copy(Place::local(self.temp(vt))),
+            };
+        }
+        let fixed = c.params.len();
+        if args.len() < fixed || (!c.variadic && args.len() > fixed) {
+            // Sema reported the call (it leaves one with too few arguments without any): an
+            // error here too, with no argument read that isn't there.
+            let at = (args.first()).map_or(x.span, |a| a.span);
+            let (least, dots) = match c.variadic {
+                true => ("at least ", " before its `...`"),
+                false => ("", ""),
+            };
+            let s = if fixed == 1 { "" } else { "s" };
+            self.cx.c_clashes.push(velt_common::Diagnostic::error(
+                format!(
+                    "C function `{}` takes {least}{fixed} argument{s}{dots}, but {} were supplied",
+                    base_symbol(&symbol),
+                    args.len()
+                ),
+                at,
+            ));
             for a in args {
                 self.system_arg_effects(a);
             }
@@ -153,7 +179,6 @@ impl FnLower<'_, '_> {
             };
             vals.push(CArg::Ready(v));
         }
-        let fixed = c.params.len();
         let mut cargs = vec![];
         for v in vals {
             cargs.push(match v {
@@ -300,10 +325,12 @@ impl FnLower<'_, '_> {
         }
         let (other, note) = match self.cx.c_symbols.get(link) {
             Some(o) => (format!("`{}` at {}", o.shown, o.at), sig.difference(&o.sig)),
-            None => (
-                "the signature the compiler's runtime calls it with".to_string(),
-                "the compiler's runtime calls this C function itself, with the C types of its own declaration".to_string(),
-            ),
+            None => {
+                let there = self.cx.extern_signature(link).is_some_and(|(_, _, v)| v);
+                return self
+                    .cx
+                    .runtime_c_clash(link, (shown, at, sig.variadic), there);
+            }
         };
         self.cx.c_clashes.push(
             velt_common::Diagnostic::error(
@@ -515,6 +542,50 @@ pub(crate) struct CSig {
     /// The Velt types it names (`c_name`), for messages.
     names: Vec<&'static str>,
     ret_name: &'static str,
+}
+
+impl Cx<'_> {
+    /// The program's C function `symbol`, declared as `shown` at `at` (`variadic` or not), has
+    /// another signature than the compiler's own calls of it (std's system calls, the runtime's),
+    /// which are `there_variadic` or not: an error at the declaration, once, whichever comes
+    /// first.
+    pub(super) fn runtime_c_clash(
+        &mut self,
+        symbol: &str,
+        (shown, at, variadic): (&str, velt_common::Span, bool),
+        there_variadic: bool,
+    ) {
+        let kind = match (variadic == there_variadic, there_variadic) {
+            (true, _) => "",
+            (false, true) => "variadic ",
+            (false, false) => "non-variadic ",
+        };
+        let message = format!(
+            "C function `{symbol}` has two signatures: `{shown}` here, and the {kind}signature the compiler's runtime calls it with"
+        );
+        if self.c_clashes.iter().any(|d| d.message == message) {
+            return;
+        }
+        let why = "the compiler's runtime calls this C function itself, with the C types of its own declaration";
+        let note = match (variadic, there_variadic) {
+            (true, false) => format!("it is variadic here and not there: {why}"),
+            (false, true) => format!("it is not variadic here and variadic there: {why}"),
+            _ => why.to_string(),
+        };
+        self.c_clashes
+            .push(velt_common::Diagnostic::error(message, at).with_note(note));
+    }
+
+    /// The program declared `symbol` as a C function (c_call.rs) before the compiler's own call
+    /// of it with another signature (`variadic` or not): [`Self::runtime_c_clash`], if so.
+    pub(super) fn c_declared_clash(&mut self, symbol: &str, variadic: bool) -> bool {
+        let Some(c) = self.c_symbols.get(symbol) else {
+            return false;
+        };
+        let (shown, at, here) = (c.shown.clone(), c.span, c.sig.variadic);
+        self.runtime_c_clash(symbol, (&shown, at, here), variadic);
+        true
+    }
 }
 
 impl CSig {
