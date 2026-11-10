@@ -12,6 +12,11 @@
 //!   callee keeps in memory across it. (The standard library's caller-tracking functions get an
 //!   instance per call site, track_caller.rs in velt_vir, so they meet the single-site rule;
 //!   this rule gives every program's loops the same, its own modules' functions included.)
+//!   A call that came into the loop with an inlined body, not one the caller's loop makes
+//!   itself, is inlined only up to `NESTED_LOOP_COST`: the callee already chose which of its own
+//!   callees to take when it was optimized, and taking the rest again at the loop limit made a
+//!   17-line row parser 16 times its size (`Number`, 910 statements, twice, through the
+//!   `integer` helper its loop calls, #2707).
 //!
 //! Functions that never return normally (panic helpers, and `never` functions that throw) are
 //! never inlined: their calls are cold.
@@ -60,6 +65,13 @@ const LEAF_COST: u64 = 120;
 const ONCE_COST: u64 = 2_000;
 /// Callees called from a loop at most this big are inlined while the growth budget lasts.
 const LOOP_COST: u64 = 1_000;
+/// ...and those an inlined body brought into the loop, at most this big (module docs). Room for a
+/// JSON reader's steps (145 to 317) and for `proxyGet` (702), whose constant keys fold in a loop
+/// reading a proxy (350 cost such a loop 8%); not for `Number` (910), which a row parser's loop
+/// took twice through its `integer` helper. On the generated 3k-line application of #2707, clang
+/// retires 4.9% fewer instructions (350: 10.8% with a caller limit of 5,000, which cost
+/// `proxy_view_convert` 4.3% and `proxy_forward_receiver` 8.2%).
+const NESTED_LOOP_COST: u64 = 750;
 /// Recursive callees at most this big are inlined into loops of outside callers (while the
 /// growth budget lasts).
 const RECURSIVE_COST: u64 = 200;
@@ -246,6 +258,8 @@ struct Site<'a> {
     caller: FuncId,
     caller_cost: u64,
     in_loop: bool,
+    /// The call came with an inlined body: the caller does not make it itself.
+    nested: bool,
     /// Recursive functions whose inlined bodies the call came with (this round).
     from: &'a [FuncId],
 }
@@ -302,7 +316,9 @@ fn decide(
         let ok = site.in_loop && size <= RECURSIVE_COST && size <= budget.remaining;
         return ok.then_some(Decision::Charged(size));
     }
-    let limit = if site.in_loop {
+    let limit = if site.in_loop && site.nested {
+        NESTED_LOOP_COST
+    } else if site.in_loop {
         LOOP_COST
     } else if size > SMALL_COST && is_leaf(program, target) {
         LEAF_COST
@@ -367,6 +383,8 @@ fn inline_into(
     let mut scan = vec![true; in_loop.len()];
     // Per block: the recursive functions whose inlined bodies it came with.
     let mut from: Vec<Vec<FuncId>> = vec![vec![]; in_loop.len()];
+    // Per block: whether it came with an inlined body.
+    let mut nested = vec![false; in_loop.len()];
     // The recursive functions this caller gets copies of in this round.
     let mut copied: Vec<FuncId> = vec![];
     let mut changed = false;
@@ -401,6 +419,7 @@ fn inline_into(
             caller,
             caller_cost,
             in_loop: in_loop[here],
+            nested: nested[here],
             from: &from[here],
         };
         let Some(decision) = decide(state, program, callee, &site, budget) else {
@@ -431,6 +450,7 @@ fn inline_into(
         in_loop.resize(grown, in_loop[here]);
         scan.resize(grown, in_loop[here]);
         from.resize(grown, brings);
+        nested.resize(grown, true);
         caller_cost += cost(&body);
         changed = true;
     }
