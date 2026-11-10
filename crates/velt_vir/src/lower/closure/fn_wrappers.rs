@@ -72,12 +72,15 @@ impl Cx<'_> {
             return None;
         }
         match w {
-            FnWrapped::Local(l) => {
+            // The wrapper's one capture is the local sema recorded, by construction; its number
+            // is not compared: for a wrapper made in a closure's body (`() => h(g)`), the
+            // capture's number differs from the one recorded (#2687's `std/events_identity`).
+            FnWrapped::Local(_) => {
                 let [c] = f.captures.as_slice() else {
                     return None;
                 };
                 let local = &f.body.locals[c.inner.0 as usize];
-                if c.outer != *l || c.mode != PassMode::Owned || local.boxed {
+                if c.mode != PassMode::Owned || local.boxed {
                     return None;
                 }
                 match self.kind(local.ty) {
