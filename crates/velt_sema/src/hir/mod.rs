@@ -53,7 +53,7 @@ pub use const_array::{ConstArray, ConstElem};
 pub use decorators::{CExport, ConstTree, Decorator, DecoratorTarget};
 pub use extern_fn::{CImport, CTy, ExternFnDef, HostImport, HostTy};
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
-pub use fresh::FreshClosure;
+pub use fresh::{FnWrapped, FreshClosure};
 pub use impl_bound::{ImplBound, ImplDef};
 pub use intrinsic::Intrinsic;
 pub use modes::{Conversion, PassMode, UseMode};
@@ -242,6 +242,12 @@ pub struct Program {
     /// function, and the conversions of function values to other function types (#943,
     /// [`FreshClosure`], hir_encodings.md "Generic function values"). Additive.
     pub fresh_closures: HashMap<DefId, FreshClosure>,
+    /// Closures sema made around a function value to fit another function type (a callback
+    /// taking fewer parameters, a parameter wider than the type's, a result dropped, a function
+    /// that doesn't throw where one may), with the function each stands for ([`FnWrapped`],
+    /// hir_encodings.md "Function wrappers", #2688): `===`, `Object.is` and `Set` / `Map` keys
+    /// see that function, as in JavaScript, where the conversion is the same object. Additive.
+    pub fn_wrappers: HashMap<DefId, FnWrapped>,
     /// The impls of `extend … implements I` blocks (by index into `impls`) with the bounds on
     /// their type parameters: such an impl fits a type only where they hold, and a type without
     /// an impl of its own (or a base class's) gets the most specific that fits (A over B when

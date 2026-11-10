@@ -116,6 +116,7 @@ impl FnCx<'_, '_> {
                     ast::ExprKind::Paren(inner) => self.immediate_closure(inner),
                     _ => self.receiver_expr(callee),
                 };
+                let f = self.record_present_callee(f, callee);
                 self.call_value_with(f, type_args, args, exp, span)
             }
         }
@@ -353,6 +354,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.as_type_call(d, type_args, args, span) {
             return h;
         }
+        if self.cx.fn_info(d).c.as_ref().is_some_and(|c| c.variadic) {
+            return self.c_variadic_call(d, name, args, exp, span);
+        }
         let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
@@ -589,6 +593,7 @@ impl FnCx<'_, '_> {
                 recv
             }
         };
+        let recv = self.record_present_member(recv, &prop.name);
         if self.record_internal_call(&recv, prop) {
             self.check_args_loose(args);
             return self.error_expr(span);

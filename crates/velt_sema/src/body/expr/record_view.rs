@@ -22,13 +22,13 @@ impl FnCx<'_, '_> {
     ) -> Result<hir::Expr, hir::Expr> {
         let converts = self.cx.ty.nothing_of(h.ty) == Some(hir::Nothing::Undefined)
             && self.cx.ty.opt_payload(h.ty) == Some(exp)
-            && self.f.record_reads.contains(&h.span);
+            && self.f.record_reads.contains_key(&h.span);
         if !converts {
             return Err(h);
         }
         let span = h.span;
         let msg = "TypeError: the record has no value at this key";
-        Ok(self.checked_present(h, msg, Some(exp), false, span))
+        Ok(self.checked_present(h, msg, Some(exp), true, span))
     }
 
     /// `obj.name` of a record (`obj` checked).

@@ -1,0 +1,7 @@
+// A package's variadic C function (`...args: CVarArgs`) refuses what C's `...` can't take; the
+// errors are the package's, reported before the program runs.
+import { show } from "clib";
+
+function main() {
+  show([1]);
+}

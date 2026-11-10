@@ -430,6 +430,28 @@ the comparison of function values:
 - `Converts { from, to }`: a closure sema makes to convert a function value of type `from` to
   type `to`. A `New` value converted by one counts as compared where values of `to` are.
 
+### Function wrappers (#2688)
+`Program::fn_wrappers` (additive) maps the closures sema makes around a function value to fit
+another function type (velt_sema `callback.rs` `wrap`, `iface_adapt.rs` `adapt_fn`,
+`generic_conversions.rs` `forwarding`: fewer or more parameters, a wider parameter, a default or
+rest parameter, a dropped result, a function that doesn't throw where one may, an `any`
+converted to a function type) to a `FnWrapped` (`hir/fresh.rs`), the function it stands for:
+- `Local(l)`: the value in local `l` of the function making the wrapper, which the wrapper
+  captures (`{ const f = value; (p…) => f(p…) }`): a function value, or an `any` holding one;
+- `Fn(def, type_args)`: the module-level function the wrapper calls by name.
+
+In JavaScript the converted function is the same object, so a program comparing function values
+gives such a wrapper (one capturing only `l`, by move, or a named one capturing nothing; not
+async) the low bit of its environment pointer (environments are aligned to 8) and an environment
+`{ drop, clone, transfer, kind, wrapped value, … }`, the wrapped value a function value or an
+`any` (whose table says in its class id word when it holds a function value). The glue that reads
+an environment through a function value (drop, clone, share, transfer, the many-threads check)
+and the wrapper's own code take the bit off; copies get it back. `===`, `Object.is`, `includes`,
+`Set` / `Map` keys and function properties, also through `any` values of two function types,
+follow a value with the bit to the function it leads to; values without it compare and hash by
+their words as before. `===` of two function types converts one to the other. Programs that neither compare function values nor write properties of
+functions through `any` (which needs their identity too) are lowered as before.
+
 A `const` holding a named generic function (`const g: G = id`, also through a chain of
 constants) is not one of these where a function type of fixed types is expected: sema gives the
 function itself there, instantiated (`FnRef`), so the values compare equal to each other and to

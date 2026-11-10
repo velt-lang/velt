@@ -22,7 +22,7 @@ use velt_vir::vir::{
 };
 
 use super::statics::{self, Names};
-use super::{select, KIND};
+use super::{key, select, KIND};
 
 /// Compile each of `programs` (a function's program of its own, [`program_of`]) in parallel:
 /// its object, or why it could not be.
@@ -55,12 +55,15 @@ pub(super) fn each(
     results.into_inner().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The program of function `i` alone (module docs); `names`: the program's statics' names.
+/// The program of function `i` alone (module docs); `names`: the program's statics' names. Every
+/// function in it, defined or declared, has the parameter attributes `assumed` keeps of the
+/// program's, as its key holds them.
 pub(super) fn program_of(
     program: &vir::Program,
     i: usize,
     names: &Names,
     depth: select::Depth,
+    assumed: key::Assumed,
 ) -> vir::Program {
     let bodies = select::inlinable(program, i, depth);
     let in_bodies: HashSet<usize> = bodies.iter().copied().collect();
@@ -115,6 +118,7 @@ pub(super) fn program_of(
     }
     for &j in &order {
         let mut f = program.funcs[j].clone();
+        f.param_attrs = assumed.attrs(&f.param_attrs);
         f.locs.clear();
         // No line info, so no variables: this program has no files or types for them.
         f.locals.iter_mut().for_each(|l| l.debug = None);
@@ -260,4 +264,184 @@ pub(super) fn store(cache: &Cache, key: &Key, object: &[u8]) -> Option<PathBuf> 
     let stored = cache.put_file(KIND, key, &tmp);
     let _ = std::fs::remove_file(&tmp);
     stored.then(|| cache.path_of(KIND, key)).flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use velt_vir::vir::{
+        AggId, AggLayout, BasicBlock, BinOp, BlockId, Local, LocalDecl, ParamAttrs, Place, Proj, Ty,
+    };
+
+    /// `(*p).0`, `p` pointing at a one-word cell.
+    fn word(p: u32) -> Place {
+        Place {
+            local: Local(p),
+            proj: vec![Proj::Deref(Ty::Agg(AggId(1))), Proj::Field(0)],
+        }
+    }
+
+    fn copy(place: Place) -> Operand {
+        Operand::Copy(place)
+    }
+
+    fn int(n: i128) -> Operand {
+        Operand::Const(Const::Int(n), Ty::I64)
+    }
+
+    /// `count(p, q)` (std's, `@noInline`): `i = 0; while (i < (*p).0) { (*q).0 -= 1; i += 1 }`,
+    /// returning `i`, with `p` `frozen readonly` as `attrs` say. `main(n)` returns
+    /// `count(&cell, &cell)` for a cell holding `n`: with `p` and `q` the same, `n / 2` rounded up,
+    /// and `n` where `(*p).0` is read once.
+    fn program(frozen: bool) -> vir::Program {
+        let local = |n: u32| Place::local(Local(n));
+        let mut count = vir::Function::new(
+            "_V3stdN5count".into(),
+            vec![Ty::Ptr, Ty::Ptr],
+            Ty::I64,
+            Linkage::Internal,
+        );
+        count.inline = vir::Inline::Never;
+        let cell = ParamAttrs {
+            nonnull: true,
+            dereferenceable: 8,
+            ..ParamAttrs::default()
+        };
+        count.param_attrs = vec![
+            ParamAttrs {
+                frozen,
+                readonly: frozen,
+                ..cell
+            },
+            cell,
+        ];
+        count.locals.push(LocalDecl::new(Ty::I64, None)); // 2: i
+        count.locals.push(LocalDecl::new(Ty::Bool, None)); // 3: i < (*p).0
+        count.blocks = vec![
+            BasicBlock {
+                stmts: vec![Stmt::Assign(local(2), Rvalue::Use(int(0)))],
+                term: Terminator::Goto(BlockId(1)),
+            },
+            BasicBlock {
+                stmts: vec![Stmt::Assign(
+                    local(3),
+                    Rvalue::Binary(BinOp::Lt, copy(local(2)), copy(word(0))),
+                )],
+                term: Terminator::Branch {
+                    cond: copy(local(3)),
+                    then: BlockId(2),
+                    els: BlockId(3),
+                },
+            },
+            BasicBlock {
+                stmts: vec![
+                    Stmt::Assign(word(1), Rvalue::Binary(BinOp::Sub, copy(word(1)), int(1))),
+                    Stmt::Assign(local(2), Rvalue::Binary(BinOp::Add, copy(local(2)), int(1))),
+                ],
+                term: Terminator::Goto(BlockId(1)),
+            },
+            BasicBlock {
+                stmts: vec![],
+                term: Terminator::Return(copy(local(2))),
+            },
+        ];
+        let string = AggLayout {
+            name: "string".into(),
+            size: 24,
+            align: 8,
+            fields: vec![(Ty::U64, 0), (Ty::U64, 8), (Ty::U64, 16)],
+        };
+        let one_word = AggLayout {
+            name: "cell".into(),
+            size: 8,
+            align: 8,
+            fields: vec![(Ty::I64, 0)],
+        };
+        vir::Program {
+            aggs: vec![string, one_word],
+            funcs: vec![count],
+            ..vir::Program::default()
+        }
+    }
+
+    /// `main(n)` added to `p`, calling its `count` with the same cell twice.
+    fn with_main(mut p: vir::Program) -> vir::Program {
+        let count = p
+            .funcs
+            .iter()
+            .position(|f| f.symbol == "_V3stdN5count")
+            .unwrap();
+        let mut main = vir::Function::new("main".into(), vec![Ty::I64], Ty::I64, Linkage::Export);
+        main.locals.push(LocalDecl::new(Ty::Agg(AggId(1)), None)); // 1: the cell
+        main.locals.push(LocalDecl::new(Ty::Ptr, None)); // 2: &cell
+        main.locals.push(LocalDecl::new(Ty::I64, None)); // 3: the result
+        let cell = Place {
+            local: Local(1),
+            proj: vec![Proj::Field(0)],
+        };
+        main.blocks = vec![
+            BasicBlock {
+                stmts: vec![
+                    Stmt::Assign(cell, Rvalue::Use(copy(Place::local(Local(0))))),
+                    Stmt::Assign(
+                        Place::local(Local(2)),
+                        Rvalue::AddrOf(Place::local(Local(1))),
+                    ),
+                ],
+                term: Terminator::Call {
+                    callee: Callee::Func(FuncId(count as u32)),
+                    args: vec![copy(Place::local(Local(2))), copy(Place::local(Local(2)))],
+                    dest: Some(Place::local(Local(3))),
+                    next: BlockId(1),
+                },
+            },
+            BasicBlock {
+                stmts: vec![],
+                term: Terminator::Return(copy(Place::local(Local(3)))),
+            },
+        ];
+        p.funcs.push(main);
+        p
+    }
+
+    fn run(p: &vir::Program, n: u64) -> u64 {
+        let host = velt_opt::interp::RecordingHost::default();
+        let mut interp = velt_opt::interp::Interp::new(p, host);
+        interp.call_symbol("main", &[n]).expect("runs")
+    }
+
+    /// `count`'s object compiled in a program where its `p` is `frozen`, optimized and run with
+    /// `main`'s same cell twice (a program where `p` is not frozen).
+    fn object(p: &vir::Program, assumed: key::Assumed) -> vir::Program {
+        let canon = velt_vir::fingerprint::Canon::new(p, velt_vir::fingerprint::Mode::Link);
+        let names = Names::new(p, &canon);
+        let mut alone = with_main(program_of(p, 0, &names, select::Depth::Whole, assumed));
+        velt_opt::optimize(&mut alone, velt_opt::OptLevel::Speed);
+        alone
+    }
+
+    /// An object compiled with the program's `frozen` miscompiles where the param isn't: the loop
+    /// reads `(*p).0` once. Compiled under `Assumed::Conservative`, as a release build stores its
+    /// object for other programs to find, it computes what the code says in any program.
+    #[test]
+    fn an_object_without_whole_program_attributes_is_right_where_they_do_not_hold() {
+        assert_eq!(run(&with_main(program(false)), 10), 5, "what the code says");
+        let frozen = program(true);
+        assert_eq!(
+            run(&object(&frozen, key::Assumed::Program), 10),
+            10,
+            "miscompiled"
+        );
+        let conservative = object(&frozen, key::Assumed::Conservative);
+        assert_eq!(run(&conservative, 10), 5);
+        let count = &conservative.funcs[0];
+        assert!(count
+            .param_attrs
+            .iter()
+            .all(|a| !a.frozen && !a.readonly && !a.noalias));
+        assert!(count
+            .param_attrs
+            .iter()
+            .all(|a| a.nonnull && a.dereferenceable == 8));
+    }
 }

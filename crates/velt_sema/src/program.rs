@@ -125,6 +125,7 @@ fn parts(p: &hir::Program) -> Vec<(&'static str, String)> {
         generated,
         decorators,
         c_exports,
+        fn_wrappers,
     } = p;
     let n = types.len() as u32;
     let kinds: Vec<_> = (0..n).map(|t| types.kind(hir::TyId(t))).collect();
@@ -164,6 +165,7 @@ fn parts(p: &hir::Program) -> Vec<(&'static str, String)> {
         ("generated", set(generated)),
         ("decorators", set(decorators)),
         ("c_exports", one(c_exports)),
+        ("fn_wrappers", set(fn_wrappers)),
     ]
 }
 
@@ -240,6 +242,7 @@ fn build(
         generic_dyn_methods: generic_called.names().collect(),
         arg_free_generic_fns: generic_fns.free_of_args.into_iter().collect(),
         fresh_closures: generic_fns.fresh.into_iter().collect(),
+        fn_wrappers: generic_fns.wrappers.into_iter().collect(),
         extension_impls: extension_impls.into_iter().collect(),
         dyn_bounds: dyn_bounds.into_iter().collect(),
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),

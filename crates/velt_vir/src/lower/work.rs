@@ -24,6 +24,12 @@ pub(super) enum Work {
     /// `(env: ptr) -> ptr`: the environment of closure `(def, targs)` made safe for another
     /// thread (glue/transfer.rs).
     EnvTransfer(DefId, Vec<TyId>),
+    /// `(code, env, out: ptr)`: the function the function value `{ code, env }` leads to through
+    /// wrappers, written to `out` (closure/fn_wrappers.rs).
+    FnRoot,
+    /// `(a: ptr, b_code, b_env) -> bool`: `===` of two function values through wrappers
+    /// (closure/fn_wrappers.rs).
+    FnSame,
     /// `(len: u64, index: i64|u64, at: ptr)`: index-out-of-bounds panic (true = signed index;
     /// `at` points to the ` at <location>` string suffix).
     Oob(bool),

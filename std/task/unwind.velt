@@ -1,0 +1,69 @@
+// velt/task (internal): running a function and catching the Velt panic that unwinds out of it
+// (docs/internals/design/unwinding.md), for the executor's catch at a started promise and for
+// `catchPanic`.
+
+import { catchUnwind } from "velt/lang/intrinsics/unwind";
+import { catchesPanics, enterCatch, leaveCatch, takePanic } from "velt/lang/hooks/unwind";
+import { processEnv } from "velt/lang/hooks/process";
+
+declare function velt_rt_xfer_suspend(): u32;
+declare function velt_rt_xfer_resume(depth: u32): void;
+declare function velt_rt_xfer_end(): void;
+declare function velt_rt_write_str(stream: u32, s: string);
+
+/**
+ * Whether `catchVeltPanic` catches here: false where generated code doesn't catch (WebAssembly,
+ * Windows for now, the `velt dev` JIT), where a panic in `f` ends the process.
+ */
+export function canCatchPanics(): bool {
+  return catchesPanics();
+}
+
+/**
+ * Calls `f`; returns null when it returns, or the panic's message when a Velt panic unwound out
+ * of it (the message is printed to stderr when it happens, as an uncaught one is). What `f` was
+ * doing is abandoned, not undone: its memory is leaked, nothing it held is dropped. Any other
+ * exception passes through. Where generated code doesn't catch (WebAssembly, Windows for now, the
+ * `velt dev` JIT), `f` is called plainly and a panic in it ends the process as any other does.
+ */
+export function catchVeltPanic(f: () => void): string | null {
+  if (!enterCatch()) {
+    f();
+    return null;
+  }
+  // SAFETY: the exception object is taken once, below.
+  const e = unsafe { catchUnwind(f) };
+  leaveCatch();
+  if (e == 0) {
+    return null;
+  }
+  caught();
+  // SAFETY: `e` is the exception `catchUnwind` returned, taken here once.
+  return unsafe { takePanic(e) };
+}
+
+/**
+ * After a caught panic: the state the panicked code left open on this thread is closed, as the
+ * runtime's own catch does (`velt_rt::panic::catch`), and the leak check learns of it.
+ */
+function caught() {
+  // A panic inside a transfer (a value going to `spawn` that can't, a copy that failed) left its
+  // depth up: every later transfer of this thread would nest in it. `f` runs as user code, where
+  // the depth is 0 (a transfer suspends around the user code it calls), so close what is open:
+  // `suspend` reads the depth (and sets the open transfer aside), `resume` takes it back, and each
+  // `end` closes one level; the last clears its copies and releases the references it deferred,
+  // which belonged to the transfer, not to the abandoned frames.
+  const depth = velt_rt_xfer_suspend();
+  if (depth > 0) {
+    velt_rt_xfer_resume(depth);
+    for (let i: u32 = 0; i < depth; i++) {
+      velt_rt_xfer_end();
+    }
+  }
+  // The abandoned frames leaked what they held, so the block counts of this process can't
+  // balance: say so where the leak check reads them (std/test/plan.velt `leakedBlocks`), as the
+  // runtime's `panics caught=` does for its own catch.
+  if (processEnv("VELT_RC_STATS") == "1") {
+    velt_rt_write_str(2, "rc stats: std caught a panic\n");
+  }
+}

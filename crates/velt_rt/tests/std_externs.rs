@@ -273,8 +273,13 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
     for (name, (want, velt_path)) in velt_declarations() {
         // The SIMD operations and the `velt_math_*` math operations are emitted inline by the
         // backends (rt_abi.md "SIMD", "Math operations"): no runtime defines them. `velt_vir`'s
-        // `simd` tests and the verifier (math) check their declarations.
-        if name.starts_with("velt_simd_") || name.starts_with("velt_math_") {
+        // `simd` tests and the verifier (math) check their declarations. The `velt_eh_*` family
+        // (`velt_eh_try`, `velt_eh_catches`, `velt_eh_personality`) is defined by the backend in
+        // each object (docs/internals/design/unwinding.md), never by a runtime.
+        if name.starts_with("velt_simd_")
+            || name.starts_with("velt_math_")
+            || name.starts_with("velt_eh_")
+        {
             continue;
         }
         let Some(found) = defs.get(&name) else {

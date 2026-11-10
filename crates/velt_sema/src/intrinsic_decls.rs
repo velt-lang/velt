@@ -122,6 +122,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // future.velt
     ("futDrop", Op(I::FutDrop)),
     ("futPoll", Op(I::FutPoll)),
+    // unwind.velt
+    ("catchUnwind", Op(I::CatchUnwind)),
     // string.velt
     ("strAsciiWords", Op(I::StrAsciiWords)),
     ("strByteAt", Op(I::StrByteAt)),

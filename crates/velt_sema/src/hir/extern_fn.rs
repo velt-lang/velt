@@ -44,9 +44,14 @@ pub struct CImport {
     /// `{ errno: true }`: each call saves `errno` for `lastOsError()`. Most libraries report
     /// failures through results, and a call that doesn't ask pays nothing.
     pub errno: bool,
-    /// One per parameter of the declaration, in order.
+    /// One per parameter of the declaration, in order; a variadic function's fixed ones.
     pub params: Vec<CTy>,
     pub ret: CTy,
+    /// The declaration ends with `...args: CVarArgs` (velt/ffi): C's `...`. `params` (and the
+    /// `ExternFnDef`'s) are the fixed parameters; a call's further arguments are integers,
+    /// `f32`, `f64`, `bool`, `Ptr<T>`, `Ptr<T> | null` or `null`, each passed with C's default
+    /// argument promotions (c-ffi.md "Variadic functions"). Additive.
+    pub variadic: bool,
 }
 
 /// A type that crosses to C.

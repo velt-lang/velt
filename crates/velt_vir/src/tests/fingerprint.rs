@@ -119,6 +119,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
                 is_async: false,
             }),
             c_decl: None,
+            variadic: false,
         },
         ExternFn {
             symbol: "velt_rt_panic".into(),
@@ -127,6 +128,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
             noreturn: v.noreturn,
             host: None,
             c_decl: None,
+            variadic: false,
         },
     ];
     let leaf = |symbol: &str| {

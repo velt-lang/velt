@@ -1,5 +1,6 @@
 //! Which std functions the cache serves (hand-built VIR).
 
+use super::super::key::Assumed;
 use super::statics::Names;
 use super::*;
 use velt_vir::vir::{
@@ -264,6 +265,7 @@ fn code_reaching_a_thread_local_stays_where_it_has_no_data_to_share() {
         noreturn: false,
         host: None,
         c_decl: None,
+        variadic: false,
     });
     let helpers = [false; 3];
     let rule = |thread_data| Rule::Debug {
@@ -501,7 +503,8 @@ fn a_release_objects_program_has_its_own_copies_and_the_programs_addresses() {
         ],
         vec![],
     );
-    let alone = super::super::compile::program_of(&p, 0, &names(&p), Depth::Whole);
+    let alone =
+        super::super::compile::program_of(&p, 0, &names(&p), Depth::Whole, Assumed::Program);
     let of = |name: &str| {
         let f = (alone.funcs.iter())
             .find(|f| velt_vir::mangle::demangle(&f.symbol).ends_with(name))
@@ -514,7 +517,8 @@ fn a_release_objects_program_has_its_own_copies_and_the_programs_addresses() {
     assert_eq!(of("::small"), (Internal, true));
     assert_eq!(of("::by_address"), (Import, true));
     assert_eq!(of("::other_entry"), (Import, false));
-    let debug = super::super::compile::program_of(&p, 0, &names(&p), Depth::Small);
+    let debug =
+        super::super::compile::program_of(&p, 0, &names(&p), Depth::Small, Assumed::Program);
     let large = debug
         .funcs
         .iter()
@@ -574,6 +578,7 @@ fn has_check(p: &mut Program) -> vir::ExternId {
         noreturn: false,
         host: None,
         c_decl: None,
+        variadic: false,
     });
     vir::ExternId(p.externs.len() as u32 - 1)
 }

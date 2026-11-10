@@ -37,6 +37,7 @@ pub(crate) fn declare(externs: &mut Vec<ExternFn>) {
                 noreturn: false,
                 host: None,
                 c_decl: None,
+                variadic: false,
             });
         }
     }

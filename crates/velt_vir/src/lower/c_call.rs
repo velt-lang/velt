@@ -9,7 +9,7 @@
 use velt_sema::hir::{self, CTy, DefId, IntTy, TyId, TyKind};
 
 use super::system::Arg;
-use super::{cint, ice, unit, FnLower};
+use super::{cint, ice, unit, Cx, FnLower};
 use crate::system;
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty, STR_AGG};
 
@@ -34,6 +34,18 @@ enum CArg {
     Field(Place, TyId, &'static str),
 }
 
+/// The first C declaration of a symbol: where it is and how it reads, for the error of a second
+/// signature.
+pub(super) struct CDecl {
+    pub span: velt_common::Span,
+    /// `path:line:col`.
+    pub at: String,
+    /// `abs$i8(i8): i32`.
+    pub shown: String,
+    /// Its C signature, which every other declaration of the symbol must pass.
+    pub sig: CSig,
+}
+
 impl FnLower<'_, '_> {
     /// A call of the C function `def` (an `ExternFnDef` with `c`).
     pub(super) fn c_call(&mut self, def: DefId, args: &[hir::Expr]) -> Operand {
@@ -56,12 +68,47 @@ impl FnLower<'_, '_> {
                 vt => Operand::Copy(Place::local(self.temp(vt))),
             };
         }
+        let fixed = c.params.len();
+        if args.len() < fixed || (!c.variadic && args.len() > fixed) {
+            // Sema reported the call (it leaves one with too few arguments without any): an
+            // error here too, with no argument read that isn't there.
+            let at = (args.first()).map_or(x.span, |a| a.span);
+            let (least, dots) = match c.variadic {
+                true => ("at least ", " before its `...`"),
+                false => ("", ""),
+            };
+            let s = if fixed == 1 { "" } else { "s" };
+            self.cx.c_clashes.push(velt_common::Diagnostic::error(
+                format!(
+                    "C function `{}` takes {least}{fixed} argument{s}{dots}, but {} were supplied",
+                    base_symbol(&symbol),
+                    args.len()
+                ),
+                at,
+            ));
+            for a in args {
+                self.system_arg_effects(a);
+            }
+            return match self.cx.ty(ret) {
+                Ty::Unit => unit(),
+                vt => Operand::Copy(Place::local(self.temp(vt))),
+            };
+        }
         let mut ctys = vec![];
         let mut vals = vec![];
         let laters = self.later_each(args);
         let callee = format!("C function `{}`", base_symbol(&symbol));
         let wasm = wasm32(&self.cx.target);
-        for (k, ((a, t), later)) in args.iter().zip(&c.params).zip(laters).enumerate() {
+        // A variadic function's further arguments, each as what it is (sema checked it is a
+        // scalar or a pointer C's `...` takes).
+        let types: Vec<CTy> = (c.params.iter().copied())
+            .chain(
+                args[c.params.len().min(args.len())..]
+                    .iter()
+                    .map(|a| self.vararg_cty(a.ty)),
+            )
+            .collect();
+        for (k, ((a, t), later)) in args.iter().zip(&types).zip(laters).enumerate() {
             ctys.push(c_vir(*t, wasm));
             if let CTy::Buf { .. } = t {
                 let name = format!("argument {}", k + 1);
@@ -132,6 +179,16 @@ impl FnLower<'_, '_> {
                     }
                 }
             };
+            // C's default argument promotions, for a variadic argument.
+            let v = match (k >= c.params.len(), promoted(*t, wasm)) {
+                (true, Some(pt)) => {
+                    *ctys
+                        .last_mut()
+                        .unwrap_or_else(|| ice("a C argument's type")) = pt;
+                    self.rvalue_temp(pt, Rvalue::Cast(v, pt))
+                }
+                _ => v,
+            };
             vals.push(CArg::Ready(v));
         }
         let mut cargs = vec![];
@@ -158,41 +215,66 @@ impl FnLower<'_, '_> {
             .and_then(|m| m.loc(x.span).map(|l| m.describe(l)))
             .unwrap_or_else(|| link.to_string());
         let shown = shown_signature(&symbol, &c);
-        let clash = self
-            .cx
-            .extern_signature(link)
-            .is_some_and(|s| s != (&ctys[..], cret));
-        if clash {
-            // Reported once per declaration, naming the other one (or the runtime's use).
-            if self.cx.c_clashes_reported.insert(def) {
-                let other = match self.cx.c_symbols.get(link) {
-                    Some(o) => format!("`{}` at {}", o.shown, o.at),
-                    None => "the signature the compiler's runtime calls it with".to_string(),
-                };
-                self.cx.c_clashes.push(
-                    velt_common::Diagnostic::error(
-                        format!("C function `{link}` has two signatures: `{shown}` here, and {other}"),
-                        x.span,
-                    )
-                    .with_note("one symbol has one signature until calls through C function pointers come (#2187 step 4)"),
+        let sig = CSig::of(&c);
+        // Another declaration of the symbol (or the compiler's own use) may have fixed its
+        // signature with other Velt types: of the same C signature, this call passes its
+        // arguments as those types (the same bits), and anything else is a clash.
+        let (vparams, vret) = match self.cx.extern_signature(link) {
+            None => (ctys[..fixed].to_vec(), cret),
+            Some((ps, r, v)) => {
+                let (ps, same_vir) = (
+                    ps.to_vec(),
+                    ps == &ctys[..fixed] && r == cret && v == c.variadic,
                 );
+                let words = [
+                    Ty::Ptr,
+                    c_vir(CTy::Int(IntTy::USize), wasm),
+                    c_vir(CTy::Int(IntTy::ISize), wasm),
+                ];
+                let other = self.cx.c_symbols.get(link);
+                let compatible = same_vir
+                    || match other {
+                        Some(o) => o.sig.same(&sig),
+                        // The compiler's own use: a word for a pointer it passes.
+                        None => {
+                            v == c.variadic
+                                && ps.len() == fixed
+                                && (ps
+                                    .iter()
+                                    .zip(&c.params)
+                                    .zip(&ctys)
+                                    .chain([((&r, &c.ret), &cret)]))
+                                .all(|((&have, &t), &want)| {
+                                    have == want
+                                        || (class(t) == CClass::Word && words.contains(&have))
+                                })
+                        }
+                    };
+                if !compatible {
+                    self.c_clash(def, (link, &shown, &sig), x.span);
+                    return match cret {
+                        Ty::Unit => unit(),
+                        t => Operand::Copy(Place::local(self.temp(t))),
+                    };
+                }
+                (ps, r)
             }
-            return match cret {
-                Ty::Unit => unit(),
-                t => Operand::Copy(Place::local(self.temp(t))),
-            };
+        };
+        for (k, want) in vparams.iter().enumerate() {
+            if ctys[k] != *want {
+                let v = cargs[k].clone();
+                cargs[k] = self.rvalue_temp(*want, Rvalue::Cast(v, *want));
+            }
         }
-        self.cx
-            .c_symbols
-            .entry(link.to_string())
-            .or_insert(super::CDecl {
-                span: x.span,
-                at: decl.clone(),
-                shown,
-            });
-        let id = self.cx.extern_sym(link, ctys, cret, false);
+        self.cx.c_symbols.entry(link.to_string()).or_insert(CDecl {
+            span: x.span,
+            at: decl.clone(),
+            shown,
+            sig,
+        });
+        let id = self.cx.extern_sym_c(link, vparams, vret, c.variadic);
         self.cx.externs[id.0 as usize].c_decl = Some(decl);
-        let dest = (cret != Ty::Unit).then(|| self.temp(cret));
+        let dest = (vret != Ty::Unit).then(|| self.temp(vret));
         self.call(
             vir::Callee::Extern(id),
             cargs,
@@ -208,7 +290,11 @@ impl FnLower<'_, '_> {
         let Some(d) = dest else {
             return unit();
         };
-        let result = Operand::Copy(Place::local(d));
+        // The result as this declaration types it.
+        let mut result = Operand::Copy(Place::local(d));
+        if vret != cret {
+            result = self.rvalue_temp(cret, Rvalue::Cast(result, cret));
+        }
         match c.ret {
             CTy::Ptr { nullable } => {
                 let addr = self.rvalue_temp(Ty::U64, Rvalue::Cast(result, Ty::U64));
@@ -231,6 +317,50 @@ impl FnLower<'_, '_> {
                 self.rvalue_temp(wide, Rvalue::Cast(result, wide))
             }
             _ => result,
+        }
+    }
+
+    /// The error for C declaration `def` (at `at`) of `link` (`shown`, C signature `sig`), whose
+    /// symbol another declaration or the compiler's runtime calls with another C signature:
+    /// once per declaration, naming the other one and what differs.
+    fn c_clash(
+        &mut self,
+        def: DefId,
+        (link, shown, sig): (&str, &str, &CSig),
+        at: velt_common::Span,
+    ) {
+        if !self.cx.c_clashes_reported.insert(def) {
+            return;
+        }
+        let (other, note) = match self.cx.c_symbols.get(link) {
+            Some(o) => (format!("`{}` at {}", o.shown, o.at), sig.difference(&o.sig)),
+            None => {
+                let there = self.cx.extern_signature(link).is_some_and(|(_, _, v)| v);
+                return self
+                    .cx
+                    .runtime_c_clash(link, (shown, at, sig.variadic), there);
+            }
+        };
+        self.cx.c_clashes.push(
+            velt_common::Diagnostic::error(
+                format!("C function `{link}` has two signatures: `{shown}` here, and {other}"),
+                at,
+            )
+            .with_note(note),
+        );
+    }
+
+    /// What a variadic argument of type `t` crosses as (sema allowed only these).
+    fn vararg_cty(&mut self, t: TyId) -> CTy {
+        let t = self.sub(t);
+        match self.cx.kind(t) {
+            TyKind::Int(i) => CTy::Int(i),
+            TyKind::Float(hir::FloatTy::F32) => CTy::F32,
+            TyKind::Float(_) => CTy::F64,
+            TyKind::Bool => CTy::Bool,
+            TyKind::Option(inner, _) if matches!(self.cx.kind(inner), TyKind::Never) => CTy::Null,
+            TyKind::Option(..) => CTy::Ptr { nullable: true },
+            _ => CTy::Ptr { nullable: false },
         }
     }
 
@@ -376,9 +506,164 @@ pub(super) fn c_vir(t: CTy, wasm32: bool) -> Ty {
     }
 }
 
+/// What a C type is to the C calling convention (c-ffi.md "One C function, several
+/// declarations"): two declarations of one symbol whose parameters and results are of one class
+/// each pass the same C signature, whatever Velt types they name.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CClass {
+    /// A pointer of any kind, `size_t` or `ssize_t`: one register class and width on every
+    /// target Velt compiles for.
+    Word,
+    /// Any other integer, by width and signedness (a caller extends a narrow one by its sign).
+    Int(IntTy),
+    F32,
+    F64,
+    /// `_Bool`.
+    Bool,
+    Void,
+}
+
+/// The class of C type `t`.
+fn class(t: CTy) -> CClass {
+    match t {
+        CTy::Int(IntTy::USize | IntTy::ISize)
+        | CTy::Ptr { .. }
+        | CTy::Null
+        | CTy::StrBytes
+        | CTy::Buf { .. }
+        | CTy::CString
+        | CTy::Out
+        | CTy::OutPtr => CClass::Word,
+        CTy::Int(i) => CClass::Int(i),
+        CTy::F32 => CClass::F32,
+        CTy::F64 => CClass::F64,
+        CTy::Bool => CClass::Bool,
+        CTy::Void => CClass::Void,
+    }
+}
+
+/// A declaration's C signature, by class: what two declarations of one symbol must agree on.
+#[derive(Clone, Debug)]
+pub(crate) struct CSig {
+    params: Vec<CClass>,
+    ret: CClass,
+    variadic: bool,
+    /// The Velt types it names (`c_name`), for messages.
+    names: Vec<&'static str>,
+    ret_name: &'static str,
+}
+
+impl Cx<'_> {
+    /// The program's C function `symbol`, declared as `shown` at `at` (`variadic` or not), has
+    /// another signature than the compiler's own calls of it (std's system calls, the runtime's),
+    /// which are `there_variadic` or not: an error at the declaration, once, whichever comes
+    /// first.
+    pub(super) fn runtime_c_clash(
+        &mut self,
+        symbol: &str,
+        (shown, at, variadic): (&str, velt_common::Span, bool),
+        there_variadic: bool,
+    ) {
+        let kind = match (variadic == there_variadic, there_variadic) {
+            (true, _) => "",
+            (false, true) => "variadic ",
+            (false, false) => "non-variadic ",
+        };
+        let message = format!(
+            "C function `{symbol}` has two signatures: `{shown}` here, and the {kind}signature the compiler's runtime calls it with"
+        );
+        if self.c_clashes.iter().any(|d| d.message == message) {
+            return;
+        }
+        let why = "the compiler's runtime calls this C function itself, with the C types of its own declaration";
+        let note = match (variadic, there_variadic) {
+            (true, false) => format!("it is variadic here and not there: {why}"),
+            (false, true) => format!("it is not variadic here and variadic there: {why}"),
+            _ => why.to_string(),
+        };
+        self.c_clashes
+            .push(velt_common::Diagnostic::error(message, at).with_note(note));
+    }
+
+    /// The program declared `symbol` as a C function (c_call.rs) before the compiler's own call
+    /// of it with another signature (`variadic` or not): [`Self::runtime_c_clash`], if so.
+    pub(super) fn c_declared_clash(&mut self, symbol: &str, variadic: bool) -> bool {
+        let Some(c) = self.c_symbols.get(symbol) else {
+            return false;
+        };
+        let (shown, at, here) = (c.shown.clone(), c.span, c.sig.variadic);
+        self.runtime_c_clash(symbol, (&shown, at, here), variadic);
+        true
+    }
+}
+
+impl CSig {
+    fn of(c: &hir::CImport) -> CSig {
+        CSig {
+            params: c.params.iter().map(|t| class(*t)).collect(),
+            ret: class(c.ret),
+            variadic: c.variadic,
+            names: c.params.iter().map(|t| c_name(*t)).collect(),
+            ret_name: c_name(c.ret),
+        }
+    }
+
+    /// Whether `self` and `other` pass the same C signature.
+    fn same(&self, other: &CSig) -> bool {
+        self.params == other.params && self.ret == other.ret && self.variadic == other.variadic
+    }
+
+    /// What differs between this signature (here) and `other` (there), for the error's note.
+    fn difference(&self, other: &CSig) -> String {
+        const RULE: &str = "two declarations of one C function must pass the same C types: every pointer, `usize` and `isize` is one machine word, any other integer keeps its width and sign";
+        let what = if self.params.len() != other.params.len() {
+            format!(
+                "it takes {} parameters here and {} there",
+                self.params.len(),
+                other.params.len()
+            )
+        } else if self.variadic != other.variadic {
+            let (a, b) = if self.variadic {
+                ("", " not")
+            } else {
+                (" not", "")
+            };
+            format!("it is{a} variadic here and{b} there")
+        } else if let Some(k) = (0..self.params.len()).find(|&k| self.params[k] != other.params[k])
+        {
+            format!(
+                "parameter {} is `{}` here and `{}` there",
+                k + 1,
+                self.names[k],
+                other.names[k]
+            )
+        } else {
+            format!(
+                "the result is `{}` here and `{}` there",
+                self.ret_name, other.ret_name
+            )
+        };
+        format!("{what}: {RULE}")
+    }
+}
+
+/// The type a variadic argument crossing as `t` is passed as, when C's default argument
+/// promotions change it: an integer narrower than `int` and `_Bool` become an `int`, a `float`
+/// a `double` (`size_t` stays itself, 32 bits on wasm32).
+fn promoted(t: CTy, wasm32: bool) -> Option<Ty> {
+    match c_vir(t, wasm32) {
+        Ty::I8 | Ty::I16 | Ty::U8 | Ty::U16 | Ty::Bool => Some(Ty::I32),
+        Ty::F32 => Some(Ty::F64),
+        _ => None,
+    }
+}
+
 /// How a C function's declaration reads, for messages: `abs$u8(u8): i32`.
 fn shown_signature(declared: &str, c: &hir::CImport) -> String {
-    let ps: Vec<&str> = c.params.iter().map(|t| c_name(*t)).collect();
+    let mut ps: Vec<&str> = c.params.iter().map(|t| c_name(*t)).collect();
+    if c.variadic {
+        ps.push("...");
+    }
     format!("{declared}({}): {}", ps.join(", "), c_name(c.ret))
 }
 

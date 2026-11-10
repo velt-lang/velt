@@ -1,0 +1,12 @@
+// velt/ffi (internal): `CVarArgs`, the type of C's `...` in a `declare c` function
+// (docs/internals/design/c-ffi.md "Variadic functions"; crates/velt_sema/src/collect/c_sig.rs).
+
+/**
+ * C's `...`: the last parameter of a variadic C function, `...args: CVarArgs`
+ * (`declare c("c") function fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i32;`). A call passes
+ * the fixed arguments, then any number of integers, `f32`s, `f64`s, `bool`s, `Ptr<T>`s and
+ * `null`s, each with C's default argument promotions (an integer narrower than `int` and a
+ * `bool` pass as an `int`, an `f32` as a `double`). A number literal says its C type there
+ * (`0 as i32`). Nothing else gives a value of this type.
+ */
+export type CVarArgs = never[];

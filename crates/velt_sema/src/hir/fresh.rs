@@ -1,6 +1,18 @@
-//! `Program::fresh_closures` (#943).
+//! `Program::fresh_closures` (#943) and `Program::fn_wrappers` (#2688).
 
-use super::TyId;
+use super::{DefId, LocalId, TyId};
+
+/// The function a closure sema made around another function value to fit a function type
+/// stands for (`Program::fn_wrappers`): the wrapper is that function in JavaScript, so the
+/// comparison of function values looks through it (hir_encodings.md "Function wrappers").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FnWrapped {
+    /// The function value held in this local of the function making the wrapper, which the
+    /// wrapper captures (`{ const f = value; (p…) => f(p…) }`).
+    Local(LocalId),
+    /// The module-level function `.0` at type arguments `.1`, which the wrapper calls by name.
+    Fn(DefId, Vec<TyId>),
+}
 
 /// What lowering is told about a closure for the comparison of function values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

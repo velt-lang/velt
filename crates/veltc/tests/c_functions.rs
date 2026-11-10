@@ -206,8 +206,9 @@ fn a_package_checks_its_own_c_declarations() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 }
 
-/// One C symbol has one signature: each declaration with another one is an error, once (however
-/// often it is called), naming both declarations in Velt's types.
+/// One C symbol has one C signature: each declaration with another one (here an integer of
+/// another width or sign, or `bool`) is an error, once (however often it is called), naming both
+/// declarations in Velt's types.
 #[test]
 fn one_symbol_has_one_signature() {
     let dir = test_dir::TestDir::new();
@@ -704,4 +705,185 @@ fn a_c_string_s_bytes_are_read_only() {
     );
     let out = check(dir.path());
     assert!(out.matches("read-only").count() >= 2, "{out}");
+}
+
+const VARIADIC: &str = include_str!("c_functions/variadic.velt");
+
+/// C's `...` (`...args: CVarArgs`): integers of every width, promoted as C promotes them (a
+/// negative `i8` stays negative, a `u8` above 127 positive), more than the registers hold, in
+/// debug (Cranelift: on Apple arm64 they go on the stack) and release (LLVM) builds; `fcntl`
+/// with an `int` after the command and with nothing.
+#[test]
+fn variadic_functions_take_integers() {
+    let dir = test_dir::TestDir::new();
+    let unix = cfg!(unix);
+    let main = if unix {
+        "import { ints, closeOnExec } from \"cmath\";\n\nfunction main() {\n  console.log(ints());\n  console.log(closeOnExec());\n}\n"
+    } else {
+        "import { ints } from \"cmath\";\n\nfunction main() {\n  console.log(ints());\n}\n"
+    };
+    project(dir.path(), VARIADIC, main);
+    let want = format!(
+        "-5 250 65535 4000000000 -9000000000 1 12345|1 2 3 4 5\n{}",
+        if unix { "1\n" } else { "" }
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            want,
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}
+
+/// Floats through `...` (an `f32` promoted to `double`), mixed with integers and a pointer, more
+/// than the float registers hold. Cranelift can't set SysV x86-64's `%al`, so a debug build
+/// there refuses the call, naming the declaration and `--release`.
+#[test]
+fn variadic_functions_take_floats() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        VARIADIC,
+        "import { floats } from \"cmath\";\n\nfunction main() {\n  console.log(floats());\n}\n",
+    );
+    let sysv_x86 = cfg!(all(target_arch = "x86_64", not(windows)));
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        if sysv_x86 && args.len() == 1 {
+            assert!(!o.status.success(), "{stderr}");
+            assert!(
+                stderr.contains("C function `snprintf` (declared at ")
+                    && stderr.contains("is passed a float variadic argument")
+                    && stderr.contains("--release"),
+                "{stderr}"
+            );
+            continue;
+        }
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "1.50 2.25 7 0.5 -1 3.0625 1.0 2.0 3.0 4.0 5.0 6.0 world\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}
+
+const SAME_SYMBOL: &str = include_str!("c_functions/same_symbol.velt");
+
+/// One C function declared with other Velt types for the same C types (`memcpy` as velt/ffi's
+/// `readCString` declares it, by addresses as `usize`, from a `readonly u8[]` into a
+/// `Ptr<void>` with an `isize` result) is one symbol in one program, in debug and release builds.
+#[test]
+fn declarations_of_one_c_signature_share_their_symbol() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        SAME_SYMBOL,
+        "import { roundTrip } from \"cmath\";\n\nfunction main() {\n  console.log(roundTrip(\"héllo, C\"));\n}\n",
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "héllo, C\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}
+
+/// What differs in C stays an error, at each declaration that differs, naming the first one and
+/// what differs: an integer's width, a float for an integer, the number of parameters, `...`.
+#[test]
+fn declarations_of_other_c_signatures_clash() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { CVarArgs } from \"velt/ffi\";\n\ndeclare c(\"c\") function memcpy$a(dst: usize, src: usize, n: usize): usize;\ndeclare c(\"c\") function memcpy$b(dst: usize, src: usize, n: u32): usize;\ndeclare c(\"c\") function memcpy$c(dst: usize, src: usize, n: usize): f64;\ndeclare c(\"c\") function memcpy$d(dst: usize, src: usize): usize;\ndeclare c(\"c\") function memcpy$e(dst: usize, src: usize, n: usize, ...args: CVarArgs): usize;\n\nexport function f(): usize {\n  // SAFETY: copies of nothing.\n  return unsafe { memcpy$a(0, 0, 0) + memcpy$b(0, 0, 0) + (memcpy$c(0, 0, 0) as usize) + memcpy$d(0, 0) + memcpy$e(0, 0, 0) };\n}\n",
+        "import { f } from \"cmath\";\n\nfunction main() {\n  console.log(f());\n}\n",
+    );
+    let o = velt(dir.path(), &["build"]);
+    let out = String::from_utf8_lossy(&o.stderr).to_string();
+    assert!(!o.status.success(), "{out}");
+    let first = "`memcpy$a(usize, usize, usize): usize` at ";
+    for (decl, note) in [
+        (
+            "memcpy$b(usize, usize, u32): usize",
+            "parameter 3 is `u32` here and `usize` there",
+        ),
+        (
+            "memcpy$c(usize, usize, usize): f64",
+            "the result is `f64` here and `usize` there",
+        ),
+        (
+            "memcpy$d(usize, usize): usize",
+            "it takes 2 parameters here and 3 there",
+        ),
+        (
+            "memcpy$e(usize, usize, usize, ...): usize",
+            "it is variadic here and not there",
+        ),
+    ] {
+        let e = format!("C function `memcpy` has two signatures: `{decl}` here, and {first}");
+        assert!(out.contains(&e), "{e}:\n{out}");
+        assert!(out.contains(note), "{note}:\n{out}");
+    }
+    assert_eq!(out.matches("has two signatures").count(), 4, "{out}");
+    assert!(
+        out.contains("every pointer, `usize` and `isize` is one machine word"),
+        "{out}"
+    );
+}
+
+const POSITIONS: &str = include_str!("c_functions/positions.velt");
+
+/// `xs.subarray(begin, end)` of a number array passes the address of element `begin` (scaled by
+/// the element's size, from the end when negative) for a C parameter of that array type, in
+/// debug and release builds; a part of a `u8[]` crosses into C memory by its address this way,
+/// with no stand-in for the array's address.
+#[test]
+fn a_subarray_passes_the_address_of_an_element() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        POSITIONS,
+        "import { positions, copiedOut } from \"cmath\";\n\nfunction main() {\n  console.log(positions());\n  console.log(copiedOut([10, 11, 12, 13, 14, 15]));\n}\n",
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "1,2,9,9,5,6 1,2,20,30,5 1,2,3,-8\n12,13,14\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}
+
+/// `subarray` passes only for a parameter of its own array type, and a read-only array's never
+/// for one C writes.
+#[test]
+fn a_subarray_of_another_type_or_a_read_only_array_is_refused() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "declare c(\"c\") function memcpy(dst: f64[], src: readonly f64[], n: usize): usize;\n\nconst FIXED: readonly f64[] = [1, 2];\n\nexport function f(xs: i32[], ys: f64[]): usize {\n  // SAFETY: none of these compile.\n  return unsafe { memcpy(ys.subarray(0), xs.subarray(1), 4) + memcpy(FIXED.subarray(1), ys, 8) };\n}\n",
+        "import { f } from \"cmath\";\n\nfunction main() {\n  console.log(f([1], [2]));\n}\n",
+    );
+    let out = check(dir.path());
+    assert!(
+        out.contains("`subarray` of a `i32[]` can't be passed for a `f64[]` parameter"),
+        "{out}"
+    );
+    assert!(
+        out.contains("a read-only array cannot be passed for a buffer the C function writes"),
+        "{out}"
+    );
 }

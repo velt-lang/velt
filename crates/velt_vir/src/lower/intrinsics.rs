@@ -133,6 +133,7 @@ impl FnLower<'_, '_> {
                 };
                 self.rvalue_temp(t, Rvalue::Use(Operand::Copy(place)))
             }
+            (I::CatchUnwind, [f]) => self.catch_unwind(f),
             (I::StrByteAt, [s, i]) => {
                 if let Some(data) = self.known_str_data(s) {
                     let i = self.expr(i);

@@ -1,0 +1,10 @@
+// Taking a missing key's `undefined` apart is Node's `TypeError` (#930).
+type S = { value: number; name: string };
+const rec: Record<string, S> = {};
+function k(s: string): string {
+  return s;
+}
+const key = k("z");
+console.log("before");
+const { value, name } = rec[key];
+console.log(value, name);

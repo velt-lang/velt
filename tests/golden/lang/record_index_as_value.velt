@@ -1,0 +1,59 @@
+// An open record's read is typed `V`, as in TypeScript (#930 phase 3): a present key reads as its
+// value wherever a `V` is used, and a missing key gives `undefined`, which tests, `??`, `?.`,
+// `typeof` and a local keep, as in Node.
+type S = { value: number; f(): number };
+const rec: Record<string, S> = { a: { value: 1, f: () => 2 } };
+const fns: Record<string, () => number> = { g: () => 3 };
+const idx: { [k: string]: number[] } = { n: [4, 5] };
+function k(s: string): string {
+  return s;
+}
+function take(s: S): number {
+  return s.value;
+}
+const a = k("a");
+const z = k("z");
+const i = 1;
+console.log(rec[a].value, rec[a].f(), fns[k("g")](), fns.g(), idx[k("n")][i], idx[k("n")].length);
+const e = rec[a];
+console.log(e.value, e.f(), take(rec[a]), take(e), e.value);
+const m = rec[z];
+console.log(m === undefined, rec[z] === undefined, rec[z]?.value ?? "d", rec[z]?.value, typeof rec[z]);
+if (rec[z]) {
+  console.log("present");
+} else {
+  console.log("absent");
+}
+for (const id in rec) {
+  if (rec[id].value === 1) {
+    console.log("in", id);
+  }
+}
+const out: Record<string, number> = {};
+for (const key of [a]) {
+  out[key] = rec[key].value;
+}
+console.log(out);
+if (a in rec) {
+  const entry = rec[a];
+  const chunk = { url: entry.value, run: entry.f() };
+  console.log(chunk);
+}
+let n = rec[z];
+console.log(n === undefined ? "none" : n.value);
+n = rec[a];
+console.log(n.value);
+// Writes, closures, patterns, returns and arithmetic take the read as a `V` too.
+rec[a].value = 5;
+rec[a].value++;
+rec[a].value += 2;
+const read = () => e.value;
+const { value } = rec[a];
+function get(key: string): S {
+  return rec[key];
+}
+const nums: Record<string, number> = { one: 1 };
+console.log(rec[a].value, read(), value, get(a).value, nums[k("one")] + 1, -nums[k("one")], nums[k("one")] > 0);
+const arr: S[] = [];
+arr.push(rec[a]);
+console.log(arr.length, Math.max(nums[k("one")], 3), "k" + nums[k("two")]);

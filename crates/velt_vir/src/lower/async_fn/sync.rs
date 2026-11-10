@@ -351,7 +351,9 @@ impl FnLower<'_, '_> {
         if let hir::ExprKind::Closure(d) = &f.kind {
             if !moved.is_empty() {
                 let ea = self.cx.env_agg(*d, &self.targs.clone());
-                let env = proj(&proj(&fp, Proj::Field(1)), Proj::Deref(Ty::Agg(ea)));
+                let (bare, _) = self.closure_env(&fp);
+                let bare = self.operand_place(bare, Ty::Ptr);
+                let env = proj(&bare, Proj::Deref(Ty::Agg(ea)));
                 for &(field, ty) in &moved {
                     self.transfer_root_in_place(proj(&env, Proj::Field(field)), ty);
                 }

@@ -62,7 +62,10 @@ impl FnCx<'_, '_> {
     ) -> R {
         let marked = rmw && self.cx.asserted_rmw.contains(&span);
         let outer = std::mem::replace(&mut self.asserted_target, marked);
+        // A read-modify-write reads its target first (`field_access`).
+        let update = std::mem::replace(&mut self.f.update_target, rmw);
         let r = f(self);
+        self.f.update_target = update;
         self.asserted_target = outer;
         r
     }

@@ -40,6 +40,7 @@ mod storage_tests;
 mod target;
 mod terminator;
 mod tls;
+mod variadic;
 
 use rustc_hash::FxHashMap;
 
@@ -173,7 +174,12 @@ pub(crate) fn translate_function(
             builder_ctx,
             &in_memory,
             &single,
-        )?;
+        )
+        .inspect_err(|_| {
+            // An error half-way (a float variadic argument on SysV x86-64, variadic.rs) leaves
+            // the builder's context dirty: the next function on this thread must not see it.
+            *builder_ctx = FunctionBuilderContext::new();
+        })?;
         let (demote, srclocs) = match attempt {
             Ok(done) => done,
             Err(lib) => {

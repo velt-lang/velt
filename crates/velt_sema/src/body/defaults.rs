@@ -221,6 +221,7 @@ impl super::FnCx<'_, '_> {
             // A `T | undefined` parameter is a `T` once its default is applied, unless the
             // default may itself be `undefined` (`config: C | undefined = current()`): then it
             // stays a `T | undefined`, as in TypeScript.
+            let mut trusted = None;
             let (ty, then, value) = match undefined_only(self.cx, ty) {
                 Some(inner) => {
                     // Checked against the parameter's own type (`c ? [] : undefined` is one),
@@ -231,7 +232,11 @@ impl super::FnCx<'_, '_> {
                         .ty
                         .nothing_of(d.ty)
                         .is_some_and(|n| n.has_undefined());
-                    let narrowed = match may_be_undefined {
+                    // An `any` default may hold `undefined` too (#2666): TypeScript types the
+                    // parameter `T`, so it stays a `T | undefined` read as a `T` where it is
+                    // used as one (`record_present`), as an open record's read is.
+                    let dynamic = self.cx.dynamic(d.ty).is_some();
+                    let narrowed = match may_be_undefined || dynamic {
                         true => Err(d),
                         false => self.try_coerce(d, inner),
                     };
@@ -240,7 +245,10 @@ impl super::FnCx<'_, '_> {
                             let value = synth(ast::ExprKind::NonNull(Box::new(param())));
                             (inner, then, value)
                         }
-                        Err(d) => (ty, self.coerce(d, ty), param()),
+                        Err(d) => {
+                            trusted = dynamic.then_some(inner);
+                            (ty, self.coerce(d, ty), param())
+                        }
                     }
                 }
                 None => (ty, self.expr_coerce(e, ty, Want::Move), param()),
@@ -256,6 +264,9 @@ impl super::FnCx<'_, '_> {
             let scope = self.f.scopes.last_mut().expect("ICE: no scope");
             scope.names.insert(name.name.clone(), local);
             self.rec_local_decl(local);
+            if let Some(v) = trusted {
+                self.f.trusted_locals.insert(local, v);
+            }
             out.push(crate::hir::Stmt {
                 kind: crate::hir::StmtKind::Let {
                     local,

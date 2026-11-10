@@ -69,6 +69,8 @@ pub(crate) struct GenericFns {
     sites: FxHashMap<DefId, Span>,
     /// `hir::Program::fresh_closures`.
     pub fresh: FxHashMap<DefId, hir::FreshClosure>,
+    /// `hir::Program::fn_wrappers`.
+    pub wrappers: FxHashMap<DefId, hir::FnWrapped>,
 }
 
 /// A generic function type's parts, over the type parameters in scope, the implementor and

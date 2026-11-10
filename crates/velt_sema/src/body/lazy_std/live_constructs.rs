@@ -125,11 +125,15 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
 /// The constructs `present` demands the hooks of. The integer hooks act as one bit: a construct
 /// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
 /// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).
+/// `CatchUnwind` is its own bit: it demands std's panic path, which only a program that catches
+/// needs (and a source generator must not reach).
 pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
-    match present {
+    let catch = Construct::CatchUnwind.bit();
+    let integer = match present & !catch {
         0 => 0,
-        _ => Construct::ALL.iter().fold(0, |set, c| set | c.bit()),
-    }
+        _ => Construct::ALL.iter().fold(0, |set, c| set | c.bit()) & !catch,
+    };
+    integer | (present & catch)
 }
 
 /// The name that finds function, class or constant `d` again next round.

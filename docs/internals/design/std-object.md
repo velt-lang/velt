@@ -71,7 +71,8 @@ below):
 - After lowering, each std function the cache serves gets a key: its canonical code
   (`velt_vir::fingerprint`, `Mode::Link`) and parameter attributes, those of every small function
   it may inline, and who compiles it for what (`build_cache::compiler_identity`, clang, target,
-  CPU, optimization level). Whole-program facts show in the code, so the key covers them.
+  CPU, optimization level). Whole-program facts show in the code, so the key covers them, but for
+  the parameter attributes that depend on the whole program (below).
 - Before the program is optimized, each such function becomes a declaration (`Import`), and
   the program's functions its object may call are exported. After, the program links the
   objects of those it still calls (the optimizer drops a declaration nothing calls, as it would
@@ -99,6 +100,23 @@ IR from `--emit` would name std functions it does not define, and the cached obj
 line info. The key also covers clang's optimization flag and, for every function a cached
 object calls without compiling it, the signature and parameter attributes it is declared with,
 which are whole-program facts the caller is optimized against.
+
+**Whole-program parameter attributes.** `noalias`, `readonly` and `frozen` (velt_vir
+`lower/param_attrs.rs`) depend on the whole program and don't show in the code: in a program that
+sorts an array of a class holding a string with a comparator, strings are borrowed inside counted
+objects, and `string` params lose `readonly frozen`. Keyed with them alone, the same std function
+missed in every such program (`bench/jsx/main`: its four escapers, +5.8 % build cost). So a
+release build's default (below) keys each object two ways (`key::Assumed`): with the program's
+attributes, as before, and without those three, for an object compiled with none of them in any
+function of its program of its own (`compile::program_of`). Leaving an attribute out only takes a
+fact away from velt_opt and LLVM, so that object is right in every program that has the same code
+and the same other attributes (`nonnull`, `dereferenceable`, the layouts), and they all make its
+key; an object compiled with an attribute is never linked into a program without it, since only
+the first key holds them. A build links the first if the cache has it, else the second
+(`VELT_STD_OBJECT_STATS` counts those: "found without whole-program attributes"). A filling build
+stores both where they differ: its own, which programs like it link with their attributes, and the
+second, which the others find. `VELT_STD_OBJECT=1` and debug builds key with the program's
+attributes only.
 
 ### Release builds: the functions std marks `@noInline`
 
@@ -155,10 +173,26 @@ changes for them. Such a build:
   `bench/stdport/brotli_stream_*` calls once at the end moved a large drop glue into
   `Decoder.run` (+3.5 to +6.6 %). Taken out after, the program's code is the same as without the
   cache, but for the functions its object calls, made `Export` before velt_opt runs so that it
-  takes no facts about them from the program's calls; the cost is velt_opt's work on a body that
-  is then dropped (clang never sees it). Then what only the served functions called is removed.
-  A clone velt_opt makes of a served function (`const_fields` for a known closure, `null_exits`)
-  is the program's own, compiled with it as without the cache.
+  takes no facts about them from the program's calls. Then what only the served functions called
+  is removed. A clone velt_opt makes of a served function (`const_fields` for a known closure,
+  `null_exits`) is the program's own.
+- has velt_opt leave a served function's body to the inliner (`velt_opt::optimize_served`): the
+  first per-function pass works on it, before inlining (the body is small then, and the
+  inliner's budget starts from the sizes that pass leaves); then the inliner inlines its callees
+  into it, spending the budget, and its calls count and keep alive what they call; but no later
+  per-function pass (`constfold`, `sroa`, `dce`, `bounds`, …) works on it, as that work was on
+  code then dropped (`html_escape` with #2405's std: +33M instructions of velt). The rest of the
+  program is then the same as without the cache wherever those passes would not have changed what
+  the rest sees of the served body. They remove dead code: a call they would have removed (a
+  branch on a constant flag of an `inline()` callee) stays, keeping its callee alive, counting
+  towards its call sites, giving `numrep` its arguments as facts about its parameters, and maybe
+  inlined into the served body, which also nears `CALLER_LIMIT` sooner. Facts other passes read
+  from bodies (`borrowed_copies`' calls that may free, `cold_calls`' functions that never
+  return) are the unoptimized body's, and a clone made of a served function (`null_exits`'s
+  `$present`, a `const_fields` specialization) is made from that body and gets no more passes
+  than it did. The release VIR of the goldens (`std/`, `m1/`, `lang/`), `bench/stdport` and
+  `bench/jsx/main` is the same with the skip as without, and the same as without the cache but
+  for what is served (#2672).
 - leaves in the program a function the optimizer would clone for a function gated on a CPU
   extension (`gated_clones`: an ordinary function checking an extension, itself or through what
   it references), and a gated function whose object would call such a function: in the program

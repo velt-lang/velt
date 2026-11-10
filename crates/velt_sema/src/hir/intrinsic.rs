@@ -411,6 +411,11 @@ pub enum Intrinsic {
     /// of its `CExport` there. For a C API that takes a function pointer (`pthread_create`).
     /// Additive.
     ExportedAddress,
+    /// std only: `catchUnwind(f: () => void) -> usize`: call `f` (borrowed) and return 0 when it
+    /// returns, or the address of the Velt panic's exception object when a Velt panic unwound
+    /// out of it (docs/internals/design/unwinding.md). Lowered to a call of `velt_eh_try`, which
+    /// the backend defines (`velt_vir::eh`). Additive.
+    CatchUnwind,
     /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
     /// range against `StrByteLen`). The bytes are read where the string keeps them.
     StrByteAt,

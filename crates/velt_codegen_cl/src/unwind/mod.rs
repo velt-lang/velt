@@ -49,12 +49,14 @@ pub(crate) fn function_unwind(
     })
 }
 
-/// Append the unwind sections the object format uses for `infos` (collected by `build_module`).
+/// Append the unwind sections the object format uses for `infos` (collected by `build_module`);
+/// `eh`: the personality and LSDA of `velt_eh_try` (crate::eh), if the object defines it.
 pub(crate) fn add_unwind_info(
     product: &mut ObjectProduct,
     isa: &dyn TargetIsa,
     infos: &[FunctionUnwind],
+    eh: Option<crate::eh::EhSymbols>,
 ) -> CodegenResult<()> {
     windows::add_windows_unwind_info(product, infos)?;
-    eh_frame::add_eh_frame(product, isa, infos)
+    eh_frame::add_eh_frame(product, isa, infos, eh)
 }
