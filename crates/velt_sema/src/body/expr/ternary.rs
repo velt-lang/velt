@@ -34,11 +34,13 @@ impl FnCx<'_, '_> {
         let late = |e: &ast::Expr| {
             untyped(e) || only_nothings(e) || super::nothing_slot::is_asserted_nothing(e)
         };
-        // `c ? ("a" as const) : ("b" as const)`: each arm its own literal (below).
+        // `c ? ("a" as const) : ("b" as const)`, or `c ? "a" : "b"` initializing a `const`:
+        // each arm its own literal (below).
+        let plain = self.kept_plain_arms;
         let const_arms = exp.is_none()
             && self.kept_arms.take() == Some(span)
-            && as_const_arm(then)
-            && as_const_arm(els);
+            && kept_arm(then, plain)
+            && kept_arm(els, plain);
         let before = self.narrow_state();
         let (t, f) = if const_arms {
             let hint = self.as_const_literal(then);
@@ -69,8 +71,9 @@ impl FnCx<'_, '_> {
             self.meet_narrowing(&after);
             (t, f)
         };
-        // A declaration's `c ? ("a" as const) : ("b" as const)` keeps its literals (`"a" |
-        // "b"`), as in TypeScript, where other branches of literal types widen (#2655).
+        // A declaration's `c ? ("a" as const) : ("b" as const)`, and a `const`'s `c ? "a" :
+        // "b"`, keep their literals (`"a" | "b"`), as in TypeScript, where other branches of
+        // literal types widen (#2655, #2686).
         let kept = const_arms
             && self.string_literals(t.ty).is_some()
             && self.string_literals(f.ty).is_some();
@@ -89,8 +92,9 @@ impl FnCx<'_, '_> {
         self.mk(kind, ty, span)
     }
 
-    /// `const kind = c ? ("a" as const) : ("b" as const)`: the declaration of `simple_decl`,
-    /// its conditional keeping the arms' literals (`"a" | "b"`) as TypeScript does (#2655).
+    /// `const kind = c ? ("a" as const) : ("b" as const)` (or, for a `const`, `c ? "a" : "b"`):
+    /// the declaration of `simple_decl`, its conditional keeping the arms' literals (`"a" |
+    /// "b"`) as TypeScript does (#2655, #2686).
     /// Elsewhere (an object literal's value, an array element) such a conditional widens to
     /// `string`, so a value holding it still fits a `string` field.
     pub(crate) fn decl_keeping_arms(
@@ -104,15 +108,19 @@ impl FnCx<'_, '_> {
         let init = v.init.as_ref().map(super::object_builtins::strip_parens);
         let cond = init.filter(|e| matches!(e.kind, ast::ExprKind::Cond { .. }));
         let outer = std::mem::replace(&mut self.kept_arms, cond.map(|e| e.span));
+        let plain = std::mem::replace(&mut self.kept_plain_arms, v.kind == ast::VarKind::Const);
         self.simple_decl(v, name, ann, span, out);
-        self.kept_arms = outer;
+        (self.kept_arms, self.kept_plain_arms) = (outer, plain);
     }
 
-    /// The literal type of an arm written `"a" as const` (`None` for a nested conditional,
-    /// which gives its own arms theirs).
+    /// The literal type of an arm written `"a" as const`, or `"a"` (`None` for a nested
+    /// conditional, which gives its own arms theirs).
     fn as_const_literal(&mut self, e: &ast::Expr) -> Option<TyId> {
         match &e.kind {
             ast::ExprKind::Paren(inner) => self.as_const_literal(inner),
+            ast::ExprKind::Lit(ast::Lit::Str(s)) => {
+                Some(self.cx.lit_type(hir::LitValue::Str(s.clone())))
+            }
             ast::ExprKind::Cast { expr, .. } => {
                 match &super::object_builtins::strip_parens(expr).kind {
                     ast::ExprKind::Lit(ast::Lit::Str(s)) => {
@@ -233,11 +241,14 @@ fn written_nothings(e: &ast::Expr) -> Option<Nothing> {
 }
 
 /// Is `e` written `x as const`, or a conditional whose arms both are?
-fn as_const_arm(e: &ast::Expr) -> bool {
+/// An arm that keeps its literal: `"a" as const`, or with `plain` (a `const`'s conditional) a
+/// string literal `"a"`; a nested conditional of such arms.
+fn kept_arm(e: &ast::Expr, plain: bool) -> bool {
     match &e.kind {
-        ast::ExprKind::Paren(inner) => as_const_arm(inner),
+        ast::ExprKind::Paren(inner) => kept_arm(inner, plain),
         ast::ExprKind::Cast { ty, .. } => super::member::is_as_const(ty),
-        ast::ExprKind::Cond { then, els, .. } => as_const_arm(then) && as_const_arm(els),
+        ast::ExprKind::Lit(ast::Lit::Str(_)) => plain,
+        ast::ExprKind::Cond { then, els, .. } => kept_arm(then, plain) && kept_arm(els, plain),
         _ => false,
     }
 }
