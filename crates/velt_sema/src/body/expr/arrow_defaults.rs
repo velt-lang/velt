@@ -3,7 +3,7 @@
 //! - [`FnCx::default_slots`]: slots nothing inferred take their defaults once every argument is
 //!   checked.
 //! - [`FnCx::fix_for_context_sensitive`]: before an arrow function with an unannotated parameter
-//!   is checked, the type parameters in those parameters' types that nothing inferred yet are
+//!   (or a bare `undefined` for a `T | undefined`) is checked, the type parameters in those parameters' types that nothing inferred yet are
 //!   fixed, as TypeScript fixes them before checking a context-sensitive function: sigx's
 //!   `component(({ signal }) => …)` types `ctx` as `ComponentSetupContext<…, {}, …>` from
 //!   `component<TCombined = {}, …>`. A type parameter only in the function's result still comes
@@ -384,6 +384,19 @@ impl FnCx<'_, '_> {
     ) {
         let core = self.cx.ty.core(pty).unwrap_or(pty);
         match &strip_parens(arg).kind {
+            // A bare `undefined` (or `null`) passed where the parameter has that nothing
+            // (`o: T | undefined`) is a candidate for no type parameter of the rest: they are
+            // fixed as with nothing inferred, as TypeScript infers the constraint or `unknown`
+            // for `g(undefined)` (#2683).
+            ast::ExprKind::Lit(lit @ (ast::Lit::Undefined | ast::Lit::Null)) => {
+                let held = self.cx.ty.nothing_of(pty).is_some_and(|n| match lit {
+                    ast::Lit::Undefined => n.has_undefined(),
+                    _ => n.has_null(),
+                });
+                if held && core != pty {
+                    crate::types::collect_params(&self.cx.ty, core, &mut open.fix);
+                }
+            }
             ast::ExprKind::Arrow {
                 type_params,
                 params,

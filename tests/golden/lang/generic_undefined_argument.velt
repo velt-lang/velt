@@ -1,0 +1,16 @@
+// A bare `undefined` passed for a `T | undefined` parameter offers no candidate for `T`: it is
+// the constraint (`object`) or `unknown`, as TypeScript infers it (#2683; it was an internal
+// error in lowering).
+function g<T extends object>(o: T | undefined): number {
+  if (o !== undefined) {
+    return Object.keys(o).length;
+  }
+  return 0;
+}
+function h<T>(o: T | undefined): string {
+  return typeof o;
+}
+function k<T extends string>(o: T | undefined): number {
+  return o === undefined ? 0 : o.length;
+}
+console.log(g({ q: 1, r: 2 }), g(undefined), h(undefined), k(undefined), k("ab"));
