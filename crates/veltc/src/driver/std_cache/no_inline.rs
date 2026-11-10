@@ -517,6 +517,7 @@ mod tests {
                     args: vec![Operand::Copy(Place::local(Local(0)))],
                     dest: Some(result()),
                     next: BlockId(n as u32 + 1),
+                    unwind: None,
                 },
             })
             .collect();
