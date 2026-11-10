@@ -1,0 +1,10 @@
+// `"tag" in fn` on a function type: a function may have gained fields its type doesn't show
+// (`Object.assign(fn, { tag })`, where Node answers `true`), so only the members every
+// function has are known while compiling (#2655).
+function takes(fn: () => number): boolean {
+  return "tag" in fn;
+}
+function takes2(fn: (() => number) | string): boolean {
+  return typeof fn === "function" && "__sigx" in fn;
+}
+console.log(takes(() => 1), takes2("s"), "length" in takes);

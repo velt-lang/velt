@@ -1,0 +1,33 @@
+// `for (const k in o)` where `o` may be `undefined` or `null` lists no keys of a nothing, and
+// `o` is narrowed in the body, as in TypeScript (#2655, sigx's server client headers).
+function merge(extra: Record<string, string> | undefined, options?: { headers?: Record<string, string> }) {
+    const headers: Record<string, string> = {};
+    for (const source of [extra, options?.headers]) {
+        for (const key in source) {
+            headers[key] = source[key];
+        }
+    }
+    return JSON.stringify(headers);
+}
+console.log(merge(undefined, undefined));
+console.log(merge({ a: "1" }, { headers: { b: "2" } }));
+console.log(merge(undefined, {}));
+
+// A `null`, a value held once, and labels.
+let calls = 0;
+function maybe(n: number): Record<string, number> | null {
+    calls++;
+    return n > 0 ? { x: n, y: n * 2 } : null;
+}
+const seen: string[] = [];
+for (const k in maybe(0)) seen.push(k);
+for (const k in maybe(3)) seen.push(k);
+console.log(seen.join(","), calls);
+outer: for (const k in maybe(1)) {
+    for (const j in maybe(2)) {
+        if (j === "y") continue outer;
+        if (k === "y") break outer;
+        seen.push(k + j);
+    }
+}
+console.log(seen.join(","), calls);

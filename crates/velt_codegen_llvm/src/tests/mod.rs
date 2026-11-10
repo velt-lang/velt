@@ -485,6 +485,7 @@ mod static_symbols;
 mod target_features;
 mod tbaa;
 mod units;
+mod variadic;
 mod wasm;
 
 /// `velt_main` returning `velt_simd_has_sha_x86()` (#1981 step 5).

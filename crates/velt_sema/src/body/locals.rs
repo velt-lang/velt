@@ -245,6 +245,8 @@ impl FnCx<'_, '_> {
         // A read-only array or collection (or a number-keyed record) is one in the closures that
         // capture it too.
         let marks = self.outer[j].local_marks.get(&prev).copied();
+        // A trusted local (`record_present`) is one in the closures that capture it too.
+        let trusted = self.outer[j].trusted_locals.get(&prev).copied();
         for idx in j + 1..self.outer.len() {
             let f = &mut self.outer[idx];
             prev = add_narrowed_capture(f, name, prev, ty, span, narrowing);
@@ -256,6 +258,9 @@ impl FnCx<'_, '_> {
             }
             if let Some(m) = marks {
                 f.local_marks.insert(prev, m);
+            }
+            if let Some(v) = trusted {
+                f.trusted_locals.insert(prev, v);
             }
             ty = f.locals[prev.0 as usize].ty;
             narrowing = match assigned {
@@ -275,6 +280,9 @@ impl FnCx<'_, '_> {
         }
         if let Some(m) = marks {
             self.f.local_marks.insert(inner, m);
+        }
+        if let Some(v) = trusted {
+            self.f.trusted_locals.insert(inner, v);
         }
         self.late_lookup(Some(declared.0), declared.1, inner, name, span);
         Some(inner)

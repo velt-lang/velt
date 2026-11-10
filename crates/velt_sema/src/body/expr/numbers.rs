@@ -269,6 +269,12 @@ impl FnCx<'_, '_> {
     /// The right operand `v` of `place op= v`: a value of a type that converts to a number
     /// exactly converts to a number place (`total += b` with `b: u8`).
     pub(crate) fn compound_operand(&mut self, place: &hir::Expr, v: hir::Expr) -> hir::Expr {
+        // An open record's read is its `V` (`record_present`): `t += r[k]` adds `NaN` for a missing
+        // number. Text keeps a missing value as `undefined` (`s += r[k]`).
+        let v = match place.ty == self.cx.ty.str_ {
+            true => v,
+            false => self.record_operand(v),
+        };
         if place.ty == self.cx.ty.f64 && self.exact_in_number(v.ty) {
             let f64_ = self.cx.ty.f64;
             return self.int_to_float(v, f64_);

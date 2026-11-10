@@ -267,6 +267,7 @@ fn fits_both(externs: &mut Vec<ExternFn>, lanes: Lanes) -> ExternId {
             noreturn: false,
             host: None,
             c_decl: None,
+            variadic: false,
         });
         externs.len() - 1
     });

@@ -247,6 +247,9 @@ impl<'p> Canon<'p> {
         if let Some(e) = self.program.externs.get(id as usize) {
             if self.mode == Mode::Link {
                 let _ = write!(out, "({:?}){:?}{}", e.params, e.ret, e.noreturn);
+                if e.variadic {
+                    out.push_str(" ...");
+                }
                 // A host function's import and manifest line (what crosses) are part of it.
                 if let Some(h) = &e.host {
                     let _ = write!(out, " H{:?}", h.manifest_line());

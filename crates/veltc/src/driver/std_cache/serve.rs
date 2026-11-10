@@ -23,6 +23,10 @@ use crate::driver::BuildOptions;
 /// others stay calls in its code, as Cranelift compiles them.
 const DEPTH: select::Depth = select::Depth::Small;
 
+/// The parameter attributes a debug build's objects assume: the program's (only a release build
+/// looks for objects compiled without the whole-program ones).
+const PROGRAM: key::Assumed = key::Assumed::Program;
+
 /// `VELT_STD_OBJECT_FILL`: compile misses with LLVM and store them (`velt cache warm`), where
 /// clang is available.
 pub(super) fn fill() -> bool {
@@ -91,6 +95,9 @@ pub(in crate::driver) fn serve(
             optimize: true,
             cpu: None,
         };
+        let missing = (missing.into_iter())
+            .map(|(i, key)| (i, key, PROGRAM))
+            .collect();
         let stored = compile_missing(program, &names, &optimized, cache, missing, DEPTH);
         compiled = stored.len();
         found.extend(stored);
@@ -125,22 +132,23 @@ pub(in crate::driver) fn serve(
     objects
 }
 
-/// Compile `missing` on their own for `cg`, with what `depth` compiles into them, and store them:
-/// where each stored one is. One that can't be compiled alone stays in the program.
+/// Compile `missing` on their own for `cg`, with what `depth` compiles into them and the
+/// parameter attributes each key says they assume, and store them: where each stored one is. One
+/// that can't be compiled alone stays in the program.
 pub(super) fn compile_missing(
     program: &vir::Program,
     names: &statics::Names,
     cg: &velt_codegen_cl::CodegenOptions,
     cache: &Cache,
-    missing: Vec<(usize, Key)>,
+    missing: Vec<(usize, Key, key::Assumed)>,
     depth: select::Depth,
 ) -> Vec<(usize, PathBuf)> {
     let programs = (missing.iter())
-        .map(|&(i, _)| compile::program_of(program, i, names, depth))
+        .map(|&(i, _, assumed)| compile::program_of(program, i, names, depth, assumed))
         .collect();
     let objects = compile::each(programs, cg);
     (missing.into_iter().zip(objects))
-        .filter_map(|((i, key), object)| {
+        .filter_map(|((i, key, _), object)| {
             let path = compile::store(cache, &key, &object.ok()?)?;
             Some((i, path))
         })
@@ -169,13 +177,13 @@ impl Digests {
         let code = set.iter().map(|&j| {
             *(self.code)
                 .entry(j)
-                .or_insert_with(|| digest(&key::Code::of(&program.funcs[j], canon)))
+                .or_insert_with(|| digest(&key::Code::of(&program.funcs[j], canon, PROGRAM)))
         });
         let mut parts: Vec<Key> = code.collect();
         parts.extend(declared.iter().map(|&j| {
             *(self.declared)
                 .entry(j)
-                .or_insert_with(|| digest(&key::Code::declared(&program.funcs[j])))
+                .or_insert_with(|| digest(&key::Code::declared(&program.funcs[j], PROGRAM)))
         }));
         inputs.key_of_digests(&parts)
     }

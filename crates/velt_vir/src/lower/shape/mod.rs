@@ -164,6 +164,42 @@ impl Cx<'_> {
             && matches!(self.types.kind(t), TyKind::Param(n) if *n >= SHAPE_BASE)
     }
 
+    /// Per type of the table, whether it mentions a placeholder of an earlier pass (the type
+    /// table outlives a pass, its placeholders don't), which this pass cannot name. One sweep:
+    /// a type's parts are interned before it, so their answers are known (a later part is
+    /// walked).
+    pub(super) fn stale_ph_types(&self) -> Vec<bool> {
+        let live = self.shapes.ph.len() as u32;
+        let stale_kind = |k: &TyKind| matches!(k, TyKind::Param(n) if *n >= SHAPE_BASE && *n - SHAPE_BASE >= live);
+        let mut out: Vec<bool> = Vec::with_capacity(self.types.len());
+        for i in 0..self.types.len() {
+            let k = self.types.kind(TyId(i as u32));
+            let stale = stale_kind(k)
+                || parts(k).into_iter().any(|p| match out.get(p.0 as usize) {
+                    Some(&known) => known,
+                    None => {
+                        let mut stack = vec![p];
+                        let mut seen = rustc_hash::FxHashSet::default();
+                        let mut found = false;
+                        while let Some(x) = stack.pop() {
+                            if !seen.insert(x) {
+                                continue;
+                            }
+                            let k = self.types.kind(x);
+                            if stale_kind(k) {
+                                found = true;
+                                break;
+                            }
+                            stack.extend(parts(k));
+                        }
+                        found
+                    }
+                });
+            out.push(stale);
+        }
+        out
+    }
+
     /// Does `t` mention a placeholder?
     #[inline]
     pub(super) fn mentions_ph(&self, t: TyId) -> bool {

@@ -39,6 +39,7 @@ mod clang_probe;
 mod clang_run;
 mod clang_search;
 mod debug;
+mod eh;
 mod function;
 mod half;
 mod inlining;

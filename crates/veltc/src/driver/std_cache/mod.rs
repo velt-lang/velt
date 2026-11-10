@@ -225,7 +225,7 @@ pub(super) fn split(
     let mut memo = HashMap::new();
     let looked_up: Vec<(usize, Key, Option<PathBuf>)> = (candidates.iter())
         .map(|&i| {
-            let key = release_key(program, &canon, &inputs, i, DEPTH_ALL, &mut memo);
+            let key = release_key(program, &canon, &inputs, i, DEPTH_ALL, PROGRAM, &mut memo);
             (i, key, cache.path_of(KIND, &key))
         })
         .collect();
@@ -242,7 +242,10 @@ pub(super) fn split(
     for (i, key, found) in looked_up {
         let object = match found {
             Some(_) => Object::Found(key),
-            None => Object::Compile(key, compile::program_of(program, i, &names, DEPTH_ALL)),
+            None => {
+                let alone = compile::program_of(program, i, &names, DEPTH_ALL, PROGRAM);
+                Object::Compile(key, alone)
+            }
         };
         let symbol = program.funcs[i].symbol.clone();
         let mut calls: Vec<String> = (select::inlinable(program, i, DEPTH_ALL).into_iter())
@@ -285,19 +288,25 @@ pub(super) fn split(
 /// call, as before release builds served `@noInline` functions by default.
 const DEPTH_ALL: select::Depth = select::Depth::Small;
 
+/// The parameter attributes [`split`]'s objects assume: the program's. It compiles its misses
+/// itself, so it has no use for objects that other programs could link too.
+const PROGRAM: key::Assumed = key::Assumed::Program;
+
 /// A release build's key of std function `i`: at `Depth::Whole` a mark that says so, then its
 /// code and what it is compiled with at `depth` (`select::inlinable`), then what its object
-/// declares (`select::declared`). `memo`: each function's code, worked out once per build (a
-/// function is in the set of everything that reaches it). The mark keeps apart two objects of one
-/// set: at `Depth::Small` the object calls the program's copies of what it doesn't inline, at
-/// `Depth::Whole` its own, which the program then doesn't export.
+/// declares (`select::declared`), each with the parameter attributes `assumed` keeps. `memo`:
+/// each function's canonical text, worked out once per build (a function is in the set of
+/// everything that reaches it, and in both of its keys). The mark keeps apart two objects of one set: at `Depth::Small` the
+/// object calls the program's copies of what it doesn't inline, at `Depth::Whole` its own, which
+/// the program then doesn't export.
 fn release_key(
     program: &vir::Program,
     canon: &Canon,
     inputs: &key::Inputs,
     i: usize,
     depth: select::Depth,
-    memo: &mut HashMap<usize, key::Code>,
+    assumed: key::Assumed,
+    memo: &mut HashMap<usize, String>,
 ) -> Key {
     let set = select::inlinable(program, i, depth);
     let declared = select::declared(program, &set);
@@ -310,10 +319,11 @@ fn release_key(
         });
     }
     for &j in &set {
-        let of = || key::Code::of(&program.funcs[j], canon);
-        code.push(memo.entry(j).or_insert_with(of).clone());
+        let f = &program.funcs[j];
+        let text = memo.entry(j).or_insert_with(|| canon.text(f));
+        code.push(key::Code::with_text(f, text.clone(), assumed));
     }
-    code.extend((declared.iter()).map(|&j| key::Code::declared(&program.funcs[j])));
+    code.extend((declared.iter()).map(|&j| key::Code::declared(&program.funcs[j], assumed)));
     inputs.key(code)
 }
 
@@ -535,7 +545,7 @@ mod tests {
             cpu: None,
             release: true,
         };
-        let at = |depth| release_key(&p, &canon, &inputs, 0, depth, &mut HashMap::new());
+        let at = |depth| release_key(&p, &canon, &inputs, 0, depth, PROGRAM, &mut HashMap::new());
         assert_eq!(select::inlinable(&p, 0, select::Depth::Small), [0]);
         assert_eq!(select::inlinable(&p, 0, select::Depth::Whole), [0]);
         assert_ne!(at(select::Depth::Small), at(select::Depth::Whole));

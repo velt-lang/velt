@@ -407,8 +407,8 @@ impl<'a> Wtf8<'a> {
 
 /// Why `bytes` is not canonical WTF-8, if it isn't: an invalid sequence, or a high surrogate
 /// directly followed by a low one (a pair must be stored as its 4-byte code point). Only the
-/// debug checks use it.
-#[cfg(any(debug_assertions, test))]
+/// debug checks and the runtime's tests (feature `invariants`) use it.
+#[cfg(any(debug_assertions, test, feature = "invariants"))]
 pub fn check_canonical(bytes: &[u8]) -> Result<(), String> {
     let mut i = 0;
     let mut after_high = false;

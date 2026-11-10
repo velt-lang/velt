@@ -501,6 +501,18 @@ fn optimize_stage(
     opts: &BuildOptions,
     program: &mut vir::Program,
 ) -> Result<(), BuildError> {
+    optimize_serving(sess, opts, program, &std::collections::HashSet::new())
+}
+
+/// [`optimize_stage`] of a program whose functions `served` names become declarations once it is
+/// optimized (`std_cache::no_inline`): the optimizer leaves their bodies to the inliner
+/// (`velt_opt::optimize_served`).
+fn optimize_serving(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    program: &mut vir::Program,
+    served: &std::collections::HashSet<String>,
+) -> Result<(), BuildError> {
     let t = Instant::now();
     let level = if opts.release {
         velt_opt::OptLevel::Speed
@@ -508,7 +520,7 @@ fn optimize_stage(
         velt_opt::OptLevel::None
     };
     let mut passes = velt_opt::PassTimings::new();
-    velt_opt::optimize_timed(program, level, &mut passes);
+    velt_opt::optimize_served(program, level, &mut passes, served);
     let verify_start = Instant::now();
     let verified = velt_vir::verify(program);
     let mut steps = passes.entries().to_vec();

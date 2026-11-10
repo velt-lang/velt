@@ -109,6 +109,7 @@ table! {
     lang_hooks_string => "lang/hooks/string",
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_hooks_tuple_elements => "lang/hooks/tuple_elements",
+    lang_hooks_unwind => "lang/hooks/unwind",
     lang_import_meta => "lang/import_meta",
     /// The compiler's intrinsics, declared (`@intrinsic declare function`; std-layout.md §10).
     lang_intrinsics => "lang/intrinsics",
@@ -150,6 +151,7 @@ table! {
     ffi_out => "ffi/out",
     ffi_out_ptr => "ffi/out_ptr",
     ffi_export => "ffi/export",
+    ffi_c_var_args => "ffi/c_var_args",
     /// `velt/host`: `HostRef`, the handle to a JS value host functions pass (https://veltlang.com/docs/reference/host-functions/).
     host => "host",
     host_host_ref => "host/host_ref",

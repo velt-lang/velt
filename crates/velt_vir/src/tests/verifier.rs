@@ -242,6 +242,7 @@ fn verify_rejects_misused_atomic_externs() {
         noreturn,
         host: None,
         c_decl: None,
+        variadic: false,
     };
     let mut p = base_program();
     p.externs.push(atomic("velt_atomic_load_08_acq", false));
@@ -318,6 +319,7 @@ fn with_extern(symbol: &str, params: Vec<Ty>, ret: Ty) -> vir::Program {
         noreturn: false,
         host: None,
         c_decl: None,
+        variadic: false,
     });
     p
 }
@@ -347,6 +349,7 @@ fn with_sqrt(x: Operand, declare: bool) -> vir::Program {
             noreturn: false,
             host: None,
             c_decl: None,
+            variadic: false,
         });
     }
     let f = &mut p.funcs[0];
@@ -402,6 +405,7 @@ fn verify_rejects_a_direct_call_of_a_math_operation() {
         noreturn: false,
         host: None,
         c_decl: None,
+        variadic: false,
     });
     let t = p.funcs.len() - 1;
     p.funcs[t].blocks = vec![call(&p), block(vec![], ret_x())];
@@ -418,4 +422,53 @@ fn verify_rejects_a_direct_call_of_a_math_operation() {
     let stmt = Stmt::Assign(Place::local(Local(1)), Rvalue::Intrinsic(pow, args));
     p.funcs[t].blocks = vec![block(vec![stmt], ret_x())];
     assert_eq!(crate::verify(&p), Ok(()));
+}
+
+/// A variadic extern's call passes at least its fixed arguments, the further ones promoted (no
+/// type narrower than `I32`, no `F32`); any other extern's passes exactly its parameters.
+#[test]
+fn variadic_calls_pass_promoted_further_arguments() {
+    let call = |variadic: bool, extra: Operand| {
+        let mut p = with_test_fn(vec![]);
+        let ext = ExternId(p.externs.len() as u32);
+        p.externs.push(ExternFn {
+            symbol: "fcntl".into(),
+            params: vec![Ty::I32, Ty::I32],
+            ret: Ty::I32,
+            noreturn: false,
+            host: None,
+            c_decl: None,
+            variadic,
+        });
+        let f = p.funcs.last_mut().expect("test fn");
+        f.locals.push(LocalDecl::new(Ty::I32, None));
+        let i32_ = |v| Operand::Const(Const::Int(v), Ty::I32);
+        f.blocks = vec![
+            block(
+                vec![set_x(0)],
+                Terminator::Call {
+                    callee: Callee::Extern(ext),
+                    args: vec![i32_(3), i32_(4), extra],
+                    dest: Some(Place::local(Local(2))),
+                    next: BlockId(1),
+                },
+            ),
+            block(vec![], ret_x()),
+        ];
+        p
+    };
+    crate::verify(&call(true, Operand::Const(Const::Int(1), Ty::I32))).unwrap();
+    crate::verify(&call(true, Operand::Const(Const::Float(1.0), Ty::F64))).unwrap();
+    expect_err(
+        &call(true, Operand::Const(Const::Int(1), Ty::I8)),
+        "variadic call arg 2: I8 is not a promoted C type",
+    );
+    expect_err(
+        &call(true, Operand::Const(Const::Float(1.0), Ty::F32)),
+        "variadic call arg 2: F32 is not a promoted C type",
+    );
+    expect_err(
+        &call(false, Operand::Const(Const::Int(1), Ty::I32)),
+        "call passes 3 args, callee takes 2",
+    );
 }

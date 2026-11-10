@@ -589,11 +589,12 @@ and `len` (or `ptr + start` and `end - start` for a declared range, checked); a 
 `ptr`, after checking that the last element is 0; a struct is the address of a zeroed temporary
 in the C layout, filled from the Velt struct's fields by name and copied back after the call;
 a parameter the declaration leaves out is `NULL`. Variadic arguments are 64-bit integers
-(pointers converted), and on Apple arm64 come after zeros up to eight integer arguments, so
-they land in the stack slots a variadic callee reads. Right after each system call, the `int`
+(pointers converted) passed to a variadic extern (`vir::ExternFn::variadic`), which each backend
+calls with the target's variadic convention (on Apple arm64 they land in the stack slots a
+variadic callee reads). Right after each system call, the `int`
 that `__error()` (macOS) or `__errno_location()` (Linux) points to is stored into a
 thread-local value (`velt_tls_*_32_0` of `velt/os::lastOsError:I32`, crate::tls), and
-`lastOsError()` reads that value; on Windows it is a call of `GetLastError`. One symbol has one signature, so the forms of `fcntl` share it.
+`lastOsError()` reads that value; on Windows it is a call of `GetLastError`. The forms of `fcntl` are one variadic extern, as a `declare c` declaration of it is.
 
 ### 3.2 Object handles
 

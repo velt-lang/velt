@@ -135,6 +135,8 @@ struct Walk {
     generators: [bool; 2],
     /// An async host function: lowering awaits its call's `HostSettled` (`velt_vir` `host.rs`).
     async_host: bool,
+    /// A call of `catchUnwind` ([`Construct::CatchUnwind`]).
+    catch_unwind: bool,
     /// The last type added to `types` (a body repeats the same type many times in a row).
     last_type: Option<TyId>,
 }
@@ -149,12 +151,23 @@ impl Walk {
 }
 
 /// The hooks lowering may call (`hir::Program::hooks_demanded`): those the constructs of live
-/// code demand; every hook when nothing is deferred (laziness off).
+/// code demand; when nothing is deferred (laziness off), every hook but std's panic path, which
+/// only a live `catchUnwind` asks for and laziness off doesn't look for (its programs then panic
+/// through the runtime, as every program did before; the VIR stays the same either way).
 pub(crate) fn demanded(cx: &Ctx) -> HookSet {
     #[cfg(test)]
     tests::note_demanded(cx);
     match cx.lazy.modules.is_empty() {
-        true => HookSet::all(),
+        true => {
+            let mut all = HookSet::default();
+            let catch_only = |h: &velt_common::std_hooks::Hook| {
+                h.constructs == [Construct::CatchUnwind].as_slice()
+            };
+            for (i, _) in HOOKS.iter().enumerate().filter(|(_, h)| !catch_only(h)) {
+                all.insert(i);
+            }
+            all
+        }
         false => HookSet::demanded_by(demanded_for(cx.lazy.live.present)),
     }
 }
@@ -343,6 +356,9 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
     let generators = [cx.generator_class(), cx.async_generator_class()];
     for (_, d) in (w.generators.iter().zip(generators)).filter(|(g, _)| **g) {
         live_classes(cx, d);
+    }
+    if w.catch_unwind {
+        cx.lazy.live.present |= Construct::CatchUnwind.bit();
     }
     if w.async_host {
         let settled = hook_class(cx, hook_index::host_settled);
@@ -534,6 +550,10 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             callee: Callee::Intrinsic(I::AnyTo | I::AnyToExact),
             ..
         } => w.conversions.push(e.ty),
+        E::Call {
+            callee: Callee::Intrinsic(I::CatchUnwind),
+            ..
+        } => w.catch_unwind = true,
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..

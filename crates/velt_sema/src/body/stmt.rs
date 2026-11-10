@@ -341,7 +341,7 @@ impl FnCx<'_, '_> {
             if let Some(t) = v.ty.as_ref().or(init_ty) {
                 self.cx.note_written_type(name.span, t.span);
             }
-            self.simple_decl(v, name, ann, span, out);
+            self.decl_keeping_arms(v, name, ann, span, out);
             return self.note_named_fn(v, name);
         }
         let Some(e) = &v.init else {
@@ -384,7 +384,7 @@ impl FnCx<'_, '_> {
         let init = match ann {
             Some(t) => self.expr_coerce(e, t, Want::Borrow),
             // What is taken apart is the payload of a narrowed value (`checked_copies`).
-            None => self.payload_expr(e, None, Want::Borrow),
+            None => self.pattern_init(e, &v.pattern),
         };
         // `const [a, b] = v` of an `any`: read through it (`literal_patterns`).
         if self.cx.dynamic(init.ty).is_some()
@@ -441,7 +441,7 @@ impl FnCx<'_, '_> {
         true
     }
 
-    fn simple_decl(
+    pub(crate) fn simple_decl(
         &mut self,
         v: &ast::VarDecl,
         name: &ast::Ident,
@@ -573,6 +573,7 @@ impl FnCx<'_, '_> {
         if late {
             self.f.late_lets.insert(local);
         }
+        self.note_trusted_local(local, ann, init.as_ref());
         self.note_marks(local, v.ty.as_ref(), v.init.as_ref());
         if let (None, Some(e), Some(h)) = (&v.ty, &v.init, &init) {
             self.note_readonly_init(local, e, h);

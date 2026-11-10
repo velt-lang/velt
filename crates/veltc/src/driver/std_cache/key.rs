@@ -13,6 +13,14 @@
 //! with threads, frozen and caller-tracking instances, error sets) show in its lowered code, so
 //! the canonical code covers them.
 //!
+//! The parameter attributes `noalias`, `readonly` and `frozen` are whole-program facts too
+//! (velt_vir `lower/param_attrs.rs`: whether a type is counted or borrowed inside counted objects
+//! anywhere in the program, and what module state reaches), and they don't show in the code: a
+//! program that sorts an array of a class holding a string with a comparator has `string` params
+//! without `readonly frozen`. So a release build keys an object two ways ([`Assumed`]): with the
+//! program's attributes, which its object assumes, and with none of the three, under which an
+//! object compiled with none of them is right in every program that has the same code.
+//!
 //! A debug build's lookups ([`Inputs::debug`]) name no clang and always the target's default CPU:
 //! a reader has no use for either, and may have no clang at all.
 
@@ -36,6 +44,37 @@ pub(super) struct Inputs {
     pub release: bool,
 }
 
+/// The parameter attributes an object is compiled with, and keyed by: those of every function
+/// of its program of its own (the served function, what it is compiled with, what it declares).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum Assumed {
+    /// The program's, as lowered. They hold in this program, and in every program that makes the
+    /// same key, as the key holds them all.
+    Program,
+    /// The program's without `noalias`, `readonly` and `frozen`, the attributes that depend on
+    /// the whole program. Leaving one out only takes a fact away from the optimizers, so an
+    /// object compiled so is right in every program with the same code and the same other
+    /// attributes (`nonnull`, `dereferenceable`: the types' layouts), and they all make this key.
+    Conservative,
+}
+
+impl Assumed {
+    /// `attrs` as an object compiled under `self` assumes them.
+    pub fn attrs(self, attrs: &[vir::ParamAttrs]) -> Vec<vir::ParamAttrs> {
+        match self {
+            Assumed::Program => attrs.to_vec(),
+            Assumed::Conservative => (attrs.iter())
+                .map(|a| vir::ParamAttrs {
+                    noalias: false,
+                    readonly: false,
+                    frozen: false,
+                    ..*a
+                })
+                .collect(),
+        }
+    }
+}
+
 /// What a function is, as its key sees it.
 #[derive(Clone)]
 pub(super) struct Code {
@@ -45,11 +84,16 @@ pub(super) struct Code {
 }
 
 impl Code {
-    pub fn of(f: &vir::Function, canon: &Canon) -> Code {
+    pub fn of(f: &vir::Function, canon: &Canon, assumed: Assumed) -> Code {
+        Code::with_text(f, canon.text(f), assumed)
+    }
+
+    /// [`Code::of`] with `f`'s canonical text already worked out.
+    pub fn with_text(f: &vir::Function, text: String, assumed: Assumed) -> Code {
         Code {
             symbol: f.symbol.clone(),
-            text: canon.text(f),
-            attrs: format!("{:?}", f.param_attrs),
+            text,
+            attrs: format!("{:?}", assumed.attrs(&f.param_attrs)),
         }
     }
 
@@ -57,11 +101,11 @@ impl Code {
     /// parameter attributes LLVM declares it with, which the caller is optimized against. They
     /// are whole-program facts (`readonly` depends on the counted types, `noalias` on module
     /// state), so two programs can declare one callee differently.
-    pub fn declared(f: &vir::Function) -> Code {
+    pub fn declared(f: &vir::Function, assumed: Assumed) -> Code {
         Code {
             symbol: f.symbol.clone(),
             text: format!("declare {:?} -> {:?}", f.params, f.ret),
-            attrs: format!("{:?}", f.param_attrs),
+            attrs: format!("{:?}", assumed.attrs(&f.param_attrs)),
         }
     }
 }
@@ -272,15 +316,24 @@ mod tests {
             vir::Ty::Unit,
             vir::Linkage::Import,
         );
-        let plain = base().key([code(F.0, F.1, F.2), Code::declared(&g)]);
+        g.param_attrs = vec![vir::ParamAttrs::default()];
+        let plain = base().key([code(F.0, F.1, F.2), Code::declared(&g, Assumed::Program)]);
         g.param_attrs = vec![vir::ParamAttrs {
             readonly: true,
             ..vir::ParamAttrs::default()
         }];
         assert_ne!(
             plain,
-            base().key([code(F.0, F.1, F.2), Code::declared(&g)]),
+            base().key([code(F.0, F.1, F.2), Code::declared(&g, Assumed::Program)]),
             "declared attributes"
+        );
+        assert_eq!(
+            base().key([
+                code(F.0, F.1, F.2),
+                Code::declared(&g, Assumed::Conservative)
+            ]),
+            plain,
+            "but not those that depend on the whole program, where none are assumed"
         );
         assert_ne!(key, of(&base(), &[G, F]), "another function first");
     }

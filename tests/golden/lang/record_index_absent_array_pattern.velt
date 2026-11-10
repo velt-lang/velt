@@ -1,0 +1,8 @@
+// Taking a missing key's `undefined` apart with an array pattern is Node's `TypeError` (#930).
+const lists: Record<string, number[]> = {};
+function k(s: string): string {
+  return s;
+}
+console.log("before");
+const [p] = lists[k("z")];
+console.log(p);

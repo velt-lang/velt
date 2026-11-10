@@ -25,6 +25,8 @@ pub(crate) struct Version {
     pub module: JITModule,
     pub code: Vec<Option<usize>>,
     pub trampolines: Vec<Option<usize>>,
+    /// The address of [`Inputs::wanted_static`].
+    pub wanted_static: Option<usize>,
 }
 
 /// What a version is compiled from, besides the program.
@@ -39,6 +41,12 @@ pub(crate) struct Inputs<'a> {
     pub first: bool,
     /// Describe the code to debuggers (`debug_info::jit`).
     pub debug_info: bool,
+    /// A static of the program this version imports under a symbol (in `imports`) instead of
+    /// defining it: the running version's module state descriptor, whose block it shares.
+    pub shared_static: Option<(usize, &'a str)>,
+    /// A static this version defines whose address the session keeps (its module state
+    /// descriptor, when it does not share the running one).
+    pub wanted_static: Option<usize>,
 }
 
 /// Compile `program` as described by `inputs`, appending the time of each step to `timings`.
@@ -53,6 +61,8 @@ pub(crate) fn compile(
         runtime,
         first,
         debug_info,
+        shared_static,
+        wanted_static,
     } = *inputs;
     let start = Instant::now();
     // JIT code runs on this machine: its own CPU features.
@@ -71,7 +81,12 @@ pub(crate) fn compile(
     }
     builder.memory_provider(crate::jit_memory::arena(arena_size(program, names, first))?);
     let mut module = JITModule::new(builder);
-    let built = build_module(&mut module, &*isa, program, &Naming::Dev(names))?;
+    let built = build_module(
+        &mut module,
+        &*isa,
+        program,
+        &Naming::Dev(names, shared_static),
+    )?;
     #[cfg(all(windows, target_arch = "x86_64"))]
     let unwind = crate::unwind::jit_windows::JitUnwind::stage(&mut module, &built.unwind)?;
     timings.push(("compile", start.elapsed()));
@@ -105,10 +120,13 @@ pub(crate) fn compile(
         .zip(&built.references)
         .map(|(name, &id)| name.trampoline.as_ref().map(|_| address(id)))
         .collect();
+    let wanted_static = (wanted_static.and_then(|i| built.statics.get(i)))
+        .map(|&id| module.get_finalized_data(id).0 as usize);
     Ok(Version {
         module,
         code,
         trampolines,
+        wanted_static,
     })
 }
 

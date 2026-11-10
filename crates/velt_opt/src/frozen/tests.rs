@@ -245,7 +245,11 @@ fn reads_once_what_inlined_callees_read() {
     assert_eq!(expected, 35);
     let mut after = before.clone();
     let mut budget = crate::inline::Budget::for_program(&after);
-    assert!(crate::inline::run(&mut after, &mut budget));
+    assert!(crate::inline::run(
+        &mut after,
+        &mut budget,
+        crate::Served::default()
+    ));
     assert_valid(&after);
     assert_eq!(run_main(&after, 7), expected);
     assert_eq!(run_main(&after, 0), 0);

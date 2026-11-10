@@ -1,0 +1,10 @@
+// A `string` asserted to a union of string literals anywhere but a comparison is a checked
+// conversion (#1410): a value that is one of the literals becomes it, and any other value
+// stops with a `TypeError` (Node goes on with the string).
+type Route = '/' | '/counter' | '/forms';
+function toRoute(path: string): Route {
+    return path as Route;
+}
+const r: Route = toRoute('/forms');
+console.log(r, r === '/forms');
+console.log(toRoute('/unknown'));

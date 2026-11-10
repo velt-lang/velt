@@ -51,4 +51,5 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_text",
     "std/lang/hooks/number_float",
     "std/lang/hooks/any_record",
+    "std/lang/hooks/unwind",
 ];

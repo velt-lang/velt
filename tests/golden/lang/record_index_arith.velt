@@ -1,0 +1,20 @@
+// Arithmetic, bitwise and ordering operators on an open record's read follow Node (#930): a
+// missing number is `NaN` (`~` gives -1, `| 0` gives 0, an ordering `false`), a missing
+// string's ordering is `false`, and compound assignment reads a missing key the same way.
+const nums: Record<string, number> = { one: 1 };
+const strs: Record<string, string> = { b: "b" };
+function k(s: string): string {
+  return s;
+}
+const z = k("z");
+const v = nums[z];
+console.log(nums[z] + 1, nums[z] * 2, nums[z] - 1, nums[z] / 2, -nums[z], +nums[z], nums[z] % 2, nums[z] ** 2);
+console.log(~nums[z], nums[z] | 0, nums[z] >> 1, nums[z] < 5, nums[z] >= 5, v + 1, v < 1, nums[k("one")] + 1);
+console.log(strs[z] < "c", strs[k("b")] < "c", "a" < strs[z], strs[z] >= strs[k("b")], strs[k("b")] + 1, "k" + strs[z], strs[z] + "x");
+nums[z] += 1;
+nums.y = 1;
+nums[k("y")]++;
+nums[k("w")]++;
+nums[k("one")] *= 5;
+strs[z] += "x";
+console.log(nums, strs);

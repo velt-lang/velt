@@ -1,0 +1,38 @@
+import { CString, Ptr, readCString } from "velt/ffi";
+
+// velt/ffi's `readCString` declares `memcpy(dst: u8[], src: Ptr<u8>, n: usize): Ptr<u8>` and
+// `strlen(s: Ptr<u8>): usize`; these name other Velt types for the same C types: a pointer,
+// `usize` and `isize` are each one machine word.
+declare c("c") function memcpy$addr(dst: usize, src: usize, n: usize): usize;
+declare c("c") function memcpy$in(dst: Ptr<void>, src: readonly u8[], n: usize): isize;
+declare c("c") function strlen$text(s: CString): usize;
+declare c("c") function malloc(n: usize): Ptr<void> | null;
+declare c("c") function free(p: usize): void;
+
+/**
+ * `text` copied into C memory from its bytes, copied again by address, and read back with
+ * velt/ffi's `readCString`.
+ */
+export function roundTrip(text: string): string {
+  const c = new CString(text);
+  // SAFETY: `c` is NUL-terminated and lives past the call.
+  const n = unsafe { strlen$text(c) } + 1;
+  // SAFETY: two blocks of `n` bytes, freed below.
+  const [first, second] = unsafe { [malloc(n), malloc(n)] };
+  if (first === null || second === null) {
+    return "no memory";
+  }
+  // SAFETY: `first` has `n` bytes, and `c`'s bytes with their NUL are `n`.
+  const at = unsafe { memcpy$in(first, CString.bytesOf(c), n) } as usize;
+  const to = Ptr.addressOf(second);
+  // SAFETY: both blocks have `n` bytes.
+  const copied = unsafe { memcpy$addr(to, at, n) };
+  // SAFETY: `copied` is `second`, which holds a NUL-terminated copy.
+  const back = unsafe { readCString(Ptr.at<u8>(copied)) };
+  // SAFETY: both blocks came from `malloc` and are freed once.
+  unsafe {
+    free(at);
+    free(to);
+  }
+  return back;
+}

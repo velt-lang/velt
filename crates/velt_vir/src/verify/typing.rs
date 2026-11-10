@@ -258,7 +258,8 @@ impl FnCheck<'_> {
     }
 
     /// (params, ret, noreturn) of a callee.
-    fn callee_sig<'c>(&'c self, callee: &'c Callee) -> R<(&'c [Ty], Ty, bool)> {
+    /// The parameters, result, `noreturn` and `variadic` of `callee`.
+    fn callee_sig<'c>(&'c self, callee: &'c Callee) -> R<(&'c [Ty], Ty, bool, bool)> {
         match callee {
             Callee::Func(fi) => {
                 let f = self
@@ -266,7 +267,7 @@ impl FnCheck<'_> {
                     .funcs
                     .get(fi.0 as usize)
                     .ok_or_else(|| format!("unknown function fn#{}", fi.0))?;
-                Ok((&f.params, f.ret, false))
+                Ok((&f.params, f.ret, false, false))
             }
             Callee::Extern(e) => {
                 let e = self
@@ -274,7 +275,7 @@ impl FnCheck<'_> {
                     .externs
                     .get(e.0 as usize)
                     .ok_or_else(|| format!("unknown extern extern#{}", e.0))?;
-                Ok((&e.params, e.ret, e.noreturn))
+                Ok((&e.params, e.ret, e.noreturn, e.variadic))
             }
             Callee::Ptr {
                 target,
@@ -287,7 +288,7 @@ impl FnCheck<'_> {
                 if params.iter().any(|t| !t.is_scalar()) || matches!(ret, Ty::Agg(_)) {
                     return Err("indirect call signature is not scalar-only".into());
                 }
-                Ok((params, *ret, false))
+                Ok((params, *ret, false, false))
             }
         }
     }
@@ -311,13 +312,25 @@ impl FnCheck<'_> {
                 ));
             }
         }
-        let (params, ret, noreturn) = self.callee_sig(callee)?;
-        if params.len() != args.len() {
+        let (params, ret, noreturn, variadic) = self.callee_sig(callee)?;
+        if params.len() != args.len() && !(variadic && args.len() > params.len()) {
             return Err(format!(
                 "call passes {} args, callee takes {}",
                 args.len(),
                 params.len()
             ));
+        }
+        // C's default argument promotions are done: nothing narrower than an `int`, no `float`.
+        for (i, a) in args.iter().enumerate().skip(params.len()) {
+            let at = self.operand_ty(a)?;
+            if !matches!(
+                at,
+                Ty::I32 | Ty::U32 | Ty::I64 | Ty::U64 | Ty::F64 | Ty::Ptr
+            ) {
+                return Err(format!(
+                    "variadic call arg {i}: {at:?} is not a promoted C type"
+                ));
+            }
         }
         for (i, (a, pt)) in args.iter().zip(params).enumerate() {
             let at = self.operand_ty(a)?;

@@ -91,3 +91,31 @@ impl FnLower<'_, '_> {
         v
     }
 }
+
+impl FnLower<'_, '_> {
+    /// `catchUnwind(f)`: `velt_eh_try(code, env)`, the exception object's address or 0
+    /// (`crate::eh`).
+    pub(super) fn catch_unwind(&mut self, f: &hir::Expr) -> Operand {
+        let fty = self.sub(f.ty);
+        let fv = self.borrowed_arg(f);
+        if self.dead() {
+            return super::unit();
+        }
+        let fp = self.place_of(fv, fty);
+        let code = Operand::Copy(proj(&fp, Proj::Field(0)));
+        let env = Operand::Copy(proj(&fp, Proj::Field(1)));
+        let (params, ret) = crate::eh::try_signature();
+        let id = self.cx.extern_sym(crate::eh::TRY, params, ret, false);
+        let out = self.temp(ret);
+        self.call(
+            vir::Callee::Extern(id),
+            vec![code, env],
+            Some(Place::local(out)),
+            false,
+        );
+        self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Cast(Operand::Copy(Place::local(out)), Ty::U64),
+        )
+    }
+}

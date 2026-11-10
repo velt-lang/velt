@@ -1,0 +1,6 @@
+action: restart
+reason: class Node is now counted
+get /read: read 0:
+get /make: made 2
+get /drop: dropped 2v2
+get /read: read 1:2v2,

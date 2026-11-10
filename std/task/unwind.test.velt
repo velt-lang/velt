@@ -1,0 +1,118 @@
+// velt/task (tests): catching a Velt panic that unwinds (docs/internals/design/unwinding.md),
+// run by `velt test std/`, debug (Cranelift) and release (LLVM). That another language's
+// exception passes through is veltc's `unwinding` test: the test runner polls tests in a task
+// whose Rust frames would claim it (and abort) before the end of the stack.
+import { describe, expect, it } from "velt/test";
+import { canCatchPanics, catchVeltPanic } from "velt/task/unwind";
+
+declare function velt_rt_xfer_suspend(): u32;
+declare function velt_rt_xfer_resume(depth: u32): void;
+
+function deep(n: number, xs: number[]): number {
+  if (n == 0) {
+    return xs[xs.length + 3];
+  }
+  return deep(n - 1, xs) + 1;
+}
+
+// A function value that captured a weak collection can't go to another thread: its transfer panics
+// inside the transfer (#2668's repro).
+class V {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Cache extends WeakMap<V, V> {}
+
+function mk(keep: V): () => number {
+  const c = new Cache();
+  c.set(keep, keep);
+  return () => {
+    const x = c.get(keep);
+    return x === undefined ? -1 : x.n;
+  };
+}
+
+async function run(f: () => number): Promise<number> {
+  return f();
+}
+
+/** This thread's transfer depth (`suspend` reads it and sets the transfer aside; `resume` undoes). */
+function transferDepth(): u32 {
+  const depth = velt_rt_xfer_suspend();
+  velt_rt_xfer_resume(depth);
+  return depth;
+}
+
+describe("catchVeltPanic", () => {
+  it("returns null when nothing panics", () => {
+    let ran = 0;
+    expect(
+      catchVeltPanic(() => {
+        ran = ran + 1;
+      }),
+    ).toBe(null);
+    expect(ran).toBe(1);
+  });
+
+  it("catches panic(msg) with its message", () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
+    const msg = catchVeltPanic(() => {
+      panic("boom");
+    });
+    expect(msg !== null && msg.startsWith("boom")).toBe(true);
+  });
+
+  it("catches an index out of bounds deep in calls, and the process goes on", () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
+    let after = 0;
+    const msg = catchVeltPanic(() => {
+      deep(20, [1, 2, 3]);
+      after = 1;
+    });
+    expect(msg === null).toBe(false);
+    expect(after).toBe(0);
+    expect(catchVeltPanic(() => {})).toBe(null);
+  });
+
+  it("nests: the inner catch takes the panic", () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
+    let inner: string | null = null;
+    const outer = catchVeltPanic(() => {
+      inner = catchVeltPanic(() => {
+        panic("inner");
+      });
+    });
+    expect(outer).toBe(null);
+    expect(inner !== null && inner.startsWith("inner")).toBe(true);
+  });
+
+  it("closes a transfer the panic left open", async () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
+    const keep = new V(7);
+    const msg = catchVeltPanic(() => {
+      spawn(run(mk(keep)));
+    });
+    expect(msg !== null && msg.includes("WeakMap")).toBe(true);
+    expect(transferDepth()).toBe(0);
+    // A later transfer is one of its own: copies of a graph keep its sharing.
+    const shared = new V(3);
+    const pair = [shared, shared];
+    const got = await spawn(async () => pair[0] === pair[1] ? pair[0].n : -1);
+    expect(got).toBe(3);
+  });
+});

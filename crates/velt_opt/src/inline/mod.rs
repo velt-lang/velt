@@ -98,8 +98,9 @@ impl Budget {
     }
 }
 
-/// Inline call sites across the program; returns whether anything was inlined.
-pub(crate) fn run(program: &mut Program, budget: &mut Budget) -> bool {
+/// Inline call sites across the program; returns whether anything was inlined. Into the functions
+/// `served` names too, but their bodies get no pass after it (`crate::optimize_served`).
+pub(crate) fn run(program: &mut Program, budget: &mut Budget, served: crate::Served) -> bool {
     let graph = CallGraph::of(program);
     let mut scc_of = vec![0usize; program.funcs.len()];
     let sccs = graph.sccs_bottom_up();
@@ -126,6 +127,9 @@ pub(crate) fn run(program: &mut Program, budget: &mut Budget) -> bool {
         for &caller in scc {
             if inline_into(program, caller, &mut state, budget) {
                 changed = true;
+                if !served.optimizes(&program.funcs[caller.0 as usize]) {
+                    continue;
+                }
                 // Its callees' reads of its `frozen` params are its own now, while it still
                 // has the params: read them once before it is inlined into its own callers.
                 let f = &mut program.funcs[caller.0 as usize];

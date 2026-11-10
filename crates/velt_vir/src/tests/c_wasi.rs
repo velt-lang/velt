@@ -11,7 +11,7 @@ use crate::LowerOptions;
 
 /// `src` (the root module) loaded with the real std and checked, with its source map, so that
 /// lowering can tell std's declarations from the program's.
-fn check(src: &str) -> (hir::Program, SourceMap) {
+pub(super) fn check(src: &str) -> (hir::Program, SourceMap) {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut sm = SourceMap::new();
     let mut diags = vec![];
@@ -30,14 +30,23 @@ fn check(src: &str) -> (hir::Program, SourceMap) {
 
 fn lower_for(src: &str, target: &str) -> Result<vir::Program, String> {
     let (p, sm) = check(src);
+    lower_checked_for(&p, &sm, target)
+}
+
+/// `p` lowered for `target`, or its errors, one per line (message; notes).
+pub(super) fn lower_checked_for(
+    p: &hir::Program,
+    sm: &SourceMap,
+    target: &str,
+) -> Result<vir::Program, String> {
     let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
     let opts = LowerOptions {
-        source_map: Some(&sm),
+        source_map: Some(sm),
         std_root: Some(&std),
         target: Some(target),
         ..Default::default()
     };
-    crate::lower_checked(&p, &opts).map_err(|ds| {
+    crate::lower_checked(p, &opts).map_err(|ds| {
         ds.iter()
             .map(|d| format!("{}; {}", d.message, d.notes.join("; ")))
             .collect::<Vec<_>>()

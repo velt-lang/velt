@@ -39,7 +39,7 @@ fn calls_to(f: &Function, id: FuncId) -> usize {
 
 fn inline(p: &mut Program) {
     let mut budget = Budget::for_program(p);
-    run(p, &mut budget);
+    run(p, &mut budget, crate::Served::default());
     assert_valid(p);
 }
 
@@ -141,7 +141,7 @@ fn mutual_recursion_is_inlined_once_per_caller() {
     let mut p = pb.finish();
     let mut budget = Budget::for_program(&p);
     for _ in 0..3 {
-        run(&mut p, &mut budget);
+        run(&mut p, &mut budget, crate::Served::default());
     }
     assert_valid(&p);
     let m = &p.funcs[main.0 as usize];
@@ -167,7 +167,7 @@ fn budget_caps_growth() {
         remaining: 100,
         cycles: FxHashMap::default(),
     };
-    run(&mut p, &mut budget);
+    run(&mut p, &mut budget, crate::Served::default());
     assert_valid(&p);
     let inlined = 200 - calls_to(&p.funcs[1], small);
     assert_eq!(inlined, 3, "budget 100 / cost 31 → 3 sites");
@@ -508,7 +508,7 @@ fn always_inline_callee_is_inlined_whatever_its_size() {
         let mut p = pb.finish();
         let mut budget = Budget::for_program(&p);
         budget.remaining = 100;
-        run(&mut p, &mut budget);
+        run(&mut p, &mut budget, crate::Served::default());
         assert_valid(&p);
         assert_eq!(calls_to(&p.funcs[2], big), calls, "{marker:?}");
         assert_eq!(calls_to(&p.funcs[2], small), 0, "{marker:?}");

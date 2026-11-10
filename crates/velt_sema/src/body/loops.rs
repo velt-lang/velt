@@ -147,7 +147,10 @@ impl FnCx<'_, '_> {
                 body,
                 is_await,
             } => {
-                if !*is_await && self.for_in_proxy(*kind, pattern, iter, body, label, span, out) {
+                if !*is_await
+                    && (self.for_in_nullable(*kind, pattern, iter, body, label, span, out)
+                        || self.for_in_proxy(*kind, pattern, iter, body, label, span, out))
+                {
                     return;
                 }
                 let tested = match is_await {
@@ -337,6 +340,7 @@ impl FnCx<'_, '_> {
         // the body adds to the original.
         // A branded value iterates as its primitive or class instance (`crate::brands`).
         let it = self.receiver_expr(iter);
+        let it = self.record_present_iter(it, iter, "");
         let it = self.unbrand(it);
         // `for (const x of s)` over a `shared<T>`: the value inside (#36), whatever it iterates
         // (an array, a string, a `Map`, a `Set`, a typed array).

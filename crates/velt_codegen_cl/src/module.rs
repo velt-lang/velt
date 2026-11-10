@@ -36,12 +36,16 @@ pub(crate) struct Built {
     /// Unwind info per defined function: SystemV CFI for ELF/Mach-O, Windows x64 for x86_64
     /// COFF (none for arm64 COFF yet).
     pub unwind: Vec<FunctionUnwind>,
+    /// What `.eh_frame` names for catching (eh.rs), when the program calls `velt_eh_try`.
+    pub eh: Option<crate::eh::EhSymbols>,
     /// Line tables per defined function, when the program has source locations.
     pub lines: Vec<FunctionLines>,
     /// How many functions came from the cache.
     pub cache: CacheStats,
     /// The time of each step: declaring, translating and compiling (on every core), defining.
     pub timings: Vec<(&'static str, Duration)>,
+    /// Cranelift ids of `program.statics`, in order.
+    pub statics: Vec<DataId>,
 }
 
 /// Module-level ids of the program's entities, indexed by VIR id.
@@ -56,14 +60,19 @@ pub(crate) struct Declarations {
     /// has thread-local storage (tls.rs).
     pub tls: FxHashMap<u64, DataId>,
     pub call_conv: CallConv,
+    /// `velt_eh_try` and what catching needs in the object (eh.rs), with their unwind info.
+    pub eh: Option<crate::eh::EhSymbols>,
+    pub eh_unwind: Vec<FunctionUnwind>,
 }
 
 /// How `build_module` names and links the program's functions.
 pub(crate) enum Naming<'a> {
     /// Every function is defined under its symbol with its VIR linkage (objects, tests).
     Program,
-    /// A `velt dev` version: one entry per VIR function.
-    Dev(&'a [DevFunction]),
+    /// A `velt dev` version: one entry per VIR function, and a static the version imports
+    /// under a symbol instead of defining it (the module state's descriptor of an earlier
+    /// version, dev/mod.rs).
+    Dev(&'a [DevFunction], Option<(usize, &'a str)>),
 }
 
 /// How a `velt dev` version declares one function.
@@ -107,7 +116,7 @@ pub(crate) fn build_module_cached<M: Module>(
 ) -> CodegenResult<Built> {
     let start = Instant::now();
     validate_aggregates(program)?;
-    let (decls, defs) = declare_all(module, program, naming)?;
+    let (mut decls, defs) = declare_all(module, program, naming)?;
     let target = Target::of(isa, module);
     let declared = start.elapsed();
 
@@ -117,7 +126,7 @@ pub(crate) fn build_module_cached<M: Module>(
     let start = Instant::now();
     let mut defining = Duration::ZERO;
     let mut stats = CacheStats::default();
-    let mut unwind = Vec::new();
+    let mut unwind = std::mem::take(&mut decls.eh_unwind);
     let mut lines = Vec::new();
     let defined: Vec<(FuncId, &vir::Function)> = (program.funcs.iter().enumerate())
         .filter_map(|(i, func)| Some((defs[i]?, func)))
@@ -165,6 +174,8 @@ pub(crate) fn build_module_cached<M: Module>(
     let compiling = start.elapsed();
     Ok(Built {
         funcs: defs,
+        statics: decls.statics,
+        eh: decls.eh,
         references: decls.funcs,
         unwind,
         lines,
@@ -234,7 +245,7 @@ fn compile_function(
 }
 
 /// Declarations of everything, plus the ids of the function code this module defines.
-fn declare_all<M: Module>(
+pub(crate) fn declare_all<M: Module>(
     module: &mut M,
     program: &vir::Program,
     naming: &Naming,
@@ -249,11 +260,43 @@ fn declare_all<M: Module>(
                 .collect();
             (funcs, defs)
         }
-        Naming::Dev(names) => declare_dev_functions(module, program, call_conv, names)?,
+        Naming::Dev(names, _) => declare_dev_functions(module, program, call_conv, names)?,
     };
     let mut externs = Vec::with_capacity(program.externs.len());
     let (mut tls, mut tls_keys) = (FxHashMap::default(), FxHashMap::default());
+    let (mut eh, mut eh_try, mut eh_unwind) = (None, None, vec![]);
+    let mut eh_catches = None;
     for e in &program.externs {
+        // Catching a Velt panic: a function this module defines (eh.rs).
+        if velt_vir::eh::is_try(&e.symbol) {
+            let id = match eh_try {
+                Some(id) => id,
+                None => {
+                    let (p, r) = velt_vir::eh::try_signature();
+                    let id = declare_function(module, call_conv, &e.symbol, &p, r, Linkage::Local)?;
+                    eh = crate::eh::define(module, call_conv, id, &mut eh_unwind)?;
+                    eh_try = Some(id);
+                    id
+                }
+            };
+            externs.push(Some(id));
+            continue;
+        }
+        // Whether `velt_eh_try` catches: a constant this module defines (eh.rs).
+        if velt_vir::eh::is_catches(&e.symbol) {
+            let id = match eh_catches {
+                Some(id) => id,
+                None => {
+                    let (p, r) = velt_vir::eh::catches_signature();
+                    let id = declare_function(module, call_conv, &e.symbol, &p, r, Linkage::Local)?;
+                    crate::eh::define_catches(module, call_conv, id, &mut eh_unwind)?;
+                    eh_catches = Some(id);
+                    id
+                }
+            };
+            externs.push(Some(id));
+            continue;
+        }
         // A thread-local value: inline on thread-local storage, or a function this module
         // defines on the operating system's thread keys (tls.rs).
         if let Some(call) = velt_vir::tls::TlsCall::of_symbol(&e.symbol) {
@@ -277,7 +320,7 @@ fn declare_all<M: Module>(
             )?;
             // A `velt dev` version imports the session's key slot (dev/mod.rs), so every
             // version of the program uses one key per constant.
-            let shared = matches!(naming, Naming::Dev(_));
+            let shared = matches!(naming, Naming::Dev(..));
             crate::tls::define_on_keys(module, call_conv, &mut tls_keys, call, id, sig, shared)?;
             externs.push(Some(id));
             continue;
@@ -308,7 +351,11 @@ fn declare_all<M: Module>(
         // A static atomic's word, in a `velt dev` version: the session's (dev/mod.rs), so
         // every version changes the same one.
         let declared = match (s.mutable, naming, &s.symbol) {
-            (Some(id), Naming::Dev(_), _) => {
+            // An earlier version's copy, which this one uses instead of its own.
+            (_, Naming::Dev(_, Some((shared, sym))), _) if *shared == i => {
+                module.declare_data(sym, Linkage::Import, false, false)
+            }
+            (Some(id), Naming::Dev(..), _) => {
                 let sym = velt_vir::atomic::static_symbol(id);
                 module.declare_data(&sym, Linkage::Import, true, false)
             }
@@ -331,8 +378,9 @@ fn declare_all<M: Module>(
     };
     // Defined after all declarations: relocations may point at any function, extern or static.
     for (i, s) in program.statics.iter().enumerate() {
-        let dev_word = s.mutable.is_some() && matches!(naming, Naming::Dev(_));
-        if !dev_word && s.linkage != vir::Linkage::Import {
+        let dev_word = s.mutable.is_some() && matches!(naming, Naming::Dev(..));
+        let shared = matches!(naming, Naming::Dev(_, Some((shared, _))) if *shared == i);
+        if !dev_word && !shared && s.linkage != vir::Linkage::Import {
             define_static(module, &targets, i, s)?;
         }
     }
@@ -342,6 +390,8 @@ fn declare_all<M: Module>(
         statics,
         tls,
         call_conv,
+        eh,
+        eh_unwind,
     };
     Ok((decls, defs))
 }
