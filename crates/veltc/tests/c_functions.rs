@@ -206,8 +206,9 @@ fn a_package_checks_its_own_c_declarations() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 }
 
-/// One C symbol has one signature: each declaration with another one is an error, once (however
-/// often it is called), naming both declarations in Velt's types.
+/// One C symbol has one C signature: each declaration with another one (here an integer of
+/// another width or sign, or `bool`) is an error, once (however often it is called), naming both
+/// declarations in Velt's types.
 #[test]
 fn one_symbol_has_one_signature() {
     let dir = test_dir::TestDir::new();
@@ -770,4 +771,72 @@ fn variadic_functions_take_floats() {
             "velt {args:?}:\n{stderr}"
         );
     }
+}
+
+const SAME_SYMBOL: &str = include_str!("c_functions/same_symbol.velt");
+
+/// One C function declared with other Velt types for the same C types (`memcpy` as velt/ffi's
+/// `readCString` declares it, by addresses as `usize`, from a `readonly u8[]` into a
+/// `Ptr<void>` with an `isize` result) is one symbol in one program, in debug and release builds.
+#[test]
+fn declarations_of_one_c_signature_share_their_symbol() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        SAME_SYMBOL,
+        "import { roundTrip } from \"cmath\";\n\nfunction main() {\n  console.log(roundTrip(\"héllo, C\"));\n}\n",
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "héllo, C\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}
+
+/// What differs in C stays an error, at each declaration that differs, naming the first one and
+/// what differs: an integer's width, a float for an integer, the number of parameters, `...`.
+#[test]
+fn declarations_of_other_c_signatures_clash() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { CVarArgs } from \"velt/ffi\";\n\ndeclare c(\"c\") function memcpy$a(dst: usize, src: usize, n: usize): usize;\ndeclare c(\"c\") function memcpy$b(dst: usize, src: usize, n: u32): usize;\ndeclare c(\"c\") function memcpy$c(dst: usize, src: usize, n: usize): f64;\ndeclare c(\"c\") function memcpy$d(dst: usize, src: usize): usize;\ndeclare c(\"c\") function memcpy$e(dst: usize, src: usize, n: usize, ...args: CVarArgs): usize;\n\nexport function f(): usize {\n  // SAFETY: copies of nothing.\n  return unsafe { memcpy$a(0, 0, 0) + memcpy$b(0, 0, 0) + (memcpy$c(0, 0, 0) as usize) + memcpy$d(0, 0) + memcpy$e(0, 0, 0) };\n}\n",
+        "import { f } from \"cmath\";\n\nfunction main() {\n  console.log(f());\n}\n",
+    );
+    let o = velt(dir.path(), &["build"]);
+    let out = String::from_utf8_lossy(&o.stderr).to_string();
+    assert!(!o.status.success(), "{out}");
+    let first = "`memcpy$a(usize, usize, usize): usize` at ";
+    for (decl, note) in [
+        (
+            "memcpy$b(usize, usize, u32): usize",
+            "parameter 3 is `u32` here and `usize` there",
+        ),
+        (
+            "memcpy$c(usize, usize, usize): f64",
+            "the result is `f64` here and `usize` there",
+        ),
+        (
+            "memcpy$d(usize, usize): usize",
+            "it takes 2 parameters here and 3 there",
+        ),
+        (
+            "memcpy$e(usize, usize, usize, ...): usize",
+            "it is variadic here and not there",
+        ),
+    ] {
+        let e = format!("C function `memcpy` has two signatures: `{decl}` here, and {first}");
+        assert!(out.contains(&e), "{e}:\n{out}");
+        assert!(out.contains(note), "{note}:\n{out}");
+    }
+    assert_eq!(out.matches("has two signatures").count(), 4, "{out}");
+    assert!(
+        out.contains("every pointer, `usize` and `isize` is one machine word"),
+        "{out}"
+    );
 }

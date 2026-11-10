@@ -277,6 +277,44 @@ nothing it checks that the argument's own type doesn't already say. `va_list` pa
 (`vprintf`) aren't declared yet: a `va_list` is target-specific storage C code fills, a C struct
 of layer 3.
 
+### One C function, several declarations
+
+One C function is often declared more than once in a program: velt/ffi's `readCString` declares
+`memcpy(dst: u8[], src: Ptr<u8>, n: usize): Ptr<u8>` and the scheduler's ring buffer
+`memcpy$sched(dst: usize, src: usize, n: usize): usize`. They link one symbol, so they must pass
+the same C signature; they don't have to name the same Velt types.
+
+- **Same C signature** is decided on the C type each Velt type crosses as (the "What crosses"
+  table), by class, the same on every target:
+  - **a machine word**: every pointer form (`Ptr<T>`, `Ptr<T> | null`, `null`, `StrBytes`,
+    `CString`, arrays and views, `Out<T>`, `OutPtr<T>`) and `isize`/`usize`. A pointer and
+    `size_t`/`ssize_t` are one register class and width on every target Velt compiles for
+    (64 bits natively, 32 on wasm32), so C reads one where the other was passed;
+  - each other integer by width **and** signedness (`i8` and `u8` differ: a caller extends
+    them, by sign or by zero, and C reads the extended register; `i32`/`u32` and `i64`/`u64`
+    are kept apart too, as the header check does);
+  - `bool` (`_Bool`), `f32`, `f64`, and `void` for a result.
+  Two declarations are the same C signature when they have as many fixed parameters, both or
+  neither end with `...args: CVarArgs`, and each parameter and the result is of one class.
+- **What lowering does**: the symbol's first call fixes the extern's VIR signature; a call
+  through another declaration of the same C signature casts each argument whose VIR type
+  differs (a `usize` to a `Ptr`, a `Ptr` to a `u64`: the same bits) and the result back, so the
+  extern has one signature and no backend sees two. A program that never mixes them compiles
+  exactly as before.
+- **A real mismatch is still an error**, once per declaration that differs, at that
+  declaration and naming the other one with where it is: `C function \`abs\` has two
+  signatures: \`abs$u8(u8): i32\` here, and \`abs$i8(i8): i32\` at src/lib.velt:1:1`, with a note
+  naming the first position that differs (`parameter 1 is \`u8\` here and \`i8\` there`) and
+  the rule.
+- **Not a check against headers**: declaring a pointer `usize` still fails the header check
+  where there is one (`usize` matches `size_t`). This rule is about two declarations agreeing
+  with each other, which the linker can't see; the header check is what says either is right.
+
+Rejected: requiring the same Velt types (today's rule): std and packages can't be loaded
+together when they spell one C function differently, though each is right. Merging by VIR type
+alone: `usize` is `u64` natively but `u32` on wasm32, so a program would compile for one target
+and not another.
+
 ### C structs
 
 ```ts planned
@@ -844,8 +882,9 @@ Step 1 lands in layers, each its own pull request:
    until step 2 captures the CRT's `errno`), calls
    only in unsafe code. Until the trust boundary layer, a C declaration is allowed in std and in
    any file with a package (not a lone file), the only library is `"c"`, the platform's C
-   library, and a call on WebAssembly is an error. One symbol has one signature: a second one
-   (another `$suffix`, another package) is an error until calls through C function pointers.
+   library, and a call on WebAssembly is an error. One symbol has one C signature: a second
+   declaration (another `$suffix`, another package) may name other Velt types for the same C
+   types, and one of another C signature is an error (layer 9).
    Under `velt dev` a C function no loaded library has is an error naming its declaration.
    Step 1 is complete only with layers 5 (the trust boundary) and 6 (the header check): until layer
    6, declarations are unchecked.
@@ -1107,6 +1146,11 @@ Step 1 lands in layers, each its own pull request:
      calls `(…, ...)`, Cranelift places them per target (`function/variadic.rs`), and the
      header check matches variadic prototypes. `declare system`'s variadic forms became variadic
      externs too.
+   - One C function, several declarations ("One C function, several declarations" above): the
+     symbol's first call fixes the extern's VIR signature, and a call through another declaration
+     of the same C signature (`CSig`, by `CClass` per position, `lower/c_call.rs`) casts its
+     arguments and result to it; another C signature is an error naming both declarations and
+     what differs.
 
 9. `@export("c_name")` (#2203 step 5): "Exported functions" above, with
    `exportedAddress`. Tested: veltc's c_export.rs (C sources calling exports by name, a thread
@@ -1132,3 +1176,9 @@ Step 1 lands in layers, each its own pull request:
   (#2203 step 5, decided while the owner was away, open to revisit).
 - User-set build conditions: a separate change. A result-returning callback with no active C
   call stops the program until step 9.
+- C's `...` is `...args: CVarArgs`; a number literal passed to it says its C type; Cranelift on
+  SysV x86-64 refuses a float variadic argument (no way to set `%al`) rather than pass it wrong
+  (layer 9, made while the owner was away, for review).
+- Two declarations of one C function agree when their C types are of one class per position
+  (pointers, `usize` and `isize` one machine word), not when their Velt types are the same
+  (layer 9, as above).

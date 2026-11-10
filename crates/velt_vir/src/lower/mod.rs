@@ -797,4 +797,6 @@ pub(super) struct CDecl {
     pub at: String,
     /// `abs$i8(i8): i32`.
     pub shown: String,
+    /// Its C signature, which every other declaration of the symbol must pass.
+    pub sig: c_call::CSig,
 }
