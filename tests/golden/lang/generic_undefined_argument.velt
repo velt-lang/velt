@@ -1,6 +1,7 @@
 // A bare `undefined` passed for a `T | undefined` parameter offers no candidate for `T`: it is
 // the constraint (`object`) or `unknown`, as TypeScript infers it (#2683; it was an internal
-// error in lowering).
+// error in lowering). A later argument still gives `T` its type (`g4(undefined, 1)` is
+// `T = number`), and so does a sibling of an `undefined` element (`ga([undefined, 1])`).
 function g<T extends object>(o: T | undefined): number {
   if (o !== undefined) {
     return Object.keys(o).length;
@@ -14,3 +15,24 @@ function k<T extends string>(o: T | undefined): number {
   return o === undefined ? 0 : o.length;
 }
 console.log(g({ q: 1, r: 2 }), g(undefined), h(undefined), k(undefined), k("ab"));
+
+function g4<T>(b: T | undefined, a: T): T {
+  return a;
+}
+const r4 = g4(undefined, 1);
+const n4: number = r4;
+const n5: number = g4(undefined, 1.5);
+const s4: string = g4(undefined, "s");
+function gn<T>(b: T | null, a: T): T {
+  return a;
+}
+const t4: boolean = gn(null, true);
+function ga<T>(xs: (T | undefined)[]): T | undefined {
+  return xs[1];
+}
+const na: number | undefined = ga([undefined, 1]);
+function gf<T>(b: T | undefined, f: (x: number) => T): T {
+  return f(2);
+}
+const nf: number = gf(undefined, (x: number) => x * 3);
+console.log(n4, n5, s4, t4, na, nf);

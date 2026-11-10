@@ -3,8 +3,8 @@
 //! - [`FnCx::default_slots`]: slots nothing inferred take their defaults once every argument is
 //!   checked.
 //! - [`FnCx::fix_for_context_sensitive`]: before an arrow function with an unannotated parameter
-//!   (or a bare `undefined` for a `T | undefined`) is checked, the type parameters in those parameters' types that nothing inferred yet are
-//!   fixed, as TypeScript fixes them before checking a context-sensitive function: sigx's
+//!   (or a bare `undefined` for a `T | undefined`) is checked, the type parameters in those
+//!   parameters' types that nothing inferred yet are fixed, as TypeScript fixes them before checking a context-sensitive function: sigx's
 //!   `component(({ signal }) => …)` types `ctx` as `ComponentSetupContext<…, {}, …>` from
 //!   `component<TCombined = {}, …>`. A type parameter only in the function's result still comes
 //!   from what the arrow returns, and so does one in the result and in a position an arrow leaves
@@ -90,7 +90,18 @@ impl FnCx<'_, '_> {
             return;
         }
         let mut open = OpenSlots::default();
-        self.open_slots(arg, pty, known, &mut open);
+        // A bare `undefined` (or `null`) passed where the parameter has that nothing (`o: T |
+        // undefined`) is a candidate for no type parameter of the rest: checked after every
+        // argument that may be one (`arg_order`), it fixes those still open as with nothing
+        // inferred, as TypeScript infers `number` for `g(undefined, 1)` and the constraint or
+        // `unknown` for `g(undefined)` (#2683). Only the argument itself: an `undefined` element
+        // of an array literal leaves `T` to its siblings (`ga([undefined, 1])`).
+        if self.bare_nothing_for(arg, pty) {
+            let core = self.cx.ty.core(pty).unwrap_or(pty);
+            crate::types::collect_params(&self.cx.ty, core, &mut open.fix);
+        } else {
+            self.open_slots(arg, pty, known, &mut open);
+        }
         if open.fix.is_empty() {
             return;
         }
@@ -373,6 +384,24 @@ impl FnCx<'_, '_> {
         Some(self.cx.ty.intern(TyKind::Dyn(defs.unknown, vec![])))
     }
 
+    /// Is `arg` a bare `undefined` (or `null`) passed for a parameter of type `pty` that has
+    /// that nothing next to a type parameter (`o: T | undefined`)?
+    pub(super) fn bare_nothing_for(&self, arg: &ast::Expr, pty: TyId) -> bool {
+        let ast::ExprKind::Lit(lit @ (ast::Lit::Undefined | ast::Lit::Null)) =
+            &strip_parens(arg).kind
+        else {
+            return false;
+        };
+        let held = self.cx.ty.nothing_of(pty).is_some_and(|n| match lit {
+            ast::Lit::Undefined => n.has_undefined(),
+            _ => n.has_null(),
+        });
+        let core = self.cx.ty.core(pty).unwrap_or(pty);
+        let mut names = vec![];
+        crate::types::collect_params(&self.cx.ty, core, &mut names);
+        held && core != pty && !names.is_empty()
+    }
+
     /// The slots the context-sensitive arrows in `arg`, checked against `pty`, need fixed:
     /// directly, inside an array or object literal, or returned by another arrow.
     fn open_slots(
@@ -384,19 +413,6 @@ impl FnCx<'_, '_> {
     ) {
         let core = self.cx.ty.core(pty).unwrap_or(pty);
         match &strip_parens(arg).kind {
-            // A bare `undefined` (or `null`) passed where the parameter has that nothing
-            // (`o: T | undefined`) is a candidate for no type parameter of the rest: they are
-            // fixed as with nothing inferred, as TypeScript infers the constraint or `unknown`
-            // for `g(undefined)` (#2683).
-            ast::ExprKind::Lit(lit @ (ast::Lit::Undefined | ast::Lit::Null)) => {
-                let held = self.cx.ty.nothing_of(pty).is_some_and(|n| match lit {
-                    ast::Lit::Undefined => n.has_undefined(),
-                    _ => n.has_null(),
-                });
-                if held && core != pty {
-                    crate::types::collect_params(&self.cx.ty, core, &mut open.fix);
-                }
-            }
             ast::ExprKind::Arrow {
                 type_params,
                 params,
