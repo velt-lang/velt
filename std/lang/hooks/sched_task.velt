@@ -108,7 +108,9 @@ export const CREDIT: u32 = 128;
 /** The executor (started by sched.velt before anything here runs). */
 @inline
 export function exec(): usize {
-  return EXEC.load("relaxed") as usize;
+  // Acquire: pairs with `install`'s release, so a waker on another thread sees the initialized
+  // executor it reads through.
+  return EXEC.load("acquire") as usize;
 }
 
 /** Makes `e` the executor, with this thread its worker. */

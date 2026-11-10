@@ -81,7 +81,7 @@ export function tlaAt(e: usize, site: string): void {
     // SAFETY: the slot holds a string (the flag says so), taken once and dropped here.
     const old = unsafe { slotTake<string>(e + t.E_TLA) };
   }
-  // SAFETY: the slot has room for a string, aligned to 16, and holds none now.
+  // SAFETY: the slot has room for a string, aligned to 8 (rawAlloc), and holds none now.
   unsafe {
     // A copy: the caller lends `site` (the hook borrows it).
     slotPut<string>(e + t.E_TLA, site.slice(0));
@@ -95,7 +95,8 @@ function runtimeQuiet(e: usize): bool {
   const f = unsafe { velt_rt_timer_unref_due$probe() };
   // SAFETY: `f` is a live heap future; the probe's `cx` lives in the executor.
   const r = unsafe { futPoll(f, e + t.E_PROBE_CX) };
-  // Ready with 1: the runtime saw its own end (quiet too); with 0: something is outstanding.
+  // The probe's contract (quiet.rs `UnrefDue`): pending while the runtime may be quiet, ready
+  // with 1 when it saw its own end (quiet too), ready with 0 when something is outstanding.
   const quiet = r === 0 || (m.ld(f + U_RESULT) & 255) !== 0;
   // SAFETY: owned, polled no more.
   unsafe {

@@ -23,7 +23,7 @@ export function slotSize<T>(): usize {
 }
 
 /**
- * Moves `value` into the memory at `at`, which must have `slotSize<T>()` bytes, aligned to 16,
+ * Moves `value` into the memory at `at`, which must have `slotSize<T>()` bytes, aligned to 8,
  * holding no value. The value crosses to whichever task takes it, as a channel send's does: moved
  * when this task held the only reference, else copied, and a resource still shared here stops
  * the program (#2613). Unsafe: the memory and its state are the caller's.
