@@ -13,7 +13,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::Span;
 
-use super::{carried, extended_impls, field_types, is_generic};
+use super::{carried, extended_impls, field_types};
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::dispatch::{instantiate, Dispatch, Rounds, Target};
@@ -46,10 +46,11 @@ pub(super) struct Found {
     /// belongs to is on runs.
     pub(super) in_body: FxHashSet<(DefId, TyId)>,
     pub(super) pneeds: FxHashMap<DefId, Vec<ParamCall>>,
-    /// The types each function converts to a dynamic type, in terms of its own parameters,
-    /// when the program reads members of one ([`members_by_name`]).
+    /// The type parameters (or types computed from them) each function's conversions to a
+    /// dynamic type hold, when the program reads members of one ([`members_by_name`]): what a
+    /// caller gives for them reaches its classes' methods by name.
     pub(super) anys: FxHashMap<DefId, Vec<TyId>>,
-    /// The interfaces whose values become dynamic ones ([`held_ifaces`]).
+    /// The interfaces whose values become dynamic ones (`Held::ifaces`).
     pub(super) dyn_ifaces: FxHashSet<DefId>,
     pub(super) bad: Vec<(Span, TyId, Site)>,
     /// Where a limit stopped the check.
@@ -372,15 +373,17 @@ pub(super) fn carry(
                         st.changed(j);
                     }
                 }
-                if is_generic(cx, t) {
-                    if !carried(cx, t) {
+                // The parameters held, not the type: its other parts are followed here, in
+                // terms of them.
+                for p in held.params {
+                    if !carried(cx, p) {
                         s.limits.push(span);
-                    } else {
-                        let n = s.anys.entry(*f).or_default();
-                        if !n.contains(&t) {
-                            n.push(t);
-                            grew = true;
-                        }
+                        continue;
+                    }
+                    let n = s.anys.entry(*f).or_default();
+                    if !n.contains(&p) {
+                        n.push(p);
+                        grew = true;
                     }
                 }
                 // What runs by name runs at whatever reached the conversion.

@@ -13,6 +13,7 @@ use crate::ctx::Ctx;
 use crate::dispatch::{class_chain, Target};
 use crate::hir::{AdtKind, DefId, TyId, TyKind};
 use crate::hooks;
+use crate::struct_tuples::is_generic;
 use crate::types::children;
 
 /// The method names glue calls.
@@ -32,6 +33,10 @@ pub(crate) struct Held {
     /// The interfaces (not dynamic types) whose values are held: converted to a dynamic type,
     /// such a value's object reaches its class's methods by name too.
     pub(crate) ifaces: Vec<DefId>,
+    /// The type parameters held (and the types computed from them, like `T["k"]`): what a
+    /// caller gives for them is held too. The rest of a generic type is followed here, its
+    /// classes' methods with arguments in these parameters.
+    pub(crate) params: Vec<TyId>,
 }
 
 /// [`Reach::hooks`] and [`Reach::dynamic`] per type, memoized.
@@ -53,22 +58,22 @@ impl Reach {
         }
         self.work += 1;
         let kind = cx.ty.kind(t).clone();
-        let mut out = vec![];
+        let mut out = Targets::default();
         if let TyKind::Adt(d, args) = &kind {
             self.methods(cx, *d, args, false, &mut out);
         }
         // A type argument never holds the type itself, so this ends.
         for c in children(&kind) {
             for x in self.hooks(cx, c) {
-                push(&mut out, x);
+                out.push(x);
             }
         }
-        self.hooks.insert(t, out.clone());
-        out
+        self.hooks.insert(t, out.list.clone());
+        out.list
     }
 
     /// What a value of type `t` converted to a dynamic type reaches by name: every method of
-    /// each struct or class it holds, in its type arguments and its fields (and theirs: a
+    /// each struct or class it holds, in its type arguments, its union members and its fields (and theirs: a
     /// member read through the dynamic value gives a dynamic value of the field), and the
     /// interfaces whose values it holds there.
     pub(crate) fn dynamic(&mut self, cx: &mut Ctx, t: TyId) -> Held {
@@ -76,6 +81,7 @@ impl Reach {
             return h.clone();
         }
         let mut held = Held::default();
+        let mut methods = Targets::default();
         let (mut stack, mut seen) = (vec![t], FxHashSet::default());
         while let Some(t) = stack.pop() {
             if !seen.insert(t) {
@@ -84,8 +90,16 @@ impl Reach {
             self.work += 1;
             let kind = cx.ty.kind(t).clone();
             match &kind {
+                TyKind::Param(_) => {
+                    held.params.push(t);
+                    continue;
+                }
+                TyKind::Op(..) if is_generic(cx, t) => {
+                    held.params.push(t);
+                    continue;
+                }
                 TyKind::Adt(d, args) => {
-                    self.methods(cx, *d, args, true, &mut held.methods);
+                    self.methods(cx, *d, args, true, &mut methods);
                     let fields: Vec<TyId> = cx
                         .adt(*d)
                         .map(|a| a.fields.iter().map(|f| f.ty).collect())
@@ -98,15 +112,20 @@ impl Reach {
                 }
                 _ => {}
             }
+            // A union holds its members' values.
+            if let Some(ms) = cx.union_members(t) {
+                stack.extend(ms);
+            }
             stack.extend(children(&kind));
         }
+        held.methods = methods.list;
         self.dynamic.insert(t, held.clone());
         held
     }
 
     /// The methods of struct or class `d<args>` and its base classes (hooks only, unless
     /// `all`), with their owners' arguments.
-    fn methods(&mut self, cx: &mut Ctx, d: DefId, args: &[TyId], all: bool, out: &mut Vec<Target>) {
+    fn methods(&mut self, cx: &mut Ctx, d: DefId, args: &[TyId], all: bool, out: &mut Targets) {
         let methods = cx
             .adt(d)
             .is_some_and(|a| matches!(a.kind, AdtKind::Class | AdtKind::Struct));
@@ -122,15 +141,24 @@ impl Reach {
             own.sort();
             self.work += own.len() as u64;
             for (_, m) in own {
-                push(out, (m, cargs.clone()));
+                out.push((m, cargs.clone()));
             }
         }
     }
 }
 
-fn push(out: &mut Vec<Target>, t: Target) {
-    if !out.contains(&t) {
-        out.push(t);
+/// Targets in the order found, each once.
+#[derive(Default)]
+struct Targets {
+    list: Vec<Target>,
+    seen: FxHashSet<Target>,
+}
+
+impl Targets {
+    fn push(&mut self, t: Target) {
+        if self.seen.insert(t.clone()) {
+            self.list.push(t);
+        }
     }
 }
 

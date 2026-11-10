@@ -11,12 +11,15 @@
 //! Only `sema_time_grows_linearly`, which guards every pass at once, measures CPU time.
 
 mod common;
+#[path = "scaling/struct_tuples.rs"]
+mod struct_tuples;
 
 use std::sync::{Mutex, MutexGuard};
 
 use common::hir_walk::func;
 use common::process_work;
 use common::programs::{err_src, load_src, load_src_at, ok_src, repo_root, Loaded};
+use struct_tuples::{any_wrappers, growing_source, implementations};
 use velt_sema::hir::PassMode;
 use velt_sema::{check_work, instantiation_work, InstantiationWork};
 
@@ -70,32 +73,6 @@ fn generic_chains(n: usize) -> String {
         );
     }
     out + "function main() {\n  k0<string>(\"{}\");\n  p0<i64>([1]);\n  h0<i64>(1);\n}\n"
-}
-
-/// `n` classes implementing a generic interface method, each entering one generic chain at its
-/// own link, whose end stores its argument in a struct, and one call through the interface,
-/// which runs all of them. The chain's needs reach one more class per round of the fixed point:
-/// the caller must not read every class again each round.
-fn implementations(n: usize) -> String {
-    let mut out = String::from(
-        "struct Held<T> {\n  v: T;\n  n: number;\n}\ninterface M {\n  m<T>(x: T): number;\n}\n",
-    );
-    let mut news = vec![];
-    for i in 0..n {
-        let next = match i + 1 < n {
-            true => format!("return h{}<T>(x);", i + 1),
-            false => "const h: Held<T> = { v: x, n: 1 };\n  return h.n;".to_string(),
-        };
-        out += &format!(
-            "class C{i} implements M {{\n  m<T>(x: T): number {{\n    return h{i}<T>(x);\n  }}\n}}\n\
-             function h{i}<T>(x: T): number {{\n  {next}\n}}\n"
-        );
-        news.push(format!("new C{i}()"));
-    }
-    out + &format!(
-        "function main() {{\n  const ms: M[] = [{}];\n  console.log(ms[0].m<i64>(1));\n}}\n",
-        news.join(", ")
-    )
 }
 
 /// A type graph whose types share parts: `N{k}` holds two `N{k-1}`, so `N{n-1}` has 2^n paths
@@ -355,6 +332,9 @@ fn instantiation_work_grows_linearly() {
     assert_linear_work(&[100, 800], |n| generated_program(n, n), 1.5);
     assert_linear_work(&[100, 800], generic_chains, 1.5);
     assert_linear_work(&[100, 800], implementations, 1.5);
+    assert_linear_work(&[100, 800], growing_source, 1.5);
+    // The types reaching `f0` double per level: compared below the depth limit of what's carried.
+    assert_linear_work(&[6, 12], any_wrappers, 1.5);
 }
 
 /// One test, so the timings don't compete with each other for the CPU.

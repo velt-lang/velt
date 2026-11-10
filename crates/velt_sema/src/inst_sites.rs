@@ -35,8 +35,10 @@ pub(crate) struct Uses {
     pub closures: Vec<DefId>,
     /// The guard bits of each of `closures`, where the closure is made.
     pub closure_guards: Vec<u64>,
-    /// The conversions to an interface value or a dynamic type (`ToDyn`, and `Upcast` of an
-    /// interface value): the type converted, the type it converts to, and the span.
+    /// The conversions to an interface value or a dynamic type: `ToDyn` of any value, and an
+    /// `Upcast` whose operand is already an interface value (to `any` or a wider interface; a
+    /// `ToDyn` made that interface value). The type converted, the type it converts to, and
+    /// the span.
     pub converts: Vec<(TyId, TyId, Span)>,
     /// The methods the class types among `types` dispatch dynamically to, with those types'
     /// arguments and the span of the type (filled by the pass: `dispatch::Dispatch`).

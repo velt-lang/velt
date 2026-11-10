@@ -119,7 +119,7 @@ fn holds_tuple(cx: &mut Ctx, ty: TyId, depth: u32) -> bool {
     }
 }
 
-fn is_generic(cx: &Ctx, ty: TyId) -> bool {
+pub(crate) fn is_generic(cx: &Ctx, ty: TyId) -> bool {
     let mut ps = vec![];
     collect_params(&cx.ty, ty, &mut ps);
     !ps.is_empty()

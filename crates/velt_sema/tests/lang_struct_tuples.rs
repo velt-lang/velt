@@ -483,6 +483,14 @@ fn a_value_converted_to_any_reaches_every_method() {
                  function wrap<T>(x: T): any {
                    return x;
                  }
+                 function wrap2<U>(x: U): any {
+                   return wrap<{ w: U }>({ w: x });
+                 }
+                 type Inner<T> = T extends { h: infer U } ? U : never;
+                 function pick<T>(x: Inner<T>): any {
+                   const a: any = { v: x };
+                   return a;
+                 }
                  class W {
                    h: H<P3> = new H<P3>();
                  }
@@ -503,6 +511,12 @@ fn a_value_converted_to_any_reaches_every_method() {
         "const a: any = new W();\n  console.log(a.h.make(t));",
         "const o: any = { h: new H<P3>() };\n  console.log(o.h.make(t));",
         "const b: any = new Box(new K<P3>());\n  console.log(b.n.make(t));",
+        // A union's members are its values.
+        "const u: H<P3> | number = new H<P3>();\n  const h: any = u;\n  console.log(h.make(t));",
+        "const h = wrap<H<P3> | number>(new H<P3>());\n  console.log(h.make(t));",
+        // Through two generic functions, and through a type computed from the parameter.
+        "const h = wrap2<H<P3>>(new H<P3>());\n  console.log(h.w.make(t));",
+        "const a = pick<{ h: H<P3> }>(new H<P3>());\n  console.log(a.v.make(t));",
     ] {
         let e = err_src(&main(body));
         assert!(
