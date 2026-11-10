@@ -121,8 +121,7 @@ static uint32_t main_poll(void* s, void* cx) {
         if (!m->f->poll(m->f, cx)) return 0;
         r = *(int64_t*)((char*)m->f + 16);
         m->f->drop(m->f);
-        write_i64(1, r); velt_rt_write_byte(1, '
-');
+        write_i64(1, r); velt_rt_write_byte(1, '\n');
         m->result = 5;
         return 1;
     }
