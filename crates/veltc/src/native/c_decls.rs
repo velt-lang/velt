@@ -15,6 +15,10 @@ use vpm::PackageGraph;
 /// The platform's C library: every target links it, and it needs no `native.c` entry.
 const C_LIBRARY: &str = "c";
 
+/// What [`links`] holds when the program declares a function of [`C_LIBRARY`]: no library to
+/// load (`velt dev` skips it), but the link adds [`c_library_links`] for it.
+pub(super) const DECLARES_C: &str = "platform:c";
+
 /// What checking a program's C declarations remembers between them.
 #[derive(Default)]
 pub(super) struct Checked {
@@ -201,15 +205,18 @@ pub(super) fn check_const<'g>(
 
 /// The system libraries (`sqlite3`, `framework:Accelerate`) of the C libraries `program`'s
 /// declarations name, for `target`, and those built from `sources` ([`super::c_sources`]): each
-/// once, in declaration order. The platform's C library is linked anyway, but a declaration
-/// from it may need [`c_library_links`] beside it.
+/// once, in declaration order. The platform's C library is linked anyway; a declaration from it
+/// adds [`DECLARES_C`] first, on every target (the build's stamp keeps it), for the link.
 pub fn links(
     program: &hir::Program,
     sm: &SourceMap,
     graph: Option<&PackageGraph>,
     target: &str,
 ) -> Vec<String> {
-    let mut seen = platform_links(&program.defs, target);
+    let mut seen: Vec<String> = Vec::new();
+    if declares_c(&program.defs) {
+        seen.push(DECLARES_C.to_string());
+    }
     let Some(graph) = graph else {
         return seen;
     };
@@ -240,17 +247,11 @@ pub fn links(
     seen
 }
 
-/// [`c_library_links`] when `defs` declare a function of the platform's C library.
-fn platform_links(defs: &[hir::Def], target: &str) -> Vec<String> {
-    let declares_c = defs.iter().any(|def| {
+/// Whether `defs` declare a function of the platform's C library.
+fn declares_c(defs: &[hir::Def]) -> bool {
+    defs.iter().any(|def| {
         matches!(def, hir::Def::ExternFn(f) if f.c.as_ref().is_some_and(|c| c.library == C_LIBRARY))
-    });
-    let links = if declares_c {
-        c_library_links(target)
-    } else {
-        &[]
-    };
-    links.iter().map(|l| l.to_string()).collect()
+    })
 }
 
 /// What a build for `target` links when the program declares a function of the platform's C
@@ -258,7 +259,8 @@ fn platform_links(defs: &[hir::Def], target: &str) -> Vec<String> {
 /// UCRT's `<stdio.h>` defines `printf`, `snprintf`, `sprintf`, `fprintf`, `vsnprintf` and the rest
 /// of the family inline, so `ucrt.lib` exports none of them, and a declaration that only names
 /// the symbol links against the library's out-of-line copies. A static library adds only the
-/// functions a program calls, so it costs nothing when unused.
+/// functions a program calls, so it costs nothing when unused. Only the link has it: `velt dev`
+/// finds such a function in no DLL yet.
 fn c_library_links(target: &str) -> &'static [&'static str] {
     if target.contains("-windows-msvc") {
         &["legacy_stdio_definitions"]
@@ -269,11 +271,16 @@ fn c_library_links(target: &str) -> &'static [&'static str] {
 
 /// The linker arguments of `systems` ([`links`]) for `target`: `-lsqlite3`, `-framework
 /// Accelerate`; `sqlite3.lib` with MSVC. A manifest has a framework only under `darwin`: another
-/// target's linker would open its name as an input file.
+/// target's linker would open its name as an input file. [`DECLARES_C`] adds
+/// [`c_library_links`].
 pub fn link_args(systems: &[String], target: &str) -> Vec<String> {
     let msvc = target.contains("-windows-msvc");
     let mut args = Vec::new();
-    for system in super::c_sources::system_libraries(systems).iter() {
+    let platform = (systems.iter().any(|s| s == DECLARES_C))
+        .then(|| c_library_links(target).iter().map(|l| l.to_string()))
+        .into_iter()
+        .flatten();
+    for system in platform.chain(super::c_sources::system_libraries(systems)) {
         match system.strip_prefix("framework:") {
             Some(framework) if !target.contains("-apple-") => {
                 panic!("ICE: framework `{framework}` reached the link for {target}")
@@ -288,7 +295,8 @@ pub fn link_args(systems: &[String], target: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{link_args, platform_links};
+    use super::{declares_c, link_args, DECLARES_C};
+    use crate::native::c_system_libraries;
     use velt_common::Span;
     use velt_sema::hir;
 
@@ -329,19 +337,25 @@ mod tests {
 
     /// A `declare c("c")` binding of `snprintf` links on Windows: the UCRT defines the stdio
     /// family inline in `<stdio.h>`, so MSVC's link needs `legacy_stdio_definitions.lib`.
-    /// Other targets, and programs that declare nothing from `c`, link nothing more.
+    /// Other targets, and programs that declare nothing from `c`, link nothing more; `velt dev`
+    /// loads no library for it (a static library, no DLL).
     #[test]
     fn the_c_library_brings_the_out_of_line_stdio_with_msvc() {
-        let link = |defs: &[hir::Def], target: &str| {
-            let links = platform_links(defs, target);
-            link_args(&links, target)
+        let links = |defs: &[hir::Def]| -> Vec<String> {
+            (declares_c(defs).then(|| DECLARES_C.to_string()).into_iter()).collect()
         };
-        let c = [snprintf_from("c")];
-        let other_library = [snprintf_from("sqlite3")];
+        let c = links(&[snprintf_from("c")]);
+        let other_library = links(&[snprintf_from("sqlite3")]);
+        assert_eq!(c, [DECLARES_C]);
+        assert!(other_library.is_empty() && links(&[]).is_empty());
+        assert!(c_system_libraries(&c).is_empty(), "velt dev would load it");
         for msvc in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
-            assert_eq!(link(&c, msvc), ["legacy_stdio_definitions.lib"]);
-            assert!(link(&other_library, msvc).is_empty());
-            assert!(link(&[], msvc).is_empty());
+            assert_eq!(link_args(&c, msvc), ["legacy_stdio_definitions.lib"]);
+            let with_z = [c[0].clone(), "z".to_string()];
+            assert_eq!(
+                link_args(&with_z, msvc),
+                ["legacy_stdio_definitions.lib", "z.lib"]
+            );
         }
         for other in [
             "aarch64-apple-darwin",
@@ -349,7 +363,7 @@ mod tests {
             "x86_64-unknown-linux-musl",
             "wasm32-wasip1",
         ] {
-            assert!(link(&c, other).is_empty(), "{other}: {:?}", link(&c, other));
+            assert!(link_args(&c, other).is_empty(), "{other}");
         }
     }
 

@@ -699,11 +699,14 @@ native: {
   `printf`, `snprintf`, `sprintf`, `fprintf`, `vsnprintf` and the rest of the stdio family inline
   in `<stdio.h>`, and `ucrt.lib` exports none of them: a declaration only names the symbol, so a
   program that declares a function from `c` and targets `*-windows-msvc` also links
-  `legacy_stdio_definitions.lib`, their out-of-line copies (`native::c_decls::links`). Only then,
-  not for every Windows link: a static library adds only what a program calls, so it costs
-  nothing unused, but it is one more file for `link.exe` to read in every build of every program.
-  The bundled linker's kit has no such library yet, so those functions link with the system
-  linker only.
+  `legacy_stdio_definitions.lib`, their out-of-line copies: such a declaration puts the marker
+  `platform:c` among the program's C libraries (`native::c_decls::links`, kept by the build's
+  stamp), which the link turns into that library with MSVC and into nothing elsewhere. Only
+  then, not for every Windows link: a static library adds only what a program calls, so it
+  costs nothing unused, but it is one more file for `link.exe` to read in every build of every
+  program. It is no DLL, so `velt dev` loads nothing for the marker, and its JIT finds these
+  functions in no module on Windows yet; the bundled linker's kit has no such library either, so
+  they link with the system linker only.
 
 ### Fetched archives (#2367)
 

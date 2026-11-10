@@ -18,10 +18,11 @@ pub(super) fn entry(package: &str, library: &str) -> String {
     format!("{BUNDLED}{package}/{library}")
 }
 
-/// The entries of `c_libs` that name a system library.
+/// The entries of `c_libs` that name a system library (not one built from `sources`, nor
+/// [`super::c_decls::DECLARES_C`]).
 pub fn system_libraries(c_libs: &[String]) -> Vec<String> {
     (c_libs.iter())
-        .filter(|l| !l.starts_with(BUNDLED))
+        .filter(|l| !l.starts_with(BUNDLED) && *l != super::c_decls::DECLARES_C)
         .cloned()
         .collect()
 }
