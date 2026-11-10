@@ -22,8 +22,9 @@
 //   polls get and its await word, the started promises woken (a stack other threads push on),
 //   how many it drives that are unfinished, its microtask queue (sched_micro.velt; 0 until the
 //   first entry), the rejected promises nobody handled, reported once its microtasks are drained
-//   (sched_node.velt `report`), the join handle (a heap future, rt_abi_async.md §1) whose result slot follows,
-//   then the initial state copied in: one allocation per spawn.
+//   (sched_node.velt `report`), the task's size in bytes (to free it with), the join handle (a
+//   heap future, rt_abi_async.md §1) whose result slot follows, then the initial state copied
+//   in: one allocation per spawn.
 //
 // One worker (VELT_THREADS=1 scope): the live count and a task's join slot and flags are plain
 // memory the worker alone changes; they become atomics in the multi-worker step (#2649 step 3).
@@ -79,6 +80,7 @@ export const T_WOKEN: usize = 104;
 export const T_LOCALS: usize = 112;
 export const T_MICRO: usize = 120;
 export const T_UNHANDLED: usize = 128;
+export const T_BYTES: usize = 136;
 export const T_JOIN: usize = 144;
 export const T_SLOT: usize = 160;
 
@@ -106,7 +108,9 @@ export const CREDIT: u32 = 128;
 /** The executor (started by sched.velt before anything here runs). */
 @inline
 export function exec(): usize {
-  return EXEC.load("relaxed") as usize;
+  // Acquire: pairs with `install`'s release, so a waker on another thread sees the initialized
+  // executor it reads through.
+  return EXEC.load("acquire") as usize;
 }
 
 /** Makes `e` the executor, with this thread its worker. */
@@ -185,11 +189,12 @@ export function wake(t: usize): void {
 /** Gives back one reference to task `t`: the last frees it. */
 export function release(t: usize): void {
   if (m.dec(t + T_REFS) === 1) {
-    m.release(t);
+    m.release(t, m.ld(t + T_BYTES));
   }
 }
 
 /** Queues scheduled task `t`: on the worker's own queue, or from another thread its inbox. */
+@inline
 export function schedule(e: usize, t: usize): void {
   if (ON_WORKER.get()) {
     push(e, t);

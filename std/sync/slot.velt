@@ -14,7 +14,7 @@ declare c("c") function free$slot(p: Ptr<u8>): void;
 
 /** Room for one `T`. */
 export class Slot<T> {
-  /** The value's memory (16-aligned), allocated with the slot. */
+  /** The value's memory (`malloc`, 16-aligned), allocated with the slot. */
   private readonly at: usize;
   private full: bool = false;
 

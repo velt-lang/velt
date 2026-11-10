@@ -1,6 +1,8 @@
 // velt/lang/hooks (internal): the raw memory of the executor in Velt (sched.velt, #2649): words
-// read and written at an address, atomically where other threads read them too, the C library's
-// allocator, and the calls through a waker's table (rt_abi_async.md §1: clone, wake,
+// read and written at an address, atomically where other threads read them too, the allocator
+// compiled code uses (`rawAlloc`, mimalloc in a release runtime; the debug runtime checks every
+// block's size when it is freed), the C library's for the blocks that live as long as the
+// worker (which the leak counters would otherwise report), and the calls through a waker's table (rt_abi_async.md §1: clone, wake,
 // wake_by_ref, drop at offsets 0, 8, 16, 24 of the table the header's first word points to).
 // Every address passed here is one the executor allocated, or a waker header from a `cx`.
 
@@ -14,15 +16,17 @@ import {
   ptrAtomicLoad,
   ptrAtomicRmw,
   ptrAtomicStore,
+  rawAlloc,
+  rawFree,
   stateDrop,
 } from "velt/lang/intrinsics";
 
 // Pointers are `Ptr`s, as in every other C declaration of these symbols (a program's own, velt/
 // ffi's `memcpy`): one C symbol has one signature in a program, and a pointer is `Ptr` there.
-declare c("c") function malloc$sched(n: usize): Ptr<u8> | null;
 declare c("c") function calloc$sched(n: usize, size: usize): Ptr<u8> | null;
 declare c("c") function free$sched(p: Ptr<u8> | null): void;
 declare c("c") function memcpy$sched(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
+declare c("c") function memset$sched(dst: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 
 /** Address `a` as a C pointer argument; 0 passes `NULL`. */
 @inline
@@ -40,19 +44,40 @@ export function addr(p: Ptr<u8> | null): usize {
   return Ptr.addressOf(p);
 }
 
-/** `n` bytes, aligned to 16. */
+/** `n` (> 0) bytes, aligned to 8 (every value's alignment); `release(p, n)` gives them back. */
 @inline
 export function alloc(n: usize): usize {
-  // SAFETY: malloc has no precondition; its result is checked.
-  const p = addr(unsafe { malloc$sched(n) });
-  if (p === 0) {
-    panic("out of memory");
+  return rawAlloc(n);
+}
+
+/** `n` (> 0) bytes set to 0, aligned to 8; `release(p, n)` gives them back. */
+@inline
+export function zeroed(n: usize): usize {
+  const p = rawAlloc(n);
+  // SAFETY: `p` holds `n` bytes.
+  unsafe {
+    memset$sched(ptr(p), 0, n);
   }
   return p;
 }
 
-/** `n` bytes set to 0, aligned to 16. */
-export function zeroed(n: usize): usize {
+/**
+ * Gives back the `n` bytes at `p`, which `alloc(n)` or `zeroed(n)` gave and nothing uses after. A
+ * call, not inlined: a free is the cold end of every reference count's release, which stays
+ * small enough to inline where it is hot (a task's waker wake and drop).
+ */
+export function release(p: usize, n: usize): void {
+  // SAFETY: as the doc says.
+  unsafe {
+    rawFree(p, n);
+  }
+}
+
+/**
+ * `n` bytes set to 0, aligned to 16, from the C library: for a block that lives as long as the
+ * worker (the executor, its I/O block, reactor and handle table), freed with `lastingRelease`.
+ */
+export function lastingZeroed(n: usize): usize {
   // SAFETY: calloc has no precondition; its result is checked.
   const p = addr(unsafe { calloc$sched(1, n) });
   if (p === 0) {
@@ -61,9 +86,9 @@ export function zeroed(n: usize): usize {
   return p;
 }
 
-/** Frees what `alloc` gave. */
-export function release(p: usize): void {
-  // SAFETY: `p` came from malloc and is not used after.
+/** Frees what `lastingZeroed` gave. */
+export function lastingRelease(p: usize): void {
+  // SAFETY: `p` came from calloc and is not used after.
   unsafe {
     free$sched(ptr(p));
   }

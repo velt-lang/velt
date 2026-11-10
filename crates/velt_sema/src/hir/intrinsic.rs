@@ -441,6 +441,12 @@ pub enum Intrinsic {
     /// std only: `promiseAt<T>(f: usize) -> Promise<T>`: the heap future at `f` as an owned
     /// promise. Additive.
     PromiseAt,
+    /// std only: `rawAlloc(n: usize) -> usize`: `n` bytes (aligned to 8) from the allocator
+    /// generated code uses (`velt_rt_alloc`), on every target. Additive.
+    RawAlloc,
+    /// std only: `rawFree(p: usize, n: usize)`: gives back what `rawAlloc(n)` returned
+    /// (`velt_rt_free`). Additive.
+    RawFree,
     /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
     /// range against `StrByteLen`). The bytes are read where the string keeps them.
     StrByteAt,

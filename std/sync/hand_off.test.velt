@@ -96,6 +96,28 @@ describe("velt/sync HandOff", () => {
     },
   );
 
+  it("two parks held at once each leave on their own", async () => {
+    // The first park takes the hand-off's own future; the second, alive at the same time, gets
+    // one of its own. The second sees the give and finishes; the first, dropped after the give
+    // without seeing it, leaves the item behind.
+    const h = shared(new HandOff<Conn>());
+    {
+      const first = h.park();
+      const second = h.park();
+      expect(h.give(new Conn(11))).toBe(null);
+      await second;
+    }
+    expect(h.takeBack()?.id).toBe(11);
+    // Both gone: the next park uses the hand-off's own future again and is given its item.
+    const g = shared(new HandOff<Conn>());
+    {
+      const gone = g.park();
+    }
+    const waiter = spawn(parkAndClaim(g));
+    expect(await spawn(giveOne(g, 12))).toBe(0);
+    expect(await waiter).toBe(12);
+  });
+
   it("a wait outlives a hand-off dropped while it waits, and resumes at its end", async () => {
     // A temporary: the hand-off is gone before the race polls its park.
     const p = new HandOff<string>().park();

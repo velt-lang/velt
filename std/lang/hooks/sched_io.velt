@@ -109,7 +109,7 @@ export function io(): usize {
 
 /** Makes the I/O block: the reactor, an empty table; `tickAt` is the executor's I/O tick. */
 export function open(tickAt: usize): usize {
-  const b = m.zeroed(IO_SIZE);
+  const b = m.lastingZeroed(IO_SIZE);
   m.st(b + IO_TICK_AT, tickAt);
   m.st(tickAt, TICKS);
   m.st(b + IO_REACTOR, r.open());
@@ -207,7 +207,7 @@ export function register(fd: i32, flags: u32, ready: u32): usize {
   const b = io();
   const e = r.add(m.ld(b + IO_REACTOR), fd, s);
   if (e !== 0) {
-    m.release(s);
+    m.release(s, S_SIZE);
     return 0;
   }
   m.st(b + IO_LIVE, m.ld(b + IO_LIVE) + 1);
@@ -221,9 +221,9 @@ export function free(s: usize): void {
   wt.wakeAll(s);
   const buf = m.ld(s + S_BUF);
   if (buf !== 0) {
-    m.release(buf);
+    m.release(buf, m.ld(s + S_CAP));
   }
-  m.release(s);
+  m.release(s, S_SIZE);
 }
 
 /** Clears readiness `bit` of `s`: an operation found the socket not ready (EAGAIN). */

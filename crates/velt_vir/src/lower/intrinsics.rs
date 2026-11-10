@@ -43,6 +43,8 @@ impl FnLower<'_, '_> {
             (I::SlotPut, [at, v]) => self.slot_put(at, v),
             (I::SlotTake, [at]) => self.slot_take(at, ty),
             (I::PromiseAt, [f]) => self.promise_at(f, ty),
+            (I::RawAlloc, [n]) => self.raw_alloc(n, ty),
+            (I::RawFree, [p, n]) => self.raw_free(p, n),
             (I::ThreadLocalGet | I::ThreadLocalSet, _) => self.thread_local_intrinsic(i, args),
             (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
             (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),

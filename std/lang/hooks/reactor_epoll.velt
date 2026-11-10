@@ -84,7 +84,7 @@ export function open(): usize {
   if (ep < 0 || evfd < 0) {
     return 0;
   }
-  const r = m.zeroed(R_SIZE);
+  const r = m.lastingZeroed(R_SIZE);
   m.st(r + R_EP, ep as usize);
   m.st(r + R_EVFD, evfd as usize);
   const packed = velt_rt_os_arch() === "x64";
@@ -168,7 +168,7 @@ export function wake(r: usize): void {
   unsafe {
     write$io(m.ld(r + R_EVFD) as i32, m.ptr(one), 8);
   }
-  m.release(one);
+  m.release(one, 16);
 }
 
 /** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */

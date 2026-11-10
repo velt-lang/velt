@@ -58,7 +58,7 @@ export function enqueue(task: usize, w: usize, credit: bool): u64 {
       m.st(buf + 16 * i, m.ld(from));
       m.st(buf + 16 * i + 8, m.ld(from + 8));
     }
-    m.release(old);
+    m.release(old, 16 * cap);
     m.st(q + Q_BUF, buf);
     m.st(q + Q_HEAD, 0);
     cap = cap * 2;
@@ -152,8 +152,8 @@ function ticketAt(q: usize, i: usize): usize {
 export function free(task: usize): void {
   const q = m.ld(task + t.T_MICRO);
   if (q !== 0) {
-    m.release(m.ld(q + Q_BUF));
-    m.release(q);
+    m.release(m.ld(q + Q_BUF), 16 * m.ld(q + Q_CAP));
+    m.release(q, 32);
   }
 }
 

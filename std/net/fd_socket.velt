@@ -143,15 +143,15 @@ function resolve(addr: string, passive: bool): IoResult<usize> {
     hostC = new CString(host);
     portC = new CString(parts[1]);
   } catch (e) {
-    m.release(hints);
+    m.release(hints, 64);
     return failed({ code: 4, message: "invalid socket address" }, 0);
   }
   const res = m.zeroed(16);
   // SAFETY: NUL-terminated host and port, hints and a result word in raw memory.
   const e = unsafe { getaddrinfo(hostC, portC, m.ptr(hints), m.ptr(res)) };
   const list = m.ld(res);
-  m.release(hints);
-  m.release(res);
+  m.release(hints, 64);
+  m.release(res, 16);
   if (e !== 0) {
     // SAFETY: gai_strerror returns a NUL-terminated message.
     const why = cText(Ptr.addressOf(unsafe { gai_strerror(e) }));
@@ -168,7 +168,7 @@ function setOn(fd: i32, level: i32, name: i32): void {
   unsafe {
     setsockopt(fd, level, name, m.ptr(one), 4);
   }
-  m.release(one);
+  m.release(one, 16);
 }
 
 /** Closes descriptor `fd` (not registered). */
@@ -262,7 +262,7 @@ async function connectOne(ai: usize): Promise<IoResult<u64>> {
     getsockopt(fd, sys.SOL_SOCKET, sys.SO_ERROR, m.ptr(word), m.ptr(word + 8));
   }
   const err = m.ld32(word) as i32;
-  m.release(word);
+  m.release(word, 16);
   if (err !== 0) {
     discard(h, s);
     return failed(osError(err), 0);
@@ -354,7 +354,7 @@ export function portOf(l: u64): u32 {
     getsockname(m.ld(s + io.S_FD) as i32, m.ptr(sa), m.ptr(sa + SA_SIZE));
   }
   const port = ((m.ld32(sa) >> 16) & 0xffff) as u32;
-  m.release(sa);
+  m.release(sa, SA_SIZE + 8);
   return ((port & 0xff) << 8) | (port >> 8);
 }
 
@@ -385,11 +385,11 @@ export function peerOf(h: u64): string {
       inet_ntop(v6 ? sys.AF_INET6 : 2, m.ptr(sa + (v6 ? 8 : 4)), m.ptr(text), 64);
     }
     const ip = cText(text);
-    m.release(text);
+    m.release(text, 64);
     const p = (m.ld32(sa) >> 16) & 0xffff;
     const port = ((p & 0xff) << 8) | (p >> 8);
     out = v6 ? `[${ip}]:${port}` : `${ip}:${port}`;
   }
-  m.release(sa);
+  m.release(sa, SA_SIZE + 8);
   return out;
 }

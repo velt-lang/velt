@@ -130,6 +130,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("catchUnwind", Op(I::CatchUnwind)),
     // slot.velt
     ("promiseAt", Op(I::PromiseAt)),
+    ("rawAlloc", Op(I::RawAlloc)),
+    ("rawFree", Op(I::RawFree)),
     ("slotPut", Op(I::SlotPut)),
     ("slotSizeOfFirst", Op(I::SlotSize)),
     ("slotTake", Op(I::SlotTake)),
