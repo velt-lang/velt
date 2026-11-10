@@ -303,7 +303,12 @@ that, it calls `velt.host_forget(id)`.
 catches panics. Then it prints the message as usual and unwinds (a Rust unwind with a private
 payload) through the compiled frames to the runtime's poll of the nearest such promise. Compiled
 functions therefore have unwind tables and are not `nounwind` (LLVM; Cranelift emits unwind
-tables already), and contain no landing pads: nothing in an unwound frame is dropped. Every
+tables already). In a program that doesn't catch Velt panics (`catchUnwind`) they contain no
+landing pads: nothing in an unwound frame is dropped. In one that does, a call in a frame that
+owns values has a cleanup pad (vir.rs invariant 14; docs/internals/design/unwinding.md "Cleanup
+in unwound frames"), and the frame's personality lands there only for Velt's own exception: this
+Rust unwind is a foreign class to it and passes those frames in both phases, so their pads don't
+run and what the frames own leaks as before. Every
 runtime function an unwind can pass through is `extern "C-unwind"`: `velt_rt_panic`, the task
 ABI (§1, §2: `PollFn`, `DropFn` and the functions that poll promises) and the futures behind it.
 The others stay `extern "C"`; a callback they run (drop, transfer, trace glue) runs no user code.

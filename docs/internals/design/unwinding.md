@@ -492,7 +492,9 @@ resume of the unwind.
   about string data set aside (as a `finally` is), so a pad's code depends only on its entries.
 - **Not covered** (they leak as before): calls of externs; the shared `division by zero` panic
   blocks (built after the scopes are gone); Cranelift on Apple arm64 for a call whose arguments
-  don't all fit in registers (below); the JIT (`velt dev`); Windows and WebAssembly.
+  don't all fit in registers (below); the JIT (`velt dev`); Windows and WebAssembly. Since the
+  leak-check marker of a caught panic is gone (below), `velt test` fails the leak check of a
+  test that catches a panic unwinding through one of these paths.
 
 `VELT_UNWIND_PADS=0` turns the edges off in lowering. It is for measuring the gate only (the same
 program with and without pads); a program built with it leaks as before #2667.
@@ -566,7 +568,10 @@ thread-local `UNWINDING` flag, set by `panicRaise` just before it raises and cle
 `catchVeltPanic` when the catch returns the exception. A `panicRaise` that finds it set prints
 the message and `panic while unwinding: aborting` and calls `abort()`. Nothing is added to the
 normal path; the cost is that a catch inside a destructor run by a cleanup can't catch either
-(it aborts too), which Rust also does.
+(it aborts too). Older Rust did the same; recent Rust allows a panic that a drop running during
+an unwind catches itself, and only one that escapes the drop aborts. That is worth
+following once the executor's catch is public (step 5): it needs the flag to be a count of the
+catches entered since the unwind began.
 
 ### Async state machines
 
