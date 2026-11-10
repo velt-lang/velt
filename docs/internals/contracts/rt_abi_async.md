@@ -20,6 +20,20 @@ typedef struct VeltFut {                             // every runtime-owned futu
     uint32_t (*poll)(struct VeltFut* self, void* cx);
     void     (*drop)(struct VeltFut* self);
 } VeltFut;                                           // result slot at byte offset 16
+
+typedef struct VeltWakerHeader VeltWakerHeader;     // a block starting with its table
+typedef struct VeltWakerVt {                         // a waker's C functions
+    const VeltWakerHeader* (*clone)(const VeltWakerHeader* w); // one more reference
+    void (*wake)(const VeltWakerHeader* w);          // wakes, gives a reference back
+    void (*wake_by_ref)(const VeltWakerHeader* w);   // wakes, keeps the reference
+    void (*drop)(const VeltWakerHeader* w);          // gives a reference back
+} VeltWakerVt;
+struct VeltWakerHeader { const VeltWakerVt* vt; /* the waker's own fields follow */ };
+
+typedef struct VeltCx {                              // what `cx` points to (2 pointers)
+    const uint32_t*        await_word;               // offset 0: read by generated code
+    const VeltWakerHeader* waker;                    // the task's waker, borrowed for the poll
+} VeltCx;
 ```
 
 **Compiled `async function`** (emitted by lowering):
@@ -35,9 +49,26 @@ typedef struct VeltFut {                             // every runtime-owned futu
 - Before the first poll a state may be moved/copied bytewise (the runtime copies initial states
   into tasks); it must not contain pointers into itself until it has been polled. After the first
   poll it never moves.
-- `cx` points to the runtime's `{ const uint32_t* word; Context* cx; }`: the task's **await
-  word**, then the Rust `&mut Context`. Generated code passes `cx` on and reads only the word
-  (below, "Awaiting").
+- `cx` points to a `VeltCx`: the task's **await word**, then its **waker**, one pointer to a
+  header whose first word is its table (#2649; tokio lays out its task headers the same way). A
+  task header starts with it; a C library's waker is any block that starts with its own table.
+  Generated code passes `cx` on and reads only the word (below, "Awaiting"). The waker contract,
+  for every table:
+  - The waker in `cx` is borrowed for the poll call: a callee may `clone` it and `wake_by_ref`
+    it, never `wake` or `drop` it. A reference from `clone` ends in exactly one `wake` or `drop`.
+  - All four functions may be called from any thread, including threads Velt did not start
+    (tokio's, a GPU driver's callback): on the borrowed waker during the poll, on a reference
+    from `clone` at any time.
+  - The reference count is atomic.
+  - A wake after the task finished is harmless: the count keeps the header alive until the last
+    reference is given back.
+
+  The Rust executors pass a header (on the stack, beside the `VeltCx`) with the runtime's own
+  table and their `&mut Context`; runtime leaves recognize the table and use that `Context`
+  as it is (velt_rt `task/waker.rs`). A `clone` through that table returns a boxed header
+  owning a Rust `Waker`. For any other table a leaf's Rust waker is `RawWaker::new(header,
+  &FORWARD)`, whose entries call the header's table: nothing is allocated on a clone. Before
+  #2649 the second field was a Rust `&mut Context`.
 - Generators (`function*`) reuse this state-machine shape without the runtime: their poll
   function is called with a null `cx` and returns 0 (done), 1 (a value is in the result slot)
   or 2 (the slot holds the `Err`), and `$drop` closes a suspended generator (it runs `finally`
@@ -52,10 +83,13 @@ typedef struct VeltFut {                             // every runtime-owned futu
 - *Compiled child, fast path (no allocation):* the child state is a field of the parent state.
   Initialize it, then `r = child$poll(&st->child, cx); if (r == 0) return 0;` and read the result
   at `&st->child + 0`.
-- *Heap future `f` (leaf, join handle, boxed promise):* `if (velt_rt_fut_poll(f, cx) == 0) return 0;`
+- *Heap future `f` (leaf, join handle, boxed promise):* `if (f->poll(f, cx) == 0) return 0;`
   then move the result out of `(char*)f + 16` (type given per function below), then
-  `velt_rt_fut_drop(f)` (frees it; never touches the result). `f->poll(f, cx)` may be called
-  directly instead of `velt_rt_fut_poll`.
+  `f->drop(f)` (cancels it if still running and frees it; never touches the result). Compiled
+  code calls through the header itself, with the C calling convention (unwinding allowed); the
+  runtime has no function for either (the former `velt_rt_fut_poll` and `velt_rt_fut_drop`,
+  #2196). On wasm32 each header entry is an 8-byte slot holding the function's table index in
+  its low 4 bytes, as every pointer slot there.
 - *The step after an `await`* (user code; std code takes none, its prelude counts Node's steps
   with `velt_rt_microtask`): once the child or heap future is READY, the code after the `await`
   runs one microtask later, as in Node. `if (*cx->word != 0) { t = velt_rt_await_tick(cx); if
@@ -73,8 +107,6 @@ typedef struct VeltFut {                             // every runtime-owned futu
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_fut_poll` | `(VeltFut* f, void* cx) -> u32` | `f->poll(f, cx)` |
-| `velt_rt_fut_drop` | `(VeltFut* f)` | cancel if pending, free; never drops the result slot |
 | `velt_rt_fut_box` | `(PollFn, DropFn, const void* state, u64 size, u64 align) -> VeltFut*` | moves a compiled initial state into a heap future (for `Promise<T>` values that are stored, put in arrays, returned); result at +16 = state offset 0. `align ≤ 16`. Lazy until polled or started (§1.1). |
 | `velt_rt_fut_start` | `(VeltFut* f, void (*result_drop)(void* slot))` | start a boxed promise now (§1.1); no-op for any other future, or outside a task. `result_drop` disposes of an unclaimed result (null if nothing to do); for a promise that can reject it reports an `Err` like an unhandled rejection. |
 | `velt_rt_fut_start_rejecting` | `(VeltFut* f, void (*result_drop)(void* slot))` | `velt_rt_fut_start` for a promise that can reject (its result is a `Result`, tag first; `result_drop` reports an `Err`): when it rejects while its owner does not wait for it, the rejection is reported as uncaught (through `result_drop`, which then gets 0 from `velt_rt_unhandled_defer`) once the task's microtask queue is drained, unless the owner awaited it, dropped it, or handed it to a combinator or another task by then, as Node reports a rejection without a handler. (additive) |
@@ -110,7 +142,7 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_all_or_reject` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | `Promise.all` over promises that can reject: like `velt_rt_all_with_drop` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled), but completes as soon as a child rejects. Its result is empty. On a rejection the rejected child's result is moved to slot 0 and is the only initialized slot (so a rejection is an `Err` tag in slot 0, `n > 0`): the runtime drops the other finished results with `result_drop` (null: nothing to drop) and drops the pending children (started promises keep running; mark them with `velt_rt_futs_handled` first). |
 | `velt_rt_race` | `(VeltFut* const* futs, u64 n, u64 result_size) -> VeltFut*` | `Promise.race(array)`: takes ownership of the `n` futures (not of the pointer array); the first child to finish moves its `result_size`-byte result to the returned future's slot (+16) and the others are dropped (started promises keep running, §1.1; one created during the task's current poll that is queued, woken by that poll's own code, runs once now, before the race's awaiter; so do the pending children of `velt_rt_all_or_reject` when it rejects). `n == 0` never completes. |
 | `velt_rt_race_ok` | `(VeltFut* const* futs, u64 n, u64 result_size, void (*reject_drop)(void* slot)) -> VeltFut*` | `Promise.any`: like `velt_rt_race` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled): the first fulfilled child wins; a rejected one is dropped with `reject_drop` (null: nothing to drop) while others are still running, and the last rejection is the result when all reject. |
-| `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | the owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task. If it was created during the task's current poll (and nothing yielded during it), it is polled once now, before the owner's continuation: only that poll's own code can have woken it, as with a JS microtask queued before the rejection handler (#150). Otherwise it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before the timers and events that woke it. A started promise keeps running, as a loser of `velt_rt_race` does (§1.1). Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped as by `velt_rt_fut_drop`. Takes ownership of `f`. |
+| `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | the owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task. If it was created during the task's current poll (and nothing yielded during it), it is polled once now, before the owner's continuation: only that poll's own code can have woken it, as with a JS microtask queued before the rejection handler (#150). Otherwise it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before the timers and events that woke it. A started promise keeps running, as a loser of `velt_rt_race` does (§1.1). Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped (`f->drop(f)`). Takes ownership of `f`. |
 | `velt_rt_fut_share` | `(VeltFut* f, u64 result_size, void (*share)(const void* src, void* dst), void (*result_drop)(void* slot)) -> VeltFut*` | another holder of promise `f` (§1.2): a new handle on `f`, which is now shared; null stays null. `share` writes another reference to a result into a slot (null: the bytes are copied), `result_drop` drops one (null: nothing to drop) (additive) |
 | `velt_rt_fut_id` | `(VeltFut* f) -> u64` | the identity of promise `f` (§1.3): what `===` and `Set` / `Map` keys compare and hash for a promise; the same for every holder of a shared promise and for a converted promise and the promise it converts; null gives 0 (additive) |
 | `velt_rt_fut_alias` | `(VeltFut* w, VeltFut* inner, void (*quiet_drop)(void* slot))` | converted promise `w` (from `velt_rt_fut_box`, not yet run) wraps or awaits `inner` (a holder, borrowed): `w` stands for the promise `inner` holds when that one is shared (§1.3); `quiet_drop` drops `w`'s result without a report (null: nothing to drop). No-op for anything else (additive) |
@@ -132,13 +164,13 @@ each polled until done, done-flags in the state): no allocation.
   task (they may move between workers with it). A local promise's poll gets a waker that queues
   it in its set and wakes the task. When one finishes, its awaiter runs at once if it is the
   task's root or another promise of the set (a JS microtask), else it is woken.
-- `velt_rt_fut_poll` on a started promise: READY once it finished (the awaiter then owns the
+- Polling a started promise (`f->poll`): READY once it finished (the awaiter then owns the
   result at +16). Polled from inside the task that drives it while it is not woken, the awaiter
   polls its state directly with its own `cx` ("adopts" it: its leaves then wake the awaiter, with
   no trip through the set — e.g. `Promise.all` over stored promises); otherwise the awaiter's
   waker is registered and the set drives it. Any task may await it. An adopted promise that is
   dropped, or awaited from elsewhere, goes back to its set.
-- `velt_rt_fut_drop` on an unfinished started promise does **not** cancel it: it keeps running
+- Dropping an unfinished started promise (`f->drop`) does **not** cancel it: it keeps running
   and `result_drop` disposes of its result when it finishes (`quiet_drop` instead once
   `velt_rt_futs_handled` marked it). Dropped after finishing without being
   awaited, the result is dropped then. The node is freed when the owner, the set and every cloned
@@ -474,6 +506,8 @@ A JS host's thread belongs to its event loop, so nothing waits on it (velt_rt_wa
 `host_turn.rs`), and nothing unwinds through the module: every call from the host returns
 normally, with the executor's state on the heap. On `wasm32-unknown-unknown`, `velt_main` does not
 call `velt_rt_block_on`: it hands `main`'s root task to the runtime and returns.
+On both wasm targets `cx` is the same `VeltCx` with 32-bit pointers (the word at offset 0, the
+waker at 4; a header's table at its offset 0); velt_rt_wasm compiles velt_rt's `task/waker.rs`.
 
 - `velt_rt_host_main(PollFn poll, const void* state, u64 size, u64 align, int32_t (*finish)(void*
   state))`: moves the root's unpolled state (`size` bytes, `align`) to the heap and runs the first
@@ -856,18 +890,18 @@ uint32_t add1After$poll(void* s, void* cx) {
     Add1After* st = s;
     switch (st->tag) {
     case 0: st->sleep = velt_rt_sleep(st->ms); st->tag = 1; /* fallthrough */
-    case 1: if (!velt_rt_fut_poll(st->sleep, cx)) return 0;
-            velt_rt_fut_drop(st->sleep);
+    case 1: if (!st->sleep->poll(st->sleep, cx)) return 0;
+            st->sleep->drop(st->sleep);
             st->result = st->a + 1; st->tag = 2; return 1;
     }
 }
-void add1After$drop(void* s) { Add1After* st = s; if (st->tag == 1) velt_rt_fut_drop(st->sleep); }
+void add1After$drop(void* s) { Add1After* st = s; if (st->tag == 1) st->sleep->drop(st->sleep); }
 
 // const h = spawn(add1After(41, 5)); ... await h
 Add1After init = { 0, 0, 41, 5, 0 };
 st->h = velt_rt_spawn(add1After$poll, add1After$drop, &init, sizeof init, 8, sizeof(int64_t), NULL);
-... if (!velt_rt_fut_poll(st->h, cx)) return 0;
-    int64_t v = *(int64_t*)((char*)st->h + 16); velt_rt_fut_drop(st->h);
+... if (!st->h->poll(st->h, cx)) return 0;
+    int64_t v = *(int64_t*)((char*)st->h + 16); st->h->drop(st->h);
 
 // async function main() { ... }   →   int32_t velt_main(void) {
 //     Main m = {0}; velt_rt_block_on(main$poll, &m); return 0; }

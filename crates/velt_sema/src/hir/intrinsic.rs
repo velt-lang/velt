@@ -35,7 +35,7 @@ pub enum Intrinsic {
     Exit,
     /// `panic(msg: string)` → Never.
     Panic,
-    // M2. Those std calls are declared in std/lang/intrinsics (`declare intrinsic function`, named
+    // M2. Those std calls are declared in std/lang/intrinsics (`@intrinsic declare function`, named
     // in `velt_sema::intrinsic_decls`); some are user-visible too.
     /// `(cap: usize) -> T[]`
     ArrayWithCapacity,
@@ -377,6 +377,40 @@ pub enum Intrinsic {
     /// at `address` in memory, unchecked (velt/ffi's raw reads of C memory, which are unsafe
     /// functions). Additive.
     AddressLoad,
+    /// std only: `addressStore<T>(address: usize, v: T)`, `T` a number type or `bool` (sema
+    /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
+    /// Additive.
+    AddressStore,
+    /// std only: `ptrAtomicLoad<T>(p: Ptr<T>, order: u8) -> T`, `T` an integer type: as
+    /// `AtomicLoad` on the integer `p` points to (its address is `p`'s one field). Sema turns the
+    /// declaration's string literal orderings into the `Atomic*` intrinsics' integer literals.
+    /// Additive.
+    PtrAtomicLoad,
+    /// `(p: Ptr<T>, v: T, order: u8)`: as `AtomicStore` at `p`. Additive.
+    PtrAtomicStore,
+    /// `(p: Ptr<T>, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `p` (the declaration's
+    /// `(p, op, v, order)` reordered by sema, `op` a literal as `AtomicRmw` numbers it).
+    /// Additive.
+    PtrAtomicRmw,
+    /// `(p: Ptr<T>, expected: T, v: T, order: u8, failure: u8) -> T`: as `AtomicCas` at `p`.
+    /// Additive.
+    PtrAtomicCas,
+    /// As `PtrAtomicCas`, `-> bool` (may fail spuriously). Additive.
+    PtrAtomicCasWeak,
+    /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
+    /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
+    /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.
+    AtomicAddress,
+    /// std only: `futPoll(f: usize, cx: usize) -> u32`: `f->poll(f, cx)`, the call through
+    /// offset 0 of heap future `f`'s header (rt_abi_async.md §1), inline. Additive.
+    FutPoll,
+    /// std only: `futDrop(f: usize)`: `f->drop(f)`, through offset 8 of the header. Additive.
+    FutDrop,
+    /// std only: `exportedAddress(f) -> usize`, the address of the C function lowering builds
+    /// for an `@export` function (`Program::c_exports`): the argument is a `Lit::Int`, the index
+    /// of its `CExport` there. For a C API that takes a function pointer (`pthread_create`).
+    /// Additive.
+    ExportedAddress,
     /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
     /// range against `StrByteLen`). The bytes are read where the string keeps them.
     StrByteAt,
@@ -386,9 +420,6 @@ pub enum Intrinsic {
     /// `(s, at: u64, count: u64)` → u8x16: `count` (below 16) bytes from `at` in the low lanes,
     /// 0 in the others, unchecked (a SIMD `load_partial` of the string's bytes).
     StrLoadPartialU8x16,
-    /// std only: `inline()`, a statement: every call of the function whose body it is in is
-    /// inlined where `velt_opt`'s inliner runs (lowering sets `vir::Inline::Always`). No code.
-    Inline,
     /// std only: `(w0: u64, w1: u64, w2: u64, len: usize)` → string: the inline ASCII string of
     /// `len` (at most 23) bytes, byte `i` in bits `8 * (i % 8)` of word `i / 8`. The bytes past
     /// `len` must be 0 (equality compares the words). No call: the string's inline form
@@ -406,9 +437,6 @@ pub enum Intrinsic {
     /// plain heap builder with room for 8 more bytes gets it stored after its text; anything else
     /// calls `velt_rt_strbuf_push_words` (`StrbufPushAsciiWords` for up to 24).
     StrbufPushAsciiWord,
-    /// std only: `noInline()`, a statement: the function whose body it is in is never inlined
-    /// (#1884; lowering sets `vir::Inline::Never`). No code.
-    NoInline,
     /// `(xs: borrow T[]) -> u64` — address of element 0 (no std declaration calls it now).
     ArrayDataPtr,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a

@@ -11,7 +11,7 @@
 /// crates/xtask/src/zig.rs). With `VELT_ZIG_TESTS` set they fail without zig rather than skip
 /// (crates/veltc/tests/zig_env). The job's `cargo test` in `.github/workflows/ci.yml` and
 /// `nightly.yml` names the same files.
-pub const TESTS: &[&str] = &["c_headers", "c_constants", "c_sources"];
+pub const TESTS: &[&str] = &["c_headers", "c_constants", "c_sources", "c_export"];
 
 const PATHS: &[&str] = &[
     "crates/veltc/src/native/",
@@ -86,7 +86,8 @@ mod tests {
         assert_eq!(
             without_zig_tests("all() - binary_id(veltc::golden)"),
             "(all() - binary_id(veltc::golden)) - (binary_id(veltc::c_headers) \
-             | binary_id(veltc::c_constants) | binary_id(veltc::c_sources))"
+             | binary_id(veltc::c_constants) | binary_id(veltc::c_sources) \
+             | binary_id(veltc::c_export))"
         );
     }
 }

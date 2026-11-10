@@ -163,10 +163,23 @@ impl Emitter<'_> {
         if kept || self.enters_gated(callee) {
             text.push_str(" noinline");
         }
+        // In a function C calls, an `invoke` whose unwind edge aborts (stop_unwind.rs).
+        let mut continues = None;
+        if self.invokes(&target) {
+            let (invoke, label) = self.invoke_text(&text);
+            text = invoke;
+            continues = Some(label);
+        }
         if ret == Ty::Unit {
             self.line(text);
+            if let Some(label) = &continues {
+                self.label(label);
+            }
         } else {
             let result = self.inst(text);
+            if let Some(label) = &continues {
+                self.label(label);
+            }
             if let Some(dest) = dest {
                 let loc = self.place(dest)?;
                 if loc.ty() != ret && loc.ty() != Ty::Unit {

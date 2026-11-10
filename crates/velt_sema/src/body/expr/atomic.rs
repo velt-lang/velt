@@ -14,7 +14,7 @@ use crate::hir::{self, Conversion, DefId, ExprKind as H, IntTy, Intrinsic, Lit, 
 const ORDERS: [&str; 5] = ["relaxed", "acquire", "release", "acqrel", "seqcst"];
 
 /// The read-modify-write methods, as `AtomicRmw` numbers them.
-const RMW: [&str; 8] = ["exchange", "add", "sub", "and", "or", "xor", "max", "min"];
+pub(super) const RMW: [&str; 8] = ["exchange", "add", "sub", "and", "or", "xor", "max", "min"];
 
 impl FnCx<'_, '_> {
     /// `new Atomic<T>(x)` once `mutex_new` found the class is the prelude's `Atomic`.
@@ -221,13 +221,19 @@ impl FnCx<'_, '_> {
     /// The ordering an argument names (its index in `ORDERS`): a string literal, or a value
     /// whose type is one string literal type. A union of string literals is an enum, so a
     /// literal passed as one is the variant of its own literal type.
-    fn ordering_of(&mut self, a: &hir::Expr) -> Option<u8> {
-        let s = match &a.kind {
-            H::Lit(Lit::Str(s)) => s.clone(),
-            H::Variant { args, .. } if args.len() == 1 => self.single_string_literal(args[0].ty)?,
-            _ => self.single_string_literal(a.ty)?,
-        };
+    pub(super) fn ordering_of(&mut self, a: &hir::Expr) -> Option<u8> {
+        let s = self.literal_string(a)?;
         ORDERS.iter().position(|o| *o == s).map(|o| o as u8)
+    }
+
+    /// The string an argument of a string literal type names: a string literal, or a value
+    /// whose type is one string literal type (a variant of a union of them).
+    pub(super) fn literal_string(&mut self, a: &hir::Expr) -> Option<String> {
+        match &a.kind {
+            H::Lit(Lit::Str(s)) => Some(s.clone()),
+            H::Variant { args, .. } if args.len() == 1 => self.single_string_literal(args[0].ty),
+            _ => self.single_string_literal(a.ty),
+        }
     }
 
     fn single_string_literal(&mut self, t: TyId) -> Option<String> {
@@ -237,7 +243,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    fn u8_lit(&mut self, v: u8, span: Span) -> hir::Expr {
+    pub(super) fn u8_lit(&mut self, v: u8, span: Span) -> hir::Expr {
         let u8_ = self.cx.ty.intern(TyKind::Int(IntTy::U8));
         self.mk(H::Lit(Lit::Int(u128::from(v))), u8_, span)
     }

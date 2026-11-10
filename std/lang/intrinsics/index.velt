@@ -1,13 +1,22 @@
 // velt/lang/intrinsics: the compiler's intrinsics, declared (docs/internals/design/std-layout.md
 // §10): operations the compiler emits inline, such as a bounds-checked swap, a byte of a string
 // or a per-type equality, which no Velt code can express. Each file of this folder declares an
-// area's with `export declare intrinsic function`; the declaration is the signature calls are
+// area's with `@intrinsic export declare function`; the declaration is the signature calls are
 // checked against (modes.velt says how arguments are passed), and the compiler's table
 // (`crates/velt_sema/src/body/expr/intrinsics.rs`) maps each name to the operation, a test
 // checking that the two name the same set. std code imports them like any function; programs
 // and packages cannot (`velt/lang` is internal), so they use the public APIs instead.
 
-export { addressLoad } from "velt/lang/intrinsics/address";
+export {
+  addressLoad,
+  addressStore,
+  exportedAddress,
+  ptrAtomicCas,
+  ptrAtomicCasWeak,
+  ptrAtomicLoad,
+  ptrAtomicRmw,
+  ptrAtomicStore,
+} from "velt/lang/intrinsics/address";
 export {
   anyDelete,
   anyIsList,
@@ -33,6 +42,7 @@ export {
   arrayWithCapacity,
 } from "velt/lang/intrinsics/array";
 export {
+  atomicAddress,
   atomicCas,
   atomicCasWeak,
   atomicFence,
@@ -43,6 +53,7 @@ export {
 } from "velt/lang/intrinsics/atomic";
 export { chanReceive, chanSend, chanTryReceive, chanTrySend } from "velt/lang/intrinsics/channel";
 export { hash, includesEq, keyEq } from "velt/lang/intrinsics/compare";
+export { futDrop, futPoll } from "velt/lang/intrinsics/future";
 export {
   asyncGeneratorDispose,
   asyncGeneratorResume,
@@ -54,7 +65,7 @@ export {
   generatorThrow,
   generatorValue,
 } from "velt/lang/intrinsics/generator";
-export { inline, noInline } from "velt/lang/intrinsics/inline";
+export { inline, intrinsic, noInline } from "velt/lang/intrinsics/decorators";
 export { abs, ceil, floor, round, sqrt, trunc } from "velt/lang/intrinsics/math";
 export { share, transfer } from "velt/lang/intrinsics/ownership";
 export {

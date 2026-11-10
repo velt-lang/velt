@@ -307,6 +307,7 @@ mod tests {
             target: None,
             cold: false,
             inline: velt_vir::vir::Inline::Default,
+            stops_unwind: false,
         }
     }
 

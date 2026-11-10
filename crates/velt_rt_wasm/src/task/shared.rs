@@ -18,7 +18,7 @@ use std::rc::Rc;
 use std::task::Waker;
 
 use super::all::ResultDropFn;
-use super::{context, FutDropFn, FutPollFn, VeltFut, Wide, FUT_RESULT_OFFSET, PENDING, READY};
+use super::{with_context, FutDropFn, FutPollFn, VeltFut, Wide, FUT_RESULT_OFFSET, PENDING, READY};
 
 /// Compiled share glue of a result slot: writes another reference to `*src` into `dst`.
 pub type ShareFn = unsafe extern "C" fn(src: *const u8, dst: *mut u8);
@@ -176,7 +176,7 @@ unsafe fn slot(f: *mut VeltFut) -> *mut u8 {
 /// `poll` of every holder, the original future and the handles alike.
 unsafe extern "C" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     if let Some((p, size)) = forwarded(f) {
-        if super::velt_rt_fut_poll(p, cx) != READY {
+        if super::poll_fut(p, cx) != READY {
             return PENDING;
         }
         std::ptr::copy_nonoverlapping(slot(p), slot(f), size);
@@ -227,7 +227,7 @@ pub(crate) unsafe fn hand_over(f: *mut VeltFut, transfer: Option<ResultDropFn>) 
                 w.proxy = next;
             }
         });
-        super::velt_rt_fut_drop(p);
+        super::drop_fut(p);
         return;
     }
     let h = hub(f);
@@ -275,23 +275,23 @@ unsafe fn new_proxy(h: HubRef, transfer: Option<ResultDropFn>) -> *mut VeltFut {
 
 unsafe extern "C" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
     let role = *(state as *mut *mut VeltFut);
-    if super::velt_rt_fut_poll(role, cx) != READY {
+    if super::poll_fut(role, cx) != READY {
         return PENDING;
     }
     let size = handle_hub(role).borrow().size;
     std::ptr::copy_nonoverlapping(slot(role), state, size);
-    super::velt_rt_fut_drop(role);
+    super::drop_fut(role);
     READY
 }
 
 unsafe extern "C" fn proxy_drop(state: *mut u8) {
-    super::velt_rt_fut_drop(*(state as *mut *mut VeltFut));
+    super::drop_fut(*(state as *mut *mut VeltFut));
 }
 
 /// `drop` of every holder: a handle also frees its own block.
 unsafe extern "C" fn holder_drop(f: *mut VeltFut) {
     if let Some(fwd) = FORWARDS.with(|m| m.borrow_mut().remove(&(f as usize))) {
-        super::velt_rt_fut_drop(fwd.proxy);
+        super::drop_fut(fwd.proxy);
         match fwd.orig {
             Some((poll, orig_drop)) => {
                 (*f).poll = Wide(poll);
@@ -341,7 +341,7 @@ fn on_its_task(h: &HubRef) {
 unsafe fn poll_holder(h: &HubRef, f: *mut VeltFut, cx: *mut c_void) -> u32 {
     on_its_task(h);
     let me = f as usize;
-    let w = context(cx).waker().clone();
+    let w = with_context(cx, |c| c.waker().clone());
     if !h.borrow().done {
         let first = {
             let mut s = h.borrow_mut();

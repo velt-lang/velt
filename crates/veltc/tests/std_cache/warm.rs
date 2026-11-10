@@ -62,7 +62,7 @@ fn a_failed_warm_up_program_is_not_warmed_again() {
 }
 
 /// `velt cache warm` stores what release builds link too: a release build of a warm-up program
-/// then finds its `noInline()` functions and leaves none in the program.
+/// then finds its `@noInline` functions and leaves none in the program.
 #[test]
 fn the_warm_up_stores_what_release_builds_link() {
     let tmp = test_dir::TestDir::new();

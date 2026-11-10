@@ -82,23 +82,40 @@ pub struct Carried {
 }
 
 /// Build the current sources and take them into the running program if possible.
-/// `carried`: what the running version leaves, replaced by the new version's when it builds.
+/// `carried`: what the running version leaves; a version that represents a value of the running
+/// one differently restarts.
 fn reload(
     session: &mut DevSession,
     opts: &BuildOptions,
     flags: Report,
     carried: &mut Carried,
 ) -> Reloaded {
-    let seed = &mut carried.seed;
+    let load = |sess: &Session| super::native::load_c_libraries(opts, &sess.c_libs);
+    reload_with(session, opts, flags, carried, load)
+}
+
+/// [`reload`], with `load` taking in what the new version needs after it built (its C libraries).
+fn reload_with(
+    session: &mut DevSession,
+    opts: &BuildOptions,
+    flags: Report,
+    carried: &mut Carried,
+    load: impl FnOnce(&Session) -> Result<(), String>,
+) -> Reloaded {
     let verbose = flags.verbose;
     let mut sess = Session::new();
     sess.show_details = flags.details;
-    // Moved in and back out: lowering replaces it only when it lowers the new version, so a
-    // build that fails before or in lowering hands the running version's seed back unchanged.
-    sess.counted_seed = Some(seed.take().unwrap_or_default());
+    // The running version's counted types are what live values were made with: they stay the
+    // baseline until a version is taken in (swapped in, or restarted into). A version that fails
+    // after lowering never ran, so its seed must not become the next comparison's baseline.
+    let running = carried.seed.take().unwrap_or_default();
+    sess.counted_seed = Some(running.clone());
     sess.interfaces = verbose.then(Default::default);
     let program = driver::compile(&mut sess, opts);
-    *seed = sess.counted_seed.take();
+    let next = sess.counted_seed.take();
+    // Values the running code made that the new code would count, free or call differently
+    // (a class that is counted in one version only, #2653): only a restart is safe.
+    let changed = (next.as_ref()).and_then(|next| running.representation_change(next));
     if program.is_ok() {
         let own = super::edits::Snapshot::of_build(&sess, &opts.input);
         let interfaces = sess.interfaces.take();
@@ -117,18 +134,23 @@ fn reload(
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
     let program = program.and_then(|p| {
-        super::native::load_c_libraries(opts, &sess.c_libs)
-            .map_err(crate::driver::BuildError::Failed)?;
+        load(&sess).map_err(crate::driver::BuildError::Failed)?;
         Ok(p)
     });
     let program = match program {
         Ok(program) => program,
         Err(err) => {
+            carried.seed = Some(running);
             report(&sess, verbose);
             failure_code(&err);
             return Reloaded::Failed { files };
         }
     };
+    carried.seed = next;
+    if let Some(reason) = changed {
+        report(&sess, verbose);
+        return Reloaded::Restart { reason, files };
+    }
     let start = Instant::now();
     let mut steps = vec![];
     let outcome = session.reload_timed(&program, &mut steps);

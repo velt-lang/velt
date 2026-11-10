@@ -23,9 +23,18 @@ impl FnLower<'_, '_> {
                 | I::AtomicCas
                 | I::AtomicCasWeak
                 | I::AtomicFence
-                | I::AtomicSpinHint,
+                | I::AtomicSpinHint
+                | I::PtrAtomicLoad
+                | I::PtrAtomicStore
+                | I::PtrAtomicRmw
+                | I::PtrAtomicCas
+                | I::PtrAtomicCasWeak,
                 _,
             ) => self.atomic_intrinsic(i, args),
+            (I::AtomicAddress, [a]) => self.atomic_address(a, ty),
+            (I::AddressStore, [a, v]) => self.address_store(a, v),
+            (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
+            (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::ThreadLocalGet | I::ThreadLocalSet, _) => self.thread_local_intrinsic(i, args),
             (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
             (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),
@@ -103,6 +112,14 @@ impl FnLower<'_, '_> {
                 let p = self.operand_place(v, Ty::Agg(STR_AGG));
                 self.str_bytes(&p)
             }
+            (I::ExportedAddress, [a]) => {
+                // `a` is the index of the `hir::CExport` (sema's `exported_address`).
+                let hir::ExprKind::Lit(hir::Lit::Int(index)) = a.kind else {
+                    ice("`exportedAddress` without its export's index")
+                };
+                let f = self.cx.c_export_address(index as u32);
+                self.rvalue_temp(Ty::U64, Rvalue::Cast(f, Ty::U64))
+            }
             (I::AddressLoad, [a]) => {
                 let addr = self.expr(a);
                 let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
@@ -124,14 +141,6 @@ impl FnLower<'_, '_> {
                 let v = self.projection_base(s, BoxHold::No);
                 let i = self.expr(i);
                 self.str_byte_at(v, i)
-            }
-            (I::Inline, []) => {
-                self.inline = crate::vir::Inline::Always;
-                unit()
-            }
-            (I::NoInline, []) => {
-                self.inline = crate::vir::Inline::Never;
-                unit()
             }
             (I::StrLoadU8x16, [s, at]) => {
                 let v = self.projection_base(s, BoxHold::No);

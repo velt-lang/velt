@@ -260,21 +260,31 @@ pub struct Function {
     /// lowering; `velt_opt` keeps it on clones. False promises nothing.
     pub cold: bool,
     /// Whether optimizers and backends must inline it, must not, or decide for themselves: the
-    /// std markers `inline()` and `noInline()` (std/lang/intrinsics/inline.velt). Set by
+    /// std decorators `@inline` and `@noInline` (std/lang/intrinsics/decorators.velt). Set by
     /// lowering; `velt_opt` keeps it on clones.
     pub inline: Inline,
+    /// A function C calls (`@export("c_name")`, lowering's c_export.rs): an unwind started below
+    /// it (a Velt panic that a `catchPanic` further up would stop) must not pass it into C
+    /// frames, so the process aborts there. LLVM makes its calls `invoke`s whose landing pad
+    /// calls `abort` (a `cleanuppad` on Windows), as clang does for `noexcept`; Cranelift emits
+    /// it without unwind information, so the unwinder finds no way past it, except on Windows,
+    /// whose unwinder takes a function without unwind information for a leaf (there it keeps
+    /// it: docs/internals/design/c-ffi.md "Exported functions"). Its small integer parameters
+    /// carry no extension attribute: the C caller may leave their upper bits unset (AAPCS64
+    /// outside Darwin). False for every other function.
+    pub stops_unwind: bool,
 }
 
-/// A function's inlining, as std's markers set it (`vir::Function::inline`).
+/// A function's inlining, as std's decorators set it (`vir::Function::inline`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Inline {
-    /// No marker: the optimizer's and the backend's own heuristics decide.
+    /// Neither decorator: the optimizer's and the backend's own heuristics decide.
     #[default]
     Default,
-    /// `inline()`: every call is inlined wherever `velt_opt`'s inliner runs, whatever the
+    /// `@inline`: every call is inlined wherever `velt_opt`'s inliner runs, whatever the
     /// callee's size (LLVM `alwaysinline`). Sema rejects it on a recursive function.
     Always,
-    /// `noInline()` (#1884): every call stays a call (LLVM `noinline`, without `cold`).
+    /// `@noInline` (#1884): every call stays a call (LLVM `noinline`, without `cold`).
     Never,
 }
 
@@ -328,6 +338,7 @@ impl Function {
             target: None,
             cold: false,
             inline: Inline::Default,
+            stops_unwind: false,
         }
     }
 

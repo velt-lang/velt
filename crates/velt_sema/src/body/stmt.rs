@@ -341,7 +341,7 @@ impl FnCx<'_, '_> {
             if let Some(t) = v.ty.as_ref().or(init_ty) {
                 self.cx.note_written_type(name.span, t.span);
             }
-            self.simple_decl(v, name, ann, span, out);
+            self.decl_keeping_arms(v, name, ann, span, out);
             return self.note_named_fn(v, name);
         }
         let Some(e) = &v.init else {
@@ -441,7 +441,7 @@ impl FnCx<'_, '_> {
         true
     }
 
-    fn simple_decl(
+    pub(crate) fn simple_decl(
         &mut self,
         v: &ast::VarDecl,
         name: &ast::Ident,

@@ -3,7 +3,7 @@
 //!
 //! The box is the only allocation; the Rust future lives inline after the result slot and is pinned
 //! because the box never moves. It is dropped as soon as it completes so that resources (sockets,
-//! timers) are released before generated code gets around to `velt_rt_fut_drop`.
+//! timers) are released before generated code gets around to `drop_fut`.
 //!
 //! A leaf made with [`new_leaf`] waits for a timer or I/O: while it is pending it keeps the
 //! process alive, as a Node request does (quiet.rs, through [`External`]). One that waits for
@@ -11,7 +11,8 @@
 //! timer holds its own keep-alive reference) does not: what it waits for keeps the process alive
 //! or nothing does. It costs nothing extra.
 
-use super::{context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use super::waker::context_or_repoll;
+use super::{VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 use std::ffi::c_void;
 use std::future::Future;
 use std::mem::MaybeUninit;
@@ -71,8 +72,13 @@ unsafe extern "C-unwind" fn leaf_poll<R, F: Future<Output = R>>(
     let Some(fut) = leaf.fut.as_mut() else {
         return READY; // already completed: polling again is harmless
     };
+    // A waker of another table: this leaf is polled again with a Rust one.
+    let c = match context_or_repoll(cx, f, leaf_poll::<R, F>) {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     // SAFETY: the future lives inside a heap box that never moves until `leaf_drop`.
-    match Pin::new_unchecked(fut).poll(context(cx)) {
+    match Pin::new_unchecked(fut).poll(c) {
         Poll::Pending => PENDING,
         Poll::Ready(v) => {
             leaf.result.write(v);
@@ -147,5 +153,56 @@ impl<F> Drop for External<F> {
         if self.counted {
             super::quiet::external_end();
         }
+    }
+}
+
+/// Native only: `velt_rt_wasm` has no `new_inner_leaf`, and `waker_tests.rs` is compiled
+/// into both crates.
+#[cfg(test)]
+mod tests {
+    /// A leaf future that registers like `AtomicWaker`: it keeps its waker while `will_wake` says
+    /// the new one is the same, and is ready on its fourth poll.
+    struct Registers {
+        polls: u32,
+        w: Option<std::task::Waker>,
+    }
+
+    impl std::future::Future for Registers {
+        type Output = u64;
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<u64> {
+            self.polls += 1;
+            if self.polls > 3 {
+                return std::task::Poll::Ready(7);
+            }
+            if !self.w.as_ref().is_some_and(|w| w.will_wake(cx.waker())) {
+                self.w = Some(cx.waker().clone());
+            }
+            std::task::Poll::Pending
+        }
+    }
+
+    /// Every leaf takes the `context_or_repoll` path: with a foreign `cx`, the Rust waker it builds
+    /// is the same across polls (`will_wake`), so a future that registers once clones once.
+    #[test]
+    fn a_leaf_polled_with_a_foreign_cx_registers_its_waker_once() {
+        use crate::task::{drop_fut, poll_fut, PENDING, READY};
+        let t = crate::task::waker::tests::TestHeader::new();
+        let word = 0u32;
+        let mut cx = t.cx(&word);
+        let cx = &mut cx as *mut crate::task::VeltCx as *mut std::ffi::c_void;
+        let f = super::new_inner_leaf(Registers { polls: 0, w: None });
+        // SAFETY: the future is owned here; `cx` outlives the polls.
+        unsafe {
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(t.get()[0], 1, "one clone over three pending polls");
+            assert_eq!(poll_fut(f, cx), READY);
+            drop_fut(f);
+        }
+        assert!(t.balanced());
     }
 }

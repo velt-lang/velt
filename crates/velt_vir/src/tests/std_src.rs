@@ -30,3 +30,28 @@ pub fn check_src(src: &str) -> hir::Program {
     let (program, diags) = velt_sema::check(&loaded.modules, loaded.root);
     program.unwrap_or_else(|| panic!("check:\n{diags:#?}\n{src}"))
 }
+
+/// [`check_src`] with the root loaded as a std module (`velt/lang/<name>`), which may import
+/// the intrinsics.
+#[allow(dead_code)] // tests/native.rs shares this file and needs only `check_src`
+pub fn check_std_src(name: &str, src: &str) -> hir::Program {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let std = manifest.join("../../std");
+    let mut sm = velt_common::SourceMap::new();
+    let mut diags = vec![];
+    let root = std.join(format!("lang/{name}.velt"));
+    let opts = velt_loader::LoadOptions {
+        std_root: Some(std),
+        root_source: Some(src.to_string()),
+        std_root_as_std: true,
+        ..Default::default()
+    };
+    let loaded = velt_loader::load_program(&mut sm, &root, opts, &mut diags)
+        .unwrap_or_else(|e| panic!("load: {e}"));
+    assert!(
+        diags.iter().all(|d| !d.is_error()),
+        "load:\n{diags:#?}\n{src}"
+    );
+    let (program, diags) = velt_sema::check(&loaded.modules, loaded.root);
+    program.unwrap_or_else(|| panic!("check:\n{diags:#?}\n{src}"))
+}

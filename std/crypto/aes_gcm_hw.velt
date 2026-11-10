@@ -81,8 +81,8 @@ export function rounds(keys: u8x16[]): Rounds {
 }
 
 /** The block `v` reversed byte for byte: a block as a field element, and back. */
+@inline
 export function rev(v: u8x16): u8x16 {
-  inline();
   return u8x16.shuffle(v, v, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
 }
 
@@ -98,26 +98,26 @@ declare function velt_simd_u8x16_load_partial(from: u8[], at: u64, count: u64): 
 declare function velt_simd_u8x16_store_partial(v: u8x16, to: u8[], at: u64, count: u64);
 
 /** The 16 bytes of `b` from `at`, which the caller knows are there. */
+@inline
 export function load16(b: u8[], at: usize): u8x16 {
-  inline();
   return velt_simd_u8x16_load(b, at as u64);
 }
 
 /** `v` into the 16 bytes of `b` from `at`, which the caller knows are there. */
+@inline
 export function store16(v: u8x16, b: u8[], at: usize) {
-  inline();
   velt_simd_u8x16_store(v, b, at as u64);
 }
 
 /** The field element of the 16 bytes of `b` from `at`, which the caller knows are there. */
+@inline
 export function element(b: u8[], at: usize): u64x2 {
-  inline();
   return rev(load16(b, at)).asU64x2();
 }
 
 /** `v` with its two halves swapped. */
+@inline
 export function swapHalves(v: u64x2): u64x2 {
-  inline();
   return u64x2.shuffle(v, v, 1, 0);
 }
 
@@ -125,8 +125,8 @@ export function swapHalves(v: u64x2): u64x2 {
  * The product `lo` + `mid` · 2^64 + `hi` · 2^128 (unreflected, 256 bits) shifted left by one and
  * reduced by x^128 + x^7 + x^2 + x + 1 in GCM's reflected representation (std/crypto/ghash.velt).
  */
+@inline
 export function reduce(lo: u64x2, mid: u64x2, hi: u64x2): u64x2 {
-  inline();
   let v0 = velt_simd_u64x2_lane(lo, 0);
   let v1 = velt_simd_u64x2_lane(lo, 1) ^ velt_simd_u64x2_lane(mid, 0);
   let v2 = velt_simd_u64x2_lane(hi, 0) ^ velt_simd_u64x2_lane(mid, 1);
@@ -143,8 +143,8 @@ export function reduce(lo: u64x2, mid: u64x2, hi: u64x2): u64x2 {
 }
 
 /** `a` · `b` in GF(2^128); `bs` is `b` with its halves swapped. */
+@inline
 export function gfmul(a: u64x2, b: u64x2, bs: u64x2): u64x2 {
-  inline();
   const mid = a.clmulLow(bs).xor(a.clmulHigh(bs));
   return reduce(a.clmulLow(b), mid, a.clmulHigh(b));
 }
@@ -173,8 +173,8 @@ export function hashPowers(h: u8[]): u64x2[] {
  * (y + c0) H^8 + c1 H^7 + … + c7 H with one reduction. Out of line: a call per 128 bytes costs
  * little, and the optimizer's work on a function grows faster than its length.
  */
+@noInline
 function ghash8(y: u64x2, hp: u64x2[], b: u8[], off: usize): u64x2 {
-  noInline();
   const c0 = element(b, off);
   const c1 = element(b, off + 16);
   const c2 = element(b, off + 32);
@@ -231,8 +231,8 @@ function ghash8(y: u64x2, hp: u64x2[], b: u8[], off: usize): u64x2 {
  * `ghash8` for four blocks `b[off..off + 64]`: (y + c0) H^4 + c1 H^3 + c2 H^2 + c3 H, one
  * reduction (the four to seven blocks a short message leaves after the groups of eight).
  */
+@noInline
 function ghash4(y: u64x2, hp: u64x2[], b: u8[], off: usize): u64x2 {
-  noInline();
   const x0 = element(b, off).xor(y);
   const c1 = element(b, off + 16);
   const c2 = element(b, off + 32);
@@ -293,8 +293,8 @@ export function lengths(aadBytes: usize, textBytes: usize): u64x2 {
 }
 
 /** The counter block of `base` (the nonce, the last word 0) with the 32-bit counter `ctr`. */
+@inline
 export function counterBlock(base: u32x4, ctr: u32): u8x16 {
-  inline();
   return base.withLane(3, ctr.swapBytes()).asU8x16();
 }
 

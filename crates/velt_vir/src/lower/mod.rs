@@ -69,6 +69,7 @@ mod boxes;
 mod boxing;
 pub use boxing::CountedSeed;
 mod c_call;
+mod c_export;
 mod call;
 mod callee;
 mod caller_aliases;
@@ -81,6 +82,7 @@ mod console;
 mod cpu_checks;
 mod ctor_init;
 mod debug_vars;
+mod decorators;
 mod deferred_versions;
 mod dispatch;
 mod drops;
@@ -95,6 +97,7 @@ mod for_of_shared;
 mod foreign;
 mod frame_envs;
 mod lower_profile;
+mod raw_memory;
 mod state;
 use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
 mod fn_shapes;
@@ -282,6 +285,7 @@ pub(crate) fn lower_program_seeded(
             cx.build_now(fid, &work);
         }
         cx.build_iface_glues();
+        cx.seed_c_exports();
         // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
         cx.func(Work::Main);
         while let Some((fid, work)) = cx.queue.pop_front() {
@@ -397,8 +401,7 @@ struct Cx<'h> {
     /// JSON glue (json/reader.rs `json_std_fn`): one map, not a scan of every def per call.
     std_fns: std::cell::OnceCell<FxHashMap<&'h str, DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
-    /// scheduler. Known once every function
-    /// but `velt_main` is lowered, which is why it is built last (`lower_program`).
+    /// scheduler. Known once every function but `velt_main` is lowered, hence built last.
     uses_placement: bool,
     /// Report every use of a captured variable's cell to the debug runtime (cells.rs,
     /// `LowerOptions::cell_checks`).
@@ -471,6 +474,7 @@ struct Cx<'h> {
     /// The data of each static atomic used so far, `None` for a global that is not one
     /// (static_atomic.rs).
     static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
+    fut_header: Option<crate::vir::AggId>, // a heap future's header (raw_memory.rs `fut_header`)
     /// The class id number of each `struct` type with an interface table (class_test.rs
     /// `VALUE_IDS`), in the order the tables are made.
     value_ids: FxHashMap<TyId, u64>,
@@ -591,8 +595,6 @@ struct FnLower<'c, 'h> {
     glue: bool,
     /// Generating the many-threads check's strict walk (glue/many.rs).
     many_strict: bool,
-    /// The body's marker, `inline()` or `noInline()` (`Function::inline`).
-    inline: crate::vir::Inline,
     locals: Vec<LocalDecl>,
     blocks: Vec<(Vec<vir::Stmt>, Option<Terminator>)>,
     /// The locals that hold an `f16`/`bf16` value (its bits), recorded in debug builds of the

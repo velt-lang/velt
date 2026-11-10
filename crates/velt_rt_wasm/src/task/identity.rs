@@ -73,7 +73,7 @@ pub unsafe extern "C" fn velt_rt_fut_alias(
     let holder = shared::another_holder(of);
     let old = ALIASES.with(|m| m.borrow_mut().insert(w as usize, holder as usize));
     match old {
-        Some(stale) => super::velt_rt_fut_drop(stale as *mut VeltFut),
+        Some(stale) => super::drop_fut(stale as *mut VeltFut),
         None => COUNT.with(|c| c.set(c.get() + 1)),
     }
 }
@@ -95,6 +95,6 @@ pub(super) unsafe fn forget(f: *mut VeltFut) {
     let holder = ALIASES.with(|m| m.borrow_mut().remove(&(f as usize)));
     if let Some(h) = holder {
         COUNT.with(|c| c.set(c.get() - 1));
-        super::velt_rt_fut_drop(h as *mut VeltFut);
+        super::drop_fut(h as *mut VeltFut);
     }
 }

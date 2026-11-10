@@ -103,25 +103,55 @@ fn declare_system_function() {
     assert!(matches!(&m.items[3].kind, ItemKind::ExternFn(s) if !s.is_system));
 }
 
-/// `declare intrinsic function`: `intrinsic` is a word only between `declare` and `function` (a
-/// function may still be named `intrinsic`), and the declaration is generic like any other.
+/// `@intrinsic declare function`: an intrinsic is a declaration with a decorator, which sema
+/// tells apart (`intrinsic` is no word of the parser); `declare unsafe function` parses for an
+/// unsafe one, and the declaration is generic like any other.
 #[test]
 fn declare_intrinsic_function() {
     let m = parse_ok(
-        "export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;
-         function intrinsic(): i32 { return 1; }
-         declare function intrinsic2(): i32;",
+        "@intrinsic export declare function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;
+         @intrinsic export declare unsafe function addressLoad<T>(address: usize): T;
+         function intrinsic(): i32 { return 1; }",
     );
     let ItemKind::ExternFn(sig) = &m.items[0].kind else {
         panic!()
     };
-    assert!(sig.is_intrinsic && !sig.is_system && !sig.is_async && m.items[0].exported);
+    assert!(!sig.is_system && !sig.is_async && !sig.is_unsafe && m.items[0].exported);
+    assert_eq!(sig.decorators.len(), 1);
     assert_eq!(sig.name.name, "arraySwap");
     assert_eq!(sig.generics.len(), 1);
     assert_eq!(sig.params.len(), 3);
     assert_eq!(sig.params[0].name.name, "xs");
-    assert!(matches!(&m.items[1].kind, ItemKind::Function(f) if f.sig.name.name == "intrinsic"));
-    assert!(matches!(&m.items[2].kind, ItemKind::ExternFn(s) if !s.is_intrinsic));
+    let ItemKind::ExternFn(sig) = &m.items[1].kind else {
+        panic!()
+    };
+    assert!(sig.is_unsafe && !sig.is_decorator && sig.name.name == "addressLoad");
+    assert!(matches!(&m.items[2].kind, ItemKind::Function(f) if f.sig.name.name == "intrinsic"));
+}
+
+/// The old `declare [unsafe] intrinsic function` is an error naming the new form, and still
+/// parses as it (a function may be named `intrinsic` as before).
+#[test]
+fn declare_intrinsic_function_is_the_old_form() {
+    for (src, form) in [
+        (
+            "declare intrinsic function strLen(s: string): usize;",
+            "`@intrinsic declare function`",
+        ),
+        (
+            "declare unsafe intrinsic function load<T>(a: usize): T;",
+            "`@intrinsic declare unsafe function`",
+        ),
+    ] {
+        let (m, d) = parse(src);
+        assert_eq!(d.len(), 1, "{src}: {d:?}");
+        assert!(d[0].message.contains(form), "{}", d[0].message);
+        let ItemKind::ExternFn(sig) = &m.items[0].kind else {
+            panic!()
+        };
+        assert_eq!(sig.is_unsafe, src.contains("unsafe"));
+    }
+    parse_ok("declare function intrinsic(): void;");
 }
 
 /// `declare generated("<spec>") function`: a generic function with an empty body whose

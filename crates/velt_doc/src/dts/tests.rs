@@ -30,7 +30,7 @@ fn package() -> BTreeMap<String, String> {
         input(
             "lang/intrinsics/array.velt",
             "import type { Mut } from \"./modes\";\n\
-             export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n",
+             @intrinsic\nexport declare function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n",
         ),
         input(
             "box/index.velt",

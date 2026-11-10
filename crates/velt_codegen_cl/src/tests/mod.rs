@@ -8,6 +8,7 @@ mod entry;
 mod frames;
 mod half;
 mod hot_swap;
+mod hot_swap_state;
 mod jit;
 mod jit_relocs;
 mod link;

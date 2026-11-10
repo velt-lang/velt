@@ -29,7 +29,7 @@ use std::task::Poll;
 use futures_util::stream::{FuturesUnordered, Stream};
 
 use super::all::{give_up_in_order, Child, ResultDropFn};
-use super::{context, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use super::{with_context, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 #[repr(C, align(16))]
 struct Tail {
@@ -81,9 +81,8 @@ unsafe extern "C-unwind" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
             return win(t, i, cx);
         }
     }
-    let cx = context(cx);
     loop {
-        match Pin::new(&mut *children).poll_next(cx) {
+        match with_context(cx, |c| Pin::new(&mut *children).poll_next(c)) {
             Poll::Ready(Some(_)) => {}
             _ => return PENDING,
         }
@@ -168,7 +167,7 @@ unsafe fn turn(f: *mut VeltFut) -> Turn {
 /// of them (in array order) with its own waker.
 unsafe fn settled_first(t: &mut Tail, slot: *mut u8, cx: *mut c_void) -> Option<u32> {
     if !super::coop::has_budget_remaining() {
-        context(cx).waker().wake_by_ref();
+        with_context(cx, |c| c.waker().wake_by_ref());
         return Some(PENDING);
     }
     let mut rest: Vec<Child> = t.children.take()?.into_iter().collect();
@@ -181,7 +180,7 @@ unsafe fn settled_first(t: &mut Tail, slot: *mut u8, cx: *mut c_void) -> Option<
             continue;
         }
         let mut w = rest.remove(at);
-        if Pin::new(&mut w).poll(context(cx)).is_pending() {
+        if with_context(cx, |c| Pin::new(&mut w).poll(c)).is_pending() {
             rest.insert(at, w);
             at += 1;
             continue;
@@ -211,7 +210,7 @@ unsafe fn win(t: &mut Tail, i: usize, cx: *mut c_void) -> u32 {
         return PENDING;
     };
     let mut w = rest.swap_remove(at);
-    if Pin::new(&mut w).poll(context(cx)).is_pending() {
+    if with_context(cx, |c| Pin::new(&mut w).poll(c)).is_pending() {
         rest.push(w);
         t.children = Some(rest.into_iter().collect());
         return PENDING;

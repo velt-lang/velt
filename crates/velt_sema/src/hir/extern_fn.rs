@@ -30,7 +30,8 @@ pub struct ExternFnDef {
     /// Additive.
     pub c: Option<CImport>,
     /// `declare decorator function` (hir_encodings.md "Decorators"): data, with no symbol behind
-    /// it, which nothing calls. Additive.
+    /// it, which nothing calls; its `name` is qualified (`std/lang/intrinsics/decorators::inline`),
+    /// as a function's. Additive.
     pub is_decorator: bool,
     pub span: Span,
 }

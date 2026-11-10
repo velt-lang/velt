@@ -105,19 +105,25 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
                 rest = &rest[i + "declare ".len()..];
                 continue;
             }
+            // The line before: `@intrinsic` (std/lang/intrinsics) makes the declaration the
+            // compiler's, not the runtime's (std writes a decorator on a line of its own).
+            let before = rest[..line_start].trim_end();
+            let decorated = before[before.rfind('\n').map_or(0, |n| n + 1)..].starts_with('@');
             let decl = &rest[i..];
             let end = decl.find(';').expect("declaration ends with `;`");
             rest = &decl[end..];
             let decl = &decl[..end];
+            if decorated && decl.starts_with("declare ") {
+                continue;
+            }
             // A system function binds the C library, not the runtime
-            // (https://veltlang.com/docs/reference/system-functions/), an intrinsic is the compiler's
+            // (https://veltlang.com/docs/reference/system-functions/), an intrinsic and a decorator are the compiler's
             // (std/lang/intrinsics), a generated function's body is a source generator's and a
             // host function is the JS host's (a WebAssembly import, rt_abi.md "Host values"), and
             // a C function or C type a C library's (docs/internals/design/c-ffi.md).
             if [
                 "declare system ",
-                "declare intrinsic ",
-                "declare unsafe intrinsic ",
+                "declare decorator ",
                 "declare generated(",
                 "declare host(",
                 "declare c(",

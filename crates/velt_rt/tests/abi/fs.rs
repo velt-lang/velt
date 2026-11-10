@@ -37,7 +37,7 @@ fn promises_are_lazy() {
     // const p = writeFile(file, "x");  (dropped without await/spawn: nothing happens)
     let p = unsafe { velt_rt_fs_write_file(&arg(&file), &arg("x")) };
     std::thread::sleep(std::time::Duration::from_millis(50));
-    unsafe { crate::task::velt_rt_fut_drop(p) };
+    unsafe { crate::task::drop_fut(p) };
     assert!(!std::path::Path::new(&file).exists());
     let _ = std::fs::remove_dir_all(&dir);
 }

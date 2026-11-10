@@ -151,13 +151,13 @@ pub unsafe extern "C-unwind" fn velt_rt_latch_wait(h: Handle<Latch>) -> *mut Vel
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, PENDING, READY};
+    use crate::task::{drop_fut, poll_fut, raw_cx, PENDING, READY};
     use std::task::{Context, Waker};
 
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
-        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
+        unsafe { poll_fut(f, raw_cx(&mut cx).ptr()) }
     }
 
     #[test]
@@ -185,9 +185,98 @@ mod tests {
             assert_eq!(poll(early), READY);
             let late = velt_rt_latch_wait(h);
             assert_eq!(poll(late), READY);
-            velt_rt_fut_drop(early);
-            velt_rt_fut_drop(late);
+            drop_fut(early);
+            drop_fut(late);
             velt_rt_latch_free(h);
         }
     }
+    /// A latch wait driven by an executor whose waker is a C table (an executor in Velt): the
+    /// latch is opened on another thread, the wake reaches the C table, and every clone the
+    /// leaf took is given back.
+    #[test]
+    fn a_wait_wakes_a_foreign_c_waker() {
+        use crate::task::waker::tests::TestHeader;
+        let n = TestHeader::new();
+        let h = velt_rt_latch_new();
+        let word = 0u32;
+        let mut cx = n.cx(&word);
+        let cx = &mut cx as *mut crate::task::VeltCx as *mut std::ffi::c_void;
+        // SAFETY: `h` is live until freed; the future is owned here; `cx` outlives the polls.
+        unsafe {
+            let f = velt_rt_latch_wait(h);
+            // The executor's loop: poll, sleep until woken, poll again.
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(n.woken(), 0);
+            let opener = SendHandle(h);
+            let t = std::thread::spawn(move || {
+                let opener = opener;
+                velt_rt_latch_open(opener.0)
+            });
+            // Opening wakes the waiters before it returns, so after the join the wake has
+            // reached the C table: no waiting loop.
+            t.join().unwrap();
+            assert_eq!(n.woken(), 1, "never woken");
+            assert_eq!(poll_fut(f, cx), READY);
+            drop_fut(f);
+            velt_rt_latch_free(h);
+        }
+        assert!(n.balanced(), "every reference a clone took given back");
+    }
+
+    /// The contract's "a wake after the task finished is harmless": a wait cancelled before the
+    /// latch opens (on another thread) gives its waker back and nothing reaches the table after.
+    #[test]
+    fn a_cancelled_wait_gives_its_foreign_waker_back_before_the_latch_opens() {
+        use crate::task::waker::tests::TestHeader;
+        let n = TestHeader::new();
+        let word = 0u32;
+        let mut cx = n.cx(&word);
+        let cx = &mut cx as *mut crate::task::VeltCx as *mut std::ffi::c_void;
+        let h = velt_rt_latch_new();
+        // SAFETY: `h` is live until freed; the future is owned here; `cx` outlives the poll.
+        unsafe {
+            let f = velt_rt_latch_wait(h);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            drop_fut(f);
+            assert!(n.balanced(), "the cancelled wait gave its reference back");
+            let before = n.get();
+            let opener = SendHandle(h);
+            std::thread::spawn(move || {
+                let opener = opener;
+                velt_rt_latch_open(opener.0)
+            })
+            .join()
+            .unwrap();
+            assert_eq!(n.get(), before, "nothing reaches the table after the drop");
+            velt_rt_latch_free(h);
+        }
+        assert!(n.balanced());
+    }
+
+    /// Woken, never polled again, then dropped: the wake consumed its reference, and the drop
+    /// gives back nothing more.
+    #[test]
+    fn a_woken_wait_dropped_unpolled_stays_balanced() {
+        use crate::task::waker::tests::TestHeader;
+        let n = TestHeader::new();
+        let word = 0u32;
+        let mut cx = n.cx(&word);
+        let cx = &mut cx as *mut crate::task::VeltCx as *mut std::ffi::c_void;
+        let h = velt_rt_latch_new();
+        // SAFETY: as above.
+        unsafe {
+            let f = velt_rt_latch_wait(h);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            velt_rt_latch_open(h);
+            assert_eq!(n.woken(), 1);
+            drop_fut(f);
+            velt_rt_latch_free(h);
+        }
+        assert!(n.balanced());
+    }
+
+    struct SendHandle(Handle<Latch>);
+    // SAFETY: latch handles are thread-safe (opening is).
+    unsafe impl Send for SendHandle {}
 }

@@ -572,6 +572,7 @@ fn check_timed(
         any_fn_views,
         generated: generated.into_iter().collect(),
         decorators: std::mem::take(&mut cx.decorator_uses).into_iter().collect(),
+        c_exports: std::mem::take(&mut cx.c_exports),
     };
     (
         (Some(Checked::Program(Box::new(program))), diags),
@@ -625,7 +626,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     timings::pass("script_tdz::check", || script_tdz::check(cx));
     timings::pass("collect::collect", || collect::collect(cx));
     cx.collected_defs = cx.defs.len();
-    timings::pass("decorators::check", || decorators::check(cx));
+    timings::pass("decorators::check", || decorators::check(cx, 0));
     timings::pass("global_this::declare", || global_this::declare(cx));
     timings::pass("build_fill_bodies", || {
         body::expr::virtual_defaults::build_fill_bodies(cx, 0)
@@ -704,6 +705,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         return;
     }
     timings::pass("hooks::check_throws", || hooks::check_throws(cx));
+    decorators::export_throws(cx);
     let uses = timings::pass("record_keys::check_instantiations", || {
         record_keys::check_instantiations(cx)
     });

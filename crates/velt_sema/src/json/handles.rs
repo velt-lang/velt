@@ -46,9 +46,7 @@ impl Ctx<'_> {
                     .items
                     .iter()
                     .filter_map(|i| match &i.kind {
-                        ItemKind::ExternFn(s)
-                            if !s.is_system && !s.is_intrinsic && s.host.is_none() =>
-                        {
+                        ItemKind::ExternFn(s) if !s.is_system && s.host.is_none() => {
                             Some(s.c.is_none())
                         }
                         _ => None,

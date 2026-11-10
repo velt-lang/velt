@@ -1,14 +1,18 @@
 // velt/lang/intrinsics (internal): SIMD loads of a string's bytes, and the CPU extension a
 // function is compiled for. The public surface is velt/simd.
 
+import { intrinsic } from "./decorators";
+
 /** The 16 UTF-8 bytes of `s` from `at`, unchecked: a SIMD load of the string's bytes, no copy. */
-export declare intrinsic function strLoadU8x16(s: string, at: u64): u8x16;
+@intrinsic
+export declare function strLoadU8x16(s: string, at: u64): u8x16;
 
 /**
  * `count` (below 16) UTF-8 bytes of `s` from `at` in the low lanes, 0 in the others, unchecked
  * (a SIMD partial load of the string's bytes).
  */
-export declare intrinsic function strLoadPartialU8x16(s: string, at: u64, count: u64): u8x16;
+@intrinsic
+export declare function strLoadPartialU8x16(s: string, at: u64, count: u64): u8x16;
 
 /**
  * As the first statement of a std function (not a method or closure): the function is compiled
@@ -18,4 +22,5 @@ export declare intrinsic function strLoadPartialU8x16(s: string, at: u64, count:
  * a function gated on the same one. An AES target includes its architecture's carry-less
  * multiplication (`u8x16.hasAesArm()` implies `u64x2.hasClmulArm()`).
  */
-export declare intrinsic function targetFeature(name: string): void;
+@intrinsic
+export declare function targetFeature(name: string): void;

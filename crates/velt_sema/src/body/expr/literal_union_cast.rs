@@ -5,7 +5,8 @@
 //! be, in the target's order, and becomes that member; a value that is none of them stops with
 //! a `TypeError`, as other failed assertions do (Node goes on with the string). A nullable
 //! source is checked to hold a value first (`!`), as other assertions to a type without `null`
-//! are. A `string` source (`path as Route`) stays an error until #1410 settles it.
+//! are. A `string` source (`path as Route`) is tested the same way (#1410), except where it is
+//! compared (`literal_union_compare`).
 
 use velt_common::Span;
 
@@ -44,9 +45,10 @@ impl FnCx<'_, '_> {
             return Ok(self.with_temps_value(stmts, out));
         }
         let source = h.ty;
-        // A `string` (`path as Route`) is not asserted: `ROUTES.includes(path as Route)` tests a
-        // string no member may hold, which Node answers with `false` (#1410).
+        // A `string` (`path as Route`) may be any of them, or none (#1410). As a comparison
+        // (`literal_union_compare`) it is not converted.
         let held = match self.string_literals(source) {
+            None if source == self.cx.ty.str_ => values.clone(),
             // A local narrowed to some of its members holds only those.
             Some(vs) => match self.narrowed_variants(&h) {
                 Some(live) => (vs.into_iter().enumerate())
@@ -59,7 +61,8 @@ impl FnCx<'_, '_> {
         };
         // The literals the value may be; with none, the assertion always stops (`"a" as "b"`).
         let kept: Vec<&String> = values.iter().filter(|v| held.contains(v)).collect();
-        let complete = !held.is_empty() && held.iter().all(|v| kept.contains(&v));
+        let complete =
+            source != self.cx.ty.str_ && !held.is_empty() && held.iter().all(|v| kept.contains(&v));
         self.push_scope();
         let mut stmts = vec![];
         let id = self.temp_ident("#lit", h, &mut stmts);

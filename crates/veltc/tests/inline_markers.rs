@@ -1,8 +1,10 @@
-//! std's inlining markers (std/lang/intrinsics/inline.velt, std only): `inline()` inlines every
-//! call of a function whatever its size, `noInline()` keeps every call a call, and sema rejects
-//! `inline()` on a recursive function and a marker that is not the first statement of a plain
-//! function or method. The markers are std-only, so
-//! a golden file cannot use them: std is copied to a temp directory with a probe module added,
+//! std's inlining decorators (std/lang/intrinsics/decorators.velt, std only, #2203): `@inline`
+//! inlines every call of a function whatever its size, `@noInline` keeps every call a call, and
+//! sema rejects `@inline` on a recursive function, both on one function, either on a
+//! generator, an async function, a `declare function` or an abstract method, either outside std,
+//! and `@intrinsic` on a function with a body. They are std-only (a program's own
+//! decorators of those names are data: tests/golden/lang/errors/decorators_known_by_role.velt),
+//! so a golden file cannot use them: std is copied to a temp directory with a probe module added,
 //! and `velt` uses it through `$VELT_STD` (as gated_functions.rs does).
 
 use std::path::{Path, PathBuf};
@@ -26,6 +28,11 @@ fn copy_tree(from: &Path, to: &Path) {
 /// A std with the module `velt/zz_marked` (`probe`) added, and `main.velt` beside it; runs
 /// `velt <args> main.velt`.
 fn velt(dir: &test_dir::TestDir, probe: &str, args: &[&str]) -> Output {
+    velt_with_main(dir, probe, MAIN, args)
+}
+
+/// [`velt`] with the program `main` instead of [`MAIN`].
+fn velt_with_main(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str]) -> Output {
     let std: PathBuf = dir.path().join("std");
     if !std.exists() {
         copy_tree(
@@ -34,10 +41,11 @@ fn velt(dir: &test_dir::TestDir, probe: &str, args: &[&str]) -> Output {
         );
     }
     std::fs::create_dir_all(std.join("zz_marked")).unwrap();
-    let probe = format!("import {{ inline, noInline }} from \"velt/lang/intrinsics\";\n{probe}");
+    let probe =
+        format!("import {{ inline, noInline, intrinsic }} from \"velt/lang/intrinsics\";\n{probe}");
     std::fs::write(std.join("zz_marked/index.velt"), probe).unwrap();
     let file = dir.path().join("main.velt");
-    std::fs::write(&file, MAIN).unwrap();
+    std::fs::write(&file, main).unwrap();
     let mut all: Vec<&str> = args.to_vec();
     all.push(file.to_str().unwrap());
     no_window::command(env!("CARGO_BIN_EXE_velt"))
@@ -52,8 +60,8 @@ fn velt(dir: &test_dir::TestDir, probe: &str, args: &[&str]) -> Output {
 const MAIN: &str =
     "import { probe } from \"velt/zz_marked\";\n\nfunction main() {\n  console.log(probe(7));\n}\n";
 
-/// `wide` (300 statements: past every size the inliner takes, even from a loop) marked `inline()`
-/// and called three times; `tiny` (trivial, called once) marked `noInline()`.
+/// `wide` (300 statements: past every size the inliner takes, even from a loop) marked `@inline`
+/// and called three times; `tiny` (trivial, called once) marked `@noInline`.
 const LINES: &str = "  y = y * 3 + 0;
   y = y * 4 + 1;
   y = y * 5 + 2;
@@ -356,15 +364,15 @@ const LINES: &str = "  y = y * 3 + 0;
   y = y * 7 + 299;";
 
 const MARKED: &str = r#"
+@inline
 function wide(x: i64): i64 {
-  inline();
   let y = x;
 LINES
   return y;
 }
 
+@noInline
 function tiny(x: i64): i64 {
-  noInline();
   return x + 1;
 }
 
@@ -409,12 +417,8 @@ fn release_vir(probe: &str) -> (String, impl Fn(&str) -> usize) {
 #[test]
 fn inline_inlines_every_call_and_no_inline_keeps_its_call() {
     let marked = MARKED.replace("LINES", LINES);
-    // Without the markers, `wide` stays a call and `tiny` is inlined: the test needs both.
-    let (vir, calls) = release_vir(
-        &marked
-            .replace("  inline();\n", "")
-            .replace("  noInline();\n", ""),
-    );
+    // Without the decorators, `wide` stays a call and `tiny` is inlined: the test needs both.
+    let (vir, calls) = release_vir(&marked.replace("@inline\n", "").replace("@noInline\n", ""));
     assert_eq!(calls("zz__markedN4wide"), 3, "{vir}");
     assert_eq!(calls("zz__markedN4tiny"), 0, "{vir}");
     let (vir, calls) = release_vir(&marked);
@@ -461,13 +465,13 @@ fn check_fails(probe: &str, messages: &[&str]) {
 fn inline_on_a_recursive_function_is_an_error() {
     // Directly, and through another function: each marked function on the cycle is reported.
     let probe = r#"
+@inline
 function fact(n: i64): i64 {
-  inline();
   return n <= 1 ? 1 : n * fact(n - 1);
 }
 
+@inline
 function even(n: i64): bool {
-  inline();
   return n == 0 ? true : odd(n - 1);
 }
 
@@ -479,11 +483,11 @@ export function probe(a: i64): i64 {
   return fact(a) + (even(a) ? 1 : 0);
 }
 "#;
-    check_fails(probe, &["`inline()` on a recursive function"]);
+    check_fails(probe, &["`@inline` on a recursive function"]);
     let dir = test_dir::TestDir::new();
     let err = String::from_utf8_lossy(&velt(&dir, probe, &["check"]).stderr).into_owned();
     assert_eq!(
-        err.matches("`inline()` on a recursive function").count(),
+        err.matches("`@inline` on a recursive function").count(),
         2,
         "{err}"
     );
@@ -497,8 +501,8 @@ function fact(n: i64): i64 {
   return n <= 1 ? 1 : n * fact(n - 1);
 }
 
+@inline
 function outer(n: i64): i64 {
-  inline();
   return fact(n) + 1;
 }
 
@@ -517,13 +521,13 @@ export function probe(a: i64): i64 {
 }
 
 #[test]
-fn a_second_marker_is_an_error() {
-    // Only the first statement may be a marker, so `inline()` and `noInline()` together (or a
-    // marker twice) is an error at the second.
+fn both_decorators_are_an_error() {
+    // One field says how a function is inlined, so `@inline` and `@noInline` together are an
+    // error at the second.
     let probe = r#"
+@inline
+@noInline
 function both(x: i64): i64 {
-  inline();
-  noInline();
   return x;
 }
 
@@ -533,59 +537,42 @@ export function probe(a: i64): i64 {
 "#;
     check_fails(
         probe,
-        &["5:3: error: `noInline()` must be the first statement of a function or method"],
+        &["4:1: error: a function is `@inline` or `@noInline`, not both"],
     );
 }
 
 #[test]
-fn a_marker_is_the_first_statement_of_a_plain_function() {
-    // After another statement, last, in a branch, in a closure, a generator or an async
-    // function: each is an error (a generator's and an async function's body is compiled into a
-    // resume function the marker would not reach).
+fn the_decorators_apply_to_plain_functions_and_methods() {
+    // On a generator or an async function (whose body is compiled into a resume function the
+    // decorator would not reach) and on a `declare function` (no body): each is an error.
     let probe = r#"
-function middle(n: i64): i64 {
-  const k = n * 2;
-  inline();
-  return k;
-}
-
-function last(n: i64): i64 {
-  const y = n + 1;
-  noInline();
-  return y;
-}
-
-function branch(n: i64): i64 {
-  if (n > 100) {
-    noInline();
-  }
-  return n;
-}
-
-function closure(n: i64): i64 {
-  const f = (x: i64): i64 => {
-    inline();
-    return x + 1;
-  };
-  return f(n);
-}
-
+@inline
 function* gen(n: i64): Generator<i64> {
-  inline();
   yield n;
 }
 
+@noInline
 async function later(n: i64): Promise<i64> {
-  noInline();
   return n;
 }
 
+class Box {
+  @inline
+  async load(n: i64): Promise<i64> {
+    return n;
+  }
+}
+
+@noInline
+declare function velt_rt_zz_probe(n: i64): i64;
+
 export function probe(a: i64): i64 {
-  let s = middle(a) + last(a) + branch(a) + closure(a);
+  let s = a;
   for (const v of gen(a)) {
     s += v;
   }
   later(a);
+  new Box().load(a);
   return s;
 }
 "#;
@@ -593,26 +580,30 @@ export function probe(a: i64): i64 {
     let out = velt(&dir, probe, &["check"]);
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "{err}");
-    let inline = "`inline()` must be the first statement of a function or method";
-    let no_inline = "`noInline()` must be the first statement of a function or method";
-    assert_eq!(err.matches(inline).count(), 3, "{err}");
-    assert_eq!(err.matches(no_inline).count(), 3, "{err}");
+    let resumable = "doesn't apply to an async function or a generator";
+    assert_eq!(err.matches(resumable).count(), 3, "{err}");
+    assert!(err.contains("`@inline` doesn't apply"), "{err}");
+    assert!(err.contains("`@noInline` doesn't apply"), "{err}");
+    assert!(
+        err.contains("`@noInline` applies to a function with a body, not to a `declare function`"),
+        "{err}"
+    );
 }
 
 #[test]
-fn a_marker_first_in_a_method_is_accepted() {
+fn the_decorators_on_methods_are_accepted() {
     let probe = r#"
 class Counter {
   n: i64 = 0;
 
+  @inline
   bump(by: i64): i64 {
-    inline();
     this.n += by;
     return this.n;
   }
 
+  @noInline
   static twice(x: i64): i64 {
-    noInline();
     return x * 2;
   }
 }
@@ -630,4 +621,101 @@ export function probe(a: i64): i64 {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "21");
+}
+
+#[test]
+fn the_decorators_on_an_abstract_method_are_an_error() {
+    // An abstract method has no body to inline, like a `declare function`.
+    let probe = r#"
+abstract class Shape {
+  @inline
+  abstract area(): i64;
+
+  @noInline
+  abstract side(): i64;
+}
+
+class Square extends Shape {
+  area(): i64 {
+    return 4;
+  }
+
+  side(): i64 {
+    return 2;
+  }
+}
+
+export function probe(a: i64): i64 {
+  const s: Shape = new Square();
+  return a + s.area() + s.side();
+}
+"#;
+    check_fails(
+        probe,
+        &[
+            "4:3: error: `@inline` applies to a function with a body, not to an abstract method",
+            "7:3: error: `@noInline` applies to a function with a body, not to an abstract method",
+        ],
+    );
+}
+
+#[test]
+fn intrinsic_on_a_function_with_a_body_is_an_error() {
+    // `@intrinsic` names an operation of the compiler by a declaration's name; on a function
+    // with a body it would do nothing (on a method it is a misplaced function decorator).
+    let probe = r#"
+@intrinsic
+function withBody(x: i64): i64 {
+  return x + 1;
+}
+
+export function probe(a: i64): i64 {
+  return withBody(a);
+}
+"#;
+    check_fails(
+        probe,
+        &["3:1: error: `@intrinsic` applies to a `declare function`"],
+    );
+}
+
+#[test]
+fn the_decorators_outside_std_are_an_error() {
+    // Only import visibility keeps them in std today; were a public std module to re-export them,
+    // a program's use is still refused.
+    let probe = r#"
+export { inline, noInline };
+
+export function probe(a: i64): i64 {
+  return a;
+}
+"#;
+    let main = r#"import { probe, inline, noInline } from "velt/zz_marked";
+
+@inline
+function bump(x: i64): i64 {
+  return x + 1;
+}
+
+class Counter {
+  @noInline
+  twice(x: i64): i64 {
+    return x * 2;
+  }
+}
+
+function main() {
+  console.log(probe(7) + bump(1) + new Counter().twice(2));
+}
+"#;
+    let dir = test_dir::TestDir::new();
+    let out = velt_with_main(&dir, probe, main, &["check"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    for m in [
+        "3:1: error: `@inline` is not allowed: only the standard library marks how its functions are inlined",
+        "9:3: error: `@noInline` is not allowed: only the standard library marks how its functions are inlined",
+    ] {
+        assert!(err.contains(m), "missing `{m}` in:\n{err}");
+    }
 }

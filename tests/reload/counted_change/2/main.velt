@@ -1,0 +1,58 @@
+// A version that starts counting a class (#2653): the running version's objects of it carry no
+// count, which the new code would read and free them by, so `velt dev` restarts instead of
+// swapping. Step 1 hands each `Node` over (not counted); step 2 keeps using one after storing it
+// twice (counted).
+import { serve } from "http-server";
+
+class Node {
+  v: number = 0;
+  tag: string = "n";
+}
+
+let saved: Node[] = [];
+
+function put(n: Node) {
+  saved.push(n);
+}
+
+function take(): Node | undefined {
+  return saved.shift();
+}
+
+function list(): string {
+  let s = "";
+  for (let i = 0; i < saved.length; i++) {
+    s += `${saved[i].v}${saved[i].tag},`;
+  }
+  return s;
+}
+
+function handle(path: string): string {
+  if (path == "/make") {
+    const a = new Node();
+    put(a);
+    put(a);
+    a.v += 2;
+    a.tag = "v2";
+    return `made ${saved.length}`;
+  }
+  if (path == "/read") {
+    return `read ${saved.length}:${list()}`;
+  }
+  if (path == "/drop") {
+    const n = take();
+    if (n === undefined) {
+      return "none";
+    }
+    return `dropped ${n.v}${n.tag}`;
+  }
+  return "ok";
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(handle(new URL(req.url).pathname));
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

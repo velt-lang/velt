@@ -92,8 +92,8 @@ function addRoundKey(q: u64[], skey: u64[], round: usize) {
  * Encrypts the four bitsliced blocks in `q` under the expanded key `skey`. Out of line: a call per
  * 64 bytes costs nothing beside its work, and inlined it makes `aesCtrInPlace` slow to compile.
  */
+@noInline
 export function aesEncrypt4(skey: u64[], q: u64[]) {
-  noInline();
   const rounds = skey.length / 8 - 1;
   addRoundKey(q, skey, 0);
   for (let r: usize = 1; r < rounds; r++) {

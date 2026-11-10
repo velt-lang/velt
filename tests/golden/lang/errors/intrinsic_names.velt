@@ -1,5 +1,7 @@
-// The old spelling of an intrinsic is no name at all, and only std declares intrinsics.
-declare intrinsic function arraySwap<T>(xs: T[], i: usize, j: usize): void;
+// The old spelling of an intrinsic is no name at all, and only std declares intrinsics: its
+// `@intrinsic` is no name a program has.
+@intrinsic
+declare function arraySwap<T>(xs: T[], i: usize, j: usize): void;
 
 function main() {
   const xs: i64[] = [1, 2];

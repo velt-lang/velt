@@ -32,7 +32,7 @@ use std::task::{Context, Poll, Waker};
 
 use super::set::{self, Driver};
 use super::TaskCx;
-use crate::task::{context, leaf, VeltFut};
+use crate::task::{leaf, with_context, VeltFut};
 
 /// One entry: whom to run when the queue reaches it.
 struct Entry {
@@ -242,7 +242,7 @@ pub unsafe extern "C-unwind" fn velt_rt_await_tick(cx: *mut c_void) -> u64 {
         return 0;
     }
     match queue_or_new() {
-        Some(q) => push(t, q, context(cx).waker().clone(), false),
+        Some(q) => push(t, q, with_context(cx, |c| c.waker().clone()), false),
         None => 0,
     }
 }
@@ -258,10 +258,12 @@ pub unsafe extern "C-unwind" fn velt_rt_await_ready(ticket: u64, cx: *mut c_void
     match q.waiting(ticket) {
         None => 1,
         Some(e) => {
-            let w = context(cx).waker();
-            if !e.waker.as_ref().is_some_and(|x| x.will_wake(w)) {
-                e.waker = Some(w.clone());
-            }
+            with_context(cx, |c| {
+                let w = c.waker();
+                if !e.waker.as_ref().is_some_and(|x| x.will_wake(w)) {
+                    e.waker = Some(w.clone());
+                }
+            });
             0
         }
     }
@@ -316,7 +318,7 @@ pub extern "C-unwind" fn velt_rt_microtask() -> *mut VeltFut {
 mod tests {
     use std::task::{Context, Waker};
 
-    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, READY};
+    use crate::task::{drop_fut, poll_fut, raw_cx, READY};
 
     #[test]
     fn a_microtask_outside_a_task_is_ready_at_once() {
@@ -324,8 +326,8 @@ mod tests {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf, polled and dropped once.
         unsafe {
-            assert_eq!(velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()), READY);
-            velt_rt_fut_drop(f);
+            assert_eq!(poll_fut(f, raw_cx(&mut cx).ptr()), READY);
+            drop_fut(f);
         }
     }
 

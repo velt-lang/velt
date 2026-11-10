@@ -1,0 +1,5 @@
+action: swap
+get /: n=1
+get /count: count 1
+get /add: n=2
+get /count: count 2

@@ -5,28 +5,28 @@
 // The `Atomic` is read and changed where it is (in a local, an object, an array or a `shared`
 // box); nothing else reads or writes one.
 
+import { intrinsic } from "./decorators";
 import type { Copied } from "./modes";
 
 /** The value. */
-export declare intrinsic function atomicLoad<T>(a: Atomic<T>, order: u8): T;
+@intrinsic
+export declare function atomicLoad<T>(a: Atomic<T>, order: u8): T;
 
 /** Makes `value` the value. */
-export declare intrinsic function atomicStore<T>(a: Atomic<T>, value: Copied<T>, order: u8): void;
+@intrinsic
+export declare function atomicStore<T>(a: Atomic<T>, value: Copied<T>, order: u8): void;
 
 /**
  * A read-modify-write; returns the previous value. `op` is an integer literal: 0 exchange, 1 add,
  * 2 sub, 3 and, 4 or, 5 xor, 6 max, 7 min (`max` and `min` compare as `T` does: signed for a
  * signed `T`; integers only; add and sub wrap).
  */
-export declare intrinsic function atomicRmw<T>(
-  a: Atomic<T>,
-  value: Copied<T>,
-  op: u8,
-  order: u8,
-): T;
+@intrinsic
+export declare function atomicRmw<T>(a: Atomic<T>, value: Copied<T>, op: u8, order: u8): T;
 
 /** Makes `value` the value if it is `expected`; returns the previous value. */
-export declare intrinsic function atomicCas<T>(
+@intrinsic
+export declare function atomicCas<T>(
   a: Atomic<T>,
   expected: Copied<T>,
   value: Copied<T>,
@@ -35,7 +35,8 @@ export declare intrinsic function atomicCas<T>(
 ): T;
 
 /** As `atomicCas`, whether it made the change (which may fail spuriously). */
-export declare intrinsic function atomicCasWeak<T>(
+@intrinsic
+export declare function atomicCasWeak<T>(
   a: Atomic<T>,
   expected: Copied<T>,
   value: Copied<T>,
@@ -43,8 +44,20 @@ export declare intrinsic function atomicCasWeak<T>(
   failure: u8,
 ): bool;
 
+/**
+ * The address of the word of `a`, an `Atomic` of a 32- or 64-bit integer type that cannot move:
+ * a module `const` initialized with `new Atomic<T>(literal)` (a static atomic, whose word is in
+ * the program's data), or a field (of a field…) of the value of a `shared` box, read in place.
+ * For a `shared` one, the address stays valid while the box lives: the caller keeps a reference
+ * to it. For `futex`, `__ulock_wait` and their wakes (docs/internals/design/intrinsics.md).
+ */
+@intrinsic
+export declare function atomicAddress<T>(a: Atomic<T>): usize;
+
 /** A memory fence of ordering `order` (never relaxed). */
-export declare intrinsic function atomicFence(order: u8): void;
+@intrinsic
+export declare function atomicFence(order: u8): void;
 
 /** Tells the CPU the thread is spinning on a value another thread changes. */
-export declare intrinsic function atomicSpinHint(): void;
+@intrinsic
+export declare function atomicSpinHint(): void;

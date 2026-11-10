@@ -104,4 +104,7 @@ pub(super) enum Work {
     ModuleInit(u32, u32),
     /// `()`: releases the references the static atomics hold, at exit (static_atomic.rs).
     StaticsDrop,
+    /// The C function of `Program::c_exports[i]` (`@export("c_name")`, c_export.rs): its
+    /// unmangled symbol, its C signature, a call of the Velt function.
+    CExport(u32),
 }

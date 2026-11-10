@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::task::Waker;
 
 use super::{DropCtxFn, DropResultFn, WorkFn};
-use crate::task::{context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use crate::task::{with_context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 /// Result bytes, 16-aligned (results have align <= 8; the slot itself is at a 16-byte offset).
 type Buf = Vec<u128>;
@@ -149,10 +149,12 @@ pub(super) unsafe extern "C-unwind" fn native_poll(f: *mut VeltFut, cx: *mut c_v
     let mut slot = m.shared.slot.lock().unwrap_or_else(|e| e.into_inner());
     match &mut *slot {
         Slot::Pending(waker) => {
-            let w = context(cx).waker();
-            if !waker.as_ref().is_some_and(|old| old.will_wake(w)) {
-                *waker = Some(w.clone());
-            }
+            with_context(cx, |c| {
+                let w = c.waker();
+                if !waker.as_ref().is_some_and(|old| old.will_wake(w)) {
+                    *waker = Some(w.clone());
+                }
+            });
             if m.pending.is_none() {
                 m.pending = Some(crate::task::quiet::Pending::new());
             }

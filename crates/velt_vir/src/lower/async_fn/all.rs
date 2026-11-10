@@ -131,7 +131,7 @@ impl FnLower<'_, '_> {
         self.branch(is_err, err_bb, next);
         self.switch_to(err_bb);
         let own = self.copy_to_temp(Operand::Copy(res), rv);
-        self.call_rt(Rt::FutDrop, vec![Operand::Copy(Place::local(*f))], None);
+        self.fut_drop_call(vec![Operand::Copy(Place::local(*f))]);
         for (j, (other, &od)) in children.iter().zip(done).enumerate() {
             if j != i {
                 self.release_sibling(other, od, elem, rty);
@@ -160,7 +160,7 @@ impl FnLower<'_, '_> {
         self.branch(Operand::Copy(Place::local(done)), fin, pend);
         self.switch_to(fin);
         self.drop_child_result(c, elem, rty);
-        self.call_rt(Rt::FutDrop, vec![fp.clone()], None);
+        self.fut_drop_call(vec![fp.clone()]);
         self.goto(next);
         self.switch_to(pend);
         let quiet = self.result_drop_fn(rty).unwrap_or_else(|| cint(0, Ty::Ptr));
@@ -236,7 +236,7 @@ impl FnLower<'_, '_> {
             }
             Child::Heap(f) => {
                 let fp = Operand::Copy(Place::local(*f));
-                self.call_rt(Rt::FutPoll, vec![fp, cx], Some(Place::local(r)));
+                self.fut_poll_call(vec![fp, cx], Place::local(r));
             }
         }
         let ready = Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(r)), cint(0, Ty::U32));
@@ -279,7 +279,7 @@ impl FnLower<'_, '_> {
                 self.drop_glue(p, t);
             }
             if let Child::Heap(f) = c {
-                self.call_rt(Rt::FutDrop, vec![Operand::Copy(Place::local(*f))], None);
+                self.fut_drop_call(vec![Operand::Copy(Place::local(*f))]);
             }
             self.goto(next);
             self.switch_to(pend);
@@ -292,7 +292,7 @@ impl FnLower<'_, '_> {
                     self.call(vir::Callee::Func(drop_fn), vec![sp], None, false);
                 }
                 Child::Heap(f) => {
-                    self.call_rt(Rt::FutDrop, vec![Operand::Copy(Place::local(*f))], None);
+                    self.fut_drop_call(vec![Operand::Copy(Place::local(*f))]);
                 }
             }
             self.goto(next);
@@ -331,7 +331,7 @@ impl FnLower<'_, '_> {
                 self.assign(dst, Rvalue::Use(Operand::Copy(src)));
             }
             if let Child::Heap(f) = c {
-                self.call_rt(Rt::FutDrop, vec![Operand::Copy(Place::local(*f))], None);
+                self.fut_drop_call(vec![Operand::Copy(Place::local(*f))]);
             }
         }
         self.own_array(arr, arr_ty)

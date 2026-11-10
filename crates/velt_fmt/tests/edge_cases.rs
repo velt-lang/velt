@@ -437,8 +437,11 @@ declare host(\"app\") async function later(): Promise<i32>;",
 #[test]
 fn intrinsic_function_declarations() {
     holds(
-        "export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;
-export declare intrinsic function throwLoc(): string;",
+        "@intrinsic
+export declare function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;
+
+@intrinsic
+export declare unsafe function addressLoad<T>(address: usize): T;",
     );
 }
 

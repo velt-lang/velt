@@ -144,18 +144,18 @@ impl<'a> Printer<'a> {
             ItemKind::ExternFn(sig) if sig.host.is_some() => self.host_fn(sig),
             ItemKind::ExternFn(sig) if sig.c.is_some() => self.c_fn(sig),
             ItemKind::ExternFn(sig) => {
-                let asyncness = match (sig.is_system, sig.is_intrinsic, sig.is_async) {
+                let asyncness = match (sig.is_system, sig.is_async) {
                     // Not a decorator (the check says why), but written as it was.
                     _ if sig.is_decorator && sig.is_async => "decorator async ",
                     _ if sig.is_decorator => "decorator ",
                     // Not a system function (the check says why), but written as it was.
-                    (true, _, true) => "async system ",
-                    (true, _, false) => "system ",
-                    // `declare intrinsic function` is never async (it parses only so).
-                    (false, true, _) if sig.is_unsafe => "unsafe intrinsic ",
-                    (false, true, _) => "intrinsic ",
-                    (false, false, true) => "async ",
-                    (false, false, false) => "",
+                    (true, true) => "async system ",
+                    (true, false) => "system ",
+                    // `declare unsafe function` (an `@intrinsic`'s) is never async (it parses only
+                    // so).
+                    (false, _) if sig.is_unsafe => "unsafe ",
+                    (false, true) => "async ",
+                    (false, false) => "",
                 };
                 let sig = self.fn_sig(sig, "function ", sig.span.hi);
                 cat!["declare ", asyncness, sig, ";"]

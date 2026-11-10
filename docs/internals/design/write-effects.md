@@ -436,7 +436,7 @@ Reasons for doc tags over the alternatives:
   decorators on functions, on interface members or on `declare` functions. #1664's compile-time
   decorators are limited to classes, structs and their fields, so a std file would stop parsing
   as TypeScript.
-- **Body markers** like `inline()` (std/lang/intrinsics/inline.velt) need a body. Externs and
+- **Hints** like `@inline` (std/lang/intrinsics/decorators.velt) need a body. Externs and
   interface methods have none.
 - **`Readonly<T>` and `readonly T[]` parameters** are shallow, and they cannot express a store
   or a call.

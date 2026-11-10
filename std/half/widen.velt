@@ -5,7 +5,7 @@
 // on a default (x86-64-v2) build, with no run-time F16C dispatch yet (#2241). bf16 is a shift
 // (and a NaN's quiet bit) on every target.
 //
-// The `…Into` functions stay out of line (`noInline()`): inlined into a caller's loop, the x86
+// The `…Into` functions stay out of line (`@noInline`): inlined into a caller's loop, the x86
 // integer sequence's ten constants compete with the caller's registers, and the loop gains a
 // register copy per instruction or so (11.5 instructions a value on x86-64-v2 against 8.75).
 
@@ -26,8 +26,8 @@ export function widenF16(ws: f16[]): f32[] {
  * Writes each element of `ws` as an `f32` to `xs[at..at + ws.length)`, allocating nothing.
  * Panics with a RangeError when that range passes the end of `xs`.
  */
+@noInline
 export function widenF16Into(ws: f16[], xs: f32[], at: usize = 0) {
-  noInline();
   const n = ws.length;
   intoRange(n, xs.length, at, "widenF16Into");
   for (let i: usize = 0; i < n; i++) {
@@ -47,8 +47,8 @@ export function widenBf16(ws: bf16[]): f32[] {
 }
 
 /** As `widenF16Into`, for `bf16`. */
+@noInline
 export function widenBf16Into(ws: bf16[], xs: f32[], at: usize = 0) {
-  noInline();
   const n = ws.length;
   intoRange(n, xs.length, at, "widenBf16Into");
   for (let i: usize = 0; i < n; i++) {

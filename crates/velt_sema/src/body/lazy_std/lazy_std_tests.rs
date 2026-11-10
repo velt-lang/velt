@@ -210,7 +210,8 @@ fn hook_uses(dir: &std::path::Path, out: &mut Vec<String>) {
 }
 
 /// A hook lowering, the optimizer or a backend calls is marked `lowered` in velt_common's
-/// table, so lazy std keeps it checked: nothing in the checked code refers to it.
+/// table, so lazy std keeps it checked: nothing in the checked code refers to it. A decorator
+/// lowering reads (`@inline`) is not called: a program that uses it has its module loaded.
 #[test]
 fn every_hook_lowering_calls_is_marked_lowered() {
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -226,9 +227,10 @@ fn every_hook_lowering_calls_is_marked_lowered() {
     assert!(names.iter().any(|n| n == "any_loose_eq"), "{names:?}");
     let unmarked: Vec<&String> = (names.iter())
         .filter(|n| {
-            !velt_common::std_hooks::HOOKS
-                .iter()
-                .any(|h| h.name == n.as_str() && h.lowered)
+            !velt_common::std_hooks::HOOKS.iter().any(|h| {
+                let decorator = h.sig == velt_common::hook_sig::Sig::Decorator;
+                h.name == n.as_str() && (h.lowered || decorator)
+            })
         })
         .collect();
     assert!(

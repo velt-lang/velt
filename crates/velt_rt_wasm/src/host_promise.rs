@@ -134,11 +134,11 @@ pub fn pending() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, FUT_RESULT_OFFSET, READY};
+    use crate::task::{drop_fut, poll_fut, raw_cx, FUT_RESULT_OFFSET, READY};
 
     unsafe fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
-        velt_rt_fut_poll(f, raw_cx(&mut cx).ptr())
+        poll_fut(f, raw_cx(&mut cx).ptr())
     }
 
     #[test]
@@ -155,7 +155,7 @@ mod tests {
             let slot = (f as *const u8).add(FUT_RESULT_OFFSET) as *const u64;
             assert_eq!(slot.read(), 0, "the code stays the empty string");
             assert_eq!(slot.add(VALUE_WORD).read(), 7);
-            velt_rt_fut_drop(f);
+            drop_fut(f);
             assert!(imports::FORGOTTEN.with(|f| f.borrow().is_empty()));
         }
     }
@@ -165,7 +165,7 @@ mod tests {
         unsafe {
             let f = velt_rt_host_promise(3);
             assert!(pending());
-            velt_rt_fut_drop(f);
+            drop_fut(f);
             assert!(!pending());
             assert_eq!(imports::FORGOTTEN.with(|f| f.borrow().clone()), [3]);
             settle(3); // settles into nothing

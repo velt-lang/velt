@@ -25,8 +25,8 @@ function twice(a: u8, b: u8): u64 {
   return (a as u64) + (b as u64);
 }
 
+@noInline
 export function fold(s: string): u64 {
-  noInline();
   const n = strByteLen(s) as u64;
   let h = OFFSET;
   for (let i: u64 = 0; i < n; i++) {
@@ -35,14 +35,14 @@ export function fold(s: string): u64 {
   return h;
 }
 
+@noInline
 export function lengthOnly(s: string): u64 {
-  noInline();
   const n = strByteLen(s) as u64;
   return n + 1;
 }
 
+@noInline
 export function inNestedBlock(s: string, c: bool): u8 {
-  noInline();
   if (c) {
     const n = strByteLen(s) as u64;
     if (n > 0) {
@@ -52,8 +52,8 @@ export function inNestedBlock(s: string, c: bool): u8 {
   return 0;
 }
 
+@noInline
 export function afterTheBlock(s: string, c: bool): u8 {
-  noInline();
   let m: u64 = 0;
   if (c) {
     const n = strByteLen(s) as u64;
@@ -62,21 +62,21 @@ export function afterTheBlock(s: string, c: bool): u8 {
   return strByteAt(s, 1) + (m as u8);
 }
 
+@noInline
 export function underCondition(s: string, c: bool): u64 {
-  noInline();
   const n: u64 = c ? (strByteLen(s) as u64) : 1;
   return twice(strByteAt(s, n - 1), strByteAt(s, n - 1));
 }
 
+@noInline
 export function underAnd(s: string, c: bool): u64 {
-  noInline();
   const big = c && strByteLen(s) > 1;
   const at: u64 = big ? 1 : 0;
   return twice(strByteAt(s, at), strByteAt(s, at));
 }
 
+@noInline
 export function readAfterPush(out: string): u64 {
-  noInline();
   const n = strByteLen(out) as u64;
   for (let i = 0; i < 64; i++) {
     velt_rt_strbuf_push_byte(out, 122);
@@ -84,13 +84,13 @@ export function readAfterPush(out: string): u64 {
   return twice(strByteAt(out, n + 40), strByteAt(out, n + 40));
 }
 
+@noInline
 export function forwarded(out: string): void {
-  noInline();
   velt_rt_strbuf_push_str(out, "wxyz");
 }
 
+@noInline
 export function readAfterCall(out: string): u64 {
-  noInline();
   const n = strByteLen(out) as u64;
   forwarded(out);
   return twice(strByteAt(out, n), strByteAt(out, n));
@@ -100,16 +100,16 @@ export class Holder {
   s: string = "a".repeat(41);
 }
 
+@noInline
 export function borrowedConst(h: Holder): u64 {
-  noInline();
   const t = h.s;
   const n = strByteLen(t) as u64;
   h.s = "b".repeat(50);
   return twice(strByteAt(t, n - 1), strByteAt(t, n - 1));
 }
 
+@noInline
 export function replacedByClosure(): u64 {
-  noInline();
   let s = "a".repeat(41);
   const n = strByteLen(s) as u64;
   const change = () => {
@@ -119,8 +119,8 @@ export function replacedByClosure(): u64 {
   return twice(strByteAt(s, n - 1), strByteAt(s, n - 1));
 }
 
+@noInline
 export function ownerReplaced(s: string, f: () => void): u64 {
-  noInline();
   const n = strByteLen(s) as u64;
   f();
   return twice(strByteAt(s, n - 1), strByteAt(s, n - 1));
@@ -138,13 +138,13 @@ export async function afterAwait(s: string): Promise<u64> {
   return twice(strByteAt(s, n - 1), strByteAt(s, n - 1));
 }
 
+@noInline
 export function sink(b: u8): void {
-  noInline();
   console.log(b);
 }
 
+@noInline
 export function inFinally(s0: string, c: bool): u8 {
-  noInline();
   let s = s0 + "x".repeat(40);
   try {
     const n = strByteLen(s) as u64;
@@ -158,8 +158,8 @@ export function inFinally(s0: string, c: bool): u8 {
   }
 }
 
+@noInline
 export function pushInFinally(out: string): u8 {
-  noInline();
   try {
     const n = strByteLen(out) as u64;
     return strByteAt(out, n - 1);
@@ -171,8 +171,8 @@ export function pushInFinally(out: string): u8 {
   }
 }
 
+@noInline
 export function nestedTwice(s: string, c: bool): u64 {
-  noInline();
   if (c) {
     const n = strByteLen(s) as u64;
     return twice(strByteAt(s, n - 1), strByteAt(s, 0));
@@ -180,16 +180,16 @@ export function nestedTwice(s: string, c: bool): u64 {
   return 0;
 }
 
+@noInline
 export function assigned(s0: string): u64 {
-  noInline();
   let s = s0 + "x".repeat(40);
   const n = strByteLen(s) as u64;
   s = "b".repeat(50);
   return twice(strByteAt(s, n - 1), strByteAt(s, 0));
 }
 
+@noInline
 export function generic<T>(s: string, x: T): u64 {
-  noInline();
   const n = strByteLen(s) as u64;
   return twice(strByteAt(s, n - 1), strByteAt(s, 0));
 }

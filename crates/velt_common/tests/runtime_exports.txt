@@ -159,10 +159,8 @@ velt_rt velt_rt_fs_writer_write_bytes
 velt_rt velt_rt_fut_alias
 velt_rt velt_rt_fut_box
 velt_rt velt_rt_fut_detach
-velt_rt velt_rt_fut_drop
 velt_rt velt_rt_fut_id
 velt_rt velt_rt_fut_peek
-velt_rt velt_rt_fut_poll
 velt_rt velt_rt_fut_share
 velt_rt velt_rt_fut_start
 velt_rt velt_rt_fut_start_rejecting
@@ -588,10 +586,8 @@ velt_rt_wasm velt_rt_fs_write_file
 velt_rt_wasm velt_rt_fut_alias
 velt_rt_wasm velt_rt_fut_box
 velt_rt_wasm velt_rt_fut_detach
-velt_rt_wasm velt_rt_fut_drop
 velt_rt_wasm velt_rt_fut_id
 velt_rt_wasm velt_rt_fut_peek
-velt_rt_wasm velt_rt_fut_poll
 velt_rt_wasm velt_rt_fut_share
 velt_rt_wasm velt_rt_fut_start
 velt_rt_wasm velt_rt_fut_start_rejecting

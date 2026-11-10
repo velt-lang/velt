@@ -70,6 +70,7 @@ impl<'h> Cx<'h> {
             statics: vec![],
             module_desc: None,
             static_atomics: FxHashMap::default(),
+            fut_header: None,
             value_ids: FxHashMap::default(),
             reassigned_slots: None,
             assigned_fields: None,
@@ -235,6 +236,7 @@ impl<'h> Cx<'h> {
                 | Work::Main
                 | Work::ModuleInit(..)
                 | Work::StaticsDrop
+                | Work::CExport(_)
                 | Work::ArrayGrow
                 | Work::ArrayTooLong
                 | Work::Oob(_)

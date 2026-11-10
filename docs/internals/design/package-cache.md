@@ -104,7 +104,7 @@ Three layers, each usable without the next:
    dependent is checked against this without the package's bodies. The interface hash is the
    hash of this layer.
 2. **Checked bodies** for what dependents instantiate or inline: generic functions and methods,
-   `inline()` fast paths, functions under `SMALL_COST`, and generator inputs. Stored as HIR,
+   `@inline` fast paths, functions under `SMALL_COST`, and generator inputs. Stored as HIR,
    decoded on demand when reach (`lazy_std::reach`) first needs them, the same demand #2161
    introduces for loading std modules.
 3. **Compiled code** for the package's non-generic functions above `SMALL_COST`: one object per
@@ -178,7 +178,7 @@ fact read around it is a silent miscompile in some programs only. Two guards:
 ### Release run time
 
 A served object is not inlined into its callers across the package boundary. Layer 2 keeps
-`inline()` and `SMALL_COST` bodies inlinable, but a hot mid-size std function called in a loop
+`@inline` and `SMALL_COST` bodies inlinable, but a hot mid-size std function called in a loop
 loses the inlining LLVM gives it today. That is measured, not assumed: today's std cache already
 shows it. `bench/json/parse_typed.velt` built with `VELT_STD_OBJECT=1` runs 3,295M instructions
 against 2,520M without it (+31%): the reader's functions are linked instead of inlined into

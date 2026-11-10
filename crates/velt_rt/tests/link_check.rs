@@ -40,8 +40,6 @@ typedef struct VeltFut { uint32_t (*poll)(struct VeltFut*, void*); void (*drop)(
 typedef uint32_t (*PollFn)(void*, void*);
 typedef void (*DropFn)(void*);
 VeltFut* velt_rt_sleep(int64_t);
-uint32_t velt_rt_fut_poll(VeltFut*, void*);
-void velt_rt_fut_drop(VeltFut*);
 VeltFut* velt_rt_spawn(PollFn, DropFn, const void*, uint64_t, uint64_t, uint64_t, void (*)(void*));
 void velt_rt_block_on(PollFn, void*);
 "#;
@@ -102,17 +100,17 @@ static uint32_t main_poll(void* s, void* cx) {
     case 0: velt_rt_write_i64(1, 1); velt_rt_write_byte(1, 10); m->f = velt_rt_sleep(10); m->tag = 1; break;
     case 1: {
         Square q = { 0, 7 };
-        if (!velt_rt_fut_poll(m->f, cx)) return 0;
-        velt_rt_fut_drop(m->f);
+        if (!m->f->poll(m->f, cx)) return 0;
+        m->f->drop(m->f);
         m->f = velt_rt_spawn(square_poll, square_drop, &q, sizeof q, 8, 8, 0);
         m->tag = 2;
         break;
     }
     default: {
         int64_t r;
-        if (!velt_rt_fut_poll(m->f, cx)) return 0;
+        if (!m->f->poll(m->f, cx)) return 0;
         r = *(int64_t*)((char*)m->f + 16);
-        velt_rt_fut_drop(m->f);
+        m->f->drop(m->f);
         velt_rt_write_i64(1, r); velt_rt_write_byte(1, '\n');
         m->result = 5;
         return 1;
@@ -135,7 +133,11 @@ fn runtime_lib() -> PathBuf {
         "libvelt_rt.a"
     };
     let p = target_dir().join(name);
-    assert!(p.exists(), "staticlib not found at {}", p.display());
+    assert!(
+        p.exists(),
+        "staticlib not found at {} (build it first: `cargo build -p velt_rt`, with `--release` for a release test run)",
+        p.display()
+    );
     p
 }
 
@@ -380,8 +382,8 @@ static uint32_t idle_poll(void* s, void* cx) {
         m->f = velt_rt_sleep(86400000);
         m->tag = 1;
     }
-    if (!velt_rt_fut_poll(m->f, cx)) return 0;
-    velt_rt_fut_drop(m->f);
+    if (!m->f->poll(m->f, cx)) return 0;
+    m->f->drop(m->f);
     return 1;
 }
 int32_t velt_main(void) { Idle m = { 0, 0, 0 }; velt_rt_block_on(idle_poll, &m); return 0; }
@@ -469,8 +471,8 @@ static uint32_t main_poll(void* s, void* cx) {
         m->tag = 1;
     }
     for (; m->i < 64; m->i++) {
-        if (!velt_rt_fut_poll(m->h[m->i], cx)) return 0;
-        velt_rt_fut_drop(m->h[m->i]);
+        if (!m->h[m->i]->poll(m->h[m->i], cx)) return 0;
+        m->h[m->i]->drop(m->h[m->i]);
     }
     return 1;
 }

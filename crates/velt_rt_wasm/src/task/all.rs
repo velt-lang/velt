@@ -171,7 +171,7 @@ unsafe fn new_join(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, PENDING};
+    use crate::task::{drop_fut, poll_fut, raw_cx, PENDING};
     use std::task::Waker;
 
     /// A child that is pending `polls` times, then writes `tag | id << 8` (byte 0 is its `Result`
@@ -189,7 +189,7 @@ mod tests {
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live join future.
-        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
+        unsafe { poll_fut(f, raw_cx(&mut cx).ptr()) }
     }
 
     #[test]
@@ -208,7 +208,7 @@ mod tests {
             assert_eq!(poll(all), PENDING, "child 1 has not settled yet");
             assert_eq!(poll(all), READY, "child 1 rejected on the second pass");
             assert_eq!(results[0], 1 | (1 << 8), "child 1's result is in slot 0");
-            velt_rt_fut_drop(all);
+            drop_fut(all);
         }
     }
 
@@ -223,7 +223,7 @@ mod tests {
             assert_eq!(poll(all), PENDING);
             assert_eq!(poll(all), READY);
             assert_eq!(results, [0, 1 << 8]);
-            velt_rt_fut_drop(all);
+            drop_fut(all);
         }
     }
 }

@@ -517,14 +517,13 @@ fn imports_exports_and_intrinsics() {
         r.contains("cannot find `__intrinsic_array_with_capacity` in this scope"),
         "{r}"
     );
+    // `intrinsic` is std's decorator, which a program has no name for (nor can it import it:
+    // tests/golden/lang/errors/intrinsic_import.velt). The old form, `declare intrinsic
+    // function`, is a parse error naming the new one (velt_syntax's tests).
     let r = err_src(
-        "declare intrinsic function arraySwap<T>(xs: T[], i: usize, j: usize): void; function main() { const xs = [1, 2]; arraySwap(xs, 0, 1); }",
+        "@intrinsic declare function arraySwap<T>(xs: T[], i: usize, j: usize): void; function main() { const xs = [1, 2]; arraySwap(xs, 0, 1); }",
     );
-    assert!(
-        r.contains("`declare intrinsic function arraySwap` is not allowed: only the standard library declares intrinsics"),
-        "{r}"
-    );
-    assert_eq!(r.matches("error").count(), 1, "{r}");
+    assert!(r.contains("cannot find `intrinsic` in this scope"), "{r}");
     let r = err_src("import { nope } from \"velt/math\"; function main() {}");
     assert!(r.contains("has no member `nope`"), "{r}");
     ok_src("import { clamp as c } from \"velt/math\"; function main() { console.log(c(1, 2, 3), Math.PI); }");

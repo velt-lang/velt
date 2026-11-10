@@ -94,7 +94,7 @@ its reason; the exported class is the safe API.
 ## Declarations
 
 `declare c("<library>") function name(params): R;` is a declaration kind of its own in the AST,
-HIR and VIR (like `declare host("m")`, `declare intrinsic` and `declare generated("m")`). The
+HIR and VIR (like `declare host("m")`, `@intrinsic declare` and `declare generated("m")`). The
 keyword is `c` because it names the ABI, which every language here speaks.
 
 - `<library>` is a **logical name** that the manifest maps to a library per target (below);
@@ -353,6 +353,93 @@ program with a message (the context is a key with a generation). APIs without us
   program, until the main-thread loop (step 9) may relax it.
 - Errors and panics never unwind into C: an error escaping a callback is a panic, which aborts
   in a trampoline. Hot reload goes through a slot per trampoline, so stored pointers stay valid.
+
+## Exported functions: `@export("c_name")`
+
+The other direction: a top-level Velt function C calls by name, or through its address
+(#2203 step 5; the Velt scheduler's worker threads start on one, #2649).
+
+```ts
+import * as ffi from "velt/ffi";
+
+@ffi.export("tiny_on_row")
+function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
+```
+
+- **The decorator** is velt/ffi's (`std/ffi/export.velt`), found by its hook role
+  (`decorator_export`), never by name. `export` is a keyword, and a name only at a decorator's head
+  after `@`, as a `declare decorator function`'s name, and in an import or re-export specifier
+  (`import { export as cExport } from "velt/ffi"`; `import { export }` is an error, as a binding
+  can't be named `export`). So a module writes `@ffi.export(…)` through a namespace import or
+  `@cExport(…)`. velt/ffi rather than the prelude: `declare c` users import from there, and the
+  prelude is loaded by every program.
+- **Who may use it**: it is raw native API, as `Ptr` is ("The trust boundary"): only std and the
+  packages with native code the program allows (`allowNative`) import it. An export defines a C
+  symbol, so any other package could replace a C library function no list covers (an exported
+  `getaddrinfo` takes over the program's name lookups, a `clock_gettime` its clock).
+- **What may be exported**: a top-level function with a body, neither generic, async, a
+  generator, a method nor nested in another function. Its parameters and result are what a
+  `declare c` function passes by value: integers, `f32`, `f64`, `bool`, `Ptr<T>`,
+  `Ptr<T> | null`, and `void` as the result. It throws nothing (after inference): C has no
+  exceptions, so the function catches its errors and returns a result C reads.
+- **No module state**: C may call it on a thread Velt didn't start (a library's worker, a thread
+  C starts on it). Such a thread has no task to give the module lock back at the end of a step,
+  so the lock its first use of module state takes would never be released and every other use
+  would wait for ever. So module state (module-level `let`s and kept constants) is not reachable
+  from an export, directly or through what it calls: the walk that refuses it in a `with`
+  callback (module_state.rs), an error at the decorator naming the path.
+- **The name** is a C identifier, at most 255 bytes, given to one function of the program; not
+  `velt_…` (the runtime's) or `rust_…` (the Rust runtime's: `rust_eh_personality`), not
+  reserved by C (`__…`, `_` and a capital), not `main`, a C keyword
+  or one of the C library's common functions and objects (an executable's `free` would replace
+  the C library's for every caller, the runtime's included), and no `declare c` function of the
+  program has it. Each is an error at the decorator.
+- **It compiles to** a function with the unmangled symbol and the target's C calling convention
+  (Velt functions use it already for scalars), which converts what crosses (an address to its
+  `Ptr`, a `Ptr` result to its address, with std's `ptrOf`, `ptrOrNull`, `ptrAddress`,
+  `ptrAddressOrZero`) and calls the Velt function, which stays an ordinary function for Velt
+  callers. Built whether or not Velt code reaches it, in both backends; a std function with
+  `@export` is live for lazy std. Its `i8`, `i16` and `bool` parameters carry no `signext` /
+  `zeroext` in LLVM: AAPCS64 outside Darwin leaves their upper bits unspecified, and clang's
+  callers there don't extend them, so the export extends them itself (its result keeps the
+  attribute). Cranelift's functions extend them already.
+- **Panics**: one that reaches it ends the process; nothing unwinds into C (owner decision (b) on
+  #2649, until #2008). A Velt panic ends the process anyway unless a `catchPanic` poll is up the
+  thread's stack, which only a C function called from Velt can put between them. For that case
+  the function is `vir::Function::stops_unwind`:
+  - **LLVM** (release builds, every target): each call in it is an `invoke` whose landing pad
+    calls `abort`, as clang does for `noexcept` and Rust for `extern "C"`: `landingpad … cleanup`
+    with `rust_eh_personality` on Linux and macOS, `cleanuppad` with `__CxxFrameHandler3` on
+    Windows (Rust's panics are MSVC C++ exceptions there). The unwinder's first phase finds the
+    `catchPanic`; the second one runs the landing pad, which aborts (SIGABRT, exit 134 on Unix).
+    Leaving the function without unwind information was not enough: LLVM writes CFI for it with
+    `-g`, and a call in tail position became a jump, which leaves no frame to stop at. An
+    `invoke` is never a tail call.
+  - **Cranelift** (debug builds) on Linux and macOS: no unwind information, so the unwinder finds
+    no way past it and the runtime aborts ("failed to initiate panic, error 5").
+  - **Cranelift on Windows** keeps its unwind information, whose absence would make the unwinder
+    take it for a leaf and misread the stack. So a debug build on Windows lets that panic unwind
+    through the C frames to the `catchPanic`: SEH pops C frames without handlers as `longjmp`
+    would, `catch_unwind` takes the panic, and the program goes on (the `catchPanic` rejects).
+    Whatever the C code held stays as it was (a lock, a half-updated structure). For C that is
+    defined at the Windows x64 ABI level; C++ built with `/EHsc` would be undefined behaviour
+    (vpm compiles only C). The fix is an `UNW_FLAG_EHANDLER` handler that aborts in the `.xdata`
+    the backend writes (`unwind/windows.rs`), a follow-up.
+- **Its address**: `exportedAddress(f)` (std/lang/intrinsics, std only, unsafe) is the C
+  function's address as a `usize`, for a C API taking a function pointer (`pthread_create`,
+  `qsort`); its argument must name an `@export` function. A package gets the address from C
+  (a C source taking `&tiny_on_row`) until `CFunction<F>` (step 5).
+- **Linking**: a package's C `sources` call an export by name. Release builds link the static
+  archive, whose reference the linker resolves; debug builds link the shared library, which finds
+  the symbol in the executable when it loads (macOS: the library is linked with
+  `-undefined dynamic_lookup`; ELF linkers export a symbol a linked shared library references).
+  Windows links the DLL in both modes, which can't call into the executable: by name works there
+  only with a static library (later). Release links strip an export nothing references
+  (`-dead_strip`, `--gc-sections`).
+- **WebAssembly**: an error at the decorator's use (no C callers to link with; a module export
+  has the host's own ABI, a separate feature).
+- **Not yet**: C structs by value (with `declare c`'s, layer 3); calling an export by name under
+  `velt dev` (the JIT names each function per version; its address works).
 
 ## Buffers C keeps: `PinnedBuffer<T>` and leases
 
@@ -763,7 +850,7 @@ Step 1 lands in layers, each its own pull request:
        `SAFETY:` in the comment lines directly above its line, and each unsafe function such a
        comment or an `Unsafe:` paragraph in its doc comment (what callers must guarantee). It is
        an error. std follows it too, checked by a test rather than at each build.
-     - `addressLoad` is `declare unsafe intrinsic function`: its callers are unsafe code.
+     - `addressLoad` is `@intrinsic declare unsafe function`: its callers are unsafe code.
      - The language server doesn't run these checks yet (builds and `velt check` do).
    - 5c: what the program trusts, in view.
      - `velt check` ends, when it passes, with each package with native code that the program
@@ -956,6 +1043,12 @@ Step 1 lands in layers, each its own pull request:
      - Structs by value in `declare c` signatures, `Out<S>` and `Ref<S>` (the shared
        classifier, both backends); the header check of structs; the differential ABI test.
 
+9. `@export("c_name")` (#2203 step 5): "Exported functions" above, with
+   `exportedAddress`. Tested: veltc's c_export.rs (C sources calling exports by name, a thread
+   started with `pthread_create` on one, a panic ending the process, and aborting under a
+   `catchPanic`), std/ffi/export.test.velt (`qsort` and `bsearch` through `exportedAddress`, both
+   backends), velt_sema's lang_export.rs and the golden `lang/errors/export_decorator`.
+
 ## Decisions
 
 - `declare c("lib")` (it names the ABI); one way to call native code, Rust included; `declare
@@ -970,5 +1063,7 @@ Step 1 lands in layers, each its own pull request:
 - `allowNative` is an install error from the start, no warning release (owner).
 - Re-entrancy: callback captures follow the transfer rules; async leases, handle references and
   completions move into the call (review).
+- `@export` lives in velt/ffi, not the prelude; `export` is a contextual name at a decorator's head
+  (#2203 step 5, decided while the owner was away, open to revisit).
 - User-set build conditions: a separate change. A result-returning callback with no active C
   call stops the program until step 9.

@@ -127,11 +127,16 @@ class Parser {
       if (modifier) {
         this.at++;
       }
-      if (!(modifier || allTypes) || !isIdentLike(this.peek())) {
+      // `export` is a keyword, but an import may bind it under another name (`export as P`).
+      const keyword = this.peek().is(TokenKind.Word, "export");
+      if (!(modifier || allTypes) || !(keyword || isIdentLike(this.peek()))) {
         this.fail("`package.velt` may only import types from `velt/package`");
       }
       let bound = this.peek().text;
       this.at++;
+      if (keyword && !this.peek().is(TokenKind.Word, "as")) {
+        this.fail("`export` is a keyword: import it under another name");
+      }
       if (this.word("as")) {
         if (!isIdentLike(this.peek())) {
           this.fail("expected a name");

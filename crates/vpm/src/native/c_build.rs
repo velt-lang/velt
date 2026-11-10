@@ -423,6 +423,10 @@ fn link_shared(
     args.extend(names.iter().cloned());
     if req.target.contains("apple") {
         args.push(format!("-Wl,-install_name,@rpath/{file}"));
+        // A function the program exports (`@export("c_name")`, #2203 step 5) is the library's
+        // to call: Apple's linker refuses an undefined symbol in a shared library unless told to
+        // leave it to the loader, which finds it in the executable when the library loads.
+        args.push("-Wl,-undefined,dynamic_lookup".to_string());
     } else if let Some(import) = &files.import_lib {
         // Every function of the library, as elsewhere, without `__declspec(dllexport)`. clang
         // records zig's random temporary path in a Windows object whatever `-g0` says, so only

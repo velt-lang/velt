@@ -241,11 +241,12 @@ pub(crate) struct FnInfo<'m> {
     pub host: Option<crate::hir::HostImport>,
     /// `declare c("lib") function` (`hir::ExternFnDef::c`). `None` for anything else.
     pub c: Option<crate::hir::CImport>,
-    /// `declare intrinsic function` (std/lang/intrinsics): what a call of it is. A call is
+    /// `@intrinsic declare function` (std/lang/intrinsics; `decorators::known`): what a call of
+    /// it is. A call is
     /// checked against its signature and becomes the intrinsic (`body::expr::intrinsic_call`),
     /// so its `hir::ExternFnDef` is never called and lowering never declares its symbol.
     pub intrinsic: Option<crate::intrinsic_decls::DeclaredIntrinsic>,
-    /// `declare unsafe intrinsic function`: a call needs unsafe code, as an unsafe function's.
+    /// `@intrinsic declare unsafe function`: a call needs unsafe code, as an unsafe function's.
     pub unsafe_intrinsic: bool,
     /// A `declare` function's written signature (`crate::decorators` reads its decorators, and
     /// whether it declares one); `None` for every other function.
@@ -265,9 +266,9 @@ pub(crate) struct FnInfo<'m> {
     pub is_private: bool,
     /// `get name()`: read as a property (`x.name`), never called with `()`.
     pub is_getter: bool,
-    /// std's inlining marker in the body, `inline()` or `noInline()`, with its span (set as the
-    /// body is checked, `body::inline_markers`).
-    pub inline_marker: Option<(crate::hir::Intrinsic, Span)>,
+    /// std's inlining decorator, `@inline` or `@noInline`, with its span (set where decorators
+    /// are checked, `decorators::known`; `body::inline_markers` checks `@inline`'s callees).
+    pub inline_marker: Option<(crate::decorators::Inline, Span)>,
     /// An override without a written result of a method returning `this`: it returns `this`
     /// too (TypeScript infers `this` from `return this;`; anything else is its TS2416).
     pub inherits_this: bool,

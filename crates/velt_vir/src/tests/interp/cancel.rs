@@ -50,13 +50,10 @@ pub(in crate::tests) fn poll_then_drop(
         if ready {
             break;
         }
-        ready = it
-            .rt("velt_rt_fut_poll", &[fut, super::async_rt::CX])
-            .expect("poll exited")
-            == 1;
+        ready = it.fut_poll(fut).expect("poll exited") == 1;
         it.exec.now += 1.0;
     }
-    it.rt("velt_rt_fut_drop", &[fut]).expect("drop exited");
+    it.fut_drop(fut).expect("drop exited");
     Cancelled {
         stdout: it.stdout,
         ready,

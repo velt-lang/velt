@@ -6,7 +6,8 @@ use velt_syntax::ast::{self, Item, ItemKind};
 pub(crate) fn declared_name(item: &Item) -> Option<&String> {
     Some(match &item.kind {
         ItemKind::Function(f) => &f.sig.name.name,
-        ItemKind::ExternFn(s) if s.is_intrinsic || s.is_decorator || s.host.is_some() => {
+        // A decorated `declare function` is std's intrinsic (`@intrinsic`).
+        ItemKind::ExternFn(s) if !s.decorators.is_empty() || s.is_decorator || s.host.is_some() => {
             &s.name.name
         }
         ItemKind::Struct(t) | ItemKind::Class(t) => &t.name.name,

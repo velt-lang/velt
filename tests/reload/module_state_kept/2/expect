@@ -1,0 +1,7 @@
+action: swap
+jit get /: n=2
+jit get /count: count 2
+jit get /add: n=3
+exe get /: n=0
+exe get /count: count 0
+exe get /add: n=1

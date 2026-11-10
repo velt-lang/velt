@@ -1,0 +1,8 @@
+action: restart
+reason: the identity of function values changed
+get /call: call []
+get /add: added 1
+get /add: added 2
+get /same: same false
+get /drop: dropped 1
+get /call: call [f]

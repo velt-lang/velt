@@ -51,6 +51,7 @@ pub(crate) mod expr;
 mod field_narrow;
 mod for_any;
 mod for_await;
+mod for_in_nullable;
 pub(crate) mod for_in_proxy;
 mod for_iter;
 mod for_map;
@@ -400,6 +401,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The object literal being checked as the operand of a type assertion (`member_cast`):
     /// its values convert to the fields' types as assertions do (`asserted_field`).
     pub asserted_lit: Option<Span>,
+    /// The conditional initializing a declaration (`const m = c ? ("a" as const) : …`), whose
+    /// `as const` arms keep their literals (`ternary`).
+    pub kept_arms: Option<Span>,
     /// The fixed parameters at a rest position the next `forwarding` passes (`fn_value_as_generic`).
     pub forwarding_items: std::cell::Cell<usize>,
     /// The next generic function value's call is `generic_as_generic`'s forwarding one.
@@ -447,6 +451,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             this_fn_forwarding: vec![],
             asserted_fn: None,
             asserted_lit: None,
+            kept_arms: None,
             forwarding_items: Default::default(),
             forward_unbounded: Default::default(),
             dynamic_raw: None,

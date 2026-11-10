@@ -4,7 +4,7 @@ How sema encodes language features in HIR; lowering relies on every point here.
 Maintainer-owned, like `hir/mod.rs`, `hir/intrinsic.rs` and `hir/module_state.rs`.
 
 An intrinsic marked "std only" below is one std declares in `std/lang/intrinsics/`
-(`export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`) and
+(`@intrinsic export declare function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`) and
 calls by that name (`arraySwap(xs, i, j)`, imported from `velt/lang/intrinsics`): sema checks
 the call against the declaration and makes it `Call { Intrinsic(..), args }` as before, so the
 declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in one table
@@ -1718,10 +1718,25 @@ branch the constant made dead).
 `Program::decorators` maps what a decorator is written on (`DecoratorTarget`: a definition, a field
 of a type, a written parameter of a function) to its compile-time decorators, in source order. Each
 is `Decorator { def, args, span }`: `def` is the `declare decorator function`, a `Def::ExternFn`
-that nothing calls and lowering never declares; `args` has one `ConstTree` per parameter of the
+that nothing calls and lowering never declares, whose `name` is qualified as a function's; `args` has one `ConstTree` per parameter of the
 declaration, defaults filled in, each as the parameter's type has it (an enum member where a
 number or a string is expected is that number or string; for `any` or `unknown`, the tree as
 written). An abstract property (`abstract x: T;`) has no field: its decorators, a field's, are on
 its getter's `DecoratorTarget::Def`. The map is a side table, so a program without decorators has an
-empty one and no other HIR type changes. Lowering reads none of it yet. A TC39 run-time decorator
+empty one and no other HIR type changes. Lowering reads only the decorators the compiler acts on,
+each found by its `def`'s qualified name from the hook table (`std_hooks`, `decorator_*`): `@inline`
+and `@noInline` on a `Def(f)` set `vir::Function::inline` (contracts README "Inlining
+decorators"); `@intrinsic` is sema's alone. A TC39 run-time decorator
 is an error until #2204, so it never gets here.
+
+`@export("c_name")` (velt/ffi, `std_hooks` `decorator_export`, #2203 step 5) is read through its
+own side table, `Program::c_exports: Vec<CExport>`, in the order sema checked them (empty without
+any). `CExport { def, name, params: Vec<CTy>, ret: CTy, span }`: `def` is a top-level `Def::Fn`
+that is neither generic, async nor a generator and throws nothing (`throws` is `None` or
+`never`); `name` a C identifier no other export, `declare c` function, the runtime (`velt_…`) or
+C (`__…`, `_X…`, `main`, keywords, the common C library names) has; `params` and `ret` what
+crosses for each parameter and the result, as for a `declare c` function by value (integers,
+`F32`, `F64`, `Bool`, `Ptr`, and `Void` for the result). Lowering builds a C function for each
+(docs/internals/design/c-ffi.md "Exported functions"). `Intrinsic::ExportedAddress` (std only,
+`exportedAddress(f)`) has one argument, a `Lit::Int`: the index of `f`'s `CExport` there; its
+value is the C function's address as a `usize`.

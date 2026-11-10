@@ -110,6 +110,7 @@ impl PB {
             hooks_demanded: Default::default(),
             live: None,
             decorators: Default::default(),
+            c_exports: Default::default(),
             generated: Default::default(),
             cpu_targets: Default::default(),
             type_names: Default::default(),

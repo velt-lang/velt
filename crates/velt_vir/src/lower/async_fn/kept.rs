@@ -79,7 +79,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let inner = Operand::Copy(proj(&base, Proj::Field(1)));
         let r = lw.temp(Ty::U32);
         let args = vec![inner.clone(), Operand::Copy(Place::local(cxl))];
-        lw.call_rt(Rt::FutPoll, args, Some(Place::local(r)));
+        lw.fut_poll_call(args, Place::local(r));
         let (pend, ready) = (lw.new_block(), lw.new_block());
         let pending = lw.rvalue_temp(
             Ty::Bool,
@@ -96,7 +96,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let from = lw.operand_place(from, Ty::Ptr);
         let result = Operand::Copy(proj(&from, Proj::Deref(st_ty)));
         lw.assign(proj(&base, Proj::Field(0)), Rvalue::Use(result));
-        lw.call_rt(Rt::FutDrop, vec![inner], None);
+        lw.fut_drop_call(vec![inner]);
         lw.terminate(Terminator::Return(cint(1, Ty::U32)));
         let sym = format!("_Grace_box_poll_{}", lw.cx.type_symbol(slot));
         lw.finish(sym, vec![Ty::Ptr, Ty::Ptr], Ty::U32)
@@ -109,7 +109,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let st = lw.new_local(Ty::Ptr, Some("state".into()));
         let base = proj(&Place::local(st), Proj::Deref(Ty::Agg(wa)));
         let inner = Operand::Copy(proj(&base, Proj::Field(1)));
-        lw.call_rt(Rt::FutDrop, vec![inner], None);
+        lw.fut_drop_call(vec![inner]);
         lw.terminate(Terminator::Return(unit()));
         let sym = format!("_Grace_box_drop_{}", lw.cx.type_symbol(slot));
         lw.finish(sym, vec![Ty::Ptr], Ty::Unit)

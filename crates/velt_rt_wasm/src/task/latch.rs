@@ -81,13 +81,13 @@ pub unsafe extern "C" fn velt_rt_latch_wait(h: Handle<Latch>) -> *mut VeltFut {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{raw_cx, velt_rt_fut_drop, velt_rt_fut_poll, PENDING, READY};
+    use crate::task::{drop_fut, poll_fut, raw_cx, PENDING, READY};
     use std::task::Waker;
 
     fn poll(f: *mut VeltFut) -> u32 {
         let mut cx = Context::from_waker(Waker::noop());
         // SAFETY: a live leaf future.
-        unsafe { velt_rt_fut_poll(f, raw_cx(&mut cx).ptr()) }
+        unsafe { poll_fut(f, raw_cx(&mut cx).ptr()) }
     }
 
     #[test]
@@ -104,7 +104,7 @@ mod tests {
                 1,
                 "one slot however often it is polled"
             );
-            velt_rt_fut_drop(a);
+            drop_fut(a);
             let b = velt_rt_latch_wait(h);
             assert_eq!(poll(b), PENDING);
             assert_eq!(
@@ -114,8 +114,33 @@ mod tests {
             );
             velt_rt_latch_open(h);
             assert_eq!(poll(b), READY);
-            velt_rt_fut_drop(b);
+            drop_fut(b);
             velt_rt_latch_free(h);
         }
+    }
+
+    /// A latch wait driven by an executor whose waker is a C table (an executor in Velt):
+    /// opening the latch wakes through the C table, and every clone is given back.
+    #[test]
+    fn a_wait_wakes_a_foreign_c_waker() {
+        use crate::task::waker::tests::TestHeader;
+        let n = TestHeader::new();
+        let word = 0u32;
+        let mut cx = n.cx(&word);
+        let cx = &mut cx as *mut crate::task::VeltCx as *mut std::ffi::c_void;
+        let h = velt_rt_latch_new();
+        // SAFETY: `h` is live until freed; the future is owned here; `cx` outlives the polls.
+        unsafe {
+            let f = velt_rt_latch_wait(h);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(poll_fut(f, cx), PENDING);
+            assert_eq!(n.woken(), 0);
+            velt_rt_latch_open(h);
+            assert_eq!(n.woken(), 1);
+            assert_eq!(poll_fut(f, cx), READY);
+            drop_fut(f);
+            velt_rt_latch_free(h);
+        }
+        assert!(n.balanced(), "every reference a clone took given back");
     }
 }

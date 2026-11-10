@@ -30,7 +30,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use crate::net::sys::TcpStream;
 use crate::result::IoResult;
 use crate::task::runtime::time::{sleep_until, Sleep};
-use crate::task::{context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use crate::task::waker::{rust_waker, with_rust_cx};
+use crate::task::{VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 /// `u32 poll(void* state, void* cx, void* out)`: polls a library future; on `READY` it has written
 /// its result to `out`.
@@ -133,7 +134,9 @@ unsafe extern "C-unwind" fn poll_native(f: *mut VeltFut, cx: *mut c_void) -> u32
     if m.state.is_null() {
         return READY;
     }
-    let r = (m.poll)(m.state, cx, (f as *mut u8).add(FUT_RESULT_OFFSET));
+    // The library takes the waker as a Rust one (`cx_waker`).
+    let out = (f as *mut u8).add(FUT_RESULT_OFFSET);
+    let r = with_rust_cx(cx, |cx| (m.poll)(m.state, cx, out));
     if r == READY {
         let state = std::mem::replace(&mut m.state, std::ptr::null_mut());
         (m.drop_state)(state);
@@ -155,7 +158,10 @@ unsafe extern "C-unwind" fn drop_native(f: *mut VeltFut) {
 
 /// `const void* cx_waker(void* cx)`: the waker of the task being polled, borrowed for the poll.
 pub unsafe extern "C" fn cx_waker(cx: *mut c_void) -> *const c_void {
-    context(cx).waker() as *const Waker as *const c_void
+    match rust_waker(cx) {
+        Some(w) => w as *const Waker as *const c_void,
+        None => panic!("ICE: cx_waker outside a library poll"),
+    }
 }
 
 /// `void* waker_clone(const void* w)`: an owned copy (boxed) of a runtime waker, borrowed or

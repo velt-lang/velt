@@ -1,0 +1,2 @@
+decorators_known_by_role.velt:9:25: error: only a compiler intrinsic is declared `unsafe`
+  = note: `unsafe` on a declaration is for std's `@intrinsic` ones; calls of a `declare c` function need unsafe code already

@@ -15,7 +15,8 @@
 //! any_methods.velt; `velt_vir` `any_builtin.rs`).
 //!
 //! Each entry gives the hook's signature in a small type language (`sig(<A>(&string, i64) ->
-//! void)`, or `class`; [`crate::hook_sig`]), which the table turns into a [`Sig`]: `velt_sema`'s
+//! void)`, `class`, or `decorator` for a compile-time decorator the compiler acts on, #2203;
+//! [`crate::hook_sig`]), which the table turns into a [`Sig`]: `velt_sema`'s
 //! test of this table checks every hook module of std whole and walks each entry's definition
 //! against it (types, type parameters, `throws` and passing modes), so renaming or
 //! changing a hook fails the build, not a program. `velt_vir` generates a typed call builder for
@@ -97,9 +98,9 @@ impl Hook {
     }
 }
 
-/// An entry is `name => module, "item", sig(…)` (or `class`), then optional flags after commas,
-/// in any order: `lowered`, `fallback`, `replaces("velt_rt_…", …)`, `bench("row")` and
-/// `constructs(TextInt, …)` (the fields of [`Hook`]).
+/// An entry is `name => module, "item", sig(…)` (or `class`, `decorator`), then optional flags
+/// after commas, in any order: `lowered`, `fallback`, `replaces("velt_rt_…", …)`, `bench("row")`
+/// and `constructs(TextInt, …)` (the fields of [`Hook`]).
 macro_rules! hooks {
     // Each flag is one of these (an unknown one fails here).
     (@flag lowered) => {};
@@ -589,6 +590,22 @@ hooks! {
     host_await_ref => host_promise, "hostAwaitRef", sig((move Promise(HostSettled(u32), never)) -> HostRef throws IoError), lowered;
     /// `host_await` for a `HostRef | null` result.
     host_await_ref_or_null => host_promise, "hostAwaitRefOrNull", sig((move Promise(HostSettled(u32), never)) -> or_null(HostRef) throws IoError), lowered;
+
+    // lang/intrinsics/decorators.velt: the compile-time decorators the compiler acts on (#2203),
+    // found by these roles, never by the name a use is written with.
+    /// `@inline` on a std function or method: every call is inlined in release builds
+    /// (`vir::Inline::Always`; `velt_sema` `decorators/known.rs`, `velt_vir` lowering).
+    decorator_inline => lang_intrinsics_decorators, "inline", decorator;
+    /// `@noInline`: calls stay calls (`vir::Inline::Never`).
+    decorator_no_inline => lang_intrinsics_decorators, "noInline", decorator;
+    /// `@intrinsic declare function`: the declaration of a compiler intrinsic
+    /// (`velt_sema` `intrinsic_decls.rs`).
+    decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;
+    // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
+    // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
+    /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C
+    /// calling convention, whose parameters and result cross as a `declare c` function's.
+    decorator_export => ffi_export, "export", decorator;
 }
 
 /// One key of a std method the compiler calls: a symbol constant of std/lang/hooks/keys.velt.

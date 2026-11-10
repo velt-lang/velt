@@ -1,0 +1,4 @@
+in_function_gained_key.velt:5:10: error: cannot tell whether a `() => f64` has "tag"
+  = note: `in` with a string key is supported on object types, classes, interfaces and `Record`s; built-in and standard library values are not supported yet
+in_function_gained_key.velt:8:38: error: cannot tell whether a `() => f64` has "__sigx"
+  = note: `in` with a string key is supported on object types, classes, interfaces and `Record`s; built-in and standard library values are not supported yet

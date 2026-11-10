@@ -22,4 +22,8 @@ pub const DELETED: &[&str] = &[
     // #2196: FNV-1a (std/hash/fnv), which only std called, so no hook replaces it.
     "velt_rt_fnv1a64_str",
     "velt_rt_fnv1a64_bytes",
+    // #2196: polling and dropping a heap future, which compiled code (velt_vir
+    // `lower/raw_memory.rs`) and std (`futPoll`, `futDrop`) do through its header, inline.
+    "velt_rt_fut_poll",
+    "velt_rt_fut_drop",
 ];

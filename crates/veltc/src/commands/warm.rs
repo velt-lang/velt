@@ -8,7 +8,7 @@
 //! functions, so a project's first build compiles little more than its own code; with clang, as
 //! objects optimized by LLVM (`VELT_STD_OBJECT_FILL`, `std_cache::serve`), so its debug builds
 //! run them too; and then each again in release, for the same two CPUs, which stores the objects
-//! of the std functions marked `noInline()` that release builds link (`std_cache::no_inline`).
+//! of the std functions marked `@noInline` that release builds link (`std_cache::no_inline`).
 //! A marker per
 //! toolchain (`<cache>/warm/<key>`) makes later runs return at once, also after a run where some
 //! programs failed but not all (the marker names them: they would only fail again); the toolchain installers

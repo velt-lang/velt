@@ -509,3 +509,37 @@ fn script_with_its_own_main_lists_main_once() {
     assert!(names.contains(&"main"), "{names:?}");
     client.shutdown();
 }
+
+const DECORATED_DECLARE: &str = r#"export declare decorator function mark(): FunctionDecorator;
+
+@mark()
+export declare function marked(n: i64): i64;
+
+function main() {
+  marked(1);
+}
+"#;
+
+/// The outline's detail comes from the syntax tree (`signature::item`), not sema's hover:
+/// a decorated `declare function` keeps its decorators there too.
+#[test]
+fn a_decorated_declare_function_keeps_its_decorators_in_the_outline() {
+    let mut client = Client::start();
+    let doc = uri("decorated_declare.velt");
+    client.open(&doc, DECORATED_DECLARE);
+    let symbols = client.request(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": doc } }),
+    );
+    let marked = symbols
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "marked")
+        .expect("`marked` in the outline");
+    assert_eq!(
+        marked["detail"],
+        json!("@mark()\ndeclare function marked(n: i64): i64")
+    );
+    client.shutdown();
+}

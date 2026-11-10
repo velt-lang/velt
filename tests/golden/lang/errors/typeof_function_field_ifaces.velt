@@ -1,0 +1,10 @@
+// `typeof m === "function"` on a union of field-only interfaces and object types: a function
+// with fields converted to one is a function in Node, which Velt's value no longer is, so the
+// test is refused rather than answered `false` (#2655).
+interface Factory {
+  __setup: () => string;
+}
+function kind(m: Factory | { default: Factory }): string {
+  return typeof m === "function" ? "fn" : "obj";
+}
+console.log(kind({ default: { __setup: () => "s" } }));

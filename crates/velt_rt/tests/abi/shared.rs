@@ -8,8 +8,7 @@ use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start};
 use crate::task::runtime::velt_rt_block_on;
 use crate::task::shared::velt_rt_fut_share;
 use crate::task::{
-    velt_rt_fut_drop, velt_rt_fut_poll, velt_rt_yield_now_fut, VeltFut, FUT_RESULT_OFFSET, PENDING,
-    READY,
+    drop_fut, poll_fut, velt_rt_yield_now_fut, VeltFut, FUT_RESULT_OFFSET, PENDING, READY,
 };
 use std::ffi::c_void;
 use std::ptr::null_mut;
@@ -57,10 +56,10 @@ unsafe extern "C-unwind" fn value_poll(s: *mut u8, cx: *mut c_void) -> u32 {
         st.y = velt_rt_yield_now_fut();
         st.tag = 1;
     }
-    if velt_rt_fut_poll(st.y, cx) == PENDING {
+    if poll_fut(st.y, cx) == PENDING {
         return PENDING;
     }
-    velt_rt_fut_drop(st.y);
+    drop_fut(st.y);
     st.y = null_mut();
     st.result = new_box(st.v);
     st.tag = 2;
@@ -70,7 +69,7 @@ unsafe extern "C-unwind" fn value_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 unsafe extern "C-unwind" fn value_drop(s: *mut u8) {
     let st = &mut *(s as *mut Value);
     if !st.y.is_null() {
-        velt_rt_fut_drop(st.y);
+        drop_fut(st.y);
     }
 }
 
@@ -94,13 +93,13 @@ unsafe fn share(f: *mut VeltFut) -> *mut VeltFut {
 
 /// Poll holder `f`; when it is ready, take its result (and free it) and drop the holder.
 unsafe fn take(f: &mut *mut VeltFut, cx: *mut c_void) -> Option<i64> {
-    if velt_rt_fut_poll(*f, cx) == PENDING {
+    if poll_fut(*f, cx) == PENDING {
         return None;
     }
     let b = *((*f as *const u8).add(FUT_RESULT_OFFSET) as *const *mut i64);
     let v = *b;
     free_box(b);
-    velt_rt_fut_drop(*f);
+    drop_fut(*f);
     *f = null_mut();
     Some(v)
 }
@@ -137,7 +136,7 @@ unsafe extern "C-unwind" fn await_both_poll(s: *mut u8, cx: *mut c_void) -> u32 
     let Some(b) = take(&mut st.p, cx) else {
         return PENDING;
     };
-    velt_rt_fut_drop(st.r);
+    drop_fut(st.r);
     st.result = st.a * 10 + b;
     READY
 }
@@ -169,15 +168,15 @@ unsafe extern "C-unwind" fn drop_unsettled_poll(s: *mut u8, cx: *mut c_void) -> 
     if st.tag == 0 {
         let p = value(5);
         let q = share(p);
-        velt_rt_fut_drop(p);
-        velt_rt_fut_drop(q);
+        drop_fut(p);
+        drop_fut(q);
         st.y = velt_rt_yield_now_fut();
         st.tag = 1;
     }
-    if velt_rt_fut_poll(st.y, cx) == PENDING {
+    if poll_fut(st.y, cx) == PENDING {
         return PENDING;
     }
-    velt_rt_fut_drop(st.y);
+    drop_fut(st.y);
     READY
 }
 
@@ -214,6 +213,7 @@ fn holders_await_and_drop_in_any_order() {
 }
 
 /// Set in the child process of [`holders_under_the_checking_allocator`].
+#[cfg(debug_assertions)]
 const CHILD: &str = "VELT_RT_SHARED_PROMISE_CHILD";
 
 /// The same sequences with `VELT_RT_DEBUG_ALLOC=1`: every handle and result is allocated and

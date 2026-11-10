@@ -55,6 +55,13 @@ pub fn whole() -> Vec<String> {
         "import { Package } from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
         "import type { Package } from \"velt/package\";\nimport type { Package } from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
         "import type {} from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
+        // `export` is a keyword that an import binds only under another name.
+        "import type { export as Package } from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
+        "import type { export } from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
+        "import type { export as default } from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
+        "import { type export as P } from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
+        "import { export as P } from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
+        "import type { Package as export } from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
         "import type Package from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
         "import type { Package } from \"velt/pkg\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),
         "import type { type Package } from \"velt/package\";\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };".into(),

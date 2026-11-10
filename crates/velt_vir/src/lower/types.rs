@@ -11,7 +11,7 @@
 //! - `Result<T, E>` → tagged aggregate (tag `u8`: 0 = Ok, 1 = Err);
 //! - `T[]` → `{ ptr, len: u64, cap: u64 }`; `shared<T>` → `Ptr` to `{ count: u64, value: T }`;
 //! - `Promise<T>` (a promise *value*: stored, passed, not awaited in place) → `Ptr` to a heap
-//!   future (`VeltFut*`, result at +16; rt_abi_async.md), dropped with `velt_rt_fut_drop`;
+//!   future (`VeltFut*`, result at +16; rt_abi_async.md), dropped through its header (`f->drop(f)`);
 //! - function values and closures → `{ code: ptr, env: ptr }`; interface values → `{ data, vtable }`.
 
 use rustc_hash::{FxHashMap, FxHashSet};

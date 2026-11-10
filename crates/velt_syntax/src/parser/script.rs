@@ -101,7 +101,6 @@ impl Parser<'_> {
             is_async,
             is_unsafe: false,
             is_system: false,
-            is_intrinsic: false,
             is_decorator: false,
             decorators: vec![],
             generator: None,

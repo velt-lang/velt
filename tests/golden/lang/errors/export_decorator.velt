@@ -1,0 +1,38 @@
+// `@export("c_name")` (velt/ffi): what C can't call is refused at the decorator, and so is a name
+// C or the runtime has already.
+import * as ffi from "velt/ffi";
+
+@ffi.export("velt_main")
+function a(): void {}
+
+@ffi.export("lib_generic")
+function g<T>(x: T): T {
+  return x;
+}
+
+@ffi.export("lib_text")
+function t(s: string): i32 {
+  return 0;
+}
+
+@ffi.export("lib_twice")
+function one(): void {}
+
+@ffi.export("lib_twice")
+function two(): void {}
+
+@ffi.export("lib_throws")
+function th(x: i32): i32 {
+  if (x < 0) {
+    throw new Error("negative");
+  }
+  return x;
+}
+
+function main() {
+  a();
+  console.log(g(1), t("x"));
+  one();
+  two();
+  console.log(th(1));
+}

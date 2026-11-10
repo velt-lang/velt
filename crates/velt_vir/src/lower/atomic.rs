@@ -17,9 +17,17 @@ impl FnLower<'_, '_> {
     pub(super) fn atomic_intrinsic(&mut self, i: Intrinsic, args: &[hir::Expr]) -> Operand {
         use Intrinsic as I;
         let instance = !matches!(i, I::AtomicFence | I::AtomicSpinHint);
+        let raw = matches!(
+            i,
+            I::PtrAtomicLoad
+                | I::PtrAtomicStore
+                | I::PtrAtomicRmw
+                | I::PtrAtomicCas
+                | I::PtrAtomicCasWeak
+        );
         if let Some(t) = args
             .first()
-            .filter(|_| instance)
+            .filter(|_| instance && !raw)
             .and_then(|a| self.atomic_ref_value(a))
         {
             return self.atomic_ref_intrinsic(i, args, t);
@@ -27,25 +35,47 @@ impl FnLower<'_, '_> {
         match (i, args) {
             (I::AtomicFence, [o]) => self.atomic_call(AtomicCall::Fence(order(o)), vec![]),
             (I::AtomicSpinHint, []) => self.atomic_call(AtomicCall::SpinHint, vec![]),
-            (I::AtomicLoad, [a, o]) => {
-                let (p, vt, bits) = self.atomic_word(a);
+            // The integer a `Ptr<T>` points to (raw_memory.rs).
+            (_, [a, rest @ ..]) if raw => {
+                let word = self.ptr_word(a);
+                self.atomic_at(i, word, rest)
+            }
+            (_, [a, rest @ ..]) => {
+                let word = self.atomic_word(a);
+                self.atomic_at(i, word, rest)
+            }
+            _ => ice(format_args!(
+                "intrinsic {i:?} called with {} arguments",
+                args.len()
+            )),
+        }
+    }
+
+    /// The atomic operation `i` on the word at `p`, of `bits` holding a `vt`, with the
+    /// arguments after the receiver.
+    fn atomic_at(
+        &mut self,
+        i: Intrinsic,
+        (p, vt, bits): (Operand, Ty, u32),
+        rest: &[hir::Expr],
+    ) -> Operand {
+        use Intrinsic as I;
+        match (i, rest) {
+            (I::AtomicLoad | I::PtrAtomicLoad, [o]) => {
                 let order = order(o);
                 let w = self.atomic_call(AtomicCall::Load { bits, order }, vec![p]);
                 from_word(self, w, vt, bits)
             }
-            (I::AtomicStore, [a, v, o]) => {
-                let (p, vt, bits) = self.atomic_word(a);
+            (I::AtomicStore | I::PtrAtomicStore, [v, o]) => {
                 let v = self.word_arg(v, vt, bits);
                 let order = order(o);
                 self.atomic_call(AtomicCall::Store { bits, order }, vec![p, v])
             }
-            (I::AtomicRmw, [a, v, op, o]) if lit(op) != 0 && self.float_atomic(a) => {
-                let (p, vt, bits) = self.atomic_word(a);
+            (I::AtomicRmw, [v, op, o]) if lit(op) != 0 && vt.is_float() => {
                 let v = self.expr(v);
                 self.float_rmw(p, v, vt, bits, lit(op), order(o))
             }
-            (I::AtomicRmw, [a, v, op, o]) => {
-                let (p, vt, bits) = self.atomic_word(a);
+            (I::AtomicRmw | I::PtrAtomicRmw, [v, op, o]) => {
                 let v = self.word_arg(v, vt, bits);
                 let op = match (lit(op), vt.is_signed()) {
                     (0, _) => Rmw::Xchg,
@@ -64,11 +94,13 @@ impl FnLower<'_, '_> {
                 let w = self.atomic_call(AtomicCall::Rmw { op, bits, order }, vec![p, v]);
                 from_word(self, w, vt, bits)
             }
-            (I::AtomicCas | I::AtomicCasWeak, [a, e, v, o, f]) => {
-                let (p, vt, bits) = self.atomic_word(a);
+            (
+                I::AtomicCas | I::AtomicCasWeak | I::PtrAtomicCas | I::PtrAtomicCasWeak,
+                [e, v, o, f],
+            ) => {
                 let e = self.word_arg(e, vt, bits);
                 let v = self.word_arg(v, vt, bits);
-                let weak = i == I::AtomicCasWeak;
+                let weak = matches!(i, I::AtomicCasWeak | I::PtrAtomicCasWeak);
                 let call = AtomicCall::Cas {
                     bits,
                     order: order(o),
@@ -82,8 +114,8 @@ impl FnLower<'_, '_> {
                 }
             }
             _ => ice(format_args!(
-                "intrinsic {i:?} called with {} arguments",
-                args.len()
+                "intrinsic {i:?} called with {} arguments after the receiver",
+                rest.len()
             )),
         }
     }
@@ -176,15 +208,6 @@ impl FnLower<'_, '_> {
         match vt.is_float() {
             true => self.reinterpret(v, vt, word(bits)),
             false => self.cast_to(v, vt, word(bits)),
-        }
-    }
-
-    /// Whether the receiver `a` is an `Atomic<f32>` or `Atomic<f64>`.
-    fn float_atomic(&mut self, a: &hir::Expr) -> bool {
-        let aty = self.sub(a.ty);
-        match self.cx.kind(aty) {
-            TyKind::Adt(_, args) if args.len() == 1 => self.cx.ty(args[0]).is_float(),
-            _ => false,
         }
     }
 
