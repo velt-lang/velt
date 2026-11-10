@@ -1,0 +1,58 @@
+// velt/text and velt/jsx: escaping where entities fall at every place around the 16-byte blocks of
+// the scan, on heap and inline strings, with non-ASCII text and lone surrogates kept. The expected
+// output is this program in Node, with a chain of `replaceAll` calls for the escaping (react-dom's
+// escapeTextForBrowser writes the same five entities, `&#x27;` for the apostrophe) and
+// renderToStaticMarkup of the same element for the last line.
+import { escapeHtml } from "velt/text";
+import { renderToStringSync } from "velt/jsx";
+
+function repeated(part: string, times: i64): string {
+  let s = "";
+  for (let i = 0; i < times; i++) {
+    s += part;
+  }
+  return s;
+}
+
+function main() {
+  const specials = ["&", "<", ">", "\"", "'"];
+  // One entity at each position of texts of lengths around the blocks.
+  let sum = 0;
+  let line = "";
+  const lengths: i64[] = [1, 15, 16, 17, 31, 32, 33, 48, 64];
+  for (const len of lengths) {
+    for (let at: i64 = 0; at < len; at++) {
+      const s = repeated("a", at) + specials[at % 5] + repeated("b", len - at - 1);
+      const e = escapeHtml(s);
+      sum += e.length;
+      if (at == len - 1) {
+        line += `${e} `;
+      }
+    }
+  }
+  console.log(sum);
+  console.log(line);
+  // Every gap between two entities, so a plain run of each length around the block store's limits.
+  const gaps: i64[] = [0, 1, 3, 4, 5, 15, 16, 17, 20];
+  for (const gap of gaps) {
+    console.log(escapeHtml(`<${repeated("x", gap)}>${repeated("y", gap)}'${repeated("z", 20)}`));
+  }
+  console.log(escapeHtml(repeated("<&>\"'", 40)));
+  // Non-ASCII around entities: length in UTF-16 units, characters kept.
+  const wide = "é<フ>🎉&ñ\"日本語のテキストが長く続く部分 '";
+  console.log(escapeHtml(wide), escapeHtml(wide).length);
+  console.log(escapeHtml("フレームワークのベンチマークです、エンティティはありません").length);
+  // Lone surrogates survive, with their length.
+  const lone = "a" + String.fromCharCode(0xd83d) + "<b" + String.fromCharCode(0xde00) + ">c";
+  console.log(escapeHtml(lone).length, escapeHtml(lone).charCodeAt(1), escapeHtml(lone).charCodeAt(7));
+  // A string with nothing to escape, and a static literal, compare and read as themselves.
+  const clean = repeated("clean", 10);
+  console.log(escapeHtml(clean) == clean, escapeHtml("literal") == "literal");
+  // The result is an independent string: changing a copy changes nothing in `s`.
+  let a = escapeHtml(clean);
+  a += "!";
+  console.log(a.length, clean.length);
+  // std/jsx's apostrophe.
+  const attr = `it's "q" & <x> ${repeated("'", 3)}`;
+  console.log(renderToStringSync(<p title={attr}>{attr}</p>));
+}

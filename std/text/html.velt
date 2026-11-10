@@ -1,17 +1,205 @@
-// velt/text (internal): escaping text for HTML output.
-//
-// `escapeHtml` is one pass in the runtime (`velt_rt_html_escape`, rt_abi_async.md §14.10): the
-// output is sized once and copied in chunks, where a chain of `replaceAll` calls in Velt would
-// scan and allocate once per character class.
+// velt/text (internal): escaping text for HTML output, one pass over the bytes where the string
+// keeps them. Only ASCII bytes are rewritten, so UTF-8 sequences pass through untouched. `std/jsx`
+// writes the apostrophe as react-dom does; everything else is the same.
 
-// `(const VeltStr* s, VeltStr* out)`: a new string with `& < > " '` replaced by entities.
-declare function velt_rt_html_escape(s: string): string;
+import {
+  arraySetLen,
+  arrayWithCapacity,
+  inline,
+  noInline,
+  share,
+  strByteAt,
+  strByteLen,
+  strLen,
+  strLoadPartialU8x16,
+  strLoadU8x16,
+} from "velt/lang/intrinsics";
+
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_or(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, lane: u64): u64;
+declare function velt_simd_u64x2_splat(x: u64): u64x2;
+declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+
+const AMP: u8 = 0x26;
+const LT: u8 = 0x3c;
+const GT: u8 = 0x3e;
+const QUOTE: u8 = 0x22;
+// The length of a text that says "unknown" to the builder, which then counts its UTF-16 units.
+const UNITS_UNKNOWN: u64 = 0xffffffffffffffff;
+
+// The lanes of `v` to escape. `&` and `'` differ in one bit, as do `<` and `>`, so three
+// comparisons cover the five bytes.
+function marks(v: u8x16): mask8x16 {
+  return velt_simd_mask8x16_or(
+    velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(QUOTE)),
+    velt_simd_mask8x16_or(
+      velt_simd_u8x16_eq(
+        velt_simd_u8x16_or(v, velt_simd_u8x16_splat(1)),
+        velt_simd_u8x16_splat(0x27),
+      ),
+      velt_simd_u8x16_eq(
+        velt_simd_u8x16_or(v, velt_simd_u8x16_splat(2)),
+        velt_simd_u8x16_splat(GT),
+      ),
+    ),
+  );
+}
+
+// The index of the first set lane of `m`, which has one: the mask's two halves as integers, one
+// byte per lane (a bitmask of the lanes takes several instructions on NEON).
+function firstLane(m: mask8x16): usize {
+  const halves = velt_simd_u8x16_as_u64x2(
+    velt_simd_u8x16_select(m, velt_simd_u8x16_splat(0xff), velt_simd_u8x16_splat(0)),
+  );
+  const low = velt_simd_u64x2_lane(halves, 0);
+  if (low != 0) {
+    return low.trailingZeros() >> 3;
+  }
+  return 8 + (velt_simd_u64x2_lane(halves, 1).trailingZeros() >> 3);
+}
+
+// The first byte of `s` (`n` bytes) from `from` to escape, or `n`. The last bytes are a partial
+// block, zero in the lanes past them (zero is not a byte to escape).
+function nextSpecial(s: string, from: usize, n: usize): usize {
+  let i = from;
+  while (i + 16 <= n) {
+    const m = marks(strLoadU8x16(s, i as u64));
+    if (velt_simd_mask8x16_any(m)) {
+      return i + firstLane(m);
+    }
+    i += 16;
+  }
+  if (i < n) {
+    const m = marks(strLoadPartialU8x16(s, i as u64, (n - i) as u64));
+    if (velt_simd_mask8x16_any(m)) {
+      return i + firstLane(m);
+    }
+  }
+  return n;
+}
+
+// The 16 bytes of `s` (`n` bytes) from `i`, which is below `n`: a partial block at the end.
+function block(s: string, i: usize, n: usize): u8x16 {
+  return i + 16 <= n ? strLoadU8x16(s, i as u64) : strLoadPartialU8x16(s, i as u64, (n - i) as u64);
+}
+
+// `s` (`n` bytes), whose first byte to escape is at `first`, with the entities written into a byte
+// array and then made a string once. The text is copied in 16-byte blocks, each stored whole: a
+// block holding a byte to escape is overwritten from there by its entity, and the entity by the
+// plain run after it. Each byte becomes at most six and the bytes before `first` stay one each,
+// so with ten bytes to spare every store fits, even at the last byte. Compiled into its two
+// entry points, `escapeFromPlain` and `escapeFromHex`, each with `hexApos` fixed.
+@inline
+function escapeFrom(s: string, first: usize, n: usize, hexApos: bool): string {
+  const room = first + (n - first) * 6 + 10;
+  const buf: u8[] = arrayWithCapacity(room);
+  arraySetLen(buf, room);
+  let i: usize = 0;
+  while (i < first) {
+    velt_simd_u8x16_store(block(s, i, n), buf, i as u64);
+    i += 16;
+  }
+  i = first;
+  let o = first;
+  while (i < n) {
+    o = writeEntity(buf, o, strByteAt(s, i as u64), hexApos);
+    i++;
+    let run = true;
+    while (run && i < n) {
+      const v = block(s, i, n);
+      const m = marks(v);
+      velt_simd_u8x16_store(v, buf, o as u64);
+      const k = velt_simd_mask8x16_any(m) ? firstLane(m) : 16;
+      const step = k < n - i ? k : n - i;
+      i += step;
+      o += step;
+      run = k == 16;
+    }
+  }
+  // ASCII stays ASCII, which the builder needn't scan; otherwise the text may hold a lone surrogate.
+  const units = strLen(s) == n ? (o as u64) : UNITS_UNKNOWN;
+  const len = o as u64;
+  let out = "";
+  velt_rt_strbuf_new(len, out);
+  velt_rt_strbuf_push_u8s(out, buf, len, units);
+  let text = "";
+  velt_rt_strbuf_finish(out, text);
+  return text;
+}
+
+// Writes the entity of byte `b` at `buf[o]`, as one 16-byte store of its bytes (the rest of the
+// block is overwritten by what follows, or past the end); the position after it.
+function writeEntity(buf: u8[], o: usize, b: u8, hexApos: bool): usize {
+  const word = entityWord(b, hexApos);
+  velt_simd_u8x16_store(velt_simd_u64x2_as_u8x16(velt_simd_u64x2_splat(word)), buf, o as u64);
+  return o + 8 - (word.leadingZeros() >> 3);
+}
+
+// The entity of byte `b`, its bytes in a word from the lowest (all targets are little-endian).
+function entityWord(b: u8, hexApos: bool): u64 {
+  if (b == AMP) {
+    return 0x3b706d6126; // &amp;
+  }
+  if (b == LT) {
+    return 0x3b746c26; // &lt;
+  }
+  if (b == GT) {
+    return 0x3b746726; // &gt;
+  }
+  if (b == QUOTE) {
+    return 0x3b746f757126; // &quot;
+  }
+  return hexApos ? 0x3b3732782326 : 0x3b39332326; // &#x27; or &#39;
+}
+
+// `escapeFrom` with `'` as `&#39;`. Out of line (as are the other entry points): each caller would
+// otherwise compile its own copy of the loops. One per apostrophe, so that each is compiled with
+// its flag fixed, also where its object is compiled once for every program (the std cache).
+@noInline
+function escapeFromPlain(s: string, first: usize, n: usize): string {
+  return escapeFrom(s, first, n, false);
+}
+
+// `escapeFrom` with `'` as `&#x27;`.
+@noInline
+function escapeFromHex(s: string, first: usize, n: usize): string {
+  return escapeFrom(s, first, n, true);
+}
 
 /**
  * `s` with `&`, `<`, `>`, `"` and `'` replaced by `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`:
  * safe inside element content and in single- or double-quoted attribute values. Other
- * characters (including non-ASCII) are kept as they are.
+ * characters (including non-ASCII) are kept as they are. `s` itself, shared, when it has none of
+ * them: the share keeps `s` borrowed (returning `s` would move it, and callers would copy a field
+ * they pass in).
  */
+@noInline
 export function escapeHtml(s: string): string {
-  return velt_rt_html_escape(s);
+  const n = strByteLen(s);
+  const first = nextSpecial(s, 0, n);
+  if (first == n) {
+    return share(s);
+  }
+  return escapeFromPlain(s, first, n);
+}
+
+/** As `escapeHtml`, with `'` as `&#x27;`, as react-dom writes it (std/jsx). */
+@noInline
+export function escapeHtmlHexApos(s: string): string {
+  const n = strByteLen(s);
+  const first = nextSpecial(s, 0, n);
+  if (first == n) {
+    return share(s);
+  }
+  return escapeFromHex(s, first, n);
 }

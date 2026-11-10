@@ -181,8 +181,11 @@ fn word_uses<'a>(src: &'a str, word: &'a str) -> impl Iterator<Item = usize> + '
 }
 
 /// The `bench/stdport/` rows of ports that have no hook, because only std called the Rust they
-/// replaced, so `HOOKS` can't name them.
-const PORTS_WITHOUT_A_HOOK: [&str; 2] = ["prng", "fnv"];
+/// replaced, so `HOOKS` can't name them. `html_escape_jsx` is the HTML escaper's second row:
+/// `escapeHtml` and std/jsx's `escapeHtmlHexApos` in a program that sorts a class holding a
+/// string, where `string` parameters have other attributes than in `html_escape` (they are in a
+/// release object's key, docs/internals/design/std-object.md).
+const PORTS_WITHOUT_A_HOOK: [&str; 4] = ["prng", "fnv", "html_escape", "html_escape_jsx"];
 
 /// The warm-up stores what debug builds link (`velt cache warm`, std_cache/serve.rs), and prebuilt
 /// objects will be what it reaches: a port not on its list runs unoptimized in debug builds, as
