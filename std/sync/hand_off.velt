@@ -19,8 +19,8 @@
 // Its block in raw memory, shared by the hand-off and every wait on it (each holds a count, so a
 // wait outliving the hand-off reads live memory): the count, the state word, the waker word and
 // the waiter's waker (an AtomicWaker: a registering poll and a waking giver on two threads never
-// both touch it), the count of `wait()`s and whether the hand-off is gone, the block's size, then
-// the item. Givers
+// both touch it), the count of `wait()`s and whether the hand-off is gone, the block's size,
+// whether its park future is in use, that park future, then the item. Givers
 // race only through the state word: a giver claims the item (EMPTY or WAITING → FILLING) before it
 // writes it. An item nobody took is dropped by whichever of the hand-off and the `wait()`s goes
 // last (`dropLeft`; both are generic, so they know the item's type: a park future is not, and
@@ -58,7 +58,9 @@ const B_WAKER: usize = 16;
 const B_WAITS: usize = 24;
 const B_GONE: usize = 28;
 const B_BYTES: usize = 32;
-const B_ITEM: usize = 48;
+const B_PARKED: usize = 40;
+const B_PARK: usize = 48;
+const B_ITEM: usize = 80;
 
 /** One value handed from a giver to one waiting task, once. */
 export class HandOff<T> {
@@ -67,9 +69,14 @@ export class HandOff<T> {
   constructor() {
     const n = slotSize<T>();
     const bytes = B_ITEM + (n === 0 ? 16 : n);
-    const b = m.zeroed(bytes);
+    // The words before the park future start at 0 (the item is written before it is read).
+    const b = m.alloc(bytes);
     m.st(b + B_REFS, 1);
+    m.st(b + B_STATE, 0);
+    m.st(b + B_WAKER, 0);
+    m.st(b + B_WAITS, 0);
     m.st(b + B_BYTES, bytes);
+    m.st(b + B_PARKED, 0);
     this.block = b;
   }
 
@@ -292,14 +299,25 @@ function wakeWaiter(b: usize): void {
 
 // The park future: a heap future (rt_abi_async.md §1; its header, then the block, then whether
 // it saw the end of the wait) with no result, holding a count of the block. Its poll and drop are
-// C functions (`fnAddress`, a stand-in for `exportedAddress`, #2203 step 5).
+// C functions (`fnAddress`, a stand-in for `exportedAddress`, #2203 step 5). It lives in the
+// block, so a wait allocates nothing more: a hand-off has one waiter. A second park while that
+// one is alive (two `park()`s held at once) gets one of its own.
 
 const F_BLOCK: usize = 16;
 const F_DONE: usize = 24;
+const F_SIZE: usize = 32;
 
 function parkFuture(b: usize): usize {
   m.inc(b + B_REFS);
-  const f = m.alloc(32);
+  if (m.cas32(b + B_PARKED, 0, 1) === 0) {
+    const f = b + B_PARK;
+    m.st(f, fnAddress(parkPoll));
+    m.st(f + 8, fnAddress(parkDropInBlock));
+    m.st(f + F_BLOCK, b);
+    m.st(f + F_DONE, 0);
+    return f;
+  }
+  const f = m.alloc(F_SIZE);
   m.st(f, fnAddress(parkPoll));
   m.st(f + 8, fnAddress(parkDrop));
   m.st(f + F_BLOCK, b);
@@ -333,8 +351,24 @@ function parkPoll(f: usize, cx: usize): u32 {
   return 1;
 }
 
+/** The drop of a park future of its own: it leaves, then frees its memory. */
 function parkDrop(f: usize): void {
   const b = m.ld(f + F_BLOCK);
+  leave(f, b);
+  m.release(f, F_SIZE);
+  release(b);
+}
+
+/** The drop of the park future in block `b`: it leaves, and the next park may use it. */
+function parkDropInBlock(f: usize): void {
+  const b = f - B_PARK;
+  leave(f, b);
+  m.store32(b + B_PARKED, 0);
+  release(b);
+}
+
+/** Park future `f` of block `b` is dropped: one dropped while waiting leaves. */
+function leave(f: usize, b: usize): void {
   if (m.ld(f + F_DONE) === 0) {
     // Dropped while waiting: leave, or leave the item given meanwhile behind.
     let s = settled(b);
@@ -345,6 +379,4 @@ function parkDrop(f: usize): void {
       m.cas32(b + B_STATE, GIVEN, RETURNED);
     }
   }
-  m.release(f, 32);
-  release(b);
 }
