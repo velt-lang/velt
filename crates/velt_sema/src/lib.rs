@@ -92,6 +92,7 @@ mod index_signatures;
 mod infer;
 mod inst_sites;
 mod instantiation_cycles;
+pub mod interface;
 mod interface_merge;
 mod intersection_class_parts;
 mod intersection_members;

@@ -155,8 +155,18 @@ The fast path, per save:
 What it needs, as separate pull requests, each falling back to the cold front end when unsure:
 - **A. Change detection** (`veltc` dev host): per-definition source hashes and the edit's kind,
   reported by `velt dev -v`. No behavior change; the gate for the rest.
-- **B. Interface summaries** (`velt_sema`): a hash per function of what other code observes,
-  computed after the check, compared between versions.
+- **B. Interface summaries** (`velt_sema::interface`): a hash per function of what other code
+  observes, and one per kind of program-wide fact a body can change, computed from the checked
+  HIR by structure and name (never by `TyId`, `DefId` or `Span`, which move when a body
+  changes), compared between versions. `velt dev -v` says after a body edit whether everything
+  but the edited functions (and their closures) kept its interface (about 5 ms on `http_hello`;
+  the fast path summarizes only the functions it checks again). What it showed: a body edit that
+  makes lazy std check more definitions (the first `new Map` in a program) changes the program's
+  `reached std`, declarations (fields std's bodies assign), implementations and flags, and the
+  lock-free callbacks among std's closures. Such an edit takes the cold front end until C and D
+  can check newly reached std bodies. Facts sema keeps out of the HIR (which functions return
+  fresh values) are not in the summaries: D reruns `fresh_returns` over every widening, which is
+  cheap.
 - **C. A kept checking context** (`velt_sema`, dev only): the host keeps the running version's
   `Ctx` and modules; a body is checked again in it, with its closures' definitions replaced and
   its diagnostics its own.
