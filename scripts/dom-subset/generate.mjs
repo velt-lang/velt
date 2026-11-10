@@ -28,8 +28,11 @@
 //   what they extend, as `tsc` does by their members (`HTMLElement` doesn't convert to
 //   `HTMLAnchorElement`);
 // - a std global a declaration names (`AbortSignal`, `URL`) is imported from its defining file;
-// - an interface that extends a std class (`Event`) declares the listed members of the class
-//   itself, since a Velt interface extends only interfaces;
+// - an interface that extends a std class (`Event`) alone, directly or through others that do
+//   (`KeyboardEvent` through `UIEvent`), is a class extending it (`classBase`), so that it
+//   converts to the class as under `tsc`: its fields start out empty (`""`, `0`, `false`,
+//   `null`), as no Velt value is one; sema treats those classes as types only, as the interfaces
+//   were (no value in Node);
 // - `EventTarget` is the interface of std's class's members (`FIXED`), which the class implements
 //   and the interfaces of nodes and windows extend: `e.target` is one, and `e.target as
 //   HTMLInputElement` an interface cast. It isn't a global (the class is), so it is left out of
@@ -364,6 +367,23 @@ function emittedBases(t, seen = new Set()) {
   }
   return [...new Set(out)];
 }
+// The class an interface that is to be a class extends (`UIEvent` for `KeyboardEvent`, `Event`
+// for `UIEvent`), or undefined.
+function classBase(t) {
+  const bs = bases(t);
+  if (bs.length !== 1 || !ifaces.has(t)) return undefined;
+  return STD_CLASSES.has(bs[0]) || classBase(bs[0]) ? bs[0] : undefined;
+}
+// Field `line` of such a class with the value it starts out with.
+function withStart(t, line) {
+  const m = line.match(/^(\s*(?:readonly )?\w+): (.*);$/);
+  if (!m) throw new Error(`${t}: a class member generate.mjs can't start: ${line}`);
+  const ty = m[2];
+  const start = ty === "string" ? `""` : ty === "number" ? "0" : ty === "boolean" ? "false"
+    : /\| null/.test(ty) ? "null" : null;
+  if (start === null) throw new Error(`${t}: no start value for a field of type ${ty}`);
+  return `${m[1]}: ${ty} = ${start};`;
+}
 function emit(t) {
   if (FIXED.has(t)) return FIXED.get(t);
   if (aliases.has(t)) {
@@ -404,13 +424,9 @@ function emit(t) {
     const line = memberOf(t, m, scope);
     if (line) lines.push(line);
   }
-  for (const b of bases(t)) {
-    if (!STD_CLASSES.has(b)) continue;
-    note("members of a std class an interface extends: declared on the interface");
-    for (const m of want.get(b) ?? []) {
-      const line = memberOf(b, m, scope);
-      if (line) lines.push(line);
-    }
+  if (classBase(t)) {
+    note("interface extending a std class: a class");
+    return { tp, lines: lines.map((l) => withStart(t, l)), base: classBase(t) };
   }
   return { tp, lines };
 }
@@ -419,7 +435,9 @@ const textOf = new Map(order.map((t) => {
   const e = emitted.get(t);
   if (typeof e === "string") return [t, e];
   const ext = emittedBases(t);
-  const head = `export interface ${t}${e.tp}${ext.length ? ` extends ${ext.join(", ")}` : ""}`;
+  const head = e.base
+    ? `export class ${t}${e.tp} extends ${e.base}`
+    : `export interface ${t}${e.tp}${ext.length ? ` extends ${ext.join(", ")}` : ""}`;
   return [t, e.lines.length ? `${head} {\n${e.lines.join("\n")}\n}` : `${head} {}`];
 }));
 const refsOf = new Map(order.map((t) => [t, new Set((textOf.get(t).match(/[A-Za-z_]\w*/g) ?? []).filter((w) => w !== t && emitted.has(w)))]));

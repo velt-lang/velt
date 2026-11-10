@@ -93,14 +93,24 @@ impl FnCx<'_, '_> {
         self.dom_type(t).then_some(t)
     }
 
-    /// Is `t` one of std's `lib.dom` interfaces that has a value in `lib.dom`?
+    /// Is `t` one of std's `lib.dom` interfaces (or classes: `KeyboardEvent`) that has a value
+    /// in `lib.dom`?
     pub(crate) fn dom_type(&self, t: TyId) -> bool {
-        let TyKind::Dyn(d, _) = self.cx.ty.kind(t) else {
-            return false;
-        };
-        self.cx.iface(*d).is_some_and(|i| {
-            self.cx.scopes[i.module].is_std && DOM_VALUES.binary_search(&i.name.as_str()).is_ok()
-        })
+        self.dom_type_name(t)
+            .is_some_and(|n| DOM_VALUES.binary_search(&n.as_str()).is_ok())
+    }
+
+    /// The name of std's `lib.dom` interface or class `t`.
+    fn dom_type_name(&self, t: TyId) -> Option<String> {
+        match self.cx.ty.kind(t) {
+            TyKind::Dyn(d, _) => (self.cx.iface(*d))
+                .filter(|i| self.cx.scopes[i.module].is_std)
+                .map(|i| i.name.clone()),
+            TyKind::Adt(d, _) if self.cx.std_dom_class(*d) => {
+                self.cx.adt(*d).map(|a| a.name.clone())
+            }
+            _ => None,
+        }
     }
 
     /// A read, where `instanceof` narrowed it to `target`, of a variable narrowed by such a
@@ -109,10 +119,7 @@ impl FnCx<'_, '_> {
         if !self.dom_type(target) {
             return None;
         }
-        let TyKind::Dyn(d, _) = self.cx.ty.kind(target) else {
-            return None;
-        };
-        let name = self.cx.iface(*d)?.name.clone();
+        let name = self.dom_type_name(target)?;
         let mut e = self.not_defined(&name, span);
         e.ty = target;
         Some(e)

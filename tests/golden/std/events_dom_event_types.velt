@@ -1,0 +1,14 @@
+// The lib.dom subset's event types (`KeyboardEvent`, `MouseEvent`, ...) convert to `Event`, as
+// under `tsc` (#2378): they are classes extending it. Node has no such value, so `typeof` is
+// "undefined".
+function show(e: Event): string {
+  return e.type;
+}
+function onKey(k: KeyboardEvent): string {
+  return show(k) + ":" + k.key;
+}
+function onClick(m: MouseEvent): string {
+  return show(m);
+}
+const handlers: ((e: MouseEvent) => string)[] = [onClick];
+console.log(show(new Event("plain")), handlers.length, typeof KeyboardEvent, typeof MouseEvent);
