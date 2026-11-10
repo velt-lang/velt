@@ -303,6 +303,17 @@ pub(crate) fn lower_program_seeded(
         cx.build_iface_glues();
         cx.build_fn_tables();
         lower_profile::end_pass(pass, pass_start.elapsed());
+        if let Some(dir) = std::env::var_os("VELT_LOWER_DUMP_PASSES") {
+            let dump = crate::vir::Program {
+                aggs: cx.aggs.clone(),
+                funcs: cx.funcs.iter().flatten().cloned().collect(),
+                externs: cx.externs.clone(),
+                statics: cx.statics.clone(),
+                ..Default::default()
+            };
+            let path = std::path::Path::new(&dir).join(format!("pass{pass}.vir"));
+            let _ = std::fs::write(path, dump.to_string());
+        }
         cx.shapes_close();
         let next = cx.close_boxing();
         if next == counted && seeded && next.locks_may_follow_seed() {
