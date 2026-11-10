@@ -64,8 +64,7 @@ impl Snapshot {
     /// The program's own files of a build: those under the root module's directory that are not
     /// std's (a path dependency's files outside it are a package's).
     pub fn of_build(sess: &crate::driver::Session, root: &Path) -> Snapshot {
-        let dir = root.parent().unwrap_or(Path::new(""));
-        let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        let dir = own_dir(root);
         let std: HashSet<FileId> = sess.std_files.iter().copied().collect();
         let own = (sess.sm.files())
             .filter(|(id, f)| {
@@ -83,6 +82,16 @@ impl Snapshot {
             .collect();
         Snapshot { files }
     }
+}
+
+/// The directory of the root module, canonical: a bare file name (`velt dev main.velt`) is in the
+/// working directory. (An empty path would canonicalize to nothing, and every file starts with it.)
+fn own_dir(root: &Path) -> PathBuf {
+    let dir = match root.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
 }
 
 impl File {
@@ -317,5 +326,13 @@ function main() {
         assert!(cutoff(&edit, &many).unwrap().ends_with("and 2 more"));
         assert_eq!(cutoff(&Edit::None, &[]), None);
         assert_eq!(cutoff(&Edit::Other("x".into()), &[]), None);
+    }
+
+    #[test]
+    fn a_bare_root_file_name_is_in_the_working_directory() {
+        let cwd = std::fs::canonicalize(".").expect("cwd");
+        assert_eq!(own_dir(Path::new("main.velt")), cwd);
+        assert_eq!(own_dir(Path::new("./main.velt")), cwd);
+        assert!(!own_dir(Path::new("main.velt")).as_os_str().is_empty());
     }
 }
