@@ -514,14 +514,21 @@ import { AbortController } from \"velt/task\";
 async function main() {
   const l = await listen(\"127.0.0.1:0\");
   const stop = new AbortController();
+  // The client writes only after the server has looked (nothing there yet) and is about to wait:
+  // the server resolves these just before each wait, and the wait runs up to its park before the
+  // client's task gets the worker back.
+  const first = Promise.withResolvers<void>();
+  const second = Promise.withResolvers<void>();
   const server = spawn((async () => {
     const s = await l.accept();
     const buf: u8[] = Buffer.alloc(16);
     // Nothing has come yet: the socket is not readable now, so each wait below waits.
     console.log(s.tryRead(buf));
+    first.resolve();
     console.log(\"signal only:\", await s.readableWithin(-1, stop.signal));
     console.log(await s.readString());
     console.log(s.tryRead(buf));
+    second.resolve();
     console.log(\"no limit:\", await s.readableWithin(-1));
     console.log(await s.readString());
     stop.abort();
@@ -529,9 +536,9 @@ async function main() {
     s.close();
   })());
   const c = await connect(`127.0.0.1:${l.port}`);
-  await sleep(50);
+  await first.promise;
   await c.write(\"one\");
-  await sleep(50);
+  await second.promise;
   await c.write(\"two\");
   await server;
   c.close();
