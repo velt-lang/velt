@@ -80,6 +80,56 @@ impl FnCx<'_, '_> {
         Ok(Instance::Maybe(self.cx.subst_known(own, &slots)))
     }
 
+    /// `x as C` of a local `x` of a base class of class `C` (`target`, with its type
+    /// arguments), as TypeScript allows it: `x instanceof C ? x : panic`, checked at run time as
+    /// the other narrowing assertions are (`type assertion failed`). `C`'s type arguments are
+    /// those `x`'s type gives it, or any when they are erased ([`Self::erased_args`]); `None`
+    /// for any other assertion.
+    pub(super) fn class_downcast_cast(
+        &mut self,
+        expr: &velt_syntax::ast::Expr,
+        target: TyId,
+        want: crate::body::Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let (class, args) = self.cx.class_of(target)?;
+        let velt_syntax::ast::ExprKind::Ident(id) =
+            &super::object_builtins::strip_parens(expr).kind
+        else {
+            return None;
+        };
+        let l = self.lookup_local(&id.name, id.span)?;
+        let from = self.local_ty(l);
+        let from_class = match self.cx.class_of(from) {
+            Some((d, _)) if d != class && self.cx.class_extends(class, d) => d,
+            _ => return None,
+        };
+        let Ok(Instance::Maybe(narrowed)) = self.instance_kind(from, class) else {
+            return None;
+        };
+        if narrowed != target {
+            let mut open = vec![None; args.len()];
+            if !self.erased_args(class, Some(from_class), &mut open) {
+                return None;
+            }
+        }
+        let test = self.expr(expr, None, crate::body::Want::Borrow);
+        let cond = self.class_test(test, class, span)?;
+        let value = self.expr(expr, None, want);
+        let then = self.mk(hir::ExprKind::Downcast(Box::new(value)), target, span);
+        let name = self.cx.display(target);
+        let msg = format!("TypeError: type assertion failed: the value is not of type `{name}`");
+        let m = self.str_lit(&msg, span);
+        let never = self.cx.ty.never;
+        let els = self.intrinsic(hir::Intrinsic::Panic, vec![m], never, span);
+        let kind = hir::ExprKind::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            els: Box::new(els),
+        };
+        Some(self.mk(kind, target, span))
+    }
+
     /// Fills the open `slots` of class `class` (narrowed from a value of class `from`, its
     /// direct base) with their defaults, when each such parameter is erased: it has a default
     /// without parameters, and neither a field `class` declares nor its base type mentions it,

@@ -1,0 +1,15 @@
+// `x as C` of a base class value, as TypeScript allows it: checked at run time (#2378). `e as
+// CustomEvent<D>` of an `Event` reads the detail (`CustomEvent`'s type parameter is erased).
+class A { a = 1 }
+class B extends A { b = 2 }
+const x: A = new B();
+console.log((x as B).b);
+const t = new EventTarget();
+const onAdd = (e: Event) => {
+  const detail = (e as CustomEvent<{ price: number }>).detail;
+  console.log(detail?.price ?? 0);
+};
+t.addEventListener("cart:add", onAdd);
+t.dispatchEvent(new CustomEvent("cart:add", { detail: { price: 3 } }));
+t.removeEventListener("cart:add", onAdd);
+t.dispatchEvent(new CustomEvent("cart:add", { detail: { price: 4 } }));
