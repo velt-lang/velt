@@ -46,6 +46,9 @@ impl FnCx<'_, '_> {
         span: Span,
         out: &mut Vec<hir::Stmt>,
     ) {
+        // `switch (path as Route)` of a `string` compares the string (#1410).
+        let plain = self.switch_string_operand(disc);
+        let disc = plain.as_ref().unwrap_or(disc);
         let mut stmts = vec![];
         let s = self.scrutinee(disc, &mut stmts);
         let sels: Vec<(Option<Sel>, Span)> = cases

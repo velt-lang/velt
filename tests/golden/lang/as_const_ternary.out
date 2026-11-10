@@ -1,0 +1,5 @@
+t:blocking b blocking blocking BLOCKING 8
+t:stream a stream stream STREAM 6
+t:stream c stream stream STREAM 6
+[ 'a', 'z' ] x p! [ 'u' ] {"mode":"x"}
+[ 'b', 'z' ] y q! [ 'v' ] {"mode":"y"}
