@@ -442,12 +442,14 @@ converted to a function type) to a `FnWrapped` (`hir/fresh.rs`), the function it
 
 In JavaScript the converted function is the same object, so a program comparing function values
 gives such a wrapper (one capturing only `l`, by move, or a named one capturing nothing; not
-async) an environment whose clone entry is one marker function for all wrappers, followed by the
-wrapper's own clone entry, a kind word and the wrapped value (a function value, or an `any`
-whose table says in its class id word when it holds a function value). `===`, `Object.is`,
-`includes`, `Set` / `Map` keys and function properties, also through `any` values of two
-function types, follow wrappers to the function they wrap. `===` of two function types
-converts one to the other. Programs that compare no function values are lowered as before.
+async) the low bit of its environment pointer (environments are aligned to 8) and an environment
+`{ drop, clone, transfer, kind, wrapped value, … }`, the wrapped value a function value or an
+`any` (whose table says in its class id word when it holds a function value). The glue that reads
+an environment through a function value (drop, clone, share, transfer, the many-threads check)
+and the wrapper's own code take the bit off; copies get it back. `===`, `Object.is`, `includes`,
+`Set` / `Map` keys and function properties, also through `any` values of two function types,
+follow a value with the bit to the function it leads to; values without it compare and hash by
+their words as before. `===` of two function types converts one to the other. Programs that compare no function values are lowered as before.
 
 A `const` holding a named generic function (`const g: G = id`, also through a chain of
 constants) is not one of these where a function type of fixed types is expected: sema gives the
