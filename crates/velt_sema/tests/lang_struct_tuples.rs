@@ -191,7 +191,8 @@ fn a_default_method_storing_what_cant_be_a_tuple_is_legal() {
         }");
 }
 
-/// The error is at the interface's method, so it names the interface's parameter.
+/// The error is at the interface's method, so it names the interface's parameter, and points at
+/// the `extend`.
 #[test]
 fn a_default_method_is_reported_with_its_own_parameter() {
     let e = err_src(&format!(
@@ -208,7 +209,14 @@ fn a_default_method_is_reported_with_its_own_parameter() {
            console.log(d.d(1));
          }}"
     ));
-    assert!(e.contains("stores `X` in a struct's field"), "{e}");
+    assert!(
+        e.contains("this default method stores `X` in a struct's field"),
+        "{e}"
+    );
+    assert!(
+        e.contains("this `extend` gives the interface the default method"),
+        "{e}"
+    );
 }
 
 /// Literal types aren't struct instances: they don't count toward the walk's limit.
@@ -413,4 +421,252 @@ fn a_struct_cant_be_given_to_a_function_that_makes_a_proxy_of_it() {
     );
     assert!(e.contains("makes a `Proxy` of a struct (`P`)"), "{e}");
     assert_eq!(e.matches("error:").count(), 2, "{e}");
+}
+
+/// A class a method of such an `extend` makes is the method's own: what the class's methods
+/// store runs at whatever reaches the `extend`. Only the class the `extend` is on is followed
+/// wherever it is (`an_extend_counts_for_what_its_own_method_stores`).
+#[test]
+fn a_class_an_extend_makes_counts_as_its_own() {
+    let e = err_src(&format!(
+        "{PRELUDE}interface I<X> {{
+           f(x: X): X;
+         }}
+         interface Ex<X> {{
+           e(): X;
+         }}
+         class Impl<T> implements I<T> {{
+           f(x: T): T {{
+             const g: G<T> = {{ v: x, n: 7 }};
+             return g.v;
+           }}
+         }}
+         extend<T> Array<T> implements Ex<T> {{
+           e(): T {{
+             const i: I<T> = new Impl<T>();
+             return i.f(this[0]);
+           }}
+         }}
+         function main() {{
+           const p: P3 = [1, 2, 3];
+           const h: Ex<P3> = [p];
+           console.log(h.e()[0]);
+         }}"
+    ));
+    assert!(e.contains("this method of an `extend` stores `T`"), "{e}");
+    assert_eq!(e.matches("error:").count(), 1, "{e}");
+}
+
+/// A value converted to `any` reaches every method of its class by name, while the program
+/// reads members of an `any`: directly, through a type parameter, through an interface, and
+/// through a field.
+#[test]
+fn a_value_converted_to_any_reaches_every_method() {
+    let class = "class H<T> {
+                   make(x: T): number {
+                     const g: G<T> = { v: x, n: 7 };
+                     return g.n;
+                   }
+                 }
+                 interface Named {
+                   name(): string;
+                 }
+                 class K<T> implements Named {
+                   name(): string {
+                     return \"k\";
+                   }
+                   make(x: T): number {
+                     const g: G<T> = { v: x, n: 7 };
+                     return g.n;
+                   }
+                 }
+                 function wrap<T>(x: T): any {
+                   return x;
+                 }
+                 function wrap2<U>(x: U): any {
+                   return wrap<{ w: U }>({ w: x });
+                 }
+                 type Inner<T> = T extends { h: infer U } ? U : never;
+                 function pick<T>(x: Inner<T>): any {
+                   const a: any = { v: x };
+                   return a;
+                 }
+                 class W {
+                   h: H<P3> = new H<P3>();
+                 }
+                 class Box {
+                   n: Named;
+                   constructor(n: Named) {
+                     this.n = n;
+                   }
+                 }";
+    let main = |body: &str| {
+        format!("{PRELUDE}{class}\nfunction main() {{\n  const t: P3 = [1, 2, 3];\n  {body}\n}}")
+    };
+    for body in [
+        "const h: any = new H<P3>();\n  console.log(h.make(t));",
+        "const h = wrap<H<P3>>(new H<P3>());\n  console.log(h.make(t));",
+        "const n: Named = new K<P3>();\n  const h: any = n;\n  console.log(h.make(t));",
+        // A member read through it gives its fields as dynamic values.
+        "const a: any = new W();\n  console.log(a.h.make(t));",
+        "const o: any = { h: new H<P3>() };\n  console.log(o.h.make(t));",
+        "const b: any = new Box(new K<P3>());\n  console.log(b.n.make(t));",
+        // A union's members are its values.
+        "const u: H<P3> | number = new H<P3>();\n  const h: any = u;\n  console.log(h.make(t));",
+        "const h = wrap<H<P3> | number>(new H<P3>());\n  console.log(h.make(t));",
+        // Through two generic functions, and through a type computed from the parameter.
+        "const h = wrap2<H<P3>>(new H<P3>());\n  console.log(h.w.make(t));",
+        "const a = pick<{ h: H<P3> }>(new H<P3>());\n  console.log(a.v.make(t));",
+    ] {
+        let e = err_src(&main(body));
+        assert!(
+            e.contains("a method of this type stores a tuple"),
+            "{body}: {e}"
+        );
+    }
+    // A value that never becomes a dynamic one, or a program that reads no member of one.
+    ok_src(&main("console.log(new H<P3>() == null);"));
+    ok_src(&main(
+        "const h: any = new H<P3>();\n  console.log(h == null);",
+    ));
+}
+
+/// Glue runs a class's hooks for every value of it: the drop hook and the formatters'.
+#[test]
+fn a_hook_counts_wherever_its_class_is() {
+    for (hook, body, use_) in [
+        ("[Symbol.dispose](): void", "", "using h = new H<P3>(t);"),
+        (
+            "toString(): string",
+            "return \"h\";",
+            "console.log(String(new H<P3>(t)));",
+        ),
+    ] {
+        let e = err_src(&format!(
+            "{PRELUDE}class H<T> {{
+               v: T;
+               constructor(v: T) {{
+                 this.v = v;
+               }}
+               {hook} {{
+                 const g: G<T> = {{ v: this.v, n: 7 }};
+                 console.log(g.n);
+                 {body}
+               }}
+             }}
+             function main() {{
+               const t: P3 = [1, 2, 3];
+               {use_}
+             }}"
+        ));
+        assert!(e.contains("stores a tuple"), "{hook}: {e}");
+    }
+}
+
+/// A closure made in a guarded branch keeps the guard: `f<P3>` drops the branch. Given what
+/// may be a number, the branch stays.
+#[test]
+fn a_closure_keeps_the_guard_of_its_branch() {
+    let src = |call: &str| {
+        format!(
+            "{PRELUDE}function isNum(x: unknown): x is number {{
+               return typeof x == \"number\";
+             }}
+             function st<T>(x: T): number {{
+               const g: G<T> = {{ v: x, n: 1 }};
+               return g.n;
+             }}
+             function f<T>(x: T): number {{
+               if (isNum(x)) {{
+                 const c = () => st<T>(x);
+                 return c();
+               }}
+               return 0;
+             }}
+             function main() {{
+               const p: P3 = [1, 2, 3];
+               console.log({call});
+             }}"
+        )
+    };
+    ok_src(&src("f<P3>(p)"));
+    let e = err_src(&src("f<number | P3>(p)"));
+    assert!(e.contains("this call stores a tuple"), "{e}");
+}
+
+/// A tuple given under a guard on a type parameter is for the callers to tell: `h<C>`, with a
+/// class, drops the branch, and `h<number>` keeps it, so the error is at that call.
+#[test]
+fn a_tuple_given_under_a_guard_is_reported_where_the_branch_stays() {
+    let src = |call: &str| {
+        format!(
+            "{PRELUDE}function isNum(x: unknown): x is number {{
+               return typeof x == \"number\";
+             }}
+             function f<T, U>(x: T, u: U): number {{
+               const g: G<U> = {{ v: u, n: 1 }};
+               return g.n;
+             }}
+             class C {{
+               a = 1;
+             }}
+             function h<T>(x: T): number {{
+               if (isNum(x)) {{
+                 const p: P3 = [1, 2, 3];
+                 return f<T, P3>(x, p);
+               }}
+               return 0;
+             }}
+             function main() {{
+               console.log({call});
+             }}"
+        )
+    };
+    ok_src(&src("h<C>(new C())"));
+    let bad = src("h<C>(new C()), h<number>(1)");
+    let e = err_src(&bad);
+    assert!(e.contains("this call stores a tuple"), "{e}");
+    let at = bad.find("h<number>").unwrap();
+    let line = bad[..at].matches('\n').count() + 1;
+    let col = at - bad[..at].rfind('\n').unwrap();
+    assert!(e.contains(&format!(":{line}:{col}: error")), "{e}");
+    assert_eq!(e.matches("error:").count(), 1, "{e}");
+}
+
+/// The type an `extend` is on is followed wherever it is, but another instance of its class
+/// isn't: `Cell<T>` made in `extend<T> Cell<T[]>` is the method's own.
+#[test]
+fn another_instance_of_the_class_an_extend_is_on_counts_as_its_own() {
+    let e = err_src(&format!(
+        "{PRELUDE}interface Ex<X> {{
+           e(): X;
+         }}
+         class Base<T> {{
+           v: T;
+           constructor(v: T) {{
+             this.v = v;
+           }}
+           f(): T {{
+             return this.v;
+           }}
+         }}
+         class Cell<T> extends Base<T> {{
+           override f(): T {{
+             const g: G<T> = {{ v: this.v, n: 7 }};
+             return g.v;
+           }}
+         }}
+         extend<T> Cell<T[]> implements Ex<T> {{
+           e(): T {{
+             const b: Base<T> = new Cell<T>(this.v[0]);
+             return b.f();
+           }}
+         }}
+         function main() {{
+           const p: P3 = [1, 2, 3];
+           const h: Ex<P3> = new Cell<P3[]>([p]);
+           console.log(h.e()[0]);
+         }}"
+    ));
+    assert!(e.contains("this method of an `extend` stores `T`"), "{e}");
 }
