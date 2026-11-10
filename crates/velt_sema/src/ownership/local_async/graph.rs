@@ -243,12 +243,15 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         let ret = w.ret_node(d);
         w.block(&f.body.block, To::Node(ret, None));
     }
-    // A closure literal, and a named function used as a value, is called through function values,
-    // whose arguments the graph doesn't follow into its parameters: they hold values of unknown
+    // Closure literals and named functions used as values are called through function values,
+    // whose arguments the graph doesn't follow into their parameters: those hold values of unknown
     // origin, of their declared types. One that crosses (a callback that spawns its argument)
     // makes its type a crossing type, so the closures passed to such calls cross by the heap rule.
+    // A function referenced in several places is listed once.
     let mut called: Vec<DefId> = g.parent.keys().copied().collect();
     called.extend(g.fn_values.iter().copied());
+    called.sort_by_key(|d| d.0);
+    called.dedup();
     for c in called {
         let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
             continue;
