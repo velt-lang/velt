@@ -392,6 +392,74 @@ fn promoted_fields_are_current_when_a_call_unwinds() {
     );
 }
 
+/// A panic inside a generator's body, reached through `for...of` over a direct call (the state in
+/// the caller's frame), a stored generator's `next()` and `next(value)`. The body's frame marks
+/// the generator finished as the panic leaves it, so the pad of the frame holding the generator
+/// drops it quietly instead of closing a running generator (which panics, and aborts during a
+/// cleanup), and `next()` after the catch reports done. What the body's state held leaks with it,
+/// as a panicked async state machine's does.
+#[cfg(not(windows))]
+const GENERATORS: &str = r#"
+import { catchVeltPanic } from "velt/zz_unwind";
+
+function boom(i: number): number { if (i > 5) { const xs = [1]; return xs[i]; } return i; }
+
+function* gen(n: number): Generator<number> {
+  const s = "gen" + n.toString();
+  for (let i = 0; i < 10; i++) {
+    yield s.length + boom(i);
+  }
+}
+
+function useGen(n: number): number {
+  let t = 0;
+  for (const v of gen(n)) { t += v; }
+  return t;
+}
+
+function* sum(): Generator<number, void, number> {
+  let total = 0;
+  const s = "sum";
+  while (true) {
+    const x = yield total;
+    total += boom(x) + s.length;
+  }
+}
+
+function main() {
+  console.log("embedded", catchVeltPanic(() => { console.log(useGen(1)); }) !== null);
+  const g = gen(2);
+  const boxed = catchVeltPanic(() => {
+    let r = g.next();
+    while (!r.done) { r = g.next(); }
+  });
+  console.log("boxed", boxed !== null, g.next().done);
+  const h = sum();
+  h.next(0);
+  const sent = catchVeltPanic(() => { h.next(1); h.next(9); });
+  console.log("send", sent !== null, h.next(1).done);
+  console.log("after");
+}
+"#;
+
+#[cfg(not(windows))]
+#[test]
+fn a_panic_in_a_generator_body_is_caught() {
+    let dir = test_dir::TestDir::new();
+    for args in DEBUG_AND_RELEASE {
+        let out = velt_counted(&dir, GENERATORS, args);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let why = format!("{args:?}: {:?}: {stderr}", out.status);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "embedded true\nboxed true true\nsend true true\nafter\n",
+            "{why}"
+        );
+        assert!(out.status.success(), "{why}");
+        assert!(!stderr.contains("debug-alloc"), "{why}");
+    }
+}
+
 /// A drop in a cleanup pad that panics: the second panic aborts instead of unwinding through the
 /// frame whose cleanup is running (which would drop again what it is dropping).
 #[cfg(not(windows))]

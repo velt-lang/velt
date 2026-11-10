@@ -567,7 +567,17 @@ own temporaries: lowering records each pad link of a poll function, and after th
 has chosen what goes into the state, a link whose code touches a spilled local is bypassed (its
 first block jumps to the next link). Values that never cross a suspension (the temporaries of
 the statement that panicked, locals between two `await`s) are dropped; what the state holds
-leaks with it. A plain function's pads drop everything the frame owns. The spill pass's
+leaks with it. A plain function's pads drop everything the frame owns.
+
+A generator's resume function (and an async generator's poll function) gives every call that
+may unwind a pad, also where the frame owns nothing, and its pads end by setting the state's tag
+to finished (`DONE`) before the resume. The frame holding the generator (a `for...of` frame with
+the state inline, or the owner of a `Generator` object) then drops it as a finished one, which
+does nothing to the state (what it held leaks, as above) and frees the object; without it the
+drop would find the tag of a running generator and panic ("generator is already running"), and
+during that frame's cleanup the panic aborts. A later `next()` (or `next(v)`) is done, as after
+a generator that threw. An async generator's poll function is built the same way; it is reached
+by an unwind only once a catch can run inside an executor (the design's step 5). The spill pass's
 liveness follows unwind edges, so a bypassed link never moves a local into the state.
 
 ### Windows and WebAssembly

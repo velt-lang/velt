@@ -22,6 +22,9 @@ pub(super) struct Pads {
     cache: FxHashMap<String, BlockId>,
     /// The block calling `velt_eh_resume`, once built.
     resume: Option<BlockId>,
+    /// In a generator's resume function: the block marking the generator finished before the
+    /// resume, once built.
+    gen_resume: Option<BlockId>,
     /// While a pad is lowered: its calls get no unwind edge.
     inside: bool,
     /// Each link of a poll function: (its first block, the next link), for the spill pass,
@@ -58,7 +61,8 @@ impl super::Cx<'_> {
 impl FnLower<'_, '_> {
     /// The unwind edge of a call of `callee` emitted now: the pad dropping what the frame owns,
     /// or `None` (the program doesn't catch, the callee can't unwind, the frame owns nothing,
-    /// or this is a pad's own call).
+    /// or this is a pad's own call). Every call in a generator's body that may unwind gets one:
+    /// its pads end by marking the generator finished (`gen_resume_block`).
     pub(super) fn cleanup_pad(&mut self, callee: &vir::Callee) -> Option<BlockId> {
         if self.pads.inside || self.dead() || !eh::may_unwind(callee) || !self.cx.unwind_pads() {
             return None;
@@ -68,13 +72,17 @@ impl FnLower<'_, '_> {
             .filter(|d| self.drops_something(d))
             .cloned()
             .collect();
-        if entries.is_empty() {
+        let generator = self.in_generator();
+        if entries.is_empty() && !generator {
             return None;
         }
         let (cur, loc) = (self.cur, self.loc);
         let known = std::mem::take(&mut self.str_datas);
         self.pads.inside = true;
-        let mut next = self.resume_block();
+        let mut next = match generator {
+            true => self.gen_resume_block(),
+            false => self.resume_block(),
+        };
         let mut key = String::new();
         for d in &entries {
             key.push_str(&self.entry_key(d));
@@ -113,6 +121,23 @@ impl FnLower<'_, '_> {
         let id = self.cx.extern_sym(eh::RESUME, params, ret, true);
         self.call(vir::Callee::Extern(id), vec![], None, true);
         self.pads.resume = Some(b);
+        b
+    }
+
+    /// The block ending a generator body's pads: the generator is marked finished
+    /// (`mark_unwound`), so the frame that holds it drops it quietly and a later `next()` is
+    /// done, then the unwind goes on.
+    fn gen_resume_block(&mut self) -> BlockId {
+        if let Some(b) = self.pads.gen_resume {
+            return b;
+        }
+        let resume = self.resume_block();
+        let b = self.new_block();
+        self.live[b.0 as usize] = true;
+        self.switch_to(b);
+        self.mark_unwound();
+        self.goto(resume);
+        self.pads.gen_resume = Some(b);
         b
     }
 
