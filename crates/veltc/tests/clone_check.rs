@@ -1,9 +1,10 @@
 //! `VELT_SEMA_CLONE_CHECK` builds every program also from a clone of sema's checked context and
-//! compares the two (velt_sema `program.rs`): the dev host's kept checking context
-//! (docs/internals/design/dev-warm-front-end.md step 3, "C") is a clone, sound only if a clone
-//! is a complete, independent copy. Programs with classes, closures, generics, async code,
-//! decorators, generated functions and JSON build with the check on, to the same VIR as without.
-//! Every golden passes with it on too, which the merge queue doesn't run on each pull request.
+//! compares the two (velt_sema `program.rs`), for the dev host's kept checking context
+//! (docs/internals/design/dev-warm-front-end.md step 3, "C"). It shows that the clone holds
+//! everything the finishing steps read, and that nothing they change is shared with the original.
+//! Programs with classes, closures, generics, async code, decorators, generated functions and
+//! JSON build with the check on, to the same VIR as without. Every golden passes with it on too,
+//! which the merge queue doesn't run on each pull request.
 
 mod no_window;
 mod test_dir;

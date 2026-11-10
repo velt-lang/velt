@@ -46,6 +46,16 @@ pub(crate) struct ModuleScope {
 /// (`Ctx::classes_below`).
 pub(crate) type ClassesBelow = std::rc::Rc<[(DefId, DefId)]>;
 
+/// The state of a check. `Clone` for the dev host's kept checking context
+/// (docs/internals/design/dev-warm-front-end.md step 3, "C"): what it holds by value is copied,
+/// `RefCell`s and `OnceCell`s included, and the `Rc`s it holds point to data that doesn't change
+/// (`gen.input` is copied on write). A clone shares with the original what it borrows for `'m`:
+/// - the modules and their syntax trees, which nothing changes;
+/// - `loads`, the std modules loaded on demand (`StdLoads`): sound to share, since it only grows
+///   and each `Ctx` replays the batches it added by index, as the driver's rounds already do;
+/// - `gen.generate`, the driver's generator, whose state (`GenState`, the generated modules)
+///   keeping adds to: a clone that generates code writes into the original check's generator.
+///   A kept clone that checks bodies again must have no generator, or one of its own.
 #[derive(Clone)]
 pub(crate) struct Ctx<'m> {
     /// The program's modules, then the generated ones added during the check (`add_module`).

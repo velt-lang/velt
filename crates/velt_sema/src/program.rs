@@ -1,8 +1,14 @@
-//! The checked context turned into the HIR program (step 6 of `crate`), and the debug check that
-//! a clone of the context builds the same program (`VELT_SEMA_CLONE_CHECK`, below): the dev host
-//! keeps a clone of the checked context to check edited bodies again in
-//! (docs/internals/design/dev-warm-front-end.md step 3, "C. A kept checking context"), which is
-//! only sound if the clone is a complete, independent copy.
+//! The checked context turned into the HIR program (step 6 of `crate`), and a debug check that a
+//! clone of the context builds the same program (`VELT_SEMA_CLONE_CHECK`, below). The dev host
+//! will keep a clone of the checked context to check edited bodies again in
+//! (docs/internals/design/dev-warm-front-end.md step 3, "C. A kept checking context"); what a
+//! clone shares with the original is listed on [`Ctx`].
+//!
+//! What the check shows is narrow: the clone holds everything the finishing steps read, and
+//! nothing those steps change is shared between the clone and the original. It doesn't show that
+//! a clone is independent in general: state shared through a cache keyed by `TyId` would pass it,
+//! because both builds intern the same types in the same order. A body checked again in a clone
+//! needs a check of its own (the design note, C3).
 
 use velt_common::Diagnostics;
 
@@ -12,7 +18,8 @@ use crate::type_level;
 use crate::{anon, any, body, collect, ctx, finalize, hir, layout_merge, module_state, readonly};
 
 /// With this variable set, every program is also built from a clone of the checked context and
-/// compared with the one built from the context itself: a difference is an internal error.
+/// compared with the one built from the context itself: a difference is an internal error that
+/// names the part that differs and shows where, from both sides.
 pub(crate) const CLONE_CHECK_ENV: &str = "VELT_SEMA_CLONE_CHECK";
 
 /// The program of a check that reported no error: its definitions built and finished.
@@ -33,16 +40,38 @@ pub(crate) fn build_checked(
 }
 
 /// What differs between two programs: the first part (a field of the program, or the
-/// diagnostics) whose contents differ, maps and sets compared without their order.
+/// diagnostics) whose contents differ, maps and sets compared without their order, with the text
+/// of each side around the first difference.
 fn differs(a: &(hir::Program, Diagnostics), b: &(hir::Program, Diagnostics)) -> Option<String> {
     let ((pa, da), (pb, db)) = (a, b);
     let mut pa = parts(pa);
     let mut pb = parts(pb);
     pa.push(("diagnostics", format!("{da:?}")));
     pb.push(("diagnostics", format!("{db:?}")));
-    (pa.iter().zip(&pb))
-        .find(|(x, y)| x.1 != y.1)
-        .map(|(x, _)| x.0.to_string())
+    let (x, y) = pa.iter().zip(&pb).find(|(x, y)| x.1 != y.1)?;
+    let (from, to) = around_difference(&x.1, &y.1);
+    Some(format!("{}\n  context: …{from}…\n  clone:   …{to}…", x.0))
+}
+
+/// The text of `a` and of `b` around the first character where they differ: up to `SHOWN` bytes
+/// before it and after it, on character boundaries.
+fn around_difference<'s>(a: &'s str, b: &'s str) -> (&'s str, &'s str) {
+    const SHOWN: usize = 150;
+    let at = (a.char_indices().zip(b.chars()))
+        .find(|((_, x), y)| x != y)
+        .map_or(a.len().min(b.len()), |((i, _), _)| i);
+    let window = |s: &'s str| {
+        let mut lo = at.saturating_sub(SHOWN);
+        while !s.is_char_boundary(lo) {
+            lo -= 1;
+        }
+        let mut hi = (at + SHOWN).min(s.len());
+        while !s.is_char_boundary(hi) {
+            hi += 1;
+        }
+        &s[lo..hi]
+    };
+    (window(a), window(b))
 }
 
 /// The contents of each field of a program, as text. Destructured field by field: a new field
@@ -223,4 +252,21 @@ fn build(
         c_exports: std::mem::take(&mut cx.c_exports),
     };
     (program, diags)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::around_difference;
+
+    #[test]
+    fn the_message_shows_both_sides_at_the_first_difference() {
+        let a = format!("{}Adt(7){}", "x".repeat(400), "y".repeat(400));
+        let b = format!("{}Adt(8){}", "x".repeat(400), "y".repeat(400));
+        let (from, to) = around_difference(&a, &b);
+        assert!(from.contains("Adt(7)") && to.contains("Adt(8)"));
+        assert!(from.len() <= 301 && to.len() <= 301);
+        // A difference in length only, and multi-byte characters at the window's edges.
+        let (from, to) = around_difference("ééé", "éééé");
+        assert_eq!((from, to), ("ééé", "éééé"));
+    }
 }
