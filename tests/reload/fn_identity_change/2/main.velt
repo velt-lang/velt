@@ -1,0 +1,39 @@
+// A version that starts comparing function values (#2653): every closure then carries an
+// identity, an environment of its own, which the running version's closures do not have and the
+// new code would drop, so `velt dev` restarts instead of swapping.
+import { serve } from "http-server";
+
+let fns: (() => string)[] = [];
+
+function handle(path: string): string {
+  if (path == "/add") {
+    fns.push(() => "f");
+    return `added ${fns.length}`;
+  }
+  if (path == "/call") {
+    let s = "";
+    for (const f of fns) {
+      s += f();
+    }
+    return `call [${s}]`;
+  }
+  if (path == "/drop") {
+    fns.pop();
+    return `dropped ${fns.length}`;
+  }
+  if (path == "/same") {
+    return `same ${fns.length > 1 && fns[0] === fns[1]}`;
+  }
+  return "ok";
+}
+
+// A declared function, not a closure: `main` stays the same when closures get an identity.
+async function respond(req: Request): Promise<Response> {
+  return new Response(handle(new URL(req.url).pathname));
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, respond);
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

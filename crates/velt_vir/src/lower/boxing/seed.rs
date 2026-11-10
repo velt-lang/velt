@@ -32,10 +32,16 @@
 //! implements interface `I` by one hidden struct name (`hidden_struct_def`), so two of them share a
 //! key and the seed may count another one than the old version did: every hidden struct may be
 //! counted in a cold build too, so that costs at most an extra pass.
+//!
+//! The seed is also what the dev host compares to tell whether the running program's values fit
+//! the next version's code ([`CountedSeed::representation_change`], #2653): a class the running
+//! version did not count holds no count in front of its objects, which code that counts it would
+//! read and free by. A seed never takes a type out, but it adds what the next version newly
+//! counts, and a lowering done again without it may count fewer.
 
 use std::collections::BTreeSet;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use velt_sema::hir::{DefId, TyId};
 
 use super::Boxing;
@@ -51,13 +57,113 @@ pub struct CountedSeed {
     /// [`Boxing`]'s flags, likewise.
     flags: Vec<bool>,
     any_call_keys: BTreeSet<String>,
+    /// The sets never seeded but compared ([`CountedSeed::representation_change`]): live values
+    /// carry them too (a weak-capable object's flag, a tagged proxy pointer). Weak-capable
+    /// types and class hierarchies, then the types and hierarchies that may hold a proxy.
+    unseeded_types: Vec<BTreeSet<String>>,
+    unseeded_defs: Vec<BTreeSet<String>>,
+    /// `weak_object`.
+    unseeded_flags: Vec<bool>,
+    /// Every type key and definition name the program has, counted or not: a name whose
+    /// counting differs between two versions matters only when both have it (a new class has no
+    /// live objects yet).
+    known: FxHashSet<String>,
 }
+
+/// What each of [`CountedSeed::types`] decides about values of its types, for
+/// [`CountedSeed::representation_change`]; `None`: nothing live values carry (`interior` only
+/// changes which parameters are `noalias`, decided per version).
+const TYPE_SETS: [Option<&str>; 7] = [
+    Some("counted"),
+    None,
+    Some("held by identity as an interface"),
+    Some("copied by a transfer"),
+    Some("an array view"),
+    Some("an `RwLock` value"),
+    Some("counted under an `RwLock`"),
+];
+
+/// Likewise for [`CountedSeed::defs`].
+const DEF_SETS: [&str; 4] = [
+    "counted",
+    "counted (recursive)",
+    "carrying its `any` table",
+    "counted under an `RwLock`",
+];
+
+/// Likewise for [`CountedSeed::unseeded_types`] and [`CountedSeed::unseeded_defs`].
+const UNSEEDED_SETS: [&str; 2] = ["weak-capable", "a possible proxy"];
+
+/// What each of [`CountedSeed::flags`] decides, program-wide, about live values or the tables
+/// they point at.
+const FLAGS: [&str; 13] = [
+    "how `any` values hold objects",
+    "the identity of function values",
+    "the `any` tables of generic closures",
+    "the `any` tables' write slots",
+    "the properties of function values",
+    "the `any` tables' `in` slot",
+    "the transfer entries of environments",
+    "the `any` tables' delete slot",
+    "the `any` tables' keys slot",
+    "the `any` tables' reflection slot",
+    "the `any` tables' number slot",
+    "what a shared read counts",
+    "the `any` tables' member slots",
+];
 
 impl CountedSeed {
     /// Whether one of its sets names `name` (a type key, or `adt Node` for a definition).
     #[cfg(test)]
     pub(crate) fn names(&self, name: &str) -> bool {
         (self.types.iter().chain(&self.defs)).any(|s| s.contains(name))
+    }
+
+    /// Why values the program lowered as `self` made would not fit code lowered as `next`, the
+    /// next version (`velt dev` restarts then instead of swapping, #2653): a type or class both
+    /// versions have that one counts and the other does not (the old code frees or reads an
+    /// object by a count that is not there), or a program-wide choice such as whether closures
+    /// carry an identity (`fn_identity`, which decides whether a closure has an environment to
+    /// drop). `None` when every value of the running program is represented the same in `next`.
+    pub fn representation_change(&self, next: &CountedSeed) -> Option<String> {
+        let both = |name: &&String| self.known.contains(*name) && next.known.contains(*name);
+        let sets = (self.types.iter().zip(&next.types).zip(TYPE_SETS))
+            .filter_map(|((a, b), what)| Some((a, b, what?)))
+            .chain((self.defs.iter().zip(&next.defs).zip(DEF_SETS)).map(|((a, b), w)| (a, b, w)))
+            .chain(
+                (self
+                    .unseeded_types
+                    .iter()
+                    .zip(&next.unseeded_types)
+                    .zip(UNSEEDED_SETS))
+                .map(|((a, b), w)| (a, b, w)),
+            )
+            .chain(
+                (self
+                    .unseeded_defs
+                    .iter()
+                    .zip(&next.unseeded_defs)
+                    .zip(UNSEEDED_SETS))
+                .map(|((a, b), w)| (a, b, w)),
+            );
+        for (before, after, what) in sets {
+            let mut changed: Vec<&String> =
+                before.symmetric_difference(after).filter(both).collect();
+            changed.sort();
+            if let Some(name) = changed.first() {
+                let shown = shown_name(name);
+                return Some(match after.contains(*name) {
+                    true => format!("{shown} is now {what}"),
+                    false => format!("{shown} is no longer {what}"),
+                });
+            }
+        }
+        if self.unseeded_flags != next.unseeded_flags {
+            return Some("whether `object` values can be held weakly changed".to_string());
+        }
+        (self.flags.iter().zip(&next.flags).zip(FLAGS))
+            .find(|((a, b), _)| a != b)
+            .map(|(_, what)| format!("{what} changed"))
     }
 
     /// Names nothing (the first version's, or a program that counts nothing): nothing to add.
@@ -122,14 +228,15 @@ impl Cx<'_> {
             transferred,
             // Not seeded: whether a class or type is weak-capable or may hold a proxy decides
             // whether an `RwLock` read of it is exclusive (locks.rs `lock_reach`), which is
-            // behavior (module docs). Each lowering finds them again.
-            weak_roots: _,
-            weak: _,
-            weak_object: _,
+            // behavior (module docs). Each lowering finds them again; the seed records them only
+            // to compare versions (`unseeded_types`).
+            weak_roots,
+            weak,
+            weak_object,
             dyn_types: _,
             dyn_to_any,
-            proxy_roots: _,
-            proxy_types: _,
+            proxy_roots,
+            proxy_types,
             proxy_class: _,
             proxy_traced: _,
             array_views,
@@ -176,7 +283,23 @@ impl Cx<'_> {
                 *any_members,
             ],
             any_call_keys: any_call_keys.clone(),
+            unseeded_types: vec![types(&mut weak.iter()), types(&mut proxy_types.iter())],
+            unseeded_defs: vec![defs(&mut weak_roots.iter()), defs(&mut proxy_roots.iter())],
+            unseeded_flags: vec![*weak_object],
+            known: self.known_names(),
         }
+    }
+
+    /// Every type key and definition name of the program ([`CountedSeed::known`]). Types made
+    /// in an earlier pass around one of its shape placeholders are left out: no value has them.
+    fn known_names(&self) -> FxHashSet<String> {
+        let stale = self.stale_ph_types();
+        let mut known: FxHashSet<String> = (0..self.types.len())
+            .filter(|&i| !stale.get(i).copied().unwrap_or(true))
+            .map(|i| self.type_key(TyId(i as u32)))
+            .collect();
+        known.extend((0..self.hir.defs.len()).filter_map(|i| self.seed_def_name(DefId(i as u32))));
+        known
     }
 
     /// `b` with what `seed` names that this program has added: the counted types the first
@@ -248,5 +371,14 @@ impl Cx<'_> {
             Def::Fn(f) => Some(format!("fn {}", f.name)),
             _ => None,
         }
+    }
+}
+
+/// A seed name as a restart reason shows it: `class Node` for `adt Node`.
+fn shown_name(name: &str) -> String {
+    match name.split_once(' ') {
+        Some(("adt", n)) => format!("class {n}"),
+        Some(("iface", n)) => format!("interface {n}"),
+        _ => name.to_string(),
     }
 }

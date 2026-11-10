@@ -103,10 +103,12 @@ futures already in flight finish on the old code. That is the right behavior for
 them per function key. It restarts when an existing aggregate layout changed (live objects have
 the old shape), a closure's environment layout changed, a function's signature changed (old
 frames would call the new code with the old ABI), `main`'s already-executed part changed, a key
-that live data may still reference disappeared, or the key diff is ambiguous. Everything else
+that live data may still reference disappeared, the key diff is ambiguous, or a value would be
+represented differently (a class one version counts and the other does not, closures that gain
+or lose an identity: #2653). Everything else
 swaps: function bodies, handler logic, new functions and types, string and constant changes, and
-async bodies (through pinning). Velt has no mutable globals, so there is **no global state to
-migrate**, unlike most hot-reload systems.
+async bodies (through pinning). Module state is never migrated: it is kept as it is, or started
+over (decision 2).
 
 **Stable function keys.** A function's key must not depend on compilation order: generic
 instances spell out their type arguments (`sum<i64>`), glue is keyed by its type's name, and
@@ -121,9 +123,20 @@ Designed in [dev-warm-front-end.md](dev-warm-front-end.md) (#2621).
 ## Decisions
 
 1. **Stable function keys**: symbols never depend on type-interning order.
-2. **Module state starts over.** Module-level `let`s (#76) live in a process-wide block the
-   runtime keys by the program's module descriptor; swapped-in code has a new descriptor and gets a
-   fresh block from its own initializers, so nothing is migrated
+2. **Module state is kept, or starts over; never migrated.** Module-level `let`s (#76) live in a
+   process-wide block the runtime keys by the address of the program's module descriptor. A
+   version whose module state has the same key as the running one (the descriptor's contents:
+   size, slot names, init and drop functions; and the fingerprints of those functions, which spell
+   the layout and the initializers) imports the running descriptor, so swapped-in code reads and
+   writes the live values (#2654): every edit that leaves the module-level declarations alone.
+   An edit that changes an initializer but keeps the block's layout also swaps, into a fresh
+   block: the version gets a descriptor of its own, its code a block
+   initialized by its own initializers, and every function reaching module state is recompiled,
+   changed or not, so all new calls use the new block. An edit that changes the layout (a
+   module-level `let` added or removed, a slot whose type changes) restarts (`module state gained
+   a slot`, `module state lost a slot`, `the type of a module state slot changed`), and so does a
+   renamed slot: the descriptor holds the slot names, and `main` reaches the descriptor (`main
+   changed (it already ran)`)
    ([the Reference](https://veltlang.com/docs/reference/variables/#module-state)). State in `shared(...)` or
    class instances owned by `main` or handlers carries over. So does a static atomic
    (`const X = new Atomic<T>(literal)`, not module state) and a `ThreadLocal`'s key: the
@@ -169,11 +182,17 @@ its code that does not depend on ids (async state aggregates are fingerprinted b
 embedding a child's state is recompiled through its reference to the child's pinned `poll`
 instead). The restart rules, in order, each with its message: an ambiguous key changed; a layout
 lost a structure and gained another (`Point gained a field`, `the captures of
-main::{closure#0} changed`); a signature changed (`the signature of greet changed`); one of
+main::{closure#0} changed`); the module state's layout changed (`module state gained a slot`); a
+signature changed (`the signature of greet changed`); a value of
+the running version is represented differently, which veltc's host decides before this from
+lowering's counted types and the weak and proxy sets it records only for this comparison
+(`CountedSeed::representation_change`: `class Node is now counted`, `the identity of function
+values changed`); one of
 `main`'s keys changed (`main changed (it already ran)`); a key whose address was taken
 disappeared; closures were added or reordered while an existing one changed. Otherwise the
 changed and new keys are compiled, plus every function that refers to a recompiled pinned
-function. After 200 swaps the host restarts to reclaim memory.
+function, plus every function reaching module state when its key changed (its layout did not:
+a changed layout restarts, see decision 2). After 200 swaps the host restarts to reclaim memory.
 
 **Supervisor and host** ([rt_abi_async.md §13](../contracts/rt_abi_async.md)): after `go`, the
 host keeps its build-report connection; on a change the supervisor sends `reload` there, the
@@ -201,12 +220,14 @@ trampoline bytes are unit-tested per architecture; the reload tests also pass on
 (not yet run on macOS). JIT frames there have no registered unwind information yet.
 
 **Tests**: `velt_codegen_cl` `tests/hot_swap.rs` (hand-built VIR: old code reaching new code
-through direct calls, function values and a pinned entry; restart reasons; repeated swaps);
+through direct calls, function values and a pinned entry; restart reasons; repeated swaps),
+`tests/hot_swap_state.rs` (which module state descriptor swapped code reaches);
 `veltc` `dev/swap/tests.rs` (real sources: body, async-body and generic edits swap; layout,
 signature, `main` and capture changes restart); and the reload tests in `tests/reload/` (JIT and
 `--exe`, with a probe asserting that no connection is refused): swaps for `hello_server`,
 `shared_counter` (the count continues), `imported_module`, `new_function`, `generic_edit`, a
-fix after a failed build; restarts for `struct_field`, `signature_change`, `closure_captures`;
+fix after a failed build, `module_state_kept`; restarts for `struct_field`, `signature_change`,
+`closure_captures`, `counted_change`, `fn_identity_change`;
 and `in_flight` (a slow request started before the swap answers from the old code while new
 requests get the new code).
 

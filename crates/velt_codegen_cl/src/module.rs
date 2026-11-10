@@ -42,6 +42,8 @@ pub(crate) struct Built {
     pub cache: CacheStats,
     /// The time of each step: declaring, translating and compiling (on every core), defining.
     pub timings: Vec<(&'static str, Duration)>,
+    /// Cranelift ids of `program.statics`, in order.
+    pub statics: Vec<DataId>,
 }
 
 /// Module-level ids of the program's entities, indexed by VIR id.
@@ -62,8 +64,10 @@ pub(crate) struct Declarations {
 pub(crate) enum Naming<'a> {
     /// Every function is defined under its symbol with its VIR linkage (objects, tests).
     Program,
-    /// A `velt dev` version: one entry per VIR function.
-    Dev(&'a [DevFunction]),
+    /// A `velt dev` version: one entry per VIR function, and a static the version imports
+    /// under a symbol instead of defining it (the module state's descriptor of an earlier
+    /// version, dev/mod.rs).
+    Dev(&'a [DevFunction], Option<(usize, &'a str)>),
 }
 
 /// How a `velt dev` version declares one function.
@@ -165,6 +169,7 @@ pub(crate) fn build_module_cached<M: Module>(
     let compiling = start.elapsed();
     Ok(Built {
         funcs: defs,
+        statics: decls.statics,
         references: decls.funcs,
         unwind,
         lines,
@@ -249,7 +254,7 @@ fn declare_all<M: Module>(
                 .collect();
             (funcs, defs)
         }
-        Naming::Dev(names) => declare_dev_functions(module, program, call_conv, names)?,
+        Naming::Dev(names, _) => declare_dev_functions(module, program, call_conv, names)?,
     };
     let mut externs = Vec::with_capacity(program.externs.len());
     let (mut tls, mut tls_keys) = (FxHashMap::default(), FxHashMap::default());
@@ -277,7 +282,7 @@ fn declare_all<M: Module>(
             )?;
             // A `velt dev` version imports the session's key slot (dev/mod.rs), so every
             // version of the program uses one key per constant.
-            let shared = matches!(naming, Naming::Dev(_));
+            let shared = matches!(naming, Naming::Dev(..));
             crate::tls::define_on_keys(module, call_conv, &mut tls_keys, call, id, sig, shared)?;
             externs.push(Some(id));
             continue;
@@ -308,7 +313,11 @@ fn declare_all<M: Module>(
         // A static atomic's word, in a `velt dev` version: the session's (dev/mod.rs), so
         // every version changes the same one.
         let declared = match (s.mutable, naming, &s.symbol) {
-            (Some(id), Naming::Dev(_), _) => {
+            // An earlier version's copy, which this one uses instead of its own.
+            (_, Naming::Dev(_, Some((shared, sym))), _) if *shared == i => {
+                module.declare_data(sym, Linkage::Import, false, false)
+            }
+            (Some(id), Naming::Dev(..), _) => {
                 let sym = velt_vir::atomic::static_symbol(id);
                 module.declare_data(&sym, Linkage::Import, true, false)
             }
@@ -331,8 +340,9 @@ fn declare_all<M: Module>(
     };
     // Defined after all declarations: relocations may point at any function, extern or static.
     for (i, s) in program.statics.iter().enumerate() {
-        let dev_word = s.mutable.is_some() && matches!(naming, Naming::Dev(_));
-        if !dev_word && s.linkage != vir::Linkage::Import {
+        let dev_word = s.mutable.is_some() && matches!(naming, Naming::Dev(..));
+        let shared = matches!(naming, Naming::Dev(_, Some((shared, _))) if *shared == i);
+        if !dev_word && !shared && s.linkage != vir::Linkage::Import {
             define_static(module, &targets, i, s)?;
         }
     }

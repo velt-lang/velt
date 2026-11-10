@@ -41,6 +41,9 @@ use trampoline::Slot;
 /// Swaps after which the host restarts to reclaim the memory of old versions.
 const MAX_SWAPS: u32 = 200;
 
+/// The symbol a version imports the running module state descriptor under (`Naming::Dev`).
+const SHARED_MODULE_DESC: &str = "velt_dev_module_desc";
+
 /// A JIT session: owns every version it loaded (and so the code's memory), the slots and
 /// trampolines, and the facts of the running version.
 pub struct DevSession {
@@ -62,6 +65,10 @@ pub struct DevSession {
     /// for the whole session, starting as the first version's value, which every version
     /// imports. Never freed.
     static_atomics: FxHashMap<u64, Box<std::sync::atomic::AtomicU64>>,
+    /// The address of the running version's module state descriptor, which the runtime keys
+    /// its block by: a version whose module state has the same key imports it, so its code
+    /// reads and writes the values the running code does (`classify::shares_module_state`).
+    module_desc: Option<usize>,
 }
 
 /// A program loaded by [`DevSession::load`]; valid as long as its session lives.
@@ -98,6 +105,7 @@ impl DevSession {
             debug_info: true,
             tls_keys: FxHashMap::default(),
             static_atomics: FxHashMap::default(),
+            module_desc: None,
         }
     }
 
@@ -128,8 +136,9 @@ impl DevSession {
             .position(|f| f.symbol == "velt_main")
             .ok_or("codegen: the program has no `velt_main`")?;
         let all: FxHashSet<&str> = program.funcs.iter().map(|f| f.symbol.as_str()).collect();
-        let code = self.install(program, &all, true, timings)?;
-        self.running = Some(Facts::of(program));
+        let facts = Facts::of(program);
+        let code = self.install(program, &all, true, &facts, false, timings)?;
+        self.running = Some(facts);
         let main = code[main_index].ok_or("ICE: `velt_main` was not compiled")?;
         Ok(JitProgram { main })
     }
@@ -156,13 +165,14 @@ impl DevSession {
             return Ok(Reload::Restart(reason));
         }
         let facts = Facts::of(program);
+        let share = classify::shares_module_state(running, &facts);
         match classify::classify(running, &facts) {
             Decision::Restart(reason) => Ok(Reload::Restart(reason)),
             Decision::Swap(keys) => {
                 // Nothing compiled (e.g. only comments changed): no new module either.
                 if !keys.is_empty() {
                     let define: FxHashSet<&str> = keys.iter().map(String::as_str).collect();
-                    self.install(program, &define, false, timings)?;
+                    self.install(program, &define, false, &facts, share, timings)?;
                     self.swaps += 1;
                 }
                 self.running = Some(facts);
@@ -173,27 +183,44 @@ impl DevSession {
         }
     }
 
-    /// Compile the functions of `program` in `define` as a new version and switch to them.
-    /// Returns the code address of each defined function.
+    /// Compile the functions of `program` (whose facts are `facts`) in `define` as a new version
+    /// and switch to them; `share`: it keeps the running version's module state. Returns the
+    /// code address of each defined function.
     fn install(
         &mut self,
         program: &vir::Program,
         define: &FxHashSet<&str>,
         first: bool,
+        facts: &Facts,
+        share: bool,
         timings: &mut Vec<(&'static str, Duration)>,
     ) -> Result<Vec<Option<usize>>, String> {
         let (names, new_slots) = self.names(program, define);
         let mut imports = self.imports(program, &names)?;
         imports.extend(self.tls_key_slots(program));
         imports.extend(self.static_atomic_words(program));
+        let desc = facts.module_state.as_ref().map(|m| m.desc.0 as usize);
+        let shared_static = match (desc, self.module_desc) {
+            (Some(desc), Some(address)) if share => {
+                imports.push((SHARED_MODULE_DESC.to_string(), address));
+                Some((desc, SHARED_MODULE_DESC))
+            }
+            _ => None,
+        };
         let inputs = version::Inputs {
             names: &names,
             imports: &imports,
             runtime: &self.runtime,
             first,
             debug_info: self.debug_info,
+            shared_static,
+            wanted_static: desc.filter(|_| shared_static.is_none()),
         };
         let version = version::compile(program, &inputs, timings)?;
+        // A version with module state of its own: its descriptor keys the block from now on.
+        if shared_static.is_none() {
+            self.module_desc = version.wanted_static;
+        }
         for (i, func) in program.funcs.iter().enumerate() {
             let Some(code) = version.code[i] else {
                 continue;

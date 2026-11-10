@@ -1,0 +1,30 @@
+// Module state across hot swaps (#2654): a swapped-in function reads and writes the block the
+// running code uses, so an edit that leaves the module-level declarations alone keeps their
+// values (step 2). An edit to an initializer starts the state over for all code, swapped and
+// unchanged alike (step 3: `count` is the same in every version). A restart (`--exe` mode)
+// starts over each time.
+import { serve } from "http-server";
+
+let saved: string[] = ["x"];
+
+function count(): number {
+  return saved.length;
+}
+
+function handle(path: string): string {
+  if (path == "/add") {
+    saved.push("a");
+  }
+  if (path == "/count") {
+    return `count ${count()}`;
+  }
+  return `n=${saved.length}`;
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(handle(new URL(req.url).pathname));
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

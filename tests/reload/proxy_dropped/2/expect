@@ -1,0 +1,3 @@
+action: restart
+reason: class Box is no longer a possible proxy
+get /read: read2 0:

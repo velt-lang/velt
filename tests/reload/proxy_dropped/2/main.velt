@@ -1,0 +1,52 @@
+// A version that stops proxying a class (#2653): the running version stored proxies of `Box` in
+// module state, which the new code would read as plain objects, so `velt dev` restarts. `Other`
+// stays proxied, so the `any` glue both versions have survives the edit and only the seed's proxy
+// sets (`CountedSeed::representation_change`) tell the versions apart.
+import { serve } from "http-server";
+
+class Box {
+  v: number = 1;
+  tag: string = "b";
+}
+
+class Other {
+  w: number = 7;
+}
+
+let saved: Box[] = [];
+
+function wrap(target: any): any {
+  return new Proxy(target, {});
+}
+
+function list(): string {
+  let s = "";
+  for (let i = 0; i < saved.length; i++) {
+    s += `${saved[i].v}${saved[i].tag},`;
+  }
+  return s;
+}
+
+function handle(path: string): string {
+  if (path == "/make") {
+    const b = new Box();
+    saved.push(b);
+    return `made ${saved.length}`;
+  }
+  if (path == "/other") {
+    const o = wrap(new Other()) as Other;
+    return `other ${o.w}`;
+  }
+  if (path == "/read") {
+    return `read2 ${saved.length}:${list()}`;
+  }
+  return "ok";
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(handle(new URL(req.url).pathname));
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}
