@@ -11,6 +11,9 @@
 //!   gets the leading ones;
 //! - it takes more parameters than the expected type passes, all of them optional or with
 //!   defaults (`setTimeout(tick, 10)` with `function tick(n?: number)`): `f` gets none of them;
+//!   a standard timer calls its callback with no arguments, so there the required ones may be
+//!   left out too when each admits `undefined`, which they get (`setTimeout(resolve, 10)` with
+//!   a promise's `resolve: (value: unknown) => void`, as in Node);
 //! - the expected type returns `void` and `f` returns a value: it is dropped;
 //! - the expected type returns a union with `f`'s result as a member (`(x) => Resp` for
 //!   `(x) => Resp | Promise<Resp>`): it converts;
@@ -36,7 +39,7 @@
 use velt_syntax::ast;
 
 use super::args::as_arrow;
-use super::callback_wrap::{plan, wrapper, Plan, Shape};
+use super::callback_wrap::{plan, wrapper, Arg, Plan, Shape};
 use crate::body::places::is_place;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::collect::ret_infer::stmt_returns_value;
@@ -139,7 +142,12 @@ impl FnCx<'_, '_> {
         let widens_result = ret_known.is_some_and(|r| self.result_widens(r, want_ret));
         // A sync function where a timer wants the promise to run: checked as an async arrow.
         let becomes_task = task && !returns_promise;
-        if sig.required > n && !want.rest {
+        // A timer passes no arguments: required parameters that admit `undefined` get it.
+        let undefined_args = match task && !want.rest && sig.required > n {
+            true if self.admit_undefined(&sig.params[n..sig.required]) => sig.required - n,
+            _ => 0,
+        };
+        if sig.required > n && !want.rest && undefined_args == 0 {
             return None;
         }
         if sig.shape() == want
@@ -150,9 +158,20 @@ impl FnCx<'_, '_> {
         {
             return None;
         }
-        let Some(args) = self.adapter_args(want, elem, &sig, arg) else {
+        let Some(mut args) = self.adapter_args(want, elem, &sig, arg) else {
             return Some(self.error_expr(arg.span));
         };
+        // A trailing `void` parameter is left out (`resolve()` of a `Promise<void>`).
+        let unit = self.cx.ty.unit;
+        let passes_undefined = match undefined_args {
+            0 => 0,
+            k => (sig.params[n..n + k].iter())
+                .rposition(|&t| t != unit)
+                .map_or(0, |i| i + 1),
+        };
+        for arm in &mut args.arms {
+            arm.extend((0..passes_undefined).map(|_| Arg::Undefined));
+        }
         let wrap = if becomes_task {
             Wrap::Task
         } else if to_void && returns_promise {
