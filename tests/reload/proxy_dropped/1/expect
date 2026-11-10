@@ -1,0 +1,4 @@
+action: start
+get /make: made 1
+get /read: read 1b,
+get /other: other 7
