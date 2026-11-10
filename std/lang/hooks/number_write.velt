@@ -1,25 +1,19 @@
 // velt/lang/hooks (internal): the compiler's hook for a float written by `console.log` or
-// `console.error` with the space or newline after it, in one write (velt_vir `console.rs`). Out of
-// velt/lang/hooks/number_text, whose integer hooks a printed float doesn't demand: it waits for
-// live code that prints a float (velt_common `ON_DEMAND_WRITE`), and lowering calls the runtime's
-// printer while it is unchecked. Loaded then (`ON_DEMAND_MODULES`), with number_text for the
-// integer writer that a whole number takes.
-
-import { intWrite, whole } from "velt/lang/hooks/number_text";
+// `console.error` with the space or newline after it (velt_vir `console.rs`). Out of
+// velt/lang/hooks/number_text, and holding none of its integer hooks, so that a program that
+// prints a float checks no integer printing: it waits for live code that prints a float
+// (velt_common `ON_DEMAND_WRITE`), and lowering calls the runtime's printer while it is unchecked.
+// Loaded then (`ON_DEMAND_MODULES`). Where `x` is known to be a whole number other than `-0`,
+// `velt_opt` numrep calls the integer writer `intWrite` in its place, if the program has it.
 
 declare function velt_rt_write_f64(stream: u32, x: f64);
 declare function velt_rt_write_byte(stream: u32, b: u8);
 
 /**
- * Writes a float as `console.log` prints it and `end` to `stream`: a whole number below 2^53 other
- * than `-0` by `intWrite` (which `velt_opt` numrep calls directly when it knows `x` is one),
- * anything else (`-0`, `0.5`, `1e+21`, `NaN`) by the runtime's printer.
+ * Writes a float as `console.log` prints it (`1`, `-0`, `0.5`, `1e+21`, `NaN`), by the runtime's
+ * printer, and `end` to `stream`.
  */
 export function numberWrite(stream: u32, x: f64, end: u8): void {
-  if (whole(x) && (x != 0.0 || 1.0 / x > 0.0)) {
-    intWrite(stream, x as i64, end);
-    return;
-  }
   velt_rt_write_f64(stream, x);
   velt_rt_write_byte(stream, end);
 }

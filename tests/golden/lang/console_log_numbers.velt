@@ -1,8 +1,9 @@
 // console.log of numbers as plain arguments (the direct path: no builder): every integer width at
-// its bounds, through std's `intWrite` / `uintWrite`, and floats through `numberWrite`: a whole
-// float prints its integer digits (also where the optimizer proves it whole and calls the integer
-// writer directly), `-0` stays `-0`, and the 2^53 boundaries, `1e21`, `NaN` and infinities keep
-// the runtime's float text (#2197).
+// its bounds, through std's `intWrite` / `uintWrite`, and floats through `numberWrite` (the
+// runtime's printer), or `intWrite` where the optimizer proves one whole and not `-0`, as the
+// loop's `i` and `x`, since this program has it: a whole float prints its integer digits either
+// way, `-0` stays `-0`, and the 2^53 boundaries, `1e21`, `NaN` and infinities keep the float
+// text (#2197).
 const a: i8 = -128;
 const b: u8 = 255;
 const c: i16 = -32768;

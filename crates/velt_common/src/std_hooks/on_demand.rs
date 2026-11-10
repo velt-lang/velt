@@ -10,9 +10,8 @@
 pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
 
 /// The lowered hook that sema checks only once live code prints a float (`velt_sema` `lazy_std`):
-/// `console.log`'s float writer, whose whole numbers take std's integer writer (`int_write`, which
-/// it calls by name, so no construct demands it). Lowering calls the runtime's printer while it is
-/// unchecked.
+/// `console.log`'s float writer, which calls the runtime's printer and no integer hook. Lowering
+/// calls that printer while it is unchecked.
 pub const ON_DEMAND_WRITE: &[&str] = &["number_write"];
 
 /// The std modules of hooks no program needs by default: not loaded with the prelude. Sema demands

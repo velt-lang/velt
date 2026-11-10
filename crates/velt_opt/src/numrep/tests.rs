@@ -509,14 +509,20 @@ enum Printed {
 /// `f(a: i32)`: `console.log(x)` of `x` (`Printed`) through std's `numberWrite`, with its integer
 /// twin `intWrite` in the program (bodies left empty: only the calls matter).
 fn formatted_program(x_is: Printed) -> Program {
+    formatted(x_is, true)
+}
+
+/// `formatted_program`, with `intWrite` in the program or not.
+fn formatted(x_is: Printed, with_int: bool) -> Program {
     let mut pb = ProgramBuilder::new();
     // `f` is the first function, as `callees` reads it; the hooks follow it.
     let f_id = pb.reserve();
     let mut hooks = Vec::new();
-    for (hook, ty) in [
-        (velt_common::std_hook!(number_write), Ty::F64),
-        (velt_common::std_hook!(int_write), Ty::I64),
-    ] {
+    let int_write = (velt_common::std_hook!(int_write), Ty::I64);
+    for (hook, ty) in [(velt_common::std_hook!(number_write), Ty::F64)]
+        .into_iter()
+        .chain(with_int.then_some(int_write))
+    {
         let symbol = velt_vir::mangle::mangle(hook);
         let mut h = FuncBuilder::internal(&symbol, &[Ty::U32, ty, Ty::U8], Ty::Unit);
         let b = h.block();
@@ -572,6 +578,15 @@ fn whole_numbers_format_through_the_integer_formatters() {
     assert_eq!(callees(&q), std::slice::from_ref(&number_write));
     // `console.log` prints `-0` as `-0`, which the integer cannot.
     let q = narrowed(&formatted_program(Printed::Zero));
+    assert_eq!(callees(&q), [number_write]);
+}
+
+/// `numberWrite` holds no integer writer: a program that prints only `number`s has no `intWrite`
+/// to switch to, and keeps the float writer (the runtime's printer) for a whole number too.
+#[test]
+fn a_whole_number_keeps_the_float_writer_without_the_integer_one() {
+    let number_write = velt_vir::mangle::mangle(velt_common::std_hook!(number_write));
+    let q = narrowed(&formatted(Printed::Whole, false));
     assert_eq!(callees(&q), [number_write]);
 }
 

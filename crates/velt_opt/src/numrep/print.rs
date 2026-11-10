@@ -3,9 +3,12 @@
 //! `floatPush` of a whole `x` below 2^53 becomes one of `intWrite`, `intText` or `intPush` of
 //! `x as i64`: no conversion to `f64` and no test in the formatter once `x` is an integer.
 //! `console.log` prints `-0` as `-0`, so for `numberWrite` `x` must not be `-0` either
-//! (`` `${-0}` `` is `0`, which the integer prints). Each float hook calls its integer twin, so
-//! a program that calls one has both. The runtime's float printers have no integer twin left:
-//! the runtime prints no integer (#2197).
+//! (`` `${-0}` `` is `0`, which the integer prints). A call switches only to a twin the program
+//! has ([`pairs`]): the text hooks call theirs, so a program that calls one has both, but
+//! `numberWrite` holds no integer writer (a printed float would make sema check the integer
+//! printing), so `console.log` of a whole `number` takes `intWrite` only where something else in
+//! the program, such as printing an integer type, has it. The runtime's float printers have no
+//! integer twin left: the runtime prints no integer (#2197).
 
 use velt_vir::vir::Place;
 use velt_vir::vir::{Callee, FuncId, Function, Local, LocalDecl, Operand};

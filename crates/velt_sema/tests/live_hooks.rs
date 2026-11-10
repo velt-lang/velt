@@ -183,13 +183,13 @@ fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
     }
 }
 
-/// `console.log` of a float checks its writer (`numberWrite`, velt_common `ON_DEMAND_WRITE`) and
-/// the integer writer it holds, which only its whole numbers reach, but demands no integer hook
-/// and checks none of the text hooks (their module, velt/lang/hooks/number_text, is loaded for the
-/// integer writer). A program that prints no float leaves the float writer unchecked (`velt_lsp`'s
-/// `demand` test: nor does it load its module).
+/// `console.log` of a float checks its writer (`numberWrite`, velt_common `ON_DEMAND_WRITE`), but
+/// demands no integer hook and checks no integer printing: neither the integer writer, which
+/// `numberWrite` doesn't hold (numrep calls it for a whole number only where the program has it),
+/// nor the text hooks. A program that prints no float leaves the float writer unchecked
+/// (`velt_lsp`'s `demand` test: nor does it load its module).
 #[test]
-fn a_float_printed_checks_its_writer_and_no_text_hook() {
+fn a_float_printed_checks_its_writer_and_no_integer_hook() {
     let number_write = hook_index::number_write;
     for body in [
         "  const x: f64 = 0.5;\n  console.log(x);",
@@ -201,11 +201,9 @@ fn a_float_printed_checks_its_writer_and_no_text_hook() {
             checked(&p, number_write),
             "numberWrite is not checked:\n{body}"
         );
-        assert!(
-            checked(&p, hook_index::int_write),
-            "intWrite is not checked:\n{body}"
-        );
         for i in [
+            hook_index::int_write,
+            hook_index::uint_write,
             hook_index::int_text,
             hook_index::uint_text,
             hook_index::int_push,

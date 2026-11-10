@@ -854,7 +854,7 @@ through `any` never call them.
 | Symbol | Signature |
 |---|---|
 | `velt_rt_write_str` | `(uint32_t stream, const VeltStr* s)` |
-| `velt_rt_write_f64` | `(uint32_t stream, double v)` — `console.log` formatting (`1`, `1.5`, `1e+21`, `NaN`, `-0`); called by std's `numberWrite` for a float that is not a whole number below 2^53 or is `-0`, and by lowering where sema left `numberWrite` unchecked |
+| `velt_rt_write_f64` | `(uint32_t stream, double v)` — `console.log` formatting (`1`, `1.5`, `1e+21`, `NaN`, `-0`); called by std's `numberWrite`, and by lowering where sema left `numberWrite` unchecked |
 | `velt_rt_write_bool` | `(uint32_t stream, uint8_t v)` |
 | `velt_rt_write_byte` | `(uint32_t stream, uint8_t b)` — used for `' '` and `'\n'` |
 | `velt_rt_flush` | `(void)` |
@@ -862,7 +862,8 @@ through `any` never call them.
 `console.log(a, b)` lowers to: `write_<a>(1, a); write_byte(1, ' '); write_<b>(1, b); write_byte(1, '\n')`,
 except that a number is written by std's hooks (velt/lang/hooks/number_text and number_write,
 #2197) in one call with the byte after it: `intWrite(1, a, ' ')`, `uintWrite` (integers, extended
-to 64-bit; their text through `write_str`) and `numberWrite` (floats, `f32` converted to `f64`).
+to 64-bit; their text through `write_str`) and `numberWrite` (floats, `f32` converted to `f64`, through `write_f64`; `velt_opt` numrep calls
+`intWrite` in its place for a whole number other than `-0` where the program has `intWrite`).
 
 ## Memory [M1]
 | Symbol | Signature |

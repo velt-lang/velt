@@ -1,8 +1,8 @@
-// console.log of floats in a program that prints no integer, through the float writer
-// (velt/lang/hooks/number_write), whose whole numbers take the integer writer: `1`, not `1.0`
-// (#2197). The runtime's printer, lowering's fallback, prints the same: what this checks is that
-// the program builds with the writers live in a debug compiler. That sema checks the writer is
-// velt_sema's `live_hooks` test.
+// console.log of floats in a program that prints no integer type, through the float writer
+// (velt/lang/hooks/number_write), which holds no integer printing: every float, whole numbers
+// included, is the runtime's printer's text, `1`, not `1.0` (#2197). The `let i = 0` loop's
+// whole numbers stay floats here, since the program has no integer writer for the optimizer to
+// switch to. That sema checks the writer and no integer hook is velt_sema's `live_hooks` test.
 function main() {
   let x: f64 = 0.25;
   for (let k = 0; k < 4; k++) {
@@ -10,4 +10,9 @@ function main() {
     x = x * 2.0;
   }
   console.log(-0.0, 1e21, NaN, -x);
+  for (let i = 0; i < 3; i++) {
+    console.log(i);
+  }
+  let n = 9007199254740991;
+  console.log(n, -n, n + 1, 123456789012, -10000000);
 }
