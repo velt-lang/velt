@@ -1,0 +1,49 @@
+// A handler whose async closure captures the request (or its `ServeInfo`) and is passed on, as a
+// middleware's `next` is: the closure works on a copy of what it captured, per call, so the copy
+// of an HTTP/1.1 request reaches the connection's watch and its response. The two used to point
+// at each other, a cycle reference counting never frees, so every request leaked its copy
+// (about 40 KB). The package tests' block counters fail a test file that leaves a block unfreed.
+import { serve, ServeInfo } from "../src/lib";
+import { describe, expect, it } from "velt/test";
+
+type Next = () => Promise<Response>;
+type Middleware = (next: Next) => Promise<Response>;
+
+// Called through a function value, as a framework calls its middleware: the closure passed to it
+// is not known to stay local, so it copies what it captured.
+const middleware: Middleware[] = [
+  async (next: Next): Promise<Response> => {
+    const res = await next();
+    res.headers.set("x-around", "1");
+    return res;
+  },
+];
+
+describe("a closure that captures the request", () => {
+  it("frees its copy of the request once the response is sent", async () => {
+    const server = await serve({ port: 0 }, async (
+      req: Request,
+      info: ServeInfo,
+    ): Promise<Response> => {
+      if (new URL(req.url).pathname == "/info") {
+        return await middleware[0](
+          async (): Promise<Response> => new Response(info.remoteAddr.hostname),
+        );
+      }
+      return await middleware[0](
+        async (): Promise<Response> => new Response(`${req.method} ${await req.text()}`),
+      );
+    });
+    try {
+      const base = `http://127.0.0.1:${server.port}`;
+      for (let i = 0; i < 3; i++) {
+        const r = await fetch(`${base}/req`, { method: "POST", body: `n${i}` });
+        expect(r.headers.get("x-around")).toBe("1");
+        expect(await r.text()).toBe(`POST n${i}`);
+      }
+      expect(await (await fetch(`${base}/info`)).text()).toBe("127.0.0.1");
+    } finally {
+      await server.shutdown();
+    }
+  });
+});

@@ -41,9 +41,11 @@ export class ClientWatch {
   private parser: Parser;
   private head: Head;
   private body: BodyReader;
-  /// The response being answered; held only until then, or the two would keep each other alive
-  /// past the connection.
-  private target: ClientEnd | null = null;
+  /// A request is being answered (from `begin` to `close`). The response itself is not held, but
+  /// passed to each call that reports to it: the response holds this watch, and a back reference
+  /// would make the two a cycle, which a copy of the request (what an async closure capturing it
+  /// copies per call) would leak.
+  private answering: bool = false;
   /// The handler reads the body from the socket: the socket is its until the body's end.
   private bodyBusy: bool = false;
   /// The handler waited once.
@@ -61,25 +63,22 @@ export class ClientWatch {
   }
 
   /// A new request.
-  begin(target: ClientEnd) {
-    this.target = target;
+  begin() {
+    this.answering = true;
     this.bodyBusy = false;
     this.waited = false;
   }
 
   /// The handler ran up to its first wait, or to its end.
-  handlerWaits() {
+  handlerWaits(target: ClientEnd) {
     this.waited = true;
-    this.listen();
+    this.listen(target);
   }
 
   /// The handler asked for its signal, or started a streamed response: from its next wait on.
-  listen() {
-    if (this.waited) {
-      const t = this.target;
-      if (t != null && t.listens()) {
-        this.start();
-      }
+  listen(target: ClientEnd) {
+    if (this.waited && this.answering && target.listens()) {
+      this.start(target);
     }
   }
 
@@ -95,23 +94,22 @@ export class ClientWatch {
   }
 
   /// The request's body was read to its end.
-  bodyEnded() {
+  bodyEnded(target: ClientEnd) {
     this.bodyBusy = false;
-    this.listen();
+    this.listen(target);
   }
 
   /// The client ended the request's body early.
-  async cutOff() {
-    const t = this.target;
-    if (t != null && !this.over) {
+  async cutOff(target: ClientEnd) {
+    if (this.answering && !this.over) {
       this.over = true;
-      await t.closedEarly(true);
+      await target.closedEarly(true);
     }
   }
 
   /// The handler is done: from here on nothing starts a watch.
   close() {
-    this.target = null;
+    this.answering = false;
   }
 
   /// Whether a watch is running: the connection stops it before it reads again.
@@ -133,10 +131,9 @@ export class ClientWatch {
     }
   }
 
-  private start() {
-    const t = this.target;
+  private start(t: ClientEnd) {
     if (
-      t == null ||
+      !this.answering ||
       this.over ||
       this.bodyBusy ||
       this.running != null ||
