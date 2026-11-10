@@ -8,7 +8,7 @@ import { BodyTooLarge } from "../errors";
 import { hasToken } from "../fields";
 import { HttpRequest } from "../request";
 import { BodyReader } from "./body_reader";
-import { ClientWatch } from "./client_watch";
+import { ClientEnd, ClientWatch } from "./client_watch";
 import { Head } from "./head";
 import { Parser } from "./parser";
 
@@ -24,6 +24,9 @@ export class Http1Request extends HttpRequest {
   private parser: Parser;
   private conn: TcpStream;
   private reader: BodyReader;
+  // The response being answered, which the watch reports to (it holds none, `ClientWatch`):
+  // nothing the response holds leads back here.
+  private answer: ClientEnd | null = null;
 
   constructor(parser: Parser, conn: TcpStream, idle: i64, requestMs: i64 = 300000) {
     super();
@@ -33,9 +36,11 @@ export class Http1Request extends HttpRequest {
     this.watch = new ClientWatch(conn, parser, this.head, this.reader);
   }
 
-  /// A new request's head was parsed into `head`.
-  begin(now: i64) {
+  /// A new request's head was parsed into `head`; `answer` is its response.
+  begin(now: i64, answer: ClientEnd) {
     this.reader.begin(now);
+    this.answer = answer;
+    this.watch.begin();
   }
 
   get keepAlive(): bool {
@@ -122,7 +127,7 @@ export class Http1Request extends HttpRequest {
       }
       const piece = await this.reader.read();
       if (this.reader.ended) {
-        this.watch.bodyEnded();
+        this.bodyEnded();
       }
       return piece;
     } catch (e) {
@@ -137,7 +142,7 @@ export class Http1Request extends HttpRequest {
         await this.watch.stop();
       }
       const all = await this.reader.all();
-      this.watch.bodyEnded();
+      this.bodyEnded();
       return all;
     } catch (e) {
       await this.bodyFailed(e);
@@ -174,10 +179,18 @@ export class Http1Request extends HttpRequest {
     return await this.reader.finish();
   }
 
+  private bodyEnded() {
+    const a = this.answer;
+    if (a != null) {
+      this.watch.bodyEnded(a);
+    }
+  }
+
   /// A body cut off by the client tells the response, as `ClientWatch` would.
   private async bodyFailed(e: IoError | BodyTooLarge | RangeError) {
-    if (e instanceof IoError && e.code == "ECONNRESET") {
-      await this.watch.cutOff();
+    const a = this.answer;
+    if (a != null && e instanceof IoError && e.code == "ECONNRESET") {
+      await this.watch.cutOff(a);
     }
   }
 
