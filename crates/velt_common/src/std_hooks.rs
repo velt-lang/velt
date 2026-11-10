@@ -316,6 +316,16 @@ hooks! {
     /// `velt_rt_spawn_target`'s (`(worker)`: the next spawn is pinned, and stays the runtime's).
     sched_spawn_fut => lang_hooks_sched, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
     sched_pinned => lang_hooks_sched, "schedPinned", sig((i64) -> void), lowered;
+    /// `velt_rt_sleep`'s: `(ms)`, a heap future; then std/prelude/timers.velt's: the Node timer
+    /// order's `velt_rt_timer_new`, `_turn` (a heap future), `_again`, `_clear`, `_free`, then
+    /// `velt_rt_uncaught_now` (a callback's error is reported at once).
+    sched_sleep => lang_hooks_sched, "schedSleep", sig((i64) -> usize), lowered;
+    sched_timer_new => lang_hooks_sched, "schedTimerNew", sig((i64) -> u64), lowered;
+    sched_timer_turn => lang_hooks_sched, "schedTimerTurn", sig((u64, u64) -> usize), lowered;
+    sched_timer_again => lang_hooks_sched, "schedTimerAgain", sig((u64, i64) -> void), lowered;
+    sched_timer_clear => lang_hooks_sched, "schedTimerClear", sig((u64) -> void), lowered;
+    sched_timer_free => lang_hooks_sched, "schedTimerFree", sig((u64) -> void), lowered;
+    sched_uncaught_now => lang_hooks_sched, "schedUncaughtNow", sig(() -> void), lowered;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.

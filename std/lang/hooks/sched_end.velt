@@ -4,6 +4,8 @@
 // - no task queued (the worker's queue and its inbox are empty: it is about to park);
 // - no keep-alive reference (a ref'd timer: std/prelude/timers.velt's externs route here);
 // - no wait linked into a source of the Velt reactor (a socket read, an accept, a deadline);
+// - no pending `sleep` (sched_sleep.velt; Node's timers count through their keep-alive
+//   references, so an `unref()`'d one does not);
 // - no runtime leaf outstanding: a Rust leaf polled `PENDING` that waits for a timer or I/O
 //   counts until it is ready or dropped. The runtime counts those itself (leaf.rs `External`,
 //   child processes, native futures); the executor asks it with the runtime's own question of a
@@ -28,6 +30,7 @@ import { fnAddress, futDrop, futPoll, noInline, slotPut, slotTake } from "velt/l
 import * as io from "./sched_io";
 import * as wt from "./sched_io_wait";
 import * as m from "./sched_mem";
+import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
 
 /** The runtime's question of a due `unref()`'d timer, asked as a probe (a heap future). */
@@ -117,6 +120,10 @@ function busy(e: usize): bool {
     return true;
   }
   if (m.ld(m.ld(e + t.E_IO) + io.IO_WAITING) !== 0) {
+    return true;
+  }
+  const tb = m.ld(e + t.E_TIMERS);
+  if (tb !== 0 && sl.pending(tb)) {
     return true;
   }
   // The runtime first, the inbox again after: a leaf counts until its task polled it ready, and

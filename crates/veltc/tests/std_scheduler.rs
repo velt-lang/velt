@@ -163,23 +163,38 @@ async function main() {
     );
 }
 
+/// A file read finishes on the runtime's blocking threads: its wake reaches the worker waiting in
+/// the reactor (sched_task.velt `schedule`). And sleeps of spawned tasks (std's own timers under
+/// the executor in Velt) resume by deadline.
 #[test]
-fn a_sleep_on_another_thread_wakes_the_task() {
-    same_on_both(
-        "sleep_wake",
-        "async function nap(ms: i64, s: string): Promise<string> {
+fn a_leaf_on_another_thread_wakes_the_task() {
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("wake.txt");
+    let file = file.to_string_lossy().replace('\\', "/");
+    let src = format!(
+        "import {{ readFile, writeFile }} from \"velt/fs\";
+
+async function nap(ms: i64, s: string): Promise<string> {{
   await sleep(ms);
   return s;
-}
+}}
 
-async function main() {
+async function main() {{
+  await writeFile(\"{file}\", \"from another thread\");
+  console.log(await readFile(\"{file}\"));
   const slow = spawn(nap(60, \"slow\"));
   const fast = spawn(nap(5, \"fast\"));
   console.log(await fast);
   console.log(await slow);
-}
-",
-        "fast\nslow\n",
+}}
+"
+    );
+    same_on_both_in(
+        dir.path(),
+        "leaf_wake",
+        &src,
+        "from another thread\nfast\nslow\n",
+        0,
     );
 }
 

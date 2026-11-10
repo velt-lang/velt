@@ -4,8 +4,10 @@
 // yieldNow()` (`schedYield`), boxed and started promises (`schedBox`, `schedStart`,
 // sched_node.velt), the microtask steps of `await` and the prelude's microtasks (`schedAwaitTick`,
 // `schedAwaitReady`, `schedMicrotask`, sched_micro.velt), the process lifetime (keep-alive
-// references, a due `unref()`'d timer's question, the top-level `await` waiting: sched_end.velt);
-// `schedFinish` drives the tasks still alive once `main` is done. The runtime's leaves (timers, channels, files, sockets) stay Rust:
+// references, a due `unref()`'d timer's question, the top-level `await` waiting: sched_end.velt),
+// `sleep` (`schedSleep`, sched_sleep.velt) and Node's timer order (`schedTimer*`,
+// sched_order.velt); `schedFinish` drives the tasks still alive once `main` is done. The runtime's
+// other leaves (channels, files, sockets) stay Rust:
 // they wake a task through its C waker (rt_abi_async.md §1) from any thread, which queues it and
 // unparks the worker. The layout of the executor and its tasks is in sched_task.velt.
 //
@@ -17,6 +19,7 @@
 // The waker tables and the join handle's header hold function addresses (`fnAddress`), a
 // stand-in until `@export` with `exportedAddress` (#2203 step 5) lands.
 
+import { Ptr } from "velt/ffi";
 import { fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
 import * as end from "./sched_end";
 import * as io from "./sched_io";
@@ -24,10 +27,22 @@ import * as latch from "./sched_latch";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as node from "./sched_node";
+import * as order from "./sched_order";
 import * as run from "./sched_run";
+import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
 
 declare function velt_rt_set_scheduler(kind: u32): void;
+/** The runtime's `velt_rt_uncaught_now`: the report shows where the callback threw. */
+declare c("c") function velt_rt_uncaught_now$rt(): void;
+// The runtime's timers, for code polled off the worker (a pinned spawn runs on the runtime's
+// executor): its `sleep`, and its Node timer order, whose handles have bit 0 clear (ours set it).
+declare c("c") function velt_rt_sleep$rt(ms: i64): Ptr<u8>;
+declare c("c") function velt_rt_timer_new$rt(ms: i64): u64;
+declare c("c") function velt_rt_timer_turn$rt(h: u64, gate: u64): Ptr<u8>;
+declare c("c") function velt_rt_timer_again$rt(h: u64, ms: i64): void;
+declare c("c") function velt_rt_timer_clear$rt(h: u64): void;
+declare c("c") function velt_rt_timer_free$rt(h: u64): void;
 declare function velt_rt_spawn_target(worker: i64): void;
 
 /** The executor, started on first use (by the worker: `main`'s thread). */
@@ -95,6 +110,7 @@ function task(
   m.st(k + t.T_MICRO, 0);
   m.st(k + t.T_UNHANDLED, 0);
   m.st(k + t.T_BYTES, bytes);
+  m.st(k + t.T_TIMERS, 0);
   m.st(k + t.T_JOIN, fnAddress(run.joinPoll));
   m.st(k + t.T_JOIN + 8, fnAddress(run.joinDrop));
   return k;
@@ -312,6 +328,88 @@ export function schedKeepAliveRelease(): void {
 export function schedUnrefDue(): usize {
   exec();
   return end.unrefDue();
+}
+
+/**
+ * `velt_rt_sleep`: a heap future that completes `ms` milliseconds from now, in timer order; off
+ * the worker (a pinned spawn's code), the runtime's.
+ */
+export function schedSleep(ms: i64): usize {
+  if (!t.onWorker()) {
+    // SAFETY: the runtime's entry takes a number and returns a new heap future.
+    return m.addr(unsafe { velt_rt_sleep$rt(ms) });
+  }
+  return sl.sleep(exec(), ms);
+}
+
+/**
+ * `velt_rt_timer_new`: a Node timer due `ms` milliseconds from now, queued; its handle (bit 0
+ * set; off the worker, the runtime's handle, bit 0 clear).
+ */
+export function schedTimerNew(ms: i64): u64 {
+  if (!t.onWorker()) {
+    // SAFETY: the runtime's entry takes a number.
+    return unsafe { velt_rt_timer_new$rt(ms) };
+  }
+  return order.timerNew(exec(), ms) | 1;
+}
+
+/** `velt_rt_timer_turn`: a heap future that completes once timer `h`'s turn has come. */
+export function schedTimerTurn(h: u64, gate: u64): usize {
+  if ((h & 1) === 0) {
+    // SAFETY: `h` is a live handle of the runtime's (bit 0 clear).
+    return m.addr(unsafe { velt_rt_timer_turn$rt(h, gate) });
+  }
+  exec();
+  return order.turn((h & ~1) as usize);
+}
+
+/** `velt_rt_timer_again`: an interval's timer `h` queued again, `ms` after its last turn. */
+export function schedTimerAgain(h: u64, ms: i64): void {
+  if ((h & 1) === 0) {
+    // SAFETY: as `schedTimerTurn`.
+    unsafe {
+      velt_rt_timer_again$rt(h, ms);
+    }
+    return;
+  }
+  order.timerAgain(exec(), (h & ~1) as usize, ms);
+}
+
+/** `velt_rt_timer_clear`: timer `h` leaves the order (`clearTimeout`). */
+export function schedTimerClear(h: u64): void {
+  if ((h & 1) === 0) {
+    // SAFETY: as `schedTimerTurn`.
+    unsafe {
+      velt_rt_timer_clear$rt(h);
+    }
+    return;
+  }
+  order.timerClear(exec(), (h & ~1) as usize);
+}
+
+/** `velt_rt_timer_free`: timer `h` leaves the order and its handle is freed. */
+export function schedTimerFree(h: u64): void {
+  if ((h & 1) === 0) {
+    // SAFETY: as `schedTimerTurn`; not used afterwards.
+    unsafe {
+      velt_rt_timer_free$rt(h);
+    }
+    return;
+  }
+  order.timerFree(exec(), (h & ~1) as usize);
+}
+
+/**
+ * `velt_rt_uncaught_now`: the next rejection nobody handles is an error a timer or microtask
+ * callback threw, reported at once (sched_node.velt), not after the task's microtasks.
+ */
+export function schedUncaughtNow(): void {
+  m.st(exec() + t.E_UNCAUGHT, 1);
+  // SAFETY: the runtime's entry takes nothing; it records where the error was thrown.
+  unsafe {
+    velt_rt_uncaught_now$rt();
+  }
 }
 
 /** `velt_rt_tla_at`: the top-level `await` at `site` suspends. */

@@ -182,7 +182,15 @@ export function nodeDrop(f: usize): void {
 function dropResult(n: usize): void {
   const task = m.ld(n + N_TASK);
   const e = t.exec();
-  if ((m.load32(n + N_FLAGS) & REJECTING) !== 0 && task !== 0 && m.ld(e + t.E_CURRENT) === task) {
+  const rejecting = (m.load32(n + N_FLAGS) & REJECTING) !== 0;
+  if (rejecting && m.ld(e + t.E_UNCAUGHT) !== 0) {
+    // An error a callback threw (sched.velt `schedUncaughtNow`): reported now, as Node's
+    // uncaught exception ends the process before the microtasks run.
+    m.st(e + t.E_UNCAUGHT, 0);
+    dropNow(n);
+    return;
+  }
+  if (rejecting && task !== 0 && m.ld(e + t.E_CURRENT) === task) {
     m.inc(n + N_REFS);
     m.st(n + N_UNHANDLED_NEXT, m.ld(task + t.T_UNHANDLED));
     m.st(task + t.T_UNHANDLED, n);
@@ -279,6 +287,11 @@ export function run(task: usize, n: usize, taken: bool): void {
     }
   }
   release(n);
+}
+
+/** Is started node `w` (a waker header) among its task's woken nodes? */
+export function queued(w: usize): bool {
+  return (m.load32(w + N_FLAGS) & QUEUED) !== 0;
 }
 
 /** Is `w` a waker header of a started node of task `task`? */

@@ -1,0 +1,193 @@
+// velt/lang/hooks (internal): which timer comes next in Node's event loop, under the executor in
+// Velt (sched_order.velt, #2649), as the runtime's velt_rt task/local/order_pass.rs: a timers pass
+// reads the clock once and runs, list by list, every timer due by then; once none is left, the
+// immediates created so far run (the check phase), and the next pass reads the clock again.
+//
+// `look` only looks (a timer whose time has not come yet starts no pass or check phase); `commit`
+// moves the loop on, when a timer's turn comes. A pass meets lists due by its `now` whose next
+// timer is not due: they get new places (`max(start + ms, now + 1)`, a new id), as Node's
+// `listOnTimeout` gives them. What a look found is kept in the block (`P_*`), read by the caller.
+// One worker: no task is in a poll while the worker looks, so no list is passed over for that.
+
+import * as l from "./sched_order_list";
+import * as m from "./sched_mem";
+import * as sl from "./sched_sleep";
+
+/**
+ * What the last look found: the timer that comes next (0: none), its phase (a pass with `now`
+ * `P_VAL`, or the check phase running the immediates numbered up to `P_VAL`), the `now` it was
+ * chosen in (and whether there is one), the list of the timer chosen, whether lists due by `now`
+ * whose next timer is not were passed over, whether the clock was read for it, whether such lists
+ * were passed over in the pass under way.
+ */
+export const P_NEXT: usize = l.O_LOOK;
+export const P_PHASE: usize = l.O_LOOK + 8;
+export const P_VAL: usize = l.O_LOOK + 16;
+export const P_NOW: usize = l.O_LOOK + 24;
+export const P_NOW_SET: usize = l.O_LOOK + 32;
+export const P_LIST: usize = l.O_LOOK + 40;
+export const P_PARTLY: usize = l.O_LOOK + 48;
+export const P_FRESH: usize = l.O_LOOK + 56;
+export const P_IN_PASS: usize = l.O_LOOK + 64;
+
+/** The phases. */
+export const PASS: usize = 1;
+export const CHECK: usize = 2;
+
+/** The clock in whole milliseconds since the process started. */
+function clockMs(): usize {
+  return (sl.clock() / 1000000) as usize;
+}
+
+/** The first immediate of block `b` numbered up to `limit`, or 0. */
+function immediateUpto(b: usize, limit: usize): usize {
+  const h = m.ld(b + l.O_IMM + l.L_FIRST);
+  if (h !== 0 && m.ld(h + l.H_SEQ) <= limit) {
+    return h;
+  }
+  return 0;
+}
+
+/**
+ * The first timer due by `now` in the order of the lists (a list due by then whose next timer is
+ * not is passed over: `P_PARTLY`), its list in `P_LIST`; 0 when none is.
+ */
+function firstDue(b: usize, now: usize): usize {
+  let x = m.ld(b + l.O_FIRST);
+  while (x !== 0 && m.ld(x + l.L_EXPIRY) <= now) {
+    const h = m.ld(x + l.L_FIRST);
+    if (m.ld(h + l.H_START) + m.ld(x + l.L_MS) <= now) {
+      m.st(b + P_LIST, x);
+      return h;
+    }
+    m.st(b + P_PARTLY, 1);
+    x = m.ld(x + l.L_NEXT);
+  }
+  return 0;
+}
+
+/** What comes next, without changing anything (into `P_*`). */
+function peek(b: usize): void {
+  m.st(b + P_NEXT, 0);
+  m.st(b + P_PHASE, 0);
+  m.st(b + P_NOW_SET, 0);
+  m.st(b + P_LIST, 0);
+  m.st(b + P_PARTLY, 0);
+  m.st(b + P_IN_PASS, 0);
+  let check = m.ld(b + l.O_CHECK_SET) !== 0;
+  if (check) {
+    const limit = m.ld(b + l.O_CHECK);
+    const h = immediateUpto(b, limit);
+    if (h !== 0) {
+      m.st(b + P_NEXT, h);
+      m.st(b + P_PHASE, CHECK);
+      m.st(b + P_VAL, limit);
+      m.st(b + P_FRESH, 0);
+      return;
+    }
+    check = false;
+  }
+  let fresh = m.ld(b + l.O_PASS_SET) === 0;
+  let now = fresh ? clockMs() : m.ld(b + l.O_PASS);
+  m.st(b + P_FRESH, fresh ? 1 : 0);
+  while (true) {
+    const h = firstDue(b, now);
+    const passed = !fresh && m.ld(b + P_PARTLY) !== 0;
+    if (passed) {
+      m.st(b + P_IN_PASS, 1);
+    }
+    if (h !== 0) {
+      m.st(b + P_NEXT, h);
+      m.st(b + P_PHASE, PASS);
+      m.st(b + P_VAL, now);
+      m.st(b + P_NOW, now);
+      m.st(b + P_NOW_SET, 1);
+      return;
+    }
+    // The pass is over: the immediates created so far run next.
+    if (!check) {
+      const i = immediateUpto(b, m.ld(b + l.O_SEQ));
+      if (i !== 0) {
+        m.st(b + P_NEXT, i);
+        m.st(b + P_PHASE, CHECK);
+        m.st(b + P_VAL, m.ld(b + l.O_SEQ));
+        m.st(b + P_NOW, now);
+        m.st(b + P_NOW_SET, 1);
+        return;
+      }
+    }
+    if (fresh) {
+      m.st(b + P_NOW, now);
+      m.st(b + P_NOW_SET, 1);
+      return;
+    }
+    m.st(b + P_IN_PASS, m.ld(b + P_PARTLY));
+    now = clockMs();
+    fresh = true;
+    m.st(b + P_FRESH, 1);
+    m.st(b + P_PARTLY, 0);
+  }
+}
+
+/**
+ * What comes next (into `P_*`). When the pass under way met lists due by its `now` whose next
+ * timer is not, they get their new places first (with the pass's own clock), and it looks again.
+ */
+export function look(b: usize): void {
+  peek(b);
+  if (m.ld(b + P_IN_PASS) !== 0 && m.ld(b + l.O_PASS_SET) !== 0) {
+    const now = m.ld(b + l.O_PASS);
+    const sameNow = m.ld(b + P_NOW_SET) !== 0 && m.ld(b + P_NOW) === now;
+    rekeyPassed(b, now, sameNow ? m.ld(b + P_LIST) : 0);
+    peek(b);
+  }
+}
+
+/**
+ * The lists due by `now` (and before list `before`, 0: all) whose next timer is not get their
+ * new places, in the order the pass meets them: `max(start + ms, now + 1)`, a new id. Each moves
+ * past every list due by `now`, so the walk never meets it again.
+ */
+function rekeyPassed(b: usize, now: usize, before: usize): void {
+  let x = m.ld(b + l.O_FIRST);
+  while (x !== 0 && m.ld(x + l.L_EXPIRY) <= now && (before === 0 || l.keyLess(x, before))) {
+    const next = m.ld(x + l.L_NEXT);
+    const due = m.ld(m.ld(x + l.L_FIRST) + l.H_START) + m.ld(x + l.L_MS);
+    if (due > now) {
+      l.rekey(b, x, due > now + 1 ? due : now + 1);
+    }
+    x = next;
+  }
+}
+
+/**
+ * The loop woke and the last look chose nothing to run now: the lists it passed over get their
+ * new places, as Node's pass gives them before it runs anything.
+ */
+export function loopWoke(b: usize): void {
+  if (m.ld(b + P_FRESH) !== 0 && m.ld(b + P_PARTLY) !== 0 && m.ld(b + P_NOW_SET) !== 0) {
+    rekeyPassed(b, m.ld(b + P_NOW), m.ld(b + P_LIST));
+  }
+}
+
+/**
+ * The timer the last look chose takes its turn: the loop moves on to its phase. The lists the
+ * look passed over get their new places first.
+ */
+export function commit(b: usize): void {
+  if (m.ld(b + P_NEXT) === 0) {
+    return;
+  }
+  if (m.ld(b + P_PARTLY) !== 0 && m.ld(b + P_NOW_SET) !== 0) {
+    rekeyPassed(b, m.ld(b + P_NOW), m.ld(b + P_LIST));
+  }
+  if (m.ld(b + P_PHASE) === PASS) {
+    m.st(b + l.O_PASS, m.ld(b + P_VAL));
+    m.st(b + l.O_PASS_SET, 1);
+    m.st(b + l.O_CHECK_SET, 0);
+  } else {
+    m.st(b + l.O_PASS_SET, 0);
+    m.st(b + l.O_CHECK, m.ld(b + P_VAL));
+    m.st(b + l.O_CHECK_SET, 1);
+  }
+}
