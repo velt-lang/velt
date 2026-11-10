@@ -146,12 +146,13 @@ fn missing_program_is_enoent() {
     );
 }
 
-/// A `PATH` entry the lookup may not search makes a missing program `EACCES`, as in Node
-/// (`spawn x EACCES`: the lookup, like `execvp`, remembers the denied entry), and a program in
-/// a later entry is still found.
+/// A program in an entry after one the lookup may not search is still found. A missing program
+/// is then what the platform's lookup says: on Linux `EACCES`, as in Node there (`spawn x
+/// EACCES`: like `execvp`, the lookup remembers the denied entry); on macOS `ENOENT` (its
+/// lookup skips the entry).
 #[cfg(unix)]
 #[test]
-fn unsearchable_path_entry_is_eacces_like_node() {
+fn unsearchable_path_entry_reports_as_the_platform_does() {
     // SAFETY: no preconditions.
     if unsafe { libc::geteuid() } == 0 {
         return; // root may search any directory
@@ -167,7 +168,12 @@ fn unsearchable_path_entry_is_eacces_like_node() {
     remove_test_dir(&closed);
     remove_test_dir(&empty);
     let (code, message) = missing.unwrap_err();
-    assert_eq!(code, crate::result::code::PERMISSION_DENIED, "{message}");
+    let expected = if cfg!(target_os = "linux") {
+        crate::result::code::PERMISSION_DENIED
+    } else {
+        crate::result::code::NOT_FOUND
+    };
+    assert_eq!(code, expected, "{message}");
     assert!(
         message.starts_with("spawn velt-no-such-program: "),
         "{message}"
