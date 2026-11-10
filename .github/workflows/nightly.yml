@@ -5,8 +5,9 @@
 # against Node (tests/difftest), the Cranelift compile-memory stress run (bench/compile/stress.sh,
 # stress.ps1) on Linux and Windows, the `tsc` oracle for `velt check --ts-compat`
 # (tests/tscompat-oracle), the benchmarks' instruction counts against the last accepted ones
-# (bench/nightly.sh), the WebAssembly goldens on Windows and macOS, and the deletion of superseded
-# build caches (`cache-prune`). At 05:07 UTC, when the macOS runners are less busy, a second run
+# (bench/nightly.sh), the build-speed yardstick (bench/compile/scale/yardstick.py), the
+# WebAssembly goldens on Windows and macOS, and the deletion of superseded build caches
+# (`cache-prune`). At 05:07 UTC, when the macOS runners are less busy, a second run
 # has only the timing-sensitive tests, run many times on Windows and macOS (`flake`). A manual run
 # can pick one job: `gh workflow run nightly -f only=stress` (`all` includes `flake`). `c-headers`
 # checks `declare c` against C headers through the pinned zig whatever changed; pull requests and
@@ -23,7 +24,7 @@ on:
       only:
         description: Run only one job (all = every job, flake included).
         type: choice
-        options: [all, gate, stress, oracle, workerd, bench, wasm, flake, cache, headers]
+        options: [all, gate, stress, oracle, workerd, bench, yardstick, wasm, flake, cache, headers]
         default: all
       bench_baseline:
         description: >-
@@ -386,6 +387,80 @@ jobs:
                   'The log of its step has the error (the last benchmark named there did not build or did not run).',
                   range,
                   'Fix that and the next run compares every benchmark; the baseline stays where it was.',
+                ]
+            ).join('\n\n');
+            const open = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 });
+            const existing = open.data.find(i => i.title === title && !i.pull_request);
+            if (existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body });
+            }
+
+  # The build-speed yardstick (bench/compile/scale/yardstick.py, #2707): `velt check`, a debug and
+  # a release build of a generated application (one service of N features), by instructions per
+  # stage (callgrind, so load doesn't matter), with the functions and statements lowered and the
+  # peak memory. Between 10k and 100k lines nothing may grow faster than 2.1x per doubling of the
+  # lines, and every stage stays within its instructions per line in
+  # bench/compile/scale/budgets.tsv. A failure opens (or comments on) the issue "nightly
+  # build-speed yardstick failed", or "nightly build-speed yardstick failed to run" when nothing was
+  # compared. Release builds run at 10k only here (clang uncounted, as for every size: `--children`
+  # counts it on demand), and 1M lines is on demand too: `bench/compile/scale/yardstick.py --sizes
+  # 100000,1000000`. Same fixed image as `bench`, for the same reason.
+  yardstick:
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'yardstick')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: "false"
+      - name: valgrind
+        run: sudo apt-get update -q && sudo apt-get install -y -q valgrind
+      - name: bench/compile/scale/yardstick.py
+        id: yardstick
+        run: |
+          set -o pipefail
+          python3 bench/compile/scale/yardstick.py --check --sizes 10000,100000 \
+            --release-sizes 10000 --out "$RUNNER_TEMP/yardstick" --md "$RUNNER_TEMP/yardstick.md"
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### build-speed yardstick (instructions, callgrind)"
+            if [ -s "$RUNNER_TEMP/yardstick.md" ]; then
+              cat "$RUNNER_TEMP/yardstick.md"
+            else
+              echo "no results: yardstick.py stopped before its table (the step's log has the error)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: report the failure
+        if: failure() && steps.yardstick.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            let report = '';
+            try {
+              report = fs.readFileSync(`${process.env.RUNNER_TEMP}/yardstick.md`, 'utf8');
+            } catch (e) {}
+            // The table marks what failed with **over**; without a table nothing was compared.
+            const compared = report.includes('**over**');
+            const title = compared ? 'nightly build-speed yardstick failed' : 'nightly build-speed yardstick failed to run';
+            const body = (compared
+              ? [
+                  `A stage of \`velt check\` or \`velt build\` grew faster than the program (more than 2.1x per doubling of the lines) or past its budget in bench/compile/scale/budgets.tsv, at ${context.sha.slice(0, 9)}: ${run}`,
+                  report,
+                  'Count the stage at the commits since the last green run (`bench/compile/scale/yardstick.py --sizes 10000,100000 --modes <mode>` on Linux) and fix the commit that grew it. A budget that an intended change raises is rewritten with `--write-budgets` in that change, with the reason in its description.',
+                ]
+              : [
+                  `bench/compile/scale/yardstick.py failed before it compared anything, so this run says nothing about build speed: ${run}`,
+                  'The log of its step has the error (a build of the generated application that failed, or a callgrind dump count that no longer matches the stages).',
                 ]
             ).join('\n\n');
             const open = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 });
