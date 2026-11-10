@@ -5,7 +5,17 @@
 import { HostRef } from "velt/host";
 import { utf8Decode, utf8Encode } from "velt/encoding";
 import { greet, waitFor } from "probe";
-import { accept, close, headers, method, read, respond, respondStream, url, write } from "velt/host/worker";
+import {
+  accept,
+  close,
+  headers,
+  method,
+  read,
+  respond,
+  respondStream,
+  url,
+  write,
+} from "velt/host/worker";
 
 function header(req: HostRef, name: string): string {
   for (const line of headers(req).split("\n")) {

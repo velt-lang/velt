@@ -1,0 +1,356 @@
+// velt/lang/hooks (internal): the executor in Velt (#2649 step 3.1), one worker, the thread
+// that runs `main`. A program compiled with `VELT_SCHEDULER=std` runs here instead of on the
+// runtime's executor: its root (`schedBlockOn`), its spawned tasks (`schedSpawn`), `await
+// yieldNow()` (`schedYield`), boxed and started promises (`schedBox`, `schedStart`,
+// sched_node.velt), the microtask steps of `await` and the prelude's microtasks (`schedAwaitTick`,
+// `schedAwaitReady`, `schedMicrotask`, sched_micro.velt), the process lifetime (keep-alive
+// references, a due `unref()`'d timer's question, the top-level `await` waiting: sched_end.velt);
+// `schedFinish` drives the tasks still alive once `main` is done. The runtime's leaves (timers, channels, files, sockets) stay Rust:
+// they wake a task through its C waker (rt_abi_async.md §1) from any thread, which queues it and
+// unparks the worker. The layout of the executor and its tasks is in sched_task.velt.
+//
+// A poll of a task (`run`): the started promises woken since its last poll, then its root, then
+// its microtasks; each piece only when the task has them (a flag, a list, a queue made on first
+// use), so a task with no started promise and no queued microtask polls its root and nothing
+// else.
+//
+// The waker tables and the join handle's header hold function addresses (`fnAddress`), a
+// stand-in until `@export` with `exportedAddress` (#2203 step 5) lands.
+
+import { fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
+import * as end from "./sched_end";
+import * as io from "./sched_io";
+import * as latch from "./sched_latch";
+import * as m from "./sched_mem";
+import * as micro from "./sched_micro";
+import * as node from "./sched_node";
+import * as run from "./sched_run";
+import * as t from "./sched_task";
+
+declare function velt_rt_set_scheduler(kind: u32): void;
+declare function velt_rt_spawn_target(worker: i64): void;
+
+/** The executor, started on first use (by the worker: `main`'s thread). */
+@inline
+function exec(): usize {
+  const e = t.exec();
+  if (e !== 0) {
+    return e;
+  }
+  return start();
+}
+
+@noInline
+function start(): usize {
+  const e = m.zeroed(t.E_SIZE);
+  // Stand-ins for `exportedAddress` (#2203 step 5): C calls each with the C convention.
+  m.st(e + t.E_VT, fnAddress(t.wakerClone));
+  m.st(e + t.E_VT + 8, fnAddress(t.wakerWake));
+  m.st(e + t.E_VT + 16, fnAddress(t.wakerWakeByRef));
+  m.st(e + t.E_VT + 24, fnAddress(t.wakerDrop));
+  m.st(e + t.E_NODE_VT, fnAddress(node.nodeClone));
+  m.st(e + t.E_NODE_VT + 8, fnAddress(node.nodeWake));
+  m.st(e + t.E_NODE_VT + 16, fnAddress(node.nodeWakeByRef));
+  m.st(e + t.E_NODE_VT + 24, fnAddress(node.nodeDropRef));
+  m.st(e + t.E_IO, io.open(e + t.E_TICK));
+  end.open(e);
+  t.install(e);
+  // The runtime's leaves that need its timers and I/O find them from this thread.
+  velt_rt_set_scheduler(2);
+  return e;
+}
+
+/**
+ * A new task of `poll` and `drop` with a result of `rsize` bytes (dropped with `rdrop`) and room
+ * for a state of `size` bytes after it, holding `refs` references, scheduled but not queued.
+ */
+@inline
+function task(
+  e: usize,
+  poll: usize,
+  drop: usize,
+  rsize: u64,
+  rdrop: usize,
+  size: u64,
+  refs: u64,
+): usize {
+  const k = m.alloc(stateAt(rsize) + (size as usize));
+  m.st(k, e + t.E_VT);
+  m.st(k + t.T_REFS, refs as usize);
+  m.st32(k + t.T_STATE, t.SCHEDULED);
+  m.st32(k + t.T_FLAGS, 0);
+  m.st(k + t.T_NEXT, 0);
+  m.st(k + t.T_POLL, poll);
+  m.st(k + t.T_DROP, drop);
+  m.st(k + t.T_ROOT, k + stateAt(rsize));
+  m.st(k + t.T_RESULT_DROP, rdrop);
+  m.st(k + t.T_RESULT_SIZE, rsize as usize);
+  m.st(k + t.T_JOINER, 0);
+  m.st(k + t.T_CX, k + t.T_WORD);
+  m.st(k + t.T_CX + 8, k);
+  m.st(k + t.T_WORD, 0);
+  m.st(k + t.T_WOKEN, 0);
+  m.st(k + t.T_LOCALS, 0);
+  m.st(k + t.T_MICRO, 0);
+  m.st(k + t.T_UNHANDLED, 0);
+  m.st(k + t.T_JOIN, fnAddress(run.joinPoll));
+  m.st(k + t.T_JOIN + 8, fnAddress(run.joinDrop));
+  return k;
+}
+
+/** Where a task's state starts, after a result slot of `rsize` bytes. */
+@inline
+function stateAt(rsize: u64): usize {
+  return t.T_SLOT + ((rsize as usize + 15) & ~15);
+}
+
+/** `velt_main`'s root: runs it, and every task it wakes, until it is done. */
+export function schedBlockOn(poll: usize, state: usize): void {
+  const e = exec();
+  // The executor's reference and this one: the root is read after it is done.
+  const k = task(e, poll, 0, 0, 0, 0, 2);
+  m.st(k + t.T_ROOT, state);
+  m.st32(k + t.T_FLAGS, t.ROOT);
+  t.push(e, k);
+  // A park that finds nothing left to happen while it runs ends the program (sched_end.velt).
+  m.st(e + t.E_ROOT, k);
+  while (!t.has(k, t.ROOT_DONE)) {
+    run.turn(e);
+  }
+  m.st(e + t.E_ROOT, 0);
+  t.release(k);
+}
+
+/**
+ * Runs the tasks still alive once `main` is done, until none is or none can run again (a park
+ * finds nothing left to happen: sched_end.velt); not after a `main` that returned an exit code
+ * other than 0, which ends the program at once.
+ */
+export function schedFinish(code: i32): void {
+  const e = t.exec();
+  if (e === 0 || code !== 0) {
+    return;
+  }
+  while (m.ld(e + t.E_LIVE) !== 0) {
+    run.turn(e);
+  }
+}
+
+/**
+ * `spawn(f(...))`: a task from the initial state at `state` (`size` bytes, aligned to at most 16,
+ * moved in), scheduled now; its join handle, a heap future whose slot gets `rsize` bytes. A
+ * result the handle never claims is dropped with `rdrop` (0: nothing to drop).
+ */
+export function schedSpawn(
+  poll: usize,
+  drop: usize,
+  state: usize,
+  size: u64,
+  align: u64,
+  rsize: u64,
+  rdrop: usize,
+): usize {
+  const e = exec();
+  // The executor's reference and the handle's.
+  const k = task(e, poll, drop, rsize, rdrop, size, 2);
+  m.copy(m.ld(k + t.T_ROOT), state, size as usize);
+  m.st32(k + t.T_FLAGS, t.HANDLE);
+  t.bump(e + t.E_LIVE, 1);
+  t.schedule(e, k);
+  return k + t.T_JOIN;
+}
+
+/**
+ * `spawn(p)` of heap future `f` (a stored promise, a join handle, a leaf): a task polling it,
+ * scheduled now; its join handle, whose slot gets `rsize` bytes (dropped with `rdrop` when
+ * nobody claims them). The task's state is `f` and `rsize`, then the root's result.
+ */
+export function schedSpawnFut(f: usize, rsize: u64, rdrop: usize): usize {
+  const e = exec();
+  const k = task(e, fnAddress(run.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
+  const at = m.ld(k + t.T_ROOT);
+  m.st(at, f);
+  m.st(at + 8, rsize as usize);
+  m.st(k + t.T_ROOT, at + 16);
+  m.st32(k + t.T_FLAGS, t.HANDLE);
+  t.bump(e + t.E_LIVE, 1);
+  t.schedule(e, k);
+  return k + t.T_JOIN;
+}
+
+/**
+ * `velt_rt_spawn_target`: the next spawn is pinned to `worker` and stays the runtime's (its
+ * worker threads run it). The executor cannot see whether such a task still runs, so from now on
+ * a park never decides the program's end (sched_end.velt); the multi-worker step takes pinned
+ * spawns over (#2649 step 3).
+ */
+export function schedPinned(worker: i64): void {
+  m.st(exec() + t.E_PINNED, 1);
+  velt_rt_spawn_target(worker);
+}
+
+/** `await yieldNow()`: the task polled with `cx` runs again after the other ready tasks. */
+export function schedYield(cx: usize): void {
+  const w = m.ld(cx + 8);
+  if (m.ld(w) === exec() + t.E_VT) {
+    // Running: polled again once this poll returns, at the back of the queue.
+    m.cas32(w + t.T_STATE, t.RUNNING, t.NOTIFIED);
+    return;
+  }
+  m.wakeByRef(w);
+}
+
+/** `velt_rt_fut_box`: a lazy boxed promise of the initial state at `state`. */
+export function schedBox(poll: usize, drop: usize, state: usize, size: u64, align: u64): usize {
+  exec();
+  return node.boxed(poll, drop, state, size, fnAddress(node.nodePoll), fnAddress(node.nodeDrop));
+}
+
+/** `velt_rt_fut_start` (`rejecting`: `_start_rejecting`): promise `f` starts now. */
+export function schedStart(f: usize, rdrop: usize, rejecting: bool): void {
+  const e = t.exec();
+  if (e === 0) {
+    return;
+  }
+  node.start(m.ld(e + t.E_CURRENT), f, rdrop, rejecting, fnAddress(node.nodePoll));
+}
+
+/**
+ * `velt_rt_fut_detach`: the owner gives up promise `f` without cancelling it: a lazy one starts
+ * now (its result dropped quietly with `qdrop`), and keeps running; anything else is dropped.
+ */
+export function schedDetach(f: usize, qdrop: usize): void {
+  const e = exec();
+  if (m.ld(f) !== fnAddress(node.nodePoll)) {
+    // A spawned task's join handle: the task runs on, its rejection handled.
+    joinHandled(f, qdrop);
+    // SAFETY: the caller owns `f`, a heap future, and gives it up.
+    unsafe {
+      futDrop(f);
+    }
+    return;
+  }
+  node.start(m.ld(e + t.E_CURRENT), f, qdrop, false, fnAddress(node.nodePoll));
+  node.nodeDrop(f);
+}
+
+/**
+ * `velt_rt_futs_handled`: the `n` promises at `futs` go to a combinator, which handles their
+ * rejections: a started one's or a spawned task's result nobody claims is dropped with `qdrop`,
+ * quietly.
+ */
+export function schedHandled(futs: usize, n: u64, qdrop: usize): void {
+  const poll = fnAddress(node.nodePoll);
+  for (let i: usize = 0; i < (n as usize); i++) {
+    const f = m.ld(futs + 8 * i);
+    if (!joinHandled(f, qdrop)) {
+      node.handled(f, qdrop, poll);
+    }
+  }
+}
+
+/**
+ * When `f` is a spawned task's join handle (its header is the task's `T_JOIN`): the task's
+ * result nobody claims is dropped with `qdrop`, quietly (true).
+ */
+function joinHandled(f: usize, qdrop: usize): bool {
+  if (f === 0 || m.ld(f) !== fnAddress(run.joinPoll)) {
+    return false;
+  }
+  m.st(f - t.T_JOIN + t.T_RESULT_DROP, qdrop);
+  return true;
+}
+
+/** `velt_rt_await_tick`: the step of an `await` whose word is not 0; its ticket (0: go on). */
+export function schedAwaitTick(cx: usize): u64 {
+  if (t.exec() === 0) {
+    return 0;
+  }
+  const w = m.ld(cx + 8);
+  const k = t.taskOf(w);
+  if (k === 0 || micro.takeCredit(k) || m.ld32(k + t.T_WORD) === 0) {
+    return 0;
+  }
+  return micro.enqueue(k, m.wakerClone(w), false);
+}
+
+/** `velt_rt_await_ready`: has the step's turn come (1)? If not, it resumes `cx`'s waker. */
+export function schedAwaitReady(ticket: u64, cx: usize): u32 {
+  const w = m.ld(cx + 8);
+  const k = t.exec() === 0 ? 0 : t.taskOf(w);
+  if (k === 0 || micro.reached(k, ticket, w)) {
+    return 1;
+  }
+  return 0;
+}
+
+/** `velt_rt_microtask`: a heap future that completes at its turn in the task's queue. */
+export function schedMicrotask(): usize {
+  const f = m.alloc(24);
+  m.st(f, fnAddress(microPoll));
+  m.st(f + 8, fnAddress(microDrop));
+  m.st(f + 16, 0);
+  return f;
+}
+
+/** `velt_rt_keep_alive_acquire`: a ref'd timer keeps the process alive. */
+export function schedKeepAliveAcquire(): void {
+  end.keepAcquire(exec());
+}
+
+/** `velt_rt_keep_alive_release`: the reference `schedKeepAliveAcquire` took, given back. */
+export function schedKeepAliveRelease(): void {
+  end.keepRelease(exec());
+}
+
+/** `velt_rt_timer_unref_due`: a heap future, whether a due `unref()`'d timer's process ends. */
+export function schedUnrefDue(): usize {
+  exec();
+  return end.unrefDue();
+}
+
+/** `velt_rt_tla_at`: the top-level `await` at `site` suspends. */
+export function schedTlaAt(site: string): void {
+  end.tlaAt(exec(), site);
+}
+
+/** `velt_rt_latch_new`: a closed latch. */
+export function schedLatchNew(): u64 {
+  return latch.latchNew();
+}
+
+/** `velt_rt_latch_free`: the handle's reference given back. */
+export function schedLatchFree(l: u64): void {
+  latch.latchFree(l);
+}
+
+/** `velt_rt_latch_open`: opens latch `l`, resuming its waiters. */
+export function schedLatchOpen(l: u64): void {
+  latch.latchOpen(l);
+}
+
+/** `velt_rt_latch_wait`: a heap future that completes once latch `l` is open. */
+export function schedLatchWait(l: u64): usize {
+  return latch.latchWait(l, fnAddress(latch.waitPoll), fnAddress(latch.waitDrop));
+}
+
+function microPoll(f: usize, cx: usize): u32 {
+  const w = m.ld(cx + 8);
+  const k = t.exec() === 0 ? 0 : t.taskOf(w);
+  if (k === 0) {
+    return 1;
+  }
+  const ticket = m.ld(f + 16) as u64;
+  if (ticket === 0) {
+    if (micro.takeCredit(k)) {
+      return 1;
+    }
+    m.st(f + 16, micro.enqueue(k, m.wakerClone(w), false) as usize);
+    return 0;
+  }
+  return micro.reached(k, ticket, w) ? 1 : 0;
+}
+
+function microDrop(f: usize): void {
+  m.release(f);
+}

@@ -277,6 +277,45 @@ hooks! {
     /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
     /// otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
+    // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
+    /// `velt_rt_block_on`'s job: `(poll, state)`.
+    sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize) -> void), lowered;
+    /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
+    sched_spawn => lang_hooks_sched, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize) -> usize), lowered;
+    /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code, which runs
+    /// the tasks left when it is 0.
+    sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
+    sched_finish => lang_hooks_sched, "schedFinish", sig((i32) -> void), lowered;
+    /// `velt_rt_fut_box`'s: `(poll, drop, state, size, align)`, the lazy boxed promise.
+    sched_box => lang_hooks_sched, "schedBox", sig((usize, usize, usize, u64, u64) -> usize), lowered;
+    /// `velt_rt_fut_start`'s and `_start_rejecting`'s: `(f, result_drop, rejecting)`; then
+    /// `velt_rt_fut_detach`'s: `(f, quiet_drop)`.
+    sched_start => lang_hooks_sched, "schedStart", sig((usize, usize, bool) -> void), lowered;
+    sched_detach => lang_hooks_sched, "schedDetach", sig((usize, usize) -> void), lowered;
+    /// `velt_rt_futs_handled`'s: `(futs, n, quiet_drop)`.
+    sched_handled => lang_hooks_sched, "schedHandled", sig((usize, u64, usize) -> void), lowered;
+    /// `velt_rt_await_tick`'s: `(cx)`, the ticket; then `velt_rt_await_ready`'s: `(ticket, cx)`.
+    sched_await_tick => lang_hooks_sched, "schedAwaitTick", sig((usize) -> u64), lowered;
+    sched_await_ready => lang_hooks_sched, "schedAwaitReady", sig((u64, usize) -> u32), lowered;
+    /// `velt_rt_microtask`'s (std/prelude/promise.velt's extern): the heap future.
+    sched_microtask => lang_hooks_sched, "schedMicrotask", sig(() -> usize), lowered;
+    /// `velt_rt_latch_new`'s, `_free`'s, `_open`'s and `_wait`'s (std/lang/promise/settle.velt's
+    /// externs): a latch is its address; a wait is a heap future.
+    sched_latch_new => lang_hooks_sched, "schedLatchNew", sig(() -> u64), lowered;
+    sched_latch_free => lang_hooks_sched, "schedLatchFree", sig((u64) -> void), lowered;
+    sched_latch_open => lang_hooks_sched, "schedLatchOpen", sig((u64) -> void), lowered;
+    sched_latch_wait => lang_hooks_sched, "schedLatchWait", sig((u64) -> usize), lowered;
+    /// The process lifetime's (std/prelude/timers.velt's externs): `velt_rt_keep_alive_acquire`'s
+    /// and `_release`'s (a ref'd timer), `velt_rt_timer_unref_due`'s (a heap future: is the process
+    /// ending?); then `velt_rt_tla_at`'s: the top-level `await` that suspended last.
+    sched_keep_alive_acquire => lang_hooks_sched, "schedKeepAliveAcquire", sig(() -> void), lowered;
+    sched_keep_alive_release => lang_hooks_sched, "schedKeepAliveRelease", sig(() -> void), lowered;
+    sched_unref_due => lang_hooks_sched, "schedUnrefDue", sig(() -> usize), lowered;
+    sched_tla_at => lang_hooks_sched, "schedTlaAt", sig((&string) -> void), lowered;
+    /// `velt_rt_spawn_fut`'s: `(f, result_size, result_drop)`, the handle; then
+    /// `velt_rt_spawn_target`'s (`(worker)`: the next spawn is pinned, and stays the runtime's).
+    sched_spawn_fut => lang_hooks_sched, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
+    sched_pinned => lang_hooks_sched, "schedPinned", sig((i64) -> void), lowered;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
@@ -641,33 +680,12 @@ mod keys;
 pub use keys::{Key, KEYS};
 mod deleted;
 pub use deleted::DELETED;
-
-/// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).
-pub fn find(qualified: &str) -> Option<&'static Hook> {
-    let (module, item) = qualified.rsplit_once("::")?;
-    let rel = module.strip_prefix(crate::std_modules::CANONICAL_PREFIX)?;
-    HOOKS
-        .iter()
-        .find(|h| h.item == item && crate::std_modules::rel(h.module_entry) == Some(rel))
-}
-
+mod scheduler;
+pub use scheduler::{std_scheduler, SCHEDULER_ENV};
+mod lookup;
+pub use lookup::{find, is_lowered};
 mod on_demand;
 pub use on_demand::{on_demand, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE};
-
-/// Is the definition with qualified name `qualified` a hook lowering calls by name?
-pub fn is_lowered(qualified: &str) -> bool {
-    static LOWERED: std::sync::OnceLock<std::collections::HashSet<String>> =
-        std::sync::OnceLock::new();
-    LOWERED
-        .get_or_init(|| {
-            HOOKS
-                .iter()
-                .filter(|h| h.lowered)
-                .map(Hook::qualified)
-                .collect()
-        })
-        .contains(qualified)
-}
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]

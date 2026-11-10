@@ -1,0 +1,55 @@
+// velt/sync (tests): `Slot<T>`, a value moved into raw memory and out once: a second take gives
+// nothing, and a slot dropped while it holds a value drops it (its dispose runs once).
+import { describe, expect, it } from "velt/test";
+import { Slot } from "./slot";
+
+/** How many `Ticket`s were dropped. */
+const DROPPED = new Atomic<u64>(0);
+
+class Ticket {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+  [Symbol.dispose]() {
+    DROPPED.add(1);
+  }
+}
+
+describe("velt/sync Slot", () => {
+  it("moves a value in and out once", () => {
+    const s = new Slot<string>();
+    expect(s.holds).toBe(false);
+    expect(s.put(`a string long enough for the heap ${1}`)).toBe(true);
+    expect(s.put("second")).toBe(false);
+    expect(s.take()).toBe("a string long enough for the heap 1");
+    expect(s.take()).toBe(null);
+    expect(s.holds).toBe(false);
+  });
+
+  it("drops what it still holds when it is dropped, and a taken value once", () => {
+    DROPPED.store(0);
+    {
+      const s = new Slot<Ticket>();
+      s.put(new Ticket(1));
+    }
+    expect(DROPPED.load()).toBe(1);
+    {
+      const s = new Slot<Ticket>();
+      s.put(new Ticket(2));
+      const t = s.take();
+      expect(t?.id).toBe(2);
+    }
+    expect(DROPPED.load()).toBe(2);
+  });
+
+  it("holds numbers and structs", () => {
+    const s = new Slot<u64>();
+    s.put(42);
+    expect(s.take()).toBe(42);
+    const p = new Slot<[i64, string]>();
+    p.put([7, `seven ${7}`]);
+    const v = p.take();
+    expect(v?.[0]).toBe(7);
+  });
+});

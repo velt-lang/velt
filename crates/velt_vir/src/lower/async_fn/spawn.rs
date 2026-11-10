@@ -95,6 +95,10 @@ impl FnLower<'_, '_> {
             ];
             // The result reaches the joining task: the task transfers it as it finishes, while
             // promises it started (which may still use the result's objects) are on its thread.
+            if self.std_sched() && worker.is_none() {
+                // One worker: the result stays on this thread, nothing to transfer.
+                return self.sched_spawn(args, ty);
+            }
             if !detached && self.cx.transfers(slot) {
                 args.push(cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot))));
                 self.pin(worker);
@@ -127,6 +131,10 @@ impl FnLower<'_, '_> {
         };
         if !self.dead() {
             self.transfer_result(fut.clone(), pty);
+        }
+        if self.std_sched() && worker.is_none() {
+            // One worker: the task polls the heap future on this thread.
+            return self.sched_spawn_fut(fut, rsize, result_drop, ty);
         }
         self.pin(worker);
         self.rt_value(Rt::SpawnFut, vec![fut, rsize, result_drop], ty)

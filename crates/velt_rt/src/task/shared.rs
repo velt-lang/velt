@@ -382,6 +382,16 @@ fn forwarded(f: *mut VeltFut) -> Option<(*mut VeltFut, usize)> {
 /// `f` must be a live holder of a shared promise, owned by the caller; `transfer` must match
 /// its result.
 pub(crate) unsafe fn hand_over(f: *mut VeltFut, transfer: Option<ResultDropFn>) {
+    if super::runtime::velt_executor() {
+        // The executor in Velt (one worker, #2649): its tasks have no runtime task, so every
+        // one of them would look like code outside a task and hand the holder to the outside
+        // home's proxy, which only code outside a task drives (its waker does nothing): the
+        // other task would wait forever, and the proxy's poll would run that task's code with
+        // the outside home's task context current (the runtime's microtask queue it never
+        // drains). Its tasks share the worker's thread, so the holder stays as it is and the
+        // other task awaits it directly, as one task's holders do.
+        return;
+    }
     if let Some((p, _)) = forwarded(f) {
         if !is_shared(p) {
             // Handed on again: the proxy's result is this holder's own copy already.

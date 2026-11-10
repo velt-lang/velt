@@ -70,6 +70,74 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(r))
     }
 
+    /// `statePoll(poll, state, cx)`: the call of the compiled poll function at address `poll`
+    /// with `(state, cx)`, its `u32` result.
+    pub(super) fn state_poll(
+        &mut self,
+        poll: &hir::Expr,
+        state: &hir::Expr,
+        cx: &hir::Expr,
+    ) -> Operand {
+        let [target, state, cx] = [poll, state, cx].map(|e| {
+            let v = self.expr(e);
+            self.rvalue_temp(Ty::Ptr, Rvalue::Cast(v, Ty::Ptr))
+        });
+        let callee = Callee::Ptr {
+            target,
+            params: vec![Ty::Ptr, Ty::Ptr],
+            ret: Ty::U32,
+        };
+        let r = self.temp(Ty::U32);
+        self.header_call(callee, vec![state, cx], Some(Place::local(r)));
+        Operand::Copy(Place::local(r))
+    }
+
+    /// `stateDrop(drop, at)`: the call of the C function at address `drop` with `at`.
+    pub(super) fn state_drop(&mut self, drop: &hir::Expr, at: &hir::Expr) -> Operand {
+        let [target, at] = [drop, at].map(|e| {
+            let v = self.expr(e);
+            self.rvalue_temp(Ty::Ptr, Rvalue::Cast(v, Ty::Ptr))
+        });
+        let callee = Callee::Ptr {
+            target,
+            params: vec![Ty::Ptr],
+            ret: Ty::Unit,
+        };
+        self.header_call(callee, vec![at], None);
+        unit()
+    }
+
+    /// `addressCall(f, a)`: the call of the C function at address `f` with `a`, its
+    /// pointer-sized result as a value of type `ty` (`usize`).
+    pub(super) fn address_call(&mut self, f: &hir::Expr, a: &hir::Expr, ty: TyId) -> Operand {
+        let [target, a] = [f, a].map(|e| {
+            let v = self.expr(e);
+            self.rvalue_temp(Ty::Ptr, Rvalue::Cast(v, Ty::Ptr))
+        });
+        let callee = Callee::Ptr {
+            target,
+            params: vec![Ty::Ptr],
+            ret: Ty::Ptr,
+        };
+        let r = self.temp(Ty::Ptr);
+        self.header_call(callee, vec![a], Some(Place::local(r)));
+        let t = self.vty(ty);
+        self.rvalue_temp(t, Rvalue::Cast(Operand::Copy(Place::local(r)), t))
+    }
+
+    /// `fnAddress(f)`: the address of the function `f` names (sema checked that C can call it),
+    /// as a value of type `ty` (`usize`).
+    pub(super) fn fn_address(&mut self, f: &hir::Expr, ty: TyId) -> Operand {
+        let hir::ExprKind::FnRef(d, targs) = &f.kind else {
+            ice("fnAddress of something other than a function's name")
+        };
+        let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
+        let fid = self.cx.func_for_direct(*d, targs, super::LkMode::Plain);
+        let t = self.vty(ty);
+        let p = Operand::Const(crate::vir::Const::Func(fid), Ty::Ptr);
+        self.rvalue_temp(t, Rvalue::Cast(p, t))
+    }
+
     /// `f->poll(f, cx)` into `dest` (a `u32`, 1 when ready): the call of the function the heap
     /// future `f`'s header holds at offset 0 (rt_abi_async.md §1), with no runtime function in
     /// between.
