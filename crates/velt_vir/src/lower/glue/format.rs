@@ -327,6 +327,7 @@ impl FnLower<'_, '_> {
                 lw.format_promise(buf, place, ty, &child)
             }),
             TyKind::Dyn(..) => {
+                self.note_dyn_glue(SLOT_FORMAT, ty);
                 let vt = Operand::Copy(proj(place, Proj::Field(1)));
                 let f = self.dispatch(vt, SLOT_FORMAT);
                 let data = Operand::Copy(proj(place, Proj::Field(0)));
@@ -583,7 +584,8 @@ impl FnLower<'_, '_> {
                 };
                 let ea = self.cx.env_agg(def, &[]);
                 let env = proj(place, Proj::Field(1));
-                let printed = proj(&proj(&env, Proj::Deref(Ty::Agg(ea))), Proj::Field(3));
+                let first = self.cx.env_header(def);
+                let printed = proj(&proj(&env, Proj::Deref(Ty::Agg(ea))), Proj::Field(first));
                 let a = self.addr(printed);
                 self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), a], None);
             }

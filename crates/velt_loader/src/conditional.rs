@@ -31,11 +31,14 @@ pub(super) struct Resolved {
 
 /// The conditions of a build for `target` (`None`: this machine) and, with `--host`, its host
 /// package's condition `host`.
+/// A native build compiled with the executor in Velt (`VELT_SCHEDULER=std`) also has
+/// [`imports::STD_SCHEDULER`], which only std's map names.
 pub(super) fn build_conditions(target: Option<&str>, host: Option<&str>) -> Vec<String> {
-    match target {
+    let base = match target {
         Some(triple) => imports::conditions(triple, host),
         None => imports::conditions(&velt_toolchain::release::host_triple(), host),
-    }
+    };
+    imports::with_std_scheduler(base, velt_common::std_hooks::std_scheduler())
 }
 
 /// The conditions of the build `opts` loads for.

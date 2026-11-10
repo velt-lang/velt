@@ -395,6 +395,33 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Record that the wrapper closure in `w` stands for `wrapped` (`hir::Program::fn_wrappers`).
+    pub(super) fn mark_wraps(&mut self, w: &mut hir::Expr, wrapped: hir::FnWrapped) {
+        if let Some(c) = crate::generic_fns::closure_in(w) {
+            self.cx.generic_fns.wrappers.entry(c).or_insert(wrapped);
+        }
+    }
+
+    /// The module-level function of no type parameters `callee` names, as a wrapper calling
+    /// it by name stands for it.
+    pub(super) fn named_plain_fn(&mut self, callee: &ast::Expr) -> Option<hir::FnWrapped> {
+        let ast::ExprKind::Ident(id) = &callee.kind else {
+            return None;
+        };
+        if self.is_local_name(&id.name) {
+            return None;
+        }
+        match self.cx.lookup_item_at(self.module, &id.name, id.span) {
+            Some(crate::ctx::Item::Def(d))
+                if matches!(self.cx.info[d.0 as usize], crate::defs::DefInfo::Fn(_))
+                    && self.cx.fn_info(d).generics.len() == 0 =>
+            {
+                Some(hir::FnWrapped::Fn(d, vec![]))
+            }
+            _ => None,
+        }
+    }
+
     /// `{ const g = h; (a0, …) => g(a0, …) }` as a value of `exp`, the arrow made by `make`:
     /// `n` parameters (the last a rest one if `rest`), as many of them passed as `h` takes (a
     /// function value may take fewer parameters than its type gives).
@@ -481,7 +508,9 @@ impl FnCx<'_, '_> {
             body: ast::ArrowBody::Expr(Box::new(call)),
             is_async: false,
         });
-        let value = make(self, &arrow, exp);
+        let mut value = make(self, &arrow, exp);
+        // The wrapper of a dynamic value stands for the function it holds (lowering looks).
+        self.mark_wraps(&mut value, hir::FnWrapped::Local(l));
         self.pop_scope();
         let value = self.coerce(value, exp);
         let block = hir::Block {

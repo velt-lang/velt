@@ -1,0 +1,28 @@
+// velt/net (internal): the socket constants of an OS without the reactor of the executor in
+// Velt (std/lang/hooks/reactor_none.velt): Linux's values, never used, since std/net/tcp_sched.velt
+// hands every call to the runtime there.
+
+import { addressLoad } from "velt/lang/intrinsics";
+
+/** `AF_INET6`. */
+export const AF_INET6: i32 = 10;
+/** `SOL_SOCKET`, `SO_ERROR`, `SO_REUSEADDR`. */
+export const SOL_SOCKET: i32 = 1;
+export const SO_ERROR: i32 = 4;
+export const SO_REUSEADDR: i32 = 2;
+/** Where `struct addrinfo` keeps `ai_addr` (as Linux). */
+export const AI_ADDR: usize = 24;
+
+/** The family of the `sockaddr` at `sa`: a `u16` at byte 0. */
+export function familyOf(sa: usize): i32 {
+  // SAFETY: `sa` is a socket address the OS filled.
+  return unsafe { addressLoad<u16>(sa + 0) } as i32;
+}
+
+/** The runtime's error code (std/native/error.velt) of `errno` `e`. */
+export function codeOf(e: i32): i32 {
+  switch (e) {
+    default:
+      return 99;
+  }
+}

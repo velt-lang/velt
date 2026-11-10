@@ -1,0 +1,261 @@
+// velt/lang/event (internal): `EventTarget`, a global class as in Node: listeners by event type,
+// and `dispatchEvent`, which calls them in Node's order.
+
+import { EventTarget as Target } from "velt/lang/dom/types";
+import { Event } from "velt/lang/event/event";
+import { INSPECT } from "velt/lang/hooks/keys";
+import { AbortSignal } from "velt/task/signal";
+
+/** A listener function: called with the event. */
+export type EventListener = (evt: Event) => void throws unknown;
+
+/** A listener object: its `handleEvent` is called with the event. */
+export interface EventListenerObject {
+  handleEvent(object: Event): void throws unknown;
+}
+
+/** What `addEventListener` takes: a function or an object with `handleEvent`. */
+export type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
+
+/** The options of `removeEventListener` (or `true` for `{ capture: true }`). */
+export interface EventListenerOptions {
+  capture?: boolean;
+}
+
+/**
+ * The options of `addEventListener` (or `true` for `{ capture: true }`): `once` removes the
+ * listener before its first call, `passive` makes its `preventDefault()` do nothing, and an
+ * aborted `signal` removes it.
+ */
+export interface AddEventListenerOptions extends EventListenerOptions {
+  once?: boolean;
+  passive?: boolean;
+  signal?: AbortSignal;
+}
+
+// One added listener, in its type's list. The first of a list is a head that holds no callback.
+// A removed listener keeps its `next`, so a dispatch that holds it goes on where it was, as
+// Node's list does: a listener added during a dispatch is called in it, unless the one the
+// dispatch would reach next was the last and was removed.
+//
+// `removeEventListener` and a second `addEventListener` find a listener by the function or
+// object passed: a function converted to `EventListener` (a closure that doesn't throw, takes
+// `any` or no parameter) keeps its identity, so the one passed again is the same.
+class Listener {
+  callback: EventListenerOrEventListenerObject | null;
+  capture: boolean;
+  once: boolean;
+  passive: boolean;
+  signal: AbortSignal | null;
+  removed: boolean = false;
+  next: Listener | null = null;
+
+  constructor(
+    callback: EventListenerOrEventListenerObject | null,
+    capture: boolean,
+    once: boolean,
+    passive: boolean,
+    signal: AbortSignal | null,
+  ) {
+    this.callback = callback;
+    this.capture = capture;
+    this.once = once;
+    this.passive = passive;
+    this.signal = signal;
+  }
+
+  // Whether this is the listener of `callback` for `capture`: the same function, or the same
+  // object.
+  same(callback: EventListenerOrEventListenerObject, capture: boolean): boolean {
+    const c = this.callback;
+    if (c === null || this.capture !== capture) {
+      return false;
+    }
+    if (typeof c === "function") {
+      return typeof callback === "function" && c === callback;
+    }
+    return typeof callback !== "function" && c === callback;
+  }
+
+  // Whether its signal was aborted since it was added (then it is removed).
+  aborted(): boolean {
+    const s = this.signal;
+    return s !== null && s.aborted;
+  }
+}
+
+/**
+ * Something events are dispatched to (a global, as in Node; a class to extend): listeners by
+ * event type, called by `dispatchEvent` in the order they were added. Velt has no DOM, so a
+ * target has no parent: its capture listeners and the others run in the order they were added.
+ */
+export class EventTarget implements Target {
+  private lists: Map<string, Listener> = new Map();
+
+  /** A target without listeners. */
+  constructor() {}
+
+  /**
+   * Adds `callback` for events of `type`, unless it is `null` or already added for the same
+   * `capture` (`options === true` is `{ capture: true }`), or `options.signal` is aborted.
+   */
+  addEventListener(
+    type: string,
+    callback: EventListenerOrEventListenerObject | null,
+    options?: AddEventListenerOptions | boolean,
+  ): void {
+    if (callback === null) {
+      return;
+    }
+    let capture = false;
+    let once = false;
+    let passive = false;
+    let signal: AbortSignal | null = null;
+    if (typeof options === "boolean") {
+      capture = options;
+    } else if (options !== undefined) {
+      capture = options.capture ?? false;
+      once = options.once ?? false;
+      passive = options.passive ?? false;
+      signal = options.signal ?? null;
+    }
+    if (signal !== null && signal.aborted) {
+      return;
+    }
+    let head = this.lists.get(type);
+    if (head === undefined) {
+      const h = new Listener(null, false, false, false, null);
+      this.lists.set(type, h);
+      head = h;
+    }
+    let last: Listener = head;
+    while (true) {
+      const l = last.next;
+      if (l === null) {
+        break;
+      }
+      if (l.same(callback, capture) && !l.aborted()) {
+        return;
+      }
+      if (l.aborted()) {
+        last.next = l.next;
+        l.removed = true;
+      } else {
+        last = l;
+      }
+    }
+    last.next = new Listener(callback, capture, once, passive, signal);
+  }
+
+  /** Removes `callback` for events of `type` and the same `capture`, if it was added. */
+  removeEventListener(
+    type: string,
+    callback: EventListenerOrEventListenerObject | null,
+    options?: EventListenerOptions | boolean,
+  ): void {
+    if (callback === null) {
+      return;
+    }
+    let capture = false;
+    if (typeof options === "boolean") {
+      capture = options;
+    } else if (options !== undefined) {
+      capture = options.capture ?? false;
+    }
+    const head = this.lists.get(type);
+    if (head === undefined) {
+      return;
+    }
+    let cur = head.next;
+    while (cur !== null) {
+      if (cur.same(callback, capture)) {
+        unlink(head, cur);
+        return;
+      }
+      cur = cur.next;
+    }
+  }
+
+  /**
+   * Dispatches `event` to this target: calls the listeners of its type in order, until one
+   * calls `stopImmediatePropagation()`, and returns `false` when one cancelled it
+   * (`preventDefault()`), `true` otherwise. An error a listener throws doesn't stop the others:
+   * it is uncaught once the dispatch is over (it ends the process), as in Node. Dispatching an
+   * event that is being dispatched throws.
+   */
+  dispatchEvent(event: Event): boolean throws Error {
+    if (event.dispatching) {
+      throw new Error(`The event "${event.kind}" is already being dispatched`);
+    }
+    event.targetNow = this;
+    event.dispatching = true;
+    const head = this.lists.get(event.kind);
+    if (head === undefined || head.next === null) {
+      event.dispatching = false;
+      return !event.defaultPrevented;
+    }
+    event.currentNow = this;
+    event.phase = Event.AT_TARGET;
+    let cur: Listener | null = head.next;
+    while (!event.stoppedNow) {
+      const l = cur;
+      if (l === null) {
+        break;
+      }
+      const next = l.next;
+      if (l.removed || l.aborted()) {
+        if (!l.removed) {
+          unlink(head, l);
+        }
+        cur = next;
+        continue;
+      }
+      if (l.once) {
+        unlink(head, l);
+      }
+      const callback = l.callback;
+      if (callback !== null) {
+        event.passiveNow = l.passive;
+        try {
+          if (typeof callback === "function") {
+            callback(event);
+          } else {
+            callback.handleEvent(event);
+          }
+        } catch (e) {
+          queueMicrotask(() => {
+            throw e;
+          });
+        }
+        event.passiveNow = false;
+      }
+      cur = next;
+    }
+    event.currentNow = null;
+    event.phase = Event.NONE;
+    event.dispatching = false;
+    return !event.defaultPrevented;
+  }
+
+  /** How `console.log` shows it, like Node: `EventTarget {}`. */
+  [INSPECT]() {
+    return {};
+  }
+}
+
+// Takes `l` out of the list that starts at `head`; `l` keeps its `next` (see `Listener`).
+function unlink(head: Listener, l: Listener) {
+  let prev: Listener = head;
+  while (true) {
+    const cur = prev.next;
+    if (cur === null) {
+      return;
+    }
+    if (cur === l) {
+      prev.next = l.next;
+      l.removed = true;
+      return;
+    }
+    prev = cur;
+  }
+}

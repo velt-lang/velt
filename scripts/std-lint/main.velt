@@ -158,8 +158,12 @@ function generated(text: string): boolean {
 
 /** The exported classes and structs of `text` (the file `path`); in an `errors.velt`, a module's
  * few error classes may share the file (docs/internals/design/std-layout.md §6, "Errors"), so
- * classes extending an error class do not count there. */
+ * classes extending an error class do not count there, and a file a script generates (the
+ * lib.dom subset's event types) is one table, as it is for the size limit. */
 function exportedClasses(text: string, path: string): i64 {
+  if (generated(text)) {
+    return 0;
+  }
   const errorsFile = path == "errors.velt" || path.endsWith("/errors.velt");
   let n = 0;
   for (const line of text.split("\n")) {

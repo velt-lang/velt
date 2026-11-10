@@ -1,0 +1,55 @@
+// velt/net (internal): the socket constants and layouts of Linux for velt/net's sockets on the
+// reactor of the executor in Velt (std/net/tcp_sched.velt, #2649 step 2): what differs per OS in
+// `<sys/socket.h>`, `<netdb.h>` and `<errno.h>`, and the runtime's error code of an `errno`
+// (std/native/error.velt).
+
+import { addressLoad } from "velt/lang/intrinsics";
+
+/** `AF_INET6`. */
+export const AF_INET6: i32 = 10;
+/** `SOL_SOCKET`, `SO_ERROR`, `SO_REUSEADDR`. */
+export const SOL_SOCKET: i32 = 1;
+export const SO_ERROR: i32 = 4;
+export const SO_REUSEADDR: i32 = 2;
+/** Where `struct addrinfo` keeps `ai_addr` (Linux has it before `ai_canonname`). */
+export const AI_ADDR: usize = 24;
+
+/** The family of the `sockaddr` at `sa`: a `u16` at byte 0. */
+export function familyOf(sa: usize): i32 {
+  // SAFETY: `sa` is a socket address the OS filled.
+  return unsafe { addressLoad<u16>(sa + 0) } as i32;
+}
+
+/** The runtime's error code (std/native/error.velt) of `errno` `e`. */
+export function codeOf(e: i32): i32 {
+  switch (e) {
+    case 2:
+      return 1;
+    case 13:
+    case 1:
+      return 2;
+    case 17:
+      return 3;
+    case 22:
+      return 4;
+    case 110:
+      return 6;
+    case 111:
+      return 7;
+    case 104:
+    case 103:
+    case 107:
+      return 8;
+    case 98:
+      return 9;
+    case 32:
+      return 10;
+    case 95:
+    case 97:
+      return 12;
+    case 9:
+      return 16;
+    default:
+      return 99;
+  }
+}

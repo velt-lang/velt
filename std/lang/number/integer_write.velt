@@ -1,0 +1,63 @@
+// velt/lang/number (internal): an integer and the byte after it written as one text:
+// `console.log`'s argument and the space or newline that follows it (velt/lang/hooks/number_text),
+// so that they are one write to the stream and not two. The text is at most 21 bytes: 20 digits,
+// or a minus and 19, then the byte. One function out of line writes it (`digitsWrite`), so that
+// each of a program's `console.log`s of an integer is a call and the std cache serves its object:
+// inlined at every one, its digit code would make LLVM's loop strength reduction most of a
+// release build with many of them in a loop.
+// Up to 7 bytes and the byte are one word, built in it, with no further call before the write.
+// Longer text is written by one of two functions for both signs, each making the write itself,
+// so that nothing comes back through memory: below 10^8 (`midWrite`, one group of digits) and
+// from there up (`longWrite`, three). Two, so that the shorter numbers don't pay for the
+// registers and constants of the three groups.
+
+import { inline, noInline, strAsciiWords } from "velt/lang/intrinsics";
+import { eightWords, longWords } from "velt/lang/number/integer";
+
+declare function velt_rt_write_str(stream: u32, s: string);
+
+/**
+ * Writes `a`, after a minus when `neg`, and the ASCII byte `end` to `stream`: the hooks' one call
+ * (`intWrite`, `uintWrite`). Out of line (`@noInline`), as the header says.
+ */
+@noInline
+export function digitsWrite(stream: u32, a: u64, neg: bool, end: u8): void {
+  // -999999 to 9999999: at most 7 bytes, one word with `end`.
+  if (a < (neg ? 1000000 : 10000000)) {
+    oneWord(stream, a, neg, end);
+    return;
+  }
+  if (a < 100000000) {
+    midWrite(stream, a, neg, end);
+    return;
+  }
+  longWrite(stream, a, neg, end);
+}
+
+// Writes `a`, after a minus when `neg`, and `end`, where that is one word: up to 7 bytes, `a`
+// below 10^7, or 10^6 with the minus.
+@inline
+function oneWord(stream: u32, a: u64, neg: bool, end: u8): void {
+  const w = eightWords(a, neg);
+  velt_rt_write_str(
+    stream,
+    strAsciiWords(w.w0 | ((end as u64) << ((w.len as u64) * 8)), 0, 0, w.len + 1),
+  );
+}
+
+// Writes `a` below 10^8, after a minus when `neg`, and `end`, where that is two words: 8 or 9
+// bytes, so `end` is in the second.
+@noInline
+function midWrite(stream: u32, a: u64, neg: bool, end: u8): void {
+  const w = eightWords(a, neg);
+  const e = (end as u64) << (((w.len as u64) & 7) * 8);
+  velt_rt_write_str(stream, strAsciiWords(w.w0, w.w1 | e, 0, w.len + 1));
+}
+
+// Writes `a` from 10^8 up, after a minus when `neg`, and `end`: 9 to 20 bytes, then `end`, which
+// `longWords` places.
+@noInline
+function longWrite(stream: u32, a: u64, neg: bool, end: u8): void {
+  const w = longWords(a, neg, end as u64);
+  velt_rt_write_str(stream, strAsciiWords(w.w0, w.w1, w.w2, w.len));
+}

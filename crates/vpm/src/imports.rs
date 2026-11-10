@@ -35,6 +35,21 @@ pub const CONDITIONS: &[&str] = &[
     "native", "darwin", "linux", "win32", "wasm", "wasi", "js", DEFAULT,
 ];
 
+/// The condition of a native build compiled with the executor in Velt (`VELT_SCHEDULER=std`,
+/// #2649): only the standard library's map names it (its sockets on the Velt reactor in place of
+/// the runtime's), and the loader adds it ([`with_std_scheduler`]). Not a platform: what the
+/// compiler was asked to schedule with.
+pub const STD_SCHEDULER: &str = "std-scheduler";
+
+/// `conditions` of a native build, with [`STD_SCHEDULER`] before [`DEFAULT`] when `on`.
+pub fn with_std_scheduler(mut conditions: Vec<String>, on: bool) -> Vec<String> {
+    if on && conditions.iter().any(|c| c == "native") {
+        let at = conditions.len().saturating_sub(1);
+        conditions.insert(at, STD_SCHEDULER.to_string());
+    }
+    conditions
+}
+
 /// One file of a `#name` entry, under one condition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Variant {
@@ -150,6 +165,16 @@ fn condition_spelling(name: &str) -> bool {
 /// Check a variant's condition: a built-in one, or, when `hosts` (a package's map, not std's), a
 /// host package's (any name spelled as one).
 pub(crate) fn check_condition(condition: &str, hosts: bool) -> Result<(), String> {
+    if !hosts && condition == STD_SCHEDULER {
+        return Ok(());
+    }
+    if hosts && condition == STD_SCHEDULER {
+        return Err(format!(
+            "`{condition}` is the standard library's own condition: a package names the built-in \
+             ones ({}) or a host package's",
+            CONDITIONS.join(", ")
+        ));
+    }
     if CONDITIONS.contains(&condition) || (hosts && condition_spelling(condition)) {
         return Ok(());
     }
@@ -170,7 +195,7 @@ pub(crate) fn check_condition(condition: &str, hosts: bool) -> Result<(), String
 /// Check the condition a host package gives its builds (`crate::host`): spelled as one, and not
 /// a built-in one, which the target sets.
 pub(crate) fn check_host_condition(condition: &str) -> Result<(), String> {
-    if CONDITIONS.contains(&condition) {
+    if CONDITIONS.contains(&condition) || condition == STD_SCHEDULER {
         return Err(format!(
             "`{condition}` is a built-in condition, which the target sets: name the host's own"
         ));
@@ -225,6 +250,24 @@ mod tests {
                 target: t.to_string(),
             })
             .collect()
+    }
+
+    #[test]
+    fn the_std_scheduler_condition_is_std_only_and_native_only() {
+        let native = conditions("aarch64-apple-darwin", None);
+        assert_eq!(
+            with_std_scheduler(native.clone(), true),
+            ["native", "darwin", STD_SCHEDULER, "default"]
+        );
+        assert_eq!(
+            with_std_scheduler(native, false),
+            ["native", "darwin", "default"]
+        );
+        let js = conditions("wasm32-unknown-unknown", None);
+        assert_eq!(with_std_scheduler(js.clone(), true), js);
+        assert!(check_condition(STD_SCHEDULER, false).is_ok());
+        assert!(check_condition(STD_SCHEDULER, true).is_err());
+        assert!(check_host_condition(STD_SCHEDULER).is_err());
     }
 
     #[test]

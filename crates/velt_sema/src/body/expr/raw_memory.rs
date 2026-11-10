@@ -43,6 +43,11 @@ impl FnCx<'_, '_> {
                 self.stable_atomic(a, span)?;
                 Some(args)
             }
+            I::FnAddress => {
+                let f = args.first()?;
+                self.c_callable(f)?;
+                Some(args)
+            }
             _ => Some(args),
         }
     }
@@ -132,6 +137,46 @@ impl FnCx<'_, '_> {
             args.swap(1, 2);
         }
         Some(args)
+    }
+
+    /// Checks that `f`, the argument of `fnAddress`, names a module-level function C can call:
+    /// not generic, async or throwing, and taking and returning only numbers and `bool` (or
+    /// returning nothing), which cross the C calling convention as they are.
+    fn c_callable(&mut self, f: &hir::Expr) -> Option<()> {
+        if matches!(self.cx.ty.kind(f.ty), TyKind::Error) {
+            return None;
+        }
+        let ok = match (&f.kind, self.cx.ty.kind(f.ty).clone()) {
+            (
+                H::FnRef(d, targs),
+                TyKind::FnPtr {
+                    params,
+                    ret,
+                    throws,
+                    rest: false,
+                },
+            ) => {
+                // A promise or a generator is no number: async functions and generators fail
+                // the result's check.
+                let info = self.cx.fn_info(*d);
+                let plain = targs.is_empty() && info.owner.is_none() && info.extern_sig.is_none();
+                plain
+                    && self.cx.ty.is_bottom(throws)
+                    && params.iter().all(|&p| self.raw_value_ty(p, false))
+                    && (matches!(self.cx.ty.kind(ret), TyKind::Unit)
+                        || self.raw_value_ty(ret, false))
+            }
+            _ => false,
+        };
+        if ok {
+            return Some(());
+        }
+        self.cx.error(
+            Diagnostic::error("`fnAddress` needs a module-level function C can call", f.span).with_note(
+                "name it directly; it must not be generic, async or throwing, and takes and returns only numbers and `bool`",
+            ),
+        );
+        None
     }
 
     /// Checks that `a`, the argument of `atomicAddress`, is an `Atomic` of a 32- or 64-bit

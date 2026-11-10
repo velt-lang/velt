@@ -582,6 +582,9 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         // A heap future's poll and drop functions run any code of its body.
         | I::FutPoll
         | I::FutDrop => true,
+        // Calls through a function's address; a slot's put transfers its value, a take hands one out.
+        I::StatePoll | I::StateDrop | I::AddressCall | I::SlotPut | I::SlotTake => true,
+        I::FnAddress | I::SlotSize | I::PromiseAt => false,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat

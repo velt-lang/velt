@@ -37,6 +37,8 @@ impl FnLower<'_, '_> {
     /// keeps for its code, null while it has none.
     fn fn_env(&mut self, data: vir::Local, ty: TyId) -> Operand {
         let vp = self.any_value_place(data, ty);
+        // A wrapper's properties are those of the function it wraps (closure/fn_wrappers.rs).
+        let vp = self.fn_root(&vp);
         let out = Place::local(self.temp(Ty::Ptr));
         let env = Operand::Copy(proj(&vp, Proj::Field(1)));
         self.assign(out.clone(), Rvalue::Use(env));
@@ -151,6 +153,15 @@ impl FnLower<'_, '_> {
         // value this `any` holds keeps it as its environment.
         let vp = self.any_value_place(data, ty);
         self.fn_identity_into(&vp);
+        // A wrapper's properties are those of the function it wraps (closure/fn_wrappers.rs).
+        let vp = match self.cx.boxing.fn_wrappers {
+            true => {
+                let root = self.fn_root(&vp);
+                self.fn_identity_into(&root);
+                root
+            }
+            false => vp,
+        };
         let env = Operand::Copy(proj(&vp, Proj::Field(1)));
         let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(env));
         let (yes, no) = (self.new_block(), self.new_block());

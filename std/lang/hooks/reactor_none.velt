@@ -1,0 +1,73 @@
+// velt/lang/hooks (internal): the executor's reactor where none is wired up yet (Windows' AFD
+// over an IOCP port is #2649 step 2's: owner decision (c)): no sockets (`SUPPORTED` false, so
+// velt/net keeps the runtime's), and the worker's idle wait spins until another thread wakes it.
+
+import { Ptr } from "velt/ffi";
+import { atomicSpinHint, ptrAtomicLoad } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+
+/** Does this OS have the reactor? Not here: sockets stay the runtime's. */
+export const SUPPORTED: bool = false;
+
+export const EAGAIN: i32 = 11;
+export const EINPROGRESS: i32 = 115;
+export const EINTR: i32 = 4;
+/** `CLOCK_MONOTONIC`. */
+export const MONOTONIC: i32 = 1;
+/** `send`'s flags. */
+export const SEND_FLAGS: i32 = 0;
+/** `socket`'s extra type flags. */
+export const SOCKET_FLAGS: i32 = 0;
+
+/** No `errno` to read here: 0. */
+export function errno(): i32 {
+  return 0;
+}
+
+/** A new reactor: its block, a word a wake sets. */
+export function open(): usize {
+  return m.zeroed(16);
+}
+
+/** No sockets here: ENOTSUP's place, -1. */
+export function add(r: usize, fd: i32, source: usize): i32 {
+  return -1;
+}
+
+/** Spins until a wake (any timeout waits as long); no events. */
+export function wait(r: usize, timeoutMs: i64): usize {
+  if (timeoutMs === 0) {
+    return 0;
+  }
+  // SAFETY: the block's first word, changed atomically.
+  while (unsafe { ptrAtomicLoad(Ptr.at<u32>(r), "seqcst") } === 0) {
+    atomicSpinHint();
+  }
+  m.store32(r, 0);
+  return 0;
+}
+
+/** No events: 0. */
+export function source(r: usize, i: usize): usize {
+  return 0;
+}
+
+/** No events: 0. */
+export function bits(r: usize, i: usize): u32 {
+  return 0;
+}
+
+/** Wakes the worker spinning in `wait` (from any thread). */
+export function wake(r: usize): void {
+  m.store32(r, 1);
+}
+
+/** No sockets here: -1. */
+export function accept(fd: i32, addr: usize, len: usize): i32 {
+  return -1;
+}
+
+/** No sockets here: -1. */
+export function prepare(fd: i32): i32 {
+  return -1;
+}

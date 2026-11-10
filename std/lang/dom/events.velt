@@ -6,36 +6,36 @@
 // scripts/dom-subset/names.txt: do not edit, change the list and run the script.
 // Derived from TypeScript's lib.dom.d.ts, Copyright (c) Microsoft Corporation, Apache-2.0; see NOTICE.
 
-import { Event } from "velt/lang/dom/types";
+import { Event } from "velt/lang/event/event";
 
-export interface AnimationEvent extends Event {}
+export class AnimationEvent extends Event {}
 
-export interface ClipboardEvent extends Event {}
+export class ClipboardEvent extends Event {}
 
-export interface CompositionEvent extends UIEvent {}
+export class CompositionEvent extends UIEvent {}
 
-export interface DragEvent extends MouseEvent {}
+export class DragEvent extends MouseEvent {}
 
-export interface FocusEvent extends UIEvent {}
+export class FocusEvent extends UIEvent {}
 
-export interface InputEvent extends UIEvent {}
+export class InputEvent extends UIEvent {}
 
-export interface KeyboardEvent extends UIEvent {
-  readonly key: string;
+export class KeyboardEvent extends UIEvent {
+  readonly key: string = "";
 }
 
-export interface MediaQueryListEvent extends Event {
-  readonly matches: boolean;
+export class MediaQueryListEvent extends Event {
+  readonly matches: boolean = false;
 }
 
-export interface MouseEvent extends UIEvent {}
+export class MouseEvent extends UIEvent {}
 
-export interface PointerEvent extends MouseEvent {}
+export class PointerEvent extends MouseEvent {}
 
-export interface TouchEvent extends UIEvent {}
+export class TouchEvent extends UIEvent {}
 
-export interface TransitionEvent extends Event {}
+export class TransitionEvent extends Event {}
 
-export interface UIEvent extends Event {}
+export class UIEvent extends Event {}
 
-export interface WheelEvent extends MouseEvent {}
+export class WheelEvent extends MouseEvent {}

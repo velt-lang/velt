@@ -105,6 +105,7 @@ fn every_module_a_reach_time_hook_demands_may_be_served_in_place() {
     // The hooks each demand is for are among what it loads.
     for (module, hook) in [
         ("std/lang/hooks/number_text", "int_text"),
+        ("std/lang/hooks/number_write", "number_write"),
         ("std/lang/hooks/number_float", "float_text"),
         ("std/host/promise", "host_await"),
     ] {

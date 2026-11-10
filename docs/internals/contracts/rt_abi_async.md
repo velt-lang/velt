@@ -1427,12 +1427,9 @@ task started by whoever queues into an idle connection writes everything queued 
 (a reply by the connection's reading task, with no more input waiting, is written at once
 instead), and a send waits while more than 1 MiB is queued. No callbacks are stored (§13.5).
 
-### 14.10 HTML escaping (`velt/text`; stream std-2, additive)
+### 14.10 HTML escaping (moved)
 
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_html_escape` | `(const VeltStr* s, VeltStr* out)` | owned `s` with `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`, in one pass (output sized once); other bytes unchanged. Without any of them, `s` itself (as `velt_rt_str_own`: shared, no copy) |
-| `velt_rt_jsx_escape` | `(const VeltStr* s, VeltStr* out)` | as `velt_rt_html_escape`, but `'` → `&#x27;` (react-dom's; `std/jsx`) |
+`escapeHtml` and std/jsx's escaping are Velt code (`std/text/html.velt`, #2196).
 
 ### 14.11 SQLite (moved)
 

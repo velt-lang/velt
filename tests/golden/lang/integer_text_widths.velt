@@ -1,0 +1,85 @@
+// An integer as text at every width and sign: `String(v)`, `${v}` (a builder), and `console.log`,
+// as its last argument (one text with the newline) and before another (with a space). Each digit
+// count at its edges, 10^6 to 10^8 (where the short paths end), the bounds of `i64` and `u64`.
+// Then the floats `console.log` writes itself.
+
+function signed(v: i64): void {
+  console.log(String(v), `<${v}>`);
+  console.log(v);
+  console.log(v, 1);
+}
+
+function unsigned(v: u64): void {
+  console.log(String(v), `<${v}>`);
+  console.log(v);
+  console.log(v, 1);
+}
+
+function float(x: f64): void {
+  console.log(x);
+  console.log(x, x);
+}
+
+function main() {
+  let p: u64 = 1;
+  for (let d = 0; d < 20; d++) {
+    unsigned(p - 1);
+    unsigned(p);
+    unsigned(p + 1);
+    if (d < 19) {
+      const s = p as i64;
+      signed(s - 1);
+      signed(s);
+      signed(s + 1);
+      signed(-(s - 1));
+      signed(-s);
+      signed(-(s + 1));
+    }
+    if (d < 19) {
+      p = p * 10;
+    }
+  }
+  signed(9223372036854775807);
+  signed(-9223372036854775807);
+  signed(-9223372036854775807 - 1);
+  unsigned(18446744073709551615);
+  unsigned(18446744073709551614);
+  unsigned(18440000000000000000);
+  signed(4000000000000000000);
+  signed(-4000000000000000000);
+  signed(12345678);
+  signed(-1234567);
+  signed(-12345678);
+  signed(123456789);
+  signed(-123456789);
+  signed(-999999);
+  signed(-1000000);
+  signed(-9999999);
+  signed(-10000000);
+  unsigned(9999999);
+  unsigned(10000000);
+  const small: i8 = -128;
+  const byte: u8 = 255;
+  console.log(small);
+  console.log(byte);
+  console.log("n", small);
+  console.error(small);
+  console.error(byte);
+  console.error(-1.5);
+  float(-0.0);
+  float(0.0);
+  float(1.0);
+  float(-1.0);
+  float(0.5);
+  float(1e21);
+  float(NaN);
+  float(Infinity);
+  float(9007199254740991.0);
+  float(9007199254740992.0);
+  float(-9007199254740992.0);
+  let y = 0;
+  for (let i = 0; i < 3; i++) {
+    y = y - 1;
+    console.log(y);
+  }
+}

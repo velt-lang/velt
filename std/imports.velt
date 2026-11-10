@@ -29,4 +29,22 @@ export const imports: Imports = {
     native: "./lang/hooks/unwind_itanium.velt",
     default: "./lang/hooks/unwind_none.velt",
   },
+  // The reactor of the executor in Velt (std/lang/hooks/sched_io.velt): what the worker waits in
+  // while it has nothing to run (sockets' readiness and wakes from other threads): kqueue on
+  // macOS, epoll and an eventfd on Linux; elsewhere no sockets and a spinning wait.
+  "#reactor": {
+    darwin: "./lang/hooks/reactor_kqueue.velt",
+    linux: "./lang/hooks/reactor_epoll.velt",
+    default: "./lang/hooks/reactor_none.velt",
+  },
+  // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
+  // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
+  // reactor (std/net/tcp_sched.velt), which hands the runtime's handles (TLS, `fetch`'s pool) and
+  // an OS without a reactor back to the runtime.
+  "#net-sys": {
+    darwin: "./net/sys_darwin.velt",
+    linux: "./net/sys_linux.velt",
+    default: "./net/sys_none.velt",
+  },
+  "#net-tcp": { "std-scheduler": "./net/tcp_sched.velt", default: "./net/rt.velt" },
 };

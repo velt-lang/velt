@@ -1,0 +1,35 @@
+// HTML escaping: the TechEmpower fortunes messages (short, some with entities) 300,000 times, a
+// long clean text and a long text with entities in it 3,000 times each. The Rust port is the
+// runtime's escaper this replaced.
+import { escapeHtml } from "velt/text";
+
+function main() {
+  const messages = [
+    "fortune: No such file or directory",
+    "A computer scientist is someone who fixes things that aren't broken.",
+    "After enough decimal places, nobody gives a damn.",
+    "A bad random number generator: 1, 1, 1, 1, 1, 4.33e+67, 1, 1, 1",
+    "A computer program does what you tell it to do, not what you want it to do.",
+    "Emacs is a nice operating system, but I prefer UNIX. — Tom Christaensen",
+    "Any program that runs right is obsolete.",
+    "A list is only as strong as its weakest link. — Donald Knuth",
+    "Feature: A bug with seniority.",
+    "Computers make very fast, very accurate mistakes.",
+    "<script>alert(\"This should not be displayed in a browser alert box.\");</script>",
+    "フレームワークのベンチマーク",
+  ];
+  let total: usize = 0;
+  for (let i = 0; i < 300000; i++) {
+    total += escapeHtml(messages[i % 12]).length;
+  }
+  let clean = "";
+  let mixed = "";
+  for (let i = 0; i < 1000; i++) {
+    clean += "the quick brown fox jumps over the lazy dog ";
+    mixed += "a < b && c > d, said \"the 'fox'\" over the lazy dog ";
+  }
+  for (let i = 0; i < 3000; i++) {
+    total += escapeHtml(clean).length + escapeHtml(mixed).length;
+  }
+  console.log(total);
+}

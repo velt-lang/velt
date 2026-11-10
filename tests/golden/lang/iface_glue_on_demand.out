@@ -1,0 +1,9 @@
+11 1
+Holder {
+  items: [
+    Tag { text: 'hi', parts: [Array] },
+    { text: 'lit', label: [Function: label] }
+  ]
+} hi m
+6 6
+9

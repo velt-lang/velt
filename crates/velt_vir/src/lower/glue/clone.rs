@@ -107,7 +107,10 @@ impl FnLower<'_, '_> {
                 let f = self.share_promise(Operand::Copy(s.clone()), ty);
                 self.assign(d.clone(), Rvalue::Use(f));
             }
-            TyKind::Dyn(..) => self.clone_dyn(s, d),
+            TyKind::Dyn(..) => {
+                self.note_dyn_glue(SLOT_CLONE, ty);
+                self.clone_dyn(s, d)
+            }
             _ => self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone()))),
         }
     }
@@ -174,7 +177,7 @@ impl FnLower<'_, '_> {
     fn clone_closure(&mut self, s: &Place, d: &Place) {
         let hdr = self.cx.closure_agg();
         self.assign(d.clone(), Rvalue::Use(Operand::Copy(s.clone())));
-        let env = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(proj(s, Proj::Field(1)))));
+        let (env, bit) = self.closure_env(s);
         let done = self.new_block();
         let nn = self.non_null(env.clone());
         self.when(nn, done);
@@ -189,6 +192,7 @@ impl FnLower<'_, '_> {
         let has = self.non_null(f.clone());
         self.when(has, done);
         let new = self.call_entry(f, vec![env], vec![Ty::Ptr], Ty::Ptr);
+        let new = self.retag_env(new, bit);
         self.assign(proj(d, Proj::Field(1)), Rvalue::Use(new));
         self.goto(done);
         self.switch_to(done);

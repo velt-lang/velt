@@ -1,0 +1,183 @@
+// velt/lang/hooks (internal): the executor's reactor on Linux (sched_io.velt, #2649 step 2):
+// epoll. A socket is registered once, for reading and writing, edge-triggered (`EPOLLET`), with
+// its source (sched_io.velt) as the event's data; the worker's idle wait is an `epoll_wait`, and a
+// wake from another thread writes an eventfd registered with data 0.
+//
+// Also the few OS calls a non-blocking socket needs whose details differ per OS: `errno`, the
+// socket flags (`SOCK_NONBLOCK | SOCK_CLOEXEC` at creation), `MSG_NOSIGNAL` on every send.
+// `struct epoll_event` is packed on x86-64 (12 bytes, data at 4) and natural elsewhere (16, data
+// at 8): the block records which at `open`.
+
+import { Ptr } from "velt/ffi/ptr";
+import { velt_rt_os_arch } from "velt/os/rt";
+import * as m from "./sched_mem";
+
+/** Does this OS have the reactor? (The default variant has not: sockets stay the runtime's.) */
+export const SUPPORTED: bool = true;
+
+export const EAGAIN: i32 = 11;
+export const EINPROGRESS: i32 = 115;
+export const EINTR: i32 = 4;
+/** `CLOCK_MONOTONIC`. */
+export const MONOTONIC: i32 = 1;
+/** `send`'s flags: `MSG_NOSIGNAL` (a closed peer is EPIPE, not SIGPIPE). */
+export const SEND_FLAGS: i32 = 0x4000;
+/** `socket`'s extra type flags: `SOCK_NONBLOCK | SOCK_CLOEXEC`. */
+export const SOCKET_FLAGS: i32 = 0x80800;
+
+// Readiness bits of an event (sched_io.velt).
+const READ: u32 = 1;
+const WRITE: u32 = 2;
+const HUP: u32 = 4;
+const ERR: u32 = 8;
+
+const EPOLLIN: u32 = 0x1;
+const EPOLLOUT: u32 = 0x4;
+const EPOLLERR: u32 = 0x8;
+const EPOLLHUP: u32 = 0x10;
+const EPOLLRDHUP: u32 = 0x2000;
+const EPOLLET: u32 = 0x80000000;
+const EPOLL_CTL_ADD: i32 = 1;
+const EPOLL_CLOEXEC: i32 = 0x80000;
+const EFD_NONBLOCK_CLOEXEC: i32 = 0x80800;
+
+/** Events one wait takes at most. */
+const MAX_EVENTS: usize = 64;
+
+// The reactor's block: the epoll and event descriptors, an event's size and its data's offset,
+// an event to register, a scratch word for the eventfd, the events of the last wait.
+const R_EP: usize = 0;
+const R_EVFD: usize = 8;
+const R_STRIDE: usize = 16;
+const R_DATA: usize = 24;
+const R_CHANGE: usize = 32;
+const R_WORD: usize = 48;
+const R_EVENTS: usize = 64;
+const R_SIZE: usize = 64 + 64 * 16;
+
+declare c("c") function epoll_create1(flags: i32): i32;
+// Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
+// symbols (`declare system function read(fd: i32, buf: u8[]): isize` passes a pointer and a
+// `size_t`): one C symbol has one signature in a program. Addresses become `Ptr`s with `m.ptr`.
+declare c("c") function epoll_ctl(ep: i32, op: i32, fd: i32, event: Ptr<u8>): i32;
+declare c("c") function epoll_wait(ep: i32, events: Ptr<u8>, max: i32, timeout: i32): i32;
+declare c("c") function eventfd(initval: u32, flags: i32): i32;
+declare c("c") function read$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
+declare c("c") function write$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
+// The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
+// C symbol has one signature in a program.
+declare c("c") function __errno_location(): Ptr<i32>;
+declare c("c") function accept4(fd: i32, addr: Ptr<u8>, len: Ptr<u8>, flags: i32): i32;
+
+/** The calling thread's `errno`. */
+export function errno(): i32 {
+  // SAFETY: `__errno_location` returns the thread's errno slot.
+  return m.ld32(Ptr.addressOf(unsafe { __errno_location() })) as i32;
+}
+
+/** A new reactor: its block, or 0 when the OS refused an epoll or eventfd. */
+export function open(): usize {
+  // SAFETY: no precondition.
+  const ep = unsafe { epoll_create1(EPOLL_CLOEXEC) };
+  // SAFETY: no precondition.
+  const evfd = unsafe { eventfd(0, EFD_NONBLOCK_CLOEXEC) };
+  if (ep < 0 || evfd < 0) {
+    return 0;
+  }
+  const r = m.zeroed(R_SIZE);
+  m.st(r + R_EP, ep as usize);
+  m.st(r + R_EVFD, evfd as usize);
+  const packed = velt_rt_os_arch() === "x64";
+  m.st(r + R_STRIDE, packed ? 12 : 16);
+  m.st(r + R_DATA, packed ? 4 : 8);
+  ctl(r, evfd, EPOLLIN | EPOLLET, 0);
+  return r;
+}
+
+/** `EPOLL_CTL_ADD` of `fd` for `events` with data `data`; 0 or errno. */
+function ctl(r: usize, fd: i32, events: u32, data: usize): i32 {
+  const c = r + R_CHANGE;
+  m.st32(c, events);
+  // An unaligned word on x86-64 (data at 4): two halves.
+  const at = c + m.ld(r + R_DATA);
+  m.st32(at, (data & 0xffffffff) as u32);
+  m.st32(at + 4, (data >> 32) as u32);
+  // SAFETY: one event in the block.
+  const n = unsafe { epoll_ctl(m.ld(r + R_EP) as i32, EPOLL_CTL_ADD, fd, m.ptr(c)) };
+  return n < 0 ? errno() : 0;
+}
+
+/** Registers `fd` for both directions, edge-triggered, with `source` its events' tag; 0 or errno. */
+export function add(r: usize, fd: i32, source: usize): i32 {
+  return ctl(r, fd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, source);
+}
+
+/**
+ * Waits for events, at most `timeoutMs` milliseconds (-1: until one comes, 0: only those ready):
+ * how many the block holds now (`source`, `bits`). A wake's event resets the eventfd.
+ */
+export function wait(r: usize, timeoutMs: i64): usize {
+  const t = timeoutMs < 0 ? -1 : timeoutMs > 0x7fffffff ? 0x7fffffff : timeoutMs;
+  const ep = m.ld(r + R_EP) as i32;
+  // SAFETY: the block has room for MAX_EVENTS events of the largest size.
+  const n = unsafe { epoll_wait(ep, m.ptr(r + R_EVENTS), MAX_EVENTS as i32, t as i32) };
+  if (n <= 0) {
+    return 0;
+  }
+  for (let i: usize = 0; i < (n as usize); i++) {
+    if (source(r, i) === 0) {
+      // SAFETY: an 8-byte read of the eventfd's counter into the block.
+      unsafe {
+        read$io(m.ld(r + R_EVFD) as i32, m.ptr(r + R_WORD), 8);
+      }
+    }
+  }
+  return n as usize;
+}
+
+/** The source of event `i` of the last wait (0: the wake). */
+export function source(r: usize, i: usize): usize {
+  const at = r + R_EVENTS + i * m.ld(r + R_STRIDE) + m.ld(r + R_DATA);
+  return (m.ld32(at) as usize) | ((m.ld32(at + 4) as usize) << 32);
+}
+
+/** The readiness bits of event `i` of the last wait. */
+export function bits(r: usize, i: usize): u32 {
+  const ev = m.ld32(r + R_EVENTS + i * m.ld(r + R_STRIDE));
+  let b: u32 = 0;
+  if ((ev & EPOLLIN) !== 0) {
+    b = b | READ;
+  }
+  if ((ev & EPOLLOUT) !== 0) {
+    b = b | WRITE;
+  }
+  if ((ev & (EPOLLHUP | EPOLLRDHUP)) !== 0) {
+    b = b | HUP | READ;
+  }
+  if ((ev & EPOLLERR) !== 0) {
+    b = b | ERR | READ | WRITE;
+  }
+  return b;
+}
+
+/** Wakes the worker waiting in `wait` (from any thread). */
+export function wake(r: usize): void {
+  const one = m.alloc(16);
+  m.st(one, 1);
+  // SAFETY: an 8-byte write of 1 to the eventfd.
+  unsafe {
+    write$io(m.ld(r + R_EVFD) as i32, m.ptr(one), 8);
+  }
+  m.release(one);
+}
+
+/** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */
+export function accept(fd: i32, addr: usize, len: usize): i32 {
+  // SAFETY: `addr` holds the `socklen_t` at `len` bytes.
+  return unsafe { accept4(fd, m.ptr(addr), m.ptr(len), SOCKET_FLAGS) };
+}
+
+/** Nothing more to set on Linux (`SOCKET_FLAGS`, `SEND_FLAGS`); 0. */
+export function prepare(fd: i32): i32 {
+  return 0;
+}

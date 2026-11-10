@@ -395,6 +395,33 @@ fn math_random_seeds_each_run_on_webassembly() {
     }
 }
 
+/// std's own C calls on wasm32-wasip1 (`Math.random()`'s `getentropy`) with a std root spelled
+/// with `..`, as a compiler built into a target dir outside the checkout finds it
+/// (`crates/velt_loader/../../std`): lowering must still see that std's files are std's, or it
+/// refuses the call as a package's (`C function `getentropy` is not available`).
+#[test]
+fn std_c_calls_with_a_std_root_spelled_with_dots() {
+    if let Some(missing) = missing_tools("wasm32-wasip1", "wasmtime") {
+        eprintln!("note: {missing} not available; skipping std's C calls under a dotted std root");
+        return;
+    }
+    let root = root();
+    build_runtime(&root, "wasm32-wasip1");
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["run", "--target", "wasm32-wasip1"])
+        .arg(root.join("crates/veltc/tests/wasm_random/main.velt"))
+        .env("VELT_STD", root.join("crates/veltc/../../std"))
+        .output()
+        .expect("run velt");
+    assert!(
+        o.status.success() && !o.stdout.is_empty(),
+        "exit {:?}\n{}{}",
+        o.status,
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+}
+
 /// A `random_get` that fails stops the program with a panic (exit 101) rather than seeding
 /// `Math.random()` with zeros: tests/wasm_random/seed_fails.mjs runs the wasm32-wasip1 module
 /// under node:wasi with a `random_get` that returns EIO.

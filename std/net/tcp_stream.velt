@@ -1,5 +1,6 @@
 // velt/net (internal): `TcpStream`, a connected TCP (or TLS) stream: a Copy handle released by
-// `close()` (std/net/index.velt).
+// `close()` (std/net/index.velt). Its functions come from `#net-tcp`: the runtime's, or with the
+// executor in Velt non-blocking sockets on its reactor (std/net/tcp_sched.velt).
 
 import { unwrapIo } from "velt/native/result";
 import { TryStream } from "velt/net/byte_stream";
@@ -25,7 +26,7 @@ import {
   velt_rt_tcp_write_later,
   velt_rt_tcp_write_later_range,
   velt_rt_tcp_write_range,
-} from "velt/net/rt";
+} from "#net-tcp";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { AbortSignal } from "velt/task";
 

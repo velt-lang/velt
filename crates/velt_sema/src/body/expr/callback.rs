@@ -257,6 +257,14 @@ impl FnCx<'_, '_> {
             let from = v.ty;
             self.mark_converts(&mut w, from, to);
         }
+        // The wrapper stands for what it calls (`hir::Program::fn_wrappers`).
+        let wrapped = match &bound {
+            Some((local, _)) => Some(hir::FnWrapped::Local(*local)),
+            None => self.named_plain_fn(&named_call),
+        };
+        if let Some(wrapped) = wrapped {
+            self.mark_wraps(&mut w, wrapped);
+        }
         self.pop_scope();
         let Some((local, value)) = bound else {
             return w;

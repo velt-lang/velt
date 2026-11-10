@@ -1,0 +1,169 @@
+// velt/lang/event (internal): `Event`, a global class as in Node: what `EventTarget.dispatchEvent`
+// delivers to the listeners of its type.
+
+// `EventTarget` here is the interface of the class's members (the lib.dom subset's), which the
+// class implements and DOM nodes extend: a target read from an event casts to an element.
+import { EventTarget } from "velt/lang/dom/types";
+import { INSPECT } from "velt/lang/hooks/keys";
+
+/** The options of `new Event(type, options)`: each is `false` when left out. */
+export interface EventInit {
+  bubbles?: boolean;
+  cancelable?: boolean;
+  composed?: boolean;
+}
+
+/**
+ * An event (a global, as in Node): its `type`, the flags it was made with, and while an
+ * `EventTarget` dispatches it, the target and the listeners' controls (`preventDefault`,
+ * `stopImmediatePropagation`). Velt has no DOM, so an event has one target and no path: it never
+ * bubbles past it, and `eventPhase` is `AT_TARGET` while it is dispatched, `NONE` otherwise.
+ */
+export class Event {
+  /** `eventPhase` while the event is not being dispatched. */
+  static readonly NONE: number = 0;
+  /** `eventPhase` while it travels down to its target (never, without a DOM). */
+  static readonly CAPTURING_PHASE: number = 1;
+  /** `eventPhase` while its target's listeners run. */
+  static readonly AT_TARGET: number = 2;
+  /** `eventPhase` while it bubbles up from its target (never, without a DOM). */
+  static readonly BUBBLING_PHASE: number = 3;
+
+  // The state `EventTarget.dispatchEvent` reads and sets (std reaches private members).
+  private kind: string;
+  private bubbling: boolean;
+  private cancelling: boolean;
+  private composing: boolean;
+  private stamp: number;
+  private canceled: boolean = false;
+  private stopped: boolean = false;
+  private stoppedNow: boolean = false;
+  private passiveNow: boolean = false;
+  private dispatching: boolean = false;
+  private targetNow: EventTarget | null = null;
+  private currentNow: EventTarget | null = null;
+  private phase: number = 0;
+
+  /** An event of `type`, with the flags of `eventInitDict` (all `false` by default). */
+  constructor(type: string, eventInitDict?: EventInit) {
+    this.kind = type;
+    this.bubbling = eventInitDict?.bubbles ?? false;
+    this.cancelling = eventInitDict?.cancelable ?? false;
+    this.composing = eventInitDict?.composed ?? false;
+    this.stamp = performance.now();
+  }
+
+  /** The type it was made with: which listeners `dispatchEvent` calls. */
+  get type(): string {
+    return this.kind;
+  }
+
+  /** Whether it was made to bubble (`{ bubbles: true }`). */
+  get bubbles(): boolean {
+    return this.bubbling;
+  }
+
+  /** Whether `preventDefault()` can cancel it (`{ cancelable: true }`). */
+  get cancelable(): boolean {
+    return this.cancelling;
+  }
+
+  /** Whether it was made to cross shadow roots (`{ composed: true }`). */
+  get composed(): boolean {
+    return this.composing;
+  }
+
+  /** Whether a listener cancelled it: `preventDefault()` on a cancelable event. */
+  get defaultPrevented(): boolean {
+    return this.cancelling && this.canceled;
+  }
+
+  /** `false`: no event Velt makes comes from the user agent. */
+  get isTrusted(): boolean {
+    return false;
+  }
+
+  /** When it was made, in milliseconds since the process started (`performance.now()`). */
+  get timeStamp(): number {
+    return this.stamp;
+  }
+
+  /** The target that dispatched it last (`null` before that). */
+  get target(): EventTarget | null {
+    return this.targetNow;
+  }
+
+  /** The legacy name of `target`. */
+  get srcElement(): EventTarget | null {
+    return this.targetNow;
+  }
+
+  /** The target whose listeners run now (`null` outside a dispatch). */
+  get currentTarget(): EventTarget | null {
+    return this.currentNow;
+  }
+
+  /** `AT_TARGET` while it is dispatched, otherwise `NONE`. */
+  get eventPhase(): number {
+    return this.phase;
+  }
+
+  /** `!defaultPrevented`; setting it to `false` is `preventDefault()`. */
+  get returnValue(): boolean {
+    return !this.defaultPrevented;
+  }
+
+  set returnValue(value: boolean) {
+    if (!value) {
+      this.preventDefault();
+    }
+  }
+
+  /** Whether `stopPropagation()` was called; setting it to `true` calls it. */
+  get cancelBubble(): boolean {
+    return this.stopped;
+  }
+
+  set cancelBubble(value: boolean) {
+    if (value) {
+      this.stopped = true;
+    }
+  }
+
+  /** The targets it passes: its target while it is dispatched, otherwise none. */
+  composedPath(): EventTarget[] {
+    const t = this.targetNow;
+    if (this.dispatching && t !== null) {
+      return [t];
+    }
+    return [];
+  }
+
+  /** Cancels a cancelable event, except from a passive listener. */
+  preventDefault(): void {
+    if (this.cancelling && !this.passiveNow) {
+      this.canceled = true;
+    }
+  }
+
+  /** Stops it from reaching further targets (there are none without a DOM). */
+  stopPropagation(): void {
+    this.stopped = true;
+  }
+
+  /** Also stops the target's later listeners from running, in this and any later dispatch. */
+  stopImmediatePropagation(): void {
+    this.stopped = true;
+    this.stoppedNow = true;
+  }
+
+  /** How `console.log` shows it, like Node: `Event { type: 'x', defaultPrevented: false, … }`. */
+  [INSPECT]() {
+    return {
+      type: this.kind,
+      defaultPrevented: this.defaultPrevented,
+      cancelable: this.cancelling,
+      timeStamp: this.stamp,
+    };
+  }
+}

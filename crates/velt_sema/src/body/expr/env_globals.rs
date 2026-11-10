@@ -226,6 +226,9 @@ impl FnCx<'_, '_> {
         let only_a_type = match item {
             // A struct has no value in Velt (`RequestInit`, an interface under `tsc`).
             Item::Def(d) if self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Struct) => true,
+            // A class of std's lib.dom subset (`KeyboardEvent`, a class so that it converts to
+            // `Event`): an interface under `tsc`, with no value in Node.
+            Item::Def(d) if self.cx.std_dom_class(d) => true,
             _ => self.cx.meaning(item) == Meaning::Type,
         };
         only_a_type

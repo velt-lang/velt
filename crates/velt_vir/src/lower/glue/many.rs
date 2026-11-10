@@ -189,6 +189,7 @@ impl FnLower<'_, '_> {
             TyKind::Array(e) => self.many_check_elems(place, e),
             TyKind::FnPtr { .. } | TyKind::Closure(_) => self.many_check_closure(place),
             TyKind::Dyn(..) if self.cx.has_proxies() => {
+                self.note_dyn_glue(SLOT_TRANSFER, ty);
                 let data = proj(place, Proj::Field(0));
                 self.proxy_dyn_data(
                     &data,
@@ -196,7 +197,10 @@ impl FnLower<'_, '_> {
                     |lw| lw.many_check_dyn(place),
                 );
             }
-            TyKind::Dyn(..) => self.many_check_dyn(place),
+            TyKind::Dyn(..) => {
+                self.note_dyn_glue(SLOT_TRANSFER, ty);
+                self.many_check_dyn(place)
+            }
             _ => {}
         }
     }
@@ -277,10 +281,7 @@ impl FnLower<'_, '_> {
     /// `{ code, env }`: a heap env is checked by its transfer entry (`build_env_transfer`).
     fn many_check_closure(&mut self, place: &Place) {
         let hdr = self.cx.closure_agg();
-        let env = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(place, Proj::Field(1)))),
-        );
+        let (env, _) = self.closure_env(place);
         let done = self.new_block();
         let nn = self.non_null(env.clone());
         self.when(nn, done);

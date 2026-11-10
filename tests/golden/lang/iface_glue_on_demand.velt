@@ -1,0 +1,108 @@
+// check: no leaks
+// Each operation reaches an interface value's glue through its table, each on values of an
+// interface of its own: a clone through generic code, `console.log` of an object holding them
+// (through `any`), a transfer to another task (`spawn` and a channel). A table entry that
+// something dispatches but lowering left out (glue on demand, velt_vir lower/glue/demand.rs)
+// fails here.
+import { channel, Channel } from "velt/sync";
+
+interface Copied {
+  get(): number;
+  bump(): void;
+}
+
+class Counter implements Copied {
+  n: number = 1;
+  get(): number {
+    return this.n;
+  }
+  bump(): void {
+    this.n += 10;
+  }
+}
+
+interface Logged {
+  text: string;
+  label(): string;
+}
+
+class Tag implements Logged {
+  text: string;
+  parts: number[] = [1, 2];
+  constructor(text: string) {
+    this.text = text;
+  }
+  label(): string {
+    return this.text;
+  }
+}
+
+class Holder {
+  items: Logged[];
+  constructor(items: Logged[]) {
+    this.items = items;
+  }
+}
+
+interface Sent {
+  total(): number;
+}
+
+class Bag implements Sent {
+  items: number[] = [1, 2, 3];
+  total(): number {
+    let t = 0;
+    for (const i of this.items) t += i;
+    return t;
+  }
+}
+
+interface Queued {
+  id(): number;
+}
+
+class Job implements Queued {
+  k: number;
+  constructor(k: number) {
+    this.k = k;
+  }
+  id(): number {
+    return this.k;
+  }
+}
+
+function twice<T>(x: T): T[] {
+  return [x.clone(), x];
+}
+
+async function sum(s: Sent): Promise<number> {
+  return s.total();
+}
+
+async function drain(ch: Channel<Queued>): Promise<number> {
+  let t = 0;
+  for await (const j of ch) t += j.id();
+  return t;
+}
+
+async function main(): Promise<void> {
+  const c: Copied = new Counter();
+  const pair = twice(c);
+  pair[0].bump();
+  console.log(pair[0].get(), pair[1].get());
+
+  const l: Logged = new Tag("hi");
+  const m: Logged = { text: "lit", label: () => "m" };
+  const held: any = new Holder([l, m]);
+  console.log(held, l.label(), m.label());
+
+  const s: Sent = new Bag();
+  console.log(await spawn(sum(s)), s.total());
+
+  const ch = channel<Queued>(4);
+  const d = spawn(drain(ch));
+  await ch.send(new Job(4));
+  await ch.send(new Job(5));
+  ch.close();
+  console.log(await d);
+}
