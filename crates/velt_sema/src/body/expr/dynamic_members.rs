@@ -2,7 +2,7 @@
 //! told apart by: the one interface or object type member with no test of its own, and the one
 //! function type member, told by `typeof`. Of several function type members (`((e: Event) =>
 //! void) | (() => void)`, std's listeners), a function converts to the one with the most
-//! parameters: it is called through the `any` it came from, which passes the arguments a
+//! parameters (two with as many are ambiguous, an error): it is called through the `any` it came from, which passes the arguments a
 //! function without them leaves alone, as in JavaScript.
 
 use velt_common::{Diagnostic, Span};
@@ -106,20 +106,26 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), exp, span)
     }
 
-    /// The function type member of `members` with the most parameters (the first of those),
-    /// when none takes a rest parameter.
+    /// The function type member of `members` with the most parameters, when no other has as
+    /// many (two would be ambiguous: no test tells them apart) and none takes a rest parameter.
     fn widest_fn_member(&self, members: &[TyId]) -> Option<TyId> {
         let mut best: Option<(TyId, usize)> = None;
+        let mut tied = false;
         for &m in members {
             match self.cx.ty.kind(m) {
                 TyKind::FnPtr { rest: true, .. } => return None,
-                TyKind::FnPtr { params, .. } if best.is_none_or(|b| params.len() > b.1) => {
-                    best = Some((m, params.len()));
-                }
+                TyKind::FnPtr { params, .. } => match best {
+                    Some((_, n)) if params.len() < n => {}
+                    Some((_, n)) if params.len() == n => tied = true,
+                    _ => {
+                        best = Some((m, params.len()));
+                        tied = false;
+                    }
+                },
                 _ => {}
             }
         }
-        best.map(|b| b.0)
+        best.filter(|_| !tied).map(|b| b.0)
     }
 
     /// The one member of `members` that [`Self::member_test`] has no test for, when every other
