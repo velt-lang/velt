@@ -136,7 +136,8 @@ returned to std, which panics through `panicRaise`.
 ## The catch: `catchUnwind`
 
 ```ts
-export declare unsafe intrinsic function catchUnwind(f: () => void): usize;
+@intrinsic
+export declare unsafe function catchUnwind(f: () => void): usize;
 ```
 
 `std/lang/intrinsics/unwind.velt`, `hir::Intrinsic::CatchUnwind`. Lowering calls
@@ -220,10 +221,13 @@ the frame in the cleanup phase loses nothing.
 
 **A foreign exception leaves the count up.** One that passes `catchVeltPanic` and is caught above
 it (a C++ `catch` around a Velt call) skips `leaveCatch()`, so `CATCHING` stays 1 too high on
-that thread: later panics there raise with no live catch, which is the abort above. Today no
-foreign frame can call Velt code (no C callbacks until `@export`, #2662), so it can't happen yet.
-The fix, before `@export` lands: the personality also lands at the pad for a foreign class in the
-cleanup phase (selector 1, never in the search phase, so the exception still passes),
+that thread: later panics there raise with no live catch, which is the abort above. It can't
+happen today: the only way a foreign frame calls Velt code is an `@export` function (#2662), and
+its landing pad aborts on any exception that unwinds out of it, whatever the class (LLVM:
+`function/stop_unwind.rs`, Rust's personality runs the pad in the cleanup phase; Cranelift: no
+unwind entry, so the search ends there), so a foreign exception never reaches
+a catcher above a Velt frame. The fix, if exports ever let exceptions through: the personality
+also lands at the pad for a foreign class in the cleanup phase (selector 1, never in the search phase, so the exception still passes),
 `velt_eh_try` returns the object tagged (bit 0), and `catchVeltPanic` calls `leaveCatch()` and
 then `_Unwind_Resume` on it. It isn't built in this change because nothing can test it: the
 phase-2 pass needs a foreign catcher above a Velt frame.
