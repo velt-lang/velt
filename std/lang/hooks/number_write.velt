@@ -16,8 +16,10 @@ declare function velt_rt_write_str(stream: u32, s: string);
 /**
  * Writes a float as `console.log` prints it and `end` to `stream`: a whole number below 2^53
  * other than `-0` by `wholeNumberWrite`, anything else (`-0`, `0.5`, `1e+21`, `NaN`) by the
- * runtime's printer.
+ * runtime's printer. Out of line (`@noInline`): one call at each `console.log` of a float, not
+ * its tests and both writers' calls.
  */
+@noInline
 export function numberWrite(stream: u32, x: f64, end: u8): void {
   if (
     x == trunc(x) &&

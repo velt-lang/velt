@@ -1,7 +1,8 @@
-//! Numbers printed as integers. std's float formatters pair up with its integer ones: a call of
-//! the hook `numberWrite` (`console.log(x)`), `numberText`, `numberPush`, `floatText` or
-//! `floatPush` of a whole `x` below 2^53 becomes one of `intWrite`, `intText` or `intPush` of
-//! `x as i64`: no conversion to `f64` and no test in the formatter once `x` is an integer.
+//! Numbers printed as integers. std's float formatters pair up with twins for whole numbers: a
+//! call of the hook `numberWrite` (`console.log(x)`), `numberText`, `numberPush`, `floatText` or
+//! `floatPush` of a whole `x` below 2^53 becomes one of its twin, `intWrite`, `intText` or
+//! `intPush` of `x as i64` (no conversion to `f64` once `x` is an integer), or for `numberWrite`
+//! in a program without `intWrite`, `wholeNumberWrite` of `x`: no test in the formatter.
 //! `console.log` prints `-0` as `-0`, so for `numberWrite` `x` must not be `-0` either
 //! (`` `${-0}` `` is `0`, which the integer prints). A call switches only to a twin the program
 //! has ([`pairs`]): the text hooks call theirs, so a program that calls one has both, but

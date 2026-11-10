@@ -1,9 +1,10 @@
 // console.log of floats in a program that prints no integer type, through the float writer
 // (velt/lang/hooks/number_write), which holds no integer printing: a whole number below 2^53
 // other than `-0` by its own whole-number writer, `1`, not `1.0`, anything else by the runtime's
-// printer (#2197). The `let i = 0` loops' numbers are known whole, and the optimizer calls the
-// whole-number writer directly; the others take it through the float writer's test. That sema
-// checks the writers and no integer hook is velt_sema's `live_hooks` test.
+// printer (#2197). Where the optimizer knows a number whole (the `let i = 0` loops' in a release
+// build) it calls the whole-number writer directly; the others take it through the float
+// writer's test. That sema checks the writers and no integer hook is velt_sema's `live_hooks`
+// test.
 function main() {
   let x: f64 = 0.25;
   for (let k = 0; k < 4; k++) {
