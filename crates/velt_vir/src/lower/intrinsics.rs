@@ -112,6 +112,14 @@ impl FnLower<'_, '_> {
                 let p = self.operand_place(v, Ty::Agg(STR_AGG));
                 self.str_bytes(&p)
             }
+            (I::ExportedAddress, [a]) => {
+                // `a` is the index of the `hir::CExport` (sema's `exported_address`).
+                let hir::ExprKind::Lit(hir::Lit::Int(index)) = a.kind else {
+                    ice("`exportedAddress` without its export's index")
+                };
+                let f = self.cx.c_export_address(index as u32);
+                self.rvalue_temp(Ty::U64, Rvalue::Cast(f, Ty::U64))
+            }
             (I::AddressLoad, [a]) => {
                 let addr = self.expr(a);
                 let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));

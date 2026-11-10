@@ -470,7 +470,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         }
         facts.insert(DefId(i as u32), fd);
     }
-    if withs.is_empty() && callbacks.is_empty() {
+    if withs.is_empty() && callbacks.is_empty() && cx.c_exports.is_empty() {
         return;
     }
     // The hooks the values a body handles may run when dropped, formatted or serialised, and
@@ -501,6 +501,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         return;
     }
     let reach = propagate(&facts);
+    reach::refuse_in_exports(cx, &reach);
     let mut refused = vec![];
     for (cb, span, method) in withs {
         let found = match &cb.kind {
@@ -539,7 +540,7 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
 
 /// How a diagnostic names a node of the reach graph: a function, an object type's field
 /// initializers or a constant's initializer.
-fn node_name(cx: &Ctx, d: DefId) -> String {
+pub(super) fn node_name(cx: &Ctx, d: DefId) -> String {
     let last = |n: &str| n.rsplit("::").next().unwrap_or(n).to_string();
     match cx.info.get(d.0 as usize) {
         Some(DefInfo::Fn(f)) => format!("`{}`", last(&f.name)),

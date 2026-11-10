@@ -601,6 +601,11 @@ hooks! {
     /// `@intrinsic declare function`: the declaration of a compiler intrinsic
     /// (`velt_sema` `intrinsic_decls.rs`).
     decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;
+    // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
+    // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
+    /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C
+    /// calling convention, whose parameters and result cross as a `declare c` function's.
+    decorator_export => ffi_export, "export", decorator;
 }
 
 /// One key of a std method the compiler calls: a symbol constant of std/lang/hooks/keys.velt.

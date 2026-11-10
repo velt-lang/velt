@@ -1,11 +1,11 @@
 //! Decorator uses (part of the HIR contract, hir_encodings.md "Decorators"): what sema recorded
 //! for every compile-time decorator of a program, in `Program::decorators`. Nothing runs at run
 //! time; lowering reads only `@inline` and `@noInline`, by their hook roles (`velt_vir`
-//! `lower/decorators.rs`).
+//! `lower/decorators.rs`), and `@export("c_name")` through [`CExport`]s.
 
 use velt_common::Span;
 
-use super::DefId;
+use super::{CTy, DefId};
 
 /// What a decorator is written on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -46,4 +46,22 @@ pub enum ConstTree {
     Object(Vec<(String, ConstTree)>),
     /// Variant `.1` of enum `.0`.
     EnumMember(DefId, u32),
+}
+
+/// A function C calls (`@export("c_name")`, #2203 step 5, docs/internals/design/c-ffi.md
+/// "Exported functions"), in `Program::c_exports`: lowering builds a function with the C calling
+/// convention and the unmangled symbol `name`, whose parameters and result cross as `params` and
+/// `ret` say, that calls `def`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CExport {
+    /// The decorated top-level function: not generic, async or a generator, throwing nothing.
+    pub def: DefId,
+    /// The symbol: a C identifier, unique among the program's exports.
+    pub name: String,
+    /// One per parameter of `def`, in order: integers, `f32`, `f64`, `bool` or a `Ptr`.
+    pub params: Vec<CTy>,
+    /// The result, `CTy::Void` for `void`.
+    pub ret: CTy,
+    /// The `@…` decorator.
+    pub span: Span,
 }

@@ -149,13 +149,25 @@ impl<'a> Parser<'a> {
             if modifier {
                 self.bump();
             }
-            let name = self.parse_ident()?;
+            // `export`, the name of velt/ffi's decorator (#2203 step 5): a keyword, so an import
+            // binds it under another name (`export as cExport`), as ECMAScript allows any name
+            // before `as`.
+            let keyword = self.at_kw(Kw::Export);
+            let name = match keyword {
+                true => self.take_ident(),
+                false => self.parse_ident()?,
+            };
             let alias = if self.eat_kw(Kw::As) {
                 Some(self.parse_ident()?)
             } else {
                 None
             };
-            if binds {
+            if keyword && binds && alias.is_none() {
+                self.error(
+                    "`export` is a keyword: import it under another name (`export as cExport`) or through a namespace (`import * as ffi`)",
+                    name.span,
+                );
+            } else if binds {
                 self.check_binding_name(alias.as_ref().unwrap_or(&name));
             }
             names.push(ImportName {

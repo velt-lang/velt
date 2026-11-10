@@ -76,3 +76,12 @@ export declare unsafe function ptrAtomicCasWeak<T>(
   order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst",
   failure: "relaxed" | "acquire" | "seqcst",
 ): bool;
+
+/**
+ * The address of the C function of `f`, a function decorated `@export("c_name")` (velt/ffi), for
+ * a C API that takes a function pointer (`pthread_create`'s start routine, a callback). Unsafe:
+ * C calls it with whatever arguments it has, which the exported function's C signature must
+ * describe. Its argument names the function; anything else is an error.
+ */
+@intrinsic
+export declare unsafe function exportedAddress<F>(f: F): usize;

@@ -50,7 +50,7 @@ use std::collections::{HashMap, HashSet};
 use velt_common::Span;
 
 pub use const_array::{ConstArray, ConstElem};
-pub use decorators::{ConstTree, Decorator, DecoratorTarget};
+pub use decorators::{CExport, ConstTree, Decorator, DecoratorTarget};
 pub use extern_fn::{CImport, CTy, ExternFnDef, HostImport, HostTy};
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use fresh::FreshClosure;
@@ -277,6 +277,9 @@ pub struct Program {
     /// Every use of a compile-time decorator, by what it is written on, in source order
     /// (hir_encodings.md "Decorators"). Empty in a program without decorators. Additive.
     pub decorators: HashMap<DecoratorTarget, Vec<Decorator>>,
+    /// The functions C calls (`@export("c_name")`), in the order sema checked them. Empty in a
+    /// program without. Additive.
+    pub c_exports: Vec<CExport>,
 }
 
 impl Program {

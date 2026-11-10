@@ -308,6 +308,8 @@ pub(crate) struct Ctx<'m> {
     pub nested_locals: FxHashMap<DefId, Vec<String>>,
     /// The compile-time decorators checked so far (`crate::decorators`).
     pub decorator_uses: FxHashMap<crate::hir::DecoratorTarget, Vec<crate::hir::Decorator>>,
+    /// The functions C calls (`@export`, `crate::decorators::export`) checked so far.
+    pub c_exports: Vec<crate::hir::CExport>,
     /// For each item nested in a method (or constructor) of a class or struct: that type. Its
     /// body is inside the type's body, for `private` and `#x` (TypeScript).
     pub enclosing_class: FxHashMap<DefId, DefId>,
@@ -614,6 +616,7 @@ impl<'m> Ctx<'m> {
             nested: vec![],
             nested_locals: FxHashMap::default(),
             decorator_uses: FxHashMap::default(),
+            c_exports: vec![],
             enclosing_class: FxHashMap::default(),
             static_this: FxHashMap::default(),
             static_copies: FxHashMap::default(),

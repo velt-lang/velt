@@ -477,6 +477,7 @@ fn param_attributes_become_llvm_attributes() {
 
 mod aes;
 mod atomics;
+mod c_export;
 mod half;
 mod inlining;
 mod placement;

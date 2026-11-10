@@ -406,6 +406,11 @@ pub enum Intrinsic {
     FutPoll,
     /// std only: `futDrop(f: usize)`: `f->drop(f)`, through offset 8 of the header. Additive.
     FutDrop,
+    /// std only: `exportedAddress(f) -> usize`, the address of the C function lowering builds
+    /// for an `@export` function (`Program::c_exports`): the argument is a `Lit::Int`, the index
+    /// of its `CExport` there. For a C API that takes a function pointer (`pthread_create`).
+    /// Additive.
+    ExportedAddress,
     /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
     /// range against `StrByteLen`). The bytes are read where the string keeps them.
     StrByteAt,

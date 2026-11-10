@@ -13,6 +13,7 @@ mod cast;
 mod ops;
 mod place;
 mod stmt;
+mod stop_unwind;
 mod terminator;
 mod value;
 
@@ -22,7 +23,9 @@ use velt_vir::vir::{self, Ty};
 
 use crate::debug::{DebugInfo, FnDebug};
 use crate::inlining::Caps;
-use crate::module::{define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS};
+use crate::module::{
+    define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS, STOP_UNWIND_ATTRS,
+};
 use crate::statics::StaticNames;
 use crate::target::Target;
 use crate::tbaa::Access;
@@ -117,6 +120,10 @@ struct Emitter<'a> {
     kept_calls: &'a [usize],
     /// The block being translated.
     block: usize,
+    /// How a function C calls stops an unwind (stop_unwind.rs); `None` for the others.
+    pad: Option<stop_unwind::Pad>,
+    /// The `invoke`s emitted so far (stop_unwind.rs).
+    invokes_made: u32,
 }
 
 /// Translate `function` into a complete `define ... { ... }` text.
@@ -165,6 +172,8 @@ pub(crate) fn emit_function(
             .any(|e| e.symbol.starts_with("velt_simd_")),
         kept_calls: caps.kept(index),
         block: 0,
+        pad: stop_unwind::Pad::of(function, target),
+        invokes_made: 0,
     };
     emitter.set_location(function.first_loc());
     emitter.entry_block()?;
@@ -182,6 +191,7 @@ pub(crate) fn emit_function(
             .terminator(&block.term)
             .map_err(|e| format!("bb{bi} terminator ({:?}): {e}", block.term))?;
     }
+    let personality = emitter.finish_pad();
     let ext_features;
     let features = match (emitter.uses_simd, emitter.simd) {
         (true, crate::simd::Arch::Wasm) => crate::simd::WASM_SIMD,
@@ -193,8 +203,12 @@ pub(crate) fn emit_function(
             None => "",
         },
     };
+    let attrs = match function.stops_unwind {
+        true => STOP_UNWIND_ATTRS,
+        false => FN_ATTRS,
+    };
     Ok(format!(
-        "{} {}({}) {FN_ATTRS}{}{features}{define_dbg} {{\n{}}}\n",
+        "{} {}({}) {attrs}{}{features}{personality}{define_dbg} {{\n{}}}\n",
         define_prefix(function, how)?,
         global_name(&function.symbol),
         definition_params(function)?,

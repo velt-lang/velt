@@ -223,7 +223,7 @@ jobs:
       - name: declarations against headers, C constants and sources, every target
         env:
           VELT_ZIG_TESTS: "1"
-        run: cargo test --workspace --test c_headers --test c_constants --test c_sources -- --nocapture
+        run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export -- --nocapture
       # The pin itself: the release still downloads and matches its SHA-256.
       - name: the pinned zig downloads
         run: env -u VELT_ZIG cargo test -p velt_toolchain zig -- --ignored

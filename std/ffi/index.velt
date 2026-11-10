@@ -26,3 +26,6 @@ export { OutPtr } from "velt/ffi/out_ptr";
 
 /** Copies of bytes, UTF-8 text and NUL-terminated strings in C memory (unsafe). */
 export { readBytes, readCString, readUtf8 } from "velt/ffi/read";
+
+/** `@export("c_name")`: a top-level Velt function C calls by that name (#2203 step 5). */
+export { export } from "velt/ffi/export";
