@@ -26,4 +26,7 @@ pub const DELETED: &[&str] = &[
     // `lower/raw_memory.rs`) and std (`futPoll`, `futDrop`) do through its header, inline.
     "velt_rt_fut_poll",
     "velt_rt_fut_drop",
+    // #2197: `console.log` of an integer (std/lang/hooks/number_text).
+    "velt_rt_write_i64",
+    "velt_rt_write_u64",
 ];

@@ -69,8 +69,8 @@ pub struct Hook {
     /// counts is that the compiler no longer calls it in the hook's place.
     pub replaces: &'static [&'static str],
     /// Lowering calls the runtime instead when the hook is missing or left unchecked (it is
-    /// one of [`ON_DEMAND_FLOAT`]): its `velt_vir` builder returns an `Option`. Every other
-    /// lowered hook missing is an internal compiler error.
+    /// one of [`ON_DEMAND_FLOAT`] or [`ON_DEMAND_WRITE`]): its `velt_vir` builder returns an
+    /// `Option`. Every other lowered hook missing is an internal compiler error.
     pub fallback: bool,
     /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.velt`)
     /// that measures this hook against the Rust it replaced, if one does.
@@ -221,6 +221,27 @@ hooks! {
     uint_push => lang_hooks_number_text, "uintPush", sig((&mut string, u64) -> void), lowered,
         replaces("velt_rt_strbuf_push_u64"), bench("int_to_string"),
         constructs(TextUint, Format, Dynamic);
+    /// A signed integer and the byte after it (a space or the newline) written to a stream in one
+    /// write: a `console.log` argument (`velt_vir` `console.rs`). `Format`, like `int_push`, which
+    /// prints it when the line isn't all scalars: the same demand, not a narrower one
+    /// (`hook_demand.rs`).
+    int_write => lang_hooks_number_text, "intWrite", sig((u32, i64, u8) -> void), lowered,
+        replaces("velt_rt_write_i64"), constructs(Format);
+    /// An unsigned integer and the byte after it, as `int_write`.
+    uint_write => lang_hooks_number_text, "uintWrite", sig((u32, u64, u8) -> void), lowered,
+        replaces("velt_rt_write_u64"), constructs(Format);
+    /// A float as `console.log` prints it and the byte after it: a whole number below 2^53 other
+    /// than `-0` by `whole_number_write`, anything else by the runtime's printer, which lowering
+    /// calls while this is unchecked ([`ON_DEMAND_WRITE`]). It holds no integer hook, so a printed
+    /// float checks no integer printing. numrep turns a call with such an `x` into one of
+    /// `int_write` where the program has that, else of `whole_number_write`.
+    number_write => lang_hooks_number_write, "numberWrite", sig((u32, f64, u8) -> void), lowered,
+        fallback, replaces("velt_rt_write_f64");
+    /// A whole number below 2^53 other than `-0`, as an `i64`, and the byte after it, as
+    /// `number_write` writes the float, by digits of its own (no integer hook): `number_write`'s
+    /// and numrep's.
+    whole_number_write => lang_hooks_number_write, "wholeNumberWrite", sig((u32, i64, u8) -> void),
+        lowered, fallback;
     /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
     /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
     /// whole `x` into one of `int_text`.
@@ -662,7 +683,9 @@ pub use deleted::DELETED;
 mod scheduler;
 pub use scheduler::{std_scheduler, SCHEDULER_ENV};
 mod lookup;
-pub use lookup::{find, is_lowered, on_demand, ON_DEMAND_FLOAT, ON_DEMAND_MODULES};
+pub use lookup::{find, is_lowered};
+mod on_demand;
+pub use on_demand::{on_demand, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE};
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]

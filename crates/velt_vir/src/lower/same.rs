@@ -201,7 +201,9 @@ impl FnLower<'_, '_> {
         self.note_fn_compared(ty);
         let code = self.word_eq(a, b, 0);
         let env = self.word_eq(a, b, 1);
-        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env))
+        let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, code, env));
+        // A wrapper is the function it wraps (closure/fn_wrappers.rs).
+        self.fn_same_through_wrappers(a, b, same)
     }
 
     /// `===` of two interface values of type `ty` that hold `struct` values (#641): the same

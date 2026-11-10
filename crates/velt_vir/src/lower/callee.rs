@@ -339,10 +339,7 @@ impl FnLower<'_, '_> {
             Ty::Ptr,
             Rvalue::Use(Operand::Copy(proj(fp, Proj::Field(0)))),
         );
-        let held = self.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Use(Operand::Copy(proj(fp, Proj::Field(1)))),
-        );
+        let (held, _) = self.closure_env(fp);
         let own = self.temp(Ty::Ptr);
         let null = cint(0, Ty::Ptr);
         self.assign(Place::local(own), Rvalue::Use(null));

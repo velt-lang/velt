@@ -144,11 +144,12 @@ Checking on demand still parses every module a program loads, and parsing and co
 costs about as much as checking it. So some of std is not loaded at all unless a program needs it.
 
 **During the check (#2161 (a1)).** The modules of hooks no program needs by default
-(velt_common `std_hooks::ON_DEMAND_MODULES`: `velt/lang/hooks/number_text`, `number_float` and
-`any_record`) are not loaded with the prelude. `reach` finds out, from checked code and its types,
-that one of their hooks is needed (a live construct's integer hook, `live.rs`; a text conversion in
-the program's own code of a value that may hold a float, `number_text.rs`; a conversion to a record
-with string keys, `record_hooks_needed`), and demands the module (`Ctx::demand_std`, `std_load.rs`):
+(velt_common `std_hooks::ON_DEMAND_MODULES`: `velt/lang/hooks/number_text`, `number_write`,
+`number_float` and `any_record`) are not loaded with the prelude. `reach` finds out, from checked
+code and its types, that one of their hooks is needed (a live construct's integer hook, `live.rs`;
+a text conversion in the program's own code of a value that may hold a float, or a float printed
+by live code, `number_text.rs`; a conversion to a record with string keys, `record_hooks_needed`),
+and demands the module (`Ctx::demand_std`, `std_load.rs`):
 - The driver's load callback (`velt_sema::LoadFn`) goes on from the program's load
   (`velt_loader::load_more`) with the module and what it imports that is not loaded. Each must
   follow the rule of `velt_loader::std_index`, so what it adds stays local to it; the loader applies
@@ -193,8 +194,12 @@ demands nothing. A function may get a `throws` that needs formatting from what i
 declares, which is known only after the passes, too late to load a hook: the check then runs once
 more with `Format` assumed (`too_late`). Live code is a superset of what lowering builds: the program's
 own and the std code it reaches (`velt_sema` `body/lazy_std/live.rs`), std's own conversions
-included, so hello world checks none of std's integer printing. The four integer hooks act as one
-bit: a program demands none of them or all of them (`live_constructs.rs` `demanded_for`).
+included, so hello world checks none of std's integer printing. The integer hooks (`console.log`'s
+integer writers among them) act as one bit: a program demands none of them or all of them
+(`live_constructs.rs` `demanded_for`). `console.log`'s float writers are not among them: they wait
+for live code that prints a float (`ON_DEMAND_WRITE`, `number_text.rs`), and hold no integer
+printing (whole numbers have a writer of their own), so a program that prints only floats loads
+none.
 
 `host_async` is not moved: `velt/host/promise` loads `velt/io/error`, whose `IoError` extends the
 prelude's `Error`, which the rule excludes. It keeps its trigger below until (a2) (#2161 step 4).

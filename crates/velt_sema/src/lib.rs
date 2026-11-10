@@ -562,6 +562,7 @@ fn check_timed(
         generic_dyn_methods: generic_called.names().collect(),
         arg_free_generic_fns: generic_fns.free_of_args.into_iter().collect(),
         fresh_closures: generic_fns.fresh.into_iter().collect(),
+        fn_wrappers: generic_fns.wrappers.into_iter().collect(),
         extension_impls: extension_impls.into_iter().collect(),
         dyn_bounds: dyn_bounds.into_iter().collect(),
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),

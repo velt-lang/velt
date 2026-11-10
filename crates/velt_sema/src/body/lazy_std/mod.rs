@@ -18,9 +18,9 @@
 //! ([`BY_NAME`]), and in the prelude ([`HELPERS`]) the compiler's helpers ([`is_helper`]). Two
 //! kinds of hook lowering can do without stay unchecked until the program needs them:
 //! [`RECORD_HOOKS`], for a conversion to a record ([`record_hooks_needed`]), and the float hooks,
-//! for a text conversion in the program's own code (`number_text.rs`). The hooks whose table entry
-//! lists constructs (velt_common `hook_demand.rs`) are demanded by the constructs of live code,
-//! and `hir::Program::hooks_demanded` tells lowering.
+//! for a text conversion in the program's own code or a float printed (`number_text.rs`). The
+//! hooks whose table entry lists constructs (velt_common `hook_demand.rs`) are demanded by the
+//! constructs of live code, and `hir::Program::hooks_demanded` tells lowering.
 //!
 //! All of std is checked with laziness off (`VELT_CHECK_ALL_STD=1`), as `velt check --std` and
 //! veltc's `all_of_std_checks_without_diagnostics` do. The editor's analysis checks everything.
@@ -111,9 +111,7 @@ pub(crate) fn is_helper(qualified: &str) -> bool {
     let name = qualified.rsplit(['.', ':']).next().unwrap_or(qualified);
     (velt_common::std_hooks::is_lowered(qualified)
         && velt_common::std_hooks::find(qualified).is_some_and(|h| {
-            !velt_common::std_hooks::ON_DEMAND_FLOAT.contains(&h.name)
-                && h.constructs.is_empty()
-                && !SCHED_HOOKS.contains(&qualified)
+            !h.fallback && h.constructs.is_empty() && !SCHED_HOOKS.contains(&qualified)
         }))
         || HELPER_NAMES.contains(&name)
         || name
@@ -177,6 +175,9 @@ pub(crate) struct Lazy {
     /// The program's code converts a value that may hold a float to text: the float hooks are
     /// reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
     float_text: bool,
+    /// Live code prints a float: `console.log`'s float writer is reached
+    /// (`velt_common::std_hooks::ON_DEMAND_WRITE`).
+    float_write: bool,
     /// The live definitions, and the hooks their constructs demand ([`live`]).
     live: live::Live,
 }
@@ -200,6 +201,7 @@ impl Lazy {
             record_hooks: false,
             sched_hooks: false,
             float_text: false,
+            float_write: false,
             live: live::Live::new(),
         }
     }
@@ -340,6 +342,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         number_text::reach_hooks(cx, texts, &mut found);
+        number_text::reach_writer(cx, &mut found);
         // A std function C calls (`@export`) is live though no checked code refers to it.
         found.extend(cx.c_exports.iter().map(|e| e.def));
         sched_hooks(cx, &mut found);

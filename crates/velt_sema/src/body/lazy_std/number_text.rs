@@ -3,8 +3,9 @@
 //! that may hold a float. `texts` are the types of the values it converts (`ToString`,
 //! `TemplateToString`) in the program's code and in live classes' field defaults, walked since the
 //! last call. Std's function bodies don't count: their conversions would make every program that
-//! reaches one check the hooks. The integer hooks are
-//! demanded by the constructs of live code instead (`live.rs`).
+//! reaches one check the hooks. `console.log`'s float writer (`ON_DEMAND_WRITE`) is reached once
+//! live code prints a float ([`reach_writer`]). The integer hooks are demanded by the constructs of
+//! live code instead (`live.rs`).
 
 use crate::ctx::Ctx;
 use crate::hir::{self, DefId, TyId, TyKind};
@@ -28,6 +29,23 @@ pub(super) fn reach_hooks(cx: &mut Ctx, texts: Vec<TyId>, found: &mut Vec<DefId>
         }
     }
     cx.lazy.float_text = true;
+}
+
+/// Adds `console.log`'s float writer to `found` once live code prints a float: it demands no
+/// integer hook, and lowering calls the runtime's printer where it is unchecked, as when the float
+/// is found too late to add a module.
+pub(super) fn reach_writer(cx: &mut Ctx, found: &mut Vec<DefId>) {
+    if cx.lazy.float_write || cx.lazy.live.finishing || !cx.lazy.live.prints_float {
+        return;
+    }
+    let hooks = velt_common::std_hooks::HOOKS.iter();
+    for h in hooks.filter(|h| velt_common::std_hooks::ON_DEMAND_WRITE.contains(&h.name)) {
+        cx.demand_std(&h.module());
+        if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
+            found.push(d);
+        }
+    }
+    cx.lazy.float_write = true;
 }
 
 /// How deep [`may_hold_float`] looks: past it, a type counts as able to (a generic alias can expand

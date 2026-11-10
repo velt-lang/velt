@@ -72,7 +72,69 @@ impl PB {
         id
     }
 
-    pub fn finish(self) -> Program {
+    /// `console.log`'s number writers (velt_common `std_hooks.rs` `int_write`, `uint_write`,
+    /// `number_write`), which a hand-built program has no std for: each forwards to an extern the
+    /// interpreter prints with (`velt_test_write_i64`, `_u64`, `_f64`), so these tests keep printing
+    /// numbers (#2197). Tests of the hooks themselves load the real std (std_src.rs).
+    fn console_writers(&mut self) {
+        let u8 = self.types.intern(TyKind::Int(IntTy::U8));
+        let u32 = self.types.intern(TyKind::Int(IntTy::U32));
+        let u64 = self.types.intern(TyKind::Int(IntTy::U64));
+        let writers = [
+            (
+                velt_common::std_hook!(int_write),
+                self.t.i64,
+                "velt_test_write_i64",
+            ),
+            (
+                velt_common::std_hook!(uint_write),
+                u64,
+                "velt_test_write_u64",
+            ),
+            (
+                velt_common::std_hook!(number_write),
+                self.t.f64,
+                "velt_test_write_f64",
+            ),
+        ];
+        for (hook, ty, symbol) in writers {
+            let ext = self.declare();
+            self.defs[ext.0 as usize] = Some(Def::ExternFn(ExternFnDef {
+                name: symbol.into(),
+                symbol: symbol.into(),
+                params: vec![u32, ty, u8],
+                ret: self.t.unit,
+                is_async: false,
+                system: None,
+                host: None,
+                c: None,
+                is_decorator: false,
+                span: SP,
+            }));
+            let mut f = FB::new(hook, self.t.unit);
+            let stream = f.param("stream", u32, PassMode::Copy);
+            let v = f.param("v", ty, PassMode::Copy);
+            let end = f.param("end", u8, PassMode::Copy);
+            let body = vec![se(call(
+                ext,
+                vec![f.cp(stream), f.cp(v), f.cp(end)],
+                self.t.unit,
+            ))];
+            self.add_fn(f.build(body));
+        }
+    }
+
+    pub fn finish(mut self) -> Program {
+        self.console_writers();
+        // Sema demands the writers of a program that prints a number; a hand-built program says
+        // so here, for the hooks it defines above.
+        let mut hooks_demanded = velt_common::std_hooks::HookSet::default();
+        for i in [
+            velt_common::std_hooks::hook_index::int_write,
+            velt_common::std_hooks::hook_index::uint_write,
+        ] {
+            hooks_demanded.insert(i);
+        }
         Program {
             types: self.types,
             defs: self
@@ -107,7 +169,7 @@ impl PB {
             lock_free_callbacks: Default::default(),
             any_fn_views: vec![],
             unchecked: Default::default(),
-            hooks_demanded: Default::default(),
+            hooks_demanded,
             live: None,
             decorators: Default::default(),
             c_exports: Default::default(),
@@ -117,6 +179,7 @@ impl PB {
             generic_dyn_methods: Default::default(),
             arg_free_generic_fns: Default::default(),
             fresh_closures: Default::default(),
+            fn_wrappers: Default::default(),
         }
     }
 }

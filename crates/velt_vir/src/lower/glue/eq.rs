@@ -189,6 +189,8 @@ impl FnLower<'_, '_> {
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
                 self.note_fn_compared(ty);
+                // Agreeing with `ref_identity`: the function a wrapper wraps.
+                let place = &self.fn_root_out_of_line(place);
                 let code = Operand::Copy(proj(place, Proj::Field(0)));
                 let code = self.cast_to(code, Ty::Ptr, Ty::U64);
                 let h = self.fx_combine(cint(0, Ty::U64), code);

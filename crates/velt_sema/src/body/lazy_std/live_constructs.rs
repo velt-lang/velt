@@ -27,6 +27,7 @@ pub(super) fn evaluate(cx: &mut Ctx, w: &Walk) {
         present |= format_bit(cx, t);
     }
     cx.lazy.live.present |= present;
+    cx.lazy.live.prints_float |= w.prints_float;
 }
 
 /// What a round starts with, for what the round before learned too late to act on: what only
