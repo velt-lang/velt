@@ -39,6 +39,7 @@
 //! glue/transfer_env.rs), and a local closure that becomes callable from several threads at
 //! once panics in the many-threads check (glue/many.rs).
 
+mod call_sites;
 mod callbacks;
 mod changes;
 mod fed;
@@ -147,7 +148,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                 changed = true;
             }
         }
-        changed |= crossing_params(cx, &g, &mut p);
+        changed |= call_sites::crossing_params(cx, &g, &mut p);
         if !changed {
             break;
         }
@@ -229,59 +230,6 @@ fn lit_matches(cx: &Ctx, wrapped: Option<TyId>, sync: bool, l: TyId, t: TyId) ->
 /// HTTP/2 session and its `onClose`).
 fn heap_reaches(cx: &Ctx, w: &Why, c: DefId) -> bool {
     !w.library || cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
-}
-
-/// A closure whose declared parameter crosses (the prelude's `resolve`, a callback that spawns
-/// its argument) is called through function values: the argument at that position of every
-/// such call whose callee may be the closure crosses too. Returns whether a flag changed.
-fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
-    let mut found = vec![];
-    for (n, node) in g.nodes.iter().enumerate() {
-        let Node::Lit(c) = *node else { continue };
-        let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
-            continue;
-        };
-        let declared: Vec<_> = f
-            .params
-            .iter()
-            .skip(f.captures.len())
-            .map(|p| p.local)
-            .collect();
-        for (k, local) in declared.into_iter().enumerate() {
-            let Some(&i) = g.ids.get(&Node::Local(c, local)) else {
-                continue;
-            };
-            if p.flags[i] & CROSSES != 0 {
-                for ty in instances(cx, g, c, g.tys[n]) {
-                    found.push((ty, k, p.why[i], c));
-                }
-            }
-        }
-    }
-    let mut changed = false;
-    for (ty, k, why, c) in found {
-        for (callee, args, span, library, only) in &g.indirect {
-            // A call through a variable holding only closures of one function
-            // (`crate::defined_accessors`) reaches no closure of another.
-            if only.is_some_and(|d| outermost(g, d) != outermost(g, c)) {
-                continue;
-            }
-            if let Some(&a) = args.get(k) {
-                if p.flags[a] & CROSSES == 0 && types::may_be(cx, ty, *callee) {
-                    let arg_why = match why {
-                        Some(w) => match w.step(false, Some((*span, *library))) {
-                            Some(w) => Some(w),
-                            None => continue,
-                        },
-                        None => None,
-                    };
-                    p.set(a, CROSSES, arg_why);
-                    changed = true;
-                }
-            }
-        }
-    }
-    changed
 }
 
 /// The crossing values of a generic type found since `done` (`Graph::wild`, `Graph::generic_roots`):
@@ -700,9 +648,15 @@ impl Propagation {
     fn root(&mut self, cx: &Ctx, g: &Graph, n: usize, f: u8, w: Why) {
         let ty = g.tys[n];
         let rooted = f == CROSSES && (g.unknown[n] || !types::fn_like(cx, ty));
-        if let (true, Node::Local(d, _) | Node::Ret(d)) =
-            (rooted && g.wild.binary_search(&n).is_ok(), g.nodes[n])
-        {
+        // Only a value of unknown origin (a read, or what one fed) or fed by std (`Graph::std_fed`):
+        // one the program's own flow feeds, such as a parameter of a function it calls, crosses
+        // where its values come from instead.
+        if let (true, Node::Local(d, _) | Node::Ret(d)) = (
+            rooted
+                && (g.unknown[n] || g.std_fed.binary_search(&n).is_ok())
+                && g.wild.binary_search(&n).is_ok(),
+            g.nodes[n],
+        ) {
             self.hits.push((d, ty, w));
         }
         if rooted && !matches!(g.nodes[n], Node::Lit(_)) {

@@ -1,0 +1,4 @@
+async_closure_generic_std_fed.velt:28:5: error: this async closure modifies captured `n`, so it must stay on the task that created it
+async_closure_generic_std_fed.velt:12:30: but it is stored in a `(() => Promise<void>) | undefined`, which reaches `spawn` here
+async_closure_generic_std_fed.velt:36:7: error: this async closure modifies captured `s`, so it must stay on the task that created it
+async_closure_generic_std_fed.velt:19:11: but it is stored in a `(i64) => Promise<void>`, which reaches `spawn` here

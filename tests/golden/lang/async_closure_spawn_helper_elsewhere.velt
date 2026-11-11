@@ -1,0 +1,24 @@
+// check: no leaks
+// A spawn helper elsewhere in the program (`later`) doesn't make every closure of its function
+// type cross (#2756): a closure stored in a field and called on the task that made it may change
+// what it captured, as in JavaScript. Main after #2734 refused it (`Job` was a crossing type for
+// the whole program). The output is Node's.
+
+type Job = () => Promise<void>;
+class Box {
+  cb: Job | null = null;
+}
+async function main() {
+  const later = (g: Job): Promise<void> => spawn(g());
+  await later(async (): Promise<void> => {
+    console.log("spawned");
+  });
+  let n = 0;
+  const b = new Box();
+  b.cb = async (): Promise<void> => {
+    n += 1;
+  };
+  const cb = b.cb;
+  if (cb != null) await cb();
+  console.log("n", n);
+}

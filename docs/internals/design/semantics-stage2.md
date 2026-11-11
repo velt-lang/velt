@@ -276,13 +276,16 @@ a callback and runs it on another thread must reach it through one of these plac
 a runtime hook of its own. So a closure passed to a function value, an interface method or an
 overridden method (an unknown callee) is not a boundary: what the callee keeps, it keeps in the
 heap, and sema's heap rule (ownership/local_async/types.rs) decides whether the closure crosses, by
-whether a value that crosses holds its function type. A closure literal's own parameters hold
-values of unknown origin of their declared types, so a callback that spawns its argument makes the
-closures passed to such calls cross; so do a dispatched method's (one in a class's vtable, an
-overriding or overridden method, or an interface's implementation, which a call through a generic
-bound reaches too). A crossing value whose type mentions a type parameter (`T`, `T[]`, `Box<T>`,
-a `T` read out of one), in a function outside std, crosses with what that type is in the
-function's instantiations: the type arguments of its direct calls and of its uses as a function
+whether a value that crosses holds its function type. A callback that spawns its argument is
+followed per call site, not by its type across the program (#2756): a closure literal or a named
+function used as a value whose parameter crosses makes the argument at that position cross at each
+call through a function value whose type may be its own (`crossing_params`), and a dispatched
+method's (one in a class's vtable, or an interface's implementation, which a call through a generic
+bound reaches too) at each virtual, interface or bounded call that may reach it. So one spawn
+helper doesn't make every closure of its function type cross. A crossing value of unknown origin
+(a read, or what one fed) whose type mentions a type parameter (`T`, `T[]`, `Box<T>`, a `T` read
+out of one), in a function outside std, crosses with what that type is in the function's
+instantiations: the type arguments of its direct calls and of its uses as a function
 value, followed to their callers where they are generic themselves (#2740, #2741); an element or
 field read, or a call's result, that crosses at once (`spawn(gs[0]())`, `spawn(pick(gs)())`) is
 resolved the same way. A method a dispatched call may reach (a generic class's method through an

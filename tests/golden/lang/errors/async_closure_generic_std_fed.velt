@@ -1,0 +1,39 @@
+// A closure of a type parameter's type that comes back out of std (`m.get(k)` on a
+// `Map<string, T>` parameter, a std iterator over a `Map<string, T>`) and is spawned, in a generic
+// function used as a value: std's own nodes don't resolve the program's type parameters, so the
+// value is resolved through the function's instantiation, and the closures passed to it cross and
+// must not change what they captured (#2756's review). Each case has a function type of its own.
+
+type Job = () => Promise<void>;
+type Step = (n: i64) => Promise<void>;
+
+async function runKey<T extends Job>(m: Map<string, T>, k: string): Promise<void> {
+  const g = m.get(k);
+  if (g !== undefined) await spawn(g());
+}
+
+async function runAll<T extends Step>(gs: T[]): Promise<void> {
+  const m = new Map<string, T>();
+  m.set("a", gs[0]);
+  for (const g of m.values()) {
+    await spawn(g(1));
+  }
+}
+
+async function main() {
+  let n = 0;
+  const f: (m: Map<string, Job>, k: string) => Promise<void> = runKey;
+  const m = new Map<string, Job>();
+  m.set("a", async (): Promise<void> => {
+    n += 1;
+  });
+  await f(m, "a");
+
+  let s = 0;
+  const g: (gs: Step[]) => Promise<void> = runAll;
+  await g([
+    async (k: i64): Promise<void> => {
+      s += k;
+    },
+  ]);
+}

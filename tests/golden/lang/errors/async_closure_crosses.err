@@ -7,6 +7,6 @@ async_closure_crosses.velt:39:9: but it is stored in a `Jobs`, which reaches `sp
 async_closure_crosses.velt:44:5: error: this async closure modifies captured `d`, so it must stay on the task that created it
 async_closure_crosses.velt:43:9: but it is sent on a channel here
 async_closure_crosses.velt:52:5: error: this async closure modifies captured `e`, so it must stay on the task that created it
-async_closure_crosses.velt:49:5: but it is stored in a `(i64) => Promise<void>`, which reaches `spawn` here
+async_closure_crosses.velt:49:5: but it reaches `spawn` here
 async_closure_crosses.velt:57:5: error: this async closure modifies captured `counts`, so it must stay on the task that created it
 async_closure_crosses.velt:56:13: but it reaches `shared(...)` here
