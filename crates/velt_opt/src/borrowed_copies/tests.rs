@@ -49,6 +49,12 @@ enum Between {
     VeltCallWritingThroughArgument,
     /// The copy's address passed to a Velt function that calls one that writes through it.
     VeltCallOfWriter,
+    /// The copy's address passed to a Velt function that stores a call's result through it.
+    VeltCallStoringResultThroughArgument,
+    /// The copy's address passed to a Velt function that fills memory through it (`MemSet`).
+    VeltCallFillingThroughArgument,
+    /// The copy's address passed to a Velt function that makes an indirect call.
+    VeltCallOfIndirect,
 }
 
 struct Kit {
@@ -192,6 +198,45 @@ fn readers(pb: &mut ProgramBuilder, eq: ExternId, other: ExternId) -> Vec<(Betwe
         );
         fb.ret(after, unit());
     }));
+    let stores_result = pb.add(reader(
+        "stores_a_result_through",
+        Ty::Unit,
+        eq,
+        |fb, b, a, c| {
+            let next = fb.block();
+            fb.term(
+                b,
+                Terminator::Call {
+                    callee: Callee::Extern(eq),
+                    args: vec![copy_local(a), copy_local(c)],
+                    dest: Some(deref(a, Ty::U8)),
+                    next,
+                    unwind: None,
+                },
+            );
+            fb.ret(next, unit());
+        },
+    ));
+    let fills = pb.add(reader("fills_through", Ty::Unit, eq, |fb, b, a, _| {
+        fb.push(
+            b,
+            Stmt::MemSet {
+                dst: copy_local(a),
+                byte: int(0, Ty::U8),
+                len: int(8, Ty::U64),
+            },
+        );
+        fb.ret(b, unit());
+    }));
+    let indirect = pb.add(reader("calls_indirectly", Ty::Unit, eq, |fb, b, _, c| {
+        let callee = Callee::Ptr {
+            target: copy_local(c),
+            params: vec![],
+            ret: Ty::Unit,
+        };
+        let after = fb.call(b, callee, vec![], None);
+        fb.ret(after, unit());
+    }));
     vec![
         (Between::ReadOnlyVeltCall, only),
         (Between::ReadOnlyVeltChain, chain),
@@ -200,6 +245,9 @@ fn readers(pb: &mut ProgramBuilder, eq: ExternId, other: ExternId) -> Vec<(Betwe
         (Between::VeltCallOfUnknownExtern, unknown),
         (Between::VeltCallWritingThroughArgument, writes),
         (Between::VeltCallOfWriter, calls_writer),
+        (Between::VeltCallStoringResultThroughArgument, stores_result),
+        (Between::VeltCallFillingThroughArgument, fills),
+        (Between::VeltCallOfIndirect, indirect),
     ]
 }
 
@@ -305,7 +353,10 @@ fn program(between: Between, gated: bool) -> Program {
         | Between::VeltCallReturningPointer
         | Between::VeltCallOfUnknownExtern
         | Between::VeltCallWritingThroughArgument
-        | Between::VeltCallOfWriter => {
+        | Between::VeltCallOfWriter
+        | Between::VeltCallStoringResultThroughArgument
+        | Between::VeltCallFillingThroughArgument
+        | Between::VeltCallOfIndirect => {
             let f = kit.readers.iter().find(|(c, _)| *c == between).unwrap().1;
             let args = vec![copy_local(t), copy_local(s)];
             let dest = (between == Between::VeltCallReturningPointer).then(|| fb.local(Ty::Ptr));
@@ -642,4 +693,7 @@ fn calls_of_velt_functions_that_may_write_or_leak_keep_the_clone() {
     assert_kept(Between::VeltCallOfUnknownExtern);
     assert_kept(Between::VeltCallWritingThroughArgument);
     assert_kept(Between::VeltCallOfWriter);
+    assert_kept(Between::VeltCallStoringResultThroughArgument);
+    assert_kept(Between::VeltCallFillingThroughArgument);
+    assert_kept(Between::VeltCallOfIndirect);
 }
