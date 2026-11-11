@@ -1,12 +1,19 @@
 //! The listener of the loopback flow: `127.0.0.1` on a free port, answering only
 //! `GET /callback?…&state=<its state>` (compared in constant time) once; every other request
 //! gets a 404 and is otherwise ignored, so a stray tab or another page can't end the sign-in.
+//! The callback's tab is answered only when the code has been exchanged, with the real outcome
+//! ([`Listener::finish`]).
 
+use std::io::{BufReader, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
-use velt_http::{Request, Response, Server};
+use velt_http::message::{read_request, write_response};
+use velt_http::{Request, Response};
 
 /// What the browser brought back.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,52 +65,110 @@ impl Refusal {
 
 /// The longest `code` accepted.
 const MAX_CODE: usize = 512;
+/// How long a connection may take to send its request.
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long the callback's tab waits for the outcome (the exchange takes at most a minute).
+const OUTCOME_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long [`Listener::finish`] waits for the tab's page to be written.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A listener waiting for one callback.
+/// The matching callback's connection, waiting for the outcome: the signed-in user (`None`:
+/// failed), then reporting that its page was written.
+struct Waiting {
+    outcome: Sender<Option<String>>,
+    written: Receiver<()>,
+}
+
+/// A listener waiting for one callback. It answers the callback's tab only when
+/// [`Listener::finish`] gives the outcome, and keeps answering 404 to other requests until then.
 pub struct Listener {
-    server: Server,
+    addr: std::net::SocketAddr,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
     registry: String,
-    answers: Receiver<Callback>,
+    arrived: Receiver<(Callback, Waiting)>,
+    waiting: Option<Waiting>,
 }
 
 impl Listener {
     /// Listens on `127.0.0.1`, any free port, for the callback carrying `state`; `registry` is
     /// named on the page the browser shows.
     pub fn bind(state: &str, registry: &str) -> Result<Listener, String> {
-        let socket = std::net::TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| format!("cannot listen on 127.0.0.1 for the browser: {e}"))?;
-        let (send, answers) = channel();
-        let handler = Handler {
+        let failed = |e: std::io::Error| format!("cannot listen on 127.0.0.1 for the browser: {e}");
+        let socket = TcpListener::bind("127.0.0.1:0").map_err(failed)?;
+        let addr = socket.local_addr().map_err(failed)?;
+        let (send, arrived) = channel();
+        let handler = Arc::new(Handler {
             state: state.to_string(),
             registry: registry.to_string(),
             send: Mutex::new(Some(send)),
-        };
-        let handler = Arc::new(move |req: Request| handler.answer(&req));
-        let server = Server::start(socket, handler, 0)
-            .map_err(|e| format!("cannot listen on 127.0.0.1 for the browser: {e}"))?;
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::Builder::new()
+            .name("velt-login-listener".into())
+            .spawn(move || {
+                for conn in socket.incoming() {
+                    if flag.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let (Ok(stream), handler) = (conn, handler.clone()) else {
+                        continue;
+                    };
+                    let _ = std::thread::Builder::new()
+                        .name("velt-login-conn".into())
+                        .spawn(move || handler.serve(stream));
+                }
+            })
+            .map_err(failed)?;
         Ok(Listener {
-            server,
+            addr,
+            stop,
+            thread: Some(thread),
             registry: registry.to_string(),
-            answers,
+            arrived,
+            waiting: None,
         })
     }
 
     /// The port the browser is sent back to.
     pub fn port(&self) -> u16 {
-        self.server.addr().port()
+        self.addr.port()
     }
 
-    /// The callback, waiting at most `timeout`; stops listening either way.
-    pub fn wait(self, timeout: Duration) -> Result<Callback, String> {
-        let got = self.answers.recv_timeout(timeout);
-        self.server.stop();
-        match got {
-            Ok(callback) => Ok(callback),
+    /// The callback, waiting at most `timeout`. Its tab waits for [`Listener::finish`].
+    pub fn wait(&mut self, timeout: Duration) -> Result<Callback, String> {
+        match self.arrived.recv_timeout(timeout) {
+            Ok((callback, waiting)) => {
+                self.waiting = Some(waiting);
+                Ok(callback)
+            }
             Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => Err(format!(
                 "the browser did not come back within {} minutes: run `velt login {} --device` to sign in without a browser on this machine",
                 timeout.as_secs().div_ceil(60),
                 self.registry
             )),
+        }
+    }
+
+    /// Answers the callback's tab with the outcome (`Some(user)`: signed in), waits until its
+    /// page is written, and stops listening.
+    pub fn finish(mut self, user: Option<&str>) {
+        if let Some(waiting) = self.waiting.take() {
+            if waiting.outcome.send(user.map(str::to_string)).is_ok() {
+                let _ = waiting.written.recv_timeout(WRITE_TIMEOUT);
+            }
+        }
+    }
+}
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        // Wake the blocking accept with a connection of our own.
+        let _ = TcpStream::connect(self.addr);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
     }
 }
@@ -112,46 +177,78 @@ struct Handler {
     state: String,
     registry: String,
     /// Taken by the first matching callback: later ones get a 404.
-    send: Mutex<Option<Sender<Callback>>>,
+    send: Mutex<Option<Sender<(Callback, Waiting)>>>,
 }
 
 impl Handler {
-    fn answer(&self, req: &Request) -> Response {
-        let not_found =
-            || Response::text(404, "not found").with_header("Cache-Control", "no-store");
+    /// Reads one request and answers it: the matching callback once the outcome is known.
+    fn serve(&self, stream: TcpStream) {
+        let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+        let Ok(mut writer) = stream.try_clone() else {
+            return;
+        };
+        let mut reader = BufReader::new(stream);
+        let Ok(req) = read_request(&mut reader, 0) else {
+            return;
+        };
+        let (response, written) = match self.callback(&req) {
+            None => (not_found(), None),
+            Some(callback) => {
+                let (outcome, told) = channel();
+                let (wrote, written) = channel();
+                let waiting = Waiting { outcome, written };
+                match self.send.lock().ok().and_then(|mut s| s.take()) {
+                    Some(send) if send.send((callback, waiting)).is_ok() => {
+                        let user = told.recv_timeout(OUTCOME_TIMEOUT).ok().flatten();
+                        (page(user.as_deref(), &self.registry), Some(wrote))
+                    }
+                    _ => (not_found(), None),
+                }
+            }
+        };
+        let _ = write_response(&mut writer, &response);
+        let _ = writer.flush();
+        let _ = writer.shutdown(Shutdown::Write);
+        if let Some(wrote) = written {
+            let _ = wrote.send(());
+        }
+    }
+
+    /// The request's callback when it is `GET /callback` with this state and a code or an error.
+    fn callback(&self, req: &Request) -> Option<Callback> {
         if req.method != "GET" || req.path != "/callback" {
-            return not_found();
+            return None;
         }
         let state = query_value(&req.query, "state").unwrap_or_default();
         if !same(state.as_bytes(), self.state.as_bytes()) {
-            return not_found();
+            return None;
         }
-        let callback = match (
+        match (
             query_value(&req.query, "code"),
             query_value(&req.query, "error"),
         ) {
-            (Some(code), _) if !code.is_empty() && code.len() <= MAX_CODE => Callback::Code(code),
-            (_, Some(word)) => Callback::Refused(Refusal::from_word(&word)),
-            _ => return not_found(),
-        };
-        let Some(send) = self.send.lock().ok().and_then(|mut s| s.take()) else {
-            return not_found();
-        };
-        let signed_in = matches!(callback, Callback::Code(_));
-        let _ = send.send(callback);
-        page(signed_in, &self.registry)
+            (Some(code), _) if !code.is_empty() && code.len() <= MAX_CODE => {
+                Some(Callback::Code(code))
+            }
+            (_, Some(word)) => Some(Callback::Refused(Refusal::from_word(&word))),
+            _ => None,
+        }
     }
 }
 
-/// The page the browser shows after the callback.
-fn page(signed_in: bool, registry: &str) -> Response {
-    let text = if signed_in {
-        format!(
-            "Signed in to {}. You can close this tab and return to the terminal.",
-            escape(registry)
-        )
-    } else {
-        "Signing in failed: see the terminal.".to_string()
+fn not_found() -> Response {
+    Response::text(404, "not found").with_header("Cache-Control", "no-store")
+}
+
+/// The page the callback's tab shows: signed in as `user`, or failed (`None`).
+fn page(user: Option<&str>, registry: &str) -> Response {
+    let text = match user {
+        Some(user) => format!(
+            "Signed in to {} as {}. You can close this tab and return to the terminal.",
+            escape(registry),
+            escape(user)
+        ),
+        None => "Signing in failed: see the terminal.".to_string(),
     };
     let html = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>velt login</title></head><body style=\"font-family:system-ui,sans-serif;margin:3em\"><p>{text}</p></body></html>"

@@ -222,7 +222,7 @@ pub fn browser(
     timeout: Duration,
 ) -> Result<SignedIn, String> {
     let pkce = Pkce::new()?;
-    let listener = loopback::Listener::bind(&pkce.state, api)?;
+    let mut listener = loopback::Listener::bind(&pkce.state, api)?;
     let url = browser_url(&found.browser, listener.port(), &pkce);
     ui.say(&format!(
         "Opening {url} to sign in (or run `velt login {api} --device` to sign in without a browser on this machine)"
@@ -230,10 +230,13 @@ pub fn browser(
     if !ui.open(&url) {
         ui.say("Could not start a browser: open the URL above yourself.");
     }
-    match listener.wait(timeout)? {
+    let signed = match listener.wait(timeout)? {
         loopback::Callback::Code(code) => exchange(api, &code, &pkce.verifier),
         loopback::Callback::Refused(word) => Err(word.message(api)),
-    }
+    };
+    // The tab shows the real outcome: signed in only once the token is here.
+    listener.finish(signed.as_ref().ok().map(|s| s.user.as_str()));
+    signed
 }
 
 /// `POST <api>/api/v1/login/token`: the token for a callback's `code`.

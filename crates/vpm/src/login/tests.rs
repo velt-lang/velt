@@ -22,6 +22,12 @@ struct Stub {
     polled: usize,
     /// The `error` word the sign-in page sends the browser back with, instead of a code.
     refuse: Option<&'static str>,
+    /// The sign-in page issues a code for another challenge (the exchange fails).
+    wrong_challenge: bool,
+    /// The callback URL the page sent the browser to; replayed while the code is exchanged.
+    callback: Option<String>,
+    /// The listener's answer to that replay.
+    replayed: Option<u16>,
 }
 
 fn json(status: u16, value: serde_json::Value) -> Response {
@@ -59,17 +65,29 @@ fn registry() -> (Server, String, Arc<Mutex<Stub>>) {
                 let outcome = match stub.refuse {
                     Some(word) => format!("error={word}&error_description=EVIL%1b[31m"),
                     None => {
-                        stub.codes.insert("c1".into(), q("challenge"));
+                        let issued = match stub.wrong_challenge {
+                            true => challenge("another verifier"),
+                            false => q("challenge"),
+                        };
+                        stub.codes.insert("c1".into(), issued);
                         "code=c1".into()
                     }
                 };
                 let to = format!("http://127.0.0.1:{port}/callback?{outcome}&state={state}");
+                stub.callback = Some(to.clone());
                 Response::text(302, "").with_header("Location", &to)
             }
-            ("POST", "/api/v1/login/token") => match stub.codes.remove(&field("code")) {
-                Some(c) if c == challenge(&field("verifier")) => token(),
-                _ => json(400, serde_json::json!({"error": "invalid_grant"})),
-            },
+            ("POST", "/api/v1/login/token") => {
+                // The tab is still waiting for its page: a reload of the callback is ignored.
+                if let Some(callback) = stub.callback.take() {
+                    let replay = velt_http::fetch("GET", &callback, &[], b"").unwrap();
+                    stub.replayed = Some(replay.status);
+                }
+                match stub.codes.remove(&field("code")) {
+                    Some(c) if c == challenge(&field("verifier")) => token(),
+                    _ => json(400, serde_json::json!({"error": "invalid_grant"})),
+                }
+            }
             ("POST", "/api/v1/login/device") => json(
                 200,
                 serde_json::json!({
@@ -100,8 +118,10 @@ struct Browser {
     said: Vec<String>,
     opened: Vec<String>,
     slept: Vec<u64>,
-    /// The listener's answers to the stray requests, then to the callback.
+    /// The listener's answers to the stray requests.
     answers: Vec<u16>,
+    /// The callback's tab, waiting for its page.
+    tab: Option<std::thread::JoinHandle<Response>>,
     /// Whether `open` follows the redirect (false: a machine without a browser).
     works: bool,
 }
@@ -130,16 +150,10 @@ impl Ui for Browser {
             self.answers
                 .push(velt_http::fetch("GET", &stray, &[], b"").unwrap().status);
         }
-        let callback = velt_http::fetch("GET", &to, &[], b"").unwrap();
-        self.answers.push(callback.status);
-        assert!(
-            callback.body_text().contains("<p>"),
-            "{}",
-            callback.body_text()
-        );
-        // Only once: a replay is ignored.
-        self.answers
-            .push(velt_http::fetch("GET", &to, &[], b"").unwrap().status);
+        // The tab gets its page only once the sign-in is over.
+        self.tab = Some(std::thread::spawn(move || {
+            velt_http::fetch("GET", &to, &[], b"").unwrap()
+        }));
         true
     }
 
@@ -149,6 +163,15 @@ impl Ui for Browser {
 
     fn sleep(&mut self, d: Duration) {
         self.slept.push(d.as_secs());
+    }
+}
+
+impl Browser {
+    /// The text of the page the callback's tab ended with.
+    fn page(&mut self) -> String {
+        let tab = self.tab.take().expect("a callback").join().unwrap();
+        assert_eq!(tab.status, 200);
+        tab.body_text()
     }
 }
 
@@ -187,8 +210,16 @@ fn the_loopback_flow_signs_in_with_the_code_and_the_verifier() {
         ("velt_s3cret", "andii", "2027-11-11")
     );
     assert!(!format!("{signed:?}").contains("s3cret"));
-    // Wrong path, no state, wrong state: 404; the callback: 200; its replay: 404.
-    assert_eq!(ui.answers, [404, 404, 404, 200, 404]);
+    // Wrong path, no state, wrong state: 404; the callback's replay: 404.
+    assert_eq!(ui.answers, [404, 404, 404]);
+    assert_eq!(stub.lock().unwrap().replayed, Some(404));
+    let page = ui.page();
+    assert!(
+        page.contains(&format!(
+            "Signed in to {base} as andii. You can close this tab"
+        )),
+        "{page}"
+    );
     let opened = &ui.opened[0];
     assert!(
         opened.starts_with(&format!("{base}/login/cli?port=")),
@@ -221,8 +252,20 @@ fn refusals_print_fixed_messages_and_bad_codes_are_refused() {
         let e = browser(&base, &found, &mut ui, CALLBACK_TIMEOUT).unwrap_err();
         assert!(e.contains(message), "{word}: {e}");
         assert!(!e.contains("EVIL") && !e.contains("script"), "{e}");
+        assert!(ui.page().contains("Signing in failed: see the terminal."));
     }
     stub.lock().unwrap().refuse = None;
+    // A code the exchange refuses (`invalid_grant`): the tab says it failed, not signed in.
+    stub.lock().unwrap().wrong_challenge = true;
+    let mut ui = browser_ui();
+    let e = browser(&base, &found, &mut ui, CALLBACK_TIMEOUT).unwrap_err();
+    assert!(e.contains("did not accept the sign-in"), "{e}");
+    let page = ui.page();
+    assert!(
+        page.contains("Signing in failed: see the terminal."),
+        "{page}"
+    );
+    stub.lock().unwrap().wrong_challenge = false;
     // A code with another verifier (or an unknown one) is worth nothing.
     assert!(exchange(&base, "c1", "verifier")
         .unwrap_err()
@@ -239,24 +282,31 @@ fn refusals_print_fixed_messages_and_bad_codes_are_refused() {
 
 #[test]
 fn the_listener_gives_up_after_its_timeout() {
-    let listener = Listener::bind("ab", "https://registry.example.com").unwrap();
+    let mut listener = Listener::bind("ab", "https://registry.example.com").unwrap();
     // timing: the timeout is what this test checks.
     let e = listener.wait(Duration::from_millis(20)).unwrap_err();
     assert!(
         e.contains("velt login https://registry.example.com --device"),
         "{e}"
     );
-    // A refused callback only ends the wait when its state matches.
-    let listener = Listener::bind("ab", "r").unwrap();
+    // A refused callback only ends the wait when its state matches; its tab waits for the
+    // outcome.
+    let mut listener = Listener::bind("ab", "r").unwrap();
     let url = format!("http://127.0.0.1:{}/callback", listener.port());
     let other = velt_http::fetch("GET", &format!("{url}?error=refused&state=a"), &[], b"").unwrap();
     assert_eq!(other.status, 404);
-    let ours = velt_http::fetch("GET", &format!("{url}?error=refused&state=ab"), &[], b"").unwrap();
-    assert!(ours.body_text().contains("Signing in failed"));
+    let ours = format!("{url}?error=refused&state=ab");
+    let tab = std::thread::spawn(move || velt_http::fetch("GET", &ours, &[], b"").unwrap());
     assert_eq!(
         listener.wait(CALLBACK_TIMEOUT).unwrap(),
         Callback::Refused(Refusal::Refused)
     );
+    listener.finish(None);
+    assert!(tab
+        .join()
+        .unwrap()
+        .body_text()
+        .contains("Signing in failed"));
 }
 
 #[test]
