@@ -1,24 +1,29 @@
-// A generic class's method, reached through an interface, that spawns its parameter of a type
-// parameter: no call gives that type parameter's type, so the parameter stands for any function
-// type, and a closure passed to an unknown callee crosses and must not change what it captured
-// (#2726, #2740).
+// An interface method with a type parameter of its own (`run<U>`), implemented by a generic class
+// made inside a generic function: a dispatched call may give `U` any type, so the parameter stands
+// for any function type, and a closure passed to an unknown callee crosses and must not change
+// what it captured (#2726, #2741). The class's own type parameter comes from its `new`; the
+// method's doesn't.
 
 type Job = () => Promise<void>;
 
-interface Runner<T> {
-  run(g: T): void;
+interface Runner {
+  run<U extends Job>(g: U): Promise<void>;
 }
 
-class Spawner<T extends Job> implements Runner<T> {
-  run(g: T): void {
-    spawn(g());
+class Spawner<T> implements Runner {
+  async run<U extends Job>(g: U): Promise<void> {
+    await spawn(g());
   }
+}
+
+function make<A, B>(): Runner {
+  return new Spawner<A>();
 }
 
 async function main() {
   let n = 0;
-  const r: Runner<Job> = new Spawner<Job>();
-  r.run(async (): Promise<void> => {
+  const r = make<number, string>();
+  await r.run(async (): Promise<void> => {
     n += 1;
   });
 }

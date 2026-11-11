@@ -1,0 +1,42 @@
+// A generic class's method reached through an interface spawns what its parameter of a type
+// parameter's type holds. A direct call with another type argument (`Sp<Plain>`) is not all its
+// instantiations: a dispatched call may reach it with any, and every `new` of the class gives
+// one (`Sp<FnTask>`), so the closure in the `FnTask` crosses and must not change what it captured
+// (#2741).
+
+interface Task {
+  go(): Promise<void>;
+}
+class Plain implements Task {
+  async go(): Promise<void> {}
+}
+class FnTask implements Task {
+  f: () => Promise<void>;
+  constructor(f: () => Promise<void>) {
+    this.f = f;
+  }
+  async go(): Promise<void> {
+    const f = this.f;
+    await f();
+  }
+}
+interface Runner<T> {
+  run(xs: T[]): Promise<void>;
+}
+class Sp<T extends Task> implements Runner<T> {
+  async run(xs: T[]): Promise<void> {
+    for (const x of xs) {
+      await spawn(x.go());
+    }
+  }
+}
+async function main() {
+  await new Sp<Plain>().run([new Plain()]);
+  let n = 0;
+  const r: Runner<FnTask> = new Sp<FnTask>();
+  await r.run([
+    new FnTask(async (): Promise<void> => {
+      n += 1;
+    }),
+  ]);
+}

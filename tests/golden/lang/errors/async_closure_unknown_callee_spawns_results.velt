@@ -1,0 +1,50 @@
+// A closure of a type parameter's type returned by a call and spawned at once, with no local in
+// between, crosses like a local of that type would (#2741): a generic class's getter and a generic
+// helper, each reached from a generic function used as a value, whose instantiation gives the
+// type. Each case has a function type of its own.
+
+type Job = () => Promise<void>;
+type Step = (n: i64) => Promise<void>;
+
+class Pool<T extends Job> {
+  items: T[];
+  constructor(items: T[]) {
+    this.items = items;
+  }
+  get(i: i64): T {
+    return this.items[i];
+  }
+  async run(): Promise<void> {
+    await spawn(this.get(0)());
+  }
+}
+
+function make<T extends Job>(items: T[]): Pool<T> {
+  return new Pool<T>(items);
+}
+
+function pick<T>(xs: T[]): T {
+  return xs[0];
+}
+
+async function go<T extends Step>(gs: T[]): Promise<void> {
+  await spawn(pick(gs)(1));
+}
+
+async function main() {
+  let n = 0;
+  const mk: (items: Job[]) => Pool<Job> = make;
+  await mk([
+    async (): Promise<void> => {
+      n += 1;
+    },
+  ]).run();
+
+  let m = 0;
+  const g: (gs: Step[]) => Promise<void> = go;
+  await g([
+    async (k: i64): Promise<void> => {
+      m += k;
+    },
+  ]);
+}

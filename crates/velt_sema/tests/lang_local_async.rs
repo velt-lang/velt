@@ -215,8 +215,9 @@ fn generic_parameters_keep_the_callers_types() {
            const w = wrap<Job>(new Job(async () => { n += 1; }));
          }",
     );
+    // The `Mutex<T>` made in `wrap<T>` crosses with `wrap<Job>`'s instantiation.
     assert!(
-        r.contains("is stored in a `Job`, which is put in a `Mutex` here"),
+        r.contains("is stored in a `Mutex<Job>`, which reaches `shared(...)` here"),
         "{r}"
     );
 }
