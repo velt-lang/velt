@@ -13,6 +13,19 @@
 //!   instance per call site, track_caller.rs in velt_vir, so they meet the single-site rule;
 //!   this rule gives every program's loops the same, its own modules' functions included.)
 //!
+//! The budget is the program's: it may at most double in size, plus `BUDGET_SLACK`. Callers are
+//! visited bottom-up, so spent first come, first served, the first ones (deep library code, glue)
+//! could spend it all before a program's own code, nearer the top, got a turn (#2753). So each
+//! round sets aside for every caller what it wants (`wants`: the calls in its body that would be
+//! charged), and when they want more than is left, no more than a level set so that what is set
+//! aside adds up to it (a max-min fair share, `Budget::share`). A caller may spend what is set
+//! aside for it and whatever no caller still to come has set aside, so what one leaves unspent
+//! goes to the next: a hot loop that wants little gets it whatever else the program holds, and
+//! only callers wanting more than the level wait for what others leave. `wants` is an estimate:
+//! it doesn't see the calls an inlined body brings along, nor a callee that becomes free (called
+//! once) during the round, so a program whose callers' wants fit is inlined as first come, first
+//! served would only as far as the estimate is right (all of `bench/` that never runs out is).
+//!
 //! Functions that never return normally (panic helpers, and `never` functions that throw) are
 //! never inlined: their calls are cold.
 //!
@@ -82,6 +95,10 @@ pub(crate) fn cost(func: &Function) -> u64 {
 /// Program-wide code growth allowance for inlining, shared by all pipeline rounds.
 pub(crate) struct Budget {
     remaining: u64,
+    /// Per caller, what is set aside for it this round until it is visited (module docs).
+    set_aside: Vec<u64>,
+    /// The sum of `set_aside`: what callers still to come may spend before any other.
+    set_aside_total: u64,
     /// Per caller, recursive functions it has a copy of (inlined into it, directly or within
     /// another callee's body): their cycles are not inlined into it again (module docs).
     cycles: FxHashMap<FuncId, Vec<FuncId>>,
@@ -93,9 +110,64 @@ impl Budget {
         let size: u64 = program.funcs.iter().map(cost).sum();
         Budget {
             remaining: size + BUDGET_SLACK,
+            set_aside: vec![],
+            set_aside_total: 0,
             cycles: FxHashMap::default(),
         }
     }
+
+    /// What the caller being visited may still be charged: what no caller still to come has set
+    /// aside.
+    fn room(&self) -> u64 {
+        self.remaining - self.set_aside_total
+    }
+
+    /// `caller` is visited: what is set aside for it is its to spend.
+    fn visit(&mut self, caller: FuncId) {
+        if let Some(mine) = self.set_aside.get_mut(caller.0 as usize) {
+            self.set_aside_total -= *mine;
+            *mine = 0;
+        }
+    }
+
+    /// Charge the caller being visited `size` (at most [`Budget::room`]).
+    fn charge(&mut self, size: u64) {
+        self.remaining -= size;
+    }
+
+    /// Start a round whose callers want `wants` (one entry per caller): what is set aside for
+    /// each, up to the level that shares what is left among them (module docs).
+    fn share(&mut self, wants: Vec<u64>) {
+        let cap = level(&wants, self.remaining).unwrap_or(u64::MAX);
+        self.set_aside = wants.into_iter().map(|w| w.min(cap)).collect();
+        self.set_aside_total = self.set_aside.iter().sum();
+        // At most what is left: the level is rounded down.
+        debug_assert!(
+            self.set_aside_total <= self.remaining,
+            "ICE: set aside more than is left"
+        );
+    }
+}
+
+/// The level that shares `pool` among callers wanting `wants`: each gets what it wants up to the
+/// level, and what they get adds up to `pool`. `None` when what they want fits.
+fn level(wants: &[u64], pool: u64) -> Option<u64> {
+    if wants.iter().sum::<u64>() <= pool {
+        return None;
+    }
+    let mut wants: Vec<u64> = wants.iter().copied().filter(|&w| w > 0).collect();
+    wants.sort_unstable();
+    let (mut left, mut n) = (pool, wants.len() as u64);
+    for w in wants {
+        // Every caller from here on wants at least `w`: if that is more than an equal split of
+        // what is left, the split is the level.
+        if w.saturating_mul(n) > left {
+            return Some(left / n);
+        }
+        left -= w;
+        n -= 1;
+    }
+    None
 }
 
 /// Inline call sites across the program; returns whether anything was inlined. Into the functions
@@ -122,9 +194,11 @@ pub(crate) fn run(program: &mut Program, budget: &mut Budget, served: crate::Ser
         call_sites: graph.call_sites.clone(),
         address_taken: graph.address_taken,
     };
+    budget.share(wants(program, &state, budget));
     let mut changed = false;
     for scc in &sccs {
         for &caller in scc {
+            budget.visit(caller);
             if inline_into(program, caller, &mut state, budget) {
                 changed = true;
                 if !served.optimizes(&program.funcs[caller.0 as usize]) {
@@ -249,6 +323,8 @@ struct Site<'a> {
     in_loop: bool,
     /// Recursive functions whose inlined bodies the call came with (this round).
     from: &'a [FuncId],
+    /// What the caller may still be charged ([`Budget::room`]).
+    room: u64,
 }
 
 fn decide(
@@ -300,7 +376,7 @@ fn decide(
     if recursive {
         // A copy of a recursive function adds to its body, which stays: only a small entry
         // called from a loop is worth one (module docs).
-        let ok = site.in_loop && size <= RECURSIVE_COST && size <= budget.remaining;
+        let ok = site.in_loop && size <= RECURSIVE_COST && size <= site.room;
         return ok.then_some(Decision::Charged(size));
     }
     let limit = if site.in_loop {
@@ -310,7 +386,7 @@ fn decide(
     } else {
         SMALL_COST
     };
-    (size <= limit && size <= budget.remaining).then_some(Decision::Charged(size))
+    (size <= limit && size <= site.room).then_some(Decision::Charged(size))
 }
 
 /// Whether `func` calls nothing but functions that never return (its checks' reports).
@@ -403,6 +479,7 @@ fn inline_into(
             caller_cost,
             in_loop: in_loop[here],
             from: &from[here],
+            room: budget.room(),
         };
         let Some(decision) = decide(state, program, callee, &site, budget) else {
             continue;
@@ -418,7 +495,7 @@ fn inline_into(
         }
         copied.extend(brings.iter().copied());
         if let Decision::Charged(size) = decision {
-            budget.remaining -= size;
+            budget.charge(size);
         }
         let body = program.funcs[callee.0 as usize].clone();
         state.call_sites[callee.0 as usize] -= 1;
@@ -445,6 +522,53 @@ fn inline_into(
         }
     }
     changed
+}
+
+/// Per function, what this round would charge it with the budget unlimited: the sizes of the calls
+/// in its body that [`decide`] charges for. Calls that inlined bodies bring along are not counted,
+/// so it is a lower bound.
+fn wants(program: &Program, state: &State, budget: &Budget) -> Vec<u64> {
+    (program.funcs.iter().enumerate())
+        .map(|(fi, func)| {
+            if func.blocks.is_empty() {
+                return 0;
+            }
+            let caller = FuncId(fi as u32);
+            let caller_cost = cost(func);
+            let in_loop = loop_blocks(func);
+            let mut want = 0;
+            for (bi, block) in func.blocks.iter().enumerate() {
+                let Terminator::Call {
+                    callee: Callee::Func(callee),
+                    args,
+                    ..
+                } = &block.term
+                else {
+                    continue;
+                };
+                let Some(target) = program.funcs.get(callee.0 as usize) else {
+                    continue;
+                };
+                let gated_elsewhere = target.target.is_some() && target.target != func.target;
+                if !splice::arity_matches(args, target) || gated_elsewhere {
+                    continue;
+                }
+                let site = Site {
+                    caller,
+                    caller_cost,
+                    in_loop: in_loop[bi],
+                    from: &[],
+                    room: u64::MAX,
+                };
+                if let Some(Decision::Charged(size)) =
+                    decide(state, program, *callee, &site, budget)
+                {
+                    want += size;
+                }
+            }
+            want
+        })
+        .collect()
 }
 
 /// Per block of `func`: whether it lies on a cycle of the control-flow graph (in a loop).
