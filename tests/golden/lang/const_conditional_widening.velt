@@ -1,7 +1,7 @@
 // The literals a `const` keeps from a conditional (`"x" | "y"`) widen where TypeScript widens
 // them: a `let`, an object literal's property, an inferred function result and an array
 // element are `string`s, and so is a type argument inferred from them; another `const` keeps
-// them (#2686).
+// them (#2686). `a!`, `c ? a : "y"`, `a || "z"` and an arrow's result carry them as `a` does.
 function id<T>(x: T): T {
   return x;
 }
@@ -52,6 +52,18 @@ function main() {
   const bx = box(a1);
   bx.v = "boxed";
   console.log(t1, w, obj.m, sh.a1, arr.join(","), rv, rv2, tb, wb, ee, t2, ws, capture(), m.size);
-  console.log(gid, bx.v);
+  let q1 = c ? a1 : "y";
+  q1 = "q1";
+  let q5 = a1!;
+  q5 = "q5";
+  let q7 = a1 || "z";
+  q7 = "q7";
+  const k1 = c ? a1 : "y";
+  let q8 = k1;
+  q8 = "q8";
+  const ra = () => a1;
+  let q9 = ra();
+  q9 = "q9";
+  console.log(gid, bx.v, q1, q5, q7, q8, q9);
 }
 main();

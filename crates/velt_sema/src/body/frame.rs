@@ -200,6 +200,10 @@ pub(crate) struct Frame {
     pub const_lits: FxHashMap<LocalId, velt_syntax::ast::SignedLit>,
     /// `const a = c ? "x" : "y"`: constants of widening literal types (`widening_consts`).
     pub widening_consts: rustc_hash::FxHashSet<LocalId>,
+    /// An arrow's expression body gives a value of widening literal types.
+    pub widening_result: bool,
+    /// `const f = () => a` of such an arrow: a call `f()` gives widening literals too.
+    pub widening_fn_locals: rustc_hash::FxHashSet<LocalId>,
     /// Generated code's `const` locals initialized by an object or struct literal (also
     /// `__construct<T>(…)`): values it is building, whose readonly fields it may set.
     pub built_locals: rustc_hash::FxHashSet<LocalId>,
@@ -309,6 +313,8 @@ impl Frame {
             truthy_returns: false,
             const_lits: FxHashMap::default(),
             widening_consts: Default::default(),
+            widening_result: false,
+            widening_fn_locals: Default::default(),
             built_locals: Default::default(),
             regex_consts: FxHashMap::default(),
             untyped_lets: FxHashMap::default(),

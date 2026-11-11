@@ -377,6 +377,9 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
+        if frame.widening_result {
+            self.cx.widening_fns.insert(span);
+        }
         self.finish_trap(&frame);
         // Reads outside the body's statements (an expression body) check at its start.
         let late = self.late_check_stmts(frame.late.checks.clone(), span);
@@ -508,10 +511,11 @@ impl FnCx<'_, '_> {
                         self.expr_stmt(void_op(e).unwrap_or(e))
                     }
                     Some(r) => self.returned(e, r),
-                    // `() => a` of a constant of widening literals: its result is a `string`.
+                    // `() => a` of a constant of widening literals: so is a call's result.
                     None => {
                         let h = self.expr(e, None, Want::Move);
-                        self.widened_ref(e, h)
+                        self.f.widening_result = self.widening_expr(e);
+                        h
                     }
                 };
                 let h = match (self.f.ret, self.promise_value(h.ty)) {

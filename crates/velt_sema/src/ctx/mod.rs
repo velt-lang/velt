@@ -458,6 +458,9 @@ pub(crate) struct Ctx<'m> {
     pub rechecks: Vec<crate::body::recheck::Frame>,
     /// Closures created by body checks, in order (`body::recheck`).
     pub closure_defs: Vec<DefId>,
+    /// The spans of arrows whose result is of widening literal types (`() => a` of `const a =
+    /// c ? "x" : "y"`): a call of one is too (`body::expr::widening_consts`).
+    pub widening_fns: rustc_hash::FxHashSet<velt_common::Span>,
     /// The modules of the JS API (`body::expr::numbers::is_js_api`): each prelude module
     /// (`None`: all of it), and each module the prelude's globals re-export from, with the
     /// names re-exported from it (`Some`).
@@ -689,6 +692,7 @@ impl<'m> Ctx<'m> {
             diags: vec![],
             rechecks: vec![],
             closure_defs: vec![],
+            widening_fns: Default::default(),
             js_api_modules: std::cell::OnceCell::new(),
             native_libraries: std::cell::OnceCell::new(),
             decorator_scopes: Default::default(),

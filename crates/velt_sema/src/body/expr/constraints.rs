@@ -30,7 +30,14 @@ impl FnCx<'_, '_> {
         expected: TyId,
         (known, slots): (&[Option<TyId>], &[Option<TyId>]),
     ) -> TyId {
-        if c.constraints.iter().all(Option::is_none) || !has_literal(arg) {
+        if c.constraints.iter().all(Option::is_none) {
+            return expected;
+        }
+        // `useK({ kind: a })` of a constant of widening literals: checked against the
+        // constraint, which keeps them (`widening_consts`).
+        let literal = matches!(arg.kind, ast::ExprKind::Object(_) | ast::ExprKind::Array(_));
+        let widening = literal && !has_literal(arg) && self.holds_widening(arg);
+        if !has_literal(arg) && !widening {
             return expected;
         }
         if let Some(t) = self.literal_for_form(c, arg, pty, slots) {
@@ -51,7 +58,7 @@ impl FnCx<'_, '_> {
                 None => fixed.insert(self.unbroken_slots(c, slots)),
             };
             let b = self.cx.subst_known(b, fixed);
-            if self.cx.has_literal_member(b) {
+            if self.cx.has_literal_member(b) || widening && self.cx.lit_value(b).is_none() {
                 with_bounds[k] = Some(b);
                 changed = true;
             }

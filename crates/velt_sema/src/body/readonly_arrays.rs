@@ -426,7 +426,10 @@ impl FnCx<'_, '_> {
             Some(t) => Some(t),
             None => self.as_const_array_ty(e),
         };
-        self.expr(e, exp, want)
+        let outer = std::mem::replace(&mut self.in_as_const, true);
+        let h = self.expr(e, exp, want);
+        self.in_as_const = outer;
+        h
     }
 
     fn as_const_array_ty(&mut self, e: &ast::Expr) -> Option<TyId> {

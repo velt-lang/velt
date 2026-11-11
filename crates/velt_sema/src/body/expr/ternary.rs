@@ -114,16 +114,9 @@ impl FnCx<'_, '_> {
         let init = v.init.as_ref().map(super::object_builtins::strip_parens);
         let cond = init.filter(|e| matches!(e.kind, ast::ExprKind::Cond { .. }));
         let outer = std::mem::replace(&mut self.kept_arms, cond.map(|e| e.span));
-        // A hidden temporary (an element of `const [e] = [c ? "a" : "b"]`) widens, as an array
-        // literal's element does in TypeScript.
-        let keep = v.kind == ast::VarKind::Const && !name.name.starts_with('#');
+        let keep = v.kind == ast::VarKind::Const;
         let plain = std::mem::replace(&mut self.kept_plain_arms, keep);
-        // `let w = a` of such a constant `a` is a `string` (`widening_consts`).
-        let widened = (v.kind == ast::VarKind::Let && ann.is_none())
-            .then(|| init.filter(|e| self.widening_ref(e)))
-            .flatten()
-            .map(|_| self.cx.ty.str_);
-        self.simple_decl(v, name, ann.or(widened), span, out);
+        self.simple_decl(v, name, ann, span, out);
         (self.kept_arms, self.kept_plain_arms) = (outer, plain);
         self.note_widening_const(v, name);
     }
