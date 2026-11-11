@@ -5,13 +5,13 @@
 //
 // Also the few OS calls a non-blocking socket needs whose details differ per OS: `errno`, making
 // a descriptor non-blocking and close-on-exec, keeping a write to a closed peer from raising
-// SIGPIPE. `fcntl` is variadic and `declare c` has no `CVarArgs` yet (docs/internals/design/
-// c-ffi.md): it is the compiler's system function, which passes the argument where each
+// SIGPIPE. `fcntl` is variadic: its `int` argument goes as C's `...` (`CVarArgs`), where each
 // architecture reads it.
 //
 // Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
 // symbols: one C symbol has one signature in a program. Addresses become `Ptr`s with `m.ptr`.
 
+import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
 
@@ -81,7 +81,7 @@ declare c("c") function kevent(
   nevents: i32,
   timeout: Ptr<u8>,
 ): i32;
-declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
+declare c("c") function fcntl$io(fd: i32, cmd: i32, ...args: CVarArgs): i32;
 declare c("c") function setsockopt$io(
   fd: i32,
   level: i32,
@@ -89,8 +89,8 @@ declare c("c") function setsockopt$io(
   value: Ptr<u8>,
   len: u32,
 ): i32;
-// The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
-// C symbol has one signature in a program.
+// The signature the compiler calls it with for `{ errno: true }` (velt_vir c_abi.rs): one C
+// symbol has one signature in a program.
 declare c("c") function __error(): Ptr<i32>;
 declare c("c") function accept$io(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32;
 declare c("c") function close$io(fd: i32): i32;
@@ -293,7 +293,10 @@ export function accept(fd: i32, addr: usize, len: usize): i32 {
 
 /** Makes a new socket non-blocking, close-on-exec, and SIGPIPE-free; 0 or errno. */
 export function prepare(fd: i32): i32 {
-  if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
+  // SAFETY: F_SETFL and F_SETFD take an `int`, passed as C's `...` argument.
+  const nonblocking = unsafe { fcntl$io(fd, F_SETFL, O_NONBLOCK) };
+  // SAFETY: as above.
+  if (nonblocking < 0 || unsafe { fcntl$io(fd, F_SETFD, FD_CLOEXEC) } < 0) {
     return errno();
   }
   const one = m.alloc(16);

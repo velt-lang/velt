@@ -62,15 +62,15 @@ const R_SIZE: usize = 64 + 64 * 16;
 
 declare c("c") function epoll_create1(flags: i32): i32;
 // Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
-// symbols (`declare system function read(fd: i32, buf: u8[]): isize` passes a pointer and a
+// symbols (velt/fs's `read(fd: i32, buf: u8[], nbyte: usize): isize` passes a pointer and a
 // `size_t`): one C symbol has one signature in a program. Addresses become `Ptr`s with `m.ptr`.
 declare c("c") function epoll_ctl(ep: i32, op: i32, fd: i32, event: Ptr<u8>): i32;
 declare c("c") function epoll_wait(ep: i32, events: Ptr<u8>, max: i32, timeout: i32): i32;
 declare c("c") function eventfd(initval: u32, flags: i32): i32;
 declare c("c") function read$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
 declare c("c") function write$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
-// The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
-// C symbol has one signature in a program.
+// The signature the compiler calls it with for `{ errno: true }` (velt_vir c_abi.rs): one C
+// symbol has one signature in a program.
 declare c("c") function __errno_location(): Ptr<i32>;
 // `fcntl` is variadic: the compiler's system function passes `arg` where each architecture reads it.
 declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
