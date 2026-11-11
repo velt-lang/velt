@@ -137,7 +137,11 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("strByteAt", Op(I::StrByteAt)),
     ("strByteLen", Op(I::StrByteLen)),
     ("strCharCodeAt", Op(I::StrCharCodeAt)),
+    ("strDataAddress", Op(I::StrDataAddress)),
     ("strLen", Op(I::StrLen)),
+    ("strWord0", Op(I::StrWord0)),
+    ("strWord1", Op(I::StrWord1)),
+    ("strWord2", Op(I::StrWord2)),
     ("strbufPushAsciiWord", Op(I::StrbufPushAsciiWord)),
     ("strbufPushAsciiWords", Op(I::StrbufPushAsciiWords)),
     // symbol.velt

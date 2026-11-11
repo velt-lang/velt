@@ -609,6 +609,10 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::StrConcat
         | I::StrLen
         | I::StrByteLen
+        | I::StrWord0
+        | I::StrWord1
+        | I::StrWord2
+        | I::StrDataAddress
         | I::StrCharCodeAt
         | I::StrByteAt
         | I::StrAsciiWords

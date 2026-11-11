@@ -136,8 +136,10 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   bit 0x40 of byte 23 clear, or a static/heap string whose halves of `w1` are equal, is ASCII,
   and the byte at `i` is loaded inline (bounds-checked against the length); any other string
   calls `velt_rt_str_char_code_at`. The byte length (`Buffer.byteLength(s)`, intrinsic
-  `StrByteLen`) is read inline too: `byte23 ≥ 0x80 ? byte23 & 0x1f : w1 & 0xffffffff`. Strings
-  are passed to the runtime by pointer for everything else. Test a form through byte 23: inline
+  `StrByteLen`) is read inline too: `byte23 ≥ 0x80 ? byte23 & 0x1f : w1 & 0xffffffff`. std code
+  reads the words themselves with `strWord0`/`strWord1`/`strWord2`, and the address of the bytes
+  with `strDataAddress` (`byte23 ≥ 0x80 ? &value : w0`), the layout above being what they return
+  (#2778). Strings are passed to the runtime by pointer for everything else. Test a form through byte 23: inline
   appends write single bytes into `w2`, and reading `w2` as a word right after would stall on
   store forwarding.
 - Generated code also writes the inline form (#1982): std's intrinsic `strAsciiWords(w0, w1, w2,

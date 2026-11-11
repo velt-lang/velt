@@ -18,6 +18,31 @@ export declare function strLen(s: string): usize;
 @intrinsic
 export declare function strByteAt(s: string, i: u64): u8;
 
+/**
+ * The three words of the string value `s` (rt_abi.md "Strings"): `w0`, a heap or static
+ * string's data pointer; `w1`, its `units << 32 | len`; `w2`, its form (inline when the top bit
+ * is set, the text then in the words themselves). What the runtime's position translation
+ * (breadcrumbs, the recent-translation cache) reads from a string (#2778). No call.
+ */
+@intrinsic
+export declare function strWord0(s: string): u64;
+
+/** The second word of `s`'s value: see `strWord0`. */
+@intrinsic
+export declare function strWord1(s: string): u64;
+
+/** The third word of `s`'s value: see `strWord0`. */
+@intrinsic
+export declare function strWord2(s: string): u64;
+
+/**
+ * The address of `s`'s UTF-8 bytes: inside the value for an inline string, the buffer
+ * otherwise. Valid while `s` is alive and unchanged; read with `addressLoad`. One select, so a
+ * loop reads its bytes through one pointer (#2778). No call.
+ */
+@intrinsic
+export declare function strDataAddress(s: string): usize;
+
 /** The byte at `i`, or -1 when `i` is out of range; inline code, no call. */
 @intrinsic
 export declare function strCharCodeAt(s: string, i: i64): i64;

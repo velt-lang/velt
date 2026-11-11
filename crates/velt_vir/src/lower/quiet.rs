@@ -229,6 +229,10 @@ pub(super) fn pure_intrinsic(i: hir::Intrinsic) -> bool {
         I::ArrayLen
             | I::StrLen
             | I::StrByteLen
+            | I::StrWord0
+            | I::StrWord1
+            | I::StrWord2
+            | I::StrDataAddress
             | I::StrCharCodeAt
             | I::StrByteAt
             | I::AddressLoad
