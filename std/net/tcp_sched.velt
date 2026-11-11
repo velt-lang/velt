@@ -23,6 +23,7 @@ import * as io from "velt/lang/hooks/sched_io";
 import * as tb from "velt/lang/hooks/sched_io_table";
 import * as fio from "velt/net/fd_io";
 import * as fs from "velt/net/fd_socket";
+import { readableUntil } from "velt/net/fd_until";
 import * as rt from "velt/net/rt";
 import * as lat from "velt/net/rt_later";
 
@@ -176,7 +177,7 @@ export async function velt_rt_tcp_readable_within(
     return fs.value(0);
   }
   if (ms < 0) {
-    return await fio.readableUntil(s, signal);
+    return await readableUntil(s, signal);
   }
   // The signal's wait is the runtime's: whichever ends first ends the other (dropped).
   const within = fio.readableWithin(s, ms);

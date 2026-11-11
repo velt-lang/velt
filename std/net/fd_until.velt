@@ -1,0 +1,50 @@
+// velt/net (internal): a wait for input on a socket of the executor in Velt's reactor that an
+// abort signal ends too (std/net/tcp_sched.velt `velt_rt_tcp_readable_within` with no time limit),
+// http-server's wait for the next request on a kept-alive connection: one wait on the source that
+// owns the signal's wait (std/lang/hooks/sched_io_wait.velt `waitAlso`), not a race of two
+// promises.
+
+import { IoResult } from "velt/native/result";
+import { promiseAt } from "velt/lang/intrinsics";
+import { Ptr } from "velt/ffi/ptr";
+import * as io from "velt/lang/hooks/sched_io";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as wt from "velt/lang/hooks/sched_io_wait";
+import { closed, failed, value } from "velt/net/fd_socket";
+
+/**
+ * The runtime's wait for an abort signal (velt_rt task/abort.rs), as the heap future it returns:
+ * a waiter that owns it polls it beside its source (sched_io_wait.velt `waitAlso`).
+ */
+declare c("c") function velt_rt_signal_wait$fut(s: u64): Ptr<u8>;
+declare function velt_rt_signal_aborted(s: u64): bool;
+
+/**
+ * `readable` until abort signal `signal` (a live handle) is aborted: 1 readable, 0 aborted
+ * (aborted wins when both are). One wait on the source that the signal's wait ends too
+ * (sched_io_wait.velt `waitAlso`): http-server's wait for the next request on a kept-alive
+ * connection, with its deadline in the signal.
+ */
+export async function readableUntil(h: u64, signal: u64): Promise<IoResult<u8>> {
+  const s = tb.enter(h);
+  if (s === 0) {
+    return failed(closed(), 0);
+  }
+  const ready = wt.satisfied(s, io.K_READ, 0);
+  tb.leave(s);
+  if (!ready) {
+    // SAFETY: a live signal handle; the wait owns the heap future, and drops it.
+    const also = Ptr.addressOf(unsafe { velt_rt_signal_wait$fut(signal) });
+    await unsafe { promiseAt<void>(wt.waitAlso(h, io.K_READ, 0, 0, also)) };
+    if (velt_rt_signal_aborted(signal)) {
+      return value(0);
+    }
+  }
+  const again = tb.enter(h);
+  if (again === 0) {
+    return failed(closed(), 0);
+  }
+  const now = wt.satisfied(again, io.K_READ, 0);
+  tb.leave(again);
+  return value(now ? 1 : 0);
+}
