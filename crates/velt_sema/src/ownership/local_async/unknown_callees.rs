@@ -36,6 +36,18 @@ pub(super) fn mark(cx: &Ctx, g: &mut Graph) {
         let std = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_std);
         if !std && super::types::mentions_param(cx, g.tys[n]) {
             g.wild.push(n);
+            // Fed by std (`m.get(k)` on a `Map<string, T>`, a std iterator's values): the flow goes
+            // into std's own nodes, where the program's type parameters aren't resolved, so this
+            // local is resolved through its function's instantiations like one of unknown origin.
+            let in_std = |m: usize| match g.nodes[m] {
+                Node::Local(d, _) | Node::Ret(d) => {
+                    cx.try_fn(d).is_some_and(|i| cx.scopes[i.module].is_std)
+                }
+                _ => false,
+            };
+            if g.srcs[n].iter().any(|&(m, _)| in_std(m)) {
+                g.std_fed.push(n);
+            }
         }
     }
 }

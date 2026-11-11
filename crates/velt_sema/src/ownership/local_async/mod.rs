@@ -648,10 +648,13 @@ impl Propagation {
     fn root(&mut self, cx: &Ctx, g: &Graph, n: usize, f: u8, w: Why) {
         let ty = g.tys[n];
         let rooted = f == CROSSES && (g.unknown[n] || !types::fn_like(cx, ty));
-        // Only a value of unknown origin (a read, or what one fed): one the graph follows, such as
-        // a parameter of a function called by flow, crosses where its values come from instead.
+        // Only a value of unknown origin (a read, or what one fed) or fed by std (`Graph::std_fed`):
+        // one the program's own flow feeds, such as a parameter of a function it calls, crosses
+        // where its values come from instead.
         if let (true, Node::Local(d, _) | Node::Ret(d)) = (
-            rooted && g.unknown[n] && g.wild.binary_search(&n).is_ok(),
+            rooted
+                && (g.unknown[n] || g.std_fed.binary_search(&n).is_ok())
+                && g.wild.binary_search(&n).is_ok(),
             g.nodes[n],
         ) {
             self.hits.push((d, ty, w));

@@ -208,6 +208,9 @@ pub(super) struct Graph {
     /// crosses carries what its type has in each instantiation of its function
     /// (`super::instances`), or any closure where no instantiation is known.
     pub wild: Vec<usize>,
+    /// The `wild` nodes a value from std flows into directly (in node order, so sorted): resolved
+    /// like values of unknown origin.
+    pub std_fed: Vec<usize>,
     /// Per closure literal node: its capture locals' nodes.
     pub captures: FxHashMap<usize, Vec<usize>>,
 }
