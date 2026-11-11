@@ -16,6 +16,7 @@ mod doctor;
 mod fmt;
 mod host;
 mod lint;
+mod login;
 pub mod lsp;
 pub mod members;
 mod native_headers;
@@ -140,7 +141,7 @@ pub fn execute(cmd: Command) -> ExitCode {
         } => registry::yank_command(&name, &version, undo),
         Command::Owner { action, package } => registry::owner_command(&action, &package),
         Command::Search { query, json } => registry::search_command(&query, json),
-        Command::Login { url } => registry::login_command(&url),
+        Command::Login { url, how } => login::login_command(&url, how),
         Command::Logout { url } => registry::logout_command(&url),
         Command::RegistryOwner {
             add,

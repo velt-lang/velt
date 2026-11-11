@@ -1,5 +1,5 @@
-//! Argument parsing for the registry-management commands: `yank`, `owner`, `search` and
-//! `registry user` (`registry serve` is in [`super::tools`]).
+//! Argument parsing for the registry-management commands: `yank`, `owner`, `search`, `login`,
+//! `logout` and `registry user` (`registry serve` is in [`super::tools`]).
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -30,6 +30,18 @@ pub enum UserAction {
     },
     /// Replace a user's token and print the new one.
     Token,
+}
+
+/// How `velt login` gets the token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginHow {
+    /// The browser on this machine when the registry offers it and stdin is a terminal, else a
+    /// token read from stdin.
+    Auto,
+    /// `--device`: a code entered in a browser anywhere.
+    Device,
+    /// `--token-stdin`: one line from stdin.
+    TokenStdin,
 }
 
 /// `velt yank <pkg>@<version> [--undo]`.
@@ -95,20 +107,42 @@ pub(super) fn parse_search(args: Vec<OsString>) -> Result<Command, String> {
     })
 }
 
-/// `velt login <registry-url>` / `velt logout <registry-url>`.
+/// `velt login <registry-url> [--device | --token-stdin]` / `velt logout <registry-url>`.
 pub(super) fn parse_login(sub: &str, args: Vec<OsString>) -> Result<Command, String> {
-    let args = strings(args)?;
+    let mut args = strings(args)?;
+    let mut how = LoginHow::Auto;
+    if sub == "login" {
+        for (flag, chosen) in [
+            ("--device", LoginHow::Device),
+            ("--token-stdin", LoginHow::TokenStdin),
+        ] {
+            if args.iter().any(|a| a == flag) {
+                if how != LoginHow::Auto {
+                    return Err(
+                        "`--device` and `--token-stdin` don't go together: choose one".into(),
+                    );
+                }
+                how = chosen;
+            }
+            args.retain(|a| a != flag);
+        }
+    }
     if let Some(flag) = args.iter().find(|a| a.starts_with('-')) {
         return Err(super::unknown_option(sub, flag));
     }
     let [url] = args.as_slice() else {
         return Err(format!(
-            "usage: velt {sub} <registry-url> (e.g. `velt {sub} https://registry.example.com`)"
+            "usage: velt {sub} <registry-url>{} (e.g. `velt {sub} https://registry.example.com`)",
+            if sub == "login" {
+                " [--device | --token-stdin]"
+            } else {
+                ""
+            }
         ));
     };
     let url = url.clone();
     Ok(if sub == "login" {
-        Command::Login { url }
+        Command::Login { url, how }
     } else {
         Command::Logout { url }
     })
@@ -270,5 +304,32 @@ mod tests {
         assert!(p(&["registry", "owner", "list", "json"]).is_err());
         assert!(p(&["registry", "user", "rename", "a"]).is_err());
         assert!(p(&["registry", "user", "add"]).is_err());
+    }
+
+    #[test]
+    fn login_takes_device_or_token_stdin() {
+        let url = "https://r.example.com";
+        for (flag, how) in [
+            (None, LoginHow::Auto),
+            (Some("--device"), LoginHow::Device),
+            (Some("--token-stdin"), LoginHow::TokenStdin),
+        ] {
+            let mut args = vec!["login", url];
+            args.extend(flag);
+            assert_eq!(
+                p(&args).unwrap(),
+                Command::Login {
+                    url: url.into(),
+                    how
+                }
+            );
+        }
+        let both = p(&["login", url, "--device", "--token-stdin"]).unwrap_err();
+        assert!(both.contains("choose one"), "{both}");
+        assert!(p(&["login", "--device"])
+            .unwrap_err()
+            .starts_with("usage: velt login"));
+        let logout = p(&["logout", url, "--device"]).unwrap_err();
+        assert!(logout.contains("unknown option `--device`"), "{logout}");
     }
 }

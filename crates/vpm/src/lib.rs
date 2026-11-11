@@ -5,7 +5,8 @@
 //!   ([`paths`]: its import aliases, [`imports`]: its conditional imports); [`edit`]: comment-preserving `velt add`; [`scaffold`]:
 //!   `velt new`.
 //! - [`registry`]: the registry (`publish`, index), local or remote ([`remote`], packages as
-//!   [`archive`]s over HTTP); [`yank`] and [`search`]; [`cache`]: verified extraction.
+//!   [`archive`]s over HTTP); [`yank`] and [`search`]; [`credentials`] and [`login`]: a
+//!   registry's token, stored by `velt login` (signing in through the browser); [`cache`]: verified extraction.
 //! - [`extract`]: the hardened extractor for `.tar.gz` and `.zip` archives fetched from a URL.
 //! - [`resolve`]: semver resolution with backtracking; [`lockfile`]: `velt.lock.json`.
 //! - [`install`]: resolve + lock + fetch → [`PackageGraph`] for the compiler's module loader;
@@ -27,6 +28,7 @@ pub mod install;
 pub mod json_file;
 pub mod locations;
 pub mod lockfile;
+pub mod login;
 pub mod manifest;
 pub mod native;
 pub mod npm;

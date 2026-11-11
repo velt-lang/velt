@@ -209,7 +209,7 @@ fn write(
     match resp.status {
         200..=299 => Ok(text),
         401 => Err(format!(
-            "registry {url} refused the request ({text}): run `velt login {url}` with your token (or set ${TOKEN_VAR})"
+            "registry {url} refused the request ({text}): sign in with `velt login {url}` (or set ${TOKEN_VAR})"
         )),
         s => Err(format!("registry {url}: {s}: {text}")),
     }

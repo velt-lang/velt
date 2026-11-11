@@ -1,4 +1,5 @@
-//! Registry tokens: `velt login <url>` stores the user's token for one registry in
+//! Registry tokens: `velt login <url>` stores the user's token for one registry (handed out by
+//! the registry's browser sign-in, [`crate::login`], or pasted) in
 //! `$VELT_HOME/credentials.json` (mode 0600 on Unix), keyed by the registry's URL, and vpm sends
 //! it only to that registry. `$VELT_REGISTRY_TOKEN` overrides the file (CI). A token never travels
 //! over plain `http://` except to this machine.
@@ -36,7 +37,7 @@ pub struct Credentials {
 /// The user's credential for one registry. `Debug` never prints the token.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credential {
-    /// The token `velt registry user add` printed.
+    /// The token the registry's sign-in handed out, or `velt registry user add` printed.
     pub token: String,
 }
 

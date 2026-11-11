@@ -220,8 +220,28 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   server, or with `@scope` (no `/name`) a scope's (`/api/v1/scopes/<scope>/owners`, registry-core
   servers); `list` prints one per line on stdout; an error for a local registry.
 - `add @scope/name[@<req>]` (additive): the version's `@` is the one after the scope's.
-- `login <registry-url>` / `logout <registry-url>` (additive): `login` reads one line from stdin
-  (prompting on stderr when stdin is a terminal) and stores it as the token of that registry in
+- `login <registry-url> [--device | --token-stdin]` / `logout <registry-url>` (additive; the two
+  flags together are an error): `login` first refuses a plain `http://` URL that is not loopback
+  (rule below), before it reads or opens anything. Then:
+  - with `--token-stdin`, or without a flag when stdin is not a terminal: it reads one line from
+    stdin (as before; nothing is asked of the registry);
+  - otherwise it asks the registry for browser sign-in (`GET /api/v1/login`, `manifest.md`
+    "Remote registries"). Any answer but a 200 with a `browser` page, and a registry that can't be
+    reached (a warning), fall back to reading the token from stdin, prompting on stderr without
+    echo (`--device` warns first);
+  - with browser sign-in and no flag, the loopback flow: it prints the page's URL (with a hint
+    about `--device`) on stderr, opens it (`open` on macOS, `xdg-open` on other Unix,
+    `cmd /d /v:off /c start "" "<url>"` on Windows, where a URL with `%`, `!` or `"` is only
+    printed), and waits up to 5 minutes for the browser's callback, then fails suggesting
+    `--device`. A browser that can't be opened is not an error;
+  - with `--device`: the device flow (an error when discovery says `"device": false`); it prints
+    `Open <verification_uri> and enter the code <user_code>` on stderr, tries to open
+    `verification_uri_complete`, and polls until signed in, declined, or `expires_in` (at most an
+    hour) has passed.
+
+  A sign-in prints `Logged in to <url> as <user> (token valid until <expires>)` on stderr; the
+  token is never printed, and the terminal shows only fixed messages for the registry's `error`
+  words. The token, pasted or signed in, is stored as the token of that registry in
   `$VELT_HOME/credentials.json`: `{"registries": {"<url>": {"token": "…"}}}`, keys with the scheme
   and host lowercased and no trailing `/`, written atomically (temporary file, synced, renamed),
   mode 0600 on Unix, an owner-only protected DACL on Windows; the terminal doesn't echo the
