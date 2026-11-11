@@ -173,8 +173,9 @@ pub(super) fn direct_subclasses(cx: &Ctx, d: crate::hir::DefId) -> Vec<(crate::h
 
 /// Can a closure of type `lit` be a value of the crossing function type `f`? Same parameter
 /// shapes, both results promises (or both not) and, when not, both `void` (or both not);
-/// generic parameters match anything, and what a function throws, or a promise rejects or
-/// resolves with, is not compared (a function value may be adapted to a wider one).
+/// generic parameters match anything (a result of a type parameter either way), and what a
+/// function throws, or a promise rejects or resolves with, is not compared (a function value may
+/// be adapted to a wider one).
 pub(super) fn may_be(cx: &Ctx, lit: TyId, f: TyId) -> bool {
     match (cx.ty.kind(lit), cx.ty.kind(f)) {
         (_, TyKind::Closure(_)) | (TyKind::Closure(_), _) => lit == f,
@@ -196,9 +197,11 @@ pub(super) fn may_be(cx: &Ctx, lit: TyId, f: TyId) -> bool {
             // `void` there (#694), which is the closure matched. A type parameter may be either.
             let unit = |t: &TyId| matches!(cx.ty.kind(*t), TyKind::Unit);
             let param = |t: &TyId| matches!(cx.ty.kind(*t), TyKind::Param(_));
+            // A type parameter may be a promise, `void` or anything else.
+            let either = param(r1) || param(r2);
             p1.len() == p2.len()
-                && promise(r1) == promise(r2)
-                && (promise(r1) || unit(r1) == unit(r2) || param(r1) || param(r2))
+                && (promise(r1) == promise(r2) || either)
+                && (promise(r1) || unit(r1) == unit(r2) || either)
                 && p1.iter().zip(p2).all(|(a, b)| same_shape(cx, *a, *b, 0))
         }
         _ => false,

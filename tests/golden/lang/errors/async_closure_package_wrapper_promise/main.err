@@ -1,0 +1,2 @@
+main.velt:12:5: error: this async closure modifies captured `m`, so it must stay on the task that created it
+main.velt:19:9: but it is stored in a `Holder<Promise<void>>`, which is sent on a channel here

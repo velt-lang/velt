@@ -1,0 +1,27 @@
+// A generic class, reached only through an interface, that wraps the program's callback in a
+// closure of its own (`(): T => { f(); return t; }`) and keeps it.
+export type Cb = () => void;
+
+export class Holder<T> {
+  cbs: (() => T)[] = [];
+}
+
+export interface Wrapper<T> {
+  wrap(f: Cb): void;
+}
+
+export class W<T> implements Wrapper<T> {
+  h: Holder<T>;
+  tag: T;
+  constructor(h: Holder<T>, tag: T) {
+    this.h = h;
+    this.tag = tag;
+  }
+  wrap(f: Cb): void {
+    const t = this.tag;
+    this.h.cbs.push((): T => {
+      f();
+      return t;
+    });
+  }
+}
