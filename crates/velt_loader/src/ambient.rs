@@ -223,7 +223,9 @@ fn declaration_files(dir: &Path, deep: bool, out: &mut Vec<PathBuf>) {
         return;
     };
     let mut entries: Vec<PathBuf> = entries.into_iter().map(|e| e.path()).collect();
-    entries.sort();
+    // By name: comparing whole paths walks their shared directory, here for every directory of
+    // every package.
+    entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
     for path in entries {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let link = std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
@@ -266,5 +268,32 @@ pub(super) fn declare_global_types(module: &mut ast::Module, ambient: &[Ambient]
             exported: false,
             span: a.span,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// In order of name, with a directory's files where the directory's name falls.
+    #[test]
+    fn declaration_files_are_in_order_of_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let mut want = vec![];
+        std::fs::create_dir(dir.join("a")).unwrap();
+        std::fs::write(dir.join("a/x.d.ts"), "").unwrap();
+        want.push(dir.join("a").join("x.d.ts"));
+        // Enough files that a directory's own order isn't this one by chance.
+        let mut sorted: Vec<String> = ["a-b", "a.b", "a"].map(|n| format!("{n}.d.ts")).to_vec();
+        sorted.extend((10..40).map(|n| format!("m{n}.d.ts")));
+        for name in &sorted {
+            std::fs::write(dir.join(name), "").unwrap();
+        }
+        sorted.sort();
+        want.extend(sorted.iter().map(|n| dir.join(n)));
+        let mut got = vec![];
+        declaration_files(dir, true, &mut got);
+        assert_eq!(got, want);
     }
 }

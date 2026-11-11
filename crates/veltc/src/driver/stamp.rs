@@ -29,6 +29,7 @@
 //!
 //! Only builds without diagnostics get a stamp, so a build that warned warns every time.
 
+use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -226,7 +227,7 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
         // Read other than through `probe` (none is): no time, so it is always hashed. A file
         // `probe` read is recorded with its hash already, and is not hashed again.
         files
-            .entry(vpm::relpath::absolute(&file.path))
+            .entry(vpm::relpath::absolute(&file.path).into_os_string())
             .or_insert_with(|| probe::Read {
                 stat: None,
                 hash: probe::content_hash(file.src.as_bytes()),
@@ -253,29 +254,24 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
             stat,
             hash: hash.to_string(),
         };
-        files.entry(PathBuf::from(path)).or_insert(read);
+        files.entry(OsString::from(path)).or_insert(read);
     }
+    let shown = |path: &OsString| Path::new(path).display().to_string();
     let mut lines: Vec<(String, String)> = vec![];
     for (path, read) in &files {
         let time = read
             .stat
             .map_or_else(String::new, |(size, t)| format!(" {size} {t}"));
-        lines.push((
-            format!("file {}{time}", read.hash),
-            path.display().to_string(),
-        ));
+        lines.push((format!("file {}{time}", read.hash), shown(path)));
     }
     for (dir, hash) in &seen.listed {
-        lines.push((format!("dir {hash}"), dir.display().to_string()));
+        lines.push((format!("dir {hash}"), shown(dir)));
     }
     for (path, kind) in &seen.probed {
-        lines.push((
-            format!("probe {}", kind.letter()),
-            path.display().to_string(),
-        ));
+        lines.push((format!("probe {}", kind.letter()), shown(path)));
     }
     for (path, hash) in &seen.resolved {
-        lines.push((format!("real {hash}"), path.display().to_string()));
+        lines.push((format!("real {hash}"), shown(path)));
     }
     for line in generator_lookups {
         if let Some((head, path)) = line.split_once('\t') {
@@ -445,7 +441,7 @@ pub(crate) fn write(path: &Path, text: &str) -> std::io::Result<()> {
 /// The files the stamp at `path` records with a size and time older than the stamp itself (so
 /// trusted by [`check`]), with their hashes: what [`probe::record_reusing`] may reuse for a file
 /// that still has that size and time, instead of hashing it again.
-pub(super) fn known(path: &Path) -> std::collections::BTreeMap<PathBuf, probe::Read> {
+pub(super) fn known(path: &Path) -> std::collections::BTreeMap<OsString, probe::Read> {
     let mut known = std::collections::BTreeMap::new();
     let (Ok(text), Some((_, written))) = (std::fs::read_to_string(path), probe::stat(path)) else {
         return known;
@@ -479,7 +475,7 @@ pub(super) fn known(path: &Path) -> std::collections::BTreeMap<PathBuf, probe::R
                 stat: Some((size, time)),
                 hash: hash.to_string(),
             };
-            known.insert(PathBuf::from(file.as_ref()), read);
+            known.insert(OsString::from(file.as_ref()), read);
         }
     }
     known

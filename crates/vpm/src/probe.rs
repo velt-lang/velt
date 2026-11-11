@@ -10,6 +10,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -69,24 +70,28 @@ pub struct Read {
     pub hash: String,
 }
 
-/// Everything noted while recording, by absolute path.
+/// Everything noted while recording, by absolute path ([`crate::relpath::absolute`], so each
+/// path has one spelling). The keys are `OsString`s, not `PathBuf`s: a `Path` compares byte by
+/// byte up to the first difference and then component by component, and a build notes thousands
+/// of paths that share a long prefix (a package in the cache). The maps are in byte order, and a
+/// name that isn't UTF-8 keeps its bytes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Seen {
     /// Every path probed, with what it was.
-    pub probed: BTreeMap<PathBuf, Kind>,
+    pub probed: BTreeMap<OsString, Kind>,
     /// Every directory listed, with the [`listing_hash`] of its entries then.
-    pub listed: BTreeMap<PathBuf, String>,
+    pub listed: BTreeMap<OsString, String>,
     /// Every file read.
-    pub read: BTreeMap<PathBuf, Read>,
+    pub read: BTreeMap<OsString, Read>,
     /// Every path resolved ([`canonicalize`]), with the [`content_hash`] of where it led
     /// ([`resolved_hash`]).
-    pub resolved: BTreeMap<PathBuf, String>,
+    pub resolved: BTreeMap<OsString, String>,
 }
 
 thread_local! {
     static SEEN: RefCell<Option<Seen>> = const { RefCell::new(None) };
     /// The reads of an earlier recording [`record_reusing`] runs with.
-    static KNOWN: RefCell<BTreeMap<PathBuf, Read>> = const { RefCell::new(BTreeMap::new()) };
+    static KNOWN: RefCell<BTreeMap<OsString, Read>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// Run `f`, noting what it looks at through this module.
@@ -99,7 +104,7 @@ pub fn record<T>(f: impl FnOnce() -> T) -> (T, Seen) {
 /// clock's granularity) gets the hash `known` has, instead of hashing its contents again. Only
 /// reads made with a size and time old enough to trust (the rule a build stamp checks files by)
 /// belong in `known`.
-pub fn record_reusing<T>(known: BTreeMap<PathBuf, Read>, f: impl FnOnce() -> T) -> (T, Seen) {
+pub fn record_reusing<T>(known: BTreeMap<OsString, Read>, f: impl FnOnce() -> T) -> (T, Seen) {
     let outer = SEEN.with(|s| s.borrow_mut().replace(Seen::default()));
     let outer_known = KNOWN.with(|k| k.replace(known));
     let out = f();
@@ -109,10 +114,10 @@ pub fn record_reusing<T>(known: BTreeMap<PathBuf, Read>, f: impl FnOnce() -> T) 
 }
 
 /// Note something about `path` when recording.
-fn note(path: &Path, add: impl FnOnce(&mut Seen, PathBuf)) {
+fn note(path: &Path, add: impl FnOnce(&mut Seen, OsString)) {
     SEEN.with(|s| {
         if let Some(seen) = s.borrow_mut().as_mut() {
-            add(seen, crate::relpath::absolute(path));
+            add(seen, crate::relpath::absolute(path).into_os_string());
         }
     });
 }
@@ -188,7 +193,7 @@ fn known_hash(path: &Path, stat: Option<(u64, u128)>) -> Option<String> {
         if k.is_empty() {
             return None;
         }
-        let read = k.get(&crate::relpath::absolute(path))?;
+        let read = k.get(crate::relpath::absolute(path).as_os_str())?;
         (read.stat == Some(stat)).then(|| read.hash.clone())
     })
 }
@@ -284,7 +289,7 @@ mod tests {
             assert_eq!(read_to_string(&dir.join("a.ts")).unwrap(), "a");
             assert!(read_to_string(&dir.join("c.ts")).is_err());
         });
-        let abs = |n: &str| crate::relpath::absolute(&dir.join(n));
+        let abs = |n: &str| crate::relpath::absolute(&dir.join(n)).into_os_string();
         assert_eq!(seen.probed[&abs("a.ts")], Kind::File);
         assert_eq!(seen.probed[&abs("b.ts")], Kind::Missing);
         assert_eq!(seen.probed[&abs("c.ts")], Kind::Missing);
@@ -315,5 +320,55 @@ mod tests {
         assert_ne!(seen.listed[&abs("")], listing_hash(dir).unwrap());
         let ((), again) = record(|| ());
         assert_eq!(again, Seen::default());
+    }
+
+    /// A path is one key however it was spelled, and a recording made under one spelling is
+    /// found under another: nothing but `absolute` makes them equal, as the keys are plain bytes.
+    #[test]
+    fn a_path_is_one_key_however_it_is_spelled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("a.ts"), "a").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        let file = std::fs::File::options().write(true).open(dir.join("a.ts"));
+        file.unwrap().set_modified(old).unwrap();
+        let plain = dir.join("a.ts");
+        let dotted = format!("{}/./a.ts", dir.display());
+        let (_, seen) = record(|| {
+            assert!(is_file(&plain));
+            assert!(is_file(Path::new(&dotted)));
+            read_to_string(&plain).unwrap();
+            read_to_string(Path::new(&dotted)).unwrap();
+        });
+        assert_eq!(seen.probed.len(), 1, "{:?}", seen.probed);
+        assert_eq!(seen.read.len(), 1, "{:?}", seen.read);
+
+        let mut known = seen.read.clone();
+        for read in known.values_mut() {
+            read.hash = "known".to_string();
+        }
+        let ((), again) = record_reusing(known, || {
+            read_to_string(Path::new(&dotted)).unwrap();
+        });
+        assert_eq!(again.read.values().next().unwrap().hash, "known");
+    }
+
+    /// Names that are not UTF-8 stay what they are, each its own key.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_that_is_not_utf8_keeps_its_bytes() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = crate::relpath::absolute(tmp.path());
+        let named = |last: u8| dir.join(std::ffi::OsStr::from_bytes(&[b'a', last]));
+        let ((), seen) = record(|| {
+            is_file(&named(0xfe));
+            is_file(&named(0xff));
+        });
+        let mut want = vec![named(0xfe).into_os_string(), named(0xff).into_os_string()];
+        want.sort();
+        let got: Vec<OsString> = seen.probed.keys().cloned().collect();
+        assert_eq!(got, want);
+        assert_eq!(*got[1].clone().into_vec().last().unwrap(), 0xff);
     }
 }
