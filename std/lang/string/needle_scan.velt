@@ -1,0 +1,181 @@
+// velt/lang/string (internal): finding a needle of two bytes or more (std/lang/string/search.velt):
+// the starts whose first and last bytes match, 32 at a time with SIMD compares (the "packed
+// pair" filter of the `memchr` crate), each candidate checked in full; a byte loop below 17
+// starts. A needle longer than 32 bytes whose candidates keep failing late switches to
+// Knuth-Morris-Pratt (kmp.velt), so that no search costs more than linear time.
+
+import { inline, noInline, strByteAt } from "velt/lang/intrinsics";
+import { eqAt, sameBytes } from "velt/lang/string/byte_scan";
+import { findKmp, rfindKmp } from "velt/lang/string/kmp";
+
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_mask8x16_and(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
+
+/** Needles up to this many bytes are always checked in full at each candidate. */
+const SHORT_NEEDLE: usize = 32;
+
+/** The first offset in `from..=n - m` of `s` where the `m` bytes of `needle` (`2 <= m`,
+ * `m <= n - from`) are, or -1. */
+@inline
+export function findBytes(s: string, needle: string, m: usize, from: usize, n: usize): i64 {
+  const end = n - m;
+  if (end - from >= 16) {
+    return findBytesLong(s, needle, m, from, end);
+  }
+  const first = strByteAt(needle, 0);
+  const last = strByteAt(needle, (m - 1) as u64);
+  for (let i = from; i <= end; i++) {
+    if (
+      strByteAt(s, i as u64) == first &&
+      strByteAt(s, (i + m - 1) as u64) == last &&
+      sameBytes(s, i + 1, needle, 1, m - 2)
+    ) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+/** `findBytes` with at least 17 starts (`from..=end`): the starts whose first and last bytes
+ * match, 32 at a time tested as one, then 16 at a time (the last block ending at `end`), each
+ * candidate checked in full. */
+@noInline
+function findBytesLong(s: string, needle: string, m: usize, from: usize, end: usize): i64 {
+  const vf = velt_simd_u8x16_splat(strByteAt(needle, 0));
+  const vl = velt_simd_u8x16_splat(strByteAt(needle, (m - 1) as u64));
+  // Bytes of needle checked by candidates that failed, against bytes passed: past the budget a
+  // long needle switches to Knuth-Morris-Pratt.
+  let spent: usize = 0;
+  let i = from;
+  while (i + 31 <= end) {
+    const m0 = velt_simd_mask8x16_and(eqAt(s, i, vf), eqAt(s, i + m - 1, vl));
+    const m1 = velt_simd_mask8x16_and(eqAt(s, i + 16, vf), eqAt(s, i + 15 + m, vl));
+    if (velt_simd_mask8x16_any(velt_simd_mask8x16_or(m0, m1))) {
+      const bits = velt_simd_mask8x16_bitmask(m0) | (velt_simd_mask8x16_bitmask(m1) << 16);
+      const k = firstCandidate(s, needle, m, i, bits);
+      if (k >= 0) {
+        return k;
+      }
+      spent += m * bits.countOnes();
+      if (m > SHORT_NEEDLE && spent > 4 * (i + 32 - from) + 1024) {
+        return findKmp(s, needle, m, i + 32, end + m);
+      }
+    }
+    i += 32;
+  }
+  while (i <= end) {
+    // The last block is the 16 starts that end at `end`, its starts before `i` masked off
+    // (they were checked).
+    const at = i + 15 <= end ? i : end - 15;
+    const bits =
+      velt_simd_mask8x16_bitmask(velt_simd_mask8x16_and(eqAt(s, at, vf), eqAt(s, at + m - 1, vl))) &
+      ~((1 << ((i - at) as u64)) - 1);
+    if (bits != 0) {
+      const k = firstCandidate(s, needle, m, at, bits);
+      if (k >= 0) {
+        return k;
+      }
+    }
+    i = at + 16;
+  }
+  return -1;
+}
+
+/** The first of the candidate starts `at + b` (`b` a set bit of `bits`) where all of `needle`
+ * is, or -1. */
+@noInline
+function firstCandidate(s: string, needle: string, m: usize, at: usize, bits: u64): i64 {
+  let left = bits;
+  while (left != 0) {
+    const k = at + (left.trailingZeros() as usize);
+    if (sameBytes(s, k + 1, needle, 1, m - 2)) {
+      return k as i64;
+    }
+    left = left & (left - 1);
+  }
+  return -1;
+}
+
+/** The last offset in `0..=last` of `s` where the `m` bytes of `needle` (`2 <= m`,
+ * `last + m <= strByteLen(s)`) are, or -1. */
+@noInline
+export function rfindBytes(s: string, needle: string, m: usize, last: usize): i64 {
+  if (last >= 16) {
+    return rfindBytesLong(s, needle, m, last);
+  }
+  const first = strByteAt(needle, 0);
+  const lastByte = strByteAt(needle, (m - 1) as u64);
+  let i = last + 1;
+  while (i > 0) {
+    i--;
+    if (
+      strByteAt(s, i as u64) == first &&
+      strByteAt(s, (i + m - 1) as u64) == lastByte &&
+      sameBytes(s, i + 1, needle, 1, m - 2)
+    ) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+/** `rfindBytes` with at least 17 starts (`0..=last`), as `findBytesLong` from the end. */
+@noInline
+function rfindBytesLong(s: string, needle: string, m: usize, last: usize): i64 {
+  const vf = velt_simd_u8x16_splat(strByteAt(needle, 0));
+  const vl = velt_simd_u8x16_splat(strByteAt(needle, (m - 1) as u64));
+  let spent: usize = 0;
+  // The starts not yet checked are `0..top`.
+  let top = last + 1;
+  while (top >= 32) {
+    const at = top - 32;
+    const m0 = velt_simd_mask8x16_and(eqAt(s, at, vf), eqAt(s, at + m - 1, vl));
+    const m1 = velt_simd_mask8x16_and(eqAt(s, at + 16, vf), eqAt(s, at + 15 + m, vl));
+    if (velt_simd_mask8x16_any(velt_simd_mask8x16_or(m0, m1))) {
+      const bits = velt_simd_mask8x16_bitmask(m0) | (velt_simd_mask8x16_bitmask(m1) << 16);
+      const k = lastCandidate(s, needle, m, at, bits);
+      if (k >= 0) {
+        return k;
+      }
+      spent += m * bits.countOnes();
+      if (m > SHORT_NEEDLE && spent > 4 * (last + 1 - at) + 1024) {
+        return rfindKmp(s, needle, m, at);
+      }
+    }
+    top = at;
+  }
+  while (top > 0) {
+    // The first block is the 16 starts from 0, its starts from `top` on masked off.
+    const at = top >= 16 ? top - 16 : 0;
+    const bits =
+      velt_simd_mask8x16_bitmask(velt_simd_mask8x16_and(eqAt(s, at, vf), eqAt(s, at + m - 1, vl))) &
+      ((1 << ((top - at) as u64)) - 1);
+    if (bits != 0) {
+      const k = lastCandidate(s, needle, m, at, bits);
+      if (k >= 0) {
+        return k;
+      }
+    }
+    top = at;
+  }
+  return -1;
+}
+
+/** The last of the candidate starts `at + b` (`b` a set bit of `bits`) where all of `needle`
+ * is, or -1. */
+@noInline
+function lastCandidate(s: string, needle: string, m: usize, at: usize, bits: u64): i64 {
+  let left = bits;
+  while (left != 0) {
+    const b = 63 - (left.leadingZeros() as usize);
+    const k = at + b;
+    if (sameBytes(s, k + 1, needle, 1, m - 2)) {
+      return k as i64;
+    }
+    left = left & ~(1 << (b as u64));
+  }
+  return -1;
+}

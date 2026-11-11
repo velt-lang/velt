@@ -1,0 +1,99 @@
+"abcabc ab" "": indexOf 0 0 1 3 4 9 9 9 9 | lastIndexOf 0 0 1 3 4 9 9 9 9 | 0 9 true true true
+"abcabc ab" "a": indexOf 0 0 3 3 7 -1 -1 -1 -1 | lastIndexOf 0 0 0 3 3 7 7 7 7 | 0 7 true true false
+"abcabc ab" "ab": indexOf 0 0 3 3 7 -1 -1 -1 -1 | lastIndexOf 0 0 0 3 3 7 7 7 7 | 0 7 true true true
+"abcabc ab" "bc": indexOf 1 1 1 4 4 -1 -1 -1 -1 | lastIndexOf -1 -1 1 1 4 4 4 4 4 | 1 4 true false false
+"abcabc ab" "abc": indexOf 0 0 3 3 -1 -1 -1 -1 -1 | lastIndexOf 0 0 0 3 3 3 3 3 3 | 0 3 true true false
+"abcabc ab" "c ": indexOf 5 5 5 5 5 -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 -1 5 5 5 5 | 5 5 true false false
+"abcabc ab" "c ab": indexOf 5 5 5 5 5 -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 -1 5 5 5 5 | 5 5 true false true
+"abcabc ab" "b": indexOf 1 1 1 4 4 -1 -1 -1 -1 | lastIndexOf -1 -1 1 1 4 8 8 8 8 | 1 8 true false true
+"abcabc ab" "ba": indexOf -1 -1 -1 -1 -1 -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 -1 -1 -1 -1 -1 | -1 -1 false false false
+"abcabc ab" "abcabc ab": indexOf 0 0 -1 -1 -1 -1 -1 -1 -1 | lastIndexOf 0 0 0 0 0 0 0 0 0 | 0 0 true true true
+"abcabc ab" "abcabc ab!": indexOf -1 -1 -1 -1 -1 -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 -1 -1 -1 -1 -1 | -1 -1 false false false
+"abcabc ab" "x": indexOf -1 -1 -1 -1 -1 -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 -1 -1 -1 -1 -1 | -1 -1 false false false
+"abc" "": indexOf 0 1 2 | lastIndexOf 0 1 2 | 0 3 true true true
+"abc" "a": indexOf 0 -1 -1 | lastIndexOf 0 0 0 | 0 0 true true false
+"abc" "c": indexOf 2 2 2 | lastIndexOf -1 -1 2 | 2 2 true false true
+"abc" "abc": indexOf 0 -1 -1 | lastIndexOf 0 0 0 | 0 0 true true true
+"abc" "abcd": indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+"" "": indexOf 0 0 0 | lastIndexOf 0 0 0 | 0 0 true true true
+"" "a": indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+"héllo" "é": indexOf 1 1 -1 | lastIndexOf -1 1 1 | 1 1 true false false
+"héllo" "llo": indexOf 2 2 2 | lastIndexOf -1 -1 2 | 2 2 true false true
+"héllo" "hé": indexOf 0 -1 -1 | lastIndexOf 0 0 0 | 0 0 true true false
+"aXbXc" "X": indexOf 1 1 3 | lastIndexOf -1 1 1 | 1 3 true false false
+"ab" "ba": indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+<25 units: http://127…1:8080/a?b> "/": indexOf 5 21 21 -1 | lastIndexOf -1 6 21 21 | 5 21 true false false
+<25 units: http://127…1:8080/a?b> "://": indexOf 4 4 -1 | lastIndexOf -1 4 4 | 4 4 true false false
+"aaab" "ab": indexOf 2 2 2 -1 | lastIndexOf -1 -1 2 2 | 2 2 true false true
+"aaab" "aab": indexOf 1 1 -1 | lastIndexOf -1 1 1 | 1 1 true false true
+"abab" "ab": indexOf 0 2 2 -1 | lastIndexOf 0 0 2 2 | 0 2 true true true
+"héllo" "l": indexOf 2 2 3 -1 | lastIndexOf -1 2 3 3 | 2 3 true false false
+"héllo" "é": indexOf 1 1 -1 | lastIndexOf -1 1 1 | 1 1 true false false
+<27 units: I 😀 Velt,…t, 🎉 done> ",": indexOf 9 9 18 18 -1 | lastIndexOf -1 9 9 18 18 | 9 18 true false false
+<27 units: I 😀 Velt,…t, 🎉 done> "🚀": indexOf 11 11 -1 -1 | lastIndexOf -1 11 11 11 | 11 11 true false false
+"東京都,大阪府,京都府" "府": indexOf 6 6 10 10 | lastIndexOf -1 6 6 10 | 6 10 true false true
+"😀" "\ude00": indexOf 1 1 -1 | lastIndexOf -1 1 1 | 1 1 true false true
+"😀" "\ud83d": indexOf 0 -1 -1 | lastIndexOf 0 0 0 | 0 0 true true false
+"😀" "": indexOf 0 1 2 | lastIndexOf 0 1 2 | 0 2 true true true
+"a😀b😀" "\ude00b": indexOf 2 2 2 -1 -1 | lastIndexOf -1 -1 2 2 2 | 2 2 true false false
+"a😀b😀" "b\ud83d": indexOf 3 3 3 -1 -1 | lastIndexOf -1 -1 3 3 3 | 3 3 true false false
+"a😀b😀" "\ude00b\ud83d": indexOf 2 2 -1 | lastIndexOf -1 2 2 | 2 2 true false false
+"x\ud83dy\ude00" "\ud83d": indexOf 1 1 -1 -1 | lastIndexOf -1 1 1 1 | 1 1 true false false
+"x\ud83dy\ude00" "\ude00": indexOf 3 3 3 -1 | lastIndexOf -1 -1 3 3 | 3 3 true false true
+"😀😀" "😀": indexOf 0 2 2 -1 | lastIndexOf 0 0 2 2 | 0 2 true true true
+"é😀é" "é": indexOf 0 3 3 3 -1 | lastIndexOf 0 0 0 3 3 | 0 3 true true true
+"éa" "\ud83da": indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+"😀" "\ud83da": indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+"éé" "a\ude00": indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+"😀😀" "\ud83dé\ud83dé": indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+len 1: 0/0/-1/0
+len 7: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1
+len 8: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1
+len 15: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1
+len 16: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1 15/15/-1/-1
+len 17: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1 15/15/-1/-1 16/16/-1/-1
+len 31: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1 15/15/-1/-1 16/16/-1/-1 17/17/-1/-1 18/18/-1/-1 19/19/-1/-1 20/20/-1/-1 21/21/-1/-1 22/22/-1/-1 23/23/-1/-1 24/24/-1/-1 25/25/-1/-1 26/26/-1/-1 27/27/-1/-1 28/28/-1/-1 29/29/-1/-1 30/30/-1/-1
+len 32: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1 15/15/-1/-1 16/16/-1/-1 17/17/-1/-1 18/18/-1/-1 19/19/-1/-1 20/20/-1/-1 21/21/-1/-1 22/22/-1/-1 23/23/-1/-1 24/24/-1/-1 25/25/-1/-1 26/26/-1/-1 27/27/-1/-1 28/28/-1/-1 29/29/-1/-1 30/30/-1/-1 31/31/-1/-1
+len 33: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1 15/15/-1/-1 16/16/-1/-1 17/17/-1/-1 18/18/-1/-1 19/19/-1/-1 20/20/-1/-1 21/21/-1/-1 22/22/-1/-1 23/23/-1/-1 24/24/-1/-1 25/25/-1/-1 26/26/-1/-1 27/27/-1/-1 28/28/-1/-1 29/29/-1/-1 30/30/-1/-1 31/31/-1/-1 32/32/-1/-1
+len 63: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1 15/15/-1/-1 16/16/-1/-1 17/17/-1/-1 18/18/-1/-1 19/19/-1/-1 20/20/-1/-1 21/21/-1/-1 22/22/-1/-1 23/23/-1/-1 24/24/-1/-1 25/25/-1/-1 26/26/-1/-1 27/27/-1/-1 28/28/-1/-1 29/29/-1/-1 30/30/-1/-1 31/31/-1/-1 32/32/-1/-1 33/33/-1/-1 34/34/-1/-1 35/35/-1/-1 36/36/-1/-1 37/37/-1/-1 38/38/-1/-1 39/39/-1/-1 40/40/-1/-1 41/41/-1/-1 42/42/-1/-1 43/43/-1/-1 44/44/-1/-1 45/45/-1/-1 46/46/-1/-1 47/47/-1/-1 48/48/-1/-1 49/49/-1/-1 50/50/-1/-1 51/51/-1/-1 52/52/-1/-1 53/53/-1/-1 54/54/-1/-1 55/55/-1/-1 56/56/-1/-1 57/57/-1/-1 58/58/-1/-1 59/59/-1/-1 60/60/-1/-1 61/61/-1/-1 62/62/-1/-1
+len 64: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1 15/15/-1/-1 16/16/-1/-1 17/17/-1/-1 18/18/-1/-1 19/19/-1/-1 20/20/-1/-1 21/21/-1/-1 22/22/-1/-1 23/23/-1/-1 24/24/-1/-1 25/25/-1/-1 26/26/-1/-1 27/27/-1/-1 28/28/-1/-1 29/29/-1/-1 30/30/-1/-1 31/31/-1/-1 32/32/-1/-1 33/33/-1/-1 34/34/-1/-1 35/35/-1/-1 36/36/-1/-1 37/37/-1/-1 38/38/-1/-1 39/39/-1/-1 40/40/-1/-1 41/41/-1/-1 42/42/-1/-1 43/43/-1/-1 44/44/-1/-1 45/45/-1/-1 46/46/-1/-1 47/47/-1/-1 48/48/-1/-1 49/49/-1/-1 50/50/-1/-1 51/51/-1/-1 52/52/-1/-1 53/53/-1/-1 54/54/-1/-1 55/55/-1/-1 56/56/-1/-1 57/57/-1/-1 58/58/-1/-1 59/59/-1/-1 60/60/-1/-1 61/61/-1/-1 62/62/-1/-1 63/63/-1/-1
+len 65: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1 15/15/-1/-1 16/16/-1/-1 17/17/-1/-1 18/18/-1/-1 19/19/-1/-1 20/20/-1/-1 21/21/-1/-1 22/22/-1/-1 23/23/-1/-1 24/24/-1/-1 25/25/-1/-1 26/26/-1/-1 27/27/-1/-1 28/28/-1/-1 29/29/-1/-1 30/30/-1/-1 31/31/-1/-1 32/32/-1/-1 33/33/-1/-1 34/34/-1/-1 35/35/-1/-1 36/36/-1/-1 37/37/-1/-1 38/38/-1/-1 39/39/-1/-1 40/40/-1/-1 41/41/-1/-1 42/42/-1/-1 43/43/-1/-1 44/44/-1/-1 45/45/-1/-1 46/46/-1/-1 47/47/-1/-1 48/48/-1/-1 49/49/-1/-1 50/50/-1/-1 51/51/-1/-1 52/52/-1/-1 53/53/-1/-1 54/54/-1/-1 55/55/-1/-1 56/56/-1/-1 57/57/-1/-1 58/58/-1/-1 59/59/-1/-1 60/60/-1/-1 61/61/-1/-1 62/62/-1/-1 63/63/-1/-1 64/64/-1/-1
+len 80: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1 15/15/-1/-1 16/16/-1/-1 17/17/-1/-1 18/18/-1/-1 19/19/-1/-1 20/20/-1/-1 21/21/-1/-1 22/22/-1/-1 23/23/-1/-1 24/24/-1/-1 25/25/-1/-1 26/26/-1/-1 27/27/-1/-1 28/28/-1/-1 29/29/-1/-1 30/30/-1/-1 31/31/-1/-1 32/32/-1/-1 33/33/-1/-1 34/34/-1/-1 35/35/-1/-1 36/36/-1/-1 37/37/-1/-1 38/38/-1/-1 39/39/-1/-1 40/40/-1/-1 41/41/-1/-1 42/42/-1/-1 43/43/-1/-1 44/44/-1/-1 45/45/-1/-1 46/46/-1/-1 47/47/-1/-1 48/48/-1/-1 49/49/-1/-1 50/50/-1/-1 51/51/-1/-1 52/52/-1/-1 53/53/-1/-1 54/54/-1/-1 55/55/-1/-1 56/56/-1/-1 57/57/-1/-1 58/58/-1/-1 59/59/-1/-1 60/60/-1/-1 61/61/-1/-1 62/62/-1/-1 63/63/-1/-1 64/64/-1/-1 65/65/-1/-1 66/66/-1/-1 67/67/-1/-1 68/68/-1/-1 69/69/-1/-1 70/70/-1/-1 71/71/-1/-1 72/72/-1/-1 73/73/-1/-1 74/74/-1/-1 75/75/-1/-1 76/76/-1/-1 77/77/-1/-1 78/78/-1/-1 79/79/-1/-1
+len 129: 0/0/-1/0 1/1/-1/-1 2/2/-1/-1 3/3/-1/-1 4/4/-1/-1 5/5/-1/-1 6/6/-1/-1 7/7/-1/-1 8/8/-1/-1 9/9/-1/-1 10/10/-1/-1 11/11/-1/-1 12/12/-1/-1 13/13/-1/-1 14/14/-1/-1 15/15/-1/-1 16/16/-1/-1 17/17/-1/-1 18/18/-1/-1 19/19/-1/-1 20/20/-1/-1 21/21/-1/-1 22/22/-1/-1 23/23/-1/-1 24/24/-1/-1 25/25/-1/-1 26/26/-1/-1 27/27/-1/-1 28/28/-1/-1 29/29/-1/-1 30/30/-1/-1 31/31/-1/-1 32/32/-1/-1 33/33/-1/-1 34/34/-1/-1 35/35/-1/-1 36/36/-1/-1 37/37/-1/-1 38/38/-1/-1 39/39/-1/-1 40/40/-1/-1 41/41/-1/-1 42/42/-1/-1 43/43/-1/-1 44/44/-1/-1 45/45/-1/-1 46/46/-1/-1 47/47/-1/-1 48/48/-1/-1 49/49/-1/-1 50/50/-1/-1 51/51/-1/-1 52/52/-1/-1 53/53/-1/-1 54/54/-1/-1 55/55/-1/-1 56/56/-1/-1 57/57/-1/-1 58/58/-1/-1 59/59/-1/-1 60/60/-1/-1 61/61/-1/-1 62/62/-1/-1 63/63/-1/-1 64/64/-1/-1 65/65/-1/-1 66/66/-1/-1 67/67/-1/-1 68/68/-1/-1 69/69/-1/-1 70/70/-1/-1 71/71/-1/-1 72/72/-1/-1 73/73/-1/-1 74/74/-1/-1 75/75/-1/-1 76/76/-1/-1 77/77/-1/-1 78/78/-1/-1 79/79/-1/-1 80/80/-1/-1 81/81/-1/-1 82/82/-1/-1 83/83/-1/-1 84/84/-1/-1 85/85/-1/-1 86/86/-1/-1 87/87/-1/-1 88/88/-1/-1 89/89/-1/-1 90/90/-1/-1 91/91/-1/-1 92/92/-1/-1 93/93/-1/-1 94/94/-1/-1 95/95/-1/-1 96/96/-1/-1 97/97/-1/-1 98/98/-1/-1 99/99/-1/-1 100/100/-1/-1 101/101/-1/-1 102/102/-1/-1 103/103/-1/-1 104/104/-1/-1 105/105/-1/-1 106/106/-1/-1 107/107/-1/-1 108/108/-1/-1 109/109/-1/-1 110/110/-1/-1 111/111/-1/-1 112/112/-1/-1 113/113/-1/-1 114/114/-1/-1 115/115/-1/-1 116/116/-1/-1 117/117/-1/-1 118/118/-1/-1 119/119/-1/-1 120/120/-1/-1 121/121/-1/-1 122/122/-1/-1 123/123/-1/-1 124/124/-1/-1 125/125/-1/-1 126/126/-1/-1 127/127/-1/-1 128/128/-1/-1
+len 2: 
+len 15: 0/0/-1/0/false 1/1/-1/-1/false 2/2/-1/-1/false 3/3/-1/-1/false 4/4/-1/-1/false 5/5/-1/-1/false 6/6/-1/-1/false 7/7/-1/-1/false 8/8/-1/-1/false 9/9/-1/-1/false 10/10/-1/-1/false 11/11/-1/-1/false 12/12/-1/-1/true
+len 16: 0/0/-1/0/false 1/1/-1/-1/false 2/2/-1/-1/false 3/3/-1/-1/false 4/4/-1/-1/false 5/5/-1/-1/false 6/6/-1/-1/false 7/7/-1/-1/false 8/8/-1/-1/false 9/9/-1/-1/false 10/10/-1/-1/false 11/11/-1/-1/false 12/12/-1/-1/false 13/13/-1/-1/true
+len 17: 0/0/-1/0/false 1/1/-1/-1/false 2/2/-1/-1/false 3/3/-1/-1/false 4/4/-1/-1/false 5/5/-1/-1/false 6/6/-1/-1/false 7/7/-1/-1/false 8/8/-1/-1/false 9/9/-1/-1/false 10/10/-1/-1/false 11/11/-1/-1/false 12/12/-1/-1/false 13/13/-1/-1/false 14/14/-1/-1/true
+len 18: 0/0/-1/0/false 1/1/-1/-1/false 2/2/-1/-1/false 3/3/-1/-1/false 4/4/-1/-1/false 5/5/-1/-1/false 6/6/-1/-1/false 7/7/-1/-1/false 8/8/-1/-1/false 9/9/-1/-1/false 10/10/-1/-1/false 11/11/-1/-1/false 12/12/-1/-1/false 13/13/-1/-1/false 14/14/-1/-1/false 15/15/-1/-1/true
+len 33: 0/0/-1/0/false 1/1/-1/-1/false 2/2/-1/-1/false 3/3/-1/-1/false 4/4/-1/-1/false 5/5/-1/-1/false 6/6/-1/-1/false 7/7/-1/-1/false 8/8/-1/-1/false 9/9/-1/-1/false 10/10/-1/-1/false 11/11/-1/-1/false 12/12/-1/-1/false 13/13/-1/-1/false 14/14/-1/-1/false 15/15/-1/-1/false 16/16/-1/-1/false 17/17/-1/-1/false 18/18/-1/-1/false 19/19/-1/-1/false 20/20/-1/-1/false 21/21/-1/-1/false 22/22/-1/-1/false 23/23/-1/-1/false 24/24/-1/-1/false 25/25/-1/-1/false 26/26/-1/-1/false 27/27/-1/-1/false 28/28/-1/-1/false 29/29/-1/-1/false 30/30/-1/-1/true
+len 40: 0/0/-1/0/false 1/1/-1/-1/false 2/2/-1/-1/false 3/3/-1/-1/false 4/4/-1/-1/false 5/5/-1/-1/false 6/6/-1/-1/false 7/7/-1/-1/false 8/8/-1/-1/false 9/9/-1/-1/false 10/10/-1/-1/false 11/11/-1/-1/false 12/12/-1/-1/false 13/13/-1/-1/false 14/14/-1/-1/false 15/15/-1/-1/false 16/16/-1/-1/false 17/17/-1/-1/false 18/18/-1/-1/false 19/19/-1/-1/false 20/20/-1/-1/false 21/21/-1/-1/false 22/22/-1/-1/false 23/23/-1/-1/false 24/24/-1/-1/false 25/25/-1/-1/false 26/26/-1/-1/false 27/27/-1/-1/false 28/28/-1/-1/false 29/29/-1/-1/false 30/30/-1/-1/false 31/31/-1/-1/false 32/32/-1/-1/false 33/33/-1/-1/false 34/34/-1/-1/false 35/35/-1/-1/false 36/36/-1/-1/false 37/37/-1/-1/true
+len 70: 0/0/-1/0/false 1/1/-1/-1/false 2/2/-1/-1/false 3/3/-1/-1/false 4/4/-1/-1/false 5/5/-1/-1/false 6/6/-1/-1/false 7/7/-1/-1/false 8/8/-1/-1/false 9/9/-1/-1/false 10/10/-1/-1/false 11/11/-1/-1/false 12/12/-1/-1/false 13/13/-1/-1/false 14/14/-1/-1/false 15/15/-1/-1/false 16/16/-1/-1/false 17/17/-1/-1/false 18/18/-1/-1/false 19/19/-1/-1/false 20/20/-1/-1/false 21/21/-1/-1/false 22/22/-1/-1/false 23/23/-1/-1/false 24/24/-1/-1/false 25/25/-1/-1/false 26/26/-1/-1/false 27/27/-1/-1/false 28/28/-1/-1/false 29/29/-1/-1/false 30/30/-1/-1/false 31/31/-1/-1/false 32/32/-1/-1/false 33/33/-1/-1/false 34/34/-1/-1/false 35/35/-1/-1/false 36/36/-1/-1/false 37/37/-1/-1/false 38/38/-1/-1/false 39/39/-1/-1/false 40/40/-1/-1/false 41/41/-1/-1/false 42/42/-1/-1/false 43/43/-1/-1/false 44/44/-1/-1/false 45/45/-1/-1/false 46/46/-1/-1/false 47/47/-1/-1/false 48/48/-1/-1/false 49/49/-1/-1/false 50/50/-1/-1/false 51/51/-1/-1/false 52/52/-1/-1/false 53/53/-1/-1/false 54/54/-1/-1/false 55/55/-1/-1/false 56/56/-1/-1/false 57/57/-1/-1/false 58/58/-1/-1/false 59/59/-1/-1/false 60/60/-1/-1/false 61/61/-1/-1/false 62/62/-1/-1/false 63/63/-1/-1/false 64/64/-1/-1/false 65/65/-1/-1/false 66/66/-1/-1/false 67/67/-1/-1/true
+<33 units: ab,ab,ab,a…,ab,ab,ab,> "ab,": indexOf 0 3 3 30 30 -1 -1 | lastIndexOf 0 0 3 27 30 30 30 | 0 30 true true true
+<3014 units: ababababab…ababababab> "aaac": indexOf 3000 3000 3000 -1 | lastIndexOf -1 -1 -1 3000 | 3000 3000 true false false
+<3014 units: ababababab…ababababab> "cabab": indexOf 3003 3003 3003 -1 | lastIndexOf -1 -1 -1 3003 | 3003 3003 true false false
+<3014 units: ababababab…ababababab> "abababx": indexOf -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 | -1 -1 false false false
+<3014 units: ababababab…ababababab> "bab": indexOf 1 1001 3005 -1 | lastIndexOf -1 999 2997 3011 | 1 3011 true false true
+<3046 units: aaaaabaaaa…aaabaaaaab> "aaaaaaaaaaaaaaac": indexOf 3000 3000 3000 -1 | lastIndexOf -1 -1 -1 3000 | 3000 3000 true false false
+<3046 units: aaaaabaaaa…aaabaaaaab> "caaaaabaaaaab": indexOf 3015 3015 3015 -1 | lastIndexOf -1 -1 -1 3015 | 3015 3015 true false false
+<3046 units: aaaaabaaaa…aaabaaaaab> "aaaaabaaaaabaaaaabx": indexOf -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 | -1 -1 false false false
+<3046 units: aaaaabaaaa…aaabaaaaab> "baaaaab": indexOf 5 1001 3021 -1 | lastIndexOf -1 995 2993 3039 | 5 3039 true false true
+<3230 units: aaaaaaaaaa…aaaaaaaaab> <94 units: aaaaaaaaaa…aaaaaaaaac>: indexOf 2976 2976 -1 -1 | lastIndexOf -1 -1 2976 2976 | 2976 2976 true false false
+<3230 units: aaaaaaaaaa…aaaaaaaaab> <65 units: caaaaaaaaa…aaaaaaaaab>: indexOf 3069 3069 3069 -1 | lastIndexOf -1 -1 -1 3069 | 3069 3069 true false false
+<3230 units: aaaaaaaaaa…aaaaaaaaab> <97 units: aaaaaaaaaa…aaaaaaaabx>: indexOf -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 | -1 -1 false false false
+<3230 units: aaaaaaaaaa…aaaaaaaaab> <33 units: baaaaaaaaa…aaaaaaaaab>: indexOf 31 1023 3101 -1 | lastIndexOf -1 991 2943 3197 | 31 3197 true false true
+<3232 units: aaaaaaaaaa…aaaaaaaaab> <97 units: aaaaaaaaaa…aaaaaaaaac>: indexOf 2970 2970 -1 -1 | lastIndexOf -1 -1 2970 2970 | 2970 2970 true false false
+<3232 units: aaaaaaaaaa…aaaaaaaaab> <67 units: caaaaaaaaa…aaaaaaaaab>: indexOf 3066 3066 3066 -1 | lastIndexOf -1 -1 -1 3066 | 3066 3066 true false false
+<3232 units: aaaaaaaaaa…aaaaaaaaab> <100 units: aaaaaaaaaa…aaaaaaaabx>: indexOf -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 | -1 -1 false false false
+<3232 units: aaaaaaaaaa…aaaaaaaaab> <34 units: baaaaaaaaa…aaaaaaaaab>: indexOf 32 1022 3099 -1 | lastIndexOf -1 989 2936 3198 | 32 3198 true false true
+<3262 units: aaaaaaaaaa…aaaaaaaaab> <100 units: aaaaaaaaaa…aaaaaaaaac>: indexOf 2992 2992 -1 -1 | lastIndexOf -1 -1 2992 2992 | 2992 2992 true false false
+<3262 units: aaaaaaaaaa…aaaaaaaaab> <69 units: caaaaaaaaa…aaaaaaaaab>: indexOf 3091 3091 3091 -1 | lastIndexOf -1 -1 -1 3091 | 3091 3091 true false false
+<3262 units: aaaaaaaaaa…aaaaaaaaab> <103 units: aaaaaaaaaa…aaaaaaaabx>: indexOf -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 | -1 -1 false false false
+<3262 units: aaaaaaaaaa…aaaaaaaaab> <35 units: baaaaaaaaa…aaaaaaaaab>: indexOf 33 1019 3125 -1 | lastIndexOf -1 985 2957 3227 | 33 3227 true false true
+<3735 units: aaaaaaaaaa…aaaaaaaaab> <301 units: aaaaaaaaaa…aaaaaaaaac>: indexOf 2929 2929 -1 -1 | lastIndexOf -1 -1 2929 2929 | 2929 2929 true false false
+<3735 units: aaaaaaaaaa…aaaaaaaaab> <203 units: caaaaaaaaa…aaaaaaaaab>: indexOf 3229 3229 3229 -1 | lastIndexOf -1 -1 -1 3229 | 3229 3229 true false false
+<3735 units: aaaaaaaaaa…aaaaaaaaab> <304 units: aaaaaaaaaa…aaaaaaaabx>: indexOf -1 -1 -1 -1 | lastIndexOf -1 -1 -1 -1 | -1 -1 false false false
+<3735 units: aaaaaaaaaa…aaaaaaaaab> <102 units: baaaaaaaaa…aaaaaaaaab>: indexOf 100 1009 3330 3532 | lastIndexOf -1 908 2827 3431 | 100 3633 true false true
+<4500 units: the quick …lazy dog, > <53 units: lazy dog, …e lazy cat>: indexOf -1 | lastIndexOf -1 | -1 -1 false false false
+<4500 units: the quick …lazy dog, > "dog, the": indexOf 40 1030 -1 | lastIndexOf -1 985 4450 | 40 4450 true false false
+<4501 units: the quick …azy dog, é> "é": indexOf 4500 4500 | lastIndexOf -1 4500 | 4500 4500 true false true
+<4501 units: éthe quick…lazy dog, > "the": indexOf 1 1 4006 | lastIndexOf -1 1 3992 | 1 4487 true false false
