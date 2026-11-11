@@ -281,9 +281,10 @@ impl<'p> Hashing<'p> {
                     span: _,
                     slot,
                     c_const,
+                    c_global,
                 } = g;
-                // `CConst` holds no ids.
-                let c = format!("{c_const:?}");
+                // `CConst` and `CGlobal` hold no ids.
+                let c = format!("{c_const:?}{c_global:?}");
                 (name.clone(), finish((4u8, self.ty(*ty), slot, c)))
             }
         })

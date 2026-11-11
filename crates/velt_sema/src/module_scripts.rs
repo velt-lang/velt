@@ -123,10 +123,12 @@ fn declare_one(cx: &mut Ctx, m: usize, script: &ast::FnDecl) {
                 owner: None,
                 is_private: false,
                 c_const: false,
+                c_global: None,
             },
             mutable: false,
             stored: true,
             c_const: None,
+            c_global: None,
         };
         let g = cx.alloc_def(span, DefInfo::Global(Box::new(global)));
         cx.module_scripts.push(g);

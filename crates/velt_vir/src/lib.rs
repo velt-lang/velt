@@ -251,6 +251,10 @@ pub struct LowerOptions<'a> {
     /// The counted types of the previous version of this program ([`lower_seeded`], `velt dev`):
     /// the first pass starts from them, so it is often the only one.
     pub counted_seed: Option<&'a CountedSeed>,
+    /// The program runs in this process under the JIT (`velt dev`), not linked: a C variable is
+    /// named by its own symbol, whose address the host resolves, also on Windows, where a linked
+    /// program reaches it through the import library's `__imp_<name>` pointer (lower/c_global.rs).
+    pub jit: bool,
 }
 
 pub use lower::CountedSeed;

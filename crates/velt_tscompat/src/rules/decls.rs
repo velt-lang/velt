@@ -57,6 +57,13 @@ pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
                 .into(),
             &["keep native bindings out of code shared with TypeScript"],
         ),
+        I::Var(v) if v.c_global.is_some() => cx.error(
+            "declare-fn",
+            cx.keyword(item.span, "declare"),
+            "`declare c(\"<library>\") let` names a C library's variable, which JavaScript doesn't have"
+                .into(),
+            &["keep native bindings out of code shared with TypeScript"],
+        ),
         I::Class(c) if c.c_type => cx.error(
             "declare-fn",
             cx.keyword(item.span, "declare"),

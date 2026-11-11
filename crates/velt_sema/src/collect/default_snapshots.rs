@@ -82,6 +82,7 @@ fn snapshot(x: &ast::Ident, kw: Span, span: Span) -> &'static ast::Item {
             }),
             span,
             c_const: false,
+            c_global: None,
         }),
         exported: true,
         span,

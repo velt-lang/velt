@@ -297,8 +297,8 @@ impl FnLower<'_, '_> {
             ));
         }
         self.cx.assert_live(d);
-        if let Some(c) = g.c_const {
-            return self.c_const(d, c, g.ty);
+        if g.c_const.is_some() || g.c_global.is_some() {
+            return self.c_value(d);
         }
         if let Some(slot) = g.slot {
             // A module-level `let`: its slot, read in place (sema shares what it moves out).
@@ -462,6 +462,7 @@ impl FnLower<'_, '_> {
                         hir::CValue::Bool(v) => Const::Bool(v),
                         hir::CValue::Address(_) => return None,
                     },
+                    None if g.c_global.is_some() => return None,
                     None => self.table_const(&g.init, from, depth + 1)?,
                 }
             }

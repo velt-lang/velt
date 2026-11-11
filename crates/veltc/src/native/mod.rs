@@ -201,6 +201,12 @@ pub fn check_declares(
     let io = IoTypes::find(p, sm, std_root);
     let mut checked = c_decls::Checked::default();
     for def in &p.defs {
+        if let Def::Global(g) = def {
+            if let Some(c) = &g.c_global {
+                c_decls::check_global(g, c, sm, graph, std_files, target, &mut checked, diags);
+            }
+            continue;
+        }
         let Def::ExternFn(f) = def else { continue };
         if f.is_decorator {
             continue;

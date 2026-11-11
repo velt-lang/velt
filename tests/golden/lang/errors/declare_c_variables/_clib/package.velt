@@ -1,0 +1,8 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "clib",
+  version: "0.1.0",
+  // Variables of the platform's C library, unchecked so the golden needs no zig for the headers.
+  native: { c: { c: { unchecked: true } } },
+};

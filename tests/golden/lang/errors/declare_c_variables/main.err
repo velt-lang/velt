@@ -1,0 +1,7 @@
+_clib/src/lib.velt:7:1: error: C variable `optarg` has type `string`, which can't hold a C variable
+  = note: a C variable is an integer (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, `Ptr<T>` or `Ptr<T> | null` (velt/ffi)
+_clib/src/lib.velt:10:15: error: using C variable `opterr` needs an `unsafe` block or function
+_clib/src/lib.velt:11:3: error: using C variable `opterr` needs an `unsafe` block or function
+_clib/src/lib.velt:14:5: error: cannot assign to C variable `optind`
+  = note: a C variable declared `const` is only read: declare it with `let` if C lets the program assign it
+_clib/src/lib.velt:15:5: error: cannot assign to C variable `optind`

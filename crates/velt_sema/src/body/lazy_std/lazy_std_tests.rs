@@ -84,8 +84,15 @@ fn every_name_lowering_looks_up_is_a_helper() {
     assert!(names.iter().any(|n| n == "__error"), "{names:?}");
     // C preprocessor macros (`__AVX2__`, `__GCC_…`, `__ARM_FEATURE_…`), DWARF names and the C library's own
     // symbols (`errno`'s location, velt_vir `system/posix.rs`) and Mach-O segment and section
-    // names (velt_codegen_cl `eh.rs`) are no definitions.
-    const C_SYMBOLS: &[&str] = &["__error", "__errno_location", "__TEXT", "__gcc_except_tab"];
+    // names (velt_codegen_cl `eh.rs`) are no definitions, nor is the import library's prefix of a
+    // Windows DLL's variable (velt_vir `lower/c_global.rs`).
+    const C_SYMBOLS: &[&str] = &[
+        "__error",
+        "__errno_location",
+        "__TEXT",
+        "__gcc_except_tab",
+        "__imp_",
+    ];
     let missing: Vec<&String> = (names.iter())
         .filter(|n| {
             !n.ends_with("__")

@@ -1,0 +1,32 @@
+// velt/ffi (tests): the calling thread's C `errno`, set and read where the C library keeps it
+// (`#errno-location`, errno.velt).
+import { describe, expect, it } from "velt/test";
+import { CString, errno, setErrno } from "velt/ffi";
+
+declare c("c") function strtol(s: CString, end: null, base: i32): i64;
+
+describe("velt/ffi errno", () => {
+  it("sets the thread's errno and reads it back", () => {
+    // SAFETY: only this thread's errno changes, and it is restored.
+    unsafe {
+      const saved = errno();
+      setErrno(34);
+      expect(errno()).toBe(34);
+      setErrno(0);
+      expect(errno()).toBe(0);
+      setErrno(saved);
+    }
+  });
+
+  it("reads what the C library set", () => {
+    let got: i32 = 0;
+    // SAFETY: strtol reads a NUL-terminated string and sets errno to ERANGE (34 with every C
+    // library Velt links) for a number a `long` can't hold; `end` may be NULL.
+    unsafe {
+      setErrno(0);
+      strtol(new CString("999999999999999999999999999"), null, 10);
+      got = errno();
+    }
+    expect(got).toBe(34);
+  });
+});

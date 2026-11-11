@@ -1,0 +1,1 @@
+c_variable_outside_package.velt:3:20: error: `declare c(…) let opterr` is only allowed in a package: this file has no package.velt

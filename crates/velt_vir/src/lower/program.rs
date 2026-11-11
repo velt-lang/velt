@@ -46,6 +46,8 @@ impl<'h> Cx<'h> {
             unreduced: vec![],
             c_clashes: vec![],
             c_symbols: Default::default(),
+            c_globals: Default::default(),
+            jit: false,
             c_clashes_reported: Default::default(),
             ffi_hooks: Default::default(),
             std_calls: FxHashMap::default(),

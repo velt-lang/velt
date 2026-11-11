@@ -216,6 +216,35 @@ fn c_declarations() {
 }
 
 #[test]
+fn c_variables() {
+    let m = parse_ok(
+        "declare c(\"c\") let environ: Ptr<Ptr<u8> | null>;\nexport declare c(\"m\") const v: i32\nlet c = 1;",
+    );
+    assert!(m.items[1].exported);
+    let ItemKind::Var(a) = &m.items[0].kind else {
+        panic!("{:?}", m.items[0].kind)
+    };
+    let lib = a.c_global.as_ref().expect("a C variable");
+    assert_eq!(lib.library, "c");
+    assert!(!a.c_const && a.ty.is_some() && a.init.is_none() && a.kind == VarKind::Let);
+    let ItemKind::Var(b) = &m.items[1].kind else {
+        panic!("{:?}", m.items[1].kind)
+    };
+    assert!(b.kind == VarKind::Const && b.c_global.as_ref().is_some_and(|l| l.library == "m"));
+    let ItemKind::Var(c) = &m.items[2].kind else {
+        panic!("{:?}", m.items[2].kind)
+    };
+    assert!(c.c_global.is_none());
+    let e = errors("declare c(\"c\") let x: i32 = 5;");
+    assert!(e[0].contains("it has no initializer"), "{e:?}");
+    let e = errors("declare c(\"c\") let x;");
+    assert!(e[0].contains("a C variable says its type"), "{e:?}");
+    // With options, it is a function's head: a variable takes none.
+    let e = errors("declare c(\"c\", { errno: true }) let x: i32;");
+    assert!(!e.is_empty());
+}
+
+#[test]
 fn c_types() {
     let m =
         parse_ok("declare c const A: i32;\nexport declare c const B: Ptr<void> | null\nlet c = 1;");

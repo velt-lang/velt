@@ -270,6 +270,7 @@ pub(crate) fn wrapper(
                     init: Some(call),
                     span,
                     c_const: false,
+                    c_global: None,
                 }),
                 span,
             }],

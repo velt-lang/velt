@@ -512,6 +512,8 @@ pub(crate) struct GlobalInfo<'m> {
     pub stored: bool,
     /// `declare c const`: what it crosses as, once its type is checked.
     pub c_const: Option<crate::hir::CTy>,
+    /// `declare c("<library>") let` (or `const`): the C variable, once its type is checked.
+    pub c_global: Option<crate::hir::CGlobal>,
 }
 
 /// Source of a constant: a module-level `const`, or a `static readonly` field of a type.
@@ -525,6 +527,9 @@ pub(crate) struct GlobalSrc<'m> {
     pub is_private: bool,
     /// `declare c const`: no initializer, its value comes from C headers.
     pub c_const: bool,
+    /// `declare c("<library>") let` (or `const`): no initializer, a C library defines it. With
+    /// whether it is a `let`, which the program may assign.
+    pub c_global: Option<(&'m ast::CLibrary, bool)>,
 }
 
 #[derive(Clone)]

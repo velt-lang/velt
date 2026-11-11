@@ -19,10 +19,24 @@ pub struct CFunction {
     pub at: String,
 }
 
-/// The functions and typedefs of a translation unit.
+/// A variable of the headers (`extern char **environ;`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CVariable {
+    /// Its C type, as written (`char **`, `const int`).
+    pub ty: String,
+    /// `_Thread_local` / `__thread`: each thread has its own, which a link symbol doesn't name.
+    pub thread_local: bool,
+    /// `static`: the header defines it for each file that includes it, under no link symbol.
+    pub internal: bool,
+    /// Where it is declared: the header's file name and line.
+    pub at: String,
+}
+
+/// The functions, variables and typedefs of a translation unit.
 #[derive(Default, Debug)]
 pub struct Headers {
     pub functions: HashMap<String, CFunction>,
+    pub variables: HashMap<String, CVariable>,
     /// Typedef name → the type it names, as written.
     typedefs: HashMap<String, String>,
     /// Enum tag (a typedef's name, for an enum without a tag) → what its width comes from.
@@ -111,6 +125,17 @@ impl Headers {
                     params,
                     variadic,
                     attributes,
+                    at,
+                });
+            }
+            Some("VarDecl") if node["isImplicit"] != true => {
+                let name = node["name"].as_str().unwrap_or_default().to_string();
+                let ty = node["type"]["qualType"].as_str().unwrap_or_default();
+                // The first declaration wins, as for a function.
+                self.variables.entry(name).or_insert(CVariable {
+                    ty: ty.to_string(),
+                    thread_local: node.get("tls").is_some_and(|t| !t.is_null()),
+                    internal: node["storageClass"] == "static",
                     at,
                 });
             }
@@ -210,6 +235,12 @@ impl Headers {
             Some(under) if under.trim() != base.join(" ") => self.is_const(under, depth + 1),
             _ => false,
         }
+    }
+
+    /// Is an object of C type `written` itself `const` (`const int`, `char *const`, a typedef
+    /// of one), not only what it points to?
+    pub fn object_is_const(&self, written: &str) -> bool {
+        self.is_const(written, 0)
     }
 
     /// The C type `written` (`size_t`, `const char *`) for a target whose `long` has `long_bits`.

@@ -788,6 +788,7 @@ fn closure_const(s: ast::Stmt, in_group: bool) -> ast::Stmt {
         }),
         span: s.span,
         c_const: false,
+        c_global: None,
     };
     ast::Stmt {
         kind: S::Var(var),

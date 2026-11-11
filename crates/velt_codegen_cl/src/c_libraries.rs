@@ -104,17 +104,25 @@ pub(crate) fn missing_c_functions(
     program: &vir::Program,
     known: &dyn Fn(&str) -> bool,
 ) -> Option<String> {
-    let missing: Vec<String> = (program.externs.iter())
+    let found = |symbol: &str| known(symbol) || own(symbol).is_some() || loaded(symbol).is_some();
+    let mut missing: Vec<String> = (program.externs.iter())
         .filter_map(|e| e.c_decl.as_ref().map(|d| (e, d)))
-        .filter(|(e, _)| !known(&e.symbol) && own(&e.symbol).is_none())
-        .filter(|(e, _)| loaded(&e.symbol).is_none())
-        .map(|(e, d)| format!("`{}` (declared at {d})", e.symbol))
+        .filter(|(e, _)| !found(&e.symbol))
+        .map(|(e, d)| format!("C function `{}` (declared at {d})", e.symbol))
         .collect();
+    // C variables (`declare c("lib") let`): the JIT can't link a data symbol it doesn't find.
+    missing.extend(
+        (program.statics.iter())
+            .filter(|s| s.c_global)
+            .filter_map(|s| s.symbol.as_deref())
+            .filter(|s| !found(s))
+            .map(|s| format!("C variable `{s}`")),
+    );
     if missing.is_empty() {
         return None;
     }
     Some(format!(
-        "C function {} not found in the libraries loaded into `velt dev` (the C library and the packages' `native.c` libraries)",
+        "{} not found in the libraries loaded into `velt dev` (the C library and the packages' `native.c` libraries)",
         missing.join(", ")
     ))
 }

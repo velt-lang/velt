@@ -179,6 +179,7 @@ impl Parser<'_> {
                 init: Some(expr),
                 span,
                 c_const: false,
+                c_global: None,
             }),
             exported: true,
             span,

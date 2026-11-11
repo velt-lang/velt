@@ -70,6 +70,7 @@ mod boxing;
 pub use boxing::CountedSeed;
 mod c_call;
 mod c_export;
+pub(crate) mod c_global;
 mod call;
 mod callee;
 mod caller_aliases;
@@ -267,6 +268,7 @@ pub(crate) fn lower_program_seeded(
             .target
             .map_or_else(crate::system::host_triple, str::to_string);
         cx.cpu_checks.no_extensions = opts.no_cpu_extensions;
+        cx.jit = opts.jit;
         cx.no_await_steps = no_await_steps;
         cx.facts_only = facts_only;
         cx.glue_slots.keep_all = want_seed || glue::demand_off();
@@ -421,6 +423,10 @@ struct Cx<'h> {
     /// The symbols C functions declared (c_call.rs): a later extern of the same symbol with
     /// another signature is that clash, reported, not an internal error.
     c_symbols: FxHashMap<String, c_call::CDecl>,
+    /// The statics of C variables (c_global.rs), by link symbol.
+    c_globals: FxHashMap<String, StaticId>,
+    /// `LowerOptions::jit`: C variables by their own symbols (c_global.rs).
+    jit: bool,
     /// The C declarations whose signature clash is reported (once each).
     c_clashes_reported: rustc_hash::FxHashSet<DefId>,
     /// velt/ffi's hooks found so far (c_call.rs): each is looked up once per program.

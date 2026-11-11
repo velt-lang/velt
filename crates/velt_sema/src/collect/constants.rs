@@ -33,10 +33,12 @@ pub(super) fn declare_statics<'m>(cx: &mut Ctx<'m>, m: usize, owner: DefId, t: &
                 owner: Some(owner),
                 is_private: f.is_private,
                 c_const: false,
+                c_global: None,
             },
             mutable: !f.readonly,
             stored: !f.readonly,
             c_const: None,
+            c_global: None,
         };
         let g = cx.alloc_def(f.name.span, DefInfo::Global(Box::new(info)));
         if cx
@@ -80,15 +82,19 @@ pub(super) fn global_info<'m>(
             owner: None,
             is_private: false,
             c_const: v.c_const,
+            c_global: (v.c_global.as_ref()).map(|c| (c, v.kind == ast::VarKind::Let)),
         },
-        mutable: v.kind == ast::VarKind::Let,
+        // A C variable is read from C memory at each use and assigned there: no slot of the
+        // module state (`c_sig.rs` `c_const_init`).
+        mutable: v.kind == ast::VarKind::Let && v.c_global.is_none(),
         // A `const` moved out of an imported module's statements is kept as they would keep it
         // (`module_chunks`). `export default expr;` (the constant `default`) is evaluated once,
         // in module order, as in Node, whatever its initializer (#1916).
-        stored: v.kind == ast::VarKind::Let
-            || (cx.promoted_consts.contains(&v.span) && !v.c_const)
+        stored: (v.kind == ast::VarKind::Let && v.c_global.is_none())
+            || (cx.promoted_consts.contains(&v.span) && !v.c_const && v.c_global.is_none())
             || name.name == "default",
         c_const: None,
+        c_global: None,
     };
     Some((name, DefInfo::Global(Box::new(info))))
 }

@@ -18,6 +18,7 @@ mod ctype;
 mod probe;
 mod record;
 mod shape;
+mod variables;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -44,6 +45,9 @@ struct Decl {
     ret: Shape,
     /// It ends with `...args: CVarArgs`: `params` are its fixed parameters.
     variadic: bool,
+    /// A C variable (`declare c("lib") let`, or `const`: `Some(false)`), not a function: `ret`
+    /// is its type and `params` are empty.
+    variable: Option<bool>,
     span: Span,
 }
 
@@ -88,32 +92,21 @@ pub fn check(
     // (package root, library) → its declarations.
     let mut groups: BTreeMap<(PathBuf, String), (&GraphPackage, Vec<Decl>)> = BTreeMap::new();
     for def in &p.defs {
-        let Def::ExternFn(f) = def else { continue };
-        let Some(c) = &f.c else { continue };
-        if std_files.contains(&f.span.file) {
+        let Some((library, decl)) = decl_of(p, def) else {
+            continue;
+        };
+        if std_files.contains(&decl.span.file) {
             continue;
         }
-        let Some(package) = graph.package_of(&sm.get(f.span.file).path) else {
+        let Some(package) = graph.package_of(&sm.get(decl.span.file).path) else {
             continue;
         };
         // A library other than `c` without an entry is `c_decls`' error.
-        if c.library != "c" && !package.c_libraries.contains_key(&c.library) {
+        if library != "c" && !package.c_libraries.contains_key(library) {
             continue;
         }
-        let decl = Decl {
-            name: velt_vir::system::base_name(&f.symbol).to_string(),
-            params: f
-                .params
-                .iter()
-                .zip(&c.params)
-                .map(|(&t, &ct)| shape(p, t, ct))
-                .collect(),
-            ret: shape(p, f.ret, c.ret),
-            variadic: c.variadic,
-            span: f.span,
-        };
         groups
-            .entry((package.root.clone(), c.library.clone()))
+            .entry((package.root.clone(), library.to_string()))
             .or_insert_with(|| (package, Vec::new()))
             .1
             .push(decl);
@@ -147,6 +140,39 @@ pub fn check(
         }
     }
     checked
+}
+
+/// The C declaration `def` is, a function's or a variable's, with its library.
+fn decl_of<'p>(p: &'p hir::Program, def: &'p Def) -> Option<(&'p str, Decl)> {
+    match def {
+        Def::ExternFn(f) => {
+            let c = f.c.as_ref()?;
+            let decl = Decl {
+                name: velt_vir::system::base_name(&f.symbol).to_string(),
+                params: (f.params.iter().zip(&c.params))
+                    .map(|(&t, &ct)| shape(p, t, ct))
+                    .collect(),
+                ret: shape(p, f.ret, c.ret),
+                variadic: c.variadic,
+                variable: None,
+                span: f.span,
+            };
+            Some((&c.library, decl))
+        }
+        Def::Global(g) => {
+            let c = g.c_global.as_ref()?;
+            let decl = Decl {
+                name: c.symbol.clone(),
+                params: vec![],
+                ret: shape(p, g.ty, c.ty),
+                variadic: false,
+                variable: Some(c.writable),
+                span: g.span,
+            };
+            Some((&c.library, decl))
+        }
+        _ => None,
+    }
 }
 
 /// The error for a C library that lists no headers and doesn't say it has none.
@@ -294,6 +320,10 @@ fn file_digest(file: &Path) -> Option<String> {
 
 fn check_decl(d: &Decl, h: &Headers, headers: &[String], windows: bool, diags: &mut Diagnostics) {
     let long_bits = if windows { 32 } else { 64 };
+    if let Some(writable) = d.variable {
+        variables::check(d, writable, h, (headers, long_bits), diags);
+        return;
+    }
     let Some(c) = h.functions.get(&d.name) else {
         diags.push(Diagnostic::error(
             format!(
@@ -402,6 +432,9 @@ fn cache_key(root: &Path, read: LibraryHeaders, decls: &[Decl], target: &str) ->
     }
     for d in decls {
         h.update(format!("\0{}{:?}{:?}", d.name, d.params, d.ret));
+        if let Some(writable) = d.variable {
+            h.update(format!("\0variable {writable}"));
+        }
     }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }

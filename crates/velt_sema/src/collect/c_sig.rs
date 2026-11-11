@@ -232,26 +232,46 @@ impl Ctx<'_> {
             .or_else(|| self.c_const_init(d, ann))
     }
 
-    /// The initializer of global `d` (of type `ann`) when it is a `declare c const`: a
-    /// placeholder never evaluated, as its value comes from C headers after sema
-    /// (`GlobalDef::c_const`) and lowering reads that. A type that can't hold one is reported.
+    /// The initializer of global `d` (of type `ann`) when it is a `declare c const` or a C
+    /// variable (`declare c("lib") let`): a placeholder never evaluated, as a constant's value
+    /// comes from C headers after sema (`GlobalDef::c_const`) and a variable is read from C
+    /// memory (`GlobalDef::c_global`), which lowering does. A type that can't hold one is
+    /// reported.
     fn c_const_init(&mut self, d: DefId, ann: Option<TyId>) -> Option<crate::hir::Expr> {
-        let g = self.global(d).filter(|g| g.src.c_const)?;
-        let (name, at) = (g.name.clone(), g.src.span);
+        let g = self
+            .global(d)
+            .filter(|g| g.src.c_const || g.src.c_global.is_some())?;
+        let (name, at, global) = (g.name.clone(), g.src.span, g.src.c_global);
         let t = ann?;
         let cty = value_ty(self, t);
         if cty.is_none() && t != self.ty.error {
             let shown = self.display(t);
+            let (what, a) = match global {
+                Some(_) => ("C variable", "a C variable"),
+                None => ("C constant", "a C constant"),
+            };
             self.error(
                 Diagnostic::error(
-                    format!("C constant `{name}` has type `{shown}`, which can't hold a C constant"),
+                    format!("{what} `{name}` has type `{shown}`, which can't hold {a}"),
                     at,
                 )
-                .with_note("a C constant is an integer (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, `Ptr<T>` or `Ptr<T> | null` (velt/ffi)"),
+                .with_note(format!("{a} is an integer (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, `Ptr<T>` or `Ptr<T> | null` (velt/ffi)")),
             );
         }
+        let c_global = match (global, cty) {
+            (Some((lib, writable)), Some(ty)) => Some(crate::hir::CGlobal {
+                library: lib.library.clone(),
+                symbol: name.clone(),
+                ty,
+                writable,
+            }),
+            _ => None,
+        };
         if let crate::defs::DefInfo::Global(g) = &mut self.info[d.0 as usize] {
-            g.c_const = cty;
+            match global {
+                Some(_) => g.c_global = c_global,
+                None => g.c_const = cty,
+            }
         }
         Some(crate::hir::Expr {
             kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Unit),
@@ -392,6 +412,8 @@ fn c_pointee(cx: &Ctx, ty: TyId) -> bool {
                 .is_some_and(|a| a.decl.is_some_and(|t| t.c_type || t.c_struct))
                 || is_c_ptr(cx, ty)
         }
+        // A pointer that may be NULL (`char **environ`: `Ptr<Ptr<u8> | null>`), the same word.
+        TyKind::Option(inner, n) => *n != Nothing::Both && is_c_ptr(cx, *inner),
         _ => false,
     }
 }

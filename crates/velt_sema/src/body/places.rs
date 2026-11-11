@@ -181,6 +181,9 @@ impl FnCx<'_, '_> {
             }
         }
         if let H::Global(d) = root_expr(e).kind {
+            if let Some(ok) = self.c_global_write(d, e, what) {
+                return ok;
+            }
             let (name, stored, mutable, module) = self
                 .cx
                 .global(d)

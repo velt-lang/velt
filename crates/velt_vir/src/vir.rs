@@ -66,6 +66,7 @@
 //!     may read, as LLVM's `available_externally`, but are never emitted). Symbols are unique
 //!     among the program's statics, functions and externs. An `Import` static's relocations
 //!     name only `Export`/`Import` functions and statics, and externs (checked by `verify`).
+//!     A C variable (`StaticData::c_global`) is an `Import` static whose contents no pass knows.
 //! 14. Unwind edges (additive, #2667; docs/internals/design/unwinding.md "Cleanup in unwound
 //!     frames"): `Terminator::Call::unwind` is `Some(pad)` only in programs that catch Velt
 //!     panics, on calls of functions and function values (`eh::may_unwind`). When the callee
@@ -436,6 +437,10 @@ pub struct StaticData {
     /// visible to the link's other objects under `symbol`. `Import`: defined by another object
     /// under `symbol`, with the contents above for reading only (invariant 13).
     pub linkage: Linkage,
+    /// A C library's variable (`declare c("lib") let`, additive): an `Import` under `symbol`,
+    /// no `bytes`, `relocs` or `mutable`; backends declare it as C does an `extern` variable
+    /// (default visibility, writable, contents unknown). `false` for every other static.
+    pub c_global: bool,
 }
 
 #[derive(Clone, Debug)]

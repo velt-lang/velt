@@ -107,7 +107,7 @@ fn compile_and_load(
     opts: &BuildOptions,
     session: &mut DevSession,
 ) -> Result<JitProgram, BuildError> {
-    let program = driver::compile(sess, opts)?;
+    let program = driver::compile_for_jit(sess, opts)?;
     super::native::load_c_libraries(opts, &sess.c_libs).map_err(BuildError::Failed)?;
     let start = Instant::now();
     let mut steps = vec![];

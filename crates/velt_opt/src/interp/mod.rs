@@ -124,7 +124,12 @@ impl<'p, H: Host> Interp<'p, H> {
         let statics = program
             .statics
             .iter()
-            .map(|s| mem.add_static(&s.bytes, s.align))
+            // A C variable (`StaticData::c_global`) has no contents here: its address is null,
+            // so reading or writing it traps rather than seeing made-up bytes.
+            .map(|s| match s.c_global {
+                true => 0,
+                false => mem.add_static(&s.bytes, s.align),
+            })
             .collect();
         let mut interp = Interp {
             program,

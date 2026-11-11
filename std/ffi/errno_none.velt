@@ -1,0 +1,9 @@
+// velt/ffi (internal): a target without a C library's `errno` (WebAssembly, JS hosts;
+// `#errno-location`, errno.velt).
+
+import { Ptr } from "velt/ffi/ptr";
+
+/** No `errno` here. */
+export function errnoLocation(): Ptr<i32> | null {
+  return null;
+}

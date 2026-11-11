@@ -74,6 +74,7 @@ impl FnCx<'_, '_> {
                 init: Some(copy),
                 span,
                 c_const: false,
+                c_global: None,
             };
             self.var_decl(&v, span, out);
             for key in taken {

@@ -139,6 +139,7 @@ impl<'a> Printer<'a> {
             ItemKind::Enum(decl) => self.enum_decl(decl),
             ItemKind::TypeAlias(alias) => self.type_alias(alias),
             ItemKind::Var(var) if var.c_const => cat!["declare c ", self.var_decl(var), ";"],
+            ItemKind::Var(var) if var.c_global.is_some() => self.c_global(var),
             ItemKind::Var(var) => cat![self.var_decl(var), ";"],
             ItemKind::Extend(decl) => self.extend(decl),
             ItemKind::ExternFn(sig) if sig.host.is_some() => self.host_fn(sig),
@@ -233,6 +234,15 @@ impl<'a> Printer<'a> {
         let sig = self.fn_sig(sig, "function ", sig.span.hi);
         let options = if c.errno { ", { errno: true }" } else { "" };
         cat!["declare c(", library, options, ") ", asyncness, sig, ";"]
+    }
+
+    /// `declare c("<library>") let name: T;` (or `const`).
+    fn c_global(&mut self, var: &VarDecl) -> Doc {
+        let Some(c) = &var.c_global else {
+            return text("");
+        };
+        let library = text(string_literal(slice(self.src, c.span)));
+        cat!["declare c(", library, ") ", self.var_decl(var), ";"]
     }
 
     /// `declare host("<module>") [async] function f(…): R;` (`async` is an error, printed as
