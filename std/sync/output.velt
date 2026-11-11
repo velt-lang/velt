@@ -2,17 +2,22 @@
 // (#249, #2771). The runtime buffers stdout per worker thread and publishes the buffer at the end
 // of every poll; a hand-off (a channel send or close, room a receive frees in a bounded channel, a
 // `HandOff.give` or `end`) can be seen by a task on another worker before that, so a line logged
-// before it would print after what the other task prints next. Opening a runtime latch publishes
-// this thread's buffer first (`publish_before_handoff`, one thread-local check when nothing is
-// buffered), and opening one that is already open does nothing else: that is the publish, with no
-// extern of its own (#2196, #2649 "Output ordering"). std/imports.velt picks output_wasm.velt on
-// WebAssembly.
+// before it would print after what the other task prints next.
+//
+// Only a thread that wrote to stdout since its last publish here has anything to publish: every
+// write of stdout from compiled code marks the thread first (`stdoutWritten`,
+// velt/lang/hooks/process), so a hand-off reads one thread-local `bool` and goes on when it is
+// clear. When it is set, opening a runtime latch publishes the thread's buffer
+// (`publish_before_handoff`), and opening one that is already open does nothing else: that is the
+// publish, with no extern of its own (#2196, #2649 "Output ordering"). std/imports.velt picks
+// output_wasm.velt on WebAssembly.
 //
 // These are the runtime's own latches also under `VELT_SCHEDULER=std`, whose lowering routes the
 // plain declarations to the executor's latches (which publish nothing): stdout is the runtime's
 // buffer under both executors. The `$rt` suffix is not part of the symbol.
 
-import { inline } from "velt/lang/intrinsics";
+import { inline, noInline } from "velt/lang/intrinsics";
+import { takeStdoutWritten } from "velt/lang/hooks/process";
 
 declare c("c") function velt_rt_latch_new$rt(): u64;
 
@@ -20,51 +25,57 @@ declare c("c") function velt_rt_latch_free$rt(latch: u64): void;
 
 declare c("c") function velt_rt_latch_open$rt(latch: u64): void;
 
-/** A new latch, already open: [`publishWith`] it before each hand-off; freed by [`freeOpenLatch`]. */
-export function newOpenLatch(): u64 {
-  // SAFETY: the runtime's entry takes nothing and returns a new latch handle.
-  const l = unsafe { velt_rt_latch_new$rt() };
-  publishWith(l);
-  return l;
-}
-
-/** Makes what this thread printed visible, through `latch` (from [`newOpenLatch`]). */
+/**
+ * Makes what this thread printed visible: before a change another task may see at once, ahead
+ * of the lock that makes it.
+ */
 @inline
-export function publishWith(latch: u64): void {
-  // SAFETY: `latch` is a live handle from `newOpenLatch`; nobody waits on it.
-  unsafe {
-    velt_rt_latch_open$rt(latch);
-  }
-}
-
-/** Gives back a latch from [`newOpenLatch`]. */
-export function freeOpenLatch(latch: u64): void {
-  // SAFETY: `latch` is a live handle from `newOpenLatch`, not used afterwards.
-  unsafe {
-    velt_rt_latch_free$rt(latch);
-  }
-}
-
-// The process's open latch for hand-offs that have none of their own, made on first use: a static
-// atomic (its word is in the program's data, not module state). Never freed: the runtime's
-// latches are not the leak counters' blocks.
-const LATCH = new Atomic<u64>(0);
-
-/** Makes what this thread printed visible, through the process's open latch. */
 export function publishOutput(): void {
+  if (takeStdoutWritten()) {
+    publishWritten();
+  }
+}
+
+/**
+ * Whether this thread wrote to stdout since its last publish here, clearing the mark: if so,
+ * [`publishWritten`] must follow before the hand-off is visible.
+ */
+@inline
+export function outputWritten(): bool {
+  return takeStdoutWritten();
+}
+
+/** Makes what this thread printed visible, after [`outputWritten`] said there is some. */
+@noInline
+export function publishWritten(): void {
   let l = LATCH.load("acquire");
   if (l === 0) {
     l = processLatch();
   }
-  publishWith(l);
+  // SAFETY: `l` is the process's open latch, never freed; nobody waits on it.
+  unsafe {
+    velt_rt_latch_open$rt(l);
+  }
 }
 
+// The process's open latch, made on first use: a static atomic (its word is in the program's
+// data, not module state). Never freed: the runtime's latches are not the leak counters' blocks.
+const LATCH = new Atomic<u64>(0);
+
 function processLatch(): u64 {
-  const made = newOpenLatch();
+  // SAFETY: the runtime's entry takes nothing and returns a new latch handle.
+  const made = unsafe { velt_rt_latch_new$rt() };
+  // SAFETY: `made` is live; opened once, so later opens only publish.
+  unsafe {
+    velt_rt_latch_open$rt(made);
+  }
   // Two first calls race: one latch wins, the other is given back.
   const was = LATCH.compareExchange(0, made, "acqrel");
   if (was !== 0) {
-    freeOpenLatch(made);
+    // SAFETY: `made` is live and not used afterwards.
+    unsafe {
+      velt_rt_latch_free$rt(made);
+    }
     return was;
   }
   return made;

@@ -6,9 +6,7 @@
 // handle reads live memory), a spin lock, the closed flag, the capacity (0: unbounded), the ring
 // of items (`len` of them from `head`, each `stride` bytes, a multiple of 16, growing as needed)
 // and the two lines of waiting tasks, receives waiting for an item and sends waiting for room. All
-// of it changes under the lock; `length` and `closed` read it without. Last, an open runtime latch
-// that a send, a close and a receive that frees room for a waiting send open before the change is
-// visible: what the thread printed is published first (output.velt, #249).
+// of it changes under the lock; `length` and `closed` read it without.
 //
 // A wait is a heap future (rt_abi_async.md §1) that is also the waiter's place in its line
 // (channel_wait.velt): it joins the line's back with a clone of its poll's waker, and leaves in
@@ -34,7 +32,7 @@ import {
 import { Ptr } from "velt/ffi/ptr";
 import { Backoff } from "velt/sync/backoff";
 import { wakeOwned } from "#sync-chan-word";
-import { freeOpenLatch, newOpenLatch, publishWith } from "#sync-output";
+import { publishOutput } from "#sync-output";
 
 // The block.
 const B_REFS: usize = 0;
@@ -48,9 +46,7 @@ const B_RING: usize = 48;
 const B_STRIDE: usize = 56;
 // The lines: first and last waiter, receives then sends.
 const B_LINES: usize = 64;
-// The open latch (output.velt), set once.
-const B_OUT: usize = 96;
-const BLOCK: usize = 104;
+const BLOCK: usize = 96;
 
 /** A wait for an item (or the close). */
 export const RECV: usize = 0;
@@ -138,7 +134,6 @@ export function newBlock(capacity: usize, size: usize): usize {
   st(b + B_REFS, 1);
   st(b + B_CAP, capacity);
   st(b + B_STRIDE, size <= 16 ? 16 : (size + 15) & ~(15 as usize));
-  st(b + B_OUT, newOpenLatch() as usize);
   return b;
 }
 
@@ -154,21 +149,11 @@ export function release(b: usize): void {
         rawFree(ring, ld(b + B_SLOTS) * ld(b + B_STRIDE));
       }
     }
-    freeOpenLatch(ld(b + B_OUT) as u64);
     // SAFETY: the block, freed once.
     unsafe {
       rawFree(b, BLOCK);
     }
   }
-}
-
-/**
- * Makes what this thread printed visible before a change to block `b` that another task may see
- * at once (an item, room, the close): before the lock, as the runtime's channel did.
- */
-@inline
-export function publishOutput(b: usize): void {
-  publishWith(ld(b + B_OUT) as u64);
 }
 
 /** Takes the lock of block `b`. */
@@ -325,7 +310,8 @@ function takeFirst(line: usize, c: usize): usize {
 
 /** Closes block `b` (once) and wakes every waiter: receives drain it, sends fail. */
 export function closeBlock(b: usize): void {
-  publishOutput(b);
+  // Waiters may run on other workers at once (and print): this task's lines go first (#249).
+  publishOutput();
   lock(b);
   if (load32(b + B_CLOSED) !== 0) {
     unlock(b);

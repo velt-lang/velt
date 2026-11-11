@@ -18,7 +18,7 @@ fn expect_err(p: &vir::Program, needle: &str) {
 fn verify_rejects_use_before_assign() {
     let mut p = base_program();
     let f = &mut p.funcs[0];
-    f.blocks[0].stmts.remove(2); // drop `_2 = &_1`; the call then reads an unassigned _2
+    f.blocks[1].stmts.remove(0); // drop `_2 = &_1`; the call then reads an unassigned _2
     expect_err(&p, "may be used before it is assigned");
 }
 

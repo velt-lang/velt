@@ -3,16 +3,13 @@
 // it, so there is nothing to publish (and the JS host has no C functions to publish it with).
 // std/imports.velt picks this file on `wasi` and `js`.
 
-/** No latch: 0. */
-export function newOpenLatch(): u64 {
-  return 0;
+/** Nothing to publish. */
+export function publishOutput(): void {}
+
+/** Nothing to publish: false. */
+export function outputWritten(): bool {
+  return false;
 }
 
 /** Nothing to publish. */
-export function publishWith(latch: u64): void {}
-
-/** No latch to give back. */
-export function freeOpenLatch(latch: u64): void {}
-
-/** Nothing to publish. */
-export function publishOutput(): void {}
+export function publishWritten(): void {}

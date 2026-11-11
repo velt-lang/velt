@@ -366,15 +366,22 @@ fn#0 internal _V4main() -> unit {
   bb0:
     _0 = cast static#0 as u64
     _1 = agg#0 { _0, 51539607564_u64, 0_u64 }
-    _2 = &_1
-    call extern#0 velt_rt_write_str(1_u32, _2) -> bb1
+    call fn#1 _V3stdP4langP5hooksP7processN13stdoutWritten() -> bb1
   bb1:
-    call extern#1 velt_rt_write_byte(1_u32, 10_u8) -> bb2
+    _2 = &_1
+    call extern#0 velt_rt_write_str(1_u32, _2) -> bb2
   bb2:
+    call extern#1 velt_rt_write_byte(1_u32, 10_u8) -> bb3
+  bb3:
     return ()
 }
 
-fn#1 export velt_main() -> i32 {
+fn#1 internal _V3stdP4langP5hooksP7processN13stdoutWritten() -> unit {
+  bb0:
+    return ()
+}
+
+fn#2 export velt_main() -> i32 {
   bb0:
     call fn#0 _V4main() -> bb1
   bb1:

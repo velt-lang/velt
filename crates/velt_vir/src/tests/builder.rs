@@ -75,7 +75,8 @@ impl PB {
     /// `console.log`'s number writers (velt_common `std_hooks.rs` `int_write`, `uint_write`,
     /// `number_write`), which a hand-built program has no std for: each forwards to an extern the
     /// interpreter prints with (`velt_test_write_i64`, `_u64`, `_f64`), so these tests keep printing
-    /// numbers (#2197). Tests of the hooks themselves load the real std (std_src.rs).
+    /// numbers (#2197), and its mark of a stdout write, which does nothing here. Tests of the hooks
+    /// themselves load the real std (std_src.rs).
     fn console_writers(&mut self) {
         let u8 = self.types.intern(TyKind::Int(IntTy::U8));
         let u32 = self.types.intern(TyKind::Int(IntTy::U32));
@@ -122,6 +123,9 @@ impl PB {
             ))];
             self.add_fn(f.build(body));
         }
+        // `console.log`'s mark of a stdout write (`stdout_written`): nothing to mark here.
+        let f = FB::new(velt_common::std_hook!(stdout_written), self.t.unit);
+        self.add_fn(f.build(vec![]));
     }
 
     pub fn finish(mut self) -> Program {
