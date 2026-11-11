@@ -86,8 +86,9 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     let mut resolved = 0;
-    // The types each stored generic closure literal has in its function's instantiations.
-    let mut lit_insts: FxHashMap<usize, Vec<TyId>> = FxHashMap::default();
+    // The types a stored closure literal's type has in its function's instantiations, by the
+    // function and the type.
+    let mut lit_insts: FxHashMap<(DefId, TyId), Vec<TyId>> = FxHashMap::default();
     loop {
         p.run(cx, &g);
         resolve_hits(cx, &g, &mut p, &mut resolved);
@@ -111,13 +112,21 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             // that type is in the function's instantiations (`() => number` from a getter), which
             // a `() => void` can't hold; one still generic matches anything, as before.
             let lit = g.tys[n];
-            if let std::collections::hash_map::Entry::Vacant(e) = lit_insts.entry(n) {
-                e.insert(match types::mentions_param(cx, lit) {
+            // Once per function and type: the literals of one generic function share them. A
+            // library function no call instantiates (a method reached only through an interface)
+            // gives none, and its closure's generic type matches anything, as before.
+            let key = (outermost(&g, c), lit);
+            if let std::collections::hash_map::Entry::Vacant(e) = lit_insts.entry(key) {
+                let mut insts = match types::mentions_param(cx, lit) {
                     true => instances(cx, &g, c, lit),
-                    false => vec![lit],
-                });
+                    false => vec![],
+                };
+                if insts.is_empty() {
+                    insts.push(lit);
+                }
+                e.insert(insts);
             }
-            let lits = &lit_insts[&n];
+            let lits = &lit_insts[&key];
             let lit_may_be = |t: TyId| lits.iter().any(|l| types::may_be(cx, *l, t));
             let matches = |t: TyId| match wrapped {
                 Some(inner) => {
