@@ -160,14 +160,15 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         let local = p.flags[n] & CROSSES == 0;
         finish(cx, c, local, why);
         // A standard-library function that runs it on other threads: spawns it, from the user's
-        // call (`serve`'s handler). A sync closure sent on a channel or settling a promise for
-        // another task runs there too, on a copy of what it captured, so a change it makes would be
-        // lost (#2772). One the program spawns itself runs on its own copy, as documented.
+        // call (`serve`'s handler). A sync closure sent on a channel runs on the receiving task, on
+        // a copy of what it captured, so a change it makes would be lost (#2772). One the program
+        // spawns itself runs on its own copy, as documented; a promise it settles may be awaited on
+        // its own task, where the change is kept, so settling isn't reported either.
         let sync =
             matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if !f.is_async && !f.is_generator);
         let handed = |w: &Why| {
             (w.in_library && w.boundary == Boundary::Spawn)
-                || (sync && matches!(w.boundary, Boundary::Channel | Boundary::Settle))
+                || (sync && w.boundary == Boundary::Channel)
         };
         let to_std = (p.why[n]).filter(|w| p.flags[n] & CROSSES != 0 && handed(w));
         if let (Some(w), false) = (to_std, reported.contains(&c)) {

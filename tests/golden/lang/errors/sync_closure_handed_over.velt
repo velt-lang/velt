@@ -1,9 +1,8 @@
-// A sync closure that changes what it captured, held in a value another task gets: sent on a
-// channel (a captured object's field, a captured variable) or settling a promise another task
-// awaits. The receiving task runs it on a copy of what it captured, so the change would be lost
-// where Node shares the object: an error (#2772). A closure the program spawns itself runs on its
-// own copy, as documented, and isn't reported. Each case has a class and a function type of its
-// own.
+// A sync closure that changes what it captured, held in a value sent on a channel (a captured
+// object's field, a captured variable): the receiving task runs it on a copy of what it captured,
+// so the change would be lost where Node shares the object: an error (#2772). A closure the
+// program spawns itself runs on its own copy, as documented, and one in a value settling a promise
+// isn't reported (lang/sync_closure_settled). Each case has a class and a function type of its own.
 import { channel } from "velt/sync";
 
 class Counter {
@@ -16,10 +15,6 @@ class Holder {
 
 class VarHolder {
   cb: ((by: i64) => void) | null = null;
-}
-
-class Settled {
-  cb: ((tag: string) => void) | null = null;
 }
 
 async function main() {
@@ -38,13 +33,4 @@ async function main() {
   };
   const ch2 = channel<VarHolder>();
   await ch2.send(h2);
-
-  let m = 0;
-  const h3 = new Settled();
-  h3.cb = (tag: string): void => {
-    m += tag.length;
-  };
-  const { promise, resolve } = Promise.withResolvers<Settled>();
-  resolve(h3);
-  await promise;
 }
