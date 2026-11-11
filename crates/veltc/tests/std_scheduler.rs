@@ -92,6 +92,16 @@ fn same_on_both_exiting(name: &str, src: &str, want: &str, code: i32) {
 /// task's result (an unclaimed one in the task's slot, a claimed one as the share the handle's
 /// copies hold).
 fn same_on_both_freeing_all(name: &str, src: &str, want: &str) {
+    same_on_both_freeing_all_runs(name, src, want, 1);
+}
+
+/// The counted runs of the programs whose tasks end while other threads of the executor run.
+const STRESS_RUNS: usize = 20;
+
+/// [`same_on_both_freeing_all`], the counted run repeated `runs` times with one worker (the
+/// default stall rescue on: its monitor thread naps while the program ends) and `runs` times with
+/// four workers: a block that a thread other than `main`'s holds at the end shows now and then.
+fn same_on_both_freeing_all_runs(name: &str, src: &str, want: &str, runs: usize) {
     if !std_builds_here() {
         return;
     }
@@ -101,28 +111,37 @@ fn same_on_both_freeing_all(name: &str, src: &str, want: &str) {
         "{name}_std{}",
         if cfg!(windows) { ".exe" } else { "" }
     ));
-    let o = command(&exe)
-        .env("VELT_THREADS", "1")
-        .env("VELT_RT_DEBUG_ALLOC", "1")
-        .env("VELT_RC_STATS", "1")
-        .env_remove("VELT_SCHEDULER")
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&o.stderr);
-    assert!(o.status.success(), "{name} (counted): {stderr}");
-    let Some(stats) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
-        // Only the debug runtime counts (a `--release` test run links the release one).
-        if cfg!(debug_assertions) {
-            panic!("{name}: no rc stats in:\n{stderr}");
+    let settings: &[&str] = if runs > 1 { &["1", "4"] } else { &["1"] };
+    for threads in settings {
+        for run in 0..runs {
+            let o = command(&exe)
+                .env("VELT_THREADS", threads)
+                .env("VELT_RT_DEBUG_ALLOC", "1")
+                .env("VELT_RC_STATS", "1")
+                .env_remove("VELT_SCHEDULER")
+                .env_remove("VELT_RESCUE")
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            assert!(o.status.success(), "{name} (counted): {stderr}");
+            let Some(stats) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
+                // Only the debug runtime counts (a `--release` test run links the release one).
+                if cfg!(debug_assertions) {
+                    panic!("{name}: no rc stats in:\n{stderr}");
+                }
+                return;
+            };
+            let blocks = stats
+                .split_whitespace()
+                .find_map(|w| w.strip_prefix("blocks="))
+                .and_then(|b| b.split_once('/'))
+                .unwrap_or_else(|| panic!("{name}: no block counts in {stats}"));
+            assert_eq!(
+                blocks.0, blocks.1,
+                "{name}: blocks left unfreed, {threads} worker(s), run {run} ({stats})"
+            );
         }
-        return;
-    };
-    let blocks = stats
-        .split_whitespace()
-        .find_map(|w| w.strip_prefix("blocks="))
-        .and_then(|b| b.split_once('/'))
-        .unwrap_or_else(|| panic!("{name}: no block counts in {stats}"));
-    assert_eq!(blocks.0, blocks.1, "{name}: blocks left unfreed ({stats})");
+    }
 }
 
 fn same_on_both_in(dir: &Path, name: &str, src: &str, want: &str, code: i32) {
@@ -269,7 +288,7 @@ fn a_dropped_spawn_handle_frees_its_task() {
     // The join handle of `spawn(f())` is the task's last reference once it is done: dropped at
     // once (a statement) or at the end of its block (a stored handle never awaited), the task's
     // block and the object it returned are freed.
-    same_on_both_freeing_all(
+    same_on_both_freeing_all_runs(
         "spawn_dropped",
         "class Tag {
   n: i64;
@@ -294,6 +313,7 @@ async function main() {
 }
 ",
         "done\n",
+        STRESS_RUNS,
     );
 }
 
@@ -374,7 +394,7 @@ fn a_combinator_s_spawned_losers_reject_quietly() {
     // The handles a rejected `Promise.all` leaves behind (inline: given up to the task) and the
     // losers of a `Promise.race` over a stored array are handled: their tasks reject later,
     // after the handles were dropped, without an uncaught report, and are freed.
-    same_on_both_freeing_all(
+    same_on_both_freeing_all_runs(
         "spawn_losers",
         "import { Channel, channel } from \"velt/sync\";
 
@@ -409,6 +429,7 @@ async function main() {
 }
 ",
         "all: now\nrace: 5\ndone\n",
+        STRESS_RUNS,
     );
 }
 

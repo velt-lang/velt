@@ -55,6 +55,8 @@ const R_STRIDE: usize = 16;
 const R_DATA: usize = 24;
 const R_CHANGE: usize = 32;
 const R_WORD: usize = 48;
+/** The eventfd's increment that `wake` writes (1), read only. */
+const R_ONE: usize = 56;
 const R_EVENTS: usize = 64;
 const R_SIZE: usize = 64 + 64 * 16;
 
@@ -90,6 +92,7 @@ export function open(): usize {
   const r = m.lastingZeroed(R_SIZE);
   m.st(r + R_EP, ep as usize);
   m.st(r + R_EVFD, evfd as usize);
+  m.st(r + R_ONE, 1);
   const packed = velt_rt_os_arch() === "x64";
   m.st(r + R_STRIDE, packed ? 12 : 16);
   m.st(r + R_DATA, packed ? 4 : 8);
@@ -174,13 +177,11 @@ export function bits(r: usize, i: usize): u32 {
 
 /** Wakes the worker waiting in `wait` (from any thread). */
 export function wake(r: usize): void {
-  const one = m.alloc(16);
-  m.st(one, 1);
-  // SAFETY: an 8-byte write of 1 to the eventfd.
+  // SAFETY: an 8-byte write of 1 to the eventfd, from the block (no allocation: a thread may
+  // wake a worker while the process ends).
   unsafe {
-    write$io(m.ld(r + R_EVFD) as i32, m.ptr(one), 8);
+    write$io(m.ld(r + R_EVFD) as i32, m.ptr(r + R_ONE), 8);
   }
-  m.release(one, 16);
 }
 
 /** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */
@@ -221,14 +222,14 @@ export function wordWait(word: usize, expected: u32): void {
  */
 export function wordWaitFor(word: usize, expected: u32, us: u32): void {
   const n = futexNumber();
-  const ts = m.alloc(16);
+  // The thread's own buffer: the process may end during the nap.
+  const ts = m.scratch();
   m.st(ts, (us / 1000000) as usize);
   m.st(ts + 8, ((us % 1000000) * 1000) as usize);
   // SAFETY: as `wordWait`; a relative timespec at `ts`.
   unsafe {
     syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, ts as i64, 0, 0);
   }
-  m.release(ts, 16);
 }
 
 /** Wakes one thread sleeping on the `u32` at `word`, if any. */
@@ -249,7 +250,8 @@ declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<u8>): i32;
  * worker the OS took off its core is not stalled in a poll); 0 when there is none.
  */
 export function threadClock(): u64 {
-  const a = m.zeroed(16);
+  const a = m.scratch();
+  m.st(a, 0);
   let c: u64 = 0;
   // SAFETY: `a` has room for a `clockid_t`.
   unsafe {
@@ -257,7 +259,6 @@ export function threadClock(): u64 {
       c = (m.ld32(a) as u64) | 0x100000000;
     }
   }
-  m.release(a, 16);
   return c;
 }
 
@@ -266,12 +267,13 @@ export function threadCpu(c: u64): u64 {
   if (c === 0) {
     return 0;
   }
-  const ts = m.zeroed(16);
+  // The monitor's own buffer (it reads the clock while the process may end).
+  const ts = m.scratch();
+  m.st(ts, 0);
+  m.st(ts + 8, 0);
   // SAFETY: a timespec at `ts`; the clock is a live thread's (workers run until the end).
   unsafe {
     clock_gettime$io((c & 0xffffffff) as u32 as i32, m.ptr(ts));
   }
-  const ns = (m.ld(ts) * 1000000000 + m.ld(ts + 8)) as u64;
-  m.release(ts, 16);
-  return ns;
+  return (m.ld(ts) * 1000000000 + m.ld(ts + 8)) as u64;
 }
