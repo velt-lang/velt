@@ -137,7 +137,7 @@ export function schedule(t: usize): void {
 @inline
 export function scheduleNew(w: usize, t: usize): void {
   if (w !== 0 && m.ld32(w + tk.E_SOLO) !== 0) {
-    // The only thread at the executor: no lock, its spawns counted (sched_loop.velt `interval`).
+    // The only thread at the executor: no lock, its spawns counted (sched_tick.velt `interval`).
     q.pushRest(w, t, 0);
     tk.bump(w + tk.E_RLEN, 1);
     return;
@@ -174,7 +174,7 @@ export function scheduleNew(w: usize, t: usize): void {
     q.pushRest(h, t, mode);
     q.unlock(h, mode);
     if (mode === 0) {
-      // One worker's count of tasks spawned not yet run (sched_loop.velt `interval`).
+      // One worker's count of tasks spawned not yet run (sched_tick.velt `interval`).
       tk.bump(h + tk.E_RLEN, 1);
     }
     return;

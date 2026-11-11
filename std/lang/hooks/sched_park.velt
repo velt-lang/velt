@@ -6,7 +6,6 @@ import { inline, noInline, stdUsed } from "velt/lang/intrinsics";
 import * as end from "./sched_end";
 import * as io from "./sched_io";
 import * as w from "./sched_io_write";
-import * as loop from "./sched_loop";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
 import * as order from "./sched_order";
@@ -16,6 +15,7 @@ import * as rx from "./sched_relax";
 import * as sl from "./sched_sleep";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
+import * as tick from "./sched_tick";
 import * as wk from "./sched_wake";
 
 /**
@@ -105,7 +105,7 @@ export function park(e: usize): void {
     w.flushDue(b);
   }
   m.st32(e + t.E_DISPATCH, 0);
-  loop.turned(e);
+  tick.turned(e);
   if (mode !== 0) {
     const g = m.ld(e + t.E_MAIN);
     if ((mode & t.M_SPREAD) !== 0) {

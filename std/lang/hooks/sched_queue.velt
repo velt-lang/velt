@@ -18,7 +18,7 @@
 // takes for each operation and others only try, except for the slot, which the worker fills and
 // empties with a swap (`pushNext`, `popNextOwn`); with one worker and no monitor (`E_MODE` 0),
 // none is taken, and the second queue is not counted either (`E_RLEN`: what the spread and the
-// monitor read): there it counts tasks spawned not yet run, an estimate (sched_loop.velt
+// monitor read): there it counts tasks spawned not yet run, an estimate (sched_tick.velt
 // `interval`), and a fair pass counts the queue when it starts.
 
 import { inline, noInline } from "velt/lang/intrinsics";

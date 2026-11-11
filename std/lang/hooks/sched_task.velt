@@ -266,7 +266,7 @@ export const E_NOBORROW: usize = 880;
  */
 export const E_DROPPING: usize = 888;
 /**
- * The fair pass's clock between two reads (sched_loop.velt `fairLook`): reactor turns left before
+ * The fair pass's clock between two reads (sched_tick.velt `fairLook`): reactor turns left before
  * the next read, turns since the last, and the time of the last.
  */
 export const E_FAIR_SKIP: usize = 904;
