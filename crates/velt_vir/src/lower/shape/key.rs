@@ -324,7 +324,8 @@ impl Cx<'_> {
     /// per member: a type joins a shape through the instances it is used with, and a type built
     /// from it that no instance of it reaches (`Map<B, bool>` when only `Set<A>` exists) is
     /// never one shared code runs on.
-    pub(in crate::lower) fn shapes_close(&mut self) {
+    /// Returns the next pass's `multi_hint` (`multi_pairs`).
+    pub(in crate::lower) fn shapes_close(&mut self) -> Option<FxHashSet<(String, String)>> {
         CHECKING.with(|c| c.set(true));
         let asked: Vec<(Option<crate::vir::FuncId>, TyId)> =
             self.shapes.asked.borrow().iter().copied().collect();
@@ -370,6 +371,7 @@ impl Cx<'_> {
             }
         }
         CHECKING.with(|c| c.set(false));
+        self.shapes.on.then(|| self.multi_pairs())
     }
 
     /// Does `t` mention type `p` (a placeholder)?
