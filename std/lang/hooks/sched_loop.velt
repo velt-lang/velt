@@ -173,7 +173,7 @@ function adopt(e: usize): void {
   q.recount(e);
   q.unlock(e, mode);
   m.st(e + t.E_PROGRESS, m.load(e + t.E_TICKS));
-  wk.publish(e);
+  wk.publishPrinted(e);
 }
 
 /**
@@ -229,7 +229,27 @@ function turnShared(e: usize, mode: u32): void {
   if (m.load32Relaxed(e + t.E_RELAX) !== 0 && rx.relax(e)) {
     return;
   }
-  q.lock(e, mode);
+  const again = m.ld(e + t.E_AGAIN);
+  if (again !== 0) {
+    m.st(e + t.E_AGAIN, 0);
+    if (m.load(e + t.E_INBOX) === 0 && q.ownEmpty(e)) {
+      runLocal(e, mode, again);
+      return;
+    }
+    // Something else queued meanwhile: it queues behind (what it printed was published at its
+    // poll's end, sched_run.velt `run`).
+    q.lock(e, mode);
+    q.pushRest(e, again, mode);
+  } else {
+    if (m.load(e + t.E_INBOX) === 0) {
+      const k = q.popNextOwn(e);
+      if (k !== 0) {
+        runLocal(e, mode, k);
+        return;
+      }
+    }
+    q.lock(e, mode);
+  }
   if (m.load(e + t.E_INBOX) !== 0) {
     q.takeInbox(e);
   }
@@ -249,16 +269,67 @@ function turnShared(e: usize, mode: u32): void {
 }
 
 /**
- * One word for the I/O, counting down: it reaches 0 every `IO_INTERVAL` polls of a busy worker,
- * or after this one when the poll queued bytes with `writeLater` (sched_io.velt `due` set it to 1).
+ * Polls tasks this worker takes with no lock, from task `k` on, while nothing came from another
+ * thread (its inbox) and no relax is asked: a task woken during its own poll with nothing else
+ * queued (sched_run.velt `again`: it runs again without a push and a pop), or the slot's task,
+ * when `pop` would take it (`popNextOwn`: a task woken by the task before). Each poll published
+ * what it printed at its end, as every poll with other threads at the executor (sched_run.velt
+ * `run`): other threads see this one's effects through module state, shared objects and the
+ * process's end, not only when a task moves.
+ * Ends at anything else (the locked step takes it), and on worker 0 once the root of `main` is
+ * done (its loop looks at that between steps). Each poll counts as `after`'s; no watch: neither
+ * task is fresh.
  */
 @inline
-function ioCountdown(e: usize, mode: u32): void {
+function runLocal(e: usize, mode: u32, first: usize): void {
+  const g = t.main();
+  // Worker 0's loop (sched.velt `schedBlockOn`) ends once the root of `main` is done, here or on
+  // another worker; the root stays alive while that loop runs.
+  const root = e === g ? m.ld(e + t.E_ROOT) : 0;
+  let k = first;
+  while (true) {
+    if ((mode & t.M_MONITOR) !== 0) {
+      m.st(e + t.E_PROGRESS, m.load(g + t.E_TICKS));
+    }
+    run.run(e, k, mode);
+    const own = m.ld(e + t.E_AGAIN) === k;
+    counted(e, mode);
+    const ticked = ioCountdown(e, mode);
+    if ((m.load(e + t.E_INBOX) | (m.load32Relaxed(e + t.E_RELAX) as usize)) !== 0) {
+      return;
+    }
+    if (root !== 0 && (m.load32(root + t.T_FLAGS) & t.ROOT_DONE) !== 0) {
+      return;
+    }
+    if (own) {
+      // The I/O tick may have queued tasks: then the step queues this one behind them.
+      if (ticked && !q.ownEmpty(e)) {
+        return;
+      }
+      m.st(e + t.E_AGAIN, 0);
+    } else {
+      k = q.popNextOwn(e);
+      if (k === 0) {
+        return;
+      }
+    }
+  }
+}
+
+/**
+ * One word for the I/O, counting down: it reaches 0 every `IO_INTERVAL` polls of a busy worker,
+ * or after this one when the poll queued bytes with `writeLater` (sched_io.velt `due` set it to 1).
+ * Whether it reached 0 (the I/O ran).
+ */
+@inline
+function ioCountdown(e: usize, mode: u32): bool {
   const n = m.ld(e + t.E_TICK) - 1;
   m.st(e + t.E_TICK, n);
   if (n === 0) {
     ioDue(e, mode);
+    return true;
   }
+  return false;
 }
 
 /** The I/O tick reached 0: the polls until the next (`interval`), then the I/O. */
@@ -320,14 +391,20 @@ function before(e: usize, k: usize): bool {
 }
 
 /**
- * After a poll, with other threads at the executor: the watch ends; every `HELP` polls, the
- * spread. (What the poll printed was published before its end: sched_wake.velt `publishPolled`.)
+ * After a poll, with other threads at the executor: the watch ends; the poll is counted.
+ * (What the poll printed was published before its end: sched_wake.velt `publishPolled`.)
  */
 @noInline
 function after(e: usize, mode: u32, watched: bool): void {
   if (watched) {
     m.swap(e + t.E_WATCH, 0);
   }
+  counted(e, mode);
+}
+
+/** A poll of worker `e` counted (`E_POLLS`); every `HELP` polls, the spread. */
+@inline
+function counted(e: usize, mode: u32): void {
   m.st(e + t.E_POLLS, m.ld(e + t.E_POLLS) + 1);
   if ((mode & t.M_SPREAD) !== 0) {
     const left = m.ld(e + t.E_HELP) - 1;

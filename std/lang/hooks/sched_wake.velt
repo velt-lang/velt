@@ -104,10 +104,12 @@ export function schedule(t: usize): void {
       pend(w, t, d);
       return;
     }
-    q.lock(w, mode);
     if (d === 0 && mode !== 0) {
-      q.pushNext(w, t);
-    } else if (d === tk.D_INPUT) {
+      q.pushNext(w, t, mode);
+      return;
+    }
+    q.lock(w, mode);
+    if (d === tk.D_INPUT) {
       q.pushIo(w, t);
     } else {
       q.pushRest(w, t, mode);
@@ -122,10 +124,7 @@ export function schedule(t: usize): void {
     tk.movable(t) &&
     m.ld(tk.main() + tk.E_STAY) === 0
   ) {
-    const mode = m.load32Relaxed(w + tk.E_MODE);
-    q.lock(w, mode);
-    q.pushNext(w, t);
-    q.unlock(w, mode);
+    q.pushNext(w, t, m.load32Relaxed(w + tk.E_MODE));
     return;
   }
   toInbox(h, t);
@@ -169,7 +168,7 @@ export function scheduleNew(w: usize, t: usize): void {
     }
     if (mode !== 0) {
       // A fresh task may start on another worker at once: what this thread printed first.
-      publish(h);
+      publishPrinted(h);
     }
     q.lock(h, mode);
     q.pushRest(h, t, mode);
@@ -208,7 +207,7 @@ function pendStacked(w: usize, t: usize, n: usize): void {
   if (n === 0) {
     // The first task this poll spawns may start on a spare (the monitor's rescue): what this
     // thread printed first (the runtime publishes at each spawn; here at each poll's first).
-    publish(w);
+    publishPrinted(w);
   }
   pendOn(w, t, tk.E_PREST);
 }
@@ -234,7 +233,7 @@ export function push(e: usize, t: usize): void {
 export function toInbox(h: usize, t: usize): void {
   const w = tk.here();
   if (w !== 0) {
-    publish(w);
+    publishPrinted(w);
   }
   m.pushStack(h + tk.E_INBOX, t, tk.T_NEXT);
   unpark(h);
@@ -265,6 +264,21 @@ export function publish(w: usize): void {
  */
 @inline
 export function publishPolled(w: usize): void {
+  publishPrinted(w);
+}
+
+/**
+ * `publish` at the points where work this thread made may run on another worker next: after a
+ * poll whose task may resume elsewhere (sched_loop.velt `after`), a spawn, a wake sent to
+ * another worker's inbox. Each goes through the runtime (a call, a check of its thread's
+ * buffer and a swap on the latch).
+ *
+ * Hook point (#2786, for #2780): once every stdout write sets this thread's stdout mark
+ * (#2780's `stdoutWritten` hook, lowered before each `console.log`, which sets `STDOUT_WRITTEN` in
+ * process.velt), this tests the mark and publishes, clearing it, only when it is set.
+ */
+@inline
+export function publishPrinted(w: usize): void {
   publish(w);
 }
 

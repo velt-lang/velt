@@ -16,9 +16,11 @@ import * as wk from "./sched_wake";
 export function mainDone(e: usize, k: usize): void {
   const g = m.ld(e + t.E_MAIN);
   if (e !== g) {
-    // The root ran on another worker (the monitor moved it): what it printed reaches the OS
-    // before worker 0 can see it done and end the process (stdout is buffered per thread).
-    wk.handOffOutput();
+    // The root ran on another worker (the monitor moved it): what it printed is published before
+    // worker 0 can see it done and end the process, which writes out what was published (stdout
+    // is buffered per thread; a publish takes the runtime's output lock only when this thread
+    // buffered anything).
+    wk.publishPrinted(e);
   }
   // Worker 0 reads the flags from its loop (sched_task.velt `rootLeft`): counted live before it
   // can see the root done, and both flags at once (an atomic or, ordered after the count).
