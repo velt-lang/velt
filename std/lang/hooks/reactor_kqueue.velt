@@ -304,14 +304,12 @@ export function threadCpu(c: u64): u64 {
     m.st(info + i, 0);
   }
   m.st32(info + 40, THREAD_BASIC_INFO_COUNT);
+  const port = (c & 0xffffffff) as u32;
+  let rc: i32 = 0;
   // SAFETY: `info` has room for a `thread_basic_info` and its count after it.
-  const rc =
-    unsafe { thread_info(
-      (c & 0xffffffff) as u32,
-      THREAD_BASIC_INFO,
-      m.ptr(info),
-      m.ptr(info + 40),
-    ) };
+  unsafe {
+    rc = thread_info(port, THREAD_BASIC_INFO, m.ptr(info), m.ptr(info + 40));
+  }
   let ns: u64 = 0;
   if (rc === 0) {
     const secs = (m.ld32(info) + m.ld32(info + 8)) as u64;
