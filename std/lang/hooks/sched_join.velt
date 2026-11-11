@@ -13,6 +13,9 @@ import * as nc from "./sched_node_catch";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
+declare function velt_rt_flush(): void;
+declare function velt_rt_exit(code: i32): never;
+
 /** `rootDone`'s join slot of task `k` while other threads may reach it (or count operations). */
 @noInline
 export function joinDone(e: usize, k: usize): void {
@@ -95,11 +98,20 @@ function joinPollAs(f: usize, cx: usize, kind: u32): u32 {
   const s = mk.lockJoin(k, kind);
   if ((s & t.J_DONE) !== 0) {
     if ((s & nc.J_PANICKED) !== 0) {
-      // Called through the header read before the root panicked: the next poll calls
-      // `joinPanicked`, which raises the panic.
-      mk.unlockJoin(k, s, kind);
-      m.wakeByRef(m.ld(cx + 8));
-      return 0;
+      // Called through the header read before the root panicked. A joiner that read it just
+      // before the switch polls again through the new one, `joinPanicked`, which raises the
+      // panic: woken once for that. A caller that calls this poll again anyway kept it (the
+      // runtime's shared-promise hub, velt_rt task/shared.rs, calls the poll it found when the
+      // promise was shared): answering pending again would spin for ever, and this `@export`
+      // frame can't unwind to a catch, so the panic ends the process as an uncaught one does
+      // (its message was printed when it panicked).
+      if ((s & nc.J_STALE) === 0) {
+        mk.unlockJoin(k, s | nc.J_STALE, kind);
+        m.wakeByRef(m.ld(cx + 8));
+        return 0;
+      }
+      mk.unlockJoin(k, s | t.J_CLAIMED, kind);
+      uncaught();
     }
     mk.unlockJoin(k, s | t.J_CLAIMED, kind);
     return 1;
@@ -139,6 +151,13 @@ export function rootPanicked(e: usize, k: usize, x: usize): void {
     m.wakeOwned(joiner);
     m.st32(e + t.E_DISPATCH, 0);
   }
+}
+
+/** Ends the process as an uncaught panic whose message was printed already. */
+@noInline
+function uncaught(): never {
+  velt_rt_flush();
+  velt_rt_exit(101);
 }
 
 /**

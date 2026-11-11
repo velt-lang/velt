@@ -35,6 +35,11 @@ export const E_CATCH_AGAIN: usize = 872;
 export const T_CATCHES: u32 = 16384;
 export const T_PANICKED: u32 = 32768;
 export const J_PANICKED: u32 = 16;
+/**
+ * The join word: a poll through the header read before the panic (`joinPoll`) was answered once
+ * with a wake to poll again (sched_join.velt `joinPollAs`).
+ */
+export const J_STALE: u32 = 32;
 
 /** Task `k`, spawned now on worker `e`, catches when a catching poll runs there. */
 export function spawned(e: usize, k: usize): void {

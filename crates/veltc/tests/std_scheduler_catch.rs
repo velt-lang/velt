@@ -356,6 +356,123 @@ async function main() {
     );
 }
 
+/// Programs whose panicked promise or task is reached through the runtime's shared-promise hub
+/// (velt_rt task/shared.rs: a promise read where it stays, `kept[0]`, or awaited at two places),
+/// and what the default executor prints for each: its exit code and stdout.
+const SHARED: &[(&str, &str, i32, &str)] = &[
+    (
+        // A task that panicked under a catch, joined from an array outside any: the hub kept the
+        // join's poll from before the panic. It spun at 100% CPU; now it ends as uncaught.
+        "shared_join_outside",
+        r#"import { catchPanic, workerCount } from "velt/task";
+async function bad(): Promise<i64> { await yieldNow(); panic("task boom"); return 1; }
+let hs: Promise<i64>[] = [];
+async function body(): Promise<string> { hs.push(spawn(bad(), { worker: workerCount() - 1 })); return "body"; }
+async function main() {
+  console.log(await catchPanic(() => body()));
+  console.log("joining outside");
+  console.log(await hs[0]);
+  console.log("not printed");
+}
+"#,
+        101,
+        "body\njoining outside\n",
+    ),
+    (
+        // A panicked promise awaited again in another catch: the raise unwound through the hub,
+        // which kept the unwound waiter as its driver, so the next await waited for ever and the
+        // program ended with 0 after "1 boom".
+        "shared_awaited_again",
+        r#"import { catchPanic } from "velt/task";
+async function bad(): Promise<i64> { await yieldNow(); panic("boom"); return 0; }
+let kept: Promise<i64>[] = [];
+async function body(): Promise<string> { const b = bad(); kept.push(b); const r = await b; return "body"; }
+async function again(): Promise<i64> { return await kept[0]; }
+async function main() {
+  try { console.log(await catchPanic(() => body())); } catch (e) { console.log("1", (e as Error).message.split(" at ")[0]); }
+  try { console.log(await catchPanic(() => again())); } catch (e) { console.log("2", (e as Error).message.split(" at ")[0]); }
+  console.log("end");
+}
+"#,
+        0,
+        "1 boom\n2 boom\nend\n",
+    ),
+    (
+        // The same through `Promise.all` over a promise also kept in an array.
+        "shared_all_again",
+        r#"import { catchPanic } from "velt/task";
+async function bad(): Promise<i64> { await yieldNow(); panic("boom"); return 0; }
+async function good(): Promise<i64> { await yieldNow(); return 1; }
+let kept: Promise<i64>[] = [];
+async function body(): Promise<string> {
+  const a = good();
+  const b = bad();
+  kept.push(b);
+  const all = await Promise.all([a, b]);
+  return `body ${all.length}`;
+}
+async function again(): Promise<i64> { return await kept[0]; }
+async function main() {
+  try { console.log(await catchPanic(() => body())); } catch (e) { console.log("1", (e as Error).message.split(" at ")[0]); }
+  try { console.log(await catchPanic(() => again())); } catch (e) { console.log("2", (e as Error).message.split(" at ")[0]); }
+  console.log("end");
+}
+"#,
+        0,
+        "1 boom\n2 boom\nend\n",
+    ),
+];
+
+#[test]
+fn a_panicked_promise_or_task_through_a_shared_promise_ends_or_raises_as_with_the_runtime() {
+    if !catches_here() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    for (name, src, want_code, want_out) in SHARED {
+        let file = dir.path().join(format!("{name}.velt"));
+        std::fs::write(&file, src).unwrap();
+        let exe = exe_name(dir.path(), name);
+        build_std(&file, &exe);
+        for threads in ["1", "4"] {
+            // A hang guard: the busy hang this tests for would otherwise hold the test for ever.
+            let mut c = command(&exe);
+            c.current_dir(dir.path())
+                .env("VELT_THREADS", threads)
+                .env_remove("VELT_SCHEDULER")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            let child = c.spawn().unwrap();
+            let id = child.id();
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let flag = done.clone();
+            let guard = std::thread::spawn(move || {
+                let start = std::time::Instant::now();
+                while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    // timing: a hang guard, not an order: a run that ends in time is the result.
+                    if start.elapsed() > std::time::Duration::from_secs(20) {
+                        let _ = command("kill").arg("-9").arg(id.to_string()).status();
+                        return;
+                    }
+                    // timing: polls for the end the guard above bounds.
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+            });
+            let o = child.wait_with_output().unwrap();
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
+            guard.join().unwrap();
+            let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+            let err = String::from_utf8_lossy(&o.stderr);
+            assert_eq!(
+                (o.status.code().unwrap_or(-1), out.as_str()),
+                (*want_code, *want_out),
+                "{name} at {threads} workers; stderr: {err}"
+            );
+        }
+    }
+}
+
 #[test]
 fn only_a_program_that_catches_has_the_catch() {
     if !catches_here() {

@@ -391,6 +391,19 @@ variant of `#task-catch`, whose default variant std/task/catch_rt.velt calls `ve
   process goes on. This differs from the runtime's executor, where a panic in a spawned task
   ends the process: under the runtime the task's poll is a Rust frame no catch reaches, while
   here the task runs on the same executor, and an HTTP handler that spawns work keeps serving.
+- **Shared promises** (a promise read where it stays, `kept[0]`, or awaited at two places) still
+  go through the runtime's hub (velt_rt task/shared.rs), whose first waiter drives the promise
+  with the poll it found when the promise was shared. Two rules keep a panic from getting stuck
+  there. A raise that unwinds through the hub's frame drops the driver's place at the head of
+  the waiters (`DriverGone`), so the next await drives and is raised the panic in turn. And a
+  task's join that the hub polls through the header from before the panic (`joinPoll`) is woken
+  once to poll again (a joiner that read the header just before the switch then gets
+  `joinPanicked`); a second such poll ends the process with 101, as an uncaught panic, since
+  that `@export` frame can't unwind to a catch. That leaves one gap: a task that panicked after
+  its join was shared, joined through one of the runtime's shared-promise paths (the hub, and
+  `Promise.race`, which also polls through the runtime) inside another `catchPanic`, ends the
+  process with 101 instead of being caught. Moving shared promises and the combinators into std
+  closes it.
 - **Where generated code doesn't catch** (`velt_eh_catches() == 0`: Windows until its
   structured exceptions are built, the `velt dev` JIT until its tables are registered),
   `catchPanicRaw` calls the poll plainly and a panic under `catchPanic` ends the process with
