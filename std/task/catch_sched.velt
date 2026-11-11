@@ -1,0 +1,121 @@
+// velt/task (internal): `catchPanic`'s catch (std/task/panic.velt) under the executor in Velt
+// (`VELT_SCHEDULER=std`, the `std-scheduler` variant of `#task-catch`;
+// docs/internals/design/unwinding.md "The executor in Velt"). No runtime catch: generated code
+// catches Velt's exception with `catchUnwind`.
+//
+// - `arm` raises the low bit of this worker's `E_CATCHING`; the next promise started takes it and
+//   catches (`E_GUARDED` gets it), and so does every promise started, and every task spawned,
+//   while a catching poll runs (sched_node.velt `start`, sched.velt `schedSpawn`).
+// - The executor polls only those through `caughtPoll` (its address at worker 0's
+//   `E_CATCH_POLL`): a panic there makes the promise (the task's root) panicked, its exception
+//   (the message) kept; whoever awaits it (joins it) gets the panic raised again (`again`, at
+//   `E_CATCH_AGAIN`), so a panic travels through `await`s as through calls until a catching poll
+//   takes it, or ends the process (exit 101) where none runs.
+// - `settled` waits for the guarded promise without claiming its result.
+//
+// Where generated code doesn't catch (`canCatchPanics()` false: Windows until its structured
+// exceptions are built, the `velt dev` JIT; WebAssembly never runs this executor), `caughtPoll`
+// is a plain poll and a panic ends the process as an uncaught one does.
+
+import { fnAddress, promiseAt, statePoll } from "velt/lang/intrinsics";
+import { panicText, raiseAgain } from "velt/lang/hooks/unwind";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as node from "velt/lang/hooks/sched_node";
+import * as nc from "velt/lang/hooks/sched_node_catch";
+import * as t from "velt/lang/hooks/sched_task";
+import { catchPanicRaw } from "./unwind";
+
+/** The next promise started on this worker catches panics. */
+export function arm(): void {
+  const g = t.main();
+  if (m.ld(g + nc.E_CATCH_POLL) === 0) {
+    m.st(g + nc.E_CATCH_AGAIN, fnAddress(again));
+    m.st(g + nc.E_CATCH_POLL, fnAddress(caughtPoll));
+  }
+  const e = t.exec();
+  m.st(e + nc.E_CATCHING, m.ld(e + nc.E_CATCHING) | 1);
+  m.st(e + nc.E_GUARDED, 0);
+}
+
+/** The promise that took the arming, as a handle (0: none did); disarms. */
+export function take(): u64 {
+  const e = t.exec();
+  m.st(e + nc.E_CATCHING, m.ld(e + nc.E_CATCHING) & ~1);
+  const f = m.ld(e + nc.E_GUARDED);
+  m.st(e + nc.E_GUARDED, 0);
+  return f as u64;
+}
+
+/** Waits until promise `h` finished, without claiming its result: true when it panicked. */
+export function settled(h: u64): Promise<bool> {
+  const f = m.alloc(32);
+  m.st(f, fnAddress(settledPoll));
+  m.st(f + 8, fnAddress(settledDrop));
+  m.st(f + 16, 0);
+  m.st(f + 24, h as usize);
+  // SAFETY: `f` is a heap future of this layout, given up to the promise.
+  return unsafe { promiseAt<bool>(f) };
+}
+
+/** The panic message of promise `h` (it panicked). */
+export function message(h: u64): string {
+  // SAFETY: the exception of a panicked promise, kept for as long as the node lives (always).
+  return unsafe { panicText(nc.panicOf(h as usize)) };
+}
+
+/** Releases handle `h`. */
+export function free(h: u64): void {
+  if (h !== 0) {
+    nc.releasePromise(h as usize);
+  }
+}
+
+/** `settled`'s poll: its result (a `bool`) at +16, the promise at +24. */
+function settledPoll(f: usize, cx: usize): u32 {
+  const p = m.ld(f + 24);
+  if (node.nodeSettled(p, cx) === 0) {
+    return 0;
+  }
+  m.st(f + 16, nc.isPanicked(p) ? 1 : 0);
+  return 1;
+}
+
+function settledDrop(f: usize): void {
+  m.release(f, 32);
+}
+
+/**
+ * The executor's catching poll: polls the state at `a + 8` with its poll at `a` and `cx`
+ * through `catchUnwind`; 0 pending, 1 ready, 2 panicked with the exception stored at `a + 16`.
+ * What the poll left on this worker (the catching depth, an adoption under way) is restored then.
+ */
+function caughtPoll(a: usize, cx: usize): u32 {
+  const poll = m.ld(a);
+  const state = m.ld(a + 8);
+  const e = t.exec();
+  const catching = m.ld(e + nc.E_CATCHING);
+  const adopting = m.ld(e + t.E_ADOPTING);
+  m.st(e + nc.E_CATCHING, catching + 2);
+  let r: u32 = 0;
+  let x: usize = 0;
+  // SAFETY: the exception object is kept by the panicked promise, never freed (its message).
+  unsafe {
+    x = catchPanicRaw(() => {
+      // SAFETY: the caller's arguments: a state, its poll, and the context of its task.
+      r = unsafe { statePoll(poll, state, cx) };
+    });
+  }
+  m.st(e + nc.E_CATCHING, catching);
+  if (x !== 0) {
+    m.st(e + t.E_ADOPTING, adopting);
+    m.st(e + nc.E_CATCH_ARGS + 16, x);
+    return 2;
+  }
+  return r;
+}
+
+/** The panic held by exception `x`, raised again where a panicked promise is awaited. */
+function again(x: usize, unused: usize): u32 {
+  // SAFETY: the exception of a panicked promise or task, never freed.
+  raiseAgain(unsafe { panicText(x) });
+}

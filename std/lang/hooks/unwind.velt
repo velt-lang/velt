@@ -10,7 +10,7 @@
 
 import { abortProcess, raise } from "#unwind-raise";
 
-export { takePanic } from "#unwind-raise";
+export { panicText, takePanic } from "#unwind-raise";
 
 declare function velt_rt_panic(msg: string): never;
 declare function velt_rt_exit(code: i32): never;
@@ -57,6 +57,20 @@ export function panicRaise(msg: string): never {
     velt_rt_exit(101);
   }
   velt_rt_panic(msg);
+}
+
+/**
+ * A panic that was caught already (its message printed then), raised again where its result was
+ * awaited (the executor in Velt's panicked promise, std/task/catch_sched.velt): with a catch
+ * running on this thread it raises Velt's exception; otherwise it ends the process as an uncaught
+ * panic does, without printing the message a second time.
+ */
+export function raiseAgain(msg: string): never {
+  if (CATCHING.get() != 0) {
+    raise(msg);
+  }
+  velt_rt_flush();
+  velt_rt_exit(101);
 }
 
 /**

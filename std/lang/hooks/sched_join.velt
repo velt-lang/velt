@@ -1,13 +1,15 @@
 // velt/lang/hooks (internal): a spawned task's join handle in the executor in Velt (sched.velt,
 // #2649): its poll and drop (a heap future's header in the task's block, `T_JOIN`, which C calls
 // on any thread), its slot's lock (sched_make.velt `lockJoin`), and the end of the slot when the
-// task's root is done (sched_run.velt `rootDone`).
+// task's root is done (sched_run.velt `rootDone`) or panicked under a catch (`rootPanicked`,
+// sched_node_catch.velt).
 
 import { export as cExport } from "velt/ffi";
-import { exportedAddress, inline, noInline, stateDrop } from "velt/lang/intrinsics";
+import { exportedAddress, fnAddress, inline, noInline, stateDrop } from "velt/lang/intrinsics";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as mk from "./sched_make";
+import * as nc from "./sched_node_catch";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
@@ -35,7 +37,7 @@ export function joinDone(e: usize, k: usize): void {
 /** Drops task `k`'s result in its slot, which nobody claimed. */
 export function dropResult(k: usize): void {
   const rdrop = m.ld(k + t.T_RESULT_DROP);
-  if (rdrop !== 0) {
+  if (rdrop !== 0 && (m.load32(k + t.T_JOIN_STATE) & nc.J_PANICKED) === 0) {
     // SAFETY: the slot holds the result, which `rdrop` is the drop glue of.
     unsafe {
       stateDrop(rdrop, k + t.T_SLOT);
@@ -74,7 +76,10 @@ export function joinDropSolo(f: usize): void {
 export function isJoin(f: usize): bool {
   const poll = m.ld(f);
   // SAFETY: `@export`ed functions (only their addresses are read).
-  return unsafe { poll === exportedAddress(joinPoll) || poll === exportedAddress(joinPollSolo) };
+  if (unsafe { poll === exportedAddress(joinPoll) || poll === exportedAddress(joinPollSolo) }) {
+    return true;
+  }
+  return poll === fnAddress(joinPanicked);
 }
 
 /** `joinPoll` while other threads may reach the slot (or a lazy worker 0 counts its operation). */
@@ -89,6 +94,13 @@ function joinPollAs(f: usize, cx: usize, kind: u32): u32 {
   const k = f - t.T_JOIN;
   const s = mk.lockJoin(k, kind);
   if ((s & t.J_DONE) !== 0) {
+    if ((s & nc.J_PANICKED) !== 0) {
+      // Called through the header read before the root panicked: the next poll calls
+      // `joinPanicked`, which raises the panic.
+      mk.unlockJoin(k, s, kind);
+      m.wakeByRef(m.ld(cx + 8));
+      return 0;
+    }
     mk.unlockJoin(k, s | t.J_CLAIMED, kind);
     return 1;
   }
@@ -99,6 +111,47 @@ function joinPollAs(f: usize, cx: usize, kind: u32): u32 {
     m.wakerDrop(old);
   }
   return 0;
+}
+
+/**
+ * Task `k`'s root panicked with exception `x` (the message) under a catch (sched_run.velt
+ * `pollRootCaught`): done with no result (nothing transferred, copied or dropped: the join word's
+ * `J_PANICKED` says so), its state abandoned (the task is never freed: a leaf in it may still wake
+ * it), `x` kept for a join, which raises the panic again; with nobody joining it, the panic ends
+ * there. The same on a solo worker (`joinPollSolo`'s tasks) as with other threads.
+ */
+@noInline
+export function rootPanicked(e: usize, k: usize, x: usize): void {
+  m.st(k + t.T_POLL, x);
+  m.inc(k + t.T_REFS);
+  t.flags(k, t.ROOT_DONE | nc.T_PANICKED, 0);
+  const kind = lk.kind();
+  const s = mk.lockJoin(k, kind);
+  // The join raises the panic from a poll that may unwind: `joinPoll` and `joinPollSolo` are C's
+  // (`@export`), whose frames end any unwinding (rt_abi.md), so the handle's header gets
+  // `joinPanicked`.
+  m.st(k + t.T_JOIN, fnAddress(joinPanicked));
+  const joiner = m.ld(k + t.T_JOINER);
+  m.st(k + t.T_JOINER, 0);
+  mk.unlockJoin(k, s | t.J_DONE | nc.J_PANICKED, kind);
+  if (joiner !== 0) {
+    m.st32(e + t.E_DISPATCH, t.D_OUTPUT);
+    m.wakeOwned(joiner);
+    m.st32(e + t.E_DISPATCH, 0);
+  }
+}
+
+/**
+ * The poll of a join handle whose task's root panicked (`rootPanicked`): the panic, raised again
+ * in the task joining it; never returns.
+ */
+export function joinPanicked(f: usize, cx: usize): u32 {
+  const k = f - t.T_JOIN;
+  const kind = lk.kind();
+  const s = mk.lockJoin(k, kind);
+  mk.unlockJoin(k, s | t.J_CLAIMED, kind);
+  nc.again(m.ld(k + t.T_POLL));
+  return 1;
 }
 
 /** A join handle's drop (on any thread): detaches the task; drops a result it never claimed. */

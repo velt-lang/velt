@@ -33,6 +33,7 @@ import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as mod from "./sched_module";
 import * as node from "./sched_node";
+import * as nc from "./sched_node_catch";
 import * as off from "./sched_off";
 import * as order from "./sched_order";
 import * as run from "./sched_run";
@@ -163,6 +164,7 @@ export function schedSpawn(
   m.st(k + t.T_TRANSFER, transfer);
   m.copy(m.ld(k + t.T_ROOT), state, size as usize);
   m.st(k + t.T_JOIN_STATE, t.J_HANDLE as usize);
+  nc.spawned(e, k);
   mk.home(e, k);
   mk.liveUp(m.ld(e + t.E_MAIN), e);
   wk.scheduleNew(w, k);
@@ -189,6 +191,7 @@ export function schedSpawnFut(f: usize, rsize: u64, rdrop: usize): usize {
   m.st(k + t.T_ROOT, at + 16);
   m.st(k + t.T_JOIN_STATE, t.J_HANDLE as usize);
   m.st(k + t.T_TRANSFER, 0);
+  nc.spawned(e, k);
   mk.home(e, k);
   mk.liveUp(m.ld(e + t.E_MAIN), e);
   wk.scheduleNew(w, k);
@@ -262,7 +265,8 @@ export function schedStart(f: usize, rdrop: usize, rejecting: bool): void {
     off.start(f, rdrop, rejecting);
     return;
   }
-  node.start(m.ld(e + t.E_CURRENT), f, rdrop, rejecting, fnAddress(node.nodePoll));
+  const c = m.ld(e + nc.E_CATCHING);
+  node.start(m.ld(e + t.E_CURRENT), f, rdrop, rejecting, fnAddress(node.nodePoll), c);
 }
 
 /**
@@ -285,7 +289,8 @@ export function schedDetach(f: usize, qdrop: usize): void {
     }
     return;
   }
-  node.start(m.ld(e + t.E_CURRENT), f, qdrop, false, fnAddress(node.nodePoll));
+  const c = m.ld(e + nc.E_CATCHING) & ~1;
+  node.start(m.ld(e + t.E_CURRENT), f, qdrop, false, fnAddress(node.nodePoll), c);
   node.nodeDrop(f);
 }
 

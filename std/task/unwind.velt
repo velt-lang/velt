@@ -32,20 +32,33 @@ export function canCatchPanics(): bool {
  * `velt dev` JIT), `f` is called plainly and a panic in it ends the process as any other does.
  */
 export function catchVeltPanic(f: () => void): string | null {
-  if (!enterCatch()) {
-    f();
-    return null;
-  }
   // SAFETY: the exception object is taken once, below.
-  const e = unsafe { catchUnwind(f) };
-  leaveCatch();
+  const e = unsafe { catchPanicRaw(f) };
   if (e == 0) {
     return null;
   }
-  caughtPanic();
-  caught();
-  // SAFETY: `e` is the exception `catchUnwind` returned, taken here once.
+  // SAFETY: `e` is the exception `catchPanicRaw` returned, taken here once.
   return unsafe { takePanic(e) };
+}
+
+/**
+ * `catchVeltPanic`, with the exception object itself in place of the message: 0 when `f`
+ * returned. Unsafe: the caller owns the object (`panicText` reads its message, `takePanic` reads
+ * and frees it).
+ */
+export unsafe function catchPanicRaw(f: () => void): usize {
+  if (!enterCatch()) {
+    f();
+    return 0;
+  }
+  // SAFETY: the exception object goes to the caller, who owns it.
+  const e = unsafe { catchUnwind(f) };
+  leaveCatch();
+  if (e != 0) {
+    caughtPanic();
+    caught();
+  }
+  return e;
 }
 
 /**

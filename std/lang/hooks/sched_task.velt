@@ -242,10 +242,12 @@ export const E_CALM: usize = 792;
 export const E_SOLO: usize = 800;
 /**
  * The join handle's poll and drop (a heap future's header) of the tasks made on this worker:
- * without the slot's lock on a solo worker (sched_run.velt `joinPollSolo`), else `joinPoll`.
+ * without the slot's lock on a solo worker (sched_join.velt `joinPollSolo`), else `joinPoll`.
  */
 export const E_JOIN_VT: usize = 808;
-export const E_SIZE: usize = 824;
+/** Catching panics: 56 bytes of words, laid out in sched_node_catch.velt. */
+export const E_CATCH: usize = 824;
+export const E_SIZE: usize = 880;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */
@@ -329,7 +331,7 @@ export const TOUCHED: u32 = 2048;
 /**
  * Anchored to its home worker: it made a sleep, a Node timer or a wait with a deadline, which
  * live in that worker's timer block or I/O block and touch the task from there; it runs only on
- * its home and never moves.
+ * its home and never moves. (16384 and 32768: sched_node_catch.velt's.)
  */
 export const ANCHORED: u32 = 4096;
 

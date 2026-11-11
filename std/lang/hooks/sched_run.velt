@@ -11,6 +11,7 @@ import * as mk from "./sched_make";
 import * as micro from "./sched_micro";
 import * as mod from "./sched_module";
 import * as node from "./sched_node";
+import * as nc from "./sched_node_catch";
 import * as order from "./sched_order";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
@@ -38,8 +39,9 @@ export function run(e: usize, k: usize, mode: u32): void {
   if (mode !== 0 && mode !== t.M_LAZY && (fl & t.STARTED) === 0) {
     m.st32(k + t.T_FLAGS, fl | t.STARTED);
   }
-  // One test on the straight path: the root polled, nothing else.
-  if ((fl & (t.LOCALS | t.ROOT_DONE | t.TOUCHED)) === 0) {
+  // One test on the straight path: the root polled, nothing else (a task whose root catches
+  // panics, sched_node_catch.velt `T_CATCHES`, polls it in `runOther`).
+  if ((fl & (t.LOCALS | t.ROOT_DONE | t.TOUCHED | nc.T_CATCHES)) === 0) {
     pollRunning(e, k);
   } else {
     runOther(e, k, fl);
@@ -72,7 +74,7 @@ export function run(e: usize, k: usize, mode: u32): void {
 /**
  * `run`'s poll of task `k` (flags `fl`) off the straight path: a task touching the program's
  * module state takes its lock first; then its woken promises and sleeps, or its root unless it is
- * done.
+ * done (through the catch when it catches).
  */
 @noInline
 function runOther(e: usize, k: usize, fl: u32): void {
@@ -81,8 +83,10 @@ function runOther(e: usize, k: usize, fl: u32): void {
   }
   if ((fl & t.LOCALS) !== 0) {
     runWoken(e, k, fl);
+  } else if ((fl & (t.ROOT_DONE | nc.T_CATCHES)) === 0) {
+    pollRunning(e, k);
   } else if ((fl & t.ROOT_DONE) === 0) {
-    pollRoot(e, k);
+    pollRootCaught(e, k);
   }
 }
 
@@ -195,13 +199,31 @@ function requeue(e: usize, k: usize, mode: u32): void {
   }
 }
 
-/** Polls task `k`'s root, unless it is done. */
+/** Polls task `k`'s root, unless it is done; through the catch when it catches. */
 @inline
 function pollRoot(e: usize, k: usize): void {
-  if (t.has(k, t.ROOT_DONE)) {
+  if ((m.ld32(k + t.T_FLAGS) & (t.ROOT_DONE | nc.T_CATCHES)) !== 0) {
+    if (!t.has(k, t.ROOT_DONE)) {
+      pollRootCaught(e, k);
+    }
     return;
   }
   pollRunning(e, k);
+}
+
+/**
+ * Polls the root of task `k`, spawned while a catching poll ran, through the catch
+ * (std/task/catch_sched.velt `caughtPoll`, at worker 0's `E_CATCH_POLL`). A panic makes the root
+ * done with no result (sched_join.velt `rootPanicked`).
+ */
+@noInline
+function pollRootCaught(e: usize, k: usize): void {
+  const r = nc.caughtPoll(e, m.ld(k + t.T_POLL), m.ld(k + t.T_ROOT), k + t.T_CX);
+  if (r === 1) {
+    rootDone(e, k);
+  } else if (r === 2) {
+    jn.rootPanicked(e, k, nc.caughtPanic(e));
+  }
 }
 
 /** Polls the root of task `k`, not done. */
