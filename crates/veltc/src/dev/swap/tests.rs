@@ -238,6 +238,7 @@ fn a_version_that_failed_after_lowering_is_not_the_baseline() {
     let mut carried = super::Carried {
         seed: sess.counted_seed.take(),
         own: None,
+        kept: None,
     };
     let failed = host_reload(
         &mut session,
@@ -308,4 +309,28 @@ console.log(s.area() + a.speak());
         }
         assert!(has(&dev, g), "{g} missing from a dev version");
     }
+}
+
+#[test]
+fn a_dev_build_keeps_its_check_when_asked() {
+    let source = program(
+        "function twice(n: i64): i64 { return n * 2; }",
+        "console.log(twice(2));",
+    );
+    let opts = BuildOptions {
+        input: PathBuf::from("main.velt"),
+        root_source: Some(source),
+        ..BuildOptions::default()
+    };
+    let mut sess = Session::new();
+    sess.keep_check = true;
+    driver::compile(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+    // It owns the program's modules: reading their paths goes through the kept context.
+    let kept = sess.kept.take().expect("a kept check");
+    assert!(kept.module_paths().iter().any(|p| p.contains("main")));
+    assert!(kept.definitions() > 0 && kept.items() > 0);
+    // Not asked, nothing is kept.
+    let mut sess = Session::new();
+    driver::compile(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+    assert!(sess.kept.is_none());
 }

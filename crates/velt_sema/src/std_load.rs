@@ -72,6 +72,13 @@ pub struct StdLoads {
     served: Mutex<(FxHashMap<String, Option<usize>>, usize)>,
 }
 
+impl StdLoads {
+    /// What tells one `StdLoads` from another, also after it moves: the address of its slots.
+    pub(crate) fn id(&self) -> usize {
+        self.slots.as_ptr() as usize
+    }
+}
+
 impl Default for StdLoads {
     fn default() -> Self {
         StdLoads {

@@ -25,7 +25,7 @@ use velt_sema::generated::{needs_rewrite, GenBatch, GenInput, GenInstance, GenMo
 use velt_sema::{hir, CheckOptions, Checked, SourceModule};
 use velt_syntax::ast::ItemKind;
 
-use crate::driver::{Session, StdLoad};
+use crate::driver::{KeptHandover, Session, StdLoad};
 
 pub use host::host_main;
 pub(crate) use process::stop_all;
@@ -66,13 +66,26 @@ pub(crate) fn check(
         let files = offer.generator_files.clone();
         if let Some(p) = check_offered(sess, modules, root, opts, offer, (more.0, more.1)) {
             sess.generator_inputs.extend(files);
+            if let Some(h) = &mut sess.pending_kept {
+                h.loads = Some(kept);
+            }
             return Some(p);
         }
+        sess.pending_kept = None;
         // Not covered: forget what checking with it reported, and start from scratch.
         sess.diagnostics.truncate(mark);
     }
     let mut st = Rounds::default();
-    let program = rounds(sess, modules, root, (opts, packages), &mut st, more)?;
+    let program = rounds(sess, modules, root, (opts, packages), &mut st, more);
+    if let Some(pending) = st.pending.take() {
+        sess.pending_kept = Some(KeptHandover {
+            pending,
+            input: None,
+            sources: vec![],
+            loads: Some(kept),
+        });
+    }
+    let program = program?;
     if let Some(key) = offer_key.filter(|_| !st.offer.instances.is_empty()) {
         cache::store_offer(&key, &st.offer);
     }
@@ -157,13 +170,11 @@ fn check_offered(
     }
     input.instances = offer.instances;
     // Generated code a check would rewrite (`needs_rewrite`) is checked as a program module.
-    let rewritten: Vec<SourceModule>;
-    let (all, sources) = match sources.iter().any(|m| needs_rewrite(&m.ast)) {
-        true => {
-            rewritten = modules.iter().chain(&sources).map(copy_module).collect();
-            (&rewritten[..], &[][..])
-        }
-        false => (modules, &sources[..]),
+    let rewritten: Option<Vec<SourceModule>> = (sources.iter().any(|m| needs_rewrite(&m.ast)))
+        .then(|| modules.iter().chain(&sources).map(copy_module).collect());
+    let (all, given) = match &rewritten {
+        Some(r) => (&r[..], &[][..]),
+        None => (modules, &sources[..]),
     };
     let t = Instant::now();
     let has_more = more.is_some();
@@ -174,12 +185,31 @@ fn check_offered(
         Some(more.as_mut()?.serve(sess, demanded))
     };
     let loads = has_more.then_some(velt_sema::Loads { run: &serve, kept });
-    let (out, diags) = velt_sema::check_generating(all, root, opts, &input, sources, None, loads);
+    let keep = shared.lock().ok()?.0.keep_check;
+    let ((out, diags), pending) = match keep {
+        true => velt_sema::check_generating_kept(all, root, opts, &input, given, None, loads),
+        false => (
+            velt_sema::check_generating(all, root, opts, &input, given, None, loads),
+            None,
+        ),
+    };
     let (sess, _) = shared.into_inner().ok()?;
     sess.record_time("sema", t.elapsed());
     match out {
         Some(Checked::Program(p)) if !diags.iter().any(Diagnostic::is_error) => {
             sess.diagnostics.extend(diags);
+            // The kept check borrows what the check was given: its copy of the modules, or the
+            // generated modules given apart from the parsed ones (the driver's std loads are
+            // added by the caller).
+            sess.pending_kept = pending.map(|pending| {
+                let sources = if rewritten.is_some() { vec![] } else { sources };
+                KeptHandover {
+                    pending,
+                    input: rewritten,
+                    sources,
+                    loads: None,
+                }
+            });
             Some(*p)
         }
         _ => None,
@@ -203,6 +233,8 @@ struct Rounds {
     files: Vec<(FileId, Vec<Described>)>,
     /// What to offer the next build.
     offer: cache::Offer,
+    /// The kept check of the first round, when the session asked for one (`Session::kept`).
+    pending: Option<velt_sema::PendingKept>,
 }
 
 fn rounds(
@@ -214,6 +246,7 @@ fn rounds(
     (more, kept): MoreStd,
 ) -> Option<hir::Program> {
     let has_more = more.is_some();
+    let keep = sess.keep_check;
     let mut owned: Option<Vec<SourceModule>> = None;
     for round in 1..=MAX_ROUNDS + 1 {
         let current = owned.as_deref().unwrap_or(modules);
@@ -237,16 +270,19 @@ fn rounds(
             Some(more.as_mut()?.serve(sess, demanded))
         };
         let loads = has_more.then_some(velt_sema::Loads { run: &serve, kept });
-        let (out, diags) = velt_sema::check_generating(
-            current,
-            root,
-            opts,
-            &input,
-            &sources,
-            Some(&generate),
-            loads,
-        );
+        // The first check of the program's own modules, with nothing generated yet, can be
+        // kept (`velt_sema::kept`).
+        let keep = keep && round == 1 && sources.is_empty();
+        let (gen, srcs) = (&input, &sources[..]);
+        let ((out, diags), pending) = if keep {
+            velt_sema::check_generating_kept(current, root, opts, gen, srcs, Some(&generate), loads)
+        } else {
+            let checked =
+                velt_sema::check_generating(current, root, opts, gen, srcs, Some(&generate), loads);
+            (checked, None)
+        };
         let (_, st, spent, _) = shared.into_inner().ok()?;
+        st.pending = pending;
         let mut sources = sources;
         sources.append(&mut st.sources);
         st.sources = sources;

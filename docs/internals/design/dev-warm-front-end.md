@@ -172,10 +172,21 @@ What it needs, as separate pull requests, each falling back to the cold front en
     passes it, since both builds intern types in the same order). Every golden passes with it
     on. A clone of `http_hello`'s checked context (5,600 definitions) takes 11–15 ms in a debug
     compiler.
-  - *C2:* an owning kept check: the rewritten modules a `Ctx<'m>` borrows (`check_timed`'s
-    source rewrites), the loader's modules and the generator's, moved with the clone into one
-    value the dev host keeps; measured for memory. The kept clone has no generator and no std
-    loads of its own: a body checked again that would generate code or load std falls back.
+  - *C2:* an owning kept check (`velt_sema::kept`): the clone, the rewritten modules it
+    borrows (the source rewrites' last copy), the loader's modules when it borrows them, the
+    generated modules given with them, and the driver's `StdLoads`, in one value the dev host
+    keeps (`KeptCheck`, with `-v` for now). The check offers it (`PendingKept`); the driver hands
+    over the vectors and `adopt` takes them only if their heap addresses are the ones borrowed.
+    The `unsafe` (the clone's `'m` erased, its drop first, `Send`) is in that one module, and
+    the kept check's tests run clean under valgrind's memcheck (which reports the invalid reads
+    of a version that drops the rewritten modules). Kept: the first check of a program (round
+    1) and a check with generated code offered from the cache, `http_hello`'s path. Not kept: a
+    check in which a generator ran, and a script whose variables `script_locals` moved into
+    `main` (another copy of the modules). Measured on `http_hello` (debug compiler, five
+    saves): resident memory 230 MB without, 370 MB with a kept check of 375 modules and 5,474
+    definitions. Most of it is the clone and the moment the original and the clone are both
+    alive during the finishing steps, not the modules; keeping the original and making the
+    finishing steps leave it intact would save both.
   - *C3:* a body checked again in a clone of the kept context, with a check of its own: the
     body checked again in two clones (or in a clone after the original was finished) and
     compared, since it interns new types in another order than the cold check. Caches outside

@@ -194,6 +194,13 @@ pub struct Session {
     /// `velt dev`: the counted types of the previous version, which lowering starts from, and
     /// after lowering the new version's (`velt_vir::lower_seeded`). `None`: lowering as always.
     pub counted_seed: Option<velt_vir::CountedSeed>,
+    /// `velt dev`: keep the check of the program (`velt_sema::KeptCheck`, in [`Session::kept`]),
+    /// when it can be kept (dev-warm-front-end.md step 3, "C2").
+    pub keep_check: bool,
+    /// The kept check of the last build, owning the program's parsed modules.
+    pub kept: Option<velt_sema::KeptCheck>,
+    /// The check's kept check and what it borrows, until the driver hands them over.
+    pub(crate) pending_kept: Option<KeptHandover>,
     /// `-v`: say at once that the build waits for another of its output (`std_cache::Place::lock`).
     pub verbose: bool,
     /// Reports the build was asked for (`--report`), printed after the diagnostics.
@@ -290,7 +297,30 @@ fn check_program(
     scope: &CheckScope,
 ) -> Result<hir::Program, BuildError> {
     let mut loaded = load_stage(sess, opts, scope)?;
-    sema_stage(sess, opts, scope, &mut loaded)
+    let hir = sema_stage(sess, opts, scope, &mut loaded);
+    // The kept check borrows the parsed modules: it takes them over, or nothing is kept.
+    if let Some(h) = sess.pending_kept.take() {
+        let input = h
+            .input
+            .unwrap_or_else(|| std::mem::take(&mut loaded.modules));
+        sess.kept = match (&hir, h.pending.adopt(input, h.sources, h.loads)) {
+            (Ok(_), Ok(kept)) => Some(kept),
+            _ => None,
+        };
+    }
+    hir
+}
+
+/// A kept check (`velt_sema::PendingKept`) and the modules it borrows besides the parsed ones,
+/// until [`check_program`] hands them over.
+pub(crate) struct KeptHandover {
+    pub pending: velt_sema::PendingKept,
+    /// The modules the check was given when they are a copy of the parsed ones (generated code
+    /// checked as program modules); `None`: the parsed modules themselves.
+    pub input: Option<Vec<velt_sema::SourceModule>>,
+    /// The generated modules given with them.
+    pub sources: Vec<velt_sema::SourceModule>,
+    pub loads: Option<velt_sema::StdLoads>,
 }
 
 /// Load and parse the program; stops if that reported errors.

@@ -77,6 +77,20 @@ pub struct Carried {
     pub seed: Option<velt_vir::CountedSeed>,
     /// The program's own definitions (`super::edits`): what the next save changed.
     pub own: Option<super::edits::Snapshot>,
+    /// With `-v`, the last good build's kept check (velt_sema `KeptCheck`,
+    /// dev-warm-front-end.md step 3 "C2"): kept and measured, not used yet.
+    pub kept: Option<velt_sema::KeptCheck>,
+}
+
+/// What `-v` says of a kept check: its size, and the process's memory with it kept.
+pub fn kept_report(kept: &velt_sema::KeptCheck) -> String {
+    let memory = crate::driver::memory::read().map(crate::driver::memory::render);
+    format!(
+        "kept the check: {} modules, {} definitions{}",
+        kept.module_paths().len(),
+        kept.definitions(),
+        memory.map(|m| format!(" ({m})")).unwrap_or_default()
+    )
 }
 
 /// `carried`: what the running version leaves; a version that represents a value of the running
@@ -107,6 +121,7 @@ fn reload_with(
     // after lowering never ran, so its seed must not become the next comparison's baseline.
     let running = carried.seed.take().unwrap_or_default();
     sess.counted_seed = Some(running.clone());
+    sess.keep_check = verbose;
     let program = driver::compile(&mut sess, opts);
     let next = sess.counted_seed.take();
     // Values the running code made that the new code would count, free or call differently
@@ -118,6 +133,12 @@ fn reload_with(
             eprintln!("velt dev: edit: {}", super::edits::classify(before, &own));
         }
         carried.own = Some(own);
+        // The previous version's kept check is dropped first, so the memory said is this one's.
+        carried.kept = None;
+        carried.kept = sess.kept.take();
+        if let (true, Some(kept)) = (verbose, &carried.kept) {
+            eprintln!("velt dev: {}", kept_report(kept));
+        }
     }
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
