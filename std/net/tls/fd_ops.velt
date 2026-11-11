@@ -21,8 +21,6 @@ import {
   takeListener,
 } from "velt/net/tls/fd_table";
 
-export { isTls } from "velt/net/tls/fd_table";
-
 /** The socket of TLS listener `l`, or 0 once it is closed. */
 export function listenerFd(l: u64): u64 {
   const entry = findListener(l);

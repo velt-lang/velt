@@ -323,3 +323,46 @@ async function main() {
          again\nlimit: true\nread: 6\n",
     );
 }
+
+/// A program that names no TLS option (`cert`) doesn't load the TLS server in Velt, nor the TLS
+/// operations its streams would check for (std/prelude/global/tls_reactor.velt): a plain TCP
+/// echo under `VELT_SCHEDULER=std` builds neither, and still runs.
+#[test]
+fn a_program_without_tls_options_builds_no_tls_server() {
+    if !cfg!(unix) {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    std::fs::write(
+        dir.path().join("plain.velt"),
+        r#"import { connect, listen } from "velt/net";
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  const s = spawn(async () => {
+    const c = await l.accept();
+    await c.writeBytes(await c.read());
+    c.close();
+  });
+  const c = await connect(`127.0.0.1:${l.port}`);
+  await c.write("hi");
+  console.log(await c.readString());
+  await s;
+  c.close();
+  l.close();
+}
+"#,
+    )
+    .unwrap();
+    let exe = build(dir.path(), "plain", true);
+    assert_eq!(run(&exe, 1), "hi\n");
+    let bin = std::fs::read(&exe).unwrap();
+    for marker in [&b"tryServerHandshake"[..], b"fd__ops", b"fd__server"] {
+        assert!(
+            !contains(&bin, marker),
+            "{}: built without TLS options",
+            String::from_utf8_lossy(marker)
+        );
+    }
+}

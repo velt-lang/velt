@@ -49,7 +49,7 @@ export async function serveHttp<E>(
   if (tls != null) {
     // HTTP/2 first when the client offers it (ALPN), unless the options chose the protocols.
     const alpn = tls.alpn ?? (h2 != null ? ["h2", "http/1.1"] : ["http/1.1"]);
-    listener = await listenTls(addr, { cert: tls.cert, key: tls.key, alpn: alpn });
+    listener = await listenTls(addr, { ...tls, alpn: alpn });
   } else {
     listener = await listen(addr);
   }

@@ -1,8 +1,7 @@
 // velt/net (internal): what std/net/tls/fd_ops.velt calls on a TLS stream and a TLS listener of
-// the reactor (`VELT_SCHEDULER=std`, #2649), as interfaces. The TLS code behind them (the
-// handshake, the record layer, the crypto) is reached only through the listener `listenTls`
-// made, so a program that never calls `listenTls` doesn't compile it: every `TcpStream`
-// operation checks for a TLS handle, and only the interfaces are on that path.
+// the reactor (`VELT_SCHEDULER=std`, #2649), as interfaces: the waits on the socket
+// (fd_ops.velt) are written against these, and the TLS code behind them (the handshake, the
+// record layer, the crypto) is named only by std/net/tls/fd_server.velt, which makes the streams.
 
 import { IoError } from "velt/io/error";
 

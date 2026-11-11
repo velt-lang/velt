@@ -58,11 +58,6 @@ function listeners(): shared<Mutex<Map<u64, Listen>>> {
   return made;
 }
 
-/** Is `h` the handle of a TLS stream or listener of this table's? */
-export function isTls(h: u64): bool {
-  return (h & 0xffffffff) === 0 && tb.ours(h);
-}
-
 // A new handle: the top bit, an id of 31 bits, the low 32 bits zero.
 function nextHandle(): u64 {
   const id = (NEXT.add(1, "relaxed") % 0x7fffffff) + 1;
