@@ -1,0 +1,65 @@
+// String methods on text that is not ASCII (#2198): short and medium lines of Latin with accents,
+// Cyrillic, CJK and emoji (positions in UTF-16 units differ from byte offsets), 100,000 rounds of
+// about twenty-five calls each, with ASCII and other needles. The Rust port is the same program on
+// `str`'s methods, positions in UTF-16 units as JS's.
+
+const LINES = [
+  "café,crème brûlée,résumé",
+  "  Ångström à la carte, naïve façade ",
+  "Москва, Санкт-Петербург, Новосибирск",
+  "東京都,大阪府,京都府,北海道",
+  "ユーザー: 山田太郎; 年齢: 42",
+  "I 😀 Velt, 🚀 fast, 🎉 done",
+  "👍🏽 ok 👍🏽 ok 👍🏽",
+  "Zürich → Genève → Lausanne, Schweiz",
+  "　全角スペース付き,テキスト　",
+  "naïve,coöperate,über,señor,piñata,jalapeño",
+];
+
+const NEEDLES = [",", "é", "ok", "府", "→", "😀", " ", "ü"];
+
+function mix(sum: i64, x: i64): i64 {
+  return (sum * 31 + x) % 1000000007;
+}
+
+function flag(b: bool): i64 {
+  return b ? 1 : 0;
+}
+
+function main() {
+  let sum: i64 = 0;
+  for (let i = 0; i < 100000; i++) {
+    const s = LINES[i % 10];
+    const v = NEEDLES[i % 8];
+    const comma: i64 = s.indexOf(",");
+    sum = mix(sum, comma);
+    sum = mix(sum, s.indexOf("→"));
+    sum = mix(sum, s.indexOf(v));
+    sum = mix(sum, s.indexOf(v, 3));
+    sum = mix(sum, s.lastIndexOf(","));
+    sum = mix(sum, s.lastIndexOf(v));
+    sum = mix(sum, flag(s.includes("xq")));
+    sum = mix(sum, flag(s.includes(v)));
+    sum = mix(sum, flag(s.startsWith("café")));
+    sum = mix(sum, flag(s.startsWith(v)));
+    sum = mix(sum, flag(s.endsWith("府")));
+    sum = mix(sum, flag(s.endsWith(v)));
+    // Positions from a search are on code point boundaries.
+    const cut = comma < 0 ? 0 : comma;
+    sum = mix(sum, s.slice(0, cut).length as i64);
+    sum = mix(sum, s.slice(cut).charCodeAt(1));
+    sum = mix(sum, s.substring(comma < 0 ? 0 : comma + 1, s.length as i64).length as i64);
+    sum = mix(sum, s.charCodeAt(i % 12));
+    sum = mix(sum, s.split(",").length as i64);
+    sum = mix(sum, s.split(v).length as i64);
+    sum = mix(sum, s.trim().length as i64);
+    sum = mix(sum, s.trimEnd().charCodeAt(0));
+    sum = mix(sum, s.toUpperCase().charCodeAt(1));
+    sum = mix(sum, s.toLowerCase().length as i64);
+    sum = mix(sum, s.replace(",", "、").charCodeAt(cut));
+    sum = mix(sum, s.replaceAll(v, "··").length as i64);
+    sum = mix(sum, s.padStart(48, "·").charCodeAt(3));
+    sum = mix(sum, v.repeat(i % 5).length as i64);
+  }
+  console.log(sum);
+}

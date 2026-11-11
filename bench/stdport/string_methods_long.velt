@@ -1,0 +1,52 @@
+// String methods on long ASCII text (#2198): a 4.6 kB text of 100 comma-separated lines and a
+// 1.5 kB one with whitespace around it, 10,000 rounds of searches that scan most of the text
+// (misses, last matches), splits, trims, case mapping, replacing and slices. The Rust port is
+// the same program on `str`'s methods, positions in UTF-16 units as JS's.
+
+function mix(sum: i64, x: i64): i64 {
+  return (sum * 31 + x) % 1000000007;
+}
+
+function flag(b: bool): i64 {
+  return b ? 1 : 0;
+}
+
+function main() {
+  let text = "";
+  for (let i = 0; i < 100; i++) {
+    text += `row ${i}, the quick brown fox, jumps over the lazy dog\n`;
+  }
+  let padded = "  \t";
+  for (let i = 0; i < 30; i++) {
+    padded += "lorem ipsum dolor sit amet consectetur ";
+  }
+  padded += " \n\n ";
+  const needles = ["lazy dog\nrow 99", "Z", "row 7", "fox, jumps"];
+  let sum: i64 = 0;
+  for (let i = 0; i < 10000; i++) {
+    const v = needles[i % 4];
+    sum = mix(sum, text.indexOf("Z"));
+    sum = mix(sum, text.indexOf("row 99"));
+    sum = mix(sum, text.indexOf(v, i % 100));
+    sum = mix(sum, text.lastIndexOf("row 1,"));
+    sum = mix(sum, text.lastIndexOf(v));
+    sum = mix(sum, flag(text.includes("xq")));
+    sum = mix(sum, flag(text.includes(v)));
+    sum = mix(sum, flag(text.startsWith("row 0")));
+    sum = mix(sum, flag(text.endsWith("dog\n")));
+    sum = mix(sum, text.slice(100, 3000).length as i64);
+    sum = mix(sum, text.substring(i % 4000).charCodeAt(0));
+    sum = mix(sum, text.split("\n").length as i64);
+    sum = mix(sum, text.split(", ").length as i64);
+    sum = mix(sum, padded.trim().length as i64);
+    sum = mix(sum, padded.trimStart().charCodeAt(0));
+    sum = mix(sum, padded.trimEnd().length as i64);
+    sum = mix(sum, text.toUpperCase().charCodeAt(i % 4000));
+    sum = mix(sum, padded.toLowerCase().length as i64);
+    sum = mix(sum, text.replace("lazy", "sleepy").length as i64);
+    sum = mix(sum, text.replaceAll(",", ";").charCodeAt(5));
+    sum = mix(sum, padded.padEnd(2000, "-").length as i64);
+    sum = mix(sum, "abc ".repeat(i % 500).length as i64);
+  }
+  console.log(sum);
+}

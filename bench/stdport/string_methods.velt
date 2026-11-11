@@ -1,0 +1,76 @@
+// String methods on short ASCII text (#2198): request lines, headers, CSV rows and paths of 9 to
+// 46 bytes, 200,000 rounds of about thirty calls each, literal needles (`indexOf(",")`,
+// `startsWith("GET ")`) and needles that vary per call. The runtime's methods were Rust
+// (crates/velt_rt/src/str_ops); the Rust port is the same program on `str`'s methods, positions in
+// UTF-16 units as JS's.
+
+const LINES = [
+  "GET /api/v1/users?id=42 HTTP/1.1",
+  "content-type: text/html; charset=utf-8",
+  "alice,30,engineer,stockholm",
+  "  /static/css/site.css  ",
+  "Accept-Encoding: gzip, br",
+  "bob,41,designer,oslo,",
+  "POST /login HTTP/1.1",
+  "x-request-id: 7f3a9c",
+  "\tcarol,25,,berlin\n",
+  "/a/b/c/d/e/f/g/h",
+  "Host: example.com",
+  "dave,33,manager,paris",
+];
+
+const NEEDLES = ["/", "e", "1.1", ",", "api", "zz", ": ", "o"];
+
+function mix(sum: i64, x: i64): i64 {
+  return (sum * 31 + x) % 1000000007;
+}
+
+function flag(b: bool): i64 {
+  return b ? 1 : 0;
+}
+
+function main() {
+  let sum: i64 = 0;
+  for (let i = 0; i < 200000; i++) {
+    const s = LINES[i % 12];
+    const v = NEEDLES[i % 8];
+    // Search with literal needles.
+    sum = mix(sum, s.indexOf(","));
+    sum = mix(sum, s.indexOf(": "));
+    sum = mix(sum, s.indexOf("HTTP/"));
+    sum = mix(sum, s.indexOf("/", 2));
+    sum = mix(sum, s.lastIndexOf("/"));
+    sum = mix(sum, s.lastIndexOf(","));
+    sum = mix(sum, flag(s.includes("xq")));
+    sum = mix(sum, flag(s.includes("tml")));
+    sum = mix(sum, flag(s.startsWith("GET ")));
+    sum = mix(sum, flag(s.startsWith("/")));
+    sum = mix(sum, flag(s.endsWith("1.1")));
+    sum = mix(sum, flag(s.endsWith(",")));
+    // Search with a needle that varies.
+    sum = mix(sum, s.indexOf(v));
+    sum = mix(sum, s.lastIndexOf(v));
+    sum = mix(sum, flag(s.includes(v)));
+    sum = mix(sum, flag(s.startsWith(v)));
+    sum = mix(sum, flag(s.endsWith(v)));
+    // Substrings.
+    sum = mix(sum, s.slice(2, 6).charCodeAt(1));
+    sum = mix(sum, s.slice(-5).length as i64);
+    sum = mix(sum, s.substring(4).length as i64);
+    sum = mix(sum, s.charAt(3).charCodeAt(0));
+    // Split, trim, case, replace, pad, repeat.
+    sum = mix(sum, s.split(",").length as i64);
+    sum = mix(sum, s.split(v).length as i64);
+    sum = mix(sum, s.trim().length as i64);
+    sum = mix(sum, s.trimStart().charCodeAt(0));
+    sum = mix(sum, s.trimEnd().length as i64);
+    sum = mix(sum, s.toUpperCase().charCodeAt(5));
+    sum = mix(sum, s.toLowerCase().charCodeAt(1));
+    sum = mix(sum, s.replace(" ", "_").charCodeAt(4));
+    sum = mix(sum, s.replaceAll("/", "::").length as i64);
+    sum = mix(sum, s.padStart(40, ".").charCodeAt(2));
+    sum = mix(sum, s.padEnd(40).length as i64);
+    sum = mix(sum, v.repeat(i % 5).length as i64);
+  }
+  console.log(sum);
+}
