@@ -1,0 +1,13 @@
+// velt/lang/intrinsics (internal): calling a function hook by its role (#2198, #2161 (a1)).
+
+import { intrinsic } from "./decorators";
+
+/**
+ * `hookCall("role", args…)`: the call of the function hook `role` (velt_common `std_hooks.rs`)
+ * with `args`, checked against the hook's own declaration, its module loaded by the check when
+ * the call is (`Ctx::demand_std`). std code reaches a hook's module this way without importing
+ * it, so a program that never calls the code around the call never loads the module: a prelude
+ * method whose implementation is large. `role` is a string literal.
+ */
+@intrinsic
+export declare function hookCall(role: string, ...args: any[]): any;

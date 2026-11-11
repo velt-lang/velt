@@ -107,6 +107,7 @@ mod generic_spread;
 mod generic_values;
 mod hidden_nothings;
 mod hoist;
+mod hook_call;
 pub(crate) mod iface_adapt;
 pub(crate) mod iface_adapt_dynamic;
 pub(crate) mod iface_adapt_slots;

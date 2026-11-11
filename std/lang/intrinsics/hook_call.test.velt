@@ -1,0 +1,18 @@
+// velt/lang/intrinsics (tests): `hookCall` (#2198), run by `velt test std/`: a hook called by its
+// role, its module (`velt/lang/hooks/number_float`, which the prelude doesn't load) loaded by the
+// check of the call.
+import { describe, expect, it } from "velt/test";
+import { hookCall } from "velt/lang/intrinsics";
+
+/** `String(x)` through the hook `float_text` (`floatText`). */
+function floatText(x: f64): string {
+  return hookCall("float_text", x);
+}
+
+describe("hookCall", () => {
+  it("calls the hook its role names, with the hook's result", () => {
+    expect(floatText(1.5)).toBe("1.5");
+    expect(floatText(-0.25)).toBe("-0.25");
+    expect(floatText(1e21)).toBe("1e+21");
+  });
+});
