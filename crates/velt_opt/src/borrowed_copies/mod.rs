@@ -35,13 +35,14 @@ mod tests;
 
 pub(crate) mod counted;
 mod live;
+mod read_only;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_vir::math::effects;
 use velt_vir::vir::{
-    AggLayout, BinOp, Callee, ExternId, Function, Local, Operand, Place, Program, Proj, Rvalue,
-    Stmt, Terminator, Ty, UnOp, STR_AGG,
+    AggLayout, BinOp, Callee, ExternId, FuncId, Function, Local, Operand, Place, Program, Proj,
+    Rvalue, Stmt, Terminator, Ty, UnOp, STR_AGG,
 };
 
 use crate::locals::Usage;
@@ -61,6 +62,8 @@ pub(crate) struct Runtime {
     drop: Option<ExternId>,
     alloc: Option<ExternId>,
     read_only: FxHashSet<ExternId>,
+    /// Velt functions that write nothing their callers can see (`read_only.rs`).
+    read_only_fns: FxHashSet<FuncId>,
 }
 
 impl Runtime {
@@ -72,15 +75,17 @@ impl Runtime {
                 .position(|e| e.symbol == name)
                 .map(|i| ExternId(i as u32))
         };
+        // Runtime functions that write no memory compiled code reads (`velt_vir::math`).
+        let read_only: FxHashSet<ExternId> = (program.externs.iter().enumerate())
+            .filter(|(_, e)| effects(&e.symbol).writes_nothing_visible())
+            .map(|(i, _)| ExternId(i as u32))
+            .collect();
         Runtime {
             clone: ext(STR_CLONE),
             drop: ext(STR_DROP),
             alloc: ext(ALLOC),
-            // Runtime functions that write no memory compiled code reads (`velt_vir::math`).
-            read_only: (program.externs.iter().enumerate())
-                .filter(|(_, e)| effects(&e.symbol).writes_nothing_visible())
-                .map(|(i, _)| ExternId(i as u32))
-                .collect(),
+            read_only_fns: read_only::read_only_functions(program, &read_only),
+            read_only,
         }
     }
 
@@ -89,7 +94,11 @@ impl Runtime {
     }
 
     fn reads_only(&self, callee: &Callee) -> bool {
-        matches!(callee, Callee::Extern(e) if self.read_only.contains(e))
+        match callee {
+            Callee::Extern(e) => self.read_only.contains(e),
+            Callee::Func(f) => self.read_only_fns.contains(f),
+            Callee::Ptr { .. } => false,
+        }
     }
 }
 

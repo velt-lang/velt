@@ -455,6 +455,17 @@ pub fn effects(symbol: &str) -> Effects {
     if MathOp::of_symbol(symbol).is_some() {
         return Effects::None;
     }
+    // The SIMD operations (`velt_simd_*`, std/simd), which backends expand inline: lane
+    // arithmetic, comparisons, conversions and loads read at most memory; the stores write, and
+    // `velt_simd_cpuid` is left as unknown.
+    if let Some(op) = symbol.strip_prefix("velt_simd_") {
+        let writes = op.ends_with("_store") || op.ends_with("_store_partial") || op == "cpuid";
+        return if writes {
+            Effects::Any
+        } else {
+            Effects::ReadOnly
+        };
+    }
     EFFECTS
         .iter()
         .find(|(s, _)| *s == symbol)
@@ -568,6 +579,11 @@ mod tests {
         assert_eq!(effects("velt_rt_str_cmp"), Effects::ReadOnly);
         assert_eq!(effects("velt_rt_str_index_of"), Effects::ReadCaching);
         assert_eq!(effects("velt_rt_array_view_cold"), Effects::Cold);
+        assert_eq!(effects("velt_simd_u8x16_eq"), Effects::ReadOnly);
+        assert_eq!(effects("velt_simd_u8x16_load"), Effects::ReadOnly);
+        assert_eq!(effects("velt_simd_u8x16_store"), Effects::Any);
+        assert_eq!(effects("velt_simd_f32x4_store_partial"), Effects::Any);
+        assert_eq!(effects("velt_simd_cpuid"), Effects::Any);
         assert_eq!(effects("velt_rt_write_str"), Effects::Any);
         assert!(!Effects::Cold.writes_nothing_visible());
         assert!(Effects::ReadCaching.writes_nothing_visible());

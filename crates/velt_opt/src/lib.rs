@@ -341,7 +341,8 @@ fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTiming
             let allocator = heap_sroa::Allocator::find(program);
             let probes = map_probe::Probes::find(program);
             let lookups = module_state::Lookups::find(program);
-            let runtime = borrowed_copies::Runtime::find(program);
+            // The read-only summaries of every function (`borrowed_copies/read_only.rs`).
+            let runtime = t.time("read_only", || borrowed_copies::Runtime::find(program));
             let env = numrep::Env::of(
                 &program.externs,
                 &program.funcs,
