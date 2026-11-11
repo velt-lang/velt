@@ -154,6 +154,7 @@ function md5For(password: string, user: string): string {
 // names: `USER`, else `USERNAME` (Windows).
 export async function test_md5_hashes_for_the_user_the_startup_names() {
   const user = process.env.USER;
+  const username = process.env.USERNAME;
   removeEnv("USER");
   setEnv("USERNAME", "winuser");
   const got = shared(new Mutex<string[]>([]));
@@ -167,6 +168,11 @@ export async function test_md5_hashes_for_the_user_the_startup_names() {
   }
   if (user != null) {
     setEnv("USER", user);
+  }
+  if (username != null) {
+    setEnv("USERNAME", username);
+  } else {
+    removeEnv("USERNAME");
   }
   assertEq(outcome, "connected");
   assertEq(got.with((g) => g.join(",")), md5For("secret", "winuser"));
