@@ -337,11 +337,10 @@ impl Walk<'_, '_> {
                 // don't resolve the program's type parameters (#2768).
                 let into_std = super::unknown_callees::std_node(self.cx, self.g, m);
                 if into_std && !self.std && super::types::mentions_param(self.cx, e.ty) {
-                    self.g
-                        .std_inflows
-                        .entry(m)
-                        .or_default()
-                        .push((self.d, e.ty));
+                    let entry = self.g.std_inflows.entry(m).or_default();
+                    if !entry.contains(&(self.d, e.ty)) {
+                        entry.push((self.d, e.ty));
+                    }
                 }
             }
             To::Flag(CROSSES, Some(why)) => {
