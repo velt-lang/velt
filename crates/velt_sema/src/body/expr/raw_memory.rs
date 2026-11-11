@@ -48,6 +48,11 @@ impl FnCx<'_, '_> {
                 self.c_callable(f)?;
                 Some(args)
             }
+            I::StrDataAddress | I::StrWord0 => {
+                let s = args.first()?;
+                self.lasting_string(i, s)?;
+                Some(args)
+            }
             _ => Some(args),
         }
     }
@@ -212,6 +217,24 @@ impl FnCx<'_, '_> {
             Diagnostic::error("`atomicAddress` needs an `Atomic` that cannot move", a.span).with_note(
                 "a module `const` made by `new Atomic<T>(literal)`, or a field of the value of a `shared` box held in a variable (`s.state`); a local, an object, an array or a temporary box moves or is freed while its address is in use. The box must stay alive (not reassigned or dropped) while the address is used",
             ),
+        );
+        None
+    }
+
+    /// `strDataAddress(s)` and `strWord0(s)` give the address of `s`'s bytes (#2794): `s` must be
+    /// a variable (a local or a parameter), which keeps the string, and with it its bytes, for the
+    /// rest of its scope. A temporary (a call's result, a concatenation, a literal or a module
+    /// constant, evaluated at each use) is gone after the statement, its address with it.
+    fn lasting_string(&mut self, i: Intrinsic, s: &hir::Expr) -> Option<()> {
+        if matches!(s.kind, H::Local(..)) || matches!(self.cx.ty.kind(s.ty), TyKind::Error) {
+            return Some(());
+        }
+        let name = crate::intrinsic_decls::name_of(i).unwrap_or("intrinsic");
+        self.cx.error(
+            Diagnostic::error(format!("`{name}` needs a string held in a variable"), s.span)
+                .with_note(
+                    "the address is of the bytes the string keeps: a temporary string (a call's result, a concatenation, a literal) is gone after the statement, and its address with it; hold the string in a `const` first",
+                ),
         );
         None
     }

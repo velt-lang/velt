@@ -247,3 +247,31 @@ fn slot_intrinsics_move_owned_values_in_unsafe_code() {
          }",
     );
 }
+
+#[test]
+fn a_string_s_data_address_needs_the_string_in_a_variable() {
+    let imports = "import { strDataAddress, strWord0 } from \"velt/lang/intrinsics\";";
+    let refused = "needs a string held in a variable";
+    for arg in [
+        "make()",
+        "a + b",
+        "\"a literal that is long enough not to be inline\"",
+        "TEXT",
+    ] {
+        for f in ["strDataAddress", "strWord0"] {
+            let e = std_err(&format!(
+                "{imports}
+                 const TEXT = \"hello\";
+                 function make(): string {{ return \"x\".repeat(40); }}
+                 function main() {{ const a = make(); const b = make(); console.log({f}({arg})); }}"
+            ));
+            assert!(e.contains(&format!("`{f}` {refused}")), "{f}({arg}):\n{e}");
+        }
+    }
+    // A local or a parameter keeps its string for the rest of its scope.
+    std_ok(&format!(
+        "{imports}
+         function at(s: string): usize {{ return strDataAddress(s) + (strWord0(s) as usize); }}
+         function main() {{ const s = \"x\".repeat(40); console.log(at(s), strDataAddress(s)); }}"
+    ));
+}

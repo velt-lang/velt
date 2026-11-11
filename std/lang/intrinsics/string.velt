@@ -38,7 +38,8 @@ export declare function strWord2(s: string): u64;
 /**
  * The address of `s`'s UTF-8 bytes: inside the value for an inline string, the buffer
  * otherwise. Valid while `s` is alive and unchanged; read with `addressLoad`. One select, so a
- * loop reads its bytes through one pointer (#2778). No call.
+ * loop reads its bytes through one pointer (#2778). No call. `s` must be a variable (a local or a
+ * parameter): the address of a temporary would outlive its string (#2794); `strWord0` alike.
  */
 @intrinsic
 export declare function strDataAddress(s: string): usize;
