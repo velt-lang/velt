@@ -1,0 +1,72 @@
+// The module-lock row (#2729) and the skewed-load row: `server <port> <mode>`.
+//   mode "module": the handler reads a module-level `const cache = new Map<string, string>()`
+//                  (filled before serving), so every request touches module state.
+//   mode "param":  the same work on a map made in `main` and passed to the handler (no module
+//                  state; the handler captures it).
+// Each request does WORK lookups (`/heavy`: 10 × WORK) and answers with a checksum, so a poll
+// is long enough for a process-wide lock to show. bench/http/modlock/run.sh measures it.
+
+import { serve } from "http-server";
+import { args } from "velt/process";
+
+const KEYS = 32;
+const WORK = 200;
+
+const cache = new Map<string, string>();
+
+function fill(m: Map<string, string>) {
+  for (let i = 0; i < KEYS; i++) {
+    m.set(`key-${i}`, `value-${i}-${"x".repeat(i)}`);
+  }
+}
+
+function sumFrom(m: Map<string, string>, rounds: i64): i64 {
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    const v = m.get(`key-${i % KEYS}`);
+    if (v != undefined) {
+      sum += v.length;
+    }
+  }
+  return sum;
+}
+
+function sumModule(rounds: i64): i64 {
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    const v = cache.get(`key-${i % KEYS}`);
+    if (v != undefined) {
+      sum += v.length;
+    }
+  }
+  return sum;
+}
+
+function roundsFor(url: string): i64 {
+  return url.endsWith("/heavy") ? WORK * 10 : WORK;
+}
+
+async function main() {
+  const argv = args();
+  const port = argv.length > 0 ? parseInt(argv[0], 10) : 8080;
+  const mode = argv.length > 1 ? argv[1] : "module";
+  if (mode == "module") {
+    fill(cache);
+    const server = await serve(
+      { port: port },
+      async (req: Request): Promise<Response> => new Response(`${sumModule(roundsFor(req.url))}`),
+    );
+    console.log(`listening on http://127.0.0.1:${server.port} (module)`);
+  } else {
+    const local = new Map<string, string>();
+    fill(local);
+    const server = await serve(
+      { port: port },
+      async (req: Request): Promise<Response> => new Response(
+        `${sumFrom(local, roundsFor(req.url))}`,
+      ),
+    );
+    console.log(`listening on http://127.0.0.1:${server.port} (param)`);
+  }
+  await sleep(1000000000);
+}
