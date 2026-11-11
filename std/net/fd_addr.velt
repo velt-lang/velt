@@ -11,6 +11,7 @@ import { CString } from "velt/ffi/c_string";
 import { Ptr } from "velt/ffi/ptr";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { addressLoad } from "velt/lang/intrinsics";
+import { freeaddrinfo, gai_strerror, inet_ntop } from "#net-calls";
 import * as sys from "#net-sys";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as bp from "velt/lang/hooks/sched_blocking";
@@ -21,21 +22,14 @@ const AI_NUMERICHOST: i32 = 4;
 const AI_NEXT: usize = 40;
 
 // Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
-// signature in a program. Addresses become `Ptr`s with `m.ptr` (0 passes `NULL`).
+// signature in a program (Winsock's has the same). Addresses become `Ptr`s with `m.ptr` (0
+// passes `NULL`). The others are `#net-calls`'.
 declare c("c") function getaddrinfo(
   host: CString,
   port: CString,
   hints: Ptr<u8>,
   res: Ptr<u8>,
 ): i32;
-declare c("c") function freeaddrinfo(ai: Ptr<u8>): void;
-declare c("c") function gai_strerror(e: i32): Ptr<u8>;
-declare c("c") function inet_ntop(
-  family: i32,
-  src: Ptr<u8>,
-  dst: Ptr<u8>,
-  size: u32,
-): Ptr<u8> | null;
 
 /** The NUL-terminated text at `p` (a message of the C library, an address inet_ntop wrote). */
 export function cText(p: usize): string {

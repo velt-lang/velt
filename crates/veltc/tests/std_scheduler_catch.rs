@@ -17,9 +17,9 @@ fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Where the executor in Velt catches: a `VELT_SCHEDULER=std` program builds on unix only (no
-/// reactor in Velt on Windows yet), and generated code catches with the Itanium unwinder (macOS
-/// and Linux; Windows' structured exceptions are not built yet).
+/// Where the executor in Velt catches: generated code catches with the Itanium unwinder (macOS
+/// and Linux; Windows' structured exceptions are not built yet, so a panic under `catchPanic`
+/// ends a `VELT_SCHEDULER=std` program there: decision 3 on #2649).
 fn catches_here() -> bool {
     cfg!(any(target_os = "macos", target_os = "linux"))
 }

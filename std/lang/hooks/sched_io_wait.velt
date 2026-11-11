@@ -11,8 +11,8 @@
 // anchors its task to its worker (sched_task.velt `anchor`): its place in the timer list is
 // that worker's.
 
-import { Ptr } from "velt/ffi/ptr";
 import { inline, noInline } from "velt/lang/intrinsics";
+import * as os from "#sched-os";
 import * as r from "#reactor";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
@@ -223,18 +223,9 @@ export function waitDrop(f: usize): void {
 
 // ---- Deadlines. ----
 
-declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<u8>): i32;
-
 /** The monotonic clock, in nanoseconds. */
 export function now(): u64 {
-  const ts = m.alloc(16);
-  // SAFETY: a timespec in `ts`.
-  unsafe {
-    clock_gettime$io(r.MONOTONIC, m.ptr(ts));
-  }
-  const ns = (m.ld(ts) as u64) * 1000000000 + (m.ld(ts + 8) as u64);
-  m.release(ts, 16);
-  return ns;
+  return os.monotonicNs(r.MONOTONIC);
 }
 
 /** Has waiter `f`'s deadline passed (the timer list said so, or the clock does now)? */

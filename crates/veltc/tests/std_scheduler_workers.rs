@@ -86,9 +86,9 @@ fn same_on_both(name: &str, src: &str, want: &str) {
     );
 }
 
-/// Workers only start where `#sched-thread` has threads (macOS and Linux for now).
+/// Workers only start where `#sched-thread` has threads (macOS, Linux and Windows).
 fn has_threads() -> bool {
-    cfg!(any(target_os = "macos", target_os = "linux"))
+    cfg!(any(target_os = "macos", target_os = "linux", windows))
 }
 
 #[test]

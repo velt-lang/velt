@@ -39,12 +39,18 @@ export const imports: Imports = {
   },
   // The reactor of the executor in Velt (std/lang/hooks/sched_io.velt): what the worker waits in
   // while it has nothing to run (sockets' readiness and wakes from other threads): kqueue on
-  // macOS, epoll and an eventfd on Linux; elsewhere no sockets and a spinning wait.
+  // macOS, epoll and an eventfd on Linux, `\Device\Afd` polls over an I/O completion port on
+  // Windows; elsewhere no sockets and a spinning wait.
   "#reactor": {
     darwin: "./lang/hooks/reactor_kqueue.velt",
     linux: "./lang/hooks/reactor_epoll.velt",
+    win32: "./lang/hooks/reactor_afd.velt",
     default: "./lang/hooks/reactor_none.velt",
   },
+  // The two OS calls the executor in Velt's core makes whatever its reactor (std/lang/hooks/
+  // sched_mem.velt, sched_io_wait.velt): `sched_yield` and `clock_gettime`, or on Windows
+  // `SwitchToThread` and the performance counter.
+  "#sched-os": { win32: "./lang/hooks/os_win32.velt", default: "./lang/hooks/os_posix.velt" },
   // The layout of `sigaction` for the executor in Velt's signals (std/lang/hooks/
   // sched_signal.velt): per OS; elsewhere none.
   "#sched-signal": {
@@ -53,10 +59,11 @@ export const imports: Imports = {
     default: "./lang/hooks/signal_none.velt",
   },
   // The threads of the executor in Velt's workers (std/lang/hooks/sched.velt): `pthread_create`
-  // on macOS and Linux; elsewhere none yet (one worker).
+  // on macOS and Linux, `CreateThread` on Windows; elsewhere none (one worker).
   "#sched-thread": {
     darwin: "./lang/hooks/thread_posix.velt",
     linux: "./lang/hooks/thread_posix.velt",
+    win32: "./lang/hooks/thread_win32.velt",
     default: "./lang/hooks/thread_none.velt",
   },
   // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
@@ -66,6 +73,7 @@ export const imports: Imports = {
   "#net-sys": {
     darwin: "./net/sys_darwin.velt",
     linux: "./net/sys_linux.velt",
+    win32: "./net/sys_win32.velt",
     default: "./net/sys_none.velt",
   },
   // velt/sync's channel (std/sync/channel_block.velt): how its waits read a poll's `cx` and a
@@ -89,9 +97,17 @@ export const imports: Imports = {
     default: "./sync/channel_entry.velt",
   },
   "#net-tcp": { "std-scheduler": "./net/tcp_sched.velt", default: "./net/rt.velt" },
+  // The C library's socket functions those sockets call (std/net/fd_socket.velt, fd_io.velt,
+  // fd_addr.velt, std/lang/hooks/sched_io_write.velt), or Winsock's under the same names.
+  "#net-calls": { win32: "./net/calls_win32.velt", default: "./net/calls_posix.velt" },
   // velt/net's UDP sockets and name lookups: the runtime's, or, compiled with the executor in
   // Velt, non-blocking UDP sockets on its reactor and `getaddrinfo` on its blocking pool.
-  "#net-udp": { "std-scheduler": "./net/udp/udp_sched.velt", default: "./net/udp/rt.velt" },
+  // On Windows UDP stays the runtime's under it too (#2649: its Winsock port is a follow-up).
+  "#net-udp": {
+    win32: "./net/udp/rt.velt",
+    "std-scheduler": "./net/udp/udp_sched.velt",
+    default: "./net/udp/rt.velt",
+  },
   "#net-dns": { "std-scheduler": "./net/dns/rt_sched.velt", default: "./net/dns/rt.velt" },
   // velt/fs's and velt/process's runtime functions: the runtime's (std/fs/rt.velt, std/process/
   // rt.velt), or, compiled with the executor in Velt (`VELT_SCHEDULER=std`), the same names with
@@ -100,8 +116,10 @@ export const imports: Imports = {
   "#fs-rt": { "std-scheduler": "./fs/rt_sched.velt", default: "./fs/rt.velt" },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
   // velt/process/child's runtime functions: the runtime's (tokio's processes), or, compiled with
-  // the executor in Velt, `posix_spawn` with the exit and the pipes on its reactor.
+  // the executor in Velt, `posix_spawn` with the exit and the pipes on its reactor. On Windows
+  // child processes stay the runtime's under it too (#2649: `CreateProcess` is a follow-up).
   "#child-rt": {
+    win32: "./process/child/rt.velt",
     "std-scheduler": "./process/child/child_sched.velt",
     default: "./process/child/rt.velt",
   },

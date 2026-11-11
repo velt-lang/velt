@@ -330,3 +330,9 @@ export function threadCpu(c: u64): u64 {
   }
   return (m.ld(ts) * 1000000000 + m.ld(ts + 8)) as u64;
 }
+
+/** Does an operation that finds a socket not ready call `rearm`? No: events come by edge. */
+export const REARMS: bool = false;
+
+/** Nothing to ask again: the next edge reports the socket ready. */
+export function rearm(r: usize, fd: i32, source: usize, bits: u32): void {}

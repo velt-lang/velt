@@ -10,9 +10,9 @@
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { arrayTruncate, promiseAt, strByteLen } from "velt/lang/intrinsics";
-import { StrBytes } from "velt/ffi";
 import { Ptr } from "velt/ffi/ptr";
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding/utf8";
+import { bcopy$text, read$net, recv$net, shutdown$net } from "#net-calls";
 import * as r from "#reactor";
 import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
@@ -25,16 +25,11 @@ import * as wk from "velt/lang/hooks/sched_wake";
 
 // Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
 // signature in a program.
-declare c("c") function recv$net(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
-declare c("c") function shutdown$net(fd: i32, how: i32): i32;
-declare c("c") function read$net(fd: i32, buf: Ptr<u8>, n: usize): isize;
 /**
  * The address of `data`'s first byte (`memset` of nothing returns its destination): a stand-in
  * until `declare c` can take a pointer into an array (#2187).
  */
 declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
-/** Copies a string's bytes to an address. */
-declare c("c") function bcopy$text(src: StrBytes, dst: Ptr<u8>, n: usize): void;
 
 /** The address of byte `at` of `data` (which has it). */
 function addressOf(data: u8[], at: u64): usize {

@@ -1,0 +1,372 @@
+// velt/lang/hooks (internal): the poll requests of the executor's reactor on Windows
+// (reactor_afd.velt): one per socket and reactor, an `IOCTL_AFD_POLL` on the reactor's
+// `\Device\Afd` handle, whose completion comes to the reactor's I/O completion port, as mio and
+// wepoll do it. A poll asks for a set of events and completes once one of them holds (at once
+// when one holds already); then it is submitted again for what is still wanted.
+//
+// The reactor's sources are edge-triggered (sched_io.velt): an event sets readiness bits and an
+// operation that finds the socket not ready (`notReady`) clears them. Here an event the poll
+// reported is no longer wanted, so a readable socket nobody reads does not complete poll after
+// poll; `rearm` (from `notReady`) wants it again. A poll waits for the socket's close too
+// (`LOCAL_CLOSE`), so every request ends with its socket and none is ever left behind.
+//
+// A request changes only under its reactor's lock (`R_LOCK`): from the reactor's wait (its
+// completions), from `add`/`del` (a source following its task to another worker's reactor, from
+// that worker's thread) and from `rearm` (the thread running the operation). Its memory is the
+// kernel's while a poll is pending; a request taken out (`del`, its socket replaced by a new one
+// with the same handle) is freed when its last poll completes.
+
+import { Ptr } from "velt/ffi/ptr";
+import * as m from "./sched_mem";
+
+/** `\Device\Afd`'s poll request. */
+const IOCTL_AFD_POLL: u32 = 0x00012024;
+const STATUS_PENDING: i32 = 0x103;
+/** `STATUS_CANCELLED` (0xC0000120). */
+const STATUS_CANCELLED: i32 = -1073741536;
+
+// The events of a poll.
+const POLL_RECEIVE: u32 = 0x1;
+const POLL_SEND: u32 = 0x4;
+const POLL_DISCONNECT: u32 = 0x8;
+const POLL_ABORT: u32 = 0x10;
+const POLL_LOCAL_CLOSE: u32 = 0x20;
+const POLL_ACCEPT: u32 = 0x80;
+const POLL_CONNECT_FAIL: u32 = 0x100;
+const WANT_READ: u32 = POLL_RECEIVE | POLL_ACCEPT | POLL_DISCONNECT;
+const WANT_WRITE: u32 = POLL_SEND;
+const WANT_ERR: u32 = POLL_ABORT | POLL_CONNECT_FAIL;
+export const WANT_ALL: u32 = WANT_READ | WANT_WRITE | WANT_ERR;
+
+// Readiness bits of an event (sched_io.velt).
+const READ: u32 = 1;
+const WRITE: u32 = 2;
+const HUP: u32 = 4;
+const ERR: u32 = 8;
+
+/**
+ * The reactor's block (reactor_afd.velt): its completion port and AFD handle, its lock, whether
+ * a wake is posted, its requests by socket (an open-addressing table of `(handle + 1, request)`
+ * pairs, its capacity a power of two, the slots used, tombstones included), the events of the
+ * last wait, a scratch word and a status block for cancelling, the completions of the last wait
+ * and the events found in them (`(source, bits)` pairs).
+ */
+export const R_PORT: usize = 0;
+export const R_AFD: usize = 8;
+export const R_LOCK: usize = 16;
+export const R_WOKEN: usize = 20;
+export const R_MAP: usize = 24;
+export const R_CAP: usize = 32;
+export const R_USED: usize = 40;
+export const R_N: usize = 48;
+export const R_WORD: usize = 56;
+export const R_CANCEL: usize = 64;
+export const R_ENTRIES: usize = 80;
+/** Completions one wait takes at most; an `OVERLAPPED_ENTRY` is 32 bytes. */
+export const MAX_EVENTS: usize = 64;
+export const R_EVENTS: usize = 80 + 64 * 32;
+export const R_SIZE: usize = 80 + 64 * 32 + 64 * 16;
+
+/**
+ * A request: its `IO_STATUS_BLOCK`, its `AFD_POLL_INFO` (timeout, handle count, exclusive, then
+ * one handle's socket, events and status), the source, the socket and its base socket, its
+ * state, whether it was taken out, the events wanted and those of the pending poll.
+ */
+const P_IOSB: usize = 0;
+const P_INFO: usize = 16;
+const P_SOURCE: usize = 48;
+const P_FD: usize = 56;
+const P_BASE: usize = 64;
+const P_STATE: usize = 72;
+const P_DEAD: usize = 76;
+const P_WANT: usize = 80;
+const P_PENDING: usize = 84;
+const P_SIZE: usize = 96;
+
+const IDLE: u32 = 0;
+const PENDING: u32 = 1;
+const CANCELLED: u32 = 2;
+
+const TOMB: usize = 0xffffffffffffffff;
+
+declare c("c") function NtDeviceIoControlFile(
+  file: usize,
+  event: usize,
+  apc: Ptr<u8>,
+  context: Ptr<u8>,
+  iosb: Ptr<u8>,
+  code: u32,
+  input: Ptr<u8>,
+  inputLen: u32,
+  output: Ptr<u8>,
+  outputLen: u32,
+): i32;
+declare c("c") function NtCancelIoFileEx(file: usize, request: Ptr<u8>, iosb: Ptr<u8>): i32;
+
+/** Takes reactor `r`'s lock. */
+export function lock(r: usize): void {
+  if (m.cas32(r + R_LOCK, 0, 1) !== 0) {
+    m.spinLock(r + R_LOCK);
+  }
+}
+
+/** Gives reactor `r`'s lock back. */
+export function unlock(r: usize): void {
+  m.store32(r + R_LOCK, 0);
+}
+
+/** The slot of socket `fd` in `r`'s table: its own, or the empty one it would take. */
+function slotOf(r: usize, fd: usize): usize {
+  const map = m.ld(r + R_MAP);
+  const mask = m.ld(r + R_CAP) - 1;
+  let i = ((fd >> 2) * 0x9e3779b1) & mask;
+  let free: usize = 0;
+  while (true) {
+    const at = map + i * 16;
+    const k = m.ld(at);
+    if (k === fd + 1) {
+      return at;
+    }
+    if (k === 0) {
+      return free !== 0 ? free : at;
+    }
+    if (k === TOMB && free === 0) {
+      free = at;
+    }
+    i = (i + 1) & mask;
+  }
+}
+
+/** The request of socket `fd` in `r` (locked), or 0. */
+export function find(r: usize, fd: usize): usize {
+  if (m.ld(r + R_CAP) === 0) {
+    return 0;
+  }
+  const at = slotOf(r, fd);
+  return m.ld(at) === fd + 1 ? m.ld(at + 8) : 0;
+}
+
+/** Takes socket `fd`'s request out of `r`'s table (locked): the request, or 0. */
+export function remove(r: usize, fd: usize): usize {
+  if (m.ld(r + R_CAP) === 0) {
+    return 0;
+  }
+  const at = slotOf(r, fd);
+  if (m.ld(at) !== fd + 1) {
+    return 0;
+  }
+  m.st(at, TOMB);
+  return m.ld(at + 8);
+}
+
+/** Puts request `p` of socket `fd` in `r`'s table (locked): the request it replaces, or 0. */
+function insert(r: usize, fd: usize, p: usize): usize {
+  if ((m.ld(r + R_USED) + 1) * 4 >= m.ld(r + R_CAP) * 3) {
+    grow(r);
+  }
+  const at = slotOf(r, fd);
+  const old = m.ld(at) === fd + 1 ? m.ld(at + 8) : 0;
+  if (m.ld(at) === 0) {
+    m.st(r + R_USED, m.ld(r + R_USED) + 1);
+  }
+  m.st(at, fd + 1);
+  m.st(at + 8, p);
+  return old;
+}
+
+/** A table twice the size (or the first one), without tombstones. */
+function grow(r: usize): void {
+  const map = m.ld(r + R_MAP);
+  const cap = m.ld(r + R_CAP);
+  const next = cap === 0 ? 64 : cap * 2;
+  m.st(r + R_MAP, m.lastingZeroed(next * 16));
+  m.st(r + R_CAP, next);
+  m.st(r + R_USED, 0);
+  for (let i: usize = 0; i < cap; i++) {
+    const k = m.ld(map + i * 16);
+    if (k !== 0 && k !== TOMB) {
+      const at = slotOf(r, k - 1);
+      m.st(at, k);
+      m.st(at + 8, m.ld(map + i * 16 + 8));
+      m.st(r + R_USED, m.ld(r + R_USED) + 1);
+    }
+  }
+  if (map !== 0) {
+    m.lastingRelease(map);
+  }
+}
+
+/**
+ * A request for socket `fd` (base socket `base`) of `source` in `r` (locked), wanting every
+ * event, its poll submitted: 0, or the status of a submission that failed (no request left).
+ */
+export function open(r: usize, fd: usize, base: usize, source: usize): i32 {
+  const p = m.zeroed(P_SIZE);
+  m.st(p + P_SOURCE, source);
+  m.st(p + P_FD, fd);
+  m.st(p + P_BASE, base);
+  m.st32(p + P_WANT, WANT_ALL);
+  // A request left with the handle's last socket: that socket is closed.
+  const old = insert(r, fd, p);
+  if (old !== 0) {
+    drop(r, old);
+  }
+  return update(r, p);
+}
+
+/** Request `p`, taken out of the table (locked): freed now, or once its poll completes. */
+export function drop(r: usize, p: usize): void {
+  m.st32(p + P_DEAD, 1);
+  const st = m.ld32(p + P_STATE);
+  if (st === PENDING) {
+    cancel(r, p);
+  } else if (st === IDLE) {
+    m.release(p, P_SIZE);
+  }
+}
+
+/** Wants the events behind readiness bits `bits` of request `p` (locked) again. */
+export function want(r: usize, p: usize, bits: u32): void {
+  let w: u32 = WANT_ERR;
+  if ((bits & (READ | HUP | ERR)) !== 0) {
+    w = w | WANT_READ;
+  }
+  if ((bits & WRITE) !== 0) {
+    w = w | WANT_WRITE;
+  }
+  m.st32(p + P_WANT, m.ld32(p + P_WANT) | w);
+  update(r, p);
+}
+
+/**
+ * Submits request `p`'s poll for what it wants, unless one pending covers it; one pending that
+ * doesn't is cancelled, and its completion submits the new one. 0, or a submission's status
+ * (the request is then freed: its socket is gone).
+ */
+function update(r: usize, p: usize): i32 {
+  const st = m.ld32(p + P_STATE);
+  const w = m.ld32(p + P_WANT);
+  if (st === PENDING) {
+    if ((w & ~m.ld32(p + P_PENDING)) !== 0) {
+      cancel(r, p);
+    }
+    return 0;
+  }
+  if (st === CANCELLED) {
+    return 0;
+  }
+  const info = p + P_INFO;
+  m.st(info, 0x7fffffffffffffff);
+  m.st32(info + 8, 1);
+  m.st32(info + 12, 0);
+  m.st(info + 16, m.ld(p + P_BASE));
+  m.st32(info + 24, w | POLL_LOCAL_CLOSE);
+  m.st32(info + 28, 0);
+  m.st32(p + P_IOSB, STATUS_PENDING as u32);
+  let s: i32 = 0;
+  // SAFETY: the request's status block and poll information live until its completion is
+  // taken (the request is freed only then); `p` comes back as the completion's `lpOverlapped`.
+  unsafe {
+    s = NtDeviceIoControlFile(
+      m.ld(r + R_AFD),
+      0,
+      m.ptr(0),
+      m.ptr(p),
+      m.ptr(p + P_IOSB),
+      IOCTL_AFD_POLL,
+      m.ptr(info),
+      32,
+      m.ptr(info),
+      32,
+    );
+  }
+  if (s !== 0 && s !== STATUS_PENDING) {
+    // No completion comes: the socket is closed or no socket.
+    forget(r, p);
+    return s;
+  }
+  m.st32(p + P_STATE, PENDING);
+  m.st32(p + P_PENDING, w);
+  return 0;
+}
+
+/** Cancels request `p`'s pending poll (locked): its completion comes all the same. */
+function cancel(r: usize, p: usize): void {
+  m.st32(p + P_STATE, CANCELLED);
+  if ((m.ld32(p + P_IOSB) as i32) !== STATUS_PENDING) {
+    return;
+  }
+  // SAFETY: the pending poll's status block; a scratch status block of the reactor (locked).
+  unsafe {
+    NtCancelIoFileEx(m.ld(r + R_AFD), m.ptr(p + P_IOSB), m.ptr(r + R_CANCEL));
+  }
+}
+
+/**
+ * Request `p`'s poll completed (`r` locked): what it reported is no longer wanted, the next poll
+ * is submitted. Its source and readiness bits as an event at `ev`: whether there is one.
+ */
+export function completed(r: usize, p: usize, ev: usize): bool {
+  m.st32(p + P_STATE, IDLE);
+  if (m.ld32(p + P_DEAD) !== 0) {
+    m.release(p, P_SIZE);
+    return false;
+  }
+  const status = m.ld32(p + P_IOSB) as i32;
+  const source = m.ld(p + P_SOURCE);
+  let events: u32 = 0;
+  if (status === STATUS_CANCELLED) {
+    events = 0;
+  } else if (status < 0) {
+    // The poll itself failed: the socket is broken, an error for whoever uses it next. Not
+    // submitted again (it would fail again, poll after poll).
+    forget(r, p);
+    m.st(ev, source);
+    m.st(ev + 8, bitsOf(POLL_CONNECT_FAIL) as usize);
+    return true;
+  } else if (m.ld32(p + P_INFO + 8) >= 1) {
+    events = m.ld32(p + P_INFO + 24);
+    if ((events & POLL_LOCAL_CLOSE) !== 0) {
+      forget(r, p);
+      return false;
+    }
+  }
+  events = events & m.ld32(p + P_WANT);
+  m.st32(p + P_WANT, m.ld32(p + P_WANT) & ~events);
+  update(r, p);
+  if (events === 0) {
+    return false;
+  }
+  m.st(ev, source);
+  m.st(ev + 8, bitsOf(events) as usize);
+  return true;
+}
+
+/** Request `p`, idle and done with (its socket closed or broken): out of the table, freed. */
+function forget(r: usize, p: usize): void {
+  if (find(r, m.ld(p + P_FD)) === p) {
+    remove(r, m.ld(p + P_FD));
+  }
+  m.release(p, P_SIZE);
+}
+
+/** The readiness bits (sched_io.velt) of poll events `e`. */
+function bitsOf(e: u32): u32 {
+  let b: u32 = 0;
+  if ((e & (POLL_RECEIVE | POLL_ACCEPT)) !== 0) {
+    b = b | READ;
+  }
+  if ((e & POLL_SEND) !== 0) {
+    b = b | WRITE;
+  }
+  if ((e & POLL_DISCONNECT) !== 0) {
+    b = b | HUP | READ;
+  }
+  if ((e & POLL_ABORT) !== 0) {
+    b = b | HUP | ERR | READ | WRITE;
+  }
+  if ((e & POLL_CONNECT_FAIL) !== 0) {
+    b = b | ERR | READ | WRITE;
+  }
+  return b;
+}
