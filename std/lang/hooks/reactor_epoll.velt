@@ -24,6 +24,8 @@ export const MONOTONIC: i32 = 1;
 export const SEND_FLAGS: i32 = 0x4000;
 /** `socket`'s extra type flags: `SOCK_NONBLOCK | SOCK_CLOEXEC`. */
 export const SOCKET_FLAGS: i32 = 0x80800;
+/** `sysconf`'s name of the online cores (`_SC_NPROCESSORS_ONLN`; 0: none). */
+export const SC_NPROCESSORS_ONLN: i32 = 84;
 
 // Readiness bits of an event (sched_io.velt).
 const READ: u32 = 1;
@@ -38,6 +40,7 @@ const EPOLLHUP: u32 = 0x10;
 const EPOLLRDHUP: u32 = 0x2000;
 const EPOLLET: u32 = 0x80000000;
 const EPOLL_CTL_ADD: i32 = 1;
+const EPOLL_CTL_DEL: i32 = 2;
 const EPOLL_CLOEXEC: i32 = 0x80000;
 const EFD_NONBLOCK_CLOEXEC: i32 = 0x80800;
 
@@ -90,26 +93,35 @@ export function open(): usize {
   const packed = velt_rt_os_arch() === "x64";
   m.st(r + R_STRIDE, packed ? 12 : 16);
   m.st(r + R_DATA, packed ? 4 : 8);
-  ctl(r, evfd, EPOLLIN | EPOLLET, 0);
+  ctl(r, EPOLL_CTL_ADD, evfd, EPOLLIN | EPOLLET, 0);
   return r;
 }
 
-/** `EPOLL_CTL_ADD` of `fd` for `events` with data `data`; 0 or errno. */
-function ctl(r: usize, fd: i32, events: u32, data: usize): i32 {
-  const c = r + R_CHANGE;
+/**
+ * `epoll_ctl` `op` of `fd` for `events` with data `data`, in a record of the caller's (from any
+ * thread: a source follows its task to another worker's reactor); 0 or errno.
+ */
+function ctl(r: usize, op: i32, fd: i32, events: u32, data: usize): i32 {
+  const c = m.zeroed(16);
   m.st32(c, events);
   // An unaligned word on x86-64 (data at 4): two halves.
   const at = c + m.ld(r + R_DATA);
   m.st32(at, (data & 0xffffffff) as u32);
   m.st32(at + 4, (data >> 32) as u32);
-  // SAFETY: one event in the block.
-  const n = unsafe { epoll_ctl(m.ld(r + R_EP) as i32, EPOLL_CTL_ADD, fd, m.ptr(c)) };
+  // SAFETY: one event at `c`.
+  const n = unsafe { epoll_ctl(m.ld(r + R_EP) as i32, op, fd, m.ptr(c)) };
+  m.release(c, 16);
   return n < 0 ? errno() : 0;
 }
 
 /** Registers `fd` for both directions, edge-triggered, with `source` its events' tag; 0 or errno. */
 export function add(r: usize, fd: i32, source: usize): i32 {
-  return ctl(r, fd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, source);
+  return ctl(r, EPOLL_CTL_ADD, fd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, source);
+}
+
+/** Takes `fd` out of reactor `r` (from any thread): its events come to another reactor now. */
+export function del(r: usize, fd: i32): void {
+  ctl(r, EPOLL_CTL_DEL, fd, 0, 0);
 }
 
 /**
@@ -180,4 +192,50 @@ export function accept(fd: i32, addr: usize, len: usize): i32 {
 /** Nothing more to set on Linux (`SOCKET_FLAGS`, `SEND_FLAGS`); 0. */
 export function prepare(fd: i32): i32 {
   return 0;
+}
+
+const FUTEX_WAIT_PRIVATE: i64 = 128;
+const FUTEX_WAKE_PRIVATE: i64 = 129;
+
+declare c("c") function syscall(n: i64, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64): i64;
+
+/** The futex call's number on this architecture. */
+function futexNumber(): i64 {
+  return velt_rt_os_arch() === "arm64" ? 98 : 202;
+}
+
+/**
+ * Sleeps while the `u32` at `word` is `expected` (a lock's waiters: sched_module.velt); it may
+ * return early, so the caller looks again.
+ */
+export function wordWait(word: usize, expected: u32): void {
+  const n = futexNumber();
+  // SAFETY: `word` is an aligned word that lives as long as the process; no timeout.
+  unsafe {
+    syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, 0, 0, 0);
+  }
+}
+
+/**
+ * `wordWait` for at most `us` microseconds (the stall monitor's nap, cut short by a wake).
+ */
+export function wordWaitFor(word: usize, expected: u32, us: u32): void {
+  const n = futexNumber();
+  const ts = m.alloc(16);
+  m.st(ts, (us / 1000000) as usize);
+  m.st(ts + 8, ((us % 1000000) * 1000) as usize);
+  // SAFETY: as `wordWait`; a relative timespec at `ts`.
+  unsafe {
+    syscall(n, word as i64, FUTEX_WAIT_PRIVATE, expected as i64, ts as i64, 0, 0);
+  }
+  m.release(ts, 16);
+}
+
+/** Wakes one thread sleeping on the `u32` at `word`, if any. */
+export function wordWake(word: usize): void {
+  const n = futexNumber();
+  // SAFETY: as `wordWait`.
+  unsafe {
+    syscall(n, word as i64, FUTEX_WAKE_PRIVATE, 1, 0, 0, 0);
+  }
 }

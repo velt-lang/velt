@@ -18,6 +18,8 @@ export const MONOTONIC: i32 = 1;
 export const SEND_FLAGS: i32 = 0;
 /** `socket`'s extra type flags. */
 export const SOCKET_FLAGS: i32 = 0;
+/** `sysconf`'s name of the online cores (`_SC_NPROCESSORS_ONLN`; 0: none). */
+export const SC_NPROCESSORS_ONLN: i32 = 0;
 
 /** No `errno` to read here: 0. */
 export function errno(): i32 {
@@ -33,6 +35,9 @@ export function open(): usize {
 export function add(r: usize, fd: i32, source: usize): i32 {
   return -1;
 }
+
+/** No sockets here: nothing to take out. */
+export function del(r: usize, fd: i32): void {}
 
 /** Spins until a wake (any timeout waits as long); no events. */
 export function wait(r: usize, timeoutMs: i64): usize {
@@ -71,3 +76,12 @@ export function accept(fd: i32, addr: usize, len: usize): i32 {
 export function prepare(fd: i32): i32 {
   return -1;
 }
+
+/** No OS wait here: returns at once (the caller spins). */
+export function wordWait(word: usize, expected: u32): void {}
+
+/** Nothing sleeps here. */
+export function wordWake(word: usize): void {}
+
+/** No threads to wait for: returns at once. */
+export function wordWaitFor(word: usize, expected: u32, us: u32): void {}

@@ -1,0 +1,478 @@
+// velt/lang/hooks (internal): the worker loop of the executor in Velt (sched.velt, #2649): a step
+// of the worker (`turn`: the inbox, the next ready task from its run queue, sched_queue.velt;
+// with none, work offered or borrowed from another worker, sched_spread.velt, or a park in the
+// reactor until a wake), the reactor's look every few polls, and what other threads read of the
+// worker (the monitor's progress and watch, sched_monitor.velt). The poll of a task is
+// sched_run.velt's.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as end from "./sched_end";
+import * as io from "./sched_io";
+import * as w from "./sched_io_write";
+import * as m from "./sched_mem";
+import * as mon from "./sched_monitor";
+import * as order from "./sched_order";
+import * as q from "./sched_queue";
+import * as run from "./sched_run";
+import * as sp from "./sched_spread";
+import * as tq from "./sched_take";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/** Task polls between two looks at the reactor of a busy worker (the runtime's). */
+const IO_INTERVAL: usize = 61;
+/** Polls between two looks while at least `BACKLOG` tasks are queued (one input's fan-out). */
+const FANOUT_IO_INTERVAL: usize = 4;
+const BACKLOG: usize = 256;
+
+/**
+ * One step of the worker: take the inbox, run the next ready task (sched_queue.velt), or, with
+ * none, take over or borrow work from another worker, or park until a wake (inlined in its
+ * loops). With other threads at the executor (`E_MODE`), the step also tells the monitor it
+ * makes progress, publishes what its poll printed, and every few polls looks at the spread.
+ */
+@inline
+export function turn(e: usize): void {
+  const mode = m.ld32(e + t.E_MODE);
+  if (mode !== 0) {
+    turnShared(e, mode);
+    return;
+  }
+  turnSolo(e);
+}
+
+/**
+ * `turn` of the only thread at the executor (`E_MODE` 0, decided at its start: its loops call
+ * this directly): no lock, no one to tell, no count of the second queue; tasks woken from other
+ * threads (the runtime's) are taken when the queue runs out and at each look at the reactor.
+ */
+@inline
+export function turnSolo(e: usize): void {
+  let k = q.pop(e, 0);
+  if (k === 0) {
+    k = fromInbox(e);
+    if (k === 0) {
+      idle(e, 0);
+      return;
+    }
+  }
+  run.run(e, k, 0);
+  ioCountdown(e, 0);
+}
+
+/**
+ * A lazy worker 0's look before each step (sched_task.velt `E_LAZY`): whether its queue is still
+ * its own. Read with an ordered load after the poll before (whose end stores its task's state,
+ * ordered): when the monitor saw that poll running after it made the queue shared, the look sees
+ * the shared mode, and the worker takes it on (`adopt`).
+ */
+@inline
+export function alone(e: usize): bool {
+  if (m.load32(e + t.E_MODE) === 0) {
+    const any = m.ld(e + t.E_PANY);
+    if (any === t.PANY_FIRST) {
+      // Only the first task the poll woke: at the end of the second queue (`joinWoken`).
+      const k = m.ld(e + t.E_PWAKE);
+      m.st(e + t.E_PWAKE, 0);
+      m.st(e + t.E_PANY, 0);
+      q.pushRest(e, k, 0);
+    } else if (any !== 0) {
+      joinAll(e);
+    }
+    return true;
+  }
+  adopt(e);
+  return false;
+}
+
+/** What lazy worker 0 `e`'s last poll queued (`E_PANY`), joined to its queues. */
+@noInline
+function joinAll(e: usize): void {
+  m.st(e + t.E_PANY, 0);
+  if (m.ld(e + t.E_PWAKE) !== 0) {
+    joinWoken(e);
+  }
+  // A poll that spawned has its first spawn on `E_PREST` (with the mode still 0 the monitor
+  // took nothing from it), so the test covers `E_PLIST` too.
+  if ((m.loadRelaxed(e + t.E_PIO) | m.loadRelaxed(e + t.E_PREST)) !== 0) {
+    joinPending(e);
+  }
+}
+
+/**
+ * Queues the first task lazy worker 0 `e` woke during its last poll (sched_task.velt `E_PWAKE`):
+ * at the end of its second queue, ahead of the others it woke (`E_PREST`, joined next); in the
+ * input queue when tasks woke as input (`E_PIO`: none does during a poll, but the stack allows it).
+ */
+@inline
+function joinWoken(e: usize): void {
+  const k = m.ld(e + t.E_PWAKE);
+  m.st(e + t.E_PWAKE, 0);
+  if (m.loadRelaxed(e + t.E_PIO) === 0) {
+    q.pushRest(e, k, m.ld32(e + t.E_MODE));
+  } else {
+    q.pushIo(e, k);
+  }
+}
+
+/** Joins what lazy worker 0 `e` queued during its last poll to its queues (sched_task `pend`). */
+@noInline
+function joinPending(e: usize): void {
+  let k = q.reverse(m.takeStack(e + t.E_PIO));
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    q.pushIo(e, k);
+    k = next;
+  }
+  k = q.reverse(m.takeStack(e + t.E_PREST));
+  const mode = m.ld32(e + t.E_MODE);
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    q.pushRest(e, k, mode);
+    k = next;
+  }
+  // Then the spawns past the stacked ones, in order: spliced on (`adopt` counts the queue again).
+  m.st(e + t.E_PCOUNT, 0);
+  const first = m.ld(e + t.E_PLIST);
+  if (first !== 0) {
+    const tail = m.ld(e + t.E_TAIL);
+    if (tail === 0) {
+      m.st(e + t.E_HEAD, first);
+    } else {
+      m.st(tail + t.T_NEXT, first);
+    }
+    m.st(e + t.E_TAIL, m.ld(e + t.E_PLIST_TAIL));
+    m.st(e + t.E_PLIST, 0);
+    m.st(e + t.E_PLIST_TAIL, 0);
+  }
+}
+
+/**
+ * Worker 0 takes on the shared mode the monitor gave its queue during a stall: its queue lock
+ * (the monitor may hold it, moving tasks), its queues counted, its progress and output published.
+ */
+@noInline
+function adopt(e: usize): void {
+  const mode = m.ld32(e + t.E_MODE);
+  q.lock(e, mode);
+  // Not lazy any more before the stack is joined: a rescue that puts tasks back on it after the
+  // join sees that and sends them to the inbox (sched_monitor.velt `lazyRescue`).
+  m.swap(e + t.E_LAZY, 0);
+  m.st(e + t.E_PANY, 0);
+  if (m.ld(e + t.E_PWAKE) !== 0) {
+    joinWoken(e);
+  }
+  joinPending(e);
+  const again = m.ld(e + t.E_AGAIN);
+  if (again !== 0) {
+    m.st(e + t.E_AGAIN, 0);
+    q.pushRest(e, again, mode);
+  }
+  q.recount(e);
+  q.unlock(e, mode);
+  m.st(e + t.E_PROGRESS, m.load(e + t.E_TICKS));
+  wk.publish(e);
+}
+
+/**
+ * `turnSolo` of a lazy worker 0 (sched_task.velt `E_LAZY`), with the look right after the poll
+ * (`alone`): whether it is still alone. What its poll queues waits apart until then, so the
+ * monitor may take tasks from its queues while the poll runs; what happens after the look (the
+ * I/O, a park) runs with no poll the monitor could see.
+ */
+@inline
+export function turnLazy(e: usize): bool {
+  let k = m.ld(e + t.E_AGAIN);
+  if (k !== 0) {
+    m.st(e + t.E_AGAIN, 0);
+  } else {
+    k = q.pop(e, 0);
+    if (k === 0) {
+      k = fromInbox(e);
+      if (k === 0) {
+        idle(e, 0);
+        return true;
+      }
+    }
+  }
+  run.run(e, k, t.M_LAZY);
+  if (!alone(e)) {
+    return false;
+  }
+  ioCountdown(e, 0);
+  // The task woken during its poll (`E_AGAIN`) queues behind what is queued; with nothing queued it
+  // stays there and runs next, without a push and a pop.
+  const again = m.ld(e + t.E_AGAIN);
+  if (again !== 0 && (m.ld(e + t.E_HEAD) | m.ld(e + t.E_IHEAD)) !== 0) {
+    m.st(e + t.E_AGAIN, 0);
+    q.pushRest(e, again, 0);
+  }
+  return true;
+}
+
+/** The queue ran out: the inbox's tasks, the first of them (0: none). */
+@noInline
+function fromInbox(e: usize): usize {
+  if (m.load(e + t.E_INBOX) === 0) {
+    return 0;
+  }
+  q.takeInbox(e);
+  return q.pop(e, 0);
+}
+
+/** `turn` with other threads at the executor (`mode`: its `E_MODE`). */
+@noInline
+function turnShared(e: usize, mode: u32): void {
+  q.lock(e, mode);
+  if (m.load(e + t.E_INBOX) !== 0) {
+    q.takeInbox(e);
+  }
+  const k = q.pop(e, mode);
+  let watched = false;
+  if (k !== 0 && (mode & t.M_MONITOR) !== 0) {
+    watched = before(e, k);
+  }
+  q.unlock(e, mode);
+  if (k === 0) {
+    idle(e, mode);
+    return;
+  }
+  run.run(e, k, mode);
+  after(e, mode, watched);
+  ioCountdown(e, mode);
+}
+
+/**
+ * One word for the I/O, counting down: it reaches 0 every `IO_INTERVAL` polls of a busy worker,
+ * or after this one when the poll queued bytes with `writeLater` (sched_io.velt `due` set it to 1).
+ */
+@inline
+function ioCountdown(e: usize, mode: u32): void {
+  const n = m.ld(e + t.E_TICK) - 1;
+  m.st(e + t.E_TICK, n);
+  if (n === 0) {
+    ioDue(e, mode);
+  }
+}
+
+/** The I/O tick reached 0: the polls until the next (`interval`), then the I/O. */
+@noInline
+function ioDue(e: usize, mode: u32): void {
+  if (mode === 0) {
+    // With the I/O tick, a lazy worker 0's progress (sched_monitor.velt `lazyDuties`).
+    m.st(e + t.E_LOOKS, m.ld(e + t.E_LOOKS) + 1);
+  }
+  m.st(e + t.E_TICK, interval(e, mode));
+  ioTick(e, m.ld(e + t.E_IO));
+}
+
+/**
+ * The polls until the next look at the reactor: fewer while `BACKLOG` tasks are queued. With
+ * one worker the second queue keeps no count; its spawned tasks not yet run (`E_RLEN`, counted
+ * by sched_task.velt `scheduleNew`) estimate it: each poll of the interval starting now is taken
+ * off in advance, as one of them (a spawn burst's tasks run in the order they came).
+ */
+@inline
+function interval(e: usize, mode: u32): usize {
+  if (mode !== 0) {
+    return q.len(e) >= BACKLOG ? FANOUT_IO_INTERVAL : IO_INTERVAL;
+  }
+  const spawned = m.ld(e + t.E_RLEN);
+  if (spawned === 0) {
+    return m.ld(e + t.E_ILEN) >= BACKLOG ? FANOUT_IO_INTERVAL : IO_INTERVAL;
+  }
+  const n = q.input(e) + spawned >= BACKLOG ? FANOUT_IO_INTERVAL : IO_INTERVAL;
+  m.st(e + t.E_RLEN, spawned > n ? spawned - n : 0);
+  return n;
+}
+
+/**
+ * Before the poll of task `k` (the queue locked, a monitor watching): the progress the monitor
+ * sees, and, for the first poll of a spawned task with fresh tasks behind it, a watch (whether
+ * one was published).
+ */
+@noInline
+function before(e: usize, k: usize): bool {
+  m.st(e + t.E_PROGRESS, m.load(t.main() + t.E_TICKS));
+  if (!t.fresh(k)) {
+    return false;
+  }
+  const behind = tq.freshBehind(e);
+  return behind > 0 && mon.watch(e, m.ld(e + t.E_POLLS), behind);
+}
+
+/**
+ * After a poll, with other threads at the executor: the watch ends; what the poll printed is
+ * published (the task may resume on another worker); every `HELP` polls, the spread.
+ */
+@noInline
+function after(e: usize, mode: u32, watched: bool): void {
+  if (watched) {
+    m.swap(e + t.E_WATCH, 0);
+  }
+  wk.publish(e);
+  m.st(e + t.E_POLLS, m.ld(e + t.E_POLLS) + 1);
+  if ((mode & t.M_SPREAD) !== 0) {
+    const left = m.ld(e + t.E_HELP) - 1;
+    if (left === 0) {
+      m.st(e + t.E_HELP, sp.HELP);
+      sp.maybeHelp(e, mode);
+    } else {
+      m.st(e + t.E_HELP, left);
+    }
+  }
+}
+
+/**
+ * Nothing queued: take over what a worker offers, or borrow input from a busy one; else park.
+ */
+@noInline
+function idle(e: usize, mode: u32): void {
+  if ((mode & t.M_SPREAD) !== 0) {
+    if (sp.steal(e) || sp.borrow(e)) {
+      return;
+    }
+    sp.saw(e, 0, 0);
+    sp.publishIdle(e);
+  }
+  park(e);
+}
+
+/**
+ * The I/O at the end of a poll whose tick reached 0: what is due is sent; due `unref()`'d timers
+ * waiting for a park ask again (sched_end.velt: a worker that never parks); due sleeps fire and
+ * Node's timer loop moves on (sched_order.velt `tick`); with sockets
+ * registered, the reactor's ready events and passed deadlines are delivered without waiting, and
+ * what they made due is sent. The tasks it wakes are input; a fair pass starts if one is due.
+ */
+@noInline
+function ioTick(e: usize, b: usize): void {
+  if (m.load(e + t.E_INBOX) !== 0) {
+    const mode = m.ld32(e + t.E_MODE);
+    q.lock(e, mode);
+    q.takeInbox(e);
+    q.unlock(e, mode);
+  }
+  m.st32(e + t.E_DISPATCH, t.D_INPUT);
+  if (io.anyDue(b)) {
+    w.flushDue(b);
+  }
+  if (m.ld(e + t.E_UNREF) !== 0) {
+    end.wakeUnref(e);
+  }
+  if (m.ld(e + t.E_TIMERS) !== 0) {
+    order.tick(e);
+  }
+  if (m.load(b + io.IO_LIVE) !== 0) {
+    io.look(b);
+    if (io.anyDue(b)) {
+      w.flushDue(b);
+    }
+  }
+  m.st32(e + t.E_DISPATCH, 0);
+  turned(e);
+}
+
+/**
+ * After a reactor turn: a fair pass if one is due, timed only while both queues hold tasks (the
+ * clock is read then, or for the spread's window: `E_NOW`).
+ */
+function turned(e: usize): void {
+  const mode = m.ld32(e + t.E_MODE);
+  if ((mode & t.M_SPREAD) === 0 && (m.ld(e + t.E_HEAD) === 0 || m.ld(e + t.E_IHEAD) === 0)) {
+    if (m.ld(e + t.E_HEAD) === 0) {
+      m.st(e + t.E_FAIR_DUE, 0);
+    }
+    return;
+  }
+  m.st(e + t.E_NOW, sp.now());
+  q.lock(e, mode);
+  q.tick(e, mode);
+  q.unlock(e, mode);
+}
+
+/**
+ * May worker `e` (its park word up, nothing queued) sleep? Worker 0 decides the program's end
+ * there (sched_end.velt `mayPark`); another worker wakes worker 0 if it sleeps, so that it looks
+ * again with this one idle.
+ */
+function parkable(e: usize): bool {
+  const g = m.ld(e + t.E_MAIN);
+  if (m.ld(g + t.E_COUNT) > 1) {
+    // Idle: what its tasks printed reaches the OS, as the runtime's workers do.
+    wk.handOffOutput();
+  }
+  if (e === g) {
+    return end.mayPark(e);
+  }
+  wk.unpark(g);
+  return true;
+}
+
+/**
+ * Sleeps in the reactor until a socket is ready, a task is woken from another thread or the next
+ * timer is due; what is due is sent first, and what the wait made due (writable sockets with
+ * bytes left) after it. Due timers fire before (when they make a task ready, the worker does not
+ * wait) and after the wait. Not when nothing can happen any more (sched_end.velt `mayPark`: the
+ * program ends). Out of line: the worker's step (`turn`) stays small enough to inline.
+ */
+@noInline
+function park(e: usize): void {
+  const b = m.ld(e + t.E_IO);
+  m.st32(e + t.E_DISPATCH, t.D_INPUT);
+  if (io.anyDue(b)) {
+    w.flushDue(b);
+  }
+  let timeout: i64 = -1;
+  const timers = m.ld(e + t.E_TIMERS) !== 0;
+  if (timers) {
+    timeout = order.next(e);
+    if (q.any(e)) {
+      m.st32(e + t.E_DISPATCH, 0);
+      return;
+    }
+  }
+  m.store32(e + t.E_PARK, 1);
+  const mode = m.ld32(e + t.E_MODE);
+  if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || !parkable(e)) {
+    m.store32(e + t.E_PARK, 0);
+    m.st32(e + t.E_DISPATCH, 0);
+    if ((mode & t.M_MONITOR) !== 0 || m.ld(e + t.E_LAZY) !== 0) {
+      // The monitor may have seen every worker parked meanwhile and gone to sleep.
+      mon.kick(m.ld(e + t.E_MAIN));
+    }
+    return;
+  }
+  let asleep: usize = 0;
+  if ((mode & t.M_SPREAD) !== 0) {
+    asleep = sp.now();
+  }
+  io.park(b, timeout);
+  m.store32(e + t.E_PARK, 0);
+  if (timers) {
+    order.tick(e);
+  }
+  if (m.ld(e + t.E_UNREF) !== 0 && e !== m.ld(e + t.E_MAIN)) {
+    // Worker 0 found something that can still happen: due unref()'d timers ask again.
+    end.wakeUnref(e);
+  }
+  if (io.anyDue(b)) {
+    w.flushDue(b);
+  }
+  m.st32(e + t.E_DISPATCH, 0);
+  turned(e);
+  if (mode !== 0) {
+    const g = m.ld(e + t.E_MAIN);
+    if ((mode & t.M_SPREAD) !== 0) {
+      sp.slept(e, m.ld(e + t.E_NOW) - asleep);
+    }
+    // Asleep is not stalled: the monitor counts from now.
+    m.st(e + t.E_PROGRESS, m.load(g + t.E_TICKS));
+    if ((mode & t.M_MONITOR) !== 0) {
+      mon.kick(g);
+    }
+  } else if (m.ld(e + t.E_LAZY) !== 0) {
+    // A lazy worker 0 awake again: its polls need watching (sched_monitor.velt `lazyDuties`).
+    mon.kick(e);
+  }
+}

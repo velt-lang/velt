@@ -1,0 +1,104 @@
+// velt/lang/hooks (internal): whether the executor in Velt (sched.velt, #2649 step 3) takes the
+// locks of its task-level objects (a latch: sched_latch.velt; a task's join slot: sched_make.velt
+// `lockJoin`), each a word of its own taken for a few stores.
+//
+// - `LK_NONE`: one worker and no stall monitor (`VELT_THREADS=1 VELT_RESCUE=0`): no other thread
+//   reaches them, no lock.
+// - `LK_ON`: several workers, or after the monitor rescued the only one: every operation locks.
+// - `LK_LAZY`: the only worker, which the monitor may rescue (`VELT_THREADS=1`, the default):
+//   nothing else runs tasks until the monitor finds worker 0 stalled and starts a spare
+//   (sched_monitor.velt `lazyDuties`), so worker 0 locks nothing until then, as its queue
+//   (sched_task.velt `E_LAZY`).
+//
+// The hand-over from `LK_LAZY` to `LK_ON` happens while worker 0 runs a poll, which may be in the
+// middle of an operation it began without the lock. So worker 0 counts its operations under way
+// (`lazyIn`, `lazyOut`: a store, then a load of the mode, both sequentially consistent), and the
+// monitor stores the mode, then waits until the count is 0 (`locksOn`), before any task reaches a
+// spare. Either the operation sees `LK_ON` and locks, or the monitor sees it counted and waits for
+// its end (Dekker's argument); an end the monitor reads with the count at 0 happens before the
+// spares' operations. Only worker 0 writes the count, with plain arithmetic. An operation does
+// nothing that begins another latch's or join slot's operation, but the count allows that.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+
+/** The modes (see the module docs). */
+export const LK_NONE: u32 = 0;
+export const LK_LAZY: u32 = 1;
+export const LK_ON: u32 = 2;
+
+/** The mode, set before tasks run (sched_workers.velt) and once by the monitor (`locksOn`). */
+const MODE = new Atomic<u32>(0);
+/** Worker 0's operations under way without the lock while the mode is `LK_LAZY`. */
+const LAZY_OPS = new Atomic<usize>(0);
+
+/** Sets the mode before any task runs. */
+export function setMode(mode: u32): void {
+  MODE.store(mode, "release");
+}
+
+/** The mode (`LK_NONE` tells a caller it may take a path without locks or counts). */
+@inline
+export function mode(): u32 {
+  return MODE.load("relaxed");
+}
+
+/**
+ * How the operation beginning now on a lock word goes: `LK_NONE` (no lock), `LK_LAZY` (no lock,
+ * counted: `done` ends it), or `LK_ON` (take the lock). Read once per operation, passed to the
+ * unlock.
+ */
+@inline
+export function kind(): u32 {
+  const mode = MODE.load("relaxed");
+  // Bit tests, here and in the callers: one instruction each.
+  if ((mode & LK_LAZY) !== 0) {
+    return lazyIn();
+  }
+  return mode;
+}
+
+/** An operation of kind `k` ends (its lock, if any, given back already). */
+@inline
+export function done(k: u32): void {
+  if ((k & LK_LAZY) !== 0) {
+    LAZY_OPS.store(LAZY_OPS.load("relaxed") - 1, "seqcst");
+  }
+}
+
+/** Worker 0 begins an operation while the mode was lazy: `LK_LAZY` when it is still. */
+@noInline
+function lazyIn(): u32 {
+  LAZY_OPS.store(LAZY_OPS.load("relaxed") + 1, "seqcst");
+  if (MODE.load("seqcst") === LK_LAZY) {
+    return LK_LAZY;
+  }
+  LAZY_OPS.store(LAZY_OPS.load("relaxed") - 1, "seqcst");
+  return LK_ON;
+}
+
+/**
+ * Locks on from now (the monitor, rescuing worker 0 from the lazy mode): returns once no operation
+ * begun without the lock is under way.
+ */
+export function locksOn(): void {
+  if (MODE.load("relaxed") !== LK_LAZY) {
+    return;
+  }
+  MODE.store(LK_ON, "seqcst");
+  let spins: u32 = 0;
+  while (LAZY_OPS.load("seqcst") !== 0) {
+    spins++;
+    if (spins > 64) {
+      m.yieldCore();
+    }
+  }
+}
+
+/** Takes the lock word at `a` (an operation of kind `LK_ON`). */
+@inline
+export function take(a: usize): void {
+  if (m.cas32(a, 0, 1) !== 0) {
+    m.spinLock(a);
+  }
+}

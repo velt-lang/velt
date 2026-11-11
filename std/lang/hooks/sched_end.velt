@@ -1,7 +1,10 @@
 // velt/lang/hooks (internal): the process lifetime under the executor in Velt (sched.velt,
 // #2649), as the runtime's (velt_rt task/quiet.rs) and Node's: the program runs while something
 // can still happen, and ends when the worker would park with nothing left that can wake it:
-// - no task queued (the worker's queue and its inbox are empty: it is about to park);
+// - no task queued (worker 0's queue and its inbox are empty: it is about to park), and every
+//   other worker asleep in its reactor with nothing queued, no wait linked into its sources and
+//   no pending `sleep` (a worker that parks while worker 0 sleeps wakes it to look again:
+//   sched_run.velt `parkable`);
 // - no keep-alive reference (a ref'd timer: std/prelude/timers.velt's externs route here);
 // - no wait linked into a source of the Velt reactor (a socket read, an accept, a deadline);
 // - no pending `sleep` (sched_sleep.velt; Node's timers count through their keep-alive
@@ -26,12 +29,24 @@
 // parks (code that keeps yielding) wakes it every I/O tick, and after a second it runs, as the
 // runtime's patience does.
 
-import { fnAddress, futDrop, futPoll, noInline, slotPut, slotTake } from "velt/lang/intrinsics";
+import { export as cExport } from "velt/ffi";
+import {
+  exportedAddress,
+  fnAddress,
+  futDrop,
+  futPoll,
+  noInline,
+  slotPut,
+  slotTake,
+} from "velt/lang/intrinsics";
 import * as io from "./sched_io";
 import * as wt from "./sched_io_wait";
+import * as mk from "./sched_make";
 import * as m from "./sched_mem";
+import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 /** The runtime's question of a due `unref()`'d timer, asked as a probe (a heap future). */
 declare c("c") function velt_rt_timer_unref_due$probe(): usize;
@@ -52,20 +67,25 @@ const U_SIZE: usize = 64;
 
 /** Sets up the probe's waker (a table whose entries do nothing) and `cx` in executor `e`. */
 export function open(e: usize): void {
-  m.st(e + t.E_PROBE_VT, fnAddress(probeClone));
-  m.st(e + t.E_PROBE_VT + 8, fnAddress(probeNothing));
-  m.st(e + t.E_PROBE_VT + 16, fnAddress(probeNothing));
-  m.st(e + t.E_PROBE_VT + 24, fnAddress(probeNothing));
+  // SAFETY: `@export`ed functions of a waker table's slots' C signatures.
+  unsafe {
+    m.st(e + t.E_PROBE_VT, exportedAddress(probeClone));
+    m.st(e + t.E_PROBE_VT + 8, exportedAddress(probeNothing));
+    m.st(e + t.E_PROBE_VT + 16, exportedAddress(probeNothing));
+    m.st(e + t.E_PROBE_VT + 24, exportedAddress(probeNothing));
+  }
   m.st(e + t.E_PROBE, e + t.E_PROBE_VT);
   m.st(e + t.E_PROBE_WORD, 0);
   m.st(e + t.E_PROBE_CX, e + t.E_PROBE_WORD);
   m.st(e + t.E_PROBE_CX + 8, e + t.E_PROBE);
 }
 
+@cExport("std_sched_probe_clone")
 function probeClone(w: usize): usize {
   return w;
 }
 
+@cExport("std_sched_probe_nothing")
 function probeNothing(w: usize): void {}
 
 /** A keep-alive reference taken (`velt_rt_keep_alive_acquire`). */
@@ -109,26 +129,92 @@ function runtimeQuiet(e: usize): bool {
   return quiet;
 }
 
-/** Can something still happen besides the code running now (module docs)? */
-function busy(e: usize): bool {
-  if (m.load(e + t.E_KEEP) !== 0 || m.ld(e + t.E_HEAD) !== 0 || m.load(e + t.E_INBOX) !== 0) {
+/** Has worker `w` a pending `sleep`? */
+function waits(w: usize): bool {
+  const tb = m.load(w + t.E_TIMERS);
+  return tb !== 0 && sl.pending(tb);
+}
+
+/**
+ * Is a wait linked into a source? Each worker counts the waits its thread linked less those it
+ * unlinked (a wait may leave on another worker than the one it joined on): the sum over the
+ * workers, read while every other worker is parked.
+ */
+function ioWaits(e: usize): bool {
+  const n = m.load(e + t.E_STARTED);
+  let sum: usize = 0;
+  for (let i: usize = 0; i < n; i++) {
+    sum = sum + m.load(m.ld(t.worker(i) + t.E_IO) + io.IO_WAITING);
+  }
+  const mb = m.load(e + t.E_MON_IO);
+  if (mb !== 0) {
+    sum = sum + m.load(mb + io.IO_WAITING);
+  }
+  return sum !== 0;
+}
+
+/**
+ * Has worker `w` something to run or something that can wake it: awake (unless it is `self`, the
+ * thread asking: its code running now does not count), a task queued, in its inbox or offered,
+ * a pending sleep? Another worker's words are read while its park word is up (it runs nothing
+ * then).
+ */
+function workerBusy(w: usize, self: usize): bool {
+  if (w !== self && m.load32(w + t.E_PARK) !== 1) {
     return true;
   }
-  if (m.ld(e + t.E_PINNED) !== 0) {
-    // A task on the runtime's executor (a pinned spawn) may be running: the runtime counts only
-    // its queued ones, so the program's end is not decided here (sched.velt `schedPinned`).
+  if (m.load(w + t.E_INBOX) !== 0 || q.any(w) || m.load(w + t.E_OFFER) !== 0) {
     return true;
   }
-  if (m.ld(m.ld(e + t.E_IO) + io.IO_WAITING) !== 0) {
+  return waits(w);
+}
+
+/** The unparks of every started worker so far (a worker woken mid-scan moves it). */
+function unparks(g: usize): usize {
+  const n = m.load(g + t.E_STARTED);
+  let sum: usize = 0;
+  for (let i: usize = 0; i < n; i++) {
+    sum = sum + m.load(t.worker(i) + t.E_UNPARKS);
+  }
+  return sum;
+}
+
+/**
+ * Can something still happen besides the code running now on worker `self` (module docs)? `g` is
+ * worker 0's block, which holds what is process-wide.
+ */
+function busy(g: usize, self: usize): bool {
+  // Keep-alive references, and tasks in the monitor's hands between two workers.
+  if (m.load(g + t.E_KEEP) !== 0 || m.load(g + t.E_MOVING) !== 0) {
     return true;
   }
-  const tb = m.ld(e + t.E_TIMERS);
-  if (tb !== 0 && sl.pending(tb)) {
+  const n = m.load(g + t.E_STARTED);
+  for (let i: usize = 0; i < n; i++) {
+    if (workerBusy(t.worker(i), self)) {
+      return true;
+    }
+  }
+  if (ioWaits(g)) {
     return true;
   }
   // The runtime first, the inbox again after: a leaf counts until its task polled it ready, and
   // its wake reaches the inbox before that.
-  return !runtimeQuiet(e) || m.load(e + t.E_INBOX) !== 0;
+  return !runtimeQuiet(g) || m.load(self + t.E_INBOX) !== 0;
+}
+
+/**
+ * Worker 0 (`e`, its park word up) sees nothing that can still happen: true when that holds for
+ * the whole scan. The workers are read one after another, so a worker read as idle may be woken
+ * before another is read (by a worker that then parks, or by a thread of the runtime's): every
+ * wake of a parked worker counts in its `E_UNPARKS`, and a worker going idle unparks worker 0,
+ * so the scan counts only when no worker was woken meanwhile and worker 0 is still parked.
+ */
+function quiet(e: usize): bool {
+  const before = unparks(e);
+  if (busy(e, e)) {
+    return false;
+  }
+  return m.load32(e + t.E_PARK) === 1 && unparks(e) === before;
 }
 
 /**
@@ -138,17 +224,29 @@ function busy(e: usize): bool {
  */
 @noInline
 export function mayPark(e: usize): bool {
-  if (!busy(e)) {
+  if (quiet(e)) {
     const root = m.ld(e + t.E_ROOT);
     if (root !== 0 && !t.has(root, t.ROOT_DONE)) {
       unfinished(e);
     }
     // `schedFinish` runs while tasks are live: none of them can run again.
-    m.st(e + t.E_LIVE, 0);
+    mk.noneLive(e);
     return false;
   }
+  if (m.load32(e + t.E_PARK) !== 1) {
+    // Woken during the scan: look again.
+    return false;
+  }
+  // Something can still happen: the due unref()'d timers run (another worker's ask again once
+  // it wakes: sched_loop.velt `park`).
+  const n = m.load(e + t.E_STARTED);
+  for (let i: usize = 1; i < n; i++) {
+    const w = t.worker(i);
+    if (m.load(w + t.E_UNREF) !== 0) {
+      wk.unpark(w);
+    }
+  }
   if (m.ld(e + t.E_UNREF) !== 0) {
-    // Something can still happen: the due unref()'d timers run.
     wakeUnref(e);
     return false;
   }
@@ -212,7 +310,9 @@ function unrefPoll(f: usize, cx: usize): u32 {
   unlink(e, f);
   // Never true here: an end the executor sees exits the process (`mayPark`).
   m.st(f + U_RESULT, 0);
-  if (busy(e)) {
+  // Asked for the process, from this worker (its own list keeps the question: its timers'
+  // task is anchored here).
+  if (busy(t.main(), e)) {
     return 1;
   }
   const now = wt.now();

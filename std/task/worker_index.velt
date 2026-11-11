@@ -1,0 +1,15 @@
+// velt/task (internal): the worker count and this task's worker, from the runtime's executor
+// (the default variant of `#task-workers`; std/lang/hooks/sched.velt answers under
+// `VELT_SCHEDULER=std`, worker_index_sched.velt).
+
+import { velt_rt_current_worker, velt_rt_worker_count } from "velt/task/rt";
+
+/** How many workers run tasks. */
+export function count(): u64 {
+  return velt_rt_worker_count();
+}
+
+/** The worker running this task. */
+export function current(): u64 {
+  return velt_rt_current_worker();
+}

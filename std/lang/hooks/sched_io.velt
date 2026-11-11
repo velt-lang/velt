@@ -24,28 +24,32 @@
 //   list, sent at the end of each poll of a task and before the worker waits
 //   (sched_io_write.velt).
 //
-// One worker (VELT_THREADS=1 scope): sources, their waiters and the table are plain memory the
-// worker alone changes; only the wake crosses threads.
+// Workers (#2649 step 3): each worker has an I/O block of its own (its reactor, due list and
+// waits); `io()` is this thread's. A source is registered with one worker's reactor (`S_IOB`) and
+// follows the home worker of the task using it (#2370); the handle table is the process's, and
+// a source has a lock that every operation on it and the delivery of its events hold once
+// several threads run (sched_io_table.velt), since a task may run on a worker other than its
+// home (a borrow, the slot for the task woken next) and several tasks may share a socket.
 
 import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as m from "./sched_mem";
+import * as tb from "./sched_io_table";
 import * as wt from "./sched_io_wait";
 
-/** The I/O block's address (0 until the executor starts). */
+/** Worker 0's I/O block (0 until the executor starts). */
 const IO = new Atomic<u64>(0);
+/** This thread's worker's I/O block (0: not a worker). */
+const IO_HERE = new ThreadLocal<u64>(0);
 
 /**
- * The I/O block: the reactor, the due list, the handle table (sched_io_table.velt), the
- * address of the executor's I/O tick (sched_task.velt `E_TICK`, set to 1 when a write is due),
- * the waiters' poll and drop.
+ * The I/O block: the reactor, the due list, the sources registered with the reactor (changed
+ * atomically: a source that follows its task leaves from another thread), the address of the
+ * executor's I/O tick (sched_task.velt `E_TICK`, set to 1 when a write is due), the waiters'
+ * poll and drop.
  */
 export const IO_REACTOR: usize = 0;
 export const IO_DUE: usize = 8;
-export const IO_TABLE: usize = 16;
-export const IO_CAP: usize = 24;
-export const IO_LEN: usize = 32;
-export const IO_FREE: usize = 40;
 export const IO_LIVE: usize = 48;
 export const IO_TICK_AT: usize = 56;
 /** The polls of a busy worker between two looks at the reactor. */
@@ -53,9 +57,20 @@ export const TICKS: usize = 64;
 export const IO_WAIT_POLL: usize = 64;
 export const IO_WAIT_DROP: usize = 72;
 export const IO_TIMERS: usize = 80;
-/** Waits linked into a source: pending I/O, which keeps the process alive (sched_end.velt). */
+/**
+ * Waits linked into a source by this worker's thread, less those its thread unlinked (a wait may
+ * be linked on one worker and woken on another): summed over the workers, pending I/O, which
+ * keeps the process alive (sched_end.velt).
+ */
 export const IO_WAITING: usize = 88;
-const IO_SIZE: usize = 96;
+/**
+ * The reactor's lock (its wait and the delivery of what it found; the stall monitor's turn for a
+ * stalled worker only tries it), and the sources made due from another thread (the monitor's
+ * turn: a stack the worker's `flushDue` takes).
+ */
+export const IO_RLOCK: usize = 96;
+export const IO_RDUE: usize = 104;
+const IO_SIZE: usize = 112;
 
 /** A source's fields. */
 export const S_FD: usize = 0;
@@ -70,10 +85,29 @@ export const S_QUEUED: usize = 56;
 export const S_WRITTEN: usize = 64;
 export const S_DUE_NEXT: usize = 72;
 export const S_ERR: usize = 80;
-export const S_HANDLE: usize = 88;
+/**
+ * Whether its lock is taken (sched_io_table.velt `lock`): sources are shared, set as it is made,
+ * kept when it is reset (the table's `share` comes before the first source).
+ */
+export const S_LOCKED: usize = 84;
 export const S_CARRY: usize = 96;
 export const S_CARRY_LEN: usize = 100;
-export const S_SIZE: usize = 112;
+/**
+ * Its lock (sched_io_table.velt), its generation, the I/O block of the reactor it is registered
+ * with, its slot in the handle table, the next free source.
+ */
+export const S_LOCK: usize = 104;
+export const S_GEN: usize = 108;
+export const S_IOB: usize = 112;
+export const S_SLOT: usize = 120;
+export const S_FREE: usize = 128;
+/**
+ * The task that uses it (sched_io_table.velt `follow`): 0 none yet, `SHARED` once a second task
+ * did (a pooled connection), whose source stays where it is.
+ */
+export const S_TASK: usize = 136;
+export const SHARED: usize = 1;
+export const S_SIZE: usize = 144;
 
 /** Readiness bits (the reactor's). */
 export const READ: u32 = 1;
@@ -101,13 +135,28 @@ export const K_WRITE: u32 = 1;
 export const K_WRITTEN: u32 = 2;
 export const K_DRAINED: u32 = 3;
 
-/** The I/O block, made by the executor at its start (0 before, and on a JS host). */
+/**
+ * This thread's worker's I/O block, made by the executor at its start; off the workers worker
+ * 0's (0 before the executor starts, and on a JS host).
+ */
 @inline
 export function io(): usize {
+  const b = IO_HERE.get();
+  if (b !== 0) {
+    return b as usize;
+  }
   return IO.load("relaxed") as usize;
 }
 
-/** Makes the I/O block: the reactor, an empty table; `tickAt` is the executor's I/O tick. */
+/** Makes `b` this thread's I/O block (a worker thread's start). */
+export function installHere(b: usize): void {
+  IO_HERE.set(b as u64);
+}
+
+/**
+ * Makes an I/O block: the reactor, an empty table; `tickAt` is the worker's I/O tick. The first
+ * is worker 0's.
+ */
 export function open(tickAt: usize): usize {
   const b = m.lastingZeroed(IO_SIZE);
   m.st(b + IO_TICK_AT, tickAt);
@@ -115,7 +164,10 @@ export function open(tickAt: usize): usize {
   m.st(b + IO_REACTOR, r.open());
   m.st(b + IO_WAIT_POLL, fnAddress(wt.waitPoll));
   m.st(b + IO_WAIT_DROP, fnAddress(wt.waitDrop));
-  IO.store(b as u64, "release");
+  if (IO.load("relaxed") === 0) {
+    IO.store(b as u64, "release");
+    IO_HERE.set(b as u64);
+  }
   return b;
 }
 
@@ -164,17 +216,53 @@ function wait(b: usize, timeoutMs: i64): void {
   if (rb === 0) {
     return;
   }
+  const shared = tb.shared();
+  if (shared) {
+    m.spinLock(b + IO_RLOCK);
+  }
   const n = r.wait(rb, timeoutMs);
+  deliver(rb, n);
+  if (shared) {
+    m.store32(b + IO_RLOCK, 0);
+  }
+}
+
+/** Delivers the `n` events the last wait of reactor `rb` found: whether one was the wake. */
+function deliver(rb: usize, n: usize): bool {
+  let woken = false;
   for (let i: usize = 0; i < n; i++) {
     const s = r.source(rb, i);
     if (s !== 0) {
+      tb.lock(s);
       ready(s, r.bits(rb, i));
+      tb.unlock(s);
+    } else {
+      woken = true;
     }
+  }
+  return woken;
+}
+
+/**
+ * A turn of the reactor of I/O block `b` for its worker, stalled (the stall monitor's thread,
+ * sched_monitor.velt): the events of its sockets, without waiting, unless the worker is in its
+ * reactor itself. Its own wake is posted again: the worker, once it runs, must not sleep on with
+ * the wake spent.
+ */
+export function turnFor(b: usize): void {
+  const rb = m.ld(b + IO_REACTOR);
+  if (rb === 0 || m.cas32(b + IO_RLOCK, 0, 1) !== 0) {
+    return;
+  }
+  const woken = deliver(rb, r.wait(rb, 0));
+  m.store32(b + IO_RLOCK, 0);
+  if (woken) {
+    r.wake(rb);
   }
 }
 
 /**
- * Source `s` became ready for `bits`: its waiters are woken; a writable one with bytes to send
+ * Source `s` (locked) became ready for `bits`: its waiters are woken; a writable one with bytes to send
  * goes on the due list, which the worker sends after the wait (sched_io_write.velt).
  */
 export function ready(s: usize, bits: u32): void {
@@ -185,13 +273,20 @@ export function ready(s: usize, bits: u32): void {
   wt.wakeAll(s);
 }
 
-/** Puts source `s` on the due list, once. */
+/**
+ * Puts source `s` (locked) on this worker's due list, once; from a thread with no reactor (the
+ * stall monitor), on the due stack of the worker whose reactor has it.
+ */
 @inline
 export function due(s: usize): void {
   const fl = m.ld32(s + S_FLAGS);
   if ((fl & F_DUE) === 0) {
     m.st32(s + S_FLAGS, fl | F_DUE);
     const b = io();
+    if (m.ld(b + IO_REACTOR) === 0) {
+      dueFrom(s);
+      return;
+    }
     m.st(s + S_DUE_NEXT, m.ld(b + IO_DUE));
     m.st(b + IO_DUE, s);
     // The poll's end looks at the I/O block (the tick's next count is 0).
@@ -199,36 +294,81 @@ export function due(s: usize): void {
   }
 }
 
+/** Has I/O block `b` sources due (on its list, or made due from another thread)? */
+@inline
+export function anyDue(b: usize): bool {
+  return (m.ld(b + IO_DUE) | m.load(b + IO_RDUE)) !== 0;
+}
+
+@noInline
+function dueFrom(s: usize): void {
+  const b = m.ld(s + S_IOB);
+  m.pushStack(b + IO_RDUE, s, S_DUE_NEXT);
+  m.st(m.ld(b + IO_TICK_AT), 1);
+}
+
+/** An I/O block with no reactor, for a thread that only delivers events (the stall monitor). */
+export function openBare(): usize {
+  const b = m.lastingZeroed(IO_SIZE);
+  installHere(b);
+  return b;
+}
+
 /**
  * Registers descriptor `fd` with `flags`, ready for `ready` until an operation finds otherwise
- * (the first read or write of a connected socket tries at once): its source, or 0 with `errno`
- * set (the reactor refused it).
+ * (the first read or write of a connected socket tries at once), with this worker's reactor: its
+ * source, or 0 with `errno` set (the reactor refused it, or the table is full).
  */
 export function register(fd: i32, flags: u32, ready: u32): usize {
-  const s = m.zeroed(S_SIZE);
+  const s = tb.take();
+  if (s === 0) {
+    return 0;
+  }
   m.st(s + S_FD, fd as usize);
   m.st32(s + S_READY, ready);
   m.st32(s + S_FLAGS, flags);
   const b = io();
+  m.st(s + S_IOB, b);
   const e = r.add(m.ld(b + IO_REACTOR), fd, s);
   if (e !== 0) {
-    m.release(s, S_SIZE);
+    tb.bump(s);
+    tb.unlock(s);
+    tb.give(s);
     return 0;
   }
-  m.st(b + IO_LIVE, m.ld(b + IO_LIVE) + 1);
+  m.inc(b + IO_LIVE);
+  tb.unlock(s);
   return s;
 }
 
-/** Frees source `s` (its descriptor closed, nothing waiting, nothing to send). */
+/**
+ * Frees source `s` (locked; its descriptor closed, nothing waiting, nothing to send): reset, its
+ * handles dead, back to the table's free list (its lock stays the caller's to give back).
+ */
 export function free(s: usize): void {
-  const b = io();
-  m.st(b + IO_LIVE, m.ld(b + IO_LIVE) - 1);
+  m.dec(m.ld(s + S_IOB) + IO_LIVE);
   wt.wakeAll(s);
   const buf = m.ld(s + S_BUF);
   if (buf !== 0) {
     m.release(buf, m.ld(s + S_CAP));
   }
-  m.release(s, S_SIZE);
+  tb.bump(s);
+  m.st(s + S_FD, 0);
+  m.st32(s + S_READY, 0);
+  m.st32(s + S_FLAGS, 0);
+  m.st(s + S_BUF, 0);
+  m.st(s + S_OFF, 0);
+  m.st(s + S_LEN, 0);
+  m.st(s + S_CAP, 0);
+  m.st(s + S_QUEUED, 0);
+  m.st(s + S_WRITTEN, 0);
+  m.st(s + S_DUE_NEXT, 0);
+  m.st32(s + S_ERR, 0);
+  m.st32(s + S_CARRY, 0);
+  m.st32(s + S_CARRY_LEN, 0);
+  m.st(s + S_IOB, 0);
+  m.st(s + S_TASK, 0);
+  tb.give(s);
 }
 
 /** Clears readiness `bit` of `s`: an operation found the socket not ready (EAGAIN). */

@@ -27,6 +27,8 @@ export const MONOTONIC: i32 = 6;
 export const SEND_FLAGS: i32 = 0;
 /** `socket`'s extra type flags: none on macOS (`prepare` sets them). */
 export const SOCKET_FLAGS: i32 = 0;
+/** `sysconf`'s name of the online cores (`_SC_NPROCESSORS_ONLN`; 0: none). */
+export const SC_NPROCESSORS_ONLN: i32 = 58;
 
 // Readiness bits of an event (sched_io.velt).
 const READ: u32 = 1;
@@ -38,6 +40,7 @@ const EVFILT_READ: i16 = -1;
 const EVFILT_WRITE: i16 = -2;
 const EVFILT_USER: i16 = -10;
 const EV_ADD: u16 = 0x1;
+const EV_DELETE: u16 = 0x2;
 const EV_CLEAR: u16 = 0x20;
 const EV_ERROR: u16 = 0x4000;
 const EV_EOF: u16 = 0x8000;
@@ -119,14 +122,31 @@ function change(r: usize, ident: usize, filter: i16, flags: u16, fflags: u32, ud
   m.st(c + 24, udata);
 }
 
-/** Registers `fd` for both directions, edge-triggered, with `source` its events' tag; 0 or errno. */
+/**
+ * Registers `fd` for both directions, edge-triggered, with `source` its events' tag; 0 or errno.
+ * From any thread (a source follows its task to another worker's reactor): the change records
+ * are the caller's own.
+ */
 export function add(r: usize, fd: i32, source: usize): i32 {
-  const c = r + R_CHANGE;
-  change(r, fd as usize, EVFILT_READ, EV_ADD | EV_CLEAR, 0, source);
+  return changeBoth(r, fd, EV_ADD | EV_CLEAR, source);
+}
+
+/** Takes `fd` out of reactor `r` (from any thread): its events come to another reactor now. */
+export function del(r: usize, fd: i32): void {
+  changeBoth(r, fd, EV_DELETE, 0);
+}
+
+/** One change of both filters of `fd` with `flags`, in records of the caller's; 0 or errno. */
+function changeBoth(r: usize, fd: i32, flags: u16, source: usize): i32 {
+  const c = m.zeroed(2 * EV);
+  m.st(c, fd as usize);
+  m.st32(c + 8, ((EVFILT_READ as u16) as u32) | ((flags as u32) << 16));
+  m.st(c + 24, source);
   m.copy(c + EV, c, EV);
-  m.st32(c + EV + 8, ((EVFILT_WRITE as u16) as u32) | (((EV_ADD | EV_CLEAR) as u32) << 16));
-  // SAFETY: two change records in the block (R_CHANGE has room for two).
+  m.st32(c + EV + 8, ((EVFILT_WRITE as u16) as u32) | ((flags as u32) << 16));
+  // SAFETY: two change records at `c`.
   const n = unsafe { kevent(m.ld(r + R_KQ) as i32, m.ptr(c), 2, m.ptr(0), 0, m.ptr(0)) };
+  m.release(c, 2 * EV);
   return n < 0 ? errno() : 0;
 }
 
@@ -217,4 +237,39 @@ export function prepare(fd: i32): i32 {
   }
   m.release(one, 16);
   return 0;
+}
+
+/** `UL_COMPARE_AND_WAIT | ULF_NO_ERRNO`: wait while the 32-bit word holds the value. */
+const COMPARE_AND_WAIT: u32 = 0x01000001;
+
+declare c("c") function __ulock_wait(op: u32, addr: Ptr<u8>, value: u64, timeoutUs: u32): i32;
+declare c("c") function __ulock_wake(op: u32, addr: Ptr<u8>, wakeValue: u64): i32;
+
+/**
+ * Sleeps while the `u32` at `word` is `expected` (a lock's waiters: sched_module.velt); it may
+ * return early, so the caller looks again.
+ */
+export function wordWait(word: usize, expected: u32): void {
+  // SAFETY: `word` is an aligned word that lives as long as the process.
+  unsafe {
+    __ulock_wait(COMPARE_AND_WAIT, m.ptr(word), expected as u64, 0);
+  }
+}
+
+/**
+ * `wordWait` for at most `us` microseconds (the stall monitor's nap, cut short by a wake).
+ */
+export function wordWaitFor(word: usize, expected: u32, us: u32): void {
+  // SAFETY: as `wordWait`.
+  unsafe {
+    __ulock_wait(COMPARE_AND_WAIT, m.ptr(word), expected as u64, us);
+  }
+}
+
+/** Wakes one thread sleeping on the `u32` at `word`, if any. */
+export function wordWake(word: usize): void {
+  // SAFETY: as `wordWait`.
+  unsafe {
+    __ulock_wake(COMPARE_AND_WAIT, m.ptr(word), 0);
+  }
 }

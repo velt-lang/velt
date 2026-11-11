@@ -1,0 +1,255 @@
+// velt/lang/hooks (internal): waking a task of the executor in Velt (sched.velt, #2649): a task's
+// C waker table, which C calls from any thread, and queueing a woken or spawned task on its home
+// worker (its queues, a lazy worker 0's pending stacks, or its inbox from another thread); the
+// layouts are sched_task.velt's.
+
+import { export as cExport } from "velt/ffi";
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as io from "./sched_io";
+import * as m from "./sched_mem";
+import * as q from "./sched_queue";
+import * as tk from "./sched_task";
+
+declare function velt_rt_flush(): void;
+declare c("c") function velt_rt_latch_open$rt(l: u64): void;
+
+@cExport("std_sched_waker_clone")
+export function wakerClone(w: usize): usize {
+  m.inc(w + tk.T_REFS);
+  return w;
+}
+
+@cExport("std_sched_waker_wake")
+export function wakerWake(w: usize): void {
+  wake(w);
+  release(w);
+}
+
+@cExport("std_sched_waker_wake_by_ref")
+export function wakerWakeByRef(w: usize): void {
+  wake(w);
+}
+
+@cExport("std_sched_waker_drop")
+export function wakerDrop(w: usize): void {
+  release(w);
+}
+
+/** Wakes task `t`: queued once if idle, polled again if running. */
+export function wake(t: usize): void {
+  let s = m.load32(t + tk.T_STATE);
+  while (true) {
+    if (s === tk.IDLE) {
+      const was = m.cas32(t + tk.T_STATE, tk.IDLE, tk.SCHEDULED);
+      if (was === tk.IDLE) {
+        schedule(t);
+        return;
+      }
+      s = was;
+    } else if (s === tk.RUNNING) {
+      const was = m.cas32(t + tk.T_STATE, tk.RUNNING, tk.NOTIFIED);
+      if (was === tk.RUNNING) {
+        return;
+      }
+      s = was;
+    } else {
+      return;
+    }
+  }
+}
+
+/** Gives back one reference to task `t`: the last frees it. */
+export function release(t: usize): void {
+  if (m.dec(t + tk.T_REFS) === 1) {
+    m.release(t, m.ld(t + tk.T_BYTES));
+  }
+}
+
+/**
+ * Queues scheduled task `t` (woken), as the runtime's (velt_rt task/runtime/velt/worker.rs
+ * `queue`): from its home worker's thread, as input during a reactor turn or timers, as output
+ * when room to write woke it, else in the slot for the task to run next (woken by the task
+ * running; with one thread at the queues, at the end of the second queue instead); from another worker's thread running a task, in that worker's slot (it runs there
+ * next and keeps its home) unless it may not move; else on its home's inbox, waking the home.
+ */
+@inline
+export function schedule(t: usize): void {
+  const h = m.ld(t + tk.T_HOME);
+  const w = tk.here();
+  if (w === h) {
+    const d = m.ld32(w + tk.E_DISPATCH);
+    // Relaxed: the monitor changes it (sched_monitor_lazy.velt `lazyDuties`).
+    const mode = m.load32Relaxed(w + tk.E_MODE);
+    if (mode === 0 && m.ld(w + tk.E_LAZY) !== 0 && m.ld(w + tk.E_CURRENT) !== 0) {
+      if (d === 0 && m.ld(w + tk.E_PANY) === 0) {
+        // The poll's first wake, its own: queued at the look after the poll (`E_PWAKE`).
+        m.st(w + tk.E_PWAKE, t);
+        m.st(w + tk.E_PANY, tk.PANY_FIRST);
+        return;
+      }
+      pend(w, t, d);
+      return;
+    }
+    q.lock(w, mode);
+    if (d === 0 && mode !== 0) {
+      q.pushNext(w, t);
+    } else if (d === tk.D_INPUT) {
+      q.pushIo(w, t);
+    } else {
+      q.pushRest(w, t, mode);
+    }
+    q.unlock(w, mode);
+    return;
+  }
+  if (
+    w !== 0 &&
+    m.ld(w + tk.E_CURRENT) !== 0 &&
+    m.ld32(w + tk.E_DISPATCH) === 0 &&
+    tk.movable(t) &&
+    m.ld(tk.main() + tk.E_STAY) === 0
+  ) {
+    const mode = m.load32Relaxed(w + tk.E_MODE);
+    q.lock(w, mode);
+    q.pushNext(w, t);
+    q.unlock(w, mode);
+    return;
+  }
+  toInbox(h, t);
+}
+
+/** Queues task `t`, just spawned: behind the input on its home, or on its home's inbox. */
+@inline
+export function scheduleNew(t: usize): void {
+  const h = m.ld(t + tk.T_HOME);
+  if (tk.here() === h) {
+    const mode = m.load32Relaxed(h + tk.E_MODE);
+    if (mode === 0 && m.ld(h + tk.E_LAZY) !== 0 && m.ld(h + tk.E_CURRENT) !== 0) {
+      pend(h, t, tk.D_SPAWN);
+      tk.bump(h + tk.E_RLEN, 1);
+      return;
+    }
+    if (mode !== 0) {
+      // A fresh task may start on another worker at once: what this thread printed first.
+      publish(h);
+    }
+    q.lock(h, mode);
+    q.pushRest(h, t, mode);
+    q.unlock(h, mode);
+    if (mode === 0) {
+      // One worker's count of tasks spawned not yet run (sched_loop.velt `interval`).
+      tk.bump(h + tk.E_RLEN, 1);
+    }
+    return;
+  }
+  toInbox(h, t);
+}
+
+/**
+ * Queues task `t` on lazy worker 0 `w` during a poll (on `E_PIO` or `E_PREST`): `d` as
+ * `schedule`'s, `D_SPAWN` for a spawned task.
+ */
+@noInline
+function pend(w: usize, t: usize, d: u32): void {
+  if (d === 0 && m.ld(w + tk.E_PWAKE) === 0) {
+    m.st(w + tk.E_PWAKE, t);
+    m.st(w + tk.E_PANY, m.ld(w + tk.E_PANY) | tk.PANY_FIRST);
+    return;
+  }
+  // Woken past the first: not part of a fan-out (sched_monitor_lazy.velt `fanOutOnly`).
+  const more = d === tk.D_SPAWN ? tk.PANY_MORE : tk.PANY_MORE | tk.PANY_WOKE;
+  m.st(w + tk.E_PANY, m.ld(w + tk.E_PANY) | more);
+  if (d === tk.D_SPAWN) {
+    const n = m.ld(w + tk.E_PCOUNT);
+    m.st(w + tk.E_PCOUNT, n + 1);
+    if (n >= tk.PEND_STACKED) {
+      m.st(t + tk.T_NEXT, 0);
+      const tail = m.ld(w + tk.E_PLIST_TAIL);
+      if (tail === 0) {
+        m.st(w + tk.E_PLIST, t);
+      } else {
+        m.st(tail + tk.T_NEXT, t);
+      }
+      m.st(w + tk.E_PLIST_TAIL, t);
+      return;
+    }
+    if (n === 0) {
+      // The first task this poll spawns may start on a spare (the monitor's rescue): what this
+      // thread printed first (the runtime publishes at each spawn; here at each poll's first).
+      publish(w);
+    }
+  }
+  pendOn(w, t, d === tk.D_INPUT ? tk.E_PIO : tk.E_PREST);
+}
+
+/** Pushes task `k` on the stack of lazy worker 0 `w` at offset `at` (`E_PIO` or `E_PREST`). */
+function pendOn(w: usize, k: usize, at: usize): void {
+  m.pushStack(w + at, k, tk.T_NEXT);
+}
+
+/** Queues task `t` on worker `e`'s second queue (the end of a poll that woke it, a root's start). */
+export function push(e: usize, t: usize): void {
+  const mode = m.load32Relaxed(e + tk.E_MODE);
+  q.lock(e, mode);
+  q.pushRest(e, t, mode);
+  q.unlock(e, mode);
+}
+
+/**
+ * Pushes task `t` on worker `h`'s inbox and wakes `h` if it sleeps (from another thread). From
+ * another worker, what this thread printed is published first, so it comes before anything the
+ * woken task prints (the runtime's output buffers are per thread).
+ */
+export function toInbox(h: usize, t: usize): void {
+  const w = tk.here();
+  if (w !== 0) {
+    publish(w);
+  }
+  m.pushStack(h + tk.E_INBOX, t, tk.T_NEXT);
+  unpark(h);
+}
+
+/**
+ * Publishes what this thread printed into the runtime's shared buffer, ahead of what any other
+ * thread prints from now on (the runtime's `publish_before_handoff`, reached through the opening
+ * of a latch that is open already); worker `w` is this thread's.
+ */
+@inline
+export function publish(w: usize): void {
+  // SAFETY: the worker's latch handle, open, never freed.
+  unsafe {
+    velt_rt_latch_open$rt(m.ld(w + tk.E_LATCH) as u64);
+  }
+}
+
+/** Writes out what this thread printed (stdout is buffered per thread by the runtime). */
+@noInline
+export function handOffOutput(): void {
+  velt_rt_flush();
+}
+
+/** Wakes worker `w` if it sleeps in its reactor (its park word is up). */
+export function unpark(w: usize): void {
+  if (m.load32(w + tk.E_PARK) !== 1) {
+    return;
+  }
+  // Counted before the wake, so a scan that reads the count after it sees the wake.
+  m.incOrdered(w + tk.E_UNPARKS);
+  if (m.cas32(w + tk.E_PARK, 1, 0) === 1) {
+    // Woken is not stalled: the monitor counts from now.
+    m.st(w + tk.E_PROGRESS, m.load(tk.main() + tk.E_TICKS));
+    io.wake(m.ld(w + tk.E_IO));
+  }
+}
+
+/** The task a waker header belongs to (a task, or a promise one drives); 0 for another table. */
+export function taskOf(w: usize): usize {
+  const e = tk.main();
+  const vt = m.ld(w);
+  if (vt === e + tk.E_VT) {
+    return w;
+  }
+  if (vt === e + tk.E_NODE_VT) {
+    return m.ld(w + 48);
+  }
+  return 0;
+}

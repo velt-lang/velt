@@ -10,6 +10,8 @@
 //   from the caller's bytes and buffers only the rest (`sendNow`).
 // - The counts of bytes queued in all and sent in all tell a waiter when its bytes are out
 //   (`K_WRITTEN`) and how many are still to send (`K_DRAINED`).
+// - Everything here runs with the source locked (sched_io_table.velt): by the operation that
+//   called it, or by `flushDue`.
 // - A failure to send is kept (`S_ERR`): the stream sends nothing more, and its next operation
 //   reports it. A shutdown or close asked for while bytes are buffered happens once they are sent.
 
@@ -18,6 +20,7 @@ import { inline, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
+import * as tb from "./sched_io_table";
 import * as wt from "./sched_io_wait";
 
 /** The most of a sent buffer's capacity kept for the next poll's bytes. */
@@ -203,13 +206,19 @@ export function flushDue(b: usize): void {
   while (true) {
     let s = m.ld(b + io.IO_DUE);
     if (s === 0) {
+      s = m.takeStack(b + io.IO_RDUE);
+    }
+    if (s === 0) {
       return;
     }
     m.st(b + io.IO_DUE, 0);
     while (s !== 0) {
+      // Locked: a task on another worker may be writing on it meanwhile.
+      tb.lock(s);
       const next = m.ld(s + io.S_DUE_NEXT);
       m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) & ~io.F_DUE);
       flush(s);
+      tb.unlock(s);
       s = next;
     }
   }

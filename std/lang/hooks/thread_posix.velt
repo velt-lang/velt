@@ -1,0 +1,58 @@
+// velt/lang/hooks (internal): the threads of the executor in Velt's workers (sched.velt, #2649
+// step 3) on macOS and Linux: `pthread_create` on a C function Velt exports (`@export`, its
+// address from `exportedAddress`), with the stack every thread that runs tasks has, and the
+// number of online cores (`sysconf`), the default worker count.
+//
+// Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
+// symbols: one C symbol has one signature in a program.
+
+import { Ptr } from "velt/ffi/ptr";
+import * as r from "#reactor";
+import * as m from "./sched_mem";
+
+/** Can this OS start worker threads? (The default variant cannot: one worker.) */
+export const SUPPORTED: bool = true;
+
+/** A worker thread's stack: 8 MiB, as the runtime's task threads and the main thread have. */
+const STACK: usize = 8388608;
+/** Room for a `pthread_attr_t` (56 or 64 bytes on these OSes) and a `pthread_t`. */
+const ATTR: usize = 128;
+
+declare c("c") function pthread_create(
+  thread: Ptr<u8>,
+  attr: Ptr<u8>,
+  start: Ptr<u8>,
+  arg: Ptr<u8>,
+): i32;
+declare c("c") function pthread_attr_init(attr: Ptr<u8>): i32;
+declare c("c") function pthread_attr_setstacksize(attr: Ptr<u8>, size: usize): i32;
+declare c("c") function pthread_attr_destroy(attr: Ptr<u8>): i32;
+declare c("c") function sysconf(name: i32): isize;
+
+/** The online cores (at least 1). */
+export function cores(): usize {
+  // SAFETY: `sysconf` takes a constant and returns a number.
+  const n = unsafe { sysconf(r.SC_NPROCESSORS_ONLN) };
+  return n < 1 ? 1 : n as usize;
+}
+
+/**
+ * Starts a thread running C function `start` (an `@export`ed one: `void* f(void*)`) with `arg`;
+ * whether it started. The thread is never joined: it runs until the process ends.
+ */
+export function start(start: usize, arg: usize): bool {
+  const a = m.zeroed(ATTR + 16);
+  const attr = m.ptr(a);
+  const t = m.ptr(a + ATTR);
+  let rc: i32 = 0;
+  // SAFETY: `a` is zeroed memory larger than a `pthread_attr_t` and a `pthread_t`; `start` is a
+  // C function of the signature `pthread_create` calls; `arg` is passed through to it.
+  unsafe {
+    pthread_attr_init(attr);
+    pthread_attr_setstacksize(attr, STACK);
+    rc = pthread_create(t, attr, m.ptr(start), m.ptr(arg));
+    pthread_attr_destroy(attr);
+  }
+  m.release(a, ATTR + 16);
+  return rc === 0;
+}

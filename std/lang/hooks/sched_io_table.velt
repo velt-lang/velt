@@ -1,16 +1,44 @@
 // velt/lang/hooks (internal): the handles of the executor's reactor's sources (sched_io.velt,
-// #2649 step 2): velt/net holds a socket by a handle with the top bit set, its slot and
-// generation in a table of the I/O block, so a handle used after `close` finds nothing (EBADF)
-// rather than freed memory, and a slot is reused with the next generation.
+// #2649 steps 2 and 3): velt/net holds a socket by a handle with the top bit set, its slot and
+// generation, so a handle used after `close` finds nothing (EBADF) rather than another socket,
+// and a slot is reused with the next generation.
+//
+// One table for the process, so a handle works on every worker (a socket handed to a task on
+// another worker, a task that moved): slots in chunks that are never freed or moved, so a lookup
+// takes no lock. A slot's source is its own for good (reset when freed, reused with the slot):
+// a thread that read a source's address before it was freed (a reactor event delivered late, a
+// lookup that raced a close) finds a source, never freed memory, and its generation says
+// whether it is still the one it looked for.
+//
+// With more than one thread at the executor's sources (several workers, or the stall monitor:
+// `share`), each source has a lock (`S_LOCK`) that every operation on it holds (`enter`,
+// `leave`), and so does the reactor delivering its events: a task may run on a worker other
+// than the one whose reactor has the socket. An operation from a task whose home worker is
+// another moves the socket's registration to the home's reactor first (`follow`, #2370), so its
+// events wake the task where it lives, not across threads.
 
 import { inline, noInline } from "velt/lang/intrinsics";
+import * as r from "#reactor";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
-
-// The table: entries of { source (or the next free slot + 1), generation }.
+import * as t from "./sched_task";
 
 /** The top bit: a handle of this table, not one of the runtime's. */
 export const TAG: u64 = 0x8000000000000000;
+
+/** The table (0 until the first source): its lock, its length, the free list, the chunks. */
+const TABLE = new Atomic<u64>(0);
+/** Do threads other than one worker reach the sources (their locks are taken)? */
+const SHARED = new Atomic<bool>(false);
+
+const TB_LOCK: usize = 0;
+const TB_LEN: usize = 8;
+const TB_FREE: usize = 16;
+const TB_CHUNKS: usize = 24;
+/** Slots per chunk (a power of two) and chunks at most: 4M sockets. */
+const CHUNK_BITS: usize = 10;
+const CHUNK: usize = 1024;
+const CHUNKS: usize = 4096;
 
 /** Is `h` a handle of this table? */
 @inline
@@ -18,64 +46,266 @@ export function ours(h: u64): bool {
   return (h & TAG) !== 0;
 }
 
-/** A handle for source `s`. */
-export function handleOf(s: usize): u64 {
-  const b = io.io();
-  let slot = m.ld(b + io.IO_FREE);
-  if (slot !== 0) {
-    slot = slot - 1;
-    m.st(b + io.IO_FREE, m.ld(m.ld(b + io.IO_TABLE) + slot * 16));
-  } else {
-    slot = m.ld(b + io.IO_LEN);
-    if (slot === m.ld(b + io.IO_CAP)) {
-      grow(b);
-    }
-    m.st(b + io.IO_LEN, slot + 1);
+/**
+ * From now on sources are reached from several threads: their locks are taken (each source's
+ * `S_LOCKED`, those made already included; before the first, as a rule).
+ */
+export function share(): void {
+  SHARED.store(true, "release");
+  const tb = TABLE.load("acquire") as usize;
+  if (tb === 0) {
+    return;
   }
-  const at = m.ld(b + io.IO_TABLE) + slot * 16;
-  const gen = (m.ld(at + 8) + 1) & 0x7fffffff;
-  m.st(at, s);
-  m.st(at + 8, gen);
-  const h = TAG | ((gen as u64) << 32) | ((slot + 1) as u64);
-  m.st(s + io.S_HANDLE, h as usize);
-  return h;
+  lockTable(tb);
+  const n = m.ld(tb + TB_LEN);
+  for (let slot: usize = 0; slot < n; slot++) {
+    const s = m.ld(m.ld(tb + TB_CHUNKS + 8 * (slot >> CHUNK_BITS)) + 8 * (slot & (CHUNK - 1)));
+    m.store32(s + io.S_LOCKED, 1);
+  }
+  m.store32(tb + TB_LOCK, 0);
+}
+
+/** Are sources reached from several threads? */
+@inline
+export function shared(): bool {
+  return SHARED.load("relaxed");
+}
+
+/** The table, made on first use (by the thread that registers the first source). */
+function table(): usize {
+  const tb = TABLE.load("acquire") as usize;
+  if (tb !== 0) {
+    return tb;
+  }
+  return makeTable();
 }
 
 @noInline
-function grow(b: usize): void {
-  const cap = m.ld(b + io.IO_CAP);
-  const next = cap === 0 ? 64 : cap * 2;
-  const t = m.lastingZeroed(next * 16);
-  const old = m.ld(b + io.IO_TABLE);
-  if (old !== 0) {
-    m.copy(t, old, cap * 16);
-    m.lastingRelease(old);
+function makeTable(): usize {
+  const tb = m.lastingZeroed(TB_CHUNKS + 8 * CHUNKS);
+  const was = TABLE.compareExchange(0, tb as u64, "acqrel");
+  if (was !== 0) {
+    m.lastingRelease(tb);
+    return was as usize;
   }
-  m.st(b + io.IO_TABLE, t);
-  m.st(b + io.IO_CAP, next);
+  return tb;
 }
 
-/** The source of handle `h`, or 0 when it is closed (or not this table's). */
+/** Takes the table's lock (slots taken and given back). */
+function lockTable(tb: usize): void {
+  m.spinLock(tb + TB_LOCK);
+}
+
+/**
+ * A free source (zeroed but for its slot and generation, locked when sources are shared): a slot
+ * given back before, or a new one.
+ */
+export function take(): usize {
+  const tb = table();
+  lockTable(tb);
+  let s = m.ld(tb + TB_FREE);
+  if (s !== 0) {
+    m.st(tb + TB_FREE, m.ld(s + io.S_FREE));
+  } else {
+    const slot = m.ld(tb + TB_LEN);
+    if (slot >= CHUNK * CHUNKS) {
+      m.store32(tb + TB_LOCK, 0);
+      return 0;
+    }
+    const at = tb + TB_CHUNKS + 8 * (slot >> CHUNK_BITS);
+    if (m.ld(at) === 0) {
+      m.st(at, m.lastingZeroed(8 * CHUNK));
+    }
+    s = m.lastingZeroed(io.S_SIZE);
+    m.st(s + io.S_SLOT, slot);
+    m.st(m.ld(at) + 8 * (slot & (CHUNK - 1)), s);
+    // Published after the source is made (`share` walks the slots up to it).
+    m.swap(tb + TB_LEN, slot + 1);
+  }
+  m.store32(tb + TB_LOCK, 0);
+  m.st32(s + io.S_LOCKED, shared() ? 1 : 0);
+  // A source given back may still be held by the thread that freed it: its lock is waited for.
+  lock(s);
+  return s;
+}
+
+/** Gives source `s` (reset, its generation moved on, locked or not) back to the free list. */
+export function give(s: usize): void {
+  const tb = table();
+  lockTable(tb);
+  m.st(s + io.S_FREE, m.ld(tb + TB_FREE));
+  m.st(tb + TB_FREE, s);
+  m.store32(tb + TB_LOCK, 0);
+}
+
+/** A handle for source `s`. */
+export function handleOf(s: usize): u64 {
+  const gen = m.load32(s + io.S_GEN) as u64;
+  return TAG | (gen << 32) | ((m.ld(s + io.S_SLOT) + 1) as u64);
+}
+
+/**
+ * The source of handle `h`, or 0 when it is closed (or not this table's); no lock taken. The
+ * loads are unordered: a thread holding a handle came by it after its source was made (through a
+ * channel, a task's state, a lock), and an operation that relies on the source takes its lock.
+ */
 @inline
 export function lookup(h: u64): usize {
   const slot = ((h & 0xffffffff) as usize) - 1;
-  const b = io.io();
-  if (b === 0 || slot >= m.ld(b + io.IO_LEN)) {
+  const tb = TABLE.load("relaxed") as usize;
+  if (tb === 0) {
     return 0;
   }
-  const at = m.ld(b + io.IO_TABLE) + slot * 16;
-  if (m.ld(at + 8) !== (((h >> 32) & 0x7fffffff) as usize)) {
+  // A slot past the chunks taken finds no chunk, one past the slots taken no source (both 0).
+  const chunk = m.ld(tb + TB_CHUNKS + 8 * ((slot >> CHUNK_BITS) & (CHUNKS - 1)));
+  if (chunk === 0) {
     return 0;
   }
-  return m.ld(at);
+  const s = m.ld(chunk + 8 * (slot & (CHUNK - 1)));
+  if (s === 0 || m.load32Relaxed(s + io.S_GEN) !== (((h >> 32) & 0x7fffffff) as u32)) {
+    return 0;
+  }
+  return s;
 }
 
-/** Closes handle `h`: later lookups find nothing; its slot is reused with the next generation. */
+/**
+ * The source of handle `h`, locked for an operation (`leave` gives it back), its registration
+ * moved to the reactor of the running task's home worker first; 0 when it is closed.
+ */
+@inline
+export function enter(h: u64): usize {
+  const s = lookup(h);
+  if (s === 0 || m.ld32(s + io.S_LOCKED) === 0) {
+    return s;
+  }
+  return enterShared(s, h);
+}
+
+@noInline
+function enterShared(s: usize, h: u64): usize {
+  lock(s);
+  if (m.load32(s + io.S_GEN) !== (((h >> 32) & 0x7fffffff) as u32)) {
+    unlock(s);
+    return 0;
+  }
+  follow(s);
+  return s;
+}
+
+/**
+ * The source of handle `h`, locked for a look that changes nothing (`leave` gives it back; its
+ * registration stays where it is, unlike `enter`'s); 0 when it is closed.
+ */
+export function hold(h: u64): usize {
+  const s = lookup(h);
+  if (s === 0 || m.ld32(s + io.S_LOCKED) === 0) {
+    return s;
+  }
+  lock(s);
+  if (m.load32(s + io.S_GEN) !== (((h >> 32) & 0x7fffffff) as u32)) {
+    unlock(s);
+    return 0;
+  }
+  return s;
+}
+
+/** The end of an operation on source `s` (from `enter` or `hold`, not 0). */
+@inline
+export function leave(s: usize): void {
+  unlock(s);
+}
+
+/** Takes source `s`'s lock when sources are shared (its `S_LOCKED`). */
+@inline
+export function lock(s: usize): void {
+  if (m.ld32(s + io.S_LOCKED) !== 0 && m.cas32(s + io.S_LOCK, 0, 1) !== 0) {
+    m.spinLock(s + io.S_LOCK);
+  }
+}
+
+/** Gives source `s`'s lock back when sources are shared. */
+@inline
+export function unlock(s: usize): void {
+  if (m.ld32(s + io.S_LOCKED) !== 0) {
+    m.store32(s + io.S_LOCK, 0);
+  }
+}
+
+/**
+ * Moves source `s` (locked) to the reactor of the running task's home worker when it is another's
+ * and the source is that task's alone (#2370): registered there first (an edge-triggered registration reports what is there
+ * already, so nothing that arrived meanwhile is lost), then taken out of the old one. A
+ * listener stays (tasks on every worker may accept on it); so does a source used outside a task.
+ *
+ * A socket that tasks take turns with (a pool's connection) stays where it is, and the task
+ * follows it instead (`join`).
+ */
+function follow(s: usize): void {
+  const e = t.exec();
+  if (e === 0) {
+    return;
+  }
+  const k = m.ld(e + t.E_CURRENT);
+  if (k === 0) {
+    return;
+  }
+  // Only a socket of one task follows it: one that tasks of several workers take turns with (a
+  // pool's connection) would move at every turn, two reactor calls each.
+  const owner = m.ld(s + io.S_TASK);
+  if (owner !== k) {
+    m.st(s + io.S_TASK, owner === 0 ? k : io.SHARED);
+    if (owner !== 0) {
+      join(k, s);
+      return;
+    }
+  }
+  const hb = m.ld(m.ld(k + t.T_HOME) + t.E_IO);
+  const ob = m.ld(s + io.S_IOB);
+  if (ob === hb || (m.ld32(s + io.S_FLAGS) & io.F_LISTENER) !== 0) {
+    return;
+  }
+  moveTo(s, ob, hb);
+}
+
+/**
+ * Task `k` (running) uses source `s`, which tasks take turns with: it makes the source's worker
+ * its home, so the source's events wake it there rather than across threads (a pool's
+ * connection: the reply to its query, and the waiter it hands the connection to, which the
+ * waker's worker runs next). Not for a listener (tasks on every worker accept on it), a task
+ * that may not move (pinned, anchored) or while tasks stay on their worker.
+ */
+function join(k: usize, s: usize): void {
+  if ((m.ld32(s + io.S_FLAGS) & io.F_LISTENER) !== 0 || !t.movable(k)) {
+    return;
+  }
+  const h = m.ld(m.ld(s + io.S_IOB) + io.IO_TICK_AT) - t.E_TICK;
+  // No wake queues a running task, so its home may change now (sched_spread.velt `anchor`).
+  if (h !== m.ld(k + t.T_HOME) && m.ld(t.main() + t.E_STAY) === 0) {
+    m.st(k + t.T_HOME, h);
+  }
+}
+
+@noInline
+function moveTo(s: usize, ob: usize, hb: usize): void {
+  const fd = m.ld(s + io.S_FD) as i32;
+  if (r.add(m.ld(hb + io.IO_REACTOR), fd, s) !== 0) {
+    return;
+  }
+  r.del(m.ld(ob + io.IO_REACTOR), fd);
+  m.st(s + io.S_IOB, hb);
+  m.inc(hb + io.IO_LIVE);
+  m.dec(ob + io.IO_LIVE);
+}
+
+/** Closes handle `h`: later lookups find nothing (the source lives on until it is freed). */
 export function forget(h: u64): void {
-  const slot = ((h & 0xffffffff) as usize) - 1;
-  const b = io.io();
-  const at = m.ld(b + io.IO_TABLE) + slot * 16;
-  m.st(at, m.ld(b + io.IO_FREE));
-  m.st(at + 8, (m.ld(at + 8) + 1) & 0x7fffffff);
-  m.st(b + io.IO_FREE, slot + 1);
+  const s = lookup(h);
+  if (s !== 0) {
+    bump(s);
+  }
+}
+
+/** Moves source `s`'s generation on: handles to it find nothing from now on. */
+export function bump(s: usize): void {
+  m.store32(s + io.S_GEN, (m.load32(s + io.S_GEN) + 1) & 0x7fffffff);
 }

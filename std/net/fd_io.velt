@@ -2,7 +2,10 @@
 // (#2649 step 2, std/net/tcp_sched.velt), with the runtime functions' results: `tryRead` and
 // `tryWrite` straight between the caller's bytes and the socket; `readable`, `drained` and a
 // `write`'s end as waits on the reactor (std/lang/hooks/sched_io_wait.velt); `writeLater`'s bytes
-// in the stream's buffer, sent when the poll ends (std/lang/hooks/sched_io_write.velt).
+// in the stream's buffer, sent when the poll ends (std/lang/hooks/sched_io_write.velt). Each
+// operation holds the source's lock (`tb.enter`, `tb.leave`) while it touches it, never across
+// an `await`: a task on another worker, or the reactor delivering the socket's events, may use
+// it in between.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
@@ -14,9 +17,11 @@ import * as r from "#reactor";
 import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as tb from "velt/lang/hooks/sched_io_table";
+import * as t from "velt/lang/hooks/sched_task";
 import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as wr from "velt/lang/hooks/sched_io_write";
 import { aborted, closed, failed, ok, osError, value } from "velt/net/fd_socket";
+import * as wk from "velt/lang/hooks/sched_wake";
 
 // Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
 // signature in a program.
@@ -36,7 +41,7 @@ function addressOf(data: u8[], at: u64): usize {
   return Ptr.addressOf(unsafe { memset$bytes(data, 0, 0) }) + (at as usize);
 }
 
-/** The state of stream `s` before an operation: closed, aborted, failed, or fine. */
+/** The state of stream `s` (locked, or 0) before an operation: closed, aborted, failed, or fine. */
 function check(s: usize): IoStatus {
   if (s === 0) {
     return closed();
@@ -48,6 +53,29 @@ function check(s: usize): IoStatus {
   return e !== 0 ? osError(e) : ok();
 }
 
+/** The state of the stream of handle `h` now (`check` under its lock). */
+function checkNow(h: u64): IoStatus {
+  const s = tb.enter(h);
+  const st = check(s);
+  if (s !== 0) {
+    tb.leave(s);
+  }
+  return st;
+}
+
+/**
+ * Before a send hands work to the peer (a task of this program may run it on another worker at
+ * once): what this thread printed comes first (the runtime's `publish_before_handoff` at its
+ * socket writes). Nothing to do with one worker and no monitor; a lazy worker 0 (`E_LAZY`) does
+ * it too, as the monitor may move the peer to a spare while this poll runs on.
+ */
+function handOff(): void {
+  const w = t.here();
+  if (w !== 0 && (m.ld32(w + t.E_MODE) !== 0 || m.ld(w + t.E_LAZY) !== 0)) {
+    wk.publish(w);
+  }
+}
+
 /** Waits on the source of `h` for `kind` with `arg`, until `deadline` (0: none). */
 async function waitOn(h: u64, kind: u32, arg: u64, deadline: u64): Promise<void> {
   // SAFETY: `waitFor` makes a heap future, given up to the promise.
@@ -56,11 +84,16 @@ async function waitOn(h: u64, kind: u32, arg: u64, deadline: u64): Promise<void>
 
 /** Reads into `data[start..end]` now: the count, 0 at the end, -1 when nothing has arrived. */
 export function tryReadInto(h: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
-  const s = tb.lookup(h);
-  if (s === 0 || (m.ld32(s + io.S_FLAGS) & io.F_ABORTED) !== 0) {
-    return failed(check(s), 0);
+  const s = tb.enter(h);
+  if (s === 0) {
+    return failed(closed(), 0);
+  }
+  if ((m.ld32(s + io.S_FLAGS) & io.F_ABORTED) !== 0) {
+    tb.leave(s);
+    return failed(aborted(), 0);
   }
   if (start >= end) {
+    tb.leave(s);
     return value(0);
   }
   const p = addressOf(data, start);
@@ -68,15 +101,18 @@ export function tryReadInto(h: u64, data: u8[], start: u64, end: u64): IoResult<
     // SAFETY: `data` holds `end - start` bytes at `p`; the descriptor is open.
     const n = unsafe { recv$net(m.ld(s + io.S_FD) as i32, m.ptr(p), (end - start) as usize, 0) };
     if (n >= 0) {
+      tb.leave(s);
       return value(n as i64);
     }
     const e = r.errno();
     if (e === r.EAGAIN) {
       // Nothing yet: whatever an event said (a hang-up of the other direction included).
       io.notReady(s, io.READ | io.HUP | io.ERR);
+      tb.leave(s);
       return value(-1);
     }
     if (e !== r.EINTR) {
+      tb.leave(s);
       return failed(osError(e), 0);
     }
   }
@@ -84,11 +120,13 @@ export function tryReadInto(h: u64, data: u8[], start: u64, end: u64): IoResult<
 
 /** Resolves once a read may find something (data, the end, an error). */
 export async function readable(h: u64): Promise<IoStatus> {
-  const s = tb.lookup(h);
+  const s = tb.enter(h);
   if (s === 0) {
     return closed();
   }
-  if (!wt.satisfied(s, io.K_READ, 0)) {
+  const ready = wt.satisfied(s, io.K_READ, 0);
+  tb.leave(s);
+  if (!ready) {
     await waitOn(h, io.K_READ, 0, 0);
   }
   return tb.lookup(h) === 0 ? closed() : ok();
@@ -99,21 +137,25 @@ export async function readable(h: u64): Promise<IoStatus> {
  * no limit, as the runtime's (a caller racing a signal, http-server's idle wait); 0 only looks.
  */
 export async function readableWithin(h: u64, ms: i64): Promise<IoResult<u8>> {
-  const s = tb.lookup(h);
+  const s = tb.enter(h);
   if (s === 0) {
     return failed(closed(), 0);
   }
-  if (!wt.satisfied(s, io.K_READ, 0)) {
+  const ready = wt.satisfied(s, io.K_READ, 0);
+  tb.leave(s);
+  if (!ready) {
     if (ms === 0) {
       return value(0);
     }
     await waitOn(h, io.K_READ, 0, ms < 0 ? 0 : wt.now() + (ms as u64) * 1000000);
   }
-  const t = tb.lookup(h);
-  if (t === 0) {
+  const again = tb.enter(h);
+  if (again === 0) {
     return failed(closed(), 0);
   }
-  return value(wt.satisfied(t, io.K_READ, 0) ? 1 : 0);
+  const now = wt.satisfied(again, io.K_READ, 0);
+  tb.leave(again);
+  return value(now ? 1 : 0);
 }
 
 /** The next 1..max bytes (`max` 0: up to 64 KiB); empty at the end of the stream. */
@@ -146,22 +188,23 @@ export async function readString(h: u64, max: u64): Promise<IoResult<string>> {
     if (got.code !== 0) {
       return failed({ code: got.code, message: got.message }, "");
     }
-    const s = tb.lookup(h);
+    const s = tb.enter(h);
     if (s === 0) {
       return failed(closed(), "");
     }
     let bytes = got.value;
     const carried = m.ld32(s + io.S_CARRY_LEN);
+    const word = m.ld32(s + io.S_CARRY);
+    m.st32(s + io.S_CARRY_LEN, 0);
+    tb.leave(s);
     if (carried !== 0) {
       const all: u8[] = [];
-      const word = m.ld32(s + io.S_CARRY);
       for (let i: u32 = 0; i < carried; i++) {
         all.push(((word >> (8 * i)) & 0xff) as u8);
       }
       for (const b of bytes) {
         all.push(b);
       }
-      m.st32(s + io.S_CARRY_LEN, 0);
       if (got.value.length === 0) {
         return value(utf8DecodeLossy(all));
       }
@@ -177,8 +220,12 @@ export async function readString(h: u64, max: u64): Promise<IoResult<string>> {
       for (let i: usize = 0; i < keep; i++) {
         word = word | ((bytes[from + i] as u32) << (8 * (i as u32)));
       }
-      m.st32(s + io.S_CARRY, word);
-      m.st32(s + io.S_CARRY_LEN, keep as u32);
+      const c = tb.enter(h);
+      if (c !== 0) {
+        m.st32(c + io.S_CARRY, word);
+        m.st32(c + io.S_CARRY_LEN, keep as u32);
+        tb.leave(c);
+      }
       arrayTruncate(bytes, from);
       if (bytes.length === 0) {
         continue;
@@ -205,21 +252,33 @@ function incompleteTail(b: u8[]): usize {
 
 /** Writes what the socket takes of `data[start..end]` now: the count (0 behind buffered bytes). */
 export function tryWriteRange(h: u64, data: u8[], start: u64, end: u64): u64 {
-  const s = tb.lookup(h);
-  if (s === 0 || start >= end || m.ld(s + io.S_LEN) !== 0 || check(s).code !== 0) {
+  handOff();
+  const s = tb.enter(h);
+  if (s === 0) {
     return 0;
   }
-  if ((m.ld32(s + io.S_READY) & io.WRITE) === 0) {
-    return 0;
+  let n: u64 = 0;
+  if (
+    start < end &&
+    m.ld(s + io.S_LEN) === 0 &&
+    check(s).code === 0 &&
+    (m.ld32(s + io.S_READY) & io.WRITE) !== 0
+  ) {
+    n = wr.sendNow(s, addressOf(data, start), (end - start) as usize) as u64;
   }
-  return wr.sendNow(s, addressOf(data, start), (end - start) as usize) as u64;
+  tb.leave(s);
+  return n;
 }
 
 /** Resolves once every byte of `data[start..end]` is sent, after the bytes buffered before. */
 export async function writeRange(h: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
-  const s = tb.lookup(h);
+  handOff();
+  const s = tb.enter(h);
   const st = check(s);
   if (st.code !== 0 || start >= end) {
+    if (s !== 0) {
+      tb.leave(s);
+    }
     return st;
   }
   const p = addressOf(data, start);
@@ -227,19 +286,20 @@ export async function writeRange(h: u64, data: u8[], start: u64, end: u64): Prom
   let done: usize = 0;
   if (m.ld(s + io.S_LEN) === 0 && (m.ld32(s + io.S_READY) & io.WRITE) !== 0) {
     done = wr.sendNow(s, p, n);
-    if (m.ld32(s + io.S_ERR) !== 0) {
-      return check(s);
-    }
-    if (done === n) {
-      return ok();
+    if (m.ld32(s + io.S_ERR) !== 0 || done === n) {
+      const after = check(s);
+      tb.leave(s);
+      return after;
     }
   }
   wr.append(s, p + done, n - done);
   if ((m.ld32(s + io.S_READY) & io.WRITE) !== 0) {
     io.due(s);
   }
-  await waitOn(h, io.K_WRITTEN, m.ld(s + io.S_QUEUED) as u64, 0);
-  return check(tb.lookup(h));
+  const queued = m.ld(s + io.S_QUEUED) as u64;
+  tb.leave(s);
+  await waitOn(h, io.K_WRITTEN, queued, 0);
+  return checkNow(h);
 }
 
 /** `write` of a string: its UTF-8. */
@@ -250,23 +310,31 @@ export async function writeText(h: u64, data: string): Promise<IoStatus> {
 
 /** Queues `data[start..end]` to be sent when the poll ends: the bytes still to send. */
 export function writeLaterRange(h: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
-  const s = tb.lookup(h);
+  const s = tb.enter(h);
   const st = check(s);
   if (st.code !== 0) {
+    if (s !== 0) {
+      tb.leave(s);
+    }
     return failed(st, 0);
   }
   if (start < end) {
     wr.append(s, addressOf(data, start), (end - start) as usize);
     io.due(s);
   }
-  return value((m.ld(s + io.S_QUEUED) - m.ld(s + io.S_WRITTEN)) as u64);
+  const left = (m.ld(s + io.S_QUEUED) - m.ld(s + io.S_WRITTEN)) as u64;
+  tb.leave(s);
+  return value(left);
 }
 
 /** `writeLaterRange` of a string's UTF-8, copied straight into the buffer. */
 export function writeLaterText(h: u64, data: string): IoResult<u64> {
-  const s = tb.lookup(h);
+  const s = tb.enter(h);
   const st = check(s);
   if (st.code !== 0) {
+    if (s !== 0) {
+      tb.leave(s);
+    }
     return failed(st, 0);
   }
   const n = strByteLen(data);
@@ -279,35 +347,46 @@ export function writeLaterText(h: u64, data: string): IoResult<u64> {
     wr.commit(s, n);
     io.due(s);
   }
-  return value((m.ld(s + io.S_QUEUED) - m.ld(s + io.S_WRITTEN)) as u64);
+  const left = (m.ld(s + io.S_QUEUED) - m.ld(s + io.S_WRITTEN)) as u64;
+  tb.leave(s);
+  return value(left);
 }
 
 /** Resolves once at most `max` buffered bytes are still to send. */
 export async function drained(h: u64, max: u64): Promise<IoStatus> {
-  const s = tb.lookup(h);
+  const s = tb.enter(h);
   const st = check(s);
   if (st.code !== 0) {
+    if (s !== 0) {
+      tb.leave(s);
+    }
     return st;
   }
-  if (!wt.satisfied(s, io.K_DRAINED, max as usize)) {
+  const done = wt.satisfied(s, io.K_DRAINED, max as usize);
+  tb.leave(s);
+  if (!done) {
     await waitOn(h, io.K_DRAINED, max, 0);
   }
-  return check(tb.lookup(h));
+  return checkNow(h);
 }
 
 /** Half-close once the buffered bytes are sent. */
 export function shutdown(h: u64): IoStatus {
-  const s = tb.lookup(h);
+  handOff();
+  const s = tb.enter(h);
   const st = check(s);
   if (st.code === 0) {
     wr.endSource(s, false);
+  }
+  if (s !== 0) {
+    tb.leave(s);
   }
   return st;
 }
 
 /** Fails what is in flight and everything after; the handle stays open until `close`. */
 export function abort(h: u64): void {
-  const s = tb.lookup(h);
+  const s = tb.enter(h);
   if (s === 0) {
     return;
   }
@@ -319,15 +398,18 @@ export function abort(h: u64): void {
     shutdown$net(m.ld(s + io.S_FD) as i32, 2);
   }
   wt.wakeAll(s);
+  tb.leave(s);
 }
 
 /** Releases the handle; the socket closes once its buffered bytes are sent. */
 export function close(h: u64): void {
-  const s = tb.lookup(h);
+  handOff();
+  const s = tb.enter(h);
   if (s === 0) {
     return;
   }
   tb.forget(h);
   wt.wakeAll(s);
   wr.endSource(s, true);
+  tb.leave(s);
 }

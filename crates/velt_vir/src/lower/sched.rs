@@ -2,18 +2,20 @@
 //! when the compiler starts (velt_common `std_hooks::std_scheduler`), lowering calls its hooks
 //! where it would call the runtime's executor: `velt_main`'s root (`velt_rt_block_on`), a spawn
 //! from an initial state (`velt_rt_spawn`, `velt_rt_spawn_transfer`) or of a heap future
-//! (`velt_rt_spawn_fut`), the pin of a spawn that stays the runtime's (`velt_rt_spawn_target`),
+//! (`velt_rt_spawn_fut`), the pin of the next spawn to a worker (`velt_rt_spawn_target`),
 //! `await yieldNow()`
 //! (`velt_rt_yield_now`), boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`,
 //! `_start_rejecting`), the microtask step of `await` (`velt_rt_await_tick`, `_ready`), the
 //! prelude's microtasks (`velt_rt_microtask`), the process lifetime (keep-alive references,
 //! a due `unref()`'d timer's question, the top-level `await` waiting now: `velt_rt_tla_at`),
 //! `sleep` (`velt_rt_sleep`) and the prelude's Node timer order (`velt_rt_timer_new`, `_turn`,
-//! `_again`, `_clear`, `_free`), and at the end of `velt_main` the tasks still alive. The choice
-//! is made here, at compile time: a program pays no branch for it when it runs. Everything else
-//! (pinned spawns, combinators, shared promises) still goes to the runtime, whose leaves wake the
-//! Velt executor's tasks through their C waker.
+//! `_again`, `_clear`, `_free`), and at the end of `velt_main` the tasks still alive. A pinned
+//! spawn (`spawn(p, { worker })`) is a task of the executor's worker it names. The choice is made
+//! here, at compile time: a program pays no branch for it when it runs. Everything else
+//! (combinators, shared promises) still goes to the runtime, whose leaves wake the Velt
+//! executor's tasks through their C waker.
 
+use super::cint;
 use super::hook_calls::{self as hooks, ty, HookTy};
 use super::rt::Rt;
 use super::FnLower;
@@ -57,23 +59,38 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))
     }
 
-    /// `velt_main`'s root task `poll` with its state at `state`, run to completion.
+    /// `velt_main`'s root task `poll` with its state at `state`, run to completion. The third
+    /// argument is 1 when tasks must stay on their worker: a program that may give a declared
+    /// function properties through `any` reaches them in the runtime (fn_props.rs), under the
+    /// runtime's module lock, which worker 0 keeps.
     pub(super) fn sched_block_on(&mut self, poll: Operand, state: Operand) {
         let (poll, state) = (self.as_usize(poll), self.as_usize(state));
-        hooks::sched_block_on(self, ty::USize::arg(poll), ty::USize::arg(state)).emit(self);
+        let stay = cint(i128::from(self.cx.boxing.fn_props), Ty::U64);
+        let (poll, state, stay) = (
+            ty::USize::arg(poll),
+            ty::USize::arg(state),
+            ty::U64::arg(stay),
+        );
+        hooks::sched_block_on(self, poll, state, stay).emit(self);
     }
 
-    /// `spawn(f(...))` from an initial state: `velt_rt_spawn`'s arguments (a transfer function
-    /// after them is left out: the task runs on this thread); its join handle, of promise type
-    /// `ty`, owned by this expression like the runtime's (`rt_value`): a use moves it and an
-    /// unused one is dropped, where a plain temporary would be shared at its use and never
-    /// dropped itself.
+    /// `spawn(f(...))` from an initial state: `velt_rt_spawn`'s arguments, then the result's
+    /// transfer glue when it has one (`velt_rt_spawn_transfer`'s eighth argument; the task may
+    /// finish on another worker than its joiner's, with promises it started still using the
+    /// result's objects there); its join handle, of promise type `ty`, owned by this expression
+    /// like the runtime's (`rt_value`): a use moves it and an unused one is dropped, where a
+    /// plain temporary would be shared at its use and never dropped itself.
     pub(super) fn sched_spawn(&mut self, args: Vec<Operand>, ty: velt_sema::hir::TyId) -> Operand {
         self.cx.sched_tasks = true;
-        let [poll, drop, state, size, align, rsize, rdrop] =
-            <[Operand; 7]>::try_from(args.into_iter().take(7).collect::<Vec<_>>())
-                .unwrap_or_else(|_| super::ice("a spawn takes seven arguments"));
-        let [poll, drop, state, rdrop] = [poll, drop, state, rdrop].map(|o| self.as_usize(o));
+        let mut args = args;
+        if args.len() == 7 {
+            args.push(cint(0, Ty::Ptr));
+        }
+        let [poll, drop, state, size, align, rsize, rdrop, transfer] =
+            <[Operand; 8]>::try_from(args.into_iter().take(8).collect::<Vec<_>>())
+                .unwrap_or_else(|_| super::ice("a spawn takes seven or eight arguments"));
+        let [poll, drop, state, rdrop, transfer] =
+            [poll, drop, state, rdrop, transfer].map(|o| self.as_usize(o));
         let h = hooks::sched_spawn(
             self,
             ty::USize::arg(poll),
@@ -83,6 +100,7 @@ impl FnLower<'_, '_> {
             ty::U64::arg(align),
             ty::U64::arg(rsize),
             ty::USize::arg(rdrop),
+            ty::USize::arg(transfer),
         )
         .emit(self)
         .op();

@@ -1,0 +1,321 @@
+// velt/lang/hooks (internal): a worker's run queue in the executor in Velt (sched.velt, #2649
+// step 3), ported from the runtime's (velt_rt task/runtime/velt/queue.rs): input first (tasks
+// woken by I/O, timers or other threads), then output and the work tasks made (writers woken by
+// room to write; spawned, woken while they ran, moved over from another worker), each in the
+// order it came, both linked through the tasks' `T_NEXT`.
+//
+// - A task woken by the task running runs next, from a one-task slot (`pushNext`), as with
+//   tokio's LIFO slot: a chain of request and reply between tasks does not wait behind the whole
+//   queue at each step. At most `NEXT_RUNS` in a row, so two tasks waking each other cannot hold
+//   the worker. Only with other threads at the queues (`pushNext`).
+// - The second queue waits only while input never runs out, and not for long: every `TRICKLE`th
+//   task comes from it, and once it has waited `FAIR` a fair pass runs every task it holds. Its
+//   clock is the worker's reactor turns (`E_NOW`, `tick`): the wait counts from the first turn
+//   that finds both queues holding tasks, so a push or pop reads no clock and stores no time.
+//
+// With more than one thread at the queues (`t.M_SHARED`: other workers borrow input and the
+// monitor rescues a stalled worker's tasks), each queue has a lock (`E_QLOCK`) that its worker
+// takes for each operation and others only try; with one worker and no monitor (`E_MODE` 0),
+// none is taken, and the second queue is not counted either (`E_RLEN`: what the spread and the
+// monitor read): there it counts tasks spawned not yet run, an estimate (sched_loop.velt
+// `interval`), and a fair pass counts the queue when it starts.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+
+/** How long the second queue may wait behind the first before a fair pass (nanoseconds). */
+const FAIR: usize = 10000000;
+/** One task in this many comes from the second queue while both hold tasks. */
+const TRICKLE: usize = 61;
+/** Tasks in a row from the slot for the next task, before the queue gets a turn. */
+const NEXT_RUNS: usize = 3;
+
+/** Takes worker `e`'s queue lock when queues are shared (`mode`: its `E_MODE`). */
+@inline
+export function lock(e: usize, mode: u32): void {
+  if ((mode & t.M_SHARED) !== 0) {
+    lockSlow(e);
+  }
+}
+
+@noInline
+function lockSlow(e: usize): void {
+  m.spinLock(e + t.E_QLOCK);
+}
+
+/** Gives worker `e`'s queue lock back (`mode` as `lock`'s). */
+@inline
+export function unlock(e: usize, mode: u32): void {
+  if ((mode & t.M_SHARED) !== 0) {
+    m.store32(e + t.E_QLOCK, 0);
+  }
+}
+
+/** Takes worker `e`'s queue lock if it is free (another thread's look at it): whether it did. */
+export function tryLock(e: usize): bool {
+  return m.cas32(e + t.E_QLOCK, 0, 1) === 0;
+}
+
+/** Appends task `k` to the second queue (work this worker's tasks made; `mode`: its `E_MODE`). */
+@inline
+export function pushRest(e: usize, k: usize, mode: u32): void {
+  m.st(k + t.T_NEXT, 0);
+  const tail = m.ld(e + t.E_TAIL);
+  if (tail === 0) {
+    m.st(e + t.E_HEAD, k);
+  } else {
+    m.st(tail + t.T_NEXT, k);
+  }
+  m.st(e + t.E_TAIL, k);
+  if (mode !== 0) {
+    t.bump(e + t.E_RLEN, 1);
+  }
+}
+
+/** Appends task `k` to the input queue. */
+@inline
+export function pushIo(e: usize, k: usize): void {
+  m.st(k + t.T_NEXT, 0);
+  const tail = m.ld(e + t.E_ITAIL);
+  if (tail === 0) {
+    m.st(e + t.E_IHEAD, k);
+  } else {
+    m.st(tail + t.T_NEXT, k);
+  }
+  m.st(e + t.E_ITAIL, k);
+  t.bump(e + t.E_ILEN, 1);
+  m.st(e + t.E_QSLOW, 1);
+}
+
+/**
+ * Makes task `k` (woken by the task running) the next to run; one there before joins the input.
+ * Only with other threads at the queues (`E_MODE` not 0), where the slot keeps a wake on the
+ * waker's worker: one thread queues a woken task at the end of the second queue, in the order of
+ * the wakes (sched_task.velt `schedule`). With the slot, 64 callers making requests of 4 owner
+ * tasks (bench/async/pingpong_pinned.velt) took a step of each owner per request instead of one
+ * per batch (1.71G instructions against 1.34G).
+ */
+@inline
+export function pushNext(e: usize, k: usize): void {
+  const before = m.ld(e + t.E_NEXT);
+  m.st(e + t.E_NEXT, k);
+  m.st(e + t.E_QSLOW, 1);
+  if (before !== 0) {
+    pushIo(e, before);
+  }
+}
+
+/** Takes the first task of the second queue (0: none; `mode` as `pushRest`'s). */
+@inline
+export function popRest(e: usize, mode: u32): usize {
+  const k = m.ld(e + t.E_HEAD);
+  if (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    m.st(e + t.E_HEAD, next);
+    if (next === 0) {
+      m.st(e + t.E_TAIL, 0);
+    }
+    if (mode !== 0) {
+      m.st(e + t.E_RLEN, m.ld(e + t.E_RLEN) - 1);
+    }
+  }
+  return k;
+}
+
+/** Takes the first task of the input queue (0: none). */
+@inline
+export function popIo(e: usize): usize {
+  const k = m.ld(e + t.E_IHEAD);
+  if (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    m.st(e + t.E_IHEAD, next);
+    if (next === 0) {
+      m.st(e + t.E_ITAIL, 0);
+    }
+    m.st(e + t.E_ILEN, m.ld(e + t.E_ILEN) - 1);
+  }
+  return k;
+}
+
+/** The next task to run (the queue locked; `mode`: its `E_MODE`), 0 when there is none. */
+@inline
+export function pop(e: usize, mode: u32): usize {
+  if (m.ld(e + t.E_QSLOW) !== 0) {
+    return popSlow(e, mode);
+  }
+  // Only the second queue holds tasks (its count since the last is 0 then).
+  return popRest(e, mode);
+}
+
+/** The next task of the two queues: input, but every `TRICKLE`th from the second. */
+@inline
+function popPlain(e: usize, mode: u32): usize {
+  if (m.ld(e + t.E_IHEAD) === 0 || m.ld(e + t.E_SINCE_REST) >= TRICKLE) {
+    const k = popRest(e, mode);
+    if (k !== 0) {
+      m.st(e + t.E_SINCE_REST, 0);
+      return k;
+    }
+  }
+  const k = popIo(e);
+  if (k !== 0) {
+    t.bump(e + t.E_SINCE_REST, 1);
+  }
+  return k;
+}
+
+/**
+ * `pop` with input queued, a fair pass under way, a task in the slot or the slot's run count to
+ * reset.
+ */
+@noInline
+function popSlow(e: usize, mode: u32): usize {
+  const left = m.ld(e + t.E_FAIR_LEFT);
+  if (left > 0) {
+    m.st(e + t.E_FAIR_LEFT, left - 1);
+    if (left === 1) {
+      m.st(e + t.E_FAIR_DUE, m.ld(e + t.E_NOW) + FAIR);
+    }
+    const k = popRest(e, mode);
+    if (k !== 0) {
+      return k;
+    }
+    m.st(e + t.E_FAIR_LEFT, 0);
+  }
+  const next = m.ld(e + t.E_NEXT);
+  if (next !== 0) {
+    m.st(e + t.E_NEXT, 0);
+    const runs = m.ld(e + t.E_NEXT_RUNS);
+    if (runs < NEXT_RUNS) {
+      m.st(e + t.E_NEXT_RUNS, runs + 1);
+      return next;
+    }
+    pushIo(e, next);
+  }
+  m.st(e + t.E_NEXT_RUNS, 0);
+  const k = popPlain(e, mode);
+  if (m.ld(e + t.E_IHEAD) === 0 && m.ld(e + t.E_FAIR_LEFT) === 0) {
+    // Back to the fast path: nothing in the slot, no input, no fair pass.
+    m.st(e + t.E_QSLOW, 0);
+    m.st(e + t.E_SINCE_REST, 0);
+  }
+  return k;
+}
+
+/**
+ * At each reactor turn (its time in `E_NOW`): the second queue's wait starts when the turn finds
+ * both queues holding tasks, ends when it finds the second empty, and once it reached `FAIR` a
+ * fair pass starts.
+ */
+export function tick(e: usize, mode: u32): void {
+  if (m.ld(e + t.E_HEAD) === 0) {
+    m.st(e + t.E_FAIR_DUE, 0);
+    return;
+  }
+  if (m.ld(e + t.E_FAIR_LEFT) !== 0 || m.ld(e + t.E_IHEAD) === 0) {
+    return;
+  }
+  const due = m.ld(e + t.E_FAIR_DUE);
+  const now = m.ld(e + t.E_NOW);
+  if (due === 0) {
+    m.st(e + t.E_FAIR_DUE, now + FAIR);
+  } else if (now >= due) {
+    m.st(e + t.E_FAIR_LEFT, mode !== 0 ? m.ld(e + t.E_RLEN) : countRest(e));
+    m.st(e + t.E_QSLOW, 1);
+  }
+}
+
+/** The tasks in worker `e`'s second queue, counted (one worker: it keeps no count). */
+function countRest(e: usize): usize {
+  let n: usize = 0;
+  let k = m.ld(e + t.E_HEAD);
+  while (k !== 0) {
+    n++;
+    k = m.ld(k + t.T_NEXT);
+  }
+  return n;
+}
+
+/** Tasks queued on worker `e` (its queue locked; with other threads at the executor). */
+@inline
+export function len(e: usize): usize {
+  return m.ld(e + t.E_ILEN) + m.ld(e + t.E_RLEN) + (m.ld(e + t.E_NEXT) !== 0 ? 1 : 0);
+}
+
+/** Input waiting on worker `e` (the input queue and the slot). */
+@inline
+export function input(e: usize): usize {
+  return m.ld(e + t.E_ILEN) + (m.ld(e + t.E_NEXT) !== 0 ? 1 : 0);
+}
+
+/** Has worker `e` a task queued (read from any thread: a hint)? */
+@inline
+export function any(e: usize): bool {
+  return (m.load(e + t.E_HEAD) | m.load(e + t.E_IHEAD) | m.load(e + t.E_NEXT)) !== 0;
+}
+
+/**
+ * Moves the inbox (tasks woken or moved here from other threads), in the order they came, to the
+ * input queue (the queue locked).
+ */
+export function takeInbox(e: usize): void {
+  let k = m.takeStack(e + t.E_INBOX);
+  // The stack is last in first out.
+  let rev: usize = 0;
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    m.st(k + t.T_NEXT, rev);
+    rev = k;
+    k = next;
+  }
+  while (rev !== 0) {
+    const next = m.ld(rev + t.T_NEXT);
+    pushIo(e, rev);
+    rev = next;
+  }
+}
+
+/**
+ * Counts worker `e`'s queues again (the queue locked), as the shared mode keeps them, when a
+ * lazy worker 0 takes it on (sched_loop.velt `adopt`): the slow path takes the next pop.
+ */
+export function recount(e: usize): void {
+  let n: usize = 0;
+  let k = m.ld(e + t.E_IHEAD);
+  while (k !== 0) {
+    n++;
+    k = m.ld(k + t.T_NEXT);
+  }
+  m.st(e + t.E_ILEN, n);
+  m.st(e + t.E_RLEN, countRest(e));
+  m.st(e + t.E_QSLOW, 1);
+}
+
+/** Reverses a chain of tasks linked through `T_NEXT`: its new first. */
+export function reverse(k: usize): usize {
+  let rev: usize = 0;
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    m.st(k + t.T_NEXT, rev);
+    rev = k;
+    k = next;
+  }
+  return rev;
+}
+
+/**
+ * Wakes waker `w` (giving its reference back) as output: a writer woken by room to write queues
+ * behind input, as the work tasks make (above).
+ */
+export function wakeOutput(w: usize): void {
+  const e = t.here();
+  if (e === 0) {
+    m.wakeOwned(w);
+    return;
+  }
+  const was = m.ld32(e + t.E_DISPATCH);
+  m.st32(e + t.E_DISPATCH, t.D_OUTPUT);
+  m.wakeOwned(w);
+  m.st32(e + t.E_DISPATCH, was);
+}

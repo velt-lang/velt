@@ -95,12 +95,17 @@ impl FnLower<'_, '_> {
             ];
             // The result reaches the joining task: the task transfers it as it finishes, while
             // promises it started (which may still use the result's objects) are on its thread.
-            if self.std_sched() && worker.is_none() {
-                // One worker: the result stays on this thread, nothing to transfer.
-                return self.sched_spawn(args, ty);
-            }
             if !detached && self.cx.transfers(slot) {
                 args.push(cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot))));
+            }
+            if self.std_sched() {
+                // The executor in Velt: the task may finish on another worker than its
+                // joiner's (pinned, or moved by the placement policy), so its result is
+                // transferred as it finishes, as the runtime's.
+                self.pin(worker);
+                return self.sched_spawn(args, ty);
+            }
+            if args.len() == 8 {
                 self.pin(worker);
                 return self.rt_value(Rt::SpawnTransfer, args, ty);
             }
@@ -132,8 +137,10 @@ impl FnLower<'_, '_> {
         if !self.dead() {
             self.transfer_result(fut.clone(), pty);
         }
-        if self.std_sched() && worker.is_none() {
-            // One worker: the task polls the heap future on this thread.
+        if self.std_sched() {
+            // The executor in Velt: a task polling the heap future on this worker, or on the
+            // worker it is pinned to.
+            self.pin(worker);
             return self.sched_spawn_fut(fut, rsize, result_drop, ty);
         }
         self.pin(worker);

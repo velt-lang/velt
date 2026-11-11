@@ -347,9 +347,9 @@ b\na\n[ 'a', 'b' ]\nfirst\nsecond\nfirst after yieldNow\n[ 'first', 'second' ]\n
 /// Promise(r => setTimeout(r, ms))`: `sleep 2|timeout 10|spawned sleep 2|timeout 8`). The rest
 /// differs from Node: the spawned task's body runs once `main` lets go, so with one worker its
 /// sleep is created after `busy` and comes due after the timeout of 8 (Node runs the body before
-/// `busy`; #1332's case). The executor in Velt keeps timer order there; the runtime's executor
-/// runs the spawned task on another thread meanwhile, and its sleeps and timers interleave by
-/// when it looks: only its first line is compared there.
+/// `busy`; #1332's case). Both executors' stall monitors move the spawned task to a spare
+/// worker meanwhile (`main` holds the only one for 30 ms), and its sleeps and timers interleave
+/// by when it looks: only the first line is compared there.
 #[test]
 fn sleeps_and_timers_due_together_run_in_one_order() {
     if !std_builds_here() {
@@ -391,9 +391,17 @@ async function main() {{
         ["sleep 2", "spawned sleep 2", "timeout 10", "timeout 8"],
         "the runtime's executor: {rt}"
     );
+    let mut lines: Vec<&str> = std.lines().collect();
     assert_eq!(
-        std, "sleep 2\ntimeout 10\ntimeout 8\nspawned sleep 2\n",
-        "the executor in Velt"
+        lines.first(),
+        Some(&"sleep 2"),
+        "the executor in Velt: {std}"
+    );
+    lines.sort_unstable();
+    assert_eq!(
+        lines,
+        ["sleep 2", "spawned sleep 2", "timeout 10", "timeout 8"],
+        "the executor in Velt: {std}"
     );
     assert!(contains(&std_bin, b"schedSleep"));
 }

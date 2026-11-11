@@ -23,6 +23,7 @@ import * as l from "./sched_order_list";
 import * as p from "./sched_order_pass";
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
+import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 
 /** A turn's future: its timer after the header. */
@@ -102,6 +103,8 @@ function turnPoll(f: usize, cx: usize): u32 {
   const h = m.ld(f + F_TIMER);
   const s = m.ld(h + l.H_STATE);
   if (s === l.QUEUED) {
+    // Waiting in this worker's timer order: its task stays on this worker.
+    sp.anchor();
     const w = m.ld(cx + 8);
     const old = m.ld(h + l.H_WAKER);
     if (old !== w) {

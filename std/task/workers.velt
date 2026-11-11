@@ -1,6 +1,6 @@
 // velt/task (internal): the workers that run tasks: how many, and which one runs this task.
 
-import { velt_rt_current_worker, velt_rt_worker_count } from "velt/task/rt";
+import * as wi from "#task-workers";
 
 /**
  * How many workers run tasks: fixed for the process (`VELT_THREADS`, else the number of cores;
@@ -8,7 +8,7 @@ import { velt_rt_current_worker, velt_rt_worker_count } from "velt/task/rt";
  * are not counted, so an array sized by it at start-up has a slot for every `currentWorker()`.
  */
 export function workerCount(): i64 {
-  return velt_rt_worker_count() as i64;
+  return wi.count() as i64;
 }
 
 /**
@@ -19,7 +19,7 @@ export function workerCount(): i64 {
  * atomic or a lock, as it does for a task that moves.
  */
 export function currentWorker(): i64 {
-  return velt_rt_current_worker() as i64;
+  return wi.current() as i64;
 }
 
 /**

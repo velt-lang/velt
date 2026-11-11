@@ -1,0 +1,265 @@
+// velt/lang/hooks (internal): when the executor in Velt uses another worker (sched.velt, #2649
+// step 3), ported from the runtime's (velt_rt task/runtime/velt/spread.rs and worker.rs).
+//
+// Work stays on the worker that made it: on a core that keeps up, spreading only adds
+// cross-thread wakes and splits the writes it could batch (#717). So a worker measures how long
+// its tasks wait. Every `HELP` polls, and when it runs out of work, it notes its queue's length;
+// at the end of each `WINDOW` it estimates the delay of its queue as the mean length noted times
+// the mean time of a task poll (wall time while awake). From `TARGET` on, or when it was awake
+// for nearly all of the window (`SATURATED`) with input waiting, it offers half of its queue to
+// the sleeping worker that did least, which takes the tasks over (their sockets follow them:
+// sched_io_table.velt). What counts is input; the whole queue once polls are long (`HEAVY`).
+//
+// A worker that runs out of work takes what is offered (its own offer first: what no helper
+// took comes back), then borrows half of the input waiting on an awake worker with at least
+// `BORROW_MIN` waiting, as tokio's work stealing does: the borrowed tasks keep their home (their
+// sockets stay registered there, their next wake goes there). Pinned tasks and tasks anchored to
+// their worker (sched_task.velt `ANCHORED`) are never offered or borrowed.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as mon from "./sched_monitor";
+import * as q from "./sched_queue";
+import * as sl from "./sched_sleep";
+import * as tq from "./sched_take";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/** How long each measurement runs (nanoseconds). */
+const WINDOW: usize = 10000000;
+/** The delay from which a worker takes on a helper (nanoseconds). */
+const TARGET: usize = 200000;
+/** The share of a window (percent) a worker must be awake for, with input waiting, to be saturated. */
+const SATURATED: usize = 95;
+/** Mean time per task poll from which all waiting tasks count, not only input (nanoseconds). */
+const HEAVY: usize = 20000;
+/** Task polls between two looks at the spread. */
+export const HELP: usize = 16;
+/** Input waiting on a worker from which a worker that ran out of work borrows half. */
+const BORROW_MIN: usize = 2;
+
+/** The clock of the spread: nanoseconds since the process started. */
+@inline
+export function now(): usize {
+  return sl.clock() as usize;
+}
+
+/** Notes worker `e`'s queue lengths, input and all, in its window. */
+export function saw(e: usize, input: usize, all: usize): void {
+  t.bump(e + t.E_W_INPUT, input);
+  t.bump(e + t.E_W_ALL, all);
+  t.bump(e + t.E_W_NOTED, 1);
+}
+
+/** Counts `ns` nanoseconds worker `e` slept in its window. */
+export function slept(e: usize, ns: usize): void {
+  t.bump(e + t.E_W_SLEPT, ns);
+}
+
+/**
+ * Once worker `e`'s window is over (at `nowNs`, after `polls` polls): whether its queue's delay
+ * reached `TARGET` or it was saturated (the next window starts); false while it runs.
+ */
+function windowEnd(e: usize, nowNs: usize, polls: usize): bool {
+  const started = m.ld(e + t.E_W_START);
+  const wall = nowNs > started ? nowNs - started : 0;
+  if (wall < WINDOW) {
+    return false;
+  }
+  const p0 = m.ld(e + t.E_W_POLLS);
+  const ran = polls > p0 + 1 ? polls - p0 : 1;
+  const sleptNs = m.ld(e + t.E_W_SLEPT);
+  const awake = wall > sleptNs ? wall - sleptNs : 0;
+  const perPoll = awake / ran;
+  const sum = perPoll >= HEAVY ? m.ld(e + t.E_W_ALL) : m.ld(e + t.E_W_INPUT);
+  const noted = m.ld(e + t.E_W_NOTED);
+  const waiting = sum / (noted === 0 ? 1 : noted);
+  const queued = perPoll * waiting;
+  m.st(e + t.E_W_START, nowNs);
+  m.st(e + t.E_W_POLLS, polls);
+  m.st(e + t.E_W_INPUT, 0);
+  m.st(e + t.E_W_ALL, 0);
+  m.st(e + t.E_W_NOTED, 0);
+  m.st(e + t.E_W_SLEPT, 0);
+  const saturated = awake * 100 >= wall * SATURATED && waiting >= 1;
+  return queued >= TARGET || saturated;
+}
+
+/**
+ * Every `HELP` polls of worker `e` (with other workers): publishes its work and queue length,
+ * notes its queue in the window, and once the window shows its tasks wait too long, offers half
+ * of them to a sleeping worker.
+ */
+@noInline
+export function maybeHelp(e: usize, mode: u32): void {
+  q.lock(e, mode);
+  const input = q.input(e);
+  const all = q.len(e);
+  q.unlock(e, mode);
+  const polls = m.ld(e + t.E_POLLS);
+  m.st(e + t.E_WORK, polls);
+  m.swap(e + t.E_QUEUED, all);
+  saw(e, input, all);
+  if (!windowEnd(e, now(), polls) || all < 2) {
+    return;
+  }
+  const helper = sleepingHelper(e);
+  if (helper !== 0) {
+    offer(e, mode, helper);
+  }
+}
+
+/** Publishes what other threads read of worker `e` before it idles: its work, its queue's length. */
+export function publishIdle(e: usize): void {
+  m.st(e + t.E_WORK, m.ld(e + t.E_POLLS));
+  m.swap(e + t.E_QUEUED, 0);
+}
+
+/** The sleeping worker (not `e`) that did least: one with nothing to do; 0 when none sleeps. */
+export function sleepingHelper(e: usize): usize {
+  const g = t.main();
+  const n = m.load(g + t.E_STARTED);
+  let best: usize = 0;
+  let least: usize = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const w = t.worker(i);
+    if (w === e || m.load32(w + t.E_PARK) !== 1) {
+      continue;
+    }
+    const work = m.ld(w + t.E_WORK);
+    if (best === 0 || work < least) {
+      best = w;
+      least = work;
+    }
+  }
+  return best;
+}
+
+/** Offers half of worker `e`'s waiting tasks (not pinned or anchored ones) and wakes `helper`. */
+function offer(e: usize, mode: u32, helper: usize): void {
+  q.lock(e, mode);
+  let k = tq.takeHalf(e, false);
+  q.unlock(e, mode);
+  if (k === 0) {
+    return;
+  }
+  // Pushed oldest first: the helper's `steal` takes them in the order they waited.
+  k = q.reverse(k);
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    m.pushStack(e + t.E_OFFER, k, t.T_NEXT);
+    k = next;
+  }
+  wk.unpark(helper);
+}
+
+/**
+ * Worker `e`, out of work, takes over what a worker offers (its own offer first): whether there
+ * was anything. The tasks' home becomes `e`.
+ */
+export function steal(e: usize): bool {
+  const g = t.main();
+  const n = m.load(g + t.E_STARTED);
+  for (let j: usize = 0; j <= n; j++) {
+    const w = j === 0 ? e : t.worker(j - 1);
+    if (j !== 0 && w === e) {
+      continue;
+    }
+    if (m.load(w + t.E_OFFER) === 0) {
+      continue;
+    }
+    let k = q.reverse(m.takeStack(w + t.E_OFFER));
+    if (k === 0) {
+      continue;
+    }
+    const mode = m.ld32(e + t.E_MODE);
+    q.lock(e, mode);
+    while (k !== 0) {
+      const next = m.ld(k + t.T_NEXT);
+      m.st(k + t.T_HOME, e);
+      q.pushRest(e, k, mode);
+      k = next;
+    }
+    q.unlock(e, mode);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Worker `e`, out of work, runs half of the input waiting on another awake worker (at least
+ * `BORROW_MIN` waiting), so a request waits for any core, not for its own worker's next time
+ * slice. The tasks keep their home: borrowing moves nothing for good. Sleeping workers lend
+ * nothing, so light load stays on one worker. Whether it borrowed anything.
+ */
+export function borrow(e: usize): bool {
+  const g = t.main();
+  const n = m.load(g + t.E_STARTED);
+  const me = m.ld(e + t.E_INDEX);
+  for (let j: usize = 1; j < n; j++) {
+    const w = t.worker((me + j) % n);
+    if (m.load32(w + t.E_PARK) === 1 || m.load(w + t.E_QUEUED) < BORROW_MIN) {
+      continue;
+    }
+    if (!q.tryLock(w)) {
+      continue;
+    }
+    let k: usize = 0;
+    if (q.input(w) >= BORROW_MIN) {
+      k = tq.takeHalfInput(w);
+    }
+    m.store32(w + t.E_QLOCK, 0);
+    if (k === 0) {
+      continue;
+    }
+    k = q.reverse(k);
+    const mode = m.ld32(e + t.E_MODE);
+    q.lock(e, mode);
+    while (k !== 0) {
+      const next = m.ld(k + t.T_NEXT);
+      q.pushIo(e, k);
+      k = next;
+    }
+    q.unlock(e, mode);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The task being polled on this thread makes per-worker timer state (a sleep, a Node timer, a
+ * wait with a deadline): it is anchored to this worker from now on, its home if it ran here off
+ * its home (no wake can queue it while it runs, so its home may change now).
+ */
+export function anchor(): void {
+  const e = t.exec();
+  if (e === 0) {
+    return;
+  }
+  const k = m.ld(e + t.E_CURRENT);
+  if (k === 0 || t.has(k, t.ANCHORED)) {
+    return;
+  }
+  anchorTo(e, k);
+}
+
+@noInline
+function anchorTo(e: usize, k: usize): void {
+  t.flags(k, t.ANCHORED, 0);
+  if (m.ld(k + t.T_HOME) !== e) {
+    m.st(k + t.T_HOME, e);
+  }
+}
+
+/**
+ * From now on no task moves or runs off its home (worker 0's `g` block, before `main` runs):
+ * no offers, borrows or tasks run next on the waker's worker, and the monitor rescues nothing.
+ */
+export function stay(g: usize): void {
+  m.st(g + t.E_STAY, 1);
+  const n = m.ld(g + t.E_COUNT) + (m.ld(g + t.E_RESCUE) !== 0 ? mon.SPARES : 0);
+  for (let i: usize = 0; i < n; i++) {
+    const w = t.worker(i);
+    m.st32(w + t.E_MODE, m.ld32(w + t.E_MODE) & ~t.M_SPREAD);
+  }
+}

@@ -23,10 +23,12 @@
 // drives it: a wake puts it among the task's woken nodes, which the task runs before its root
 // (sched.velt `run`). Its owner only sees it finish. A task that starts nothing pays nothing.
 
+import { export as cExport } from "velt/ffi";
 import { stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 export const N_HEAD: usize = 112;
 const N_REFS: usize = 8;
@@ -65,7 +67,7 @@ export function boxed(
   const e = t.exec();
   const bytes = N_HEAD + 16 + (size as usize);
   const n = m.alloc(bytes);
-  m.st(n, e + t.E_NODE_VT);
+  m.st(n, t.main() + t.E_NODE_VT);
   m.st(n + N_REFS, 1);
   m.st32(n + N_FLAGS, 0);
   m.st32(n + N_BYTES, bytes as u32);
@@ -115,7 +117,7 @@ export function nodePoll(f: usize, cx: usize): u32 {
   if (
     (fl & (RUNNING | QUEUED)) === 0 &&
     m.ld(e + t.E_ADOPTING) === 0 &&
-    t.taskOf(m.ld(cx + 8)) === task
+    wk.taskOf(m.ld(cx + 8)) === task
   ) {
     // Its owner is the task driving it (its root, or another promise of it): the owner polls
     // the state with its own cx ("adopts" it), so its leaves wake the owner directly and a
@@ -277,7 +279,7 @@ export function run(task: usize, n: usize, taken: bool): void {
     const w = m.ld(n + N_AWAITER);
     if (w !== 0) {
       m.st(n + N_AWAITER, 0);
-      if (t.taskOf(w) === task) {
+      if (wk.taskOf(w) === task) {
         // Its awaiter is the task's root or another promise it drives: its reaction is queued
         // now, as Node queues a promise's reactions when it settles, and that entry is its step.
         micro.enqueue(task, w, true);
@@ -296,7 +298,7 @@ export function queued(w: usize): bool {
 
 /** Is `w` a waker header of a started node of task `task`? */
 export function ownNode(task: usize, w: usize): bool {
-  return m.ld(w) === t.exec() + t.E_NODE_VT && m.ld(w + N_TASK) === task;
+  return m.ld(w) === t.main() + t.E_NODE_VT && m.ld(w + N_TASK) === task;
 }
 
 /**
@@ -322,20 +324,24 @@ export function nextWoken(n: usize): usize {
 
 // ---- A node's waker table: C calls these, from any thread. ----
 
+@cExport("std_sched_node_clone")
 export function nodeClone(w: usize): usize {
   m.inc(w + N_REFS);
   return w;
 }
 
+@cExport("std_sched_node_wake")
 export function nodeWake(w: usize): void {
   wake(w);
   release(w);
 }
 
+@cExport("std_sched_node_wake_by_ref")
 export function nodeWakeByRef(w: usize): void {
   wake(w);
 }
 
+@cExport("std_sched_node_drop_ref")
 export function nodeDropRef(w: usize): void {
   release(w);
 }
@@ -356,9 +362,9 @@ function wake(n: usize): void {
   m.inc(n + N_REFS);
   const task = m.ld(n + N_TASK);
   m.pushStack(task + t.T_WOKEN, n, N_NEXT);
-  const e = t.exec();
-  if (!(t.onWorker() && m.ld(e + t.E_CURRENT) === task)) {
-    t.wake(task);
+  const e = t.here();
+  if (!(e !== 0 && m.ld(e + t.E_CURRENT) === task)) {
+    wk.wake(task);
   }
 }
 
@@ -368,7 +374,7 @@ export function release(n: usize): void {
     const task = m.ld(n + N_TASK);
     m.release(n, m.ld32(n + N_BYTES) as usize);
     if (task !== 0) {
-      t.release(task);
+      wk.release(task);
     }
   }
 }

@@ -1,0 +1,15 @@
+// velt/lang/hooks (internal): the threads of the executor in Velt's workers (sched.velt, #2649
+// step 3) where none can start yet (Windows' `CreateThread` comes with its reactor): one worker.
+
+/** Can this OS start worker threads? */
+export const SUPPORTED: bool = false;
+
+/** The online cores: one worker here. */
+export function cores(): usize {
+  return 1;
+}
+
+/** Starts no thread (false). */
+export function start(start: usize, arg: usize): bool {
+  return false;
+}

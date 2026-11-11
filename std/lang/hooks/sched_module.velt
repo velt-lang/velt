@@ -1,0 +1,203 @@
+// velt/lang/hooks (internal): module state under the executor in Velt's workers (sched.velt,
+// #2649 step 3), as the runtime's module lock (velt_rt task/local/module_state.rs) keeps it: one
+// process-wide lock, which a task takes on its first access of module state and keeps until the
+// end of that poll, and at the start of every later poll (it is touched, flag `TOUCHED`); code
+// outside a task (worker 0's synchronous `main` once the executor runs) keeps it until it hands
+// over to the tasks. So a task's code between two `await`s runs alone with respect to every other
+// task that uses module state, as in Node, on whichever worker it runs.
+//
+// The block itself stays the runtime's: worker 0 asks it (`velt_rt_module_state`, which
+// allocates and initializes it on first use and keeps the runtime's own lock on worker 0's thread
+// for good, as with one worker), and its address and how many slots are initialized are kept here
+// (`velt_rt_module_ready` routes here too). Other workers never call the runtime's entries, which
+// would wait for that lock for ever; a slot read before its initializer ran is reported here as
+// the runtime does.
+//
+// Gaps: a program giving a declared function properties through `any` takes the runtime's lock
+// around a `Mutex` (`velt_rt_module_with`), which waits for ever off worker 0; code swapped in by
+// `velt dev` (a second block) is not served here.
+
+import { Ptr } from "velt/ffi";
+import { addressLoad, atomicAddress, noInline } from "velt/lang/intrinsics";
+import * as r from "#reactor";
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+
+declare c("c") function velt_rt_module_state$rt(desc: Ptr<u8>, slot: u64): Ptr<u8>;
+declare c("c") function velt_rt_module_block$rt(desc: Ptr<u8>): Ptr<u8>;
+declare c("c") function velt_rt_module_ready$rt(state: Ptr<u8>, n: u64): void;
+declare function velt_rt_write_str(stream: u32, s: string);
+
+/** The lock: 0 free, 1 held, 2 held with threads waiting. */
+const LOCK = new Atomic<u32>(0);
+/** The program's descriptor, its block, and the slots initialized (0 until worker 0 asked). */
+const DESC = new Atomic<u64>(0);
+const BLOCK = new Atomic<u64>(0);
+const READY = new Atomic<u64>(0);
+
+/** How this thread holds the lock: not, for its task's poll, outside a task. */
+const NOT_HELD: u32 = 0;
+const IN_POLL: u32 = 1;
+const OUTSIDE: u32 = 2;
+const HELD = new ThreadLocal<u32>(0);
+
+/** `velt_rt_module_state`: the block, to reach slot `slot` of the program's descriptor `desc`. */
+export function state(desc: usize, slot: u64): usize {
+  const e = t.here();
+  if (e === 0) {
+    // No worker runs yet (the program's start): the runtime's, on this thread alone.
+    return remember(desc, m.addr(unsafeState(desc, slot)));
+  }
+  if (HELD.get() === NOT_HELD) {
+    take(e);
+  }
+  if (DESC.load("acquire") as usize === desc && slot < READY.load("acquire")) {
+    return BLOCK.load("relaxed") as usize;
+  }
+  return slow(e, desc, slot);
+}
+
+/** `velt_rt_module_block`: the block without the slot check (the root file's `main`). */
+export function block(desc: usize): usize {
+  const e = t.here();
+  if (e !== 0 && HELD.get() === NOT_HELD) {
+    take(e);
+  }
+  if (DESC.load("acquire") as usize === desc) {
+    return BLOCK.load("relaxed") as usize;
+  }
+  // SAFETY: `desc` is the program's module descriptor (the compiler's static).
+  return remember(desc, m.addr(unsafe { velt_rt_module_block$rt(m.ptr(desc)) }));
+}
+
+/** `velt_rt_module_ready`: the slots of `state` below `n` are initialized. */
+export function ready(state: usize, n: u64): void {
+  BLOCK.store(state as u64, "relaxed");
+  READY.store(n, "release");
+  // SAFETY: `state` is the block being initialized, as the runtime's entry wants it.
+  unsafe {
+    velt_rt_module_ready$rt(m.ptr(state), n);
+  }
+}
+
+function unsafeState(desc: usize, slot: u64): Ptr<u8> {
+  // SAFETY: `desc` is the program's module descriptor (the compiler's static).
+  return unsafe { velt_rt_module_state$rt(m.ptr(desc), slot) };
+}
+
+/** Keeps `p` as `desc`'s block: the address. */
+function remember(desc: usize, p: usize): usize {
+  BLOCK.store(p as u64, "relaxed");
+  DESC.store(desc as u64, "release");
+  return p;
+}
+
+/** Not cached yet, or slot `slot` not initialized: worker 0 asks the runtime; others report. */
+@noInline
+function slow(e: usize, desc: usize, slot: u64): usize {
+  if (e === m.ld(e + t.E_MAIN) || DESC.load("acquire") === 0) {
+    return remember(desc, m.addr(unsafeState(desc, slot)));
+  }
+  notReady(desc, slot);
+}
+
+/** A slot read before its initializer ran: the runtime's uncaught `ReferenceError`. */
+function notReady(desc: usize, slot: u64): never {
+  // The descriptor's slot names (NUL-terminated, in slot order) are at offset 32.
+  let at = m.ld(desc + 32);
+  let name = "";
+  if (at !== 0) {
+    for (let i: u64 = 0; i < slot; i++) {
+      while (byte(at) !== 0) {
+        at++;
+      }
+      at++;
+    }
+    // Names are identifiers: ASCII, or code points written as `?` here.
+    while (byte(at) !== 0) {
+      const b = byte(at);
+      name += b < 128 ? String.fromCharCode(b as number) : "?";
+      at++;
+    }
+  }
+  velt_rt_write_str(2, `Uncaught ReferenceError: Cannot access '${name}' before initialization\n`);
+  process.exit(1);
+}
+
+function byte(a: usize): u8 {
+  // SAFETY: inside the descriptor's names, a static string.
+  return unsafe { addressLoad<u8>(a) };
+}
+
+/** Takes the lock for worker `e`'s task being polled (touched from now on), or outside a task. */
+function take(e: usize): void {
+  lock();
+  const k = m.ld(e + t.E_CURRENT);
+  if (k !== 0) {
+    t.flags(k, t.TOUCHED, 0);
+    HELD.set(IN_POLL);
+  } else {
+    HELD.set(OUTSIDE);
+  }
+}
+
+/** A touched task's poll starts: the lock, unless this thread holds it. */
+export function enter(): void {
+  if (HELD.get() === NOT_HELD) {
+    lock();
+    HELD.set(IN_POLL);
+  }
+}
+
+/** A touched task's poll ends: the lock it took goes. */
+export function leave(): void {
+  if (HELD.get() === IN_POLL) {
+    HELD.set(NOT_HELD);
+    unlock();
+  }
+}
+
+/** Code outside a task hands over to the tasks: the lock it holds goes. */
+export function handOver(): void {
+  if (HELD.get() === OUTSIDE) {
+    HELD.set(NOT_HELD);
+    unlock();
+  }
+}
+
+function lock(): void {
+  const a = atomicAddress(LOCK);
+  if (m.cas32(a, 0, 1) !== 0) {
+    lockSlow(a);
+  }
+}
+
+@noInline
+function lockSlow(a: usize): void {
+  while (true) {
+    const s = m.load32(a);
+    if (s === 0) {
+      // Taken as contended: the unlock wakes one waiter, which takes it the same way.
+      if (m.cas32(a, 0, 2) === 0) {
+        return;
+      }
+    } else if (s === 2 || m.cas32(a, 1, 2) === 1) {
+      r.wordWait(a, 2);
+    }
+  }
+}
+
+function unlock(): void {
+  const a = atomicAddress(LOCK);
+  let s = m.load32(a);
+  while (true) {
+    const was = m.cas32(a, s, 0);
+    if (was === s) {
+      break;
+    }
+    s = was;
+  }
+  if (s === 2) {
+    r.wordWake(a);
+  }
+}
