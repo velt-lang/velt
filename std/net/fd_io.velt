@@ -30,6 +30,12 @@ import * as wk from "velt/lang/hooks/sched_wake";
  * until `declare c` can take a pointer into an array (#2187).
  */
 declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
+/**
+ * The runtime's wait for an abort signal (velt_rt task/abort.rs), as the heap future it returns:
+ * a waiter that owns it polls it beside its source (sched_io_wait.velt `waitAlso`).
+ */
+declare c("c") function velt_rt_signal_wait$fut(s: u64): Ptr<u8>;
+declare function velt_rt_signal_aborted(s: u64): bool;
 
 /** The address of byte `at` of `data` (which has it). */
 export function addressOf(data: u8[], at: u64): usize {
@@ -151,6 +157,36 @@ export async function readableWithin(h: u64, ms: i64): Promise<IoResult<u8>> {
       return value(0);
     }
     await waitOn(h, io.K_READ, 0, ms < 0 ? 0 : wt.now() + (ms as u64) * 1000000);
+  }
+  const again = tb.enter(h);
+  if (again === 0) {
+    return failed(closed(), 0);
+  }
+  const now = wt.satisfied(again, io.K_READ, 0);
+  tb.leave(again);
+  return value(now ? 1 : 0);
+}
+
+/**
+ * `readable` until abort signal `signal` (a live handle) is aborted: 1 readable, 0 aborted
+ * (aborted wins when both are). One wait on the source that the signal's wait ends too
+ * (sched_io_wait.velt `waitAlso`): http-server's wait for the next request on a kept-alive
+ * connection, with its deadline in the signal.
+ */
+export async function readableUntil(h: u64, signal: u64): Promise<IoResult<u8>> {
+  const s = tb.enter(h);
+  if (s === 0) {
+    return failed(closed(), 0);
+  }
+  const ready = wt.satisfied(s, io.K_READ, 0);
+  tb.leave(s);
+  if (!ready) {
+    // SAFETY: a live signal handle; the wait owns the heap future, and drops it.
+    const also = Ptr.addressOf(unsafe { velt_rt_signal_wait$fut(signal) });
+    await unsafe { promiseAt<void>(wt.waitAlso(h, io.K_READ, 0, 0, also)) };
+    if (velt_rt_signal_aborted(signal)) {
+      return value(0);
+    }
   }
   const again = tb.enter(h);
   if (again === 0) {

@@ -589,6 +589,49 @@ async function main() {
     );
 }
 
+/// A read wait with only a signal ends when the signal aborts while it waits: by `abort()` from
+/// another task, and by an `AbortSignal.timeout` (http-server's idle deadline); with input it ends
+/// readable. Under the executor in Velt the signal's wait is polled inside the socket's wait
+/// (std/lang/hooks/sched_io_wait.velt `waitAlso`), not raced against it.
+#[test]
+fn a_read_wait_ends_when_its_signal_aborts_while_it_waits() {
+    same_on_both(
+        "readable_until_abort",
+        "import { connect, listen } from \"velt/net\";
+import { AbortController, AbortSignal } from \"velt/task\";
+
+async function main() {
+  const l = await listen(\"127.0.0.1:0\");
+  const c = await connect(`127.0.0.1:${l.port}`);
+  const s = await l.accept();
+  // Nothing has come yet: a read finds nothing, so the waits below wait.
+  console.log(s.tryRead(Buffer.alloc(16)));
+  const stop = new AbortController();
+  const waiting = Promise.withResolvers<void>();
+  const aborter = spawn((async () => {
+    await waiting.promise;
+    stop.abort();
+  })());
+  waiting.resolve();
+  console.log(\"abort:\", await s.readableWithin(-1, stop.signal));
+  await aborter;
+  console.log(\"timeout:\", await s.readableWithin(-1, AbortSignal.timeout(20)));
+  const later = new AbortController();
+  const wrote = spawn((async () => {
+    await c.write(\"x\");
+  })());
+  console.log(\"input:\", await s.readableWithin(-1, later.signal));
+  await wrote;
+  console.log(await s.readString());
+  s.close();
+  c.close();
+  l.close();
+}
+",
+        "0\nabort: false\ntimeout: false\ninput: true\nx\n",
+    );
+}
+
 /// Requests one after another on one kept-alive connection to an http-server served under the
 /// executor in Velt: between them the server waits for the next with only its idle timeout's
 /// signal, and must not close the connection meanwhile (fetch reuses it from its pool at once, so

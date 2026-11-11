@@ -175,6 +175,9 @@ export async function velt_rt_tcp_readable_within(
   if (velt_rt_signal_aborted(signal)) {
     return fs.value(0);
   }
+  if (ms < 0) {
+    return await fio.readableUntil(s, signal);
+  }
   // The signal's wait is the runtime's: whichever ends first ends the other (dropped).
   const within = fio.readableWithin(s, ms);
   await Promise.race([within.then((_) => {}), velt_rt_signal_wait(signal)]);
