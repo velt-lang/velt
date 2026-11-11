@@ -311,7 +311,7 @@ impl FnCx<'_, '_> {
 
     /// The members of an object type, a class's and an interface's (its own and inherited, and
     /// without private ones); `None` for any other type.
-    fn object_members(&mut self, t: TyId) -> Option<Vec<Member>> {
+    pub(super) fn object_members(&mut self, t: TyId) -> Option<Vec<Member>> {
         match self.cx.ty.kind(t).clone() {
             TyKind::Adt(d, args) => {
                 if self.record_args(t).is_some() {

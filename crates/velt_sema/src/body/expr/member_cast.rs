@@ -133,6 +133,10 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.class_downcast_cast(expr, target, want, span) {
             return h;
         }
+        // `node as A | B` of a base class value: the subclass found at run time.
+        if let Some(h) = self.class_union_downcast(expr, target, want, span) {
+            return h;
+        }
         // `{ hasValue: v.hasValue, … } as ValuePresence<T>`: the member chosen at run time.
         if let Some(h) = self.discriminated_cast(expr, target, span) {
             return h;

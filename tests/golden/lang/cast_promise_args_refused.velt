@@ -1,0 +1,11 @@
+// A promise asserted to a promise of another type: tsc allows it, but the value it settles with
+// keeps its type. Refused, pointing at the conversion where it is awaited.
+async function resolveP(): Promise<unknown> {
+    return { id: 7 };
+}
+
+function principal<P = unknown>(): Promise<P | null> {
+    return resolveP() as Promise<P | null>;
+}
+
+principal<{ id: number }>().then((p) => console.log(p?.id));
