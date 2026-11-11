@@ -332,7 +332,7 @@ fn check(file: &Path, out: Option<&Path>) -> (bool, String) {
 #[test]
 fn velt_net_users_compile_as_their_goldens_say() {
     if !cfg!(unix) {
-        // Some of these goldens use POSIX system functions Windows doesn't have.
+        // Some of these goldens use POSIX C functions Windows doesn't have.
         return;
     }
     runtime_support::build_native_runtime(manifest());
@@ -342,11 +342,8 @@ fn velt_net_users_compile_as_their_goldens_say() {
     files.sort();
     // Programs reading `lastOsError()`, built: the compiler declares errno's location then.
     let dir = test_dir::TestDir::new();
-    for name in [
-        "system_function_errno_await",
-        "system_function_subarray_owner",
-    ] {
-        let f = golden.join(format!("lang/{name}.velt"));
+    for name in ["errno_await", "subarray_owner"] {
+        let f = golden.join(format!("lang/declare_c_buffers/{name}.velt"));
         let exe = |tag: &str| {
             dir.path()
                 .join(format!("{name}{tag}{}", std::env::consts::EXE_SUFFIX))

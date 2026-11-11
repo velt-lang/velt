@@ -1,0 +1,27 @@
+// requires: unix
+// A view of a `u8[]` passed as a C function's buffer, whose array a later argument shrinks: the
+// bytes are checked at the call, after every argument, and those outside the array's current
+// length stop the program (the array keeps its capacity, so the call would otherwise write past
+// its length).
+import { CVarArgs } from "velt/ffi";
+
+declare c("c") function open(path: readonly u8[], oflag: i32, ...args: CVarArgs): i32;
+declare c("c") function pread(fd: i32, buf: u8[], nbyte: usize, offset: i64): isize;
+
+const ZERO: u8[] = [47, 100, 101, 118, 47, 122, 101, 114, 111, 0]; // "/dev/zero"
+let g: u8[] = Buffer.alloc(4096);
+
+function shrink(): i64 {
+  g.length = 0;
+  return 0;
+}
+
+function main() {
+  // SAFETY: a NUL-terminated path.
+  const fd = unsafe { open(ZERO, 0) };
+  const v = g.subarray(0, 4096);
+  // SAFETY: 4096 bytes, the view's.
+  console.log(unsafe { pread(fd, v, 4096, 0) });
+  // SAFETY: none once `shrink` ran: the call must stop before C runs.
+  console.log(unsafe { pread(fd, v, 4096, shrink()) }, g.length);
+}
