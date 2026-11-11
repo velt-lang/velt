@@ -1,0 +1,333 @@
+// velt/net (internal): TLS streams and listeners on the reactor's sockets under the executor in
+// Velt (`VELT_SCHEDULER=std`, #2649): the TLS half of std/net/tcp_sched.velt. `listenTls` binds a
+// socket of the reactor and its `accept` gives streams whose server handshake (#2392 step 4) runs
+// in Velt with their first operations; each stream is an `FdTlsConn` that reads and writes its
+// socket directly, waiting on the socket's readiness and nothing else (no task in between). Their
+// handles are in std/net/tls/fd_table.velt; a stream's lock is held only while an operation runs
+// (none waits with it held).
+
+import { IoError } from "velt/io/error";
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import * as fio from "velt/net/fd_io";
+import * as fs from "velt/net/fd_socket";
+import { TcpStream } from "velt/net/tcp_stream";
+import { FdTlsConn, READY } from "velt/net/tls/fd_conn";
+import {
+  addConn,
+  addListener,
+  Conn,
+  findConn,
+  findListener,
+  takeConn,
+  takeListener,
+  TlsListen,
+} from "velt/net/tls/fd_table";
+import { ServerHandshake } from "velt/net/tls/server_handshake";
+import { serverKey } from "velt/net/tls/server_key";
+import { TlsEngine } from "velt/net/tls/tls_engine";
+
+export { isTls } from "velt/net/tls/fd_table";
+
+/** How long an accepted stream's handshake may take (as the runtime's listener). */
+const HANDSHAKE_MS = 10000;
+
+/**
+ * Binds a TLS listener on the reactor; null when the Velt server can't sign with the key (RSA, a
+ * curve other than P-256, Ed25519: the runtime's listener takes those). Throws `IoError`
+ * `EINVAL` for a certificate or key that is not valid PEM.
+ */
+export async function listenTls(
+  addr: string,
+  cert: string,
+  key: string,
+  alpn: string,
+): Promise<IoResult<u64> | null, IoError> {
+  const sk = serverKey(cert, key);
+  if (sk == null) {
+    return null;
+  }
+  const l = await fs.listenOn(addr);
+  if (l.code !== 0) {
+    return l;
+  }
+  const protocols = alpn == "" ? ([] as string[]) : alpn.split(",");
+  const entry = shared(new Mutex<TlsListen>(new TlsListen(l.value, sk, protocols)));
+  return fs.value(addListener(entry));
+}
+
+/** The socket of TLS listener `l`, or 0 once it is closed. */
+export function listenerFd(l: u64): u64 {
+  const entry = findListener(l);
+  return entry == null ? 0 : entry.with((x) => x.fd);
+}
+
+/** Closes TLS listener `l` (again: nothing). */
+export function closeListener(l: u64) {
+  const entry = takeListener(l);
+  if (entry != null) {
+    fs.closeListener(entry.with((x) => x.fd));
+  }
+}
+
+/** The next stream of TLS listener `l`; its handshake runs with its first operations. */
+export async function accept(l: u64): Promise<IoResult<u64>> {
+  const entry = findListener(l);
+  if (entry == null) {
+    return fs.failed(fs.closed(), 0);
+  }
+  const r = await fs.accept(entry.with((x) => x.fd));
+  if (r.code !== 0) {
+    return r;
+  }
+  const hs = entry.with((x) => new ServerHandshake(x.key, x.alpn));
+  const conn = new FdTlsConn(
+    r.value,
+    new TlsEngine(TcpStream.ofHandle(r.value)),
+    hs,
+    (Date.now() as number) + HANDSHAKE_MS,
+  );
+  const c: Conn = shared(new Mutex<FdTlsConn>(conn));
+  return fs.value(addConn(c));
+}
+
+// Waits until `c`'s socket is readable, within the handshake's time limit while it runs.
+async function waitReadable(c: Conn): Promise<void> {
+  const fd = c.with((x) => x.fd);
+  const deadline = c.with((x) => x.deadline);
+  if (deadline == 0) {
+    const st = await fio.readable(fd);
+    if (st.code !== 0) {
+      throw new IoError(st.code == 16 ? "EBADF" : "ECONNRESET", st.message);
+    }
+    return;
+  }
+  const left = deadline - (Date.now() as number);
+  if (left > 0) {
+    const r = await fio.readableWithin(fd, left as i64);
+    if (r.code !== 0) {
+      throw new IoError(r.code == 16 ? "EBADF" : "ECONNRESET", r.message);
+    }
+    if (r.value == 1) {
+      return;
+    }
+  }
+  const err = c.with((x) => x.fail(new IoError("ETIMEDOUT", "TLS: the handshake timed out")));
+  fio.close(fd);
+  throw err;
+}
+
+// Runs `c`'s handshake to its end and seals what waited for it.
+async function settle(c: Conn): Promise<void> {
+  while (true) {
+    const st = c.with((x) => {
+      try {
+        return x.step();
+      } catch (e) {
+        return x.fail(e);
+      }
+    });
+    if (st instanceof IoError) {
+      throw st;
+    }
+    if (st == READY) {
+      return;
+    }
+    await waitReadable(c);
+  }
+}
+
+/** The next 1..max bytes of TLS stream `s`; empty at the end of the stream. */
+export async function read(s: u64, max: u64): Promise<IoResult<u8[]>> {
+  const c = findConn(s);
+  if (c == null) {
+    return fs.failed(fs.closed(), []);
+  }
+  while (true) {
+    const got = c.with((x) => {
+      try {
+        return x.tryTake(max);
+      } catch (e) {
+        return x.fail(e);
+      }
+    });
+    if (got instanceof IoError) {
+      throw got;
+    }
+    if (got != null) {
+      return fs.value(got);
+    }
+    await waitReadable(c);
+  }
+}
+
+/** The next chunk of TLS stream `s` as UTF-8; "" at the end of the stream. */
+export async function readString(s: u64, max: u64): Promise<IoResult<string>> {
+  const c = findConn(s);
+  if (c == null) {
+    return fs.failed(fs.closed(), "");
+  }
+  while (true) {
+    const got = await read(s, max);
+    if (got.code !== 0) {
+      return fs.failed({ code: got.code, message: got.message }, "");
+    }
+    const bytes = got.value;
+    const text = c.with((x) => x.text(bytes));
+    if (text != null) {
+      return fs.value(text);
+    }
+  }
+}
+
+/** Reads what TLS stream `s` has now into `data[start..end]`: the count, 0 at the end, -1 none. */
+export function tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
+  const c = findConn(s);
+  if (c == null) {
+    return fs.failed(fs.closed(), 0);
+  }
+  const got = c.with((x) => {
+    try {
+      return x.tryRead(data, start as usize, end as usize);
+    } catch (e) {
+      return x.fail(e);
+    }
+  });
+  if (got instanceof IoError) {
+    throw got;
+  }
+  return fs.value(got);
+}
+
+/**
+ * 1 when a `tryRead` of TLS stream `s` has something the socket won't announce (decrypted bytes, a
+ * whole record, the end, a failure), else 0: then wait on the socket (`fdOf`).
+ */
+export function readyNow(s: u64): IoResult<u8> {
+  const c = findConn(s);
+  if (c == null) {
+    return fs.failed(fs.closed(), 0);
+  }
+  const ready = c.with((x) => {
+    try {
+      return x.step() == READY && x.hasBuffered();
+    } catch (e) {
+      x.fail(e);
+      return true;
+    }
+  });
+  return fs.value(ready ? 1 : 0);
+}
+
+/** The socket of TLS stream `s`, or 0 once it is closed. */
+export function fdOf(s: u64): u64 {
+  const c = findConn(s);
+  return c == null ? 0 : c.with((x) => x.fd);
+}
+
+/** Resolves once a `tryRead` of TLS stream `s` may find something. */
+export async function readable(s: u64): Promise<IoStatus> {
+  const r = readyNow(s);
+  if (r.code !== 0) {
+    return { code: r.code, message: r.message };
+  }
+  if (r.value == 1) {
+    return fs.ok();
+  }
+  const c = findConn(s);
+  if (c == null) {
+    return fs.closed();
+  }
+  await waitReadable(c);
+  return fs.ok();
+}
+
+/** Seals `data[start..end]` on TLS stream `s` for the task's next wait: the bytes left to send. */
+export function writeLaterRange(s: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
+  const c = findConn(s);
+  if (c == null) {
+    return fs.failed(fs.closed(), 0);
+  }
+  const left = c.with((x) => {
+    try {
+      return x.writeLater(data, start as usize, end as usize);
+    } catch (e) {
+      return x.fail(e);
+    }
+  });
+  if (left instanceof IoError) {
+    throw left;
+  }
+  return fs.value(left as u64);
+}
+
+/** Writes `data[start..end]` on TLS stream `s` now: the bytes taken (0 before the handshake). */
+export function tryWriteRange(s: u64, data: u8[], start: u64, end: u64): u64 {
+  const c = findConn(s);
+  if (c == null) {
+    return 0;
+  }
+  const n = c.with((x) => {
+    try {
+      return x.tryWrite(data, start as usize, end as usize);
+    } catch (e) {
+      x.fail(e);
+      return 0 as i64;
+    }
+  });
+  return n as u64;
+}
+
+/** Resolves once at most `max` bytes written on TLS stream `s` are still to be sent. */
+export async function drained(s: u64, max: u64): Promise<IoStatus> {
+  const c = findConn(s);
+  if (c == null) {
+    return fs.closed();
+  }
+  await settle(c);
+  return await fio.drained(c.with((x) => x.fd), max);
+}
+
+/** Writes `data[start..end]` on TLS stream `s`; resolves once it is sent. */
+export async function writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
+  const r = writeLaterRange(s, data, start, end);
+  if (r.code !== 0) {
+    return { code: r.code, message: r.message };
+  }
+  return await drained(s, 0);
+}
+
+/** Sends close_notify on TLS stream `s` and half-closes its socket. */
+export function shutdown(s: u64): IoStatus {
+  const c = findConn(s);
+  if (c == null) {
+    return fs.closed();
+  }
+  const fd = c.with((x) => {
+    try {
+      x.shutdown();
+    } catch (e) {
+      x.fail(e);
+    }
+    return x.fd;
+  });
+  return fio.shutdown(fd);
+}
+
+/** The protocol ALPN chose on TLS stream `s` ("" for none), once its handshake is done. */
+export async function alpn(s: u64): Promise<IoResult<string>> {
+  const c = findConn(s);
+  if (c == null) {
+    return fs.failed(fs.closed(), "");
+  }
+  await settle(c);
+  return fs.value(c.with((x) => x.e.alpn ?? ""));
+}
+
+/** Closes TLS stream `s` at once (again: nothing). */
+export function close(s: u64) {
+  const c = takeConn(s);
+  if (c != null) {
+    fio.close(c.with((x) => x.fd));
+  }
+}

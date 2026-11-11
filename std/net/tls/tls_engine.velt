@@ -1,6 +1,7 @@
-// velt/net (internal): `TlsEngine`, a TLS 1.3 client connection over any `ByteStream`: the
-// handshake driven by `ClientHandshake`, the reading side of the record layer (RFC 8446 §5), and
-// what comes after the handshake (NewSessionTicket, KeyUpdate, alerts, close_notify).
+// velt/net (internal): `TlsEngine`, a TLS 1.3 connection over any `ByteStream`: the client's
+// handshake driven by `ClientHandshake` (or the server's by `ServerHandshake`, without waiting),
+// the reading side of the record layer (RFC 8446 §5), and what comes after the handshake
+// (NewSessionTicket, KeyUpdate, alerts, close_notify).
 //
 // Built for throughput: `RecordReader` reads and decrypts records in place in one reused
 // buffer, and writes seal up to four records in place in a second reused buffer and go out in
@@ -33,6 +34,12 @@ import {
   RecordReader,
 } from "velt/net/tls/record_reader";
 import { RecordWriter } from "velt/net/tls/record_writer";
+import {
+  S_DONE,
+  S_SEND_FLIGHT,
+  S_SEND_RETRY,
+  ServerHandshake,
+} from "velt/net/tls/server_handshake";
 
 /** What `tryFill` found: nothing has arrived yet. */
 export const NOTHING_YET: u8 = 0;
@@ -41,7 +48,7 @@ export const DATA: u8 = 1;
 /** What `tryFill` found: the end of the stream. */
 export const ENDED: u8 = 2;
 
-/** One TLS 1.3 client connection. */
+/** One TLS 1.3 connection. */
 export class TlsEngine {
   private r: RecordReader;
   /** The writing half. */
@@ -105,6 +112,70 @@ export class TlsEngine {
     } catch (e) {
       throw await this.out.failed(e);
     }
+  }
+
+  /**
+   * Runs the server's handshake `h` as far as what has arrived allows, without waiting (over a
+   * transport that can): true once it is done. What goes out is queued on the transport for the
+   * task's next wait; when false, wait for the transport to be readable and call again.
+   */
+  tryServerHandshake(h: ServerHandshake): bool {
+    const t = this.out.tryTransport();
+    const r = this.r;
+    const out = this.out;
+    try {
+      while (!h.done()) {
+        if (!this.hs.hasMessage()) {
+          const step = r.step();
+          if (step == MORE) {
+            const got = r.tryMore(t);
+            if (got == null) {
+              r.cut(false);
+            } else if (got == 0) {
+              return false;
+            }
+          } else if (step == (HANDSHAKE as u16)) {
+            this.addHandshake();
+          } else if (step == (CHANGE_CIPHER_SPEC as u16)) {
+            checkCcs(r);
+          } else {
+            throw new TlsFailure(
+              UNEXPECTED_MESSAGE,
+              `unexpected record type ${step} during the handshake`,
+            );
+          }
+          continue;
+        }
+        const action = h.onMessage(this.hs.take());
+        if (action == S_SEND_RETRY) {
+          this.hs.checkEmpty();
+          out.queue(HANDSHAKE, h.retry, true);
+          if (h.compat) {
+            out.queue(CHANGE_CIPHER_SPEC, [1], true);
+            h.ccsSent = true;
+          }
+        } else if (action == S_SEND_FLIGHT) {
+          this.hs.checkEmpty();
+          this.suite = h.suite;
+          out.queue(HANDSHAKE, h.hello, true);
+          out.cipher = new RecordCipher(h.suite, h.serverHandshake);
+          out.queue(HANDSHAKE, h.flight, false, h.compat && !h.ccsSent);
+          out.secret = h.serverApplication;
+          out.suite = h.suite;
+          out.cipher = new RecordCipher(h.suite, h.serverApplication);
+          r.cipher = new RecordCipher(h.suite, h.clientHandshake);
+        } else if (action == S_DONE) {
+          this.hs.checkEmpty();
+          this.readSecret = h.clientApplication;
+          r.cipher = new RecordCipher(h.suite, this.readSecret);
+          r.handshaking = false;
+          this.alpn = h.alpn;
+        }
+      }
+    } catch (e) {
+      throw this.out.failedNow(e);
+    }
+    return true;
   }
 
   /** Waits until application data is buffered: false at the end of the stream. */
@@ -229,10 +300,7 @@ export class TlsEngine {
       if (type == HANDSHAKE) {
         this.addHandshake();
       } else if (type == CHANGE_CIPHER_SPEC) {
-        // Middlebox compatibility (RFC 8446 §5): one byte, 1, and nothing else.
-        if (r.cend - r.cstart != 1 || r.buf[r.cstart] != 1) {
-          throw new TlsFailure(UNEXPECTED_MESSAGE, "a malformed ChangeCipherSpec");
-        }
+        checkCcs(r);
       } else {
         throw new TlsFailure(
           UNEXPECTED_MESSAGE,
@@ -300,5 +368,12 @@ export class TlsEngine {
     this.readSecret = nextSecret(this.readSecret);
     this.r.cipher = new RecordCipher(this.suite, this.readSecret);
     return m[4] == 1;
+  }
+}
+
+// Middlebox compatibility (RFC 8446 §5): a ChangeCipherSpec is one byte, 1, and nothing else.
+function checkCcs(r: RecordReader) {
+  if (r.cend - r.cstart != 1 || r.buf[r.cstart] != 1) {
+    throw new TlsFailure(UNEXPECTED_MESSAGE, "a malformed ChangeCipherSpec");
   }
 }

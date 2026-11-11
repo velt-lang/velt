@@ -1,0 +1,182 @@
+// velt/net (internal): `FdTlsConn`, a TLS stream on one of the reactor's sockets under the executor
+// in Velt (`VELT_SCHEDULER=std`, #2649): what a `listenTls` or `connectTls` `TcpStream` handle
+// stands for there (std/net/tls/fd_ops.velt). It reads and writes the socket's descriptor
+// directly through `TcpStream`'s non-waiting operations, with no task in between: every
+// operation here returns at once, and the caller waits on the socket (readable, drained) without
+// holding the connection's lock. A server's handshake runs the same way, a step each time the
+// socket has something.
+
+import { IoError } from "velt/io/error";
+import { utf8DecodeLossy } from "velt/encoding/utf8";
+import { DATA, ENDED, TlsEngine } from "velt/net/tls/tls_engine";
+import { ServerHandshake } from "velt/net/tls/server_handshake";
+
+/** `step`: the handshake is done and nothing is held back. */
+export const READY: i32 = 0;
+/** `step`: wait for the socket to be readable, then step again. */
+export const WAIT: i32 = 1;
+
+/** A TLS stream over the reactor socket `fd`. */
+export class FdTlsConn {
+  /** The socket's handle (std/lang/hooks/sched_io_table.velt). */
+  fd: u64;
+  /** The connection. */
+  e: TlsEngine;
+  // The server's handshake until it is done.
+  private hs: ServerHandshake | null;
+  // Plaintext written before the write keys, sealed once they are there.
+  private pending: u8[] = [];
+  // A UTF-8 character cut off at the end of the last `readString` chunk.
+  private carry: u8[] = [];
+  /** When the handshake must be done (`Date.now()` milliseconds; 0 once it is). */
+  deadline: number;
+  /** Why the connection failed, once it did. */
+  failure: IoError | null = null;
+
+  /** The connection `e` on `fd`; `hs` is the server's handshake still to run, or null. */
+  constructor(fd: u64, e: TlsEngine, hs: ServerHandshake | null, deadline: number) {
+    this.fd = fd;
+    this.e = e;
+    this.hs = hs;
+    this.deadline = hs == null ? 0 : deadline;
+  }
+
+  /** Steps the handshake with what has arrived and seals what was held back: READY or WAIT. */
+  step(): i32 {
+    const f = this.failure;
+    if (f != null) {
+      throw f;
+    }
+    const h = this.hs;
+    if (h != null) {
+      try {
+        if (!this.e.tryServerHandshake(h)) {
+          return WAIT;
+        }
+      } catch (e) {
+        throw this.fail(e);
+      }
+      this.hs = null;
+      this.deadline = 0;
+    }
+    if (this.pending.length > 0) {
+      const p = this.pending;
+      this.pending = [];
+      this.e.out.writeLater(p, 0, p.length);
+    }
+    return READY;
+  }
+
+  /** Records the failure `e` (an `IoError`, else EPROTO) and returns it. */
+  fail(e: unknown): IoError {
+    const err = e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
+    if (this.failure == null) {
+      this.failure = err;
+    }
+    return err;
+  }
+
+  /** Whether a `tryRead` has something to find that the socket won't announce. */
+  hasBuffered(): bool {
+    return this.failure != null || (this.hs == null && this.e.hasBuffered());
+  }
+
+  /** Reads into `out[start..end]` now: the count, 0 at the end of the stream, -1 for nothing yet. */
+  tryRead(out: u8[], start: usize, end: usize): i64 {
+    if (this.step() == WAIT) {
+      return -1;
+    }
+    const found = this.e.tryFill();
+    if (found == ENDED) {
+      return 0;
+    }
+    if (found != DATA) {
+      return -1;
+    }
+    const have = this.e.available();
+    const n = have < end - start ? have : end - start;
+    this.e.takeInto(out, start, n);
+    return n as i64;
+  }
+
+  /** The next 1..max bytes now (`max` 0: all there are), empty at the end, null for nothing yet. */
+  tryTake(max: u64): u8[] | null {
+    if (this.step() == WAIT) {
+      return null;
+    }
+    const found = this.e.tryFill();
+    if (found == ENDED) {
+      return [];
+    }
+    if (found != DATA) {
+      return null;
+    }
+    const have = this.e.available();
+    return this.e.take(max == 0 || (max as usize) > have ? have : (max as usize));
+  }
+
+  /**
+   * `bytes` as text, a character cut off at its end kept for the next chunk (and one cut off by
+   * the end of the stream, `bytes` empty, as U+FFFD); null when it held only part of a character.
+   */
+  text(bytes: u8[]): string | null {
+    let all = bytes;
+    if (this.carry.length > 0) {
+      all = this.carry.concat(bytes);
+      this.carry = [];
+      if (bytes.length == 0) {
+        return utf8DecodeLossy(all);
+      }
+    }
+    const keep = incompleteTail(all);
+    if (keep > 0) {
+      this.carry = all.slice((all.length - keep) as i64);
+      if (all.length == keep) {
+        return null;
+      }
+      return utf8DecodeLossy(all.slice(0, (all.length - keep) as i64));
+    }
+    return utf8DecodeLossy(all);
+  }
+
+  /** Seals `bytes[from..to]` for the task's next wait (held until the keys): the bytes left. */
+  writeLater(bytes: u8[], from: usize, to: usize): i64 {
+    if (this.step() == WAIT) {
+      for (let i = from; i < to; i++) {
+        this.pending.push(bytes[i]);
+      }
+      return this.pending.length as i64;
+    }
+    return this.e.out.writeLater(bytes, from, to);
+  }
+
+  /** Writes `bytes[from..to]` now, queueing what the socket doesn't take: 0 before the keys. */
+  tryWrite(bytes: u8[], from: usize, to: usize): i64 {
+    if (this.step() == WAIT) {
+      return 0;
+    }
+    return this.e.out.tryWrite(bytes, from, to);
+  }
+
+  /** Queues close_notify for the task's next wait, once the handshake is done. */
+  shutdown() {
+    if (this.failure == null && this.hs == null) {
+      this.e.out.shutdownNow();
+    }
+  }
+}
+
+/** How many bytes at the end of `b` start a UTF-8 character that is not complete yet (0..3). */
+function incompleteTail(b: u8[]): usize {
+  const n = b.length;
+  let i: usize = 0;
+  while (i < 3 && i < n) {
+    const c = b[n - 1 - i];
+    if ((c & 0xc0) != 0x80) {
+      const need: usize = c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : c >= 0xc0 ? 2 : 1;
+      return need > i + 1 ? i + 1 : 0;
+    }
+    i++;
+  }
+  return 0;
+}
