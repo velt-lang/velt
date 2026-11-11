@@ -85,11 +85,19 @@ impl FnLower<'_, '_> {
             I::ArrayPush if args.len() == 2 => self.marked_owner(&args[0]),
             _ => None,
         };
+        // A push onto a module-level array itself marks unconditionally.
+        let global = i == I::ArrayPush
+            && args.len() == 2
+            && matches!(&args[0].kind, hir::ExprKind::Global(d) if self.slot_of(*d).is_some());
         let r = self.array_op(i, &args[1..], &arr, aty, ty);
         if let Some(owner) = owner.filter(|_| !self.dead()) {
             let elem = self.elem_ty(aty);
             let last = self.last_elem(&arr, elem);
             self.mark_if_owner_marked(owner, last, elem);
+        } else if global && !self.dead() && self.cx.markable(aty) {
+            let elem = self.elem_ty(aty);
+            let last = self.last_elem(&arr, elem);
+            self.mark_value(last, elem);
         }
         r
     }
