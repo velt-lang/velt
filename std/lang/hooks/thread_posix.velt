@@ -44,14 +44,22 @@ export function start(start: usize, arg: usize): bool {
   const a = m.zeroed(ATTR + 16);
   const attr = m.ptr(a);
   const t = m.ptr(a + ATTR);
-  let rc: i32 = 0;
+  // No thread starts without its stack size: tasks need the 8 MiB (a secondary thread's default
+  // is 512 KiB on macOS), so a failed `pthread_attr_init` or `pthread_attr_setstacksize` is a
+  // thread that could not start (the callers run without it). The attributes are destroyed only
+  // once initialized; a failed destroy changes nothing for the thread started.
   // SAFETY: `a` is zeroed memory larger than a `pthread_attr_t` and a `pthread_t`; `start` is a
   // C function of the signature `pthread_create` calls; `arg` is passed through to it.
-  unsafe {
-    pthread_attr_init(attr);
-    pthread_attr_setstacksize(attr, STACK);
-    rc = pthread_create(t, attr, m.ptr(start), m.ptr(arg));
-    pthread_attr_destroy(attr);
+  let rc = unsafe { pthread_attr_init(attr) };
+  if (rc === 0) {
+    // SAFETY: as above; `attr` was initialized.
+    unsafe {
+      rc = pthread_attr_setstacksize(attr, STACK);
+      if (rc === 0) {
+        rc = pthread_create(t, attr, m.ptr(start), m.ptr(arg));
+      }
+      pthread_attr_destroy(attr);
+    }
   }
   m.release(a, ATTR + 16);
   return rc === 0;

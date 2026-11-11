@@ -151,13 +151,16 @@ export function handleOf(s: usize): u64 {
  */
 @inline
 export function lookup(h: u64): usize {
+  // Callers pass handles of this table (velt/net's `ours` decides which table a handle is
+  // for), made by `handleOf`; an untagged handle, or a slot no handle has (0, past the table:
+  // `slot` wraps below 0 to a huge number), still finds nothing rather than another source.
   const slot = ((h & 0xffffffff) as usize) - 1;
   const tb = TABLE.load("relaxed") as usize;
-  if (tb === 0) {
+  if (tb === 0 || !ours(h) || slot >= CHUNK * CHUNKS) {
     return 0;
   }
   // A slot past the chunks taken finds no chunk, one past the slots taken no source (both 0).
-  const chunk = m.ld(tb + TB_CHUNKS + 8 * ((slot >> CHUNK_BITS) & (CHUNKS - 1)));
+  const chunk = m.ld(tb + TB_CHUNKS + 8 * (slot >> CHUNK_BITS));
   if (chunk === 0) {
     return 0;
   }

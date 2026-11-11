@@ -158,11 +158,14 @@ function openAs(a: usize, lkind: u32): void {
         first = k;
       } else {
         if (n === cap) {
-          cap = cap === 0 ? 4 : 2 * cap;
+          // Full: the old buffer (room for `old`, all used) is freed with the size it was made
+          // with, which the allocator checks (sized frees).
+          const old = cap;
+          cap = old === 0 ? 4 : 2 * old;
           const grown = m.alloc(8 * cap);
           if (more !== 0) {
-            m.copy(grown, more, 8 * n);
-            m.release(more, 8 * n);
+            m.copy(grown, more, 8 * old);
+            m.release(more, 8 * old);
           }
           more = grown;
         }
