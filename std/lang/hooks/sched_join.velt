@@ -1,0 +1,147 @@
+// velt/lang/hooks (internal): a spawned task's join handle in the executor in Velt (sched.velt,
+// #2649): its poll and drop (a heap future's header in the task's block, `T_JOIN`, which C calls
+// on any thread), its slot's lock (sched_make.velt `lockJoin`), and the end of the slot when the
+// task's root is done (sched_run.velt `rootDone`).
+
+import { export as cExport } from "velt/ffi";
+import { exportedAddress, inline, noInline, stateDrop } from "velt/lang/intrinsics";
+import * as lk from "./sched_lock";
+import * as m from "./sched_mem";
+import * as mk from "./sched_make";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/** `rootDone`'s join slot of task `k` while other threads may reach it (or count operations). */
+@noInline
+export function joinDone(e: usize, k: usize): void {
+  const kind = lk.kind();
+  const s = mk.lockJoin(k, kind);
+  const joiner = m.ld(k + t.T_JOINER);
+  m.st(k + t.T_JOINER, 0);
+  mk.unlockJoin(k, s | t.J_DONE, kind);
+  if (joiner !== 0) {
+    // Behind the tasks queued already, not in the slot for the task to run next: a join of many
+    // tasks (`Promise.all` of spawns) then polls once for the many that finished meanwhile.
+    // A poll runs with no dispatch under way (a reactor turn's or timers' wakes poll nothing).
+    m.st32(e + t.E_DISPATCH, t.D_OUTPUT);
+    m.wakeOwned(joiner);
+    m.st32(e + t.E_DISPATCH, 0);
+  }
+  if ((s & t.J_HANDLE) === 0) {
+    dropResult(k);
+  }
+}
+
+/** Drops task `k`'s result in its slot, which nobody claimed. */
+export function dropResult(k: usize): void {
+  const rdrop = m.ld(k + t.T_RESULT_DROP);
+  if (rdrop !== 0) {
+    // SAFETY: the slot holds the result, which `rdrop` is the drop glue of.
+    unsafe {
+      stateDrop(rdrop, k + t.T_SLOT);
+    }
+  }
+}
+
+/**
+ * A join handle's poll (C calls it through the handle's header, on any thread): ready once the
+ * task's root is done, else its waker waits in the join slot.
+ */
+@cExport("std_sched_join_poll")
+export function joinPoll(f: usize, cx: usize): u32 {
+  if (lk.mode() === lk.LK_NONE) {
+    return joinPollAs(f, cx, lk.LK_NONE);
+  }
+  return joinPollLocking(f, cx);
+}
+
+/**
+ * A join handle's poll with one thread at the executor (sched_task.velt `E_SOLO`, sched_lock.velt
+ * `LK_NONE`, which never changes): no lock, no test (`mk.task` gives a solo worker's tasks these).
+ */
+@cExport("std_sched_join_poll_solo")
+export function joinPollSolo(f: usize, cx: usize): u32 {
+  return joinPollAs(f, cx, lk.LK_NONE);
+}
+
+/** A join handle's drop with one thread at the executor (as `joinPollSolo`). */
+@cExport("std_sched_join_drop_solo")
+export function joinDropSolo(f: usize): void {
+  joinDropAs(f, lk.LK_NONE);
+}
+
+/** Is `f` a spawned task's join handle (its header a task's `T_JOIN`)? */
+export function isJoin(f: usize): bool {
+  const poll = m.ld(f);
+  // SAFETY: `@export`ed functions (only their addresses are read).
+  return unsafe { poll === exportedAddress(joinPoll) || poll === exportedAddress(joinPollSolo) };
+}
+
+/** `joinPoll` while other threads may reach the slot (or a lazy worker 0 counts its operation). */
+@noInline
+function joinPollLocking(f: usize, cx: usize): u32 {
+  return joinPollAs(f, cx, lk.kind());
+}
+
+/** `joinPoll`, the operation of kind `kind` (sched_lock.velt). */
+@inline
+function joinPollAs(f: usize, cx: usize, kind: u32): u32 {
+  const k = f - t.T_JOIN;
+  const s = mk.lockJoin(k, kind);
+  if ((s & t.J_DONE) !== 0) {
+    mk.unlockJoin(k, s | t.J_CLAIMED, kind);
+    return 1;
+  }
+  const old = m.ld(k + t.T_JOINER);
+  m.st(k + t.T_JOINER, m.wakerClone(m.ld(cx + 8)));
+  mk.unlockJoin(k, s, kind);
+  if (old !== 0) {
+    m.wakerDrop(old);
+  }
+  return 0;
+}
+
+/** A join handle's drop (on any thread): detaches the task; drops a result it never claimed. */
+@cExport("std_sched_join_drop")
+export function joinDrop(f: usize): void {
+  if (lk.mode() === lk.LK_NONE) {
+    joinDropAs(f, lk.LK_NONE);
+  } else {
+    joinDropLocking(f);
+  }
+}
+
+/** `joinDrop` while other threads may reach the slot (or a lazy worker 0 counts its operation). */
+@noInline
+function joinDropLocking(f: usize): void {
+  joinDropAs(f, lk.kind());
+}
+
+/** `joinDrop`, the operation of kind `kind` (sched_lock.velt). */
+@inline
+function joinDropAs(f: usize, kind: u32): void {
+  const k = f - t.T_JOIN;
+  const s = mk.lockJoin(k, kind);
+  const joiner = m.ld(k + t.T_JOINER);
+  m.st(k + t.T_JOINER, 0);
+  mk.unlockJoin(k, s & ~t.J_HANDLE, kind);
+  if (joiner !== 0) {
+    m.wakerDrop(joiner);
+  }
+  if ((s & (t.J_DONE | t.J_CLAIMED)) === t.J_DONE) {
+    dropResult(k);
+  }
+  wk.release(k);
+}
+
+/**
+ * When `f` is a spawned task's join handle (its header is the task's `T_JOIN`): the task's
+ * result nobody claims is dropped with `qdrop`, quietly (true).
+ */
+export function joinHandled(f: usize, qdrop: usize): bool {
+  if (f === 0 || !isJoin(f)) {
+    return false;
+  }
+  m.st(f - t.T_JOIN + t.T_RESULT_DROP, qdrop);
+  return true;
+}

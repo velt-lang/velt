@@ -74,8 +74,17 @@ export function release(t: usize): void {
  */
 @inline
 export function schedule(t: usize): void {
-  let h = m.ld(t + tk.T_HOME);
   const w = tk.here();
+  if (w !== 0 && m.ld32(w + tk.E_SOLO) !== 0) {
+    // The only thread at the executor (its home): input during a reactor turn, else the second queue.
+    if (m.ld32(w + tk.E_DISPATCH) === tk.D_INPUT) {
+      q.pushIo(w, t);
+    } else {
+      q.pushRest(w, t, 0);
+    }
+    return;
+  }
+  let h = m.ld(t + tk.T_HOME);
   if (w !== h && w !== 0 && m.load32Relaxed(w + tk.E_MODE) === 0) {
     // Woken on a lazy worker 0, homed on a spare that retired (sched_relax.velt): homed here.
     m.st(t + tk.T_HOME, w);
@@ -122,11 +131,20 @@ export function schedule(t: usize): void {
   toInbox(h, t);
 }
 
-/** Queues task `t`, just spawned: behind the input on its home, or on its home's inbox. */
+/**
+ * Queues task `t`, just spawned on this thread (`w`: its worker block, `tk.here()`): behind the
+ * input on its home, or on its home's inbox.
+ */
 @inline
-export function scheduleNew(t: usize): void {
+export function scheduleNew(w: usize, t: usize): void {
+  if (w !== 0 && m.ld32(w + tk.E_SOLO) !== 0) {
+    // The only thread at the executor: no lock, its spawns counted (sched_loop.velt `interval`).
+    q.pushRest(w, t, 0);
+    tk.bump(w + tk.E_RLEN, 1);
+    return;
+  }
   const h = m.ld(t + tk.T_HOME);
-  if (tk.here() === h) {
+  if (w === h) {
     const mode = m.load32Relaxed(h + tk.E_MODE);
     if (mode === 0 && m.ld(h + tk.E_LAZY) !== 0 && m.ld(h + tk.E_CURRENT) !== 0) {
       pend(h, t, tk.D_SPAWN);
@@ -247,6 +265,7 @@ export function unpark(w: usize): void {
 }
 
 /** The task a waker header belongs to (a task, or a promise one drives); 0 for another table. */
+@inline
 export function taskOf(w: usize): usize {
   const e = tk.main();
   const vt = m.ld(w);

@@ -234,7 +234,18 @@ export const RELAX_ASKED: u32 = 1;
 export const RELAX_DOING: u32 = 2;
 /** Worker 0's: the monitor's ticks so far with the spares idle (sched_relax.velt). */
 export const E_CALM: usize = 792;
-export const E_SIZE: usize = 800;
+/**
+ * 1 on the only worker of an executor with no monitor (`VELT_THREADS=1 VELT_RESCUE=0`), set before
+ * tasks run and never changed: no other thread runs tasks, so every task is homed on it and its
+ * queues need no lock or count (sched_wake.velt `schedule`'s first path).
+ */
+export const E_SOLO: usize = 800;
+/**
+ * The join handle's poll and drop (a heap future's header) of the tasks made on this worker:
+ * without the slot's lock on a solo worker (sched_run.velt `joinPollSolo`), else `joinPoll`.
+ */
+export const E_JOIN_VT: usize = 808;
+export const E_SIZE: usize = 824;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */

@@ -287,9 +287,22 @@ function interval(e: usize, mode: u32): usize {
   if (spawned === 0) {
     return m.ld(e + t.E_ILEN) >= BACKLOG ? FANOUT_IO_INTERVAL : IO_INTERVAL;
   }
-  const n = q.input(e) + spawned >= BACKLOG ? FANOUT_IO_INTERVAL : IO_INTERVAL;
+  const n = q.input(e) + spawned >= BACKLOG && looksFor(e) ? FANOUT_IO_INTERVAL : IO_INTERVAL;
   m.st(e + t.E_RLEN, spawned > n ? spawned - n : 0);
   return n;
+}
+
+/**
+ * Has worker `e`'s look at the reactor anything to find early: sockets registered, sleeps or
+ * `unref()`'d timers? (A fan-out of spawns with none looks every `IO_INTERVAL` polls: a look finds
+ * nothing then, and the next interval is decided again.)
+ */
+@inline
+function looksFor(e: usize): bool {
+  return (
+    m.load(m.ld(e + t.E_IO) + io.IO_LIVE) !== 0 ||
+    (m.ld(e + t.E_TIMERS) | m.ld(e + t.E_UNREF)) !== 0
+  );
 }
 
 /**

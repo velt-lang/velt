@@ -23,9 +23,10 @@
 // starts on one too.
 
 import { Ptr } from "velt/ffi";
-import { exportedAddress, fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
+import { fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
 import * as end from "./sched_end";
 import * as io from "./sched_io";
+import * as jn from "./sched_join";
 import * as latch from "./sched_latch";
 import * as loop from "./sched_loop";
 import * as m from "./sched_mem";
@@ -150,7 +151,13 @@ export function schedSpawn(
   if (align > 8) {
     panic("ICE: a task's state aligned to more than 8 bytes");
   }
-  const e = exec();
+  // This thread's worker block (0 off the workers), read once (`exec`, and the queueing).
+  let w = t.here();
+  let e = w;
+  if (w === 0) {
+    e = exec();
+    w = t.here();
+  }
   // The executor's reference and the handle's.
   const k = mk.task(e, poll, drop, rsize, rdrop, size, 2);
   m.st(k + t.T_TRANSFER, transfer);
@@ -158,7 +165,7 @@ export function schedSpawn(
   m.st(k + t.T_JOIN_STATE, t.J_HANDLE as usize);
   mk.home(e, k);
   mk.liveUp(m.ld(e + t.E_MAIN), e);
-  wk.scheduleNew(k);
+  wk.scheduleNew(w, k);
   return k + t.T_JOIN;
 }
 
@@ -168,7 +175,13 @@ export function schedSpawn(
  * nobody claims them). The task's state is `f` and `rsize`, then the root's result.
  */
 export function schedSpawnFut(f: usize, rsize: u64, rdrop: usize): usize {
-  const e = exec();
+  // This thread's worker block (0 off the workers), read once (`exec`, and the queueing).
+  let w = t.here();
+  let e = w;
+  if (w === 0) {
+    e = exec();
+    w = t.here();
+  }
   const k = mk.task(e, fnAddress(run.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
   const at = m.ld(k + t.T_ROOT);
   m.st(at, f);
@@ -178,7 +191,7 @@ export function schedSpawnFut(f: usize, rsize: u64, rdrop: usize): usize {
   m.st(k + t.T_TRANSFER, 0);
   mk.home(e, k);
   mk.liveUp(m.ld(e + t.E_MAIN), e);
-  wk.scheduleNew(k);
+  wk.scheduleNew(w, k);
   return k + t.T_JOIN;
 }
 
@@ -258,16 +271,14 @@ export function schedStart(f: usize, rdrop: usize, rejecting: bool): void {
  */
 export function schedDetach(f: usize, qdrop: usize): void {
   const e = exec();
-  // SAFETY: `joinPoll` is `@export`ed (only its address is read).
-  const join = unsafe { exportedAddress(run.joinPoll) };
-  if (!t.onWorker() && m.ld(f) !== fnAddress(node.nodePoll) && m.ld(f) !== join) {
+  if (!t.onWorker() && m.ld(f) !== fnAddress(node.nodePoll) && !jn.isJoin(f)) {
     // Off the worker: the runtime's box, or a leaf of its.
     off.detach(f, qdrop);
     return;
   }
   if (m.ld(f) !== fnAddress(node.nodePoll)) {
     // A spawned task's join handle: the task runs on, its rejection handled.
-    run.joinHandled(f, qdrop);
+    jn.joinHandled(f, qdrop);
     // SAFETY: the caller owns `f`, a heap future, and gives it up.
     unsafe {
       futDrop(f);
@@ -290,7 +301,7 @@ export function schedHandled(futs: usize, n: u64, qdrop: usize): void {
   const poll = fnAddress(node.nodePoll);
   for (let i: usize = 0; i < (n as usize); i++) {
     const f = m.ld(futs + 8 * i);
-    if (!run.joinHandled(f, qdrop)) {
+    if (!jn.joinHandled(f, qdrop)) {
       node.handled(f, qdrop, poll);
     }
   }

@@ -12,6 +12,7 @@ import * as end from "./sched_end";
 import * as io from "./sched_io";
 import * as lk from "./sched_lock";
 import * as loop from "./sched_loop";
+import * as mk from "./sched_make";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
 import * as node from "./sched_node";
@@ -136,6 +137,10 @@ function startWorkers(e: usize): void {
   const lazy = n === 1 && monitor;
   m.st32(e + t.E_MODE, lazy ? 0 : mode);
   lk.setMode(lazy ? lk.LK_LAZY : mode !== 0 ? lk.LK_ON : lk.LK_NONE);
+  if (mode === 0) {
+    m.st32(e + t.E_SOLO, 1);
+  }
+  mk.joinTable(e, mode === 0);
   if (lazy) {
     m.st(e + t.E_LAZY, t.LAZY_WATCH);
     m.st(e + t.E_SPLIT, 1);
@@ -145,6 +150,7 @@ function startWorkers(e: usize): void {
   for (let i: usize = 1; i < n + spares; i++) {
     const w = m.lastingZeroed(t.E_SIZE);
     setUp(e, w, i);
+    mk.joinTable(w, false);
     m.st(w + t.E_IO, io.open(w + t.E_TICK));
     m.st32(w + t.E_MODE, mode | t.M_SPREAD);
     m.st(w + t.E_HELP, sp.HELP);

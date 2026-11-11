@@ -4,17 +4,8 @@
 // sleep and no queued microtask polls its root and nothing else; the end of its root and of the
 // task, and its join handle. The worker loop around it is sched_loop.velt.
 
-import { export as cExport } from "velt/ffi";
-import {
-  exportedAddress,
-  futDrop,
-  futPoll,
-  inline,
-  noInline,
-  stateDrop,
-  statePoll,
-} from "velt/lang/intrinsics";
-import * as lk from "./sched_lock";
+import { futDrop, futPoll, inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
+import * as jn from "./sched_join";
 import * as m from "./sched_mem";
 import * as mk from "./sched_make";
 import * as micro from "./sched_micro";
@@ -35,20 +26,23 @@ import * as wk from "./sched_wake";
 export function run(e: usize, k: usize, mode: u32): void {
   m.store32(k + t.T_STATE, t.RUNNING);
   // After the pop that took it (a release): the monitor reads a lazy worker 0's queue while the
-  // poll runs (sched_monitor.velt `lazyDuties`).
-  m.storeRelease(e + t.E_CURRENT, k);
+  // poll runs (sched_monitor.velt `lazyDuties`). The only thread at the executor (mode 0, not
+  // lazy) has no monitor: a plain store.
+  if (mode === 0) {
+    m.st(e + t.E_CURRENT, k);
+  } else {
+    m.storeRelease(e + t.E_CURRENT, k);
+  }
   const fl = m.ld32(k + t.T_FLAGS);
   // Fresh tasks matter to other workers only (sched_monitor.velt).
   if (mode !== 0 && mode !== t.M_LAZY && (fl & t.STARTED) === 0) {
     m.st32(k + t.T_FLAGS, fl | t.STARTED);
   }
-  if ((fl & t.TOUCHED) !== 0) {
-    mod.enter();
-  }
-  if ((fl & t.LOCALS) !== 0) {
-    runWoken(e, k, fl);
-  } else if ((fl & t.ROOT_DONE) === 0) {
-    pollRoot(e, k);
+  // One test on the straight path: the root polled, nothing else.
+  if ((fl & (t.LOCALS | t.ROOT_DONE | t.TOUCHED)) === 0) {
+    pollRunning(e, k);
+  } else {
+    runOther(e, k, fl);
   }
   if (m.ld(k + t.T_MICRO) !== 0 || m.ld(k + t.T_UNHANDLED) !== 0) {
     drain(e, k);
@@ -76,12 +70,29 @@ export function run(e: usize, k: usize, mode: u32): void {
 }
 
 /**
+ * `run`'s poll of task `k` (flags `fl`) off the straight path: a task touching the program's
+ * module state takes its lock first; then its woken promises and sleeps, or its root unless it is
+ * done.
+ */
+@noInline
+function runOther(e: usize, k: usize, fl: u32): void {
+  if ((fl & t.TOUCHED) !== 0) {
+    mod.enter();
+  }
+  if ((fl & t.LOCALS) !== 0) {
+    runWoken(e, k, fl);
+  } else if ((fl & t.ROOT_DONE) === 0) {
+    pollRoot(e, k);
+  }
+}
+
+/**
  * The started promises of task `k` woken since its last poll, run in the order they were woken,
  * then its due sleeps (flag `TIMED`, which comes with `LOCALS`: flags `fl`), then its root. A
  * microtask or a sleep that resumed the root meanwhile set flag `POLLED`: the root is not polled
  * again then, so a root that yielded there waits for the task's next poll.
  */
-@noInline
+@inline
 function runWoken(e: usize, k: usize, fl: u32): void {
   t.flags(k, 0, t.POLLED);
   if ((fl & t.LOCALS) !== 0) {
@@ -190,6 +201,12 @@ function pollRoot(e: usize, k: usize): void {
   if (t.has(k, t.ROOT_DONE)) {
     return;
   }
+  pollRunning(e, k);
+}
+
+/** Polls the root of task `k`, not done. */
+@inline
+function pollRunning(e: usize, k: usize): void {
   // SAFETY: `k`'s root is the state of its poll function, not finished; `k + T_CX` is its cx.
   const ready = unsafe { statePoll(m.ld(k + t.T_POLL), m.ld(k + t.T_ROOT), k + t.T_CX) };
   if (ready === 1) {
@@ -252,51 +269,48 @@ function rootDone(e: usize, k: usize): void {
   if (rsize !== 0) {
     m.copy(k + t.T_SLOT, m.ld(k + t.T_ROOT), rsize);
   }
+  if (t.has(k, t.ROOT)) {
+    mainDone(e, k);
+    return;
+  }
+  t.flags(k, t.ROOT_DONE, 0);
+  // The join handle may be polled or dropped on another thread meanwhile: the slot's lock (no
+  // lock with one thread at the executor: sched_task.velt `E_SOLO`, sched_lock.velt `LK_NONE`).
+  if (m.ld32(e + t.E_SOLO) !== 0) {
+    const s = m.ld32(k + t.T_JOIN_STATE);
+    const joiner = m.ld(k + t.T_JOINER);
+    m.st(k + t.T_JOINER, 0);
+    m.st32(k + t.T_JOIN_STATE, s | t.J_DONE);
+    if (joiner !== 0) {
+      // Behind the tasks queued already (one thread queues no wake in a slot).
+      m.wakeOwned(joiner);
+    }
+    if ((s & t.J_HANDLE) === 0) {
+      jn.dropResult(k);
+    }
+    return;
+  }
+  jn.joinDone(e, k);
+}
+
+/** `rootDone` of the root of `main` (task `k`, its result in place). */
+@noInline
+function mainDone(e: usize, k: usize): void {
   const g = m.ld(e + t.E_MAIN);
-  if (e !== g && t.has(k, t.ROOT)) {
+  if (e !== g) {
     // The root ran on another worker (the monitor moved it): what it printed reaches the OS
     // before worker 0 can see it done and end the process (stdout is buffered per thread).
     wk.handOffOutput();
   }
   t.flags(k, t.ROOT_DONE, 0);
-  if (t.has(k, t.ROOT)) {
-    if (m.ld(k + t.T_LOCALS) !== 0) {
-      // Its started promises keep running after `main`.
-      t.flags(k, t.COUNTED, 0);
-      mk.liveUp(g, e);
-    }
-    if (e !== g) {
-      // The root ran on another worker (the monitor moved it): worker 0 waits for it.
-      wk.unpark(g);
-    }
-    return;
+  if (m.ld(k + t.T_LOCALS) !== 0) {
+    // Its started promises keep running after `main`.
+    t.flags(k, t.COUNTED, 0);
+    mk.liveUp(g, e);
   }
-  // The join handle may be polled or dropped on another thread meanwhile: the slot's lock (no
-  // lock and one test with one thread at the executor: sched_lock.velt `LK_NONE`).
-  let s: u32 = 0;
-  let joiner: usize = 0;
-  if (lk.mode() === lk.LK_NONE) {
-    s = m.ld32(k + t.T_JOIN_STATE);
-    joiner = m.ld(k + t.T_JOINER);
-    m.st(k + t.T_JOINER, 0);
-    m.st32(k + t.T_JOIN_STATE, s | t.J_DONE);
-  } else {
-    const kind = lk.kind();
-    s = mk.lockJoin(k, kind);
-    joiner = m.ld(k + t.T_JOINER);
-    m.st(k + t.T_JOINER, 0);
-    mk.unlockJoin(k, s | t.J_DONE, kind);
-  }
-  if (joiner !== 0) {
-    // Behind the tasks queued already, not in the slot for the task to run next: a join of many
-    // tasks (`Promise.all` of spawns) then polls once for the many that finished meanwhile.
-    // A poll runs with no dispatch under way (a reactor turn's or timers' wakes poll nothing).
-    m.st32(e + t.E_DISPATCH, t.D_OUTPUT);
-    m.wakeOwned(joiner);
-    m.st32(e + t.E_DISPATCH, 0);
-  }
-  if ((s & t.J_HANDLE) === 0) {
-    dropResult(k);
+  if (e !== g) {
+    // The root ran on another worker (the monitor moved it): worker 0 waits for it.
+    wk.unpark(g);
   }
 }
 
@@ -306,6 +320,12 @@ function finish(e: usize, k: usize): void {
   micro.free(k);
   // Not the root of `main`, or that root counted as live.
   if ((m.ld32(k + t.T_FLAGS) & (t.ROOT | t.COUNTED)) !== t.ROOT) {
+    if (m.ld32(e + t.E_SOLO) !== 0) {
+      // The only thread at the executor: worker 0's own count.
+      m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
+      wk.release(k);
+      return;
+    }
     const g = m.ld(e + t.E_MAIN);
     if (e !== g) {
       // What it printed reaches the OS before worker 0 can see it was the last live task and
@@ -318,17 +338,6 @@ function finish(e: usize, k: usize): void {
     }
   }
   wk.release(k);
-}
-
-/** Drops task `k`'s result in its slot, which nobody claimed. */
-function dropResult(k: usize): void {
-  const rdrop = m.ld(k + t.T_RESULT_DROP);
-  if (rdrop !== 0) {
-    // SAFETY: the slot holds the result, which `rdrop` is the drop glue of.
-    unsafe {
-      stateDrop(rdrop, k + t.T_SLOT);
-    }
-  }
 }
 
 /**
@@ -350,86 +359,4 @@ export function futRootPoll(root: usize, cx: usize): u32 {
     }
   }
   return ready;
-}
-
-/**
- * A join handle's poll (C calls it through the handle's header, on any thread): ready once the
- * task's root is done, else its waker waits in the join slot.
- */
-@cExport("std_sched_join_poll")
-export function joinPoll(f: usize, cx: usize): u32 {
-  if (lk.mode() === lk.LK_NONE) {
-    return joinPollAs(f, cx, lk.LK_NONE);
-  }
-  return joinPollLocking(f, cx);
-}
-
-/** `joinPoll` while other threads may reach the slot (or a lazy worker 0 counts its operation). */
-@noInline
-function joinPollLocking(f: usize, cx: usize): u32 {
-  return joinPollAs(f, cx, lk.kind());
-}
-
-/** `joinPoll`, the operation of kind `kind` (sched_lock.velt). */
-@inline
-function joinPollAs(f: usize, cx: usize, kind: u32): u32 {
-  const k = f - t.T_JOIN;
-  const s = mk.lockJoin(k, kind);
-  if ((s & t.J_DONE) !== 0) {
-    mk.unlockJoin(k, s | t.J_CLAIMED, kind);
-    return 1;
-  }
-  const old = m.ld(k + t.T_JOINER);
-  m.st(k + t.T_JOINER, m.wakerClone(m.ld(cx + 8)));
-  mk.unlockJoin(k, s, kind);
-  if (old !== 0) {
-    m.wakerDrop(old);
-  }
-  return 0;
-}
-
-/** A join handle's drop (on any thread): detaches the task; drops a result it never claimed. */
-@cExport("std_sched_join_drop")
-export function joinDrop(f: usize): void {
-  if (lk.mode() === lk.LK_NONE) {
-    joinDropAs(f, lk.LK_NONE);
-  } else {
-    joinDropLocking(f);
-  }
-}
-
-/** `joinDrop` while other threads may reach the slot (or a lazy worker 0 counts its operation). */
-@noInline
-function joinDropLocking(f: usize): void {
-  joinDropAs(f, lk.kind());
-}
-
-/** `joinDrop`, the operation of kind `kind` (sched_lock.velt). */
-@inline
-function joinDropAs(f: usize, kind: u32): void {
-  const k = f - t.T_JOIN;
-  const s = mk.lockJoin(k, kind);
-  const joiner = m.ld(k + t.T_JOINER);
-  m.st(k + t.T_JOINER, 0);
-  mk.unlockJoin(k, s & ~t.J_HANDLE, kind);
-  if (joiner !== 0) {
-    m.wakerDrop(joiner);
-  }
-  if ((s & (t.J_DONE | t.J_CLAIMED)) === t.J_DONE) {
-    dropResult(k);
-  }
-  wk.release(k);
-}
-
-/**
- * When `f` is a spawned task's join handle (its header is the task's `T_JOIN`): the task's
- * result nobody claims is dropped with `qdrop`, quietly (true).
- */
-export function joinHandled(f: usize, qdrop: usize): bool {
-  // SAFETY: `joinPoll` is `@export`ed (only its address is read).
-  if (f === 0 || m.ld(f) !== unsafe { exportedAddress(joinPoll) }) {
-    return false;
-  }
-  m.st(f - t.T_JOIN + t.T_RESULT_DROP, qdrop);
-  return true;
 }

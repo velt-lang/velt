@@ -2,9 +2,9 @@
 // allocation (header, join handle, result slot, initial state) and its home worker.
 
 import { exportedAddress, inline, noInline } from "velt/lang/intrinsics";
+import * as jn from "./sched_join";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
-import * as run from "./sched_run";
 import * as t from "./sched_task";
 
 /**
@@ -45,11 +45,8 @@ export function task(
   m.st(k + t.T_BYTES, bytes);
   m.st(k + t.T_TIMERS, 0);
   m.st(k + t.T_HOME, e);
-  // SAFETY: `@export`ed functions of a heap future's poll and drop signatures.
-  unsafe {
-    m.st(k + t.T_JOIN, exportedAddress(run.joinPoll));
-    m.st(k + t.T_JOIN + 8, exportedAddress(run.joinDrop));
-  }
+  m.st(k + t.T_JOIN, m.ld(e + t.E_JOIN_VT));
+  m.st(k + t.T_JOIN + 8, m.ld(e + t.E_JOIN_VT + 8));
   return k;
 }
 
@@ -57,6 +54,20 @@ export function task(
 @inline
 function stateAt(rsize: u64): usize {
   return t.T_SLOT + ((rsize as usize + 15) & ~15);
+}
+
+/** Sets worker block `w`'s join handle table (`E_JOIN_VT`): `solo` (sched_task.velt `E_SOLO`). */
+export function joinTable(w: usize, solo: bool): void {
+  // SAFETY: `@export`ed functions of a heap future's poll and drop signatures.
+  unsafe {
+    if (solo) {
+      m.st(w + t.E_JOIN_VT, exportedAddress(jn.joinPollSolo));
+      m.st(w + t.E_JOIN_VT + 8, exportedAddress(jn.joinDropSolo));
+    } else {
+      m.st(w + t.E_JOIN_VT, exportedAddress(jn.joinPoll));
+      m.st(w + t.E_JOIN_VT + 8, exportedAddress(jn.joinDrop));
+    }
+  }
 }
 
 /**

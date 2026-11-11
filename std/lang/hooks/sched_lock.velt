@@ -12,7 +12,7 @@
 //
 // The hand-over from `LK_LAZY` to `LK_ON` happens while worker 0 runs a poll, which may be in the
 // middle of an operation it began without the lock. So worker 0 counts its operations under way
-// (`lazyIn`, `lazyOut`: a store, then a load of the mode, both sequentially consistent), and the
+// (`kind`, `done`: a store, then a load of the mode, both sequentially consistent), and the
 // monitor stores the mode, then waits until the count is 0 (`locksOn`), before any task reaches a
 // spare. Either the operation sees `LK_ON` and locks, or the monitor sees it counted and waits for
 // its end (Dekker's argument); an end the monitor reads with the count at 0 happens before the
@@ -32,9 +32,22 @@ const MODE = new Atomic<u32>(0);
 /** Worker 0's operations under way without the lock while the mode is `LK_LAZY`. */
 const LAZY_OPS = new Atomic<usize>(0);
 
+/** 1 once the executor set the mode to `LK_NONE` (`setMode`), which never changes then. */
+const NONE_SET = new Atomic<u32>(0);
+
 /** Sets the mode before any task runs. */
 export function setMode(mode: u32): void {
   MODE.store(mode, "release");
+  NONE_SET.store(mode === LK_NONE ? 1 : 0, "release");
+}
+
+/**
+ * Is the mode `LK_NONE` for good: set so by the executor, with one thread at it (it never changes
+ * then)? An object made now may keep the answer (a latch: sched_latch.velt `L_PLAIN`).
+ */
+@inline
+export function noneForGood(): bool {
+  return NONE_SET.load("relaxed") !== 0;
 }
 
 /** The mode (`LK_NONE` tells a caller it may take a path without locks or counts). */
@@ -53,7 +66,13 @@ export function kind(): u32 {
   const mode = MODE.load("relaxed");
   // Bit tests, here and in the callers: one instruction each.
   if ((mode & LK_LAZY) !== 0) {
-    return lazyIn();
+    // Worker 0 begins an operation while the mode was lazy: `LK_LAZY` when it is still (counted
+    // in line: this runs at every latch and join slot operation of a lazy worker 0).
+    LAZY_OPS.store(LAZY_OPS.load("relaxed") + 1, "seqcst");
+    if (MODE.load("seqcst") === LK_LAZY) {
+      return LK_LAZY;
+    }
+    return lazyMissed();
   }
   return mode;
 }
@@ -66,13 +85,9 @@ export function done(k: u32): void {
   }
 }
 
-/** Worker 0 begins an operation while the mode was lazy: `LK_LAZY` when it is still. */
+/** `kind` found the locks turned on after it counted the operation: not counted, `LK_ON`. */
 @noInline
-function lazyIn(): u32 {
-  LAZY_OPS.store(LAZY_OPS.load("relaxed") + 1, "seqcst");
-  if (MODE.load("seqcst") === LK_LAZY) {
-    return LK_LAZY;
-  }
+function lazyMissed(): u32 {
   LAZY_OPS.store(LAZY_OPS.load("relaxed") - 1, "seqcst");
   return LK_ON;
 }

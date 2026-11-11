@@ -23,6 +23,8 @@ const L_REFS: usize = 0;
 const L_OPEN: usize = 8;
 const L_WAITS: usize = 16;
 const L_LOCK: usize = 24;
+/** 1 when the latch was made with one thread at the executor for good (`lk.noneForGood`). */
+const L_PLAIN: usize = 28;
 const L_SIZE: usize = 32;
 
 const W_LATCH: usize = 16;
@@ -39,17 +41,16 @@ export function latchNew(): u64 {
   m.st(l + L_OPEN, 0);
   m.st(l + L_WAITS, 0);
   m.st(l + L_LOCK, 0);
+  m.st32(l + L_PLAIN, lk.noneForGood() ? 1 : 0);
   return l as u64;
 }
 
-/** Takes latch `a`'s lock when other threads may reach it: the operation's kind (sched_lock). */
+/** Takes latch `a`'s lock for an operation of kind `k` (sched_lock.velt `kind`). */
 @inline
-function lock(a: usize): u32 {
-  const k = lk.kind();
+function lock(a: usize, k: u32): void {
   if ((k & lk.LK_ON) !== 0) {
     lk.take(a + L_LOCK);
   }
-  return k;
 }
 
 /** Gives latch `a`'s lock back (`k`: `lock`'s result). */
@@ -64,8 +65,22 @@ function unlock(a: usize, k: u32): void {
 
 /** Gives a reference to latch `l` back: the last frees it. */
 export function latchFree(l: u64): void {
-  const a = l as usize;
-  if (lk.mode() === lk.LK_NONE) {
+  freeRef(l as usize, plain(l as usize));
+}
+
+/**
+ * Does latch `a` need no lock or count (`L_PLAIN`: one thread at the executor, `LK_NONE`)? Its own
+ * word, read in the line the operation reads anyway (cheaper than the mode's global).
+ */
+@inline
+function plain(a: usize): bool {
+  return m.ld32(a + L_PLAIN) !== 0;
+}
+
+/** `latchFree` of latch `a`, `plain` with one thread at the executor (`LK_NONE`). */
+@inline
+function freeRef(a: usize, plain: bool): void {
+  if (plain) {
     // One thread at the executor: a plain count.
     const n = m.ld(a + L_REFS) - 1;
     m.st(a + L_REFS, n);
@@ -82,7 +97,7 @@ export function latchFree(l: u64): void {
 /** A wait of latch `l`, with header entries `poll` and `drop`. */
 export function latchWait(l: u64, poll: usize, drop: usize): usize {
   const a = l as usize;
-  if (lk.mode() === lk.LK_NONE) {
+  if (plain(a)) {
     m.st(a + L_REFS, m.ld(a + L_REFS) + 1);
   } else {
     m.inc(a + L_REFS);
@@ -99,8 +114,19 @@ export function latchWait(l: u64, poll: usize, drop: usize): usize {
 
 /** Opens latch `l` (once): each waiter queued on the task being polled, or woken. */
 export function latchOpen(l: u64): void {
+  // With one thread at the executor (`LK_NONE`), a copy with the lock's tests folded away.
   const a = l as usize;
-  const lkind = lock(a);
+  if (plain(a)) {
+    openAs(a, lk.LK_NONE);
+  } else {
+    openAs(a, lk.kind());
+  }
+}
+
+/** `latchOpen` of latch `a`, an operation of kind `lkind` (sched_lock.velt). */
+@inline
+function openAs(a: usize, lkind: u32): void {
+  lock(a, lkind);
   if (m.ld(a + L_OPEN) !== 0) {
     unlock(a, lkind);
     return;
@@ -170,8 +196,17 @@ function wakeAfter(first: usize, more: usize, n: usize, cap: usize): void {
 /** A wait's poll: ready once the latch is open (and its queued step reached). */
 export function waitPoll(w: usize, cx: usize): u32 {
   const a = m.ld(w + W_LATCH);
+  if (plain(a)) {
+    return waitPollAs(w, a, cx, lk.LK_NONE);
+  }
+  return waitPollAs(w, a, cx, lk.kind());
+}
+
+/** `waitPoll`, an operation of kind `lkind` (sched_lock.velt). */
+@inline
+function waitPollAs(w: usize, a: usize, cx: usize, lkind: u32): u32 {
   const waker = m.ld(cx + 8);
-  const lkind = lock(a);
+  lock(a, lkind);
   if (m.ld(a + L_OPEN) !== 0) {
     const ticket = m.ld(w + W_TICKET) as u64;
     unlock(a, lkind);
@@ -203,7 +238,17 @@ export function waitPoll(w: usize, cx: usize): u32 {
 /** A wait's drop: out of its latch's list, its waker and its reference to the latch given back. */
 export function waitDrop(w: usize): void {
   const a = m.ld(w + W_LATCH);
-  const lkind = lock(a);
+  if (plain(a)) {
+    waitDropAs(w, a, lk.LK_NONE);
+  } else {
+    waitDropAs(w, a, lk.kind());
+  }
+}
+
+/** `waitDrop`, an operation of kind `lkind` (sched_lock.velt). */
+@inline
+function waitDropAs(w: usize, a: usize, lkind: u32): void {
+  lock(a, lkind);
   if (m.ld(w + W_NEXT) !== 1) {
     let at = a + L_WAITS;
     while (m.ld(at) !== 0 && m.ld(at) !== w) {
@@ -219,6 +264,6 @@ export function waitDrop(w: usize): void {
   if (k !== 0) {
     m.wakerDrop(k);
   }
-  latchFree(a as u64);
+  freeRef(a, lkind === lk.LK_NONE);
   m.release(w, W_SIZE);
 }
