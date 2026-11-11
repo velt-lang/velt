@@ -43,9 +43,20 @@ function clamp(i: i64, len: usize): usize {
 }
 
 /** `s.indexOf(needle, from)`: the first match at or after `from` (clamped), or -1; an empty
- * needle matches at the clamped `from`. */
+ * needle matches at the clamped `from`. Compiled into the caller is only the one-byte needle in
+ * an ASCII string (a literal's length and byte are constants there); the rest is one call. */
 @inline
 export function indexOf(s: string, needle: string, from: i64): i64 {
+  const n = strByteLen(s);
+  if (strByteLen(needle) == 1 && strLen(s) == n) {
+    return findByte(s, strByteAt(needle, 0), clamp(from, n), n);
+  }
+  return indexOfBody(s, needle, from);
+}
+
+/** `indexOf` past its front. */
+@noInline
+function indexOfBody(s: string, needle: string, from: i64): i64 {
   const n = strByteLen(s);
   if (strLen(s) != n) {
     return indexOfWide(s, needle, from);
@@ -92,12 +103,22 @@ function indexOfWide(s: string, needle: string, from: i64): i64 {
   return k < 0 ? -1 : velt_rt_str_byte_to_unit(s, k as u64) as i64;
 }
 
-/** `s.includes(needle, position)`: as `indexOf(...) >= 0`, but from the start a string that is
- * not ASCII needs no position translated (a byte search, as for an ASCII one). */
+/** `s.includes(needle, position)`: as `indexOf(...) >= 0`. Compiled into the caller is only a
+ * one-byte needle from the start, a byte search in any string (no position to translate). */
 @inline
 export function includes(s: string, needle: string, position: i64): bool {
+  if (position <= 0 && strByteLen(needle) == 1) {
+    return findByte(s, strByteAt(needle, 0), 0, strByteLen(s)) >= 0;
+  }
+  return includesBody(s, needle, position);
+}
+
+/** `includes` past its front: from the start a string that is not ASCII needs no position
+ * translated either. */
+@noInline
+function includesBody(s: string, needle: string, position: i64): bool {
   if (position > 0) {
-    return indexOf(s, needle, position) >= 0;
+    return indexOfBody(s, needle, position) >= 0;
   }
   const n = strByteLen(s);
   const m = strByteLen(needle);
@@ -121,9 +142,21 @@ export function includes(s: string, needle: string, position: i64): bool {
 }
 
 /** `s.lastIndexOf(needle, from)`: the last match starting at or before `from` (clamped; JS's
- * omitted `from` is the largest `i64`), or -1. */
+ * omitted `from` is the largest `i64`), or -1. Compiled into the caller is only the one-byte
+ * needle in an ASCII string; the rest is one call. */
 @inline
 export function lastIndexOf(s: string, needle: string, from: i64): i64 {
+  const n = strByteLen(s);
+  if (strByteLen(needle) == 1 && strLen(s) == n && n > 0) {
+    const at = clamp(from, n - 1);
+    return rfindByte(s, strByteAt(needle, 0), at + 1);
+  }
+  return lastIndexOfBody(s, needle, from);
+}
+
+/** `lastIndexOf` past its front. */
+@noInline
+function lastIndexOfBody(s: string, needle: string, from: i64): i64 {
   const n = strByteLen(s);
   if (strLen(s) != n) {
     return lastIndexOfWide(s, needle, from);

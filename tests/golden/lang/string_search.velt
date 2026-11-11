@@ -94,6 +94,18 @@ function main() {
   report("éé", "a" + LO, [0, 1, 2]);
   report("😀😀", HI + "é" + HI + "é", [0, 2, 4]);
 
+  // Positions through `any`: `lastIndexOf` reads a `NaN` position (or one that is not a number) as
+  // the end, the other methods as 0.
+  const dyn: any = "abcabcé😀abc";
+  const positions: any[] = [NaN, undefined, "x", Infinity, -Infinity, 3.9, -0.5, 2];
+  const seen: string[] = [];
+  for (const p of positions) {
+    seen.push(
+      `${dyn.lastIndexOf("abc", p)}/${dyn.lastIndexOf("", p)}/${dyn.lastIndexOf("é", p)}/${dyn.indexOf("abc", p)}`,
+    );
+  }
+  console.log(`any positions: ${seen.join(" ")}`);
+
   // One byte at every position of strings around the vector width (16) and its multiples.
   for (const len of [1, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 80, 129]) {
     const at: string[] = [];

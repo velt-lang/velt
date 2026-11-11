@@ -1,0 +1,215 @@
+// velt/lang/string (internal): Two-Way string matching (Crochemore and Perrin, 1991), the linear
+// fallback of a long needle whose candidates keep failing late (needle_scan.velt), forwards and
+// backwards, in constant space: it allocates nothing, so a search that reaches it still only
+// reads (borrowed copies, velt_opt `borrowed_copies/read_only.rs`).
+//
+// A port of the `memchr` crate 2.8.3's `arch/all/twoway.rs` (https://github.com/BurntSushi/memchr;
+// Copyright (c) 2015 Andrew Gallant; MIT or Unlicense, see NOTICE), without its prefilter: the
+// needle's critical factorization (the start of its maximal or minimal suffix, whichever is
+// further right, and that suffix's period), then a search that compares the needle's right part
+// first and shifts by the period or past the mismatch. A byte that is in no position of the
+// needle (by a 64-bit set of `byte % 64`) skips the whole needle.
+
+import { noInline, strByteAt } from "velt/lang/intrinsics";
+
+/** The bits `1 << (b % 64)` of every byte `b` of `needle`'s `m` bytes. */
+function byteSet(needle: string, m: usize): u64 {
+  let set: u64 = 0;
+  for (let i: usize = 0; i < m; i++) {
+    set = set | ((1 as u64) << ((strByteAt(needle, i as u64) & 63) as u64));
+  }
+  return set;
+}
+
+/** Is byte `b` possibly in the needle of `set`? */
+function inSet(set: u64, b: u8): bool {
+  return ((set >> ((b & 63) as u64)) & 1) != 0;
+}
+
+/**
+ * The maximal (or, `!maximal`, minimal) suffix of `needle`'s `m` bytes read forwards: its start
+ * in the high 32 bits, its period in the low ones.
+ */
+function suffixForward(needle: string, m: usize, maximal: bool): u64 {
+  let pos: usize = 0;
+  let period: usize = 1;
+  let candidate: usize = 1;
+  let offset: usize = 0;
+  while (candidate + offset < m) {
+    const current = strByteAt(needle, (pos + offset) as u64);
+    const next = strByteAt(needle, (candidate + offset) as u64);
+    if (maximal ? next > current : next < current) {
+      pos = candidate;
+      period = 1;
+      candidate += 1;
+      offset = 0;
+    } else if (maximal ? next < current : next > current) {
+      candidate += offset + 1;
+      offset = 0;
+      period = candidate - pos;
+    } else if (offset + 1 == period) {
+      candidate += period;
+      offset = 0;
+    } else {
+      offset += 1;
+    }
+  }
+  return ((pos as u64) << 32) | (period as u64);
+}
+
+/** As `suffixForward`, read backwards: the suffix's end (exclusive) and its period. */
+function suffixReverse(needle: string, m: usize, maximal: bool): u64 {
+  let pos = m;
+  let period: usize = 1;
+  if (m == 1) {
+    return ((pos as u64) << 32) | (period as u64);
+  }
+  let candidate = m - 1;
+  let offset: usize = 0;
+  while (offset < candidate) {
+    const current = strByteAt(needle, (pos - offset - 1) as u64);
+    const next = strByteAt(needle, (candidate - offset - 1) as u64);
+    if (maximal ? next > current : next < current) {
+      pos = candidate;
+      period = 1;
+      candidate -= 1;
+      offset = 0;
+    } else if (maximal ? next < current : next > current) {
+      candidate -= offset + 1;
+      offset = 0;
+      period = pos - candidate;
+    } else if (offset + 1 == period) {
+      candidate -= period;
+      offset = 0;
+    } else {
+      offset += 1;
+    }
+  }
+  return ((pos as u64) << 32) | (period as u64);
+}
+
+/** Do bytes `a..a + n` and `b..b + n` of `needle` match? */
+function sameRange(needle: string, a: usize, b: usize, n: usize): bool {
+  for (let k: usize = 0; k < n; k++) {
+    if (strByteAt(needle, (a + k) as u64) != strByteAt(needle, (b + k) as u64)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * The first match of `needle` (`m` bytes, at least 2) in `s` that starts at `from` or later and
+ * ends by `stop`, or -1: linear in `stop - from`, no memory allocated.
+ */
+@noInline
+export function findTwoWay(s: string, needle: string, m: usize, from: usize, stop: usize): i64 {
+  const set = byteSet(needle, m);
+  const lo = suffixForward(needle, m, false);
+  const hi = suffixForward(needle, m, true);
+  const pick = lo >> 32 > hi >> 32 ? lo : hi;
+  const critical = (pick >> 32) as usize;
+  const lower = (pick & 0xffffffff) as usize;
+  const large = critical > m - critical ? critical : m - critical;
+  // The needle is periodic with period `lower` when its left part is a suffix of its first period.
+  const small = critical * 2 < m && critical <= lower && sameRange(needle, lower, 0, critical);
+  const period = small ? lower : large;
+  let pos = from;
+  let memory: usize = 0;
+  while (pos + m <= stop) {
+    if (!inSet(set, strByteAt(s, (pos + m - 1) as u64))) {
+      pos += m;
+      memory = 0;
+      continue;
+    }
+    let i = small && memory > critical ? memory : critical;
+    while (i < m && strByteAt(needle, i as u64) == strByteAt(s, (pos + i) as u64)) {
+      i += 1;
+    }
+    if (i < m) {
+      pos += i - critical + 1;
+      memory = 0;
+      continue;
+    }
+    if (small) {
+      let j = critical;
+      while (j > memory && strByteAt(needle, j as u64) == strByteAt(s, (pos + j) as u64)) {
+        j -= 1;
+      }
+      if (j <= memory && strByteAt(needle, memory as u64) == strByteAt(s, (pos + memory) as u64)) {
+        return pos as i64;
+      }
+      pos += period;
+      memory = m - period;
+    } else {
+      let j = critical;
+      let matched = true;
+      while (j > 0) {
+        j -= 1;
+        if (strByteAt(needle, j as u64) != strByteAt(s, (pos + j) as u64)) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) {
+        return pos as i64;
+      }
+      pos += period;
+    }
+  }
+  return -1;
+}
+
+/**
+ * The last match of `needle` (`m` bytes, at least 2) in `s` that starts before `top`, or -1:
+ * linear, no memory allocated.
+ */
+@noInline
+export function rfindTwoWay(s: string, needle: string, m: usize, top: usize): i64 {
+  const set = byteSet(needle, m);
+  const lo = suffixReverse(needle, m, false);
+  const hi = suffixReverse(needle, m, true);
+  const pick = lo >> 32 < hi >> 32 ? lo : hi;
+  const critical = (pick >> 32) as usize;
+  const lower = (pick & 0xffffffff) as usize;
+  const large = critical > m - critical ? critical : m - critical;
+  // Periodic when the right part is a prefix of the needle's last period.
+  const small =
+    (m - critical) * 2 < m &&
+    m - critical <= lower &&
+    lower <= critical &&
+    sameRange(needle, critical - lower, critical, m - critical);
+  const period = small ? lower : large;
+  const first = strByteAt(needle, 0);
+  // `pos` is the end of the window: a match starting before `top` ends by `top + m - 1`.
+  let pos = top + m - 1;
+  let memory = m;
+  while (pos >= m) {
+    const start = pos - m;
+    if (!inSet(set, strByteAt(s, start as u64))) {
+      pos -= m;
+      memory = m;
+      continue;
+    }
+    let i = small && memory < critical ? memory : critical;
+    while (i > 0 && strByteAt(needle, (i - 1) as u64) == strByteAt(s, (start + i - 1) as u64)) {
+      i -= 1;
+    }
+    if (i > 0 || first != strByteAt(s, start as u64)) {
+      pos -= critical - i + 1;
+      memory = m;
+      continue;
+    }
+    let j = critical;
+    const end = small ? memory : m;
+    while (j < end && strByteAt(needle, j as u64) == strByteAt(s, (start + j) as u64)) {
+      j += 1;
+    }
+    if (j >= end) {
+      return start as i64;
+    }
+    pos -= period;
+    memory = small ? period : m;
+  }
+  return -1;
+}

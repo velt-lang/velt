@@ -2,11 +2,11 @@
 // the starts whose first and last bytes match, 32 at a time with SIMD compares (the "packed
 // pair" filter of the `memchr` crate), each candidate checked in full; a byte loop below 17
 // starts. A needle longer than 32 bytes whose candidates keep failing late switches to
-// Knuth-Morris-Pratt (kmp.velt), so that no search costs more than linear time.
+// Two-Way (two_way.velt), so that no search costs more than linear time.
 
 import { inline, noInline, strByteAt } from "velt/lang/intrinsics";
 import { eqAt, sameBytes } from "velt/lang/string/byte_scan";
-import { findKmp, rfindKmp } from "velt/lang/string/kmp";
+import { findTwoWay, rfindTwoWay } from "velt/lang/string/two_way";
 
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_mask8x16_and(a: mask8x16, b: mask8x16): mask8x16;
@@ -47,7 +47,7 @@ function findBytesLong(s: string, needle: string, m: usize, from: usize, end: us
   const vf = velt_simd_u8x16_splat(strByteAt(needle, 0));
   const vl = velt_simd_u8x16_splat(strByteAt(needle, (m - 1) as u64));
   // Bytes of needle checked by candidates that failed, against bytes passed: past the budget a
-  // long needle switches to Knuth-Morris-Pratt.
+  // long needle switches to Two-Way.
   let spent: usize = 0;
   let i = from;
   while (i + 31 <= end) {
@@ -61,7 +61,7 @@ function findBytesLong(s: string, needle: string, m: usize, from: usize, end: us
       }
       spent += m * bits.countOnes();
       if (m > SHORT_NEEDLE && spent > 4 * (i + 32 - from) + 1024) {
-        return findKmp(s, needle, m, i + 32, end + m);
+        return findTwoWay(s, needle, m, i + 32, end + m);
       }
     }
     i += 32;
@@ -142,7 +142,7 @@ function rfindBytesLong(s: string, needle: string, m: usize, last: usize): i64 {
       }
       spent += m * bits.countOnes();
       if (m > SHORT_NEEDLE && spent > 4 * (last + 1 - at) + 1024) {
-        return rfindKmp(s, needle, m, at);
+        return rfindTwoWay(s, needle, m, at);
       }
     }
     top = at;
