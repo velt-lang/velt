@@ -438,7 +438,10 @@ fn a_directory_interrupted_by_others_is_one_row() {
     assert_eq!(check(&text, &Key::of(&[b"opts"]), LATER), Some(2), "{text}");
     let entries = entry_lines(&text).unwrap();
     for (name, _) in files {
-        let path = dir.join(name).display().to_string();
+        // As the stamp spells it: on Windows, `\` for the `/` in `name`.
+        let path = vpm::relpath::absolute(&dir.join(name))
+            .display()
+            .to_string();
         assert!(entries.iter().any(|e| e.ends_with(&path)), "{name}: {text}");
     }
 }
