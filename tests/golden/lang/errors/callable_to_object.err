@@ -1,0 +1,2 @@
+callable_to_object.velt:13:14: error: a function with properties (`{ (): f64; a: f64 }`) can't convert to `O`, which has no call signature
+callable_to_object.velt:14:26: error: a function with properties (`{ (): f64; a: f64 }`) can't convert to `{ a: f64 }`, which has no call signature

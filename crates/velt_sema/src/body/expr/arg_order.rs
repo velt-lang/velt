@@ -37,9 +37,20 @@ impl FnCx<'_, '_> {
         let class: Vec<bool> = args.iter().map(|a| self.names_class(a)).collect();
         // A context-sensitive argument comes last: nothing after it can give its parameters a
         // type (`fix_for_context_sensitive`), and everything else is a candidate for them.
+        // A bare `undefined` for a `T | undefined` offers no candidate for `T`: it goes after
+        // every argument that may offer one (`g(undefined, 1)` is `T = number`), and fixes those
+        // still open (`fix_for_context_sensitive`, #2683).
+        let nothing: Vec<bool> = (0..args.len())
+            .map(|i| {
+                c.params
+                    .get(i)
+                    .is_some_and(|p| self.bare_nothing_for(&args[i], p.ty))
+            })
+            .collect();
         let round = |i: usize| match (deferred(&args[i]) || late[i], as_arrow(&args[i]).is_some()) {
             _ if class[i] => 2,
-            _ if context_sensitive(&args[i]) => 4,
+            _ if context_sensitive(&args[i]) => 5,
+            _ if nothing[i] => 4,
             (false, _) => 0,
             (true, false) => 1,
             (true, true) => 3,
