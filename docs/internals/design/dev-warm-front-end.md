@@ -186,10 +186,12 @@ What it needs, as separate pull requests, each falling back to the cold front en
     borrows (the source rewrites' last copy), the loader's modules when it borrows them, the
     generated modules given with them, and the driver's `StdLoads`, in one value the dev host
     keeps (`KeptCheck`, with `-v` for now). The check offers it (`PendingKept`); the driver hands
-    over the vectors and `adopt` takes them only if their heap addresses are the ones borrowed.
-    The `unsafe` (the clone's `'m` erased, its drop first, `Send`) is in that one module, and
-    the kept check's tests run clean under valgrind's memcheck (which reports the invalid reads
-    of a version that drops the rewritten modules). Kept: the first check of a program (round
+    over the vectors and `adopt` takes them only if their heap addresses are the ones borrowed;
+    an address can't tell a vector from another allocated in its place, so `adopt` is `unsafe`
+    and its one caller says why the vectors are the checked ones. The `unsafe` (the clone's `'m`
+    erased, its drop first, `Send`, `adopt`) is in that one module. `borrows_only_what_it_owns`
+    checks that every module the clone reads lies in a buffer the kept check owns (a test fails
+    without memcheck when an owner is dropped), and the tests run clean under memcheck. Kept: the first check of a program (round
     1) and a check with generated code offered from the cache, `http_hello`'s path. Not kept: a
     check in which a generator ran, and a script whose variables `script_locals` moved into
     `main` (another copy of the modules). Measured on `http_hello` (debug compiler, five

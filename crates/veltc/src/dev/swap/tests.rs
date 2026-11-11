@@ -330,6 +330,7 @@ fn a_dev_build_keeps_its_check_when_asked() {
     let kept = sess.kept.take().expect("a kept check");
     assert!(kept.module_paths().iter().any(|p| p.contains("main")));
     assert!(kept.definitions() > 0 && kept.items() > 0);
+    assert!(kept.borrows_only_what_it_owns());
     // Not asked, nothing is kept.
     let mut sess = Session::new();
     driver::compile(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));

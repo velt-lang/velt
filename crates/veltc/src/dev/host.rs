@@ -63,6 +63,8 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
             failure_code(err);
         }
     }
+    // The kept check of a build that loaded, for the reload loop; none is kept otherwise.
+    let mut kept = sess.kept.take().filter(|_| loaded.is_ok());
     if let Some(socket) = std::env::var_os(velt_rt_host::dev::SOCKET_ENV) {
         let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
         files.extend(super::native::source_files(opts.packages.as_ref()));
@@ -74,7 +76,7 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
                 let own = loaded
                     .is_ok()
                     .then(|| super::edits::Snapshot::of_build(&sess, &opts.input));
-                let kept = sess.kept.take();
+                let kept = kept.take();
                 if let (true, Some(k)) = (args.build.verbose, &kept) {
                     eprintln!("velt dev: {}", super::swap::kept_report(k));
                 }
@@ -94,6 +96,8 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
             }
         }
     }
+    // No reload loop: the program runs from here on without one.
+    drop(kept.take());
     let Ok(loaded) = loaded else {
         return ExitCode::from(1);
     };

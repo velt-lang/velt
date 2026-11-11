@@ -30,10 +30,9 @@ fn kept(src: &str) -> (KeptCheck, Vec<String>, usize) {
     let paths: Vec<String> = modules.iter().map(|m| m.path.clone()).collect();
     let items = modules.iter().map(|m| m.ast.items.len()).sum::<usize>();
     let pending = pending.expect("a kept check");
-    let kept = pending
-        .adopt(modules, vec![], None)
-        .ok()
-        .expect("the same modules");
+    // SAFETY: `modules` is the vector the check was given, alive and unchanged since.
+    let kept = unsafe { pending.adopt(modules, vec![], None) };
+    let kept = kept.ok().expect("the same modules");
     (kept, paths, items)
 }
 
@@ -48,6 +47,7 @@ fn a_kept_check_reads_its_modules_after_the_check() {
     assert!(kept.items() >= items, "{} < {items}", kept.items());
     assert!(kept.definitions() > 0);
     assert!(!kept.owns_rewritten_modules());
+    assert!(kept.borrows_only_what_it_owns());
 }
 
 #[test]
@@ -64,6 +64,7 @@ fn a_kept_check_owns_the_rewritten_modules_it_borrows() {
          }",
     );
     assert!(kept.owns_rewritten_modules());
+    assert!(kept.borrows_only_what_it_owns());
     let read = kept.module_paths().len();
     assert_eq!(read, paths.len());
     assert!(kept.items() > 0);
@@ -75,7 +76,9 @@ fn a_kept_check_takes_over_only_the_modules_it_borrows() {
     let pending = pending.expect("a kept check");
     // The same program loaded again, at another address, is refused and comes back.
     let copy = load_src("function main() { console.log(1); }").modules;
-    let Err(back) = pending.adopt(copy, vec![], None) else {
+    // SAFETY: refused before anything reads through it (another vector, at another address,
+    // while the one checked is alive).
+    let Err(back) = (unsafe { pending.adopt(copy, vec![], None) }) else {
         panic!("a copy of the modules was taken over");
     };
     assert_eq!(back.input.len(), modules.len());

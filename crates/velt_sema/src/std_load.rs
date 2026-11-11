@@ -77,6 +77,14 @@ impl StdLoads {
     pub(crate) fn id(&self) -> usize {
         self.slots.as_ptr() as usize
     }
+
+    /// The address and length of each served batch's modules.
+    pub(crate) fn module_places(&self) -> Vec<(usize, usize)> {
+        (self.slots.iter())
+            .filter_map(|s| s.get())
+            .map(|b| (b.modules.as_ptr() as usize, b.modules.len()))
+            .collect()
+    }
 }
 
 impl Default for StdLoads {

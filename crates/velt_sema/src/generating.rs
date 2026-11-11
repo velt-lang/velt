@@ -65,7 +65,7 @@ pub fn check_generating_kept(
         generate,
     };
     on_sema_thread(|budget| {
-        crate::kept::request(modules);
+        let _request = crate::kept::request(modules);
         let out = check_on_current_thread(modules, root, opts, &[], Some(args), load, budget);
         (out, crate::kept::take())
     })

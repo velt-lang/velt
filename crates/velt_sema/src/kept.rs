@@ -51,10 +51,21 @@ thread_local! {
     static OFFER: RefCell<Option<PendingKept>> = const { RefCell::new(None) };
 }
 
-/// Ask the check about to run on this thread to keep itself, if it checks `modules`.
-pub(crate) fn request(modules: &[SourceModule]) {
+/// Ask the check about to run on this thread to keep itself, if it checks `modules`. The
+/// request lasts while the guard returned lives: a check that panics leaves none behind.
+pub(crate) fn request(modules: &[SourceModule]) -> Request {
     REQUEST.with(|r| r.set(Some(place(modules))));
     OFFER.with(|o| o.borrow_mut().take());
+    Request
+}
+
+/// Clears this thread's request when dropped ([`request`]).
+pub(crate) struct Request;
+
+impl Drop for Request {
+    fn drop(&mut self) {
+        REQUEST.with(|r| r.set(None));
+    }
 }
 
 /// What the check kept, and the request cleared.
@@ -91,10 +102,11 @@ pub(crate) fn offer(
     Detached(mut cx): Detached,
     input: &[SourceModule],
     sources: &[SourceModule],
-    checked: *const SourceModule,
+    checked: (*const SourceModule, usize),
     stages: Vec<Stage>,
     loads: Option<usize>,
 ) {
+    let (checked, checked_len) = checked;
     cx.loads = None;
     cx.gen.generate = None;
     let stage = match checked == input.as_ptr() {
@@ -116,6 +128,7 @@ pub(crate) fn offer(
         },
         input: place(input),
         sources: place(sources),
+        checked: (checked as usize, checked_len),
         loads,
     };
     OFFER.with(|o| *o.borrow_mut() = Some(pending));
@@ -144,6 +157,8 @@ pub struct PendingKept {
     owned: Owned,
     input: Place,
     sources: Place,
+    /// Where the rewrites' copy the context checked is (in `owned.stage`, when it is one).
+    checked: Place,
     loads: Option<usize>,
 }
 
@@ -154,9 +169,15 @@ unsafe impl Send for PendingKept {}
 impl PendingKept {
     /// The kept check, owning the modules the check was given (`input`, the driver's parsed
     /// modules or its copy of them), the generated `sources` given with them, and the std
-    /// `loads`, if they are the ones the check borrowed (the same heap addresses); otherwise they
-    /// come back.
-    pub fn adopt(
+    /// `loads`, if they are at the heap addresses the check borrowed; otherwise they come back.
+    ///
+    /// # Safety
+    ///
+    /// `input`, `sources` and `loads` must be the very values whose slices (and `StdLoads`) the
+    /// check that made this was given, alive and unchanged since: not other values that happen to
+    /// be at the same addresses, which the check can't tell apart (a vector dropped and another
+    /// allocated in its place). The kept check reads through borrows into them.
+    pub unsafe fn adopt(
         mut self,
         input: Vec<SourceModule>,
         sources: Vec<SourceModule>,
@@ -179,7 +200,10 @@ impl PendingKept {
         self.owned.input = self.owned.stage.is_none().then_some(input);
         self.owned.sources = Some(sources);
         self.owned.loads = loads;
-        Ok(KeptCheck { owned: self.owned })
+        Ok(KeptCheck {
+            owned: self.owned,
+            checked: self.checked,
+        })
     }
 }
 
@@ -194,6 +218,8 @@ pub struct Refused {
 /// finishing steps, with everything it borrows (module docs).
 pub struct KeptCheck {
     owned: Owned,
+    /// Where the rewrites' copy the context checked is, when `owned.stage` holds it.
+    checked: Place,
 }
 
 // SAFETY: as for `PendingKept`.
@@ -213,6 +239,30 @@ impl KeptCheck {
     /// owns), rather than the driver's modules themselves?
     pub fn owns_rewritten_modules(&self) -> bool {
         self.owned.stage.is_some()
+    }
+
+    /// Does every module the context reads lie in a buffer this kept check owns: the modules
+    /// it was given, the generated ones, the rewrites' copy it holds, or a std batch? A
+    /// deterministic check of what the module docs argue (a kept check that lost an owner fails
+    /// it, where reading through the dangling borrows may still seem to work).
+    pub fn borrows_only_what_it_owns(&self) -> bool {
+        let size = std::mem::size_of::<SourceModule>();
+        let mut owned: Vec<Place> = vec![];
+        owned.extend(self.owned.input.as_deref().map(place));
+        owned.extend(self.owned.sources.as_deref().map(place));
+        owned.extend(self.owned.stage.is_some().then_some(self.checked));
+        owned.extend(
+            self.owned
+                .loads
+                .as_ref()
+                .map_or(vec![], |l| l.module_places()),
+        );
+        let inside =
+            |at: usize| (owned.iter()).any(|&(start, n)| at >= start && at < start + n * size);
+        let modules = &self.cx().modules;
+        modules
+            .iter()
+            .all(|m| inside(*m as *const SourceModule as usize))
     }
 
     /// The number of the context's definitions.

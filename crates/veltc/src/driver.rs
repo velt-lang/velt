@@ -306,7 +306,12 @@ fn check_program(
         let input = h
             .input
             .unwrap_or_else(|| std::mem::take(&mut loaded.modules));
-        sess.kept = match (&hir, h.pending.adopt(input, h.sources, h.loads)) {
+        // SAFETY: `input` is the vector the check was given: `loaded.modules`, alive and unchanged
+        // since `sema_stage`, or `check_offered`'s copy, moved here unchanged; `h.sources` and
+        // `h.loads` are the generated modules and the `StdLoads` that check was given, moved here
+        // unchanged (`generate::check`, `check_offered`).
+        let adopted = unsafe { h.pending.adopt(input, h.sources, h.loads) };
+        sess.kept = match (&hir, adopted) {
             (Ok(_), Ok(kept)) => Some(kept),
             _ => None,
         };

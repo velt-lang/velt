@@ -504,7 +504,7 @@ fn check_timed(
     // A kept check (`kept`) of a check in which no generator ran.
     let none_generated = generator.as_ref().is_none_or(|g| g.kept().next().is_none());
     let kept = (kept::wanted(input) && none_generated).then(|| kept::detach(cx.clone()));
-    let checked = modules.as_ptr();
+    let checked = (modules.as_ptr(), modules.len());
     let (program, diags) = program::build_checked(cx, entry, generated);
     if let Some(kept) = kept {
         let vec = |v: Option<Vec<SourceModule>>| -> kept::Stage {
