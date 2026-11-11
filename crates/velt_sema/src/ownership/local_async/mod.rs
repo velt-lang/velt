@@ -85,8 +85,10 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
+    let mut resolved = 0;
     loop {
         p.run(cx, &g);
+        resolve_hits(cx, &g, &mut p, &mut resolved);
         types::crossing_fns(cx, &p.roots[rooted..], &mut seen, &mut fns);
         rooted = p.roots.len();
         let mut changed = false;
@@ -244,6 +246,28 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
         }
     }
     changed
+}
+
+/// The crossing locals of a generic type found since `done` (`Graph::wild`): each carries
+/// what its type is in the instantiations of its function, a crossing type for the heap rule
+/// (a closure in `Job[]` or `Box<Job>` too). The type in an instantiation that is unknown (no
+/// call gives the type arguments) stays generic, and the parameter may carry any closure.
+fn resolve_hits(cx: &mut Ctx, g: &Graph, p: &mut Propagation, done: &mut usize) {
+    while let Some(&(n, w)) = p.hits.get(*done) {
+        *done += 1;
+        let Node::Local(f, _) = g.nodes[n] else {
+            continue;
+        };
+        for t in instances(cx, g, f, g.tys[n]) {
+            if types::mentions_param(cx, t) {
+                // Its type, a type parameter, says nothing to the reader: the label names the
+                // boundary.
+                p.wild.push(w);
+            } else {
+                p.roots.push((t, w));
+            }
+        }
+    }
 }
 
 /// The function that closure `c` is written in, outside every closure (`c` itself if it is no
@@ -477,8 +501,12 @@ struct Propagation {
     shared: Vec<Option<Why>>,
     work: Vec<(usize, u8)>,
     roots: Vec<(TyId, Why)>,
-    /// Why each crossing parameter of a generic type crosses (`Graph::wild`).
+    /// Why a crossing local of a generic type, with no known instantiation, crosses: it may carry
+    /// any closure (`Graph::wild`).
     wild: Vec<Why>,
+    /// Crossing locals of a generic type (`Graph::wild`), with why, to resolve through their
+    /// function's instantiations ([`resolve_hits`]).
+    hits: Vec<(usize, Why)>,
 }
 
 impl Propagation {
@@ -490,6 +518,7 @@ impl Propagation {
             work: vec![],
             roots: g.roots.clone(),
             wild: vec![],
+            hits: vec![],
         }
     }
 
@@ -564,9 +593,8 @@ impl Propagation {
     fn root(&mut self, cx: &Ctx, g: &Graph, n: usize, f: u8, w: Why) {
         let ty = g.tys[n];
         let rooted = f == CROSSES && (g.unknown[n] || !types::fn_like(cx, ty));
-        // Its type, a type parameter, says nothing to the reader: the label names the boundary.
-        if f == CROSSES && g.wild.binary_search(&n).is_ok() {
-            self.wild.push(w);
+        if rooted && g.wild.binary_search(&n).is_ok() {
+            self.hits.push((n, w));
         }
         if rooted && !matches!(g.nodes[n], Node::Lit(_)) {
             self.roots.push((ty, w));

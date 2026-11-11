@@ -1,11 +1,32 @@
-// A generic function used as a value whose parameter, of a type parameter, it spawns: the
-// parameter stands for any function type, so a closure passed to an unknown callee crosses and
-// must not change what it captured (#2726).
+// A generic function used as a value that spawns closures of its type parameter, taken as `T`,
+// inside a `T[]`, or inside a generic class (#2726, #2741): the function's instantiation at the
+// use gives the type parameter's type, so the closures passed to it cross by the heap rule and
+// must not change what they captured. Each case has a function type of its own.
 
 type Job = () => Promise<void>;
+type Step = (n: i64) => Promise<void>;
+type Task = (s: string) => Promise<void>;
 
 function later<T extends Job>(g: T): Promise<void> {
   return spawn(g());
+}
+
+function runAll<T extends Step>(gs: T[]): void {
+  for (const g of gs) {
+    spawn(g(1));
+  }
+}
+
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+
+function runBox<T extends Task>(b: Box<T>): void {
+  const f = b.v;
+  spawn(f("x"));
 }
 
 async function main() {
@@ -14,4 +35,18 @@ async function main() {
   await l(async (): Promise<void> => {
     d += 1;
   });
+
+  let e = 0;
+  const r: (gs: Step[]) => void = runAll;
+  r([
+    async (n: i64): Promise<void> => {
+      e += n;
+    },
+  ]);
+
+  let s = "";
+  const rb: (b: Box<Task>) => void = runBox;
+  rb(new Box<Task>(async (t: string): Promise<void> => {
+    s += t;
+  }));
 }
