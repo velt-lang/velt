@@ -135,6 +135,18 @@ export async function test_rows_that_lie_are_refused() {
   }
 }
 
+// Only -1 is NULL: a value length below it is a broken row, not a NULL.
+export async function test_a_value_length_below_minus_one_is_refused() {
+  for (const len of [-2 as i64, -5 as i64, -2147483648 as i64]) {
+    const bad = msg("D", join([be16(2), be32(len), be32(1), ascii("a")]));
+    const script = [describedItem(), selected([bad]), selected([item(1, "a")])];
+    const c = await connect(fakeUrl(await serve(script)));
+    assertEq(await outcome(c), "UNKNOWN unexpected batch reply: a bad value length");
+    assertEq(await outcome(c), "1 rows");
+    c.close();
+  }
+}
+
 export async function test_a_value_of_the_wrong_width_is_reported() {
   const shortInt = row([be16(1), ascii("a")]);
   const script = [describedItem(), selected([shortInt]), selected([item(1, "a")])];

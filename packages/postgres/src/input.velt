@@ -249,6 +249,11 @@ export class Input implements RowSource {
       const len = i32At(b, p);
       p += 4;
       lens[c] = len;
+      // -1 is NULL, and no other length is below 0.
+      if (len < -1) {
+        this.broke("a bad value length");
+        return false;
+      }
       if (len >= 0) {
         if (len > to - p) {
           this.broke("a truncated row");
