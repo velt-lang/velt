@@ -37,30 +37,29 @@ use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
 use super::{BytePos, VeltStr};
 
-/// The heap epoch, bumped whenever a heap buffer that may be remembered is freed or moved: std's
-/// process static `STR_EPOCH` once `velt_main` handed it over ([`use_epoch`], #2779), else
-/// [`FALLBACK_EPOCH`] (null).
-static HEAP_EPOCH: AtomicPtr<AtomicU64> = AtomicPtr::new(std::ptr::null_mut());
-
 /// The heap epoch before the program hands over its own, and in what never does (the runtime's
 /// tests, a host).
 static FALLBACK_EPOCH: AtomicU64 = AtomicU64::new(0);
 
-/// The heap epoch's word.
+/// The heap epoch's word, bumped whenever a heap buffer that may be remembered is freed or moved:
+/// std's process static `STR_EPOCH` once `velt_main` handed it over ([`use_epoch`], #2779), else
+/// [`FALLBACK_EPOCH`].
+static HEAP_EPOCH: AtomicPtr<AtomicU64> =
+    AtomicPtr::new(&FALLBACK_EPOCH as *const AtomicU64 as *mut AtomicU64);
+
+/// The heap epoch's word. A relaxed load: the handover happens before the program starts a
+/// thread, and starting one synchronizes.
 #[inline]
 fn heap_epoch() -> &'static AtomicU64 {
-    let p = HEAP_EPOCH.load(Ordering::Acquire);
-    if p.is_null() {
-        &FALLBACK_EPOCH
-    } else {
-        // SAFETY: `use_epoch` stores only the address of the program's static, which lives as
-        // long as the process.
-        unsafe { &*p }
-    }
+    // SAFETY: the pointer is the fallback or the program's static (`use_epoch`), each of which
+    // lives as long as the process.
+    unsafe { &*HEAP_EPOCH.load(Ordering::Relaxed) }
 }
 
 /// From now on the heap epoch is the word at `word` (std's `STR_EPOCH`), raised first above every
-/// epoch the fallback gave out, so no entry remembered before is valid after.
+/// epoch the fallback gave out, so no entry remembered before is valid after. `velt_main` calls it
+/// (through `velt_rt_statics`) first thing, before the program starts a thread: no other thread
+/// bumps the fallback meanwhile.
 ///
 /// # Safety
 /// `word` is the address of a word that lives as long as the process.
@@ -98,40 +97,41 @@ thread_local! {
 }
 
 /// The address and `w1`, with the static form (`w2 == 0`) in bit 63 of `w1`, which a unit count
-/// (below 2^31) never sets; and the epoch the entry must have: the heap epoch, or 0 for a static
-/// string (never expires).
+/// (below 2^31) never sets.
 #[inline]
-fn key(s: &VeltStr) -> ([u64; 2], u64) {
-    let is_static = s.w2 == 0;
-    let epoch = if is_static {
+fn key(s: &VeltStr) -> [u64; 2] {
+    [s.w0, s.w1 | ((s.w2 == 0) as u64) << 63]
+}
+
+/// The epoch an entry of `s` must have: the heap epoch, or 0 for a static string (never expires).
+#[inline]
+fn epoch_of(s: &VeltStr) -> u64 {
+    if s.w2 == 0 {
         0
     } else {
         heap_epoch().load(Ordering::Relaxed)
-    };
-    ([s.w0, s.w1 | (is_static as u64) << 63], epoch)
+    }
 }
 
 /// The remembered translation of `s`, if any.
 #[inline]
 pub(super) fn find(s: &VeltStr) -> Option<Entry> {
-    let (key, epoch) = key(s);
-    RECENT
-        .try_with(|r| {
-            r.get()
-                .into_iter()
-                .find(|e| e.key == key && e.epoch == epoch)
-        })
+    let key = key(s);
+    // The epoch only for an entry of this string: most lookups miss on the key.
+    let found = RECENT
+        .try_with(|r| r.get().into_iter().find(|e| e.key == key))
         .ok()
-        .flatten()
+        .flatten()?;
+    (found.epoch == epoch_of(s)).then_some(found)
 }
 
 /// Remember that unit `unit` of `s` is at `pos`.
 #[inline]
 pub(super) fn remember(s: &VeltStr, unit: usize, pos: BytePos) {
-    let (key, epoch) = key(s);
+    let key = key(s);
     let entry = Entry {
         key,
-        epoch,
+        epoch: epoch_of(s),
         unit,
         pos,
     };

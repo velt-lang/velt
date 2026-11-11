@@ -658,12 +658,16 @@ instead of calling again (`velt_opt` `module_state`, #1571), so a runtime change
 
 ```c
 typedef struct {
-    uint64_t size;        // bytes of the table; the runtime reads only the fields it covers
-    void (*drop)(void);   // releases the static atomics' references, or NULL
-    _Atomic uint64_t *str_epoch; // std's STR_EPOCH, or NULL
-} VeltStatics;            // later fields are appended: an older table has a smaller size
+    uint64_t size;        // bytes of the table; the runtime reads only the slots it covers
+    uint64_t drop;        // address of: void (*)(void), releasing the static atomics' references; or 0
+    uint64_t str_epoch;   // address of: _Atomic uint64_t, std's STR_EPOCH; or 0
+} VeltStatics;            // later slots are appended: an older table has a smaller size
 void velt_rt_statics(const VeltStatics *t);
 ```
+
+Each address takes an 8-byte slot on every target: on wasm32 it is the slot's first half, the
+second half zero (as in the symbol registry's table), so the layout is the same everywhere
+(`velt_rt` `statics.rs` asserts the offsets).
 
 `velt_main` calls it first thing, before anything can free a string, with a read-only table in
 the program's data. No call when every field would be NULL.
