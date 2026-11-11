@@ -17,6 +17,8 @@
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { stdUsed } from "velt/lang/intrinsics";
+import { moduleStateUsed } from "velt/lang/intrinsics/task";
+import { schedWorkerCount } from "velt/lang/hooks/sched";
 import * as io from "velt/lang/hooks/sched_io";
 import * as tb from "velt/lang/hooks/sched_io_table";
 import * as fio from "velt/net/fd_io";
@@ -47,11 +49,13 @@ export function velt_rt_tcp_listener_close(l: u64) {
 }
 
 /**
- * One: a socket of ours is on the executor's reactor, and a task pinned to a worker would run on
- * the runtime's threads (std/lang/hooks/sched.velt `schedPinned`), TLS connections included.
+ * The executor's workers (`workerCount()`), as the runtime's: a task pinned to one runs there, and
+ * a socket of ours follows the task that uses it to its worker's reactor
+ * (std/lang/hooks/sched_io_table.velt `follow`). In a program with module state only one, for the
+ * runtime's reason (std/net/rt.velt `listenerWorkers`).
  */
 export function listenerWorkers(l: u64): u64 {
-  return 1;
+  return moduleStateUsed() ? 1 : schedWorkerCount();
 }
 
 export async function velt_rt_tcp_accept(l: u64): Promise<IoResult<u64>> {

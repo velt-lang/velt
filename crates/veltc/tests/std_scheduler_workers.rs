@@ -276,6 +276,44 @@ async function main() {
     );
 }
 
+/// A listener's connections can be spread over every worker (`TcpListener.workers()`, what
+/// http-server's `serve` spreads over): each served on a task pinned to one (it was 1 with the
+/// executor in Velt, whose sockets once stayed on worker 0).
+#[test]
+fn a_listener_spreads_its_connections_over_every_worker() {
+    if !has_threads() {
+        return;
+    }
+    same_on_both(
+        "spread",
+        r#"import { listen, connect, TcpStream } from "velt/net";
+import { currentWorker } from "velt/task";
+
+async function answer(s: TcpStream): Promise<void> {
+  await s.readString();
+  await s.write(`${currentWorker()}`);
+  s.close();
+}
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  const n = l.workers() as i64;
+  let seen = "";
+  for (let i: i64 = 0; i < n; i++) {
+    const c = await connect(`127.0.0.1:${l.port}`);
+    const served = spawn(answer(await l.accept()), { worker: i });
+    await c.write("hi");
+    seen += `${await c.readString()} `;
+    await served;
+    c.close();
+  }
+  console.log(`workers ${n}: ${seen}`);
+}
+"#,
+        "workers 4: 0 1 2 3 \n",
+    );
+}
+
 /// A connection served on one worker moves to another mid-stream (its stream handed to a task
 /// pinned there): it keeps serving, its registration follows the task to that worker's reactor
 /// (#2370), and the client runs on a third worker.
