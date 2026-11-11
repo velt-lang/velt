@@ -16,12 +16,13 @@ use cranelift_codegen::gimli::write::{Address, EhFrame, EndianVec, FrameTable, W
 use cranelift_codegen::gimli::{self, RunTimeEndian};
 use cranelift_codegen::isa::unwind::UnwindInfo;
 use cranelift_codegen::isa::TargetIsa;
+use cranelift_module::FuncId;
 use cranelift_object::object::write::{
     Object, Relocation, SectionId, StandardSection, Symbol, SymbolId, SymbolSection,
 };
 use cranelift_object::object::{
     macho, Architecture, BinaryFormat, RelocationEncoding, RelocationFlags, RelocationKind,
-    SymbolFlags, SymbolKind, SymbolScope,
+    SectionKind, SymbolFlags, SymbolKind, SymbolScope,
 };
 use cranelift_object::ObjectProduct;
 
@@ -35,13 +36,14 @@ pub(super) fn add_eh_frame(
     infos: &[FunctionUnwind],
     eh: Option<&crate::eh::EhSymbols>,
 ) -> CodegenResult<()> {
-    let lsdas: rustc_hash::FxHashMap<_, _> =
-        eh.map_or_else(Default::default, |e| e.lsdas.iter().copied().collect());
+    let lsdas = eh.map_or_else(Default::default, |e| {
+        add_lsdas(&mut product.object, &e.lsdas)
+    });
     let systemv: Vec<_> = infos
         .iter()
         .filter_map(|(id, _, info)| match info {
             Unwind::Cranelift(UnwindInfo::SystemV(info)) => {
-                let lsda = lsdas.get(id).map(|&d| product.data_symbol(d));
+                let lsda = lsdas.get(id).copied();
                 Some((product.function_symbol(*id), info, lsda))
             }
             _ => None,
@@ -129,6 +131,39 @@ pub(super) fn add_eh_frame(
             .map_err(|e| format!("codegen: eh_frame relocation: {e}"))?;
     }
     Ok(())
+}
+
+/// The LSDAs `lsdas`, one after another in one section (crate::eh `lsda_section`), each with a
+/// local symbol at its start: the symbol of each function's.
+fn add_lsdas(
+    obj: &mut Object,
+    lsdas: &[(FuncId, Vec<u8>)],
+) -> rustc_hash::FxHashMap<FuncId, SymbolId> {
+    let mut symbols = rustc_hash::FxHashMap::default();
+    if lsdas.is_empty() {
+        return symbols;
+    }
+    let (segment, name) = crate::eh::lsda_section(obj.format() == BinaryFormat::MachO);
+    let section = obj.add_section(
+        segment.as_bytes().to_vec(),
+        name.as_bytes().to_vec(),
+        SectionKind::ReadOnlyData,
+    );
+    for (id, bytes) in lsdas {
+        let offset = obj.append_section_data(section, bytes, 4);
+        let symbol = obj.add_symbol(Symbol {
+            name: format!("velt_eh_lsda_{}", id.as_u32()).into_bytes(),
+            value: offset,
+            size: bytes.len() as u64,
+            kind: SymbolKind::Data,
+            scope: SymbolScope::Compilation,
+            weak: false,
+            section: SymbolSection::Section(section),
+            flags: SymbolFlags::None,
+        });
+        symbols.insert(*id, symbol);
+    }
+    symbols
 }
 
 /// x86_64 Mach-O: each pc-relative field becomes `X86_64_RELOC_SUBTRACTOR` (a label at the
