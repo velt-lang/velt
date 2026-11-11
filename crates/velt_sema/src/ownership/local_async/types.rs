@@ -147,6 +147,15 @@ pub(super) fn mentions_param(cx: &Ctx, t: TyId) -> bool {
     found
 }
 
+/// Is `t` a type parameter, or one that may be null: a value of it may be any function?
+pub(super) fn bare_param(cx: &Ctx, t: TyId) -> bool {
+    match cx.ty.kind(t) {
+        TyKind::Param(_) => true,
+        TyKind::Option(x, _) => matches!(cx.ty.kind(*x), TyKind::Param(_)),
+        _ => false,
+    }
+}
+
 /// Can a closure of type `lit` be a value of the crossing function type `f`? Same parameter
 /// shapes and both results promises (or both not); generic parameters match anything, and
 /// what a function throws, or a promise rejects or resolves with, is not compared (a function

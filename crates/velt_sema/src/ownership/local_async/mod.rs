@@ -103,10 +103,13 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                 None => types::may_be(cx, g.tys[n], t),
             };
             // Several crossing types may match: report one in user code, the earliest.
+            // A crossing parameter of a generic type (`Graph::wild`) may carry any closure.
+            let wild = p.wild.iter().filter(|w| heap_reaches(cx, w, c)).copied();
             let why = fns
                 .iter()
                 .filter(|(t, w)| heap_reaches(cx, w, c) && matches(**t))
                 .map(|(_, w)| *w)
+                .chain(wild)
                 .min_by_key(|w| w.rank(cx));
             if let Some(w) = why {
                 p.set(n, CROSSES, Some(w));
@@ -465,6 +468,8 @@ struct Propagation {
     shared: Vec<Option<Why>>,
     work: Vec<(usize, u8)>,
     roots: Vec<(TyId, Why)>,
+    /// Why each crossing parameter of a generic type crosses (`Graph::wild`).
+    wild: Vec<Why>,
 }
 
 impl Propagation {
@@ -475,6 +480,7 @@ impl Propagation {
             shared: vec![None; g.nodes.len()],
             work: vec![],
             roots: g.roots.clone(),
+            wild: vec![],
         }
     }
 
@@ -549,6 +555,10 @@ impl Propagation {
     fn root(&mut self, cx: &Ctx, g: &Graph, n: usize, f: u8, w: Why) {
         let ty = g.tys[n];
         let rooted = f == CROSSES && (g.unknown[n] || !types::fn_like(cx, ty));
+        // Its type, a type parameter, says nothing to the reader: the label names the boundary.
+        if f == CROSSES && g.wild.binary_search(&n).is_ok() {
+            self.wild.push(w);
+        }
         if rooted && !matches!(g.nodes[n], Node::Lit(_)) {
             self.roots.push((ty, w));
         }

@@ -1,0 +1,17 @@
+// A generic function used as a value whose parameter, of a type parameter, it spawns: the
+// parameter stands for any function type, so a closure passed to an unknown callee crosses and
+// must not change what it captured (#2726).
+
+type Job = () => Promise<void>;
+
+function later<T extends Job>(g: T): Promise<void> {
+  return spawn(g());
+}
+
+async function main() {
+  let d = 0;
+  const l: (g: Job) => Promise<void> = later;
+  await l(async (): Promise<void> => {
+    d += 1;
+  });
+}

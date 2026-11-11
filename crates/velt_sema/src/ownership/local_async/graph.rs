@@ -184,6 +184,9 @@ pub(super) struct Graph {
     pub roots: Vec<(TyId, Why)>,
     /// Named functions used as values (called through function values too).
     pub fn_values: Vec<DefId>,
+    /// Parameters of unknown-origin functions whose type mentions a type parameter: one that
+    /// crosses may carry a closure of any function type (sorted).
+    pub wild: Vec<usize>,
     /// Per closure literal node: its capture locals' nodes.
     pub captures: FxHashMap<usize, Vec<usize>>,
 }
@@ -243,25 +246,51 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         let ret = w.ret_node(d);
         w.block(&f.body.block, To::Node(ret, None));
     }
-    // Closure literals and named functions used as values are called through function values,
-    // whose arguments the graph doesn't follow into their parameters: those hold values of unknown
-    // origin, of their declared types. One that crosses (a callback that spawns its argument)
-    // makes its type a crossing type, so the closures passed to such calls cross by the heap rule.
-    // A function referenced in several places is listed once.
+    // Closure literals, named functions used as values and dispatched methods (an interface's
+    // implementations, overriding and overridden methods, and methods called through a generic
+    // bound) are called
+    // where the callee is unknown, whose arguments the graph doesn't follow into their parameters:
+    // those hold values of unknown origin, of their declared types. One that crosses (a callback
+    // that spawns its argument) makes its type a crossing type, so the closures passed to such
+    // calls cross by the heap rule. A parameter whose type is a type parameter (or one that may be
+    // null) stands for any function type: when it crosses, every closure the program stores or passes to an unknown
+    // callee crosses (`Graph::wild`). A function referenced in several places is listed once.
     let mut called: Vec<DefId> = g.parent.keys().copied().collect();
     called.extend(g.fn_values.iter().copied());
+    // The methods a virtual, interface or bounded call may reach: those in a class's vtable
+    // (only methods overridden somewhere have a slot) and an interface's implementations. Any
+    // other method is called directly, where the graph follows its arguments.
+    for info in &cx.info {
+        if let DefInfo::Adt(a) = info {
+            called.extend(a.vtable.iter().copied());
+        }
+    }
+    for i in &cx.impls {
+        called.extend(i.methods.iter().copied());
+    }
     called.sort_by_key(|d| d.0);
     called.dedup();
     for c in called {
         let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
             continue;
         };
-        for p in f.params.iter().skip(f.captures.len()) {
+        // A method's first parameter is `this`, the receiver the graph doesn't track.
+        let this = usize::from(f.self_ty.is_some());
+        // std's generic callbacks (the prelude's `resolve`) are matched by their instantiations
+        // instead (`super::crossing_params`).
+        let std = cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_std);
+        for p in f.params.iter().skip(f.captures.len() + this) {
             if let Some(&n) = g.ids.get(&Node::Local(c, p.local)) {
                 g.unknown[n] = true;
+                let ty = f.body.locals[p.local.0 as usize].ty;
+                if !std && super::types::bare_param(cx, ty) {
+                    g.wild.push(n);
+                }
             }
         }
     }
+    g.wild.sort_unstable();
+    g.wild.dedup();
     g
 }
 

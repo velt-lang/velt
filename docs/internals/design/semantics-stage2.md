@@ -266,6 +266,10 @@ shared is copied there, a unique one moves):
   HTTP handler's environment;
 - a native thread's entry (`NativeCallback`), an explicit boundary of its own.
 
+Module state is not on this list yet: a closure stored in a module-level variable can be called by
+tasks on several workers with no transfer in between, and only the module lock orders those calls
+(#2737).
+
 Timers run their callback as a promise of the task that created them (std/prelude/timers.velt), and
 a promise sent to another task is driven by the task that made it (#160). A new std API that keeps
 a callback and runs it on another thread must reach it through one of these places, never through
@@ -274,8 +278,17 @@ overridden method (an unknown callee) is not a boundary: what the callee keeps, 
 heap, and sema's heap rule (ownership/local_async/types.rs) decides whether the closure crosses, by
 whether a value that crosses holds its function type. A closure literal's own parameters hold
 values of unknown origin of their declared types, so a callback that spawns its argument makes the
-closures passed to such calls cross. Where the analysis does not follow a path, the transfer at the
-boundary still copies what is shared, and the many-threads check catches the rest.
+closures passed to such calls cross; so do a dispatched method's (one in a class's vtable, an
+overriding or overridden method, or an interface's implementation, which a call through a generic
+bound reaches too). A parameter whose type is a type parameter (`T`, `T | null`) of a function
+outside std stands for any function type, so when it crosses, every closure stored or passed to an
+unknown callee crosses; std's generic callbacks, such as the prelude's `resolve`, are matched by
+their instantiations instead (`crossing_params`). Where the analysis does not follow a path, the transfer at
+the boundary still copies what is shared, and the many-threads check catches the rest, with one
+exception: a captured variable's cell. A local closure's cell crosses with the closure at a spawn
+through a function value (callee.rs `call_indirect`) without being separated, so for an assigned
+captured variable the analysis is the only guard (the debug runtime's cell-owner check reports a
+miss; a release build would lose the write).
 
 Async closures that may reach another thread (all but local ones, #208, #2726) copy what they
 capture per call (deep copies of shared captures, `validate`), since an HTTP handler runs them
