@@ -17,16 +17,25 @@ export function yieldCore(): void {
   }
 }
 
+/** The performance counter's frequency (fixed at boot), once read; 0 until then. */
+const FREQUENCY = new Atomic<u64>(0);
+
 /** The performance counter in nanoseconds (`clock`, the reactor's `MONOTONIC`, is unused here). */
 export function monotonicNs(clock: i32): u64 {
   const w = m.alloc(16);
+  let f = FREQUENCY.load("relaxed");
   // SAFETY: two 64-bit words at `w`; both calls succeed on every Windows since XP.
   unsafe {
     QueryPerformanceCounter(m.ptr(w));
-    QueryPerformanceFrequency(m.ptr(w + 8));
+    if (f === 0) {
+      QueryPerformanceFrequency(m.ptr(w + 8));
+    }
   }
   const c = m.ld(w) as u64;
-  const f = m.ld(w + 8) as u64;
+  if (f === 0) {
+    f = m.ld(w + 8) as u64;
+    FREQUENCY.store(f, "relaxed");
+  }
   m.release(w, 16);
   if (f === 0) {
     return 0;

@@ -89,6 +89,12 @@ const POOL: &str = "sched__blockingN3run";
 /// Asserts that std build `exe` has the functions of each seam in `marks` (and so went through
 /// them), and the runtime build `rt` none of them.
 fn assert_std_path(name: &str, exe: &Path, rt: Option<&Path>, marks: &[&str]) {
+    if cfg!(windows) {
+        // A PE executable names no Velt function, and UDP and child processes stay the runtime's
+        // there (`#net-udp`, `#child-rt`): the other suites look for the executor's panic
+        // locations instead.
+        return;
+    }
     let bin = std::fs::read(exe).unwrap();
     let rt_bin = rt.map(|r| std::fs::read(r).unwrap()).unwrap_or_default();
     for mark in marks {
@@ -641,7 +647,7 @@ async function main(): Promise<i32> {
 
 #[test]
 fn a_nul_in_a_childs_working_directory_fails_its_start() {
-    if !has_threads() {
+    if !posix() {
         return;
     }
     // The cwd is a C string too: with a NUL in it the start fails, as the runtime's does, where
@@ -675,7 +681,7 @@ async function main(): Promise<i32> {
 
 #[test]
 fn socket_and_name_errors_read_as_the_runtimes() {
-    if !has_threads() {
+    if !posix() {
         return;
     }
     // An IPv4 socket sending to an IPv6 address (EAFNOSUPPORT: the runtime's UNKNOWN, as Rust

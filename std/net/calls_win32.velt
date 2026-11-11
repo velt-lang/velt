@@ -15,6 +15,8 @@ import { addressLoad, addressStore } from "velt/lang/intrinsics";
 import * as m from "velt/lang/hooks/sched_mem";
 
 const INVALID: usize = 0xffffffffffffffff;
+/** `WSAEMFILE`: no more sockets. */
+const WSAEMFILE: i32 = 10024;
 /** The most one `recv` or `send` passes (its length is an `int`). */
 const MOST: usize = 0x7fffffff;
 /** `FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS`. */
@@ -26,6 +28,7 @@ const TEXT: usize = 512;
 const TEXT_HERE = new ThreadLocal<u64>(0);
 
 declare c("c") function socket$win(af: i32, kind: i32, protocol: i32): usize;
+declare c("c") function WSASetLastError$win(e: i32): void;
 declare c("c") function connect$win(s: usize, addr: Ptr<u8>, len: i32): i32;
 declare c("c") function bind$win(s: usize, addr: Ptr<u8>, len: i32): i32;
 declare c("c") function listen$win(s: usize, backlog: i32): i32;
@@ -69,7 +72,20 @@ declare c("c") function FormatMessageA(
 export function socket(family: i32, kind: i32, protocol: i32): i32 {
   // SAFETY: no precondition.
   const s = unsafe { socket$win(family, kind, protocol) };
-  return s === INVALID ? -1 : s as i32;
+  if (s === INVALID) {
+    return -1;
+  }
+  if (s > 0x7fffffff) {
+    // A handle the callers' `i32` descriptor can't hold (Winsock doesn't promise small values):
+    // refused as a full table would be, rather than truncated.
+    // SAFETY: the socket just made, not used after.
+    unsafe {
+      closesocket$win(s);
+      WSASetLastError$win(WSAEMFILE);
+    }
+    return -1;
+  }
+  return s as i32;
 }
 
 export function connect$net(fd: i32, addr: Ptr<u8>, len: u32): i32 {

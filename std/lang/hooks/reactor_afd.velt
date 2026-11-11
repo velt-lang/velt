@@ -31,6 +31,8 @@ export const EAGAIN: i32 = 10035;
 export const EINPROGRESS: i32 = 10035;
 /** `WSAEINTR`. */
 export const EINTR: i32 = 10004;
+/** `WSAEMFILE`: no more sockets (an accepted handle too large for a descriptor). */
+const WSAEMFILE: i32 = 10024;
 /** No clock id on Windows (std/lang/hooks/os_win32.velt reads the performance counter). */
 export const MONOTONIC: i32 = 0;
 /** `send`'s flags: none (no SIGPIPE on Windows). */
@@ -79,6 +81,7 @@ const AFD_NAME: readonly u16[] = [
 
 declare c("c") function WSAStartup(version: u16, data: Ptr<u8>): i32;
 declare c("c") function WSAGetLastError(): i32;
+declare c("c") function WSASetLastError(e: i32): void;
 declare c("c") function WSAIoctl(
   s: usize,
   code: u32,
@@ -339,7 +342,14 @@ export function wake(r: usize): void {
 export function accept(fd: i32, addr: usize, len: usize): i32 {
   // SAFETY: `addr` holds the `int` length at `len` (both may be NULL).
   const s = unsafe { accept$afd(fd as usize, m.ptr(addr), m.ptr(len)) };
-  if (s === INVALID) {
+  if (s > 0x7fffffff) {
+    if (s !== INVALID) {
+      // SAFETY: the socket accept returned, too large for an `i32` descriptor, not used after.
+      unsafe {
+        closesocket$afd(s);
+        WSASetLastError(WSAEMFILE);
+      }
+    }
     return -1;
   }
   if (prepare(s as i32) !== 0) {
@@ -434,11 +444,6 @@ export const SPAWN_FLAGS: i16 = 0;
 /** No pipes here: -1. */
 export function pipeCloexec(fds: usize): i32 {
   return -1;
-}
-
-/** No environment to give here: 0. */
-export function environ(): usize {
-  return 0;
 }
 
 /** Nothing to keep here. */
