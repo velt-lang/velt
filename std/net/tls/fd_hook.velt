@@ -1,0 +1,115 @@
+// velt/net (internal): how std/net/tcp_sched.velt reaches the TLS server in Velt on the reactor
+// (`VELT_SCHEDULER=std`, #2649) without loading it. `TlsServer` has the operations of
+// `ReactorTls`; here they are stubs (no TLS listener, no TLS handles). The server's own,
+// std/net/tls/fd_server.velt, are a more specific `extend` of `TlsServer`, which a program loads
+// only when it can listen with TLS: the conditional global std/prelude/global/tls_reactor.velt
+// loads it once the program has the reactor's TCP functions and its own code names `cert` (the
+// field every `listenTls` option has). A program that doesn't load it parses, checks and builds
+// none of the server, and its `listenTls` goes to the runtime's listener, as with an RSA key.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import * as tb from "velt/lang/hooks/sched_io_table";
+
+/**
+ * Is `h` the handle of a TLS stream or listener of the reactor's? The top bit set, as every
+ * socket of the reactor's, and the low 32 bits zero, which no socket handle has
+ * (std/net/tls/fd_table.velt).
+ */
+export function isTls(h: u64): bool {
+  return (h & 0xffffffff) === 0 && tb.ours(h);
+}
+
+/**
+ * The TLS operations of std/net/tcp_sched.velt on the reactor's TLS handles: the names and
+ * results of its own (failures as codes, never thrown).
+ */
+export interface ReactorTls {
+  /** A TLS listener on `addr` served in Velt; null when the runtime's must serve this key. */
+  listen(addr: string, cert: string, key: string, alpn: string): Promise<IoResult<u64> | null>;
+  listenerFd(l: u64): u64;
+  closeListener(l: u64): void;
+  accept(l: u64): Promise<IoResult<u64>>;
+  read(s: u64, max: u64): Promise<IoResult<u8[]>>;
+  readString(s: u64, max: u64): Promise<IoResult<string>>;
+  tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<i64>;
+  /** 0 when a read finds something without the socket, else the socket to wait on. */
+  readyOrFd(s: u64): IoResult<u64>;
+  fdOf(s: u64): u64;
+  readable(s: u64): Promise<IoStatus>;
+  writeLaterRange(s: u64, data: u8[], start: u64, end: u64): IoResult<u64>;
+  tryWriteRange(s: u64, data: u8[], start: u64, end: u64): u64;
+  drained(s: u64, max: u64): Promise<IoStatus>;
+  writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus>;
+  shutdown(s: u64): IoStatus;
+  alpn(s: u64): Promise<IoResult<string>>;
+  close(s: u64): void;
+}
+
+/** What has the `ReactorTls` operations: the stubs below, or the server's. */
+export struct TlsServer {}
+
+/** The types the stubs are for. */
+export interface TlsStubbed {}
+
+extend TlsServer implements TlsStubbed {}
+
+function closed(): IoStatus {
+  return { code: 16, message: "handle is closed" };
+}
+
+// No TLS server loaded: no TLS listener, so no TLS handle reaches these but `listen`.
+extend<T extends TlsStubbed> T implements ReactorTls {
+  async listen(
+    addr: string,
+    cert: string,
+    key: string,
+    alpn: string,
+  ): Promise<IoResult<u64> | null> {
+    return null;
+  }
+  listenerFd(l: u64): u64 {
+    return 0;
+  }
+  closeListener(l: u64) {}
+  async accept(l: u64): Promise<IoResult<u64>> {
+    return { code: 16, message: "handle is closed", value: 0 };
+  }
+  async read(s: u64, max: u64): Promise<IoResult<u8[]>> {
+    return { code: 16, message: "handle is closed", value: [] };
+  }
+  async readString(s: u64, max: u64): Promise<IoResult<string>> {
+    return { code: 16, message: "handle is closed", value: "" };
+  }
+  tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
+    return { code: 16, message: "handle is closed", value: 0 };
+  }
+  readyOrFd(s: u64): IoResult<u64> {
+    return { code: 16, message: "handle is closed", value: 0 };
+  }
+  fdOf(s: u64): u64 {
+    return 0;
+  }
+  async readable(s: u64): Promise<IoStatus> {
+    return closed();
+  }
+  writeLaterRange(s: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
+    return { code: 16, message: "handle is closed", value: 0 };
+  }
+  tryWriteRange(s: u64, data: u8[], start: u64, end: u64): u64 {
+    return 0;
+  }
+  async drained(s: u64, max: u64): Promise<IoStatus> {
+    return closed();
+  }
+  async writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
+    return closed();
+  }
+  shutdown(s: u64): IoStatus {
+    return closed();
+  }
+  async alpn(s: u64): Promise<IoResult<string>> {
+    return { code: 16, message: "handle is closed", value: "" };
+  }
+  close(s: u64) {}
+}
