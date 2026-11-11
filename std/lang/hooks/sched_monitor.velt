@@ -10,7 +10,9 @@
 // other), a spare worker starts and takes them (up to `SPARES`, which stay workers from then on
 // and are not counted by `workerCount()`). Pinned tasks and tasks anchored to their worker stay.
 // `VELT_RESCUE=0` turns the rescue off (for counting instructions: then nothing depends on how
-// the OS schedules the threads).
+// the OS schedules the threads). With one worker (`VELT_THREADS=1`) the rescue is off unless
+// `VELT_RESCUE=1`: then there is no monitor thread at all, and a poll that runs on holds back the
+// rest, as in Node and on `main`'s one-worker executor (sched_workers.velt `rescues`).
 //
 // The monitor also starts spawned tasks that wait behind a sibling that computes: a worker that
 // starts the first poll of a spawned task with fresh tasks behind it says so (`E_WATCH`), and

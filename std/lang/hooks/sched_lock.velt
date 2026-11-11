@@ -2,10 +2,10 @@
 // locks of its task-level objects (a latch: sched_latch.velt; a task's join slot: sched_make.velt
 // `lockJoin`), each a word of its own taken for a few stores.
 //
-// - `LK_NONE`: one worker and no stall monitor (`VELT_THREADS=1 VELT_RESCUE=0`): no other thread
-//   reaches them, no lock.
+// - `LK_NONE`: one worker and no stall monitor (`VELT_THREADS=1`, unless `VELT_RESCUE=1`): no
+//   other thread reaches them, no lock.
 // - `LK_ON`: several workers, or after the monitor rescued the only one: every operation locks.
-// - `LK_LAZY`: the only worker, which the monitor may rescue (`VELT_THREADS=1`, the default):
+// - `LK_LAZY`: the only worker, which the monitor may rescue (`VELT_THREADS=1 VELT_RESCUE=1`):
 //   nothing else runs tasks until the monitor finds worker 0 stalled and starts a spare
 //   (sched_monitor.velt `lazyDuties`), so worker 0 locks nothing until then, as its queue
 //   (sched_task.velt `E_LAZY`).

@@ -394,7 +394,10 @@ started no poll for 2 ms while awake: a turn of its reactor and timers, and its 
 of its queue to another worker that can take them (one asleep, one not stalled itself, or a
 spare that starts, up to four), each 1 ms tick while the stall lasts; with none, they stay.
 `VELT_RESCUE=0` turns the rescue off (spares included), for counting instructions with
-`VELT_THREADS=1` (`bench/nightly.sh`); other moves to sleeping workers remain. It also starts
+`VELT_THREADS=1` (`bench/nightly.sh`); other moves to sleeping workers remain. The executor in
+Velt (`VELT_SCHEDULER=std`, std/lang/hooks/sched_monitor.velt) has the same rescue with more than
+one worker, but with one it is off unless `VELT_RESCUE=1`: no monitor thread, and a poll that
+runs on holds back the rest, as in Node. It also starts
 spawned tasks that wait behind a sibling that computes (`velt/monitor.rs`): a worker that starts the
 first poll of a spawned task with tasks never polled behind it, while another started worker sleeps,
 publishes it, and once that one poll has lasted 50 µs the tasks never polled (not pinned)

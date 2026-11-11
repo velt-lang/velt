@@ -78,10 +78,18 @@ function workerCount(): usize {
   return th.cores();
 }
 
-/** Does the monitor rescue stalled workers (unless `VELT_RESCUE` is `0`)? */
-function rescues(): bool {
+/**
+ * Does the monitor rescue stalled workers, with `n` workers configured? `VELT_RESCUE` decides
+ * when it is set (`0` off, anything else on); unset, the rescue is on with more than one worker
+ * and off with one: the only worker then has Node's model (a poll that runs on holds back the
+ * rest, as on `main`'s executor in Velt) and no monitor thread, lock or lazy-mode look at all.
+ */
+function rescues(n: usize): bool {
   const v = processEnv("VELT_RESCUE");
-  return v === undefined || v.trim() !== "0";
+  if (v === undefined) {
+    return n > 1;
+  }
+  return v.trim() !== "0";
 }
 
 /**
@@ -110,8 +118,9 @@ function setUp(e: usize, w: usize, i: usize): void {
  */
 function startWorkers(e: usize): void {
   const n = workerCount();
-  const rescue = th.SUPPORTED && rescues();
-  // The monitor runs with other workers, or to rescue the only one (with a spare).
+  const rescue = th.SUPPORTED && rescues(n);
+  // The monitor runs with other workers, or to rescue the only one (with a spare: opt-in,
+  // `VELT_RESCUE=1`).
   const monitor = th.SUPPORTED && (n > 1 || rescue);
   const spares = rescue ? mon.SPARES : 0;
   const ws = m.lastingZeroed(8 * (n + spares));

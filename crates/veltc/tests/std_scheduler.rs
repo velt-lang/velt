@@ -98,9 +98,9 @@ fn same_on_both_freeing_all(name: &str, src: &str, want: &str) {
 /// The counted runs of the programs whose tasks end while other threads of the executor run.
 const STRESS_RUNS: usize = 20;
 
-/// [`same_on_both_freeing_all`], the counted run repeated `runs` times with one worker (the
-/// default stall rescue on: its monitor thread naps while the program ends) and `runs` times with
-/// four workers: a block that a thread other than `main`'s holds at the end shows now and then.
+/// [`same_on_both_freeing_all`], the counted run repeated (when `runs` is over 1) `runs` times
+/// with one worker (the stall rescue on, `VELT_RESCUE=1`: its monitor thread naps while the
+/// program ends) and `runs` times with four workers: a block that a thread other than `main`'s holds at the end shows now and then.
 fn same_on_both_freeing_all_runs(name: &str, src: &str, want: &str, runs: usize) {
     if !std_builds_here() {
         return;
@@ -111,17 +111,24 @@ fn same_on_both_freeing_all_runs(name: &str, src: &str, want: &str, runs: usize)
         "{name}_std{}",
         if cfg!(windows) { ".exe" } else { "" }
     ));
-    let settings: &[&str] = if runs > 1 { &["1", "4"] } else { &["1"] };
-    for threads in settings {
+    // (workers, `VELT_RESCUE`): one counted run takes the default (no monitor with one worker).
+    let settings: &[(&str, Option<&str>)] = if runs > 1 {
+        &[("1", Some("1")), ("4", None)]
+    } else {
+        &[("1", None)]
+    };
+    for (threads, rescue) in settings {
         for run in 0..runs {
-            let o = command(&exe)
-                .env("VELT_THREADS", threads)
+            let mut cmd = command(&exe);
+            cmd.env("VELT_THREADS", threads)
                 .env("VELT_RT_DEBUG_ALLOC", "1")
                 .env("VELT_RC_STATS", "1")
                 .env_remove("VELT_SCHEDULER")
-                .env_remove("VELT_RESCUE")
-                .output()
-                .unwrap();
+                .env_remove("VELT_RESCUE");
+            if let Some(r) = rescue {
+                cmd.env("VELT_RESCUE", r);
+            }
+            let o = cmd.output().unwrap();
             let stderr = String::from_utf8_lossy(&o.stderr);
             assert!(o.status.success(), "{name} (counted): {stderr}");
             let Some(stats) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
@@ -694,3 +701,64 @@ console.log(\"never\");
         13,
     );
 }
+
+/// One worker (`VELT_THREADS=1`) has no stall rescue unless `VELT_RESCUE=1` (Node's model, as on
+/// `main`'s one-worker executor): `main` spawns 100k tasks, computes for 100 ms in the same poll,
+/// then awaits them all in one long `Promise.all`. No spare starts, so every task runs on worker
+/// 0's thread (`off worker 0 0`; with the rescue on by default, the monitor moved some of the
+/// first 64 spawns to a spare during the first poll). With `VELT_RESCUE=1` they do move, which
+/// shows the program tells the two apart.
+#[test]
+fn a_long_poll_on_the_only_worker_starts_no_spare() {
+    if !std_builds_here() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let (out, _) = build_and_run(dir.path(), "no_spare", NO_SPARE, true, 0);
+    assert_eq!(out, "sum 299995, off worker 0 0\n", "the default");
+    if !cfg!(any(target_os = "macos", target_os = "linux")) {
+        return;
+    }
+    let exe = dir.path().join("no_spare_std");
+    let o = command(&exe)
+        .env("VELT_THREADS", "1")
+        .env("VELT_RESCUE", "1")
+        .env_remove("VELT_SCHEDULER")
+        .output()
+        .unwrap();
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "VELT_RESCUE=1: {out}");
+    assert!(
+        out.starts_with("sum 299995, off worker 0 ") && !out.ends_with(" 0\n"),
+        "VELT_RESCUE=1 moves tasks to a spare: {out}"
+    );
+}
+
+/// The program of [`a_long_poll_on_the_only_worker_starts_no_spare`].
+const NO_SPARE: &str = r#"// 1 on worker 0's thread (`main` sets it): a spare is a thread of its own.
+const ON_MAIN = new ThreadLocal<i64>(0);
+const OFF = new Atomic<i64>(0);
+
+async function work(i: i64): Promise<i64> {
+  if (ON_MAIN.get() === 0) {
+    OFF.add(1);
+  }
+  return i % 7;
+}
+
+async function main() {
+  ON_MAIN.set(1);
+  const hs: Promise<i64>[] = [];
+  for (let i = 0; i < 100000; i++) {
+    hs.push(spawn(work(i)));
+  }
+  const s = Date.now();
+  while (Date.now() - s < 100) {}
+  let sum: i64 = 0;
+  for (const v of await Promise.all(hs)) {
+    sum += v;
+  }
+  console.log(`sum ${sum}, off worker 0 ${OFF.load()}`);
+}
+"#;

@@ -819,7 +819,7 @@ async function main() {
 }
 "#;
 
-/// One worker with the stall rescue (`VELT_THREADS=1`, the default): the rescue of a stalled
+/// One worker with the stall rescue (`VELT_THREADS=1 VELT_RESCUE=1`): the rescue of a stalled
 /// poll is taken back once the spares are idle (std/lang/hooks/sched_relax.velt), and given again
 /// at the next stall. `main` computes until the reader it spawned has started, which only a spare
 /// can run; the reader then waits on its socket (registered with the spare's reactor) while `main`
@@ -834,7 +834,14 @@ fn the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle() {
     }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let (code, out) = build_and_run(dir.path(), "relax", RELAX, true, "1");
+    let (code, out) = build_and_run_with(
+        dir.path(),
+        "relax",
+        RELAX,
+        true,
+        "1",
+        &[("VELT_RESCUE", "1")],
+    );
     assert_eq!(
         (code, out.as_str()),
         (
@@ -885,7 +892,7 @@ async function main() {
 }
 "#;
 
-/// One worker with the stall rescue (`VELT_THREADS=1`, the default rescue): `main` spawns 200k
+/// One worker with the stall rescue (`VELT_THREADS=1 VELT_RESCUE=1`): `main` spawns 200k
 /// tasks, then computes in the same poll until a spare has run some of them. The monitor moves
 /// half of what the poll spawned at each tick and puts the newer half back; when the poll ended
 /// while it did, worker 0 had taken its shared mode on and joined that stack already, so the half
@@ -904,7 +911,14 @@ fn tasks_put_back_while_worker_0_leaves_its_lazy_mode_still_run() {
     }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let (code, out) = build_and_run(dir.path(), "put_back", PUT_BACK, true, "1");
+    let (code, out) = build_and_run_with(
+        dir.path(),
+        "put_back",
+        PUT_BACK,
+        true,
+        "1",
+        &[("VELT_RESCUE", "1")],
+    );
     assert_eq!((code, out.as_str()), (0, "sum 599994\n"), "run 0");
     let exe = dir.path().join(format!(
         "put_back_std{}",
@@ -914,7 +928,7 @@ fn tasks_put_back_while_worker_0_leaves_its_lazy_mode_still_run() {
         let o = command(&exe)
             .env("VELT_THREADS", "1")
             .env_remove("VELT_SCHEDULER")
-            .env_remove("VELT_RESCUE")
+            .env("VELT_RESCUE", "1")
             .output()
             .unwrap();
         let out = String::from_utf8_lossy(&o.stdout);

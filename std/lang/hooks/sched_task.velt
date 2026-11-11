@@ -150,10 +150,10 @@ export const E_QSLOW: usize = 616;
 /** Times another thread woke this worker from its park (sched_end.velt `quiet`). */
 export const E_UNPARKS: usize = 624;
 /**
- * Worker 0's, when it is the only worker and the monitor may rescue it (`VELT_THREADS=1`, rescue
- * on): its queue stays its own (`E_MODE` 0, no lock, nothing counted or published per poll)
- * until the monitor finds it stalled once (`LAZY_WATCH`), then the monitor makes it shared and
- * moves tasks while the stalled poll runs, until the worker takes the shared mode on
+ * Worker 0's, when it is the only worker and the monitor may rescue it (`VELT_THREADS=1
+ * VELT_RESCUE=1`): its queue stays its own (`E_MODE` 0, no lock, nothing counted or published
+ * per poll) until the monitor finds it stalled once (`LAZY_WATCH`), then the monitor makes it
+ * shared and moves tasks while the stalled poll runs, until the worker takes the shared mode on
  * (`LAZY_TAKING`: sched_monitor.velt `lazyDuties`, sched_loop.velt `adopt`); 0 otherwise. The
  * monitor's last look at it: the I/O tick and the task it saw running, and the monitor's tick.
  */
@@ -235,9 +235,9 @@ export const RELAX_DOING: u32 = 2;
 /** Worker 0's: the monitor's ticks so far with the spares idle (sched_relax.velt). */
 export const E_CALM: usize = 792;
 /**
- * 1 on the only worker of an executor with no monitor (`VELT_THREADS=1 VELT_RESCUE=0`), set before
- * tasks run and never changed: no other thread runs tasks, so every task is homed on it and its
- * queues need no lock or count (sched_wake.velt `schedule`'s first path).
+ * 1 on the only worker of an executor with no monitor (`VELT_THREADS=1`, unless `VELT_RESCUE=1`),
+ * set before tasks run and never changed: no other thread runs tasks, so every task is homed on
+ * it and its queues need no lock or count (sched_wake.velt `schedule`'s first path).
  */
 export const E_SOLO: usize = 800;
 /**
