@@ -211,3 +211,118 @@ heaps), so two earlier rules with a fixed 4 MiB slack failed 3 of 4 runs (ending
 MiB). 300k-request runs level off: 0 middleware at 13.1 MiB, 3 middleware at
 20.4 MiB (4 workers) and 15.4 MiB (1 worker). There is no per-request leak like #2719's (40 KB
 per request and hop would be 12 GB here).
+
+## 2026-11-11 (later): connections on every worker (#2744)
+
+**Why the rows above are flat.** Since 2026-11-01 (836e3c2ec, the std layout pass), `serveHttp`'s
+accept loop called `connection(...)` and handed the started promise to `scope.spawn`. A promise
+that has already started keeps running on the task that started it (the `spawn` lowering makes a
+new task only from a direct call). So every connection ran as a promise of the accept loop's one
+task, on one worker at a time, whatever the scheduler. A per-worker count of task polls showed
+it: about 600 task polls a second across 4 workers while serving 49k requests a second.
+
+**The change.** When `TcpListener.workers()` is above 1, each connection is
+`spawn(connection(...), { worker })`: a task of its own, pinned to the workers in turn.
+`workers()` is 1 in three cases, and then the connections stay promises of the accept loop's
+task, exactly as before:
+- one configured worker;
+- `VELT_SCHEDULER=std`;
+- a program with module state (`moduleStateUsed()`, a compile-time constant from lowering).
+
+Module state is excluded because, by rt_abi.md "Module state", a task that touched module state
+takes the process-wide module lock at the start of every later poll: it may still hold objects
+reached from module state, whose reference counts are not atomic. A connection task runs the
+user's handler, which can keep such an object across an `await`, so taking the lock lazily
+would not be sound for it. Spread over workers, those polls run one at a time, and each lock
+handoff between workers (a `parking_lot` park and unpark) is added to every request. That cost
+the module-state handlers 19-35% in the previous round. This exclusion stays until #2726 step 3
+replaces the module lock. One task is also cheaper per request than a task per connection: a
+connection whose next request arrived while the others ran reads it without arming a wait.
+
+**Method.** Same machine and setup as above: server on CPUs 0,1,6,7, oha on 2-5, 5 s at 256
+connections, best of 3 interleaved rounds, "load" is the 1-minute average before each round. A
+niced build ran on CPUs 8-11 during the 4- and 8-worker rounds. Base and head use the same
+compiler and runtime (main `23ce34f4c` plus this change's compiler part), built from one tree
+with only the changed std and package files swapped. `techempower/server.velt` has no module
+state; `modlock/server.velt` has one (its `module` mode's `cache`), so both its modes take the
+one-task path, as does the skewed-load row, which runs on it.
+
+| workers | route | base req/s | head req/s | load |
+|---|---|---|---|---|
+| 1 | /plaintext | 60,633 | 58,177 | 2.4-6.1 |
+| 1 | /json | 58,972 | 56,051 | 2.4-6.1 |
+| 1 | module | 27,428 | 27,824 | 2.4-6.1 |
+| 1 | param | 27,161 | 26,670 | 2.4-6.1 |
+| 4 | /plaintext | 60,825 | 113,928 | 6.9-10.3 |
+| 4 | /json | 57,631 | 116,068 | 6.9-10.3 |
+| 4 | module | 27,291 | 26,395 | 6.9-10.3 |
+| 4 | param | 27,060 | 25,864 | 6.9-10.3 |
+| 8 | /plaintext | 57,774 | 121,615 | 10.4-10.8 |
+| 8 | /json | 55,566 | 117,165 | 10.4-10.8 |
+| 8 | module | 25,782 | 30,592 | 10.4-10.8 |
+| 8 | param | 24,722 | 31,355 | 10.4-10.8 |
+
+At one worker, and for `modlock` at every worker count, base and head run the same path; the
+differences there are run-to-run noise. The skewed-load row (on `modlock`, so one task) is the
+same in both: at 4 workers /light 10,520 vs 11,917 req/s, at 8 workers 9,034 vs 8,739. In the
+previous round, without the module-state exclusion, the same row gave the light connections
+4.4x the rate.
+
+Instructions per request (cachegrind, one worker, 2,000 and 12,000 requests on 8 connections):
+
+| | /plaintext | /json | module | param |
+|---|---|---|---|---|
+| base, default rescue | 15,439 | 16,001 | 106,083 | 100,675 |
+| head, default rescue | 15,186 | 16,770 | 105,907 | 108,132 |
+| base, `VELT_RESCUE=0` | 15,008 | 15,773 | 105,742 | 100,395 |
+| head, `VELT_RESCUE=0` | 14,992 | 15,759 | 105,648 | 107,877 |
+
+- **/plaintext and /json scale** (113-122k against 58-61k req/s at 4 and 8 workers). Per request
+  at one worker they cost the same as base, since the path is the same.
+
+**Round 3: the spread path is not built in a program with module state.** The table above, from
+the second round, has `param` 7.5% above base, all at compile time. velt_opt's inliner has one
+growth budget for the whole program (the program may double in size, plus 2,000), spent
+bottom-up over the call graph. The spawn branch's second instance of the connection state
+machine (about 27 functions) used it up before the handler's loop got its turn, so `Map.get` and
+`roundsFor` stayed calls in the handler. The per-function diff showed `main` closure#2 at 39,065
+-> 8,112 instructions, with `Map.get` 0 -> 21,000 and `Map.lookup` 0 -> 17,422. Raising
+`BUDGET_SLACK` in an experiment brought the inlining back.
+
+`moduleStateUsed()` is now a condition lowering knows (`const_cond`, and as the whole result of
+a std function without parameters, like a CPU check). `serveHttp` branches on velt/net's
+`spreadsConnections()` (`!moduleStateUsed()`). In a program with module state only
+`acceptAll`, today's accept loop unchanged, is built, and `acceptSpread` does not exist:
+`modlock/server.velt` lowers to 1,054 functions against base's 1,055, with `Map.get` and
+`roundsFor` inlined into the handler again.
+
+Same method, base vs head (main `23ce34f4c`). Instructions per request:
+
+| | /plaintext | /json | module | param |
+|---|---|---|---|---|
+| base, `VELT_RESCUE=0` | 16,482 | 17,339 | 107,946 | 101,901 |
+| head, `VELT_RESCUE=0` | 16,483 | 17,387 | 107,718 | 102,243 |
+| base, default rescue | 16,605 | 17,391 | 107,638 | 102,428 |
+| head, default rescue | 16,793 | 17,130 | 107,345 | 102,493 |
+
+With `VELT_RESCUE=0` every route is within 0.35% of base (the spare workers of the default rescue
+add up to 1.5% either way). The counts are about 10% higher on both sides than in the rounds
+above: this round's builds ran next to the gate and other builds, on another main.
+
+req/s, best of 3 interleaved. The machine was loaded (1-minute load 28-34, other builds on every
+CPU), so every number here is about half of the rounds above. Compare base with head within a
+row only.
+
+| workers | route | base req/s | head req/s |
+|---|---|---|---|
+| 4 | /plaintext | 31,582 | 57,541 |
+| 4 | /json | 31,432 | 52,882 |
+| 4 | module | 15,915 | 16,183 |
+| 4 | param | 14,606 | 14,550 |
+| 8 | /plaintext | 33,733 | 52,321 |
+| 8 | /json | 33,165 | 56,825 |
+| 8 | module | 16,442 | 15,221 |
+| 8 | param | 14,901 | 13,946 |
+
+The stateless routes keep the spread (1.6-1.8x). `module` and `param` run the same code as base,
+and their differences are the load's noise.

@@ -1,0 +1,45 @@
+// A closure of a type parameter's type read out of an array or a field and spawned at once, with
+// no local in between, crosses like a local of that type would (#2741): the generic function's
+// instantiation at its use as a function value gives the type, so the closures passed to it
+// cross by the heap rule and must not change what they captured. Each case has a function type
+// of its own.
+
+type Job = () => Promise<void>;
+type Step = (n: i64) => Promise<void>;
+
+async function first<T extends Job>(gs: T[]): Promise<void> {
+  await spawn(gs[0]());
+}
+
+class Pool<T extends Step> {
+  items: T[];
+  constructor(items: T[]) {
+    this.items = items;
+  }
+  async runFirst(): Promise<void> {
+    await spawn(this.items[0](1));
+  }
+}
+
+function make<T extends Step>(items: T[]): Pool<T> {
+  return new Pool<T>(items);
+}
+
+async function main() {
+  let n = 0;
+  const f: (gs: Job[]) => Promise<void> = first;
+  await f([
+    async (): Promise<void> => {
+      n += 1;
+    },
+  ]);
+
+  let m = 0;
+  const mk: (items: Step[]) => Pool<Step> = make;
+  const p = mk([
+    async (k: i64): Promise<void> => {
+      m += k;
+    },
+  ]);
+  await p.runFirst();
+}

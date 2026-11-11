@@ -167,6 +167,13 @@ pub enum Intrinsic {
     /// objects, closures with a heap environment)? A bit copy of a `T` that does not is an
     /// independent value. The value itself is not evaluated.
     NeedsDrop,
+    /// std only (std/lang/intrinsics/task.velt): `moduleStateUsed() -> bool`, a constant:
+    /// does the program have module state (`Program::module_state`) or functions that may have
+    /// properties through `any` (which are module state too), so that its tasks may take the
+    /// process-wide module lock (rt_abi.md "Module state")? velt/net's `TcpListener.workers()`
+    /// spreads a server's connections over the workers only without it (#2744), until #2726
+    /// replaces the module lock.
+    ModuleStateUsed,
     /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a
     /// constant: can a value of type `T` that a call borrows be reached through another
     /// reference while the call runs (lowering counts the type, or borrows values of it inside

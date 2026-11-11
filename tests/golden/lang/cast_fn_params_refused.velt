@@ -1,0 +1,14 @@
+// A function value asserted to a function type with other parameter types: tsc allows it (the
+// types overlap), but the function would be called with values of another type. Refused, with
+// the wrapper that converts each argument.
+type Policy<P> = (p: P | null, op: string) => boolean;
+
+function run(p: Policy<unknown>): boolean {
+    return p(null, "x");
+}
+
+function app<P>(pol: Policy<P>): boolean {
+    return run(pol as Policy<unknown>);
+}
+
+console.log(app<{ id: number }>((p, op) => p === null && op === "x"));

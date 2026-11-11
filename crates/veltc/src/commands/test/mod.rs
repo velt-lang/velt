@@ -145,7 +145,9 @@ pub fn run_all(path: Option<&Path>, opts: &TestOptions) -> Result<Outcome, Strin
     // What discovery listed, for the member stamp: a new test file is a change.
     let (files, seen) = vpm::probe::record(|| discover::find_test_files(&search));
     let files = files?;
-    let listed: Vec<(PathBuf, String)> = seen.listed.into_iter().collect();
+    let listed: Vec<(PathBuf, String)> = (seen.listed.into_iter())
+        .map(|(dir, hash)| (PathBuf::from(dir), hash))
+        .collect();
     let mut watched = files.clone();
     if project.is_some() {
         watched.push(base.join(vpm::manifest::MANIFEST_FILE));

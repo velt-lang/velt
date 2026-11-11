@@ -1,0 +1,1 @@
+`InternalCtx` adds `__name` to `Ctx`: an object keeps the layout it was made with
