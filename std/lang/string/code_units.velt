@@ -4,7 +4,7 @@
 // Rare: lone surrogates come only from slicing between the halves of a pair,
 // `String.fromCharCode` and JSON escapes.
 
-import { arrayWithCapacity, noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 /** Does `needle` (`m` bytes) start with a lone low surrogate or end with a lone high one? Its
  * WTF-8 is then `ED B0..BF ..` at the start or `ED A0..AF ..` at the end. */
@@ -36,38 +36,54 @@ export function codePoint3(s: string, i: usize): u32 {
     ((strByteAt(s, (i + 2) as u64) & 0x3f) as u32);
 }
 
-/** The code units of `s` (canonical WTF-8: a pair is one 4-byte sequence). */
-function codeUnits(s: string): u16[] {
-  const n = strByteLen(s);
-  const out: u16[] = arrayWithCapacity(strLen(s));
-  let i: usize = 0;
-  while (i < n) {
-    const b = strByteAt(s, i as u64);
-    if (b < 0x80) {
-      out.push(b as u16);
-      i += 1;
-    } else if (b < 0xe0) {
-      out.push(((b & 0x1f) as u16) << 6 | ((strByteAt(s, (i + 1) as u64) & 0x3f) as u16));
-      i += 2;
-    } else if (b < 0xf0) {
-      out.push(codePoint3(s, i) as u16);
-      i += 3;
-    } else {
-      const c = codePoint4(s, i) - 0x10000;
-      out.push((0xd800 + (c >> 10)) as u16);
-      out.push((0xdc00 + (c & 0x3ff)) as u16);
-      i += 4;
-    }
+// A position in a string's code units, as a byte offset: `byte * 2`, plus 1 for the low half of
+// the pair (one 4-byte sequence) at `byte`. The search walks both strings this way, so it
+// allocates nothing (a search that only reads keeps borrowed copies, velt_opt
+// `borrowed_copies/read_only.rs`).
+
+/** The code unit of `s` at position `p` (see above). */
+function unitAt(s: string, p: u64): u32 {
+  const i = (p >> 1) as usize;
+  const b = strByteAt(s, i as u64);
+  if (b < 0x80) {
+    return b as u32;
   }
-  return out;
+  if (b < 0xe0) {
+    return ((b & 0x1f) as u32) << 6 | ((strByteAt(s, (i + 1) as u64) & 0x3f) as u32);
+  }
+  if (b < 0xf0) {
+    return codePoint3(s, i);
+  }
+  const c = codePoint4(s, i) - 0x10000;
+  return (p & 1) == 0 ? 0xd800 + (c >> 10) : 0xdc00 + (c & 0x3ff);
 }
 
-/** Do units `at..at + p.length` of `h` equal `p`? */
-function unitsAt(h: u16[], p: u16[], at: usize): bool {
-  for (let k: usize = 0; k < p.length; k++) {
-    if (h[at + k] != p[k]) {
+/** The position after the code unit at `p` of `s`. */
+function nextUnit(s: string, p: u64): u64 {
+  const i = p >> 1;
+  const b = strByteAt(s, i);
+  if (b < 0x80) {
+    return (i + 1) << 1;
+  }
+  if (b < 0xe0) {
+    return (i + 2) << 1;
+  }
+  if (b < 0xf0) {
+    return (i + 3) << 1;
+  }
+  return (p & 1) == 0 ? p | 1 : (i + 4) << 1;
+}
+
+/** Do the code units of `needle` (`m` bytes) appear in `s` (`n` bytes) from position `p`? */
+function unitsMatch(s: string, n: usize, needle: string, m: usize, p: u64): bool {
+  let h = p;
+  let q: u64 = 0;
+  while ((q >> 1) < (m as u64)) {
+    if ((h >> 1) >= (n as u64) || unitAt(s, h) != unitAt(needle, q)) {
       return false;
     }
+    h = nextUnit(s, h);
+    q = nextUnit(needle, q);
   }
   return true;
 }
@@ -75,12 +91,16 @@ function unitsAt(h: u16[], p: u16[], at: usize): bool {
 /** `indexOf` of a half needle: the first match at or after unit `from`. */
 @noInline
 export function unitsFind(s: string, needle: string, from: usize): i64 {
-  const h = codeUnits(s);
-  const p = codeUnits(needle);
-  for (let i = from; i + p.length <= h.length; i++) {
-    if (unitsAt(h, p, i)) {
-      return i as i64;
+  const n = strByteLen(s);
+  const m = strByteLen(needle);
+  let p: u64 = 0;
+  let unit: usize = 0;
+  while ((p >> 1) < (n as u64)) {
+    if (unit >= from && unitsMatch(s, n, needle, m, p)) {
+      return unit as i64;
     }
+    p = nextUnit(s, p);
+    unit++;
   }
   return -1;
 }
@@ -88,14 +108,17 @@ export function unitsFind(s: string, needle: string, from: usize): i64 {
 /** `lastIndexOf` of a half needle: the last match starting at or before unit `last`. */
 @noInline
 export function unitsRfind(s: string, needle: string, last: usize): i64 {
-  const h = codeUnits(s);
-  const p = codeUnits(needle);
-  let i = last + 1;
-  while (i > 0) {
-    i--;
-    if (unitsAt(h, p, i)) {
-      return i as i64;
+  const n = strByteLen(s);
+  const m = strByteLen(needle);
+  let found: i64 = -1;
+  let p: u64 = 0;
+  let unit: usize = 0;
+  while ((p >> 1) < (n as u64) && unit <= last) {
+    if (unitsMatch(s, n, needle, m, p)) {
+      found = unit as i64;
     }
+    p = nextUnit(s, p);
+    unit++;
   }
-  return -1;
+  return found;
 }

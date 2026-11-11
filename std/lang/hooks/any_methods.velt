@@ -100,7 +100,12 @@ export function anyStr_indexOf(s: string, args: any[]): any {
 }
 
 export function anyStr_lastIndexOf(s: string, args: any[]): any {
-  return s.lastIndexOf(anyStrArg(args, 0), anyIntArg(args, 1, 9223372036854775807)) as number;
+  // JS reads a `NaN` position as +∞ here (where the other methods read it as 0), as it does an
+  // omitted one.
+  const from = anyArg(args, 1);
+  const n: number = from === undefined ? NaN : +from;
+  const at = n !== n ? 9223372036854775807 : anyIntArg(args, 1, 9223372036854775807);
+  return s.lastIndexOf(anyStrArg(args, 0), at) as number;
 }
 
 export function anyStr_includes(s: string, args: any[]): any {
