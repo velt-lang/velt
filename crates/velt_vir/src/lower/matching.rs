@@ -314,12 +314,11 @@ impl FnLower<'_, '_> {
 impl super::Cx<'_> {
     /// Is `t` (or its payload) a union with a view variant? A shape question (shape/key.rs).
     pub(super) fn holds_union_view(&self, t: TyId) -> bool {
-        let t = self.ph_rep(t);
-        let t = match self.types.kind(t) {
-            hir::TyKind::Option(p, _) => self.ph_rep(*p),
+        let t = match self.rep_kind(t) {
+            hir::TyKind::Option(p, _) => *p,
             _ => t,
         };
-        let hir::TyKind::Adt(d, _) = self.types.kind(t) else {
+        let hir::TyKind::Adt(d, _) = self.rep_kind(t) else {
             return false;
         };
         match self.hir.def(*d) {

@@ -663,7 +663,7 @@ impl<'h> Cx<'h> {
     }
 
     pub(super) fn is_never(&self, t: TyId) -> bool {
-        matches!(self.types.kind(self.ph_rep(t)), TyKind::Never)
+        matches!(self.rep_kind(t), TyKind::Never)
     }
 
     /// A concrete error type, `None` when nothing can be thrown: `Never`, or a union (built by

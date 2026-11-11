@@ -139,6 +139,10 @@ pub(super) struct Shapes {
     dicts: FxHashMap<(FuncId, Vec<TyId>), StaticId>,
     /// Memo of `mentions_ph`, by type index: 0 not known yet, 1 no, 2 yes.
     mentions: std::cell::RefCell<Vec<u8>>,
+    /// Memo of `map_shares_at`.
+    map_decided: FxHashMap<Vec<TyId>, bool>,
+    /// Memo of `answers` for types without placeholders (key.rs).
+    answers: FxHashMap<TyId, key::Answers>,
     /// The prelude `Map` class, once looked up (`map_agrees`).
     map_class: Option<Option<DefId>>,
     /// The types built from placeholders that shape questions were asked about (key.rs), with
@@ -252,9 +256,6 @@ impl Cx<'_> {
         if let Some(&p) = self.shapes.ph_of.get(&(key.clone(), pos)) {
             let i = self.ph_index(p);
             if !self.shapes.ph[i].members.contains(&t) {
-                if std::env::var_os("VELT_SHAPES_TRACE").is_some() {
-                    eprintln!("join {} at {pos}", self.type_key(t));
-                }
                 self.shapes.ph[i].members.push(t);
             }
             return Some(p);
@@ -312,9 +313,7 @@ impl Cx<'_> {
         {
             return None;
         }
-        if self.map_family(def)
-            && !(targs.iter().all(|&t| self.map_shareable(t)) && self.map_agrees(targs))
-        {
+        if self.map_family(def) && !self.map_shares_at(targs) {
             return None;
         }
         let mut phs = Vec::with_capacity(targs.len());
@@ -341,6 +340,17 @@ impl Cx<'_> {
             velt_sema::hir::Def::Fn(f) => SHARED.contains(&f.name.as_str()) || self.map_family(def),
             _ => false,
         }
+    }
+
+    /// Whether the `Map` family shares at `targs` (memoized for the pass: once a pair is
+    /// decided, the representatives it was compared with stay).
+    fn map_shares_at(&mut self, targs: &[TyId]) -> bool {
+        if let Some(&b) = self.shapes.map_decided.get(targs) {
+            return b;
+        }
+        let b = targs.iter().all(|&t| self.map_shareable(t)) && self.map_agrees(targs);
+        self.shapes.map_decided.insert(targs.to_vec(), b);
+        b
     }
 
     /// Does `Map<targs>` give the answers of the `Map` of the representatives its type
@@ -370,11 +380,7 @@ impl Cx<'_> {
         if self.proxiable(have) {
             return false;
         }
-        let (a, b) = (self.answers(have), self.answers(want));
-        if std::env::var_os("VELT_SHAPES_TRACE").is_some() {
-            eprintln!("map_agrees {} vs {}: {}", self.type_key(have), self.type_key(want), a == b);
-        }
-        a == b
+        self.answers(have) == self.answers(want)
     }
 
     /// The first placeholder position of `def`'s family: the `Map` family's shapes are its own

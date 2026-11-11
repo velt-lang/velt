@@ -77,7 +77,7 @@ impl Cx<'_> {
         };
         let any = self.hir.impls[i as usize].iface;
         // A placeholder (shape/) stands for types that are not dynamic (`shape_key`).
-        match self.types.kind(self.ph_rep(t)) {
+        match self.rep_kind(t) {
             TyKind::Dyn(d, args) if args.is_empty() => {
                 *d == any
                     || [self.hir.unknown, self.hir.object, self.hir.function].contains(&Some(*d))

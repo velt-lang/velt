@@ -89,6 +89,13 @@ impl Cx<'_> {
         self.rep_of(t).unwrap_or(t)
     }
 
+    /// The kind of `t`'s representative ([`ph_rep`](Self::ph_rep)): the kind a shape question
+    /// may depend on, which the key holds the answers for.
+    #[inline]
+    pub(in crate::lower) fn rep_kind(&self, t: TyId) -> &TyKind {
+        self.types.kind(self.ph_rep(t))
+    }
+
     /// [`ph_rep`](Self::ph_rep) without interning: `None` when a part of the result was never
     /// interned (then no counted-types set holds it either).
     fn rep_of(&self, t: TyId) -> Option<TyId> {
@@ -177,6 +184,22 @@ impl Cx<'_> {
     /// The answers to the shape questions about `t`: the yes/no queries lowering's inline code
     /// depends on, and which counted-types sets hold it.
     pub(super) fn answers(&mut self, t: TyId) -> Answers {
+        // The sets are this pass's input, fixed for the pass (a new `Shapes` per pass).
+        let concrete = !self.mentions_ph(t);
+        if concrete {
+            if let Some(a) = self.shapes.answers.get(&t) {
+                return a.clone();
+            }
+        }
+        let a = self.answers_now(t);
+        if concrete {
+            self.shapes.answers.insert(t, a.clone());
+        }
+        a
+    }
+
+    /// [`answers`](Self::answers) without the memo.
+    fn answers_now(&mut self, t: TyId) -> Answers {
         let mut bits = self.bits(t);
         let sets = self
             .boxing
@@ -236,10 +259,10 @@ impl Cx<'_> {
             // The compile-time type tests std's `Map` code folds (`const_cond`).
             self.object_only(t),
             // `holds_dynamic_or_class` is this or `is_class`, both rows.
-            self.holds_dynamic(t),
+            self.key_holds_dynamic(t, &mut FxHashSet::default()),
             self.holds_union_view(t),
             !self.in_place_parts(self.ph_rep(t)).is_empty(),
-            self.shares_as_counted(t),
+            self.key_shares_as_counted(t, &mut FxHashSet::default()),
         ];
         answers
             .iter()
@@ -378,5 +401,43 @@ impl Cx<'_> {
             && self.in_place_parts(t).is_empty()
             && !self.value_struct(t)
             && !self.c_struct(t)
+    }
+
+    /// `holds_dynamic` for the key: the same answer, with recursive types cut where they come
+    /// back (the key asks about every type argument, recursive ones too).
+    fn key_holds_dynamic(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        match self.kind(t) {
+            TyKind::Dyn(d, _) if self.hir.function == Some(d) => false,
+            TyKind::Array(e) | TyKind::Option(e, _) => self.key_holds_dynamic(e, seen),
+            TyKind::Tuple(es) => es.iter().any(|&e| self.key_holds_dynamic(e, seen)),
+            TyKind::Adt(d, _) if self.is_union(t) => {
+                let n = self.enum_def(d).variants.len() as u32;
+                (0..n).any(|v| {
+                    let member = self.variant_tys(t, v);
+                    member.iter().any(|&m| self.key_holds_dynamic(m, seen))
+                })
+            }
+            _ => self.is_dynamic(t),
+        }
+    }
+
+    /// `shares_as_counted` for the key, with recursive types cut where they come back.
+    fn key_shares_as_counted(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+        use super::super::boxing::ShareKind;
+        if !seen.insert(t) {
+            return true;
+        }
+        match self.share_kind(t) {
+            ShareKind::Object => self.counted(t),
+            ShareKind::Value => {
+                let parts = self.part_types(t);
+                parts.into_iter().all(|p| self.key_shares_as_counted(p, seen))
+            }
+            ShareKind::Promise => false,
+            _ => true,
+        }
     }
 }
