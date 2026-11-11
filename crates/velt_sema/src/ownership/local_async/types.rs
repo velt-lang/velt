@@ -194,12 +194,11 @@ pub(super) fn may_be(cx: &Ctx, lit: TyId, f: TyId) -> bool {
             // A function returning a value is never held where `void` is expected, nor the
             // reverse: a value-returning callback is retyped or wrapped in an adapter returning
             // `void` there (#694), which is the closure matched. A type parameter may be either.
-            let unit = |t: &TyId| cx.ty.kind(*t) == &TyKind::Unit;
+            let unit = |t: &TyId| matches!(cx.ty.kind(*t), TyKind::Unit);
             let param = |t: &TyId| matches!(cx.ty.kind(*t), TyKind::Param(_));
-            let results = promise(r1) || unit(r1) == unit(r2) || param(r1) || param(r2);
             p1.len() == p2.len()
                 && promise(r1) == promise(r2)
-                && results
+                && (promise(r1) || unit(r1) == unit(r2) || param(r1) || param(r2))
                 && p1.iter().zip(p2).all(|(a, b)| same_shape(cx, *a, *b, 0))
         }
         _ => false,
