@@ -71,6 +71,37 @@ pub struct DevSession {
     module_desc: Option<usize>,
 }
 
+/// The order in which a version's slots are switched to its code (function indices; a store
+/// releases the ones before it). New keys first: only new code calls them, and once an existing
+/// slot points to new code, running threads may call a new key through it at once (#880: a new
+/// function's empty slot crashed a request that ran its new caller). Then the functions the
+/// version's own module state descriptor points at (`desc_funcs`: its `init`, `drop` and
+/// `rest`), which the descriptor reaches through their slots: a request that runs a new user of
+/// the block before them makes the new block, and the runtime initializes it once, with the
+/// code those slots hold (#2811: the old initializers, so a changed initial value was lost for
+/// good). The other existing keys last.
+pub(crate) fn store_order(trampolines: &[Option<usize>], desc_funcs: &[usize]) -> Vec<usize> {
+    let all = 0..trampolines.len();
+    let new = all.clone().filter(|&i| trampolines[i].is_some());
+    let desc = desc_funcs
+        .iter()
+        .copied()
+        .filter(|&i| trampolines.get(i) == Some(&None));
+    let rest = all.filter(|i| trampolines[*i].is_none() && !desc_funcs.contains(i));
+    new.chain(desc).chain(rest).collect()
+}
+
+/// The functions the module state descriptor `desc` (a static of `program`) points at.
+fn descriptor_functions(program: &vir::Program, desc: usize) -> Vec<usize> {
+    let relocs = program.statics.get(desc).map_or(&[][..], |s| &s.relocs[..]);
+    (relocs.iter())
+        .filter_map(|(_, target)| match target {
+            vir::Const::Func(f) => Some(f.0 as usize),
+            _ => None,
+        })
+        .collect()
+}
+
 /// A program loaded by [`DevSession::load`]; valid as long as its session lives.
 #[derive(Clone, Copy, Debug)]
 pub struct JitProgram {
@@ -236,20 +267,13 @@ impl DevSession {
                 self.slots.insert(func.symbol.clone(), (slot, *trampoline));
             }
         }
-        // Slots last: from here on, calls reach the new code. The slots of new keys first: only
-        // new code calls them, and once an existing slot points to new code, running threads
-        // may call a new key through it at once (#880: a new function's empty slot crashed a
-        // request that ran its new caller). Each store releases the ones before it.
-        for new_keys in [true, false] {
-            for (i, func) in program.funcs.iter().enumerate() {
-                if version.trampolines[i].is_some() != new_keys {
-                    continue;
-                }
-                if let (Some(code), Some((slot, _))) =
-                    (version.code[i], self.slots.get(&func.symbol))
-                {
-                    slot.set(code as *const u8);
-                }
+        // Slots last: from here on, calls reach the new code.
+        let own_desc = desc.filter(|_| shared_static.is_none());
+        let desc_funcs = own_desc.map_or_else(Vec::new, |d| descriptor_functions(program, d));
+        for i in store_order(&version.trampolines, &desc_funcs) {
+            let func = &program.funcs[i];
+            if let (Some(code), Some((slot, _))) = (version.code[i], self.slots.get(&func.symbol)) {
+                slot.set(code as *const u8);
             }
         }
         let code = version.code.clone();
