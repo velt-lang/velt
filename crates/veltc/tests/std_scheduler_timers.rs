@@ -78,6 +78,13 @@ fn run_exe(exe: &Path, threads: &str, code: i32, what: &str) -> String {
     out
 }
 
+/// Whether a `VELT_SCHEDULER=std` program builds here: the executor in Velt waits in an epoll or
+/// kqueue reactor, and Windows has no reactor in Velt yet (#2723), so its build would not link.
+/// The tests compare the two executors only where both exist.
+fn std_builds_here() -> bool {
+    cfg!(unix)
+}
+
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
@@ -85,6 +92,9 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 /// Builds and runs `src` both ways, each exiting with `code`: each prints `want`, and only the
 /// std build has the executor's timers.
 fn same_on_both(name: &str, src: &str, want: &str, code: i32) {
+    if !std_builds_here() {
+        return;
+    }
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
     let (rt, rt_bin) = build_and_run(dir.path(), name, src, false, code);
@@ -342,6 +352,9 @@ b\na\n[ 'a', 'b' ]\nfirst\nsecond\nfirst after yieldNow\n[ 'first', 'second' ]\n
 /// when it looks: only its first line is compared there.
 #[test]
 fn sleeps_and_timers_due_together_run_in_one_order() {
+    if !std_builds_here() {
+        return;
+    }
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
     let src = format!(
@@ -392,6 +405,9 @@ async function main() {{
 /// runs of each build.
 #[test]
 fn a_pinned_spawn_runs_its_timers() {
+    if !std_builds_here() {
+        return;
+    }
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
     let src = "async function pinned(): Promise<i64> {

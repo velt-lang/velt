@@ -126,6 +126,9 @@ fn same_on_both_freeing_all(name: &str, src: &str, want: &str) {
 }
 
 fn same_on_both_in(dir: &Path, name: &str, src: &str, want: &str, code: i32) {
+    if !std_builds_here() {
+        return;
+    }
     runtime_support::build_native_runtime(manifest());
     let (rt, rt_bin) = build_and_run(dir, name, src, false, code);
     let (std, std_bin) = build_and_run(dir, name, src, true, code);
