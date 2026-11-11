@@ -56,6 +56,10 @@ pub(super) enum DropEntry {
     /// initializers its fields drop and it is freed, but its `[Symbol.dispose]()` does not run.
     /// Becomes a `Temp` once constructed.
     HalfBuilt(Place, TyId),
+    /// A class object whose `[Symbol.dispose]()` its drop glue is running (glue/drop.rs): when
+    /// that panics, a cleanup pad drops its fields and frees it, as Rust drops the fields of a
+    /// value whose `Drop::drop` panicked (no count: the drop already released the last one).
+    Disposing(Place, TyId),
     /// Owned temporary value that holds something only when the `Bool` local is true.
     Flagged(Place, TyId, vir::Local),
     /// An owned value from which a pattern moved some parts: drop everything else.
@@ -100,6 +104,9 @@ pub(super) enum ScopeKind {
 pub(super) struct Scope {
     pub(super) kind: ScopeKind,
     pub(super) drops: Vec<DropEntry>,
+    /// How many of `drops` (from the first) a cleanup pad emitted now still drops: all but
+    /// while an exit edge is dropping this scope's entries (cleanup.rs).
+    pub(super) pad_keep: usize,
 }
 
 impl FnLower<'_, '_> {

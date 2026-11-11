@@ -32,4 +32,17 @@ pub const DELETED: &[&str] = &[
     // #2196: HTML escaping (std/text/html), which only std called, so no hook replaces it.
     "velt_rt_html_escape",
     "velt_rt_jsx_escape",
+    // #2649: velt/sync's channel (std/sync/channel.velt), and the process-wide slots built on it
+    // (velt/net's topics and HTTP/2 sessions keep a static atomic now), which only std called.
+    "velt_rt_chan_new",
+    "velt_rt_chan_close",
+    "velt_rt_chan_closed",
+    "velt_rt_chan_len",
+    "velt_rt_chan_send",
+    "velt_rt_chan_try_send",
+    "velt_rt_chan_receive",
+    "velt_rt_chan_try_receive",
+    "velt_rt_global_lock",
+    "velt_rt_global_unlock",
+    "velt_rt_global_chan",
 ];

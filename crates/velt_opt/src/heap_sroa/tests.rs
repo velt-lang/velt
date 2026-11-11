@@ -516,6 +516,7 @@ fn a_call_result_written_while_an_alias_is_read_keeps_the_heap() {
             args: vec![],
             dest: Some(env.field(this, 0)),
             next,
+            unwind: None,
         };
         fb.term(b, call);
         next

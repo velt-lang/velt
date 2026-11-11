@@ -25,7 +25,6 @@
 mod all;
 mod all_settle;
 pub(crate) mod await_order;
-mod channel;
 mod ctor;
 mod foreign_promise;
 mod gen_object;
@@ -152,7 +151,8 @@ impl Cx<'_> {
             )
         };
         let stored: Vec<Local> = inputs.iter().flatten().copied().collect();
-        let (state, fields) = spill::spill(self, &mut func, result, &f.name, &stored);
+        let links = std::mem::take(&mut self.unwinding.links);
+        let (state, fields) = spill::spill(self, &mut func, result, &f.name, &stored, &links);
         func.is_poll = true;
         func.param_attrs = self.poll_param_attrs(state);
         let inputs = inputs

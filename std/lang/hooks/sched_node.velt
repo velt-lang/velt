@@ -4,7 +4,8 @@
 // A node is `[head (112)][VeltFut header (16)][state]`; the promise is the header's address, so
 // the state's result (its offset 0) is the result slot at +16. The head: the node's waker table
 // (a node is its own waker), its reference count (the owner's handle, the task driving it, a
-// place among its task's woken nodes, each waker clone), its flags, the state's poll and drop,
+// place among its task's woken nodes, each waker clone), its flags, its size in bytes (to free it
+// with), the state's poll and drop,
 // the result's drop glue, the task driving it (a started node holds a reference to it, so a wake
 // from another thread never touches a freed task), its link in that task's woken stack (other
 // threads push on it), the waker of whoever awaits it, the `cx` its polls get (its task's await
@@ -30,6 +31,7 @@ import * as t from "./sched_task";
 export const N_HEAD: usize = 112;
 const N_REFS: usize = 8;
 const N_FLAGS: usize = 16;
+const N_BYTES: usize = 20;
 const N_POLL: usize = 24;
 const N_DROP: usize = 32;
 const N_RESULT_DROP: usize = 40;
@@ -61,10 +63,12 @@ export function boxed(
   hdrDrop: usize,
 ): usize {
   const e = t.exec();
-  const n = m.alloc(N_HEAD + 16 + (size as usize));
+  const bytes = N_HEAD + 16 + (size as usize);
+  const n = m.alloc(bytes);
   m.st(n, e + t.E_NODE_VT);
   m.st(n + N_REFS, 1);
   m.st32(n + N_FLAGS, 0);
+  m.st32(n + N_BYTES, bytes as u32);
   m.st(n + N_POLL, poll);
   m.st(n + N_DROP, drop);
   m.st(n + N_RESULT_DROP, 0);
@@ -178,7 +182,15 @@ export function nodeDrop(f: usize): void {
 function dropResult(n: usize): void {
   const task = m.ld(n + N_TASK);
   const e = t.exec();
-  if ((m.load32(n + N_FLAGS) & REJECTING) !== 0 && task !== 0 && m.ld(e + t.E_CURRENT) === task) {
+  const rejecting = (m.load32(n + N_FLAGS) & REJECTING) !== 0;
+  if (rejecting && m.ld(e + t.E_UNCAUGHT) !== 0) {
+    // An error a callback threw (sched.velt `schedUncaughtNow`): reported now, as Node's
+    // uncaught exception ends the process before the microtasks run.
+    m.st(e + t.E_UNCAUGHT, 0);
+    dropNow(n);
+    return;
+  }
+  if (rejecting && task !== 0 && m.ld(e + t.E_CURRENT) === task) {
     m.inc(n + N_REFS);
     m.st(n + N_UNHANDLED_NEXT, m.ld(task + t.T_UNHANDLED));
     m.st(task + t.T_UNHANDLED, n);
@@ -277,6 +289,11 @@ export function run(task: usize, n: usize, taken: bool): void {
   release(n);
 }
 
+/** Is started node `w` (a waker header) among its task's woken nodes? */
+export function queued(w: usize): bool {
+  return (m.load32(w + N_FLAGS) & QUEUED) !== 0;
+}
+
 /** Is `w` a waker header of a started node of task `task`? */
 export function ownNode(task: usize, w: usize): bool {
   return m.ld(w) === t.exec() + t.E_NODE_VT && m.ld(w + N_TASK) === task;
@@ -349,7 +366,7 @@ function wake(n: usize): void {
 export function release(n: usize): void {
   if (m.dec(n + N_REFS) === 1) {
     const task = m.ld(n + N_TASK);
-    m.release(n);
+    m.release(n, m.ld32(n + N_BYTES) as usize);
     if (task !== 0) {
       t.release(task);
     }

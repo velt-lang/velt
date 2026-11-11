@@ -39,7 +39,7 @@ use crate::defs::DefInfo;
 use crate::hir::{self, Callee, DefId, ExprKind as E, Intrinsic as I, TyId, TyKind};
 
 /// The live set of one check.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Live {
     /// Give the set to lowering to check against it (`hir::Program::live`).
     check: bool,

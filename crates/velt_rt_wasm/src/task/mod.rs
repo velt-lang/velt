@@ -13,7 +13,6 @@
 pub mod abort;
 pub mod all;
 pub mod boxed;
-pub mod channel;
 pub mod executor;
 pub mod group;
 pub mod identity;

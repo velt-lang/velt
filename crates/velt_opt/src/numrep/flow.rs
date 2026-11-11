@@ -392,7 +392,13 @@ impl Flow {
                     }
                     arrive(self, default.0 as usize, &st);
                 }
-                t @ Terminator::Call { dest, next, .. } => {
+                t @ Terminator::Call {
+                    dest, next, unwind, ..
+                } => {
+                    // A pad starts with the state before the call: its result isn't written.
+                    if let Some(pad) = unwind {
+                        arrive(self, pad.0 as usize, &st);
+                    }
                     if let Some(d) = dest.as_ref().filter(|d| d.proj.is_empty()) {
                         if let Some(i) = self.slot[d.local.0 as usize] {
                             st[i] = self.call_result(func, env, t);

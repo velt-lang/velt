@@ -45,7 +45,7 @@ use crate::ctx::Ctx;
 use crate::hir::{AdtKind, DefId, TyId, TyKind, TyOp};
 
 /// The constraints on the variables of one check.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct VarSets {
     /// Union-find parent of each variable (by `TyOp::ErrSite` number).
     parent: Vec<u32>,

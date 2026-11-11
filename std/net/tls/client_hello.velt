@@ -1,11 +1,12 @@
 // velt/net (internal): the ClientHello (RFC 8446 §4.1.2) a TLS 1.3 client sends: both SHA-256
-// suites, an X25519 key share (and secp256r1 supported, for a HelloRetryRequest to ask for),
-// SNI and ALPN when given, the cookie of a HelloRetryRequest, and a legacy session id so
-// middleboxes see what looks like a resumed TLS 1.2 session (§D.4).
+// suites (the faster one on this CPU first), an X25519 key share (and secp256r1 supported, for a
+// HelloRetryRequest to ask for), SNI and ALPN when given, the cookie of a HelloRetryRequest, and a
+// legacy session id so middleboxes see what looks like a resumed TLS 1.2 session (§D.4).
 
 import { utf8Encode } from "velt/encoding/utf8";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import { AES_128_GCM_SHA256, CHACHA20_POLY1305_SHA256 } from "velt/net/tls/record_cipher";
+import { u8x16 } from "velt/simd";
 
 /** The named groups (RFC 8446 §4.2.7): X25519 and secp256r1 (NIST P-256). */
 export const X25519: usize = 0x001d;
@@ -37,6 +38,8 @@ export struct HelloInput {
   serverName: string;
   /** The ALPN protocols, most preferred first. */
   alpn: string[];
+  /** The cipher suites, most preferred first (`preferredSuites()`). */
+  suites: usize[];
   /** The whole first ClientHello message to send instead (RFC 8448's trace), or null. */
   fixed: u8[] | null;
   /** The second ClientHello and its P-256 private key to use instead (RFC 8448 §5), or null. */
@@ -57,6 +60,18 @@ function isIpLiteral(name: string): bool {
     }
   }
   return true;
+}
+
+/**
+ * The suites in the client's order of preference: AES-128-GCM first where the CPU has AES and
+ * carry-less multiply instructions (`u8x16.hasAes()`), where it is the faster of the two;
+ * ChaCha20-Poly1305 first elsewhere, where it is (bitsliced AES is several times slower). Both
+ * are constant time either way, and the server may choose by its own order.
+ */
+export function preferredSuites(): usize[] {
+  return u8x16.hasAes()
+    ? [AES_128_GCM_SHA256, CHACHA20_POLY1305_SHA256]
+    : [CHACHA20_POLY1305_SHA256, AES_128_GCM_SHA256];
 }
 
 /**
@@ -83,8 +98,9 @@ export function clientHello(
   w.put(h.sessionId);
   w.end(sid, 1);
   const suites = w.begin(2);
-  w.u16(CHACHA20_POLY1305_SHA256);
-  w.u16(AES_128_GCM_SHA256);
+  for (const suite of h.suites) {
+    w.u16(suite);
+  }
   w.end(suites, 2);
   w.u8(1);
   w.u8(0);

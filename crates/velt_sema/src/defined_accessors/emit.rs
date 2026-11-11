@@ -438,6 +438,7 @@ fn declaration(
                     init: Some(expr(E::Lit(ast::Lit::Bool(false)), span)),
                     span,
                     c_const: false,
+                    c_global: None,
                 }),
                 span,
             ));
@@ -620,6 +621,7 @@ fn definition(e: &ast::Expr, plans: &FxHashMap<(String, String), Plan>) -> Optio
                     init: Some(f),
                     span,
                     c_const: false,
+                    c_global: None,
                 }),
                 span,
             ));

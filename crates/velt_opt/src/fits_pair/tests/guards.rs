@@ -154,6 +154,7 @@ fn one_local_for_both_results_stays() {
             args: vec![copy_local(p.pb), copy_local(p.j)],
             dest: Some(Place::local(b.x)),
             next: b.test2,
+            unwind: None,
         };
         p.fb.term(b.r, call);
         p.fb.branch(b.test2, b.x, p.yes, p.no);
@@ -392,6 +393,7 @@ fn a_null_first_array_is_read_as_the_first_test_reads_it() {
             args: vec![copy_local(array), copy_local(p.j)],
             dest: Some(Place::local(b.x)),
             next: b.test1,
+            unwind: None,
         };
         p.fb.term(p.entry, call);
     });

@@ -1,0 +1,30 @@
+// A variable assigned a DOM call's result holds what the call's type says: on the server, reading
+// `document` throws `ReferenceError` as on Node, so the line after it never runs, and it
+// type-checks as under `tsc`, also for a variable a closure captures.
+function mountPortal(): string {
+  let container: HTMLElement | null = null;
+  const mount = (): void => {
+    container = document.createElement("div");
+    container.setAttribute("data-portal", "");
+  };
+  try {
+    mount();
+  } catch (e) {
+    return (e as Error).name + ": " + (e as Error).message;
+  }
+  return container == null ? "not mounted" : "mounted";
+}
+
+function direct(): string {
+  let el: HTMLElement | null = null;
+  try {
+    el = document.createElement("span");
+    el.textContent = "x";
+  } catch (e) {
+    return (e as Error).message;
+  }
+  return el == null ? "none" : "made";
+}
+
+console.log(mountPortal());
+console.log(direct());

@@ -436,10 +436,14 @@ fn promote_memory(program: &mut vir::Program, served: Served, t: &mut PassTiming
     let signatures = t.time("signatures", || callgraph::signatures(program));
     let fold = constfold::Program::of(&signatures);
     let aggs = &program.aggs;
+    // A program with cleanup pads (it catches) keeps promoted memory current on unwind edges.
+    let resume = (program.externs.iter())
+        .position(|e| velt_vir::eh::is_resume(&e.symbol))
+        .map(|i| vir::ExternId(i as u32));
     each_function(served.bodies(&mut program.funcs), t, |t, func| {
-        let mut changed = t.time("noalias", || noalias::run(aggs, func));
+        let mut changed = t.time("noalias", || noalias::run(aggs, func, resume));
         changed |= t.time("frozen", || frozen::run(aggs, func));
-        changed |= t.time("frame_slots", || frame_slots::run(aggs, func));
+        changed |= t.time("frame_slots", || frame_slots::run(aggs, func, resume));
         if changed {
             t.time("constfold", || constfold::run(&fold, func));
             t.time("copyprop", || copyprop::run(func));

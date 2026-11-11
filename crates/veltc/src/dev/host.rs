@@ -52,6 +52,8 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
     let mut session = DevSession::new(&symbols);
     // Lowering's counted types, carried from each version to the next (dev-warm-front-end.md).
     sess.counted_seed = Some(velt_vir::CountedSeed::default());
+    sess.keep_check = args.build.verbose;
+    sess.interfaces = args.build.verbose.then(Default::default);
     session.set_debug_info(std::env::var_os(DEBUG_INFO_ENV).is_none_or(|v| v != "0"));
     let loaded = compile_and_load(&mut sess, &opts, &mut session);
     // A host started ahead of need stays quiet: the running version reports the same build.
@@ -61,6 +63,8 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
             failure_code(err);
         }
     }
+    // The kept check of a build that loaded, for the reload loop; none is kept otherwise.
+    let mut kept = sess.kept.take().filter(|_| loaded.is_ok());
     if let Some(socket) = std::env::var_os(velt_rt_host::dev::SOCKET_ENV) {
         let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
         files.extend(super::native::source_files(opts.packages.as_ref()));
@@ -72,7 +76,17 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
                 let own = loaded
                     .is_ok()
                     .then(|| super::edits::Snapshot::of_build(&sess, &opts.input));
-                let state = super::swap::Carried { seed, own };
+                let kept = kept.take();
+                if let (true, Some(k)) = (args.build.verbose, &kept) {
+                    eprintln!("velt dev: {}", super::swap::kept_report(k));
+                }
+                let interfaces = sess.interfaces.take();
+                let state = super::swap::Carried {
+                    seed,
+                    own,
+                    interfaces,
+                    kept,
+                };
                 super::swap::serve_reloads(channel, opts.clone(), session, state, &args.build)
             }
             Ok(None) => {}
@@ -82,6 +96,8 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
             }
         }
     }
+    // No reload loop: the program runs from here on without one.
+    drop(kept.take());
     let Ok(loaded) = loaded else {
         return ExitCode::from(1);
     };
@@ -101,7 +117,7 @@ fn compile_and_load(
     opts: &BuildOptions,
     session: &mut DevSession,
 ) -> Result<JitProgram, BuildError> {
-    let program = driver::compile(sess, opts)?;
+    let program = driver::compile_for_jit(sess, opts)?;
     super::native::load_c_libraries(opts, &sess.c_libs).map_err(BuildError::Failed)?;
     let start = Instant::now();
     let mut steps = vec![];

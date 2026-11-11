@@ -115,6 +115,7 @@ pub(super) fn let_cell(name: &str, f: ast::TypeExpr, span: Span) -> ast::Stmt {
             init: Some(expr(E::Lit(ast::Lit::Undefined), span)),
             span,
             c_const: false,
+            c_global: None,
         }),
         span,
     )

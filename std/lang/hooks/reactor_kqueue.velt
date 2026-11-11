@@ -98,7 +98,7 @@ export function open(): usize {
   if (kq < 0) {
     return 0;
   }
-  const r = m.zeroed(R_SIZE);
+  const r = m.lastingZeroed(R_SIZE);
   m.st(r + R_KQ, kq as usize);
   // The wake: a user event, cleared when a wait takes it.
   change(r, 0, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0);
@@ -187,7 +187,7 @@ export function wake(r: usize): void {
   unsafe {
     kevent(m.ld(r + R_KQ) as i32, m.ptr(c), 1, m.ptr(0), 0, m.ptr(0));
   }
-  m.release(c);
+  m.release(c, EV);
 }
 
 /** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */
@@ -215,6 +215,6 @@ export function prepare(fd: i32): i32 {
   unsafe {
     setsockopt$io(fd, SOL_SOCKET, SO_NOSIGPIPE, m.ptr(one), 4);
   }
-  m.release(one);
+  m.release(one, 16);
   return 0;
 }

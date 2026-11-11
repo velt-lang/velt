@@ -13,8 +13,11 @@
 //   at a park (sched_end.velt): the keep-alive references held, the due `unref()`'d timers
 //   waiting for the answer, the root of `main` while it runs, the probe that asks the runtime
 //   about its leaves (a waker table, its header, a `cx`), and the location of the top-level
-//   `await` that suspended last (a string in a slot, and whether it holds one), and whether a
-//   pinned spawn handed a task to the runtime's executor (whose tasks the executor cannot see).
+//   `await` that suspended last (a string in a slot, and whether it holds one), whether a
+//   pinned spawn handed a task to the runtime's executor (whose tasks the executor cannot see),
+//   the timer block (`sleep` and Node's timer order: sched_sleep.velt, sched_order.velt; 0
+//   until the first timer), whether the next rejection nobody handles is an error a callback
+//   threw (reported at once: sched_node.velt), and whether a microtask's job is running.
 // - A task: the table's address first (a task is its own waker), its reference count (the
 //   executor's until it is done, the join handle's, one per waker clone), its state (IDLE,
 //   SCHEDULED, RUNNING, NOTIFIED, DONE) and flags, the root's poll and drop and its state's
@@ -22,8 +25,9 @@
 //   polls get and its await word, the started promises woken (a stack other threads push on),
 //   how many it drives that are unfinished, its microtask queue (sched_micro.velt; 0 until the
 //   first entry), the rejected promises nobody handled, reported once its microtasks are drained
-//   (sched_node.velt `report`), the join handle (a heap future, rt_abi_async.md §1) whose result slot follows,
-//   then the initial state copied in: one allocation per spawn.
+//   (sched_node.velt `report`), the task's size in bytes (to free it with), its sleeps due to
+//   fire (sched_sleep.velt), the join handle (a heap future, rt_abi_async.md §1) whose result
+//   slot follows, then the initial state copied in: one allocation per spawn.
 //
 // One worker (VELT_THREADS=1 scope): the live count and a task's join slot and flags are plain
 // memory the worker alone changes; they become atomics in the multi-worker step (#2649 step 3).
@@ -60,7 +64,10 @@ export const E_PROBE_CX: usize = 216;
 export const E_TLA_SET: usize = 232;
 export const E_TLA: usize = 240;
 export const E_PINNED: usize = 272;
-export const E_SIZE: usize = 280;
+export const E_TIMERS: usize = 280;
+export const E_UNCAUGHT: usize = 288;
+export const E_JOB: usize = 296;
+export const E_SIZE: usize = 304;
 
 /** A task's fields. */
 export const T_REFS: usize = 8;
@@ -79,8 +86,10 @@ export const T_WOKEN: usize = 104;
 export const T_LOCALS: usize = 112;
 export const T_MICRO: usize = 120;
 export const T_UNHANDLED: usize = 128;
-export const T_JOIN: usize = 144;
-export const T_SLOT: usize = 160;
+export const T_BYTES: usize = 136;
+export const T_TIMERS: usize = 144;
+export const T_JOIN: usize = 152;
+export const T_SLOT: usize = 168;
 
 /** A task's states. */
 export const IDLE: u32 = 0;
@@ -93,20 +102,27 @@ export const DONE: u32 = 4;
  * A task's flags: its join handle is alive; the handle took the result; the root of `main`; it
  * started a promise (check the woken ones); its root finished (its result is in the slot); it
  * counts as live (the root of `main` with promises left running); the microtask being run is a
- * waiter's step already (sched_micro.velt).
+ * waiter's step already (sched_micro.velt); sleeps of it are due to fire (sched_sleep.velt); its
+ * poll took a timer's turn, and the next turn waits for the poll's end (sched_order.velt); its
+ * root was polled as a microtask's job or by a due sleep (sched_run.velt `runWoken` reads it).
  */
 export const HANDLE: u32 = 1;
 export const CLAIMED: u32 = 2;
 export const ROOT: u32 = 4;
 export const LOCALS: u32 = 8;
 export const ROOT_DONE: u32 = 16;
+export const TIMED: u32 = 32;
 export const COUNTED: u32 = 64;
 export const CREDIT: u32 = 128;
+export const HOLDS: u32 = 256;
+export const POLLED: u32 = 512;
 
 /** The executor (started by sched.velt before anything here runs). */
 @inline
 export function exec(): usize {
-  return EXEC.load("relaxed") as usize;
+  // Acquire: pairs with `install`'s release, so a waker on another thread sees the initialized
+  // executor it reads through.
+  return EXEC.load("acquire") as usize;
 }
 
 /** Makes `e` the executor, with this thread its worker. */
@@ -185,11 +201,12 @@ export function wake(t: usize): void {
 /** Gives back one reference to task `t`: the last frees it. */
 export function release(t: usize): void {
   if (m.dec(t + T_REFS) === 1) {
-    m.release(t);
+    m.release(t, m.ld(t + T_BYTES));
   }
 }
 
 /** Queues scheduled task `t`: on the worker's own queue, or from another thread its inbox. */
+@inline
 export function schedule(e: usize, t: usize): void {
   if (ON_WORKER.get()) {
     push(e, t);

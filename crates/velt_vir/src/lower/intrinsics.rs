@@ -41,8 +41,12 @@ impl FnLower<'_, '_> {
             (I::FnAddress, [f]) => self.fn_address(f, ty),
             (I::SlotSize, []) => self.slot_size(ty),
             (I::SlotPut, [at, v]) => self.slot_put(at, v),
+            (I::SlotTransfer, [v]) => self.slot_transfer(v),
+            (I::SlotStore, [at, v]) => self.slot_store(at, v),
             (I::SlotTake, [at]) => self.slot_take(at, ty),
             (I::PromiseAt, [f]) => self.promise_at(f, ty),
+            (I::RawAlloc, [n]) => self.raw_alloc(n, ty),
+            (I::RawFree, [p, n]) => self.raw_free(p, n),
             (I::ThreadLocalGet | I::ThreadLocalSet, _) => self.thread_local_intrinsic(i, args),
             (I::GeneratorResumeWith, [g, v]) => self.gen_resume_with(g, v),
             (I::GeneratorThrow, [g, e]) => self.gen_throw(g, e),
@@ -442,11 +446,7 @@ impl FnLower<'_, '_> {
                 | I::RwLockNew
                 | I::LockRead
                 | I::PromiseWiden
-                | I::PromiseSame
-                | I::ChanSend
-                | I::ChanReceive
-                | I::ChanTrySend
-                | I::ChanTryReceive,
+                | I::PromiseSame,
                 _,
             ) => self.async_intrinsic(i, args, ty),
             (I::Attempt, [f]) => self.attempt(f, ty),

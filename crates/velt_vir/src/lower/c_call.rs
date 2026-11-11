@@ -367,7 +367,7 @@ impl FnLower<'_, '_> {
     /// Can this target call the C function of `library` declared at `span`? Every native target
     /// can. On `wasm32-wasip1` only std can, and only the C library `c` (wasi-libc, linked into
     /// every program): a package's declarations can't be checked against WASI's headers yet.
-    fn c_callable(&self, span: velt_common::Span, library: &str) -> bool {
+    pub(super) fn c_callable(&self, span: velt_common::Span, library: &str) -> bool {
         if system::target_os(&self.cx.target).is_some() {
             return true;
         }
@@ -472,7 +472,7 @@ pub(super) fn wasm32(target: &str) -> bool {
 }
 
 /// Does `t` cross as a narrower integer than Velt's (`usize`/`isize` as 32 bits on wasm32)?
-fn narrow(t: CTy, wasm32: bool) -> bool {
+pub(super) fn narrow(t: CTy, wasm32: bool) -> bool {
     wasm32 && matches!(t, CTy::Int(IntTy::USize | IntTy::ISize))
 }
 

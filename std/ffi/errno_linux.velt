@@ -1,0 +1,12 @@
+// velt/ffi (internal): where the calling thread's `errno` is with glibc and musl:
+// `__errno_location()` (`#errno-location`, errno.velt).
+
+import { Ptr } from "velt/ffi/ptr";
+
+declare c("c") function __errno_location(): Ptr<i32>;
+
+/** The address of the calling thread's `errno`. */
+export function errnoLocation(): Ptr<i32> | null {
+  // SAFETY: `__errno_location` takes nothing and returns the address of this thread's `errno`.
+  return unsafe { __errno_location() };
+}

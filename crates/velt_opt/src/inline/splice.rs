@@ -3,24 +3,40 @@
 //! block, and each `Return(v)` becomes `dest = v; goto next`.
 
 use velt_vir::vir::{
-    AggLayout, BlockId, Function, Local, Operand, Place, Rvalue, Stmt, Terminator, Ty,
+    AggLayout, BlockId, Callee, ExternFn, ExternId, Function, Local, Operand, Place, Rvalue, Stmt,
+    Terminator, Ty,
 };
 
 use crate::locals::place_ty;
 use crate::srclocs::push_stmt;
 use crate::visit::{places_mut, successors_mut};
 
+/// The program's `velt_eh_resume` extern, if it declares one (vir.rs invariant 14).
+pub(super) fn resume_extern(externs: &[ExternFn]) -> Option<ExternId> {
+    (externs.iter())
+        .position(|e| velt_vir::eh::is_resume(&e.symbol))
+        .map(|i| ExternId(i as u32))
+}
+
 /// Inline `callee` at the call terminating block `call_block` of `caller`.
 /// The caller must end that block with a direct call to `callee` with matching arity.
+/// `resume` is the program's `velt_eh_resume` ([`resume_extern`]): when the call has an unwind
+/// edge, the inlined body unwinds to it too (its calls that may unwind and have no edge get the
+/// call's, and its resumes jump to the call's pad).
 pub(super) fn inline_call(
     aggs: &[AggLayout],
     caller: &mut Function,
     call_block: usize,
     callee: &Function,
+    resume: Option<ExternId>,
 ) {
     let term = std::mem::replace(&mut caller.blocks[call_block].term, Terminator::Unreachable);
     let Terminator::Call {
-        args, dest, next, ..
+        args,
+        dest,
+        next,
+        unwind,
+        ..
     } = term
     else {
         unreachable!("ICE: inline_call on a block that does not end in a call")
@@ -52,6 +68,23 @@ pub(super) fn inline_call(
             if let Some(assign) = assign {
                 let at = body.term_loc(bi);
                 push_stmt(&mut body, bi, assign, at);
+            }
+        }
+    }
+
+    if let Some(pad) = unwind {
+        for block in &mut body.blocks {
+            if let Terminator::Call {
+                callee: c,
+                unwind: u,
+                ..
+            } = &mut block.term
+            {
+                if matches!(c, Callee::Extern(id) if Some(*id) == resume) {
+                    block.term = Terminator::Goto(pad);
+                } else if u.is_none() && velt_vir::eh::may_unwind(c) {
+                    *u = Some(pad);
+                }
             }
         }
     }
@@ -121,7 +154,7 @@ mod tests {
         pb.add(f.finish());
         let mut p = pb.finish();
         let callee = p.funcs[0].clone();
-        inline_call(&p.aggs, &mut p.funcs[1], 0, &callee);
+        inline_call(&p.aggs, &mut p.funcs[1], 0, &callee, None);
         assert_valid(&p);
         let f = &p.funcs[1];
         assert_eq!(f.locals.len(), 3 + 3);
@@ -142,5 +175,78 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn call(callee: Callee, next: u32, unwind: Option<u32>) -> Terminator {
+        Terminator::Call {
+            callee,
+            args: vec![],
+            dest: None,
+            next: BlockId(next),
+            unwind: unwind.map(BlockId),
+        }
+    }
+
+    fn function(name: &str, terms: Vec<Terminator>) -> Function {
+        let blocks = (terms.into_iter())
+            .map(|term| velt_vir::vir::BasicBlock {
+                stmts: vec![],
+                term,
+            })
+            .collect();
+        Function {
+            blocks,
+            ..Function::new(
+                name.into(),
+                vec![],
+                Ty::Unit,
+                velt_vir::vir::Linkage::Internal,
+            )
+        }
+    }
+
+    /// A call with an unwind edge (vir.rs invariant 14) inlines into it: the body's calls without
+    /// an edge get the call's pad, its own pads stay, and its resumes jump to the call's pad.
+    #[test]
+    fn an_inlined_body_unwinds_to_the_calls_pad() {
+        let (k, resume) = (Callee::Func(FuncId(2)), ExternId(0));
+        let r = || Callee::Extern(resume);
+        // g: k(); k() unwind bb3; return; bb3: resume.
+        let g = function(
+            "g",
+            vec![
+                call(k.clone(), 1, None),
+                call(k.clone(), 2, Some(3)),
+                Terminator::Return(Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit)),
+                call(r(), 4, None),
+                Terminator::Unreachable,
+            ],
+        );
+        // f: g() unwind bb2; return; bb2: resume.
+        let mut f = function(
+            "f",
+            vec![
+                call(Callee::Func(FuncId(0)), 1, Some(2)),
+                Terminator::Return(Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit)),
+                call(r(), 3, None),
+                Terminator::Unreachable,
+            ],
+        );
+        inline_call(&[], &mut f, 0, &g, Some(resume));
+        assert_eq!(f.blocks[0].term, Terminator::Goto(BlockId(4)));
+        assert_eq!(f.blocks[4].term, call(k.clone(), 5, Some(2)));
+        assert_eq!(f.blocks[5].term, call(k.clone(), 6, Some(7)));
+        assert_eq!(f.blocks[7].term, Terminator::Goto(BlockId(2)));
+        // Without an edge the body stays as it is.
+        let mut f = function(
+            "f",
+            vec![
+                call(Callee::Func(FuncId(0)), 1, None),
+                Terminator::Return(Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit)),
+            ],
+        );
+        inline_call(&[], &mut f, 0, &g, Some(resume));
+        assert_eq!(f.blocks[2].term, call(k.clone(), 3, None));
+        assert_eq!(f.blocks[5].term, call(r(), 6, None));
     }
 }

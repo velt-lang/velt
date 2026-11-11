@@ -18,6 +18,7 @@ use crate::ctx::{Ctx, Item};
 use crate::hir::DefId;
 
 /// A nested item's name and the source range (inside `module`) where it is visible.
+#[derive(Clone)]
 pub(crate) struct NestedItem {
     pub module: usize,
     pub lo: u32,

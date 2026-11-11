@@ -26,7 +26,7 @@ pub(crate) enum DefaultsOf {
 }
 
 /// The resolved defaults, and the ones being resolved.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct TypeDefaults {
     /// Per declaration, per parameter: its default (`Error` when invalid), `None` without one.
     resolved: FxHashMap<DefaultsOf, Vec<Option<TyId>>>,

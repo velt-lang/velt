@@ -1,0 +1,64 @@
+// An async closure passed to an unknown callee that spawns it must not change what it captured
+// (#2726): the callee's parameters hold values of unknown origin of their declared types, so the
+// closure crosses by the heap rule. Through an interface's implementation, an overriding method,
+// and a method called through a generic bound, each with a function type of its own, so each
+// error comes from its own callee.
+
+type Job = () => Promise<void>;
+type Step = (n: i64) => Promise<void>;
+type Task = (s: string) => Promise<void>;
+
+interface Runner {
+  run(g: Job): Promise<void>;
+}
+
+class Later implements Runner {
+  async run(g: Job): Promise<void> {
+    await spawn(g());
+  }
+}
+
+class Base {
+  async each(g: Step): Promise<void> {
+    await g(1);
+  }
+}
+
+class Spawning extends Base {
+  override async each(g: Step): Promise<void> {
+    await spawn(g(1));
+  }
+}
+
+interface Worker {
+  work(g: Task): Promise<void>;
+}
+
+class Background implements Worker {
+  async work(g: Task): Promise<void> {
+    await spawn(g("x"));
+  }
+}
+
+async function viaBound<W extends Worker>(w: W, g: Task): Promise<void> {
+  await w.work(g);
+}
+
+async function main() {
+  let a = 0;
+  const r: Runner = new Later();
+  await r.run(async (): Promise<void> => {
+    a += 1;
+  });
+
+  let b = 0;
+  const base: Base = new Spawning();
+  await base.each(async (n: i64): Promise<void> => {
+    b += n;
+  });
+
+  let c = "";
+  await viaBound<Background>(new Background(), async (s: string): Promise<void> => {
+    c += s;
+  });
+}

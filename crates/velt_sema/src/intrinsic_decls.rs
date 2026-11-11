@@ -63,11 +63,6 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("atomicRmw", Op(I::AtomicRmw)),
     ("atomicSpinHint", Op(I::AtomicSpinHint)),
     ("atomicStore", Op(I::AtomicStore)),
-    // channel.velt
-    ("chanReceive", Op(I::ChanReceive)),
-    ("chanSend", Op(I::ChanSend)),
-    ("chanTryReceive", Op(I::ChanTryReceive)),
-    ("chanTrySend", Op(I::ChanTrySend)),
     // compare.velt
     ("hash", Op(I::Hash)),
     ("includesEq", Op(I::IncludesEq)),
@@ -130,9 +125,13 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("catchUnwind", Op(I::CatchUnwind)),
     // slot.velt
     ("promiseAt", Op(I::PromiseAt)),
+    ("rawAlloc", Op(I::RawAlloc)),
+    ("rawFree", Op(I::RawFree)),
     ("slotPut", Op(I::SlotPut)),
     ("slotSizeOfFirst", Op(I::SlotSize)),
+    ("slotStore", Op(I::SlotStore)),
     ("slotTake", Op(I::SlotTake)),
+    ("slotTransfer", Op(I::SlotTransfer)),
     // string.velt
     ("strAsciiWords", Op(I::StrAsciiWords)),
     ("strByteAt", Op(I::StrByteAt)),

@@ -727,13 +727,13 @@ impl Ctx<'_> {
 
 /// `Ctx::impls` by interface, so an impl lookup doesn't scan every impl of the program.
 /// Impls are only ever appended; [`ImplIndex::extend`] catches up with new ones.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ImplIndex {
     indexed: usize,
     by_iface: FxHashMap<DefId, IfaceImpls>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct IfaceImpls {
     /// Non-generic impls: the type → its first impl (the only type such an impl fits).
     exact: FxHashMap<TyId, u32>,

@@ -45,7 +45,7 @@ struct Shape {
 }
 
 /// The interfaces made for generic function types.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct GenericFns {
     /// Per shape, with the error-set variables of its types left out.
     by_plain: FxHashMap<Shape, DefId>,

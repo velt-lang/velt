@@ -8,7 +8,13 @@
 //! - it is loaded once on entry into a new local, and reads and writes use the local;
 //! - before a call that receives `p` the promoted fields written so far are stored back, and
 //!   after it all promoted fields are reloaded (the callee may change them);
-//! - before every `return` the written fields are stored back.
+//! - before every `return` the written fields are stored back;
+//! - on the unwind edge of a call that may unwind (vir.rs invariant 14; programs that catch) the
+//!   written fields are stored back before the pad, so a frame further out, which owns the
+//!   pointee, finds its current fields when its pad drops it. A call without an edge gets one
+//!   to a block that stores them and continues the unwind (`velt_eh_resume`), once the program
+//!   has pads at all. The edge of a call that receives `p` reloads the fields instead: the
+//!   callee may have changed them. The normal path is unchanged.
 //!
 //! Stores through other pointers (array elements through a data pointer loaded from `*p`)
 //! cannot change `*p`, so an array's data pointer and length stay in registers across its
@@ -17,16 +23,19 @@
 //! otherwise (`&(*p).f`, whole-aggregate accesses, enum views, `p` stored or used anywhere but
 //! as a call argument) leaves the param alone.
 
+use rustc_hash::FxHashMap;
+use velt_vir::eh;
 use velt_vir::vir::{
-    AggLayout, BasicBlock, BlockId, Callee, Function, Local, LocalDecl, Operand, Place, Proj,
-    Rvalue, Stmt, Terminator, Ty,
+    AggLayout, BasicBlock, BlockId, Callee, ExternId, Function, Local, LocalDecl, Operand, Place,
+    Proj, Rvalue, Stmt, Terminator, Ty,
 };
 
 use crate::srclocs::{prepend_stmts, push_stmt, replace_block};
 use crate::visit::{places_mut, stmt_operands, successors, successors_mut, term_operands};
 
 /// Promote the pointees of the `noalias` params of `func`; returns whether anything changed.
-pub(crate) fn run(aggs: &[AggLayout], func: &mut Function) -> bool {
+/// `resume` is the program's `velt_eh_resume` when it has cleanup pads (it catches).
+pub(crate) fn run(aggs: &[AggLayout], func: &mut Function, resume: Option<ExternId>) -> bool {
     let mut changed = false;
     for i in 0..func.params.len() {
         if func.params[i] != Ty::Ptr || !func.param_attr(i).noalias {
@@ -49,7 +58,7 @@ pub(crate) fn run(aggs: &[AggLayout], func: &mut Function) -> bool {
             if !changed {
                 fresh_entry(func);
             }
-            promote(func, Local(i as u32), pointee, fields);
+            promote(func, Local(i as u32), pointee, fields, resume);
             changed = true;
         }
     }
@@ -190,7 +199,13 @@ fn field_place(p: Local, pointee: Ty, path: &[u32]) -> Place {
     Place { local: p, proj }
 }
 
-fn promote(func: &mut Function, p: Local, pointee: Ty, mut fields: Vec<Field>) {
+fn promote(
+    func: &mut Function,
+    p: Local,
+    pointee: Ty,
+    mut fields: Vec<Field>,
+    resume: Option<ExternId>,
+) {
     for f in &mut fields {
         func.locals.push(LocalDecl::new(f.ty, None));
         f.local = Local(func.locals.len() as u32 - 1);
@@ -224,7 +239,9 @@ fn promote(func: &mut Function, p: Local, pointee: Ty, mut fields: Vec<Field>) {
         Stmt::Assign(field_place(p, pointee, &f.path), Rvalue::Use(from))
     };
     prepend_stmts(func, 0, fields.iter().map(load).collect());
+    let mut edges = Edges::default();
     for bi in 0..func.blocks.len() {
+        edges.call(func, bi, p, &fields, resume, &load, &store);
         let exposes = match &func.blocks[bi].term {
             Terminator::Call { args, .. } => args
                 .iter()
@@ -252,6 +269,81 @@ fn promote(func: &mut Function, p: Local, pointee: Ty, mut fields: Vec<Field>) {
             if let Terminator::Call { next, .. } = &mut func.blocks[bi].term {
                 *next = reload_bb;
             }
+        }
+    }
+}
+
+/// The blocks on the unwind edges of a promoted function's calls, one per pad: stores of the
+/// written fields (a call that doesn't receive `p`) or reloads of all of them (one that does).
+#[derive(Default)]
+struct Edges {
+    stores: FxHashMap<Option<BlockId>, BlockId>,
+    reloads: FxHashMap<BlockId, BlockId>,
+}
+
+impl Edges {
+    /// Route the unwind edge of block `bi`'s call through the block keeping `*p` current there.
+    #[allow(clippy::too_many_arguments)]
+    fn call(
+        &mut self,
+        func: &mut Function,
+        bi: usize,
+        p: Local,
+        fields: &[Field],
+        resume: Option<ExternId>,
+        load: &dyn Fn(&Field) -> Stmt,
+        store: &dyn Fn(&Field) -> Stmt,
+    ) {
+        let Terminator::Call {
+            callee,
+            args,
+            unwind,
+            ..
+        } = &func.blocks[bi].term
+        else {
+            return;
+        };
+        let exposes = (args.iter())
+            .any(|a| matches!(a, Operand::Copy(pl) if pl.local == p && pl.proj.is_empty()));
+        let pad = *unwind;
+        let to = if exposes {
+            let Some(pad) = pad else { return };
+            *(self.reloads.entry(pad)).or_insert_with(|| {
+                add_block(
+                    func,
+                    fields.iter().map(load).collect(),
+                    Terminator::Goto(pad),
+                )
+            })
+        } else {
+            if !eh::may_unwind(callee) || !fields.iter().any(|f| f.written) {
+                return;
+            }
+            if let Some(&b) = self.stores.get(&pad) {
+                b
+            } else {
+                let stores: Vec<Stmt> = fields.iter().filter(|f| f.written).map(store).collect();
+                let b = match (pad, resume) {
+                    (Some(pad), _) => add_block(func, stores, Terminator::Goto(pad)),
+                    (None, Some(r)) => {
+                        let next = add_block(func, vec![], Terminator::Unreachable);
+                        let term = Terminator::Call {
+                            callee: Callee::Extern(r),
+                            args: vec![],
+                            dest: None,
+                            next,
+                            unwind: None,
+                        };
+                        add_block(func, stores, term)
+                    }
+                    (None, None) => return,
+                };
+                self.stores.insert(pad, b);
+                b
+            }
+        };
+        if let Terminator::Call { unwind, .. } = &mut func.blocks[bi].term {
+            *unwind = Some(to);
         }
     }
 }

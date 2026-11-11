@@ -8,7 +8,7 @@ use crate::ctx::Ctx;
 use crate::hir::DefId;
 
 /// The packages with a native library among a program's ([`Ctx::native_libraries`]).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct NativeLibraries {
     /// The program's own modules (neither std nor a dependency) are a package with one.
     program: bool,

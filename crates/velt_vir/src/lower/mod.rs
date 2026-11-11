@@ -70,6 +70,7 @@ mod boxing;
 pub use boxing::CountedSeed;
 mod c_call;
 mod c_export;
+pub(crate) mod c_global;
 mod call;
 mod callee;
 mod caller_aliases;
@@ -77,6 +78,7 @@ mod caller_stores;
 mod cells;
 mod cfg;
 mod class_test;
+mod cleanup;
 mod closure;
 mod console;
 mod cpu_checks;
@@ -188,17 +190,15 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use velt_sema::hir::{self, DefId, LocalId, TyId, TyTable};
-
 pub(super) use kinds::LkMode;
 use kinds::ThunkKind;
+use velt_sema::hir::{self, DefId, LocalId, TyId, TyTable};
 use work::Work;
 
 use crate::vir::{
     self, AggLayout, BlockId, Const, ExternFn, ExternId, FuncId, Function, Local, LocalDecl,
-    Operand, Place,
+    Operand, Place, SrcLoc, StaticData, StaticId, Terminator, Ty,
 };
-use crate::vir::{SrcLoc, StaticData, StaticId, Terminator, Ty};
 use crate::LowerOptions;
 
 pub(crate) use cfg::successors;
@@ -211,7 +211,6 @@ pub(crate) use glue::{inspect_key, inspect_quote};
 /// Most lowering passes the counted-type fixpoint may take (boxing/): each pass adds types,
 /// and the closure computed after a pass already contains everything its facts imply.
 const MAX_BOXING_PASSES: usize = 8;
-
 /// Passes `lower_program` may take: the fixpoint's, and one more without the `await` steps.
 const MAX_PASSES: usize = MAX_BOXING_PASSES + 1;
 
@@ -269,6 +268,7 @@ pub(crate) fn lower_program_seeded(
             .target
             .map_or_else(crate::system::host_triple, str::to_string);
         cx.cpu_checks.no_extensions = opts.no_cpu_extensions;
+        cx.jit = opts.jit;
         cx.no_await_steps = no_await_steps;
         cx.facts_only = facts_only;
         cx.glue_slots.keep_all = want_seed || glue::demand_off();
@@ -423,6 +423,10 @@ struct Cx<'h> {
     /// The symbols C functions declared (c_call.rs): a later extern of the same symbol with
     /// another signature is that clash, reported, not an internal error.
     c_symbols: FxHashMap<String, c_call::CDecl>,
+    /// The statics of C variables (c_global.rs), by link symbol.
+    c_globals: FxHashMap<String, StaticId>,
+    /// `LowerOptions::jit`: C variables by their own symbols (c_global.rs).
+    jit: bool,
     /// The C declarations whose signature clash is reported (once each).
     c_clashes_reported: rustc_hash::FxHashSet<DefId>,
     /// velt/ffi's hooks found so far (c_call.rs): each is looked up once per program.
@@ -585,6 +589,8 @@ struct Cx<'h> {
     share_from: rustc_hash::FxHashMap<TyId, TyId>,
     /// Non-zero while a prelude `Map`'s field types are substituted (`keeps_nothings_apart`).
     map_fields: u32,
+    /// Whether calls get cleanup pads, and the last poll function's pad links (cleanup.rs).
+    unwinding: cleanup::Unwinding,
 }
 
 /// Per-function lowering state.
@@ -788,4 +794,6 @@ struct FnLower<'c, 'h> {
     /// conversion (`any_record_fill`, `any_object_fill`): a member is filled the same way up to
     /// `any_record::FILL_DEPTH` deep, so a type that contains itself ends.
     record_fill: u32,
+    /// The cleanup pads of this function (cleanup.rs).
+    pads: cleanup::Pads,
 }

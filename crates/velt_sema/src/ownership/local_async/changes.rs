@@ -47,14 +47,7 @@ use crate::ownership::local_closures::walk::{self, Visit};
 use super::reach::{constructor, plain, reached_locals, reaches};
 use super::record::writer;
 use super::targets::Read;
-
-/// A callback that a library runs on other threads: the closure, and where (with the label) the
-/// program hands it to the library.
-pub(crate) struct Crossing {
-    pub closure: DefId,
-    pub at: Span,
-    pub label: String,
-}
+use super::Crossing;
 
 /// Bodies deeper than this are not followed.
 const MAX_DEPTH: u32 = 48;

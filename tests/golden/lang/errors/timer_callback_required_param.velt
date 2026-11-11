@@ -1,0 +1,7 @@
+// A standard timer calls its callback with no arguments: a function with a required parameter
+// that can't hold `undefined` is refused as one (#2490). One whose parameters all admit
+// `undefined` is passed as it is (lang/timer_callback_parameters).
+function tick(n: number): void {
+  console.log("tick", n + 1);
+}
+setTimeout(tick, 1);

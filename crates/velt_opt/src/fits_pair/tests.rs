@@ -425,6 +425,7 @@ fn first_test_at(p: &mut Parts, b: Blocks, at: Operand) {
         args: vec![copy_local(p.pa), at],
         dest: Some(Place::local(b.x)),
         next: b.test1,
+        unwind: None,
     };
     p.fb.term(p.entry, call);
 }
@@ -436,6 +437,7 @@ fn second_test_of(p: &mut Parts, b: Blocks, array: Operand) {
         args: vec![array, copy_local(p.j)],
         dest: Some(Place::local(b.y)),
         next: b.test2,
+        unwind: None,
     };
     p.fb.term(b.r, call);
 }
@@ -447,6 +449,7 @@ fn second_test_at(p: &mut Parts, b: Blocks, at: Operand) {
         args: vec![copy_local(p.pb), at],
         dest: Some(Place::local(b.y)),
         next: b.test2,
+        unwind: None,
     };
     p.fb.term(b.r, call);
 }

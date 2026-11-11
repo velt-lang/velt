@@ -31,7 +31,7 @@ use crate::defs::{BodyState, FnKind};
 use crate::hir::{DefId, TyId, TyKind};
 
 /// The closures created for a site's type (their error type holds its variable), found so far.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct SiteClosures {
     /// How many defs were looked at.
     scanned: usize,

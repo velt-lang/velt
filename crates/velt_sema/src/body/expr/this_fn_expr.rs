@@ -297,6 +297,7 @@ impl FnCx<'_, '_> {
                     init: Some(init),
                     span: p.span,
                     c_const: false,
+                    c_global: None,
                 }),
                 span: p.span,
             });

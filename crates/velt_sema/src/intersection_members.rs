@@ -22,7 +22,7 @@ use crate::hir::{DefId, ImplDef, TyId, TyKind, TyOp};
 use crate::iface_writes::SetterSrc;
 
 /// The interfaces made of intersections' object parts (`Ctx::part_field`).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct PartIfaces {
     /// Per part, as written over its own type parameters: the interface and those parameters
     /// (the interface's arguments, in its parameter order).

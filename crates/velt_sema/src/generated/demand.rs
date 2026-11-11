@@ -28,7 +28,7 @@ pub(crate) type Instance = (DefId, Vec<TyId>, Span);
 /// instances: those types only say which methods a body may dispatch to (`Dispatch`), and the
 /// calls of a method that needs none add nothing. When one does, everything is walked again
 /// with them.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Walked {
     full: bool,
     upto: usize,
@@ -46,7 +46,7 @@ pub(crate) struct Walked {
 /// Every call and function value of the checked code ([`may_reach`]): caller (a function or a
 /// module constant), callee and the range of its type arguments in `targs`, recorded once per
 /// body; and the callees of the calls in fields' defaults, listed again each time.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Calls {
     /// Per definition, whether its body (a function's, a module constant's initializer) is
     /// recorded: one checked on demand after an earlier computation is recorded when it is

@@ -57,7 +57,7 @@ pub use fresh::{FnWrapped, FreshClosure};
 pub use impl_bound::{ImplBound, ImplDef};
 pub use intrinsic::Intrinsic;
 pub use modes::{Conversion, PassMode, UseMode};
-pub use module_state::{CConst, CValue, GlobalDef, ModuleState};
+pub use module_state::{CConst, CGlobal, CValue, GlobalDef, ModuleState};
 pub use nothing::Nothing;
 pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
 pub use ops::{BinOp, Lit, LogicOp, UnOp};

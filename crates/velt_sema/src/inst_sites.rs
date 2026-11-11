@@ -25,7 +25,7 @@ use crate::visit;
 
 /// The types one function body (or one type's field initializers) mentions, and the
 /// definitions it instantiates.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Uses {
     /// Every type mentioned (expressions, locals, type arguments), with its first span.
     pub types: Vec<(TyId, Span)>,
@@ -33,6 +33,13 @@ pub(crate) struct Uses {
     /// The guard bits of each of `calls` ([`carry_guard`]).
     pub guards: Vec<u64>,
     pub closures: Vec<DefId>,
+    /// The guard bits of each of `closures`, where the closure is made.
+    pub closure_guards: Vec<u64>,
+    /// The conversions to an interface value or a dynamic type: `ToDyn` of any value, and an
+    /// `Upcast` whose operand is already an interface value (to `any` or a wider interface; a
+    /// `ToDyn` made that interface value). The type converted, the type it converts to, and
+    /// the span.
+    pub converts: Vec<(TyId, TyId, Span)>,
     /// The methods the class types among `types` dispatch dynamically to, with those types'
     /// arguments and the span of the type (filled by the pass: `dispatch::Dispatch`).
     pub dyn_calls: Vec<(DefId, Vec<TyId>, Span)>,
@@ -229,13 +236,23 @@ fn add_site(
             u.calls.push((d, targs, e.span));
             u.guards.push(guard);
         }
-        Some(Site::Closure(c)) => u.closures.push(c),
+        Some(Site::Closure(c)) => {
+            u.closures.push(c);
+            u.closure_guards.push(guard);
+        }
         Some(Site::New(d, targs)) => news.push((d, targs, e.span, guard)),
         Some(Site::Param(p)) => {
             mention(u, &p.margs);
             u.param_calls.push((p, e.span));
         }
         None => {}
+    }
+    match &e.kind {
+        E::ToDyn { expr, .. } => u.converts.push((expr.ty, e.ty, e.span)),
+        E::Upcast(inner) if matches!(tys.kind(inner.ty), TyKind::Dyn(..)) => {
+            u.converts.push((inner.ty, e.ty, e.span))
+        }
+        _ => {}
     }
 }
 
@@ -395,7 +412,7 @@ impl ParamCall {
     }
 
     /// Is the receiver's type still a type parameter (or made of one)?
-    fn generic(&self, cx: &Ctx) -> bool {
+    pub(crate) fn generic(&self, cx: &Ctx) -> bool {
         let mut ps = vec![];
         collect_params(&cx.ty, self.recv, &mut ps);
         !ps.is_empty()

@@ -416,6 +416,9 @@ pub struct VarDecl {
     /// `declare c const NAME: T;` (docs/internals/design/c-ffi.md): a constant whose value comes
     /// from the C headers of its package, per target. It has a type and no `init`.
     pub c_const: bool,
+    /// `declare c("<library>") let name: T;` (or `const`, read-only; c-ffi.md "C variables"): a
+    /// C library's variable, used in place from `unsafe` code. A type, no `init`. Additive.
+    pub c_global: Option<CLibrary>,
 }
 
 #[derive(Clone, Debug)]

@@ -1,0 +1,32 @@
+// velt/sync (internal): `ChanCore<T>`, what the copies of one `Channel<T>` share (channel.velt):
+// its block (channel_block.velt). The last copy's drop drops the values still queued, which
+// nobody can receive any more, and gives the block's count back (a wait still holding one keeps
+// the memory until it is dropped).
+
+import { slotSize, slotTake } from "velt/lang/intrinsics";
+import { count, lock, newBlock, popAt, release, unlock } from "velt/sync/channel_block";
+
+/** One channel's block, shared by its copies. */
+export class ChanCore<T> {
+  readonly block: usize;
+
+  /** A channel holding at most `capacity` values (0: unbounded). */
+  constructor(capacity: usize) {
+    this.block = newBlock(capacity, slotSize<T>());
+  }
+
+  [Symbol.dispose]() {
+    const b = this.block;
+    while (true) {
+      lock(b);
+      if (count(b) === 0) {
+        unlock(b);
+        break;
+      }
+      // SAFETY: the oldest item, taken once (it left the ring); dropped after the lock is let go.
+      const item = unsafe { slotTake<T>(popAt(b)) };
+      unlock(b);
+    }
+    release(b);
+  }
+}

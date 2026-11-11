@@ -450,9 +450,11 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `place = value`: evaluate the target's indices, then the new value; drop the old one,
-    /// store.
+    /// `place = value`: evaluate the target's indices, then the new value; drop the old, store.
     pub(super) fn assign_expr(&mut self, place: &hir::Expr, value: &hir::Expr) -> Operand {
+        if let Some((d, c)) = self.c_global_of(place) {
+            return self.c_global_assign(d, &c, value);
+        }
         if let hir::ExprKind::Field { base, index, .. } = &place.kind {
             let bty = self.sub(base.ty);
             if self.cx.proxiable(bty) && !self.is_unit_field(bty, *index) {
@@ -483,7 +485,7 @@ impl FnLower<'_, '_> {
         if let hir::ExprKind::Local(id, _) = &place.kind {
             if let Some(p) = self.local_target(*id) {
                 let v = self.detach(v, place.ty);
-                self.drop_old(*id);
+                self.drop_old(*id, &v);
                 self.store(p, v);
                 self.mark_init(*id);
             }
@@ -615,6 +617,9 @@ impl FnLower<'_, '_> {
         place: &hir::Expr,
         value: &hir::Expr,
     ) -> Operand {
+        if let Some((d, c)) = self.c_global_of(place) {
+            return self.c_global_compound(d, &c, (op, place.ty), value);
+        }
         if let hir::ExprKind::Field { base, index, .. } = &place.kind {
             let bty = self.sub(base.ty);
             if self.cx.proxiable(bty) && !self.is_unit_field(bty, *index) {
@@ -659,7 +664,7 @@ impl FnLower<'_, '_> {
         let v = if owns { self.take_owned(v) } else { v };
         match local {
             Some(id) => {
-                self.drop_old(id);
+                self.drop_old(id, &v);
                 self.assign(p, Rvalue::Use(v));
                 self.mark_init(id);
             }

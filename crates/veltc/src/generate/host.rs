@@ -147,7 +147,7 @@ pub fn host_main(root: &Path) -> ExitCode {
     let symbols = velt_rt_host::abi_symbols::symbol_table();
     let mut session = velt_codegen_cl::DevSession::new(&symbols);
     session.set_debug_info(false);
-    let program = match driver::compile(&mut sess, &opts)
+    let program = match driver::compile_for_jit(&mut sess, &opts)
         .and_then(|p| driver::check_generator_host(&mut sess, &p).map(|()| p))
     {
         Ok(p) => p,

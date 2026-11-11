@@ -1,0 +1,115 @@
+// check: no leaks
+// An async closure passed to a function value, an interface method or an overridden method
+// stays on the caller's task (#2726): the call is a promise of that task, so the closure shares
+// what it captured with each call and may change it, as in JavaScript. A middleware chain's
+// `next`, called through an array of middleware, changes a captured counter and a captured
+// object; a runner behind an interface calls its callback twice; an overriding method keeps the
+// change too; a router's dispatch passes a `next` that runs the rest of the chain, and the handler's
+// change reaches the middleware after `await next()` (before #2726 it went to a copy). The output
+// is Node's.
+
+class State {
+  log: string = "";
+}
+
+type Next = () => Promise<void>;
+type Middleware = (next: Next) => Promise<void>;
+
+const middleware: Middleware[] = [
+  async (next: Next): Promise<void> => {
+    await next();
+  },
+  async (next: Next): Promise<void> => {
+    await next();
+    await next();
+  },
+];
+
+interface Runner {
+  run(g: Next): Promise<void>;
+}
+
+class Twice implements Runner {
+  async run(g: Next): Promise<void> {
+    await g();
+    await g();
+  }
+}
+
+class Base {
+  async each(g: Next): Promise<void> {
+    await g();
+  }
+}
+
+class Thrice extends Base {
+  override async each(g: Next): Promise<void> {
+    await g();
+    await g();
+    await g();
+  }
+}
+
+class Ctx {
+  res: string = "";
+}
+
+type Step = (c: Ctx, next: Next) => Promise<void>;
+
+class Router {
+  steps: Step[] = [];
+  use(s: Step): void {
+    this.steps.push(s);
+  }
+  async dispatch(c: Ctx, i: i64): Promise<void> {
+    if (i >= this.steps.length) {
+      c.res += "handled";
+      return;
+    }
+    const step = this.steps[i];
+    await step(c, async (): Promise<void> => {
+      const rest = c;
+      await this.dispatch(rest, i + 1);
+    });
+  }
+}
+
+async function main() {
+  const state = new State();
+  let hops = 0;
+  for (const m of middleware) {
+    await m(async (): Promise<void> => {
+      state.log += "h";
+      hops++;
+    });
+  }
+  console.log(state.log, hops);
+
+  let runs = 0;
+  const r: Runner = new Twice();
+  await r.run(async (): Promise<void> => {
+    runs += 1;
+  });
+  console.log("runner", runs);
+
+  const b: Base = new Thrice();
+  await b.each(async (): Promise<void> => {
+    runs += 10;
+    state.log += "t";
+  });
+  console.log("override", runs, state.log);
+
+  const router = new Router();
+  router.use(async (c: Ctx, next: Next): Promise<void> => {
+    c.res += "[";
+    await next();
+    c.res += "]";
+  });
+  router.use(async (c: Ctx, next: Next): Promise<void> => {
+    await next();
+    c.res += "+after";
+  });
+  const c = new Ctx();
+  await router.dispatch(c, 0);
+  console.log("router", c.res);
+}

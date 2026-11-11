@@ -1,0 +1,113 @@
+// velt/lang/hooks (internal): code polled off the worker under the executor in Velt (sched.velt,
+// #2649): a pinned spawn runs on the runtime's executor (its worker threads), so its `sleep`, its
+// Node timers and the promises it boxes and starts are the runtime's, driven by the runtime's
+// task as the code is (a timer's callback runs as such a started promise). The runtime's timer
+// handles have bit 0 clear; the executor's set it. The runtime's entries are reached through
+// their `declare c` (lowering routes only the runtime's own declarations to the executor).
+// Until the multi-worker step takes pinned spawns over (#2649 step 3).
+
+import { Ptr } from "velt/ffi";
+import * as m from "./sched_mem";
+
+declare c("c") function velt_rt_sleep$rt(ms: i64): Ptr<u8>;
+declare c("c") function velt_rt_timer_new$rt(ms: i64): u64;
+declare c("c") function velt_rt_timer_turn$rt(h: u64, gate: u64): Ptr<u8>;
+declare c("c") function velt_rt_timer_again$rt(h: u64, ms: i64): void;
+declare c("c") function velt_rt_timer_clear$rt(h: u64): void;
+declare c("c") function velt_rt_timer_free$rt(h: u64): void;
+declare c("c") function velt_rt_fut_box$rt(
+  poll: usize,
+  drop: usize,
+  state: usize,
+  size: u64,
+  align: u64,
+): Ptr<u8>;
+declare c("c") function velt_rt_fut_start$rt(f: usize, rdrop: usize): void;
+declare c("c") function velt_rt_fut_start_rejecting$rt(f: usize, rdrop: usize): void;
+declare c("c") function velt_rt_fut_detach$rt(f: usize, qdrop: usize): void;
+declare c("c") function velt_rt_futs_handled$rt(futs: usize, n: u64, qdrop: usize): void;
+declare function velt_rt_flush(): void;
+
+/** The runtime's `sleep` of `ms` milliseconds: a heap future. */
+export function sleep(ms: i64): usize {
+  // SAFETY: the runtime's entry takes a number and returns a new heap future.
+  return m.addr(unsafe { velt_rt_sleep$rt(ms) });
+}
+
+/** A timer of the runtime's Node order, due in `ms` milliseconds: its handle (bit 0 clear). */
+export function timerNew(ms: i64): u64 {
+  // SAFETY: the runtime's entry takes a number.
+  return unsafe { velt_rt_timer_new$rt(ms) };
+}
+
+/** The turn of the runtime's timer `h`: a heap future. */
+export function timerTurn(h: u64, gate: u64): usize {
+  // SAFETY: `h` is a live handle of the runtime's (bit 0 clear).
+  return m.addr(unsafe { velt_rt_timer_turn$rt(h, gate) });
+}
+
+/** The runtime's interval timer `h` queued again, `ms` after its last turn. */
+export function timerAgain(h: u64, ms: i64): void {
+  // SAFETY: as `timerTurn`.
+  unsafe {
+    velt_rt_timer_again$rt(h, ms);
+  }
+}
+
+/** The runtime's timer `h` leaves its order. */
+export function timerClear(h: u64): void {
+  // SAFETY: as `timerTurn`.
+  unsafe {
+    velt_rt_timer_clear$rt(h);
+  }
+}
+
+/** The runtime's timer `h` leaves its order, and its handle is freed. */
+export function timerFree(h: u64): void {
+  // SAFETY: as `timerTurn`; not used afterwards.
+  unsafe {
+    velt_rt_timer_free$rt(h);
+  }
+}
+
+/** The runtime's lazy box of the `size`-byte initial state at `state`. */
+export function box(poll: usize, drop: usize, state: usize, size: u64, align: u64): usize {
+  // SAFETY: the arguments are the compiler's box of a state, as the runtime's entry takes them.
+  return m.addr(unsafe { velt_rt_fut_box$rt(poll, drop, state, size, align) });
+}
+
+/** Promise `f` starts now, driven by the runtime's task (its entry starts only its own boxes). */
+export function start(f: usize, rdrop: usize, rejecting: bool): void {
+  // SAFETY: `f` is a heap future.
+  unsafe {
+    if (rejecting) {
+      velt_rt_fut_start_rejecting$rt(f, rdrop);
+    } else {
+      velt_rt_fut_start$rt(f, rdrop);
+    }
+  }
+}
+
+/** The owner gives up the runtime's promise or leaf `f`: a box of its keeps running. */
+export function detach(f: usize, qdrop: usize): void {
+  // SAFETY: the caller owns `f`, a heap future, and gives it up.
+  unsafe {
+    velt_rt_fut_detach$rt(f, qdrop);
+  }
+}
+
+/** The runtime's boxes among the `n` promises at `futs` go to a combinator (the others are left). */
+export function handled(futs: usize, n: u64, qdrop: usize): void {
+  // SAFETY: `futs` holds `n` heap futures.
+  unsafe {
+    velt_rt_futs_handled$rt(futs, n, qdrop);
+  }
+}
+
+/**
+ * The worker's buffered stdout written out before it waits, as the runtime's idle workers do: a
+ * pinned spawn's lines, written on its own thread, come after the worker's written before them.
+ */
+export function flush(): void {
+  velt_rt_flush();
+}

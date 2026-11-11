@@ -169,7 +169,7 @@ impl Cx<'_> {
     }
 
     /// Can a deep copy of a `t` call a class's own `clone()` (`own_clone`), or hold a promise?
-    /// Then the copy is transferred in turn (glue/transfer.rs `settle_copy`): what `clone()`
+    /// Then the copy is transferred in turn (glue/transfer_settle.rs `settle_copy`): what `clone()`
     /// returned may share objects, and a promise's copy is another holder of it, which is handed
     /// over to the other task (#212). Function and interface values may hold any type: assumed
     /// to.
@@ -424,7 +424,13 @@ impl FnLower<'_, '_> {
         let f = self
             .cx
             .func_direct(Work::Glue(Glue::TransferRoot, ty), self.mode);
+        // `v` is off the scopes (consumed or taken), so while the glue runs only this
+        // temporary owns it: a transfer that panics (a weak collection in a captured
+        // environment) leaves it to the call's cleanup pad, which drops it as far as it was
+        // transferred (#2667). Taken back after: the caller owns the result.
+        self.own_temp(t.local, ty);
         self.call(vir::Callee::Func(f), vec![a], None, false);
+        self.take_temp(&t);
         Operand::Copy(t)
     }
 

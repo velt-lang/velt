@@ -375,10 +375,12 @@ fn math_random_seeds_each_run_on_webassembly() {
             continue;
         }
         build_runtime(&root, target);
+        let work = own_build_dir(&root, "golden-work-random", target);
         let run = || {
             let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
                 .args(["run", "--target", target])
                 .arg(&main)
+                .current_dir(&work)
                 .output()
                 .expect("run velt");
             let out = String::from_utf8_lossy(&o.stdout).into_owned();
@@ -391,8 +393,21 @@ fn math_random_seeds_each_run_on_webassembly() {
             out
         };
         let (one, two) = (run(), run());
+        let _ = std::fs::remove_dir_all(&work);
         assert_ne!(one, two, "{target}: two runs printed the same numbers");
     }
+}
+
+/// A directory of `name`'s own for a test's `velt run` of a file outside a package: such a build
+/// leaves `target/velt/<stem>.o` and `<stem>.wasm` below the current directory, which is
+/// crates/veltc for every test, so two tests building a `main.velt` at once (for different
+/// targets, or one of them linking while the other writes its object) would link each other's
+/// half-written files (rust-lld: "undefined symbol: velt_main", "invalid section type").
+fn own_build_dir(root: &Path, name: &str, target: &str) -> PathBuf {
+    let dir = work_dir::work_dir(root, name).join(format!("{target}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("work dir");
+    dir
 }
 
 /// std's own C calls on wasm32-wasip1 (`Math.random()`'s `getentropy`) with a std root spelled
@@ -407,12 +422,15 @@ fn std_c_calls_with_a_std_root_spelled_with_dots() {
     }
     let root = root();
     build_runtime(&root, "wasm32-wasip1");
+    let work = own_build_dir(&root, "golden-work-dotted-std", "wasm32-wasip1");
     let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["run", "--target", "wasm32-wasip1"])
         .arg(root.join("crates/veltc/tests/wasm_random/main.velt"))
         .env("VELT_STD", root.join("crates/veltc/../../std"))
+        .current_dir(&work)
         .output()
         .expect("run velt");
+    let _ = std::fs::remove_dir_all(&work);
     assert!(
         o.status.success() && !o.stdout.is_empty(),
         "exit {:?}\n{}{}",

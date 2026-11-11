@@ -406,7 +406,7 @@ impl FnCx<'_, '_> {
             ),
             GenCopy::Capture(name) => (
                 format!("an async closure cannot capture the generator `{name}`"),
-                "an async closure copies what it captures when it runs (it may run as a task on another thread), and a generator's suspended state cannot be copied: create the generator inside the closure, or pass it to an async function".to_string(),
+                "an async closure that may run as a task on another thread copies what it captured for each call, and a generator's suspended state cannot be copied: create the generator inside the closure, or pass it to an async function".to_string(),
             ),
             // Only weak collections are checked at a lock.
             GenCopy::LockCapture(_)

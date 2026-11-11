@@ -228,7 +228,7 @@ impl GenFunction {
 /// A check's generated code (`Ctx::gen`): what the driver generated so far, with what this check
 /// generated (`input`), the driver's generator when it generates during the check, and the
 /// binding of the instances.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Gen<'m> {
     pub input: Option<std::rc::Rc<GenInput>>,
     pub generate: Option<&'m Generator<'m>>,
@@ -236,7 +236,7 @@ pub(crate) struct Gen<'m> {
 }
 
 /// What binding the instances to their generated definitions found ([`phase::run`]).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Binding {
     /// The instances bound, once the bodies are checked.
     pub bound: bind::Bound,

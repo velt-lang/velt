@@ -23,7 +23,7 @@ use crate::resolve::TyEnv;
 /// Free functions' signatures with a type query that needs a body checked (`ReturnType<typeof
 /// f>` of a function whose result is inferred) wait until collection is finished
 /// (`Ctx::bodies_ok`, `collect::sigs::fill_deferred`).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct SigQueries<'m> {
     /// A free function's signature is being resolved: a type query that needs a body defers it.
     pub sig_fill: bool,

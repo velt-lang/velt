@@ -32,6 +32,27 @@ fn named_statics_are_hidden_globals_and_imports_are_available_externally() {
     assert!(plain.contains(&private), "{plain}");
 }
 
+/// A C variable (`StaticData::c_global`) is declared as C declares an `extern` one: no contents,
+/// default visibility, neither constant nor `available_externally`.
+#[test]
+fn a_c_variable_is_an_external_global() {
+    let mut p = super::vtable_sample();
+    p.statics.push(StaticData {
+        align: 4,
+        symbol: Some("tiny_counter".into()),
+        linkage: Linkage::Import,
+        c_global: true,
+        ..Default::default()
+    });
+    velt_vir::verify(&p).unwrap();
+    let ir = emit_ir(&p, "x86_64-unknown-linux-gnu").unwrap();
+    let line = ir
+        .lines()
+        .find(|l| l.starts_with("@\"tiny_counter\""))
+        .unwrap_or_else(|| panic!("no `tiny_counter` in\n{ir}"));
+    assert_eq!(line, "@\"tiny_counter\" = external global i8, align 4");
+}
+
 /// An unnamed static's name comes from its contents, not its index: a static added in front
 /// (a new string of the program) renames none of the others, so the modules of codegen units
 /// that use only those stay the same (and come from the build cache).
@@ -49,6 +70,7 @@ fn unnamed_statics_keep_their_names_when_others_are_added() {
             mutable: None,
             symbol: None,
             linkage: Linkage::Internal,
+            c_global: false,
         },
     );
     // References to the old statics move up by one.

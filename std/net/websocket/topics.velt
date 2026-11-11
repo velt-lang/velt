@@ -8,11 +8,10 @@
 // a flusher. A subscriber with more than `PUBLISH_LIMIT` bytes
 // already queued is skipped for that message, so one slow reader cannot grow the server's
 // memory without bound (a direct `send` waits instead). Topics are process-wide (one registry,
-// a runtime slot, rt_abi_async.md §2.2); a connection leaves all of them when it is closed.
+// a static atomic); a connection leaves all of them when it is closed.
 //
 // Locks, always in this order: the registry, a topic, a connection's queue.
 
-import { Channel } from "velt/sync/channel";
 import { TcpStream } from "velt/net/tcp_stream";
 import { START } from "velt/net/websocket/queue";
 import { Tx, writeDirect } from "velt/net/websocket/writer";
@@ -58,24 +57,26 @@ class Topic {
 type TopicRef = shared<Mutex<Topic>>;
 type Registry = Mutex<Map<string, TopicRef>>;
 
-declare function velt_rt_global_lock(slot: u32);
-declare function velt_rt_global_unlock(slot: u32);
-declare function velt_rt_global_chan(slot: u32): u64;
+// The process's registry, made on first use: a static atomic (its word is in the program's data,
+// not module state; its reference is released at exit for the leak counters).
+const REGISTRY = new Atomic<shared<Registry> | null>(null);
 
-// The topics' runtime slot (rt_abi_async.md §2.2). The slot is read only here, with its one
-// type: a generic accessor would let any importer read it as another type.
-const SLOT: u32 = 0;
-
-// The process's registry, made on first use: taken out of the slot and a reference put back.
 function registry(): shared<Registry> {
-  velt_rt_global_lock(SLOT);
-  const ch: Channel<shared<Registry>> = { handle: velt_rt_global_chan(SLOT) };
-  const found = ch.tryReceive();
-  const value =
-    found == null ? shared(new Mutex<Map<string, TopicRef>>(new Map<string, TopicRef>())) : found;
-  ch.trySend(value.clone());
-  velt_rt_global_unlock(SLOT);
-  return value;
+  const found = REGISTRY.load("acquire");
+  if (found != null) {
+    return found;
+  }
+  // Two first calls race: one value wins, the other is dropped.
+  REGISTRY.compareExchange(
+    null,
+    shared(new Mutex<Map<string, TopicRef>>(new Map<string, TopicRef>())),
+    "acqrel",
+  );
+  const made = REGISTRY.load("acquire");
+  if (made == null) {
+    panic("ICE: the topics' registry is set once and never cleared");
+  }
+  return made;
 }
 
 /** Subscribes the connection (`stream`, queue `tx`) to `topic`; false if its handle was released. */

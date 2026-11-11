@@ -100,7 +100,10 @@ fn successors(t: &Terminator) -> Vec<u32> {
             v.push(default.0);
             v
         }
-        Terminator::Call { next, .. } => vec![next.0],
+        Terminator::Call { next, unwind, .. } => match unwind {
+            Some(pad) => vec![next.0, pad.0],
+            None => vec![next.0],
+        },
         Terminator::Return(_) | Terminator::Unreachable => vec![],
     }
 }

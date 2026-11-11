@@ -144,6 +144,7 @@ fn inherit_field(cx: &mut Ctx, d: DefId, f: FieldInfo, pname: &str) {
 }
 
 /// A field an interface declares over an inherited one of another type.
+#[derive(Clone)]
 pub(crate) struct NarrowedField {
     name: String,
     own: TyId,

@@ -13,10 +13,7 @@
 //! takes back from it (`VeltBytes::take_vec`), since compiled code frees and allocates those as
 //! its own blocks: equal numbers at exit mean compiled code freed everything it allocated (leak
 //! checks, semantics stage 2); the counts are frozen at a moment when they were equal, or else
-//! once no task is left that could make them so ([`freeze`]). `channel
-//! leftovers=<n>`: values still queued in channels when `main` returned normally, which the
-//! runtime dropped then (https://veltlang.com/docs/std/sync/channel/); a leak check passes with them, so the count keeps
-//! them visible. `panics caught=<n>`: Velt panics stopped at a promise that catches them
+//! once no task is left that could make them so ([`freeze`]). `panics caught=<n>`: Velt panics stopped at a promise that catches them
 //! (`catchPanic`, panic.rs): each leaks what the panicked code held, so a leak check of such a run
 //! cannot pass and is skipped.
 
@@ -30,7 +27,6 @@ mod counters {
     pub static ALLOC: AtomicU64 = AtomicU64::new(0);
     pub static FREE: AtomicU64 = AtomicU64::new(0);
     pub static BLOCKS: super::BlockCount = super::BlockCount::new();
-    pub static CHANNEL_LEFTOVERS: AtomicU64 = AtomicU64::new(0);
 
     pub fn enabled() -> bool {
         static ON: OnceLock<bool> = OnceLock::new();
@@ -168,17 +164,6 @@ pub(crate) fn counting() -> bool {
     false
 }
 
-/// Record the number of values left in channels at exit, dropped by the runtime (reported as
-/// `channel leftovers=<n>`).
-// velt_rt_wasm compiles this file too and drops no leftovers.
-#[allow(dead_code)]
-pub(crate) fn channel_leftovers(n: u64) {
-    #[cfg(debug_assertions)]
-    counters::CHANNEL_LEFTOVERS.store(n, std::sync::atomic::Ordering::Relaxed);
-    #[cfg(not(debug_assertions))]
-    let _ = n;
-}
-
 /// After `main` returned normally (debug runtime with `VELT_RC_STATS=1` only): tasks still
 /// running then (a task whose handle was dropped, the loser of a race) free their blocks when
 /// they finish, so wait while blocks are unfreed and tasks are alive, instead of counting a
@@ -188,8 +173,7 @@ pub fn settle(tasks_alive: impl Fn() -> bool) {
     settle_blocks(tasks_alive, false);
 }
 
-/// Before [`report`]: [`settle`] again (after the runtime dropped what was left in channels),
-/// then freeze the block counts ([`BlockCount`]): what tasks still running allocate after that
+/// Before [`report`]: [`settle`] again, then freeze the block counts ([`BlockCount`]): what tasks still running allocate after that
 /// is not counted.
 pub fn freeze(tasks_alive: impl Fn() -> bool) {
     settle_blocks(tasks_alive, true);
@@ -214,14 +198,13 @@ pub fn report() {
         use std::sync::atomic::Ordering::Relaxed;
         let blocks = BLOCKS.get();
         eprintln!(
-            "rc stats: retain={} release={} alloc={} free={} blocks={}/{} channel leftovers={} panics caught={}",
+            "rc stats: retain={} release={} alloc={} free={} blocks={}/{} panics caught={}",
             RETAIN.load(Relaxed),
             RELEASE.load(Relaxed),
             ALLOC.load(Relaxed),
             FREE.load(Relaxed),
             blocks.allocated,
             blocks.freed,
-            CHANNEL_LEFTOVERS.load(Relaxed),
             crate::panic::caught_count()
         );
     }

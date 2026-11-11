@@ -12,6 +12,10 @@ and an axum 0.8 baseline (`axum/`, tokio multi-thread, release + thin LTO, syste
 Run with `bench/http/techempower/run.sh` (knobs in its header): `oha -z 10s -c 256`, 2 s warm-up
 per route, HTTP/1.1 keep-alive, client and server on the same machine (loopback).
 
+`scaling.sh` measures the same routes by worker count (1, 4, 8) for Velt on both schedulers,
+axum and a xitca-web 0.8 baseline (`xitca/`), with instructions per request from cachegrind;
+its results are in `bench/http/RESULTS.md` (2026-11-11).
+
 ## 2026-09-30 — Apple M4 (4P + 6E cores, 32 GB), macOS 26.6.2, oha 1.16.0
 
 **Noisy machine:** two other agents were compiling the whole time (load average 20–32 on 10

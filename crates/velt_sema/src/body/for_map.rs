@@ -264,6 +264,7 @@ impl<'e> CursorLoop<'e> {
             init: Some(init),
             span: self.at,
             c_const: false,
+            c_global: None,
         }))
     }
 

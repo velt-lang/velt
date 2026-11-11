@@ -345,6 +345,7 @@ impl<H: Host> Interp<'_, H> {
                 args,
                 dest,
                 next,
+                ..
             } => {
                 let mut values = Vec::with_capacity(args.len());
                 for a in args {

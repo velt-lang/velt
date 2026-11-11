@@ -5,10 +5,10 @@
 //
 // - The worker's idle wait is the reactor's (`park`): a wake from another thread (a Rust leaf
 //   waking a task through its C waker, sched_task.velt `schedule`) is the reactor's own wake (an
-//   `EVFILT_USER` trigger, an eventfd write), so one wait covers sockets and wakes. There are no
-//   timers in Velt yet (Rust's wake the worker like any other thread), so the wait has no
-//   timeout. A busy worker looks at the reactor without waiting every 64 polls (`look`, from
-//   sched_run.velt `turn`).
+//   `EVFILT_USER` trigger, an eventfd write), so one wait covers sockets and wakes. The wait
+//   lasts until the next timer at most (`sleep`, Node's timers: sched_sleep.velt,
+//   sched_order.velt; a read wait's deadline). A busy worker looks at the reactor without
+//   waiting every 64 polls (`look`, from sched_run.velt `turn`).
 // - A source is registered once, for both directions, edge-triggered: an event sets its
 //   readiness bits and wakes its waiters; an operation that finds the socket not ready (EAGAIN)
 //   clears the bit, so the next edge sets it again. Its waiters are heap futures
@@ -19,7 +19,7 @@
 //   `generation << 32 | slot`, generations far below 2^31), its slot and generation in a table,
 //   so a closed handle is EBADF, never freed memory (sched_io_table.velt).
 // - Waits (sched_io_wait.velt) may have a deadline (`readableWithin`): the worker's wait then
-//   lasts until the first one at most; these are the only timers in Velt yet.
+//   lasts until the first one at most.
 // - Deferred writes (`writeLater`) collect in the source's buffer and wait on the executor's due
 //   list, sent at the end of each poll of a task and before the worker waits
 //   (sched_io_write.velt).
@@ -109,7 +109,7 @@ export function io(): usize {
 
 /** Makes the I/O block: the reactor, an empty table; `tickAt` is the executor's I/O tick. */
 export function open(tickAt: usize): usize {
-  const b = m.zeroed(IO_SIZE);
+  const b = m.lastingZeroed(IO_SIZE);
   m.st(b + IO_TICK_AT, tickAt);
   m.st(tickAt, TICKS);
   m.st(b + IO_REACTOR, r.open());
@@ -132,14 +132,19 @@ export function wake(b: usize): void {
 
 /**
  * The worker has nothing to run (its park word is up, sched_run.velt): waits for events or a
- * wake, until the first deadline of a wait at most, and delivers the events.
+ * wake, until the first deadline of a wait or `timeoutMs` (the timers', -1: none) at most, and
+ * delivers the events.
  */
 @noInline
-export function park(b: usize): void {
+export function park(b: usize, timeoutMs: i64): void {
   if (m.ld(b + IO_REACTOR) === 0) {
     panic("the executor's reactor did not open: it has nothing to wait in");
   }
-  wait(b, wt.expire(b));
+  let ms = wt.expire(b);
+  if (timeoutMs >= 0 && (ms < 0 || timeoutMs < ms)) {
+    ms = timeoutMs;
+  }
+  wait(b, ms);
   if (m.ld(b + IO_TIMERS) !== 0) {
     wt.expire(b);
   }
@@ -207,7 +212,7 @@ export function register(fd: i32, flags: u32, ready: u32): usize {
   const b = io();
   const e = r.add(m.ld(b + IO_REACTOR), fd, s);
   if (e !== 0) {
-    m.release(s);
+    m.release(s, S_SIZE);
     return 0;
   }
   m.st(b + IO_LIVE, m.ld(b + IO_LIVE) + 1);
@@ -221,9 +226,9 @@ export function free(s: usize): void {
   wt.wakeAll(s);
   const buf = m.ld(s + S_BUF);
   if (buf !== 0) {
-    m.release(buf);
+    m.release(buf, m.ld(s + S_CAP));
   }
-  m.release(s);
+  m.release(s, S_SIZE);
 }
 
 /** Clears readiness `bit` of `s`: an operation found the socket not ready (EAGAIN). */

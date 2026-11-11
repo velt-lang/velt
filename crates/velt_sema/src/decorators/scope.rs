@@ -77,6 +77,7 @@ impl Region {
 }
 
 /// A module's scopes below module level, by position; see the module docs.
+#[derive(Clone)]
 pub(crate) struct Scopes {
     /// In source order, a region before those inside it (and before a later one of the same
     /// span, which the walk found inside it).

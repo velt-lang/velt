@@ -38,6 +38,7 @@ struct Raw {
     declared_in: Option<DefId>,
 }
 
+#[derive(Clone)]
 pub(super) struct Member {
     pub name: String,
     pub def: DefRef,

@@ -160,7 +160,7 @@ fn promotes_fields_and_keeps_behaviour() {
     assert_eq!(expected, 113 * 1000 + 3);
     let mut after = before.clone();
     let aggs = after.aggs.clone();
-    assert!(run(&aggs, &mut after.funcs[1]));
+    assert!(run(&aggs, &mut after.funcs[1], None));
     assert_valid(&after);
     assert_eq!(run_main(&after, 4), expected);
     let fill = &after.funcs[1];
@@ -178,8 +178,104 @@ fn promotes_fields_and_keeps_behaviour() {
 fn leaves_escaping_and_plain_params_alone() {
     let mut p = program(true);
     let aggs = p.aggs.clone();
-    assert!(!run(&aggs, &mut p.funcs[1]));
+    assert!(!run(&aggs, &mut p.funcs[1], None));
     let mut p = program(false);
     p.funcs[1].param_attrs = vec![];
-    assert!(!run(&aggs, &mut p.funcs[1]));
+    assert!(!run(&aggs, &mut p.funcs[1], None));
+}
+
+/// `f(p)`: `(*p).1 += 1`, then `g()` without an unwind edge and `g()` with one to a pad, then
+/// returns `(*p).1`. With the program's `velt_eh_resume`, both edges store the written field
+/// before the unwind leaves (the caller owns `*p`); without it only the existing edge does.
+#[test]
+fn unwind_edges_store_the_written_fields() {
+    for with_resume in [true, false] {
+        let mut pb = ProgramBuilder::new();
+        let arr = pb.agg("array", 24, 8, &[(Ty::Ptr, 0), (Ty::U64, 8), (Ty::U64, 16)]);
+        let resume = pb.ext(velt_vir::eh::RESUME, &[], Ty::Unit, true);
+        let mut fb = FuncBuilder::internal("g", &[], Ty::Unit);
+        let b = fb.block();
+        fb.ret(b, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
+        let g = pb.add(fb.finish());
+        let mut fb = FuncBuilder::internal("f", &[Ty::Ptr], Ty::U64);
+        let p = fb.param(0);
+        let (entry, second, done, pad) = (fb.block(), fb.block(), fb.block(), fb.block());
+        let len = through(p, arr, 1);
+        fb.push(
+            entry,
+            Stmt::Assign(
+                len.clone(),
+                bin(BinOp::Add, copy_place(len.clone()), int(1, Ty::U64)),
+            ),
+        );
+        fb.term(
+            entry,
+            Terminator::Call {
+                callee: Callee::Func(g),
+                args: vec![],
+                dest: None,
+                next: second,
+                unwind: None,
+            },
+        );
+        fb.term(
+            second,
+            Terminator::Call {
+                callee: Callee::Func(g),
+                args: vec![],
+                dest: None,
+                next: done,
+                unwind: Some(pad),
+            },
+        );
+        fb.ret(done, copy_place(len));
+        let unreachable = fb.block();
+        fb.term(unreachable, Terminator::Unreachable);
+        fb.term(
+            pad,
+            Terminator::Call {
+                callee: Callee::Extern(resume),
+                args: vec![],
+                dest: None,
+                next: unreachable,
+                unwind: None,
+            },
+        );
+        let mut f = fb.finish();
+        f.param_attrs = vec![NOALIAS];
+        let mut prog = pb.finish();
+        let fid = prog.funcs.len();
+        prog.funcs.push(f);
+        let aggs = prog.aggs.clone();
+        assert!(run(
+            &aggs,
+            &mut prog.funcs[fid],
+            with_resume.then_some(resume)
+        ));
+        assert_valid(&prog);
+        let f = &prog.funcs[fid];
+        let stores_len = |b: BlockId| {
+            f.blocks[b.0 as usize]
+                .stmts
+                .iter()
+                .any(|s| matches!(s, Stmt::Assign(pl, _) if *pl == through(p, arr, 1)))
+        };
+        let edges: Vec<Option<BlockId>> = (f.blocks.iter())
+            .filter_map(|b| match &b.term {
+                Terminator::Call {
+                    callee: Callee::Func(_),
+                    unwind,
+                    ..
+                } => Some(*unwind),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(edges.len(), 2);
+        assert!(edges[1].is_some_and(stores_len), "{:?}", f.blocks);
+        if with_resume {
+            assert!(edges[0].is_some_and(stores_len), "{:?}", f.blocks);
+        } else {
+            assert_eq!(edges[0], None, "{:?}", f.blocks);
+        }
+    }
 }

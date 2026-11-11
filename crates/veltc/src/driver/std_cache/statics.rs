@@ -46,10 +46,10 @@ impl Names {
 }
 
 /// Whether static `s` has identity: relocations (its address is in other data, or other
-/// addresses are in it), or written.
+/// addresses are in it), written, or a C library's variable (which has its symbol already).
 fn has_identity(program: &vir::Program, s: usize) -> bool {
     let data = &program.statics[s];
-    !data.relocs.is_empty() || data.mutable.is_some()
+    !data.relocs.is_empty() || data.mutable.is_some() || data.c_global
 }
 
 /// The statics the code of `set` (an `inlinable` set) reaches that must be the program's own:

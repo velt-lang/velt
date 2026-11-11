@@ -351,10 +351,12 @@ impl FnCx<'_, '_> {
                 owner: None,
                 is_private: false,
                 c_const: false,
+                c_global: None,
             },
             mutable: false,
             stored: true,
             c_const: None,
+            c_global: None,
         };
         let g = self
             .cx

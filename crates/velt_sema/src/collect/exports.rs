@@ -32,7 +32,7 @@ pub(super) const MAX_DEPTH: u32 = 32;
 /// Every module's export names and its export table, as far as computed. An import that binds
 /// namespace members (`ns.x`) a module's export list exports (`export { ns }`) changes what that
 /// module exports: it calls [`Memo::changed`].
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Memo {
     names: FxHashMap<usize, Rc<[String]>>,
     /// Module and depth: the names found by a walk [`MAX_DEPTH`] cut short. Every entry of an

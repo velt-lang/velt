@@ -594,6 +594,180 @@ fn a_published_package_needs_no_zig() {
     assert!(out.contains("VELT_NATIVE_FROM_SOURCE=1"), "{out}");
 }
 
+/// C variables (`declare c("tiny") let`, docs/internals/design/c-ffi.md "C variables"): the
+/// library's own, which its functions see changed.
+const GLOBALS_H: &str = "extern int tiny_counter;\nextern const char *tiny_name;\nextern const int tiny_version;\nextern double tiny_scale;\nextern unsigned char tiny_ready;\nint tiny_get(void);\n";
+
+const GLOBALS_C: &str = "#include \"tiny.h\"\n\nint tiny_counter = 5;\nconst char *tiny_name = \"tiny\";\nconst int tiny_version = 3;\ndouble tiny_scale = 1.5;\nunsigned char tiny_ready = 0;\nint tiny_get(void) { return tiny_counter * 10 + tiny_ready; }\n";
+
+const GLOBALS_LIB: &str = r#"import { Ptr, readCString } from "velt/ffi";
+
+declare c("tiny") let tiny_counter: i32;
+declare c("tiny") let tiny_name: Ptr<u8> | null;
+declare c("tiny") const tiny_version: i32;
+declare c("tiny") let tiny_scale: f64;
+declare c("tiny") let tiny_ready: u8;
+declare c("tiny") function tiny_get(): i32;
+
+export function run(): string {
+  // SAFETY: one thread uses the library's variables, and `tiny_name` points at a string literal.
+  unsafe {
+    const before = tiny_counter;
+    tiny_counter = 41;
+    tiny_counter += 1;
+    tiny_ready = 7;
+    tiny_scale *= 2;
+    const name = tiny_name;
+    const named = name === null ? "null" : readCString(name);
+    tiny_name = null;
+    return `${before} ${tiny_get()} ${tiny_version} ${tiny_scale} ${named} ${tiny_name === null}`;
+  }
+}
+"#;
+
+/// `dir/tiny` with C variables and `dir/app` printing what `run` gives.
+fn globals_project(dir: &Path) -> PathBuf {
+    let app = project(dir);
+    let tiny = dir.join("tiny");
+    std::fs::write(tiny.join("native/tiny.h"), GLOBALS_H).unwrap();
+    std::fs::write(tiny.join("native/tiny.c"), GLOBALS_C).unwrap();
+    std::fs::write(tiny.join("src/lib.velt"), GLOBALS_LIB).unwrap();
+    let main = "import { run } from \"tiny\";\n\nfunction main() {\n  console.log(run());\n}\n";
+    std::fs::write(app.join("src/main.velt"), main).unwrap();
+    app
+}
+
+/// A package reads and writes its C library's variables in place, in debug (the shared library)
+/// and release (the static one), and the library's own code sees what Velt wrote.
+#[test]
+fn a_package_reads_and_writes_its_c_library_s_variables() {
+    let Some(_zig) = zig() else { return };
+    reload_support::build_runtime();
+    let dir = test_dir::TestDir::new();
+    let home = home_with_zig_cache(dir.path());
+    let app = globals_project(dir.path());
+    let o = ok(velt(&app, &home, &[], &["check"]));
+    assert!(text(&o).contains("headers checked"), "{}", text(&o));
+    let expected = "5 427 3 3 tiny true\n";
+    assert_eq!(run_host(&app, &home, &[], false), expected);
+    assert_eq!(run_host(&app, &home, &[], true), expected);
+}
+
+/// The header check holds a C variable to the header's: its type, `const` for a `let`, and a
+/// variable a symbol names (not thread-local, not `static`, not a function).
+#[test]
+fn c_variables_are_checked_against_the_package_s_headers() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = home_with_zig_cache(dir.path());
+    let app = globals_project(dir.path());
+    let tiny = dir.path().join("tiny");
+    let header =
+        format!("{GLOBALS_H}extern _Thread_local int tiny_local;\nstatic int tiny_own = 1;\n");
+    std::fs::write(tiny.join("native/tiny.h"), header).unwrap();
+    let wrong = GLOBALS_LIB
+        .replace("let tiny_counter: i32", "let tiny_counter: i64")
+        .replace("const before = tiny_counter;", "const before = tiny_counter as i32;")
+        .replace("tiny_counter = 41;", "tiny_counter = 41;\n    tiny_local = tiny_own + tiny_get_v;")
+        .replace("const tiny_version", "let tiny_version")
+        .replace(
+            "declare c(\"tiny\") function tiny_get(): i32;",
+            "declare c(\"tiny\") function tiny_get(): i32;\ndeclare c(\"tiny\") let tiny_local: i32;\ndeclare c(\"tiny\") let tiny_own: i32;\ndeclare c(\"tiny\") const tiny_get_v: i32;\ndeclare c(\"tiny\") const tiny_missing: i32;",
+        )
+        .replace("${tiny_version}", "${tiny_version + tiny_missing}");
+    std::fs::write(tiny.join("src/lib.velt"), wrong).unwrap();
+    let o = velt(&app, &home, &[], &["check"]);
+    let out = text(&o);
+    assert!(!o.status.success(), "{out}");
+    for expected in [
+        "C variable `tiny_counter` is `int` in tiny.h:1, not the declaration's `i64`",
+        "C variable `tiny_version` is `const int` in tiny.h:3, which C doesn't let a program assign",
+        "C variable `tiny_local` is thread-local in tiny.h:7",
+        "C variable `tiny_own` is `static` in tiny.h:8",
+        "C variable `tiny_get_v` is not declared in its library's headers (native/tiny.h)",
+        "C variable `tiny_missing` is not declared",
+    ] {
+        assert!(out.contains(expected), "missing `{expected}` in:\n{out}");
+    }
+}
+
+/// `environ`, the C library's variable, read in place (no header check: macOS's `<unistd.h>`
+/// doesn't declare it).
+#[cfg(unix)]
+#[test]
+fn a_package_reads_the_c_library_s_environ() {
+    reload_support::build_runtime();
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let app = project(dir.path());
+    let tiny = dir.path().join("tiny");
+    std::fs::write(
+        tiny.join("package.velt"),
+        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"tiny\", version: \"0.1.0\", native: { c: { c: { unchecked: true } } } };\n",
+    )
+    .unwrap();
+    let lib = r#"import { Ptr, readCString } from "velt/ffi";
+
+declare c("c") let environ: Ptr<Ptr<u8> | null>;
+declare c("c") function memcpy(dst: usize[], src: Ptr<Ptr<u8> | null>, n: usize): Ptr<u8>;
+
+export function variable(name: string): string {
+  const entry: usize[] = [0];
+  // SAFETY: no thread changes the environment meanwhile: each entry up to the NULL one is a
+  // NUL-terminated `NAME=value`, and `entry` has room for the one copied.
+  unsafe {
+    const at = Ptr.addressOf(environ);
+    let i: usize = 0;
+    while (true) {
+      memcpy(entry, Ptr.at<Ptr<u8> | null>(at + i * 8), 8);
+      if (entry[0] == 0) {
+        break;
+      }
+      const text = readCString(Ptr.at<u8>(entry[0]));
+      if (text.startsWith(name + "=")) {
+        return text.slice(name.length + 1);
+      }
+      i += 1;
+    }
+  }
+  return "";
+}
+"#;
+    std::fs::write(tiny.join("src/lib.velt"), lib).unwrap();
+    let main = "import { variable } from \"tiny\";\n\nfunction main() {\n  console.log(variable(\"VELT_GLOBALS_TEST\"));\n}\n";
+    std::fs::write(app.join("src/main.velt"), main).unwrap();
+    let envs = [("VELT_GLOBALS_TEST", "from the environment")];
+    assert_eq!(
+        run_host(&app, &home, &envs, false),
+        "from the environment\n"
+    );
+    assert_eq!(run_host(&app, &home, &envs, true), "from the environment\n");
+    // An external global of default visibility; on Windows the import library's pointer to it.
+    for (target, global) in [
+        (
+            "x86_64-unknown-linux-gnu",
+            "@\"environ\" = external global i8, align 8",
+        ),
+        (
+            "aarch64-apple-darwin",
+            "@\"environ\" = external global i8, align 8",
+        ),
+        (
+            "x86_64-pc-windows-msvc",
+            "@\"__imp_environ\" = external global i8, align 8",
+        ),
+    ] {
+        let o = ok(velt(
+            &app,
+            &home,
+            &[],
+            &["build", "--emit", "llvm", "--target", target],
+        ));
+        let ir = String::from_utf8_lossy(&o.stdout);
+        assert!(ir.contains(global), "{target}: no `{global}` in\n{ir}");
+    }
+}
+
 fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
     for e in std::fs::read_dir(dir).ok()?.flatten() {
         let path = e.path();

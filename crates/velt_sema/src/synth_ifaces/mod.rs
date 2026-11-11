@@ -47,7 +47,7 @@ pub(super) enum Form {
 }
 
 /// The interfaces made here.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct SynthIfaces {
     by_form: FxHashMap<Form, DefId>,
     forms: FxHashMap<DefId, (Form, Span)>,

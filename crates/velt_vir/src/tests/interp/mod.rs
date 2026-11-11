@@ -329,6 +329,7 @@ impl Interp<'_> {
                 args,
                 dest,
                 next,
+                ..
             } => {
                 let argv: Vec<V> = args.iter().map(|a| self.operand(f, slots, a).0).collect();
                 let r = match callee {

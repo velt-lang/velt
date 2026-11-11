@@ -622,19 +622,24 @@ impl super::Cx<'_> {
         let mut out = vec![];
         for &(d, caller, site) in &self.unavailable {
             if let hir::Def::Global(g) = self.hir.def(d) {
+                let name = g.name.rsplit("::").next().unwrap_or(&g.name);
+                let (what, note) = match &g.c_global {
+                    Some(_) => (
+                        "C variable",
+                        "a C variable is in a C library, which this target doesn't link",
+                    ),
+                    None => (
+                        "C constant",
+                        "C constants come from C headers per target: this target has none",
+                    ),
+                };
                 if seen_decls.insert(d) {
                     out.push(
                         velt_common::Diagnostic::error(
-                            format!(
-                                "C constant `{}` is not available on {}",
-                                g.name.rsplit("::").next().unwrap_or(&g.name),
-                                self.target
-                            ),
+                            format!("{what} `{name}` is not available on {}", self.target),
                             g.span,
                         )
-                        .with_note(
-                            "C constants come from C headers per target: this target has none",
-                        ),
+                        .with_note(note),
                     );
                 }
                 continue;

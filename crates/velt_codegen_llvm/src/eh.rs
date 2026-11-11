@@ -6,7 +6,7 @@
 //! catches everything the personality lets through (`catch ptr null`) and returns the exception
 //! object. The personality claims only Velt's class: any other exception gets
 //! `_URC_CONTINUE_UNWIND`, in the search phase too, so it passes as if the frame had no landing
-//! pad ([`ITANIUM`]). The landing pad is out of line: the call that returns costs what a plain
+//! pad ([`ITANIUM_PERSONALITY`]), which cleanup pads name too. The landing pad is out of line: the call that returns costs what a plain
 //! call does.
 
 use std::fmt::Write;
@@ -17,17 +17,9 @@ use velt_vir::vir;
 use crate::module::FN_ATTRS;
 use crate::target::Target;
 
-/// `velt_eh_try` and its personality on targets with the Itanium unwinder. The personality claims
-/// Velt's class in the search phase (`_URC_HANDLER_FOUND`, 6) and passes any other class in both
-/// phases (`_URC_CONTINUE_UNWIND`, 8). In the cleanup phase it lands at the handler frame's landing
-/// pad (`_URC_INSTALL_CONTEXT`, 7) with the exception in data register 0 and selector 0 in
-/// register 1 (DWARF registers 0 and 1: rax/rdx, x0/x1). The landing pad is the first entry of the
-/// LSDA's call-site table (`velt_eh_landing`): `velt_eh_try` is `noinline` and its only call is the
-/// `invoke`, so LLVM writes exactly one, with lpstart omitted and call sites in ULEB128. An LSDA of
-/// another layout (lpstart given, another call-site encoding, no landing pad) makes the frame claim
-/// nothing, in the search phase already, instead of landing at a wrong address. Only libunwind /
-/// libgcc_s functions are called: no runtime.
-const ITANIUM: &str = r#"define linkonce_odr hidden ptr @TRY(ptr %code, ptr %env) noinline ATTRS personality ptr @PERSONALITY {
+/// `velt_eh_try` on targets with the Itanium unwinder: `code(env)` as an `invoke` whose landing
+/// pad catches what the personality lets through (`catch ptr null`) and returns the exception.
+const ITANIUM_TRY: &str = r#"define linkonce_odr hidden ptr @TRY(ptr %code, ptr %env) noinline ATTRS personality ptr @PERSONALITY {
   invoke void %code(ptr %env) to label %ok unwind label %pad
 ok:
   ret ptr null
@@ -36,23 +28,42 @@ pad:
   %e = extractvalue { ptr, i32 } %lp, 0
   ret ptr %e
 }
-define linkonce_odr hidden i32 @PERSONALITY(i32 %v, i32 %a, i64 %c, ptr %e, ptr %x) ATTRS {
+"#;
+
+/// The personality of every frame with a landing pad: `velt_eh_try`'s (a catch) and the cleanup
+/// pads of frames that own values (design "Cleanup in unwound frames"). Any class but Velt's
+/// passes in both phases (`_URC_CONTINUE_UNWIND`, 8). For Velt's it finds the LSDA's call-site
+/// entry covering `ip - 1` (`velt_eh_landing`: landing-pad base omitted, the type table skipped,
+/// call sites in ULEB128, as LLVM writes them); none, or landing pad 0, passes too. An entry with
+/// action 0 is a cleanup: the search phase passes it, the cleanup phase lands there. An entry
+/// with an action is a catch: the search phase claims it (`_URC_HANDLER_FOUND`, 6), the cleanup
+/// phase lands in the handler frame only. Landing (`_URC_INSTALL_CONTEXT`, 7) puts the exception
+/// in data register 0 and selector 0 in register 1 (DWARF registers 0 and 1: rax/rdx, x0/x1).
+/// Only libunwind / libgcc_s functions are called: no runtime.
+const ITANIUM_PERSONALITY: &str = r#"define linkonce_odr hidden i32 @PERSONALITY(i32 %v, i32 %a, i64 %c, ptr %e, ptr %x) ATTRS {
 entry:
+  %actp = alloca i64
   %ours = icmp eq i64 %c, CLASS
   br i1 %ours, label %mine, label %pass
 pass:
   ret i32 8
 mine:
-  %lp = call i64 @velt_eh_landing(ptr %x)
+  %lp = call i64 @velt_eh_landing(ptr %x, ptr %actp)
   %known = icmp ne i64 %lp, 0
   br i1 %known, label %phase, label %pass
 phase:
+  %act = load i64, ptr %actp
+  %cleanup_only = icmp eq i64 %act, 0
   %search = and i32 %a, 1
   %is_search = icmp ne i32 %search, 0
-  br i1 %is_search, label %found, label %cleanup
+  br i1 %is_search, label %searching, label %cleaning
+searching:
+  br i1 %cleanup_only, label %pass, label %found
 found:
   ret i32 6
-cleanup:
+cleaning:
+  br i1 %cleanup_only, label %land, label %handler
+handler:
   %frame = and i32 %a, 4
   %is_frame = icmp ne i32 %frame, 0
   br i1 %is_frame, label %land, label %pass
@@ -65,7 +76,7 @@ land:
   call void @_Unwind_SetIP(ptr %x, i64 %ip)
   ret i32 7
 }
-define linkonce_odr hidden i64 @velt_eh_landing(ptr %x) ATTRS {
+define linkonce_odr hidden i64 @velt_eh_landing(ptr %x, ptr %actp) ATTRS {
 entry:
   %p = alloca ptr
   %lsda = call ptr @_Unwind_GetLanguageSpecificData(ptr %x)
@@ -93,12 +104,33 @@ sites:
   %q1 = getelementptr i8, ptr %q, i64 1
   store ptr %q1, ptr %p
   %uleb = icmp eq i8 %enc, 1
-  br i1 %uleb, label %entry0, label %unknown
-entry0:
-  %table = call i64 @velt_eh_uleb(ptr %p)
+  br i1 %uleb, label %table, label %unknown
+table:
+  %len = call i64 @velt_eh_uleb(ptr %p)
+  %t0 = load ptr, ptr %p
+  %end = getelementptr i8, ptr %t0, i64 %len
+  %ipa = call i64 @_Unwind_GetIP(ptr %x)
+  %region = call i64 @_Unwind_GetRegionStart(ptr %x)
+  %ipr = sub i64 %ipa, %region
+  %ip = sub i64 %ipr, 1
+  br label %loop
+loop:
+  %cur = load ptr, ptr %p
+  %more = icmp ult ptr %cur, %end
+  br i1 %more, label %entry1, label %unknown
+entry1:
   %start = call i64 @velt_eh_uleb(ptr %p)
   %size = call i64 @velt_eh_uleb(ptr %p)
   %pad = call i64 @velt_eh_uleb(ptr %p)
+  %action = call i64 @velt_eh_uleb(ptr %p)
+  %before = icmp ult i64 %ip, %start
+  br i1 %before, label %unknown, label %upper
+upper:
+  %stop = add i64 %start, %size
+  %inside = icmp ult i64 %ip, %stop
+  br i1 %inside, label %hit, label %loop
+hit:
+  store i64 %action, ptr %actp
   ret i64 %pad
 }
 define linkonce_odr hidden i64 @velt_eh_uleb(ptr %pp) ATTRS {
@@ -124,6 +156,7 @@ done:
 }
 declare ptr @_Unwind_GetLanguageSpecificData(ptr)
 declare i64 @_Unwind_GetRegionStart(ptr)
+declare i64 @_Unwind_GetIP(ptr)
 declare void @_Unwind_SetGR(ptr, i32, i64)
 declare void @_Unwind_SetIP(ptr, i64)
 "#;
@@ -142,27 +175,33 @@ pub(crate) fn definitions(program: &vir::Program, target: &Target) -> String {
             u8::from(catching == Catching::Itanium)
         );
     }
+    let catches = catching == Catching::Itanium;
+    // The personality, where a frame names it: `velt_eh_try`'s, or a cleanup pad's (a program
+    // with pads declares `velt_eh_resume`).
+    if catches && (calls(eh::is_try) || calls(eh::is_resume)) {
+        out.push_str(&fill(ITANIUM_PERSONALITY));
+    }
     if !calls(eh::is_try) {
         return out;
     }
     let try_fn = eh::TRY;
-    match catching {
-        Catching::None => {
-            let _ = writeln!(
-                out,
-                "define linkonce_odr hidden ptr @{try_fn}(ptr %code, ptr %env) {FN_ATTRS} {{\n\
-                 \x20 call void %code(ptr %env)\n\
-                 \x20 ret ptr null\n}}"
-            );
-        }
-        Catching::Itanium => {
-            let ir = ITANIUM
-                .replace("TRY", eh::TRY)
-                .replace("PERSONALITY", eh::PERSONALITY)
-                .replace("CLASS", &eh::CLASS.to_string())
-                .replace("ATTRS", FN_ATTRS);
-            out.push_str(&ir);
-        }
+    if catches {
+        out.push_str(&fill(ITANIUM_TRY));
+    } else {
+        let _ = writeln!(
+            out,
+            "define linkonce_odr hidden ptr @{try_fn}(ptr %code, ptr %env) {FN_ATTRS} {{\n\
+             \x20 call void %code(ptr %env)\n\
+             \x20 ret ptr null\n}}"
+        );
     }
     out
+}
+
+/// `ir` with its placeholders filled in.
+fn fill(ir: &str) -> String {
+    ir.replace("TRY", eh::TRY)
+        .replace("PERSONALITY", eh::PERSONALITY)
+        .replace("CLASS", &eh::CLASS.to_string())
+        .replace("ATTRS", FN_ATTRS)
 }

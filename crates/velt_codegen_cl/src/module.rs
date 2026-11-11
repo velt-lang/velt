@@ -36,7 +36,7 @@ pub(crate) struct Built {
     /// Unwind info per defined function: SystemV CFI for ELF/Mach-O, Windows x64 for x86_64
     /// COFF (none for arm64 COFF yet).
     pub unwind: Vec<FunctionUnwind>,
-    /// What `.eh_frame` names for catching (eh.rs), when the program calls `velt_eh_try`.
+    /// What `.eh_frame` names for landing pads (eh.rs), when a function has one.
     pub eh: Option<crate::eh::EhSymbols>,
     /// Line tables per defined function, when the program has source locations.
     pub lines: Vec<FunctionLines>,
@@ -63,6 +63,11 @@ pub(crate) struct Declarations {
     /// `velt_eh_try` and what catching needs in the object (eh.rs), with their unwind info.
     pub eh: Option<crate::eh::EhSymbols>,
     pub eh_unwind: Vec<FunctionUnwind>,
+    /// Calls with an unwind edge are `try_call`s (vir.rs invariant 14): an object for a target
+    /// with the Itanium unwinder (eh.rs `catches`). Then `_Unwind_Resume`, which
+    /// `velt_eh_resume` calls, if the program has cleanup pads.
+    pub unwinds: bool,
+    pub unwind_resume: Option<FuncId>,
 }
 
 /// How `build_module` names and links the program's functions.
@@ -127,6 +132,7 @@ pub(crate) fn build_module_cached<M: Module>(
     let mut defining = Duration::ZERO;
     let mut stats = CacheStats::default();
     let mut unwind = std::mem::take(&mut decls.eh_unwind);
+    let mut eh = decls.eh.clone();
     let mut lines = Vec::new();
     let defined: Vec<(FuncId, &vir::Function)> = (program.funcs.iter().enumerate())
         .filter_map(|(i, func)| Some((defs[i]?, func)))
@@ -158,6 +164,13 @@ pub(crate) fn build_module_cached<M: Module>(
         };
         let start = Instant::now();
         define_compiled(module, id, &compiled.ctx, &func.symbol)?;
+        // Its cleanup pads: an LSDA (and the personality, once).
+        if let Some(code) = compiled.ctx.compiled_code().filter(|_| decls.unwinds) {
+            let sites = crate::eh::sites(code, false);
+            if !sites.is_empty() {
+                crate::eh::add_lsda(module, decls.call_conv, &mut eh, id, &sites, &mut unwind)?;
+            }
+        }
         defining += start.elapsed();
         stats.add(CacheStats::of(&[compiled.hit]));
         unwind.extend(compiled.unwind);
@@ -175,7 +188,7 @@ pub(crate) fn build_module_cached<M: Module>(
     Ok(Built {
         funcs: defs,
         statics: decls.statics,
-        eh: decls.eh,
+        eh,
         references: decls.funcs,
         unwind,
         lines,
@@ -266,6 +279,7 @@ pub(crate) fn declare_all<M: Module>(
     let (mut tls, mut tls_keys) = (FxHashMap::default(), FxHashMap::default());
     let (mut eh, mut eh_try, mut eh_unwind) = (None, None, vec![]);
     let mut eh_catches = None;
+    let mut unwind_resume = None;
     for e in &program.externs {
         // Catching a Velt panic: a function this module defines (eh.rs).
         if velt_vir::eh::is_try(&e.symbol) {
@@ -274,12 +288,25 @@ pub(crate) fn declare_all<M: Module>(
                 None => {
                     let (p, r) = velt_vir::eh::try_signature();
                     let id = declare_function(module, call_conv, &e.symbol, &p, r, Linkage::Local)?;
-                    eh = crate::eh::define(module, call_conv, id, &mut eh_unwind)?;
+                    crate::eh::define(module, call_conv, id, &mut eh, &mut eh_unwind)?;
                     eh_try = Some(id);
                     id
                 }
             };
             externs.push(Some(id));
+            continue;
+        }
+        // Continuing an unwind from a cleanup pad: emitted in place (function/terminator.rs),
+        // as a call of `_Unwind_Resume` where calls unwind.
+        if velt_vir::eh::is_resume(&e.symbol) {
+            if unwind_resume.is_none() && crate::eh::catches(module) {
+                let sig = make_signature(call_conv, &[vir::Ty::Ptr], vir::Ty::Unit)?;
+                let id = module
+                    .declare_function("_Unwind_Resume", Linkage::Import, &sig)
+                    .map_err(|e| format!("codegen: declaring `_Unwind_Resume`: {e}"))?;
+                unwind_resume = Some(id);
+            }
+            externs.push(None);
             continue;
         }
         // Whether `velt_eh_try` catches: a constant this module defines (eh.rs).
@@ -365,7 +392,8 @@ pub(crate) fn declare_all<M: Module>(
                     vir::Linkage::Import => Linkage::Import,
                     _ => Linkage::Hidden,
                 };
-                module.declare_data(sym, linkage, mutable.is_some(), false)
+                // A C variable (vir `StaticData::c_global`): the program writes it too.
+                module.declare_data(sym, linkage, mutable.is_some() || s.c_global, false)
             }
             (mutable, _, None) => module.declare_anonymous_data(mutable.is_some(), false),
         };
@@ -392,6 +420,8 @@ pub(crate) fn declare_all<M: Module>(
         call_conv,
         eh,
         eh_unwind,
+        unwinds: crate::eh::catches(module),
+        unwind_resume,
     };
     Ok((decls, defs))
 }

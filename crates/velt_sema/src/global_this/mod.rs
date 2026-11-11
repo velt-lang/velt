@@ -232,6 +232,7 @@ fn slot_item(key: &str, ty: ast::TypeExpr, span: Span) -> ast::Item {
         }),
         span,
         c_const: false,
+        c_global: None,
     };
     ast::Item {
         kind: ast::ItemKind::Var(decl),

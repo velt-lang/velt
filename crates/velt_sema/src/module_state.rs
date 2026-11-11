@@ -355,7 +355,12 @@ impl crate::body::FnCx<'_, '_> {
         let Some(crate::ctx::Item::Def(d)) = item else {
             return None;
         };
-        if !self.cx.global(d).is_some_and(|g| g.stored) {
+        // A C variable is assigned in C memory (`c_global_write` says whether it may be).
+        if !self
+            .cx
+            .global(d)
+            .is_some_and(|g| g.stored || g.src.c_global.is_some())
+        {
             return None;
         }
         // `export default expr;` is the constant `default`, a name the source doesn't have.

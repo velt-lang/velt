@@ -1,0 +1,5 @@
+// A C variable is declared only where a C function may be: in a package with native code that
+// the program allows, never in a lone file.
+declare c("c") let opterr: i32;
+
+function main() {}

@@ -187,7 +187,8 @@ pub(crate) fn run_helpers(program: &mut Program, helpers: &[bool]) -> bool {
                 continue;
             }
             let body = program.funcs[ci].clone();
-            splice::inline_call(&program.aggs, &mut program.funcs[fi], bi, &body);
+            let resume = splice::resume_extern(&program.externs);
+            splice::inline_call(&program.aggs, &mut program.funcs[fi], bi, &body, resume);
             changed = true;
         }
     }
@@ -453,7 +454,8 @@ fn inline_into(
                 *n += 1;
             }
         }
-        splice::inline_call(&program.aggs, &mut program.funcs[fi], here, &body);
+        let resume = splice::resume_extern(&program.externs);
+        splice::inline_call(&program.aggs, &mut program.funcs[fi], here, &body, resume);
         let grown = program.funcs[fi].blocks.len();
         in_loop.resize(grown, in_loop[here]);
         scan.resize(grown, in_loop[here]);

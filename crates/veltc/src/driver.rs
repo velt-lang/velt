@@ -194,6 +194,16 @@ pub struct Session {
     /// `velt dev`: the counted types of the previous version, which lowering starts from, and
     /// after lowering the new version's (`velt_vir::lower_seeded`). `None`: lowering as always.
     pub counted_seed: Option<velt_vir::CountedSeed>,
+    /// `velt dev`: `Some` asks for the checked program's interface summary, which replaces it
+    /// (`velt_sema::interface`). `None`: none is made.
+    pub interfaces: Option<velt_sema::interface::Summary>,
+    /// `velt dev`: keep the check of the program (`velt_sema::KeptCheck`, in [`Session::kept`]),
+    /// when it can be kept (dev-warm-front-end.md step 3, "C2").
+    pub keep_check: bool,
+    /// The kept check of the last build, owning the program's parsed modules.
+    pub kept: Option<velt_sema::KeptCheck>,
+    /// The check's kept check and what it borrows, until the driver hands them over.
+    pub(crate) pending_kept: Option<KeptHandover>,
     /// `-v`: say at once that the build waits for another of its output (`std_cache::Place::lock`).
     pub verbose: bool,
     /// Reports the build was asked for (`--report`), printed after the diagnostics.
@@ -290,7 +300,35 @@ fn check_program(
     scope: &CheckScope,
 ) -> Result<hir::Program, BuildError> {
     let mut loaded = load_stage(sess, opts, scope)?;
-    sema_stage(sess, opts, scope, &mut loaded)
+    let hir = sema_stage(sess, opts, scope, &mut loaded);
+    // The kept check borrows the parsed modules: it takes them over, or nothing is kept.
+    if let Some(h) = sess.pending_kept.take() {
+        let input = h
+            .input
+            .unwrap_or_else(|| std::mem::take(&mut loaded.modules));
+        // SAFETY: `input` is the vector the check was given: `loaded.modules`, alive and unchanged
+        // since `sema_stage`, or `check_offered`'s copy, moved here unchanged; `h.sources` and
+        // `h.loads` are the generated modules and the `StdLoads` that check was given, moved here
+        // unchanged (`generate::check`, `check_offered`).
+        let adopted = unsafe { h.pending.adopt(input, h.sources, h.loads) };
+        sess.kept = match (&hir, adopted) {
+            (Ok(_), Ok(kept)) => Some(kept),
+            _ => None,
+        };
+    }
+    hir
+}
+
+/// A kept check (`velt_sema::PendingKept`) and the modules it borrows besides the parsed ones,
+/// until [`check_program`] hands them over.
+pub(crate) struct KeptHandover {
+    pub pending: velt_sema::PendingKept,
+    /// The modules the check was given when they are a copy of the parsed ones (generated code
+    /// checked as program modules); `None`: the parsed modules themselves.
+    pub input: Option<Vec<velt_sema::SourceModule>>,
+    /// The generated modules given with them.
+    pub sources: Vec<velt_sema::SourceModule>,
+    pub loads: Option<velt_sema::StdLoads>,
 }
 
 /// Load and parse the program; stops if that reported errors.
@@ -393,26 +431,39 @@ fn sema_stage(
 
 /// Front half of the pipeline: source file → verified VIR. Stops after the first stage with errors.
 pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, BuildError> {
-    compile_to_vir_linking(sess, opts, false)
+    compile_to_vir_linking(sess, opts, VirFor::Other)
 }
 
-/// [`compile_to_vir`]; `link_std`: the program goes on to the link, so std functions may be left
-/// to the std cache's objects. Whatever else takes the VIR (the JIT host, a check) has no link.
+/// Where the VIR [`compile_to_vir_linking`] makes goes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VirFor {
+    /// The link: std functions may be left to the std cache's objects.
+    Link,
+    /// The JIT in this process (`velt dev`): no link, and C variables by their own names
+    /// (`LowerOptions::jit`).
+    Jit,
+    /// Anything else (a check, a test of the VIR): no link.
+    Other,
+}
+
+/// [`compile_to_vir`] for `dest`.
 fn compile_to_vir_linking(
     sess: &mut Session,
     opts: &BuildOptions,
-    link_std: bool,
+    dest: VirFor,
 ) -> Result<vir::Program, BuildError> {
     let scope = CheckScope {
         require_main: true,
         extra_roots: vec![],
         eager_std: false,
     };
-    let hir = memory::Noted::new(
-        check_program(sess, opts, &scope)?,
-        "hir freed",
-        &sess.lifetimes,
-    );
+    let checked = check_program(sess, opts, &scope)?;
+    if sess.interfaces.is_some() {
+        let t = Instant::now();
+        sess.interfaces = Some(velt_sema::interface::Summary::of(&checked));
+        sess.record("interfaces", t);
+    }
+    let hir = memory::Noted::new(checked, "hir freed", &sess.lifetimes);
 
     let t = Instant::now();
     let std_root = loader::std_root();
@@ -440,6 +491,7 @@ fn compile_to_vir_linking(
         shapes: !opts.release,
         no_cpu_extensions: Backend::of_build(opts) == Backend::Cranelift,
         counted_seed: sess.counted_seed.as_ref(),
+        jit: dest == VirFor::Jit,
     };
     let lowered = match sess.counted_seed.is_some() {
         true => velt_vir::lower_seeded(&hir, &lower_opts).map(|(p, seed)| (p, Some(seed))),
@@ -480,7 +532,7 @@ fn compile_to_vir_linking(
 
     // The std cache (#1728), around the optimizer. A generator host stays whole:
     // `check_generator_host` looks through its code.
-    let std_use = match link_std && !sess.generator_build {
+    let std_use = match dest == VirFor::Link && !sess.generator_build {
         true => std_cache::wanted(opts),
         false => std_cache::Use::Off,
     };
@@ -549,6 +601,15 @@ pub fn build(sess: &mut Session, opts: &BuildOptions) -> Result<Artifact, BuildE
 /// `velt dev` to check a new version before replacing the running one.
 pub fn compile(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, BuildError> {
     on_pipeline_thread(|| compile_to_vir(sess, opts))
+}
+
+/// [`compile`] for the dev JIT, which runs the program in this process: what differs is how it
+/// reaches C variables (`velt_vir::LowerOptions::jit`).
+pub fn compile_for_jit(
+    sess: &mut Session,
+    opts: &BuildOptions,
+) -> Result<vir::Program, BuildError> {
+    on_pipeline_thread(|| compile_to_vir_linking(sess, opts, VirFor::Jit))
 }
 
 /// Parse + sema only (`velt check`), on a large-stack thread: every diagnostic the front end

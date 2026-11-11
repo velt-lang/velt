@@ -302,6 +302,7 @@ fn long_poll(n: usize) -> Function {
                 args: vec![copy(t), copy(1)],
                 dest: Some(local(t + 1)),
                 next: BlockId(3 + i as u32),
+                unwind: None,
             },
         ));
     }
@@ -377,6 +378,7 @@ fn wide_poll(k: usize, n: usize) -> Function {
                 args: (0..k).map(|i| copy(x(i))).collect(),
                 dest: None,
                 next: BlockId(4),
+                unwind: None,
             },
         ),
         block(

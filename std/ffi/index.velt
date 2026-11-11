@@ -29,6 +29,9 @@ export { Out } from "velt/ffi/out";
 /** A pointer a C function writes through a pointer parameter (`T **out`). */
 export { OutPtr } from "velt/ffi/out_ptr";
 
+/** The calling thread's C `errno`, read and set in place (unsafe). */
+export { errno, setErrno } from "velt/ffi/errno";
+
 /** Copies of bytes, UTF-8 text and NUL-terminated strings in C memory (unsafe). */
 export { readBytes, readCString, readUtf8 } from "velt/ffi/read";
 

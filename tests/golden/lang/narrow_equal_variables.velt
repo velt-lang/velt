@@ -1,0 +1,36 @@
+// `a === b` of two variables narrows the nullable one where they are equal and the other can't
+// be null, as `tsc` narrows by equality: `!at || at !== dom` leaves `dom` not null.
+class Item {
+  name: string;
+  next: Item | null = null;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function nextAfter(at: Item | null, dom: Item | null): string {
+  if (!at || at !== dom) {
+    return "different";
+  }
+  const next = dom.next;
+  return dom.name + " -> " + (next == null ? "end" : next.name);
+}
+
+function same(a: Item, b: Item | null): string {
+  if (a === b) {
+    return "same " + b.name;
+  }
+  return "not " + a.name;
+}
+
+function loose(a: Item | null, b: Item): string {
+  if (b == a) {
+    return "loosely " + a.name;
+  }
+  return "not loosely";
+}
+
+const a = new Item("a");
+a.next = new Item("b");
+console.log(nextAfter(a, a), nextAfter(a, null), nextAfter(null, a), nextAfter(a, a.next));
+console.log(same(a, a), same(a, null), same(a, a.next), loose(a, a), loose(null, a));

@@ -11,15 +11,19 @@
 //!   (`spawn(f())`), an argument of one (`spawn(run(f))`) or what the spawned function returns;
 //! - the argument of `shared(...)` or `new Mutex(...)`, a channel send, a value settling a
 //!   promise (`Intrinsic::Transfer`);
-//! - passed directly to a function value, an interface method or an overridden method, whose
-//!   callee is unknown and may keep it;
 //! - through locals, parameters (from every direct caller), return values, and the captures of
-//!   a closure that is itself non-local (or passed to an unknown callee);
+//!   a closure that is itself non-local;
+//! - through the heap, by type ([`types`]): a closure stored in a field, element or map value,
+//!   or passed to an unknown callee (a function value, an interface method or an overridden
+//!   method, which may keep it), is non-local when a value crossing a boundary has a type
+//!   reaching a function type of the same shape;
 //! - an argument of a call through a function value that may be a closure whose parameter
-//!   crosses (`resolve(x)`), matched by type in each instantiation of the closure's function;
-//! - through the heap, by type ([`types`]): a closure stored in a field, element or map value
-//!   is non-local when a value crossing a boundary has a type reaching a function type of the
-//!   same shape. A value of unknown origin keeps the type it had where it flowed in, so a
+//!   crosses (`resolve(x)`), matched by type in each instantiation of the closure's function.
+//!
+//! An unknown callee is not a boundary itself (#2726): its call runs on this task. A callback it
+//! keeps and later runs on another thread gets there through a boundary (a spawn, a channel, a
+//! settled promise, `shared(...)`), whose transfer copies what is still shared (the task-creation
+//! rule, docs/internals/design/semantics-stage2.md §6). A value of unknown origin keeps the type it had where it flowed in, so a
 //!   generic parameter that crosses brings its callers' concrete types. A boundary inside a
 //!   library (std, a package) reaches the program's closures only through values the program
 //!   hands to the library ([`heap_reaches`]): the types of what the library itself makes and
@@ -54,10 +58,19 @@ use velt_common::Diagnostic;
 use crate::ctx::Ctx;
 use crate::hir::{Def, DefId, TyId, TyKind};
 
-use graph::{Boundary, Graph, Node, Why, CROSSES, INDIRECT, STORED};
+use graph::{Boundary, Graph, Node, Why, CROSSES, STORED};
 
-pub(crate) use changes::{check_crossing_changes, Crossing};
+pub(crate) use changes::check_crossing_changes;
 pub(crate) use record::record_changed_captures;
+
+/// A callback that a library runs on other threads: the closure, and where (with the label) the
+/// program hands it to the library.
+#[derive(Clone)]
+pub(crate) struct Crossing {
+    pub closure: DefId,
+    pub at: velt_common::Span,
+    pub label: String,
+}
 
 /// Decide which async closures are local, mark them (`FnDef::shares_captures`), and report the
 /// non-local ones that modify a captured variable.
@@ -72,8 +85,10 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
+    let mut resolved = 0;
     loop {
         p.run(cx, &g);
+        resolve_hits(cx, &g, &mut p, &mut resolved);
         types::crossing_fns(cx, &p.roots[rooted..], &mut seen, &mut fns);
         rooted = p.roots.len();
         let mut changed = false;
@@ -99,10 +114,13 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                 None => types::may_be(cx, g.tys[n], t),
             };
             // Several crossing types may match: report one in user code, the earliest.
+            // A crossing parameter of a generic type (`Graph::wild`) may carry any closure.
+            let wild = p.wild.iter().filter(|w| heap_reaches(cx, w, c)).copied();
             let why = fns
                 .iter()
                 .filter(|(t, w)| heap_reaches(cx, w, c) && matches(**t))
                 .map(|(_, w)| *w)
+                .chain(wild)
                 .min_by_key(|w| w.rank(cx));
             if let Some(w) = why {
                 p.set(n, CROSSES, Some(w));
@@ -117,12 +135,12 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     let reported = callbacks::check_crossing_callbacks(cx, &g, &p.flags);
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
-        let why = p.why[n][0].or(p.why[n][1]);
-        let local = p.flags[n] & (CROSSES | INDIRECT) == 0;
+        let why = p.why[n];
+        let local = p.flags[n] & CROSSES == 0;
         finish(cx, c, local, why);
         // A standard-library function that runs it on other threads: spawns it, from the user's
         // call (`serve`'s handler); a channel or a promise hands a value over once.
-        let to_std = (p.why[n][0])
+        let to_std = (p.why[n])
             .filter(|w| p.flags[n] & CROSSES != 0 && w.in_library && w.boundary == Boundary::Spawn);
         if let (Some(w), false) = (to_std, reported.contains(&c)) {
             crossing_sync(cx, c, Some(w));
@@ -199,7 +217,7 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
             };
             if p.flags[i] & CROSSES != 0 {
                 for ty in instances(cx, g, c, g.tys[n]) {
-                    found.push((ty, k, p.why[i][0], c));
+                    found.push((ty, k, p.why[i], c));
                 }
             }
         }
@@ -228,6 +246,28 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
         }
     }
     changed
+}
+
+/// The crossing locals of a generic type found since `done` (`Graph::wild`): each carries
+/// what its type is in the instantiations of its function, a crossing type for the heap rule
+/// (a closure in `Job[]` or `Box<Job>` too). The type in an instantiation that is unknown (no
+/// call gives the type arguments) stays generic, and the parameter may carry any closure.
+fn resolve_hits(cx: &mut Ctx, g: &Graph, p: &mut Propagation, done: &mut usize) {
+    while let Some(&(n, w)) = p.hits.get(*done) {
+        *done += 1;
+        let Node::Local(f, _) = g.nodes[n] else {
+            continue;
+        };
+        for t in instances(cx, g, f, g.tys[n]) {
+            if types::mentions_param(cx, t) {
+                // Its type, a type parameter, says nothing to the reader: the label names the
+                // boundary.
+                p.wild.push(w);
+            } else {
+                p.roots.push((t, w));
+            }
+        }
+    }
 }
 
 /// The function that closure `c` is written in, outside every closure (`c` itself if it is no
@@ -434,9 +474,6 @@ pub(in crate::ownership::local_async) fn reaches(cx: &Ctx, w: &Why) -> String {
         Boundary::Mutex => "is put in a `Mutex` here, which other threads may lock",
         Boundary::Channel => "is sent on a channel here",
         Boundary::Settle => "settles a promise here, which another task may await",
-        Boundary::FnValue => {
-            "is passed to a function value or an interface method here, which may keep it"
-        }
     };
     match w.via {
         Some(t) => {
@@ -454,26 +491,34 @@ pub(in crate::ownership::local_async) fn reaches(cx: &Ctx, w: &Why) -> String {
 /// In [`Propagation::work`]: a node that crosses already reaches `shared(...)` too.
 const SHARED_WALK: u8 = 8;
 
-/// Flags of every node, with why each was set (`CROSSES`, `INDIRECT`), propagated from a
+/// Flags of every node, with why `CROSSES` was set, propagated from a
 /// node to the nodes its values come from.
 struct Propagation {
     flags: Vec<u8>,
-    why: Vec<[Option<Why>; 2]>,
+    why: Vec<Option<Why>>,
     /// How a crossing node is followed by flow to a function in `shared(...)`, if it is, whichever
     /// boundary came first: a sync closure may change its copy when spawned, and not there.
     shared: Vec<Option<Why>>,
     work: Vec<(usize, u8)>,
     roots: Vec<(TyId, Why)>,
+    /// Why a crossing local of a generic type, with no known instantiation, crosses: it may carry
+    /// any closure (`Graph::wild`).
+    wild: Vec<Why>,
+    /// Crossing locals of a generic type (`Graph::wild`), with why, to resolve through their
+    /// function's instantiations ([`resolve_hits`]).
+    hits: Vec<(usize, Why)>,
 }
 
 impl Propagation {
     fn new(g: &Graph) -> Self {
         Propagation {
             flags: vec![0; g.nodes.len()],
-            why: vec![[None, None]; g.nodes.len()],
+            why: vec![None; g.nodes.len()],
             shared: vec![None; g.nodes.len()],
             work: vec![],
             roots: g.roots.clone(),
+            wild: vec![],
+            hits: vec![],
         }
     }
 
@@ -489,24 +534,20 @@ impl Propagation {
         if self.flags[n] & f != 0 {
             // A path fewer calls deep inside a library replaces a deeper one: only a path at the
             // library's own level may leave it for the program (`Why::step`).
-            let slot = match f {
-                CROSSES => 0,
-                INDIRECT => 1,
-                _ => return,
-            };
-            if let (Some(old), Some(new)) = (self.why[n][slot], why) {
+            if f != CROSSES {
+                return;
+            }
+            if let (Some(old), Some(new)) = (self.why[n], why) {
                 if old.library && new.library && new.depth < old.depth {
-                    self.why[n][slot] = Some(new);
+                    self.why[n] = Some(new);
                     self.work.push((n, f));
                 }
             }
             return;
         }
         self.flags[n] |= f;
-        match f {
-            CROSSES => self.why[n][0] = why,
-            INDIRECT => self.why[n][1] = why,
-            _ => {}
+        if f == CROSSES {
+            self.why[n] = why;
         }
         self.work.push((n, f));
     }
@@ -514,8 +555,7 @@ impl Propagation {
     fn run(&mut self, cx: &Ctx, g: &Graph) {
         while let Some((n, f)) = self.work.pop() {
             let why = match f {
-                CROSSES => self.why[n][0],
-                INDIRECT => self.why[n][1],
+                CROSSES => self.why[n],
                 SHARED_WALK => self.shared[n],
                 _ => None,
             };
@@ -552,24 +592,17 @@ impl Propagation {
     /// type-based part. A function value of known origin is followed by the graph instead.
     fn root(&mut self, cx: &Ctx, g: &Graph, n: usize, f: u8, w: Why) {
         let ty = g.tys[n];
-        let fn_like = types::fn_like(cx, ty);
-        let rooted = match f {
-            CROSSES => g.unknown[n] || !fn_like,
-            INDIRECT => g.unknown[n] && fn_like,
-            _ => false,
-        };
+        let rooted = f == CROSSES && (g.unknown[n] || !types::fn_like(cx, ty));
+        if rooted && g.wild.binary_search(&n).is_ok() {
+            self.hits.push((n, w));
+        }
         if rooted && !matches!(g.nodes[n], Node::Lit(_)) {
             self.roots.push((ty, w));
         }
         // What flowed in from places the graph does not follow, with the types it had there:
         // a generic parameter's node gets its callers' concrete types.
         for &(t, site) in &g.inflows[n] {
-            let take = match f {
-                CROSSES => true,
-                INDIRECT => types::fn_like(cx, t),
-                _ => false,
-            };
-            if let (true, Some(w)) = (take && t != ty, w.step(false, site)) {
+            if let (true, Some(w)) = (f == CROSSES && t != ty, w.step(false, site)) {
                 self.roots.push((t, w));
             }
         }
@@ -606,9 +639,7 @@ fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
             }
             Some(Boundary::Channel) => "the task receiving it runs it on another thread",
             Some(Boundary::Settle) => "the task awaiting the promise may run it on another thread",
-            Some(Boundary::FnValue) | None => {
-                "the function it is passed to may keep it and run it on another thread"
-            }
+            None => "another thread may run it",
         };
         // `shared` holds a number (`add`) or any value (`get`/`set`); a collection or an object
         // is changed in place, which needs a `Mutex`.

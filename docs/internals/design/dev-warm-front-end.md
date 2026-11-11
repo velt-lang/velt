@@ -155,11 +155,55 @@ The fast path, per save:
 What it needs, as separate pull requests, each falling back to the cold front end when unsure:
 - **A. Change detection** (`veltc` dev host): per-definition source hashes and the edit's kind,
   reported by `velt dev -v`. No behavior change; the gate for the rest.
-- **B. Interface summaries** (`velt_sema`): a hash per function of what other code observes,
-  computed after the check, compared between versions.
+- **B. Interface summaries** (`velt_sema::interface`): a hash per function of what other code
+  observes, and one per kind of program-wide fact a body can change, computed from the checked
+  HIR by structure and name (never by `TyId`, `DefId` or `Span`, which move when a body
+  changes), compared between versions. `velt dev -v` says after a body edit whether everything
+  but the edited functions (and their closures) kept its interface (about 5 ms on `http_hello`;
+  the fast path summarizes only the functions it checks again). What it showed: a body edit that
+  makes lazy std check more definitions (the first `new Map` in a program) changes the program's
+  `reached std`, declarations (fields std's bodies assign), implementations and flags, and the
+  lock-free callbacks among std's closures. Such an edit takes the cold front end until C and D
+  can check newly reached std bodies. Facts sema keeps out of the HIR (which functions return
+  fresh values) are not in the summaries: D reruns `fresh_returns` over every widening, which is
+  cheap.
 - **C. A kept checking context** (`velt_sema`, dev only): the host keeps the running version's
   `Ctx` and modules; a body is checked again in it, with its closures' definitions replaced and
-  its diagnostics its own.
+  its diagnostics its own. The checked `Ctx` is consumed and changed by the finishing steps
+  (`program.rs`: layouts merged, readonly types erased, the definitions moved into the
+  program), so the host keeps a clone made before them. In three pull requests:
+  - *C1:* `Ctx: Clone`, by derives: what it holds by value is copied, and the `Rc`s in it point
+    to data that doesn't change. A clone shares what it borrows: the modules (unchanged), the std
+    modules loaded on demand (`StdLoads`, which only grows: sound to share) and the driver's
+    generator, whose state generating code adds to. `VELT_SEMA_CLONE_CHECK=1` builds every
+    program also from a clone and compares the two field by field (an `ICE` showing the
+    difference). That shows the clone holds what the finishing steps read and that nothing they
+    change is shared; it doesn't show independence in general (a shared cache keyed by `TyId`
+    passes it, since both builds intern types in the same order). Every golden passes with it
+    on. A clone of `http_hello`'s checked context (5,600 definitions) takes 11–15 ms in a debug
+    compiler.
+  - *C2:* an owning kept check (`velt_sema::kept`): the clone, the rewritten modules it
+    borrows (the source rewrites' last copy), the loader's modules when it borrows them, the
+    generated modules given with them, and the driver's `StdLoads`, in one value the dev host
+    keeps (`KeptCheck`, with `-v` for now). The check offers it (`PendingKept`); the driver hands
+    over the vectors and `adopt` takes them only if their heap addresses are the ones borrowed;
+    an address can't tell a vector from another allocated in its place, so `adopt` is `unsafe`
+    and its one caller says why the vectors are the checked ones. The `unsafe` (the clone's `'m`
+    erased, its drop first, `Send`, `adopt`) is in that one module. `borrows_only_what_it_owns`
+    checks that every module the clone reads lies in a buffer the kept check owns (a test fails
+    without memcheck when an owner is dropped), and the tests run clean under memcheck. Kept: the first check of a program (round
+    1) and a check with generated code offered from the cache, `http_hello`'s path. Not kept: a
+    check in which a generator ran, and a script whose variables `script_locals` moved into
+    `main` (another copy of the modules). Measured on `http_hello` (debug compiler, five
+    saves): resident memory 230 MB without, 370 MB with a kept check of 375 modules and 5,474
+    definitions. Most of it is the clone and the moment the original and the clone are both
+    alive during the finishing steps, not the modules; keeping the original and making the
+    finishing steps leave it intact would save both.
+  - *C3:* a body checked again in a clone of the kept context, with a check of its own: the
+    body checked again in two clones (or in a clone after the original was finished) and
+    compared, since it interns new types in another order than the cold check. Caches outside
+    `Ctx` keyed by `TyId` or `DefId` (`locked_props::MEMO`, cleared only at the start of
+    `module_state::build`) are cleared for each check in a clone, or moved into `Ctx`.
 - **D. Per-function passes** (`velt_sema`): the passes after `check_bodies` run for a set of
   functions with the rest fixed.
 - **E. Splicing into the lowering** (`velt_vir`, dev only): the running version's lowering

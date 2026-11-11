@@ -82,16 +82,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
         )
     }
 
-    /// Prologue answering for a call's copy: a sync function's environment copied, with one transfer
-    /// scope for the whole environment, so an object reached twice is copied once and a cycle is
-    /// copied as a cycle (velt_rt `transfer_map`); null for an async closure, which copies for itself.
+    /// Prologue answering for a call's copy: the environment copied, with one transfer scope for the
+    /// whole environment, so an object reached twice is copied once and a cycle is copied as a cycle
+    /// (velt_rt `transfer_map`); null for an async closure that copies for itself (`copy` false).
     fn answer_call_copy(
         &mut self,
         here: Operand,
         def: DefId,
         targs: &[TyId],
         caps: &[(u32, PassMode, TyId)],
-        sync: bool,
+        copy: bool,
     ) {
         let counted: Vec<TyId> = (caps.iter())
             .filter(|(_, mode, ty)| *mode == PassMode::Owned && self.cx.holds_counted(*ty))
@@ -99,7 +99,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .collect();
         let copier = cfunc(self.cx.func(Work::EnvClone(def, targs.to_vec())));
         self.answer_asked(here, ASK_CALL_COPY, |lw, e| {
-            let copy = match sync {
+            let copy = match copy {
                 true => {
                     for t in &counted {
                         lw.cx.note_transfer(*t);
@@ -153,18 +153,23 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // A local async closure's calls share what it captured (async_fn/ctor.rs
         // `take_capture`): calls from several threads would update the counts at once. Sema
         // keeps such closures away from these places (ownership/local_async); this catches a
-        // path it does not follow.
-        let local = lw.cx.fn_def(def).shares_captures
-            && (!cells.is_empty()
-                || caps
-                    .iter()
-                    .any(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.holds_counted(*ty)));
+        // path it does not follow. A function in `shared(...)` (the strict walk) is called on a
+        // copy of its environment, which this entry makes (`answer_call_copy`): only a captured
+        // variable's cell, which a copy still shares, stops it there.
+        let shares = lw.cx.fn_def(def).shares_captures;
+        let local_cells = shares && !cells.is_empty();
+        let local = shares
+            && caps
+                .iter()
+                .any(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.holds_counted(*ty));
         let sync = !lw.cx.fn_def(def).is_async || lw.cx.fn_def(def).is_generator;
         let here = Operand::Copy(Place::local(env));
         // Only a program that calls a function in `shared(...)` asks for a call's copy, so only
-        // its environments' entries have the answer.
+        // its environments' entries have the answer. A local async closure shares what it captured
+        // with each call instead of copying it, so its call in `shared(...)` gets a copy here, as a
+        // sync function's does. A stopgap until shared state stops being copied per call (#2726).
         if lw.cx.boxing.shared_fns {
-            lw.answer_call_copy(here, def, targs, &caps, sync);
+            lw.answer_call_copy(here, def, targs, &caps, sync || shares);
         }
         // A function in `shared(...)` (the strict walk, many.rs) runs each call on a copy, so a
         // change it makes would be lost.
@@ -180,7 +185,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.end_walk_scope();
                 lw.panic_many_threads(t);
             }
-            if local {
+            if local_cells || (local && !lw.many_strict) {
                 lw.walk_panic(
                     "an async closure that changes or shares what it captured is shared between threads (`shared(...)`, a `Mutex`'s value, or an HTTP handler): its calls would use the captured values from several threads at once; capture `shared` values instead",
                 );

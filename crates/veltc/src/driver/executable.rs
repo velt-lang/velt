@@ -62,10 +62,10 @@ pub(super) fn build_on_current_thread(
     let (program, seen) = match &stamped {
         Some(_) => vpm::probe::record_reusing(known, || {
             stamp::note_project(opts);
-            compile_to_vir_linking(sess, opts, true)
+            compile_to_vir_linking(sess, opts, VirFor::Link)
         }),
         None => (
-            compile_to_vir_linking(sess, opts, true),
+            compile_to_vir_linking(sess, opts, VirFor::Link),
             vpm::probe::Seen::default(),
         ),
     };

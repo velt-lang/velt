@@ -50,6 +50,8 @@ pub(crate) enum Arg {
     /// An array of these: the wrapped function's own rest parameter as an ordinary parameter
     /// (`[#arg1, ...#args]`).
     Pack(Vec<Arg>),
+    /// `undefined`, for a parameter the caller never passes (a timer's callback).
+    Undefined,
 }
 
 /// How a wrapper calls the function it wraps: with the arguments of `arms[j]` when it got at
@@ -194,6 +196,7 @@ fn arg_expr(a: &Arg, span: Span) -> ast::Expr {
             ast::ExprKind::Array(xs.iter().map(|x| arg_expr(x, span)).collect()),
             span,
         ),
+        Arg::Undefined => synth(ast::ExprKind::Lit(ast::Lit::Undefined), span),
     }
 }
 
@@ -267,6 +270,7 @@ pub(crate) fn wrapper(
                     init: Some(call),
                     span,
                     c_const: false,
+                    c_global: None,
                 }),
                 span,
             }],

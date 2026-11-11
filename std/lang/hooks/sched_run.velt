@@ -1,8 +1,9 @@
 // velt/lang/hooks (internal): the worker loop of the executor in Velt (sched.velt, #2649): a
 // step of the worker (`turn`: the next ready task, or park until a wake), a poll of a task
-// (`run`: the started promises woken since its last poll, its root, its microtasks; each piece
-// only when the task has them, so a task with no started promise and no queued microtask polls
-// its root and nothing else), the end of its root and of the task, and its join handle.
+// (`run`: the started promises woken since its last poll, its sleeps due to fire, its root, its
+// microtasks; each piece only when the task has them, so a task with no started promise, no due
+// sleep and no queued microtask polls its root and nothing else), the end of its root and of the
+// task, and its join handle.
 
 import { futDrop, futPoll, inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as end from "./sched_end";
@@ -11,9 +12,13 @@ import * as w from "./sched_io_write";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as node from "./sched_node";
+import * as off from "./sched_off";
+import * as order from "./sched_order";
+import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
 
-/** One step of the worker: run the next ready task, or park until a wake. */
+/** One step of the worker: run the next ready task, or park until a wake (inlined in its loops). */
+@inline
 export function turn(e: usize): void {
   let k = m.ld(e + t.E_HEAD);
   if (k === 0) {
@@ -41,7 +46,8 @@ export function turn(e: usize): void {
 
 /**
  * The I/O at the end of a poll whose tick reached 0: what is due is sent; due `unref()`'d timers
- * waiting for a park ask again (sched_end.velt: a worker that never parks); with sockets
+ * waiting for a park ask again (sched_end.velt: a worker that never parks); due sleeps fire and
+ * Node's timer loop moves on (sched_order.velt `tick`); with sockets
  * registered, the reactor's ready events and passed deadlines are delivered without waiting, and
  * what they made due is sent.
  */
@@ -53,6 +59,9 @@ function ioTick(e: usize, b: usize): void {
   if (m.ld(e + t.E_UNREF) !== 0) {
     end.wakeUnref(e);
   }
+  if (m.ld(e + t.E_TIMERS) !== 0) {
+    order.tick(e);
+  }
   if (m.ld(b + io.IO_LIVE) === 0) {
     return;
   }
@@ -63,25 +72,24 @@ function ioTick(e: usize, b: usize): void {
 }
 
 /**
- * Polls task `k` once: its woken started promises, its root, its microtasks. A task with no
- * started promise, no queued microtask and a root still running takes the straight path: its
- * flags read once, the root polled, two words checked.
+ * Polls task `k` once: its woken started promises, its due sleeps, its root, its microtasks. A
+ * task with no started promise, no due sleep, no queued microtask and a root still running takes
+ * the straight path: its flags read once, the root polled, two words checked.
  */
 function run(e: usize, k: usize): void {
   m.store32(k + t.T_STATE, t.RUNNING);
   m.st(e + t.E_CURRENT, k);
   const fl = m.ld32(k + t.T_FLAGS);
   if ((fl & t.LOCALS) !== 0) {
-    runWoken(e, k);
-  }
-  if ((fl & t.ROOT_DONE) === 0) {
+    runWoken(e, k, fl);
+  } else if ((fl & t.ROOT_DONE) === 0) {
     pollRoot(e, k);
   }
   if (m.ld(k + t.T_MICRO) !== 0 || m.ld(k + t.T_UNHANDLED) !== 0) {
     drain(e, k);
   }
   m.st(e + t.E_CURRENT, 0);
-  if ((m.ld32(k + t.T_FLAGS) & (t.LOCALS | t.ROOT_DONE)) !== 0) {
+  if ((m.ld32(k + t.T_FLAGS) & (t.LOCALS | t.ROOT_DONE | t.HOLDS)) !== 0) {
     runEnd(e, k);
   } else if (m.cas32(k + t.T_STATE, t.RUNNING, t.IDLE) !== t.RUNNING) {
     // Woken during its poll.
@@ -90,22 +98,90 @@ function run(e: usize, k: usize): void {
   }
 }
 
-/** The started promises of task `k` woken since its last poll, run in the order they were woken. */
+/**
+ * The started promises of task `k` woken since its last poll, run in the order they were woken,
+ * then its due sleeps (flag `TIMED`, which comes with `LOCALS`: flags `fl`), then its root. A
+ * microtask or a sleep that resumed the root meanwhile set flag `POLLED`: the root is not polled
+ * again then, so a root that yielded there waits for the task's next poll.
+ */
 @noInline
-function runWoken(e: usize, k: usize): void {
-  let n = node.takeWoken(k);
-  while (n !== 0) {
-    const next = node.nextWoken(n);
-    node.run(k, n, true);
-    node.release(n);
-    drain(e, k);
-    n = next;
+function runWoken(e: usize, k: usize, fl: u32): void {
+  t.flags(k, 0, t.POLLED);
+  if ((fl & t.LOCALS) !== 0) {
+    let n = node.takeWoken(k);
+    while (n !== 0) {
+      const next = node.nextWoken(n);
+      node.run(k, n, true);
+      node.release(n);
+      drain(e, k);
+      n = next;
+    }
+  }
+  if ((fl & t.TIMED) !== 0) {
+    fireDue(e, k);
+  }
+  if (!t.has(k, t.POLLED)) {
+    pollRoot(e, k);
   }
 }
 
-/** The end of a poll of task `k`, which drives promises or whose root is done. */
+/**
+ * Fires task `k`'s due sleeps one at a time, in timer order (sched_sleep.velt): each resumes its
+ * waiter at once, and the task's microtasks run before the next, as in Node's timer phase. A
+ * waiter that polls several sleeps (`Promise.all`) finds only those fired so far ready. A waiter
+ * woken meanwhile (it yielded) is not resumed again in this poll: that sleep and the ones after
+ * it fire in the next. A root woken during a step by something else (a combinator of the
+ * runtime) resumes before the next sleep fires, as Node runs a settled promise's reaction before
+ * the next timer.
+ */
+function fireDue(e: usize, k: usize): void {
+  t.flags(k, 0, t.TIMED);
+  // The root was woken while it was polled here: it is not polled again in this poll.
+  let woken = false;
+  while (true) {
+    const f = sl.firstDue(k);
+    if (f === 0) {
+      return;
+    }
+    const w0 = sl.waiter(f);
+    const own = w0 !== k && node.ownNode(k, w0);
+    if (w0 === k ? woken : own && node.queued(w0)) {
+      t.flags(k, t.TIMED, 0);
+      return;
+    }
+    const w = sl.fire(k, f);
+    if (w === k) {
+      pollRootAgain(e, k);
+      t.release(k);
+      drain(e, k);
+      woken = m.load32(k + t.T_STATE) === t.NOTIFIED;
+    } else {
+      if (own) {
+        node.run(k, w, false);
+        node.release(w);
+      } else {
+        m.wakeOwned(w);
+      }
+      drain(e, k);
+      if (!woken && !t.has(k, t.ROOT_DONE) && m.load32(k + t.T_STATE) === t.NOTIFIED) {
+        m.store32(k + t.T_STATE, t.RUNNING);
+        pollRootAgain(e, k);
+        drain(e, k);
+        woken = m.load32(k + t.T_STATE) === t.NOTIFIED;
+      }
+    }
+  }
+}
+
+/**
+ * The end of a poll of task `k`, which drives promises, whose root is done, or which took a Node
+ * timer's turn (the loop moves on now: sched_order.velt).
+ */
 @noInline
 function runEnd(e: usize, k: usize): void {
+  if (t.has(k, t.HOLDS)) {
+    order.released(e, k);
+  }
   if (t.has(k, t.ROOT_DONE) && m.ld(k + t.T_LOCALS) === 0) {
     finish(e, k);
   } else if (m.load(k + t.T_WOKEN) !== 0) {
@@ -150,8 +226,10 @@ function drain(e: usize, k: usize): void {
       }
       return;
     }
+    // A microtask's job runs: a due sleep it polls does not fire itself (sched_sleep.velt).
+    m.st(e + t.E_JOB, m.ld(e + t.E_JOB) + 1);
     if (w === k) {
-      pollRoot(e, k);
+      pollRootAgain(e, k);
       t.release(k);
     } else if (node.ownNode(k, w)) {
       node.run(k, w, false);
@@ -159,8 +237,15 @@ function drain(e: usize, k: usize): void {
     } else {
       m.wakeOwned(w);
     }
+    m.st(e + t.E_JOB, m.ld(e + t.E_JOB) - 1);
     t.flags(k, 0, t.CREDIT);
   }
+}
+
+/** Polls task `k`'s root from a microtask or a due sleep, unless it is done; marks it polled. */
+function pollRootAgain(e: usize, k: usize): void {
+  pollRoot(e, k);
+  t.flags(k, t.POLLED, 0);
 }
 
 /** Task `k`'s root is done: its result to the join handle, its awaiter woken. */
@@ -285,22 +370,39 @@ function takeInbox(e: usize): usize {
 }
 
 /**
- * Sleeps in the reactor until a socket is ready or a task is woken from another thread; what is
- * due is sent first, and what the wait made due (writable sockets with bytes left) after it.
- * Not when nothing can happen any more (sched_end.velt `mayPark`: the program ends).
+ * Sleeps in the reactor until a socket is ready, a task is woken from another thread or the next
+ * timer is due; what is due is sent first, and what the wait made due (writable sockets with
+ * bytes left) after it. Due timers fire before (when they make a task ready, the worker does not
+ * wait) and after the wait. Not when nothing can happen any more (sched_end.velt `mayPark`: the
+ * program ends). Out of line: the worker's step (`turn`) stays small enough to inline.
  */
+@noInline
 function park(e: usize): void {
   const b = m.ld(e + t.E_IO);
   if (m.ld(b + io.IO_DUE) !== 0) {
     w.flushDue(b);
+  }
+  let timeout: i64 = -1;
+  const timers = m.ld(e + t.E_TIMERS) !== 0;
+  if (timers) {
+    timeout = order.next(e);
+    if (m.ld(e + t.E_HEAD) !== 0) {
+      return;
+    }
   }
   m.store32(e + t.E_PARK, 1);
   if (m.load(e + t.E_INBOX) !== 0 || m.ld(e + t.E_HEAD) !== 0 || !end.mayPark(e)) {
     m.store32(e + t.E_PARK, 0);
     return;
   }
-  io.park(b);
+  if (m.ld(e + t.E_PINNED) !== 0) {
+    off.flush();
+  }
+  io.park(b, timeout);
   m.store32(e + t.E_PARK, 0);
+  if (timers) {
+    order.tick(e);
+  }
   if (m.ld(b + io.IO_DUE) !== 0) {
     w.flushDue(b);
   }

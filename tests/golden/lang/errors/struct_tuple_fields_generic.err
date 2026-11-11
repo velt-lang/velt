@@ -10,7 +10,7 @@ struct_tuple_fields_generic.velt:159:3: error: this method of an `extend` stores
 struct_tuple_fields_generic.velt:185:3: error: this method of an `extend` stores `T` in a struct's field, and it implements an interface, so nothing shows that this isn't a tuple, which a struct can't hold yet
   = note: a value of any type reaches the method through the interface or `any`; take the interface off the `extend` and call the method directly, or make the struct a class, or give the field a type of its own
 
-struct_tuple_fields_generic.velt:201:3: error: this method of an `extend` stores `X` in a struct's field, and it implements an interface, so nothing shows that this isn't a tuple, which a struct can't hold yet
+struct_tuple_fields_generic.velt:201:3: error: this default method stores `X` in a struct's field, and an `extend` implements its interface, so nothing shows that this isn't a tuple, which a struct can't hold yet
   = note: a value of any type reaches the method through the interface or `any`; take the interface off the `extend` and call the method directly, or make the struct a class, or give the field a type of its own
 
 struct_tuple_fields_generic.velt:219:3: error: this method of an `extend` stores `T` in a struct's field, and it implements an interface, so nothing shows that this isn't a tuple, which a struct can't hold yet

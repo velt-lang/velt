@@ -9,7 +9,8 @@
 //! as a whole word (in code, a comment or a string: a false positive only costs loading time)
 //! loads the global module, which then becomes part of the prelude (its canonical path starts
 //! with `std/prelude/`), unless the module binds that name itself at the top level (an import,
-//! as `import { Response } from "./api"` does, or a declaration), which hides the global.
+//! as `import { Response } from "./api"` does, or a declaration), which hides the global, except
+//! for a name the module also writes as `globalThis.<name>`, which reaches past its own binding.
 //! A regular expression literal (`/a+/`, which the parser reads as `new RegExp(…)`) counts as
 //! naming `RegExp`. std modules import what they use, so they never trigger one.
 //!
@@ -170,6 +171,20 @@ pub(super) fn names_global(words: &Words, module: &ast::Module, name: &str) -> b
             && has_nothing_slot(module))
         || (name == THIS_FN && words.has("this") && has_this_fn(module))
         || (name == ASYNC_HOST && words.has("host") && has_async_host(module))
+}
+
+/// Whether `src` writes `globalThis.<name>` (a type or value that names the global past the
+/// module's own binding of `name`, which otherwise hides it).
+pub(super) fn through_global_this(src: &str, name: &str) -> bool {
+    let path = format!("globalThis.{name}");
+    src.match_indices(&path).any(|(at, _)| {
+        let before = src[..at].chars().next_back().is_none_or(|c| !ident(c));
+        let after = src[at + path.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !ident(c));
+        before && after
+    })
 }
 
 /// The trigger of the global an async host function loads (std/prelude/global/host_async.velt:
@@ -387,6 +402,17 @@ pub(super) fn mentions(src: &str, name: &str) -> bool {
 mod tests {
     use super::*;
     use velt_common::SourceMap;
+
+    #[test]
+    fn global_this_paths() {
+        assert!(through_global_this("let t: globalThis.Text | null", "Text"));
+        assert!(!through_global_this(
+            "let t: globalThis.TextDecoder",
+            "Text"
+        ));
+        assert!(!through_global_this("let t: myglobalThis.Text", "Text"));
+        assert!(!through_global_this("type Text = { a: 1 }", "Text"));
+    }
 
     #[test]
     fn whole_words_only() {

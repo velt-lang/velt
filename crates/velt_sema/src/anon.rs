@@ -45,7 +45,7 @@ impl ShapeField {
 }
 
 /// What the `Object` built-ins (`body::expr::object_builtins`) make, program-wide.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ObjectState {
     /// The type of `Object.freeze(o)` for each anonymous object type `o` frozen: a readonly def
     /// of its own, which doesn't convert to a type whose fields can be written (`frozen_defs`).

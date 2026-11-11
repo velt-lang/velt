@@ -1,39 +1,71 @@
 // velt/sync (internal): `Channel<T>`, a typed queue between tasks (https://veltlang.com/docs/std/sync/channel/). Any number
-// of tasks may send and receive through clones of one channel. A bounded channel makes `send` wait
-// while it is full (backpressure); an unbounded one never waits. `close()` ends the stream: sends
-// fail from then on, and receivers get what is queued, then `null`.
+// of tasks may send and receive through copies of one channel. A bounded channel makes `send`
+// wait while it is full (backpressure); an unbounded one never waits. `close()` ends the stream:
+// sends fail from then on, and receivers get what is queued, then `null`.
 //
 // A sent value crosses to the receiver's task like a `spawn` argument: it moves when the sender
 // no longer uses it, and is deep-copied otherwise (objects are never shared between tasks).
 //
 // `Channel<T>` is a handle struct, like `TcpStream` (https://veltlang.com/docs/std/ "Handles"): copies share
-// one channel, so pass it to producers and consumers (also `spawn`ed tasks) freely. Close it
-// when done: a closed channel is freed once it is drained, and an unclosed one lives until the
-// program ends. Values nobody receives are dropped when the program ends.
+// one channel, so pass it to producers and consumers (also `spawn`ed tasks) freely. Values still
+// queued when the last copy is dropped are dropped with it.
+//
+// Written in Velt (#2649): the items sit in a ring in raw memory under a spin lock, and waiting
+// tasks in two lines (channel_block.velt): a send or receive that can go on now takes the lock
+// once and allocates nothing; one that waits joins its line through a heap future that is its
+// place there (constant time to join and to leave). A receive takes its item when it is called
+// (as a JS promise starts): only an empty channel makes it wait.
 
 import { ChannelClosed } from "velt/sync/errors";
+import { ChanCore } from "velt/sync/channel_core";
 import {
-  velt_rt_chan_close,
-  velt_rt_chan_closed,
-  velt_rt_chan_len,
-  velt_rt_chan_new,
-} from "velt/sync/rt";
-import { chanReceive, chanSend, chanTryReceive, chanTrySend } from "velt/lang/intrinsics";
+  bounded,
+  closeBlock,
+  count,
+  hasRoom,
+  isClosed,
+  lock,
+  popAt,
+  pushAt,
+  RECV,
+  SEND,
+  unlock,
+  wakeFirst,
+} from "velt/sync/channel_block";
+import { newCell } from "velt/sync/channel_wait";
+import { wakeOwned } from "#sync-chan-word";
+import { dropAddress, pollAddress } from "#sync-chan-entry";
+import { promiseAt, slotStore, slotTake, slotTransfer } from "velt/lang/intrinsics";
 
 /**
  * A channel of `T` values. `channel<T>()` is unbounded; `channel<T>(capacity)` holds at most
  * `capacity` values (at least 1).
  */
 export struct Channel<T> implements AsyncIterable<T> {
-  private handle: u64;
+  /** Its block (channel_block.velt), read on every call: `core` keeps it alive. */
+  private handle: usize;
+  private core: shared<ChanCore<T>>;
 
   /**
    * Queues `value`, waiting while a bounded channel is full. Throws `ChannelClosed` (and drops
    * `value`) if the channel is closed, also while waiting.
    */
   async send(value: T): Promise<void> throws ChannelClosed {
-    if (!(await chanSend<T>(this.handle, value))) {
-      throw new ChannelClosed();
+    // Made the receiver's before the lock: a deep copy never runs while others spin on it.
+    const v = slotTransfer<T>(value);
+    while (true) {
+      const b = this.handle;
+      lock(b);
+      if (isClosed(b)) {
+        unlock(b);
+        throw new ChannelClosed();
+      }
+      if (hasRoom(b)) {
+        put<T>(b, v);
+        return;
+      }
+      unlock(b);
+      await wait(b, SEND);
     }
   }
 
@@ -43,17 +75,43 @@ export struct Channel<T> implements AsyncIterable<T> {
    * it may be called inside `Mutex.with`.
    */
   trySend(value: T): bool {
-    return chanTrySend<T>(this.handle, value);
+    const v = slotTransfer<T>(value);
+    const b = this.handle;
+    lock(b);
+    if (isClosed(b) || !hasRoom(b)) {
+      unlock(b);
+      return false;
+    }
+    put<T>(b, v);
+    return true;
   }
 
   /** The oldest value, waiting for one; `null` once the channel is closed and empty. */
   async receive(): Promise<T | null> {
-    return await chanReceive<T>(this.handle);
+    while (true) {
+      const b = this.handle;
+      lock(b);
+      if (count(b) !== 0) {
+        return take<T>(b);
+      }
+      if (isClosed(b)) {
+        unlock(b);
+        return null;
+      }
+      unlock(b);
+      await wait(b, RECV);
+    }
   }
 
   /** The oldest value if one is queued, else `null` (never waits). */
   tryReceive(): T | null {
-    return chanTryReceive<T>(this.handle);
+    const b = this.handle;
+    lock(b);
+    if (count(b) === 0) {
+      unlock(b);
+      return null;
+    }
+    return take<T>(b);
   }
 
   /**
@@ -62,7 +120,7 @@ export struct Channel<T> implements AsyncIterable<T> {
    */
   async *[Symbol.asyncIterator](): AsyncIterator<T> {
     while (true) {
-      const v = await chanReceive<T>(this.handle);
+      const v = await this.receive();
       if (v == null) {
         return;
       }
@@ -75,18 +133,58 @@ export struct Channel<T> implements AsyncIterable<T> {
    * `ChannelClosed`; receivers drain what is queued, then get `null`.
    */
   close() {
-    velt_rt_chan_close(this.handle);
+    closeBlock(this.handle);
   }
 
   /** Whether the channel is closed. */
   get closed(): bool {
-    return velt_rt_chan_closed(this.handle);
+    return isClosed(this.handle);
   }
 
   /** Number of queued values. */
   get length(): i64 {
-    return velt_rt_chan_len(this.handle) as i64;
+    return count(this.handle) as i64;
   }
+}
+
+/**
+ * Queues `value` (from `slotTransfer`) in block `b` (locked, with room), wakes the first waiting
+ * receive, unlocks.
+ */
+function put<T>(b: usize, value: T): void {
+  // SAFETY: the lock is held and the ring has room: the new slot holds nothing; `value` was
+  // transferred.
+  unsafe {
+    slotStore<T>(pushAt(b), value);
+  }
+  const w = wakeFirst(b, RECV);
+  unlock(b);
+  if (w !== 0) {
+    wakeOwned(w);
+  }
+}
+
+/** The oldest value of block `b` (locked, not empty); wakes the first waiting send, unlocks. */
+function take<T>(b: usize): T {
+  // SAFETY: the lock is held and an item is queued: taken once (it left the ring).
+  const v = unsafe { slotTake<T>(popAt(b)) };
+  const w = bounded(b) ? wakeFirst(b, SEND) : 0;
+  unlock(b);
+  if (w !== 0) {
+    wakeOwned(w);
+  }
+  return v;
+}
+
+/** A wait in block `b`'s line of `kind` until what it waits for is there. */
+function wait(b: usize, kind: usize): Promise<void> {
+  // SAFETY: `newCell` makes a heap future of this block, given up to the promise.
+  return unsafe { promiseAt<void>(newCell(b, kind, pollAddress(), dropAddress())) };
+}
+
+/** The block of `ch` (channel_block.velt), for std's tests of its waits. */
+export function blockOf<T>(ch: Channel<T>): usize {
+  return ch.handle;
 }
 
 /**
@@ -97,5 +195,6 @@ export function channel<T>(capacity: i64 = 0): Channel<T> {
   if (capacity < 0) {
     panic(`channel capacity must not be negative, got ${capacity}`);
   }
-  return { handle: velt_rt_chan_new(capacity as u64) };
+  const core = shared(new ChanCore<T>(capacity as usize));
+  return { handle: core.block, core: core };
 }

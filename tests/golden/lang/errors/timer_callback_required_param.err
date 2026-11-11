@@ -1,0 +1,2 @@
+timer_callback_required_param.velt:7:12: error: mismatched types
+  = note: expected () => Promise<void>, found (f64) => void

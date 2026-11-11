@@ -1,0 +1,111 @@
+// velt/sync (internal): a wait on a channel's block (channel_block.velt): a heap future
+// (rt_abi_async.md §1) that is also the waiter's place in its line. Its first poll joins the
+// line's back with a clone of the poll's waker; a wake takes it out of line (WOKEN) and the
+// next poll looks again, joining the back once more if what it waits for went to another task.
+// Dropped while in line, it leaves in constant time; dropped woken before it looked, it hands the
+// wake on while what it waited for is there. channel_entry.velt makes its poll and drop C
+// functions.
+
+import { rawAlloc, rawFree } from "velt/lang/intrinsics";
+import {
+  CELL,
+  DONE,
+  F_BLOCK,
+  F_KIND,
+  F_NEXT,
+  F_PREV,
+  F_STATE,
+  F_WAKER,
+  QUEUED,
+  WOKEN,
+  isClosed,
+  join,
+  ld,
+  leave,
+  load32,
+  lock,
+  ready,
+  release,
+  retain,
+  st,
+  store32,
+  unlock,
+  wakeFirst,
+} from "velt/sync/channel_block";
+import { wakerClone, wakerDrop, wakerOf, wakeOwned } from "#sync-chan-word";
+
+/** A wait of `kind` on block `b`: a heap future (poll `poll`, drop `drop`) holding a count. */
+export function newCell(b: usize, kind: usize, poll: usize, drop: usize): usize {
+  retain(b);
+  const f = rawAlloc(CELL);
+  st(f, poll);
+  st(f + 8, drop);
+  st(f + F_BLOCK, b);
+  st(f + F_KIND, kind);
+  st(f + F_STATE, 0);
+  st(f + F_WAKER, 0);
+  st(f + F_PREV, 0);
+  st(f + F_NEXT, 0);
+  return f;
+}
+
+/** The poll of wait `f` with context `cx`: 1 once what it waits for is there, else 0 (in line). */
+export function pollCell(f: usize, cx: usize): u32 {
+  const b = ld(f + F_BLOCK);
+  const kind = ld(f + F_KIND);
+  const w = wakerOf(cx);
+  lock(b);
+  const s = load32(f + F_STATE);
+  if (ready(b, kind)) {
+    if (s === QUEUED) {
+      leave(b, f, kind);
+    }
+    store32(f + F_STATE, DONE);
+    unlock(b);
+    return 1;
+  }
+  const old = ld(f + F_WAKER);
+  if (old !== w) {
+    st(f + F_WAKER, wakerClone(w));
+  }
+  if (s !== QUEUED) {
+    // Joins the back (first poll, or woken and found nothing).
+    join(b, f, kind);
+  }
+  unlock(b);
+  if (old !== w && old !== 0) {
+    wakerDrop(old);
+  }
+  return 0;
+}
+
+/** The drop of wait `f`: out of line, a wake it did not use handed on; frees it. */
+export function dropCell(f: usize): void {
+  const b = ld(f + F_BLOCK);
+  const s = load32(f + F_STATE);
+  if (s === QUEUED || s === WOKEN) {
+    const kind = ld(f + F_KIND);
+    let w: usize = 0;
+    lock(b);
+    // Only a wake changes it meanwhile (QUEUED to WOKEN), under the lock.
+    const now = load32(f + F_STATE);
+    if (now === QUEUED) {
+      leave(b, f, kind);
+    } else if (!isClosed(b) && ready(b, kind)) {
+      w = wakeFirst(b, kind);
+    }
+    unlock(b);
+    if (w !== 0) {
+      wakeOwned(w);
+    }
+  }
+  const mine = ld(f + F_WAKER);
+  if (mine !== 0) {
+    wakerDrop(mine);
+  }
+  // SAFETY: the wait, out of every line, freed once.
+  unsafe {
+    rawFree(f, CELL);
+  }
+  release(b);
+}

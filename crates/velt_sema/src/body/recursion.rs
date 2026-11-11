@@ -22,7 +22,7 @@ use crate::defs::{FnKind, FnSource};
 use crate::hir::DefId;
 use crate::written_types::written_param;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct RecState {
     /// Functions used before their inferred return type was known, by function.
     pending: FxHashMap<DefId, Pending>,

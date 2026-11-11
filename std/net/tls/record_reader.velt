@@ -15,6 +15,7 @@ import {
   UNEXPECTED_MESSAGE,
 } from "velt/net/tls/alert";
 import { HEADER, RecordCipher } from "velt/net/tls/record_cipher";
+import { arrayMove } from "velt/lang/intrinsics/array";
 
 /** The content type change_cipher_spec. */
 export const CHANGE_CIPHER_SPEC: u8 = 20;
@@ -84,9 +85,7 @@ export class RecordReader {
 
   /** Copies `n` bytes of application data (at most `available()`) to `out[at..]`. */
   takeInto(out: u8[], at: usize, n: usize) {
-    for (let i: usize = 0; i < n; i++) {
-      out[at + i] = this.buf[this.pstart + i];
-    }
+    arrayMove(out, at, this.buf, this.pstart, n);
     this.pstart += n;
   }
 

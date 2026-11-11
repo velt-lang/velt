@@ -1,0 +1,54 @@
+// Middleware of the `next` shape from #2726, capturing the request: `server <port> <n>` runs every
+// request through n middleware (0, 1 or 3), called through a function value as a framework calls
+// them; the innermost `next` reads `req`. Each middleware awaits `next()` and sets a header.
+// bench/http/middleware/run.sh measures it (instructions per request, peak RSS, a 100k soak).
+
+import { serve } from "http-server";
+import { args } from "velt/process";
+
+type Next = () => Promise<Response>;
+type Middleware = (next: Next) => Promise<Response>;
+
+const middleware: Middleware[] = [
+  async (next: Next): Promise<Response> => {
+    const res = await next();
+    res.headers.set("x-mw-0", "1");
+    return res;
+  },
+  async (next: Next): Promise<Response> => {
+    const res = await next();
+    res.headers.set("x-mw-1", "1");
+    return res;
+  },
+  async (next: Next): Promise<Response> => {
+    const res = await next();
+    res.headers.set("x-mw-2", "1");
+    return res;
+  },
+];
+
+// Runs middleware i..n-1 around `last`: each hop passes a fresh `next` closure.
+async function run(i: i64, n: i64, last: Next): Promise<Response> {
+  if (i >= n) {
+    return await last();
+  }
+  return await middleware[i](async (): Promise<Response> => await run(i + 1, n, last));
+}
+
+async function main() {
+  const argv = args();
+  const port = argv.length > 0 ? parseInt(argv[0], 10) : 8080;
+  const n: i64 = argv.length > 1 ? (parseInt(argv[1], 10) as i64) : 0;
+  const server = await serve({ port: port }, async (req: Request): Promise<Response> => {
+    if (n == 0) {
+      return new Response(`${req.method} ${req.url.length}`);
+    }
+    return await run(
+      0,
+      n,
+      async (): Promise<Response> => new Response(`${req.method} ${req.url.length}`),
+    );
+  });
+  console.log(`listening on http://127.0.0.1:${server.port} with ${n} middleware`);
+  await sleep(1000000000);
+}

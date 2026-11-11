@@ -285,6 +285,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             held_targets: vec![],
             user_body: false,
             record_fill: 0,
+            pads: Default::default(),
         };
         lw.mode = lw.cx.cur_mode;
         lw.own_captures = lw.cx.cur_own;

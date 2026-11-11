@@ -1,0 +1,2 @@
+async_closure_unknown_callee_spawns_unresolved.velt:22:5: error: this async closure modifies captured `n`, so it must stay on the task that created it
+async_closure_unknown_callee_spawns_unresolved.velt:14:5: but it reaches `spawn` here
