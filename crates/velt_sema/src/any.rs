@@ -414,26 +414,36 @@ fn accessor_literals_dynamic(cx: &Ctx) -> bool {
                 && (a.implements.iter()).any(|b| {
                     cx.iface(b.iface).is_some_and(|i| {
                         (i.methods.iter()).any(|m| m.is_getter || m.name.starts_with("set "))
-                            || !field_getters(cx, &a.fields, i).is_empty()
+                            || !field_getters(cx, d, i).is_empty()
                     })
                 })
         })
     })
 }
 
-/// The fields of interface `i` that an object literal (struct fields `fields`) fills with a
-/// getter `get f() { … }`: the index of each, whose getter slot follows the methods' slots.
-fn field_getters(
-    cx: &Ctx,
-    fields: &[crate::defs::FieldInfo],
-    i: &crate::defs::IfaceInfo,
-) -> Vec<(usize, String)> {
-    let getter =
-        |t: TyId| matches!(cx.ty.kind(t), TyKind::FnPtr { params, .. } if params.is_empty());
+/// The name's end of the slot method of an interface field that an object literal fills with
+/// `get f() { … }` (`body::expr::iface_object`), which tells such a getter from a function value
+/// stored in the field.
+pub(crate) const FIELD_GETTER: &str = "literal.<get>";
+
+/// The fields of interface `i` that the object literal of struct `d` fills with a getter
+/// `get f() { … }`, written as one (not a function value stored in the field): the index of
+/// each, whose getter slot follows the methods' slots, and the slot.
+fn field_getters(cx: &Ctx, d: DefId, i: &crate::defs::IfaceInfo) -> Vec<(usize, String, DefId)> {
+    let is_struct = |t: TyId| matches!(cx.ty.kind(t), TyKind::Adt(s, _) if *s == d);
+    let Some(imp) = cx.impls.iter().find(|m| is_struct(m.ty)) else {
+        return vec![];
+    };
+    let n_methods = i.methods.len();
+    let getter = FIELD_GETTER;
     (i.fields.iter().enumerate())
-        .filter(|(_, f)| !matches!(cx.ty.kind(f.ty), TyKind::FnPtr { .. }))
-        .filter(|(_, f)| (fields.iter()).any(|s| s.name == f.name && getter(s.ty)))
-        .map(|(k, f)| (k, f.name.clone()))
+        .filter_map(|(k, f)| {
+            let def = *imp.methods.get(n_methods + k)?;
+            cx.fn_info(def)
+                .name
+                .ends_with(getter)
+                .then(|| (k, f.name.clone(), def))
+        })
         .collect()
 }
 
@@ -457,15 +467,7 @@ fn literal_accessors(cx: &mut Ctx, d: DefId, members: &mut Vec<DynMember>) {
     // An interface field filled by `get f() { … }`: its getter slot runs the function (a
     // setter next to it is not listed: printing such a literal through its interface is
     // refused, `body::expr::object_text`).
-    let n_methods = slots.len();
-    let by_field = match cx.adt(d) {
-        Some(a) => field_getters(cx, &a.fields, i),
-        None => vec![],
-    };
-    for (k, name) in by_field {
-        let Some(&def) = defs.get(n_methods + k) else {
-            continue;
-        };
+    for (_, name, def) in field_getters(cx, d, i) {
         if !members.iter().any(|m| m.name == name) {
             members.push(DynMember {
                 name,

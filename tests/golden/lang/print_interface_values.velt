@@ -47,3 +47,19 @@ const withGetter: Sized = {
 const maybeSized: Sized | null = withGetter;
 console.log(withGetter, [withGetter], maybeSized, { w: withGetter });
 console.log(withGetter.size, String(withGetter));
+
+// A function value stored in an interface field is no getter: Node prints `[Function: value]`.
+interface Box<T> {
+  value: T;
+  get(): T;
+}
+
+const box: Box<() => number> = {
+  value: () => 1,
+  get() {
+    return this.value;
+  },
+};
+const boxAsAny: any = box;
+console.log(box, [box]);
+console.log(boxAsAny, box.get()());
