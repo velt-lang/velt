@@ -1,0 +1,25 @@
+// check: no leaks
+// #2763 without the callback that hid it before #2734: a record getter defined with
+// `Object.defineProperty` beside std's HTTP client, whose session holds an `onClose: () => void`;
+// the getter's `() => number` wrapper can't be that value, so the getter stays on its task.
+// The output is Node's.
+interface Dep {
+  seen: boolean;
+}
+function track(dep: Dep): void {
+  dep.seen = true;
+}
+function make(getDep: () => Dep): Record<string, any> {
+  const inst: Record<string, any> = Object.create(null);
+  Object.defineProperty(inst, "size", {
+    get() {
+      track(getDep());
+      return 1;
+    },
+  });
+  return inst;
+}
+const dep: Dep = { seen: false };
+const m = make(() => dep);
+const c = new AbortController();
+console.log(m.size, dep.seen, c.signal.aborted);

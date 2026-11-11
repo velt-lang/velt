@@ -1,0 +1,22 @@
+// A package's generic method, reached only through an interface, wraps the program's callback in
+// a closure of the method's type parameter (`() => T`) and keeps it in an object sent on a
+// channel. No call instantiates the method, so the wrapper's generic type matches anything, and
+// the capture-changing async closure the callback calls crosses (#2763's review: matching a
+// closure by its instantiations must not drop one that has none).
+import { channel } from "velt/sync";
+import { Holder, W } from "pkgx";
+import type { Wrapper } from "pkgx";
+
+async function main() {
+  let m = 0;
+  const inner = async (): Promise<void> => {
+    m += 1;
+  };
+  const h = new Holder<i64>();
+  const w: Wrapper<i64> = new W<i64>(h, 7);
+  w.wrap((): void => {
+    const p = inner();
+  });
+  const ch = channel<Holder<i64>>();
+  await ch.send(h);
+}

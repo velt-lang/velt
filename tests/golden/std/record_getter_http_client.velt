@@ -1,0 +1,32 @@
+// check: no leaks
+// A record getter defined with `Object.defineProperty` in a program that also loads std's HTTP
+// client (`new AbortController()` does): the getter's std wrapper, a `() => V` with `V = number`,
+// is not matched against the client session's `onClose: () => void`, so the getter, which changes
+// what it reaches through a capture, stays on its task (#2763; sigx's reactivity collections).
+// The output is Node's.
+interface Dep {
+  seen: boolean;
+}
+function track(dep: Dep): void {
+  dep.seen = true;
+}
+function watch(cb: (onCleanup: (fn: () => void) => void) => void): void {
+  let cleanupFn = null as (() => void) | null;
+  cb((fn) => (cleanupFn = fn));
+  if (cleanupFn) cleanupFn();
+}
+function make(getDep: () => Dep): Record<string, any> {
+  const inst: Record<string, any> = Object.create(null);
+  Object.defineProperty(inst, "size", {
+    get() {
+      track(getDep());
+      return 1;
+    },
+  });
+  return inst;
+}
+const dep: Dep = { seen: false };
+const m = make(() => dep);
+watch((onCleanup) => onCleanup(() => console.log("cleanup")));
+const c = new AbortController();
+console.log(m.size, dep.seen, c.signal.aborted);
