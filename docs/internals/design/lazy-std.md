@@ -204,6 +204,14 @@ none.
 `host_async` is not moved: `velt/host/promise` loads `velt/io/error`, whose `IoError` extends the
 prelude's `Error`, which the rule excludes. It keeps its trigger below until (a2) (#2161 step 4).
 
+**By a hook's role (#2198).** std code may call a function hook by its role, `hookCall("role",
+args…)` (std/lang/intrinsics/hook_call.velt), instead of importing the hook's module. The check of
+the call demands the module (`Ctx::demand_std`) and then checks an ordinary call of the hook's
+definition (velt_sema `body/expr/hook_call.rs`), so the call is in a body only once the body is
+checked: a prelude method's implementation, in a module of its own, is loaded only by the programs
+whose live code calls the method. The module must follow the (a1) rule above. `@hook` (#2203
+step 3) can replace the intrinsic without a change of behaviour.
+
 **Before the check.** A global module under `std/prelude/global/` whose header names a condition is
 loaded by the loader before any types are known (crates/velt_loader/src/globals). Besides the
 conditions on words (`export { … }` names, `// load when <module> uses: <words>`), a header may name

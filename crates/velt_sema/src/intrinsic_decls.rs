@@ -22,12 +22,15 @@ pub(crate) enum DeclaredIntrinsic {
     /// `anyToPrimitive(value, hint, at)` in the hook `anyPrimitive`: the per-class
     /// dispatch sema writes out (`body::expr::any_prim`).
     AnyToPrimitive,
+    /// `hookCall("role", args…)`: a call of the function hook `role` of velt_common's
+    /// `std_hooks.rs`, its module demanded when the call is checked (`body::expr::hook_call`).
+    HookCall,
     /// An `@intrinsic declare function` that names none, or one outside std/lang/intrinsics: the
     /// declaration was reported, and calls of it check their arguments and are errors.
     Invalid,
 }
 
-use DeclaredIntrinsic::{AnyToPrimitive, Op, TargetFeature};
+use DeclaredIntrinsic::{AnyToPrimitive, HookCall, Op, TargetFeature};
 use Intrinsic as I;
 
 /// Every declared intrinsic: its name in `std/lang/intrinsics` and what a call of it is.
@@ -77,6 +80,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("generatorReturn", Op(I::GeneratorReturn)),
     ("generatorThrow", Op(I::GeneratorThrow)),
     ("generatorValue", Op(I::GeneratorValue)),
+    // hook_call.velt
+    ("hookCall", HookCall),
     // math.velt
     ("abs", Op(I::FAbs)),
     ("ceil", Op(I::Ceil)),
