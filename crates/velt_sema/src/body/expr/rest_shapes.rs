@@ -98,6 +98,19 @@ impl FnCx<'_, '_> {
         }
         // The arguments the arrow's rest parameter takes.
         let taken = &want_tys[own_fixed..want.fixed];
+        // One that may be left out would be an `undefined` in the array, where Node's array is
+        // shorter (`fn_widen::packs_absent`).
+        if !want.rest && taken.iter().any(|t| self.may_be_absent(*t)) {
+            let note = self.absent_rest_note();
+            self.cx.error(
+                Diagnostic::error(
+                    "this function's rest parameter would take arguments that a call may leave out",
+                    e.span,
+                )
+                .with_note(note),
+            );
+            return Some(self.error_expr(e.span));
+        }
         let written = params
             .last()
             .and_then(|p| p.ty.as_ref())

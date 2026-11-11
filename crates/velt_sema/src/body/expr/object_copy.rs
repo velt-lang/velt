@@ -359,7 +359,7 @@ impl FnCx<'_, '_> {
             // wrapper as a function value is (`fn_widen`). Not one taking fewer parameters: the
             // copy's function would drop arguments the object's own function may read (a cast
             // `((...args) => …) as { (): T }` keeps them in Node).
-            || (!self.frameless() && self.fn_widens(from, to, false))
+            || self.fn_field_widens(from, to)
     }
 }
 
