@@ -1,0 +1,294 @@
+// velt/process/child (internal): a child process's record for the executor in Velt's child
+// processes (std/process/child/child_sched.velt, #2649 step 4): starting it, its exit on the
+// reactor, the reaper task, its pipes, and the counted record a handle holds (module docs of
+// child_sched.velt).
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { Ptr } from "velt/ffi/ptr";
+import { promiseAt } from "velt/lang/intrinsics";
+import * as r from "#reactor";
+import * as io from "velt/lang/hooks/sched_io";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as wt from "velt/lang/hooks/sched_io_wait";
+import * as fio from "velt/net/fd_io";
+import * as fs from "velt/net/fd_socket";
+import * as sp from "velt/process/child/spawn_posix";
+import { CommandSpec } from "velt/process/child/spec";
+
+declare c("c") function waitpid(pid: i32, status: Ptr<u8>, options: i32): i32;
+declare c("c") function write$child(fd: i32, buf: Ptr<u8>, n: usize): isize;
+/** The address of a byte array's elements (a copy of nothing returns its destination). */
+declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
+
+const WNOHANG: i32 = 1;
+const ECHILD: i32 = 10;
+/** The status word while the child runs. */
+export const RUNNING: usize = 0xffffffffffffffff;
+/** The status word once `waitpid` failed (it was reaped elsewhere). */
+export const LOST: usize = 0xfffffffffffffffe;
+
+// The child's record: count, lock (around reaping), pid, status (the exit code, or RUNNING or
+// LOST), the pipe handles (0: not piped), the exit source's handle (0: polled).
+const C_REFS: usize = 0;
+const C_LOCK: usize = 8;
+export const C_PID: usize = 16;
+export const C_STATUS: usize = 24;
+export const C_IN: usize = 32;
+export const C_OUT: usize = 40;
+export const C_ERR: usize = 48;
+const C_EXIT: usize = 56;
+const C_SIZE: usize = 64;
+
+/** The record of handle `c`, counted for the caller (`release`); 0 once closed. */
+export function acquire(c: u64): usize {
+  const s = tb.enter(c);
+  if (s === 0) {
+    return 0;
+  }
+  const rec = m.ld(s + io.S_BUF);
+  if (rec !== 0) {
+    m.inc(rec + C_REFS);
+  }
+  tb.leave(s);
+  return rec;
+}
+
+/** Gives back one count of `rec`: the last frees it. */
+export function release(rec: usize): void {
+  if (m.dec(rec + C_REFS) === 1) {
+    m.release(rec, C_SIZE);
+  }
+}
+
+/** The text of a child's pipe that is not one. */
+export function notPiped(name: string): IoStatus {
+  return { code: 4, message: `the child's ${name} is not a pipe (spawn it with ${name}: "pipe")` };
+}
+
+/** A pipe's end `fd` as a reactor source: its handle, or 0 (`fd` closed). */
+function adoptPipe(fd: i32): u64 {
+  if (fd < 0) {
+    return 0;
+  }
+  const s = io.register(fd, io.F_PIPE, io.READ | io.WRITE);
+  if (s === 0) {
+    sp.closeFd(fd);
+    return 0;
+  }
+  return tb.handleOf(s);
+}
+
+/** Child `pid`'s exit as a reactor source (readable once it exited): its handle, 0 to poll. */
+function watchExit(pid: i32): u64 {
+  const fd = r.exitFd(pid);
+  if (fd < 0) {
+    return 0;
+  }
+  const s = tb.take();
+  if (s === 0) {
+    if (r.EXIT_FD_OWNED) {
+      sp.closeFd(fd);
+    }
+    return 0;
+  }
+  m.st(s + io.S_FD, fd as usize);
+  // Never follows a task to another reactor (macOS watches a process id, not a descriptor).
+  m.st32(s + io.S_FLAGS, io.F_LISTENER);
+  const b = io.io();
+  m.st(s + io.S_IOB, b);
+  const e = r.watchExit(m.ld(b + io.IO_REACTOR), fd, s);
+  if (e !== 0 && e !== r.EXITED) {
+    tb.bump(s);
+    tb.unlock(s);
+    tb.give(s);
+    if (r.EXIT_FD_OWNED) {
+      sp.closeFd(fd);
+    }
+    return 0;
+  }
+  m.st32(s + io.S_READY, e === r.EXITED ? io.READ | io.HUP : 0);
+  m.inc(b + io.IO_LIVE);
+  tb.unlock(s);
+  return tb.handleOf(s);
+}
+
+/** Frees exit source `h` (the child was reaped). */
+function forgetExit(h: u64): void {
+  const s = tb.enter(h);
+  if (s === 0) {
+    return;
+  }
+  tb.forget(h);
+  if (r.EXIT_FD_OWNED) {
+    sp.closeFd(m.ld(s + io.S_FD) as i32);
+  }
+  io.free(s);
+  tb.leave(s);
+}
+
+/** A handle for record `rec` (a source no reactor watches), or 0 when the table is full. */
+export function handleFor(rec: usize): u64 {
+  const s = tb.take();
+  if (s === 0) {
+    return 0;
+  }
+  m.st(s + io.S_BUF, rec);
+  m.st32(s + io.S_FLAGS, io.F_LISTENER);
+  tb.unlock(s);
+  return tb.handleOf(s);
+}
+
+/** Has the child of `rec` been reaped? Reaps it now if it has exited. */
+export function reapNow(rec: usize): bool {
+  if (m.load(rec + C_STATUS) !== RUNNING) {
+    return true;
+  }
+  if (m.cas32(rec + C_LOCK, 0, 1) !== 0) {
+    m.spinLock(rec + C_LOCK);
+  }
+  if (m.load(rec + C_STATUS) === RUNNING) {
+    const st = m.zeroed(16);
+    // SAFETY: room for the status `int`.
+    const got = unsafe { waitpid(m.ld32(rec + C_PID) as i32, m.ptr(st), WNOHANG) };
+    const w = m.ld32(st);
+    m.release(st, 16);
+    if (got > 0) {
+      const sig = w & 0x7f;
+      const code: usize = sig === 0 ? ((w >> 8) & 0xff) as usize : 128 + (sig as usize);
+      m.swap(rec + C_STATUS, code);
+    } else if (got < 0 && r.errno() === ECHILD) {
+      m.swap(rec + C_STATUS, LOST);
+    }
+  }
+  m.store32(rec + C_LOCK, 0);
+  return m.load(rec + C_STATUS) !== RUNNING;
+}
+
+/** Waits until the child of `rec` was reaped (by whoever gets there first). */
+export async function untilReaped(rec: usize): Promise<void> {
+  while (!reapNow(rec)) {
+    const h = m.load(rec + C_EXIT) as u64;
+    const s = h === 0 ? 0 : tb.enter(h);
+    if (s === 0) {
+      // Polled: no exit source (or it is gone already, and the reaper is about to say so).
+      await sleep(h === 0 ? 10 : 1);
+      continue;
+    }
+    const ready = wt.satisfied(s, io.K_READ, 0);
+    tb.leave(s);
+    if (ready) {
+      // Exited but not reaped yet by the reaper holding the lock: look again shortly.
+      await sleep(1);
+    } else {
+      // SAFETY: `waitFor` makes a heap future, given up to the promise.
+      await unsafe { promiseAt<void>(wt.waitFor(h, io.K_READ, 0, 0)) };
+    }
+  }
+}
+
+/** The reaper of `rec`'s child: reaps it once it exits, then lets go of its exit source. */
+async function reap(rec: usize): Promise<void> {
+  await untilReaped(rec);
+  const h = m.swap(rec + C_EXIT, 0) as u64;
+  if (h !== 0) {
+    forgetExit(h);
+  }
+  release(rec);
+}
+
+/** Closes pipe handle `at` of `rec` (taken: later operations find it not piped). */
+export function closePipe(rec: usize, at: usize): void {
+  const h = m.swap(rec + at, 0) as u64;
+  if (h !== 0) {
+    fio.close(h);
+  }
+}
+
+/** `spawn x: …` for failure `errno` of `program`. */
+function spawnError(program: string, errno: i32): IoStatus {
+  if (errno === sp.EINVAL) {
+    return { code: 4, message: `spawn ${program}: nul byte found in provided data` };
+  }
+  const st = fs.osError(errno);
+  return { code: st.code, message: `spawn ${program}: ${st.message}` };
+}
+
+/** Starts `spec` with stdio `modes`: the counted record (the caller's count), or the failure. */
+export function startChild(spec: CommandSpec, modes: u32): IoResult<usize> {
+  const got = sp.start(spec, modes);
+  if (got.pid === 0) {
+    return fs.failed(spawnError(spec.program, got.error), 0);
+  }
+  const rec = m.zeroed(C_SIZE);
+  // The caller's count and the reaper's.
+  m.st(rec + C_REFS, 2);
+  m.st(rec + C_PID, got.pid as usize);
+  m.st(rec + C_STATUS, RUNNING);
+  m.st(rec + C_IN, adoptPipe(got.stdin) as usize);
+  m.st(rec + C_OUT, adoptPipe(got.stdout) as usize);
+  m.st(rec + C_ERR, adoptPipe(got.stderr) as usize);
+  m.st(rec + C_EXIT, watchExit(got.pid) as usize);
+  const reaper = spawn(reap(rec));
+  return fs.value(rec);
+}
+
+/** Writes all of `data` to pipe `h`, waiting while it is full. */
+export async function writeAll(h: u64, data: u8[]): Promise<IoStatus> {
+  let off: usize = 0;
+  while (off < data.length) {
+    const s = tb.enter(h);
+    if (s === 0) {
+      return fs.closed();
+    }
+    // SAFETY: a copy of nothing gives the address of `data`'s bytes, which hold `length - off`
+    // bytes from `off`; the descriptor is open.
+    const n =
+      unsafe { write$child(
+        m.ld(s + io.S_FD) as i32,
+        m.ptr(Ptr.addressOf(memset$bytes(data, 0, 0)) + off),
+        data.length - off,
+      ) };
+    if (n >= 0) {
+      tb.leave(s);
+      off += n as usize;
+      continue;
+    }
+    const e = r.errno();
+    if (e === r.EAGAIN) {
+      io.notReady(s, io.WRITE);
+    }
+    tb.leave(s);
+    if (e === r.EAGAIN) {
+      // SAFETY: `waitFor` makes a heap future, given up to the promise.
+      await unsafe { promiseAt<void>(wt.waitFor(h, io.K_WRITE, 0, 0)) };
+    } else if (e !== r.EINTR) {
+      return fs.osError(e);
+    }
+  }
+  return fs.ok();
+}
+
+/** Everything left on pipe `h` (0: none). */
+export async function drain(h: u64): Promise<u8[]> {
+  const all: u8[] = [];
+  if (h === 0) {
+    return all;
+  }
+  while (true) {
+    const got = await fio.read(h, 0);
+    if (got.code !== 0 || got.value.length === 0) {
+      return all;
+    }
+    for (const b of got.value) {
+      all.push(b);
+    }
+  }
+}
+
+/** Writes `input` to pipe `h`, then closes it (a feeder of its own: see `velt_rt_child_output`). */
+export async function feed(h: u64, input: u8[]): Promise<void> {
+  const st = await writeAll(h, input);
+  fio.close(h);
+}

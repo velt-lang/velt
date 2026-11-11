@@ -27,6 +27,7 @@ declare c("c") function pthread_create(
 declare c("c") function pthread_attr_init(attr: Ptr<u8>): i32;
 declare c("c") function pthread_attr_setstacksize(attr: Ptr<u8>, size: usize): i32;
 declare c("c") function pthread_attr_destroy(attr: Ptr<u8>): i32;
+declare c("c") function pthread_detach(thread: usize): i32;
 declare c("c") function sysconf(name: i32): isize;
 
 /** The online cores (at least 1). */
@@ -41,6 +42,18 @@ export function cores(): usize {
  * whether it started. The thread is never joined: it runs until the process ends.
  */
 export function start(start: usize, arg: usize): bool {
+  return startThread(start, arg, false);
+}
+
+/**
+ * As `start`, for a thread that ends on its own (a blocking pool's: its function returns): the
+ * OS frees what it holds when it ends.
+ */
+export function startDetached(start: usize, arg: usize): bool {
+  return startThread(start, arg, true);
+}
+
+function startThread(start: usize, arg: usize, detach: bool): bool {
   const a = m.zeroed(ATTR + 16);
   const attr = m.ptr(a);
   const t = m.ptr(a + ATTR);
@@ -59,6 +72,10 @@ export function start(start: usize, arg: usize): bool {
         rc = pthread_create(t, attr, m.ptr(start), m.ptr(arg));
       }
       pthread_attr_destroy(attr);
+      if (rc === 0 && detach) {
+        // A `pthread_t` is a pointer (macOS) or an `unsigned long` (Linux): a word either way.
+        pthread_detach(m.ld(a + ATTR));
+      }
     }
   }
   m.release(a, ATTR + 16);

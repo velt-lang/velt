@@ -11,7 +11,7 @@ import {
   velt_rt_fs_remove_sync,
   velt_rt_fs_rename,
   velt_rt_fs_rename_sync,
-} from "velt/fs/rt";
+} from "#fs-rt";
 
 /** The options of `remove`. */
 export type RemoveOptions = {

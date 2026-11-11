@@ -27,6 +27,7 @@ import * as wk from "velt/lang/hooks/sched_wake";
 // signature in a program.
 declare c("c") function recv$net(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
 declare c("c") function shutdown$net(fd: i32, how: i32): i32;
+declare c("c") function read$net(fd: i32, buf: Ptr<u8>, n: usize): isize;
 /**
  * The address of `data`'s first byte (`memset` of nothing returns its destination): a stand-in
  * until `declare c` can take a pointer into an array (#2187).
@@ -97,9 +98,14 @@ export function tryReadInto(h: u64, data: u8[], start: u64, end: u64): IoResult<
     return value(0);
   }
   const p = addressOf(data, start);
+  // A child process's pipe (std/process/child/child_sched.velt) is no socket: `read`.
+  const pipe = (m.ld32(s + io.S_FLAGS) & io.F_PIPE) !== 0;
   while (true) {
+    const fd = m.ld(s + io.S_FD) as i32;
+    const len = (end - start) as usize;
     // SAFETY: `data` holds `end - start` bytes at `p`; the descriptor is open.
-    const n = unsafe { recv$net(m.ld(s + io.S_FD) as i32, m.ptr(p), (end - start) as usize, 0) };
+    const n =
+      pipe ? unsafe { read$net(fd, m.ptr(p), len) } : unsafe { recv$net(fd, m.ptr(p), len, 0) };
     if (n >= 0) {
       tb.leave(s);
       return value(n as i64);

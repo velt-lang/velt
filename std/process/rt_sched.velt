@@ -1,0 +1,50 @@
+// velt/process (internal): the runtime functions velt/process calls, in a build compiled with the
+// executor in Velt (`VELT_SCHEDULER=std`, #2649 step 4): the `std-scheduler` variant of
+// `#process-rt` (std/imports.velt), with the names and signatures of the runtime's
+// (std/process/rt.velt). Reading standard input runs the runtime's synchronous twin on the
+// executor's blocking pool (std/lang/hooks/sched_blocking.velt), which shares the runtime's
+// input buffer with `readLineSync` and the rest; on an OS where the pool has no threads, the
+// runtime's leaf. Unlike the leaf, `readLine` takes no buffered line without the pool's thread:
+// the runtime has no call that only looks at its buffer.
+
+import { IoResult } from "velt/native/result";
+import * as bp from "velt/lang/hooks/sched_blocking";
+import * as rt from "./rt";
+import { LineRead } from "./rt";
+
+export {
+  LineRead,
+  lineOf,
+  velt_rt_env_all,
+  velt_rt_env_remove,
+  velt_rt_env_set,
+  velt_rt_isatty,
+  velt_rt_process_args,
+  velt_rt_process_chdir,
+  velt_rt_process_cwd,
+  velt_rt_stdin_read_all_bytes_sync,
+  velt_rt_stdin_read_all_sync,
+  velt_rt_stdin_read_line_sync,
+  velt_rt_stdout_write_bytes,
+} from "./rt";
+
+export async function velt_rt_stdin_read_line(): Promise<LineRead> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_stdin_read_line();
+  }
+  return await bp.run<LineRead>(() => rt.velt_rt_stdin_read_line_sync());
+}
+
+export async function velt_rt_stdin_read_all(): Promise<IoResult<string>> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_stdin_read_all();
+  }
+  return await bp.run<IoResult<string>>(() => rt.velt_rt_stdin_read_all_sync());
+}
+
+export async function velt_rt_stdin_read_all_bytes(): Promise<IoResult<u8[]>> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_stdin_read_all_bytes();
+  }
+  return await bp.run<IoResult<u8[]>>(() => rt.velt_rt_stdin_read_all_bytes_sync());
+}

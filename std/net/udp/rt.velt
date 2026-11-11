@@ -4,7 +4,7 @@ import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 
 /** The runtime's `VeltDatagram`. */
-struct RawDatagram {
+export struct RawDatagram {
   data: u8[];
   addr: string;
 }

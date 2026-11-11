@@ -11,6 +11,8 @@ export const AF_INET6: i32 = 10;
 export const SOL_SOCKET: i32 = 1;
 export const SO_ERROR: i32 = 4;
 export const SO_REUSEADDR: i32 = 2;
+/** `SO_BROADCAST` (UDP sockets: std/net/udp/udp_sched.velt). */
+export const SO_BROADCAST: i32 = 6;
 /** Where `struct addrinfo` keeps `ai_addr` (Linux has it before `ai_canonname`). */
 export const AI_ADDR: usize = 24;
 

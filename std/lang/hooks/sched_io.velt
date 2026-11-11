@@ -125,6 +125,8 @@ export const F_SHUT_DONE: u32 = 4;
 export const F_CLOSING: u32 = 8;
 export const F_ABORTED: u32 = 16;
 export const F_LISTENER: u32 = 32;
+/** A pipe (a child process's): read with `read`, not `recv` (std/net/fd_io.velt). */
+export const F_PIPE: u32 = 64;
 
 /**
  * What a waiter waits for: readable, writable (a connect), its bytes written (`arg`: the count

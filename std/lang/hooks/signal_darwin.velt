@@ -1,0 +1,13 @@
+// velt/lang/hooks (internal): the layout of `sigaction` for the executor in Velt's signals
+// (sched_signal.velt, #2649 step 4) on macOS: the handler, a 4-byte `sigset_t` and `sa_flags`
+// (16 bytes).
+
+/** Can signals be watched here? */
+export const SUPPORTED: bool = true;
+/** The size of `struct sigaction` (with room to spare) and where `sa_flags` is. */
+export const ACTION_SIZE: usize = 256;
+export const FLAGS_AT: usize = 12;
+/** `SA_RESTART`: a system call a handler interrupts goes on. */
+export const SA_RESTART: i32 = 2;
+/** `SIGUSR1` (the tests raise it). */
+export const SIGUSR1: i32 = 30;

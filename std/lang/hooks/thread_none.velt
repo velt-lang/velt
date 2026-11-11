@@ -13,3 +13,8 @@ export function cores(): usize {
 export function start(start: usize, arg: usize): bool {
   return false;
 }
+
+/** Starts no thread (false). */
+export function startDetached(start: usize, arg: usize): bool {
+  return false;
+}

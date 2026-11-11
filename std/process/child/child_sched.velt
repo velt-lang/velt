@@ -1,0 +1,255 @@
+// velt/process/child (internal): the child-process functions, in a build compiled with the
+// executor in Velt (`VELT_SCHEDULER=std`, #2649 step 4): the `std-scheduler` variant of
+// `#child-rt` (std/imports.velt), with the names and signatures of the runtime's
+// (std/process/child/rt.velt), instead of tokio's `process` on the runtime's bridge.
+//
+// - A child starts with `posix_spawn` (std/process/child/spawn_posix.velt). Its exit is a source
+//   of the executor's reactor: kqueue's `EVFILT_PROC` on macOS, a pidfd on Linux
+//   (std/lang/hooks/reactor_*.velt `watchExit`); where the kernel has no pidfd, the reaper looks
+//   every 10 ms instead. Its piped streams are non-blocking sources of the reactor too
+//   (`F_PIPE`: read with `read`, std/net/fd_io.velt).
+// - A reaper task per child (spawned, so a running child keeps the process alive, as in Node and
+//   the runtime) waits for the exit and reaps it with `waitpid`, so no zombie is left when nobody
+//   waits; `wait`, `exitCode` and `kill` read what it found (a signal's death is 128 + the
+//   signal, the shell's convention, as the runtime reports it).
+// - A child's handle is a source of the reactor's table that no reactor watches (its generation
+//   makes a handle used after `close` find nothing); the child's record (process id, status,
+//   pipe handles, exit handle) hangs off it and is counted: the handle and the reaper each hold
+//   it, and an operation in flight holds it while it runs. `close` releases the handle and the
+//   pipes; the child keeps running and is reaped.
+// - `execSync` (`velt_rt_child_output_sync`) stays the runtime's: it blocks its thread anyway.
+// On an OS without the reactor every call is the runtime's.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding/utf8";
+import * as io from "velt/lang/hooks/sched_io";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as fio from "velt/net/fd_io";
+import * as fs from "velt/net/fd_socket";
+import * as cr from "velt/process/child/child_record";
+import { CommandSpec } from "velt/process/child/spec";
+import * as r from "#reactor";
+import * as rt from "./rt";
+import { RawOutput } from "./rt";
+
+export { RawOutput, resultOf, velt_rt_child_output_sync } from "./rt";
+
+declare c("c") function kill(pid: i32, sig: i32): i32;
+
+export function velt_rt_child_spawn(spec: CommandSpec): IoResult<u64> {
+  if (!io.supported()) {
+    return rt.velt_rt_child_spawn(spec);
+  }
+  const got = cr.startChild(spec, spec.stdio);
+  if (got.code !== 0) {
+    return fs.failed({ code: got.code, message: got.message }, 0);
+  }
+  const h = cr.handleFor(got.value);
+  if (h === 0) {
+    cr.closePipe(got.value, cr.C_IN);
+    cr.closePipe(got.value, cr.C_OUT);
+    cr.closePipe(got.value, cr.C_ERR);
+    cr.release(got.value);
+    return fs.failed({ code: 99, message: "too many open handles" }, 0);
+  }
+  return fs.value(h);
+}
+
+export function velt_rt_child_pid(c: u64): u32 {
+  if (!tb.ours(c)) {
+    return rt.velt_rt_child_pid(c);
+  }
+  const rec = cr.acquire(c);
+  if (rec === 0) {
+    return 0;
+  }
+  const pid = m.ld32(rec + cr.C_PID);
+  cr.release(rec);
+  return pid;
+}
+
+export function velt_rt_child_exit_code(c: u64): i64 {
+  if (!tb.ours(c)) {
+    return rt.velt_rt_child_exit_code(c);
+  }
+  const rec = cr.acquire(c);
+  if (rec === 0) {
+    return -1;
+  }
+  cr.reapNow(rec);
+  const st = m.load(rec + cr.C_STATUS);
+  cr.release(rec);
+  return st === cr.RUNNING || st === cr.LOST ? -1 : st as i64;
+}
+
+export async function velt_rt_child_wait(c: u64): Promise<IoResult<i32>> {
+  if (!tb.ours(c)) {
+    return await rt.velt_rt_child_wait(c);
+  }
+  const rec = cr.acquire(c);
+  if (rec === 0) {
+    return fs.failed(fs.closed(), 0);
+  }
+  await cr.untilReaped(rec);
+  const st = m.load(rec + cr.C_STATUS);
+  cr.release(rec);
+  if (st === cr.LOST) {
+    return fs.failed({ code: 99, message: "waiting for the child failed" }, 0);
+  }
+  return fs.value(st as i32);
+}
+
+export function velt_rt_child_kill(c: u64, signal: i32): IoStatus {
+  if (!tb.ours(c)) {
+    return rt.velt_rt_child_kill(c, signal);
+  }
+  const rec = cr.acquire(c);
+  if (rec === 0) {
+    return fs.closed();
+  }
+  let st = fs.ok();
+  // Not reaped: the process id is still our child's (running, or a zombie).
+  if (m.load(rec + cr.C_STATUS) === cr.RUNNING) {
+    // SAFETY: plain system call.
+    if (unsafe { kill(m.ld32(rec + cr.C_PID) as i32, signal) } !== 0) {
+      st = fs.osError(r.errno());
+    }
+  }
+  cr.release(rec);
+  return st;
+}
+
+export function velt_rt_child_close(c: u64) {
+  if (!tb.ours(c)) {
+    rt.velt_rt_child_close(c);
+    return;
+  }
+  const s = tb.enter(c);
+  if (s === 0) {
+    return;
+  }
+  const rec = m.ld(s + io.S_BUF);
+  m.st(s + io.S_BUF, 0);
+  m.st32(s + io.S_FLAGS, 0);
+  tb.bump(s);
+  tb.give(s);
+  tb.leave(s);
+  if (rec !== 0) {
+    cr.closePipe(rec, cr.C_IN);
+    cr.closePipe(rec, cr.C_OUT);
+    cr.closePipe(rec, cr.C_ERR);
+    cr.release(rec);
+  }
+}
+
+/** The pipe handle of `rec` for `which` (1 stdout, 2 stderr). */
+function outPipe(rec: usize, which: u32): u64 {
+  return m.load(rec + (which === 2 ? cr.C_ERR : cr.C_OUT)) as u64;
+}
+
+export async function velt_rt_child_read(c: u64, which: u32, max: u64): Promise<IoResult<u8[]>> {
+  if (!tb.ours(c)) {
+    return await rt.velt_rt_child_read(c, which, max);
+  }
+  const rec = cr.acquire(c);
+  if (rec === 0) {
+    return fs.failed(fs.closed(), []);
+  }
+  const h = outPipe(rec, which);
+  cr.release(rec);
+  if (h === 0) {
+    return fs.failed(cr.notPiped(which === 2 ? "stderr" : "stdout"), []);
+  }
+  return await fio.read(h, max);
+}
+
+export async function velt_rt_child_read_string(
+  c: u64,
+  which: u32,
+  max: u64,
+): Promise<IoResult<string>> {
+  if (!tb.ours(c)) {
+    return await rt.velt_rt_child_read_string(c, which, max);
+  }
+  const rec = cr.acquire(c);
+  if (rec === 0) {
+    return fs.failed(fs.closed(), "");
+  }
+  const h = outPipe(rec, which);
+  cr.release(rec);
+  if (h === 0) {
+    return fs.failed(cr.notPiped(which === 2 ? "stderr" : "stdout"), "");
+  }
+  return await fio.readString(h, max);
+}
+
+export async function velt_rt_child_write(c: u64, data: string): Promise<IoStatus> {
+  if (!tb.ours(c)) {
+    return await rt.velt_rt_child_write(c, data);
+  }
+  const rec = cr.acquire(c);
+  if (rec === 0) {
+    return fs.closed();
+  }
+  const h = m.load(rec + cr.C_IN) as u64;
+  cr.release(rec);
+  if (h === 0) {
+    return cr.notPiped("stdin");
+  }
+  return await cr.writeAll(h, utf8Encode(data));
+}
+
+export async function velt_rt_child_close_stdin(c: u64): Promise<IoStatus> {
+  if (!tb.ours(c)) {
+    return await rt.velt_rt_child_close_stdin(c);
+  }
+  const rec = cr.acquire(c);
+  if (rec === 0) {
+    return fs.closed();
+  }
+  cr.closePipe(rec, cr.C_IN);
+  cr.release(rec);
+  return fs.ok();
+}
+
+export async function velt_rt_child_output(
+  spec: CommandSpec,
+  input: string,
+): Promise<IoResult<RawOutput>> {
+  const none: RawOutput = { code: 0, stdout: "", stderr: "" };
+  if (!io.supported()) {
+    return await rt.velt_rt_child_output(spec, input);
+  }
+  // Stdin is a pipe only when there is input; the child reads end of stream otherwise.
+  const modes: u32 = (input == "" ? 2 : 1) | (1 << 2) | (1 << 4);
+  const got = cr.startChild(spec, modes);
+  if (got.code !== 0) {
+    return fs.failed({ code: got.code, message: got.message }, none);
+  }
+  const rec = got.value;
+  const stdin = m.swap(rec + cr.C_IN, 0) as u64;
+  if (stdin !== 0) {
+    // Fed by a task of its own: a child that writes a lot before it reads its input must not
+    // block on a full stdout pipe while this one blocks writing to its stdin.
+    const feeder = spawn(cr.feed(stdin, utf8Encode(input)));
+  }
+  const both = await Promise.all<u8[]>([
+    cr.drain(m.load(rec + cr.C_OUT) as u64),
+    cr.drain(m.load(rec + cr.C_ERR) as u64),
+  ]);
+  await cr.untilReaped(rec);
+  const st = m.load(rec + cr.C_STATUS);
+  cr.closePipe(rec, cr.C_OUT);
+  cr.closePipe(rec, cr.C_ERR);
+  cr.release(rec);
+  if (st === cr.LOST) {
+    return fs.failed({ code: 99, message: "waiting for the child failed" }, none);
+  }
+  return fs.value<RawOutput>({
+    code: st as i32,
+    stdout: utf8DecodeLossy(both[0]),
+    stderr: utf8DecodeLossy(both[1]),
+  });
+}

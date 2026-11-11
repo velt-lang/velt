@@ -1,0 +1,180 @@
+// velt/fs (internal): the runtime functions velt/fs calls, in a build compiled with the executor
+// in Velt (`VELT_SCHEDULER=std`, #2649 step 4): the `std-scheduler` variant of `#fs-rt`
+// (std/imports.velt), with the names and signatures of the runtime's (std/fs/rt.velt).
+//
+// A whole-file operation (read, write, append, list, stat, link, make, remove, rename, copy,
+// exists) runs the runtime's synchronous twin on the executor's blocking pool (std/lang/hooks/
+// sched_blocking.velt) instead of the runtime's leaf on tokio's blocking threads; on an OS where
+// the pool has no threads, the runtime's leaf. File streams (`openRead`, `openWrite` and their
+// readers and writers) keep the runtime's leaves: they have no synchronous twin to run on the
+// pool (a gap until streams are Velt code over file descriptors, std/fs/fd).
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { Dirent } from "velt/fs/dirent";
+import { Stats } from "velt/fs/stats";
+import * as bp from "velt/lang/hooks/sched_blocking";
+import * as rt from "./rt";
+
+// The runtime's `VeltDirents`, as std/fs/rt.velt declares it (its structs stay that file's own):
+// sorted names and, at the same index, each one's kind (0 other, 1 file, 2 directory, 3 symlink).
+struct DirentList {
+  names: string[];
+  kinds: u8[];
+}
+
+export declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<DirentList>;
+
+/** The entries of a runtime listing, each with its type. */
+export function dirents(list: DirentList): Dirent[] {
+  const out: Dirent[] = [];
+  for (let i = 0; i < list.names.length; i++) {
+    out.push({ name: list.names[i], kind: list.kinds[i] });
+  }
+  return out;
+}
+
+export {
+  velt_rt_fs_append_file_sync,
+  velt_rt_fs_copy_file_sync,
+  velt_rt_fs_exists_sync,
+  velt_rt_fs_lstat_sync,
+  velt_rt_fs_mkdir_sync,
+  velt_rt_fs_open_read,
+  velt_rt_fs_open_read_range,
+  velt_rt_fs_open_write,
+  velt_rt_fs_read_dir_sync,
+  velt_rt_fs_read_file_bytes_sync,
+  velt_rt_fs_read_file_sync,
+  velt_rt_fs_reader_close,
+  velt_rt_fs_reader_opened_stats,
+  velt_rt_fs_reader_read,
+  velt_rt_fs_reader_read_line,
+  velt_rt_fs_reader_read_string,
+  velt_rt_fs_readlink_sync,
+  velt_rt_fs_realpath_sync,
+  velt_rt_fs_remove_sync,
+  velt_rt_fs_rename_sync,
+  velt_rt_fs_stat_sync,
+  velt_rt_fs_symlink_sync,
+  velt_rt_fs_write_file_sync,
+  velt_rt_fs_writer_close,
+  velt_rt_fs_writer_flush,
+  velt_rt_fs_writer_write,
+  velt_rt_fs_writer_free,
+  velt_rt_fs_writer_write_bytes,
+} from "./rt";
+
+export async function velt_rt_fs_read_file(path: string): Promise<IoResult<string>> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_read_file(path);
+  }
+  return await bp.run<IoResult<string>>(() => rt.velt_rt_fs_read_file_sync(path));
+}
+
+export async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_read_file_bytes(path);
+  }
+  return await bp.run<IoResult<u8[]>>(() => rt.velt_rt_fs_read_file_bytes_sync(path));
+}
+
+export async function velt_rt_fs_write_file(path: string, data: string): Promise<IoStatus> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_write_file(path, data);
+  }
+  return await bp.run<IoStatus>(() => rt.velt_rt_fs_write_file_sync(path, data));
+}
+
+export async function velt_rt_fs_append_file(path: string, data: string): Promise<IoStatus> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_append_file(path, data);
+  }
+  return await bp.run<IoStatus>(() => rt.velt_rt_fs_append_file_sync(path, data));
+}
+
+export async function velt_rt_fs_read_dir(path: string): Promise<IoResult<string[]>> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_read_dir(path);
+  }
+  return await bp.run<IoResult<string[]>>(() => rt.velt_rt_fs_read_dir_sync(path));
+}
+
+export async function velt_rt_fs_read_dir_typed(path: string): Promise<IoResult<DirentList>> {
+  if (!bp.supported()) {
+    const r = await rt.velt_rt_fs_read_dir_typed(path);
+    const list: DirentList = { names: r.value.names, kinds: r.value.kinds };
+    return { code: r.code, message: r.message, value: list };
+  }
+  return await bp.run<IoResult<DirentList>>(() => velt_rt_fs_read_dir_typed_sync(path));
+}
+
+export async function velt_rt_fs_stat(path: string): Promise<IoResult<Stats>> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_stat(path);
+  }
+  return await bp.run<IoResult<Stats>>(() => rt.velt_rt_fs_stat_sync(path));
+}
+
+export async function velt_rt_fs_lstat(path: string): Promise<IoResult<Stats>> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_lstat(path);
+  }
+  return await bp.run<IoResult<Stats>>(() => rt.velt_rt_fs_lstat_sync(path));
+}
+
+export async function velt_rt_fs_readlink(path: string): Promise<IoResult<string>> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_readlink(path);
+  }
+  return await bp.run<IoResult<string>>(() => rt.velt_rt_fs_readlink_sync(path));
+}
+
+export async function velt_rt_fs_realpath(path: string): Promise<IoResult<string>> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_realpath(path);
+  }
+  return await bp.run<IoResult<string>>(() => rt.velt_rt_fs_realpath_sync(path));
+}
+
+export async function velt_rt_fs_symlink(target: string, path: string): Promise<IoStatus> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_symlink(target, path);
+  }
+  return await bp.run<IoStatus>(() => rt.velt_rt_fs_symlink_sync(target, path));
+}
+
+export async function velt_rt_fs_mkdir(path: string, recursive: bool): Promise<IoStatus> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_mkdir(path, recursive);
+  }
+  return await bp.run<IoStatus>(() => rt.velt_rt_fs_mkdir_sync(path, recursive));
+}
+
+export async function velt_rt_fs_remove(path: string, recursive: bool): Promise<IoStatus> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_remove(path, recursive);
+  }
+  return await bp.run<IoStatus>(() => rt.velt_rt_fs_remove_sync(path, recursive));
+}
+
+export async function velt_rt_fs_rename(from: string, to: string): Promise<IoStatus> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_rename(from, to);
+  }
+  return await bp.run<IoStatus>(() => rt.velt_rt_fs_rename_sync(from, to));
+}
+
+export async function velt_rt_fs_copy_file(from: string, to: string): Promise<IoStatus> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_copy_file(from, to);
+  }
+  return await bp.run<IoStatus>(() => rt.velt_rt_fs_copy_file_sync(from, to));
+}
+
+export async function velt_rt_fs_exists(path: string): Promise<bool> {
+  if (!bp.supported()) {
+    return await rt.velt_rt_fs_exists(path);
+  }
+  return await bp.run<bool>(() => rt.velt_rt_fs_exists_sync(path));
+}

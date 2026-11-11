@@ -7,7 +7,7 @@ import { ExecResult } from "velt/process/child/exec_result";
 import { CommandSpec } from "velt/process/child/spec";
 
 // The runtime's `VeltOutput`.
-struct RawOutput {
+export struct RawOutput {
   code: i32;
   stdout: string;
   stderr: string;

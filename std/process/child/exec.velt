@@ -5,7 +5,7 @@ import { unwrapIo } from "velt/native/result";
 import { platform } from "velt/os/machine";
 import { ExecOptions } from "velt/process/child/exec_options";
 import { ExecResult } from "velt/process/child/exec_result";
-import { resultOf, velt_rt_child_output, velt_rt_child_output_sync } from "velt/process/child/rt";
+import { resultOf, velt_rt_child_output, velt_rt_child_output_sync } from "#child-rt";
 import { specOf } from "velt/process/child/spec";
 import { arrayRemove } from "velt/lang/intrinsics";
 

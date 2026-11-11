@@ -11,6 +11,8 @@ export const AF_INET6: i32 = 30;
 export const SOL_SOCKET: i32 = 0xffff;
 export const SO_ERROR: i32 = 0x1007;
 export const SO_REUSEADDR: i32 = 4;
+/** `SO_BROADCAST` (UDP sockets: std/net/udp/udp_sched.velt). */
+export const SO_BROADCAST: i32 = 0x20;
 /** Where `struct addrinfo` keeps `ai_addr` (macOS has it after `ai_canonname`). */
 export const AI_ADDR: usize = 32;
 

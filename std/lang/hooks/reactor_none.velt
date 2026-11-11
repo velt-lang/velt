@@ -95,3 +95,35 @@ export function threadClock(): u64 {
 export function threadCpu(c: u64): u64 {
   return 0;
 }
+
+/** Does `exitFd` give a descriptor to close? No: no child's exit is watched here. */
+export const EXIT_FD_OWNED: bool = false;
+
+/** No exit to watch here: -1. */
+export function exitFd(pid: i32): i32 {
+  return -1;
+}
+
+/** No exit to watch here: `ENOSYS`. */
+export function watchExit(r: usize, exit: i32, source: usize): i32 {
+  return 38;
+}
+
+/** `watchExit`'s answer for a child that has exited already (never here). */
+export const EXITED: i32 = -1;
+
+/** `posix_spawnattr_setflags`' extra flags for a child process: none here. */
+export const SPAWN_FLAGS: i16 = 0;
+
+/** No pipes here: -1. */
+export function pipeCloexec(fds: usize): i32 {
+  return -1;
+}
+
+/** Nothing to keep here. */
+export function spawnInherit(fa: usize, fd: i32): void {}
+
+/** No environment to give here: 0. */
+export function environ(): usize {
+  return 0;
+}

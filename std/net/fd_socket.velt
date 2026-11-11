@@ -4,16 +4,13 @@
 // runtime's functions do (`IoResult`, `IoStatus`; codes of std/native/error.velt, messages as
 // Rust's "… (os error N)").
 //
-// Names are resolved with `getaddrinfo`, which blocks the worker while it asks DNS (numeric
-// addresses and /etc/hosts answer at once): the runtime runs it on its blocking pool; a resolver
-// in Velt is #2649 step 2's.
+// Names are resolved by std/net/fd_addr.velt (`resolve`: a numeric address on the worker, a name
+// on the executor's blocking pool).
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
-import { CString } from "velt/ffi/c_string";
 import { Ptr } from "velt/ffi/ptr";
-import { utf8DecodeLossy } from "velt/encoding/utf8";
-import { addressLoad, promiseAt } from "velt/lang/intrinsics";
+import { promiseAt } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as sys from "#net-sys";
 import * as io from "velt/lang/hooks/sched_io";
@@ -22,11 +19,11 @@ import * as tb from "velt/lang/hooks/sched_io_table";
 import * as t from "velt/lang/hooks/sched_task";
 import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as wk from "velt/lang/hooks/sched_wake";
+import { addrText, cText, resolve } from "velt/net/fd_addr";
 
 const SOCK_STREAM: i32 = 1;
 const IPPROTO_TCP: i32 = 6;
 const TCP_NODELAY: i32 = 1;
-const AI_PASSIVE: i32 = 1;
 const AI_ADDRLEN: usize = 16;
 const AI_NEXT: usize = 40;
 const AI_FAMILY: usize = 4;
@@ -36,14 +33,7 @@ const SA_SIZE: usize = 128;
 
 // Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
 // signature in a program. Addresses become `Ptr`s with `m.ptr` (0 passes `NULL`).
-declare c("c") function getaddrinfo(
-  host: CString,
-  port: CString,
-  hints: Ptr<u8>,
-  res: Ptr<u8>,
-): i32;
 declare c("c") function freeaddrinfo(ai: Ptr<u8>): void;
-declare c("c") function gai_strerror(e: i32): Ptr<u8>;
 declare c("c") function socket(family: i32, kind: i32, protocol: i32): i32;
 declare c("c") function connect$net(fd: i32, addr: Ptr<u8>, len: u32): i32;
 declare c("c") function bind(fd: i32, addr: Ptr<u8>, len: u32): i32;
@@ -58,29 +48,8 @@ declare c("c") function getsockopt(
 declare c("c") function setsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: u32): i32;
 declare c("c") function getsockname(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32;
 declare c("c") function getpeername(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32;
-declare c("c") function inet_ntop(
-  family: i32,
-  src: Ptr<u8>,
-  dst: Ptr<u8>,
-  size: u32,
-): Ptr<u8> | null;
 declare c("c") function strerror(e: i32): Ptr<u8>;
 declare c("c") function close$net(fd: i32): i32;
-
-/** The NUL-terminated text at `p` (a message of the C library, an address inet_ntop wrote). */
-function cText(p: usize): string {
-  const out: u8[] = [];
-  let i: usize = 0;
-  while (true) {
-    // SAFETY: a byte of the text, up to and including its NUL.
-    const b = unsafe { addressLoad<u8>(p + i) };
-    if (b === 0) {
-      return utf8DecodeLossy(out);
-    }
-    out.push(b);
-    i++;
-  }
-}
 
 /** A successful status. */
 export function ok(): IoStatus {
@@ -114,56 +83,8 @@ export function failed<T>(s: IoStatus, zero: T): IoResult<T> {
   return { code: s.code, message: s.message, value: zero };
 }
 
-/** "host:port" (the host may be "[v6]"): the host, the port. */
-function split(addr: string): string[] {
-  const at = addr.lastIndexOf(":");
-  if (at < 0) {
-    return [addr, ""];
-  }
-  let host = addr.slice(0, at);
-  if (host.startsWith("[") && host.endsWith("]")) {
-    host = host.slice(1, (host.length as i64) - 1);
-  }
-  return [host, addr.slice(at + 1)];
-}
-
-/** The addresses of "host:port" (`getaddrinfo`'s list, freed by the caller), or a failure. */
-function resolve(addr: string, passive: bool): IoResult<usize> {
-  const parts = split(addr);
-  if (parts[1] === "") {
-    return failed({ code: 4, message: "invalid socket address" }, 0);
-  }
-  const host = parts[0] === "" ? (passive ? "0.0.0.0" : "localhost") : parts[0];
-  const hints = m.zeroed(64);
-  m.st32(hints, passive ? (AI_PASSIVE as u32) : 0);
-  m.st32(hints + 8, SOCK_STREAM as u32);
-  // A name holding a NUL is no address (as the runtime's parse says): caught here, so these
-  // functions throw nothing, as the runtime's (std/net/rt.velt) don't.
-  let hostC: CString;
-  let portC: CString;
-  try {
-    hostC = new CString(host);
-    portC = new CString(parts[1]);
-  } catch (e) {
-    m.release(hints, 64);
-    return failed({ code: 4, message: "invalid socket address" }, 0);
-  }
-  const res = m.zeroed(16);
-  // SAFETY: NUL-terminated host and port, hints and a result word in raw memory.
-  const e = unsafe { getaddrinfo(hostC, portC, m.ptr(hints), m.ptr(res)) };
-  const list = m.ld(res);
-  m.release(hints, 64);
-  m.release(res, 16);
-  if (e !== 0) {
-    // SAFETY: gai_strerror returns a NUL-terminated message.
-    const why = cText(Ptr.addressOf(unsafe { gai_strerror(e) }));
-    return failed({ code: 99, message: `failed to lookup address information: ${why}` }, 0);
-  }
-  return value(list);
-}
-
 /** Sets an `int` socket option to 1. */
-function setOn(fd: i32, level: i32, name: i32): void {
+export function setOn(fd: i32, level: i32, name: i32): void {
   const one = m.alloc(16);
   m.st32(one, 1);
   // SAFETY: an int option in `one`.
@@ -174,7 +95,7 @@ function setOn(fd: i32, level: i32, name: i32): void {
 }
 
 /** Closes descriptor `fd` (not registered). */
-function closeFd(fd: i32): void {
+export function closeFd(fd: i32): void {
   // SAFETY: a descriptor this module opened, not used after.
   unsafe {
     close$net(fd);
@@ -182,7 +103,7 @@ function closeFd(fd: i32): void {
 }
 
 /** A registered source and handle for connected or listening socket `fd`: the handle. */
-function adopt(fd: i32, flags: u32, ready: u32): IoResult<u64> {
+export function adopt(fd: i32, flags: u32, ready: u32): IoResult<u64> {
   const s = io.register(fd, flags, ready);
   if (s === 0) {
     const st = osError(r.errno());
@@ -199,7 +120,7 @@ export async function connect(addr: string): Promise<IoResult<u64>> {
   if (w !== 0 && (m.ld32(w + t.E_MODE) !== 0 || m.ld(w + t.E_LAZY) !== 0)) {
     wk.publish(w);
   }
-  const found = resolve(addr, false);
+  const found = await resolve(addr, false);
   if (found.code !== 0) {
     return failed({ code: found.code, message: found.message }, 0);
   }
@@ -282,7 +203,7 @@ async function connectOne(ai: usize): Promise<IoResult<u64>> {
 }
 
 /** Closes the source of handle `h` at once (nothing sent on it yet; locked: `tb.enter`). */
-function discard(h: u64, s: usize): void {
+export function discard(h: u64, s: usize): void {
   tb.forget(h);
   closeFd(m.ld(s + io.S_FD) as i32);
   io.free(s);
@@ -290,7 +211,7 @@ function discard(h: u64, s: usize): void {
 
 /** `listen("host:port")`: the listener's handle. */
 export async function listenOn(addr: string): Promise<IoResult<u64>> {
-  const found = resolve(addr, true);
+  const found = await resolve(addr, true);
   if (found.code !== 0) {
     return failed({ code: found.code, message: found.message }, 0);
   }
@@ -395,20 +316,7 @@ export function peerOf(h: u64): string {
   // SAFETY: a sockaddr_storage and its length word.
   const rc = unsafe { getpeername(m.ld(s + io.S_FD) as i32, m.ptr(sa), m.ptr(sa + SA_SIZE)) };
   tb.leave(s);
-  let out = "";
-  if (rc === 0) {
-    const v6 = sys.familyOf(sa) === sys.AF_INET6;
-    const text = m.zeroed(64);
-    // SAFETY: the address bytes of the sockaddr (at 8 for v6, 4 for v4), 64 bytes of text room.
-    unsafe {
-      inet_ntop(v6 ? sys.AF_INET6 : 2, m.ptr(sa + (v6 ? 8 : 4)), m.ptr(text), 64);
-    }
-    const ip = cText(text);
-    m.release(text, 64);
-    const p = (m.ld32(sa) >> 16) & 0xffff;
-    const port = ((p & 0xff) << 8) | (p >> 8);
-    out = v6 ? `[${ip}]:${port}` : `${ip}:${port}`;
-  }
+  const out = rc === 0 ? addrText(sa) : "";
   m.release(sa, SA_SIZE + 8);
   return out;
 }

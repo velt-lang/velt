@@ -1,7 +1,7 @@
 // velt/net/dns (internal): `lookup` and `lookupOne`, through the system resolver.
 
 import { unwrapIo } from "velt/native/result";
-import { velt_rt_dns_lookup } from "velt/net/dns/rt";
+import { velt_rt_dns_lookup } from "#net-dns";
 
 /**
  * Every IP address of `host` (IPv4 and IPv6, in resolver order, without duplicates). Throws

@@ -12,7 +12,7 @@ import {
   velt_rt_fs_read_dir_sync,
   velt_rt_fs_read_dir_typed,
   velt_rt_fs_read_dir_typed_sync,
-} from "velt/fs/rt";
+} from "#fs-rt";
 
 /** The options of `mkdir`. */
 export type MkdirOptions = {

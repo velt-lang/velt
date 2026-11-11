@@ -15,7 +15,7 @@ import {
   velt_rt_fs_stat_sync,
   velt_rt_fs_symlink,
   velt_rt_fs_symlink_sync,
-} from "velt/fs/rt";
+} from "#fs-rt";
 
 /** Metadata of `path`, following symlinks. */
 export async function stat(path: string): Promise<Stats> {

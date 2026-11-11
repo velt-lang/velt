@@ -14,7 +14,7 @@ import {
   velt_rt_child_spawn,
   velt_rt_child_wait,
   velt_rt_child_write,
-} from "velt/process/child/rt";
+} from "#child-rt";
 import { SpawnOptions } from "velt/process/child/spawn_options";
 import { specOf, stdioBits } from "velt/process/child/spec";
 

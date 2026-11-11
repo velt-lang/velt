@@ -122,6 +122,70 @@ export function add(r: usize, fd: i32, source: usize): i32 {
   return ctl(r, EPOLL_CTL_ADD, fd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, source);
 }
 
+/** Does `exitFd` give a descriptor to close? Yes: a pidfd. */
+export const EXIT_FD_OWNED: bool = true;
+
+/** `pidfd_open` on every architecture (the generic syscall table's number). */
+const PIDFD_OPEN: i64 = 434;
+
+/**
+ * A pidfd of child `pid` (readable once it has exited), close-on-exec as every pidfd is; -1
+ * with `errno` set when the kernel has none (before 5.3).
+ */
+export function exitFd(pid: i32): i32 {
+  // SAFETY: pidfd_open takes a process id and flags 0; the result is checked.
+  return unsafe { syscall(PIDFD_OPEN, pid as i64, 0, 0, 0, 0, 0) } as i32;
+}
+
+/** Watches pidfd `exit` (`exitFd`'s) in reactor `r`: readable once the child exited; 0 or errno. */
+export function watchExit(r: usize, exit: i32, source: usize): i32 {
+  return ctl(r, EPOLL_CTL_ADD, exit, EPOLLIN | EPOLLET, source);
+}
+
+/** `watchExit`'s answer for a child that has exited already (never: the pidfd says so). */
+export const EXITED: i32 = -1;
+
+/** `posix_spawnattr_setflags`' extra flags for a child process: none (pipes are `pipe2`'s). */
+export const SPAWN_FLAGS: i16 = 0;
+
+declare c("c") function pipe2(fds: Ptr<u8>, flags: i32): i32;
+
+/** `O_CLOEXEC`. */
+const O_CLOEXEC: i32 = 0x80000;
+
+/**
+ * A pipe at `fds` (read end, write end), both close-on-exec from the start, so a child another
+ * thread spawns meanwhile gets neither; 0, or -1 with `errno` set.
+ */
+export function pipeCloexec(fds: usize): i32 {
+  // SAFETY: room for two descriptors.
+  return unsafe { pipe2(m.ptr(fds), O_CLOEXEC) };
+}
+
+declare c("c") function dlsym(handle: Ptr<u8>, name: readonly u8[]): Ptr<u8> | null;
+
+/**
+ * `"environ"` and its NUL, the name `environ()` asks `dlsym` for. Bytes, not a `CString`: velt/ffi/c_string
+ * imports velt/encoding, whose error classes extend the prelude's `Error`, and this module is
+ * loaded while sema checks (std/lang/hooks/sched.velt is demanded then, #2161 (a1)), where a
+ * module that subclasses a class of another module cannot be served.
+ */
+const ENVIRON_NAME: readonly u8[] = [0x65, 0x6e, 0x76, 0x69, 0x72, 0x6f, 0x6e, 0];
+
+/**
+ * The process's environment as C has it (`char **environ`, NULL-terminated), for a child that
+ * keeps it unchanged; 0 when it can't be found. `declare c` can't read a C variable, so its
+ * address comes from `dlsym` (`RTLD_DEFAULT`, a null handle here).
+ */
+export function environ(): usize {
+  // SAFETY: a NUL-terminated name; `dlsym` returns the variable's address or NULL.
+  const at = m.addr(unsafe { dlsym(m.ptr(0), ENVIRON_NAME) });
+  return at === 0 ? 0 : m.ld(at);
+}
+
+/** Keeps descriptor `fd` the child's: nothing to do here (no `SPAWN_FLAGS`). */
+export function spawnInherit(fa: usize, fd: i32): void {}
+
 /** Takes `fd` out of reactor `r` (from any thread): its events come to another reactor now. */
 export function del(r: usize, fd: i32): void {
   ctl(r, EPOLL_CTL_DEL, fd, 0, 0);
