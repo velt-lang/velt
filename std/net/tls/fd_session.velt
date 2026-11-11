@@ -1,0 +1,49 @@
+// velt/net (internal): what std/net/tls/fd_ops.velt calls on a TLS stream and a TLS listener of
+// the reactor (`VELT_SCHEDULER=std`, #2649), as interfaces. The TLS code behind them (the
+// handshake, the record layer, the crypto) is reached only through the listener `listenTls`
+// made, so a program that never calls `listenTls` doesn't compile it: every `TcpStream`
+// operation checks for a TLS handle, and only the interfaces are on that path.
+
+import { IoError } from "velt/io/error";
+
+/** `TlsSession.step`: the handshake is done and nothing is held back. */
+export const READY: i32 = 0;
+/** `TlsSession.step`: wait for the socket to be readable, then step again. */
+export const WAIT: i32 = 1;
+
+/**
+ * A TLS stream on a reactor socket. Every method returns at once; the caller waits on the
+ * socket (`socket()`) without holding the stream's lock.
+ */
+export interface TlsSession {
+  /** The socket's handle (std/lang/hooks/sched_io_table.velt). */
+  socket(): u64;
+  /** When the handshake must be done (`Date.now()` milliseconds), or 0 once it is. */
+  deadline(): number;
+  /** Steps the handshake with what has arrived and seals what was held back: READY or WAIT. */
+  step(): i32 throws IoError;
+  /** Records the failure `e` (an `IoError`, else EPROTO) and returns it. */
+  fail(e: unknown): IoError;
+  /** Whether a `tryRead` finds something now (when false, the socket has nothing more). */
+  ready(): bool throws IoError;
+  /** Reads into `out[start..end]` now: the count, 0 at the end of the stream, -1 for nothing yet. */
+  tryRead(out: u8[], start: usize, end: usize): i64 throws IoError;
+  /** The next 1..max bytes now (`max` 0: all there are), empty at the end, null for nothing yet. */
+  tryTake(max: u64): u8[] | null throws IoError;
+  /** `bytes` as text, a character cut off at the end kept for the next chunk; null for none. */
+  text(bytes: u8[]): string | null;
+  /** Seals `bytes[from..to]` for the task's next wait (held until the keys): the bytes left. */
+  writeLater(bytes: u8[], from: usize, to: usize): i64 throws IoError;
+  /** Writes `bytes[from..to]` now, queueing what the socket doesn't take: 0 before the keys. */
+  tryWrite(bytes: u8[], from: usize, to: usize): i64 throws IoError;
+  /** Queues close_notify for the task's next wait, once the handshake is done (a failure is kept). */
+  shutdown(): void;
+  /** The protocol ALPN chose ("" for none). */
+  alpn(): string;
+}
+
+/** What a TLS listener makes of each accepted socket. */
+export interface TlsSessions {
+  /** The session of accepted socket `fd`, its handshake still to run. */
+  open(fd: u64): TlsSession;
+}

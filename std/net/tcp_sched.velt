@@ -32,6 +32,7 @@ import { readableUntil } from "velt/net/fd_until";
 import * as rt from "velt/net/rt";
 import * as lat from "velt/net/rt_later";
 import * as tls from "velt/net/tls/fd_ops";
+import { listenTls } from "velt/net/tls/fd_server";
 
 declare function velt_rt_signal_aborted(s: u64): bool;
 declare async function velt_rt_signal_wait(s: u64): Promise<void>;
@@ -320,7 +321,7 @@ export async function velt_rt_tcp_listen_tls(
 ): Promise<IoResult<u64>> {
   // Under `velt dev` the supervisor keeps the listener, as for `listen`: the runtime's.
   if (io.supported() && !devHandover()) {
-    const ours = await tls.listenTls(addr, cert, key, alpn);
+    const ours = await listenTls(addr, cert, key, alpn);
     if (ours != null) {
       return ours;
     }

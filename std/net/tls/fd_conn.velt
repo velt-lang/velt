@@ -1,6 +1,6 @@
 // velt/net (internal): `FdTlsConn`, a TLS stream on one of the reactor's sockets under the executor
-// in Velt (`VELT_SCHEDULER=std`, #2649): what a `listenTls` or `connectTls` `TcpStream` handle
-// stands for there (std/net/tls/fd_ops.velt). It reads and writes the socket's descriptor
+// in Velt (`VELT_SCHEDULER=std`, #2649): the `TlsSession` a `listenTls` `TcpStream` handle stands
+// for there (std/net/tls/fd_ops.velt). It reads and writes the socket's descriptor
 // directly through `TcpStream`'s non-waiting operations, with no task in between: every
 // operation here returns at once, and the caller waits on the socket (readable, drained) without
 // holding the connection's lock. A server's handshake runs the same way, a step each time the
@@ -8,37 +8,46 @@
 
 import { IoError } from "velt/io/error";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
+import { READY, TlsSession, WAIT } from "velt/net/tls/fd_session";
 import { DATA, ENDED, NOTHING_YET, TlsEngine } from "velt/net/tls/tls_engine";
 import { ServerHandshake } from "velt/net/tls/server_handshake";
 
-/** `step`: the handshake is done and nothing is held back. */
-export const READY: i32 = 0;
-/** `step`: wait for the socket to be readable, then step again. */
-export const WAIT: i32 = 1;
-
 /** A TLS stream over the reactor socket `fd`. */
-export class FdTlsConn {
-  /** The socket's handle (std/lang/hooks/sched_io_table.velt). */
-  fd: u64;
-  /** The connection. */
-  e: TlsEngine;
+export class FdTlsConn implements TlsSession {
+  private fd: u64;
+  private e: TlsEngine;
   // The server's handshake until it is done.
   private hs: ServerHandshake | null;
   // Plaintext written before the write keys, sealed once they are there.
   private pending: u8[] = [];
   // A UTF-8 character cut off at the end of the last `readString` chunk.
   private carry: u8[] = [];
-  /** When the handshake must be done (`Date.now()` milliseconds; 0 once it is). */
-  deadline: number;
-  /** Why the connection failed, once it did. */
-  failure: IoError | null = null;
+  // When the handshake must be done (`Date.now()` milliseconds; 0 once it is).
+  private due: number;
+  // Why the connection failed, once it did.
+  private failure: IoError | null = null;
 
   /** The connection `e` on `fd`; `hs` is the server's handshake still to run, or null. */
   constructor(fd: u64, e: TlsEngine, hs: ServerHandshake | null, deadline: number) {
     this.fd = fd;
     this.e = e;
     this.hs = hs;
-    this.deadline = hs == null ? 0 : deadline;
+    this.due = hs == null ? 0 : deadline;
+  }
+
+  /** The socket's handle. */
+  socket(): u64 {
+    return this.fd;
+  }
+
+  /** When the handshake must be done (`Date.now()` milliseconds), or 0 once it is. */
+  deadline(): number {
+    return this.due;
+  }
+
+  /** The protocol ALPN chose ("" for none). */
+  alpn(): string {
+    return this.e.alpn ?? "";
   }
 
   /** Steps the handshake with what has arrived and seals what was held back: READY or WAIT. */
@@ -57,7 +66,7 @@ export class FdTlsConn {
         throw this.fail(e);
       }
       this.hs = null;
-      this.deadline = 0;
+      this.due = 0;
     }
     if (this.pending.length > 0) {
       const p = this.pending;
@@ -76,8 +85,8 @@ export class FdTlsConn {
     return err;
   }
 
-  /** Whether a `tryRead` has something to find that the socket won't announce. */
-  hasBuffered(): bool {
+  // Whether a `tryRead` has something to find that the socket won't announce.
+  private hasBuffered(): bool {
     return this.failure != null || (this.hs == null && this.e.hasBuffered());
   }
 
@@ -170,10 +179,14 @@ export class FdTlsConn {
     return this.e.out.tryWrite(bytes, from, to);
   }
 
-  /** Queues close_notify for the task's next wait, once the handshake is done. */
+  /** Queues close_notify for the task's next wait, once the handshake is done (a failure is kept). */
   shutdown() {
     if (this.failure == null && this.hs == null) {
-      this.e.out.shutdownNow();
+      try {
+        this.e.out.shutdownNow();
+      } catch (e) {
+        this.fail(e);
+      }
     }
   }
 }

@@ -1,60 +1,27 @@
 // velt/net (internal): TLS streams and listeners on the reactor's sockets under the executor in
-// Velt (`VELT_SCHEDULER=std`, #2649): the TLS half of std/net/tcp_sched.velt. `listenTls` binds a
-// socket of the reactor and its `accept` gives streams whose server handshake (#2392 step 4) runs
-// in Velt with their first operations; each stream is an `FdTlsConn` that reads and writes its
-// socket directly, waiting on the socket's readiness and nothing else (no task in between). Their
-// handles are in std/net/tls/fd_table.velt; a stream's lock is held only while an operation runs
-// (none waits with it held).
+// Velt (`VELT_SCHEDULER=std`, #2649): the TLS half of std/net/tcp_sched.velt. A listener that
+// `listenTls` bound (std/net/tls/fd_server.velt) gives streams whose server handshake (#2392 step
+// 4) runs in Velt with their first operations; each stream is a `TlsSession` that reads and
+// writes its socket directly, waiting on the socket's readiness and nothing else (no task in
+// between). Their handles are in std/net/tls/fd_table.velt; a stream's lock is held only while
+// an operation runs (none waits with it held).
 
 import { IoError } from "velt/io/error";
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import * as fio from "velt/net/fd_io";
 import * as fs from "velt/net/fd_socket";
-import { TcpStream } from "velt/net/tcp_stream";
-import { FdTlsConn, READY } from "velt/net/tls/fd_conn";
+import { READY, TlsSession } from "velt/net/tls/fd_session";
 import {
   addConn,
-  addListener,
   Conn,
   findConn,
   findListener,
   takeConn,
   takeListener,
-  TlsListen,
 } from "velt/net/tls/fd_table";
-import { ServerHandshake } from "velt/net/tls/server_handshake";
-import { serverKey } from "velt/net/tls/server_key";
-import { TlsEngine } from "velt/net/tls/tls_engine";
 
 export { isTls } from "velt/net/tls/fd_table";
-
-/** How long an accepted stream's handshake may take (as the runtime's listener). */
-const HANDSHAKE_MS = 10000;
-
-/**
- * Binds a TLS listener on the reactor; null when the Velt server can't sign with the key (RSA, a
- * curve other than P-256, Ed25519: the runtime's listener takes those). Throws `IoError`
- * `EINVAL` for a certificate or key that is not valid PEM.
- */
-export async function listenTls(
-  addr: string,
-  cert: string,
-  key: string,
-  alpn: string,
-): Promise<IoResult<u64> | null, IoError> {
-  const sk = serverKey(cert, key);
-  if (sk == null) {
-    return null;
-  }
-  const l = await fs.listenOn(addr);
-  if (l.code !== 0) {
-    return l;
-  }
-  const protocols = alpn == "" ? ([] as string[]) : alpn.split(",");
-  const entry = shared(new Mutex<TlsListen>(new TlsListen(l.value, sk, protocols)));
-  return fs.value(addListener(entry));
-}
 
 /** The socket of TLS listener `l`, or 0 once it is closed. */
 export function listenerFd(l: u64): u64 {
@@ -80,20 +47,15 @@ export async function accept(l: u64): Promise<IoResult<u64>> {
   if (r.code !== 0) {
     return r;
   }
-  const hs = entry.with((x) => new ServerHandshake(x.key, x.alpn));
-  const conn = new FdTlsConn(
-    r.value,
-    new TlsEngine(TcpStream.ofHandle(r.value)),
-    hs,
-    (Date.now() as number) + HANDSHAKE_MS,
-  );
-  const c: Conn = shared(new Mutex<FdTlsConn>(conn));
+  const fd = r.value;
+  const session = entry.with((x) => x.sessions.open(fd));
+  const c: Conn = shared(new Mutex<TlsSession>(session));
   return fs.value(addConn(c));
 }
 
 // Waits until `c`'s socket is readable, within the handshake's time limit while it runs.
 async function waitReadable(c: Conn): Promise<void> {
-  const [fd, deadline] = c.with((x) => [x.fd, x.deadline] as [u64, number]);
+  const [fd, deadline] = c.with((x) => [x.socket(), x.deadline()] as [u64, number]);
   if (deadline == 0) {
     const st = await fio.readable(fd);
     if (st.code !== 0) {
@@ -210,7 +172,7 @@ export function readyOrFd(s: u64): IoResult<u64> {
   return fs.value(
     c.with((x) => {
       try {
-        return x.ready() ? 0 : x.fd;
+        return x.ready() ? 0 : x.socket();
       } catch (e) {
         x.fail(e);
         return 0;
@@ -222,7 +184,7 @@ export function readyOrFd(s: u64): IoResult<u64> {
 /** The socket of TLS stream `s`, or 0 once it is closed. */
 export function fdOf(s: u64): u64 {
   const c = findConn(s);
-  return c == null ? 0 : c.with((x) => x.fd);
+  return c == null ? 0 : c.with((x) => x.socket());
 }
 
 /** Resolves once a `tryRead` of TLS stream `s` may find something. */
@@ -288,7 +250,7 @@ export async function drained(s: u64, max: u64): Promise<IoStatus> {
     return fs.closed();
   }
   await settle(c);
-  return await fio.drained(c.with((x) => x.fd), max);
+  return await fio.drained(c.with((x) => x.socket()), max);
 }
 
 /** Writes `data[start..end]` on TLS stream `s`; resolves once it is sent. */
@@ -307,12 +269,8 @@ export function shutdown(s: u64): IoStatus {
     return fs.closed();
   }
   const fd = c.with((x) => {
-    try {
-      x.shutdown();
-    } catch (e) {
-      x.fail(e);
-    }
-    return x.fd;
+    x.shutdown();
+    return x.socket();
   });
   return fio.shutdown(fd);
 }
@@ -324,13 +282,13 @@ export async function alpn(s: u64): Promise<IoResult<string>> {
     return fs.failed(fs.closed(), "");
   }
   await settle(c);
-  return fs.value(c.with((x) => x.e.alpn ?? ""));
+  return fs.value(c.with((x) => x.alpn()));
 }
 
 /** Closes TLS stream `s` at once (again: nothing). */
 export function close(s: u64) {
   const c = takeConn(s);
   if (c != null) {
-    fio.close(c.with((x) => x.fd));
+    fio.close(c.with((x) => x.socket()));
   }
 }

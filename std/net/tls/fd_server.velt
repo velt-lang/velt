@@ -1,0 +1,64 @@
+// velt/net (internal): `listenTls` on the reactor under the executor in Velt (`VELT_SCHEDULER=std`,
+// #2649): the TLS 1.3 server in Velt (#2392 step 4) for each accepted socket. This file is the
+// only way into the server's code from std/net/tcp_sched.velt (std/net/tls/fd_session.velt), so
+// a program that never listens with TLS doesn't compile it.
+
+import { IoError } from "velt/io/error";
+import { IoResult } from "velt/native/result";
+import * as fs from "velt/net/fd_socket";
+import { TcpStream } from "velt/net/tcp_stream";
+import { FdTlsConn } from "velt/net/tls/fd_conn";
+import { TlsSession, TlsSessions } from "velt/net/tls/fd_session";
+import { addListener, TlsListen } from "velt/net/tls/fd_table";
+import { ServerHandshake } from "velt/net/tls/server_handshake";
+import { ServerKey, serverKey } from "velt/net/tls/server_key";
+import { TlsEngine } from "velt/net/tls/tls_engine";
+
+/** How long an accepted stream's handshake may take (as the runtime's listener). */
+const HANDSHAKE_MS = 10000;
+
+/** The server sessions of one listener: its credentials and ALPN protocols. */
+export class FdServerSessions implements TlsSessions {
+  private key: ServerKey;
+  private protocols: string[];
+
+  constructor(key: ServerKey, protocols: string[]) {
+    this.key = key;
+    this.protocols = protocols;
+  }
+
+  /** The session of accepted socket `fd`; its handshake runs with its first operations. */
+  open(fd: u64): TlsSession {
+    return new FdTlsConn(
+      fd,
+      new TlsEngine(TcpStream.ofHandle(fd)),
+      new ServerHandshake(this.key, this.protocols),
+      (Date.now() as number) + HANDSHAKE_MS,
+    );
+  }
+}
+
+/**
+ * Binds a TLS listener on the reactor; null when the Velt server can't sign with the key (RSA, a
+ * curve other than P-256, Ed25519: the runtime's listener takes those). Throws `IoError`
+ * `EINVAL` for a certificate or key that is not valid PEM.
+ */
+export async function listenTls(
+  addr: string,
+  cert: string,
+  key: string,
+  alpn: string,
+): Promise<IoResult<u64> | null, IoError> {
+  const sk = serverKey(cert, key);
+  if (sk == null) {
+    return null;
+  }
+  const l = await fs.listenOn(addr);
+  if (l.code !== 0) {
+    return l;
+  }
+  const protocols = alpn == "" ? ([] as string[]) : alpn.split(",");
+  const sessions: TlsSessions = new FdServerSessions(sk, protocols);
+  const entry = shared(new Mutex<TlsListen>(new TlsListen(l.value, sessions)));
+  return fs.value(addListener(entry));
+}
