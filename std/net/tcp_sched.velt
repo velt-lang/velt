@@ -210,11 +210,14 @@ export async function velt_rt_tcp_readable_within(
   }
   if (tls.isTls(s)) {
     // Decrypted bytes or a whole record buffered: ready without the socket.
-    const now = tls.readyNow(s);
-    if (now.code !== 0 || now.value == 1) {
-      return now;
+    const fd = tls.readyOrFd(s);
+    if (fd.code !== 0) {
+      return fs.failed({ code: fd.code, message: fd.message }, 0);
     }
-    return await velt_rt_tcp_readable_within(tls.fdOf(s), ms, signal);
+    if (fd.value == 0) {
+      return fs.value(1);
+    }
+    return await velt_rt_tcp_readable_within(fd.value, ms, signal);
   }
   if (signal === 0) {
     return await fio.readableWithin(s, ms);

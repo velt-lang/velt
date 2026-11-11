@@ -282,3 +282,44 @@ async function main() {
          450 50000 57000 57000 57000 57000 refused\n",
     );
 }
+
+/// Readiness of a TLS stream is what a `tryRead` finds: nothing right after the handshake (the
+/// socket was read during it), something once the peer wrote, nothing after it was read, whether
+/// the wait only looks, has a limit or a signal.
+#[test]
+fn a_tls_stream_is_readable_when_a_read_finds_bytes() {
+    same_on_both(
+        "tls_readable",
+        r#"import { connectTls, listenTls } from "velt/net";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
+
+async function main() {
+  const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  const server = spawn(async () => {
+    const c = await l.accept();
+    await c.alpnProtocol();
+    const buf: u8[] = Buffer.alloc(100);
+    console.log("after the handshake:", await c.readableWithin(0), c.tryRead(buf));
+    await c.write("go");
+    console.log("signal:", await c.readableWithin(-1, AbortSignal.timeout(30000)));
+    console.log("read:", c.tryRead(buf));
+    console.log("after the read:", await c.readableWithin(0), await c.readableWithin(1));
+    await c.write("again");
+    console.log("limit:", await c.readableWithin(30000));
+    console.log("read:", c.tryRead(buf));
+    c.close();
+  });
+  const k = await connectTls(`localhost:${l.port}`, { ca: TEST_CA });
+  console.log(await k.readString());
+  await k.write("hello");
+  console.log(await k.readString());
+  await k.write("world!");
+  await server;
+  k.close();
+  l.close();
+}
+"#,
+        "after the handshake: false 0\ngo\nsignal: true\nread: 5\nafter the read: false false\n\
+         again\nlimit: true\nread: 6\n",
+    );
+}

@@ -8,7 +8,7 @@
 
 import { IoError } from "velt/io/error";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
-import { DATA, ENDED, TlsEngine } from "velt/net/tls/tls_engine";
+import { DATA, ENDED, NOTHING_YET, TlsEngine } from "velt/net/tls/tls_engine";
 import { ServerHandshake } from "velt/net/tls/server_handshake";
 
 /** `step`: the handshake is done and nothing is held back. */
@@ -79,6 +79,18 @@ export class FdTlsConn {
   /** Whether a `tryRead` has something to find that the socket won't announce. */
   hasBuffered(): bool {
     return this.failure != null || (this.hs == null && this.e.hasBuffered());
+  }
+
+  /**
+   * Whether a `tryRead` finds something now. It reads what the socket holds to know, so when false
+   * the socket has nothing more (or part of a record): a wait on its readiness ends with the next
+   * bytes, not at once for bytes already read.
+   */
+  ready(): bool {
+    if (this.step() == WAIT) {
+      return false;
+    }
+    return this.hasBuffered() || this.e.tryFill() != NOTHING_YET;
   }
 
   /** Reads into `out[start..end]` now: the count, 0 at the end of the stream, -1 for nothing yet. */
