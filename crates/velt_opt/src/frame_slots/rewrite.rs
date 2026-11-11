@@ -1,6 +1,8 @@
 //! Rewriting a poll function so its chosen frame slots live in locals (see mod.rs).
 
-use velt_vir::vir::{Function, Local, LocalDecl, Operand, Place, Proj, Rvalue, Stmt, Terminator};
+use velt_vir::vir::{
+    Callee, ExternId, Function, Local, LocalDecl, Operand, Place, Proj, Rvalue, Stmt, Terminator,
+};
 
 use super::scan::{overlaps, Frame, Range, SlotUse, Target};
 use crate::noalias::{add_block, fresh_entry};
@@ -14,9 +16,15 @@ struct Promoted {
 }
 
 /// Keep `slots` in new locals: loaded on entry, stored back before every `return` (the
-/// suspension points), and stored / reloaded around the statements that access their bytes
-/// through an aggregate or a reinterpreted view.
-pub(super) fn promote(frame: &Frame, func: &mut Function, slots: Vec<SlotUse>) {
+/// suspension points) and every call of `velt_eh_resume` (`resume`: a cleanup pad leaving the
+/// function, vir.rs invariant 14), and stored / reloaded around the statements that access their
+/// bytes through an aggregate or a reinterpreted view.
+pub(super) fn promote(
+    frame: &Frame,
+    func: &mut Function,
+    slots: Vec<SlotUse>,
+    resume: Option<ExternId>,
+) {
     let promoted: Vec<Promoted> = slots
         .into_iter()
         .map(|slot| {
@@ -28,7 +36,7 @@ pub(super) fn promote(frame: &Frame, func: &mut Function, slots: Vec<SlotUse>) {
     rename_slots(frame, func, &promoted);
     for bi in 0..func.blocks.len() {
         guard_statements(frame, func, bi, &promoted);
-        guard_terminator(frame, func, bi, &promoted);
+        guard_terminator(frame, func, bi, &promoted, resume);
     }
     fresh_entry(func);
     let loads = promoted.iter().map(|p| load(frame, p)).collect();
@@ -136,13 +144,23 @@ fn guard_statements(frame: &Frame, func: &mut Function, bi: usize, promoted: &[P
     });
 }
 
-/// Before a `return` store every written slot; before a terminator that reads promoted bytes
-/// as part of a bigger access store the written ones it touches; after a call whose
-/// destination covers promoted bytes reload those.
-fn guard_terminator(frame: &Frame, func: &mut Function, bi: usize, promoted: &[Promoted]) {
+/// Before a `return` or `velt_eh_resume` store every written slot; before a terminator that
+/// reads promoted bytes as part of a bigger access store the written ones it touches; after a
+/// call whose destination covers promoted bytes reload those.
+fn guard_terminator(
+    frame: &Frame,
+    func: &mut Function,
+    bi: usize,
+    promoted: &[Promoted],
+    resume: Option<ExternId>,
+) {
     let term = &func.blocks[bi].term;
     let flush: Vec<&Promoted> = match term {
         Terminator::Return(_) => promoted.iter().collect(),
+        Terminator::Call {
+            callee: Callee::Extern(x),
+            ..
+        } if Some(*x) == resume => promoted.iter().collect(),
         t => touched(frame, promoted, |v| term_places(t, &mut |p, u| v(p, u))),
     };
     let reload: Vec<Stmt> = match term {

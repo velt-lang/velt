@@ -35,6 +35,31 @@ function mk(keep: V): () => number {
   };
 }
 
+// Frames that own values: a string, an array, an object and one with a `[Symbol.dispose]()` that
+// counts. The panic's cleanup pads drop them (#2667): every `Counted` is disposed.
+let disposed = 0;
+
+class Counted {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  [Symbol.dispose]() {
+    disposed = disposed + 1;
+  }
+}
+
+function owning(n: number, xs: number[]): number {
+  const s = "frame " + n.toString();
+  const a = [n, n + 1];
+  const v = new V(n);
+  const c = new Counted(n);
+  if (n == 0) {
+    return xs[xs.length + 3];
+  }
+  return owning(n - 1, xs) + (s.length as number) + (a.length as number) + v.n + c.n;
+}
+
 async function run(f: () => number): Promise<number> {
   return f();
 }
@@ -81,6 +106,19 @@ describe("catchVeltPanic", () => {
     expect(msg === null).toBe(false);
     expect(after).toBe(0);
     expect(catchVeltPanic(() => {})).toBe(null);
+  });
+
+  it("drops what the unwound frames own", () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
+    disposed = 0;
+    const msg = catchVeltPanic(() => {
+      owning(20, [1, 2, 3]);
+    });
+    expect(msg === null).toBe(false);
+    expect(disposed).toBe(21);
   });
 
   it("nests: the inner catch takes the panic", () => {

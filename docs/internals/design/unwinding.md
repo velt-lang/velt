@@ -31,9 +31,10 @@ the new code must not be Rust: "nothing new in the runtime" (#2196).
 - **Only Velt's class is caught.** The landing pad's personality claims `VELTPANC` in the search
   phase and nothing else: a C++ exception, a Rust panic, any foreign one passes as if the frame
   had no landing pad.
-- **Nothing in the unwound frames runs.** As since #2137, compiled frames have no cleanups: what
-  the panicked code held is leaked, never dropped; a panicked state machine is never polled or
-  dropped again.
+- **Unwound frames drop what they own**, in programs that catch (#2667): calls in frames that own
+  values get cleanup pads that drop them and resume the unwind
+  ([Cleanup in unwound frames](#cleanup-in-unwound-frames)). A panicked state machine is never
+  polled or dropped again; its frame's own temporaries are dropped.
 - **The executor in Velt catches at a started promise with it**, which deletes the runtime's
   catch: `velt_rt_catch_*`, `panic::catch`, `Catching`, `MAY_CATCH`, the Rust payload and the
   node's panicked bookkeeping in Rust.
@@ -172,7 +173,11 @@ when `f` started that is a leaked entry and nothing else; under a suspended oute
 (`catchVeltPanic` inside a `clone()` that runs during a transfer, then that nested panic), the
 outer `resume` would take the stale entry. No extern reads that stack's length; the transfer map
 moves to std with the executor (#2196), and then the catch records and truncates it as
-`forget_since` does. Test: `std/task/unwind.test.velt` "closes a transfer the panic left open"
+`forget_since` does. Limit (review of #2668): `caught()` closes every open transfer level, which
+assumes `f` started at depth 0; a `catchVeltPanic` that runs inside a transfer (from a class's
+`clone()` during one) would close the outer transfer too. The catch should record the depth on
+entry and close only the levels above it, which needs that depth read without suspending (no
+extern does that today; std's transfer map will). Test: `std/task/unwind.test.velt` "closes a transfer the panic left open"
 (#2668's repro: `spawn(run(mk(keep)))` with a captured weak collection; the depth is 0 after the
 catch and a later spawn copies a graph with its sharing).
 
@@ -183,8 +188,10 @@ extern), so with `VELT_RC_STATS=1` it writes `rc stats: std caught a panic` to s
 leak check reads too (`std/test/plan.velt` `leakedBlocks`). With the executor's switch the
 counter becomes std's altogether.
 
-**What is leaked.** Every frame between the raise and the catch is abandoned: owned values in
-them are never dropped, reference counts never decremented, a `Mutex` they held stays locked,
+**What is leaked.** Since #2667 the owned values of the frames between the raise and the catch
+are dropped by their cleanup pads ([Cleanup in unwound frames](#cleanup-in-unwound-frames), with
+its list of what is not covered). The rest of this paragraph is what stays true: every frame
+between the raise and the catch is abandoned: a `Mutex` they held stays locked,
 an object they were changing keeps the change half made (the README of `catchPanic` says so
 today). A state machine that panicked in its poll is never polled or dropped again, since its
 fields may be half moved; its task header stays allocated, so a waker that still points at it
@@ -432,13 +439,201 @@ code), or the design states why no Velt panic can pass it:
 Not changed in this PR: nothing that catches today runs through them (the executor's polls do,
 after the switch), and each change wants its own measurement.
 
-**Owner decision: drops in unwound frames.** As designed, the landing pad runs no drops: nothing
-in the frames between the raise and the catch is freed (#2668 measured 65 blocks and 22 strings
-per caught panic 20 frames deep). For a server under the Velt executor that answers 500 on a
-panic, that is a leak per panic without bound. The alternative gives frames with owned locals
-cleanup pads (an `invoke` per call that can unwind, a pad that drops what is live and resumes),
-which ends "a program that doesn't catch has byte-identical code" for programs that catch and
-costs code size in every such frame. To decide before step 5; the prototype keeps "no drops".
+**Owner decision: drops in unwound frames.** Decided on #2667 (2026-11-09): yes, frames that own
+values get cleanup code, only in programs that catch: [Cleanup in unwound frames](#cleanup-in-unwound-frames).
+Before it, nothing in the frames between the raise and the catch was freed (#2668 measured 65
+blocks and 22 strings per caught panic 20 frames deep), a leak per panic without bound for a
+server that answers 500 on a panic.
+
+## Cleanup in unwound frames
+
+Owner decision on #2667: a frame that owns values needing a drop gets cleanup code that runs
+when a Velt panic unwinds through it, only in a program whose live code calls `catchUnwind`.
+Programs that don't catch stay byte-identical. Gate: run rows and build size within ±3% on
+`bench/http` and the async rows with the catch on; the fallback if it fails is a request-scoped
+arena (a design of its own).
+
+### Where cleanups come from
+
+Lowering already knows, at every point of a function, what the frame owns: the scope stack of
+drop obligations (`lower/drops.rs`: `DropEntry` per scope, the static state or drop flag of each
+local), which `return`, `break` and `throw` drop on their edges and an async function's cancel
+path drops without its `finally` blocks (`emit_cancel_drops`). A cleanup pad is that cancel
+path at a call site: the drops of every open scope, innermost first, without `finally` blocks
+and without `catch` handlers (a panic is not an error: user code never sees it), then the
+resume of the unwind.
+
+- **Which calls.** `FnLower::call` gives a call an unwind edge when (1) the program catches: sema
+  demanded `panic_raise` (the construct `CatchUnwind` is live) and the target unwinds
+  (`Catching::of_triple(target) == Itanium`); (2) the callee may unwind: a Velt function or a
+  function value (`velt_vir::eh::may_unwind`: `Callee::Func`, `Callee::Ptr`). Externs (the
+  runtime, C) don't get one: a panic in a Velt callback the runtime runs leaks the calling
+  frame's values, as before; (3) the frame owns something now: some open scope holds an entry
+  that would emit a drop (a temporary, a flagged value, a local in state `Init` or with a
+  flag, a cell). A frame that owns nothing at a call gets no edge, and a function that never
+  owns anything at a call is unchanged. Arguments the call takes are already off the scopes
+  (`take_temp` before the call, as for `throw`), so the callee drops them, never both.
+- **Calls on exit edges.** `return`, `break`, `continue` and `throw` emit the drops (and
+  `finally` blocks) of the scopes they leave without popping them, and an async cancel path
+  emits every scope's drops. A call there (drop glue running a `[Symbol.dispose]()`, a call in
+  a `finally`) gets a pad without what the edge has dropped or is dropping: each scope keeps a
+  count of the entries pads still drop (`Scope::pad_keep`), lowered to the index of the entry
+  being dropped as the edge goes and to 0 once the scope is done, and restored after the edge.
+  `pop_scope` pops first; while it drops the popped entries, a pad drops the ones it hasn't
+  reached yet, so a disposer that panics doesn't leak the entries before it. The old value of a
+  reassigned local (`drop_old`) is left out of the pads of its own drop, and the new value,
+  which no scope owns until it is stored, is in them.
+- **A transfer that panics.** A value going to another thread (`spawn`'s arguments, a channel,
+  `shared(...)`) is off the scopes once consumed, and its transfer glue can panic (a weak
+  collection in a captured environment). `transfer_value` registers the temporary holding it
+  for the glue's call and takes it back after, so the pad drops it as far as it was transferred
+  (its copies; the originals they replaced are the transfer's deferred releases, which the
+  catch's `caught()` releases). An original's release is deferred only once its copy is
+  finished (`shared_copy` settles the copy first: a class's own `clone()` checked and its copy
+  transferred in turn), so a panic while settling leaves the original in its holder alone,
+  owned once by the temporary, and the pad and `caught()` don't both release it. The copy being
+  settled is the glue frame's temporary meanwhile (`transfer_owned`), so the glue's pad drops it,
+  and a `clone()` whose result others still reference has that reference released before its
+  panic. Tests: `a_value_whose_transfer_panics_is_dropped`,
+  `a_copy_whose_settling_panics_releases_the_original_once`,
+  `a_clone_returning_a_stored_object_releases_the_original_once`. The pads run while the
+  transfer is still open (its depth above 0, its copies map live): a pad that frees a copy leaves
+  the copy's address in the map until `caught()`, so only a transfer started from inside a pad
+  (a `[Symbol.dispose]` that spawns) could look up a stale address.
+- **Pads are shared.** A pad is a chain of links, one per drop entry, innermost first, each
+  ending in a jump to the pad of the entries outside it; the empty pad is one block calling
+  `velt_eh_resume`. Links are cached per function by the entries and the states they read, so
+  consecutive calls in one state share a pad and a new temporary adds one link. Code size grows
+  with the number of distinct ownership states at calls, not with calls × entries.
+- **Inside a pad** calls get no unwind edge, and the pads are lowered with what lowering knows
+  about string data set aside (as a `finally` is), so a pad's code depends only on its entries.
+- **Not covered** (they leak as before): calls of externs; the shared `division by zero` panic
+  blocks (built after the scopes are gone); Cranelift on Apple arm64 for a call whose arguments
+  don't all fit in registers (below); the JIT (`velt dev`); Windows and WebAssembly. Since the
+  leak-check marker of a caught panic is gone (below), `velt test` fails the leak check of a
+  test that catches a panic unwinding through one of these paths.
+
+`VELT_UNWIND_PADS=0` turns the edges off in lowering. It is for measuring the gate only (the same
+program with and without pads); a program built with it leaks as before #2667.
+
+### VIR
+
+- `Terminator::Call` gains `unwind: Option<BlockId>` (invariant 14). `Some(pad)`: when the callee
+  unwinds with a Velt exception, control continues at `pad` with `dest` not written. `None` is
+  every call of a program that doesn't catch, so its VIR, fingerprints and code are unchanged.
+- `velt_eh_resume()` (`velt_vir::eh::RESUME`, noreturn, a backend-defined extern like
+  `velt_eh_try`): continues the unwind that entered the pad being run. Each pad ends in a call of
+  it; a call of it never has an unwind edge (verify).
+- Passes see the unwind edge as a successor (`velt_opt::visit::successors`, lowering's
+  `cfg::successors`, verify's dataflow), so a value a pad reads is live at the call and
+  definitely assigned before it (verify checks the pad as any other successor; its check is per
+  block, so a pad reading the call's own result is not caught there: lowering never emits one,
+  since a call's result is owned only after the call). The inliner wires an inlined body into
+  the call's edge: the callee's calls that may unwind and have no edge get the call's, and its
+  `velt_eh_resume` calls become jumps to the call's pad; a call without an edge inlines the
+  body as it is.
+- **Memory kept in locals across calls.** A pass that keeps a pointee's fields in locals and
+  stores them back later must also store them where an unwind leaves the frame, since a frame
+  further out may own that memory and its pad drops it by what memory says. `noalias` promotion
+  stores the written fields in a block on each unwind edge of a call that doesn't receive the
+  param (reloading them on the edge of one that does, which may change them), and gives a call
+  without an edge one to a block that stores them and resumes, once the program has pads (it
+  declares `velt_eh_resume`). `frame_slots` stores a poll function's written slots before
+  `velt_eh_resume` as before a `return`. The normal path is unchanged; programs that don't catch
+  get the same code. The other passes read memory once (`frozen`, `invariant_reads`, which
+  arrives at pads with the pre-call state) or stop at a call with a pad (`fresh`, so
+  `dead_fills`); `heap_sroa` only replaces objects no other frame sees.
+
+### Backends
+
+- **LLVM.** A call with an unwind edge is an `invoke ... to label %ok unwind label %lpN`. Each
+  pad block reached by an unwind edge gets a landing block of its own,
+  `%lpN: landingpad { ptr, i32 } cleanup`, which stores the exception pointer in the function's
+  exception slot (an `alloca` in the entry block) and branches to the VIR pad, which other pads
+  may also jump to. `velt_eh_resume` is `resume { ptr, i32 }` of the slot. A function with an
+  `invoke` names `personality ptr @velt_eh_personality`.
+- **Cranelift.** A call with an unwind edge is a `try_call` (`try_call_indirect`) whose default
+  handler is a landing block per pad that stores the exception (payload register 0) in a
+  variable and jumps to the pad; `velt_eh_resume` calls `_Unwind_Resume` with it. `try_call`
+  exists only for the SystemV convention: on Linux and x86-64 macOS that is the platform's; on
+  Apple arm64 the call uses a SystemV signature for the same symbol only when every argument is
+  in a register (at most 8 integer and 8 float or vector arguments), where Cranelift's
+  AppleAarch64 and SystemV conventions agree (arguments are extended by their `sext`/`uext`
+  attributes in both); a call with stack arguments stays a plain call. After a function is
+  compiled, its call sites with a handler become its LSDA (`.gcc_except_table`, call sites in
+  `udata4`, one entry per call: `[return address - 1, +1)`, the handler, action 0 = cleanup);
+  its FDE names the LSDA and the CIE with the personality, which the object defines once (local)
+  when any of its functions has an LSDA. A `try_call` treats every register as clobbered on the
+  exceptional edge, so values live across it are spilled: a debug-build cost only.
+- **The personality** becomes the general one (both backends): for Velt's class, read the LSDA
+  header (landing-pad base omitted; the type table skipped; call sites in ULEB128 (LLVM) or
+  `udata4` (Cranelift's own)), find the entry covering `ip - 1` (`_Unwind_GetIP` minus
+  `_Unwind_GetRegionStart`); no entry or landing pad 0: `_URC_CONTINUE_UNWIND`. An entry with
+  action 0 is a cleanup: search phase `_URC_CONTINUE_UNWIND`, cleanup phase land
+  (`_URC_INSTALL_CONTEXT`). An entry with an action is a catch (`velt_eh_try`): search phase
+  `_URC_HANDLER_FOUND`, cleanup phase land only in the handler frame. A foreign class passes in
+  both phases, so its unwinding runs no Velt cleanup (unchanged: compiled frames are not
+  reached by foreign exceptions today). `velt_eh_try` keeps its LSDA; the general reader finds
+  its one entry.
+- **A function C calls** (`Function::stops_unwind`, `@export`) gets no cleanups: an unwind
+  that reaches it ends the process, so they could only run before the `abort`, and a function
+  has one personality. With LLVM its calls, those with an unwind edge too, are `invoke`s of its
+  abort pad (`function/stop_unwind.rs`, Rust's personality, which lands at the pad for any class
+  in the cleanup phase); with Cranelift it has no unwind entry, so its edges stay plain calls and
+  the search ends at it (`raise` returns, `panicRaise` exits). Its pad blocks are unreachable and
+  `velt_eh_resume` there is `unreachable` (a trap). An edge appears in one when an inlined callee
+  brings its pads.
+
+### A panic during a cleanup
+
+A drop in a pad can run user code (`[Symbol.dispose]()`, a class's destructor), which may panic.
+Its unwind would run the outer pads of the frame whose pad is running, dropping again what the
+inner drop was in the middle of. As in Rust ("panic while panicking"), it aborts: std keeps a
+thread-local `UNWINDING` flag, set by `panicRaise` just before it raises and cleared by
+`catchVeltPanic` when the catch returns the exception. A `panicRaise` that finds it set prints
+the message and `panic while unwinding: aborting` and calls `abort()`. Nothing is added to the
+normal path; the cost is that a catch inside a destructor run by a cleanup can't catch either
+(it aborts too). Older Rust did the same; recent Rust allows a panic that a drop running during
+an unwind catches itself, and only one that escapes the drop aborts. That is worth
+following once the executor's catch is public (step 5): it needs the flag to be a count of the
+catches entered since the unwind began.
+
+### Async state machines
+
+A poll function's frame holds its live state in the state struct (`async_fn/spill`): those
+values are owned by the future, not the frame, and the panicked state machine is leaked as
+before (#2008: never polled or dropped again). So a poll function's pads drop only the frame's
+own temporaries: lowering records each pad link of a poll function, and after the spill pass
+has chosen what goes into the state, a link whose code touches a spilled local is bypassed (its
+first block jumps to the next link). Values that never cross a suspension (the temporaries of
+the statement that panicked, locals between two `await`s) are dropped; what the state holds
+leaks with it. A plain function's pads drop everything the frame owns.
+
+A generator's resume function (and an async generator's poll function) gives every call that
+may unwind a pad, also where the frame owns nothing, and its pads end by setting the state's tag
+to finished (`DONE`) before the resume. The frame holding the generator (a `for...of` frame with
+the state inline, or the owner of a `Generator` object) then drops it as a finished one, which
+does nothing to the state (what it held leaks, as above) and frees the object; without it the
+drop would find the tag of a running generator and panic ("generator is already running"), and
+during that frame's cleanup the panic aborts. A later `next()` (or `next(v)`) is done, as after
+a generator that threw. An async generator's poll function is built the same way; it is reached
+by an unwind only once a catch can run inside an executor (the design's step 5). The spill pass's
+liveness follows unwind edges, so a bypassed link never moves a local into the state.
+
+### Windows and WebAssembly
+
+No unwinding (Windows until its structured exceptions are built): lowering adds no edges for
+those targets, and a backend that gets one anyway (the JIT) emits a plain call.
+
+### Contract changes
+
+- `vir::Terminator::Call::unwind` (vir.rs invariant 14) and the backend-defined extern
+  `velt_eh_resume` (`velt_vir::eh::RESUME`, `may_unwind`).
+- std: `UNWINDING` in `std/lang/hooks/unwind.velt`, `abort` in the Itanium raise; the leak-check
+  marker of a caught panic (`rc stats: std caught a panic`) goes, since a caught panic frees what
+  the unwound frames owned.
+- Objects of programs that catch: an LSDA per function with pads, the personality's CIE on their
+  FDEs, `_Unwind_Resume` and `_Unwind_GetIP` referenced (libSystem, libgcc_s).
 
 
 ## Measurements

@@ -123,3 +123,68 @@ fn an_export_s_small_integer_parameters_have_no_extension_attribute() {
         );
     }
 }
+
+/// `g`, and `name` calling it with an unwind edge to a cleanup pad ending in `velt_eh_resume`
+/// (vir.rs invariant 14), as inlining into an export of a program that catches leaves it.
+fn with_cleanup_pad(name: &str, stops_unwind: bool) -> Program {
+    let mut pb = ProgramBuilder::new();
+    let resume = pb.ext(velt_vir::eh::RESUME, &[], Unit, true);
+    let mut fb = FuncBuilder::internal("g", &[], Unit);
+    let b = fb.block();
+    fb.ret(b, Operand::Const(Const::Unit, Unit));
+    let g = pb.add(fb.finish());
+    let mut fb = FuncBuilder::export(name, &[], Unit);
+    let (entry, done, pad, dead) = (fb.block(), fb.block(), fb.block(), fb.block());
+    let call = |callee, next, unwind| Terminator::Call {
+        callee,
+        args: vec![],
+        dest: None,
+        next,
+        unwind,
+    };
+    fb.term(entry, call(Callee::Func(g), done, Some(pad)));
+    fb.ret(done, Operand::Const(Const::Unit, Unit));
+    fb.term(pad, call(Callee::Extern(resume), dead, None));
+    fb.term(dead, Terminator::Unreachable);
+    let mut f = fb.finish();
+    f.stops_unwind = stops_unwind;
+    pb.add(f);
+    let mut fb = FuncBuilder::export("velt_main", &[], I32);
+    let b = fb.block();
+    fb.ret(b, int(0, I32));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+/// A function has one personality: an export keeps only its abort pad (Rust's personality), as
+/// its cleanups could only run before the `abort`; any other function lands at its cleanup pad
+/// with Velt's personality and resumes.
+#[test]
+fn an_export_s_unwind_edges_go_to_its_abort_pad() {
+    for triple in ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"] {
+        let ir = emit_ir(&with_cleanup_pad("ex_pads", true), triple).unwrap();
+        let f = define(&ir, "ex_pads");
+        let first = f.lines().next().unwrap();
+        assert!(
+            first.contains("personality ptr @rust_eh_personality"),
+            "{triple}:\n{f}"
+        );
+        assert!(f.contains("unwind label %velt.abort"), "{triple}:\n{f}");
+        assert!(
+            !f.contains("%lp") && !f.contains("resume "),
+            "{triple}:\n{f}"
+        );
+        assert!(!f.contains("%velt.exn"), "{triple}:\n{f}");
+
+        let ir = emit_ir(&with_cleanup_pad("pads", false), triple).unwrap();
+        let f = define(&ir, "pads");
+        let first = f.lines().next().unwrap();
+        assert!(
+            first.contains("personality ptr @velt_eh_personality"),
+            "{triple}:\n{f}"
+        );
+        assert!(f.contains("unwind label %lp"), "{triple}:\n{f}");
+        assert!(f.contains("resume "), "{triple}:\n{f}");
+        assert!(!f.contains("%velt.abort"), "{triple}:\n{f}");
+    }
+}

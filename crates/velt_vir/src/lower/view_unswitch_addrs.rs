@@ -223,6 +223,7 @@ mod tests {
             args: args.into_iter().map(|l| Operand::Copy(place(l))).collect(),
             dest: None,
             next: BlockId(0),
+            unwind: None,
         })
     }
 

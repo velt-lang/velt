@@ -133,6 +133,12 @@ struct Translator<'a, 'b> {
     /// Shadow slots of described scalar locals (see the module docs), by local; and of those
     /// stored as `Variable`s, by variable index.
     shadows: Shadows,
+    /// The exception a landing block received, for `velt_eh_resume` (terminator.rs).
+    exn: Option<Variable>,
+    /// The landing block of each pad a `try_call` unwinds to, by VIR block.
+    landings: FxHashMap<u32, ir::Block>,
+    /// References with the SystemV convention to functions a `try_call` calls (terminator.rs).
+    try_refs: FxHashMap<FuncId, ir::FuncRef>,
 }
 
 /// The shadow stack slots that debug info reads described scalar locals from.
@@ -248,6 +254,9 @@ fn translate_once(
         srclocs: Vec::new(),
         srcloc_ids: FxHashMap::default(),
         shadows,
+        exn: None,
+        landings: FxHashMap::default(),
+        try_refs: FxHashMap::default(),
     };
     if let Err(e) = translator.run() {
         // Not an error of the function: the module declares the function and translates again.

@@ -253,7 +253,18 @@ impl FnCheck<'_> {
                 args,
                 dest,
                 next,
-            } => self.check_call(callee, args, dest.as_ref(), *next),
+                unwind,
+            } => {
+                if unwind.is_some() {
+                    let resume = matches!(callee, Callee::Extern(e)
+                        if self.p.externs.get(e.0 as usize)
+                            .is_some_and(|e| crate::eh::is_resume(&e.symbol)));
+                    if resume {
+                        return Err("a call of velt_eh_resume has an unwind edge".into());
+                    }
+                }
+                self.check_call(callee, args, dest.as_ref(), *next)
+            }
         }
     }
 

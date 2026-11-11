@@ -2,7 +2,7 @@
 //! thread safe there, in place. A counted object the sender holds the only reference to (a
 //! count of 1) stays, and its parts are transferred in turn; one that is still shared is replaced by a
 //! deep copy (made by the clone glue, so a resource is copied by its own `clone()`, whose result
-//! is transferred in turn: `settle_copy`) and the sender's reference released. Values that cannot reach a counted object are left alone.
+//! is transferred in turn: `settle_copy`, transfer_settle.rs) and the sender's reference released. Values that cannot reach a counted object are left alone.
 //!
 //! Class objects in a hierarchy with a vtable and interface values transfer through their
 //! vtable (`SLOT_TRANSFER`), closures through their environment's transfer entry
@@ -175,11 +175,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.assign(Place::local(out), Rvalue::Use(copy));
                 lw.goto(done);
             });
+            // Settled inside `copy`, before the original's release is deferred: a settle that
+            // panics leaves the original owned once, by its holder (see `shared_copy`).
             let new = self.shared_copy(o.clone(), ty, true, |lw, v| {
-                lw.call_glue(Glue::ObjClone, ty, vec![v])
+                let new = lw.call_glue(Glue::ObjClone, ty, vec![v]);
+                let new = lw.settle_copy(new, ty);
+                lw.settle_shared(new, ty, keep)
             });
-            let new = self.settle_copy(new, ty);
-            let new = self.settle_shared(new, ty, keep);
             self.assign(Place::local(out), Rvalue::Use(new));
             self.goto(done);
             self.switch_to(unique);
@@ -256,12 +258,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.assign(place.clone(), Rvalue::Use(copy));
             lw.goto(done);
         });
+        // Settled inside `copy`, before the original's release is deferred (see `shared_copy`).
         let new = self.shared_copy(p.clone(), ty, true, |lw, v| {
             let c = lw.clone_value(v, ty);
-            lw.rvalue_temp(Ty::Ptr, Rvalue::Use(c))
+            let new = lw.rvalue_temp(Ty::Ptr, Rvalue::Use(c));
+            let new = lw.settle_copy(new, ty);
+            lw.settle_shared(new, ty, keep)
         });
-        let new = self.settle_copy(new, ty);
-        let new = self.settle_shared(new, ty, keep);
         self.assign(place.clone(), Rvalue::Use(new));
         self.goto(done);
         self.switch_to(unique);
@@ -291,7 +294,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// (a fresh, unique graph), after which the sender's reference is released (the count is
     /// above 1: only decremented). With `defer` (`v` is a `ty`, not a cell holding one), a
     /// transfer under way releases it when it ends instead (`defer_release`). A resource
-    /// without `clone()` panics instead.
+    /// without `clone()` panics instead. `copy` returns the copy finished: nothing that can
+    /// panic may run between the release (or its deferral) and the caller storing the copy,
+    /// since a cleanup pad then drops the holder's original (the frame owns the transfer's
+    /// temporary) and the transfer's end would release it a second time. The copy being
+    /// settled is owned by the frame meanwhile (`transfer_owned`), so a pad drops it too.
     pub(super) fn shared_copy(
         &mut self,
         v: Operand,
@@ -605,7 +612,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 let (settle, join) = (lw.new_block(), lw.new_block());
                 lw.branch(s, settle, join);
                 lw.switch_to(settle);
-                lw.transfer_in_place(at, ty);
+                lw.transfer_owned(&at, ty);
                 lw.goto(join);
                 lw.switch_to(join);
             },
@@ -672,50 +679,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.call_rt(Rt::XferRecord, vec![p, new], None);
         self.goto(skip);
         self.switch_to(skip);
-    }
-
-    /// The fresh copy `new` (a counted pointer of type `ty`) made safe for the other thread
-    /// when a class's own `clone()` made part of it: that method may keep sharing parts of the
-    /// original (a shallow copy), so the copy is transferred in turn, and parts it still shares
-    /// are deep-copied. A `clone()` that returns an object referenced elsewhere (`this`, or one
-    /// it also stored) is a bug in the program: it panics, as the copy cannot be moved.
-    fn settle_copy(&mut self, new: Operand, ty: TyId) -> Operand {
-        if !self.cx.reaches_own_clone(ty) {
-            return new;
-        }
-        let new = self.rvalue_temp(Ty::Ptr, Rvalue::Use(new));
-        if self.cx.own_clone(ty).is_some() {
-            let ok = self.new_block();
-            let one = self.count_is_one(new.clone());
-            self.when_not(one, ok);
-            let name = self.cx.type_name(ty);
-            let msg = self.str_lit(&format!(
-                "`{name}.clone()` returned an object that is still referenced elsewhere (`this`, or one it also stored); a copy for another task must be a new object"
-            ));
-            let at = self.operand_addr(msg, Ty::Agg(vir::STR_AGG));
-            self.call_rt(Rt::Panic, vec![at], None);
-            self.goto(ok);
-            self.switch_to(ok);
-        }
-        let t = Place::local(self.copy_to_temp(new, Ty::Ptr));
-        self.transfer_in_place(t.clone(), ty);
-        Operand::Copy(t)
-    }
-
-    /// Continue in a fresh block when `cond` is false, else jump to `skip`.
-    fn when_not(&mut self, cond: Operand, skip: vir::BlockId) {
-        let then = self.new_block();
-        self.branch(cond, skip, then);
-        self.switch_to(then);
-    }
-
-    /// `count(p) == 1` for the counted object `p`.
-    pub(super) fn count_is_one(&mut self, p: Operand) -> Operand {
-        let c = self.count_place(p);
-        self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(c), cint(1, Ty::U64)),
-        )
     }
 
     fn transfer_variants(&mut self, place: &Place, ty: TyId) {

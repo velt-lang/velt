@@ -43,6 +43,7 @@ fn indirect_call(target: u32, dest: u32, next: u32) -> Terminator {
         args: vec![],
         dest: Some(Place::local(Local(dest))),
         next: BlockId(next),
+        unwind: None,
     }
 }
 

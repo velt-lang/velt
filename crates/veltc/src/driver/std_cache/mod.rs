@@ -467,6 +467,7 @@ mod tests {
                     args: vec![],
                     dest: Some(Place::local(Local(0))),
                     next: vir::BlockId(1),
+                    unwind: None,
                 },
             });
         }

@@ -56,6 +56,7 @@ mod thunk;
 mod trace;
 mod transfer;
 mod transfer_env;
+mod transfer_settle;
 pub(in crate::lower) mod vtable;
 
 pub(super) use demand::demand_off;

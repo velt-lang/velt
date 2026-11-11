@@ -168,7 +168,7 @@ impl FnLower<'_, '_> {
         let p = match &place.kind {
             hir::ExprKind::Local(id, _) => {
                 let p = self.place_expr(place);
-                self.drop_old(*id);
+                self.drop_old(*id, &old);
                 self.store(p.clone(), old);
                 self.mark_init(*id);
                 p

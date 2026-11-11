@@ -337,14 +337,11 @@ function leakedBlocks(stderr: string): number | null {
   if (at < 0 || !stderr.includes("rc stats:")) {
     return null;
   }
-  // A caught panic leaks what the panicked code held (`catchPanic`): no leak check then. The
-  // runtime counts its own catches (`panics caught=`); std's (`catchVeltPanic`, velt/task/unwind)
-  // print a line of their own.
+  // A panic the runtime caught leaks what the panicked code held (`catchPanic`): no leak check
+  // then (`panics caught=`). std's catch (`catchVeltPanic`, velt/task/unwind) is checked: the
+  // frames it unwound dropped what they owned (cleanup pads, #2667).
   const caught = stderr.lastIndexOf(" panics caught=");
   if (caught > at && !stderr.slice(caught + 15).startsWith("0")) {
-    return 0;
-  }
-  if (stderr.includes("rc stats: std caught a panic\n")) {
     return 0;
   }
   const field = stderr.slice(at + 8).split(" ")[0];

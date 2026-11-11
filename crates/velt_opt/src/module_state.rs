@@ -155,7 +155,11 @@ fn worth_it(func: &Function, sites: &[Site]) -> bool {
 fn rewrite(func: &mut Function, site: &Site, checked: Local, block: Local) {
     let bi = site.block;
     let Terminator::Call {
-        callee, args, next, ..
+        callee,
+        args,
+        next,
+        unwind,
+        ..
     } = std::mem::replace(&mut func.blocks[bi].term, Terminator::Unreachable)
     else {
         unreachable!("ICE: module state site is not a call")
@@ -170,6 +174,7 @@ fn rewrite(func: &mut Function, site: &Site, checked: Local, block: Local) {
             args,
             dest: Some(Place::local(block)),
             next: BlockId(func.blocks.len() as u32 + 1),
+            unwind,
         },
         at,
     );

@@ -54,8 +54,8 @@ mod rewrite;
 mod scan;
 
 use velt_vir::vir::{
-    AggId, AggLayout, Function, Local, Operand, ParamAttrs, Place, Proj, Rvalue, Stmt, Terminator,
-    Ty,
+    AggId, AggLayout, ExternId, Function, Local, Operand, ParamAttrs, Place, Proj, Rvalue, Stmt,
+    Terminator, Ty,
 };
 
 use crate::locals::Usage;
@@ -64,7 +64,9 @@ use crate::visit::successors;
 use scan::{overlaps, Facts, Frame, SlotUse};
 
 /// Promote the frame slots of `func` if it is a poll function; returns whether anything changed.
-pub(crate) fn run(aggs: &[AggLayout], func: &mut Function) -> bool {
+/// `resume` is the program's `velt_eh_resume` (it has cleanup pads): a pad leaving the function
+/// stores the written slots back, as a `return` does.
+pub(crate) fn run(aggs: &[AggLayout], func: &mut Function, resume: Option<ExternId>) -> bool {
     let Some(state) = poll_state(func) else {
         return false;
     };
@@ -90,7 +92,7 @@ pub(crate) fn run(aggs: &[AggLayout], func: &mut Function) -> bool {
     if slots.is_empty() {
         return split || marked;
     }
-    rewrite::promote(&frame, func, slots);
+    rewrite::promote(&frame, func, slots, resume);
     true
 }
 

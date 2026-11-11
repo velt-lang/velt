@@ -393,6 +393,7 @@ mod tests {
                     args: vec![copy(Place::local(Local(2))), copy(Place::local(Local(2)))],
                     dest: Some(Place::local(Local(3))),
                     next: BlockId(1),
+                    unwind: None,
                 },
             },
             BasicBlock {

@@ -423,7 +423,14 @@ impl<'p> Canon<'p> {
                 args,
                 dest,
                 next,
-            } => self.call(out, callee, args, dest.as_ref(), next.0),
+                unwind,
+            } => {
+                self.call(out, callee, args, dest.as_ref(), next.0);
+                // Only programs that catch have unwind edges: every other text is unchanged.
+                if let Some(pad) = unwind {
+                    let _ = write!(out, " unwind {}", pad.0);
+                }
+            }
             Terminator::Unreachable => out.push_str("unreachable"),
         }
     }
