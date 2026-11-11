@@ -7,12 +7,16 @@ streaming with backpressure, graceful stops (also under `velt dev`, through
 [velt/dev](https://veltlang.com/docs/std/dev/)) and [WebSockets](docs/websocket.md). Handlers take the global
 [`Request`](https://veltlang.com/docs/std/net/http/#request) and return the global
 [`Response`](https://veltlang.com/docs/std/net/http/#response), the classes `fetch` uses, as in Deno and Bun;
-they run concurrently on every core. Each connection is served on a task of its own, which gets
-the next worker in turn and stays there, as in thread-per-core servers, so a handler that
-computes for a long time holds back the other connections on its worker (`workerCount()` sets
-how many there are: `VELT_THREADS`, else one per core). A listening server keeps the process
-alive after `main` returns, like Node, until `server.close()`; dropping the `HttpServer` value
-does not stop it. A
+they run concurrently. With several workers (`workerCount()`: `VELT_THREADS`, else one per
+core) each connection is served on a task of its own, which gets the next worker in turn and
+stays there, as in thread-per-core servers, so a handler that computes for a long time holds
+back the other connections on its worker. A program with module state (a module-level `let`, or
+a module constant computed at startup) keeps its connections on one worker for now: its
+handlers would wait for each other on the process-wide lock that guards module state, and serve
+fewer requests than on one worker (until that lock is replaced, #2726); pass such state to the
+handler as a captured value to use every core. A listening server keeps the process alive after
+`main` returns, like Node, until `server.close()`; dropping the `HttpServer` value does not stop
+it. A
 `main` that fails (an uncaught error, or a nonzero exit code) ends the process at once, servers
 or not. For a walkthrough, see [Building an HTTP server](https://veltlang.com/docs/book/http-server/).
 

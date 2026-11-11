@@ -5,6 +5,7 @@
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
+import { moduleStateUsed } from "velt/lang/intrinsics/task";
 import { velt_rt_worker_count } from "velt/task/rt";
 
 export declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
@@ -67,9 +68,12 @@ export declare async function velt_rt_tcp_connect_tls(
 ): Promise<IoResult<u64>>;
 
 /**
- * The workers that can serve the connections listener `l` accepts: the runtime's sockets go to
- * any of them (`TcpListener.workers`).
+ * The workers that can serve the connections listener `l` accepts (`TcpListener.workers`): the
+ * runtime's sockets go to any of them, but in a program with module state only one. Its tasks
+ * that touch module state take the process-wide module lock for every poll (rt_abi.md "Module
+ * state"), so connections served on several workers would wait for each other on it and serve
+ * fewer requests than on one; one until #2726 replaces the module lock.
  */
 export function listenerWorkers(l: u64): u64 {
-  return velt_rt_worker_count();
+  return moduleStateUsed() ? 1 : velt_rt_worker_count();
 }

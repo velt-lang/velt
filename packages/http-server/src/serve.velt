@@ -84,13 +84,18 @@ async function closeWhen(stopped: AbortSignal, listener: TcpListener) {
 
 /**
  * Accepts connections until `stopped` (`close()`, or `velt dev`'s stop request with `reload`),
- * each served on a task of its own in one task scope, so this settles only once the last of them
- * finished. With several workers (`listener.workers()`) the tasks are pinned to them in turn
- * (#2744): a connection stays on the worker it was given, as in thread-per-core servers, and the
- * connections share every core. Unpinned, they would all start on this worker and wait for the
- * runtime to move them (a third less throughput on four workers). Only stopping ends the loop:
- * another failure (out of file descriptors, a connection reset before it was accepted) is waited
- * out, 5 ms doubling up to 1 s, as Go's net/http does.
+ * each served in one task scope, so this settles only once the last of them finished. Only
+ * stopping ends the loop: another failure (out of file descriptors, a connection reset before it
+ * was accepted) is waited out, 5 ms doubling up to 1 s, as Go's net/http does.
+ *
+ * With several workers to spread over (`listener.workers()`), each connection is a task of its
+ * own, pinned to them in turn (#2744): it stays on the worker it was given, as in thread-per-core
+ * servers, and the connections share every core (unpinned, they would all start on this worker
+ * and wait for the runtime to move them: a third less throughput on four workers). With one
+ * (one worker, a program with module state, or `VELT_SCHEDULER=std`), each connection is a
+ * promise of this task: they take turns on one worker, which costs less per request than a task
+ * each (a connection whose next request came in while the others ran reads it without waiting),
+ * and in a program with module state never wait for each other on the module lock.
  */
 async function acceptAll<E>(
   listener: TcpListener,
@@ -113,10 +118,7 @@ async function acceptAll<E>(
         try {
           const conn = await listener.accept();
           backoff = 0;
-          // A task of its own, started from the call (`spawn(connection(...))`): a promise
-          // started here and handed to `scope.spawn` keeps running on this task, so every
-          // connection shared the accept loop's one worker (#2744). The scope waits for the
-          // task's handle: nothing else awaits it.
+          // The scope waits for it: nothing else awaits it.
           let served: Promise<void>;
           if (workers > 1) {
             served = spawn(
@@ -125,7 +127,8 @@ async function acceptAll<E>(
             );
             next = next + 1 == workers ? 0 : next + 1;
           } else {
-            served = spawn(
+            // Started here and handed to `scope.spawn`, it keeps running on this task.
+            served = guarded(
               connection(conn, handler, maxHead, maxBody, idle, limits, stopped, h2, secure),
             );
           }
@@ -145,4 +148,11 @@ async function acceptAll<E>(
     // Every connection finished: the program may stop for the next version.
     drained();
   }
+}
+
+/** A connection served on the accept loop's task: what it throws ends only that connection. */
+async function guarded(served: Promise<void>): Promise<void> {
+  try {
+    await served;
+  } catch (e) {}
 }

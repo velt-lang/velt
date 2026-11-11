@@ -1,0 +1,50 @@
+// A server's connections are spread over the workers (#2744): each is a task of its own, pinned
+// to the workers in turn, so as many connections as there are workers, opened one after another,
+// are served on every worker, and both requests of a connection on its own. (They ran as promises
+// of the accept loop's one task, on one worker.) Only in a program without module state: see
+// connections_module_state_one_task.velt.
+import { HttpRequest, HttpResponse, serveHttp } from "http-server";
+import { connect, TcpStream } from "velt/net";
+import { currentWorker, workerCount } from "velt/task";
+
+async function readAll(conn: TcpStream): Promise<string> {
+  let out = "";
+  while (true) {
+    const text = await conn.readString();
+    if (text == "") {
+      return out;
+    }
+    out += text;
+  }
+}
+
+// The bodies of the responses in `text`.
+function bodies(text: string): string[] {
+  return text
+    .split("HTTP/1.1 200 OK")
+    .slice(1)
+    .map((r: string): string => r.slice(r.indexOf("\r\n\r\n") + 4));
+}
+
+async function main() {
+  const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    res.send(`${currentWorker()}`);
+  });
+  const n = workerCount();
+  const seen = new Set<string>();
+  let kept = true;
+  for (let i: i64 = 0; i < n; i++) {
+    const c = await connect(`127.0.0.1:${server.port}`);
+    // Two requests, pipelined; the second closes the connection.
+    await c.write(
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    const b = bodies(await readAll(c));
+    c.close();
+    kept = kept && b.length == 2 && b[0] == b[1];
+    seen.add(b[0]);
+  }
+  console.log(`every worker served a connection: ${seen.size == (n as number)}`);
+  console.log(`each connection stayed on its worker: ${kept}`);
+  await server.shutdown();
+}

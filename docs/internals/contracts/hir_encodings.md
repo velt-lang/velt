@@ -667,6 +667,9 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   whether a value of that type owns anything dropping it releases (lowering's drop glue). A bit
   copy of a type that needs no drop is an independent value, so the stable sort copies such
   elements instead of moving them.
+  `Intrinsic::ModuleStateUsed()` (std only, additive, #2744): a constant `bool`, whether the
+  program has module state (`Program::module_state`) or writes through `any` (a function's
+  properties are module state), so that its tasks may take the module lock.
   `Intrinsic::MayAlias(value)` (std only, value borrowed and not evaluated): a constant `bool`,
   whether a value of that type borrowed by a call can be reached through another reference while
   the call runs (lowering counts the type or borrows values of it inside counted objects, so

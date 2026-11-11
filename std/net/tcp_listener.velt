@@ -20,9 +20,10 @@ export struct TcpListener {
 
   /**
    * How many workers a server can spread the connections it accepts over, each on a task pinned
-   * to one of them (`spawn(p, { worker })`): `workerCount()`, or 1 in a build compiled with the
-   * executor in Velt (`VELT_SCHEDULER=std`), whose sockets stay on its worker. http-server's
-   * `serve` gives them the workers in turn.
+   * to one of them (`spawn(p, { worker })`): `workerCount()`; 1 in a program with module state,
+   * whose handlers would wait for each other on the module lock (until #2726 replaces it), and
+   * in a build compiled with the executor in Velt (`VELT_SCHEDULER=std`), whose sockets stay on
+   * its worker. http-server's `serve` gives them the workers in turn.
    */
   workers(): number {
     return listenerWorkers(this.handle) as number;

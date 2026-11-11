@@ -1,0 +1,2 @@
+every worker served a connection: true
+each connection stayed on its worker: true

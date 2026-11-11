@@ -1,0 +1,40 @@
+// A program with module state keeps a server's connections on one task (#2744), until #2726
+// replaces the process-wide module lock: spread over the workers, handlers that touch module
+// state would wait for each other on it and serve fewer requests than one task does. So every
+// connection is served on the same worker here, however many there are
+// (connections_spread_over_workers.velt is the program without module state).
+import { HttpRequest, HttpResponse, serveHttp } from "http-server";
+import { connect, TcpStream } from "velt/net";
+import { currentWorker, workerCount } from "velt/task";
+
+// Module state: a module-level `let`.
+let greeting = "hello";
+
+async function readAll(conn: TcpStream): Promise<string> {
+  let out = "";
+  while (true) {
+    const text = await conn.readString();
+    if (text == "") {
+      return out;
+    }
+    out += text;
+  }
+}
+
+async function main() {
+  greeting = "served";
+  const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    res.send(`${currentWorker()}`);
+  });
+  const n = workerCount();
+  const seen = new Set<string>();
+  for (let i: i64 = 0; i < n; i++) {
+    const c = await connect(`127.0.0.1:${server.port}`);
+    await c.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    const text = await readAll(c);
+    c.close();
+    seen.add(text.slice(text.indexOf("\r\n\r\n") + 4));
+  }
+  console.log(`${greeting}: one worker for every connection: ${seen.size == 1}`);
+  await server.shutdown();
+}

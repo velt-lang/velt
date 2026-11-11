@@ -12,6 +12,13 @@ import type { Owned } from "./modes";
 export declare function spawnHandled<T, E>(p: Owned<Promise<T, E>>): Promise<T, E>;
 
 /**
+ * Whether the program has module state (module-level `let`s and stored constants, or functions
+ * given properties through `any`), whose tasks take the process-wide module lock: a constant.
+ */
+@intrinsic
+export declare function moduleStateUsed(): bool;
+
+/**
  * The first of `ps` to fulfill, or the last rejection when all reject (the prelude's
  * `promiseAny`, behind `Promise.any`).
  */

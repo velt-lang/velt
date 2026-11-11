@@ -658,6 +658,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::KeyWrite
         | I::NeedsTransfer
         | I::NeedsDrop
+        | I::ModuleStateUsed
         | I::MayAlias
         | I::HoldsNull
         | I::NullAs

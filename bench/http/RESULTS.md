@@ -214,76 +214,81 @@ per request and hop would be 12 GB here).
 
 ## 2026-11-11 (later): connections on every worker (#2744)
 
-**Cause of the flat rows above.** Since 2026-11-01 (836e3c2ec, the std layout pass) `serveHttp`'s
+**Why the rows above are flat.** Since 2026-11-01 (836e3c2ec, the std layout pass), `serveHttp`'s
 accept loop called `connection(...)` and handed the started promise to `scope.spawn`. A promise
-already started keeps running on the task that started it (the `spawn` lowering only makes a new
-task from a direct call), so every connection ran as a promise of the accept loop's one task:
-one task, one worker at a time, whatever the scheduler. Before that the loop had
-`spawn(connection(...))`. A per-worker count of task polls showed it: about 600 task polls a
-second across 4 workers while serving 49k requests a second, and the monitor rescuing the
-worker that held the task. Now each connection is `spawn(connection(...), { worker })`, a task
-of its own, pinned to the workers in turn (`TcpListener.workers()`, which is 1 with
-`VELT_SCHEDULER=std`, whose sockets live on its one worker; with one worker the task is not
-pinned, so the stall rescue can still move it).
+that has already started keeps running on the task that started it (the `spawn` lowering makes a
+new task only from a direct call). So every connection ran as a promise of the accept loop's one
+task, on one worker at a time, whatever the scheduler. A per-worker count of task polls showed
+it: about 600 task polls a second across 4 workers while serving 49k requests a second.
 
-**Method.** As above (same machine, server on CPUs 0,1,6,7, oha on 2-5, 5 s at 256 connections,
-best of 3 interleaved rounds, "load" the 1-minute average before each round; nothing else ran on
-CPUs 0-7). Base and head are the same compiler and runtime (main `0200b9757` with #2743), built
-from the same tree with only `packages/http-server/src/serve.velt` and the three `std/net` files
-swapped, so std and the package are the only difference. Scripts: `bench/http/lib.sh`'s
-`measure` and `ir_per_request`, run by a loop over both binaries (/plaintext and /json of
-`techempower/server.velt`, `module` and `param` of `modlock/server.velt`, then the skewed-load
-row).
+**The change.** When `TcpListener.workers()` is above 1, each connection is
+`spawn(connection(...), { worker })`: a task of its own, pinned to the workers in turn.
+`workers()` is 1 in three cases, and then the connections stay promises of the accept loop's
+task, exactly as before:
+- one configured worker;
+- `VELT_SCHEDULER=std`;
+- a program with module state (`moduleStateUsed()`, a compile-time constant from lowering).
 
-| workers | route | base req/s | head req/s | base p99 | head p99 | load |
-|---|---|---|---|---|---|---|
-| 1 | /plaintext | 89,118 | 129,039 | 4.30 ms | 3.51 ms | 4.0-5.0 |
-| 1 | /json | 85,408 | 121,345 | 4.81 ms | 3.62 ms | 4.0-5.0 |
-| 1 | module | 34,705 | 27,990 | 4.59 ms | 16.00 ms | 4.0-5.0 |
-| 1 | param | 33,015 | 58,289 | 6.06 ms | 6.71 ms | 4.0-5.0 |
-| 4 | /plaintext | 96,542 | 152,113 | 3.98 ms | 3.03 ms | 4.1-5.3 |
-| 4 | /json | 87,373 | 147,834 | 4.62 ms | 2.99 ms | 4.1-5.3 |
-| 4 | module | 38,146 | 24,919 | 3.93 ms | 35.23 ms | 4.1-5.3 |
-| 4 | param | 38,366 | 75,639 | 1.83 ms | 4.08 ms | 4.1-5.3 |
-| 8 | /plaintext | 87,763 | 149,163 | 4.48 ms | 6.67 ms | 5.3-6.7 |
-| 8 | /json | 87,169 | 144,101 | 4.56 ms | 7.00 ms | 5.3-6.7 |
-| 8 | module | 38,205 | 27,017 | 3.91 ms | 39.59 ms | 5.3-6.7 |
-| 8 | param | 35,108 | 68,854 | 2.64 ms | 11.77 ms | 5.3-6.7 |
+Module state is excluded because, by rt_abi.md "Module state", a task that touched module state
+takes the process-wide module lock at the start of every later poll: it may still hold objects
+reached from module state, whose reference counts are not atomic. A connection task runs the
+user's handler, which can keep such an object across an `await`, so taking the lock lazily
+would not be sound for it. Spread over workers, those polls run one at a time, and each lock
+handoff between workers (a `parking_lot` park and unpark) is added to every request. That cost
+the module-state handlers 19-35% in the previous round. This exclusion stays until #2726 step 3
+replaces the module lock. One task is also cheaper per request than a task per connection: a
+connection whose next request arrived while the others ran reads it without arming a wait.
 
-Skewed load (6 connections on `/light`, 2 on `/heavy`, `param`), best /light run of 3:
+**Method.** Same machine and setup as above: server on CPUs 0,1,6,7, oha on 2-5, 5 s at 256
+connections, best of 3 interleaved rounds, "load" is the 1-minute average before each round. A
+niced build ran on CPUs 8-11 during the 4- and 8-worker rounds. Base and head use the same
+compiler and runtime (main `23ce34f4c` plus this change's compiler part), built from one tree
+with only the changed std and package files swapped. `techempower/server.velt` has no module
+state; `modlock/server.velt` has one (its `module` mode's `cache`), so both its modes take the
+one-task path, as does the skewed-load row, which runs on it.
 
-| workers | | /light req/s | p99 | /heavy req/s | p99 | thread busy share |
-|---|---|---|---|---|---|---|
-| 4 | base | 12,591 | 0.58 ms | 4,182 | 0.58 ms | 96% |
-| 4 | head | 54,935 | 0.15 ms | 3,663 | 0.63 ms | 98% 92% 91% 91% |
-| 8 | base | 12,401 | 0.56 ms | 4,064 | 0.56 ms | 96% |
-| 8 | head | 42,851 | 0.38 ms | 3,883 | 0.92 ms | 59% 58% 42% 42% 42% 42% 42% 42% |
+| workers | route | base req/s | head req/s | load |
+|---|---|---|---|---|
+| 1 | /plaintext | 60,633 | 58,177 | 2.4-6.1 |
+| 1 | /json | 58,972 | 56,051 | 2.4-6.1 |
+| 1 | module | 27,428 | 27,824 | 2.4-6.1 |
+| 1 | param | 27,161 | 26,670 | 2.4-6.1 |
+| 4 | /plaintext | 60,825 | 113,928 | 6.9-10.3 |
+| 4 | /json | 57,631 | 116,068 | 6.9-10.3 |
+| 4 | module | 27,291 | 26,395 | 6.9-10.3 |
+| 4 | param | 27,060 | 25,864 | 6.9-10.3 |
+| 8 | /plaintext | 57,774 | 121,615 | 10.4-10.8 |
+| 8 | /json | 55,566 | 117,165 | 10.4-10.8 |
+| 8 | module | 25,782 | 30,592 | 10.4-10.8 |
+| 8 | param | 24,722 | 31,355 | 10.4-10.8 |
+
+At one worker, and for `modlock` at every worker count, base and head run the same path; the
+differences there are run-to-run noise. The skewed-load row (on `modlock`, so one task) is the
+same in both: at 4 workers /light 10,520 vs 11,917 req/s, at 8 workers 9,034 vs 8,739. In the
+previous round, without the module-state exclusion, the same row gave the light connections
+4.4x the rate.
 
 Instructions per request (cachegrind, one worker, 2,000 and 12,000 requests on 8 connections):
 
 | | /plaintext | /json | module | param |
 |---|---|---|---|---|
-| base, default rescue | 15,105 | 15,864 | 105,862 | 100,513 |
-| head, default rescue | 12,772 | 14,479 | 108,467 | 108,709 |
-| base, `VELT_RESCUE=0` | 14,942 | 15,714 | 105,586 | 100,235 |
-| head, `VELT_RESCUE=0` | 16,323 | 17,364 | 107,327 | 109,575 |
+| base, default rescue | 15,439 | 16,001 | 106,083 | 100,675 |
+| head, default rescue | 15,186 | 16,770 | 105,907 | 108,132 |
+| base, `VELT_RESCUE=0` | 15,008 | 15,773 | 105,742 | 100,395 |
+| head, `VELT_RESCUE=0` | 14,992 | 15,759 | 105,648 | 107,877 |
 
-- **The connections spread.** At 4 workers /plaintext and /json serve 58-69% more, and the
-  server's four threads are each 90-98% busy where one was before; the 2 heavy connections no
-  longer hold back the 6 light ones (4.4x the light rate at 4 workers). This machine's 4 server
-  CPUs are 2 physical cores, so 8 workers is oversubscribed and adds nothing over 4. One worker
-  gains too: unpinned there, connection tasks can be taken by the stall rescue's spare workers,
-  as base's one task could.
-- **The module-lock row now shows the lock** (#2726): with the connections in parallel, handlers
-  that read module state contend on the process-wide module lock, 19-35% below base, whose one
-  task never contended. The same work without module state (`param`) doubles. That is step 3 of
-  #2726 (per-piece locks in place of the module lock), not something placement can fix.
-- **Per request at one worker without the rescue** (`VELT_RESCUE=0`, as `bench/nightly.sh`
-  counts), /plaintext and /json cost 9-10% more. A per-function diff (`cachegrind`, `-g` builds)
-  puts it in the wait for the next request: base's one task found each connection's next request
-  already there when it came back to it, so it never waited (no `readableWithin`), while a task
-  per connection reads right after its response and waits through `velt_rt_tcp_readable_within`
-  (tokio `Notify` about 470 instructions, the leaf future about 200, `StreamObj::readable` 200,
-  the event dispatch 130). The local-set bookkeeping base paid for its many promises (about
-  1,900) is gone. The two counts with the default rescue go the other way (15% and 9% fewer) and
-  show how much the shape of the run decides this; a cheaper readable wait is the follow-up.
+- **/plaintext and /json scale** (113-122k against 58-61k req/s at 4 and 8 workers). Per request
+  at one worker they cost the same as base, since the path is the same.
+- **`param` costs 7.5% more** at one worker, on the same runtime path. That is compile time, not
+  run time. velt_opt's inliner has one growth budget for the whole program (the program may
+  double in size, plus 2,000), spent bottom-up over the call graph. The spawn branch's second
+  instance of the connection's state machine adds about 27 functions, enough to use up the
+  budget before the handler's loop gets its turn. So `Map.get` and `roundsFor` stay calls in the
+  handler (the per-function diff: `main` closure#2 39,065 -> 8,112 instructions, `Map.get`
+  0 -> 21,000, `Map.lookup` 0 -> 17,422). Raising `BUDGET_SLACK` (an experiment, not committed)
+  inlines them again. Moving the spawn into a separate accept loop, wrapping `connection`, or
+  passing no handler or `h2` to the spawn does not change it. The fix belongs in velt_opt's
+  budget, so that a program's own hot loops are not starved by code that runs once per
+  connection.
+- With the default rescue, /json is 4.8% above base, from the same inlining effect plus run
+  noise. The `VELT_RESCUE=0` counts are the steadier method.

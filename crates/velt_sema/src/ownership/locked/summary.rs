@@ -267,6 +267,7 @@ impl Walk<'_, '_, '_> {
                     | Intrinsic::LockRead
                     | Intrinsic::NeedsTransfer
                     | Intrinsic::NeedsDrop
+                    | Intrinsic::ModuleStateUsed
                     | Intrinsic::MayAlias
                     | Intrinsic::HoldsNull
                     | Intrinsic::MayHoldPrimitive
