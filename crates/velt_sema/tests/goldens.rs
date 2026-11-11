@@ -415,16 +415,13 @@ fn golden_control() {
         _ => None,
     });
     assert_eq!(labeled.as_deref(), Some("outer"));
-    // ternary → If expr of the arms' literals (`"big" | "small"`: a `const` keeps them, #2686)
+    // ternary → If expr of type string
     let exprs = exprs_of(main);
-    assert!(exprs.iter().any(|e| matches!(e.kind, E::If { .. })
-        && !matches!(
-            p.types.kind(e.ty),
-            TyKind::Str | TyKind::Unit | TyKind::Error
-        )));
-    // console.log(kind) reads the union of literals without moving it (a copy: it holds no
-    // string)
-    assert!(uses(main).contains(&("kind".to_string(), UseMode::Copy)));
+    assert!(exprs
+        .iter()
+        .any(|e| matches!(e.kind, E::If { .. }) && *p.types.kind(e.ty) == TyKind::Str));
+    // console.log(kind) borrows the string
+    assert!(uses(main).contains(&("kind".to_string(), UseMode::Borrow)));
 }
 
 #[test]
