@@ -54,6 +54,14 @@ finds its position, and the parser reads the input that way.
 generator linked from a warmed std cache, against the runtime's 2,691M; 3,791M when the cache
 doesn't serve it and it compiles with Cranelift.
 
+`string_methods`, `string_methods_long` and `string_methods_wide` were added for #2198 (the
+`String.prototype` methods from the runtime to Velt): short ASCII lines, long ASCII text, and
+text that is not ASCII (Latin with accents, Cyrillic, CJK, emoji), each method with literal
+needles and needles that vary. The Rust port runs `str`'s methods with JS's positions in UTF-16
+units (`rust/src/js_str.rs`). Apple M4, macOS, instructions retired (`/usr/bin/time -l`, best of
+5) with the runtime's methods: 2,365M, 3,398M and 2,109M against Rust's 2,183M, 2,398M and
+2,127M (Node 24 on the same programs: 4,576M, 3,399M and 2,569M, start-up included).
+
 Reading it:
 
 - The four number rows call the same crates as the Rust column, so their gap is the cost of
