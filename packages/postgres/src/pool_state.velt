@@ -25,10 +25,9 @@ export const TAKE_OPEN: u8 = 1;
 export const TAKE_WAIT: u8 = 2;
 export const TAKE_ENDED: u8 = 3;
 
-// A connection, when it went idle, and the worker that last read it.
+// A connection, and the worker that last read it.
 struct Idle {
   conn: Conn;
-  since: f64;
   worker: i64;
 }
 
@@ -66,21 +65,21 @@ export class PoolState {
   /** What a task may have now. */
   take(): Taken {
     if (this.ended) {
-      return { status: TAKE_ENDED, conn: null, idleMs: 0.0, wait: null };
+      return { status: TAKE_ENDED, conn: null, wait: null };
     }
     const n = this.idle.length as usize;
     if (n > 0) {
       const i = this.takeIdle(n);
-      return { status: TAKE_IDLE, conn: i.conn, idleMs: performance.now() - i.since, wait: null };
+      return { status: TAKE_IDLE, conn: i.conn, wait: null };
     }
     if (this.open < this.max) {
       this.open++;
       this.addTo(currentWorker(), 1);
-      return { status: TAKE_OPEN, conn: null, idleMs: 0.0, wait: null };
+      return { status: TAKE_OPEN, conn: null, wait: null };
     }
     const ch = this.spare.pop() ?? channel<Grant>(1);
     this.waiters.add(ch, currentWorker());
-    return { status: TAKE_WAIT, conn: null, idleMs: 0.0, wait: ch };
+    return { status: TAKE_WAIT, conn: null, wait: ch };
   }
 
   // A socket follows the task that reads it, which costs system calls and wakes other threads, so a
@@ -132,7 +131,7 @@ export class PoolState {
     }
     const w = this.nextWaiter();
     if (w == null) {
-      this.idle.push({ conn: conn, since: performance.now(), worker: currentWorker() });
+      this.idle.push({ conn: conn, worker: currentWorker() });
     }
     return w;
   }

@@ -246,8 +246,8 @@ async function backendOf(pool: Pool): Promise<i64> throws PgError {
 }
 
 // A session ended by the server (`pg_terminate_backend`, a restart, a fail-over) while its
-// connection waited idle, too briefly for the pool to look at its socket: the statement that finds
-// the server's FATAL "57P01" first runs once more, on a new connection.
+// connection waited idle, however briefly: the pool finds the server's FATAL "57P01" on the socket
+// before it lends the connection, and opens another.
 export async function test_a_connection_whose_session_ended_while_idle_is_not_used() {
   const url = pgUrl();
   if (url == null) {
@@ -258,7 +258,6 @@ export async function test_a_connection_whose_session_ended_while_idle_is_not_us
   for (let round = 0; round < 3; round++) {
     const pid = await backendOf(pool);
     await admin.execute("SELECT pg_terminate_backend($1::int4)", [pid]);
-    // The server's FATAL is on its way, well within the 100 ms the pool trusts an idle connection.
     // timing: the termination must reach the socket before the next borrow
     await sleep(20);
     const next = await backendOf(pool);
@@ -268,7 +267,7 @@ export async function test_a_connection_whose_session_ended_while_idle_is_not_us
   pool.end();
 }
 
-// A statement that ends its own session ran: it isn't run again.
+// A statement that ends its own session ran: it fails, and isn't run again.
 export async function test_a_statement_that_ends_its_session_is_not_run_again() {
   const url = pgUrl();
   if (url == null) {

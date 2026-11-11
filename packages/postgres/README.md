@@ -192,14 +192,11 @@ pool may open another; a one-statement call's connection goes back once its repl
 `Client` from `pool.connect()` is a Copy handle with nothing to drop, so its connection never goes
 back.
 
-A connection idle over 100 ms has its socket looked at before a pool hands it out, so one the server
-closed is replaced. `pool.connect()` and `pool.transaction` look at every idle connection's socket.
-A one-statement call (`query`, `run`, `batch` …) whose connection the server ended within those
-100 ms, so that its reply is the server's FATAL `"57P01"`, `"57P02"` or `"57P03"` or the connection
-closes before any reply, runs once more on a connection whose socket was looked at, or a new one:
-the session ended before the statement ran, so nothing of it was committed. (A `batch` whose own
-statement ends its session before sending anything, such as a `DO` block that calls
-`pg_terminate_backend(pg_backend_pid())`, looks the same, and runs once more too.)
+A pool looks at an idle connection's socket before it hands it out (a read that doesn't wait), so
+one whose session the server ended while it was idle (its FATAL `"57P01"` has come, or the socket
+closed) is dropped and another taken or opened. A statement is never sent twice: a session that
+ends after that check, or a reply lost after the server ran the statement, fails the call with
+`"57P01"`, `"ECONNRESET"` or the like, and the server may have run and committed it.
 
 ## How it works
 

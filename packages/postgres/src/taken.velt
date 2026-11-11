@@ -8,7 +8,5 @@ import { Conn } from "./line";
 export struct Taken {
   status: u8;
   conn: Conn | null;
-  /** How long it was idle, in milliseconds. */
-  idleMs: f64;
   wait: Channel<Grant> | null;
 }

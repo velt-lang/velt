@@ -21,14 +21,6 @@ import { errorOf, PgError } from "./errors";
 import { connectionClosed, Failure, ioFailure } from "./failure";
 import { Input } from "./input";
 import { quiet, scanArrived } from "./reply";
-import {
-  ERROR_RESPONSE,
-  errorFields,
-  frameSize,
-  NOTICE_RESPONSE,
-  NOTIFICATION_RESPONSE,
-  PARAMETER_STATUS,
-} from "./backend";
 import { FAILED } from "./builder";
 import { Conn } from "./line";
 import { Sent } from "./sent";
@@ -234,46 +226,7 @@ export async function readWhole(conn: Conn, input: Input): Promise<void> throws 
 // A read failed: the connection is gone.
 function readFailed(conn: Conn, input: Input, e: Error): PgError {
   const why = e instanceof IoError ? ioFailure(e.code, e.message) : connectionClosed();
-  noteUnanswered(conn, input);
   return lose(conn, input, why);
-}
-
-// The connection ended while `input` waited for its reply. If none of the reply came, or the
-// server's FATAL "57P01" (terminated), "57P02" (crash shutdown) or "57P03" (cannot connect now) is
-// its first message, the session ended before the request ran: on a live session an
-// extended-protocol request's `ParseComplete` or `BindComplete`, or a statement's own reply, comes
-// first. (A simple-protocol statement that ends its own session before sending anything, a `DO`
-// block calling `pg_terminate_backend(pg_backend_pid())`, looks the same.) Only what a server sends
-// unasked may come before.
-function neverRan(input: Input): bool {
-  const buf = input.buffer;
-  const b = buf.bytes;
-  let p = buf.pos;
-  while (p < buf.end) {
-    const size = frameSize(b, p, buf.end);
-    if (size <= 0) {
-      return false;
-    }
-    const tag = b[p];
-    if (tag == ERROR_RESPONSE) {
-      const code = errorFields(b, p + 5, p + size).code;
-      return code == "57P01" || code == "57P02" || code == "57P03";
-    }
-    if (tag != NOTICE_RESPONSE && tag != PARAMETER_STATUS && tag != NOTIFICATION_RESPONSE) {
-      return false;
-    }
-    p += size;
-  }
-  return true;
-}
-
-// Notes on the connection that its request reading never ran, for a pool to run it again.
-function noteUnanswered(conn: Conn, input: Input) {
-  if (neverRan(input)) {
-    conn.with((l) => {
-      l.endedUnanswered = true;
-    });
-  }
 }
 
 // After the reads: a reply that broke the protocol, or a stream that ended (`whole` false) before
@@ -284,7 +237,6 @@ function checkWhole(conn: Conn, input: Input, whole: bool) {
     throw lose(conn, input, broken);
   }
   if (!whole) {
-    noteUnanswered(conn, input);
     // A session ending says why, and a connection cut off doesn't.
     const why = input.errorAt >= 0 ? input.serverError() : connectionClosed();
     throw lose(conn, input, why);
