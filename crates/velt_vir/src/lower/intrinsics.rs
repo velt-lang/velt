@@ -274,12 +274,13 @@ impl FnLower<'_, '_> {
             }
             (I::HoldsNull, [a]) => {
                 let t = self.sub(a.ty);
-                let holds = matches!(self.cx.kind(t), hir::TyKind::Option(..));
+                // A placeholder (shape/) is never an option (`shape_key`).
+                let holds = !self.cx.is_ph(t) && matches!(self.cx.kind(t), hir::TyKind::Option(..));
                 Operand::Const(crate::vir::Const::Bool(holds), Ty::Bool)
             }
             (I::NullAs, []) => {
                 let t = self.sub(ty);
-                if matches!(self.cx.kind(t), hir::TyKind::Option(..)) {
+                if !self.cx.is_ph(t) && matches!(self.cx.kind(t), hir::TyKind::Option(..)) {
                     return self.none_value(t);
                 }
                 // Behind a `HoldsNull` test that is false here: never runs.
@@ -411,6 +412,11 @@ impl FnLower<'_, '_> {
             }
             (I::KeyEq, [a, b]) => {
                 let t = self.sub(a.ty);
+                if self.cx.is_ph(t) {
+                    if let Some(r) = self.ph_key_call(super::shape::KEY_SAME, t, args) {
+                        return r;
+                    }
+                }
                 let (pa, pb) = self.two_places(a, b);
                 self.key_same_values(&pa, &pb, t)
             }
@@ -421,6 +427,11 @@ impl FnLower<'_, '_> {
             }
             (I::Hash, [a]) => {
                 let t = self.sub(a.ty);
+                if self.cx.is_ph(t) {
+                    if let Some(r) = self.ph_key_call(super::shape::KEY_HASH, t, args) {
+                        return r;
+                    }
+                }
                 let v = self.expr(a);
                 let p = self.place_of(v, t);
                 self.hash_value(&p, t)
@@ -551,5 +562,15 @@ impl FnLower<'_, '_> {
         let d = self.temp(Ty::I64);
         self.call_rt(r, args, Some(Place::local(d)));
         Operand::Copy(Place::local(d))
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// `hash` or `keyEq` of a placeholder key in a shared body (shape/, step 4): a call of the
+    /// std function `name` (std/lang/map/key.velt) at the key type, which the shared body
+    /// reaches through its dictionary. `None` when std lacks it.
+    fn ph_key_call(&mut self, name: &str, t: TyId, args: &[hir::Expr]) -> Option<Operand> {
+        let def = self.cx.prelude_def(name)?;
+        Some(self.call_def(def, vec![t], vec![], args))
     }
 }

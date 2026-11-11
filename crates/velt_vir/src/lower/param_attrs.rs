@@ -153,6 +153,8 @@ impl Cx<'_> {
     /// writes through the param. `atomic` false: only a `Mutex` or `RwLock` counts. `depth`
     /// guards against pathological nesting.
     pub(super) fn holds_mutex(&mut self, ty: TyId, depth: u32, atomic: bool) -> bool {
+        // A shape question (shape/key.rs): a placeholder answers for its representative.
+        let ty = self.ph_rep(ty);
         if depth > 32 {
             return true;
         }

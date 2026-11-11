@@ -132,7 +132,8 @@ impl FnLower<'_, '_> {
             true => LkMode::Deferred,
             false => self.mode,
         };
-        let fid = self.cx.func_direct(work, mode);
+        let shared = self.cx.shared_work(&work, mode);
+        let fid = shared.map_or_else(|| self.cx.func_direct(work, mode), |s| s.0);
         // Not `super.m()`: JavaScript calls the base method without reading it from `this`.
         let sup = std::mem::take(&mut self.super_call);
         if f.self_ty.is_some() && !args.is_empty() && pre.is_empty() && !sup {
@@ -174,6 +175,8 @@ impl FnLower<'_, '_> {
         let changed = std::mem::replace(&mut self.changed_args, changed);
         argv.extend(self.lower_args(args, &modes, how, Some(def)));
         self.changed_args = changed;
+        // The dictionary of a shared instance, before the location (`Inst::trailing`).
+        argv.extend(shared.map(|s| Operand::Const(vir::Const::Static(s.1), vir::Ty::Ptr)));
         argv.extend(loc_arg);
         let handed = std::mem::replace(&mut self.kept_handed, handed);
         let drops = std::mem::replace(&mut self.kept_drops, drops);

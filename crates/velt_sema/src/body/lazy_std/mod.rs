@@ -51,6 +51,8 @@ const BY_NAME: &[&str] = &[
     velt_common::std_module!(sync_epoch),
     velt_common::std_module!(lang_this_fn),
     velt_common::std_module!(host),
+    // A key's hash and comparison, which shared `Map` code calls (velt_vir lower/shape/).
+    "std/lang/map/key",
 ];
 
 /// The prelude's modules (path prefixes): lowering looks up some of their free functions by name

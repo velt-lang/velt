@@ -299,25 +299,33 @@ fn local_place(e: &hir::Expr) -> bool {
 impl FnLower<'_, '_> {
     /// Is `t` (or its payload) a union with a view variant?
     fn holds_union_view(&mut self, t: TyId) -> bool {
-        let t = match self.kind(t) {
-            hir::TyKind::Option(p, _) => p,
-            _ => t,
-        };
-        let hir::TyKind::Adt(d, _) = self.kind(t) else {
-            return false;
-        };
-        match self.cx.hir.def(d) {
-            hir::Def::Enum(e) => {
-                e.is_union
-                    && (e.variants.iter()).any(|v| v.name == super::types::UNION_VIEW_VARIANT)
-            }
-            _ => false,
-        }
+        let t = self.sub(t);
+        self.cx.holds_union_view(t)
     }
 
     /// A panic for a union view that reached a match with no arm for it.
     fn view_panic(&mut self) {
         let a = self.panic_text("TypeError: a union view reached a use that needs its member");
         self.call_rt(super::rt::Rt::Panic, vec![a], None);
+    }
+}
+
+impl super::Cx<'_> {
+    /// Is `t` (or its payload) a union with a view variant? A shape question (shape/key.rs).
+    pub(super) fn holds_union_view(&self, t: TyId) -> bool {
+        let t = match self.rep_kind(t) {
+            hir::TyKind::Option(p, _) => *p,
+            _ => t,
+        };
+        let hir::TyKind::Adt(d, _) = self.rep_kind(t) else {
+            return false;
+        };
+        match self.hir.def(*d) {
+            hir::Def::Enum(e) => {
+                e.is_union
+                    && (e.variants.iter()).any(|v| v.name == super::types::UNION_VIEW_VARIANT)
+            }
+            _ => false,
+        }
     }
 }
