@@ -1,7 +1,7 @@
 // velt/net (internal): `TcpListener`, a bound listening socket (`listen`, `listenTls`).
 
 import { unwrapIo } from "velt/native/result";
-import { velt_rt_tcp_accept, velt_rt_tcp_listener_close } from "#net-tcp";
+import { listenerWorkers, velt_rt_tcp_accept, velt_rt_tcp_listener_close } from "#net-tcp";
 import { TcpStream } from "velt/net/tcp_stream";
 
 /** A bound listening socket. */
@@ -16,6 +16,17 @@ export struct TcpListener {
    */
   async accept(): Promise<TcpStream> {
     return { handle: unwrapIo(await velt_rt_tcp_accept(this.handle)) };
+  }
+
+  /**
+   * How many workers a server can spread the connections it accepts over, each on a task pinned
+   * to one of them (`spawn(p, { worker })`): `workerCount()`; 1 in a program with module state,
+   * whose handlers would wait for each other on the module lock (until #2726 replaces it), and
+   * in a build compiled with the executor in Velt (`VELT_SCHEDULER=std`), whose sockets stay on
+   * its worker. http-server's `serve` gives them the workers in turn.
+   */
+  workers(): number {
+    return listenerWorkers(this.handle) as number;
   }
 
   /**

@@ -638,6 +638,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::KeyWrite
         | I::NeedsTransfer
         | I::NeedsDrop
+        | I::ModuleStateUsed
         | I::MayAlias
         | I::HoldsNull
         | I::NullAs

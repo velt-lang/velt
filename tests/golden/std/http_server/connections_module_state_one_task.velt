@@ -1,0 +1,43 @@
+// A program with module state keeps a server's connections on one task (#2744), until #2726
+// replaces the process-wide module lock: spread over the workers, handlers that touch module
+// state would wait for each other on it and serve fewer requests than one task does. The
+// compiler knows it (`spreadsConnections()` is a constant), the listener offers one worker to
+// spread over, and the connections are served (connections_spread_over_workers.velt is the
+// program without module state). Which worker serves them is not checked: the accept loop's one
+// task may be moved to another worker at any time (a worker the OS took off its core is
+// rescued), so the worker a handler sees says nothing about how many tasks there are.
+import { HttpRequest, HttpResponse, serveHttp } from "http-server";
+import { connect, listen, spreadsConnections, TcpStream } from "velt/net";
+
+// Module state: a module-level `let`.
+let greeting = "hello";
+
+async function readAll(conn: TcpStream): Promise<string> {
+  let out = "";
+  while (true) {
+    const text = await conn.readString();
+    if (text == "") {
+      return out;
+    }
+    out += text;
+  }
+}
+
+async function main() {
+  greeting = "served";
+  console.log(`spreads connections: ${spreadsConnections()}`);
+  const probe = await listen("127.0.0.1:0");
+  console.log(`workers to spread over: ${probe.workers()}`);
+  probe.close();
+  const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+    res.send(`ok ${req.path()}`);
+  });
+  for (let i: i64 = 0; i < 3; i++) {
+    const c = await connect(`127.0.0.1:${server.port}`);
+    await c.write(`GET /${i} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    const text = await readAll(c);
+    c.close();
+    console.log(`${greeting}: ${text.slice(text.indexOf("\r\n\r\n") + 4)}`);
+  }
+  await server.shutdown();
+}

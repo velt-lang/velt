@@ -106,7 +106,7 @@ export {
   strLen,
 } from "velt/lang/intrinsics/string";
 export { symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
-export { firstFulfilled, spawnHandled } from "velt/lang/intrinsics/task";
+export { firstFulfilled, moduleStateUsed, spawnHandled } from "velt/lang/intrinsics/task";
 export { threadLocalGet, threadLocalSet } from "velt/lang/intrinsics/thread_local";
 export {
   fnCapturesNothing,
