@@ -274,7 +274,7 @@ pub(crate) fn assignment_in(cx: &mut Ctx, d: DefId, l: LocalId) -> Option<Span> 
 }
 
 /// Per closure: the function that creates it.
-pub(super) fn enclosing_fns(cx: &mut Ctx) -> FxHashMap<DefId, DefId> {
+pub(crate) fn enclosing_fns(cx: &mut Ctx) -> FxHashMap<DefId, DefId> {
     let mut out = FxHashMap::default();
     for i in 0..cx.defs.len() {
         let Some(Def::Fn(mut f)) = cx.defs[i].take() else {

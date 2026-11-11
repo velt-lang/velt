@@ -326,6 +326,14 @@ impl Moves<'_> {
                     s.captured[i] = Some((span, holder.map(|h| h.0 as usize), w || before));
                 }
             }
+            // A closure that doesn't escape, but makes one that keeps this variable by value (an
+            // executor storing a callback, #2807): the variable is held as by an escaping closure.
+            if !escaping && self.kept.get(&d).is_some_and(|k| k.contains(&c.outer)) {
+                if let Some(s) = st {
+                    let before = s.captured[i].is_some_and(|(_, _, x)| x);
+                    s.captured[i] = Some((span, holder.map(|h| h.0 as usize), before));
+                }
+            }
         }
     }
 
