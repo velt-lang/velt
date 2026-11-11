@@ -1,10 +1,11 @@
-// velt/lang/hooks (internal): code polled off the worker under the executor in Velt (sched.velt,
-// #2649): a pinned spawn runs on the runtime's executor (its worker threads), so its `sleep`, its
-// Node timers and the promises it boxes and starts are the runtime's, driven by the runtime's
-// task as the code is (a timer's callback runs as such a started promise). The runtime's timer
-// handles have bit 0 clear; the executor's set it. The runtime's entries are reached through
-// their `declare c` (lowering routes only the runtime's own declarations to the executor).
-// Until the multi-worker step takes pinned spawns over (#2649 step 3).
+// velt/lang/hooks (internal): code polled off every worker of the executor in Velt (sched.velt,
+// #2649): code the runtime's executor runs on its own threads (a C library's callback, a
+// runtime leaf's thread), so its `sleep`, its Node timers and the promises it boxes and starts
+// are the runtime's, driven by the runtime's task as the code is (a timer's callback runs as
+// such a started promise). Pinned spawns are the executor's own tasks on their worker (#2649
+// step 3) and never come here. The runtime's timer handles have bit 0 clear; the executor's set
+// it. The runtime's entries are reached through their `declare c` (lowering routes only the
+// runtime's own declarations to the executor).
 
 import { Ptr } from "velt/ffi";
 import * as m from "./sched_mem";
@@ -26,7 +27,6 @@ declare c("c") function velt_rt_fut_start$rt(f: usize, rdrop: usize): void;
 declare c("c") function velt_rt_fut_start_rejecting$rt(f: usize, rdrop: usize): void;
 declare c("c") function velt_rt_fut_detach$rt(f: usize, qdrop: usize): void;
 declare c("c") function velt_rt_futs_handled$rt(futs: usize, n: u64, qdrop: usize): void;
-declare function velt_rt_flush(): void;
 
 /** The runtime's `sleep` of `ms` milliseconds: a heap future. */
 export function sleep(ms: i64): usize {
@@ -102,12 +102,4 @@ export function handled(futs: usize, n: u64, qdrop: usize): void {
   unsafe {
     velt_rt_futs_handled$rt(futs, n, qdrop);
   }
-}
-
-/**
- * The worker's buffered stdout written out before it waits, as the runtime's idle workers do: a
- * pinned spawn's lines, written on its own thread, come after the worker's written before them.
- */
-export function flush(): void {
-  velt_rt_flush();
 }

@@ -1,0 +1,420 @@
+// velt/lang/hooks (internal): the stall monitor of the executor in Velt (sched.velt, #2649 step
+// 3), a thread of its own (an `@export`ed function started like a worker), ported from the
+// runtime's (velt_rt task/runtime/velt/monitor.rs).
+//
+// A worker that makes no progress holds back everything queued on it: a task that runs on
+// without returning from its poll, or a worker the OS took off its core. The monitor ticks every
+// `TICK` while some worker is awake; a worker that started no poll for `STALL_TICKS` ticks while
+// work waits has its inbox and half of its queue moved to another worker, a sleeping one if
+// there is one, which becomes their home; when every other worker is stalled too (or there is no
+// other), a spare worker starts and takes them (up to `SPARES`, which stay workers from then on
+// and are not counted by `workerCount()`). Pinned tasks and tasks anchored to their worker stay.
+// `VELT_RESCUE=0` turns the rescue off (for counting instructions: then nothing depends on how
+// the OS schedules the threads). With one worker (`VELT_THREADS=1`) the rescue is off unless
+// `VELT_RESCUE=1`: then there is no monitor thread at all, and a poll that runs on holds back the
+// rest, as in Node and on `main`'s one-worker executor (sched_workers.velt `rescues`).
+//
+// The monitor also starts spawned tasks that wait behind a sibling that computes: a worker that
+// starts the first poll of a spawned task with fresh tasks behind it says so (`E_WATCH`), and
+// the monitor checks it every `FAST_TICK` while it does; once that one poll has lasted a fast
+// tick, the fresh tasks go to sleeping workers, one each. A watch wakes the monitor from its nap
+// (a hurry) until `HURRY_LIMIT` such wakes in a row moved nothing.
+//
+// A stalled worker's reactor gets a turn first (its sockets' events, `io.turnFor`), as the
+// runtime's monitor does; unlike the runtime's, the monitor does not fire the worker's timers:
+// its timer block is no other thread's, so a task waiting for a stalled worker's sleep or Node
+// timer waits for the worker (such tasks are anchored to it: sched_task.velt `ANCHORED`).
+
+import { Ptr, export as cExport } from "velt/ffi";
+import { exportedAddress, noInline } from "velt/lang/intrinsics";
+import * as r from "#reactor";
+import * as th from "#sched-thread";
+import * as io from "./sched_io";
+import * as lk from "./sched_lock";
+import * as m from "./sched_mem";
+import * as lazy from "./sched_monitor_lazy";
+import * as rx from "./sched_relax";
+import * as q from "./sched_queue";
+import * as sp from "./sched_spread";
+import * as tq from "./sched_take";
+import * as t from "./sched_task";
+import * as workers from "./sched_workers";
+import * as wk from "./sched_wake";
+
+/** The monitor's tick (nanoseconds). */
+const TICK: usize = 1000000;
+/** How often it checks a watched first poll (nanoseconds). */
+const FAST_TICK: usize = 50000;
+/** Ticks without a new task poll after which a worker counts as stalled. */
+export const STALL_TICKS: usize = 2;
+/** Hurried wakes in a row that moved nothing, after which watches stop hurrying. */
+const HURRY_LIMIT: usize = 4;
+/** Workers beyond the configured ones, started when every worker is stalled with work waiting. */
+export const SPARES: usize = 4;
+/** `E_WATCH`: the monitor has seen this poll once; the tasks queued before it. */
+const SEEN: usize = 0x80000000;
+const WATCHED: usize = 0x7fffffff;
+
+/** Starts the monitor thread for worker 0's block `g`: whether it started. */
+export function start(g: usize): bool {
+  // SAFETY: `monitorMain` is `@export`ed as `void* f(void*)`, what `pthread_create` calls.
+  const f = unsafe { exportedAddress(monitorMain) };
+  return th.start(f, g);
+}
+
+@cExport("std_sched_monitor")
+function monitorMain(arg: Ptr<u8> | null): Ptr<u8> | null {
+  const g = m.addr(arg);
+  // Its waits' count and the sources it makes due, while it delivers a stalled worker's events.
+  m.swap(g + t.E_MON_IO, io.openBare());
+  let nextTick = sp.now() + TICK;
+  let lastPass = sp.now();
+  let idleHurries: usize = 0;
+  while (true) {
+    if (allParked(g)) {
+      if (m.ld(g + t.E_RESCUE) !== 0 && m.ld(g + t.E_STAY) === 0 && rx.idleDuties(g)) {
+        // Spares asked to retire: their answers come within a tick.
+        nap(g, TICK);
+        continue;
+      }
+      sleepWhileParked(g);
+      nextTick = sp.now() + TICK;
+      continue;
+    }
+    // Slow mode published before the last look at the watches: a watch stored after it sees
+    // `E_MON_FAST` clear and hurries.
+    let fast = watching(g);
+    m.store32(g + t.E_MON_FAST, fast ? 1 : 0);
+    if (!fast && watching(g)) {
+      fast = true;
+      m.store32(g + t.E_MON_FAST, 1);
+    }
+    const n0 = sp.now();
+    const untilTick = nextTick > n0 ? nextTick - n0 : 0;
+    if (nap(g, fast && untilTick > FAST_TICK ? FAST_TICK : untilTick)) {
+      idleHurries++;
+      if (idleHurries >= HURRY_LIMIT) {
+        m.store32(g + t.E_MON_CALM, 1);
+      }
+    }
+    const nw = sp.now();
+    // Passes a fast tick apart at least: a poll seen twice has lasted that long.
+    if (nw - lastPass >= FAST_TICK && m.ld(g + t.E_STAY) === 0) {
+      lastPass = nw;
+      if (startFresh(g) > 0) {
+        idleHurries = 0;
+        m.store32(g + t.E_MON_CALM, 0);
+      }
+    }
+    if (nw < nextTick) {
+      continue;
+    }
+    nextTick = nw + TICK;
+    const ticks = m.load(g + t.E_TICKS) + 1;
+    m.swap(g + t.E_TICKS, ticks);
+    if (m.ld(g + t.E_RESCUE) !== 0 && m.ld(g + t.E_STAY) === 0 && !rx.relaxDuties(g, ticks)) {
+      if (m.load(g + t.E_LAZY) !== 0) {
+        lazy.lazyDuties(g, ticks);
+      }
+      stallDuties(g, ticks);
+    }
+  }
+  return null;
+}
+
+/** Is every started worker parked? */
+function allParked(g: usize): bool {
+  const n = m.load(g + t.E_STARTED);
+  for (let i: usize = 0; i < n; i++) {
+    if (m.load32(t.worker(i) + t.E_PARK) !== 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Sleeps while every worker is parked, until one kicks (`kick`). */
+function sleepWhileParked(g: usize): void {
+  m.store32(g + t.E_MON_ASLEEP, 1);
+  // A worker that woke between the caller's look and the store above kicks after it.
+  while (m.load32(g + t.E_MON_ASLEEP) === 1 && allParked(g)) {
+    r.wordWait(g + t.E_MON_ASLEEP, 1);
+  }
+  m.store32(g + t.E_MON_ASLEEP, 0);
+}
+
+/** Wakes the monitor if it sleeps (a worker woke up: its polls need watching). */
+export function kick(g: usize): void {
+  if (m.load32(g + t.E_MON_ASLEEP) === 1 && m.cas32(g + t.E_MON_ASLEEP, 1, 0) === 1) {
+    r.wordWake(g + t.E_MON_ASLEEP);
+  }
+}
+
+/** Sleeps `ns` nanoseconds or until a worker hurries it: whether one did. */
+function nap(g: usize, ns: usize): bool {
+  const us = ns / 1000;
+  if (us > 0 && m.load32(g + t.E_MON_HURRY) === 0) {
+    r.wordWaitFor(g + t.E_MON_HURRY, 0, us as u32);
+  }
+  return m.and32(g + t.E_MON_HURRY, 0) !== 0;
+}
+
+/** Cuts the monitor's nap short unless it checks watches often already. */
+function hurry(g: usize): void {
+  if (m.load32(g + t.E_MON_FAST) === 0 && m.or32(g + t.E_MON_HURRY, 1) === 0) {
+    r.wordWake(g + t.E_MON_HURRY);
+  }
+}
+
+/**
+ * Worker `e` starts the first poll of a spawned task (its poll number `polls`) with `behind`
+ * tasks in its second queue, some fresh: published for the monitor, which checks it soon,
+ * unless no other worker sleeps (none could start them). Whether it did.
+ */
+@noInline
+export function watch(e: usize, polls: usize, behind: usize): bool {
+  const g = t.main();
+  if (sp.sleepingHelper(e) === 0) {
+    return false;
+  }
+  const word = ((polls & 0xffffffff) << 32) | (behind > WATCHED ? WATCHED : behind);
+  m.swap(e + t.E_WATCH, word);
+  if (m.load32(g + t.E_MON_CALM) === 0) {
+    hurry(g);
+  }
+  return true;
+}
+
+/** Does a started worker run a watched poll that sleeping ones could help with? */
+function watching(g: usize): bool {
+  const n = m.load(g + t.E_STARTED);
+  let watched = false;
+  let sleeping = false;
+  for (let i: usize = 0; i < n; i++) {
+    const w = t.worker(i);
+    const parked = m.load32(w + t.E_PARK) === 1;
+    if (parked) {
+      sleeping = true;
+    } else if (m.load(w + t.E_WATCH) !== 0) {
+      watched = true;
+    }
+  }
+  return watched && sleeping;
+}
+
+/**
+ * The pass over the watches: marks a watched poll seen, and when it was seen at the last pass
+ * already (the same poll, on for a fast tick), hands the fresh tasks that waited behind it to
+ * sleeping workers, one each. How many it moved.
+ */
+function startFresh(g: usize): usize {
+  const n = m.load(g + t.E_STARTED);
+  let moved: usize = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const w = t.worker(i);
+    const word = m.load(w + t.E_WATCH);
+    if (word === 0 || m.load32(w + t.E_PARK) === 1) {
+      continue;
+    }
+    if ((word & SEEN) === 0) {
+      m.cas(w + t.E_WATCH, word, word | SEEN);
+      continue;
+    }
+    let helpers: usize = 0;
+    for (let j: usize = 0; j < n; j++) {
+      if (j !== i && m.load32(t.worker(j) + t.E_PARK) === 1) {
+        helpers++;
+      }
+    }
+    // Not waiting on the worker: one that holds its queue is between polls.
+    if (helpers === 0 || !q.tryLock(w)) {
+      continue;
+    }
+    // Still the same poll: done with it either way.
+    if (m.cas(w + t.E_WATCH, word, 0) !== word) {
+      m.store32(w + t.E_QLOCK, 0);
+      continue;
+    }
+    m.inc(g + t.E_MOVING);
+    let k = q.reverse(tq.takeFresh(w, word & WATCHED, helpers));
+    m.store32(w + t.E_QLOCK, 0);
+    while (k !== 0) {
+      const next = m.ld(k + t.T_NEXT);
+      const h = sp.sleepingHelper(w);
+      if (h !== 0) {
+        handOver(h, k);
+      } else {
+        sendBack(w, k);
+      }
+      moved++;
+      k = next;
+    }
+    m.dec(g + t.E_MOVING);
+  }
+  return moved;
+}
+
+/** The monitor's tick `now`: the rescue of each stalled worker. */
+function stallDuties(g: usize, now: usize): void {
+  let i: usize = 0;
+  // A spare started for one worker serves the next in the same tick (it is not stalled).
+  while (i < m.load(g + t.E_STARTED)) {
+    const w = t.worker(i);
+    // A lazy worker 0 has its own duties (`lazyDuties`); a retired spare runs nothing
+    // (sched_relax.velt).
+    if (
+      stalled(w, now) &&
+      (w !== g || m.load(g + t.E_LAZY) === 0) &&
+      (m.load32(w + t.E_RETIRED) & t.R_AWAY) === 0 &&
+      computing(w)
+    ) {
+      rescueOf(g, w, now);
+    }
+    i++;
+  }
+}
+
+/** Awake and no task poll started for `STALL_TICKS` ticks up to tick `now`. */
+export function stalled(w: usize, now: usize): bool {
+  return m.load32(w + t.E_PARK) !== 1 && now >= m.ld(w + t.E_PROGRESS) + STALL_TICKS;
+}
+
+/**
+ * Stalled worker `w` computes: its thread ran `STALL_CPU` since the monitor first saw it stalled
+ * (a tick before at least), not a worker the OS took off its core, which a spare would only make
+ * wait longer on a loaded machine. The first look takes the reading (false then), unless the
+ * thread has no clock (`#reactor` `threadCpu`): stalled as the ticks say.
+ */
+function computing(w: usize): bool {
+  const c = m.ld(w + t.E_CPU);
+  if (c === 0) {
+    return true;
+  }
+  const cpu = r.threadCpu(c as u64) as usize;
+  const seen = m.ld(w + t.E_PROGRESS) + 1;
+  if (m.ld(w + t.E_STALL_SEEN) !== seen) {
+    m.st(w + t.E_STALL_SEEN, seen);
+    m.st(w + t.E_STALL_CPU, cpu);
+    return false;
+  }
+  return cpu - m.ld(w + t.E_STALL_CPU) >= STALL_CPU;
+}
+
+/**
+ * The CPU time a stalled worker's thread runs between the monitor's first look and a later one
+ * for its poll to count as computing (nanoseconds): three quarters of a tick.
+ */
+export const STALL_CPU: usize = 750000;
+
+/**
+ * The rescue of stalled worker `w` at tick `now`: its inbox and half of its queue to another
+ * worker, which becomes their home (pinned and anchored tasks stay); only when a worker can take
+ * them (one asleep, one not stalled, or a spare that starts): moved to another stalled worker,
+ * they would only move again.
+ */
+function rescueOf(g: usize, w: usize, now: usize): void {
+  // Its sockets' events first: the tasks they wake join its inbox, and move with it below.
+  io.turnFor(m.ld(w + t.E_IO));
+  let waiting = m.load(w + t.E_INBOX) !== 0;
+  if (!waiting && q.tryLock(w)) {
+    waiting = q.len(w) > 0;
+    m.store32(w + t.E_QLOCK, 0);
+  }
+  if (!waiting) {
+    return;
+  }
+  let helper = helperFor(g, w, now);
+  if (helper === 0) {
+    helper = startSpare(g, now);
+  }
+  if (helper === 0) {
+    return;
+  }
+  // In no queue until they reach one again: counted, so the end of the program waits for them.
+  m.inc(g + t.E_MOVING);
+  let k = q.reverse(m.takeStack(w + t.E_INBOX));
+  if (q.tryLock(w)) {
+    let half = q.reverse(tq.takeHalf(w, true));
+    m.store32(w + t.E_QLOCK, 0);
+    // After the inbox's tasks, oldest first.
+    if (k === 0) {
+      k = half;
+    } else {
+      let last = k;
+      while (m.ld(last + t.T_NEXT) !== 0) {
+        last = m.ld(last + t.T_NEXT);
+      }
+      m.st(last + t.T_NEXT, half);
+    }
+  }
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    if (t.movable(k)) {
+      handOver(helper, k);
+    } else {
+      // Back through the inbox with a wake: the worker may have parked since.
+      sendBack(w, k);
+    }
+    k = next;
+  }
+  m.dec(g + t.E_MOVING);
+}
+
+/**
+ * The worker that takes the tasks of stalled worker `w` at tick `now`: the sleeping one that did
+ * least, else the awake one not stalled with the shortest queue; 0 when every other is stalled.
+ */
+export function helperFor(g: usize, w: usize, now: usize): usize {
+  const s = sp.sleepingHelper(w);
+  if (s !== 0) {
+    return s;
+  }
+  const n = m.load(g + t.E_STARTED);
+  let best: usize = 0;
+  let least: usize = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const h = t.worker(i);
+    if (h === w || stalled(h, now)) {
+      continue;
+    }
+    const len = m.load(h + t.E_QUEUED);
+    if (best === 0 || len < least) {
+      best = h;
+      least = len;
+    }
+  }
+  return best;
+}
+
+/** Starts the next spare worker at tick `now`: its block, or 0 once all have started. */
+export function startSpare(g: usize, now: usize): usize {
+  const i = m.load(g + t.E_STARTED);
+  if (i >= m.ld(g + t.E_COUNT) + SPARES) {
+    return 0;
+  }
+  // A second thread runs tasks: latches and join slots are locked from now on (sched_lock).
+  lk.locksOn();
+  const w = t.worker(i);
+  m.st(w + t.E_PROGRESS, now);
+  m.store32(w + t.E_PARK, 0);
+  m.swap(g + t.E_STARTED, i + 1);
+  if (!workers.startThread(w)) {
+    // No thread: asleep for good, as far as the others can tell.
+    m.store32(w + t.E_PARK, 1);
+    return 0;
+  }
+  return w;
+}
+
+/** Makes worker `h` the home of task `k`, queues it in its inbox and wakes it. */
+export function handOver(h: usize, k: usize): void {
+  m.st(k + t.T_HOME, h);
+  m.pushStack(h + t.E_INBOX, k, t.T_NEXT);
+  wk.unpark(h);
+}
+
+/** Returns task `k`, taken from worker `w`, to its inbox and wakes it. */
+export function sendBack(w: usize, k: usize): void {
+  m.pushStack(w + t.E_INBOX, k, t.T_NEXT);
+  wk.unpark(w);
+}

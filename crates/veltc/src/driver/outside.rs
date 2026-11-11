@@ -226,9 +226,13 @@ pub(crate) fn of_file(record: &str, index: usize) -> Option<String> {
 /// §5): `-` or the reasons. The host's own plumbing (`velt/generate`, which reads the requests
 /// from standard input) is left out: what counts is what the generators it registers reach.
 pub(crate) fn generator_reaches(program: &Program) -> String {
-    // `std/generate::…` and `std/generate/<file>::…`.
+    // `std/generate::…` and `std/generate/<file>::…`; and the C functions the executor in Velt
+    // exports under `VELT_SCHEDULER=std` (`std_sched_…`: its waker tables and worker threads),
+    // live in every program built then, which a generator's request never reaches.
     describe(program, &|symbol| {
-        symbol.starts_with("_V3stdP8generateN") || symbol.starts_with("_V3stdP8generateP")
+        symbol.starts_with("_V3stdP8generateN")
+            || symbol.starts_with("_V3stdP8generateP")
+            || symbol.starts_with("std_sched_")
     })
 }
 

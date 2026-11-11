@@ -1,5 +1,5 @@
 // velt/lang/hooks (internal): the tasks of the executor in Velt (sched.velt, #2649): the
-// executor's and a task's layout, waking a task (its C waker's table) and the worker's queues.
+// executor's and a task's layout and the worker blocks; waking a task is sched_wake.velt's.
 //
 // Everything is raw memory (sched_mem.velt), so nothing here is module state (which is per task):
 // - The executor, allocated once, its address in `EXEC`: the inbox (a stack of tasks woken from
@@ -26,20 +26,26 @@
 //   how many it drives that are unfinished, its microtask queue (sched_micro.velt; 0 until the
 //   first entry), the rejected promises nobody handled, reported once its microtasks are drained
 //   (sched_node.velt `report`), the task's size in bytes (to free it with), its sleeps due to
-//   fire (sched_sleep.velt), the join handle (a heap future, rt_abi_async.md §1) whose result
-//   slot follows, then the initial state copied in: one allocation per spawn.
+//   fire (sched_sleep.velt), its home worker, its join slot's word, its result's transfer glue,
+//   the join handle (a heap future, rt_abi_async.md §1) whose result slot follows, then the
+//   initial state copied in: one allocation per spawn.
 //
-// One worker (VELT_THREADS=1 scope): the live count and a task's join slot and flags are plain
-// memory the worker alone changes; they become atomics in the multi-worker step (#2649 step 3).
+// Workers (#2649 step 3): every worker thread has a block of this layout (`exec()` is this
+// thread's); the first is worker 0's, the thread that runs `main`, which also holds what is
+// process-wide: the waker tables, the live task count, the keep-alive count, the root of `main`,
+// the probe, the top-level `await`'s site, the due `unref()`'d timers, and the array of worker
+// blocks (`main()`). A task belongs to its home worker (`T_HOME`): a wake from its home's thread
+// queues it there, a wake from any other thread pushes it on the home's inbox and wakes the
+// home's reactor. Only the thread polling a task changes its flags; the join slot is guarded by a
+// lock bit in its own word (`T_JOIN_STATE`), so a handle may be polled and dropped on any thread.
 
 import { inline } from "velt/lang/intrinsics";
-import * as io from "./sched_io";
 import * as m from "./sched_mem";
 
-/** The executor's address (0 until it starts). */
+/** Worker 0's block, which holds what is process-wide (0 until the executor starts). */
 const EXEC = new Atomic<u64>(0);
-/** Is this thread the worker? */
-const ON_WORKER = new ThreadLocal<bool>(false);
+/** This thread's worker block (0: not a worker). */
+const WORKER = new ThreadLocal<u64>(0);
 
 /** The executor's fields. */
 export const E_INBOX: usize = 0;
@@ -63,11 +69,206 @@ export const E_PROBE_WORD: usize = 208;
 export const E_PROBE_CX: usize = 216;
 export const E_TLA_SET: usize = 232;
 export const E_TLA: usize = 240;
-export const E_PINNED: usize = 272;
 export const E_TIMERS: usize = 280;
 export const E_UNCAUGHT: usize = 288;
 export const E_JOB: usize = 296;
-export const E_SIZE: usize = 304;
+/** Worker 0's block (in every block); this worker's index. */
+export const E_MAIN: usize = 304;
+export const E_INDEX: usize = 312;
+/** Worker 0's: the array of worker blocks and how many there are. */
+export const E_WORKERS: usize = 320;
+export const E_COUNT: usize = 328;
+/** The worker the next spawn from this worker is pinned to, plus 1 (0: none). */
+export const E_PIN: usize = 336;
+/** Worker 0's: the workers whose threads started, the spares started on demand included. */
+export const E_STARTED: usize = 344;
+/**
+ * The run queue (sched_queue.velt; `E_HEAD`/`E_TAIL` is its second queue): its lock, the input
+ * queue (first, last, length), the second queue's length, the slot for the task to run next and
+ * its runs in a row, tasks taken from input since the second queue's last, the fair pass's tasks
+ * left and when it is due, the time of the last reactor turn (monotonic nanoseconds).
+ */
+export const E_QLOCK: usize = 352;
+export const E_IHEAD: usize = 360;
+export const E_ITAIL: usize = 368;
+export const E_ILEN: usize = 376;
+export const E_RLEN: usize = 384;
+export const E_NEXT: usize = 392;
+export const E_NEXT_RUNS: usize = 400;
+export const E_SINCE_REST: usize = 408;
+export const E_FAIR_LEFT: usize = 416;
+export const E_FAIR_DUE: usize = 424;
+export const E_NOW: usize = 432;
+/** What other threads do here (`M_SHARED`, `M_MONITOR`), fixed once the executor starts. */
+export const E_MODE: usize = 440;
+/** What a wake from this thread is now: 0 a task's, `D_INPUT` or `D_OUTPUT` (`schedule`). */
+export const E_DISPATCH: usize = 444;
+/**
+ * The spread (sched_spread.velt): tasks offered to a helper (a stack), the work done and the
+ * queue's length as last published, the monitor's tick at the last poll's start, the watch of a
+ * first poll with fresh tasks behind it (sched_monitor.velt), task polls so far, polls left until
+ * the next look at the spread; the measurement window: its start, the polls then, the input and
+ * whole queue lengths noted and how often, the time slept in it.
+ */
+export const E_OFFER: usize = 448;
+export const E_WORK: usize = 456;
+export const E_QUEUED: usize = 464;
+export const E_PROGRESS: usize = 472;
+export const E_WATCH: usize = 480;
+export const E_POLLS: usize = 488;
+export const E_HELP: usize = 496;
+export const E_W_START: usize = 504;
+export const E_W_POLLS: usize = 512;
+export const E_W_INPUT: usize = 520;
+export const E_W_ALL: usize = 528;
+export const E_W_NOTED: usize = 536;
+export const E_W_SLEPT: usize = 544;
+/** A latch of the runtime's, open, whose opening publishes this thread's output (`publish`). */
+export const E_LATCH: usize = 552;
+/**
+ * Worker 0's (sched_monitor.velt): the monitor's clock (ticks), whether it sleeps while every
+ * worker does, the word its naps wait on (a hurry), whether it checks watches often, whether
+ * watches stopped hurrying it, whether it rescues, the tasks it moves now.
+ */
+export const E_TICKS: usize = 560;
+export const E_MON_ASLEEP: usize = 568;
+export const E_MON_HURRY: usize = 572;
+export const E_MON_FAST: usize = 576;
+export const E_MON_CALM: usize = 580;
+export const E_RESCUE: usize = 584;
+export const E_MOVING: usize = 592;
+/** Worker 0's: the monitor's I/O block (no reactor: it delivers a stalled worker's events). */
+export const E_MON_IO: usize = 600;
+/** Worker 0's: tasks stay on their worker (sched_spread.velt `stay`). */
+export const E_STAY: usize = 608;
+/**
+ * The queue takes its slow path (sched_queue.velt `pop`): input queued, a task in the slot, the
+ * slot's runs to count, or a fair pass under way; else only the second queue holds tasks, and
+ * the fast path reads one word.
+ */
+export const E_QSLOW: usize = 616;
+/** Times another thread woke this worker from its park (sched_end.velt `quiet`). */
+export const E_UNPARKS: usize = 624;
+/**
+ * Worker 0's, when it is the only worker and the monitor may rescue it (`VELT_THREADS=1
+ * VELT_RESCUE=1`): its queue stays its own (`E_MODE` 0, no lock, nothing counted or published
+ * per poll) until the monitor finds it stalled once (`LAZY_WATCH`), then the monitor makes it
+ * shared and moves tasks while the stalled poll runs, until the worker takes the shared mode on
+ * (`LAZY_TAKING`: sched_monitor.velt `lazyDuties`, sched_loop.velt `adopt`); 0 otherwise. The
+ * monitor's last look at it: the I/O tick and the task it saw running, and the monitor's tick.
+ */
+export const E_LAZY: usize = 632;
+export const E_SEEN_TICK: usize = 640;
+export const E_SEEN_CUR: usize = 648;
+export const E_SEEN_AT: usize = 656;
+/**
+ * Worker 0's, when it started lazy (`E_LAZY`): live tasks counted by the other threads (atomic),
+ * while worker 0 counts its own in `E_LIVE` without a lock (`E_SPLIT` 1): the count is the sum.
+ */
+export const E_LIVE_X: usize = 664;
+export const E_SPLIT: usize = 672;
+/** A lazy worker 0's looks at the reactor (`E_TICK` reaching 0), its progress the monitor reads. */
+export const E_LOOKS: usize = 680;
+/**
+ * A lazy worker 0's tasks queued during a poll (stacks: for its input and its second queue),
+ * which the monitor may take while the poll runs (it leaves the queues alone meanwhile), joined
+ * to its queues after the poll (sched_loop.velt `alone`).
+ */
+export const E_PIO: usize = 688;
+export const E_PREST: usize = 696;
+/**
+ * A lazy worker 0's task its last poll left to queue again, queued after the look (`turnLazy`),
+ * or, with nothing queued, run next from here.
+ */
+export const E_AGAIN: usize = 704;
+/**
+ * The first task a lazy worker 0's poll woke, its own (the monitor leaves it, as it leaves the
+ * slot of a shared worker; those woken after it go on `E_PREST`, which the monitor may take,
+ * as with one worker and no monitor they go to the second queue), queued after the poll: at the
+ * end of the second queue, ahead of them (one worker has no slot: `schedule`).
+ */
+export const E_PWAKE: usize = 712;
+/**
+ * The tasks a lazy worker 0's poll spawned after its first `PEND_STACKED` (a list through
+ * `T_NEXT`, its first and last: plain stores, no reversal, the monitor leaves them; a fan-out of
+ * a million spawns paid a CAS each and a walk of the stack through cold memory to reverse it),
+ * and how many the poll spawned (`E_PCOUNT`; sched_monitor_lazy.velt `fanOutOnly` reads it).
+ */
+export const E_PLIST: usize = 720;
+export const E_PLIST_TAIL: usize = 728;
+export const E_PCOUNT: usize = 736;
+/**
+ * What a lazy worker 0's poll queued on the words above (`schedule`, `pend`), so its look reads
+ * one word: `PANY_FIRST` alone, only its first wake (`E_PWAKE`); `PANY_MORE`, tasks on the
+ * stacks or `E_PLIST`; `PANY_WOKE`, among them a task it woke past its first.
+ */
+export const E_PANY: usize = 744;
+export const PANY_FIRST: usize = 1;
+export const PANY_WOKE: usize = 2;
+export const PANY_MORE: usize = 4;
+/**
+ * The worker thread's CPU-time clock (`#reactor` `threadClock`): the monitor tells a poll that
+ * computes from a worker the OS took off its core (sched_monitor.velt `computing`); the
+ * monitor's reading of it when it last saw a lazy worker 0's poll change (`E_SEEN_CPU`), and
+ * when it first saw a worker stalled, with the progress it saw then (`E_STALL_CPU`,
+ * `E_STALL_SEEN`).
+ */
+export const E_CPU: usize = 752;
+export const E_SEEN_CPU: usize = 760;
+export const E_STALL_CPU: usize = 768;
+export const E_STALL_SEEN: usize = 776;
+/**
+ * A spare's retirement (sched_relax.velt): `R_ASKED` by the monitor, `R_RETIRED` by the spare,
+ * which then runs no task and hands what reaches it to worker 0, until the monitor sets it back
+ * to 0; `R_DECLINED` by a spare that keeps its tasks (a worker as any other: `R_AWAY` holds the
+ * states in which it runs nothing). Worker 0's `E_RELAX`: the monitor asks it to leave the shared mode (`RELAX_ASKED`), it
+ * does so between two polls (`RELAX_DOING`, then 0).
+ */
+export const E_RETIRED: usize = 784;
+export const E_RELAX: usize = 788;
+export const R_ASKED: u32 = 1;
+export const R_RETIRED: u32 = 2;
+export const R_DECLINED: u32 = 4;
+export const R_AWAY: u32 = 3;
+export const RELAX_ASKED: u32 = 1;
+export const RELAX_DOING: u32 = 2;
+/** Worker 0's: the monitor's ticks so far with the spares idle (sched_relax.velt). */
+export const E_CALM: usize = 792;
+/**
+ * 1 on the only worker of an executor with no monitor (`VELT_THREADS=1`, unless `VELT_RESCUE=1`),
+ * set before tasks run and never changed: no other thread runs tasks, so every task is homed on
+ * it and its queues need no lock or count (sched_wake.velt `schedule`'s first path).
+ */
+export const E_SOLO: usize = 800;
+/**
+ * The join handle's poll and drop (a heap future's header) of the tasks made on this worker:
+ * without the slot's lock on a solo worker (sched_run.velt `joinPollSolo`), else `joinPoll`.
+ */
+export const E_JOIN_VT: usize = 808;
+export const E_SIZE: usize = 824;
+/** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
+export const PEND_STACKED: usize = 64;
+/** `E_LAZY`'s states. */
+export const LAZY_WATCH: usize = 1;
+export const LAZY_TAKING: usize = 2;
+
+/**
+ * `E_MODE`: other threads reach the queues and sources; the monitor watches the workers; other
+ * workers may take tasks (the spread: sched_spread.velt).
+ */
+export const M_SHARED: u32 = 1;
+export const M_MONITOR: u32 = 2;
+export const M_SPREAD: u32 = 4;
+/**
+ * Not a mode of `E_MODE`: what a lazy worker 0's step passes for its poll (sched_loop.velt
+ * `turnLazy`): the task the poll leaves to queue again waits in `E_AGAIN` until the look after.
+ */
+export const M_LAZY: u32 = 8;
+/** `E_DISPATCH`: wakes are input (a reactor turn, timers), or output (room to write). */
+export const D_INPUT: u32 = 1;
+export const D_OUTPUT: u32 = 2;
+/** Not a dispatch: a spawned task, for `pend`. */
+export const D_SPAWN: u32 = 3;
 
 /** A task's fields. */
 export const T_REFS: usize = 8;
@@ -88,8 +289,13 @@ export const T_MICRO: usize = 120;
 export const T_UNHANDLED: usize = 128;
 export const T_BYTES: usize = 136;
 export const T_TIMERS: usize = 144;
-export const T_JOIN: usize = 152;
-export const T_SLOT: usize = 168;
+export const T_HOME: usize = 152;
+export const T_JOIN_STATE: usize = 160;
+/** The result's transfer glue (0: none), run as the root finishes (sched_run.velt `rootDone`). */
+export const T_TRANSFER: usize = 168;
+/** The join handle (a heap future: its header, then its result slot at `T_SLOT`). */
+export const T_JOIN: usize = 184;
+export const T_SLOT: usize = 200;
 
 /** A task's states. */
 export const IDLE: u32 = 0;
@@ -99,15 +305,13 @@ export const NOTIFIED: u32 = 3;
 export const DONE: u32 = 4;
 
 /**
- * A task's flags: its join handle is alive; the handle took the result; the root of `main`; it
+ * A task's flags (changed by the thread polling it): the root of `main`; it
  * started a promise (check the woken ones); its root finished (its result is in the slot); it
  * counts as live (the root of `main` with promises left running); the microtask being run is a
  * waiter's step already (sched_micro.velt); sleeps of it are due to fire (sched_sleep.velt); its
  * poll took a timer's turn, and the next turn waits for the poll's end (sched_order.velt); its
  * root was polled as a microtask's job or by a due sleep (sched_run.velt `runWoken` reads it).
  */
-export const HANDLE: u32 = 1;
-export const CLAIMED: u32 = 2;
 export const ROOT: u32 = 4;
 export const LOCALS: u32 = 8;
 export const ROOT_DONE: u32 = 16;
@@ -116,34 +320,85 @@ export const COUNTED: u32 = 64;
 export const CREDIT: u32 = 128;
 export const HOLDS: u32 = 256;
 export const POLLED: u32 = 512;
+/** Pinned to its worker (`spawn(p, { worker })`): it never moves. */
+export const PINNED: u32 = 1024;
+/** It was polled once (a task never polled is fresh: it may start on any worker). */
+export const STARTED: u32 = 8192;
+/** It reached module state: each of its polls holds the module lock (sched_module.velt). */
+export const TOUCHED: u32 = 2048;
+/**
+ * Anchored to its home worker: it made a sleep, a Node timer or a wait with a deadline, which
+ * live in that worker's timer block or I/O block and touch the task from there; it runs only on
+ * its home and never moves.
+ */
+export const ANCHORED: u32 = 4096;
 
-/** The executor (started by sched.velt before anything here runs). */
+/**
+ * The join slot's word (`T_JOIN_STATE`): its lock (guards `T_JOINER`), the root is done (the
+ * result is in the slot), the join handle is alive, the handle took the result.
+ */
+export const J_LOCK: u32 = 1;
+export const J_DONE: u32 = 2;
+export const J_HANDLE: u32 = 4;
+export const J_CLAIMED: u32 = 8;
+
+/**
+ * This thread's worker block; off the workers (a thread of the runtime's, a C library's),
+ * worker 0's (started by sched.velt before anything here runs; 0 before).
+ */
 @inline
 export function exec(): usize {
+  const w = WORKER.get();
+  if (w !== 0) {
+    return w as usize;
+  }
   // Acquire: pairs with `install`'s release, so a waker on another thread sees the initialized
   // executor it reads through.
   return EXEC.load("acquire") as usize;
 }
 
-/** Makes `e` the executor, with this thread its worker. */
+/** Worker 0's block, which holds what is process-wide (acquire, as `exec`'s). */
+@inline
+export function main(): usize {
+  return EXEC.load("acquire") as usize;
+}
+
+/** Makes `e` worker 0's block, with this thread worker 0. */
 export function install(e: usize): void {
-  ON_WORKER.set(true);
+  WORKER.set(e as u64);
   EXEC.store(e as u64, "release");
 }
 
-/** Is this thread the worker? */
-@inline
-export function onWorker(): bool {
-  return ON_WORKER.get();
+/** Makes `w` this thread's worker block (a worker thread's start). */
+export function installWorker(w: usize): void {
+  WORKER.set(w as u64);
 }
 
-/** Adds `d` to the word at `a`, which only the worker changes. */
+/** Is this thread a worker? */
+@inline
+export function onWorker(): bool {
+  return WORKER.get() !== 0;
+}
+
+/** This thread's worker block, 0 off the workers. */
+@inline
+export function here(): usize {
+  return WORKER.get() as usize;
+}
+
+/** Worker `i`'s block. */
+export function worker(i: usize): usize {
+  const g = main();
+  return m.ld(m.ld(g + E_WORKERS) + 8 * i);
+}
+
+/** Adds `d` to the word at `a`, which only one thread changes. */
 @inline
 export function bump(a: usize, d: usize): void {
   m.st(a, m.ld(a) + d);
 }
 
-/** Changes the flags of task `t`: `set` on, `clear` off (worker only). */
+/** Changes the flags of task `t`: `set` on, `clear` off (the thread polling it only). */
 @inline
 export function flags(t: usize, set: u32, clear: u32): void {
   m.st32(t + T_FLAGS, (m.ld32(t + T_FLAGS) | set) & ~clear);
@@ -155,91 +410,14 @@ export function has(t: usize, f: u32): bool {
   return (m.ld32(t + T_FLAGS) & f) !== 0;
 }
 
-// ---- A task's waker table: C calls these, from any thread. ----
-
-export function wakerClone(w: usize): usize {
-  m.inc(w + T_REFS);
-  return w;
-}
-
-export function wakerWake(w: usize): void {
-  wake(w);
-  release(w);
-}
-
-export function wakerWakeByRef(w: usize): void {
-  wake(w);
-}
-
-export function wakerDrop(w: usize): void {
-  release(w);
-}
-
-/** Wakes task `t`: queued once if idle, polled again if running. */
-export function wake(t: usize): void {
-  let s = m.load32(t + T_STATE);
-  while (true) {
-    if (s === IDLE) {
-      const was = m.cas32(t + T_STATE, IDLE, SCHEDULED);
-      if (was === IDLE) {
-        schedule(exec(), t);
-        return;
-      }
-      s = was;
-    } else if (s === RUNNING) {
-      const was = m.cas32(t + T_STATE, RUNNING, NOTIFIED);
-      if (was === RUNNING) {
-        return;
-      }
-      s = was;
-    } else {
-      return;
-    }
-  }
-}
-
-/** Gives back one reference to task `t`: the last frees it. */
-export function release(t: usize): void {
-  if (m.dec(t + T_REFS) === 1) {
-    m.release(t, m.ld(t + T_BYTES));
-  }
-}
-
-/** Queues scheduled task `t`: on the worker's own queue, or from another thread its inbox. */
+/** May task `k` move to another worker, or run on one other than its home (not pinned or anchored)? */
 @inline
-export function schedule(e: usize, t: usize): void {
-  if (ON_WORKER.get()) {
-    push(e, t);
-    return;
-  }
-  m.pushStack(e + E_INBOX, t, T_NEXT);
-  if (m.load32(e + E_PARK) === 1) {
-    m.store32(e + E_PARK, 0);
-    io.wake(m.ld(e + E_IO));
-  }
+export function movable(k: usize): bool {
+  return (m.ld32(k + T_FLAGS) & (PINNED | ANCHORED)) === 0;
 }
 
-/** Appends `t` to the worker's own queue. */
-export function push(e: usize, t: usize): void {
-  m.st(t + T_NEXT, 0);
-  const tail = m.ld(e + E_TAIL);
-  if (tail === 0) {
-    m.st(e + E_HEAD, t);
-  } else {
-    m.st(tail + T_NEXT, t);
-  }
-  m.st(e + E_TAIL, t);
-}
-
-/** The task a waker header belongs to (a task, or a promise one drives); 0 for another table. */
-export function taskOf(w: usize): usize {
-  const e = exec();
-  const vt = m.ld(w);
-  if (vt === e + E_VT) {
-    return w;
-  }
-  if (vt === e + E_NODE_VT) {
-    return m.ld(w + 48);
-  }
-  return 0;
+/** Is task `k` fresh: spawned and never polled? */
+@inline
+export function fresh(k: usize): bool {
+  return (m.ld32(k + T_FLAGS) & (STARTED | ROOT)) === 0;
 }

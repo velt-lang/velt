@@ -12,6 +12,7 @@ import {
   addressLoad,
   addressStore,
   inline,
+  noInline,
   ptrAtomicCas,
   ptrAtomicLoad,
   ptrAtomicRmw,
@@ -86,6 +87,24 @@ export function lastingZeroed(n: usize): usize {
   return p;
 }
 
+/** This thread's scratch buffer (`scratch`; 0 before its first use). */
+const SCRATCH = new ThreadLocal<u64>(0);
+
+/**
+ * 64 bytes of this thread's, which live as long as the thread (from the C library, so outside
+ * the block counts): the buffer of an OS call on a thread of the executor's that may still be
+ * inside it when the process ends (the stall monitor's nap) or that runs while the counts are
+ * taken; one caller at a time.
+ */
+export function scratch(): usize {
+  let p = SCRATCH.get() as usize;
+  if (p === 0) {
+    p = lastingZeroed(64);
+    SCRATCH.set(p as u64);
+  }
+  return p;
+}
+
 /** Frees what `lastingZeroed` gave. */
 export function lastingRelease(p: usize): void {
   // SAFETY: `p` came from calloc and is not used after.
@@ -144,6 +163,34 @@ export function load32(a: usize): u32 {
   return unsafe { ptrAtomicLoad(Ptr.at<u32>(a), "seqcst") };
 }
 
+/**
+ * The word at `a`, read atomically but unordered: what it guards was ordered before by how the
+ * reader came by the address (a handle passed through a channel, a lock taken after).
+ */
+@inline
+export function loadRelaxed(a: usize): usize {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicLoad(Ptr.at<usize>(a), "relaxed") };
+}
+
+@inline
+export function load32Relaxed(a: usize): u32 {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicLoad(Ptr.at<u32>(a), "relaxed") };
+}
+
+/**
+ * Stores `v` at `a` after everything this thread wrote before (a release): a thread that reads
+ * `v` with `load` sees those writes too.
+ */
+@inline
+export function storeRelease(a: usize, v: usize): void {
+  // SAFETY: as `load`.
+  unsafe {
+    ptrAtomicStore(Ptr.at<usize>(a), v, "release");
+  }
+}
+
 @inline
 export function store32(a: usize, v: u32): void {
   // SAFETY: as `load`.
@@ -157,6 +204,49 @@ export function store32(a: usize, v: u32): void {
 export function cas32(a: usize, expected: u32, v: u32): u32 {
   // SAFETY: as `load`.
   return unsafe { ptrAtomicCas(Ptr.at<u32>(a), expected, v, "seqcst", "seqcst") };
+}
+
+/** Makes the word at `a` `v` if it is `expected`; the value it had. */
+@inline
+export function cas(a: usize, expected: usize, v: usize): usize {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicCas(Ptr.at<usize>(a), expected, v, "seqcst", "seqcst") };
+}
+
+declare c("c") function sched_yield$sched(): i32;
+
+/**
+ * Takes the spin lock word at `a` (0 free, 1 held), after a first attempt failed: spins a while,
+ * then gives the core away between attempts, so a holder the OS took off its core (a loaded
+ * machine) gets to run and let go.
+ */
+@noInline
+export function spinLock(a: usize): void {
+  let spins: u32 = 0;
+  while (cas32(a, 0, 1) !== 0) {
+    spins++;
+    if (spins > 64) {
+      // SAFETY: no precondition.
+      unsafe {
+        sched_yield$sched();
+      }
+    }
+  }
+}
+
+/** Gives the core away (a thread waiting on another that the OS may have taken off its core). */
+export function yieldCore(): void {
+  // SAFETY: no precondition.
+  unsafe {
+    sched_yield$sched();
+  }
+}
+
+/** Adds 1 to the count at `a`, ordered with every other ordered operation; the count before. */
+@inline
+export function incOrdered(a: usize): usize {
+  // SAFETY: as `load`.
+  return unsafe { ptrAtomicRmw(Ptr.at<usize>(a), "add", 1, "seqcst") };
 }
 
 /** Adds 1 to the count at `a`; the count before. */

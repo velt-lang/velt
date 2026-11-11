@@ -19,7 +19,9 @@ import * as sys from "#net-sys";
 import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as tb from "velt/lang/hooks/sched_io_table";
+import * as t from "velt/lang/hooks/sched_task";
 import * as wt from "velt/lang/hooks/sched_io_wait";
+import * as wk from "velt/lang/hooks/sched_wake";
 
 const SOCK_STREAM: i32 = 1;
 const IPPROTO_TCP: i32 = 6;
@@ -192,6 +194,11 @@ function adopt(fd: i32, flags: u32, ready: u32): IoResult<u64> {
 
 /** `connect("host:port")`: each address in turn, until one answers; the stream's handle. */
 export async function connect(addr: string): Promise<IoResult<u64>> {
+  // A connect hands work to the peer: what this thread printed comes first (fd_io.velt).
+  const w = t.here();
+  if (w !== 0 && (m.ld32(w + t.E_MODE) !== 0 || m.ld(w + t.E_LAZY) !== 0)) {
+    wk.publish(w);
+  }
   const found = resolve(addr, false);
   if (found.code !== 0) {
     return failed({ code: found.code, message: found.message }, 0);
@@ -251,7 +258,7 @@ async function connectOne(ai: usize): Promise<IoResult<u64>> {
   const h = got.value;
   // SAFETY: `waitFor` makes a heap future, given up to the promise.
   await unsafe { promiseAt<void>(wt.waitFor(h, io.K_WRITE, 0, 0)) };
-  const s = tb.lookup(h);
+  const s = tb.enter(h);
   if (s === 0) {
     return failed(closed(), 0);
   }
@@ -265,14 +272,16 @@ async function connectOne(ai: usize): Promise<IoResult<u64>> {
   m.release(word, 16);
   if (err !== 0) {
     discard(h, s);
+    tb.leave(s);
     return failed(osError(err), 0);
   }
   // Connected: the first read tries at once (writable is known).
   m.st32(s + io.S_READY, m.ld32(s + io.S_READY) | io.READ);
+  tb.leave(s);
   return got;
 }
 
-/** Closes the source of handle `h` at once (nothing sent on it yet). */
+/** Closes the source of handle `h` at once (nothing sent on it yet; locked: `tb.enter`). */
 function discard(h: u64, s: usize): void {
   tb.forget(h);
   closeFd(m.ld(s + io.S_FD) as i32);
@@ -321,18 +330,22 @@ export async function listenOn(addr: string): Promise<IoResult<u64>> {
 /** The next connection of listener `l`: its stream's handle. */
 export async function accept(l: u64): Promise<IoResult<u64>> {
   while (true) {
-    const s = tb.lookup(l);
+    const s = tb.enter(l);
     if (s === 0) {
       return failed(closed(), 0);
     }
     const fd = r.accept(m.ld(s + io.S_FD) as i32, 0, 0);
     if (fd >= 0) {
+      tb.leave(s);
       setOn(fd, IPPROTO_TCP, TCP_NODELAY);
       return adopt(fd, 0, io.READ | io.WRITE);
     }
     const e = r.errno();
     if (e === r.EAGAIN) {
       io.notReady(s, io.READ);
+    }
+    tb.leave(s);
+    if (e === r.EAGAIN) {
       // SAFETY: `waitFor` makes a heap future, given up to the promise.
       await unsafe { promiseAt<void>(wt.waitFor(l, io.K_READ, 0, 0)) };
     } else if (e !== r.EINTR && sys.codeOf(e) !== 8) {
@@ -343,7 +356,9 @@ export async function accept(l: u64): Promise<IoResult<u64>> {
 
 /** The port listener `l` is bound to (0 once closed). */
 export function portOf(l: u64): u32 {
-  const s = tb.lookup(l);
+  // Held while its descriptor is used: a close and a reuse of the slot meanwhile would make it
+  // another socket's.
+  const s = tb.hold(l);
   if (s === 0) {
     return 0;
   }
@@ -353,6 +368,7 @@ export function portOf(l: u64): u32 {
   unsafe {
     getsockname(m.ld(s + io.S_FD) as i32, m.ptr(sa), m.ptr(sa + SA_SIZE));
   }
+  tb.leave(s);
   const port = ((m.ld32(sa) >> 16) & 0xffff) as u32;
   m.release(sa, SA_SIZE + 8);
   return ((port & 0xff) << 8) | (port >> 8);
@@ -360,15 +376,17 @@ export function portOf(l: u64): u32 {
 
 /** Closes listener `l` (nothing more to accept); again does nothing. */
 export function closeListener(l: u64): void {
-  const s = tb.lookup(l);
+  const s = tb.enter(l);
   if (s !== 0) {
     discard(l, s);
+    tb.leave(s);
   }
 }
 
 /** The peer's "ip:port" of stream `h` ("" once closed). */
 export function peerOf(h: u64): string {
-  const s = tb.lookup(h);
+  // Held while its descriptor is used, as `portOf`'s.
+  const s = tb.hold(h);
   if (s === 0) {
     return "";
   }
@@ -376,6 +394,7 @@ export function peerOf(h: u64): string {
   m.st32(sa + SA_SIZE, SA_SIZE as u32);
   // SAFETY: a sockaddr_storage and its length word.
   const rc = unsafe { getpeername(m.ld(s + io.S_FD) as i32, m.ptr(sa), m.ptr(sa + SA_SIZE)) };
+  tb.leave(s);
   let out = "";
   if (rc === 0) {
     const v6 = sys.familyOf(sa) === sys.AF_INET6;

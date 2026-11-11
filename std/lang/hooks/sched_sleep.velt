@@ -25,7 +25,9 @@
 
 import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
+import * as sp from "./sched_spread";
 import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 /**
  * The timer block's fields: the pending sleeps (first, last), the last sleep number, the sleeps
@@ -122,6 +124,8 @@ function sleepPoll(f: usize, cx: usize): u32 {
     }
   }
   if (s === NEW) {
+    // Pending in this worker's timer block: its task stays on this worker.
+    sp.anchor();
     insert(block(t.exec()), f);
   }
   return 0;
@@ -299,7 +303,7 @@ export function expire(b: usize, now: u64): u64 {
   while (f !== 0 && (m.ld(f + S_DEADLINE) as u64) <= now) {
     unlinkPending(b, f);
     const w = m.ld(f + S_WAKER);
-    const k = t.taskOf(w);
+    const k = wk.taskOf(w);
     if (k === 0) {
       // Polled by a waker that is not a task's: fired by waking it.
       m.st(f + S_STATE, SEEN);
@@ -309,7 +313,7 @@ export function expire(b: usize, now: u64): u64 {
       pushDue(k, f);
       // With `LOCALS`, so a poll checks one flag for both (sched_run.velt `run`).
       t.flags(k, t.TIMED | t.LOCALS, 0);
-      t.wake(k);
+      wk.wake(k);
     }
     f = m.ld(b + TM_FIRST);
   }

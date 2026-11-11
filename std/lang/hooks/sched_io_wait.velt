@@ -4,6 +4,12 @@
 // its source (any number per source; dropped, it leaves in constant time) and, with a deadline,
 // into the I/O block's timer list, sorted by deadline, which the worker's wait looks at. The
 // block counts the linked waits: pending I/O keeps the process alive (sched_end.velt).
+//
+// Workers (#2649 step 3): a wait's links into its source and its waker belong to the source's
+// lock (the source's events may be delivered on another worker than the one polling the wait);
+// the wait remembers its source (`W_SRC`) for good, to take that lock. A wait with a deadline
+// anchors its task to its worker (sched_task.velt `anchor`): its place in the timer list is
+// that worker's.
 
 import { Ptr } from "velt/ffi/ptr";
 import { inline, noInline } from "velt/lang/intrinsics";
@@ -11,6 +17,9 @@ import * as r from "#reactor";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
 import * as tb from "./sched_io_table";
+import * as q from "./sched_queue";
+import * as sp from "./sched_spread";
+import * as t from "./sched_task";
 
 // A waiter: its source's handle, what it waits for, its place in the source's list, its waker,
 // the source it is linked into (0: none), its deadline (monotonic nanoseconds, 0: none), its
@@ -27,9 +36,11 @@ const W_TNEXT: usize = 80;
 const W_TPREV: usize = 88;
 const W_TIMED: usize = 96;
 const W_EXPIRED: usize = 104;
-const W_SIZE: usize = 112;
+/** The source it was linked into last (0: never), whose lock guards its links and waker. */
+const W_SRC: usize = 112;
+const W_SIZE: usize = 120;
 
-/** Wakes every waiter of source `s`; each polls again and waits again when it must. */
+/** Wakes every waiter of source `s` (locked); each polls again and waits again when it must. */
 export function wakeAll(s: usize): void {
   let w = m.ld(s + io.S_WAITERS);
   m.st(s + io.S_WAITERS, 0);
@@ -42,7 +53,12 @@ export function wakeAll(s: usize): void {
     const k = m.ld(w + W_WAKER);
     if (k !== 0) {
       m.st(w + W_WAKER, 0);
-      m.wakeOwned(k);
+      if (m.ld32(w + W_KIND) !== io.K_READ) {
+        // Room to write: output, which waits behind input (sched_task.velt `asOutput`).
+        q.wakeOutput(k);
+      } else {
+        m.wakeOwned(k);
+      }
     }
     w = next;
   }
@@ -55,6 +71,10 @@ export function wakeAll(s: usize): void {
  */
 export function waitFor(handle: u64, kind: u32, arg: u64, deadline: u64): usize {
   const b = io.io();
+  if (deadline !== 0) {
+    // Its place in the timer list is this worker's.
+    sp.anchor();
+  }
   const f = m.alloc(W_SIZE);
   m.st(f, m.ld(b + io.IO_WAIT_POLL));
   m.st(f + 8, m.ld(b + io.IO_WAIT_DROP));
@@ -68,6 +88,7 @@ export function waitFor(handle: u64, kind: u32, arg: u64, deadline: u64): usize 
   m.st(f + W_DEADLINE, deadline as usize);
   m.st(f + W_TIMED, 0);
   m.st(f + W_EXPIRED, 0);
+  m.st(f + W_SRC, 0);
   return f;
 }
 
@@ -90,9 +111,15 @@ export function satisfied(s: usize, kind: u32, arg: usize): bool {
 }
 
 export function waitPoll(f: usize, cx: usize): u32 {
-  const s = tb.lookup(m.ld(f + W_SOURCE) as u64);
-  if (s === 0 || satisfied(s, m.ld32(f + W_KIND), m.ld(f + W_ARG)) || expired(f)) {
+  const s = tb.enter(m.ld(f + W_SOURCE) as u64);
+  if (s === 0) {
     unlink(f);
+    untime(f);
+    return 1;
+  }
+  if (satisfied(s, m.ld32(f + W_KIND), m.ld(f + W_ARG)) || expired(f)) {
+    unlinkLocked(f);
+    tb.leave(s);
     untime(f);
     return 1;
   }
@@ -113,16 +140,29 @@ export function waitPoll(f: usize, cx: usize): u32 {
     }
     m.st(s + io.S_WAITERS, f);
     m.st(f + W_LINKED, s);
+    m.st(f + W_SRC, s);
     waiting(1);
   }
+  tb.leave(s);
   if (m.ld(f + W_DEADLINE) !== 0 && m.ld(f + W_TIMED) === 0) {
     time(f);
   }
   return 0;
 }
 
-/** Takes waiter `f` out of its source's list (constant time). */
+/** Takes waiter `f` out of its source's list, under the source's lock. */
 function unlink(f: usize): void {
+  const s = m.ld(f + W_SRC);
+  if (s === 0) {
+    return;
+  }
+  tb.lock(s);
+  unlinkLocked(f);
+  tb.unlock(s);
+}
+
+/** Takes waiter `f` out of its source's list (constant time; the source is locked). */
+function unlinkLocked(f: usize): void {
   const s = m.ld(f + W_LINKED);
   if (s === 0) {
     return;
@@ -151,6 +191,7 @@ function waiting(d: isize): void {
 export function waitDrop(f: usize): void {
   unlink(f);
   untime(f);
+  // Unlinked: nothing else reaches its waker now.
   const k = m.ld(f + W_WAKER);
   if (k !== 0) {
     m.wakerDrop(k);
@@ -242,10 +283,14 @@ export function expire(b: usize): i64 {
     const next = m.ld(f + W_TNEXT);
     untime(f);
     m.st(f + W_EXPIRED, 1);
-    unlink(f);
+    // A timed wait was linked when it went on the list: its source is known.
+    const s = m.ld(f + W_SRC);
+    tb.lock(s);
+    unlinkLocked(f);
     const k = m.ld(f + W_WAKER);
+    m.st(f + W_WAKER, 0);
+    tb.unlock(s);
     if (k !== 0) {
-      m.st(f + W_WAKER, 0);
       m.wakeOwned(k);
     }
     f = next;

@@ -8,10 +8,11 @@ use rustc_hash::FxHashSet;
 use velt_sema::hir::{self, ExprKind as E, StmtKind as S};
 
 use super::cint;
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::{Cx, FnLower, Glue, ScopeKind, Work};
 use crate::vir::{
-    self, Const, Function, Operand, Place, Proj, StaticData, StaticId, Terminator, Ty,
+    self, Const, Function, Operand, Place, Proj, Rvalue, StaticData, StaticId, Terminator, Ty,
 };
 
 impl Cx<'_> {
@@ -120,6 +121,14 @@ impl FnLower<'_, '_> {
     /// `ReferenceError` when that slot's initializer has not run yet).
     fn module_block(&mut self, slot: u32) -> Operand {
         let desc = self.cx.module_desc();
+        if self.std_sched() {
+            // The executor in Velt's workers keep the module lock (sched_module.velt).
+            let d = self.desc_arg(desc);
+            let slot = cint(slot as i128, Ty::U64);
+            let b = hooks::sched_module_state(self, ty::USize::arg(d), ty::U64::arg(slot));
+            let b = b.emit(self).op();
+            return self.rvalue_temp(Ty::Ptr, Rvalue::Cast(b, Ty::Ptr));
+        }
         let f = self.cx.extern_sym(
             "velt_rt_module_state",
             vec![Ty::Ptr, Ty::U64],
@@ -222,6 +231,16 @@ impl FnLower<'_, '_> {
                 let p = lw.slot_in(Operand::Copy(Place::local(state)), i as u32);
                 lw.store(p, v);
                 // Slots up to this one may be read from now on.
+                if lw.std_sched() {
+                    let st = Operand::Copy(Place::local(state));
+                    let st = lw.rvalue_temp(Ty::U64, Rvalue::Cast(st, Ty::U64));
+                    let n = cint(ready_count(i + 1, len), Ty::U64);
+                    let c = hooks::sched_module_ready(&mut lw, ty::USize::arg(st), ty::U64::arg(n));
+                    c.emit(&mut lw);
+                    lw.pop_scope();
+                    lw.pop_scope();
+                    continue;
+                }
                 let ready = lw.cx.extern_sym(
                     "velt_rt_module_ready",
                     vec![Ty::Ptr, Ty::U64],
@@ -251,10 +270,23 @@ impl FnLower<'_, '_> {
         lw.finish(name, vec![Ty::Ptr], Ty::Unit)
     }
 
+    /// The address of module descriptor `desc`, as a hook's `usize` argument.
+    fn desc_arg(&mut self, desc: StaticId) -> Operand {
+        let p = Operand::Const(Const::Static(desc), Ty::Ptr);
+        self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64))
+    }
+
     /// The module state block, allocated and initialized on the first access, without the
     /// check that a slot is initialized (rt_abi.md "Module state").
     fn whole_block(&mut self) -> Operand {
         let desc = self.cx.module_desc();
+        if self.std_sched() {
+            let d = self.desc_arg(desc);
+            let b = hooks::sched_module_block(self, ty::USize::arg(d))
+                .emit(self)
+                .op();
+            return self.rvalue_temp(Ty::Ptr, Rvalue::Cast(b, Ty::Ptr));
+        }
         let f = self
             .cx
             .extern_sym("velt_rt_module_block", vec![Ty::Ptr], Ty::Ptr, false);

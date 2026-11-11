@@ -1,0 +1,214 @@
+// velt/lang/hooks (internal): the start of the executor in Velt (sched.velt, #2649 step 3): worker
+// 0's block on the thread that runs `main`, with the process-wide waker tables, and the other
+// workers, threads started on an `@export`ed function (`#sched-thread`), `VELT_THREADS` of them
+// in all (else the online cores).
+
+import { Ptr, export as cExport } from "velt/ffi";
+import { exportedAddress, noInline } from "velt/lang/intrinsics";
+import * as r from "#reactor";
+import * as th from "#sched-thread";
+import { processEnv } from "./process";
+import * as end from "./sched_end";
+import * as io from "./sched_io";
+import * as lk from "./sched_lock";
+import * as loop from "./sched_loop";
+import * as mk from "./sched_make";
+import * as m from "./sched_mem";
+import * as mon from "./sched_monitor";
+import * as node from "./sched_node";
+import * as sp from "./sched_spread";
+import * as t from "./sched_task";
+import * as tb from "./sched_io_table";
+import * as wk from "./sched_wake";
+
+declare function velt_rt_set_scheduler(kind: u32): void;
+declare c("c") function velt_rt_latch_new$rt(): u64;
+declare c("c") function velt_rt_latch_open$rt(l: u64): void;
+
+/** The most workers `VELT_THREADS` may ask for (more is taken for a typo: the cores instead). */
+const MAX_WORKERS: usize = 4096;
+
+/** Starts the executor on this thread (worker 0) and the other workers: worker 0's block. */
+@noInline
+export function start(): usize {
+  const e = m.lastingZeroed(t.E_SIZE);
+  // SAFETY: each is an `@export`ed function of the C signature the table's slot has.
+  unsafe {
+    m.st(e + t.E_VT, exportedAddress(wk.wakerClone));
+    m.st(e + t.E_VT + 8, exportedAddress(wk.wakerWake));
+    m.st(e + t.E_VT + 16, exportedAddress(wk.wakerWakeByRef));
+    m.st(e + t.E_VT + 24, exportedAddress(wk.wakerDrop));
+    m.st(e + t.E_NODE_VT, exportedAddress(node.nodeClone));
+    m.st(e + t.E_NODE_VT + 8, exportedAddress(node.nodeWake));
+    m.st(e + t.E_NODE_VT + 16, exportedAddress(node.nodeWakeByRef));
+    m.st(e + t.E_NODE_VT + 24, exportedAddress(node.nodeDropRef));
+  }
+  m.st(e + t.E_IO, io.open(e + t.E_TICK));
+  m.st(e + t.E_MAIN, e);
+  m.st(e + t.E_CPU, r.threadClock() as usize);
+  end.open(e);
+  t.install(e);
+  // The runtime's leaves that need its timers and I/O find them from this thread.
+  velt_rt_set_scheduler(2);
+  startWorkers(e);
+  return e;
+}
+
+/**
+ * The worker count: `VELT_THREADS` when it is a positive integer up to `MAX_WORKERS`, else
+ * (unset, not a number, 0 or more than that) the online cores; 1 where no thread can start
+ * (`#sched-thread`).
+ */
+function workerCount(): usize {
+  if (!th.SUPPORTED) {
+    return 1;
+  }
+  const v = processEnv("VELT_THREADS");
+  if (v !== undefined) {
+    let n: usize = 0;
+    let digits = 0;
+    for (const c of v.trim()) {
+      if (c < "0" || c > "9") {
+        digits = 0;
+        break;
+      }
+      n = n * 10 + ((c.charCodeAt(0) - 48) as usize);
+      digits++;
+      if (n > MAX_WORKERS) {
+        digits = 0;
+        break;
+      }
+    }
+    if (digits > 0 && n > 0) {
+      return n;
+    }
+  }
+  return th.cores();
+}
+
+/**
+ * Does the monitor rescue stalled workers, with `n` workers configured? `VELT_RESCUE` decides
+ * when it is set (`0` off, anything else on); unset, the rescue is on with more than one worker
+ * and off with one: the only worker then has Node's model (a poll that runs on holds back the
+ * rest, as on `main`'s executor in Velt) and no monitor thread, lock or lazy-mode look at all.
+ */
+function rescues(n: usize): bool {
+  const v = processEnv("VELT_RESCUE");
+  if (v === undefined) {
+    return n > 1;
+  }
+  return v.trim() !== "0";
+}
+
+/**
+ * The parts of worker block `w` (worker `i` of those after worker 0 `e`, or worker 0 itself)
+ * that do not depend on its thread: the latch that publishes its output, its microtask tickets
+ * (each worker's start at `i << 48`, so tickets stay distinct across workers).
+ */
+function setUp(e: usize, w: usize, i: usize): void {
+  // SAFETY: the runtime's entries make a latch and open it; the handle is kept for good.
+  const l = unsafe { velt_rt_latch_new$rt() };
+  // SAFETY: as above.
+  unsafe {
+    velt_rt_latch_open$rt(l);
+  }
+  m.st(w + t.E_LATCH, l as usize);
+  m.st(w + t.E_TICKET, i << 48);
+  m.st(w + t.E_MAIN, e);
+  m.st(w + t.E_INDEX, i);
+}
+
+/**
+ * Makes the blocks of the workers after worker 0 (`e`) and the spares (`mon.SPARES`, whose
+ * threads start when the monitor needs them) and starts the configured workers' threads and the
+ * monitor; a worker whose thread cannot start is left out (the count shrinks to the workers that
+ * run).
+ */
+function startWorkers(e: usize): void {
+  const n = workerCount();
+  const rescue = th.SUPPORTED && rescues(n);
+  // The monitor runs with other workers, or to rescue the only one (with a spare: opt-in,
+  // `VELT_RESCUE=1`).
+  const monitor = th.SUPPORTED && (n > 1 || rescue);
+  const spares = rescue ? mon.SPARES : 0;
+  const ws = m.lastingZeroed(8 * (n + spares));
+  m.st(ws, e);
+  m.st(e + t.E_WORKERS, ws);
+  m.st(e + t.E_COUNT, 1);
+  m.st(e + t.E_RESCUE, rescue ? 1 : 0);
+  setUp(e, e, 0);
+  let mode: u32 = 0;
+  if (n > 1 || monitor) {
+    // Tasks on several threads may share a socket, and run off their home.
+    tb.share();
+    mode = t.M_SHARED;
+  }
+  if (monitor) {
+    mode = mode | t.M_MONITOR;
+  }
+  if (n > 1) {
+    mode = mode | t.M_SPREAD;
+  }
+  // The only worker, rescued: its queue stays its own until the monitor finds it stalled once
+  // (sched_task.velt `E_LAZY`).
+  const lazy = n === 1 && monitor;
+  m.st32(e + t.E_MODE, lazy ? 0 : mode);
+  lk.setMode(lazy ? lk.LK_LAZY : mode !== 0 ? lk.LK_ON : lk.LK_NONE);
+  if (mode === 0) {
+    m.st32(e + t.E_SOLO, 1);
+  }
+  mk.joinTable(e, mode === 0);
+  if (lazy) {
+    m.st(e + t.E_LAZY, t.LAZY_WATCH);
+    m.st(e + t.E_SPLIT, 1);
+  }
+  m.st(e + t.E_HELP, sp.HELP);
+  m.st(e + t.E_W_START, sp.now());
+  for (let i: usize = 1; i < n + spares; i++) {
+    const w = m.lastingZeroed(t.E_SIZE);
+    setUp(e, w, i);
+    mk.joinTable(w, false);
+    m.st(w + t.E_IO, io.open(w + t.E_TICK));
+    m.st32(w + t.E_MODE, mode | t.M_SPREAD);
+    m.st(w + t.E_HELP, sp.HELP);
+    m.st(w + t.E_W_START, sp.now());
+    // Asleep until its thread runs: a wake before that finds its park word up.
+    m.st32(w + t.E_PARK, 1);
+    m.st(ws + 8 * i, w);
+  }
+  for (let i: usize = 1; i < n; i++) {
+    if (!startThread(t.worker(i))) {
+      break;
+    }
+    m.st(e + t.E_COUNT, i + 1);
+  }
+  m.swap(e + t.E_STARTED, m.ld(e + t.E_COUNT));
+  if (monitor) {
+    mon.start(e);
+  }
+}
+
+/** Starts the thread of worker block `w`: whether it started. */
+export function startThread(w: usize): bool {
+  // SAFETY: `workerMain` is `@export`ed as `void* f(void*)`, what `pthread_create` calls.
+  const f = unsafe { exportedAddress(workerMain) };
+  return th.start(f, w);
+}
+
+/**
+ * A worker thread (worker `E_INDEX` of block `arg`): runs its tasks and parks in its reactor
+ * when it has none, until the process ends.
+ */
+@cExport("std_sched_worker")
+function workerMain(arg: Ptr<u8> | null): Ptr<u8> | null {
+  const w = m.addr(arg);
+  m.st(w + t.E_CPU, r.threadClock() as usize);
+  t.installWorker(w);
+  io.installHere(m.ld(w + t.E_IO));
+  // The runtime's leaves polled here find its timers and I/O.
+  velt_rt_set_scheduler(2);
+  while (true) {
+    loop.turn(w);
+  }
+  return null;
+}

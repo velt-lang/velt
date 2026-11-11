@@ -1,0 +1,212 @@
+// velt/lang/hooks (internal): taking tasks from a worker's run queue (sched_queue.velt) to move
+// them to another worker in the executor in Velt (sched.velt, #2649 step 3): halves for a worker
+// that borrows or a helper offered them (sched_spread.velt), fresh tasks for sleeping workers
+// and halves of a stalled worker's queues for a spare (sched_monitor.velt). Pinned and anchored
+// tasks never move.
+
+import * as m from "./sched_mem";
+import * as q from "./sched_queue";
+import * as t from "./sched_task";
+
+/**
+ * Takes up to `n` tasks from the front of a queue (`head` the offset of its head: input or
+ * second), oldest first, as a chain through `T_NEXT`; those that may not move (pinned, anchored)
+ * go back to the same queue's end. The queue is locked.
+ */
+function take(e: usize, head: usize, n: usize, into: usize): usize {
+  const io = head === t.E_IHEAD;
+  let chain = into;
+  let i: usize = 0;
+  const back: usize[] = [];
+  while (i < n) {
+    const k = io ? q.popIo(e) : q.popRest(e, t.M_SHARED);
+    if (k === 0) {
+      break;
+    }
+    if (t.movable(k)) {
+      m.st(k + t.T_NEXT, chain);
+      chain = k;
+    } else {
+      back.push(k);
+    }
+    i++;
+  }
+  for (const k of back) {
+    if (io) {
+      q.pushIo(e, k);
+    } else {
+      q.pushRest(e, k, t.M_SHARED);
+    }
+  }
+  return chain;
+}
+
+/**
+ * Takes the half of the input that has waited longest (for a worker to borrow; the slot stays),
+ * a chain newest first; pinned and anchored tasks stay.
+ */
+export function takeHalfInput(e: usize): usize {
+  return take(e, t.E_IHEAD, m.ld(e + t.E_ILEN) / 2, 0);
+}
+
+/**
+ * Takes the half that has waited longest from each queue (to offer to a helper), rounded down,
+ * or rounded up (`up`: from a stalled worker, whose slot joins the input first); a chain newest
+ * first. The second queue's share leaves the fair pass.
+ */
+export function takeHalf(e: usize, up: bool): usize {
+  if (up) {
+    const next = m.ld(e + t.E_NEXT);
+    if (next !== 0) {
+      m.st(e + t.E_NEXT, 0);
+      m.st(next + t.T_NEXT, m.ld(e + t.E_IHEAD));
+      m.st(e + t.E_IHEAD, next);
+      if (m.ld(e + t.E_ITAIL) === 0) {
+        m.st(e + t.E_ITAIL, next);
+      }
+      t.bump(e + t.E_ILEN, 1);
+      m.st(e + t.E_QSLOW, 1);
+    }
+  }
+  const ni = m.ld(e + t.E_ILEN);
+  const nr = m.ld(e + t.E_RLEN);
+  const rest = up ? (nr + 1) / 2 : nr / 2;
+  const left = m.ld(e + t.E_FAIR_LEFT);
+  m.st(e + t.E_FAIR_LEFT, left > rest ? left - rest : 0);
+  const chain = take(e, t.E_IHEAD, up ? (ni + 1) / 2 : ni / 2, 0);
+  return take(e, t.E_HEAD, rest, chain);
+}
+
+/**
+ * Whether a spawn burst left tasks waiting behind the one about to run: the length of the second
+ * queue when its first or last task is fresh (never polled), else 0.
+ */
+export function freshBehind(e: usize): usize {
+  const first = m.ld(e + t.E_HEAD);
+  if (first === 0) {
+    return 0;
+  }
+  if (t.fresh(first) || t.fresh(m.ld(e + t.E_TAIL))) {
+    return m.ld(e + t.E_RLEN);
+  }
+  return 0;
+}
+
+/**
+ * Takes up to `max` fresh tasks that may move from the first `within` of the second queue,
+ * oldest first (for sleeping workers to start: sched_monitor.velt); a chain newest first.
+ */
+export function takeFresh(e: usize, within: usize, max: usize): usize {
+  let chain: usize = 0;
+  let taken: usize = 0;
+  let prev: usize = 0;
+  let k = m.ld(e + t.E_HEAD);
+  let i: usize = 0;
+  while (k !== 0 && i < within && taken < max) {
+    const next = m.ld(k + t.T_NEXT);
+    if (t.fresh(k) && t.movable(k)) {
+      if (prev === 0) {
+        m.st(e + t.E_HEAD, next);
+      } else {
+        m.st(prev + t.T_NEXT, next);
+      }
+      if (m.ld(e + t.E_TAIL) === k) {
+        m.st(e + t.E_TAIL, prev);
+      }
+      m.st(e + t.E_RLEN, m.ld(e + t.E_RLEN) - 1);
+      m.st(k + t.T_NEXT, chain);
+      chain = k;
+      taken++;
+    } else {
+      prev = k;
+    }
+    k = next;
+    i++;
+  }
+  const left = m.ld(e + t.E_FAIR_LEFT);
+  m.st(e + t.E_FAIR_LEFT, left > taken ? left - taken : 0);
+  return chain;
+}
+
+/**
+ * Takes half of the tasks of a queue (`head`, `tail`: the offsets of its ends: input or second),
+ * rounded up, of a lazy worker 0 stalled in a poll, which leaves its queues alone meanwhile
+ * (sched_monitor.velt `lazyDuties`), onto `chain` (newest first); pinned and anchored tasks stay.
+ * Its counts are left as they are: the worker counts again when it takes the shared mode on
+ * (`recount`).
+ */
+export function takeLazy(e: usize, head: usize, tail: usize, chain: usize): usize {
+  let n: usize = 0;
+  let k = m.load(e + head);
+  while (k !== 0) {
+    n++;
+    k = m.ld(k + t.T_NEXT);
+  }
+  let want = (n + 1) / 2;
+  let keepFirst: usize = 0;
+  let keepLast: usize = 0;
+  k = m.ld(e + head);
+  while (want > 0) {
+    const next = m.ld(k + t.T_NEXT);
+    if (t.movable(k)) {
+      m.st(k + t.T_NEXT, chain);
+      chain = k;
+    } else {
+      if (keepFirst === 0) {
+        keepFirst = k;
+      } else {
+        m.st(keepLast + t.T_NEXT, k);
+      }
+      keepLast = k;
+    }
+    want--;
+    k = next;
+  }
+  // `k`: the first task not looked at.
+  if (keepFirst !== 0) {
+    m.st(keepLast + t.T_NEXT, k);
+    m.st(e + head, keepFirst);
+    if (k === 0) {
+      m.st(e + tail, keepLast);
+    }
+  } else {
+    m.st(e + head, k);
+    if (k === 0) {
+      m.st(e + tail, 0);
+    }
+  }
+  return chain;
+}
+
+/**
+ * Takes every task of worker `e`'s queues (the queue locked): the slot, the input, the second
+ * queue, a chain newest first (a retired spare hands them on: sched_relax.velt).
+ */
+export function takeAll(e: usize): usize {
+  let chain: usize = 0;
+  const next = m.ld(e + t.E_NEXT);
+  if (next !== 0) {
+    m.st(e + t.E_NEXT, 0);
+    m.st(next + t.T_NEXT, chain);
+    chain = next;
+  }
+  while (true) {
+    const k = q.popIo(e);
+    if (k === 0) {
+      break;
+    }
+    m.st(k + t.T_NEXT, chain);
+    chain = k;
+  }
+  while (true) {
+    const k = q.popRest(e, t.M_SHARED);
+    if (k === 0) {
+      break;
+    }
+    m.st(k + t.T_NEXT, chain);
+    chain = k;
+  }
+  m.st(e + t.E_RLEN, 0);
+  m.st(e + t.E_FAIR_LEFT, 0);
+  return chain;
+}

@@ -1,0 +1,116 @@
+// velt/lang/hooks (internal): a worker of the executor in Velt (sched.velt, #2649) parks in its
+// reactor when it has nothing to run (sched_loop.velt `idle`): worker 0 decides the program's end
+// there (sched_end.velt), and a spare asked to retire answers as it leaves (sched_relax.velt).
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as end from "./sched_end";
+import * as io from "./sched_io";
+import * as w from "./sched_io_write";
+import * as loop from "./sched_loop";
+import * as m from "./sched_mem";
+import * as mon from "./sched_monitor";
+import * as order from "./sched_order";
+import * as q from "./sched_queue";
+import * as rx from "./sched_relax";
+import * as sp from "./sched_spread";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/**
+ * May worker `e` (its park word up, nothing queued) sleep? Worker 0 decides the program's end
+ * there (sched_end.velt `mayPark`); another worker wakes worker 0 if it sleeps, so that it looks
+ * again with this one idle.
+ */
+function parkable(e: usize): bool {
+  const g = m.ld(e + t.E_MAIN);
+  if (m.ld(g + t.E_COUNT) > 1) {
+    // Idle: what its tasks printed reaches the OS, as the runtime's workers do.
+    wk.handOffOutput();
+  }
+  if (e === g) {
+    return end.mayPark(e);
+  }
+  wk.unpark(g);
+  return true;
+}
+
+/**
+ * Sleeps in the reactor until a socket is ready, a task is woken from another thread or the next
+ * timer is due; what is due is sent first, and what the wait made due (writable sockets with
+ * bytes left) after it. Due timers fire before (when they make a task ready, the worker does not
+ * wait) and after the wait. Not when nothing can happen any more (sched_end.velt `mayPark`: the
+ * program ends). Out of line: the worker's step (`turn`) stays small enough to inline.
+ */
+@noInline
+export function park(e: usize): void {
+  const b = m.ld(e + t.E_IO);
+  m.st32(e + t.E_DISPATCH, t.D_INPUT);
+  if (io.anyDue(b)) {
+    w.flushDue(b);
+  }
+  let timeout: i64 = -1;
+  const timers = m.ld(e + t.E_TIMERS) !== 0;
+  if (timers) {
+    timeout = order.next(e);
+    if (q.any(e)) {
+      m.st32(e + t.E_DISPATCH, 0);
+      return;
+    }
+  }
+  m.store32(e + t.E_PARK, 1);
+  const mode = m.ld32(e + t.E_MODE);
+  if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || !parkable(e)) {
+    m.store32(e + t.E_PARK, 0);
+    m.st32(e + t.E_DISPATCH, 0);
+    if ((mode & t.M_MONITOR) !== 0 || m.ld(e + t.E_LAZY) !== 0) {
+      // The monitor may have seen every worker parked meanwhile and gone to sleep.
+      mon.kick(m.ld(e + t.E_MAIN));
+    }
+    retiring(e);
+    return;
+  }
+  let asleep: usize = 0;
+  if ((mode & t.M_SPREAD) !== 0) {
+    asleep = sp.now();
+  }
+  io.park(b, timeout);
+  m.store32(e + t.E_PARK, 0);
+  if (timers) {
+    order.tick(e);
+  }
+  if (m.ld(e + t.E_UNREF) !== 0 && e !== m.ld(e + t.E_MAIN)) {
+    // Worker 0 found something that can still happen: due unref()'d timers ask again.
+    end.wakeUnref(e);
+  }
+  if (io.anyDue(b)) {
+    w.flushDue(b);
+  }
+  m.st32(e + t.E_DISPATCH, 0);
+  loop.turned(e);
+  if (mode !== 0) {
+    const g = m.ld(e + t.E_MAIN);
+    if ((mode & t.M_SPREAD) !== 0) {
+      sp.slept(e, m.ld(e + t.E_NOW) - asleep);
+    }
+    // Asleep is not stalled: the monitor counts from now.
+    m.st(e + t.E_PROGRESS, m.load(g + t.E_TICKS));
+    if ((mode & t.M_MONITOR) !== 0) {
+      mon.kick(g);
+    }
+  } else if (m.ld(e + t.E_LAZY) !== 0) {
+    // A lazy worker 0 awake again: its polls need watching (sched_monitor.velt `lazyDuties`).
+    mon.kick(e);
+  }
+  retiring(e);
+}
+
+/**
+ * Worker `e` leaves its park: a spare asked to retire, or retired, runs nothing from here until
+ * the monitor wants it back (sched_relax.velt). Read after its park word went down, ordered.
+ */
+@inline
+function retiring(e: usize): void {
+  if ((m.load32(e + t.E_RETIRED) & t.R_AWAY) !== 0) {
+    rx.retiredLook(e);
+  }
+}

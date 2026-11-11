@@ -1,0 +1,175 @@
+// velt/lang/hooks (internal): making a task of the executor in Velt (sched.velt, #2649): its one
+// allocation (header, join handle, result slot, initial state) and its home worker.
+
+import { exportedAddress, inline, noInline } from "velt/lang/intrinsics";
+import * as jn from "./sched_join";
+import * as lk from "./sched_lock";
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+
+/**
+ * A new task of `poll` and `drop` with a result of `rsize` bytes (dropped with `rdrop`) and room
+ * for a state of `size` bytes after it, holding `refs` references, scheduled but not queued; the
+ * caller sets its join slot's word (`T_JOIN_STATE`) and transfer glue (`T_TRANSFER`).
+ */
+@inline
+export function task(
+  e: usize,
+  poll: usize,
+  drop: usize,
+  rsize: u64,
+  rdrop: usize,
+  size: u64,
+  refs: u64,
+): usize {
+  const bytes = stateAt(rsize) + (size as usize);
+  const k = m.alloc(bytes);
+  m.st(k, m.ld(e + t.E_MAIN) + t.E_VT);
+  m.st(k + t.T_REFS, refs as usize);
+  m.st32(k + t.T_STATE, t.SCHEDULED);
+  m.st32(k + t.T_FLAGS, 0);
+  m.st(k + t.T_NEXT, 0);
+  m.st(k + t.T_POLL, poll);
+  m.st(k + t.T_DROP, drop);
+  m.st(k + t.T_ROOT, k + stateAt(rsize));
+  m.st(k + t.T_RESULT_DROP, rdrop);
+  m.st(k + t.T_RESULT_SIZE, rsize as usize);
+  m.st(k + t.T_JOINER, 0);
+  m.st(k + t.T_CX, k + t.T_WORD);
+  m.st(k + t.T_CX + 8, k);
+  m.st(k + t.T_WORD, 0);
+  m.st(k + t.T_WOKEN, 0);
+  m.st(k + t.T_LOCALS, 0);
+  m.st(k + t.T_MICRO, 0);
+  m.st(k + t.T_UNHANDLED, 0);
+  m.st(k + t.T_BYTES, bytes);
+  m.st(k + t.T_TIMERS, 0);
+  m.st(k + t.T_HOME, e);
+  m.st(k + t.T_JOIN, m.ld(e + t.E_JOIN_VT));
+  m.st(k + t.T_JOIN + 8, m.ld(e + t.E_JOIN_VT + 8));
+  return k;
+}
+
+/** Where a task's state starts, after a result slot of `rsize` bytes. */
+@inline
+function stateAt(rsize: u64): usize {
+  return t.T_SLOT + ((rsize as usize + 15) & ~15);
+}
+
+/** Sets worker block `w`'s join handle table (`E_JOIN_VT`): `solo` (sched_task.velt `E_SOLO`). */
+export function joinTable(w: usize, solo: bool): void {
+  // SAFETY: `@export`ed functions of a heap future's poll and drop signatures.
+  unsafe {
+    if (solo) {
+      m.st(w + t.E_JOIN_VT, exportedAddress(jn.joinPollSolo));
+      m.st(w + t.E_JOIN_VT + 8, exportedAddress(jn.joinDropSolo));
+    } else {
+      m.st(w + t.E_JOIN_VT, exportedAddress(jn.joinPoll));
+      m.st(w + t.E_JOIN_VT + 8, exportedAddress(jn.joinDrop));
+    }
+  }
+}
+
+/**
+ * The home of a task spawned now from worker `e`: `e`, or the worker the spawn is pinned to
+ * (`velt_rt_spawn_target`, taken once); flag `PINNED` for a pinned one.
+ */
+@inline
+export function home(e: usize, k: usize): void {
+  const pin = m.ld(e + t.E_PIN);
+  if (pin !== 0) {
+    pinned(e, k, pin - 1);
+  }
+}
+
+@noInline
+function pinned(e: usize, k: usize, i: usize): void {
+  m.st(e + t.E_PIN, 0);
+  m.st(k + t.T_HOME, t.worker(i));
+  m.st32(k + t.T_FLAGS, m.ld32(k + t.T_FLAGS) | t.PINNED);
+}
+
+/**
+ * Takes the lock of task `k`'s join slot: the word with the lock bit clear. While no other thread
+ * polls or drops a handle (sched_lock.velt: `kind`, read once for the lock and its `unlockJoin`),
+ * no lock.
+ */
+@inline
+export function lockJoin(k: usize, kind: u32): u32 {
+  if ((kind & lk.LK_ON) === 0) {
+    return m.ld32(k + t.T_JOIN_STATE);
+  }
+  return lockJoinShared(k);
+}
+
+@noInline
+function lockJoinShared(k: usize): u32 {
+  while (true) {
+    const s = m.load32(k + t.T_JOIN_STATE);
+    if ((s & t.J_LOCK) === 0 && m.cas32(k + t.T_JOIN_STATE, s, s | t.J_LOCK) === s) {
+      return s;
+    }
+  }
+}
+
+/** Gives the lock of task `k`'s join slot back, its word now `s` (lock bit clear). */
+@inline
+export function unlockJoin(k: usize, s: u32, kind: u32): void {
+  if ((kind & lk.LK_ON) === 0) {
+    m.st32(k + t.T_JOIN_STATE, s & ~t.J_LOCK);
+    lk.done(kind);
+    return;
+  }
+  m.store32(k + t.T_JOIN_STATE, s & ~t.J_LOCK);
+}
+
+/**
+ * One more live task (worker 0's count, `g` its block; `e` this thread's worker block): atomic
+ * once other threads run tasks (its `E_MODE` is not 0 then), but for a lazy worker 0
+ * (sched_task.velt `E_SPLIT`), which counts its own without a lock while others count theirs
+ * apart.
+ */
+@inline
+export function liveUp(g: usize, e: usize): void {
+  if (m.ld(g + t.E_SPLIT) !== 0) {
+    if (e === g) {
+      m.st(g + t.E_LIVE, m.ld(g + t.E_LIVE) + 1);
+    } else {
+      m.inc(g + t.E_LIVE_X);
+    }
+  } else if (m.ld32(g + t.E_MODE) !== 0) {
+    m.inc(g + t.E_LIVE);
+  } else {
+    m.st(g + t.E_LIVE, m.ld(g + t.E_LIVE) + 1);
+  }
+}
+
+/** One live task fewer (`g`, `e` as `liveUp`'s): the count before. */
+@inline
+export function liveDown(g: usize, e: usize): usize {
+  if (m.ld(g + t.E_SPLIT) !== 0) {
+    if (e === g) {
+      const own = m.ld(g + t.E_LIVE);
+      m.st(g + t.E_LIVE, own - 1);
+      return own + m.load(g + t.E_LIVE_X);
+    }
+    return m.dec(g + t.E_LIVE_X) + m.loadRelaxed(g + t.E_LIVE);
+  }
+  if (m.ld32(g + t.E_MODE) !== 0) {
+    return m.dec(g + t.E_LIVE);
+  }
+  const n = m.ld(g + t.E_LIVE);
+  m.st(g + t.E_LIVE, n - 1);
+  return n;
+}
+
+/** The live tasks (worker 0's block `g`, read by worker 0). */
+@inline
+export function live(g: usize): usize {
+  return m.load(g + t.E_LIVE) + m.load(g + t.E_LIVE_X);
+}
+
+/** No task is live any more (worker 0, giving up the tasks left). */
+export function noneLive(g: usize): void {
+  m.st(g + t.E_LIVE, 0 - m.load(g + t.E_LIVE_X));
+}

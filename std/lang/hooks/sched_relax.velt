@@ -1,0 +1,335 @@
+// velt/lang/hooks (internal): the way back to the lazy mode of the only worker (sched.velt,
+// #2649 step 3). With `VELT_THREADS=1` and the rescue on, worker 0 starts lazy (sched_task.velt
+// `E_LAZY`: no lock, no count, no publish per poll); the monitor's rescue of a stalled poll makes
+// its queue shared, turns the latch and join locks on (sched_lock.velt) and hands tasks to spares
+// (sched_monitor_lazy.velt). Once the spares are idle again, with worker 0 not stalled, for
+// `CALM_TICKS` ticks, the monitor takes that back:
+//
+// 1. It asks each spare to retire (`E_RETIRED` `R_ASKED`, and a wake). A spare answers at its
+//    park: it declines when its timer block holds anything (tasks anchored to it wait for those
+//    timers), else it retires (`R_RETIRED`). A retired spare runs no task: it hands its inbox and
+//    queue to worker 0, which becomes the tasks' home, and sleeps in its reactor, whose events
+//    (sockets registered there) it still delivers, the woken tasks going to worker 0 the same way.
+// 2. With every spare retired it asks worker 0 to relax (`E_RELAX`); worker 0 does so between two
+//    polls (`relax`): the locks back to lazy, its queue its own again, lazy (`LAZY_WATCH`).
+//
+// Why that is safe: a retired spare has answered after its last poll (its compare-and-swap
+// releases what it did, which worker 0 reads before it turns the locks off), and runs none until
+// the monitor clears `E_RETIRED`, which it does only on the way to a rescue, after it turned the
+// locks on again (`unretireAll`). Worker 0 relaxes between polls, holding nothing. While worker 0
+// relaxes (`RELAX_DOING`) the monitor does nothing; while it is asked, the monitor takes the
+// request back (a compare-and-swap) before it rescues. A task homed on a retired spare that wakes
+// goes to the spare (its inbox, or its queue from its own reactor), which hands it on; one woken on
+// lazy worker 0 is homed there at once (sched_wake.velt `schedule`); a task never follows a
+// socket to a retired spare (sched_io_table.velt `join`).
+
+import { noInline } from "velt/lang/intrinsics";
+import * as io from "./sched_io";
+import * as w from "./sched_io_write";
+import * as lk from "./sched_lock";
+import * as m from "./sched_mem";
+import * as mon from "./sched_monitor";
+import * as l from "./sched_order_list";
+import * as q from "./sched_queue";
+import * as sl from "./sched_sleep";
+import * as tq from "./sched_take";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/** Ticks the spares stay idle, worker 0 not stalled, before the monitor takes the rescue back. */
+export const CALM_TICKS: usize = 10;
+
+/**
+ * The monitor's tick `now` for worker 0 (`g`) leaving the shared mode the rescue gave it (module
+ * docs): whether the monitor does nothing else this tick (a request under way).
+ */
+export function relaxDuties(g: usize, now: usize): bool {
+  const n = m.load(g + t.E_STARTED);
+  if (m.ld(g + t.E_COUNT) !== 1 || m.ld(g + t.E_SPLIT) === 0 || n < 2) {
+    return false;
+  }
+  if (m.load(g + t.E_LAZY) !== 0) {
+    // Lazy, or the rescue is under way.
+    m.st(g + t.E_CALM, 0);
+    return false;
+  }
+  const relax = m.load32(g + t.E_RELAX);
+  if (relax === t.RELAX_DOING) {
+    return true;
+  }
+  if (relax === t.RELAX_ASKED) {
+    if (!mon.stalled(g, now)) {
+      return true;
+    }
+    // Stalled before it relaxed: the request is taken back, and the spares come back for the
+    // rescue (unless worker 0 began meanwhile).
+    if (m.cas32(g + t.E_RELAX, t.RELAX_ASKED, 0) !== t.RELAX_ASKED) {
+      return true;
+    }
+    unretireAll(g);
+    m.st(g + t.E_CALM, 0);
+    return false;
+  }
+  if (!calm(g, n, now)) {
+    unretireAll(g);
+    m.st(g + t.E_CALM, 0);
+    return false;
+  }
+  let retired: usize = 0;
+  for (let i: usize = 1; i < n; i++) {
+    if (m.load32(t.worker(i) + t.E_RETIRED) === t.R_RETIRED) {
+      retired++;
+    }
+  }
+  if (retired === n - 1) {
+    m.store32(g + t.E_RELAX, t.RELAX_ASKED);
+    return true;
+  }
+  const ticks = m.ld(g + t.E_CALM) + 1;
+  m.st(g + t.E_CALM, ticks);
+  if (ticks >= CALM_TICKS) {
+    ask(g, n);
+  }
+  return false;
+}
+
+/** Asks the spares (of `n` started workers) that have not answered yet to retire. */
+function ask(g: usize, n: usize): void {
+  for (let i: usize = 1; i < n; i++) {
+    const s = t.worker(i);
+    if (m.load32(s + t.E_RETIRED) === 0) {
+      m.store32(s + t.E_RETIRED, t.R_ASKED);
+      wk.unpark(s);
+    }
+  }
+}
+
+/**
+ * Every worker is asleep (the monitor is about to sleep too, `g` worker 0's block): calm without
+ * the ticks' wait. Asks the spares to retire, or, all retired, worker 0 to relax at its next step.
+ * Whether the monitor stays awake for the spares' answers.
+ */
+export function idleDuties(g: usize): bool {
+  const n = m.load(g + t.E_STARTED);
+  if (
+    m.ld(g + t.E_COUNT) !== 1 ||
+    m.ld(g + t.E_SPLIT) === 0 ||
+    n < 2 ||
+    m.load(g + t.E_LAZY) !== 0 ||
+    m.load32(g + t.E_RELAX) !== 0 ||
+    m.load(g + t.E_MOVING) !== 0
+  ) {
+    return false;
+  }
+  let retired: usize = 0;
+  let open: usize = 0;
+  for (let i: usize = 1; i < n; i++) {
+    const s = t.worker(i);
+    const r = m.load32(s + t.E_RETIRED);
+    if (r === t.R_RETIRED) {
+      retired++;
+    } else if (r === t.R_DECLINED) {
+      // Keeps its tasks (a timer of its own): asked again once something ran.
+      return false;
+    } else if (r === 0 && (m.load(s + t.E_INBOX) | m.load(s + t.E_OFFER)) === 0 && !q.any(s)) {
+      open++;
+    } else if (r === 0) {
+      return false;
+    }
+  }
+  if (retired === n - 1) {
+    m.store32(g + t.E_RELAX, t.RELAX_ASKED);
+    return false;
+  }
+  if (open > 0) {
+    ask(g, n);
+  }
+  return true;
+}
+
+/**
+ * Nothing for a spare to do, and worker 0 (`g`) not stalled at tick `now`: every spare (`n`
+ * started workers) asleep with nothing queued, no task between two workers, nothing offered.
+ */
+function calm(g: usize, n: usize, now: usize): bool {
+  if (mon.stalled(g, now) || m.load(g + t.E_MOVING) !== 0) {
+    return false;
+  }
+  for (let i: usize = 1; i < n; i++) {
+    const s = t.worker(i);
+    if (
+      m.load32(s + t.E_PARK) !== 1 ||
+      m.load(s + t.E_INBOX) !== 0 ||
+      m.load(s + t.E_OFFER) !== 0 ||
+      q.any(s)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Takes back every spare's retirement or the request for it (the monitor, before it rescues
+ * worker 0 again; the locks are on again by then). A retired spare asleep is a parked worker
+ * again; one awake sees it at its next look.
+ */
+export function unretireAll(g: usize): void {
+  const n = m.load(g + t.E_STARTED);
+  for (let i: usize = 1; i < n; i++) {
+    const s = t.worker(i);
+    if (m.load32(s + t.E_RETIRED) !== 0) {
+      // A request it has not answered yet is a compare-and-swap that fails now.
+      m.store32(s + t.E_RETIRED, 0);
+    }
+  }
+}
+
+/** Spare `e` leaves its park (its park word down): a request to retire, or retired (module docs). */
+@noInline
+export function retiredLook(e: usize): void {
+  const g = m.ld(e + t.E_MAIN);
+  while (true) {
+    const s = m.load32(e + t.E_RETIRED);
+    if ((s & t.R_AWAY) === 0) {
+      return;
+    }
+    if (s === t.R_ASKED) {
+      if (keeps(e)) {
+        m.cas32(e + t.E_RETIRED, t.R_ASKED, t.R_DECLINED);
+        continue;
+      }
+      if (m.cas32(e + t.E_RETIRED, t.R_ASKED, t.R_RETIRED) !== t.R_ASKED) {
+        continue;
+      }
+    }
+    handOn(e, g);
+    // Asleep as any parked worker, for the wakes and the end's scan: a task pushed to the inbox
+    // after the look below wakes it (the push comes before its wake's look at the park word).
+    m.store32(e + t.E_PARK, 1);
+    if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || m.load32(e + t.E_RETIRED) !== t.R_RETIRED) {
+      m.store32(e + t.E_PARK, 0);
+      continue;
+    }
+    const b = m.ld(e + t.E_IO);
+    m.st32(e + t.E_DISPATCH, t.D_INPUT);
+    if (io.anyDue(b)) {
+      w.flushDue(b);
+    }
+    io.park(b, -1);
+    m.store32(e + t.E_PARK, 0);
+    if (io.anyDue(b)) {
+      w.flushDue(b);
+    }
+    m.st32(e + t.E_DISPATCH, 0);
+  }
+}
+
+/**
+ * Does spare `e` keep its tasks: a timer of its block (a sleep, a Node timer) still to come, or a
+ * sleep that fired and waits on its task's due list or for its leaf to see it (that task's poll
+ * reads them from this worker's block)?
+ */
+function keeps(e: usize): bool {
+  const b = m.ld(e + t.E_TIMERS);
+  if (m.ld(e + t.E_UNREF) !== 0) {
+    return true;
+  }
+  if (b === 0) {
+    return false;
+  }
+  return (
+    sl.pending(b) ||
+    (
+      m.ld(b + sl.TM_DUE) |
+      m.ld(b + sl.TM_UNSEEN) |
+      m.ld(b + l.O_FIRST) |
+      m.ld(b + l.O_QUEUED) |
+      m.ld(b + l.O_GRANTED) |
+      m.ld(b + l.O_HOLDER)
+    ) !==
+      0
+  );
+}
+
+/**
+ * Retired spare `e` hands what reached it (its inbox, offers, queue) to worker 0 (`g`), their home
+ * from now on, in the order they came.
+ */
+function handOn(e: usize, g: usize): void {
+  const mode = m.ld32(e + t.E_MODE);
+  q.lock(e, mode);
+  let k = tq.takeAll(e);
+  q.unlock(e, mode);
+  k = q.reverse(k);
+  k = chain(q.reverse(m.takeStack(e + t.E_OFFER)), k);
+  k = chain(q.reverse(m.takeStack(e + t.E_INBOX)), k);
+  if (k === 0) {
+    return;
+  }
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    m.st(k + t.T_HOME, g);
+    m.pushStack(g + t.E_INBOX, k, t.T_NEXT);
+    k = next;
+  }
+  wk.unpark(g);
+}
+
+/** Chain `a` followed by chain `b` (both linked through `T_NEXT`). */
+function chain(a: usize, b: usize): usize {
+  if (a === 0) {
+    return b;
+  }
+  let last = a;
+  while (m.ld(last + t.T_NEXT) !== 0) {
+    last = m.ld(last + t.T_NEXT);
+  }
+  m.st(last + t.T_NEXT, b);
+  return a;
+}
+
+/**
+ * Worker 0 (`g`, between two polls, shared) leaves the shared mode when the monitor asked
+ * (`E_RELAX`; every spare retired then): whether it did. Its queued tasks are homed on it, the
+ * locks are lazy again, and it is lazy (sched_loop.velt `turnLazy` from its next step).
+ */
+@noInline
+export function relax(g: usize): bool {
+  if (m.cas32(g + t.E_RELAX, t.RELAX_ASKED, t.RELAX_DOING) !== t.RELAX_ASKED) {
+    return false;
+  }
+  const n = m.load(g + t.E_STARTED);
+  for (let i: usize = 1; i < n; i++) {
+    if (m.load32(t.worker(i) + t.E_RETIRED) !== t.R_RETIRED) {
+      m.store32(g + t.E_RELAX, 0);
+      return false;
+    }
+  }
+  const mode = m.ld32(g + t.E_MODE);
+  q.lock(g, mode);
+  const next = m.ld(g + t.E_NEXT);
+  if (next !== 0) {
+    m.st(next + t.T_HOME, g);
+  }
+  homeAll(g, m.ld(g + t.E_IHEAD));
+  homeAll(g, m.ld(g + t.E_HEAD));
+  m.swap(g + t.E_WATCH, 0);
+  m.st(g + t.E_SEEN_CUR, 0);
+  m.st(g + t.E_SEEN_CPU, 0);
+  // The spares' last operations were released by their retirement, read above.
+  lk.setMode(lk.LK_LAZY);
+  m.swap(g + t.E_LAZY, t.LAZY_WATCH);
+  m.store32(g + t.E_MODE, 0);
+  q.unlock(g, mode);
+  m.store32(g + t.E_RELAX, 0);
+  return true;
+}
+
+/** Makes worker `g` the home of the tasks of the chain from `k` (a queue of its own). */
+function homeAll(g: usize, k: usize): void {
+  while (k !== 0) {
+    m.st(k + t.T_HOME, g);
+    k = m.ld(k + t.T_NEXT);
+  }
+}

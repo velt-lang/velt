@@ -16,8 +16,10 @@
 // The queue: its entries' buffer (16 bytes each: waker, ticket), their capacity, the index of the
 // first one, how many there are.
 
+import { fnAddress } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 const Q_BUF: usize = 0;
 const Q_CAP: usize = 8;
@@ -164,4 +166,34 @@ export function takeCredit(task: usize): bool {
     return true;
   }
   return false;
+}
+
+/** `velt_rt_microtask`'s heap future: it completes at its turn in the task's queue. */
+export function future(): usize {
+  const f = m.alloc(24);
+  m.st(f, fnAddress(microPoll));
+  m.st(f + 8, fnAddress(microDrop));
+  m.st(f + 16, 0);
+  return f;
+}
+
+function microPoll(f: usize, cx: usize): u32 {
+  const w = m.ld(cx + 8);
+  const k = t.exec() === 0 ? 0 : wk.taskOf(w);
+  if (k === 0) {
+    return 1;
+  }
+  const ticket = m.ld(f + 16) as u64;
+  if (ticket === 0) {
+    if (takeCredit(k)) {
+      return 1;
+    }
+    m.st(f + 16, enqueue(k, m.wakerClone(w), false) as usize);
+    return 0;
+  }
+  return reached(k, ticket, w) ? 1 : 0;
+}
+
+function microDrop(f: usize): void {
+  m.release(f, 24);
 }

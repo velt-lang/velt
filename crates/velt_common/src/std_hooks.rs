@@ -279,17 +279,16 @@ hooks! {
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
     /// `velt_rt_block_on`'s job: `(poll, state)`.
-    sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize) -> void), lowered;
+    sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
-    sched_spawn => lang_hooks_sched, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize) -> usize), lowered;
-    /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code, which runs
-    /// the tasks left when it is 0.
+    sched_spawn => lang_hooks_sched, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
+    /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code (0: the
+    /// tasks left run).
     sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
     sched_finish => lang_hooks_sched, "schedFinish", sig((i32) -> void), lowered;
     /// `velt_rt_fut_box`'s: `(poll, drop, state, size, align)`, the lazy boxed promise.
     sched_box => lang_hooks_sched, "schedBox", sig((usize, usize, usize, u64, u64) -> usize), lowered;
-    /// `velt_rt_fut_start`'s and `_start_rejecting`'s: `(f, result_drop, rejecting)`; then
-    /// `velt_rt_fut_detach`'s: `(f, quiet_drop)`.
+    /// `velt_rt_fut_start`'s, `_start_rejecting`'s (`(f, result_drop, rejecting)`), `_detach`'s.
     sched_start => lang_hooks_sched, "schedStart", sig((usize, usize, bool) -> void), lowered;
     sched_detach => lang_hooks_sched, "schedDetach", sig((usize, usize) -> void), lowered;
     /// `velt_rt_futs_handled`'s: `(futs, n, quiet_drop)`.
@@ -305,20 +304,18 @@ hooks! {
     sched_latch_free => lang_hooks_sched, "schedLatchFree", sig((u64) -> void), lowered;
     sched_latch_open => lang_hooks_sched, "schedLatchOpen", sig((u64) -> void), lowered;
     sched_latch_wait => lang_hooks_sched, "schedLatchWait", sig((u64) -> usize), lowered;
-    /// The process lifetime's (std/prelude/timers.velt's externs): `velt_rt_keep_alive_acquire`'s
-    /// and `_release`'s (a ref'd timer), `velt_rt_timer_unref_due`'s (a heap future: is the process
-    /// ending?); then `velt_rt_tla_at`'s: the top-level `await` that suspended last.
+    /// The process lifetime's: `velt_rt_keep_alive_acquire`'s and `_release`'s (a ref'd timer),
+    /// `velt_rt_timer_unref_due`'s (a heap future), `velt_rt_tla_at`'s (the top-level `await`).
     sched_keep_alive_acquire => lang_hooks_sched, "schedKeepAliveAcquire", sig(() -> void), lowered;
     sched_keep_alive_release => lang_hooks_sched, "schedKeepAliveRelease", sig(() -> void), lowered;
     sched_unref_due => lang_hooks_sched, "schedUnrefDue", sig(() -> usize), lowered;
     sched_tla_at => lang_hooks_sched, "schedTlaAt", sig((&string) -> void), lowered;
     /// `velt_rt_spawn_fut`'s: `(f, result_size, result_drop)`, the handle; then
-    /// `velt_rt_spawn_target`'s (`(worker)`: the next spawn is pinned, and stays the runtime's).
+    /// `velt_rt_spawn_target`'s (`(worker)`: the next spawn is pinned to that worker).
     sched_spawn_fut => lang_hooks_sched, "schedSpawnFut", sig((usize, u64, usize) -> usize), lowered;
     sched_pinned => lang_hooks_sched, "schedPinned", sig((i64) -> void), lowered;
-    /// `velt_rt_sleep`'s: `(ms)`, a heap future; then std/prelude/timers.velt's: the Node timer
-    /// order's `velt_rt_timer_new`, `_turn` (a heap future), `_again`, `_clear`, `_free`, then
-    /// `velt_rt_uncaught_now` (a callback's error is reported at once).
+    /// `velt_rt_sleep`'s: `(ms)`, a heap future; then the Node timer order's `velt_rt_timer_new`,
+    /// `_turn`, `_again`, `_clear`, `_free`, then `velt_rt_uncaught_now`.
     sched_sleep => lang_hooks_sched, "schedSleep", sig((i64) -> usize), lowered;
     sched_timer_new => lang_hooks_sched, "schedTimerNew", sig((i64) -> u64), lowered;
     sched_timer_turn => lang_hooks_sched, "schedTimerTurn", sig((u64, u64) -> usize), lowered;
@@ -326,6 +323,10 @@ hooks! {
     sched_timer_clear => lang_hooks_sched, "schedTimerClear", sig((u64) -> void), lowered;
     sched_timer_free => lang_hooks_sched, "schedTimerFree", sig((u64) -> void), lowered;
     sched_uncaught_now => lang_hooks_sched, "schedUncaughtNow", sig(() -> void), lowered;
+    /// Module state's `velt_rt_module_state` (`(desc, slot)`), `_block` and `_ready` (workers).
+    sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
+    sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;
+    sched_module_ready => lang_hooks_sched, "schedModuleReady", sig((usize, u64) -> void), lowered;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.

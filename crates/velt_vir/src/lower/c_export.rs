@@ -30,7 +30,15 @@ impl Cx<'_> {
             return;
         }
         if self.target.trim().starts_with("wasm") {
-            for e in &self.hir.c_exports {
+            // The executor in Velt's exports (std/lang/hooks/sched*.velt) are live whenever
+            // `VELT_SCHEDULER=std` is set, but a WebAssembly build keeps the runtime's executor
+            // (lower/sched.rs) and never takes their addresses: left out, not reported.
+            for e in self
+                .hir
+                .c_exports
+                .iter()
+                .filter(|e| !e.name.starts_with("std_sched_"))
+            {
                 self.c_clashes.push(
                     velt_common::Diagnostic::error(
                         format!("`@export(\"{}\")` has no WebAssembly form: a module has no C callers to link with", e.name),

@@ -380,6 +380,7 @@ macro_rules! builders {
     (@fn $name:ident [$($ret:tt)*] [$targs:expr] [$($decl:tt)*] [$($pass:tt)*]) => {
         #[doc = concat!("A call of the hook `", stringify!($name), "`.")]
         #[inline]
+        #[allow(clippy::too_many_arguments)]
         pub(crate) fn $name<E: Form>($($decl)*) -> Call<rty!($($ret)*), E> {
             Call::new(velt_common::std_hook!($name), $targs, [$($pass)*])
         }

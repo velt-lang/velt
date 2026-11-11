@@ -7,16 +7,25 @@
 // A latch: its reference count (the handle, each wait), whether it is open, and its waits (a
 // list linked through them). A wait is a heap future (rt_abi_async.md §1): its header, then its
 // latch, its waiter's waker (0 when none), its ticket once queued at the opening, and its link.
-// One worker (VELT_THREADS=1 scope): a latch is opened on the worker; it becomes atomic in the
-// multi-worker step.
+// Workers (#2649 step 3): the latch's reference count is atomic, and with more than one thread at
+// the executor its state (open, the waits, a wait's waker and ticket) is guarded by a lock word
+// of its own, taken for a few stores (a promise settled on one worker wakes its waiter on
+// another; sched_lock.velt says when); wakes happen after the lock is given back.
 
+import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
+import * as lk from "./sched_lock";
 import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 const L_REFS: usize = 0;
 const L_OPEN: usize = 8;
 const L_WAITS: usize = 16;
+const L_LOCK: usize = 24;
+/** 1 when the latch was made with one thread at the executor for good (`lk.noneForGood`). */
+const L_PLAIN: usize = 28;
+const L_SIZE: usize = 32;
 
 const W_LATCH: usize = 16;
 const W_WAKER: usize = 24;
@@ -27,27 +36,72 @@ const W_SIZE: usize = 48;
 
 /** A closed latch, its handle's reference held. */
 export function latchNew(): u64 {
-  const l = m.alloc(24);
+  const l = m.alloc(L_SIZE);
   m.st(l + L_REFS, 1);
   m.st(l + L_OPEN, 0);
   m.st(l + L_WAITS, 0);
+  m.st(l + L_LOCK, 0);
+  m.st32(l + L_PLAIN, lk.noneForGood() ? 1 : 0);
   return l as u64;
+}
+
+/** Takes latch `a`'s lock for an operation of kind `k` (sched_lock.velt `kind`). */
+@inline
+function lock(a: usize, k: u32): void {
+  if ((k & lk.LK_ON) !== 0) {
+    lk.take(a + L_LOCK);
+  }
+}
+
+/** Gives latch `a`'s lock back (`k`: `lock`'s result). */
+@inline
+function unlock(a: usize, k: u32): void {
+  if ((k & lk.LK_ON) !== 0) {
+    m.store32(a + L_LOCK, 0);
+  } else {
+    lk.done(k);
+  }
 }
 
 /** Gives a reference to latch `l` back: the last frees it. */
 export function latchFree(l: u64): void {
-  const a = l as usize;
-  const n = m.ld(a + L_REFS) - 1;
-  m.st(a + L_REFS, n);
-  if (n === 0) {
-    m.release(a, 24);
+  freeRef(l as usize, plain(l as usize));
+}
+
+/**
+ * Does latch `a` need no lock or count (`L_PLAIN`: one thread at the executor, `LK_NONE`)? Its own
+ * word, read in the line the operation reads anyway (cheaper than the mode's global).
+ */
+@inline
+function plain(a: usize): bool {
+  return m.ld32(a + L_PLAIN) !== 0;
+}
+
+/** `latchFree` of latch `a`, `plain` with one thread at the executor (`LK_NONE`). */
+@inline
+function freeRef(a: usize, plain: bool): void {
+  if (plain) {
+    // One thread at the executor: a plain count.
+    const n = m.ld(a + L_REFS) - 1;
+    m.st(a + L_REFS, n);
+    if (n === 0) {
+      m.release(a, L_SIZE);
+    }
+    return;
+  }
+  if (m.dec(a + L_REFS) === 1) {
+    m.release(a, L_SIZE);
   }
 }
 
 /** A wait of latch `l`, with header entries `poll` and `drop`. */
 export function latchWait(l: u64, poll: usize, drop: usize): usize {
   const a = l as usize;
-  m.st(a + L_REFS, m.ld(a + L_REFS) + 1);
+  if (plain(a)) {
+    m.st(a + L_REFS, m.ld(a + L_REFS) + 1);
+  } else {
+    m.inc(a + L_REFS);
+  }
   const w = m.alloc(W_SIZE);
   m.st(w, poll);
   m.st(w + 8, drop);
@@ -60,41 +114,109 @@ export function latchWait(l: u64, poll: usize, drop: usize): usize {
 
 /** Opens latch `l` (once): each waiter queued on the task being polled, or woken. */
 export function latchOpen(l: u64): void {
+  // With one thread at the executor (`LK_NONE`), a copy with the lock's tests folded away.
   const a = l as usize;
+  if (plain(a)) {
+    openAs(a, lk.LK_NONE);
+  } else {
+    openAs(a, lk.kind());
+  }
+}
+
+/** `latchOpen` of latch `a`, an operation of kind `lkind` (sched_lock.velt). */
+@inline
+function openAs(a: usize, lkind: u32): void {
+  lock(a, lkind);
   if (m.ld(a + L_OPEN) !== 0) {
+    unlock(a, lkind);
     return;
   }
   m.st(a + L_OPEN, 1);
-  const e = t.exec();
+  const e = t.here();
   const current = e === 0 ? 0 : m.ld(e + t.E_CURRENT);
   let w = m.ld(a + L_WAITS);
   m.st(a + L_WAITS, 0);
+  // The wakers of waiters of other tasks, woken once the lock is given back (the first in a
+  // word, any more in a raw buffer made on demand: most latches have one waiter, and an array
+  // made at every opening cost an allocation each).
+  const shared = (lkind & lk.LK_ON) !== 0;
+  let first: usize = 0;
+  let more: usize = 0;
+  let n: usize = 0;
+  let cap: usize = 0;
   while (w !== 0) {
     const next = m.ld(w + W_NEXT);
     m.st(w + W_NEXT, 1);
     const k = m.ld(w + W_WAKER);
     m.st(w + W_WAKER, 0);
     if (k !== 0) {
-      if (current !== 0 && t.taskOf(k) === current) {
+      if (current !== 0 && wk.taskOf(k) === current) {
         m.st(w + W_TICKET, micro.enqueue(current, k, true) as usize);
-      } else {
+      } else if (!shared) {
         m.wakeOwned(k);
+      } else if (first === 0) {
+        first = k;
+      } else {
+        if (n === cap) {
+          // Full: the old buffer (room for `old`, all used) is freed with the size it was made
+          // with, which the allocator checks (sized frees).
+          const old = cap;
+          cap = old === 0 ? 4 : 2 * old;
+          const grown = m.alloc(8 * cap);
+          if (more !== 0) {
+            m.copy(grown, more, 8 * old);
+            m.release(more, 8 * old);
+          }
+          more = grown;
+        }
+        m.st(more + 8 * n, k);
+        n++;
       }
     }
     w = next;
+  }
+  unlock(a, lkind);
+  if (first !== 0) {
+    wakeAfter(first, more, n, cap);
+  }
+}
+
+/**
+ * Wakes `first` and the `n` wakers in raw buffer `more` (room for `cap`, freed), after a locked
+ * opening.
+ */
+@noInline
+function wakeAfter(first: usize, more: usize, n: usize, cap: usize): void {
+  m.wakeOwned(first);
+  for (let i: usize = 0; i < n; i++) {
+    m.wakeOwned(m.ld(more + 8 * i));
+  }
+  if (more !== 0) {
+    m.release(more, 8 * cap);
   }
 }
 
 /** A wait's poll: ready once the latch is open (and its queued step reached). */
 export function waitPoll(w: usize, cx: usize): u32 {
   const a = m.ld(w + W_LATCH);
+  if (plain(a)) {
+    return waitPollAs(w, a, cx, lk.LK_NONE);
+  }
+  return waitPollAs(w, a, cx, lk.kind());
+}
+
+/** `waitPoll`, an operation of kind `lkind` (sched_lock.velt). */
+@inline
+function waitPollAs(w: usize, a: usize, cx: usize, lkind: u32): u32 {
   const waker = m.ld(cx + 8);
+  lock(a, lkind);
   if (m.ld(a + L_OPEN) !== 0) {
     const ticket = m.ld(w + W_TICKET) as u64;
+    unlock(a, lkind);
     if (ticket === 0) {
       return 1;
     }
-    const k = t.exec() === 0 ? 0 : t.taskOf(waker);
+    const k = t.exec() === 0 ? 0 : wk.taskOf(waker);
     if (k === 0 || micro.reached(k, ticket, waker)) {
       m.st(w + W_TICKET, 0);
       return 1;
@@ -112,12 +234,24 @@ export function waitPoll(w: usize, cx: usize): u32 {
     m.st(w + W_NEXT, m.ld(a + L_WAITS));
     m.st(a + L_WAITS, w);
   }
+  unlock(a, lkind);
   return 0;
 }
 
 /** A wait's drop: out of its latch's list, its waker and its reference to the latch given back. */
 export function waitDrop(w: usize): void {
   const a = m.ld(w + W_LATCH);
+  if (plain(a)) {
+    waitDropAs(w, a, lk.LK_NONE);
+  } else {
+    waitDropAs(w, a, lk.kind());
+  }
+}
+
+/** `waitDrop`, an operation of kind `lkind` (sched_lock.velt). */
+@inline
+function waitDropAs(w: usize, a: usize, lkind: u32): void {
+  lock(a, lkind);
   if (m.ld(w + W_NEXT) !== 1) {
     let at = a + L_WAITS;
     while (m.ld(at) !== 0 && m.ld(at) !== w) {
@@ -128,9 +262,11 @@ export function waitDrop(w: usize): void {
     }
   }
   const k = m.ld(w + W_WAKER);
+  m.st(w + W_WAKER, 0);
+  unlock(a, lkind);
   if (k !== 0) {
     m.wakerDrop(k);
   }
-  latchFree(a as u64);
+  freeRef(a, lkind === lk.LK_NONE);
   m.release(w, W_SIZE);
 }

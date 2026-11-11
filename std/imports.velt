@@ -45,6 +45,13 @@ export const imports: Imports = {
     linux: "./lang/hooks/reactor_epoll.velt",
     default: "./lang/hooks/reactor_none.velt",
   },
+  // The threads of the executor in Velt's workers (std/lang/hooks/sched.velt): `pthread_create`
+  // on macOS and Linux; elsewhere none yet (one worker).
+  "#sched-thread": {
+    darwin: "./lang/hooks/thread_posix.velt",
+    linux: "./lang/hooks/thread_posix.velt",
+    default: "./lang/hooks/thread_none.velt",
+  },
   // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
   // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
   // reactor (std/net/tcp_sched.velt), which hands the runtime's handles (TLS, `fetch`'s pool) and
@@ -68,4 +75,10 @@ export const imports: Imports = {
     default: "./sync/channel_entry.velt",
   },
   "#net-tcp": { "std-scheduler": "./net/tcp_sched.velt", default: "./net/rt.velt" },
+  // velt/task's `workerCount()` and `currentWorker()`: the runtime's executor's workers, or
+  // under the executor in Velt (`VELT_SCHEDULER=std`) its own.
+  "#task-workers": {
+    "std-scheduler": "./task/worker_index_sched.velt",
+    default: "./task/worker_index.velt",
+  },
 };
