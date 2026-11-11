@@ -108,6 +108,17 @@ async function outcome(url: string): Promise<string> {
   }
 }
 
+// The failure's message.
+async function failureOf(url: string): Promise<string> {
+  try {
+    const db = await connect(url);
+    db.close();
+    return "connected";
+  } catch (e) {
+    return `${e.code} ${e.message}`;
+  }
+}
+
 // A server whose certificate nothing verifies (a self-signed one, as Debian and Ubuntu install, or
 // a server before PostgreSQL 17): `prefer` and `require` upgrade the socket after `SSLRequest` and
 // encrypt without checking the certificate, as libpq does; the checked modes refuse it.
@@ -131,8 +142,12 @@ export async function test_a_server_without_tls() {
     assertEq(await outcome(withMode(url, "prefer")), "plain");
     assertEq(await outcome(withMode(url, "disable")), "plain");
     assertEq(await outcome(withMode(url, "require")), "ETLS");
-    assertEq(await outcome(withMode(url, "verify-ca")), "ETLS");
-    assertEq(await outcome(withMode(url, "verify-full")), "ETLS");
+    // It takes no direct TLS either, whatever its version: the checked modes say what they need.
+    for (const mode of ["verify-ca", "verify-full"]) {
+      const m = await failureOf(withMode(url, mode));
+      assert(m.startsWith("ETLS ") && m.includes("did not take a direct TLS connection"), m);
+      assert(m.includes("need PostgreSQL 17 or later"), m);
+    }
   }
 }
 

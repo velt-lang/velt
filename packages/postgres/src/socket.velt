@@ -39,6 +39,11 @@ function tlsFailure(host: string, why: string): Failure {
 const CHECKED_NEEDS =
   "verify-ca and verify-full use direct TLS, so the server needs PostgreSQL 17 or later and a certificate that sslrootcert or Mozilla's roots verify for the host name, under verify-ca too";
 
+// Why a handshake that failed for another reason than the certificate did: the server (before
+// PostgreSQL 17, or a proxy) doesn't take direct TLS, and reads the ClientHello as a bad start-up.
+const NO_DIRECT_TLS =
+  "the server did not take a direct TLS connection. verify-ca and verify-full need PostgreSQL 17 or later: they use its direct TLS until velt-lang/velt#2392 lets them check the certificate after SSLRequest. With an older server, or a proxy without direct TLS, sslmode=require encrypts without the check";
+
 /** `host:port`, an IPv6 host in brackets. */
 export function addressOf(host: string, port: i64): string {
   return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
@@ -104,7 +109,10 @@ async function checkedTls(
     if (e instanceof TimeoutError) {
       throw timedOut();
     }
-    throw errorOf(tlsFailure(name, `${e.message} (${CHECKED_NEEDS})`));
+    if (e.message.includes("certificate")) {
+      throw errorOf(tlsFailure(name, `${e.message} (${CHECKED_NEEDS})`));
+    }
+    throw errorOf(tlsFailure(name, `${e.message}: ${NO_DIRECT_TLS}`));
   }
   let agreed: string | null = null;
   try {

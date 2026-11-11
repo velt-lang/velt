@@ -427,6 +427,26 @@ export async function test_stricter_modes_never_fall_back() {
   }
 }
 
+// A server that closes on a direct TLS ClientHello, as one before PostgreSQL 17 does: the checked
+// modes say they need its direct TLS, not just that the handshake failed.
+export async function test_checked_modes_say_they_need_direct_tls() {
+  for (const mode of ["verify-ca", "verify-full"]) {
+    const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
+    const port = await serveTlsProbes(probes, "S", 1);
+    let message = "connected";
+    try {
+      const db = await connect(`postgres://fake@127.0.0.1:${port}/db?sslmode=${mode}`);
+      db.close();
+    } catch (e) {
+      message = `${e.code} ${e.message}`;
+    }
+    assert(message.startsWith("ETLS TLS to 127.0.0.1 failed: "), message);
+    assert(message.includes("did not take a direct TLS connection"), message);
+    assert(message.includes("need PostgreSQL 17 or later"), message);
+    assert(message.includes("velt-lang/velt#2392"), message);
+  }
+}
+
 export async function test_disable_asks_nothing() {
   const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
   const port = await serveTlsProbes(probes, "S", 1);
