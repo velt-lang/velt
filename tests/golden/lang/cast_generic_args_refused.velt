@@ -1,0 +1,16 @@
+// An instance of a generic interface asserted to the same interface with other type arguments:
+// tsc allows it, but the members keep their types. Refused, naming why.
+interface Opts<S, R> {
+    name: string;
+    handler: (s: S) => R;
+}
+
+function create(o: Opts<unknown, unknown>): string {
+    return o.name + ":" + String(o.handler(3));
+}
+
+function serverFn<S, R>(o: Opts<S, R>): string {
+    return create(o as Opts<unknown, unknown>);
+}
+
+console.log(serverFn<number, string>({ name: "f", handler: (s) => "v" + s }));

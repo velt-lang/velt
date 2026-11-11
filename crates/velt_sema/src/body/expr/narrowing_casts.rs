@@ -17,7 +17,7 @@ use velt_common::Span;
 
 use crate::body::places::is_place;
 use crate::body::{FnCx, LocalKind};
-use crate::hir::{self, ExprKind as H, Intrinsic, PatKind as P, TyId, UseMode};
+use crate::hir::{self, ExprKind as H, Intrinsic, PatKind as P, TyId, TyKind, UseMode};
 use crate::types::collect_params;
 
 use super::union_coerce::outer_mode;
@@ -43,6 +43,12 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        // `src as () => T` of a `T | (() => T)`: each written function type has its own error
+        // site, so the member is the function type that differs only in that one.
+        if let Some(m) = self.fn_member_like(h.ty, target) {
+            let member = self.narrowing_assertion(h, m, span)?;
+            return self.try_coerce(member, target);
+        }
         if generic(self, h.ty) || generic(self, target) {
             if !self.param_union(h.ty) {
                 // Members that are distinct types at every instantiation (`Ok<T> | Err`).
@@ -146,6 +152,45 @@ impl FnCx<'_, '_> {
         }
         let boxed = self.param_as_object(h, object)?;
         self.coerce_dynamic(boxed, target, true)
+    }
+
+    /// The member of union `u` (or of what it holds besides `null`/`undefined`) that is the
+    /// function type `target` but for the error sites of the two (`() => T` written twice), when
+    /// `target` itself is not one; `None` otherwise.
+    fn fn_member_like(&mut self, u: TyId, target: TyId) -> Option<TyId> {
+        let core = self.cx.ty.core(u).unwrap_or(u);
+        let members = self.cx.union_members(core)?;
+        if members.contains(&target) {
+            return None;
+        }
+        let TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest,
+        } = self.cx.ty.kind(target).clone()
+        else {
+            return None;
+        };
+        let site =
+            |s: &Self, t: TyId| matches!(s.cx.ty.kind(t), TyKind::Op(hir::TyOp::ErrSite(_), _));
+        if !site(self, throws) {
+            return None;
+        }
+        let like = |s: &Self, m: TyId| match s.cx.ty.kind(m) {
+            TyKind::FnPtr {
+                params: p,
+                ret: r,
+                throws: t,
+                rest: x,
+            } => *p == params && *r == ret && *x == rest && site(s, *t),
+            _ => false,
+        };
+        let found: Vec<TyId> = members.into_iter().filter(|m| like(self, *m)).collect();
+        match found.as_slice() {
+            [m] => Some(*m),
+            _ => None,
+        }
     }
 
     /// Is `target` a member of union `u`?

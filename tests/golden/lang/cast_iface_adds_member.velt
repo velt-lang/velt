@@ -1,0 +1,14 @@
+// An interface value asserted to an interface extending it with a member its object lacks:
+// tsc allows it, but an object keeps the layout it was made with, so a write through the
+// assertion would have nowhere to go. Refused, naming the member.
+interface Ctx {
+    el: string;
+    update(): void;
+}
+interface InternalCtx extends Ctx {
+    __name?: string;
+}
+
+const c = { el: "x", update: () => {} } as unknown as Ctx;
+(c as InternalCtx).__name = "dbg";
+console.log(c.el);
