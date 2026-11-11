@@ -93,8 +93,7 @@ export async function accept(l: u64): Promise<IoResult<u64>> {
 
 // Waits until `c`'s socket is readable, within the handshake's time limit while it runs.
 async function waitReadable(c: Conn): Promise<void> {
-  const fd = c.with((x) => x.fd);
-  const deadline = c.with((x) => x.deadline);
+  const [fd, deadline] = c.with((x) => [x.fd, x.deadline] as [u64, number]);
   if (deadline == 0) {
     const st = await fio.readable(fd);
     if (st.code !== 0) {
@@ -200,23 +199,24 @@ export function tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<
 }
 
 /**
- * 1 when a `tryRead` of TLS stream `s` has something the socket won't announce (decrypted bytes, a
- * whole record, the end, a failure), else 0: then wait on the socket (`fdOf`).
+ * 0 when a `tryRead` of TLS stream `s` has something the socket won't announce (decrypted bytes, a
+ * whole record, the end, a failure), else the socket to wait on.
  */
-export function readyNow(s: u64): IoResult<u8> {
+export function readyOrFd(s: u64): IoResult<u64> {
   const c = findConn(s);
   if (c == null) {
     return fs.failed(fs.closed(), 0);
   }
-  const ready = c.with((x) => {
-    try {
-      return x.step() == READY && x.hasBuffered();
-    } catch (e) {
-      x.fail(e);
-      return true;
-    }
-  });
-  return fs.value(ready ? 1 : 0);
+  return fs.value(
+    c.with((x) => {
+      try {
+        return x.ready() ? 0 : x.fd;
+      } catch (e) {
+        x.fail(e);
+        return 0;
+      }
+    }),
+  );
 }
 
 /** The socket of TLS stream `s`, or 0 once it is closed. */
@@ -227,18 +227,21 @@ export function fdOf(s: u64): u64 {
 
 /** Resolves once a `tryRead` of TLS stream `s` may find something. */
 export async function readable(s: u64): Promise<IoStatus> {
-  const r = readyNow(s);
-  if (r.code !== 0) {
-    return { code: r.code, message: r.message };
-  }
-  if (r.value == 1) {
-    return fs.ok();
-  }
   const c = findConn(s);
   if (c == null) {
     return fs.closed();
   }
-  await waitReadable(c);
+  const ready = c.with((x) => {
+    try {
+      return x.ready();
+    } catch (e) {
+      x.fail(e);
+      return true;
+    }
+  });
+  if (!ready) {
+    await waitReadable(c);
+  }
   return fs.ok();
 }
 
