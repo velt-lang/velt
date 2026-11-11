@@ -115,7 +115,9 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
    Debug builds run only the cheap part: CFG simplification, the int32 helpers inlined,
    `numrep`, and removal of unused functions (`dead_funcs`).
-6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR,
+6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT (its IR verifier runs in
+   the compiler's own debug builds or with `VELT_CL_VERIFY=1`; `VELT_CL_REGALLOC=single_pass`
+   trades slower programs for faster builds); textual LLVM IR,
    compiled by clang (`-O3`, or `VELT_LLVM_OPT`, for release builds; unoptimized for `--backend
    llvm`) and, for WebAssembly, by LLVM's `opt` and `llc`. Large programs are split into codegen
    units that clang compiles in parallel (`velt_codegen_llvm::units`); the root module's
