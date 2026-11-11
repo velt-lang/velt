@@ -1,0 +1,167 @@
+// velt/lang/string (internal): tests of positions.velt and crumbs.velt (#2198), run by `velt test std/`:
+// every position of mixed strings against a plain scan from the start, in each form (inline,
+// static, heap, a slice), forward, backward and at random, across a freed and reused buffer (the
+// epoch), and with the runtime's own translation filling the same tables.
+import { describe, expect, it } from "velt/test";
+import { strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { byteToUnit, unitToByte } from "velt/lang/string/positions";
+
+/** The position of unit `u` by a scan from the start: `byte << 1 | low half`. */
+function plain(s: string, u: usize): u64 {
+  let byte: usize = 0;
+  let unit: usize = 0;
+  const n = strByteLen(s);
+  while (unit < u && byte < n) {
+    const lead = strByteAt(s, byte as u64);
+    const w: usize = lead >= 0xf0 ? 2 : 1;
+    if (unit + w > u) {
+      return ((byte as u64) << 1) | 1;
+    }
+    byte += lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+    unit += w;
+  }
+  return (byte as u64) << 1;
+}
+
+/** `piece` `n` times, built at run time (a heap string). */
+function built(piece: string, n: i64): string {
+  let s = "";
+  for (let i: i64 = 0; i < n; i++) {
+    s += piece;
+  }
+  return s;
+}
+
+/** The steps of the orders past the first two: further than the cache steps from its last
+ * translation, so each goes to the breadcrumbs. */
+const STEPS: usize[] = [97, 263];
+
+/** The mismatches of every unit of `s` in `order` (0 forward, 1 backward, 2 and 3 by `STEPS`). */
+function check(s: string, order: i64): string[] {
+  const out: string[] = [];
+  const units = strLen(s);
+  for (let k: usize = 0; k <= units; k++) {
+    const u =
+      order == 0 ? k : order == 1 ? units - k : (k * STEPS[(order - 2) as usize]) % (units + 1);
+    const got = unitToByte(s, u);
+    const want = plain(s, u);
+    if (got != want) {
+      out.push(`unit ${u}: ${got} != ${want}`);
+    }
+    if ((want & 1) == 0) {
+      const back = byteToUnit(s, (want >> 1) as usize);
+      if (back != u) {
+        out.push(`byte ${want >> 1}: unit ${back} != ${u}`);
+      }
+    }
+  }
+  return out;
+}
+
+const HI = String.fromCharCode(0xd83d);
+const LO = String.fromCharCode(0xde00);
+const STATIC =
+  "a static literal of é, 日本, 😀 and more, long enough to have breadcrumbs: 😀😀😀😀 ééé 日本語 😀 end";
+
+describe("unitToByte and byteToUnit", () => {
+  it("agree with a plain scan on every position, in every order", () => {
+    const strings = [
+      built("é", 3),
+      "éa😀",
+      STATIC,
+      built("é日😀a", 50),
+      built("a😀", 200),
+      built("x" + HI + "y" + LO, 40),
+      built("😀", 100) + HI,
+      LO + built("日", 130),
+      built("abc", 100) + "é",
+    ];
+    for (const s of strings) {
+      for (let order: i64 = 0; order < 4; order++) {
+        expect(check(s, order)).toEqual([]);
+      }
+    }
+  });
+
+  it("agree in a slice and after a buffer is freed and another takes its place", () => {
+    const long = built("é日😀a", 80);
+    const tail = long.slice(3, 300);
+    expect(check(tail, 0)).toEqual([]);
+    expect(check(tail, 2)).toEqual([]);
+    expect(check(tail, 3)).toEqual([]);
+    // Strings of the same lengths (5 bytes and 3 units a piece, laid out differently), so that a
+    // freed buffer's address and `w1` come back with other text: the first translation of each is
+    // next to the last of the one before (a unit inside a piece), which this thread remembers
+    // under the old epoch.
+    let last: usize = 32;
+    let wrong: string[] = [];
+    for (let round = 0; round < 60; round++) {
+      // One allocation of the final size each (`repeat`), so the next one takes the freed block.
+      const s = (round % 2 == 0 ? "😀a" : "aéé").repeat(60);
+      const u = last + 1;
+      if (unitToByte(s, u) != plain(s, u)) {
+        wrong.push(`round ${round}: unit ${u}`);
+      }
+      last = 3 * (((round * 7 + 20) % 50) as usize) + 2;
+      expect(unitToByte(s, last)).toBe(plain(s, last));
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("agree with the runtime filling the same tables", () => {
+    const s = built("é日😀a", 120);
+    const units = strLen(s) as i64;
+    // The runtime's translation (charCodeAt of a non-ASCII string) and this one, interleaved.
+    for (let i: i64 = 0; i < units; i += 61) {
+      expect(s.charCodeAt(i) >= 0).toBe(true);
+      expect(check(s, 2)).toEqual([]);
+    }
+  });
+
+  it("agree with the runtime filling one string's tables from other threads", async () => {
+    // Each round a fresh string, whose table the tasks build and extend at once: two through
+    // the runtime (`charCodeAt`), two through this module, on the workers' threads.
+    for (let round = 0; round < 12; round++) {
+      const s = built("é日😀a", 400 + round);
+      const codes = expectedCodes(s);
+      const tasks = [
+        spawn(runtimeSide(s, 0, codes)),
+        spawn(veltSide(s, 2)),
+        spawn(runtimeSide(s, 5, codes)),
+        spawn(veltSide(s, 3)),
+      ];
+      for (const t of tasks) {
+        expect(await t).toEqual([]);
+      }
+    }
+  });
+});
+
+/** The code units of `s`, from a copy of it with a buffer of its own (so no table is shared). */
+function expectedCodes(s: string): i64[] {
+  const copy = s.slice(0, 1) + s.slice(1);
+  const out: i64[] = [];
+  for (let i: i64 = 0; i < (strLen(copy) as i64); i++) {
+    out.push(copy.charCodeAt(i));
+  }
+  return out;
+}
+
+/** The runtime's translation of every `step`-th unit of `s` (stepping on from `from`), against
+ * `codes`: the mismatches. */
+async function runtimeSide(s: string, from: i64, codes: i64[]): Promise<string[]> {
+  const out: string[] = [];
+  const units = strLen(s) as i64;
+  for (let k: i64 = 0; k < units; k++) {
+    const i = (from + k * 131) % units;
+    if (s.charCodeAt(i) != codes[i as usize]) {
+      out.push(`runtime: unit ${i}`);
+    }
+  }
+  return out;
+}
+
+/** This module's translation of every unit of `s` in `order`: the mismatches. */
+async function veltSide(s: string, order: i64): Promise<string[]> {
+  return check(s, order);
+}

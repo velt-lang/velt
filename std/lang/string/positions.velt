@@ -1,0 +1,248 @@
+// velt/lang/string (internal): UTF-16 positions ↔ WTF-8 byte offsets in Velt (#2198), as the
+// runtime translates them (velt_rt `str/crumbs.rs`, `str/recent.rs`), over the same breadcrumb
+// tables (crumbs.velt) and the same epoch (std's `STR_EPOCH`, velt/lang/hooks/process_statics).
+//
+// - ASCII (`strLen == strByteLen`): the same number.
+// - A non-ASCII string of at most `STRIDE` units, or one without breadcrumbs of its own (static,
+//   or a slice, whose buffer's table would describe the whole buffer): a scan from the nearer
+//   end. (An inline string has at most 23 bytes, so fewer units than `STRIDE`.)
+// - A plain heap string of more units: its breadcrumb table, then a forward scan of fewer than
+//   `STRIDE` units.
+// - Either way, near this thread's last translation of the same string, a step from it: a
+//   sequential index loop decodes one character per step. The cache lives with the thread
+//   (`ThreadLocal`): a translation never awaits, so the task doing it stays on its thread, and no
+//   task reads another thread's entry. An entry of a heap string is valid while `STR_EPOCH` is the
+//   one it was taken under: the runtime bumps it when a buffer with a table, or marked
+//   remembered, is freed or moved (a slice marks its buffer, as the runtime's slices do); a
+//   static string's entry never expires.
+
+import {
+  noInline,
+  strByteAt,
+  strByteLen,
+  strLen,
+  strWord0,
+  strWord1,
+  strWord2,
+} from "velt/lang/intrinsics";
+import { STR_EPOCH } from "velt/lang/hooks/process_statics";
+import {
+  crumbs,
+  entry,
+  LOW_HALF,
+  markRemembered,
+  scanForward,
+  startOf,
+  STRIDE,
+  tableLen,
+} from "velt/lang/string/crumbs";
+
+/** How far before the last translated unit a translation steps back from it. */
+const BACK_STEPS: usize = 8;
+/** The bits of a slice's `w2` (velt_rt `str/slice.rs`): the form bit, and its buffer's offset. */
+const SLICE: u64 = 1 << 62;
+const OFFSET_SHIFT: u64 = 31;
+const FIELD: u64 = (1 << 30) - 1;
+
+// This thread's two last translations, the newer first: the key (`w0`, `w1` with the static form
+// in bit 63), the epoch it was taken under, the unit, and its position (`byte << 1 | low half`).
+const KEY_A0 = new ThreadLocal<u64>(0);
+const KEY_A1 = new ThreadLocal<u64>(0);
+const EPOCH_A = new ThreadLocal<u64>(0xffffffffffffffff);
+const UNIT_A = new ThreadLocal<u64>(0);
+const POS_A = new ThreadLocal<u64>(0);
+const KEY_B0 = new ThreadLocal<u64>(0);
+const KEY_B1 = new ThreadLocal<u64>(0);
+const EPOCH_B = new ThreadLocal<u64>(0xffffffffffffffff);
+const UNIT_B = new ThreadLocal<u64>(0);
+const POS_B = new ThreadLocal<u64>(0);
+
+/** The second word of `s`'s cache key: `w1`, the static form in bit 63. */
+function key1(s: string): u64 {
+  return strWord1(s) | (strWord2(s) == 0 ? (1 as u64) << 63 : 0);
+}
+
+/** The epoch an entry of `s` must have: `STR_EPOCH` for a heap string, 0 for a static one. */
+function epochOf(s: string): u64 {
+  return strWord2(s) == 0 ? 0 : STR_EPOCH.load();
+}
+
+/** This thread's entry for `s`: `which << 63 | unit`, `which` 0 or 1, or `-1 as u64` for none. */
+function find(s: string): u64 {
+  const k0 = strWord0(s);
+  const k1 = key1(s);
+  if (KEY_A0.get() == k0 && KEY_A1.get() == k1) {
+    return EPOCH_A.get() == epochOf(s) ? UNIT_A.get() : 0xffffffffffffffff;
+  }
+  if (KEY_B0.get() == k0 && KEY_B1.get() == k1) {
+    return EPOCH_B.get() == epochOf(s) ? ((1 as u64) << 63) | UNIT_B.get() : 0xffffffffffffffff;
+  }
+  return 0xffffffffffffffff;
+}
+
+/** The position of entry `which` (0: the newer). */
+function foundPos(which: u64): u64 {
+  return which == 0 ? POS_A.get() : POS_B.get();
+}
+
+/** Remembers that unit `unit` of `s` is at `pos`; replaces this string's entry, else the older. */
+function remember(s: string, unit: usize, pos: u64): void {
+  const k0 = strWord0(s);
+  const k1 = key1(s);
+  if (KEY_A0.get() != k0 || KEY_A1.get() != k1) {
+    KEY_B0.set(KEY_A0.get());
+    KEY_B1.set(KEY_A1.get());
+    EPOCH_B.set(EPOCH_A.get());
+    UNIT_B.set(UNIT_A.get());
+    POS_B.set(POS_A.get());
+  }
+  KEY_A0.set(k0);
+  KEY_A1.set(k1);
+  EPOCH_A.set(epochOf(s));
+  UNIT_A.set(unit as u64);
+  POS_A.set(pos);
+}
+
+/** Is `s` a plain heap string (not inline, static or a slice), which has breadcrumbs? */
+function plainHeap(s: string): bool {
+  const w2 = strWord2(s);
+  return (w2 as i64) > 0 && (w2 & SLICE) == 0;
+}
+
+/** Notes, for a slice of a non-ASCII buffer, that this thread remembers a position in it. */
+function markSliceRemembered(s: string): void {
+  const w2 = strWord2(s);
+  if ((w2 as i64) > 0 && (w2 & SLICE) != 0) {
+    markRemembered((strWord0(s) - ((w2 >> OFFSET_SHIFT) & FIELD)) as usize);
+  }
+}
+
+/** Units of `s`'s bytes `from..to` (code point boundaries): one per lead byte, two for four. */
+function countUnits(s: string, from: usize, to: usize): usize {
+  let n: usize = 0;
+  for (let i = from; i < to; i++) {
+    const b = strByteAt(s, i as u64);
+    if ((b & 0xc0) != 0x80) {
+      n += b >= 0xf0 ? 2 : 1;
+    }
+  }
+  return n;
+}
+
+/** From the code point boundary `byte` of `s`, whose first unit is `unit`, back to unit
+ * `target` (`target <= unit`): the position, `byte << 1 | low half`. */
+function scanBackward(s: string, from: usize, first: usize, target: usize): u64 {
+  let byte = from;
+  let unit = first;
+  while (unit > target) {
+    let start = byte - 1;
+    while ((strByteAt(s, start as u64) & 0xc0) == 0x80) {
+      start -= 1;
+    }
+    const w: usize = strByteAt(s, start as u64) >= 0xf0 ? 2 : 1;
+    if (unit - w < target) {
+      return ((start as u64) << 1) | 1;
+    }
+    byte = start;
+    unit -= w;
+  }
+  return (byte as u64) << 1;
+}
+
+/** How far a step from the cache may go, `to_end` from the end: `near` with breadcrumbs, which
+ * are never further back; up to the end otherwise. */
+function reach(s: string, near: usize, toEnd: usize): usize {
+  return plainHeap(s) || toEnd < near ? near : toEnd;
+}
+
+/** The position of UTF-16 unit `unit` of `s` (clamped to its length): `byte << 1`, plus 1 when
+ * the unit is the low half of the pair at `byte`. */
+export function unitToByte(s: string, unit: usize): u64 {
+  const n = strByteLen(s);
+  const units = strLen(s);
+  const u = unit < units ? unit : units;
+  if (units == n) {
+    return (u as u64) << 1;
+  }
+  if (u == units) {
+    return (n as u64) << 1;
+  }
+  return unitToByteWide(s, n, units, u);
+}
+
+/** `unitToByte` of a non-ASCII string, unit `u` below its `units`. */
+@noInline
+function unitToByteWide(s: string, n: usize, units: usize, u: usize): u64 {
+  if (units <= STRIDE) {
+    return u <= units / 2 ? scanForward(s, 0, 0, u) : scanBackward(s, n, units, u);
+  }
+  const found = find(s);
+  let pos: u64 = 0;
+  const hit = found != 0xffffffffffffffff;
+  const at = hit ? foundPos(found >> 63) : 0;
+  const was = (found & 0x7fffffffffffffff) as usize;
+  if (hit && u >= was && u - was <= reach(s, STRIDE, units - u)) {
+    pos = scanForward(s, (at >> 1) as usize, was - ((at & 1) as usize), u);
+  } else if (hit && u < was && was - u <= BACK_STEPS) {
+    // From the boundary after the remembered unit's code point.
+    const low = (at & 1) != 0;
+    pos = scanBackward(s, ((at >> 1) as usize) + (low ? 4 : 0), was + (low ? 1 : 0), u);
+  } else if (plainHeap(s)) {
+    const k = u / STRIDE;
+    const start = startOf(entry(crumbs(s, strWord0(s) as usize, units, k), k), k);
+    pos = scanForward(s, (start >> 32) as usize, (start & 0xffffffff) as usize, u);
+  } else {
+    markSliceRemembered(s);
+    pos = u <= units / 2 ? scanForward(s, 0, 0, u) : scanBackward(s, n, units, u);
+  }
+  remember(s, u, pos);
+  return pos;
+}
+
+/** The UTF-16 unit of the code point boundary `byte` of `s` (clamped to its length). */
+export function byteToUnit(s: string, byte: usize): usize {
+  const n = strByteLen(s);
+  const b = byte < n ? byte : n;
+  const units = strLen(s);
+  if (units == n) {
+    return b;
+  }
+  return byteToUnitWide(s, n, units, b);
+}
+
+/** `byteToUnit` of a non-ASCII string. */
+@noInline
+function byteToUnitWide(s: string, n: usize, units: usize, b: usize): usize {
+  if (units <= STRIDE) {
+    return b <= n / 2 ? countUnits(s, 0, b) : units - countUnits(s, b, n);
+  }
+  const found = find(s);
+  const hit = found != 0xffffffffffffffff;
+  const at = hit ? foundPos(found >> 63) : 0;
+  const atByte = (at >> 1) as usize;
+  let unit: usize = 0;
+  if (hit && b >= atByte && b - atByte <= reach(s, 4 * STRIDE, n - b)) {
+    const first = ((found & 0x7fffffffffffffff) as usize) - ((at & 1) as usize);
+    unit = first + countUnits(s, atByte, b);
+  } else if (plainHeap(s)) {
+    const t = crumbs(s, strWord0(s) as usize, units, (units + STRIDE - 1) / STRIDE - 1);
+    // The last entry at or before `b`; entry 0 is offset 0.
+    let lo: usize = 0;
+    let hi = tableLen(t);
+    while (hi - lo > 1) {
+      const mid = (lo + hi) / 2;
+      if (((entry(t, mid) & ~LOW_HALF) as usize) <= b) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    const start = startOf(entry(t, lo), lo);
+    unit = ((start & 0xffffffff) as usize) + countUnits(s, (start >> 32) as usize, b);
+  } else {
+    markSliceRemembered(s);
+    unit = b <= n / 2 ? countUnits(s, 0, b) : units - countUnits(s, b, n);
+  }
+  remember(s, unit, (b as u64) << 1);
+  return unit;
+}

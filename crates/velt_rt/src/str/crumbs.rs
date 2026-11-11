@@ -38,6 +38,10 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use super::{heap, recent, work, wtf8, VeltStr};
 
+/// The alignment tables are allocated with, on every target: std's `rawAlloc`'s (Velt code builds
+/// tables too, std/lang/string/crumbs.velt).
+const TABLE_ALIGN: u64 = 8;
+
 /// Units between two breadcrumbs, and the longest string translated by a scan alone.
 pub const STRIDE: usize = 64;
 
@@ -105,8 +109,9 @@ impl Table {
     /// A new table with room for `cap` entries holding `old`'s entries.
     fn alloc(cap: usize, old: &[AtomicU32]) -> *mut Table {
         let l = Table::layout(cap);
-        // SAFETY: the layout has a non-zero size (the header).
-        let t = unsafe { alloc::alloc(l) } as *mut Table;
+        // Through the allocator compiled code uses, as std's `rawAlloc` is (aligned to 8): a table
+        // Velt code built is freed here (`free_chain`), and both are counted alike (#2198).
+        let t = crate::mem::velt_rt_alloc(l.size() as u64, TABLE_ALIGN) as *mut Table;
         if t.is_null() {
             alloc::handle_alloc_error(l);
         }
@@ -279,7 +284,8 @@ pub(super) unsafe fn free(t: *mut u8) {
 unsafe fn free_chain(mut t: *mut Table) {
     while !t.is_null() {
         let prev = (*t).prev;
-        alloc::dealloc(t as *mut u8, Table::layout((*t).cap));
+        let size = Table::layout((*t).cap).size() as u64;
+        crate::mem::velt_rt_free(t as *mut u8, size, TABLE_ALIGN);
         t = prev;
     }
 }

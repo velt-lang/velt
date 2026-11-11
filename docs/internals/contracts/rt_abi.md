@@ -687,6 +687,32 @@ the program's data. No call when every field would be NULL.
   or moved. The word is Velt's, so the runtime needs no symbol of the program (the shared runtime
   of debug builds is linked before the program exists).
 
+## Breadcrumbs [#2198; shared by the runtime and std]
+
+The position translation of long non-ASCII heap strings (UTF-16 units ↔ WTF-8 bytes) is done by
+the runtime (`velt_rt` `str/crumbs.rs`, `str/recent.rs`) and by std (std/lang/string/
+`positions.velt`, `crumbs.velt`), which read, build and extend the same tables. Both follow this,
+byte for byte:
+
+- **Header field.** A non-ASCII heap buffer is `[crumbs][lone: u64][count: u64][text]`: `crumbs`, a
+  pointer-sized word 24 bytes before the text, is 0 (none), 1 (no table, but a thread remembers a
+  position in a slice of the buffer, so freeing it bumps the epoch) or a table's address.
+- **Table.** `[len: usize][cap: usize][prev: pointer][entries: u32 × cap]`, allocated with
+  `velt_rt_alloc(size, 8)` (std's `rawAlloc`) and freed with `velt_rt_free`. Entry `k` is the byte
+  offset of unit `k × 64`, with bit 31 set when that unit is the second half of the 4-byte sequence
+  there; entry 0 is 0.
+- **Publishing.** Entries below `len` never change. A writer stores an entry (relaxed) before `len`
+  covers it, raising `len` with an atomic `max` (release); a reader loads `len` (acquire) first. A
+  table with room is extended in place (two writers store the same values); one without is
+  replaced by a copy twice its size (or as large as needed), whose `prev` is the table it
+  replaces, published by a compare-and-swap of the header field (acquire-release; acquire on
+  failure). A copy that loses is freed at once and the winner's table extended. The runtime frees
+  the chain with the buffer.
+- **Epoch.** A thread's cache of its last translations (per side: the runtime's in a Rust
+  thread-local, std's in `ThreadLocal` words) holds an entry of a heap string under std's
+  `STR_EPOCH` (§ Process statics), which the runtime bumps before a buffer with a table or with
+  `crumbs` 1 is freed or moved. Static strings' entries never expire.
+
 ## Array length limit [additive, #1572]
 
 An array (`{ data, len, cap }`) holds at most `MAX_ARRAY_LEN` = 2^52 - 1 elements, and its
