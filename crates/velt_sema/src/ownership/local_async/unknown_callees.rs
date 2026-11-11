@@ -39,13 +39,7 @@ pub(super) fn mark(cx: &Ctx, g: &mut Graph) {
             // Fed by std (`m.get(k)` on a `Map<string, T>`, a std iterator's values): the flow goes
             // into std's own nodes, where the program's type parameters aren't resolved, so this
             // local is resolved through its function's instantiations like one of unknown origin.
-            let in_std = |m: usize| match g.nodes[m] {
-                Node::Local(d, _) | Node::Ret(d) => {
-                    cx.try_fn(d).is_some_and(|i| cx.scopes[i.module].is_std)
-                }
-                _ => false,
-            };
-            if g.srcs[n].iter().any(|&(m, _)| in_std(m)) {
+            if g.srcs[n].iter().any(|&(m, _)| std_node(cx, g, m)) {
                 g.std_fed.push(n);
             }
         }
@@ -80,5 +74,15 @@ pub(super) fn dispatch_targets(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Vec<
                 .collect()
         }
         _ => vec![],
+    }
+}
+
+/// Is node `m` a local or the result of a function in std?
+pub(super) fn std_node(cx: &Ctx, g: &Graph, m: usize) -> bool {
+    match g.nodes[m] {
+        Node::Local(d, _) | Node::Ret(d) => {
+            cx.try_fn(d).is_some_and(|i| cx.scopes[i.module].is_std)
+        }
+        _ => false,
     }
 }

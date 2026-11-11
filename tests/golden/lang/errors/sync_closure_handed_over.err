@@ -1,0 +1,6 @@
+sync_closure_handed_over.velt:37:5: error: this function can be called on another thread, and it changes `n`
+sync_closure_handed_over.velt:40:9: but it is stored in a `VarHolder`, which is sent on a channel here
+sync_closure_handed_over.velt:29:5: error: this closure modifies captured `obj`, so it must stay on the task that created it
+sync_closure_handed_over.velt:32:9: but it is stored in a `Holder`, which is sent on a channel here
+sync_closure_handed_over.velt:45:5: error: this closure modifies captured `m`, so it must stay on the task that created it
+sync_closure_handed_over.velt:48:3: but it is stored in a `Settled`, which settles a promise here, which another task may await

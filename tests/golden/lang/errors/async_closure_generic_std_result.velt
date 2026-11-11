@@ -1,0 +1,20 @@
+// A closure of a type parameter's type passed straight through a std generic function
+// (`Promise.resolve(gs[0])`) and spawned, in a generic function used as a value: std's nodes
+// don't resolve the program's type parameters, so the value is resolved through the program
+// function's instantiation, and the closure passed to it crosses and must not change what it
+// captured (#2768).
+
+type Job = () => Promise<void>;
+async function first<T extends Job>(gs: T[]): Promise<void> {
+  await spawn((await Promise.resolve(gs[0]))());
+}
+async function main() {
+  let n = 0;
+  const f: (gs: Job[]) => Promise<void> = first;
+  await f([
+    async (): Promise<void> => {
+      n += 1;
+    },
+  ]);
+  console.log("n", n);
+}
