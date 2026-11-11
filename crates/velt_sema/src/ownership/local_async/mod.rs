@@ -48,6 +48,7 @@ mod reach;
 mod record;
 mod targets;
 mod types;
+mod unknown_callees;
 mod values;
 mod views;
 
@@ -292,8 +293,8 @@ fn push_instance(cx: &Ctx, p: &mut Propagation, t: TyId, w: Why) {
     }
 }
 
-/// Every `new` of method `m`'s class, with its type arguments: all the class's instantiations,
-/// when no subclass may add others (`None` otherwise).
+/// Every `new` (or literal) of method `m`'s class, with its type arguments: all the class's
+/// instantiations, when no subclass may add others and one was seen (`None` otherwise).
 fn ctor_sites(cx: &Ctx, g: &Graph, m: DefId) -> Option<Vec<(DefId, Vec<TyId>)>> {
     let Some(Def::Fn(f)) = &cx.defs[m.0 as usize] else {
         return None;
@@ -305,7 +306,11 @@ fn ctor_sites(cx: &Ctx, g: &Graph, m: DefId) -> Option<Vec<(DefId, Vec<TyId>)>> 
     if !types::subclasses(cx, class).is_empty() {
         return None;
     }
-    Some(g.news.get(&class).cloned().unwrap_or_default())
+    // No `new` seen: its objects come from somewhere the graph doesn't show.
+    g.news
+        .get(&class)
+        .filter(|sites| !sites.is_empty())
+        .cloned()
 }
 
 /// The function that closure `c` is written in, outside every closure (`c` itself if it is no
