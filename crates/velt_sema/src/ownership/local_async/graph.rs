@@ -211,6 +211,10 @@ pub(super) struct Graph {
     /// The `wild` nodes a value from std flows into directly (in node order, so sorted): resolved
     /// like values of unknown origin.
     pub std_fed: Vec<usize>,
+    /// Values of the program's generic types flowing straight into a std node (`Promise.resolve(gs[0])`),
+    /// by that node: the program function and the type, resolved through its instantiations when
+    /// the node crosses.
+    pub std_inflows: FxHashMap<usize, Vec<(DefId, TyId)>>,
     /// Per closure literal node: its capture locals' nodes.
     pub captures: FxHashMap<usize, Vec<usize>>,
 }
@@ -328,6 +332,15 @@ impl Walk<'_, '_> {
                 self.g.unknown[m] = true;
                 if !self.g.inflows[m].contains(&(e.ty, site)) {
                     self.g.inflows[m].push((e.ty, site));
+                }
+                // A value of the program's generic type flowing straight into std: std's nodes
+                // don't resolve the program's type parameters (#2768).
+                let into_std = super::unknown_callees::std_node(self.cx, self.g, m);
+                if into_std && !self.std && super::types::mentions_param(self.cx, e.ty) {
+                    let entry = self.g.std_inflows.entry(m).or_default();
+                    if !entry.contains(&(self.d, e.ty)) {
+                        entry.push((self.d, e.ty));
+                    }
                 }
             }
             To::Flag(CROSSES, Some(why)) => {

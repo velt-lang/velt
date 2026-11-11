@@ -1,0 +1,36 @@
+// A sync closure that changes what it captured, held in a value sent on a channel (a captured
+// object's field, a captured variable): the receiving task runs it on a copy of what it captured,
+// so the change would be lost where Node shares the object: an error (#2772). A closure the
+// program spawns itself runs on its own copy, as documented, and one in a value settling a promise
+// isn't reported (lang/sync_closure_settled). Each case has a class and a function type of its own.
+import { channel } from "velt/sync";
+
+class Counter {
+  k: i64 = 0;
+}
+
+class Holder {
+  cb: (() => void) | null = null;
+}
+
+class VarHolder {
+  cb: ((by: i64) => void) | null = null;
+}
+
+async function main() {
+  const obj = new Counter();
+  const h = new Holder();
+  h.cb = (): void => {
+    obj.k += 1;
+  };
+  const ch = channel<Holder>();
+  await ch.send(h);
+
+  let n = 0;
+  const h2 = new VarHolder();
+  h2.cb = (by: i64): void => {
+    n += by;
+  };
+  const ch2 = channel<VarHolder>();
+  await ch2.send(h2);
+}

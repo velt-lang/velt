@@ -1,0 +1,29 @@
+// check: no leaks
+// Sync closures that change what they captured, held in an object that settles a promise awaited
+// on the same task: the change is kept, as in Node (#2796's review: settling isn't a crossing for
+// a sync closure, only a channel send is). The output is Node's.
+
+class Store {
+  inc: () => void;
+  get: () => number;
+  constructor(inc: () => void, get: () => number) {
+    this.inc = inc;
+    this.get = get;
+  }
+}
+
+async function main() {
+  let state = 0;
+  const store = new Store(
+    (): void => {
+      state++;
+    },
+    (): number => state,
+  );
+  const { promise, resolve } = Promise.withResolvers<Store>();
+  resolve(store);
+  const s = await promise;
+  s.inc();
+  store.inc();
+  console.log(s.get(), state);
+}

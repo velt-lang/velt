@@ -184,9 +184,13 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
             }
         }
     }
-    // Only what a standard-library function runs on other threads (out of sight); a closure the
-    // program spawns itself runs on its own copy (https://veltlang.com/docs/reference/async/).
-    found.retain(|x| x.2.in_library && x.2.boundary == Boundary::Spawn);
+    // Only what a standard-library function runs on other threads (out of sight), or what a channel
+    // hands to another task; a closure the program spawns itself runs on its own copy
+    // (https://veltlang.com/docs/reference/async/), and a promise it settles may be awaited here.
+    // A channel hands it to another task as well (#2772).
+    found.retain(|x| {
+        (x.2.in_library && x.2.boundary == Boundary::Spawn) || x.2.boundary == Boundary::Channel
+    });
     let reported: FxHashSet<DefId> = found.iter().map(|x| x.0).collect();
     for (c, ty, w, cap, name, cap_ty, at) in found {
         // The closure making the assigning one runs on the other thread itself: no call to show.

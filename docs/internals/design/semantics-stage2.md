@@ -303,6 +303,15 @@ through a function value (callee.rs `call_indirect`) without being separated, so
 captured variable the analysis is the only guard (the debug runtime's cell-owner check reports a
 miss; a release build would lose the write).
 
+A sync closure that changes what it captured (a captured variable, or an object reached from a
+capture) and is sent to another task on a channel runs there on a copy, so the change would be
+lost: that is an error, as for an async closure (#2772). A library's spawn (`serve`'s handler)
+is checked the same way. A closure the program spawns itself runs on its own copy, as documented,
+and may change it; a promise it settles isn't reported, as one awaited on the same task keeps the
+change. A value of the program's generic type
+passed straight into a std call (`Promise.resolve(gs[0])`) is resolved through the program
+function's instantiations when that std node crosses (#2768).
+
 Async closures that may reach another thread (all but local ones, #208, #2726) copy what they
 capture per call (deep copies of shared captures, `validate`), since an HTTP handler runs them
 concurrently (#8, #208); a local async closure in `shared(...)` is instead called on a copy of its

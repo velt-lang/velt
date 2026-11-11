@@ -160,9 +160,17 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         let local = p.flags[n] & CROSSES == 0;
         finish(cx, c, local, why);
         // A standard-library function that runs it on other threads: spawns it, from the user's
-        // call (`serve`'s handler); a channel or a promise hands a value over once.
-        let to_std = (p.why[n])
-            .filter(|w| p.flags[n] & CROSSES != 0 && w.in_library && w.boundary == Boundary::Spawn);
+        // call (`serve`'s handler). A sync closure sent on a channel runs on the receiving task, on
+        // a copy of what it captured, so a change it makes would be lost (#2772). One the program
+        // spawns itself runs on its own copy, as documented; a promise it settles may be awaited on
+        // its own task, where the change is kept, so settling isn't reported either.
+        let sync =
+            matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if !f.is_async && !f.is_generator);
+        let handed = |w: &Why| {
+            (w.in_library && w.boundary == Boundary::Spawn)
+                || (sync && w.boundary == Boundary::Channel)
+        };
+        let to_std = (p.why[n]).filter(|w| p.flags[n] & CROSSES != 0 && handed(w));
         if let (Some(w), false) = (to_std, reported.contains(&c)) {
             crossing_sync(cx, c, Some(w));
         }
@@ -186,8 +194,13 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             }
         }
         if let Some(w) = to_std {
-            let copied = crate::ownership::Copied::Crossing(w.span, reaches(cx, &w));
-            crate::ownership::check_copied_closure(cx, c, &copied);
+            // A library's spawn runs it on other threads, each with a copy: a captured resource
+            // without `clone()` can't be copied. A channel or a promise hands one copy over, which
+            // the transfer checks at run time.
+            if w.in_library && w.boundary == Boundary::Spawn {
+                let copied = crate::ownership::Copied::Crossing(w.span, reaches(cx, &w));
+                crate::ownership::check_copied_closure(cx, c, &copied);
+            }
             // Changes through calls are known once mutation inference ran (`changes`).
             // A callback wrapper the compiler made around an async closure (`body/expr/callback.rs`)
             // is checked through that closure.
@@ -648,6 +661,13 @@ impl Propagation {
     fn root(&mut self, cx: &Ctx, g: &Graph, n: usize, f: u8, w: Why) {
         let ty = g.tys[n];
         let rooted = f == CROSSES && (g.unknown[n] || !types::fn_like(cx, ty));
+        // A value of a generic type the program passed straight into std (`Promise.resolve(gs[0])`)
+        // is resolved through the program function's instantiations (#2768).
+        if f == CROSSES {
+            for &(d, t) in g.std_inflows.get(&n).into_iter().flatten() {
+                self.hits.push((d, t, w));
+            }
+        }
         // Only a value of unknown origin (a read, or what one fed) or fed by std (`Graph::std_fed`):
         // one the program's own flow feeds, such as a parameter of a function it calls, crosses
         // where its values come from instead.
