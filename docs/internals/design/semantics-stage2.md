@@ -284,11 +284,14 @@ bound reaches too). A crossing value whose type mentions a type parameter (`T`, 
 a `T` read out of one), in a function outside std, crosses with what that type is in the
 function's instantiations: the type arguments of its direct calls and of its uses as a function
 value, followed to their callers where they are generic themselves (#2740, #2741); an element or
-field read that crosses at once (`spawn(gs[0]())`) is resolved the same way. A method a dispatched
-call may reach (a generic class's method through an interface) has instantiations its direct calls
-don't show: its class's are the type arguments of every `new` of the class. Where none of these
-gives them (no call, or a class a subclass extends, which may bind them in its `extends`), the value
-stands for any function type, and every closure stored or passed to an unknown callee crosses. std's generic
+field read, or a call's result, that crosses at once (`spawn(gs[0]())`, `spawn(pick(gs)())`) is
+resolved the same way. A method a dispatched call may reach (a generic class's method through an
+interface) has instantiations its direct calls don't show: its class's type parameters are what
+every `new` of the class gives them, and every subclass's `extends` (`class NumQueue extends
+AsyncQueue<number>`, followed through the subclass's own instantiations where it names its own type
+parameters). Where none of these gives them (no `new` seen), or for the method's own type
+parameters (`run<U>`, which a dispatched call may give anything), the value stands for any
+function type, and every closure stored or passed to an unknown callee crosses. std's generic
 callbacks, such as the prelude's `resolve`, are matched by their instantiations in
 `crossing_params`. Where the analysis does not follow a path, the transfer at
 the boundary still copies what is shared, and the many-threads check catches the rest, with one

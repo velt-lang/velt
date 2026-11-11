@@ -1,0 +1,44 @@
+// check: no leaks
+// A generic queue that passes a `T` to a stored `resolve`, with a subclass that names its type
+// argument (`class NumQueue extends AsyncQueue<number>`): the `extends` gives the class one more
+// instantiation, `number`, which holds no closure, so the program's other closures stay local
+// (#2741). A middleware's `next` beside it changes what it captured, as in JavaScript. The output
+// is Node's.
+
+interface Queue<T> {
+  push(v: T): void;
+  pop(): Promise<T>;
+}
+class AsyncQueue<T> implements Queue<T> {
+  resolvers: ((v: T) => void)[] = [];
+  push(v: T): void {
+    const r = this.resolvers.shift();
+    if (r != undefined) {
+      r(v);
+    }
+  }
+  async pop(): Promise<T> {
+    const { promise, resolve } = Promise.withResolvers<T>();
+    this.resolvers.push(resolve);
+    return await promise;
+  }
+}
+class NumQueue extends AsyncQueue<number> {}
+
+type Next = () => Promise<void>;
+const middleware: ((next: Next) => Promise<void>)[] = [
+  async (next: Next): Promise<void> => {
+    await next();
+  },
+];
+
+async function main() {
+  const q = new AsyncQueue<number>();
+  const p = q.pop();
+  q.push(5);
+  let log = "";
+  await middleware[0](async (): Promise<void> => {
+    log += "a";
+  });
+  console.log("mw", log, "queue", await p);
+}

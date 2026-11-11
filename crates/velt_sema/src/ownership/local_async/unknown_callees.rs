@@ -50,8 +50,11 @@ pub(super) fn mark(cx: &Ctx, g: &mut Graph) {
     // A local whose type mentions a type parameter (`T`, `T[]`, `Box<T>`, a `T` read out of one)
     // carries what that type is in its function's instantiations. std's generic callbacks (the
     // prelude's `resolve`) are matched by their instantiations instead (`super::crossing_params`).
+    // A generic function's result (`pick(gs)` in `spawn(pick(gs)())`) likewise.
     for (n, node) in g.nodes.iter().enumerate() {
-        let Node::Local(f, _) = *node else { continue };
+        let (Node::Local(f, _) | Node::Ret(f)) = *node else {
+            continue;
+        };
         let std = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_std);
         if !std && super::types::mentions_param(cx, g.tys[n]) {
             g.wild.push(n);

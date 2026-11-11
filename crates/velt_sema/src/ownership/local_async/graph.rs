@@ -193,7 +193,7 @@ pub(super) struct Graph {
     /// The methods a virtual, interface or bounded call may reach (sorted): what such a method's
     /// type parameters are isn't known from its direct calls alone.
     pub dispatched: Vec<DefId>,
-    /// Locals outside std whose type mentions a type parameter (in node order, so sorted). One that
+    /// Locals and results outside std whose type mentions a type parameter (in node order, so sorted). One that
     /// crosses carries what its type has in each instantiation of its function
     /// (`super::instances`), or any closure where no instantiation is known.
     pub wild: Vec<usize>,
@@ -318,10 +318,10 @@ impl Walk<'_, '_> {
             }
             To::Flag(CROSSES, Some(why)) => {
                 self.g.roots.push((e.ty, why));
-                // An element or field read of a generic type that crosses with no local in
-                // between (`spawn(gs[0]())`) is resolved like a local of that type.
-                let read = matches!(e.kind, E::Index { .. } | E::Field { .. });
-                if read && !self.std && super::types::mentions_param(self.cx, e.ty) {
+                // A value of a generic type that crosses where it is made, with no local in
+                // between (`spawn(gs[0]())`, a field, a call's result), is resolved like a local of
+                // that type.
+                if !self.std && super::types::mentions_param(self.cx, e.ty) {
                     self.g.generic_roots.push((self.d, e.ty, why));
                 }
             }
