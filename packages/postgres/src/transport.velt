@@ -10,13 +10,7 @@
 // the TLS state. `tls` is null on every other connection, one branch on each call and no other cost.
 
 import { TcpStream, TlsStream } from "velt/net";
-
-/** What a read on a TLS connection found: the bytes (`TcpStream.tryRead`), and whether more wait. */
-export struct TlsRead {
-  n: number | null;
-  /** A `tryRead` now may find bytes that waiting on the socket wouldn't announce. */
-  more: bool;
-}
+import { TlsRead } from "./tls_read";
 
 /** The byte stream under a connection. */
 export struct PgStream {

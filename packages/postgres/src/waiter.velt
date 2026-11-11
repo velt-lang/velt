@@ -1,0 +1,9 @@
+// postgres (internal): `Waiter`, a place in a pool's line of waiting tasks (waiter_line.velt).
+
+/** A task in line for a connection (what it waits on: `ch`), and its worker. */
+export struct Waiter<C> {
+  ch: C;
+  worker: i64;
+  /** The place of the next waiter on the same worker, or -1. */
+  next: i64;
+}

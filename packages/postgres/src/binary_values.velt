@@ -1,0 +1,32 @@
+// postgres (internal): values in PostgreSQL's binary format that need only the message being
+// written, not the request's statement (encoder.velt).
+
+import { Out } from "./frontend";
+import { C_FLOAT8, C_JSON, C_JSONB, C_TEXT } from "./pg_type";
+
+/** Writes text that a parameter of type `codec` takes in binary; false if it isn't a text-like type. */
+export function textInBinary(o: Out, s: string, codec: u8): bool {
+  if (codec == C_TEXT || codec == C_JSON) {
+    o.i32(Buffer.byteLength(s) as i64);
+    o.text(s);
+    return true;
+  }
+  if (codec == C_JSONB) {
+    o.i32((Buffer.byteLength(s) as i64) + 1);
+    o.u8(1);
+    o.text(s);
+    return true;
+  }
+  return false;
+}
+
+/** Writes `v` as a `float8`, or as a `float4` for any other `codec`. */
+export function floatInBinary(o: Out, v: f64, codec: u8) {
+  if (codec == C_FLOAT8) {
+    o.i32(8);
+    o.i64(v.toBits() as i64);
+  } else {
+    o.i32(4);
+    o.i32((v as f32).toBits() as i64);
+  }
+}

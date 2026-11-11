@@ -11,6 +11,8 @@
 // order, and choosing looks at each worker's first rather than along the line. A waiter served ahead
 // of its turn keeps its place, marked served, until the front of the line passes it.
 
+import { Waiter } from "./waiter";
+
 // How many waiters from the front a connection looks at, and how many times in a row the first in
 // line lets another go ahead.
 const LOOK_AHEAD: i64 = 64;
@@ -21,14 +23,6 @@ const COMPACT_FROM: usize = 32;
 
 // The worker of a place whose waiter was served ahead of its turn.
 const SERVED: i64 = -1;
-
-/** A task in line for a connection (what it waits on: `ch`), and its worker. */
-export struct Waiter<C> {
-  ch: C;
-  worker: i64;
-  /** The place of the next waiter on the same worker, or -1. */
-  next: i64;
-}
 
 // The connections worker `w` holds, of `held` (indexed by worker).
 function heldOn(held: i64[], w: i64): i64 {

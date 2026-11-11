@@ -208,14 +208,14 @@ reads its own reply.
 - `src/lib.velt`: the API (re-exports); `client.velt`, `pool.velt`, `transaction.velt`, `copy_reader.velt`,
   `copy_writer.velt`, `errors.velt`: the public types.
 - The connection: `line.velt` (the state behind its lock) and `sent.velt`, `failure.velt`, `failure_log.velt`,
-  `connection.velt` (requests), `ops.velt` (what `Client` and `Pool` share), `builder.velt` and
-  `encoder.velt` (a request's bytes), `input.velt`, `read_buffer.velt` and `reply.velt` (a reply, and
+  `connection.velt` (requests), `ops.velt` (what `Client` and `Pool` share), `builder.velt`,
+  `encoder.velt` and `binary_values.velt` (a request's bytes), `input.velt`, `read_buffer.velt` and `reply.velt` (a reply, and
   rows through velt/db's `readRows`), `drain.velt` (after a task went away), `startup.velt`,
-  `socket.velt`, `unchecked_tls.velt` (TLS without a certificate check), `transport.velt` (the stream
+  `socket.velt`, `unchecked_tls.velt` (TLS without a certificate check), `transport.velt` and `tls_read.velt` (the stream
   under it), `config.velt`, `describe.velt`, `prepared.velt`
   and `statement_cache.velt` (statements), `copy_state.velt`.
 - The pool: `pool_state.velt` (the state behind its lock), `grant.velt`, `taken.velt`,
-  `waiting_for_pool.velt`, `opening.velt`, `lent.velt`, `pool_options.velt`.
+  `waiting_for_pool.velt`, `waiter_line.velt` and `waiter.velt` (the tasks in line), `opening.velt`, `lent.velt`, `pool_options.velt`.
 - The protocol: `frontend.velt`, `backend.velt`, `scram.velt`, `md5.velt`, `placeholders.velt`,
   `pg_type.velt`, `values.velt`, `temporal.velt`, `network.velt`, `array_json.velt`, `json_params.velt`.
 - `tests/`: `velt test` in this directory. `values`, `auth`, `config`, `placeholders`,

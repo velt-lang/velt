@@ -7,6 +7,7 @@
 
 import { ParamSink } from "velt/db";
 import { Failure, invalid } from "./failure";
+import { floatInBinary, textInBinary } from "./binary_values";
 import { Out } from "./frontend";
 import {
   C_BOOL,
@@ -16,11 +17,8 @@ import {
   C_INT2,
   C_INT4,
   C_INT8,
-  C_JSON,
-  C_JSONB,
   C_NUMERIC,
   C_OID,
-  C_TEXT,
 } from "./pg_type";
 import { Prepared } from "./prepared";
 import { StatementCache } from "./statement_cache";
@@ -244,23 +242,6 @@ export class Encoder implements ParamSink {
     );
   }
 
-  // Text this parameter's type takes in binary, as a value; false if it isn't a text-like type.
-  private asText(s: string, codec: u8): bool {
-    const o = this.out;
-    if (codec == C_TEXT || codec == C_JSON) {
-      o.i32(Buffer.byteLength(s) as i64);
-      o.text(s);
-      return true;
-    }
-    if (codec == C_JSONB) {
-      o.i32((Buffer.byteLength(s) as i64) + 1);
-      o.u8(1);
-      o.text(s);
-      return true;
-    }
-    return false;
-  }
-
   // In PostgreSQL's input syntax, for the server to parse.
   private serverText(i: i64, s: string) {
     const o = this.out;
@@ -300,10 +281,10 @@ export class Encoder implements ParamSink {
         o.put16(v);
       }
     } else if (codec == C_FLOAT8 || codec == C_FLOAT4) {
-      this.floating(v as f64, codec);
+      floatInBinary(this.out, v as f64, codec);
     } else if (codec == C_NUMERIC) {
       this.serverText(i, `${v}`);
-    } else if (!this.asText(`${v}`, codec)) {
+    } else if (!textInBinary(this.out, `${v}`, codec)) {
       this.wrong("an integer", i);
     }
     this.placed(i);
@@ -333,17 +314,6 @@ export class Encoder implements ParamSink {
     }
   }
 
-  private floating(v: f64, codec: u8) {
-    const o = this.out;
-    if (codec == C_FLOAT8) {
-      o.i32(8);
-      o.i64(v.toBits() as i64);
-    } else {
-      o.i32(4);
-      o.i32((v as f32).toBits() as i64);
-    }
-  }
-
   private real(v: f64) {
     const i = this.place();
     if (i < 0) {
@@ -351,10 +321,10 @@ export class Encoder implements ParamSink {
     }
     const codec = this.statement.paramCodecs[i];
     if (codec == C_FLOAT8 || codec == C_FLOAT4) {
-      this.floating(v, codec);
+      floatInBinary(this.out, v, codec);
     } else if (codec == C_NUMERIC) {
       this.serverText(i, `${v}`);
-    } else if (!this.asText(`${v}`, codec)) {
+    } else if (!textInBinary(this.out, `${v}`, codec)) {
       this.wrong("a float", i);
     }
     this.placed(i);
@@ -369,7 +339,7 @@ export class Encoder implements ParamSink {
     if (codec == C_BOOL) {
       this.out.i32(1);
       this.out.u8(v ? 1 : 0);
-    } else if (!this.asText(v ? "true" : "false", codec)) {
+    } else if (!textInBinary(this.out, v ? "true" : "false", codec)) {
       this.wrong("a bool", i);
     }
     this.placed(i);
@@ -389,7 +359,7 @@ export class Encoder implements ParamSink {
     if (i < 0) {
       return;
     }
-    if (!this.asText(v, this.statement.paramCodecs[i])) {
+    if (!textInBinary(this.out, v, this.statement.paramCodecs[i])) {
       this.serverText(i, v);
     }
     this.placed(i);
