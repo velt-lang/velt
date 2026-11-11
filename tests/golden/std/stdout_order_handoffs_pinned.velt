@@ -1,0 +1,93 @@
+// check: no leaks
+// A line logged before a hand-off prints before what the task it hands to prints next, when that
+// task runs on another worker (#249, #2771): each worker thread buffers its output, and the giver
+// keeps running (here: computing) after the hand-off, so without publishing its line first the
+// woken task's line would come out ahead of it. Every hand-off in velt/sync: a channel send (also
+// `trySend`), a receive that frees room in a full bounded channel, a close, `HandOff.give` and
+// `HandOff.end`. The giver is pinned to another worker than `main`, which waits for it.
+import { channel, Channel, HandOff } from "velt/sync";
+import { currentWorker, workerCount } from "velt/task";
+
+// Busy for a while without yielding: the giver's poll goes on after the hand-off.
+function work(n: i64): i64 {
+  let x = 0;
+  for (let k = 0; k < n; k++) {
+    x = (x * 31 + k) % 1000003;
+  }
+  return x;
+}
+
+const N: i64 = 2000000;
+
+async function send(i: i64, ch: Channel<i64>): Promise<i64> {
+  console.log(`send ${i}`);
+  await ch.send(i);
+  return work(N);
+}
+
+async function trySend(i: i64, ch: Channel<i64>): Promise<i64> {
+  console.log(`trySend ${i}`);
+  ch.trySend(i);
+  return work(N);
+}
+
+async function makeRoom(i: i64, ch: Channel<i64>): Promise<i64> {
+  console.log(`receive ${i}`);
+  const v = await ch.receive();
+  return work(N) + (v ?? 0);
+}
+
+async function close(i: i64, ch: Channel<i64>): Promise<i64> {
+  console.log(`close ${i}`);
+  ch.close();
+  return work(N);
+}
+
+async function give(i: i64, h: shared<HandOff<i64>>): Promise<i64> {
+  console.log(`give ${i}`);
+  h.give(i);
+  return work(N);
+}
+
+async function end(i: i64, h: shared<HandOff<i64>>): Promise<i64> {
+  console.log(`end ${i}`);
+  h.end();
+  return work(N);
+}
+
+async function main() {
+  const other = (currentWorker() + 1) % workerCount();
+  let sum = 0;
+  for (let i = 0; i < 3; i++) {
+    const ch = channel<i64>();
+    let p = spawn(send(i, ch), { worker: other });
+    console.log(`got ${await ch.receive()}`);
+    sum += await p;
+
+    p = spawn(trySend(i, ch), { worker: other });
+    console.log(`got ${await ch.receive()}`);
+    sum += await p;
+
+    const full = channel<i64>(1);
+    await full.send(-1);
+    p = spawn(makeRoom(i, full), { worker: other });
+    await full.send(i);
+    console.log("room");
+    sum += await p;
+
+    p = spawn(close(i, ch), { worker: other });
+    console.log(`got ${await ch.receive()}`);
+    sum += await p;
+
+    let h = shared(new HandOff<i64>());
+    p = spawn(give(i, h), { worker: other });
+    console.log(`given ${await h.wait()}`);
+    sum += await p;
+
+    h = shared(new HandOff<i64>());
+    p = spawn(end(i, h), { worker: other });
+    console.log(`given ${await h.wait()}`);
+    sum += await p;
+  }
+  console.log("done", sum > 0);
+}

@@ -1,0 +1,18 @@
+// velt/sync (internal): output.velt on WebAssembly, whose runtime runs every task on one thread
+// and has one output buffer: a line is always written out before what another task prints after
+// it, so there is nothing to publish (and the JS host has no C functions to publish it with).
+// std/imports.velt picks this file on `wasi` and `js`.
+
+/** No latch: 0. */
+export function newOpenLatch(): u64 {
+  return 0;
+}
+
+/** Nothing to publish. */
+export function publishWith(latch: u64): void {}
+
+/** No latch to give back. */
+export function freeOpenLatch(latch: u64): void {}
+
+/** Nothing to publish. */
+export function publishOutput(): void {}

@@ -62,6 +62,13 @@ export const imports: Imports = {
     js: "./sync/channel_word_wasm.velt",
     default: "./sync/channel_word.velt",
   },
+  // velt/sync's hand-offs (std/sync/output.velt): what the thread printed, published through the
+  // runtime's latch; nothing to publish on WebAssembly's one thread.
+  "#sync-output": {
+    wasi: "./sync/output_wasm.velt",
+    js: "./sync/output_wasm.velt",
+    default: "./sync/output.velt",
+  },
   "#sync-chan-entry": {
     wasi: "./sync/channel_entry_wasm.velt",
     js: "./sync/channel_entry_wasm.velt",

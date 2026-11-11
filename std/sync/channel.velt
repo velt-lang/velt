@@ -26,10 +26,12 @@ import {
   isClosed,
   lock,
   popAt,
+  publishOutput,
   pushAt,
   RECV,
   SEND,
   unlock,
+  hasWaiter,
   wakeFirst,
 } from "velt/sync/channel_block";
 import { newCell } from "velt/sync/channel_wait";
@@ -53,6 +55,9 @@ export struct Channel<T> implements AsyncIterable<T> {
   async send(value: T): Promise<void> throws ChannelClosed {
     // Made the receiver's before the lock: a deep copy never runs while others spin on it.
     const v = slotTransfer<T>(value);
+    // A receiver on another worker may take the item at once (and print): this task's lines go
+    // first (#249). A send that waits has its lines published when its poll ends.
+    publishOutput(this.handle);
     while (true) {
       const b = this.handle;
       lock(b);
@@ -77,6 +82,7 @@ export struct Channel<T> implements AsyncIterable<T> {
   trySend(value: T): bool {
     const v = slotTransfer<T>(value);
     const b = this.handle;
+    publishOutput(b);
     lock(b);
     if (isClosed(b) || !hasRoom(b)) {
       unlock(b);
@@ -88,10 +94,20 @@ export struct Channel<T> implements AsyncIterable<T> {
 
   /** The oldest value, waiting for one; `null` once the channel is closed and empty. */
   async receive(): Promise<T | null> {
+    let published = false;
     while (true) {
       const b = this.handle;
       lock(b);
       if (count(b) !== 0) {
+        if (!published && hasWaiter(b, SEND)) {
+          // The room it frees lets a waiting sender go on at once: this task's lines go first.
+          // Only then: a receive that wakes nobody hands nothing to another task (and the
+          // publish, a call into the runtime, would cost every receive of a bounded channel).
+          unlock(b);
+          publishOutput(b);
+          published = true;
+          continue;
+        }
         return take<T>(b);
       }
       if (isClosed(b)) {
@@ -110,6 +126,16 @@ export struct Channel<T> implements AsyncIterable<T> {
     if (count(b) === 0) {
       unlock(b);
       return null;
+    }
+    if (hasWaiter(b, SEND)) {
+      // As in `receive`: published before the room is visible, then looked at again.
+      unlock(b);
+      publishOutput(b);
+      lock(b);
+      if (count(b) === 0) {
+        unlock(b);
+        return null;
+      }
     }
     return take<T>(b);
   }
