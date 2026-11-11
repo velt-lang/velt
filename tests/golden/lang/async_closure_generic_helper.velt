@@ -1,0 +1,30 @@
+// check: no leaks
+// A generic helper whose callback passes a `T` on to `resolve` (#2740): used with `T = i64`, it
+// sends no closure anywhere, so it doesn't make the program's other closures cross. A middleware's
+// `next` passed to a function value still changes what it captured, as in JavaScript. The output
+// is Node's.
+
+async function relay<T>(p: Promise<T>): Promise<T> {
+  const { promise, resolve } = Promise.withResolvers<T>();
+  const pass = (v: T): void => resolve(v);
+  pass(await p);
+  return await promise;
+}
+
+type Next = () => Promise<void>;
+
+const middleware: ((next: Next) => Promise<void>)[] = [
+  async (next: Next): Promise<void> => {
+    await next();
+    await next();
+  },
+];
+
+async function main() {
+  console.log(await relay<i64>(Promise.resolve(7)));
+  let hops = 0;
+  await middleware[0](async (): Promise<void> => {
+    hops++;
+  });
+  console.log("hops", hops, await relay<string>(Promise.resolve("done")));
+}

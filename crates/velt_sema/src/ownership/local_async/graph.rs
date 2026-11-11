@@ -184,8 +184,9 @@ pub(super) struct Graph {
     pub roots: Vec<(TyId, Why)>,
     /// Named functions used as values (called through function values too).
     pub fn_values: Vec<DefId>,
-    /// Parameters of unknown-origin functions whose type mentions a type parameter: one that
-    /// crosses may carry a closure of any function type (sorted).
+    /// Locals outside std whose type mentions a type parameter (in node order, so sorted). One that
+    /// crosses carries what its type has in each instantiation of its function
+    /// (`super::instances`), or any closure where no instantiation is known.
     pub wild: Vec<usize>,
     /// Per closure literal node: its capture locals' nodes.
     pub captures: FxHashMap<usize, Vec<usize>>,
@@ -248,13 +249,11 @@ pub(super) fn build(cx: &Ctx) -> Graph {
     }
     // Closure literals, named functions used as values and dispatched methods (an interface's
     // implementations, overriding and overridden methods, and methods called through a generic
-    // bound) are called
-    // where the callee is unknown, whose arguments the graph doesn't follow into their parameters:
-    // those hold values of unknown origin, of their declared types. One that crosses (a callback
-    // that spawns its argument) makes its type a crossing type, so the closures passed to such
-    // calls cross by the heap rule. A parameter whose type is a type parameter (or one that may be
-    // null) stands for any function type: when it crosses, every closure the program stores or passes to an unknown
-    // callee crosses (`Graph::wild`). A function referenced in several places is listed once.
+    // bound) are called where the callee is unknown, whose arguments the graph doesn't follow into
+    // their parameters: those hold values of unknown origin, of their declared types. One that
+    // crosses (a callback that spawns its argument) makes its type a crossing type, so the closures
+    // passed to such calls cross by the heap rule. A function referenced in several places is
+    // listed once.
     let mut called: Vec<DefId> = g.parent.keys().copied().collect();
     called.extend(g.fn_values.iter().copied());
     // The methods a virtual, interface or bounded call may reach: those in a class's vtable
@@ -276,21 +275,22 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         };
         // A method's first parameter is `this`, the receiver the graph doesn't track.
         let this = usize::from(f.self_ty.is_some());
-        // std's generic callbacks (the prelude's `resolve`) are matched by their instantiations
-        // instead (`super::crossing_params`).
-        let std = cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_std);
         for p in f.params.iter().skip(f.captures.len() + this) {
             if let Some(&n) = g.ids.get(&Node::Local(c, p.local)) {
                 g.unknown[n] = true;
-                let ty = f.body.locals[p.local.0 as usize].ty;
-                if !std && super::types::bare_param(cx, ty) {
-                    g.wild.push(n);
-                }
             }
         }
     }
-    g.wild.sort_unstable();
-    g.wild.dedup();
+    // A local whose type mentions a type parameter (`T`, `T[]`, `Box<T>`, a `T` read out of one)
+    // carries what that type is in its function's instantiations. std's generic callbacks (the
+    // prelude's `resolve`) are matched by their instantiations instead (`super::crossing_params`).
+    for (n, node) in g.nodes.iter().enumerate() {
+        let Node::Local(f, _) = *node else { continue };
+        let std = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_std);
+        if !std && super::types::mentions_param(cx, g.tys[n]) {
+            g.wild.push(n);
+        }
+    }
     g
 }
 
@@ -541,8 +541,13 @@ impl Walk<'_, '_> {
             }
             E::Throw(x) => self.value(x, STORE),
             // A `ConstArray`'s elements are literals, which flow nowhere (as an `ArrayLit`'s).
-            E::FnRef(d, _) => {
+            E::FnRef(d, targs) => {
                 self.g.fn_values.push(*d);
+                // A generic function used as a value is one more instantiation of it.
+                if !targs.is_empty() {
+                    let site = (self.d, targs.clone());
+                    self.g.insts.entry(*d).or_default().push(site);
+                }
                 self.unknown(e, to)
             }
             E::Lit(_) | E::ConstArray(_) | E::Global(_) => self.unknown(e, to),
