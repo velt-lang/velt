@@ -1,6 +1,6 @@
 async_closure_unknown_callee_spawns.velt:51:5: error: this async closure modifies captured `a`, so it must stay on the task that created it
-async_closure_unknown_callee_spawns.velt:17:11: but it is stored in a `() => Promise<void>`, which reaches `spawn` here
+async_closure_unknown_callee_spawns.velt:17:11: but it reaches `spawn` here
 async_closure_unknown_callee_spawns.velt:57:5: error: this async closure modifies captured `b`, so it must stay on the task that created it
-async_closure_unknown_callee_spawns.velt:29:11: but it is stored in a `(i64) => Promise<void>`, which reaches `spawn` here
+async_closure_unknown_callee_spawns.velt:29:11: but it reaches `spawn` here
 async_closure_unknown_callee_spawns.velt:62:5: error: this async closure modifies captured `c`, so it must stay on the task that created it
-async_closure_unknown_callee_spawns.velt:39:11: but it is stored in a `(string) => Promise<void>`, which reaches `spawn` here
+async_closure_unknown_callee_spawns.velt:39:11: but it reaches `spawn` here

@@ -1,2 +1,2 @@
 main.velt:13:5: error: this async closure modifies captured `m`, so it must stay on the task that created it
-main.velt:21:9: but it is stored in a `() => void`, which is sent on a channel here
+main.velt:21:9: but it is stored in a `Holder<i64>`, which is sent on a channel here

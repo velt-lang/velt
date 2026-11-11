@@ -1,27 +1,20 @@
-//! After the walk (`super::graph::build`): the functions called where the callee is unknown, whose
-//! parameters hold values of unknown origin, and the locals of a generic type that cross with
-//! their function's instantiations (`Graph::wild`).
+//! After the walk (`super::graph::build`): the methods a dispatched call may reach, and the locals
+//! of a generic type that cross with their function's instantiations (`Graph::wild`). A function
+//! called where the callee is unknown (a closure literal, a function value, a dispatched method)
+//! is followed per call site instead (`super::crossing_params`, #2756): its parameters don't
+//! make their types crossing for the whole program.
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir::{Def, DefId};
+use crate::hir::{Callee, DefId, Expr};
 
 use super::graph::{Graph, Node};
 
 /// Mark what the walk can't see the origin of in `g` (module docs).
 pub(super) fn mark(cx: &Ctx, g: &mut Graph) {
-    // Closure literals, named functions used as values and dispatched methods (an interface's
-    // implementations, overriding and overridden methods, and methods called through a generic
-    // bound) are called where the callee is unknown, whose arguments the graph doesn't follow into
-    // their parameters: those hold values of unknown origin, of their declared types. One that
-    // crosses (a callback that spawns its argument) makes its type a crossing type, so the closures
-    // passed to such calls cross by the heap rule. A function referenced in several places is
-    // listed once.
-    let mut called: Vec<DefId> = g.parent.keys().copied().collect();
-    called.extend(g.fn_values.iter().copied());
     // The methods a virtual, interface or bounded call may reach: those in a class's vtable
-    // (only methods overridden somewhere have a slot) and an interface's implementations. Any
-    // other method is called directly, where the graph follows its arguments.
+    // (only methods overridden somewhere have a slot) and an interface's implementations. Their
+    // instantiations aren't all shown by their direct calls (`super::resolve_hits`).
     for info in &cx.info {
         if let DefInfo::Adt(a) = info {
             g.dispatched.extend(a.vtable.iter().copied());
@@ -32,21 +25,6 @@ pub(super) fn mark(cx: &Ctx, g: &mut Graph) {
     }
     g.dispatched.sort_by_key(|d| d.0);
     g.dispatched.dedup();
-    called.extend(g.dispatched.iter().copied());
-    called.sort_by_key(|d| d.0);
-    called.dedup();
-    for c in called {
-        let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
-            continue;
-        };
-        // A method's first parameter is `this`, the receiver the graph doesn't track.
-        let this = usize::from(f.self_ty.is_some());
-        for p in f.params.iter().skip(f.captures.len() + this) {
-            if let Some(&n) = g.ids.get(&Node::Local(c, p.local)) {
-                g.unknown[n] = true;
-            }
-        }
-    }
     // A local whose type mentions a type parameter (`T`, `T[]`, `Box<T>`, a `T` read out of one)
     // carries what that type is in its function's instantiations. std's generic callbacks (the
     // prelude's `resolve`) are matched by their instantiations instead (`super::crossing_params`).
@@ -59,5 +37,36 @@ pub(super) fn mark(cx: &Ctx, g: &mut Graph) {
         if !std && super::types::mentions_param(cx, g.tys[n]) {
             g.wild.push(n);
         }
+    }
+}
+
+/// The methods a virtual, interface or bounded call may reach: an interface method's
+/// implementations (each `ImplDef` lists them in the interface's order), or the vtable slot of
+/// the receiver's class and of every class extending it. Empty when the receiver isn't one of
+/// those (`super::crossing_params` then takes every dispatched method).
+pub(super) fn dispatch_targets(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Vec<DefId> {
+    let impl_methods = |iface: DefId, slot: u32| -> Vec<DefId> {
+        (cx.impls.iter())
+            .filter(|i| i.iface == iface)
+            .filter_map(|i| i.methods.get(slot as usize).copied())
+            .collect()
+    };
+    let receiver = args.first().map(|a| cx.ty.kind(a.ty).clone());
+    match (callee, receiver) {
+        (Callee::Dyn { slot, .. }, Some(crate::hir::TyKind::Dyn(iface, _))) => {
+            impl_methods(iface, *slot)
+        }
+        (Callee::ParamMethod { iface, slot, .. }, _) => impl_methods(*iface, *slot),
+        (Callee::Virtual { slot }, Some(crate::hir::TyKind::Adt(class, _))) => {
+            let mut classes = vec![class];
+            classes.extend(super::types::subclasses(cx, class));
+            (classes.iter())
+                .filter_map(|c| match &cx.info[c.0 as usize] {
+                    DefInfo::Adt(a) => a.vtable.get(*slot as usize).copied(),
+                    _ => None,
+                })
+                .collect()
+        }
+        _ => vec![],
     }
 }

@@ -35,12 +35,18 @@ pub(super) enum Node {
     Ret(DefId),
     /// Argument `1` of the call through a function value numbered `0` (`Graph::indirect`).
     Arg(u32, u32),
+    /// Argument `1` of the dispatched call numbered `0` (`Graph::dispatched_calls`).
+    DArg(u32, u32),
 }
 
 /// A call through a function value: the callee's type, the argument nodes, the call's span, whether
 /// it is in a library (std or a package the program depends on), and the function whose closures
 /// alone the callee may be (a variable of `crate::defined_accessors`), if known.
 pub(super) type Indirect = (TyId, Vec<usize>, Span, bool, Option<DefId>);
+
+/// A dispatched call: the methods it may reach, the argument node at each position after the
+/// receiver, and the call's span and whether it is in a library.
+pub(super) type Dispatched = (Vec<DefId>, Vec<Option<usize>>, Span, bool);
 
 /// Where a value leaves the task that made it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -182,8 +188,13 @@ pub(super) struct Graph {
     pub seeds: Vec<(usize, u8, Option<Why>)>,
     /// Values of unknown origin that cross.
     pub roots: Vec<(TyId, Why)>,
-    /// Named functions used as values (called through function values too).
-    pub fn_values: Vec<DefId>,
+    /// Named functions used as values (called through function values too), each with its type
+    /// where it is used (the instantiation of a generic one).
+    pub fn_values: Vec<(DefId, TyId)>,
+    /// Virtual, interface and bounded method calls: the methods each may reach, its argument nodes
+    /// by position (none for the receiver), and the call (span, in a library). A method's
+    /// parameter that crosses makes the matching argument cross ([`super::crossing_params`]).
+    pub dispatched_calls: Vec<Dispatched>,
     /// Values of unknown origin, outside std, of a type that mentions a type parameter, that cross
     /// where they are read: the function, the type and why (resolved like `wild` locals).
     pub generic_roots: Vec<(DefId, TyId, Why)>,
@@ -541,7 +552,7 @@ impl Walk<'_, '_> {
             E::Throw(x) => self.value(x, STORE),
             // A `ConstArray`'s elements are literals, which flow nowhere (as an `ArrayLit`'s).
             E::FnRef(d, targs) => {
-                self.g.fn_values.push(*d);
+                self.g.fn_values.push((*d, e.ty));
                 // A generic function used as a value is one more instantiation of it.
                 if !targs.is_empty() {
                     let site = (self.d, targs.clone());
@@ -654,9 +665,25 @@ impl Walk<'_, '_> {
                 self.unknown(e, to);
             }
             Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
+                // What the callee keeps, it keeps in the heap; a parameter of a method it may
+                // reach that crosses makes the argument cross (`super::crossing_params`).
+                let call = self.g.dispatched_calls.len() as u32;
+                let mut nodes = vec![];
                 for (i, a) in args.iter().enumerate() {
-                    self.value(a, if i == 0 { To::Drop } else { STORE });
+                    if i == 0 {
+                        self.value(a, To::Drop);
+                        nodes.push(None);
+                        continue;
+                    }
+                    let n = self.g.node(Node::DArg(call, i as u32), a.ty);
+                    self.value(a, To::Node(n, None));
+                    self.g.seeds.push((n, STORED, None));
+                    nodes.push(Some(n));
                 }
+                let targets = super::unknown_callees::dispatch_targets(self.cx, callee, args);
+                self.g
+                    .dispatched_calls
+                    .push((targets, nodes, e.span, self.library));
                 self.unknown(e, to);
             }
             Callee::Intrinsic(i) => self.intrinsic(e, *i, args, to),
