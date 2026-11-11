@@ -35,6 +35,20 @@ enum Between {
     MovedOut,
     /// The source field written in a loop that reads the copy again after it.
     StoreSourceInLoop,
+    /// The copy's address passed to a Velt function that only reads (`read_only.rs`).
+    ReadOnlyVeltCall,
+    /// The same, to a Velt function that calls one that only reads.
+    ReadOnlyVeltChain,
+    /// The same, to a Velt function that only reads and calls itself.
+    ReadOnlyVeltRecursive,
+    /// The copy's address passed to a Velt function that only reads but returns a pointer.
+    VeltCallReturningPointer,
+    /// The copy's address passed to a Velt function that calls a runtime function that may write.
+    VeltCallOfUnknownExtern,
+    /// The copy's address passed to a Velt function that writes through it.
+    VeltCallWritingThroughArgument,
+    /// The copy's address passed to a Velt function that calls one that writes through it.
+    VeltCallOfWriter,
 }
 
 struct Kit {
@@ -45,6 +59,8 @@ struct Kit {
     eq: ExternId,
     other: ExternId,
     callee: FuncId,
+    /// Velt functions of `(ptr, ptr)` for the `ReadOnlyVelt…` and `VeltCall…` cases, by case.
+    readers: Vec<(Between, FuncId)>,
 }
 
 fn kit() -> Kit {
@@ -67,6 +83,7 @@ fn kit() -> Kit {
     );
     fb.ret(b, Operand::Const(Const::Unit, Ty::Unit));
     let callee = pb.add(fb.finish());
+    let readers = readers(&mut pb, eq, other);
     Kit {
         pb,
         obj,
@@ -75,7 +92,115 @@ fn kit() -> Kit {
         eq,
         other,
         callee,
+        readers,
     }
+}
+
+/// `r(a, b)`: reads the first byte of the text of the string at `a` and compares the strings at
+/// `a` and `b` (a read-only runtime call); then `last` ends it.
+fn reader(
+    name: &str,
+    ret: Ty,
+    eq: ExternId,
+    last: impl FnOnce(&mut FuncBuilder, BlockId, Local, Local),
+) -> Function {
+    let mut fb = FuncBuilder::internal(name, &[Ty::Ptr, Ty::Ptr], ret);
+    let (a, b) = (fb.param(0), fb.param(1));
+    let entry = fb.block();
+    let (w0, dp, byte, r) = (
+        fb.local(Ty::U64),
+        fb.local(Ty::Ptr),
+        fb.local(Ty::U8),
+        fb.local(Ty::U8),
+    );
+    let text = Place {
+        local: a,
+        proj: vec![Proj::Deref(Ty::Agg(STR_AGG)), Proj::Field(0)],
+    };
+    fb.assign(entry, w0, Rvalue::Use(copy_place(text)));
+    fb.assign(entry, dp, Rvalue::Cast(copy_local(w0), Ty::Ptr));
+    fb.assign(entry, byte, Rvalue::Use(copy_place(deref(dp, Ty::U8))));
+    let next = fb.call(
+        entry,
+        Callee::Extern(eq),
+        vec![copy_local(a), copy_local(b)],
+        Some(r),
+    );
+    last(&mut fb, next, a, b);
+    fb.finish()
+}
+
+/// The Velt functions the `ReadOnlyVelt…` and `VeltCall…` cases call.
+fn readers(pb: &mut ProgramBuilder, eq: ExternId, other: ExternId) -> Vec<(Between, FuncId)> {
+    let unit = || Operand::Const(Const::Unit, Ty::Unit);
+    let only = pb.add(reader("only_reads", Ty::Unit, eq, |fb, b, _, _| {
+        fb.ret(b, unit())
+    }));
+    let chain = pb.add(reader("calls_a_reader", Ty::Unit, eq, |fb, b, a, c| {
+        let after = fb.call(
+            b,
+            Callee::Func(only),
+            vec![copy_local(a), copy_local(c)],
+            None,
+        );
+        fb.ret(after, unit());
+    }));
+    let me = pb.reserve();
+    pb.set(
+        me,
+        reader("reads_recursively", Ty::Unit, eq, |fb, b, a, c| {
+            let flag = fb.local(Ty::Bool);
+            fb.assign(b, flag, bin(BinOp::Eq, copy_local(a), copy_local(c)));
+            let (again, out) = (fb.block(), fb.block());
+            fb.branch(b, flag, out, again);
+            let after = fb.call(
+                again,
+                Callee::Func(me),
+                vec![copy_local(c), copy_local(c)],
+                None,
+            );
+            fb.goto(after, out);
+            fb.ret(out, unit());
+        }),
+    );
+    let recursive = me;
+    let pointer = pb.add(reader("returns_a_pointer", Ty::Ptr, eq, |fb, b, a, _| {
+        fb.ret(b, copy_local(a))
+    }));
+    let unknown = pb.add(reader("calls_unknown", Ty::Unit, eq, |fb, b, a, c| {
+        let after = fb.call(
+            b,
+            Callee::Extern(other),
+            vec![copy_local(a), copy_local(c)],
+            None,
+        );
+        fb.ret(after, unit());
+    }));
+    let writes = pb.add(reader("writes_through", Ty::Unit, eq, |fb, b, a, _| {
+        fb.push(
+            b,
+            Stmt::Assign(deref(a, Ty::U64), Rvalue::Use(int(0, Ty::U64))),
+        );
+        fb.ret(b, unit());
+    }));
+    let calls_writer = pb.add(reader("calls_a_writer", Ty::Unit, eq, |fb, b, a, c| {
+        let after = fb.call(
+            b,
+            Callee::Func(writes),
+            vec![copy_local(a), copy_local(c)],
+            None,
+        );
+        fb.ret(after, unit());
+    }));
+    vec![
+        (Between::ReadOnlyVeltCall, only),
+        (Between::ReadOnlyVeltChain, chain),
+        (Between::ReadOnlyVeltRecursive, recursive),
+        (Between::VeltCallReturningPointer, pointer),
+        (Between::VeltCallOfUnknownExtern, unknown),
+        (Between::VeltCallWritingThroughArgument, writes),
+        (Between::VeltCallOfWriter, calls_writer),
+    ]
 }
 
 /// `(*p as obj).n`
@@ -173,6 +298,18 @@ fn program(between: Between, gated: bool) -> Program {
         Between::UnknownExtern => b = unknown_call(&mut fb, b),
         Between::VeltCall => {
             b = fb.call(b, Callee::Func(kit.callee), vec![copy_local(this)], None);
+        }
+        Between::ReadOnlyVeltCall
+        | Between::ReadOnlyVeltChain
+        | Between::ReadOnlyVeltRecursive
+        | Between::VeltCallReturningPointer
+        | Between::VeltCallOfUnknownExtern
+        | Between::VeltCallWritingThroughArgument
+        | Between::VeltCallOfWriter => {
+            let f = kit.readers.iter().find(|(c, _)| *c == between).unwrap().1;
+            let args = vec![copy_local(t), copy_local(s)];
+            let dest = (between == Between::VeltCallReturningPointer).then(|| fb.local(Ty::Ptr));
+            b = fb.call(b, Callee::Func(f), args, dest);
         }
         Between::ReadOnlyExtern => {
             let r = fb.local(Ty::U8);
@@ -490,4 +627,19 @@ fn read_only_runtime_functions_come_from_the_effects_table() {
         assert!(rt.read_only.contains(&id), "extern #{}", id.0);
     }
     assert!(!rt.read_only.contains(&append));
+}
+
+#[test]
+fn calls_of_velt_functions_that_only_read_keep_the_borrow() {
+    assert_borrowed(Between::ReadOnlyVeltCall);
+    assert_borrowed(Between::ReadOnlyVeltChain);
+    assert_borrowed(Between::ReadOnlyVeltRecursive);
+}
+
+#[test]
+fn calls_of_velt_functions_that_may_write_or_leak_keep_the_clone() {
+    assert_kept(Between::VeltCallReturningPointer);
+    assert_kept(Between::VeltCallOfUnknownExtern);
+    assert_kept(Between::VeltCallWritingThroughArgument);
+    assert_kept(Between::VeltCallOfWriter);
 }
