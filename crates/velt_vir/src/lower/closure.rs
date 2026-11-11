@@ -296,7 +296,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 continue;
             };
             let slot = proj(&base, Proj::Field(header + k as u32));
-            if self.info[c.outer.0 as usize].cell
+            // `in_cell` alone: a cell this closure borrowed from its creator (a `new Promise`
+            // executor's captures), whose local holds the cell pointer itself (`bind_captures`).
+            // A closure made here that keeps it captures the cell too, not its value (#2798).
+            let info = &self.info[c.outer.0 as usize];
+            if (info.cell || info.in_cell)
                 && c.mode != PassMode::Borrow
                 && c.mode != PassMode::BorrowMut
             {
