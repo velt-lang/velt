@@ -1,0 +1,6 @@
+call 1: 42 factory
+call 2: 10
+call 1 x true
+call 1 1
+NOT_POSITIVE not positive: 0
+call 1 3

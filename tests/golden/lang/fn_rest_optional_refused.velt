@@ -1,0 +1,5 @@
+// A function with a rest parameter is not converted to a function type with an optional
+// parameter past its fixed ones: a function type doesn't record how many arguments a call
+// passed, so `f("a")` would put an `undefined` into the rest array (Node: `a (1)`).
+const f: (a: string, b?: number) => string = (...parts: unknown[]) => parts.join(",") + " (" + parts.length + ")";
+console.log(f("a"), f("a", 3));

@@ -1,0 +1,24 @@
+// A callable object whose function takes a rest parameter converts to a callable object type
+// whose function takes fixed parameters, as TypeScript allows: the copy's function is a wrapper
+// passing the arguments on, so the object's own function sees them as in Node.
+interface Logger {
+    (...parts: unknown[]): string;
+    prefix: string;
+}
+type Pair = ((a: string, b: number) => string) & { prefix: string };
+type One = ((a: boolean) => string) & { prefix: string };
+
+function makeLogger(prefix: string): Logger {
+    const log = ((...parts: unknown[]) => prefix + parts.join(",") + " (" + parts.length + ")") as Logger;
+    log.prefix = prefix;
+    return log;
+}
+
+function asPair(l: Logger): Pair {
+    return l;
+}
+
+const pair = asPair(makeLogger("> "));
+console.log(pair("a", 1), pair.prefix);
+const one: One = makeLogger("# ");
+console.log(one(true), one.prefix);

@@ -90,6 +90,9 @@ impl FnCx<'_, '_> {
         if let Some(note) = self.narrowing_note(found.ty) {
             d = d.with_note(note);
         }
+        if let Some(note) = self.packs_absent_note(expected, found.ty) {
+            d = d.with_note(note);
+        }
         if matches!(self.cx.ty.kind(found.ty), TyKind::Shared(t) if *t == expected) {
             d = d.with_note(self.unreadable_shared_note(found.ty));
         }

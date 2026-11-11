@@ -7,7 +7,8 @@
 //! (`a?: T`) may be missing from the source (it is absent) or required there.
 //!
 //! Field types must be the same (up to `readonly`), or convert the same way (a nested object
-//! type with the fields of the expected one). An optional source field (which keeps "absent"
+//! type with the fields of the expected one, a function with wider parameters wrapped as
+//! `fn_widen` wraps a function value). An optional source field (which keeps "absent"
 //! apart from a present `undefined`) is not converted; an optional target field the source
 //! lacks is absent, and one the source has as a required field is present. A copy that a later field assignment could tell from the
 //! original is reported once every body is checked (`crate::object_copies`).
@@ -353,6 +354,12 @@ impl FnCx<'_, '_> {
                 && (self.adapting || boxes_shared(self.cx, from, 0)))
             || any_converts(self.cx, from, to)
             || self.copy_plan(from, to, depth + 1).is_some()
+            // A function whose parameters are wider, or a rest parameter for fixed ones (a
+            // callable object's `(...args: unknown[]): T` as `(p1: T1): T`), converted through a
+            // wrapper as a function value is (`fn_widen`). Not one taking fewer parameters: the
+            // copy's function would drop arguments the object's own function may read (a cast
+            // `((...args) => …) as { (): T }` keeps them in Node).
+            || self.fn_field_widens(from, to)
     }
 }
 

@@ -74,7 +74,7 @@ impl FnCx<'_, '_> {
         exp: TyId,
     ) -> Result<hir::Expr, hir::Expr> {
         // A module-level constant or a field initializer has no frame for the hidden local.
-        if self.frameless() || !self.fn_widens(h.ty, exp) {
+        if self.frameless() || !self.fn_widens(h.ty, exp, true) {
             return Err(h);
         }
         // Checked as a trial: what doesn't convert is reported by the wrapper's check, rolled
@@ -204,6 +204,15 @@ impl FnCx<'_, '_> {
         mark.rollback(self.cx);
         self.restore_trial_frames(frames);
         ok
+    }
+
+    /// Does a function field of type `from` convert to `to` for an object copy
+    /// (`object_copy`): a wrapper of the shapes [`Self::fn_widens`] takes (not one with fewer
+    /// parameters) whose conversions check, tried on a hidden local?
+    pub(super) fn fn_field_widens(&mut self, from: TyId, to: TyId) -> bool {
+        !self.frameless()
+            && self.fn_widens(from, to, false)
+            && self.passed_converts(from, to, velt_common::Span::default())
     }
 
     /// Do two parameter types differ as values (not two forms of one object type, the same but
@@ -350,11 +359,11 @@ impl FnCx<'_, '_> {
 
     /// Are `from` and `to` function types of the same shape whose parameter or result types
     /// differ, or is `from` one taking fewer parameters, or a rest parameter for `to`'s fixed
-    /// ones?
+    /// ones? `fewer`: a function taking fewer parameters counts.
     /// Whether each of `to`'s converts to `from`'s, and `from`'s result and errors to `to`'s,
     /// is what the wrapper's check finds (the conversions of arguments and results, object
     /// copies included).
-    fn fn_widens(&self, from: TyId, to: TyId) -> bool {
+    pub(super) fn fn_widens(&self, from: TyId, to: TyId, fewer: bool) -> bool {
         let t = &self.cx.ty;
         match (t.kind(from), t.kind(to)) {
             (
@@ -373,13 +382,79 @@ impl FnCx<'_, '_> {
             ) => {
                 let same = fp.len() == tp.len() && frest == trest && (fp != tp || fr != tr);
                 // Fewer parameters: the wrapper passes the first ones (#943).
-                let fewer = !frest && fp.len() < tp.len() - usize::from(*trest);
+                let fewer = fewer && !frest && fp.len() < tp.len() - usize::from(*trest);
                 // A rest parameter for fixed ones (`(...args: unknown[]) => R` as a `(p1: T1)
                 // => R`): the wrapper's call packs the arguments past `from`'s fixed ones.
-                let packs = *frest && !*trest && fp.len() <= tp.len() + 1;
+                let packs =
+                    *frest && !*trest && fp.len() <= tp.len() + 1 && !self.packs_absent(from, to);
                 (same || fewer || packs) && !t.has_error(from) && !t.has_error(to)
             }
             _ => false,
         }
+    }
+
+    /// Would the wrapper for a rest parameter taking `to`'s fixed ones put a parameter into the
+    /// rest array that may be left out (`b?: number`, or any type admitting `undefined`)? A
+    /// function type doesn't record which arguments a call passed, so the wrapper would pass
+    /// `undefined` for a missing one, and the rest array would be one longer than in Node.
+    fn packs_absent(&self, from: TyId, to: TyId) -> bool {
+        let t = &self.cx.ty;
+        let (
+            TyKind::FnPtr {
+                params: fp,
+                rest: true,
+                ..
+            },
+            TyKind::FnPtr {
+                params: tp,
+                rest: false,
+                ..
+            },
+        ) = (t.kind(from), t.kind(to))
+        else {
+            return false;
+        };
+        let fixed = fp.len().saturating_sub(1);
+        tp.iter().skip(fixed).any(|p| self.may_be_absent(*p))
+    }
+
+    /// May an argument of parameter type `p` be left out of a call: an optional parameter's
+    /// `T | undefined`, or `void`?
+    pub(super) fn may_be_absent(&self, p: TyId) -> bool {
+        let t = &self.cx.ty;
+        t.nothing_of(p).is_some_and(|n| n.has_undefined()) || matches!(t.kind(p), TyKind::Unit)
+    }
+
+    /// The note on a mismatch of function type (or callable object type) `found` where `exp`
+    /// is expected that [`Self::packs_absent`] refused.
+    pub(super) fn packs_absent_note(&mut self, exp: TyId, found: TyId) -> Option<String> {
+        let (f, e) = match (self.call_type(found), self.call_type(exp)) {
+            (Some(f), Some(e)) => (f, e),
+            _ => return None,
+        };
+        if !self.packs_absent(f, e) {
+            return None;
+        }
+        Some(self.absent_rest_note())
+    }
+
+    /// Why a rest parameter doesn't take arguments that may be left out.
+    pub(super) fn absent_rest_note(&self) -> String {
+        "a function with a rest parameter is not converted to a function type whose parameters past its fixed ones may be left out (optional or admitting `undefined`): a function type doesn't record how many arguments a call passed, so the rest array would hold an `undefined` for each one left out, which Node's would not; declare the expected parameters required, or write the function's parameters as they are expected (`(a, b?) => …`)".to_string()
+    }
+
+    /// `t` itself when it is a function type, or the function of a callable object type.
+    fn call_type(&mut self, t: TyId) -> Option<TyId> {
+        if matches!(self.cx.ty.kind(t), TyKind::FnPtr { .. }) {
+            return Some(t);
+        }
+        if !self.cx.is_callable_object(t) {
+            return None;
+        }
+        let TyKind::Adt(d, args) = self.cx.ty.kind(t).clone() else {
+            return None;
+        };
+        let f = self.cx.adt(d)?.fields.first()?.ty;
+        Some(self.cx.subst(f, &args))
     }
 }

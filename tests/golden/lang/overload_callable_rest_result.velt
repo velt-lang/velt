@@ -1,0 +1,49 @@
+// Overloads whose callback takes fixed parameters where the implementation's takes a rest
+// parameter (an adapter is passed), and whose result is a callable object with fixed call
+// parameters where the implementation's has a rest parameter (its function is wrapped for the
+// copy). The callbacks throw, through the adapter, the implementation's function and the
+// wrapper: each function type written without `throws` takes what is stored into it.
+interface Injectable<T> {
+    (...args: unknown[]): T;
+    token: string;
+}
+type Factory<A extends unknown[], T> = ((...args: A) => T) & { token: string };
+
+class FactoryError extends Error {
+    readonly code: string;
+    constructor(message: string, code: string) {
+        super(message);
+        this.code = code;
+    }
+}
+
+function defineFactory<R>(setup: (ctx: string, ...args: unknown[]) => R): Injectable<R>;
+function defineFactory<R, T1>(setup: (ctx: string, p1: T1) => R): Factory<[T1], R>;
+function defineFactory<R, T1, T2>(setup: (ctx: string, p1: T1, p2: T2) => R): Factory<[T1, T2], R>;
+function defineFactory<R>(setup: (ctx: string, ...args: unknown[]) => R) {
+    let made = 0;
+    const useFn = ((...args: unknown[]) => {
+        made++;
+        return setup("call " + made, ...args);
+    }) as Injectable<R>;
+    useFn.token = "factory";
+    return useFn;
+}
+
+const double = defineFactory((ctx: string, n: number) => ctx + ": " + n * 2);
+console.log(double(21), double.token);
+console.log(double(5));
+const join = defineFactory((ctx: string, a: string, b: boolean) => ctx + " " + a + " " + b);
+console.log(join("x", true));
+const positive = defineFactory((ctx: string, n: number) => {
+    if (n <= 0) throw new FactoryError("not positive: " + n, "NOT_POSITIVE");
+    return ctx + " " + n;
+});
+console.log(positive(1));
+try {
+    positive(0);
+} catch (e) {
+    console.log((e as FactoryError).code, (e as Error).message);
+}
+const any = defineFactory((ctx: string, ...rest: unknown[]) => ctx + " " + rest.length);
+console.log(any(1, 2, 3));

@@ -1,0 +1,14 @@
+// A callable object whose function takes a rest parameter is not copied to a callable type
+// with an optional parameter past its fixed ones: the copy's wrapper would pass an `undefined`
+// for a left-out argument, and the object's own function would see one more element than in
+// Node (`o("a")` prints `o 1:string` there).
+interface Logger {
+    (...parts: unknown[]): string;
+    prefix: string;
+}
+type Opt = ((a: string, b?: number) => string) & { prefix: string };
+
+const log = ((...parts: unknown[]) => log.prefix + parts.length + ":" + parts.map((x) => typeof x).join(",")) as Logger;
+log.prefix = "o ";
+const o: Opt = log;
+console.log(o("a"), o("a", undefined), o("a", 3));
