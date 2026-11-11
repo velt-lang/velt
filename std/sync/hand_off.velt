@@ -155,7 +155,9 @@ export class HandOff<T> {
 
   [Symbol.dispose]() {
     const b = this.block;
-    // A waiter still waiting resumes with null.
+    // A waiter still waiting resumes with null (and may print on another worker at once): this
+    // task's lines go first (#249).
+    publishOutput();
     endBlock(b);
     // Gone, then the `wait()`s counted: a `wait()` leaving at the same time sees one or the other
     // (both sequentially consistent), and the compare-and-swap in `dropLeft` picks one dropper.

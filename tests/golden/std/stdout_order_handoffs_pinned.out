@@ -3,9 +3,13 @@ got 0
 trySend 0
 got 0
 receive 0
-room
+room true
+tryReceive 0
+room true
+receive 0
+room after wait
 close 0
-got null
+got null true
 give 0
 given 0
 end 0
@@ -15,23 +19,15 @@ got 1
 trySend 1
 got 1
 receive 1
-room
+room true
+tryReceive 1
+room true
+receive 1
+room after wait
 close 1
-got null
+got null true
 give 1
 given 1
 end 1
-given null
-send 2
-got 2
-trySend 2
-got 2
-receive 2
-room
-close 2
-got null
-give 2
-given 2
-end 2
 given null
 done true

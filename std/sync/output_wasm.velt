@@ -5,11 +5,3 @@
 
 /** Nothing to publish. */
 export function publishOutput(): void {}
-
-/** Nothing to publish: false. */
-export function outputWritten(): bool {
-  return false;
-}
-
-/** Nothing to publish. */
-export function publishWritten(): void {}

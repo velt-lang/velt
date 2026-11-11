@@ -17,7 +17,7 @@
 // buffer under both executors. The `$rt` suffix is not part of the symbol.
 
 import { inline, noInline } from "velt/lang/intrinsics";
-import { takeStdoutWritten } from "velt/lang/hooks/process";
+import { clearStdoutWritten, stdoutWrittenSince } from "velt/lang/hooks/process";
 
 declare c("c") function velt_rt_latch_new$rt(): u64;
 
@@ -26,28 +26,20 @@ declare c("c") function velt_rt_latch_free$rt(latch: u64): void;
 declare c("c") function velt_rt_latch_open$rt(latch: u64): void;
 
 /**
- * Makes what this thread printed visible: before a change another task may see at once, ahead
- * of the lock that makes it.
+ * Makes what this thread printed visible: before a change another task may see at once. A thread
+ * that wrote nothing since pays one load and a branch.
  */
 @inline
 export function publishOutput(): void {
-  if (takeStdoutWritten()) {
-    publishWritten();
+  if (stdoutWrittenSince()) {
+    publishMarked();
   }
 }
 
-/**
- * Whether this thread wrote to stdout since its last publish here, clearing the mark: if so,
- * [`publishWritten`] must follow before the hand-off is visible.
- */
-@inline
-export function outputWritten(): bool {
-  return takeStdoutWritten();
-}
-
-/** Makes what this thread printed visible, after [`outputWritten`] said there is some. */
+/** [`publishOutput`] once the mark is seen set: out of line, so a hand-off keeps its shape. */
 @noInline
-export function publishWritten(): void {
+function publishMarked(): void {
+  clearStdoutWritten();
   let l = LATCH.load("acquire");
   if (l === 0) {
     l = processLatch();

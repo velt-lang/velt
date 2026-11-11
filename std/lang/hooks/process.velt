@@ -12,7 +12,7 @@ declare function velt_rt_write_str(stream: u32, s: string);
 
 /**
  * Whether this thread wrote to standard output since a hand-off last published its output
- * (`takeStdoutWritten`): the runtime buffers stdout per thread. Set by every write of stdout from
+ * (`clearStdoutWritten`): the runtime buffers stdout per thread. Set by every write of stdout from
  * compiled code: `console.log` (`stdoutWritten`, called by lowering), `process.stdout.write` and
  * `Stdout.write`; the runtime writes stdout for nobody else. True also when the runtime published
  * the buffer since (at the end of every poll): an extra publish, of nothing, is harmless.
@@ -25,17 +25,16 @@ export function stdoutWritten(): void {
   STDOUT_WRITTEN.set(true);
 }
 
-/**
- * Whether this thread wrote to standard output since the last call: the hand-off that asks
- * publishes the output then (std/sync/output.velt).
- */
+/** Whether this thread wrote to standard output since a hand-off last published it (kept set). */
 @inline
-export function takeStdoutWritten(): bool {
-  if (!STDOUT_WRITTEN.get()) {
-    return false;
-  }
+export function stdoutWrittenSince(): bool {
+  return STDOUT_WRITTEN.get();
+}
+
+/** Clears the mark: the hand-off that saw it publishes the output (std/sync/output.velt). */
+@inline
+export function clearStdoutWritten(): void {
   STDOUT_WRITTEN.set(false);
-  return true;
 }
 
 declare function velt_rt_env_get(name: string, out: string): bool;

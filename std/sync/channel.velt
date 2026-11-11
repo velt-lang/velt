@@ -20,6 +20,7 @@ import { ChannelClosed } from "velt/sync/errors";
 import { ChanCore } from "velt/sync/channel_core";
 import {
   bounded,
+  closedLocked,
   closeBlock,
   count,
   hasRoom,
@@ -27,17 +28,17 @@ import {
   lock,
   popAt,
   pushAt,
+  queued,
   RECV,
   SEND,
   unlock,
-  hasWaiter,
   wakeFirst,
 } from "velt/sync/channel_block";
 import { newCell } from "velt/sync/channel_wait";
-import { outputWritten, publishOutput, publishWritten } from "#sync-output";
+import { publishOutput } from "#sync-output";
 import { wakeOwned } from "#sync-chan-word";
 import { dropAddress, pollAddress } from "#sync-chan-entry";
-import { promiseAt, slotStore, slotTake, slotTransfer } from "velt/lang/intrinsics";
+import { inline, promiseAt, slotStore, slotTake, slotTransfer } from "velt/lang/intrinsics";
 
 /**
  * A channel of `T` values. `channel<T>()` is unbounded; `channel<T>(capacity)` holds at most
@@ -61,7 +62,7 @@ export struct Channel<T> implements AsyncIterable<T> {
     while (true) {
       const b = this.handle;
       lock(b);
-      if (isClosed(b)) {
+      if (closedLocked(b)) {
         unlock(b);
         throw new ChannelClosed();
       }
@@ -84,7 +85,7 @@ export struct Channel<T> implements AsyncIterable<T> {
     const b = this.handle;
     publishOutput();
     lock(b);
-    if (isClosed(b) || !hasRoom(b)) {
+    if (closedLocked(b) || !hasRoom(b)) {
       unlock(b);
       return false;
     }
@@ -97,17 +98,8 @@ export struct Channel<T> implements AsyncIterable<T> {
     while (true) {
       const b = this.handle;
       lock(b);
-      if (count(b) !== 0) {
-        const bnd = bounded(b);
-        if (bnd && hasWaiter(b, SEND) && outputWritten()) {
-          // The room it frees lets a waiting sender go on at once: this task's lines go first,
-          // then it looks again (with nothing left to publish). Only then: a receive that wakes
-          // nobody hands nothing to another task.
-          unlock(b);
-          publishWritten();
-          continue;
-        }
-        return take<T>(b, bnd);
+      if (queued(b) !== 0) {
+        return take<T>(b);
       }
       if (isClosed(b)) {
         unlock(b);
@@ -122,22 +114,11 @@ export struct Channel<T> implements AsyncIterable<T> {
   tryReceive(): T | null {
     const b = this.handle;
     lock(b);
-    if (count(b) === 0) {
+    if (queued(b) === 0) {
       unlock(b);
       return null;
     }
-    const bnd = bounded(b);
-    if (bnd && hasWaiter(b, SEND) && outputWritten()) {
-      // As in `receive`: published before the room is visible, then looked at again.
-      unlock(b);
-      publishWritten();
-      lock(b);
-      if (count(b) === 0) {
-        unlock(b);
-        return null;
-      }
-    }
-    return take<T>(b, bnd);
+    return take<T>(b);
   }
 
   /**
@@ -190,19 +171,28 @@ function put<T>(b: usize, value: T): void {
   }
 }
 
-/**
- * The oldest value of block `b` (locked, not empty); wakes the first waiting send if `bnd` (the
- * block is bounded), unlocks.
- */
-function take<T>(b: usize, bnd: bool): T {
+/** The oldest value of block `b` (locked, not empty); wakes the first waiting send, unlocks. */
+function take<T>(b: usize): T {
   // SAFETY: the lock is held and an item is queued: taken once (it left the ring).
   const v = unsafe { slotTake<T>(popAt(b)) };
-  const w = bnd ? wakeFirst(b, SEND) : 0;
+  const w = bounded(b) ? freeRoom(b) : 0;
   unlock(b);
   if (w !== 0) {
     wakeOwned(w);
   }
   return v;
+}
+
+/**
+ * The room a pop made in bounded block `b` (locked): the first waiting send, woken (its waker, or
+ * 0). The room lets a send on another worker go on as soon as the lock is let go (and print),
+ * whether it waits for it or comes later, so this thread's output is published first (#249): out
+ * of line, and only when this thread wrote to stdout, while the lock is held.
+ */
+@inline
+function freeRoom(b: usize): usize {
+  publishOutput();
+  return wakeFirst(b, SEND);
 }
 
 /** A wait in block `b`'s line of `kind` until what it waits for is there. */
