@@ -100,6 +100,29 @@ export class ScalarP256 {
     this.store(d, t0, t1, t2, t3, t4);
   }
 
+  /** `d = a + b` mod n (in or out of the Montgomery domain alike); `d` may be `a` or `b`. */
+  add(d: usize, a: usize, b: usize) {
+    const r = this.r;
+    const oa = 4 * a;
+    const ob = 4 * b;
+    // The highest indexes first: their bounds checks cover the others.
+    const a3 = r[oa + 3];
+    const b3 = r[ob + 3];
+    const s0 = r[oa] + r[ob];
+    const c0 = (s0 < r[ob]) as u64;
+    const x1 = r[oa + 1] + r[ob + 1];
+    const s1 = x1 + c0;
+    const c1 = ((x1 < r[ob + 1]) as u64) | ((s1 < c0) as u64);
+    const x2 = r[oa + 2] + r[ob + 2];
+    const s2 = x2 + c1;
+    const c2 = ((x2 < r[ob + 2]) as u64) | ((s2 < c1) as u64);
+    const x3 = a3 + b3;
+    const s3 = x3 + c2;
+    const c3 = ((x3 < b3) as u64) | ((s3 < c2) as u64);
+    // Both below n, so the sum is below 2n: one conditional subtraction.
+    this.store(d, s0, s1, s2, s3, c3);
+  }
+
   /**
    * Register `d` = the big-endian bytes `b[at..at + len]` (at most 32) as a number reduced
    * mod n, in the Montgomery domain; `tmp` is scratch. Returns whether the number was below n

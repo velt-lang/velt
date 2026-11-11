@@ -18,8 +18,8 @@ import {
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { AES_128_GCM_SHA256, CHACHA20_POLY1305_SHA256 } from "velt/net/tls/record_cipher";
 
-// SHA-256("HelloRetryRequest"): a ServerHello with this random is a HelloRetryRequest.
-const HRR_RANDOM: u8[] = [
+/** SHA-256("HelloRetryRequest"): a ServerHello with this random is a HelloRetryRequest. */
+export const HRR_RANDOM: u8[] = [
   0xcf,
   0x21,
   0xad,
