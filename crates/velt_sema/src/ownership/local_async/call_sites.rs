@@ -22,7 +22,10 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
         let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
             continue;
         };
-        let declared: Vec<_> = f.params.iter().map(|p| p.local).collect();
+        // The arguments of a call through the value start at its declared parameters: after any
+        // captures and a method's `this`, which the call doesn't pass.
+        let skip = f.captures.len() + usize::from(f.self_ty.is_some());
+        let declared: Vec<_> = f.params.iter().skip(skip).map(|p| p.local).collect();
         for (k, local) in declared.into_iter().enumerate() {
             if let Some(&i) = g.ids.get(&Node::Local(d, local)) {
                 if p.flags[i] & CROSSES != 0 {
