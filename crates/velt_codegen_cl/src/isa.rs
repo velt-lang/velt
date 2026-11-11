@@ -12,6 +12,8 @@
 //!   (`catchPanic`, velt_rt panic.rs).
 //! - the CPU (`--cpu`, `crate::cpu`): x86_64 code is for `cpu::DEFAULT_X86_CPU` unless another
 //!   one is asked for.
+//! - Cranelift's IR verifier only in the compiler's own debug builds (`VELT_CL_VERIFY=1` turns
+//!   it on), and the register allocator Cranelift's default unless `VELT_CL_REGALLOC` names one.
 
 use cranelift_codegen::isa::{self, OwnedTargetIsa};
 use cranelift_codegen::settings::{self, Configurable, TlsModel};
@@ -71,6 +73,22 @@ pub(crate) fn make_isa(
     set(&mut flags, "enable_probestack", "true")?;
     set(&mut flags, "probestack_strategy", "inline")?;
     set(&mut flags, "preserve_frame_pointers", "true")?;
+    // Cranelift verifies its IR after every pass by default: 23% of a debug build's
+    // instructions on a generated 10k-line application (#2707). VIR is verified before code
+    // generation (`velt_vir::verify`), so the compiler's own debug builds and
+    // `VELT_CL_VERIFY=1` keep it.
+    let verify =
+        cfg!(debug_assertions) || std::env::var_os("VELT_CL_VERIFY").is_some_and(|v| v != "0");
+    set(
+        &mut flags,
+        "enable_verifier",
+        if verify { "true" } else { "false" },
+    )?;
+    // `VELT_CL_REGALLOC=single_pass`: 11-13% fewer build instructions, programs 1.2-1.7x
+    // slower than with the default `backtracking` allocator (#2707).
+    if let Some(alloc) = std::env::var_os("VELT_CL_REGALLOC") {
+        set(&mut flags, "regalloc_algorithm", &alloc.to_string_lossy())?;
+    }
     if jit {
         set(&mut flags, "use_colocated_libcalls", "false")?;
     }
