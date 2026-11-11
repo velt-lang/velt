@@ -28,6 +28,10 @@ struct Stub {
     callback: Option<String>,
     /// The listener's answer to that replay.
     replayed: Option<u16>,
+    /// The token the next sign-in hands out (`None`: a good one).
+    bad_token: Option<&'static str>,
+    /// The device start's `interval` and `expires_in` (`None`: 5 and 600).
+    device_times: Option<(u64, u64)>,
 }
 
 fn json(status: u16, value: serde_json::Value) -> Response {
@@ -88,19 +92,28 @@ fn registry() -> (Server, String, Arc<Mutex<Stub>>) {
                     _ => json(400, serde_json::json!({"error": "invalid_grant"})),
                 }
             }
-            ("POST", "/api/v1/login/device") => json(
-                200,
-                serde_json::json!({
-                    "device_code": "d".repeat(64), "user_code": "WDJB-MJHT",
-                    "verification_uri": format!("{here}/device"),
-                    "verification_uri_complete": format!("{here}/device?code=WDJB-MJHT"),
-                    "expires_in": 600, "interval": 5
-                }),
-            ),
+            ("POST", "/api/v1/login/device") => {
+                let (interval, expires_in) = stub.device_times.unwrap_or((5, 600));
+                json(
+                    200,
+                    serde_json::json!({
+                        "device_code": "d".repeat(64), "user_code": "WDJB-MJHT",
+                        "verification_uri": format!("{here}/device"),
+                        "verification_uri_complete": format!("{here}/device?code=WDJB-MJHT"),
+                        "expires_in": expires_in, "interval": interval
+                    }),
+                )
+            }
             ("POST", "/api/v1/login/device/token") if field("device_code") == "d".repeat(64) => {
                 stub.polled += 1;
                 match stub.polls.pop_front().unwrap_or("expired_token") {
-                    "token" => token(),
+                    "token" => match stub.bad_token {
+                        Some(t) => json(
+                            200,
+                            serde_json::json!({"token": t, "user": "andii", "expires": "2027-11-11"}),
+                        ),
+                        None => token(),
+                    },
                     word => json(400, serde_json::json!({ "error": word })),
                 }
             }
@@ -310,6 +323,49 @@ fn the_listener_gives_up_after_its_timeout() {
 }
 
 #[test]
+fn the_listener_serves_a_bounded_number_of_connections() {
+    use super::loopback::MAX_CONNECTIONS;
+    use std::io::Write;
+    let mut listener = Listener::bind("ab", "r").unwrap();
+    let addr = format!("127.0.0.1:{}", listener.port());
+    // Connections that send half a request hold their places until they are closed.
+    let idle: Vec<_> = (0..MAX_CONNECTIONS)
+        .map(|_| {
+            let mut c = std::net::TcpStream::connect(&addr).unwrap();
+            c.write_all(b"GET /callback").unwrap();
+            c
+        })
+        .collect();
+    let url = format!("http://{addr}/callback?error=refused&state=ab");
+    // Each answered request proves the listener has taken every connection before it.
+    assert!(
+        velt_http::fetch("GET", &url, &[], b"").is_err(),
+        "one too many"
+    );
+    drop(idle);
+    // The idle connections' threads end as they see them closed: a stray request is answered
+    // again (404) once they have, and then the callback is served.
+    let stray = format!("http://{addr}/");
+    let mut tries = 0;
+    while velt_http::fetch("GET", &stray, &[], b"").is_err() {
+        tries += 1;
+        assert!(tries < 10_000, "the closed connections keep their places");
+        std::thread::yield_now();
+    }
+    let tab = std::thread::spawn(move || velt_http::fetch("GET", &url, &[], b"").unwrap());
+    assert_eq!(
+        listener.wait(CALLBACK_TIMEOUT).unwrap(),
+        Callback::Refused(Refusal::Refused)
+    );
+    listener.finish(None);
+    assert!(tab
+        .join()
+        .unwrap()
+        .body_text()
+        .contains("Signing in failed"));
+}
+
+#[test]
 fn the_device_flow_polls_at_the_interval_and_slows_down() {
     let (server, base, stub) = registry();
     stub.lock().unwrap().polls = ["authorization_pending", "slow_down", "token"].into();
@@ -344,6 +400,49 @@ fn the_device_flow_ends_when_the_code_expires_or_is_declined() {
     let e = device::sign_in(&base, &mut ui).unwrap_err();
     assert!(e.contains("device code expired"), "{e}");
     assert_eq!(ui.slept.iter().sum::<u64>(), 600);
+    // The last wait ends when the code expires: 85 waits of 7 s, then 5 s.
+    stub.lock().unwrap().device_times = Some((7, 600));
+    stub.lock().unwrap().polls = std::iter::repeat_n("authorization_pending", 1000).collect();
+    let mut ui = Browser::default();
+    assert!(device::sign_in(&base, &mut ui).is_err());
+    assert_eq!((ui.slept.len(), ui.slept.last()), (86, Some(&5)));
+    server.stop();
+}
+
+#[test]
+fn the_device_flow_bounds_the_registrys_interval() {
+    let (server, base, stub) = registry();
+    // A day between polls for a code that lives 10 minutes: a minute at most.
+    stub.lock().unwrap().device_times = Some((86_400, 600));
+    stub.lock().unwrap().polls = std::iter::repeat_n("authorization_pending", 1000).collect();
+    let mut ui = Browser::default();
+    let e = device::sign_in(&base, &mut ui).unwrap_err();
+    assert!(e.contains("device code expired"), "{e}");
+    assert_eq!(ui.slept, [60; 10]);
+    // `slow_down` near u64::MAX neither overflows nor sleeps forever.
+    stub.lock().unwrap().device_times = Some((u64::MAX - 1, u64::MAX));
+    stub.lock().unwrap().polls = std::iter::repeat_n("slow_down", 1000).collect();
+    let mut ui = Browser::default();
+    let e = device::sign_in(&base, &mut ui).unwrap_err();
+    assert!(e.contains("device code expired"), "{e}");
+    assert_eq!(ui.slept, [60; 60]);
+    // A token the registry sends with a line break is refused, without quoting it, and with a
+    // message about the registry's answer (not a pasted token).
+    stub.lock().unwrap().device_times = None;
+    for bad in ["velt_s3cret\r\nX-Evil: 1", "", "velt s3cret"] {
+        stub.lock().unwrap().bad_token = Some(bad);
+        stub.lock().unwrap().polls = ["token"].into();
+        let e = device::sign_in(&base, &mut Browser::default()).unwrap_err();
+        assert!(e.contains("answered the sign-in with a token"), "{e}");
+        assert!(!e.contains("s3cret") && !e.contains("pasted"), "{e}");
+    }
+    stub.lock().unwrap().bad_token = None;
+    // An interval of 0 is a second.
+    stub.lock().unwrap().device_times = Some((0, 3));
+    stub.lock().unwrap().polls = std::iter::repeat_n("authorization_pending", 10).collect();
+    let mut ui = Browser::default();
+    assert!(device::sign_in(&base, &mut ui).is_err());
+    assert_eq!(ui.slept, [1, 1, 1]);
     server.stop();
 }
 
@@ -359,6 +458,11 @@ fn pkce_secrets_and_urls() {
     ] {
         assert_eq!(base64url(bytes), text);
     }
+    // RFC 7636 Appendix B.
+    assert_eq!(
+        challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    );
     assert_eq!(
         challenge(&"a".repeat(64)),
         "_-BU_nrgy23GXDr5th1SCfQ5hR20PQulmXM33xVGaOs"

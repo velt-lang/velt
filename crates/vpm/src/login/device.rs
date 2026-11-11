@@ -12,8 +12,10 @@ use super::{display_safe, is_openable, post, shown, Answer, SignedIn, Ui};
 const DEFAULT_INTERVAL: u64 = 5;
 /// What `slow_down` adds to the interval.
 const SLOW_DOWN: u64 = 5;
-/// Bounds on what the registry asks for: at least a second between polls, at most an hour in all.
+/// Bounds on what the registry asks for: between one second and a minute between polls, at most
+/// an hour in all.
 const MIN_INTERVAL: u64 = 1;
+const MAX_INTERVAL: u64 = 60;
 const MAX_EXPIRES: u64 = 3600;
 
 /// A started device sign-in. `Debug` never prints the device code.
@@ -114,7 +116,8 @@ fn expired(api: &str) -> String {
 }
 
 /// The device flow: start, show the code (and try to open the page), then poll every
-/// `interval` seconds (`slow_down` adds 5) until done or `expires_in` seconds have been waited.
+/// `interval` seconds (`slow_down` adds 5; 1 to 60 seconds) until done or `expires_in` seconds
+/// (at most an hour) have been waited; the last wait ends when the code expires.
 pub fn sign_in(api: &str, ui: &mut dyn Ui) -> Result<SignedIn, String> {
     let started = start(api)?;
     ui.say(&format!(
@@ -125,22 +128,21 @@ pub fn sign_in(api: &str, ui: &mut dyn Ui) -> Result<SignedIn, String> {
         // A machine without a browser is why the device flow exists: failing to open is fine.
         ui.open(complete);
     }
-    let mut interval = started
-        .interval
-        .unwrap_or(DEFAULT_INTERVAL)
-        .max(MIN_INTERVAL);
+    let bounded = |i: u64| i.clamp(MIN_INTERVAL, MAX_INTERVAL);
+    let mut interval = bounded(started.interval.unwrap_or(DEFAULT_INTERVAL));
     let expires_in = started.expires_in.min(MAX_EXPIRES);
     let mut waited = 0;
     loop {
         if waited >= expires_in {
             return Err(expired(api));
         }
-        ui.sleep(Duration::from_secs(interval));
-        waited += interval;
+        let wait = interval.min(expires_in - waited);
+        ui.sleep(Duration::from_secs(wait));
+        waited += wait;
         match poll(api, &started.device_code)? {
             Poll::Done(signed) => return Ok(signed),
             Poll::Pending => {}
-            Poll::SlowDown => interval += SLOW_DOWN,
+            Poll::SlowDown => interval = bounded(interval.saturating_add(SLOW_DOWN)),
         }
     }
 }

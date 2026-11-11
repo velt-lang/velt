@@ -130,17 +130,48 @@ fn browser_command(url: &str) -> Option<std::process::Command> {
 #[cfg(windows)]
 fn browser_command(url: &str) -> Option<std::process::Command> {
     use std::os::windows::process::CommandExt;
-    // cmd.exe reads `&` as a command separator outside quotes and expands `%…%` inside them:
-    // the URL goes in quotes, and one with `%` is left for the user to open.
-    if url.contains('%') {
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.raw_arg(cmd_start_line(url)?);
+    Some(cmd)
+}
+
+/// `cmd.exe`'s arguments that open `url` with `start`, `None` for a URL it would not pass on
+/// literally. Quoted, `&`, `|`, `^`, `<`, `>` and parentheses are plain text; `/d` skips the
+/// AutoRun commands and `/v:off` delayed expansion. `%…%` expands even inside quotes and `/v:off`
+/// can't stop it, so a URL with `%` is left for the user to open; one with `!` too, in case
+/// delayed expansion is on anyway, and `"` would end the quotes (`is_openable` refuses it).
+#[cfg(any(windows, test))]
+fn cmd_start_line(url: &str) -> Option<String> {
+    if url.contains(['%', '!', '"']) {
         return None;
     }
-    let mut cmd = std::process::Command::new("cmd");
-    cmd.raw_arg(format!("/c start \"\" \"{url}\""));
-    Some(cmd)
+    Some(format!("/d /v:off /c start \"\" \"{url}\""))
 }
 
 #[cfg(not(any(unix, windows)))]
 fn browser_command(_url: &str) -> Option<std::process::Command> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cmd_start_line;
+
+    #[test]
+    fn windows_opens_urls_quoted_without_expansion_or_autorun() {
+        assert_eq!(
+            cmd_start_line("https://x.example/login?port=1&challenge=a-_b&state=c").as_deref(),
+            Some(
+                "/d /v:off /c start \"\" \"https://x.example/login?port=1&challenge=a-_b&state=c\""
+            )
+        );
+        // Variables would expand: such a URL is only printed.
+        for url in [
+            "https://evil.example/?t=%VELT_REGISTRY_TOKEN%",
+            "https://evil.example/?t=!VELT_REGISTRY_TOKEN!",
+            "https://evil.example/?a=\"&calc",
+        ] {
+            assert_eq!(cmd_start_line(url), None, "{url}");
+        }
+    }
 }

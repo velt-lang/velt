@@ -292,6 +292,16 @@ fn post(api: &str, rest: &str, body: &str) -> Result<Answer, String> {
                     "registry {api} answered the sign-in with something other than a token"
                 ));
             };
+            // Checked here so the message names the registry's answer (credentials::login's
+            // speaks of a pasted token); the token itself is never quoted.
+            if t.token.is_empty()
+                || t.token.len() > 4096
+                || t.token.chars().any(|c| c.is_control() || c.is_whitespace())
+            {
+                return Err(format!(
+                    "registry {api} answered the sign-in with a token that is empty, too long or contains spaces or control characters; nothing was stored"
+                ));
+            }
             if !display_safe(&t.user) || !display_safe(&t.expires) {
                 return Err(format!(
                     "registry {api} answered the sign-in with an invalid user name or date"

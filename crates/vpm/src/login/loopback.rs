@@ -6,7 +6,7 @@
 
 use std::io::{BufReader, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -71,6 +71,8 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 const OUTCOME_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long [`Listener::finish`] waits for the tab's page to be written.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Connections served at once; more are closed unanswered (only this machine can connect).
+pub(super) const MAX_CONNECTIONS: usize = 32;
 
 /// The matching callback's connection, waiting for the outcome: the signed-in user (`None`:
 /// failed), then reporting that its page was written.
@@ -105,6 +107,7 @@ impl Listener {
         });
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
+        let open = Arc::new(AtomicUsize::new(0));
         let thread = std::thread::Builder::new()
             .name("velt-login-listener".into())
             .spawn(move || {
@@ -115,9 +118,20 @@ impl Listener {
                     let (Ok(stream), handler) = (conn, handler.clone()) else {
                         continue;
                     };
-                    let _ = std::thread::Builder::new()
+                    if open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+                        open.fetch_sub(1, Ordering::SeqCst);
+                        continue;
+                    }
+                    let served = open.clone();
+                    let spawned = std::thread::Builder::new()
                         .name("velt-login-conn".into())
-                        .spawn(move || handler.serve(stream));
+                        .spawn(move || {
+                            handler.serve(stream);
+                            served.fetch_sub(1, Ordering::SeqCst);
+                        });
+                    if spawned.is_err() {
+                        open.fetch_sub(1, Ordering::SeqCst);
+                    }
                 }
             })
             .map_err(failed)?;

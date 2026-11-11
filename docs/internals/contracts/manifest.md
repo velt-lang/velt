@@ -441,6 +441,40 @@ registry: "https://registry.example.com",
   skipped silently, and any other failure is a warning (the version stays published).
   registry-core servers answer every `GET` with `Access-Control-Allow-Origin: *`, so a web page
   (the registry's site) reads them from the browser.
+- Browser sign-in (additive, registry-core servers, #1740; client: `vpm::login`, `velt login` in
+  `cli.md`). All answers are JSON with `cache-control: no-store`:
+  - `GET <url>/api/v1/login` → 200 `{"browser": "<page>", "device": <bool>}`. `browser` is the
+    page the loopback flow opens (absolute; it may be on another host, e.g. the website); clients
+    open only `https://` (or loopback `http://`) pages without `#`. Any other answer (404 from
+    `velt registry serve`), or JSON without `browser`: the registry has no browser sign-in, and
+    `velt login` reads a token from stdin.
+  - Loopback flow: the client makes a `verifier` (32 random bytes, lowercase hex), its
+    `challenge` (base64url without padding of the SHA-256 of the verifier's ASCII text: PKCE S256,
+    RFC 7636) and a `state` (16 random bytes, lowercase hex), listens on `127.0.0.1:<port>` (any
+    free port) and opens `<page>?port=<port>&challenge=<challenge>&state=<state>` (`&` when the page
+    has a query). After the sign-in the registry sends the browser to
+    `http://127.0.0.1:<port>/callback?code=<code>&state=<state>`, or on refusal
+    `…/callback?error=<word>&state=<state>` with `access_denied` (cancelled), `refused` (this
+    account can't sign in; the registry's page says why) or `server_error`. The client answers
+    only `GET /callback` with its own `state` (compared in constant time), once, and only after
+    the exchange below, with a page saying `Signed in to <url> as <user>` or `Signing in failed:
+    see the terminal.`; anything else gets 404 and is ignored.
+  - `POST <url>/api/v1/login/token` `{"code": "…", "verifier": "…"}` → 200 `{"token": "velt_…",
+    "user": "<name>", "expires": "YYYY-MM-DD"}`, or 400 `{"error": "invalid_grant"}` (an unknown,
+    used or expired code, or a verifier that doesn't match its challenge). A code is single-use and
+    lives 60 seconds.
+  - `POST <url>/api/v1/login/device` (empty body) → 200 `{"device_code": "<64 hex, secret>",
+    "user_code": "XXXX-XXXX", "verification_uri": "…", "verification_uri_complete": "…",
+    "expires_in": 600, "interval": 5}` (RFC 8628 names; the user code is 8 letters from
+    `BCDFGHJKLMNPQRSTVWXZ`).
+  - `POST <url>/api/v1/login/device/token` `{"device_code": "…"}` → 200 with the token as above
+    (once), or 400 `{"error": …}`: `authorization_pending` (poll again after `interval`),
+    `slow_down` (polled within 4 s; the client adds 5 s to its interval), `access_denied`
+    (declined or refused) or `expired_token` (expired or unknown). Clients keep the interval
+    between 1 and 60 s and stop polling after `expires_in` (at most 3600 s).
+  - Clients show the `user`, `expires` and `user_code` only when they are 1-64 ASCII letters,
+    digits, `-`, `_` or `.`, and refuse a token that is empty, longer than 4096 bytes or contains
+    whitespace or control characters; a sign-in otherwise fails without storing anything.
 - Search (additive): `GET <url>/api/v1/search?q=<text>` →
   `{"packages":[{"name":"…","version":"…","description"?:"…","keywords"?:["…"]}]}`. The text is
   lowercased and split on whitespace into terms; a package matches when every term is a
