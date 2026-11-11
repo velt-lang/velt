@@ -585,10 +585,6 @@ impl FnLower<'_, '_> {
                 let t = self.sub(args.first()?.ty);
                 Some(self.cx.holds_dynamic_or_class(t))
             }
-            hir::ExprKind::Call {
-                callee: hir::Callee::Intrinsic(hir::Intrinsic::ModuleStateUsed),
-                ..
-            } => Some(self.cx.module_state_used()),
             hir::ExprKind::Unary {
                 op: hir::UnOp::Not,
                 expr,
