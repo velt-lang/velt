@@ -333,6 +333,7 @@ impl<R> Call<R, hir::Expr> {
 macro_rules! builders {
     (@emit $name:ident [class]) => {};
     (@emit $name:ident [decorator]) => {};
+    (@emit $name:ident [process_static]) => {};
     (@emit $name:ident [sig(<$g0:ident> $($sig:tt)*)]) => {
         builders!(@sig $name [targs: E::TyArgs<1>,] [E::ty_args(targs)] $($sig)*);
     };

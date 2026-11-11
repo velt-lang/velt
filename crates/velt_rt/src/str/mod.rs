@@ -33,6 +33,7 @@ mod join;
 mod order;
 mod push;
 mod recent;
+pub(crate) use recent::use_epoch;
 mod slice;
 pub mod stats;
 #[cfg(test)]

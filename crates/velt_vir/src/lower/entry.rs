@@ -33,6 +33,8 @@ use crate::vir::{self, BinOp, Function, Linkage, Operand, Place, Proj, Rvalue, T
 impl<'c, 'h> FnLower<'c, 'h> {
     pub(super) fn build_main(cx: &'c mut super::Cx<'h>) -> Function {
         let mut lw = FnLower::bare(cx, vec![]);
+        // Before any string can be freed: the runtime's position cache reads std's epoch.
+        lw.register_statics();
         if lw.cx.uses_placement {
             // Before anything starts the runtime (#211).
             lw.call_rt(Rt::SetScheduler, vec![cint(1, Ty::U32)], None);
@@ -50,7 +52,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.push_scope(ScopeKind::Block);
             let code = lw.run_async_main(def);
             lw.sched_finish(&code);
-            lw.register_statics_drop();
             lw.terminate(Terminator::Return(code));
             lw.scopes.clear();
             return lw.finish_export();
@@ -77,7 +78,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
         } else {
             lw.call_main(def, None)
         };
-        lw.register_statics_drop();
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();
         lw.finish_export()

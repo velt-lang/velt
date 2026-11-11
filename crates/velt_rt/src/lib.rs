@@ -60,6 +60,7 @@ pub mod registry;
 pub mod result;
 pub mod rwlock_write;
 pub mod shared;
+pub mod statics;
 pub mod stdin;
 pub mod str;
 pub mod str_array;

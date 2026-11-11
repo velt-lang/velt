@@ -5,8 +5,9 @@
 //!
 //! An `Atomic<shared<T> | null>` made with `null` is one too, and its word owns the reference it
 //! holds. Module state is dropped at exit for the leak counters, and so are these references:
-//! `velt_main` hands the runtime a function releasing them (`velt_rt_statics_drop`,
-//! `Work::StaticsDrop`), which it calls then. `velt/sync/epoch`'s registry is one of them.
+//! `velt_main` hands the runtime a function releasing them (in the table of `velt_rt_statics`,
+//! `Work::StaticsDrop`), which it calls then. `velt/sync/epoch`'s registry is one of them. The
+//! same table holds the addresses of std's process statics (#2779), words the runtime uses.
 
 use velt_sema::hir::{self, ExprKind as K, TyKind};
 
@@ -83,14 +84,43 @@ impl FnLower<'_, '_> {
 }
 
 impl<'c, 'h> FnLower<'c, 'h> {
-    /// Before `velt_main` returns: hands the runtime the function releasing the references
-    /// static atomics hold, when the program has any.
-    pub(super) fn register_statics_drop(&mut self) {
-        if self.cx.reference_statics().is_empty() {
+    /// First thing in `velt_main`: hands the runtime the table of the process statics
+    /// (`velt_rt_statics`, rt_abi.md "Process statics", #2779). The table is read-only data:
+    /// its size, the function releasing the references static atomics hold (null when the
+    /// program has none), and the address of each process static of std (velt_common
+    /// `std_hooks.rs`, `process_static`; null when the std root lacks it). No call when the table
+    /// would be empty.
+    pub(super) fn register_statics(&mut self) {
+        const SIZE: u64 = 24;
+        let drop = if self.cx.reference_statics().is_empty() {
+            None
+        } else {
+            Some(Const::Func(self.cx.func(Work::StaticsDrop)))
+        };
+        let epoch = self
+            .cx
+            .global_def(velt_common::std_hook!(str_epoch))
+            .and_then(|d| self.static_atomic_data(d))
+            .map(Const::Static);
+        if drop.is_none() && epoch.is_none() {
             return;
         }
-        let f = self.cx.func(Work::StaticsDrop);
-        self.call_rt(Rt::StaticsDrop, vec![super::cfunc(f)], None);
+        let mut bytes = vec![0u8; SIZE as usize];
+        bytes[..8].copy_from_slice(&SIZE.to_le_bytes());
+        let relocs = [(8, drop), (16, epoch)]
+            .into_iter()
+            .filter_map(|(at, c)| c.map(|c| (at, c)))
+            .collect();
+        let id = StaticId(self.cx.statics.len() as u32);
+        self.cx.statics.push(StaticData {
+            bytes,
+            align: 8,
+            relocs,
+            mutable: None,
+            ..Default::default()
+        });
+        let table = Operand::Const(Const::Static(id), Ty::Ptr);
+        self.call_rt(Rt::Statics, vec![table], None);
     }
 
     /// `()`: releases the reference each static atomic the program uses holds, and empties its
@@ -122,6 +152,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
 }
 
 impl super::Cx<'_> {
+    /// The module constant whose qualified name is `name` (a process static, `std_hooks.rs`).
+    fn global_def(&self, name: &str) -> Option<hir::DefId> {
+        let found =
+            (self.hir.defs.iter()).position(|d| matches!(d, hir::Def::Global(g) if g.name == name));
+        found.map(|i| hir::DefId(i as u32))
+    }
+
     /// The static atomics of the checked program that hold a reference (an
     /// `Atomic<shared<T> | null>` made with `null`), in definition order, with their value type.
     /// Read from the program, not from the static data made so far: a function lowered after

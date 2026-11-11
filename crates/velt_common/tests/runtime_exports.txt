@@ -346,7 +346,7 @@ velt_rt velt_rt_spawn_fut
 velt_rt velt_rt_spawn_target
 velt_rt velt_rt_spawn_transfer
 velt_rt velt_rt_start
-velt_rt velt_rt_statics_drop
+velt_rt velt_rt_statics
 velt_rt velt_rt_stdin_read_all
 velt_rt velt_rt_stdin_read_all_bytes
 velt_rt velt_rt_stdin_read_all_bytes_sync
@@ -641,7 +641,7 @@ velt_rt_wasm velt_rt_spawn_detached
 velt_rt_wasm velt_rt_spawn_fut
 velt_rt_wasm velt_rt_spawn_target
 velt_rt_wasm velt_rt_spawn_transfer
-velt_rt_wasm velt_rt_statics_drop
+velt_rt_wasm velt_rt_statics
 velt_rt_wasm velt_rt_stdout_write_bytes
 velt_rt_wasm velt_rt_task_gate
 velt_rt_wasm velt_rt_task_gate_free

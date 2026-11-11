@@ -78,7 +78,7 @@ struct Interp<'p> {
     exec: async_rt::Exec,
     /// Bounded drop nesting (drops.rs).
     drops: drops::Drops,
-    /// The function `velt_rt_statics_drop` handed over, which releases the references the
+    /// The function `velt_rt_statics`'s table handed over, which releases the references the
     /// program's static atomics hold: called at a normal exit, before leaks are counted.
     statics_drop: Option<u64>,
 }

@@ -257,6 +257,7 @@ fn differs(p: &Program, qualified: &str, sig: &Sig) -> Option<String> {
         Def::Fn(f) => f.name == qualified,
         Def::Adt(a) => a.name == qualified,
         Def::ExternFn(x) => x.name == qualified,
+        Def::Global(g) => g.name == qualified,
         _ => false,
     });
     let Some(d) = found else {
@@ -269,6 +270,18 @@ fn differs(p: &Program, qualified: &str, sig: &Sig) -> Option<String> {
             return (!x.is_decorator).then(|| "not a `declare decorator function`".to_string())
         }
         (Def::Fn(f), Sig::Fn(s)) => (f, s),
+        // A process static: a module constant `new Atomic<u64>(literal)` (no module state slot).
+        (Def::Global(g), Sig::ProcessStatic) => {
+            let atomic_u64 = matches!(p.types.kind(g.ty), TyKind::Adt(_, args)
+                if args.len() == 1 && matches!(p.types.kind(args[0]), TyKind::Int(velt_sema::hir::IntTy::U64)));
+            return match (atomic_u64, g.slot) {
+                (true, None) => None,
+                (false, _) => Some("not an `Atomic<u64>`".to_string()),
+                (true, Some(_)) => {
+                    Some("kept in the module state, not a static atomic".to_string())
+                }
+            };
+        }
         _ => {
             return Some(
                 "a class, function or decorator where the table has another of them".to_string(),

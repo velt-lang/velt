@@ -94,17 +94,28 @@ fn finish(code: i32) -> i32 {
     code
 }
 
-/// The program's function releasing what its static atomics hold (`velt_rt_statics_drop`).
+/// The program's function releasing what its static atomics hold (`velt_rt_statics`).
 static STATICS_DROP: std::sync::atomic::AtomicPtr<()> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
-/// `velt_rt_statics_drop(f)` (rt_abi.md "Static atomics at exit"): `velt_main` hands over, before
-/// it returns, the generated function that releases the references its static atomics hold
-/// (an `Atomic<shared<T> | null>` module constant made with `null`). The runtime calls it at
-/// exit when it drops the module state, for the leak counters.
+/// `velt_rt_statics(t)` (rt_abi.md "Process statics"): `velt_main` hands over, first thing, the
+/// table of its process statics (`statics.rs`): the generated function that releases the
+/// references its static atomics hold (an `Atomic<shared<T> | null>` module constant made with
+/// `null`), which the runtime calls at exit when it drops the module state, for the leak
+/// counters; and std's `STR_EPOCH`, the epoch of the position cache.
+///
+/// # Safety
+/// `t` points at a table laid out as [`crate::statics::Statics`], at least `size` bytes, whose
+/// addresses live as long as the process.
 #[no_mangle]
-pub extern "C" fn velt_rt_statics_drop(f: extern "C" fn()) {
-    STATICS_DROP.store(f as *mut (), std::sync::atomic::Ordering::Release);
+pub unsafe extern "C" fn velt_rt_statics(t: *const crate::statics::Statics) {
+    let (drop, epoch) = crate::statics::fields(t);
+    if !drop.is_null() {
+        STATICS_DROP.store(drop as *mut (), std::sync::atomic::Ordering::Release);
+    }
+    if !epoch.is_null() {
+        crate::str::use_epoch(epoch);
+    }
 }
 
 /// At exit, for the leak counters only: the static atomics' references, after the module state.
@@ -113,7 +124,7 @@ pub extern "C" fn velt_rt_statics_drop(f: extern "C" fn()) {
 fn statics_drop_at_exit() {
     let f = STATICS_DROP.swap(std::ptr::null_mut(), std::sync::atomic::Ordering::Acquire);
     if !f.is_null() {
-        // SAFETY: stored by `velt_rt_statics_drop` from an `extern "C" fn()`.
+        // SAFETY: stored by `velt_rt_statics` from the table's `extern "C" fn()`.
         let f: extern "C" fn() = unsafe { std::mem::transmute::<*mut (), extern "C" fn()>(f) };
         f();
     }

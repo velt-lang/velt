@@ -97,8 +97,9 @@ pub(super) enum Rt {
     FnPropIdentityOf,
     ModuleWith,
     ModuleWithEnd,
-    /// Hands the runtime the function releasing the static atomics' references at exit.
-    StaticsDrop,
+    /// Hands the runtime the table of the process statics (#2779): the function releasing the
+    /// static atomics' references at exit, and std's process statics.
+    Statics,
     WeakmapSetTraced,
     WeakrefNewWith,
     WeakrefWord,
@@ -285,7 +286,7 @@ impl Rt {
             Rt::FnPropIdentityOf => f("velt_rt_fnprop_identity_of", vec![Ptr], Ptr),
             Rt::ModuleWith => f("velt_rt_module_with", vec![], U8),
             Rt::ModuleWithEnd => f("velt_rt_module_with_end", vec![U8], Unit),
-            Rt::StaticsDrop => f("velt_rt_statics_drop", vec![Ptr], Unit),
+            Rt::Statics => f("velt_rt_statics", vec![Ptr], Unit),
             Rt::WeakmapSetTraced => f("velt_rt_weakmap_set_traced", vec![U32, Ptr, U64, Ptr], Unit),
             Rt::WeakrefNewWith => f("velt_rt_weakref_new_with", vec![Ptr, U64], U32),
             Rt::WeakrefWord => f("velt_rt_weakref_word", vec![U32], U64),

@@ -247,3 +247,21 @@ fn slices_cross_threads() {
         t.join().expect("thread");
     }
 }
+
+#[test]
+fn the_program_s_epoch_is_raised_above_the_runtime_s_then_bumped_by_frees() {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    // A word of the program's (std's `STR_EPOCH`), handed over as `velt_rt_statics` does.
+    let word: &'static AtomicU64 = Box::leak(Box::new(AtomicU64::new(0)));
+    let before = recent::epoch();
+    unsafe { crate::str::use_epoch(word) };
+    assert!(word.load(Relaxed) > before);
+    assert_eq!(recent::epoch(), word.load(Relaxed));
+    // A remembered buffer freed bumps the program's word.
+    let text = "é日😀a".repeat(100);
+    let mut s = VeltStr::from_bytes(text.as_bytes());
+    unsafe { s.unit_to_byte(200) };
+    let at = word.load(Relaxed);
+    unsafe { s.release() };
+    assert!(word.load(Relaxed) > at);
+}

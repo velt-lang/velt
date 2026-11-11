@@ -33,12 +33,42 @@
 //! The epoch bump costs one atomic increment per freed indexed string; nothing else is shared.
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
 use super::{BytePos, VeltStr};
 
-/// Bumped whenever a heap buffer that may be remembered is freed or moved.
-static HEAP_EPOCH: AtomicU64 = AtomicU64::new(0);
+/// The heap epoch, bumped whenever a heap buffer that may be remembered is freed or moved: std's
+/// process static `STR_EPOCH` once `velt_main` handed it over ([`use_epoch`], #2779), else
+/// [`FALLBACK_EPOCH`] (null).
+static HEAP_EPOCH: AtomicPtr<AtomicU64> = AtomicPtr::new(std::ptr::null_mut());
+
+/// The heap epoch before the program hands over its own, and in what never does (the runtime's
+/// tests, a host).
+static FALLBACK_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The heap epoch's word.
+#[inline]
+fn heap_epoch() -> &'static AtomicU64 {
+    let p = HEAP_EPOCH.load(Ordering::Acquire);
+    if p.is_null() {
+        &FALLBACK_EPOCH
+    } else {
+        // SAFETY: `use_epoch` stores only the address of the program's static, which lives as
+        // long as the process.
+        unsafe { &*p }
+    }
+}
+
+/// From now on the heap epoch is the word at `word` (std's `STR_EPOCH`), raised first above every
+/// epoch the fallback gave out, so no entry remembered before is valid after.
+///
+/// # Safety
+/// `word` is the address of a word that lives as long as the process.
+pub(crate) unsafe fn use_epoch(word: *const AtomicU64) {
+    let w = &*word;
+    w.fetch_max(FALLBACK_EPOCH.load(Ordering::Acquire) + 1, Ordering::AcqRel);
+    HEAP_EPOCH.store(word as *mut AtomicU64, Ordering::Release);
+}
 
 /// A remembered translation: unit `unit` of the string `key` is at `pos`.
 #[derive(Clone, Copy)]
@@ -76,7 +106,7 @@ fn key(s: &VeltStr) -> ([u64; 2], u64) {
     let epoch = if is_static {
         0
     } else {
-        HEAP_EPOCH.load(Ordering::Relaxed)
+        heap_epoch().load(Ordering::Relaxed)
     };
     ([s.w0, s.w1 | (is_static as u64) << 63], epoch)
 }
@@ -117,11 +147,11 @@ pub(super) fn remember(s: &VeltStr, unit: usize, pos: BytePos) {
 /// a heap string.
 #[cold]
 pub(super) fn buffer_gone() {
-    HEAP_EPOCH.fetch_add(1, Ordering::Release);
+    heap_epoch().fetch_add(1, Ordering::Release);
 }
 
 /// The heap epoch (tests: freeing a remembered buffer bumps it).
 #[cfg(test)]
 pub(super) fn epoch() -> u64 {
-    HEAP_EPOCH.load(Ordering::Relaxed)
+    heap_epoch().load(Ordering::Relaxed)
 }

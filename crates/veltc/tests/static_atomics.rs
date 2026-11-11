@@ -104,10 +104,19 @@ fn std_constants_with_literal_and_computed_starts() {
 }
 
 /// The `mutable=<id>` of each writable static in the VIR of `src`.
+/// The ids of the program's own words: those of `src` less the ones every program has (std's
+/// process statics, #2779).
 fn word_ids(src: &str) -> Vec<String> {
-    vir(src)
-        .lines()
-        .filter_map(|l| l.split(" mutable=").nth(1).map(str::to_string))
+    let all = |src: &str| -> Vec<String> {
+        vir(src)
+            .lines()
+            .filter_map(|l| l.split(" mutable=").nth(1).map(str::to_string))
+            .collect()
+    };
+    let every = all("function main() {}\n");
+    all(src)
+        .into_iter()
+        .filter(|w| !every.contains(w))
         .collect()
 }
 
