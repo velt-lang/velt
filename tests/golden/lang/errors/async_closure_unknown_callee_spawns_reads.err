@@ -1,0 +1,4 @@
+async_closure_unknown_callee_spawns_reads.velt:33:7: error: this async closure modifies captured `n`, so it must stay on the task that created it
+async_closure_unknown_callee_spawns_reads.velt:11:9: but it is stored in a `() => Promise<void>`, which reaches `spawn` here
+async_closure_unknown_callee_spawns_reads.velt:41:7: error: this async closure modifies captured `m`, so it must stay on the task that created it
+async_closure_unknown_callee_spawns_reads.velt:20:11: but it is stored in a `(i64) => Promise<void>`, which reaches `spawn` here

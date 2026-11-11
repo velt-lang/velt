@@ -248,26 +248,64 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
     changed
 }
 
-/// The crossing locals of a generic type found since `done` (`Graph::wild`): each carries
+/// The crossing values of a generic type found since `done` (`Graph::wild`, `Graph::generic_roots`):
+/// each carries
 /// what its type is in the instantiations of its function, a crossing type for the heap rule
 /// (a closure in `Job[]` or `Box<Job>` too). The type in an instantiation that is unknown (no
 /// call gives the type arguments) stays generic, and the parameter may carry any closure.
 fn resolve_hits(cx: &mut Ctx, g: &Graph, p: &mut Propagation, done: &mut usize) {
-    while let Some(&(n, w)) = p.hits.get(*done) {
+    while let Some(&(f, ty, w)) = p.hits.get(*done) {
         *done += 1;
-        let Node::Local(f, _) = g.nodes[n] else {
-            continue;
-        };
-        for t in instances(cx, g, f, g.tys[n]) {
-            if types::mentions_param(cx, t) {
-                // Its type, a type parameter, says nothing to the reader: the label names the
-                // boundary.
-                p.wild.push(w);
-            } else {
-                p.roots.push((t, w));
+        // A method a dispatched call may reach has instantiations no direct call shows (a
+        // `Runner<FnTask>` holding an `Sp<FnTask>`). Every object of its class is made by a `new`,
+        // whose type arguments are the class's instantiations: they give the method's, unless a
+        // subclass may bind them in its `extends`, where the value may carry any closure.
+        let owner = outermost(g, f);
+        if g.dispatched.binary_search_by_key(&owner.0, |d| d.0).is_ok() {
+            match ctor_sites(cx, g, owner) {
+                Some(sites) => {
+                    for (caller, targs) in sites {
+                        let t = cx.subst(ty, &targs);
+                        for t in instances(cx, g, caller, t) {
+                            push_instance(cx, p, t, w);
+                        }
+                    }
+                    continue;
+                }
+                None => p.wild.push(w),
             }
         }
+        for t in instances(cx, g, f, ty) {
+            push_instance(cx, p, t, w);
+        }
     }
+}
+
+/// What a crossing value of type `t` (an instantiation of a generic one) carries: `t` itself,
+/// for the heap rule, or any closure when `t` is still generic.
+fn push_instance(cx: &Ctx, p: &mut Propagation, t: TyId, w: Why) {
+    if types::mentions_param(cx, t) {
+        // Its type, a type parameter, says nothing to the reader: the label names the boundary.
+        p.wild.push(w);
+    } else {
+        p.roots.push((t, w));
+    }
+}
+
+/// Every `new` of method `m`'s class, with its type arguments: all the class's instantiations,
+/// when no subclass may add others (`None` otherwise).
+fn ctor_sites(cx: &Ctx, g: &Graph, m: DefId) -> Option<Vec<(DefId, Vec<TyId>)>> {
+    let Some(Def::Fn(f)) = &cx.defs[m.0 as usize] else {
+        return None;
+    };
+    let TyKind::Adt(class, _) = cx.ty.kind(f.self_ty?) else {
+        return None;
+    };
+    let class = *class;
+    if !types::subclasses(cx, class).is_empty() {
+        return None;
+    }
+    Some(g.news.get(&class).cloned().unwrap_or_default())
 }
 
 /// The function that closure `c` is written in, outside every closure (`c` itself if it is no
@@ -504,9 +542,10 @@ struct Propagation {
     /// Why a crossing local of a generic type, with no known instantiation, crosses: it may carry
     /// any closure (`Graph::wild`).
     wild: Vec<Why>,
-    /// Crossing locals of a generic type (`Graph::wild`), with why, to resolve through their
-    /// function's instantiations ([`resolve_hits`]).
-    hits: Vec<(usize, Why)>,
+    /// Crossing values of a generic type (`Graph::wild` locals, `Graph::generic_roots`): the
+    /// function, the type and why, to resolve through the function's instantiations
+    /// ([`resolve_hits`]).
+    hits: Vec<(DefId, TyId, Why)>,
 }
 
 impl Propagation {
@@ -518,7 +557,7 @@ impl Propagation {
             work: vec![],
             roots: g.roots.clone(),
             wild: vec![],
-            hits: vec![],
+            hits: g.generic_roots.clone(),
         }
     }
 
@@ -593,8 +632,9 @@ impl Propagation {
     fn root(&mut self, cx: &Ctx, g: &Graph, n: usize, f: u8, w: Why) {
         let ty = g.tys[n];
         let rooted = f == CROSSES && (g.unknown[n] || !types::fn_like(cx, ty));
-        if rooted && g.wild.binary_search(&n).is_ok() {
-            self.hits.push((n, w));
+        if let (true, Node::Local(d, _)) = (rooted && g.wild.binary_search(&n).is_ok(), g.nodes[n])
+        {
+            self.hits.push((d, ty, w));
         }
         if rooted && !matches!(g.nodes[n], Node::Lit(_)) {
             self.roots.push((ty, w));

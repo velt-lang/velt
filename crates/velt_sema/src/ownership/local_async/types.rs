@@ -112,7 +112,7 @@ pub(super) fn adt_parts_below(
 }
 
 /// Every class that extends `d`, directly or not.
-fn subclasses(cx: &Ctx, d: crate::hir::DefId) -> Vec<crate::hir::DefId> {
+pub(super) fn subclasses(cx: &Ctx, d: crate::hir::DefId) -> Vec<crate::hir::DefId> {
     let base_of = |i: usize| match &cx.info[i] {
         DefInfo::Adt(a) => a.base.and_then(|b| match cx.ty.kind(b) {
             TyKind::Adt(bd, _) => Some(*bd),

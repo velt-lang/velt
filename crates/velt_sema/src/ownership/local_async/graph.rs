@@ -184,6 +184,14 @@ pub(super) struct Graph {
     pub roots: Vec<(TyId, Why)>,
     /// Named functions used as values (called through function values too).
     pub fn_values: Vec<DefId>,
+    /// Values of unknown origin, outside std, of a type that mentions a type parameter, that cross
+    /// where they are read: the function, the type and why (resolved like `wild` locals).
+    pub generic_roots: Vec<(DefId, TyId, Why)>,
+    /// The type arguments of every `new` of each generic class, with the function making it.
+    pub news: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    /// The methods a virtual, interface or bounded call may reach (sorted): what such a method's
+    /// type parameters are isn't known from its direct calls alone.
+    pub dispatched: Vec<DefId>,
     /// Locals outside std whose type mentions a type parameter (in node order, so sorted). One that
     /// crosses carries what its type has in each instantiation of its function
     /// (`super::instances`), or any closure where no instantiation is known.
@@ -237,12 +245,14 @@ pub(super) fn build(cx: &Ctx) -> Graph {
             continue;
         }
         let library = cx.scopes[info.module].is_library;
+        let std = cx.scopes[info.module].is_std;
         let mut w = Walk {
             cx,
             g: &mut g,
             d,
             f,
             library,
+            std,
         };
         let ret = w.ret_node(d);
         w.block(&f.body.block, To::Node(ret, None));
@@ -261,12 +271,15 @@ pub(super) fn build(cx: &Ctx) -> Graph {
     // other method is called directly, where the graph follows its arguments.
     for info in &cx.info {
         if let DefInfo::Adt(a) = info {
-            called.extend(a.vtable.iter().copied());
+            g.dispatched.extend(a.vtable.iter().copied());
         }
     }
     for i in &cx.impls {
-        called.extend(i.methods.iter().copied());
+        g.dispatched.extend(i.methods.iter().copied());
     }
+    g.dispatched.sort_by_key(|d| d.0);
+    g.dispatched.dedup();
+    called.extend(g.dispatched.iter().copied());
     called.sort_by_key(|d| d.0);
     called.dedup();
     for c in called {
@@ -300,6 +313,8 @@ struct Walk<'a, 'm> {
     d: DefId,
     f: &'a FnDef,
     library: bool,
+    /// Is this function in std (`Graph::generic_roots` leaves std out)?
+    std: bool,
 }
 
 impl Walk<'_, '_> {
@@ -346,7 +361,15 @@ impl Walk<'_, '_> {
                     self.g.inflows[m].push((e.ty, site));
                 }
             }
-            To::Flag(CROSSES, Some(why)) => self.g.roots.push((e.ty, why)),
+            To::Flag(CROSSES, Some(why)) => {
+                self.g.roots.push((e.ty, why));
+                // An element or field read of a generic type that crosses with no local in
+                // between (`spawn(gs[0]())`) is resolved like a local of that type.
+                let read = matches!(e.kind, E::Index { .. } | E::Field { .. });
+                if read && !self.std && super::types::mentions_param(self.cx, e.ty) {
+                    self.g.generic_roots.push((self.d, e.ty, why));
+                }
+            }
             _ => {}
         }
     }
@@ -486,7 +509,16 @@ impl Walk<'_, '_> {
                 self.value(rhs, to);
             }
             E::Call { callee, args } => self.call(e, callee, args, to),
-            E::New { def, args, .. } => {
+            E::New {
+                def,
+                type_args,
+                args,
+            } => {
+                // Every object of a generic class is made here: its instantiations.
+                if !type_args.is_empty() {
+                    let site = (self.d, type_args.clone());
+                    self.g.news.entry(*def).or_default().push(site);
+                }
                 let ctor = match &self.cx.info[def.0 as usize] {
                     DefInfo::Adt(a) => a.ctor,
                     _ => None,

@@ -1,0 +1,2 @@
+async_closure_unknown_callee_spawns_dispatched.velt:39:7: error: this async closure modifies captured `n`, so it must stay on the task that created it
+async_closure_unknown_callee_spawns_dispatched.velt:29:13: but it is stored in a `FnTask`, which reaches `spawn` here
