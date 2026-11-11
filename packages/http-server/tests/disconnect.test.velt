@@ -287,9 +287,10 @@ describe("a slow client", () => {
       // Bounded by what the sockets hold: the source stopped, and it wasn't cancelled.
       expect(last < 2000).toBe(true);
       expect(cancelled.arrived.tryReceive()).toBe(null);
-      // Reading makes it go on.
-      await timeout(c.read(), LIMIT);
-      let read: i64 = 0;
+      // Reading makes it go on: the loop ends once the source pulls again, which may already have
+      // happened by the time the first read returns (it freed room in the sockets), so that read
+      // counts too.
+      let read: i64 = (await timeout(c.read(), LIMIT)).length as i64;
       while (pulls.get() == last) {
         read += (await timeout(c.read(), LIMIT)).length as i64;
       }
