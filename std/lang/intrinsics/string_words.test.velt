@@ -23,6 +23,7 @@ function inline(s: string): bool {
 function bytesThroughAddress(s: string): bool {
   const at = strDataAddress(s);
   for (let i: usize = 0; i < strByteLen(s); i++) {
+    // SAFETY: `i` is below the byte length, and `s` lives and is unchanged during the loop.
     const b = unsafe { addressLoad<u8>(at + i) };
     if (b != strByteAt(s, i as u64)) {
       return false;
@@ -84,7 +85,11 @@ describe("strDataAddress", () => {
   it("is the value's own address for an inline string", () => {
     const s = built("hi", 3);
     const at = strDataAddress(s);
-    expect(unsafe { addressLoad<u8>(at) }).toBe(104);
-    expect(unsafe { addressLoad<u8>(at + 5) }).toBe(105);
+    // SAFETY: bytes 0 and 5 of the 6 of `s`, which lives until the end of the test.
+    const first = unsafe { addressLoad<u8>(at) };
+    // SAFETY: as above.
+    const last = unsafe { addressLoad<u8>(at + 5) };
+    expect(first).toBe(104);
+    expect(last).toBe(105);
   });
 });
