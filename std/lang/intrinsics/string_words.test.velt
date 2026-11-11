@@ -1,0 +1,95 @@
+// velt/lang/intrinsics (tests): white-box tests of `strWord0`, `strWord1`, `strWord2` and
+// `strDataAddress` (#2778), run by `velt test std/`: each form of a string value as
+// docs/internals/contracts/rt_abi.md "Strings" lays it out (inline, static, heap, a slice), and
+// the bytes read through the data address against `strByteAt`.
+import { describe, expect, it } from "velt/test";
+import {
+  addressLoad,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+  strLen,
+  strWord0,
+  strWord1,
+  strWord2,
+} from "velt/lang/intrinsics";
+
+/** Is `s` inline (the top bit of its last word set)? */
+function inline(s: string): bool {
+  return (strWord2(s) >> 63) == 1;
+}
+
+/** Do the bytes at `strDataAddress(s)` equal `strByteAt`'s, all of them? */
+function bytesThroughAddress(s: string): bool {
+  const at = strDataAddress(s);
+  for (let i: usize = 0; i < strByteLen(s); i++) {
+    // SAFETY: `i` is below the byte length, and `s` lives and is unchanged during the loop.
+    const b = unsafe { addressLoad<u8>(at + i) };
+    if (b != strByteAt(s, i as u64)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** A heap string of `n` copies of `piece` (built at run time, so not a literal). */
+function built(piece: string, n: i64): string {
+  let s = "";
+  for (let i: i64 = 0; i < n; i++) {
+    s += piece;
+  }
+  return s;
+}
+
+describe("strWord0, strWord1 and strWord2", () => {
+  it("tell an inline string by its last word, its length in the top byte", () => {
+    const s = built("ab", 2);
+    expect(inline(s)).toBe(true);
+    expect((strWord2(s) >> 56) & 0x1f).toBe(4);
+  });
+
+  it("give a static string's pointer, counts and zero form", () => {
+    const s = "a static literal that is too long to be inline";
+    expect(inline(s)).toBe(false);
+    expect(strWord2(s)).toBe(0);
+    expect(strWord1(s) & 0xffffffff).toBe(strByteLen(s) as u64);
+    expect(strWord1(s) >> 32).toBe(strLen(s) as u64);
+    expect(strWord0(s)).toBe(strDataAddress(s) as u64);
+  });
+
+  it("count units and bytes apart for text that is not ASCII", () => {
+    const s = built("é😀", 10);
+    expect(inline(s)).toBe(false);
+    expect(strWord1(s) & 0xffffffff).toBe(60);
+    expect(strWord1(s) >> 32).toBe(30);
+    expect((strWord2(s) as i64) > 0).toBe(true);
+  });
+
+  it("give a heap string's buffer as its data", () => {
+    const s = built("0123456789", 5);
+    expect((strWord2(s) as i64) > 0).toBe(true);
+    expect(strWord0(s)).toBe(strDataAddress(s) as u64);
+  });
+});
+
+describe("strDataAddress", () => {
+  it("reads the same bytes as strByteAt in every form", () => {
+    expect(bytesThroughAddress(built("x", 7))).toBe(true);
+    expect(bytesThroughAddress("a static literal that is too long to be inline")).toBe(true);
+    expect(bytesThroughAddress(built("é😀a", 40))).toBe(true);
+    const long = built("the quick brown fox ", 20);
+    expect(bytesThroughAddress(long.slice(7, 300))).toBe(true);
+    expect(bytesThroughAddress("")).toBe(true);
+  });
+
+  it("is the value's own address for an inline string", () => {
+    const s = built("hi", 3);
+    const at = strDataAddress(s);
+    // SAFETY: bytes 0 and 5 of the 6 of `s`, which lives until the end of the test.
+    const first = unsafe { addressLoad<u8>(at) };
+    // SAFETY: as above.
+    const last = unsafe { addressLoad<u8>(at + 5) };
+    expect(first).toBe(104);
+    expect(last).toBe(105);
+  });
+});

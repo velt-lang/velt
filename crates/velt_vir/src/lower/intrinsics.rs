@@ -124,6 +124,25 @@ impl FnLower<'_, '_> {
                 let p = self.operand_place(v, Ty::Agg(STR_AGG));
                 self.str_bytes(&p)
             }
+            (I::StrWord0 | I::StrWord1 | I::StrWord2, [a]) => {
+                let k = match i {
+                    I::StrWord0 => 0,
+                    I::StrWord1 => 1,
+                    _ => 2,
+                };
+                let v = self.projection_base(a, BoxHold::No);
+                let p = self.operand_place(v, Ty::Agg(STR_AGG));
+                self.rvalue_temp(
+                    Ty::U64,
+                    Rvalue::Use(Operand::Copy(proj(&p, Proj::Field(k)))),
+                )
+            }
+            (I::StrDataAddress, [a]) => {
+                let v = self.projection_base(a, BoxHold::No);
+                let p = self.operand_place(v, Ty::Agg(STR_AGG));
+                let data = self.str_data(&p);
+                self.cast_to(data, Ty::Ptr, Ty::U64)
+            }
             (I::ExportedAddress, [a]) => {
                 // `a` is the index of the `hir::CExport` (sema's `exported_address`).
                 let hir::ExprKind::Lit(hir::Lit::Int(index)) = a.kind else {

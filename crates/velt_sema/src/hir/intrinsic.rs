@@ -476,6 +476,21 @@ pub enum Intrinsic {
     StrbufPushAsciiWord,
     /// `(xs: borrow T[]) -> u64` — address of element 0 (no std declaration calls it now).
     ArrayDataPtr,
+    /// std only: `(s: borrow string) -> u64`, the string value's first word as rt_abi.md
+    /// "Strings" lays it out (#2778): a heap or static string's data pointer, inline text
+    /// otherwise. With `StrWord1` and `StrWord2`, what the runtime's position translation reads
+    /// from a string (its form, its buffer, its unit and byte counts).
+    StrWord0,
+    /// std only: `(s: borrow string) -> u64`, the second word (`units << 32 | len` for a heap or
+    /// static string, inline text otherwise).
+    StrWord1,
+    /// std only: `(s: borrow string) -> u64`, the third word (the form: inline when its top bit
+    /// is set, else static (0), heap or slice).
+    StrWord2,
+    /// std only: `(s: borrow string) -> usize`, the address of `s`'s UTF-8 bytes: inside the value
+    /// for an inline string, the buffer otherwise (#2778). Valid while `s` is alive and unchanged;
+    /// read with `addressLoad`.
+    StrDataAddress,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a
     /// value, of type `T | E` (or `E | null` when `T` is `void`); hir_encodings.md "Errors".
     Attempt,

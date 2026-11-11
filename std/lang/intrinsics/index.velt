@@ -103,7 +103,11 @@ export {
   strbufPushAsciiWord,
   strbufPushAsciiWords,
   strCharCodeAt,
+  strDataAddress,
   strLen,
+  strWord0,
+  strWord1,
+  strWord2,
 } from "velt/lang/intrinsics/string";
 export { symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
 export { firstFulfilled, moduleStateUsed, spawnHandled } from "velt/lang/intrinsics/task";
