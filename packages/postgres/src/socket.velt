@@ -7,7 +7,8 @@
 //   TLS: plain text under `prefer`, a failure under `require`. Any other answer is a failure. Plain
 //   text comes only from an `N`, never from a failed handshake.
 // - `verify-ca` and `verify-full`: PostgreSQL 17's direct TLS (ALPN "postgresql") with the
-//   certificate checked, through velt/net's `connectTls`; `startTls` can't check one yet.
+//   certificate checked, through velt/net's `connectTls`; `startTls` can't check one yet (#2392).
+//   `connectTls` checks the host name under both, so `verify-ca` is as strict as `verify-full`.
 //
 // The answer to `SSLRequest` is read one byte at a time, so nothing the server sent in plain text
 // after it is taken for part of the TLS stream (libpq's CVE-2021-23222). Every handshake ends by the
@@ -36,7 +37,7 @@ function tlsFailure(host: string, why: string): Failure {
 
 // What a checked TLS connection needs, in a failure's message.
 const CHECKED_NEEDS =
-  "verify-ca and verify-full use direct TLS, so the server needs PostgreSQL 17 or later and a certificate that sslrootcert or Mozilla's roots verify, name included under verify-full";
+  "verify-ca and verify-full use direct TLS, so the server needs PostgreSQL 17 or later and a certificate that sslrootcert or Mozilla's roots verify for the host name, under verify-ca too";
 
 /** `host:port`, an IPv6 host in brackets. */
 export function addressOf(host: string, port: i64): string {

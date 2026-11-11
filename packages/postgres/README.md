@@ -114,8 +114,9 @@ The full guide: https://veltlang.com/docs/packages/postgres/.
     install.
   - `verify-ca` and `verify-full` use PostgreSQL 17's direct TLS (ALPN `postgresql`, which the
     server must agree to) with the certificate checked against Mozilla's roots and the PEM file
-    named by `sslrootcert`, the name too under `verify-full`. They need PostgreSQL 17 or later.
-    `verify-full` is the mode that authenticates the server.
+    named by `sslrootcert`. Both check the host name too: unlike libpq, `verify-ca` is as strict
+    as `verify-full`, so a connection by IP address or by an alias needs a certificate whose
+    subject alternative names include it. They need PostgreSQL 17 or later.
 
   The answer to `SSLRequest` is read one byte at a time, so nothing sent in plain text after it is
   taken for part of the encrypted stream (libpq's CVE-2021-23222). The handshake ends by the
