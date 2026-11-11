@@ -6,3 +6,5 @@ Square { kind: 'square', side: 3 } [object Object] [object Object]
   { kind: 'literal', area: [Function: area] }
 ] { first: Square { kind: 'square', side: 3 } }
 [object Object] [object Object] [object Object],[object Object]
+{ size: [Getter], describe: [Function: describe] } [ { size: [Getter], describe: [Function: describe] } ] { size: [Getter], describe: [Function: describe] } { w: { size: [Getter], describe: [Function: describe] } }
+4 [object Object]

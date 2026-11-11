@@ -29,3 +29,21 @@ console.log(either, String(either), `${either}`);
 console.log(shapes, { first: square });
 console.log(String(square), `${literal}`, `${shapes}`);
 console.warn("on stderr:", square);
+
+// An object literal filling an interface field with a getter prints it `[Getter]`, as Node does.
+interface Sized {
+  readonly size: number;
+  describe(): string;
+}
+
+const withGetter: Sized = {
+  get size() {
+    return 4;
+  },
+  describe() {
+    return "x";
+  },
+};
+const maybeSized: Sized | null = withGetter;
+console.log(withGetter, [withGetter], maybeSized, { w: withGetter });
+console.log(withGetter.size, String(withGetter));

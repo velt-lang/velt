@@ -11,7 +11,7 @@
 //! shows that object (`Sq { kind: 'sq' }`, `{ kind: 'lit', area: [Function: area] }`).
 
 use crate::body::FnCx;
-use crate::hir::{self, TyId, TyKind};
+use crate::hir::{self, DefId, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// The text of `h`, which [`Self::printable`] refused (`what` names the site in errors):
@@ -50,7 +50,7 @@ impl FnCx<'_, '_> {
     /// Is every member of `t` (through nullables and unions) an object type, a printable value
     /// or one holding interfaces, and `t` holds no lock?
     fn written_through_any(&mut self, t: TyId) -> bool {
-        if self.cx.holds_lock(t) {
+        if self.may_hold_lock(t, &mut vec![]) {
             return false;
         }
         let mut inner = t;
@@ -73,8 +73,12 @@ impl FnCx<'_, '_> {
         if self.printable(t) {
             return Some(false);
         }
-        if matches!(self.cx.ty.kind(t), TyKind::Dyn(..)) && self.cx.dynamic(t).is_none() {
-            return Some(!self.cx.holds_lock(t));
+        if let TyKind::Dyn(d, _) = *self.cx.ty.kind(t) {
+            if self.cx.dynamic(t).is_some() {
+                return Some(false);
+            }
+            let refused = self.may_hold_lock(t, &mut vec![]) || self.literal_setter_impl(d);
+            return (!refused).then_some(true);
         }
         if depth > 8 || self.cx.holds_lock(t) {
             return None;
@@ -106,5 +110,46 @@ impl FnCx<'_, '_> {
             found |= self.iface_parts(p, depth + 1)?;
         }
         Some(found)
+    }
+
+    /// Does a value of `t` reach a `Mutex` or `RwLock`, also through an interface value, by
+    /// what the program's implementations of the interface hold? An `any` can't hold one.
+    fn may_hold_lock(&mut self, t: TyId, seen: &mut Vec<TyId>) -> bool {
+        if seen.contains(&t) || seen.len() > 64 || self.cx.dynamic(t).is_some() {
+            return false;
+        }
+        seen.push(t);
+        if self.cx.holds_lock(t) {
+            return true;
+        }
+        let parts: Vec<TyId> = match self.cx.ty.kind(t).clone() {
+            TyKind::Dyn(d, _) => (self.cx.impls.iter())
+                .filter(|i| i.iface == d || self.cx.iface_extends_def(i.iface, d, 0))
+                .map(|i| i.ty)
+                .collect(),
+            TyKind::Adt(d, args) => match self.cx.adt(d) {
+                Some(a) => a.fields.iter().map(|f| f.ty).collect::<Vec<_>>(),
+                None => vec![],
+            }
+            .into_iter()
+            .map(|f| self.cx.subst(f, &args))
+            .collect(),
+            TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Param(_) => vec![],
+            k => crate::types::children(&k),
+        };
+        parts.into_iter().any(|p| self.may_hold_lock(p, seen))
+    }
+
+    /// Does the program fill a field of interface `d` (or one extending it) with an object
+    /// literal's `set f(v)`? Node prints such a property `[Getter/Setter]`, which the glue of a
+    /// value held as the interface doesn't know yet: printing it stays refused.
+    fn literal_setter_impl(&self, d: DefId) -> bool {
+        (self.cx.impls.iter())
+            .filter(|i| i.iface == d || self.cx.iface_extends_def(i.iface, d, 0))
+            .any(|i| match self.cx.ty.kind(i.ty) {
+                TyKind::Adt(s, _) if self.cx.literal_structs.contains(s) => (self.cx.adt(*s))
+                    .is_some_and(|a| a.fields.iter().any(|f| f.name.starts_with("set "))),
+                _ => false,
+            })
     }
 }

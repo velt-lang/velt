@@ -1,0 +1,2 @@
+print_interface_lock.velt:17:13: error: cannot print a value of type `Shape`
+print_interface_lock.velt:18:16: error: cannot format a value of type `Shape` in a template literal
