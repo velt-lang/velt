@@ -84,10 +84,6 @@ fn finish(code: i32) -> i32 {
             crate::fn_props::drop_at_exit();
             statics_drop_at_exit();
         }
-        // Nothing receives any more: drop the values still queued in channels. Not on a failing
-        // exit: tasks may still be running then, and drop glue runs user code.
-        let left = crate::task::channel::drop_abandoned_items();
-        crate::str::stats::channel_leftovers(left);
         crate::str::stats::freeze(crate::task::runtime::tasks_may_run);
     }
     crate::io::flush_stdout();

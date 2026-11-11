@@ -1,0 +1,4 @@
+queued first: y 2 x 1
+sent later: q 2 p 1
+race: 1 left in b: 0
+race: 3 then 4 left: 0

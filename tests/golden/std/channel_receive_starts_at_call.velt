@@ -1,0 +1,40 @@
+// velt/sync: `receive()` starts when it is called, as a JS promise does: receives stored before
+// they are awaited take items in call order, and a receive that loses `Promise.race` has still
+// taken the item it found (as in Node, where both `receive()` calls run at once).
+import { channel } from "velt/sync";
+
+async function main() {
+  // Items queued before the calls.
+  const ch = channel<i64>();
+  ch.trySend(1);
+  ch.trySend(2);
+  const x = ch.receive();
+  const y = ch.receive();
+  console.log("queued first: y", await y, "x", await x);
+
+  // Items sent after the calls: the receive called first is served first.
+  const later = channel<i64>();
+  const p = later.receive();
+  const q = later.receive();
+  later.trySend(1);
+  later.trySend(2);
+  console.log("sent later: q", await q, "p", await p);
+
+  // Both receives of a race run; the loser's item is not put back.
+  const a = channel<i64>();
+  const b = channel<i64>();
+  a.trySend(1);
+  b.trySend(2);
+  const won = await Promise.race([a.receive(), b.receive()]);
+  console.log("race:", won, "left in b:", b.length);
+
+  // A race over an empty channel and one with an item: the losing receive keeps running (a
+  // promise that loses a race is not cancelled), still waiting; the item sent next stays queued
+  // until it runs again, so the tryReceive right after the send gets it.
+  const empty = channel<i64>();
+  const full = channel<i64>();
+  full.trySend(3);
+  const first = await Promise.race([empty.receive(), full.receive()]);
+  empty.trySend(4);
+  console.log("race:", first, "then", empty.tryReceive(), "left:", empty.length);
+}

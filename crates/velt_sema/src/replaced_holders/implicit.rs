@@ -553,8 +553,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::Transfer
         | I::Spawn
         | I::SpawnHandled
-        | I::ChanSend
-        | I::ChanTrySend
         | I::SharedNew
         | I::SharedSet
         | I::MutexNew
@@ -582,9 +580,11 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         // A heap future's poll and drop functions run any code of its body.
         | I::FutPoll
         | I::FutDrop => true,
-        // Calls through a function's address; a slot's put transfers its value, a take hands one out.
+        // Calls through a function's address; a slot's put and transfer transfer their value
+        // (a store, of a value already transferred, runs no code), a take hands one out.
         I::StatePoll | I::StateDrop | I::AddressCall | I::SlotPut | I::SlotTake => true,
-        I::FnAddress | I::SlotSize | I::PromiseAt | I::RawAlloc => false,
+        I::SlotTransfer => true,
+        I::FnAddress | I::SlotSize | I::SlotStore | I::PromiseAt | I::RawAlloc => false,
         I::RawFree => false,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
@@ -686,8 +686,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::FAbs
         | I::Sleep
         | I::YieldNow
-        | I::ChanReceive
-        | I::ChanTryReceive
         | I::SourceLocation
         | I::PromiseWiden
         | I::PromiseSame

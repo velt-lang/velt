@@ -25,7 +25,6 @@
 mod all;
 mod all_settle;
 pub(crate) mod await_order;
-mod channel;
 mod ctor;
 mod foreign_promise;
 mod gen_object;

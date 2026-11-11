@@ -427,48 +427,18 @@ keeps the settled value in Velt code). Thread-safe; no callbacks are stored (§1
 
 ### 2.2 Channels (`velt/sync`)
 
-`Channel<T>` (std/sync/channel.velt) is a Copy struct around a `u64` handle, a key into a runtime table
-like the socket handles (§3.2): a channel leaves the table once it is closed and drained, and any
-later use of a copy sees a closed, empty channel. The runtime never sees a `T`, only its bytes:
-every call passes the item size (align <= 16). `receive` results are a `T | null` in the
-compiler's layout: `payload` is the offset of the value after the `bool` present flag, or 0 when
-`T` is pointer-like and null is the zero pointer. `send`, `trySend`, `receive` and `tryReceive` are reached
-through the std-only intrinsics `chanSend`, `chanTrySend`, `chanReceive` and `chanTryReceive` (velt/lang/intrinsics) (lowering knows
-`T`'s size, layout and drop glue; it transfers the value first, like a `spawn` argument: a value the
-sender still shares is deep-copied). No code pointers are stored except drop glue (§13.5): the
-`item_drop` a pending `send` future owns, and the channel's copy of it. A channel keeps the
-`item_drop` of the first `send`/`trySend` that passed one (every item of a `Channel<T>` shares it).
-Values still queued in a channel nobody drains, closed or not, are not dropped while the program
-runs (any copy of the handle may still receive them); when it ends (`main` returned 0 and no
-keep-alive reference remains, §7; with `VELT_RC_STATS=1` a debug runtime also waits up to a
-minute for running tasks) the runtime drops every item still queued in any channel with that function (not after a failing exit; the `VELT_RC_STATS` report
-counts them as `channel leftovers=<n>`). velt_rt_wasm does not: the instance's memory goes with
-it.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_chan_new` | `(u64 capacity) -> u64` | a new channel; `capacity == 0` is unbounded |
-| `velt_rt_chan_close` | `(u64 ch)` | closes it: sends fail (pending ones too), receivers drain then get null; idempotent |
-| `velt_rt_chan_closed` | `(u64 ch) -> bool` | |
-| `velt_rt_chan_len` | `(u64 ch) -> u64` | queued items |
-| `velt_rt_chan_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> VeltFut*` | moves the item's bytes (and ownership) into the future at the call; `bool` result: queued (after waiting for space), or false when closed. An item not queued is dropped with `item_drop` (null: nothing to drop) |
-| `velt_rt_chan_try_send` | `(u64 ch, const void* src, u64 size, void (*item_drop)(void*)) -> bool` | moves the item's bytes into the channel if it has room now; false when full or closed, and the item is dropped with `item_drop` |
-| `velt_rt_chan_receive` | `(u64 ch, u64 size, u64 payload, u64 slot_size) -> VeltFut*` | result: a `slot_size`-byte `T \| null` (see above), null once closed and drained |
-| `velt_rt_chan_try_receive` | `(u64 ch, void* dst, u64 size, u64 payload)` | writes the oldest item, or null, as a `T \| null` at `dst` |
-
-**Process-wide slots.** A module has no mutable globals; a std feature that needs one object
-per process (std/websocket's topics, slot 0) keeps a `shared<T>` in a runtime slot. Only the
-std module that owns a slot touches it, with the slot's one type: there is no generic accessor
-an importer could use to read a slot as another type. A slot is an unbounded channel holding at most one item, since a channel is what can own
-a typed Velt value: std locks the slot, takes the item out (making it the first time), puts a
-reference back and unlocks. The item is dropped with the channel's leftovers when the program
-ends. No suspension point may lie between lock and unlock.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_global_lock` | `(u32 slot)` | locks slot `slot` (0..8; std assigns them: 0 velt/net/websocket's topics, 1 the `fetch` client's HTTP/2 sessions) |
-| `velt_rt_global_unlock` | `(u32 slot)` | unlocks it, on the thread that locked it |
-| `velt_rt_global_chan` | `(u32 slot) -> u64` | the slot's channel, made on first use; called with the slot locked |
+`Channel<T>` (std/sync/channel.velt) is std code with no runtime functions (#2649; the
+`velt_rt_chan_*` functions and the process-wide slots `velt_rt_global_*` built on them are
+removed). A channel is a handle struct around a `shared` core whose block is raw memory from
+`velt_rt_alloc` (the std-only intrinsics `rawAlloc`/`rawFree`): the items in a ring, moved in and
+out with `slotStore`/`slotTake` under a spin lock (a sent value is transferred like a `spawn`
+argument by `slotTransfer` before the lock is taken, so a deep copy never runs under it), and the tasks waiting in two intrusive lines (receives, sends). A wait is a heap future
+(§1) std makes (`fnAddress` for its poll and drop): it holds a clone of its poll's waker (§1's
+C waker, on every executor), joins and leaves its line in constant time, and is woken after the
+lock is let go. Values still queued when the last copy of a channel is dropped are dropped with
+it. Process-wide objects std needs (velt/net's websocket topics, the `fetch` client's HTTP/2
+sessions) are kept in static atomics (`Atomic<shared<T> | null>` module constants), released at
+exit for the leak counters.
 
 ### 2.3 Abort signals (`velt/task`)
 
@@ -1273,11 +1243,10 @@ A hot swap reaches new calls through each function's trampoline; a future in fli
 `poll`/`drop` of the version that created it (its `VeltFut` header).
 Rule: only vtables (via relocations) and `VeltFut` headers may store code addresses. New runtime APIs that take callbacks (timers, WebSockets, child processes,
 ...) must keep them replaceable the same way. The one exception is drop glue kept with a value in
-flight (a join's or a spawned task's result, a channel item being sent) or with the values a
-channel holds (the `item_drop` a channel keeps from its sends, §2.2, called only at program end): it
+flight (a join's or a spawned task's result): it
 matches the values' layout, which a swap doesn't change (a changed layout restarts the program),
 and old code is never freed, so the pointer stays callable after a swap. A value's drop glue goes
-away with the value; a channel's lives as long as the channel.
+away with the value.
 
 
 ## 14. Standard library breadth (stream std-net; additive)
@@ -1426,7 +1395,7 @@ the connection a request on the Velt HTTP server switched to (`HttpResponse.upgr
 of the `TcpStream` and a `shared` value holding the connection's send queue and reader (one
 lock), so there is no `VeltWs` handle and no `velt_rt_ws_*` symbol. It uses public APIs only
 (reads with `TcpStream.read`, masking keys from `randomBytes`, text through `u8[]`'s `write` and
-`utf8Slice`), except the process-wide slot of the topics (§2.2). A send encodes its frame into the connection's queue at the call (call order is wire
+`utf8Slice`), except the process-wide registry of the topics, a static atomic (§2.2). A send encodes its frame into the connection's queue at the call (call order is wire
 order, also before a server-side upgrade completes) and completes once it is queued; a flusher
 task started by whoever queues into an idle connection writes everything queued in one write
 (a reply by the connection's reading task, with no more input waiting, is written at once

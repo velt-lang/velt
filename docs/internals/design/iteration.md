@@ -468,7 +468,7 @@ error type. This is sema-internal; HIR is unchanged.
 ### Cost
 
 `for await (const v of ch)` compiles to the generator's poll embedded in the loop, calling the
-same `velt_rt_chan_receive` as `await ch.receive()`, with no allocation per value (checked in
+same `Channel.receive` as `await ch.receive()`, with no allocation per value (checked in
 VIR). Same build, LLVM release, `VELT_THREADS=1`, best of 21 interleaved (bench/RESULTS.md):
 bench/async `channel_pipeline` (1M values from 4 producers) 44.6 ms with the `receive()` loop,
 46.8 ms with `for await` (about 2 ns per value: the embedded generator step of section 4);

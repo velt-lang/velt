@@ -264,19 +264,6 @@ pub enum Intrinsic {
     /// std only: `firstFulfilled(ps: Promise<T, E>[]): Promise<T, E>` — the first to
     /// fulfill, or the last rejection when all reject (std/prelude/promise.velt `promiseAny`).
     PromiseAny,
-    /// std only (std/sync/channel.velt): `chanSend<T>(ch: u64, value: T):
-    /// Promise<bool>` — moves `value` into the channel; false (and `value` dropped) if it is
-    /// closed.
-    ChanSend,
-    /// std only: `chanReceive<T>(ch: u64): Promise<T | null>` — the oldest value,
-    /// or null once the channel is closed and drained.
-    ChanReceive,
-    /// std only: `chanTrySend<T>(ch: u64, value: T): bool` — moves `value` into
-    /// the channel if it has room; false (and `value` dropped) if it is full or closed.
-    ChanTrySend,
-    /// std only: `chanTryReceive<T>(ch: u64): T | null` — the oldest value if one
-    /// is queued.
-    ChanTryReceive,
     /// Compiler-internal (no source syntax): the location of the call's span as a string,
     /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.velt).
     SourceLocation,
@@ -436,6 +423,13 @@ pub enum Intrinsic {
     /// std only: `slotPut<T>(at: usize, value: T)`: `value` moved to `*(T*)at`, transferred as
     /// a channel send's value is. Additive.
     SlotPut,
+    /// std only: `slotTransfer<T>(value: T) -> T`: `value` made the receiving task's, as
+    /// `SlotPut` does before it stores it (and the same channel boundary), so std can transfer
+    /// a value before it takes a lock and store it with `SlotStore` under the lock. Additive.
+    SlotTransfer,
+    /// std only: `slotStore<T>(at: usize, value: T)`: `value` (already transferred with
+    /// `SlotTransfer`) moved to `*(T*)at` as it is. Additive.
+    SlotStore,
     /// std only: `slotTake<T>(at: usize) -> T`: the value at `at`, moved out. Additive.
     SlotTake,
     /// std only: `promiseAt<T>(f: usize) -> Promise<T>`: the heap future at `f` as an owned
