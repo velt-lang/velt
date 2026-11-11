@@ -2,16 +2,16 @@
 // `declare c("c")` (checked against each target's headers: `velt native headers --std`), and the
 // safe functions darwin.velt and linux.velt export over them. Each call of Node's API is one call
 // of the C library. What makes each call sound is checked here, before the `unsafe` block that
-// makes it (guards.velt): a path has exactly one 0 byte, its last; a buffer's range is inside the
-// array, and the length C gets is that range's; `fcntl` gets only the commands whose argument is
-// an `int`.
+// makes it: a path has exactly one 0 byte, its last, and `fcntl` gets only the commands whose
+// argument is an `int` (guards.velt); a buffer's range is clamped to the array, and the length C
+// gets is that range's.
 
 import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad } from "velt/lang/intrinsics";
-import { lastOsError } from "velt/os/rt";
+import { keepOsError, lastOsError } from "velt/os/rt";
 import { Stat } from "velt/fs/fd/system";
-import { checkCommand, checkPath, checkRange } from "velt/fs/fd/guards";
+import { checkCommand, checkPath } from "velt/fs/fd/guards";
 
 declare c("c", { errno: true }) function open(
   path: readonly u8[],
@@ -19,20 +19,10 @@ declare c("c", { errno: true }) function open(
   ...args: CVarArgs,
 ): i32;
 declare c("c", { errno: true }) function close(fd: i32): i32;
-declare c("c", { errno: true }) function read(fd: i32, buf: u8[], nbyte: usize): isize;
-declare c("c", { errno: true }) function write(fd: i32, buf: readonly u8[], nbyte: usize): isize;
-declare c("c", { errno: true }) function pread(
-  fd: i32,
-  buf: u8[],
-  nbyte: usize,
-  offset: i64,
-): isize;
-declare c("c", { errno: true }) function pwrite(
-  fd: i32,
-  buf: readonly u8[],
-  nbyte: usize,
-  offset: i64,
-): isize;
+declare c("c") function read(fd: i32, buf: u8[], nbyte: usize): isize;
+declare c("c") function write(fd: i32, buf: readonly u8[], nbyte: usize): isize;
+declare c("c") function pread(fd: i32, buf: u8[], nbyte: usize, offset: i64): isize;
+declare c("c") function pwrite(fd: i32, buf: readonly u8[], nbyte: usize, offset: i64): isize;
 declare c("c", { errno: true }) function fsync(fd: i32): i32;
 declare c("c", { errno: true }) function fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i32;
 declare c("c", { errno: true }) function ftruncate(fd: i32, length: i64): i32;
@@ -73,37 +63,55 @@ export function unlinkPath(path: readonly u8[]): i32 {
 }
 
 /**
- * `read` (`at < 0`) or `pread` at `at` into the bytes `start..end` of `bytes`: the number read, or
- * -1. Out of line: the two C calls and their checks would make `readSync` too large to inline
- * into its callers, whose constant arguments then no longer fold into Node's checks.
+ * `read` (`at < 0`) or `pread` at `at` into the bytes `start..end` of `bytes`, that range clamped
+ * to the array (as `subarray` clamps it; the callers have checked it against Node's rules
+ * already): the number read, or -1 with the error for `lastError()`. Its C functions and
+ * `writeFrom`'s are declared without `{ errno: true }`: `errno` is read only when a call fails
+ * (`keepOsError`, out of line), not after every one, which keeps both small enough to inline into
+ * `readSync` and `writeSync` and those into their callers, whose constant arguments then fold
+ * into Node's checks.
  */
 export function readInto(fd: i32, bytes: u8[], start: usize, end: usize, at: i64): isize {
-  checkRange("read", start, end, bytes.length as usize);
-  const n = end - start;
+  const len = bytes.length as usize;
+  const e = end < len ? end : len;
+  const b = start < e ? start : e;
+  let r: isize;
   if (at < 0) {
-    // SAFETY: `start..end` is inside `bytes` (checked above) and C gets its length, so it writes
-    // only those bytes; it keeps no pointer after it returns, and nothing else uses `bytes`
-    // during the call.
-    return unsafe { read(fd, bytes.subarray(start, end), n) };
+    // SAFETY: `b..e` is inside `bytes` (clamped above) and C gets its length, so it writes only
+    // those bytes; it keeps no pointer after it returns, and nothing else uses `bytes` during
+    // the call.
+    r = unsafe { read(fd, bytes.subarray(b, e), e - b) };
+  } else {
+    // SAFETY: as for `read` above.
+    r = unsafe { pread(fd, bytes.subarray(b, e), e - b, at) };
   }
-  // SAFETY: as for `read` above.
-  return unsafe { pread(fd, bytes.subarray(start, end), n, at) };
+  if (r < 0) {
+    keepOsError();
+  }
+  return r;
 }
 
 /**
- * `write` (`at < 0`) or `pwrite` at `at` of the bytes `start..end` of `bytes`: the number written,
- * or -1. Out of line, as `readInto`.
+ * `write` (`at < 0`) or `pwrite` at `at` of the bytes `start..end` of `bytes`, clamped as in
+ * `readInto`: the number written, or -1 with the error for `lastError()`.
  */
 export function writeFrom(fd: i32, bytes: readonly u8[], start: usize, end: usize, at: i64): isize {
-  checkRange("write", start, end, bytes.length as usize);
-  const n = end - start;
+  const len = bytes.length as usize;
+  const e = end < len ? end : len;
+  const b = start < e ? start : e;
+  let r: isize;
   if (at < 0) {
-    // SAFETY: `start..end` is inside `bytes` (checked above) and C gets its length, so it reads
-    // only those bytes, and keeps no pointer after it returns.
-    return unsafe { write(fd, bytes.subarray(start, end), n) };
+    // SAFETY: `b..e` is inside `bytes` (clamped above) and C gets its length, so it reads only
+    // those bytes, and keeps no pointer after it returns.
+    r = unsafe { write(fd, bytes.subarray(b, e), e - b) };
+  } else {
+    // SAFETY: as for `write` above.
+    r = unsafe { pwrite(fd, bytes.subarray(b, e), e - b, at) };
   }
-  // SAFETY: as for `write` above.
-  return unsafe { pwrite(fd, bytes.subarray(start, end), n, at) };
+  if (r < 0) {
+    keepOsError();
+  }
+  return r;
 }
 
 /** `fsync(fd)`: 0, or -1. */
