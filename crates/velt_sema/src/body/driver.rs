@@ -236,7 +236,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         }
         (Some(e), None) => {
             self_typed(&mut fcx, d, e);
-            Some(fcx.untyped_global_init(e, mutable))
+            Some(fcx.expr(e, None, Want::Move))
         }
         // `let x: T | undefined;` starts as `undefined`, as in JavaScript.
         (None, Some(t))

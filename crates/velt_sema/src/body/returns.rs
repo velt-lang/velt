@@ -359,11 +359,6 @@ impl FnCx<'_, '_> {
             .flatten();
         let outer = std::mem::replace(&mut self.cx.rec.in_return, true);
         let h = self.expr(e, hint, Want::Move);
-        // `return a` of a constant of widening literals: the inferred result is a `string`.
-        let h = match hint {
-            None => self.widened_ref(e, h),
-            Some(_) => h,
-        };
         self.cx.rec.in_return = outer;
         let (ty, promise) = match self.promise_value(h.ty) {
             Some(t) => {

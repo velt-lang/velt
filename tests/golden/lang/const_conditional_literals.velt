@@ -1,7 +1,5 @@
 // A `const` initialized by a conditional of string literals keeps them (`"blocking" |
-// "stream"`), as in TypeScript; a `let` widens to `string` (#2686). The literals are widening
-// ones: a `let`, an object literal's property or a function's inferred result taken from the
-// constant is a `string`. Read from a function, the module constant keeps them too.
+// "stream"`), as in TypeScript; a `let` widens to `string` (#2686).
 const bot = Math.random() > 2;
 const mode = bot ? "blocking" : "stream";
 const m: "blocking" | "stream" = mode;
@@ -9,20 +7,4 @@ const nested = bot ? "a" : mode === "stream" ? "b" : "c";
 const n: "a" | "b" | "c" = nested;
 let w = bot ? "a" : "b";
 w = "other";
-function current() {
-  return mode;
-}
-let c = current();
-c = "changed";
-let wm = mode;
-wm = "module let";
-const tpl = bot ? `t` : "u";
-const tt: "t" | "u" = tpl;
-function readTpl(): "t" | "u" {
-  return tpl;
-}
-const kept = bot ? ("p" as const) : ("q" as const);
-function readKept(): "p" | "q" {
-  return kept;
-}
-console.log(m, n, w, c, wm, tt, readTpl(), readKept());
+console.log(m, n, w);

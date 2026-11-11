@@ -508,11 +508,7 @@ impl FnCx<'_, '_> {
                         self.expr_stmt(void_op(e).unwrap_or(e))
                     }
                     Some(r) => self.returned(e, r),
-                    // `() => a` of a constant of widening literals: its result is a `string`.
-                    None => {
-                        let h = self.expr(e, None, Want::Move);
-                        self.widened_ref(e, h)
-                    }
+                    None => self.expr(e, None, Want::Move),
                 };
                 let h = match (self.f.ret, self.promise_value(h.ty)) {
                     // An async arrow giving a promise: its result is the promise's value.
