@@ -7,8 +7,12 @@ streaming with backpressure, graceful stops (also under `velt dev`, through
 [velt/dev](https://veltlang.com/docs/std/dev/)) and [WebSockets](docs/websocket.md). Handlers take the global
 [`Request`](https://veltlang.com/docs/std/net/http/#request) and return the global
 [`Response`](https://veltlang.com/docs/std/net/http/#response), the classes `fetch` uses, as in Deno and Bun;
-they run concurrently on every core. A listening server keeps the process alive after `main`
-returns, like Node, until `server.close()`; dropping the `HttpServer` value does not stop it. A
+they run concurrently on every core. Each connection is served on a task of its own, which gets
+the next worker in turn and stays there, as in thread-per-core servers, so a handler that
+computes for a long time holds back the other connections on its worker (`workerCount()` sets
+how many there are: `VELT_THREADS`, else one per core). A listening server keeps the process
+alive after `main` returns, like Node, until `server.close()`; dropping the `HttpServer` value
+does not stop it. A
 `main` that fails (an uncaught error, or a nonzero exit code) ends the process at once, servers
 or not. For a walkthrough, see [Building an HTTP server](https://veltlang.com/docs/book/http-server/).
 

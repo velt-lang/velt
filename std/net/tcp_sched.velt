@@ -42,6 +42,14 @@ export function velt_rt_tcp_listener_close(l: u64) {
   }
 }
 
+/**
+ * One: a socket of ours is on the executor's reactor, and a task pinned to a worker would run on
+ * the runtime's threads (std/lang/hooks/sched.velt `schedPinned`), TLS connections included.
+ */
+export function listenerWorkers(l: u64): u64 {
+  return 1;
+}
+
 export async function velt_rt_tcp_accept(l: u64): Promise<IoResult<u64>> {
   if (!tb.ours(l)) {
     return await rt.velt_rt_tcp_accept(l);

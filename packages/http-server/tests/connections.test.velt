@@ -4,7 +4,7 @@ import { HttpRequest, HttpResponse, serveHttp } from "../src/lib";
 import { IoError } from "velt/io";
 import { connect, connectTls, TcpStream } from "velt/net";
 import { platform } from "velt/os";
-import { timeout } from "velt/task";
+import { currentWorker, timeout, workerCount } from "velt/task";
 import { describe, expect, it } from "velt/test";
 import { arrivals, gate, hold, open, shut } from "./_gate";
 import { delay } from "velt/time";
@@ -141,6 +141,41 @@ describe("a burst of connects", () => {
         }
       }
       expect(ok).toBe(n);
+    } finally {
+      await server.shutdown();
+    }
+  });
+});
+
+describe("connections on every worker", () => {
+  // Each connection is a task of its own, pinned to the workers in turn (#2744): as many
+  // connections as there are workers, one after another, are served on every worker, and a
+  // connection's requests all on its own. (They ran as promises of the accept loop's task, so
+  // every connection was served on the worker that ran it.)
+  it("gives each connection the next worker and keeps it there", async () => {
+    const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      res.send(`${currentWorker()}`);
+    });
+    try {
+      const n = workerCount();
+      const seen = new Set<string>();
+      for (let i: i64 = 0; i < n; i++) {
+        const c = await connect(`127.0.0.1:${server.port}`);
+        // Two requests on the connection, pipelined; the second closes it.
+        await c.write(
+          "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
+        const text = await timeout(readAll(c), 10000);
+        c.close();
+        const bodies = text
+          .split("HTTP/1.1 200 OK")
+          .slice(1)
+          .map((r: string): string => r.slice(r.indexOf("\r\n\r\n") + 4));
+        expect(bodies.length).toBe(2);
+        expect(bodies[1]).toBe(bodies[0]);
+        seen.add(bodies[0]);
+      }
+      expect(seen.size).toBe(n as number);
     } finally {
       await server.shutdown();
     }

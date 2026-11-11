@@ -85,8 +85,12 @@ async function closeWhen(stopped: AbortSignal, listener: TcpListener) {
 /**
  * Accepts connections until `stopped` (`close()`, or `velt dev`'s stop request with `reload`),
  * each served on a task of its own in one task scope, so this settles only once the last of them
- * finished. Only stopping ends the loop: another failure (out of file descriptors, a connection
- * reset before it was accepted) is waited out, 5 ms doubling up to 1 s, as Go's net/http does.
+ * finished. With several workers (`listener.workers()`) the tasks are pinned to them in turn
+ * (#2744): a connection stays on the worker it was given, as in thread-per-core servers, and the
+ * connections share every core. Unpinned, they would all start on this worker and wait for the
+ * runtime to move them (a third less throughput on four workers). Only stopping ends the loop:
+ * another failure (out of file descriptors, a connection reset before it was accepted) is waited
+ * out, 5 ms doubling up to 1 s, as Go's net/http does.
  */
 async function acceptAll<E>(
   listener: TcpListener,
@@ -103,23 +107,29 @@ async function acceptAll<E>(
   await taskScope(
     async (scope: TaskScope<never>): Promise<void> => {
       let backoff: i64 = 0;
+      const workers = listener.workers() as i64;
+      let next: i64 = 0;
       while (!stopped.aborted) {
         try {
           const conn = await listener.accept();
           backoff = 0;
-          // The scope waits for it: nothing awaits the handle.
-          const served = connection(
-            conn,
-            handler,
-            maxHead,
-            maxBody,
-            idle,
-            limits,
-            stopped,
-            h2,
-            secure,
-          );
-          const task = scope.spawn(guarded(served));
+          // A task of its own, started from the call (`spawn(connection(...))`): a promise
+          // started here and handed to `scope.spawn` keeps running on this task, so every
+          // connection shared the accept loop's one worker (#2744). The scope waits for the
+          // task's handle: nothing else awaits it.
+          let served: Promise<void>;
+          if (workers > 1) {
+            served = spawn(
+              connection(conn, handler, maxHead, maxBody, idle, limits, stopped, h2, secure),
+              { worker: next },
+            );
+            next = next + 1 == workers ? 0 : next + 1;
+          } else {
+            served = spawn(
+              connection(conn, handler, maxHead, maxBody, idle, limits, stopped, h2, secure),
+            );
+          }
+          const task = scope.spawn(served);
         } catch (e) {
           if (stopped.aborted || (e instanceof IoError && e.code == "EBADF")) {
             break;
@@ -135,11 +145,4 @@ async function acceptAll<E>(
     // Every connection finished: the program may stop for the next version.
     drained();
   }
-}
-
-/** A connection's task: what it throws ends only that connection. */
-async function guarded(served: Promise<void>): Promise<void> {
-  try {
-    await served;
-  } catch (e) {}
 }

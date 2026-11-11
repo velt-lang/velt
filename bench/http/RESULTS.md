@@ -211,3 +211,79 @@ heaps), so two earlier rules with a fixed 4 MiB slack failed 3 of 4 runs (ending
 MiB). 300k-request runs level off: 0 middleware at 13.1 MiB, 3 middleware at
 20.4 MiB (4 workers) and 15.4 MiB (1 worker). There is no per-request leak like #2719's (40 KB
 per request and hop would be 12 GB here).
+
+## 2026-11-11 (later): connections on every worker (#2744)
+
+**Cause of the flat rows above.** Since 2026-11-01 (836e3c2ec, the std layout pass) `serveHttp`'s
+accept loop called `connection(...)` and handed the started promise to `scope.spawn`. A promise
+already started keeps running on the task that started it (the `spawn` lowering only makes a new
+task from a direct call), so every connection ran as a promise of the accept loop's one task:
+one task, one worker at a time, whatever the scheduler. Before that the loop had
+`spawn(connection(...))`. A per-worker count of task polls showed it: about 600 task polls a
+second across 4 workers while serving 49k requests a second, and the monitor rescuing the
+worker that held the task. Now each connection is `spawn(connection(...), { worker })`, a task
+of its own, pinned to the workers in turn (`TcpListener.workers()`, which is 1 with
+`VELT_SCHEDULER=std`, whose sockets live on its one worker; with one worker the task is not
+pinned, so the stall rescue can still move it).
+
+**Method.** As above (same machine, server on CPUs 0,1,6,7, oha on 2-5, 5 s at 256 connections,
+best of 3 interleaved rounds, "load" the 1-minute average before each round; nothing else ran on
+CPUs 0-7). Base and head are the same compiler and runtime (main `0200b9757` with #2743), built
+from the same tree with only `packages/http-server/src/serve.velt` and the three `std/net` files
+swapped, so std and the package are the only difference. Scripts: `bench/http/lib.sh`'s
+`measure` and `ir_per_request`, run by a loop over both binaries (/plaintext and /json of
+`techempower/server.velt`, `module` and `param` of `modlock/server.velt`, then the skewed-load
+row).
+
+| workers | route | base req/s | head req/s | base p99 | head p99 | load |
+|---|---|---|---|---|---|---|
+| 1 | /plaintext | 89,118 | 129,039 | 4.30 ms | 3.51 ms | 4.0-5.0 |
+| 1 | /json | 85,408 | 121,345 | 4.81 ms | 3.62 ms | 4.0-5.0 |
+| 1 | module | 34,705 | 27,990 | 4.59 ms | 16.00 ms | 4.0-5.0 |
+| 1 | param | 33,015 | 58,289 | 6.06 ms | 6.71 ms | 4.0-5.0 |
+| 4 | /plaintext | 96,542 | 152,113 | 3.98 ms | 3.03 ms | 4.1-5.3 |
+| 4 | /json | 87,373 | 147,834 | 4.62 ms | 2.99 ms | 4.1-5.3 |
+| 4 | module | 38,146 | 24,919 | 3.93 ms | 35.23 ms | 4.1-5.3 |
+| 4 | param | 38,366 | 75,639 | 1.83 ms | 4.08 ms | 4.1-5.3 |
+| 8 | /plaintext | 87,763 | 149,163 | 4.48 ms | 6.67 ms | 5.3-6.7 |
+| 8 | /json | 87,169 | 144,101 | 4.56 ms | 7.00 ms | 5.3-6.7 |
+| 8 | module | 38,205 | 27,017 | 3.91 ms | 39.59 ms | 5.3-6.7 |
+| 8 | param | 35,108 | 68,854 | 2.64 ms | 11.77 ms | 5.3-6.7 |
+
+Skewed load (6 connections on `/light`, 2 on `/heavy`, `param`), best /light run of 3:
+
+| workers | | /light req/s | p99 | /heavy req/s | p99 | thread busy share |
+|---|---|---|---|---|---|---|
+| 4 | base | 12,591 | 0.58 ms | 4,182 | 0.58 ms | 96% |
+| 4 | head | 54,935 | 0.15 ms | 3,663 | 0.63 ms | 98% 92% 91% 91% |
+| 8 | base | 12,401 | 0.56 ms | 4,064 | 0.56 ms | 96% |
+| 8 | head | 42,851 | 0.38 ms | 3,883 | 0.92 ms | 59% 58% 42% 42% 42% 42% 42% 42% |
+
+Instructions per request (cachegrind, one worker, 2,000 and 12,000 requests on 8 connections):
+
+| | /plaintext | /json | module | param |
+|---|---|---|---|---|
+| base, default rescue | 15,105 | 15,864 | 105,862 | 100,513 |
+| head, default rescue | 12,772 | 14,479 | 108,467 | 108,709 |
+| base, `VELT_RESCUE=0` | 14,942 | 15,714 | 105,586 | 100,235 |
+| head, `VELT_RESCUE=0` | 16,323 | 17,364 | 107,327 | 109,575 |
+
+- **The connections spread.** At 4 workers /plaintext and /json serve 58-69% more, and the
+  server's four threads are each 90-98% busy where one was before; the 2 heavy connections no
+  longer hold back the 6 light ones (4.4x the light rate at 4 workers). This machine's 4 server
+  CPUs are 2 physical cores, so 8 workers is oversubscribed and adds nothing over 4. One worker
+  gains too: unpinned there, connection tasks can be taken by the stall rescue's spare workers,
+  as base's one task could.
+- **The module-lock row now shows the lock** (#2726): with the connections in parallel, handlers
+  that read module state contend on the process-wide module lock, 19-35% below base, whose one
+  task never contended. The same work without module state (`param`) doubles. That is step 3 of
+  #2726 (per-piece locks in place of the module lock), not something placement can fix.
+- **Per request at one worker without the rescue** (`VELT_RESCUE=0`, as `bench/nightly.sh`
+  counts), /plaintext and /json cost 9-10% more. A per-function diff (`cachegrind`, `-g` builds)
+  puts it in the wait for the next request: base's one task found each connection's next request
+  already there when it came back to it, so it never waited (no `readableWithin`), while a task
+  per connection reads right after its response and waits through `velt_rt_tcp_readable_within`
+  (tokio `Notify` about 470 instructions, the leaf future about 200, `StreamObj::readable` 200,
+  the event dispatch 130). The local-set bookkeeping base paid for its many promises (about
+  1,900) is gone. The two counts with the default rescue go the other way (15% and 9% fewer) and
+  show how much the shape of the run decides this; a cheaper readable wait is the follow-up.
