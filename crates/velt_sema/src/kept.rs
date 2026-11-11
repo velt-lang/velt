@@ -182,18 +182,20 @@ impl PendingKept {
         input: Vec<SourceModule>,
         sources: Vec<SourceModule>,
         loads: Option<StdLoads>,
-    ) -> Result<KeptCheck, Refused> {
+    ) -> Result<KeptCheck, Box<Refused>> {
         let same_loads = match (self.loads, &loads) {
             (None, _) => true,
             (Some(id), Some(l)) => l.id() == id,
             (Some(_), None) => false,
         };
         if place(&input) != self.input || place(&sources) != self.sources || !same_loads {
-            return Err(Refused {
+            // Boxed: `Refused` holds three vectors' worth of values (over clippy's
+            // `result_large_err` limit on some targets), and refusing is the rare path.
+            return Err(Box::new(Refused {
                 input,
                 sources,
                 loads,
-            });
+            }));
         }
         // A context that checked the source rewrites' copy borrows nothing of `input` (each
         // rewrite copies every module): only the copy is kept, which halves what is kept.
