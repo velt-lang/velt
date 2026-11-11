@@ -30,7 +30,9 @@ const t4: boolean = gn(null, true);
 function ga<T>(xs: (T | undefined)[]): T | undefined {
   return xs[1];
 }
-const na: number | undefined = ga([undefined, 1]);
+// No contextual type: `T` comes from the `1` alone.
+const ra = ga([undefined, 1]);
+const na: number | undefined = ra;
 function gf<T>(b: T | undefined, f: (x: number) => T): T {
   return f(2);
 }
