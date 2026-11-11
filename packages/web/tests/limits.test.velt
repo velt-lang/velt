@@ -20,7 +20,11 @@ async function* parts(n: i64): AsyncGenerator<u8[]> {
   }
 }
 
-/** `n` requests at once for one key: how many passed, and how many were refused. */
+/**
+ * `n` requests at once for one key: how many passed, and how many were refused. Keep `n` at 100
+ * or less: macOS caps a listen backlog at 128 (`kern.ipc.somaxconn`) and resets the connections
+ * past it.
+ */
 async function burst(url: string, n: number): Promise<[number, number]> {
   const all: Promise<Response>[] = [];
   for (let i = 0; i < n; i++) {
@@ -95,9 +99,9 @@ describe("rateLimit", () => {
     const h = app.handler();
     const server = await serve({ port: 0 }, (req: Request) => h(req));
     try {
-      const [passed, refused] = await burst(`http://127.0.0.1:${server.port}/`, 200);
+      const [passed, refused] = await burst(`http://127.0.0.1:${server.port}/`, 100);
       expect(passed).toBe(50);
-      expect(refused).toBe(150);
+      expect(refused).toBe(50);
     } finally {
       await server.shutdown();
     }
@@ -111,9 +115,9 @@ describe("rateLimit", () => {
     const h = app.handler();
     const server = await serve({ port: 0 }, (req: Request) => h(req));
     try {
-      const [passed, refused] = await burst(`http://127.0.0.1:${server.port}/api/a`, 200);
+      const [passed, refused] = await burst(`http://127.0.0.1:${server.port}/api/a`, 100);
       expect(passed).toBe(50);
-      expect(refused).toBe(150);
+      expect(refused).toBe(50);
       const [free, none] = await burst(`http://127.0.0.1:${server.port}/free`, 100);
       expect(free).toBe(100);
       expect(none).toBe(0);
