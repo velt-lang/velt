@@ -608,10 +608,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyLooseEq
         | I::StrLen
         | I::StrByteLen
-        | I::StrWord0
-        | I::StrWord1
-        | I::StrWord2
-        | I::StrDataAddress
         | I::AddressLoad
         | I::AddressStore
         | I::AtomicAddress
@@ -734,6 +730,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::WeakMapValue
         | I::WeakRefNew
         | I::WeakRefDeref => false,
+        I::StrWord0 | I::StrWord1 | I::StrWord2 | I::StrDataAddress => false,
     }
 }
 
