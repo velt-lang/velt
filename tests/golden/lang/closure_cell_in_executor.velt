@@ -1,0 +1,44 @@
+// check: no leaks
+// Closures created inside a `new Promise` executor that change a variable the enclosing function
+// declared: the executor borrows the variable's cell, and a closure made in it that keeps the
+// variable captures the cell itself, not its value (#2798: the environment got the value, an
+// internal compiler error). A store resolved by the executor, and a counter made one closure
+// deeper. The output is Node's.
+
+class Store {
+  inc: () => void;
+  get: () => number;
+  constructor(inc: () => void, get: () => number) {
+    this.inc = inc;
+    this.get = get;
+  }
+}
+
+async function main() {
+  let state = 0;
+  const p = new Promise<Store>((resolve) => {
+    resolve(new Store(
+      (): void => {
+        state++;
+      },
+      (): number => state,
+    ));
+  });
+  const s = await p;
+  s.inc();
+  console.log(s.get(), state);
+
+  let hits = 10;
+  const q = new Promise<() => () => number>((resolve) => {
+    resolve((): (() => number) => {
+      return (): number => {
+        hits += 1;
+        return hits;
+      };
+    });
+  });
+  const make = await q;
+  const bump = make();
+  bump();
+  console.log(bump(), hits);
+}
