@@ -141,3 +141,19 @@ fn a_swap_that_changes_an_initializer_moves_every_user_to_a_new_block() {
     );
     assert_eq!(run(main), (4, vec![second, second]));
 }
+
+/// A swap switches the slots of the new descriptor's functions before the other existing ones,
+/// so that no request can make the new block while its `init` slot still holds the old code
+/// (#2811). New keys still come first (#880).
+#[test]
+fn the_new_descriptors_functions_are_switched_before_the_code_reaching_the_block() {
+    // 0, 2, 3: existing keys; 1, 4: new ones; 3: the descriptor's `init`.
+    let trampolines = [None, Some(1), None, None, Some(2)];
+    assert_eq!(crate::dev::store_order(&trampolines, &[3]), [1, 4, 3, 0, 2]);
+    // A descriptor function with a new key is switched with the new keys, once.
+    assert_eq!(
+        crate::dev::store_order(&trampolines, &[4, 3]),
+        [1, 4, 3, 0, 2]
+    );
+    assert_eq!(crate::dev::store_order(&trampolines, &[]), [1, 4, 0, 2, 3]);
+}
