@@ -802,3 +802,42 @@ fn only_a_program_that_catches_gets_cleanup_pads() {
         }
     }
 }
+
+/// A debug (Cranelift) object with more functions with landing pads than Mach-O has section
+/// numbers (255): each function's LSDA had a section of its own, so ld64 crashed reading the
+/// object (http-server under `VELT_SCHEDULER=std`, whose catch reaches hundreds of functions with
+/// cleanup pads). The LSDAs now share one section; the program links and catches.
+#[cfg(not(windows))]
+#[test]
+fn an_object_with_hundreds_of_functions_with_pads_links() {
+    let dir = test_dir::TestDir::new();
+    let mut main = String::from("import { catchVeltPanic } from \"velt/zz_unwind\";\n\n");
+    main.push_str(
+        "function boom(n: number): string {\n  if (n === 299) {\n    const xs = [1];\n    \
+         return xs[n].toString();\n  }\n  return n.toString();\n}\n\n",
+    );
+    for i in 0..300 {
+        main.push_str(&format!(
+            "function f{i}(n: number): number {{\n  const s = n.toString() + \"v{i}\";\n  \
+             const t = boom(n);\n  return s.length + t.length;\n}}\n\n"
+        ));
+    }
+    main.push_str("function main() {\n  let total = 0;\n  const m = catchVeltPanic(() => {\n");
+    for i in 0..300 {
+        main.push_str(&format!("    total += f{i}({i});\n"));
+    }
+    main.push_str(
+        "  });\n  console.log(total);\n  console.log(m === null ? \"null\" : \"caught\");\n}\n",
+    );
+    let out = velt(&dir, &main, &["run"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{:?}: {stderr}", out.status);
+    // f{i}(i) counts i's digits three times and "v": 4 for i < 10, 7 below 100, 10 up to 298
+    // (f299's `boom` panics).
+    let total = 10 * 4 + 90 * 7 + 199 * 10;
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("{total}\ncaught\n"),
+        "{stderr}"
+    );
+}

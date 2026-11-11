@@ -20,7 +20,6 @@ use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::FinalizedMachExceptionHandler;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
-use target_lexicon::BinaryFormat;
 use velt_vir::eh::{self, Catching};
 
 use crate::unwind::FunctionUnwind;
@@ -42,8 +41,20 @@ pub(crate) struct EhSymbols {
     /// names the routine through the GOT, the only form ld64 accepts.
     pub personality_ref: DataId,
     /// The functions with landing pads (`velt_eh_try` and those with cleanup pads) and their
-    /// LSDAs, whose FDEs name the personality's CIE.
-    pub lsdas: Vec<(FuncId, DataId)>,
+    /// LSDAs' bytes, whose FDEs name the personality's CIE. The `.eh_frame` writer puts them all
+    /// in one section (`lsda_section`): a section per LSDA overflowed Mach-O's 255 sections in
+    /// a program with that many functions with pads (ld64 crashed reading the object).
+    pub lsdas: Vec<(FuncId, Vec<u8>)>,
+}
+
+/// The LSDAs' section, (segment, section): `__TEXT,__gcc_except_tab` on Mach-O,
+/// `.gcc_except_table` on ELF, as compilers name it.
+pub(crate) fn lsda_section(macho: bool) -> (&'static str, &'static str) {
+    if macho {
+        ("__TEXT", "__gcc_except_tab")
+    } else {
+        ("", ".gcc_except_table")
+    }
 }
 
 /// A call site with a landing pad, for the LSDA: the return address and the handler (offsets
@@ -96,18 +107,8 @@ pub(crate) fn add_lsda<M: Module>(
             lsdas: vec![],
         });
     }
-    let section = match module.isa().triple().binary_format {
-        BinaryFormat::Macho => ("__TEXT", "__gcc_except_tab"),
-        _ => ("", ".gcc_except_table"),
-    };
-    let name = format!("velt_eh_lsda_{}", id.as_u32());
-    let lsda = data(module, &name, false, |_, desc| {
-        desc.define(lsda(sites).into_boxed_slice());
-        desc.set_align(4);
-        desc.set_segment_section(section.0, section.1, 0);
-    })?;
     if let Some(eh) = eh {
-        eh.lsdas.push((id, lsda));
+        eh.lsdas.push((id, lsda(sites)));
     }
     Ok(())
 }
