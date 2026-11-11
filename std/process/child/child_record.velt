@@ -242,14 +242,16 @@ export async function writeAll(h: u64, data: u8[]): Promise<IoStatus> {
     if (s === 0) {
       return fs.closed();
     }
+    let n: isize = 0;
     // SAFETY: a copy of nothing gives the address of `data`'s bytes, which hold `length - off`
     // bytes from `off`; the descriptor is open.
-    const n =
-      unsafe { write$child(
+    unsafe {
+      n = write$child(
         m.ld(s + io.S_FD) as i32,
         m.ptr(Ptr.addressOf(memset$bytes(data, 0, 0)) + off),
         data.length - off,
-      ) };
+      );
+    }
     if (n >= 0) {
       tb.leave(s);
       off += n as usize;

@@ -417,6 +417,44 @@ async function main(): Promise<i32> {
     );
 }
 
+#[test]
+fn a_read_of_a_childs_silent_pipe_leaves_its_worker_free() {
+    if !has_threads() {
+        return;
+    }
+    // The parent starts reading the child's stdout before it writes the line the child waits
+    // for: the read must find the pipe empty and wait for readiness. On a blocking pipe end it
+    // would hold the worker (here the one the write runs on) until the child wrote: never.
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let exe = build(
+        dir.path(),
+        "silent_pipe",
+        r#"import { spawn as start } from "velt/process/child";
+import { argv, args, readLine } from "velt/process";
+
+async function main(): Promise<i32> {
+  if (args().length > 0) {
+    console.log(`got ${await readLine()}`);
+    return 0;
+  }
+  console.log("started");
+  const k = start(argv()[0].clone(), ["line"], { stdin: "pipe", stdout: "pipe" });
+  const out = k.readStdout();
+  await k.write("go\n");
+  await k.closeStdin();
+  console.log((await out).trim());
+  console.log(`exit ${await k.wait()}`);
+  k.close();
+  return 0;
+}
+"#,
+        true,
+    );
+    let got = run_with_input(dir.path(), &exe, None, false);
+    assert_eq!(got, (Some(0), "started\ngot go\nexit 0\n".to_string()));
+}
+
 /// Copies directory `from` into `to` (made), recursively.
 fn copy_tree(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();

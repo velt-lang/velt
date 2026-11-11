@@ -72,6 +72,8 @@ declare c("c") function write$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
 // The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
 // C symbol has one signature in a program.
 declare c("c") function __errno_location(): Ptr<i32>;
+// `fcntl` is variadic: the compiler's system function passes `arg` where each architecture reads it.
+declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
 declare c("c") function accept4(fd: i32, addr: Ptr<u8>, len: Ptr<u8>, flags: i32): i32;
 
 /** The calling thread's `errno`. */
@@ -254,9 +256,17 @@ export function accept(fd: i32, addr: usize, len: usize): i32 {
   return unsafe { accept4(fd, m.ptr(addr), m.ptr(len), SOCKET_FLAGS) };
 }
 
-/** Nothing more to set on Linux (`SOCKET_FLAGS`, `SEND_FLAGS`); 0. */
+/** `fcntl`'s command that sets a descriptor's status flags, and the flag of non-blocking I/O. */
+const F_SETFL: i32 = 4;
+const O_NONBLOCK: i32 = 0x800;
+
+/**
+ * Makes `fd` non-blocking: a socket is already (`SOCKET_FLAGS`), a pipe end is not (`pipe2` takes
+ * only `O_CLOEXEC`, which the child's end must not share), and a read on a blocking one holds its
+ * worker until the peer writes; 0 or errno.
+ */
 export function prepare(fd: i32): i32 {
-  return 0;
+  return fcntl(fd, F_SETFL, O_NONBLOCK) < 0 ? errno() : 0;
 }
 
 const FUTEX_WAIT_PRIVATE: i64 = 128;

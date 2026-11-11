@@ -103,9 +103,11 @@ export function tryReadInto(h: u64, data: u8[], start: u64, end: u64): IoResult<
   while (true) {
     const fd = m.ld(s + io.S_FD) as i32;
     const len = (end - start) as usize;
+    let n: isize = 0;
     // SAFETY: `data` holds `end - start` bytes at `p`; the descriptor is open.
-    const n =
-      pipe ? unsafe { read$net(fd, m.ptr(p), len) } : unsafe { recv$net(fd, m.ptr(p), len, 0) };
+    unsafe {
+      n = pipe ? read$net(fd, m.ptr(p), len) : recv$net(fd, m.ptr(p), len, 0);
+    }
     if (n >= 0) {
       tb.leave(s);
       return value(n as i64);

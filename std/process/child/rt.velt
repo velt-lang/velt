@@ -6,7 +6,7 @@ import { IoStatus } from "velt/native/status";
 import { ExecResult } from "velt/process/child/exec_result";
 import { CommandSpec } from "velt/process/child/spec";
 
-// The runtime's `VeltOutput`.
+/** The runtime's `VeltOutput`. */
 export struct RawOutput {
   code: i32;
   stdout: string;

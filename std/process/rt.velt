@@ -20,7 +20,7 @@ export declare function velt_rt_stdout_write_bytes(bytes: u8[]);
 
 export declare function velt_rt_isatty(fd: i32): bool;
 
-// The runtime's `LineRead`: a line, and whether input had ended instead.
+/** The runtime's `LineRead`: a line, and whether input had ended instead. */
 export struct LineRead {
   line: IoResult<string>;
   eof: bool;

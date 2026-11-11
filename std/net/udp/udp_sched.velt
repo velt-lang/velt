@@ -152,9 +152,11 @@ async function sendTo(u: u64, data: u8[], sa: usize, len: u32): Promise<IoResult
     }
     const n = data.length;
     const p = n === 0 ? 0 : addressOf(data, 0);
+    let sent: isize = 0;
     // SAFETY: `data` holds `n` bytes at `p` (none: no buffer read); the address is getaddrinfo's.
-    const sent =
-      unsafe { sendto$udp(m.ld(s + io.S_FD) as i32, m.ptr(p), n, r.SEND_FLAGS, m.ptr(sa), len) };
+    unsafe {
+      sent = sendto$udp(m.ld(s + io.S_FD) as i32, m.ptr(p), n, r.SEND_FLAGS, m.ptr(sa), len);
+    }
     if (sent >= 0) {
       tb.leave(s);
       return fs.value(sent as u64);
@@ -188,16 +190,18 @@ export async function velt_rt_udp_recv_from(u: u64, max: u64): Promise<IoResult<
     }
     m.st32(sa + SA_SIZE, SA_SIZE as u32);
     const p = addressOf(buf, 0);
+    let n: isize = 0;
     // SAFETY: `buf` holds MAX_DATAGRAM bytes at `p`; a sockaddr_storage and its length word.
-    const n =
-      unsafe { recvfrom$udp(
+    unsafe {
+      n = recvfrom$udp(
         m.ld(s + io.S_FD) as i32,
         m.ptr(p),
         MAX_DATAGRAM,
         0,
         m.ptr(sa),
         m.ptr(sa + SA_SIZE),
-      ) };
+      );
+    }
     if (n >= 0) {
       tb.leave(s);
       arrayTruncate(buf, (n as usize) < size ? n as usize : size);
@@ -230,15 +234,11 @@ export function velt_rt_udp_set_broadcast(u: u64, on: bool): IoStatus {
   }
   const word = m.zeroed(16);
   m.st32(word, on ? 1 : 0);
+  let rc: i32 = 0;
   // SAFETY: an int option in `word`.
-  const rc =
-    unsafe { setsockopt$udp(
-      m.ld(s + io.S_FD) as i32,
-      sys.SOL_SOCKET,
-      sys.SO_BROADCAST,
-      m.ptr(word),
-      4,
-    ) };
+  unsafe {
+    rc = setsockopt$udp(m.ld(s + io.S_FD) as i32, sys.SOL_SOCKET, sys.SO_BROADCAST, m.ptr(word), 4);
+  }
   m.release(word, 16);
   const st = rc === 0 ? fs.ok() : fs.osError(r.errno());
   tb.leave(s);

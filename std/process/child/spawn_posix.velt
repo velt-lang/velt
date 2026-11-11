@@ -344,25 +344,15 @@ export function start(spec: CommandSpec, modes: u32): Started {
   }
   if (!failed) {
     const pid = m.zeroed(16);
+    let rc: i32 = 0;
     // SAFETY: as above; `pid` has room for a `pid_t`.
-    const rc =
-      program == ""
-        ? unsafe { posix_spawnp(
-          m.ptr(pid),
-          file!,
-          m.ptr(fa),
-          m.ptr(attr),
-          m.ptr(cArgv),
-          m.ptr(cEnv),
-        ) }
-        : unsafe { posix_spawn(
-          m.ptr(pid),
-          file!,
-          m.ptr(fa),
-          m.ptr(attr),
-          m.ptr(cArgv),
-          m.ptr(cEnv),
-        ) };
+    unsafe {
+      if (program == "") {
+        rc = posix_spawnp(m.ptr(pid), file!, m.ptr(fa), m.ptr(attr), m.ptr(cArgv), m.ptr(cEnv));
+      } else {
+        rc = posix_spawn(m.ptr(pid), file!, m.ptr(fa), m.ptr(attr), m.ptr(cArgv), m.ptr(cEnv));
+      }
+    }
     if (rc === 0) {
       out.pid = m.ld32(pid) as i32;
     } else {
