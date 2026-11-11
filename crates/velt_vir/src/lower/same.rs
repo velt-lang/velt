@@ -358,7 +358,7 @@ impl super::Cx<'_> {
     /// Is `t` a type declared with `struct`, whose `Map` and `Set` keys compare and hash by
     /// content (`hir::AdtDef::declared_struct`)?
     pub(super) fn content_key(&self, t: TyId) -> bool {
-        match self.raw_kind(t) {
+        match self.rep_kind(t) {
             TyKind::Adt(d, _) => {
                 matches!(self.hir.def(*d), hir::Def::Adt(a) if a.declared_struct)
             }
@@ -369,7 +369,7 @@ impl super::Cx<'_> {
     /// Is `t` a C struct (`hir::AdtDef::c_struct`): a value with no identity, never counted or
     /// boxed, whose `===`, `Object.is`, `includes` and keys compare its content?
     pub(super) fn c_struct(&self, t: TyId) -> bool {
-        match self.raw_kind(t) {
+        match self.rep_kind(t) {
             TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(a) if a.c_struct),
             _ => false,
         }

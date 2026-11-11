@@ -87,6 +87,12 @@ impl FnLower<'_, '_> {
             // Placeholder for this pass: the class is counted in the next one.
             self.cx.facts.unmet = true;
             self.assign(dst, Rvalue::Use(Operand::Copy(src)));
+        } else if self.cx.is_ph(ty) && self.cx.needs_drop(ty) {
+            // A shared body (shape/): the type's clone glue, from the dictionary (an object is
+            // never a string, `clone_into`'s other case).
+            let (s, d) = (self.addr(src), self.addr(dst));
+            let f = self.cx.func_direct(Work::Glue(Glue::Clone, ty), self.mode);
+            self.call(vir::Callee::Func(f), vec![s, d], None, false);
         } else {
             self.clone_into(src, dst, ty);
         }
