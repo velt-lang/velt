@@ -64,6 +64,11 @@ impl FnLower<'_, '_> {
     /// what initializes a local for verify/init.rs).
     pub(super) fn str_share(&mut self, src: Place, dst: Place) {
         let (s, d) = (self.addr(src), self.addr(dst));
+        if self.cx.calls_for_size() {
+            // The runtime shares every form (`VeltStr::share`).
+            self.call_rt(Rt::StrClone, vec![s, d], None);
+            return;
+        }
         let (sp, dp) = (Self::str_at(&s), Self::str_at(&d));
         let heap = self.str_counted(&sp);
         let (counted, copied, join) = (self.new_block(), self.new_block(), self.new_block());
@@ -82,6 +87,11 @@ impl FnLower<'_, '_> {
     /// here, as the runtime would, without a call.
     pub(super) fn str_drop(&mut self, place: Place) {
         let a = self.addr(place);
+        if self.cx.calls_for_size() {
+            // The runtime drops and zeroes every form (`VeltStr::release`).
+            self.call_rt(Rt::StrDrop, vec![a], None);
+            return;
+        }
         let p = Self::str_at(&a);
         let heap = self.str_counted(&p);
         let (counted, plain, join) = (self.new_block(), self.new_block(), self.new_block());
@@ -330,5 +340,15 @@ impl FnLower<'_, '_> {
         self.goto(join);
         self.switch_to(join);
         Operand::Copy(Place::local(out))
+    }
+}
+
+impl super::Cx<'_> {
+    /// Debug builds (those that share instances by shape, `shapes.wanted`) call the runtime for
+    /// a string's share and drop instead of writing its test of the form out at every use: the
+    /// inline form saves a call in code that runs hot, but every copy is compiled again, and
+    /// nothing optimizes a debug build (12% of a generated application's debug VIR, #2707).
+    pub(super) fn calls_for_size(&self) -> bool {
+        self.shapes.wanted
     }
 }
