@@ -197,6 +197,13 @@ pub struct Session {
     /// `velt dev`: `Some` asks for the checked program's interface summary, which replaces it
     /// (`velt_sema::interface`). `None`: none is made.
     pub interfaces: Option<velt_sema::interface::Summary>,
+    /// `velt dev`: keep the check of the program (`velt_sema::KeptCheck`, in [`Session::kept`]),
+    /// when it can be kept (dev-warm-front-end.md step 3, "C2").
+    pub keep_check: bool,
+    /// The kept check of the last build, owning the program's parsed modules.
+    pub kept: Option<velt_sema::KeptCheck>,
+    /// The check's kept check and what it borrows, until the driver hands them over.
+    pub(crate) pending_kept: Option<KeptHandover>,
     /// `-v`: say at once that the build waits for another of its output (`std_cache::Place::lock`).
     pub verbose: bool,
     /// Reports the build was asked for (`--report`), printed after the diagnostics.
@@ -293,7 +300,35 @@ fn check_program(
     scope: &CheckScope,
 ) -> Result<hir::Program, BuildError> {
     let mut loaded = load_stage(sess, opts, scope)?;
-    sema_stage(sess, opts, scope, &mut loaded)
+    let hir = sema_stage(sess, opts, scope, &mut loaded);
+    // The kept check borrows the parsed modules: it takes them over, or nothing is kept.
+    if let Some(h) = sess.pending_kept.take() {
+        let input = h
+            .input
+            .unwrap_or_else(|| std::mem::take(&mut loaded.modules));
+        // SAFETY: `input` is the vector the check was given: `loaded.modules`, alive and unchanged
+        // since `sema_stage`, or `check_offered`'s copy, moved here unchanged; `h.sources` and
+        // `h.loads` are the generated modules and the `StdLoads` that check was given, moved here
+        // unchanged (`generate::check`, `check_offered`).
+        let adopted = unsafe { h.pending.adopt(input, h.sources, h.loads) };
+        sess.kept = match (&hir, adopted) {
+            (Ok(_), Ok(kept)) => Some(kept),
+            _ => None,
+        };
+    }
+    hir
+}
+
+/// A kept check (`velt_sema::PendingKept`) and the modules it borrows besides the parsed ones,
+/// until [`check_program`] hands them over.
+pub(crate) struct KeptHandover {
+    pub pending: velt_sema::PendingKept,
+    /// The modules the check was given when they are a copy of the parsed ones (generated code
+    /// checked as program modules); `None`: the parsed modules themselves.
+    pub input: Option<Vec<velt_sema::SourceModule>>,
+    /// The generated modules given with them.
+    pub sources: Vec<velt_sema::SourceModule>,
+    pub loads: Option<velt_sema::StdLoads>,
 }
 
 /// Load and parse the program; stops if that reported errors.

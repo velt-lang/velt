@@ -45,6 +45,32 @@ pub fn check_generating(
     })
 }
 
+/// [`check_generating`] that also keeps the check for the dev host when it can (`kept`): a
+/// check that added no generated modules and checked `modules` themselves gives a
+/// [`crate::PendingKept`], for the driver to [`crate::PendingKept::adopt`] with `modules` and the
+/// `StdLoads` of `load`.
+#[allow(clippy::type_complexity)]
+pub fn check_generating_kept(
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+    gen: &generated::GenInput,
+    sources: &[SourceModule],
+    generate: Option<&generated::GenerateFn>,
+    load: Option<crate::Loads>,
+) -> ((Option<Checked>, Diagnostics), Option<crate::PendingKept>) {
+    let args = generated::GenArgs {
+        input: gen,
+        sources,
+        generate,
+    };
+    on_sema_thread(|budget| {
+        let _request = crate::kept::request(modules);
+        let out = check_on_current_thread(modules, root, opts, &[], Some(args), load, budget);
+        (out, crate::kept::take())
+    })
+}
+
 /// Give a new `Ctx` of a check the code generated so far (`gen`), and the driver's generator:
 /// the generated modules given apart from the program's and those the generator made during
 /// an earlier `Ctx` of the check are added to it (`Ctx::add_module`).

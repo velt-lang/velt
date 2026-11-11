@@ -79,6 +79,20 @@ pub struct Carried {
     /// The checked program's interfaces (velt_sema `interface`), kept with `-v` to say whether
     /// a body edit kept everything else's.
     pub interfaces: Option<velt_sema::interface::Summary>,
+    /// With `-v`, the last good build's kept check (velt_sema `KeptCheck`,
+    /// dev-warm-front-end.md step 3 "C2"): kept and measured, not used yet.
+    pub kept: Option<velt_sema::KeptCheck>,
+}
+
+/// What `-v` says of a kept check: its size, and the process's memory with it kept.
+pub fn kept_report(kept: &velt_sema::KeptCheck) -> String {
+    let memory = crate::driver::memory::read().map(crate::driver::memory::render);
+    format!(
+        "kept the check: {} modules, {} definitions{}",
+        kept.module_paths().len(),
+        kept.definitions(),
+        memory.map(|m| format!(" ({m})")).unwrap_or_default()
+    )
 }
 
 /// Build the current sources and take them into the running program if possible.
@@ -110,6 +124,7 @@ fn reload_with(
     // after lowering never ran, so its seed must not become the next comparison's baseline.
     let running = carried.seed.take().unwrap_or_default();
     sess.counted_seed = Some(running.clone());
+    sess.keep_check = verbose;
     sess.interfaces = verbose.then(Default::default);
     let program = driver::compile_for_jit(&mut sess, opts);
     let next = sess.counted_seed.take();
@@ -130,6 +145,12 @@ fn reload_with(
         }
         carried.own = Some(own);
         carried.interfaces = interfaces;
+        // The previous version's kept check is dropped first, so the memory said is this one's.
+        carried.kept = None;
+        carried.kept = sess.kept.take();
+        if let (true, Some(kept)) = (verbose, &carried.kept) {
+            eprintln!("velt dev: {}", kept_report(kept));
+        }
     }
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
