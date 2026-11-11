@@ -31,6 +31,7 @@ import * as io from "./sched_io";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as lazy from "./sched_monitor_lazy";
+import * as rx from "./sched_relax";
 import * as q from "./sched_queue";
 import * as sp from "./sched_spread";
 import * as tq from "./sched_take";
@@ -69,6 +70,11 @@ function monitorMain(arg: Ptr<u8> | null): Ptr<u8> | null {
   let idleHurries: usize = 0;
   while (true) {
     if (allParked(g)) {
+      if (m.ld(g + t.E_RESCUE) !== 0 && m.ld(g + t.E_STAY) === 0 && rx.idleDuties(g)) {
+        // Spares asked to retire: their answers come within a tick.
+        nap(g, TICK);
+        continue;
+      }
       sleepWhileParked(g);
       nextTick = sp.now() + TICK;
       continue;
@@ -104,7 +110,7 @@ function monitorMain(arg: Ptr<u8> | null): Ptr<u8> | null {
     nextTick = nw + TICK;
     const ticks = m.load(g + t.E_TICKS) + 1;
     m.swap(g + t.E_TICKS, ticks);
-    if (m.ld(g + t.E_RESCUE) !== 0 && m.ld(g + t.E_STAY) === 0) {
+    if (m.ld(g + t.E_RESCUE) !== 0 && m.ld(g + t.E_STAY) === 0 && !rx.relaxDuties(g, ticks)) {
       if (m.load(g + t.E_LAZY) !== 0) {
         lazy.lazyDuties(g, ticks);
       }
@@ -252,8 +258,14 @@ function stallDuties(g: usize, now: usize): void {
   // A spare started for one worker serves the next in the same tick (it is not stalled).
   while (i < m.load(g + t.E_STARTED)) {
     const w = t.worker(i);
-    // A lazy worker 0 has its own duties (`lazyDuties`).
-    if (stalled(w, now) && (w !== g || m.load(g + t.E_LAZY) === 0)) {
+    // A lazy worker 0 has its own duties (`lazyDuties`); a retired spare runs nothing
+    // (sched_relax.velt).
+    if (
+      stalled(w, now) &&
+      (w !== g || m.load(g + t.E_LAZY) === 0) &&
+      (m.load32(w + t.E_RETIRED) & t.R_AWAY) === 0 &&
+      computing(w)
+    ) {
       rescueOf(g, w, now);
     }
     i++;
@@ -261,9 +273,36 @@ function stallDuties(g: usize, now: usize): void {
 }
 
 /** Awake and no task poll started for `STALL_TICKS` ticks up to tick `now`. */
-function stalled(w: usize, now: usize): bool {
+export function stalled(w: usize, now: usize): bool {
   return m.load32(w + t.E_PARK) !== 1 && now >= m.ld(w + t.E_PROGRESS) + STALL_TICKS;
 }
+
+/**
+ * Stalled worker `w` computes: its thread ran `STALL_CPU` since the monitor first saw it stalled
+ * (a tick before at least), not a worker the OS took off its core, which a spare would only make
+ * wait longer on a loaded machine. The first look takes the reading (false then), unless the
+ * thread has no clock (`#reactor` `threadCpu`): stalled as the ticks say.
+ */
+function computing(w: usize): bool {
+  const c = m.ld(w + t.E_CPU);
+  if (c === 0) {
+    return true;
+  }
+  const cpu = r.threadCpu(c as u64) as usize;
+  const seen = m.ld(w + t.E_PROGRESS) + 1;
+  if (m.ld(w + t.E_STALL_SEEN) !== seen) {
+    m.st(w + t.E_STALL_SEEN, seen);
+    m.st(w + t.E_STALL_CPU, cpu);
+    return false;
+  }
+  return cpu - m.ld(w + t.E_STALL_CPU) >= STALL_CPU;
+}
+
+/**
+ * The CPU time a stalled worker's thread runs between the monitor's first look and a later one
+ * for its poll to count as computing (nanoseconds): three quarters of a tick.
+ */
+export const STALL_CPU: usize = 750000;
 
 /**
  * The rescue of stalled worker `w` at tick `now`: its inbox and half of its queue to another

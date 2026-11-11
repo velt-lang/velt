@@ -8,6 +8,8 @@ import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
 import * as q from "./sched_queue";
+import * as r from "#reactor";
+import * as rx from "./sched_relax";
 import * as tq from "./sched_take";
 import * as t from "./sched_task";
 
@@ -19,7 +21,9 @@ import * as t from "./sched_task";
  * spawn_many, and a spare taking half of the tasks made the run 2.5 times as long; with one
  * worker the user asked for one thread. A few tasks spawned behind a poll that computes (what
  * it may wait for) move after `STALL_TICKS`. Of a poll's spawns the monitor may move only the
- * first `t.PEND_STACKED` (sched_task.velt `E_PLIST`).
+ * first `t.PEND_STACKED` (sched_task.velt `E_PLIST`): the poll links the rest without atomics, so
+ * a poll that spawns more and then waits without a pause for all of them never ends, as on one
+ * worker without the monitor (taking that list from a running poll would cost a fence per spawn).
  */
 const FAN_OUT: usize = 64;
 const FAN_OUT_TICKS: usize = 50;
@@ -53,27 +57,59 @@ export function lazyDuties(g: usize, now: usize): void {
     m.st(g + t.E_SEEN_CUR, cur);
     m.st(g + t.E_SEEN_TICK, tick);
     m.st(g + t.E_SEEN_AT, now);
+    m.st(g + t.E_SEEN_CPU, 0);
     return;
   }
-  if (now < m.ld(g + t.E_SEEN_AT) + mon.STALL_TICKS) {
+  const seenAt = m.ld(g + t.E_SEEN_AT);
+  if (m.ld(g + t.E_SEEN_CPU) === 0) {
+    // The poll has run for a tick: its thread's CPU time from here (`computed`).
+    m.st(g + t.E_SEEN_CPU, cpuOf(g) | 1);
+  }
+  if (now < seenAt + mon.STALL_TICKS) {
     return;
   }
-  if (now < m.ld(g + t.E_SEEN_AT) + FAN_OUT_TICKS && fanOutOnly(g)) {
+  const fanOut = fanOutOnly(g);
+  if (fanOut && now < seenAt + FAN_OUT_TICKS) {
     return;
   }
   if (nothingWaits(g)) {
     // Nothing to move: the poll may run on, the worker stays lazy.
     return;
   }
+  if (!computed(g, fanOut ? FAN_OUT_TICKS : mon.STALL_TICKS)) {
+    // The OS kept the thread off its core: not stalled (a spare would wait for a core too).
+    return;
+  }
   if (m.load(g + t.E_LAZY) === t.LAZY_WATCH) {
     m.swap(g + t.E_LAZY, t.LAZY_TAKING);
     m.store32(g + t.E_MODE, t.M_SHARED | t.M_MONITOR);
-    // Latches and join slots locked from now on, before a task reaches a spare.
+    // Latches and join slots locked from now on, before a task reaches a spare, which a
+    // retirement may hold back (sched_relax.velt).
     lk.locksOn();
+    rx.unretireAll(g);
   }
   if (m.load(g + t.E_CURRENT) === cur) {
     lazyRescue(g, now);
   }
+}
+
+/** Worker `w`'s thread's CPU time (nanoseconds; 0: no clock). */
+function cpuOf(w: usize): usize {
+  const c = m.ld(w + t.E_CPU);
+  return c === 0 ? 0 : r.threadCpu(c as u64) as usize;
+}
+
+/**
+ * Has lazy worker 0's (`g`) poll computed for `ticks` ticks less one, since the monitor's reading
+ * a tick into it (`E_SEEN_CPU`), by its thread's CPU time (three quarters of each tick: the
+ * monitor's own ticks come late)? True without a clock.
+ */
+function computed(g: usize, ticks: usize): bool {
+  const c = m.ld(g + t.E_CPU);
+  if (c === 0) {
+    return true;
+  }
+  return cpuOf(g) - m.ld(g + t.E_SEEN_CPU) >= (ticks - 1) * mon.STALL_CPU;
 }
 
 /**

@@ -273,3 +273,47 @@ export function wordWake(word: usize): void {
     __ulock_wake(COMPARE_AND_WAIT, m.ptr(word), 0);
   }
 }
+
+declare c("c") function pthread_self(): usize;
+declare c("c") function pthread_mach_thread_np(thread: usize): u32;
+declare c("c") function thread_info(thread: u32, flavor: i32, info: Ptr<u8>, count: Ptr<u8>): i32;
+
+/** `THREAD_BASIC_INFO` and its count of `int`s (user and system time, then six more). */
+const THREAD_BASIC_INFO: i32 = 3;
+const THREAD_BASIC_INFO_COUNT: u32 = 10;
+
+/**
+ * This thread's CPU-time clock (its Mach port), which `threadCpu` reads from any thread (the
+ * stall monitor: a worker the OS took off its core is not stalled in a poll); 0 when there is
+ * none.
+ */
+export function threadClock(): u64 {
+  // SAFETY: the calling thread's own handle and port, valid while it runs.
+  const port = unsafe { pthread_mach_thread_np(pthread_self()) };
+  return port === 0 ? 0 : (port as u64) | 0x100000000;
+}
+
+/** The CPU time of the thread whose `threadClock` is `c` (nanoseconds; 0: unknown). */
+export function threadCpu(c: u64): u64 {
+  if (c === 0) {
+    return 0;
+  }
+  const info = m.zeroed(48);
+  m.st32(info + 40, THREAD_BASIC_INFO_COUNT);
+  // SAFETY: `info` has room for a `thread_basic_info` and its count after it.
+  const rc =
+    unsafe { thread_info(
+      (c & 0xffffffff) as u32,
+      THREAD_BASIC_INFO,
+      m.ptr(info),
+      m.ptr(info + 40),
+    ) };
+  let ns: u64 = 0;
+  if (rc === 0) {
+    const secs = (m.ld32(info) + m.ld32(info + 8)) as u64;
+    const us = (m.ld32(info + 4) + m.ld32(info + 12)) as u64;
+    ns = secs * 1000000000 + us * 1000;
+  }
+  m.release(info, 48);
+  return ns;
+}

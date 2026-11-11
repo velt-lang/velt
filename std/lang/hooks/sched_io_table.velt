@@ -280,7 +280,13 @@ function join(k: usize, s: usize): void {
   }
   const h = m.ld(m.ld(s + io.S_IOB) + io.IO_TICK_AT) - t.E_TICK;
   // No wake queues a running task, so its home may change now (sched_spread.velt `anchor`).
-  if (h !== m.ld(k + t.T_HOME) && m.ld(t.main() + t.E_STAY) === 0) {
+  const home = m.ld(k + t.T_HOME);
+  if (h !== home && m.ld(t.main() + t.E_STAY) === 0) {
+    if ((m.load32(h + t.E_RETIRED) & t.R_AWAY) !== 0) {
+      // A spare retiring or retired runs no task (sched_relax.velt): the source comes here.
+      moveTo(s, m.ld(s + io.S_IOB), m.ld(home + t.E_IO));
+      return;
+    }
     m.st(k + t.T_HOME, h);
   }
 }

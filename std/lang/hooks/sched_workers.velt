@@ -5,6 +5,7 @@
 
 import { Ptr, export as cExport } from "velt/ffi";
 import { exportedAddress, noInline } from "velt/lang/intrinsics";
+import * as r from "#reactor";
 import * as th from "#sched-thread";
 import { processEnv } from "./process";
 import * as end from "./sched_end";
@@ -40,6 +41,7 @@ export function start(): usize {
   }
   m.st(e + t.E_IO, io.open(e + t.E_TICK));
   m.st(e + t.E_MAIN, e);
+  m.st(e + t.E_CPU, r.threadClock() as usize);
   end.open(e);
   t.install(e);
   // The runtime's leaves that need its timers and I/O find them from this thread.
@@ -177,6 +179,7 @@ export function startThread(w: usize): bool {
 @cExport("std_sched_worker")
 function workerMain(arg: Ptr<u8> | null): Ptr<u8> | null {
   const w = m.addr(arg);
+  m.st(w + t.E_CPU, r.threadClock() as usize);
   t.installWorker(w);
   io.installHere(m.ld(w + t.E_IO));
   // The runtime's leaves polled here find its timers and I/O.

@@ -446,7 +446,8 @@ async function main() {
 /// connection, not across threads. That worker is `main`'s at its last read (the read moves the
 /// connection to `main`'s home, whose reactor wakes it), which the spread may have made another
 /// than worker 0 on a loaded machine, so the program prints whether the task ended up there, not
-/// a worker's index. The stall monitor is off (`VELT_RESCUE=0`). With `join` removed (the task
+/// a worker's index. The stall monitor is off (`VELT_RESCUE=0`): the rule is asserted only so, since
+/// with the rescue on (the default) the monitor may move the task (1 of 60 `false` on contended cores). With `join` removed (the task
 /// stays on worker 2) it prints `false` (60 of 60 runs on two contended cores, Linux arm64 VM; 60 of 60 `true` with it).
 /// The server answers the task 20 ms after its request, so the answer wakes the task: one there
 /// already when the task reads would leave it where it is.
@@ -818,6 +819,72 @@ async function main() {
 }
 "#;
 
+/// One worker with the stall rescue (`VELT_THREADS=1`, the default): the rescue of a stalled
+/// poll is taken back once the spares are idle (std/lang/hooks/sched_relax.velt), and given again
+/// at the next stall. `main` computes until the reader it spawned has started, which only a spare
+/// can run; the reader then waits on its socket (registered with the spare's reactor) while `main`
+/// sleeps, long enough for the spare to retire. The answer that wakes the reader then runs it on
+/// worker 0; with the rescue one-way it ran on the spare (`on worker 0 false`). A second stall moves
+/// a task to a spare again. (`currentWorker()` names a spare as a configured worker: the program
+/// tells worker 0's thread by a thread-local.)
+#[test]
+fn the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(dir.path(), "relax", RELAX, true, "1");
+    assert_eq!(
+        (code, out.as_str()),
+        (
+            0,
+            "moved true, read hi on worker 0 true\nmoved again true\n"
+        ),
+        "the executor in Velt, 1 worker"
+    );
+}
+
+/// The program of [`the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle`].
+const RELAX: &str = r#"import { listen, connect, TcpStream } from "velt/net";
+
+// 1 on worker 0's thread (`main` sets it): a spare is a thread of its own.
+const ON_MAIN = new ThreadLocal<i64>(0);
+const STARTED = new Atomic<i64>(0);
+const AGAIN = new Atomic<i64>(0);
+
+async function reader(s: TcpStream): Promise<string> {
+  const first = ON_MAIN.get();
+  STARTED.store(1);
+  const got = await s.readString();
+  return `moved ${first === 0}, read ${got} on worker 0 ${ON_MAIN.get() === 1}`;
+}
+
+async function mark(): Promise<i64> {
+  AGAIN.store(1);
+  return ON_MAIN.get();
+}
+
+async function main() {
+  ON_MAIN.set(1);
+  const l = await listen("127.0.0.1:0");
+  const c = await connect(`127.0.0.1:${l.port}`);
+  const s = await l.accept();
+  const r = spawn(reader(s));
+  // Busy until a spare has started the reader: the monitor's rescue of this poll.
+  while (STARTED.load() === 0) {}
+  // Idle: the spare parks, the reader waiting on its socket; the monitor takes the rescue back.
+  await sleep(300);
+  await c.write("hi");
+  console.log(await r);
+  const m = spawn(mark());
+  while (AGAIN.load() === 0) {}
+  console.log(`moved again ${(await m) === 0}`);
+  c.close();
+  l.close();
+}
+"#;
+
 /// One worker with the stall rescue (`VELT_THREADS=1`, the default rescue): `main` spawns 200k
 /// tasks, then computes in the same poll until a spare has run some of them. The monitor moves
 /// half of what the poll spawned at each tick and puts the newer half back; when the poll ended
@@ -826,6 +893,10 @@ async function main() {
 /// code 0 and no output (4 runs in 5 in the Linux arm64 VM, debug and release alike, while the
 /// monitor could take all 200k; now it takes from the first 64 a poll spawns, and the window is
 /// much narrower: a guard of the rescue's end more than of that race).
+/// The limit that comes with it: the monitor moves only the first 64 tasks a poll spawns (the
+/// rest are on a list the poll links without atomics, std/lang/hooks/sched_task.velt `E_PLIST`),
+/// so a poll that spawns more and then waits without a pause for all of them never ends (as on
+/// one worker without the monitor); this program waits for 16.
 #[test]
 fn tasks_put_back_while_worker_0_leaves_its_lazy_mode_still_run() {
     if !has_threads() {

@@ -177,3 +177,36 @@ export function takeLazy(e: usize, head: usize, tail: usize, chain: usize): usiz
   }
   return chain;
 }
+
+/**
+ * Takes every task of worker `e`'s queues (the queue locked): the slot, the input, the second
+ * queue, a chain newest first (a retired spare hands them on: sched_relax.velt).
+ */
+export function takeAll(e: usize): usize {
+  let chain: usize = 0;
+  const next = m.ld(e + t.E_NEXT);
+  if (next !== 0) {
+    m.st(e + t.E_NEXT, 0);
+    m.st(next + t.T_NEXT, chain);
+    chain = next;
+  }
+  while (true) {
+    const k = q.popIo(e);
+    if (k === 0) {
+      break;
+    }
+    m.st(k + t.T_NEXT, chain);
+    chain = k;
+  }
+  while (true) {
+    const k = q.popRest(e, t.M_SHARED);
+    if (k === 0) {
+      break;
+    }
+    m.st(k + t.T_NEXT, chain);
+    chain = k;
+  }
+  m.st(e + t.E_RLEN, 0);
+  m.st(e + t.E_FAIR_LEFT, 0);
+  return chain;
+}

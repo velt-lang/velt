@@ -239,3 +239,39 @@ export function wordWake(word: usize): void {
     syscall(n, word as i64, FUTEX_WAKE_PRIVATE, 1, 0, 0, 0);
   }
 }
+
+declare c("c") function pthread_self(): usize;
+declare c("c") function pthread_getcpuclockid(thread: usize, clock: Ptr<u8>): i32;
+declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<u8>): i32;
+
+/**
+ * This thread's CPU-time clock, which `threadCpu` reads from any thread (the stall monitor: a
+ * worker the OS took off its core is not stalled in a poll); 0 when there is none.
+ */
+export function threadClock(): u64 {
+  const a = m.zeroed(16);
+  let c: u64 = 0;
+  // SAFETY: `a` has room for a `clockid_t`.
+  unsafe {
+    if (pthread_getcpuclockid(pthread_self(), m.ptr(a)) === 0) {
+      c = (m.ld32(a) as u64) | 0x100000000;
+    }
+  }
+  m.release(a, 16);
+  return c;
+}
+
+/** The CPU time of the thread whose `threadClock` is `c` (nanoseconds; 0: unknown). */
+export function threadCpu(c: u64): u64 {
+  if (c === 0) {
+    return 0;
+  }
+  const ts = m.zeroed(16);
+  // SAFETY: a timespec at `ts`; the clock is a live thread's (workers run until the end).
+  unsafe {
+    clock_gettime$io((c & 0xffffffff) as u32 as i32, m.ptr(ts));
+  }
+  const ns = (m.ld(ts) * 1000000000 + m.ld(ts + 8)) as u64;
+  m.release(ts, 16);
+  return ns;
+}

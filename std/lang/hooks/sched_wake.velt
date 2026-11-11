@@ -74,8 +74,13 @@ export function release(t: usize): void {
  */
 @inline
 export function schedule(t: usize): void {
-  const h = m.ld(t + tk.T_HOME);
+  let h = m.ld(t + tk.T_HOME);
   const w = tk.here();
+  if (w !== h && w !== 0 && m.load32Relaxed(w + tk.E_MODE) === 0) {
+    // Woken on a lazy worker 0, homed on a spare that retired (sched_relax.velt): homed here.
+    m.st(t + tk.T_HOME, w);
+    h = w;
+  }
   if (w === h) {
     const d = m.ld32(w + tk.E_DISPATCH);
     // Relaxed: the monitor changes it (sched_monitor_lazy.velt `lazyDuties`).

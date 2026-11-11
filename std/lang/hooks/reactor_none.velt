@@ -85,3 +85,13 @@ export function wordWake(word: usize): void {}
 
 /** No threads to wait for: returns at once. */
 export function wordWaitFor(word: usize, expected: u32, us: u32): void {}
+
+/** No thread clock here: 0. */
+export function threadClock(): u64 {
+  return 0;
+}
+
+/** No thread clock here: 0 (unknown). */
+export function threadCpu(c: u64): u64 {
+  return 0;
+}

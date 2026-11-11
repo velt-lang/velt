@@ -206,7 +206,35 @@ export const E_PANY: usize = 744;
 export const PANY_FIRST: usize = 1;
 export const PANY_WOKE: usize = 2;
 export const PANY_MORE: usize = 4;
-export const E_SIZE: usize = 752;
+/**
+ * The worker thread's CPU-time clock (`#reactor` `threadClock`): the monitor tells a poll that
+ * computes from a worker the OS took off its core (sched_monitor.velt `computing`); the
+ * monitor's reading of it when it last saw a lazy worker 0's poll change (`E_SEEN_CPU`), and
+ * when it first saw a worker stalled, with the progress it saw then (`E_STALL_CPU`,
+ * `E_STALL_SEEN`).
+ */
+export const E_CPU: usize = 752;
+export const E_SEEN_CPU: usize = 760;
+export const E_STALL_CPU: usize = 768;
+export const E_STALL_SEEN: usize = 776;
+/**
+ * A spare's retirement (sched_relax.velt): `R_ASKED` by the monitor, `R_RETIRED` by the spare,
+ * which then runs no task and hands what reaches it to worker 0, until the monitor sets it back
+ * to 0; `R_DECLINED` by a spare that keeps its tasks (a worker as any other: `R_AWAY` holds the
+ * states in which it runs nothing). Worker 0's `E_RELAX`: the monitor asks it to leave the shared mode (`RELAX_ASKED`), it
+ * does so between two polls (`RELAX_DOING`, then 0).
+ */
+export const E_RETIRED: usize = 784;
+export const E_RELAX: usize = 788;
+export const R_ASKED: u32 = 1;
+export const R_RETIRED: u32 = 2;
+export const R_DECLINED: u32 = 4;
+export const R_AWAY: u32 = 3;
+export const RELAX_ASKED: u32 = 1;
+export const RELAX_DOING: u32 = 2;
+/** Worker 0's: the monitor's ticks so far with the spares idle (sched_relax.velt). */
+export const E_CALM: usize = 792;
+export const E_SIZE: usize = 800;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */

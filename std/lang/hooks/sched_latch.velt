@@ -12,7 +12,7 @@
 // of its own, taken for a few stores (a promise settled on one worker wakes its waiter on
 // another; sched_lock.velt says when); wakes happen after the lock is given back.
 
-import { inline } from "velt/lang/intrinsics";
+import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as lk from "./sched_lock";
@@ -65,6 +65,15 @@ function unlock(a: usize, k: u32): void {
 /** Gives a reference to latch `l` back: the last frees it. */
 export function latchFree(l: u64): void {
   const a = l as usize;
+  if (lk.mode() === lk.LK_NONE) {
+    // One thread at the executor: a plain count.
+    const n = m.ld(a + L_REFS) - 1;
+    m.st(a + L_REFS, n);
+    if (n === 0) {
+      m.release(a, L_SIZE);
+    }
+    return;
+  }
   if (m.dec(a + L_REFS) === 1) {
     m.release(a, L_SIZE);
   }
@@ -73,7 +82,11 @@ export function latchFree(l: u64): void {
 /** A wait of latch `l`, with header entries `poll` and `drop`. */
 export function latchWait(l: u64, poll: usize, drop: usize): usize {
   const a = l as usize;
-  m.inc(a + L_REFS);
+  if (lk.mode() === lk.LK_NONE) {
+    m.st(a + L_REFS, m.ld(a + L_REFS) + 1);
+  } else {
+    m.inc(a + L_REFS);
+  }
   const w = m.alloc(W_SIZE);
   m.st(w, poll);
   m.st(w + 8, drop);
@@ -135,8 +148,17 @@ export function latchOpen(l: u64): void {
   }
   unlock(a, lkind);
   if (first !== 0) {
-    m.wakeOwned(first);
+    wakeAfter(first, more, n, cap);
   }
+}
+
+/**
+ * Wakes `first` and the `n` wakers in raw buffer `more` (room for `cap`, freed), after a locked
+ * opening.
+ */
+@noInline
+function wakeAfter(first: usize, more: usize, n: usize, cap: usize): void {
+  m.wakeOwned(first);
   for (let i: usize = 0; i < n; i++) {
     m.wakeOwned(m.ld(more + 8 * i));
   }
