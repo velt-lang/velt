@@ -1,0 +1,18 @@
+// An object literal filling an interface field with `get v()` and `set v(x)`: Node prints the
+// property `[Getter/Setter]`, which Velt can't show through the interface yet, so printing it is
+// refused rather than printed differently.
+interface Settable {
+  v: number;
+  describe(): string;
+}
+
+const gs: Settable = {
+  get v() {
+    return 1;
+  },
+  set v(x: number) {},
+  describe() {
+    return "y";
+  },
+};
+console.log(gs);

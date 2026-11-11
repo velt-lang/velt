@@ -602,7 +602,7 @@ impl FnCx<'_, '_> {
                         TyKind::FnPtr { ret, .. } => *ret,
                         _ => fty,
                     };
-                    let name = format!("{iname} literal.<get>");
+                    let name = format!("{iname} {}", crate::any::FIELD_GETTER);
                     let target = Target::Field {
                         index: j,
                         fn_ty: fty,

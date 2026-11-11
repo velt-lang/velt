@@ -1,0 +1,10 @@
+// `globalThis.Element` past the module's own class `Element`.
+class Element {
+  mine = 1;
+}
+
+function tagOf(e: globalThis.Element | null): string {
+  return e == null ? "no element" : e.tagName;
+}
+
+console.log(new Element().mine, tagOf(null));

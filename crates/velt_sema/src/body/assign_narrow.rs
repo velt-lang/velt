@@ -15,6 +15,13 @@ impl FnCx<'_, '_> {
     /// `token` (a local or the token of a field path, of type `ty`) was just assigned the
     /// checked value `v`: the facts `v` establishes.
     pub(crate) fn narrow_to_assigned(&mut self, token: LocalId, ty: hir::TyId, v: &hir::Expr) {
+        // A value that never comes (`x = document.createElement("div")`, whose read of
+        // `document` throws as on Node) leaves nothing after it to run: there the variable holds
+        // what the expression's type says, which isn't null, as under `tsc`.
+        if v.ty == self.cx.ty.never {
+            self.narrow(&Fact::NonNull(token));
+            return;
+        }
         let mut inner = v;
         if let H::WrapSome(x) = &v.kind {
             // On a `T | null | undefined` a `WrapSome` of a `T | null` only rules out

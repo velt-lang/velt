@@ -1,0 +1,11 @@
+// `globalThis.Comment` past the module's own interface `Comment`.
+interface Comment {
+  mine: number;
+}
+
+function markerOf(c: globalThis.Comment | null): string {
+  return c == null ? "no marker" : c.data;
+}
+
+const own: Comment = { mine: 1 };
+console.log(own.mine, markerOf(null));

@@ -1,0 +1,18 @@
+// An interface value whose implementation holds a lock can't be printed or written as text: an
+// `any` can't hold the lock.
+interface Shape {
+  kind: string;
+  area(): number;
+}
+
+class Locked implements Shape {
+  kind = "locked";
+  m: Mutex<number> = new Mutex<number>(1);
+  area(): number {
+    return 0;
+  }
+}
+
+const s: Shape = new Locked();
+console.log(s);
+console.log(`${s}`);

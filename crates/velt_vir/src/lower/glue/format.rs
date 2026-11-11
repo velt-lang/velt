@@ -441,8 +441,10 @@ impl FnLower<'_, '_> {
         if let Some(m) = self.hook(ty, Hook::Inspect) {
             self.format_inspect(&buf, p, ty, m, &depth);
         } else if !self.format_collection(&buf, &place, ty, &depth) {
-            let literal =
-                matches!(self.cx.kind(ty), TyKind::Adt(d, _) if self.has_accessor_fields(d));
+            // An object literal's struct made a class (a method using `this`) prints as the
+            // literal it is too: `Ctx::hidden_struct_def`'s `<interface> literal` name.
+            let literal = matches!(self.cx.kind(ty), TyKind::Adt(d, _)
+                if self.has_accessor_fields(d) || self.cx.adt_def(d).name.ends_with(" literal"));
             let name = (!literal).then(|| self.cx.type_name(ty));
             self.format_object(&buf, name, &place, ty, Some(p), &depth);
         }
