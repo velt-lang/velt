@@ -1,0 +1,3 @@
+before the await: 9
+after the await: a number (true), not necessarily 9
+b: 2

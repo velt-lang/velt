@@ -1,0 +1,51 @@
+// requires: unix
+// `lastOsError()` reads the errno of the call right before it, even when freeing a temporary (or
+// any other work that calls the C library) sits between the failing call and the read: the
+// compiler captures errno into the thread's slot right after each call of a `{ errno: true }`
+// declaration. `open` of a missing file sets ENOENT (2 everywhere); building and dropping arrays
+// in between must not change it, nor a C call that doesn't ask (`close$quiet`), which leaves the
+// C library's `errno` at EBADF (9).
+import { CVarArgs } from "velt/ffi";
+import { lastOsError } from "velt/os";
+
+declare c("c", { errno: true }) function open(
+  path: readonly u8[],
+  oflag: i32,
+  ...args: CVarArgs,
+): i32;
+declare c("c", { errno: true }) function close(fd: i32): i32;
+declare c("c") function close$quiet(fd: i32): i32;
+
+function cString(s: string): u8[] {
+  const b: u8[] = Buffer.alloc(Buffer.byteLength(s) + 1);
+  b.write(s);
+  return b;
+}
+
+// A failing call in a callee is seen by the caller, on either branch: the slot is the thread's,
+// not the function's.
+function fail(): i32 {
+  // SAFETY: closing a descriptor that is none.
+  return unsafe { close(-1) };
+}
+
+function pick(h: bool): i32 {
+  // SAFETY: as in `fail`.
+  const r = h ? fail() : unsafe { close(-1) };
+  return r == -1 ? lastOsError() : 0;
+}
+
+function main() {
+  // A temporary path (freed at the end of this statement, before `lastOsError`).
+  // SAFETY: a NUL-terminated path.
+  console.log(unsafe { open(cString("velt_errno_missing_dir/nope"), 0) });
+  const junk: u8[] = Buffer.alloc(4096);
+  junk.fill(7);
+  // SAFETY: closing a descriptor that is none.
+  const quiet = unsafe { close$quiet(-1) };
+  console.log(quiet, lastOsError());
+  // A second failing call overwrites the slot; `lastOsError` then reads the newer errno.
+  // SAFETY: closing a descriptor that is none.
+  console.log(unsafe { close(-1) }, lastOsError() == 9);
+  console.log(pick(false), pick(true));
+}
