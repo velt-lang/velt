@@ -74,7 +74,7 @@ impl FnCx<'_, '_> {
         exp: TyId,
     ) -> Result<hir::Expr, hir::Expr> {
         // A module-level constant or a field initializer has no frame for the hidden local.
-        if self.frameless() || !self.fn_widens(h.ty, exp) {
+        if self.frameless() || !self.fn_widens(h.ty, exp, true) {
             return Err(h);
         }
         // Checked as a trial: what doesn't convert is reported by the wrapper's check, rolled
@@ -350,11 +350,11 @@ impl FnCx<'_, '_> {
 
     /// Are `from` and `to` function types of the same shape whose parameter or result types
     /// differ, or is `from` one taking fewer parameters, or a rest parameter for `to`'s fixed
-    /// ones?
+    /// ones? `fewer`: a function taking fewer parameters counts.
     /// Whether each of `to`'s converts to `from`'s, and `from`'s result and errors to `to`'s,
     /// is what the wrapper's check finds (the conversions of arguments and results, object
     /// copies included).
-    fn fn_widens(&self, from: TyId, to: TyId) -> bool {
+    pub(super) fn fn_widens(&self, from: TyId, to: TyId, fewer: bool) -> bool {
         let t = &self.cx.ty;
         match (t.kind(from), t.kind(to)) {
             (
@@ -373,7 +373,7 @@ impl FnCx<'_, '_> {
             ) => {
                 let same = fp.len() == tp.len() && frest == trest && (fp != tp || fr != tr);
                 // Fewer parameters: the wrapper passes the first ones (#943).
-                let fewer = !frest && fp.len() < tp.len() - usize::from(*trest);
+                let fewer = fewer && !frest && fp.len() < tp.len() - usize::from(*trest);
                 // A rest parameter for fixed ones (`(...args: unknown[]) => R` as a `(p1: T1)
                 // => R`): the wrapper's call packs the arguments past `from`'s fixed ones.
                 let packs = *frest && !*trest && fp.len() <= tp.len() + 1;

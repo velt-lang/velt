@@ -1,0 +1,13 @@
+// A callable object whose function takes fewer parameters than the expected callable object
+// type's is not converted: the copy would call it without the arguments, which its own function
+// may read in Node (a cast of `(...args) => …` to `{ (): T }` keeps them there).
+interface Thunk {
+    (): number;
+    label: string;
+}
+type Unary = ((x: number) => number) & { label: string };
+
+const t = ((...args: unknown[]) => args.length) as Thunk;
+t.label = "t";
+const u: Unary = t;
+console.log(u(5));
