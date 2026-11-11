@@ -133,8 +133,8 @@ pub(super) fn add_eh_frame(
     Ok(())
 }
 
-/// The LSDAs `lsdas`, one after another in one section (crate::eh `lsda_section`), each with a
-/// local symbol at its start: the symbol of each function's.
+/// Writes the LSDAs `lsdas` one after another into one section (crate::eh `lsda_section`), with
+/// a local symbol at the start of each, and returns each function's LSDA symbol.
 fn add_lsdas(
     obj: &mut Object,
     lsdas: &[(FuncId, Vec<u8>)],
