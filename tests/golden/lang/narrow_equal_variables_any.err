@@ -1,0 +1,1 @@
+narrow_equal_variables_any.velt:8:12: error: value of type `Item | null` may be null

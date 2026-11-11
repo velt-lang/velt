@@ -1,0 +1,31 @@
+// A value of an interface type prints as the object it holds, alone, nullable, in a union, in an
+// array or in an object, and `String(x)` and a template literal write it as Node does.
+interface Shape {
+  kind: string;
+  area(): number;
+}
+
+class Square implements Shape {
+  kind = "square";
+  side: number;
+  constructor(side: number) {
+    this.side = side;
+  }
+  area(): number {
+    return this.side * this.side;
+  }
+}
+
+const square: Shape = new Square(3);
+const literal: Shape = { kind: "literal", area: () => 1 };
+const maybe: Shape | null = Math.random() > 2 ? null : literal;
+const none: Shape | null = null;
+const either: Shape | string = Math.random() > 2 ? "text" : square;
+const shapes: Shape[] = [square, literal];
+
+console.log(square, literal);
+console.log("maybe:", maybe, "none:", none);
+console.log(either, String(either), `${either}`);
+console.log(shapes, { first: square });
+console.log(String(square), `${literal}`, `${shapes}`);
+console.warn("on stderr:", square);

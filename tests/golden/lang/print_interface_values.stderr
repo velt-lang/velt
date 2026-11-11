@@ -1,0 +1,1 @@
+on stderr: Square { kind: 'square', side: 3 }

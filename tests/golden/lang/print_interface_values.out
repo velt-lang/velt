@@ -1,0 +1,8 @@
+Square { kind: 'square', side: 3 } { kind: 'literal', area: [Function: area] }
+maybe: { kind: 'literal', area: [Function: area] } none: null
+Square { kind: 'square', side: 3 } [object Object] [object Object]
+[
+  Square { kind: 'square', side: 3 },
+  { kind: 'literal', area: [Function: area] }
+] { first: Square { kind: 'square', side: 3 } }
+[object Object] [object Object] [object Object],[object Object]

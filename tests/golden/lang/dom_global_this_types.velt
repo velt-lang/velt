@@ -1,0 +1,21 @@
+// `globalThis.T` in a type names the global type `T`, past a declaration of the same name in the
+// module: here a module value `Comment` and a type `Text` of its own, as sigx's hydration code has
+// them, beside lib.dom's interfaces. Velt has no DOM, so only the paths without a node run.
+const Comment = Symbol("Comment");
+type Text = { own: string };
+
+function markerText(dom: Node | null): string {
+  if (dom && dom.nodeType === 8) {
+    return (dom as globalThis.Comment).data;
+  }
+  return "no marker";
+}
+
+function textOf(node: Node | null): string {
+  return node == null ? "no text" : (node as globalThis.Text).data;
+}
+
+const own: Text = { own: "mine" };
+let el: globalThis.Element | null = null;
+const holder: { node: globalThis.Node | null } = { node: null };
+console.log(String(Comment), own.own, markerText(null), textOf(null), el, holder.node);

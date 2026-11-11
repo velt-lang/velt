@@ -203,18 +203,33 @@ impl Ctx<'_> {
         path: &[velt_syntax::ast::Ident],
         at: Span,
     ) -> Option<Item> {
-        match path {
-            [name] => self.lookup_type_item_at(module, &name.name, at),
-            _ => {
-                if !self.scopes[module].type_keys {
-                    return self.lookup_path_at(module, path, at);
-                }
-                let key = type_key(&crate::namespaces::path_key(self, module, path));
-                match self.scopes[module].items.get(&key) {
-                    Some(&it) => Some(it),
-                    None => self.lookup_path_at(module, path, at),
-                }
-            }
+        if let [name] = path {
+            return self.lookup_type_item_at(module, &name.name, at);
         }
+        let keyed = self.scopes[module].type_keys.then(|| {
+            let key = type_key(&crate::namespaces::path_key(self, module, path));
+            self.scopes[module].items.get(&key).copied()
+        });
+        keyed
+            .flatten()
+            .or_else(|| self.lookup_path_at(module, path, at))
+            .or_else(|| self.global_this_type(module, path))
+    }
+
+    /// `globalThis.T` in a type: the global type `T` past the module's own declarations of that
+    /// name, as `tsc` reads it (a module that declares a value `Comment` still names lib.dom's
+    /// interface as `globalThis.Comment`). A module's own namespace `globalThis` wins.
+    fn global_this_type(&self, module: usize, path: &[velt_syntax::ast::Ident]) -> Option<Item> {
+        let [ns, name] = path else { return None };
+        let scope = &self.scopes[module];
+        if ns.name != "globalThis" || scope.namespaces.contains_key("globalThis") {
+            return None;
+        }
+        let keyed = self.prelude_type_keys.then(|| type_key(&name.name));
+        if let Some(&it) = keyed.as_ref().and_then(|k| self.prelude.get(k)) {
+            return Some(it);
+        }
+        let it = *self.prelude.get(&name.name)?;
+        (self.meaning(it) != Meaning::Value).then_some(it)
     }
 }

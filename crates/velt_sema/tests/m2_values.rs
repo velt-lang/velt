@@ -437,8 +437,14 @@ fn printing_and_formatting() {
         r.contains("cannot print a value of type `(i64) => i64`"),
         "{r}"
     );
-    let r = err_src("interface I { f(): i64; } struct S implements I { f(): i64 { return 1; } } function main() { const i: I = ({} as S); console.log(`${i}`); }");
-    assert!(r.contains("cannot format a value of type `I`"), "{r}");
+    // An interface value is written as the object it holds, through `any` (`object_text`).
+    ok_src("interface I { f(): i64; } struct S implements I { f(): i64 { return 1; } } function main() { const i: I = ({} as S); console.log(`${i}`, i, [i]); }");
+    let r = err_src("interface I { f(): i64; } function main() { const g = (x: i64) => x; const p: [I, (x: i64) => i64] | null = null; console.log(`${g}`, p); }");
+    assert!(
+        r.contains("cannot format a value of type `(i64) => i64`"),
+        "{r}"
+    );
+    assert!(r.contains("cannot print a value of type"), "{r}");
 }
 
 #[test]

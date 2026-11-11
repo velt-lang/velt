@@ -361,7 +361,12 @@ impl FnCx<'_, '_> {
             (None, Some(l)) => (lhs, l),
             (Some(l), None) => (rhs, l),
             // `x === K` for a constant `K` of a `unique symbol` type.
-            _ => return self.unique_symbol_facts(lhs, rhs).unwrap_or_default(),
+            _ => {
+                let facts = self.unique_symbol_facts(lhs, rhs);
+                return facts
+                    .or_else(|| self.local_eq_facts(lhs, rhs))
+                    .unwrap_or_default();
+            }
         };
         if let ast::Lit::Bool(b) = lit.lit {
             if let Some(facts) = self.destructured_facts(other, b) {
