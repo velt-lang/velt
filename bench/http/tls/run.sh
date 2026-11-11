@@ -5,11 +5,12 @@
 # connection (a full TLS 1.3 handshake each, X25519 + ECDSA P-256). Reports, per server and load,
 # the server's instructions per request (the difference of two runs of N1 and N2 requests, so
 # start-up cancels; macOS `/usr/bin/time -l`, Linux cachegrind) and req/s (best of
-# RUNS interleaved rounds of DURATION; meaningless on a busy machine: compare instructions there).
+# RUNS interleaved rounds of RATE_REQUESTS or RATE_HANDSHAKES requests; meaningless on a busy
+# machine: compare instructions there).
 # The client is h2load over HTTP/1.1 (OpenSSL: TLS 1.3; oha on macOS speaks only TLS 1.2), with
 # `connection: close` for the handshake load.
-# Usage: bench/http/tls/run.sh   Knobs: WORKERS, CONNS, N1, N2, RUNS, DURATION (s), VELT, H2LOAD,
-# WORK.
+# Usage: bench/http/tls/run.sh   Knobs: WORKERS, CONNS, N1, N2, RUNS, RATE_REQUESTS,
+# RATE_HANDSHAKES, LOADS, VELT, H2LOAD, WORK.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
@@ -21,7 +22,10 @@ CONNS="${CONNS:-16}"
 N1="${N1:-2000}"
 N2="${N2:-12000}"
 RUNS="${RUNS:-3}"
-DURATION="${DURATION:-5}"
+# Requests per req/s round (h2load's -D with `connection: close` never ends, so rounds count).
+RATE_REQUESTS="${RATE_REQUESTS:-100000}"
+RATE_HANDSHAKES="${RATE_HANDSHAKES:-3000}"
+LOADS="${LOADS:-keepalive handshake}"
 
 echo "building into $WORK..." >&2
 "$VELT" build --release "$HERE/server.velt" -o "$WORK/https-rt" >&2
@@ -83,7 +87,7 @@ load() { # $1 keepalive|handshake, then h2load's arguments; warns about failed r
 
 echo "| load | server | instructions / request | req/s (best of $RUNS) |"
 echo "|---|---|---:|---:|"
-for kind in keepalive handshake; do
+for kind in $LOADS; do
   ipr_rt=0
   ipr_std=0
   best_rt=0
@@ -102,7 +106,8 @@ for kind in keepalive handshake; do
   for _ in $(seq 1 "$RUNS"); do
     for s in rt std; do
       start "$WORK/https-$s" ""
-      rps=$(load "$kind" -D "$DURATION" "https://127.0.0.1:$PORT/plaintext")
+      if [ "$kind" = handshake ]; then count=$RATE_HANDSHAKES; else count=$RATE_REQUESTS; fi
+      rps=$(load "$kind" -n "$count" "https://127.0.0.1:$PORT/plaintext")
       stop
       eval "best=\$best_$s"
       if [ "$rps" -gt "$best" ]; then eval "best_$s=$rps"; fi
