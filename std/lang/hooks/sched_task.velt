@@ -265,7 +265,16 @@ export const E_NOBORROW: usize = 880;
  * task's reference back first (sched_exit.velt).
  */
 export const E_DROPPING: usize = 888;
-export const E_SIZE: usize = 896;
+/**
+ * The fair pass's clock between two reads (sched_loop.velt `fairLook`): reactor turns left before
+ * the next read, turns since the last, and the time of the last.
+ */
+export const E_FAIR_SKIP: usize = 904;
+export const E_FAIR_TURNS: usize = 912;
+export const E_FAIR_AT: usize = 920;
+/** The spread's looks left before its next look at the clock (sched_spread.velt `windowEnd`). */
+export const E_W_SKIP: usize = 928;
+export const E_SIZE: usize = 936;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */

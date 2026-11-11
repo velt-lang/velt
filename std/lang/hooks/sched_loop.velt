@@ -465,12 +465,65 @@ function ioTick(e: usize, b: usize): void {
     }
   }
   m.st32(e + t.E_DISPATCH, 0);
-  turned(e);
+  tickTurned(e);
+}
+
+/** Reactor turns a fair pass's wait goes at most without a look at the clock. */
+const FAIR_SKIP_MAX: usize = 15;
+
+/**
+ * `turned` after an I/O tick's turn: the fair pass's wait reads the clock only when its end may
+ * have come (`fairLook`), and only while both queues hold tasks.
+ */
+@inline
+function tickTurned(e: usize): void {
+  if (m.loadRelaxed(e + t.E_HEAD) === 0) {
+    m.st(e + t.E_FAIR_DUE, 0);
+    m.st(e + t.E_FAIR_SKIP, 0);
+    m.st(e + t.E_FAIR_AT, 0);
+    return;
+  }
+  m.st(e + t.E_FAIR_TURNS, m.ld(e + t.E_FAIR_TURNS) + 1);
+  const skip = m.ld(e + t.E_FAIR_SKIP);
+  if (skip !== 0) {
+    m.st(e + t.E_FAIR_SKIP, skip - 1);
+    return;
+  }
+  if (m.loadRelaxed(e + t.E_IHEAD) === 0) {
+    return;
+  }
+  fairLook(e);
 }
 
 /**
- * After a reactor turn: a fair pass if one is due, timed only while both queues hold tasks (the
- * clock is read then, or for the spread's window: `E_NOW`).
+ * The clock for the fair pass's wait (sched_queue.velt `tick`). While the wait runs, the turns
+ * until the next read are half the time left over the time a turn took since the last read (at
+ * most `FAIR_SKIP_MAX`): the pass starts at most a few turns late, and a turn of long polls
+ * reads the clock each time.
+ */
+@noInline
+function fairLook(e: usize): void {
+  const now = sp.now();
+  const at = m.ld(e + t.E_FAIR_AT);
+  const turns = m.ld(e + t.E_FAIR_TURNS);
+  m.st(e + t.E_NOW, now);
+  m.st(e + t.E_FAIR_AT, now);
+  m.st(e + t.E_FAIR_TURNS, 0);
+  const mode = m.ld32(e + t.E_MODE);
+  q.lock(e, mode);
+  q.tick(e, mode);
+  q.unlock(e, mode);
+  const due = m.ld(e + t.E_FAIR_DUE);
+  if (at !== 0 && turns !== 0 && due > now && now > at) {
+    const per = (now - at) / turns;
+    const skip = per === 0 ? FAIR_SKIP_MAX : (due - now) / 2 / per;
+    m.st(e + t.E_FAIR_SKIP, skip < FAIR_SKIP_MAX ? skip : FAIR_SKIP_MAX);
+  }
+}
+
+/**
+ * After a park's reactor turn: a fair pass if one is due, timed only while both queues hold
+ * tasks (the clock is read then, or for the spread's window: `E_NOW`).
  */
 export function turned(e: usize): void {
   const mode = m.ld32(e + t.E_MODE);

@@ -35,6 +35,8 @@ const SATURATED: usize = 95;
 const HEAVY: usize = 20000;
 /** Task polls between two looks at the spread. */
 export const HELP: usize = 16;
+/** Looks at the spread at most between two reads of the clock while a window runs. */
+const SKIP_MAX: usize = 8;
 /** Input waiting on a worker from which a worker that ran out of work borrows half. */
 const BORROW_MIN: usize = 2;
 /**
@@ -70,10 +72,17 @@ export function slept(e: usize, ns: usize): void {
 function windowEnd(e: usize, nowNs: usize, polls: usize): bool {
   const started = m.ld(e + t.E_W_START);
   const wall = nowNs > started ? nowNs - started : 0;
+  const p0 = m.ld(e + t.E_W_POLLS);
   if (wall < WINDOW) {
+    // The looks until the clock is read again: half of those the window's rest takes at the
+    // polls' pace so far (sleeps count in it, so the estimate errs short), at most `SKIP_MAX`.
+    const ran = polls > p0 ? polls - p0 : 0;
+    if (ran !== 0 && wall !== 0) {
+      const skip = ((WINDOW - wall) * ran) / wall / 2 / HELP;
+      m.st(e + t.E_W_SKIP, skip < SKIP_MAX ? skip : SKIP_MAX);
+    }
     return false;
   }
-  const p0 = m.ld(e + t.E_W_POLLS);
   const ran = polls > p0 + 1 ? polls - p0 : 1;
   const sleptNs = m.ld(e + t.E_W_SLEPT);
   const awake = wall > sleptNs ? wall - sleptNs : 0;
@@ -107,6 +116,11 @@ export function maybeHelp(e: usize, mode: u32): void {
   m.st(e + t.E_WORK, polls);
   m.swap(e + t.E_QUEUED, all);
   saw(e, input, all);
+  const skip = m.ld(e + t.E_W_SKIP);
+  if (skip !== 0) {
+    m.st(e + t.E_W_SKIP, skip - 1);
+    return;
+  }
   if (!windowEnd(e, now(), polls) || all < 2) {
     return;
   }
