@@ -1,0 +1,67 @@
+// A closure that may settle a promise and stays in locals is matched with the calls it reaches:
+// called through the local, through a parameter, or through `?.`, what it is called with
+// crosses. Each case has its own types, so that one crossing does not stand for the others.
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+}
+
+class Direct {
+  constructor(public run: () => Promise<void>) {}
+}
+
+class Passed {
+  constructor(public run: (n: number) => Promise<void>) {}
+}
+
+class Optional {
+  constructor(public run: (s: string) => Promise<void>) {}
+}
+
+function apply<T>(f: (x: T) => void, v: T): void {
+  f(v);
+}
+
+function direct<T>(settle: (x: unknown) => void, v: T): void {
+  const fwd = (x: T) => {
+    settle(x);
+  };
+  fwd(v);
+}
+
+function passed<T>(settle: (x: unknown) => void, v: T): void {
+  const fwd = (x: T) => {
+    settle(x);
+  };
+  apply(fwd, v);
+}
+
+function optional<T>(settle: (x: unknown) => void, v: T): void {
+  const fwd: ((x: T) => void) | undefined = (x: T) => {
+    settle(x);
+  };
+  fwd?.(v);
+}
+
+const a = gen();
+const b = gen();
+const c = gen();
+const { promise, resolve } = Promise.withResolvers<unknown>();
+direct(
+  resolve,
+  new Direct(async () => {
+    console.log((await a.next()).value);
+  }),
+);
+passed(
+  resolve,
+  new Passed(async (n: number) => {
+    console.log((await b.next()).value);
+  }),
+);
+optional(
+  resolve,
+  new Optional(async (s: string) => {
+    console.log((await c.next()).value);
+  }),
+);
+await ((await promise) as Direct).run();

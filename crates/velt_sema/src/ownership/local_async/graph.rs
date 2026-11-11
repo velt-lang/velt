@@ -26,6 +26,8 @@ use crate::hir::{
     StmtKind as S, TyId,
 };
 
+use super::call_sites::{Held, Indirect};
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Node {
     /// The closure literal `def` (its value where it is created).
@@ -37,12 +39,9 @@ pub(super) enum Node {
     Arg(u32, u32),
     /// Argument `1` of the dispatched call numbered `0` (`Graph::dispatched_calls`).
     DArg(u32, u32),
+    /// The function value called by the call through a function value numbered `0`.
+    Callee(u32),
 }
-
-/// A call through a function value: the callee's type, the argument nodes, the call's span, whether
-/// it is in a library (std or a package the program depends on), and the function whose closures
-/// alone the callee may be (a variable of `crate::defined_accessors`), if known.
-pub(super) type Indirect = (TyId, Vec<usize>, Span, bool, Option<DefId>);
 
 /// A dispatched call: the methods it may reach, the argument node at each position after the
 /// receiver, and the call's span and whether it is in a library.
@@ -184,6 +183,8 @@ pub(super) struct Graph {
     pub insts: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
     /// The function creating each closure literal.
     pub parent: FxHashMap<DefId, DefId>,
+    /// Where values go that the edges don't show (`super::call_sites::held_in_locals`).
+    pub held: Held,
     /// Nodes whose values reach a flag's sink directly.
     pub seeds: Vec<(usize, u8, Option<Why>)>,
     /// Values of unknown origin that cross.
@@ -234,7 +235,7 @@ impl Graph {
 /// Where a value goes.
 #[derive(Clone, Copy)]
 enum To {
-    /// Used here (read, compared, called, borrowed): nowhere else.
+    /// Used here (read, compared, called, borrowed, matched): nowhere the graph follows.
     Drop,
     /// Into a node, passed by the call at the span (an argument), if any.
     Node(usize, Option<(Span, bool)>),
@@ -273,6 +274,7 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         w.block(&f.body.block, To::Node(ret, None));
     }
     super::unknown_callees::mark(cx, &mut g);
+    super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
     g
 }
 
@@ -315,7 +317,7 @@ impl Walk<'_, '_> {
     /// Values of node `n` go to `to`.
     fn connect(&mut self, n: usize, to: To) {
         match to {
-            To::Drop => {}
+            To::Drop => self.g.held.escapes.push(n),
             To::Node(m, site) => self.g.srcs[m].push((n, site)),
             To::Flag(f, why) => self.g.seeds.push((n, f, why)),
         }
@@ -556,6 +558,7 @@ impl Walk<'_, '_> {
             // A `ConstArray`'s elements are literals, which flow nowhere (as an `ArrayLit`'s).
             E::FnRef(d, targs) => {
                 self.g.fn_values.push((*d, e.ty));
+                self.g.held.referenced.insert(*d);
                 // A generic function used as a value is one more instantiation of it.
                 if !targs.is_empty() {
                     let site = (self.d, targs.clone());
@@ -638,6 +641,7 @@ impl Walk<'_, '_> {
                 }
                 let direct = matches!(&self.cx.defs[g.0 as usize], Some(Def::Fn(gf)) if gf.params.len() >= args.len());
                 self.pass_to_params(Some(*g), args, e.span);
+                *self.g.held.direct.entry(*g).or_insert(true) &= direct;
                 if direct {
                     let n = self.ret_node(*g);
                     self.connect(n, to);
@@ -646,11 +650,14 @@ impl Walk<'_, '_> {
                 }
             }
             Callee::Indirect(f) => {
-                self.value(f, To::Drop);
+                let call = self.g.indirect.len() as u32;
+                // Where the called value comes from, so that a closure that stays in locals is
+                // matched only with the calls it may reach (`super::call_sites`).
+                let callee = self.g.node(Node::Callee(call), f.ty);
+                self.value(f, To::Node(callee, None));
                 // A variable of `Object.defineProperty`'s rewrite holds only closures of this
                 // function, which keep nothing as a function value might.
                 let cell = self.accessor_cell(f);
-                let call = self.g.indirect.len() as u32;
                 let mut nodes = vec![];
                 for (i, a) in args.iter().enumerate() {
                     let n = self.g.node(Node::Arg(call, i as u32), a.ty);
@@ -661,10 +668,14 @@ impl Walk<'_, '_> {
                     }
                     nodes.push(n);
                 }
-                let only = cell.then_some(self.d);
-                self.g
-                    .indirect
-                    .push((f.ty, nodes, e.span, self.library, only));
+                self.g.indirect.push(Indirect {
+                    ty: f.ty,
+                    callee,
+                    args: nodes,
+                    span: e.span,
+                    library: self.library,
+                    only: cell.then_some(self.d),
+                });
                 self.unknown(e, to);
             }
             Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {

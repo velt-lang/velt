@@ -1,0 +1,6 @@
+async_closure_settles_through_reached_calls.velt:52:24: error: an async closure that may run on another thread cannot capture the generator `a`
+async_closure_settles_through_reached_calls.velt:28:3: but it is stored in a `Direct`, which settles a promise here, which another task may await
+async_closure_settles_through_reached_calls.velt:58:24: error: an async closure that may run on another thread cannot capture the generator `b`
+async_closure_settles_through_reached_calls.velt:21:3: but it is stored in a `Passed`, which settles a promise here, which another task may await
+async_closure_settles_through_reached_calls.velt:64:24: error: an async closure that may run on another thread cannot capture the generator `c`
+async_closure_settles_through_reached_calls.velt:42:3: but it is stored in an `Optional`, which settles a promise here, which another task may await

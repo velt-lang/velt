@@ -359,9 +359,16 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
         }
         let sites = g.insts.get(&f).cloned().unwrap_or_default();
         // A generic library function that the program never calls directly
-        // makes no such closure (its methods are called with their type arguments too).
+        // makes no such closure (its methods are called with their type arguments too). Nor
+        // does a generic function of the program that nothing calls directly or holds as a
+        // value (`computed`'s implementation where only its overloads are called, and they are
+        // not): a method may be called through dispatch, which names no type arguments here.
         let library = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_library);
-        if sites.is_empty() && library {
+        // Only where `f` has type parameters of its own: a closure literal placed at several
+        // sites (a struct field's default) may have its type from a generic one and `f` from
+        // another, which names no type parameters.
+        let free = matches!(&cx.defs[f.0 as usize], Some(Def::Fn(fd)) if fd.self_ty.is_none() && fd.generics > 0);
+        if sites.is_empty() && (library || (free && !g.held.referenced.contains(&f))) {
             continue;
         }
         if sites.is_empty() || depth > 4 || out.len() + work.len() > 64 {

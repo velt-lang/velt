@@ -1,0 +1,22 @@
+// Made by a module-level initializer, which the inference does not walk
+// (`async_closure_settles_from_module_init`).
+import { channel } from "velt/sync";
+
+export class Job {
+  constructor(public run: () => Promise<void>) {}
+}
+
+function relay<T>(settle: (x: unknown) => void): (x: T) => void {
+  return (x: T) => {
+    settle(x);
+  };
+}
+
+function sender(): (x: unknown) => void {
+  return (x: unknown) => {
+    void ch.send(x);
+  };
+}
+
+export const ch = channel<unknown>(1);
+export const f = relay<Job>(sender());

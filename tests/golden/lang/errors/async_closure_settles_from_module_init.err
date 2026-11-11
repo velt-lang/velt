@@ -1,0 +1,2 @@
+async_closure_settles_from_module_init.velt:12:24: error: an async closure that may run on another thread cannot capture the generator `chunks`
+_settle_module_init_lib.velt:17:10: but it is stored in a `Job`, which is sent on a channel here

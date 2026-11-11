@@ -1,0 +1,31 @@
+// A closure that may settle a promise, kept in an object field and called through it: what
+// it is called with crosses, though only a local held the closure where it was made.
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+}
+
+class Job {
+  constructor(public run: () => Promise<void>) {}
+}
+
+class Box<T> {
+  f: ((x: T) => void) | null = null;
+}
+
+function keep<T>(b: Box<T>, settle: (x: T) => void): void {
+  const forward = (x: T) => {
+    settle(x);
+  };
+  b.f = forward;
+}
+
+const chunks = gen();
+const { promise, resolve } = Promise.withResolvers<Job>();
+const b = new Box<Job>();
+keep(b, (x) => resolve(x));
+b.f!(
+  new Job(async () => {
+    console.log((await chunks.next()).value);
+  }),
+);
+await (await promise).run();

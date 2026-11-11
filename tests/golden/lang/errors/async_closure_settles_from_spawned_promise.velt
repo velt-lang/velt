@@ -1,0 +1,24 @@
+// A closure that may settle a promise, returned by an async function whose promise is spawned
+// after it started: `spawn` hands back the closure, so what it is called with crosses.
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+}
+
+class Job {
+  constructor(public run: () => Promise<void>) {}
+}
+
+async function make<T>(settle: (x: unknown) => void): Promise<(x: T) => void> {
+  return (x: T) => {
+    settle(x);
+  };
+}
+
+const chunks = gen();
+const { promise, resolve } = Promise.withResolvers<unknown>();
+const p = make<Job>(resolve);
+const f = await spawn(p);
+f(new Job(async () => {
+    console.log((await chunks.next()).value);
+  }));
+await ((await promise) as Job).run();

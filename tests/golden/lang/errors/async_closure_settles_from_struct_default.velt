@@ -1,0 +1,38 @@
+// A closure that may settle a promise, a struct field's default placed both in a generic and in a
+// plain function: its type comes from one, and the other names no type arguments for it.
+import { channel } from "velt/sync";
+
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+}
+
+class Job {
+  constructor(public run: () => Promise<void>) {}
+}
+
+const ch = channel<unknown>(1);
+
+struct Box<T> {
+  cb: (x: T) => void = (x: T) => {
+    void ch.send(x);
+  };
+}
+
+function wrap<U>(): Box<U> {
+  return {};
+}
+
+function helper(): Box<Job> {
+  return {};
+}
+
+const chunks = gen();
+helper().cb(
+  new Job(async () => {
+    console.log((await chunks.next()).value);
+  }),
+);
+for await (const j of ch) {
+  await (j as Job).run();
+  break;
+}
