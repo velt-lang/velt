@@ -50,6 +50,18 @@ impl FnCx<'_, '_> {
     /// cast that would change it is no assertion. `None` for other pairs.
     pub(super) fn cast_refusal_note(&mut self, from: TyId, to: TyId) -> Option<String> {
         let (s, d) = (self.cx.display(from), self.cx.display(to));
+        // A promise (or a union with one) as `any`: a promise has one owner, so no `any`
+        // holds one (`typeof (r as any).then === "function"`, a promise test).
+        if self.cx.dynamic(to).is_some() {
+            let core = self.cx.ty.core(from).unwrap_or(from);
+            let parts = self.cx.union_members(core).unwrap_or_else(|| vec![core]);
+            let promise = |s: &Self, t: TyId| matches!(s.cx.ty.kind(t), TyKind::Promise(..));
+            if parts.iter().any(|t| promise(self, *t)) {
+                return Some(format!(
+                    "a promise has one owner, so an `{d}` can't hold one; test for a promise with `instanceof Promise` instead of reading `.then` through `{d}`"
+                ));
+            }
+        }
         // An interface extending the source's, with members the object has no room for.
         if self.related_ifaces(from, to) {
             let have = self.object_members(from).unwrap_or_default();
@@ -59,8 +71,9 @@ impl FnCx<'_, '_> {
                 .map(|m| format!("`{}`", m.0))
                 .collect();
             if !extra.is_empty() {
+                let base = s.split('<').next().unwrap_or(&s).to_string();
                 return Some(format!(
-                    "`{d}` adds {} to `{s}`: an object keeps the layout it was made with, so one made as a `{s}` has no room for {}; declare {} on `{s}` (optional members are fine) or make the object with {}",
+                    "`{d}` adds {} to `{s}`: an object keeps the layout it was made with, so one made as a `{s}` has no room for {}; declare {} on `{base}` (optional members are fine) or make the object with {}",
                     extra.join(", "),
                     pronoun(extra.len()),
                     pronoun(extra.len()),
