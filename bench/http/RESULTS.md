@@ -279,16 +279,50 @@ Instructions per request (cachegrind, one worker, 2,000 and 12,000 requests on 8
 
 - **/plaintext and /json scale** (113-122k against 58-61k req/s at 4 and 8 workers). Per request
   at one worker they cost the same as base, since the path is the same.
-- **`param` costs 7.5% more** at one worker, on the same runtime path. That is compile time, not
-  run time. velt_opt's inliner has one growth budget for the whole program (the program may
-  double in size, plus 2,000), spent bottom-up over the call graph. The spawn branch's second
-  instance of the connection's state machine adds about 27 functions, enough to use up the
-  budget before the handler's loop gets its turn. So `Map.get` and `roundsFor` stay calls in the
-  handler (the per-function diff: `main` closure#2 39,065 -> 8,112 instructions, `Map.get`
-  0 -> 21,000, `Map.lookup` 0 -> 17,422). Raising `BUDGET_SLACK` (an experiment, not committed)
-  inlines them again. Moving the spawn into a separate accept loop, wrapping `connection`, or
-  passing no handler or `h2` to the spawn does not change it. The fix belongs in velt_opt's
-  budget, so that a program's own hot loops are not starved by code that runs once per
-  connection.
-- With the default rescue, /json is 4.8% above base, from the same inlining effect plus run
-  noise. The `VELT_RESCUE=0` counts are the steadier method.
+
+**Round 3: the spread path is not built in a program with module state.** The table above, from
+the second round, has `param` 7.5% above base, all at compile time. velt_opt's inliner has one
+growth budget for the whole program (the program may double in size, plus 2,000), spent
+bottom-up over the call graph. The spawn branch's second instance of the connection state
+machine (about 27 functions) used it up before the handler's loop got its turn, so `Map.get` and
+`roundsFor` stayed calls in the handler. The per-function diff showed `main` closure#2 at 39,065
+-> 8,112 instructions, with `Map.get` 0 -> 21,000 and `Map.lookup` 0 -> 17,422. Raising
+`BUDGET_SLACK` in an experiment brought the inlining back.
+
+`moduleStateUsed()` is now a condition lowering knows (`const_cond`, and as the whole result of
+a std function without parameters, like a CPU check). `serveHttp` branches on velt/net's
+`spreadsConnections()` (`!moduleStateUsed()`). In a program with module state only
+`acceptAll`, today's accept loop unchanged, is built, and `acceptSpread` does not exist:
+`modlock/server.velt` lowers to 1,054 functions against base's 1,055, with `Map.get` and
+`roundsFor` inlined into the handler again.
+
+Same method, base vs head (main `23ce34f4c`). Instructions per request:
+
+| | /plaintext | /json | module | param |
+|---|---|---|---|---|
+| base, `VELT_RESCUE=0` | 16,482 | 17,339 | 107,946 | 101,901 |
+| head, `VELT_RESCUE=0` | 16,483 | 17,387 | 107,718 | 102,243 |
+| base, default rescue | 16,605 | 17,391 | 107,638 | 102,428 |
+| head, default rescue | 16,793 | 17,130 | 107,345 | 102,493 |
+
+With `VELT_RESCUE=0` every route is within 0.35% of base (the spare workers of the default rescue
+add up to 1.5% either way). The counts are about 10% higher on both sides than in the rounds
+above: this round's builds ran next to the gate and other builds, on another main.
+
+req/s, best of 3 interleaved. The machine was loaded (1-minute load 28-34, other builds on every
+CPU), so every number here is about half of the rounds above. Compare base with head within a
+row only.
+
+| workers | route | base req/s | head req/s |
+|---|---|---|---|
+| 4 | /plaintext | 31,582 | 57,541 |
+| 4 | /json | 31,432 | 52,882 |
+| 4 | module | 15,915 | 16,183 |
+| 4 | param | 14,606 | 14,550 |
+| 8 | /plaintext | 33,733 | 52,321 |
+| 8 | /json | 33,165 | 56,825 |
+| 8 | module | 16,442 | 15,221 |
+| 8 | param | 14,901 | 13,946 |
+
+The stateless routes keep the spread (1.6-1.8x). `module` and `param` run the same code as base,
+and their differences are the load's noise.
