@@ -4,22 +4,19 @@
 // above them. Process-wide, so a handle works on every worker; each entry has its own lock.
 
 import * as tb from "velt/lang/hooks/sched_io_table";
-import { FdTlsConn } from "velt/net/tls/fd_conn";
-import { ServerKey } from "velt/net/tls/server_key";
+import { TlsSession, TlsSessions } from "velt/net/tls/fd_session";
 
 /** A TLS stream's entry. */
-export type Conn = shared<Mutex<FdTlsConn>>;
+export type Conn = shared<Mutex<TlsSession>>;
 
-/** A `listenTls` listener: its socket, credentials and ALPN protocols. */
+/** A `listenTls` listener: its socket, and what it makes of the sockets it accepts. */
 export class TlsListen {
   fd: u64;
-  key: ServerKey;
-  alpn: string[];
+  sessions: TlsSessions;
 
-  constructor(fd: u64, key: ServerKey, alpn: string[]) {
+  constructor(fd: u64, sessions: TlsSessions) {
     this.fd = fd;
-    this.key = key;
-    this.alpn = alpn;
+    this.sessions = sessions;
   }
 }
 
