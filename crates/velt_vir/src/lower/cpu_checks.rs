@@ -71,6 +71,10 @@ impl Cx<'_> {
     fn cpu_check_expr(&mut self, e: &hir::Expr) -> Option<bool> {
         match &e.kind {
             hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::ModuleStateUsed),
+                ..
+            } => Some(self.module_state_used()),
+            hir::ExprKind::Call {
                 callee: hir::Callee::Def(d, targs),
                 args,
             } if args.is_empty() && targs.is_empty() => self.cpu_check(*d),
@@ -87,6 +91,13 @@ impl Cx<'_> {
             }
             _ => None,
         }
+    }
+
+    /// `Intrinsic::ModuleStateUsed`: module state slots, or a function's properties through
+    /// `any` (any_fn_props.rs); either takes the module lock. Known like a CPU check, so a
+    /// branch it rules out is never built (velt/net's `spreadsConnections`, #2744).
+    pub(super) fn module_state_used(&self) -> bool {
+        self.hir.module_state.is_some() || self.boxing.any_writes
     }
 
     /// Whether `symbol` is the check of an extension this build cannot have.

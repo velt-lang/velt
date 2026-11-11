@@ -3,7 +3,7 @@
 // (http1/connection.velt, and HTTP/2 in h2/). Nothing on the request path is module state (#1487).
 
 import { IoError } from "velt/io";
-import { listen, listenTls, TcpListener } from "velt/net";
+import { listen, listenTls, spreadsConnections, TcpListener } from "velt/net";
 import { AbortController, AbortSignal, TaskScope, taskScope } from "velt/task";
 import { drained, joinStop } from "velt/dev";
 import { delay } from "velt/time";
@@ -70,9 +70,38 @@ export async function serveHttp<E>(
   }
   const reload = dev != null;
   const secure = tls != null;
-  const done = spawn(
-    acceptAll(listener, handler, maxHead, maxBody, idle, limits, stopped, reload, h2, secure),
-  );
+  // Spread over the workers only in a program without module state (`spreadsConnections`, a
+  // constant: in one with module state, `acceptSpread` is not even built) and with several
+  // workers to spread over; else every connection is a promise of one task (`acceptAll`).
+  let done: Promise<void>;
+  if (spreadsConnections()) {
+    const workers = listener.workers() as i64;
+    if (workers > 1) {
+      done = spawn(
+        acceptSpread(
+          listener,
+          handler,
+          maxHead,
+          maxBody,
+          idle,
+          limits,
+          stopped,
+          reload,
+          h2,
+          secure,
+          workers,
+        ),
+      );
+    } else {
+      done = spawn(
+        acceptAll(listener, handler, maxHead, maxBody, idle, limits, stopped, reload, h2, secure),
+      );
+    }
+  } else {
+    done = spawn(
+      acceptAll(listener, handler, maxHead, maxBody, idle, limits, stopped, reload, h2, secure),
+    );
+  }
   return new HttpServer(listener.port, (): void => listener.close(), stop, done);
 }
 
@@ -84,18 +113,9 @@ async function closeWhen(stopped: AbortSignal, listener: TcpListener) {
 
 /**
  * Accepts connections until `stopped` (`close()`, or `velt dev`'s stop request with `reload`),
- * each served in one task scope, so this settles only once the last of them finished. Only
- * stopping ends the loop: another failure (out of file descriptors, a connection reset before it
- * was accepted) is waited out, 5 ms doubling up to 1 s, as Go's net/http does.
- *
- * With several workers to spread over (`listener.workers()`), each connection is a task of its
- * own, pinned to them in turn (#2744): it stays on the worker it was given, as in thread-per-core
- * servers, and the connections share every core (unpinned, they would all start on this worker
- * and wait for the runtime to move them: a third less throughput on four workers). With one
- * (one worker, a program with module state, or `VELT_SCHEDULER=std`), each connection is a
- * promise of this task: they take turns on one worker, which costs less per request than a task
- * each (a connection whose next request came in while the others ran reads it without waiting),
- * and in a program with module state never wait for each other on the module lock.
+ * each served on a task of its own in one task scope, so this settles only once the last of them
+ * finished. Only stopping ends the loop: another failure (out of file descriptors, a connection
+ * reset before it was accepted) is waited out, 5 ms doubling up to 1 s, as Go's net/http does.
  */
 async function acceptAll<E>(
   listener: TcpListener,
@@ -112,27 +132,23 @@ async function acceptAll<E>(
   await taskScope(
     async (scope: TaskScope<never>): Promise<void> => {
       let backoff: i64 = 0;
-      const workers = listener.workers() as i64;
-      let next: i64 = 0;
       while (!stopped.aborted) {
         try {
           const conn = await listener.accept();
           backoff = 0;
-          // The scope waits for it: nothing else awaits it.
-          let served: Promise<void>;
-          if (workers > 1) {
-            served = spawn(
-              connection(conn, handler, maxHead, maxBody, idle, limits, stopped, h2, secure),
-              { worker: next },
-            );
-            next = next + 1 == workers ? 0 : next + 1;
-          } else {
-            // Started here and handed to `scope.spawn`, it keeps running on this task.
-            served = guarded(
-              connection(conn, handler, maxHead, maxBody, idle, limits, stopped, h2, secure),
-            );
-          }
-          const task = scope.spawn(served);
+          // The scope waits for it: nothing awaits the handle.
+          const served = connection(
+            conn,
+            handler,
+            maxHead,
+            maxBody,
+            idle,
+            limits,
+            stopped,
+            h2,
+            secure,
+          );
+          const task = scope.spawn(guarded(served));
         } catch (e) {
           if (stopped.aborted || (e instanceof IoError && e.code == "EBADF")) {
             break;
@@ -150,9 +166,62 @@ async function acceptAll<E>(
   }
 }
 
-/** A connection served on the accept loop's task: what it throws ends only that connection. */
+/** A connection's task: what it throws ends only that connection. */
 async function guarded(served: Promise<void>): Promise<void> {
   try {
     await served;
   } catch (e) {}
+}
+
+/**
+ * `acceptAll` for a program that spreads its connections over `workers` workers (#2744): each
+ * connection is a task of its own, pinned to the workers in turn, so it stays on the worker it
+ * was given, as in thread-per-core servers, and the connections share every core. (Started here
+ * and handed to `scope.spawn`, as `acceptAll` does, a connection keeps running on this task;
+ * spawned unpinned, they would all start on this worker and wait for the runtime to move them, a
+ * third less throughput on four workers.)
+ */
+async function acceptSpread<E>(
+  listener: TcpListener,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
+  maxHead: i64,
+  maxBody: i64,
+  idle: i64,
+  limits: Limits,
+  stopped: AbortSignal,
+  reload: bool,
+  h2: H2Options | null,
+  secure: bool,
+  workers: i64,
+): Promise<void> {
+  await taskScope(
+    async (scope: TaskScope<never>): Promise<void> => {
+      let backoff: i64 = 0;
+      let next: i64 = 0;
+      while (!stopped.aborted) {
+        try {
+          const conn = await listener.accept();
+          backoff = 0;
+          // A task from the call; the scope waits for its handle: nothing else awaits it.
+          const served = spawn(
+            connection(conn, handler, maxHead, maxBody, idle, limits, stopped, h2, secure),
+            { worker: next },
+          );
+          next = next + 1 == workers ? 0 : next + 1;
+          const task = scope.spawn(served);
+        } catch (e) {
+          if (stopped.aborted || (e instanceof IoError && e.code == "EBADF")) {
+            break;
+          }
+          backoff = backoff == 0 ? 5 : backoff >= 500 ? 1000 : backoff * 2;
+          await delay(backoff);
+        }
+      }
+    },
+    { cancelOnError: false },
+  );
+  if (reload) {
+    // Every connection finished: the program may stop for the next version.
+    drained();
+  }
 }

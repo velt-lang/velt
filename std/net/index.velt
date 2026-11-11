@@ -20,7 +20,7 @@
 
 export { ByteStream, TryStream } from "velt/net/byte_stream";
 export { connect, connectTls, TlsConnectOptions } from "velt/net/connect";
-export { listen, listenTls, TlsListenOptions } from "velt/net/listen";
+export { listen, listenTls, spreadsConnections, TlsListenOptions } from "velt/net/listen";
 export { streamPair } from "velt/net/pair";
 export { TcpListener } from "velt/net/tcp_listener";
 export { TcpStream } from "velt/net/tcp_stream";

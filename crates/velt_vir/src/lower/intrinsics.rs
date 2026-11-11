@@ -266,9 +266,7 @@ impl FnLower<'_, '_> {
                 Operand::Const(crate::vir::Const::Bool(self.cx.holds_counted(t)), Ty::Bool)
             }
             (I::ModuleStateUsed, []) => {
-                // Slots, or a function's properties through `any` (any_fn_props.rs): either
-                // takes the module lock.
-                let used = self.cx.hir.module_state.is_some() || self.cx.boxing.any_writes;
+                let used = self.cx.module_state_used();
                 Operand::Const(crate::vir::Const::Bool(used), Ty::Bool)
             }
             (I::NeedsDrop, [a]) => {

@@ -3,6 +3,18 @@
 import { unwrapIo } from "velt/native/result";
 import { velt_rt_tcp_listen, velt_rt_tcp_listen_tls, velt_rt_tcp_listener_port } from "#net-tcp";
 import { TcpListener } from "velt/net/tcp_listener";
+import { moduleStateUsed } from "velt/lang/intrinsics/task";
+
+/**
+ * Whether a server in this program may spread its connections over the workers
+ * (`TcpListener.workers()`): false in a program with module state (module-level `let`s, module
+ * constants computed at startup, functions given properties through `any`), whose handlers would
+ * wait for each other on the process-wide module lock, until #2726 replaces it. A constant the
+ * compiler knows: the branch it rules out is not built.
+ */
+export function spreadsConnections(): bool {
+  return !moduleStateUsed();
+}
 
 /** Listens on "host:port" (port 0 picks a free port; read it back from `.port`). */
 export async function listen(addr: string): Promise<TcpListener> {
