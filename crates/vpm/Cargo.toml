@@ -7,6 +7,8 @@ edition.workspace = true
 # The archive extractor (extract.rs): gzip and deflate in Rust (miniz_oxide), and Unicode
 # normalisation for the paths that clash on macOS.
 flate2 = "1.1.10"
+# The PKCE verifier and state of `velt login`'s browser sign-in (login/mod.rs).
+getrandom = "0.2.17"
 icu_normalizer = { version = "2.3.0", default-features = false, features = ["compiled_data"] }
 object = { version = "0.39", default-features = false, features = ["read", "std"] }
 semver = "1.0.28"

@@ -1,6 +1,7 @@
 //! The registry commands: `velt registry serve` (share a registry directory over HTTP, crate
 //! `velt_registry`), `velt registry user` (its users and their tokens), and `velt yank`,
-//! `velt owner` and `velt search` against the current package's registry.
+//! `velt owner` and `velt search` against the current package's registry; `velt logout`, and the
+//! hidden token prompt of `velt login` ([`super::login`]).
 
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -170,44 +171,15 @@ pub fn owner_command(action: &OwnerAction, package: &str) -> Result<(), String> 
     Ok(())
 }
 
-/// `velt login <url>`: read the token from stdin (one line; a prompt when it is a terminal) and
-/// store it for that registry.
-pub fn login_command(url: &str) -> Result<(), String> {
-    use std::io::{BufRead, IsTerminal};
-    let key = vpm::credentials::registry_key(url)?;
-    vpm::credentials::check_transport(&key, "a registry token")?;
-    let stdin = std::io::stdin();
-    let mut token = String::new();
-    let read = if stdin.is_terminal() {
-        eprint!("Token for {key}: ");
-        // The token is not shown while it is typed (or pasted); the guard restores the
-        // terminal on every path.
-        let _quiet = NoEcho::start();
-        let read = stdin.lock().read_line(&mut token);
-        eprintln!();
-        read
-    } else {
-        stdin.lock().read_line(&mut token)
-    };
-    read.map_err(|e| format!("cannot read the token from stdin: {e}"))?;
-    let path = vpm::credentials::default_path()?;
-    vpm::credentials::login(&path, &key, &token)?;
-    style::status(
-        "Saved",
-        &format!("the token for {key} in {}", path.display()),
-    );
-    Ok(())
-}
-
 /// Turns off the terminal's echo of stdin until dropped (nothing when that fails). An interrupt
 /// while the token is typed (Ctrl+C, a closed terminal) restores the echo before the process
 /// ends, so the shell isn't left without it.
-struct NoEcho {
+pub(super) struct NoEcho {
     on: bool,
 }
 
 impl NoEcho {
-    fn start() -> NoEcho {
+    pub(super) fn start() -> NoEcho {
         NoEcho {
             on: no_echo::start(),
         }

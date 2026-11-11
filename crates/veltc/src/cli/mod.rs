@@ -246,8 +246,12 @@ pub enum Command {
     },
     /// `velt search <text>`.
     Search { query: String, json: bool },
-    /// `velt login <registry-url>`: store a token (read from stdin) for that registry.
-    Login { url: String },
+    /// `velt login <registry-url> [--device | --token-stdin]`: sign in (through the browser, or
+    /// with a token read from stdin) and store the token for that registry.
+    Login {
+        url: String,
+        how: registry::LoginHow,
+    },
     /// `velt logout <registry-url>`: forget the stored token of that registry.
     Logout { url: String },
     /// `velt registry owner add|remove <pkg> <user> [--dir <d>]`: an administrator's change.

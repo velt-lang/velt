@@ -500,16 +500,28 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "login",
-        summary: "Store your token for a registry server",
-        usage: &["login <registry-url>"],
-        about: "Reads the token (from `velt registry user add` on the server) from stdin and \
-                stores it in $VELT_HOME/credentials.json, readable only by you. It is sent only \
-                to that registry, and never over plain http:// to another machine. \
-                $VELT_REGISTRY_TOKEN overrides it (for CI).",
-        options: &[],
+        summary: "Sign in to a registry server and store your token",
+        usage: &["login <registry-url> [--device | --token-stdin]"],
+        about: "Opens the registry's sign-in page in your browser and stores the token it hands \
+                back in $VELT_HOME/credentials.json, readable only by you. A registry without \
+                browser sign-in (`velt registry serve`), or stdin that is not a terminal, reads \
+                the token (from `velt registry user add` on the server) from stdin instead. The \
+                token is sent only to that registry, and never over plain http:// to another \
+                machine. $VELT_REGISTRY_TOKEN overrides it (for CI).",
+        options: &[
+            (
+                "--device",
+                "sign in with a code entered in a browser on any machine (no browser here)",
+            ),
+            ("--token-stdin", "read the token from stdin instead of signing in"),
+        ],
         examples: &[
-            ("velt login https://registry.example.com", "paste the token when asked"),
-            ("echo $TOKEN | velt login https://registry.example.com", "in a script"),
+            ("velt login https://registry.example.com", "sign in through the browser"),
+            ("velt login https://registry.example.com --device", "over SSH"),
+            (
+                "echo $TOKEN | velt login https://registry.example.com --token-stdin",
+                "in a script",
+            ),
         ],
     },
     CommandHelp {
