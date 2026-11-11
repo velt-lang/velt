@@ -50,8 +50,21 @@ impl Cx<'_> {
             .flat_map(|s| &s.relocs)
             .find(|(_, c)| matches!(c, Const::Func(f) if self.pseudo_of(*f).is_some()))
         {
+            let name = self.fn_def(self.shapes.insts[&inst].def).name.clone();
+            let entry = match bad.1 {
+                Const::Func(f) => self.pseudo_of(f).map(|(i, k)| {
+                    match self.shapes.insts.get(&i).and_then(|x| x.entries.get(k as usize)) {
+                        Some(super::Entry::Code(super::super::Work::Glue(g, t), _)) => {
+                            format!("{g:?} of `{}`", self.type_key(*t))
+                        }
+                        e => format!("{e:?}"),
+                    }
+                }),
+                _ => None,
+            };
+            let name = format!("{name}; entry {entry:?}");
             ice(format_args!(
-                "a static refers to code at a placeholder type: {bad:?}"
+                "a static refers to code at a placeholder type: {bad:?} (in `{name}`)"
             ));
         }
     }

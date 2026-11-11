@@ -45,7 +45,20 @@ pub(super) const KEY_SAME: &str = "std/lang/map/key::keySame";
 
 /// Functions of the `Map` family kept per type: the key functions themselves, and those writing a
 /// key's text (`${key}`), which needs the type's format code.
-const MAP_PER_TYPE: &[&str] = &[KEY_HASH, KEY_SAME, "::mapKeyNames", "mapNewestKeyDigit"];
+const MAP_PER_TYPE: &[&str] = &[
+    KEY_HASH,
+    KEY_SAME,
+    "::mapKeyNames",
+    "mapNewestKeyDigit",
+    // Its object's descriptor (a static) holds the map type's own code.
+    "::Map.constructor",
+];
+
+/// The first placeholder position of the `Map` family (`pos_base`).
+const MAP_POS: u32 = 1 << 16;
+
+/// The prelude `Map` class.
+const MAP_CLASS: &str = concat!(velt_common::std_module!(prelude_map), "::Map");
 
 /// Placeholder types are `TyKind::Param(SHAPE_BASE + i)`.
 pub(super) const SHAPE_BASE: u32 = 1 << 30;
@@ -126,8 +139,11 @@ pub(super) struct Shapes {
     dicts: FxHashMap<(FuncId, Vec<TyId>), StaticId>,
     /// Memo of `mentions_ph`, by type index: 0 not known yet, 1 no, 2 yes.
     mentions: std::cell::RefCell<Vec<u8>>,
-    /// The types built from placeholders that shape questions were asked about (key.rs).
-    asked: std::cell::RefCell<rustc_hash::FxHashSet<TyId>>,
+    /// The prelude `Map` class, once looked up (`map_agrees`).
+    map_class: Option<Option<DefId>>,
+    /// The types built from placeholders that shape questions were asked about (key.rs), with
+    /// the shared instance being lowered then (`None`: outside one).
+    asked: std::cell::RefCell<rustc_hash::FxHashSet<(Option<FuncId>, TyId)>>,
 }
 
 impl Shapes {
@@ -236,6 +252,9 @@ impl Cx<'_> {
         if let Some(&p) = self.shapes.ph_of.get(&(key.clone(), pos)) {
             let i = self.ph_index(p);
             if !self.shapes.ph[i].members.contains(&t) {
+                if std::env::var_os("VELT_SHAPES_TRACE").is_some() {
+                    eprintln!("join {} at {pos}", self.type_key(t));
+                }
                 self.shapes.ph[i].members.push(t);
             }
             return Some(p);
@@ -293,9 +312,14 @@ impl Cx<'_> {
         {
             return None;
         }
+        if self.map_family(def)
+            && !(targs.iter().all(|&t| self.map_shareable(t)) && self.map_agrees(targs))
+        {
+            return None;
+        }
         let mut phs = Vec::with_capacity(targs.len());
         for (i, &t) in targs.iter().enumerate() {
-            phs.push(self.placeholder(t, i as u32)?);
+            phs.push(self.placeholder(t, self.pos_base(def) + i as u32)?);
         }
         let work = match at {
             Some(at) => Work::Tracked(def, phs, at),
@@ -314,12 +338,109 @@ impl Cx<'_> {
     /// Is `def` one of the functions shared in this step?
     fn shares(&self, def: DefId) -> bool {
         match self.hir.def(def) {
+            velt_sema::hir::Def::Fn(f) => SHARED.contains(&f.name.as_str()) || self.map_family(def),
+            _ => false,
+        }
+    }
+
+    /// Does `Map<targs>` give the answers of the `Map` of the representatives its type
+    /// arguments would share with? Which counted-types sets hold a map type depends on what the
+    /// program does with that map, not on its type arguments' shapes, so a call whose map
+    /// differs keeps its per-type instance. Asked before the type arguments join their shapes,
+    /// which the end-of-pass check then compares (`shapes_close`).
+    fn map_agrees(&mut self, targs: &[TyId]) -> bool {
+        // Only `<K, V>` functions share (positions are each function's own: a one-parameter
+        // helper's `V` would join the shapes of `K`).
+        let [k, v] = targs else {
+            return false;
+        };
+        let Some(map) = self.map_class() else {
+            return true;
+        };
+        let (rk, rv) = (self.peek_rep(*k, MAP_POS), self.peek_rep(*v, MAP_POS + 1));
+        // Interned now if new: the sets are the pass's, so the answers are the end's.
+        let have = self.intern(TyKind::Adt(map, vec![*k, *v]));
+        let want = self.intern(TyKind::Adt(map, vec![rk, rv]));
+        // A type holding a map (one of itself, through a recursive object type) is a `Map`
+        // type built from the placeholder whose answers follow the map's own (`shapes_close`).
+        if [*k, *v].iter().any(|&t| self.holds_map(t, map)) {
+            return false;
+        }
+        // A proxiable map reads its methods as function values, whose tables are its own.
+        if self.proxiable(have) {
+            return false;
+        }
+        let (a, b) = (self.answers(have), self.answers(want));
+        if std::env::var_os("VELT_SHAPES_TRACE").is_some() {
+            eprintln!("map_agrees {} vs {}: {}", self.type_key(have), self.type_key(want), a == b);
+        }
+        a == b
+    }
+
+    /// The first placeholder position of `def`'s family: the `Map` family's shapes are its own
+    /// (positions count each function's type parameters, which mean other things elsewhere).
+    fn pos_base(&self, def: DefId) -> u32 {
+        match self.map_family(def) {
+            true => MAP_POS,
+            false => 0,
+        }
+    }
+
+    /// Does `t` hold a `Map` (in its parts, at any depth)?
+    fn holds_map(&mut self, t: TyId, map: DefId) -> bool {
+        let mut stack = vec![t];
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(x) = stack.pop() {
+            if !seen.insert(x) {
+                continue;
+            }
+            if matches!(self.types.kind(x), TyKind::Adt(d, _) if *d == map) {
+                return true;
+            }
+            let k = self.types.kind(x).clone();
+            stack.extend(parts(&k));
+            if matches!(k, TyKind::Adt(..)) {
+                stack.extend(self.part_types(x));
+            }
+        }
+        false
+    }
+
+    /// The prelude `Map` class (memoized).
+    fn map_class(&mut self) -> Option<DefId> {
+        if let Some(d) = self.shapes.map_class {
+            return d;
+        }
+        let d = self.prelude_def(MAP_CLASS);
+        self.shapes.map_class = Some(d);
+        d
+    }
+
+    /// The representative concrete `t` would have at position `pos`: its shape's, or `t` when
+    /// it would start a shape (nothing is registered).
+    fn peek_rep(&mut self, t: TyId, pos: u32) -> TyId {
+        if let Some(&Some(p)) = self.shapes.ph_for.get(&(t, pos)) {
+            return self.shapes.ph[self.ph_index(p)].rep;
+        }
+        let Some(key) = self.shape_key(t) else {
+            return t;
+        };
+        match self.shapes.ph_of.get(&(key, pos)) {
+            Some(&p) => self.shapes.ph[self.ph_index(p)].rep,
+            None => t,
+        }
+    }
+
+    /// Is `def` a function of the prelude `Map` family shared in step 4?
+    fn map_family(&self, def: DefId) -> bool {
+        match self.hir.def(def) {
             velt_sema::hir::Def::Fn(f) => {
-                SHARED.contains(&f.name.as_str())
-                    || (maps_wanted()
-                        && !MAP_PER_TYPE.iter().any(|n| f.name.contains(n))
-                        && (f.name.starts_with("std/lang/map/")
-                            || f.name.starts_with("std/prelude/map::Map.")))
+                maps_wanted()
+                    // What it throws is per type (`error_ty` of a placeholder has no answer).
+                    && f.throws.is_none()
+                    && !MAP_PER_TYPE.iter().any(|n| f.name.contains(n))
+                    && (f.name.starts_with("std/lang/map/")
+                        || f.name.starts_with("std/prelude/map::Map."))
             }
             _ => false,
         }
@@ -356,13 +477,14 @@ impl Cx<'_> {
             Work::Tracked(d, targs, _) => (d, targs),
             _ => return None,
         };
+        let base = self.pos_base(*d);
         let canonical = targs.iter().enumerate().all(|(i, &t)| {
             self.is_ph(t)
                 && self
                     .shapes
                     .ph_of
                     .iter()
-                    .any(|(k, &p)| p == t && k.1 == i as u32)
+                    .any(|(k, &p)| p == t && k.1 == base + i as u32)
         });
         (!targs.is_empty() && self.shares(*d) && canonical).then(|| (*d, targs.clone()))
     }
@@ -578,7 +700,7 @@ fn work_tys(work: &Work) -> Vec<TyId> {
 }
 
 /// The types a type is built from (one level).
-fn parts(k: &TyKind) -> Vec<TyId> {
+pub(super) fn parts(k: &TyKind) -> Vec<TyId> {
     match k {
         TyKind::Adt(_, ts) | TyKind::Dyn(_, ts) | TyKind::Tuple(ts) | TyKind::Op(_, ts) => {
             ts.clone()
