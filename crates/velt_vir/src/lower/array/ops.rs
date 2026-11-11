@@ -80,7 +80,18 @@ impl FnLower<'_, '_> {
         if caller {
             return self.caller_array_op(i, &args[1..], &arr, aty, ty);
         }
-        self.array_op(i, &args[1..], &arr, aty, ty)
+        // Prototype #2730: a push onto an array held by a marked object marks the element.
+        let owner = match i {
+            I::ArrayPush if args.len() == 2 => self.marked_owner(&args[0]),
+            _ => None,
+        };
+        let r = self.array_op(i, &args[1..], &arr, aty, ty);
+        if let Some(owner) = owner.filter(|_| !self.dead()) {
+            let elem = self.elem_ty(aty);
+            let last = self.last_elem(&arr, elem);
+            self.mark_if_owner_marked(owner, last, elem);
+        }
+        r
     }
 
     /// An array intrinsic on the caller's array in a `read` callback (caller_stores.rs): it

@@ -1,0 +1,50 @@
+// The sessions row of #2730: `server <port>`. A module-level `Map<string, Session>` of objects;
+// each request picks a session (round robin over KEYS), reads it out of the map, awaits
+// (`yieldNow()`, where a database query would be), and then writes its fields. Under #2726
+// option (c) the object read out of written shared state is reachable from several requests on
+// several workers after the await.
+
+import { serve } from "http-server";
+import { args } from "velt/process";
+
+const KEYS = 64;
+
+class Session {
+  id: string;
+  visits: number = 0;
+  last: string = "";
+  constructor(id: string) {
+    this.id = id;
+  }
+}
+
+const sessions = new Map<string, Session>();
+let next = 0;
+
+function pick(): Session {
+  const id = `s${next % KEYS}`;
+  next++;
+  let s = sessions.get(id);
+  if (s == undefined) {
+    const made = new Session(id);
+    sessions.set(id, made);
+    return made;
+  }
+  return s;
+}
+
+async function handle(req: Request): Promise<Response> {
+  const s = pick();
+  await yieldNow();
+  s.visits++;
+  s.last = req.url;
+  return new Response(`${s.id} ${s.visits}`);
+}
+
+async function main() {
+  const argv = args();
+  const port = argv.length > 0 ? parseInt(argv[0], 10) : 8080;
+  const server = await serve({ port: port }, handle);
+  console.log(`listening on http://127.0.0.1:${server.port} (sessions)`);
+  await sleep(1000000000);
+}

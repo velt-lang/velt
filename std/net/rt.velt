@@ -5,7 +5,6 @@
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
-import { moduleStateUsed } from "velt/lang/intrinsics/task";
 import { velt_rt_worker_count } from "velt/task/rt";
 
 export declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
@@ -75,5 +74,5 @@ export declare async function velt_rt_tcp_connect_tls(
  * fewer requests than on one; one until #2726 replaces the module lock.
  */
 export function listenerWorkers(l: u64): u64 {
-  return moduleStateUsed() ? 1 : velt_rt_worker_count();
+  return velt_rt_worker_count();
 }

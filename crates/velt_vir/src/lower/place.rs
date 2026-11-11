@@ -23,6 +23,7 @@ impl FnLower<'_, '_> {
                     self.proxy_guard(base);
                 }
                 let base = self.retained_hop(base, ty);
+                self.marked_access(&base, ty);
                 let p = proj(&base, Proj::Deref(Ty::Agg(obj)));
                 proj(&p, Proj::Field(self.cx.vir_field(ty, index)))
             }
@@ -502,12 +503,23 @@ impl FnLower<'_, '_> {
         };
         let drops = refill.is_none() && self.cx.needs_drop(ty);
         let unstored = v.clone();
+        let stored = p.clone();
         self.write_pinned(
             pin,
             p,
             |this, p| this.store_assigned(place, p, v, ty, shared, drops),
             |this| this.drop_unstored(&unstored, ty),
         );
+        // Prototype #2730: a store into shared state marks what the value reaches.
+        if !self.dead() {
+            if let hir::ExprKind::Global(d) = &place.kind {
+                if self.slot_of(*d).is_some() && self.cx.markable(ty) {
+                    self.mark_value(stored, ty);
+                }
+            } else if let Some(owner) = self.marked_owner(place) {
+                self.mark_if_owner_marked(owner, stored, ty);
+            }
+        }
         unit()
     }
 

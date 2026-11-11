@@ -220,7 +220,11 @@ impl FnLower<'_, '_> {
             let v = lw.detach(v, g.ty);
             if !lw.dead() {
                 let p = lw.slot_in(Operand::Copy(Place::local(state)), i as u32);
-                lw.store(p, v);
+                lw.store(p.clone(), v);
+                // Prototype #2730: what the slot holds is marked.
+                if lw.cx.markable(g.ty) {
+                    lw.mark_value(p, g.ty);
+                }
                 // Slots up to this one may be read from now on.
                 let ready = lw.cx.extern_sym(
                     "velt_rt_module_ready",

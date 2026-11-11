@@ -1,0 +1,8 @@
+import type { Package } from "velt/package";
+
+// The sessions server of #2730 (bench/http/sessions), on the repository's HTTP server package.
+export const pkg: Package = {
+  name: "sessions-bench",
+  version: "0.1.0",
+  dependencies: { "http-server": { path: "../../../packages/http-server" } },
+};

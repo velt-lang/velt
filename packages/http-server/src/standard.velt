@@ -5,6 +5,7 @@
 // `Response` it returns is written through the connection's `HttpResponse`.
 
 import { IoError } from "velt/io";
+import { protoStretchEnd } from "velt/net";
 import { BodyKind, Request, Response, responseParts, serverRequest } from "velt/net/http";
 import { Received } from "./received";
 import { HttpRequest } from "./request";
@@ -43,6 +44,7 @@ export async function serve<E, F>(
     } catch (e) {
       console.error("request handler failed:", e);
     }
+    protoStretchEnd();
     received.release();
     await answer(res, out);
     received.responded();

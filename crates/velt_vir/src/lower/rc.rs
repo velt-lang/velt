@@ -111,6 +111,21 @@ impl FnLower<'_, '_> {
     /// One more reference to the (non-null) counted object `p` of type `ty`. In read mode only
     /// a reader's own objects are counted (velt_rt `read_mode`).
     pub(super) fn retain_of(&mut self, p: Operand, ty: TyId) {
+        if self.cx.markable(ty) {
+            let (q, r) = (p.clone(), p.clone());
+            return self.marked_split(
+                p,
+                |lw| {
+                    let c = lw.count_addr(q);
+                    lw.call_rt(Rt::ProtoRcInc, vec![c], None);
+                },
+                |lw| lw.retain_of_plain(r, ty),
+            );
+        }
+        self.retain_of_plain(p, ty)
+    }
+
+    fn retain_of_plain(&mut self, p: Operand, ty: TyId) {
         if !self.cx.lock_counted(ty) {
             return self.retain(p);
         }
@@ -133,6 +148,49 @@ impl FnLower<'_, '_> {
     /// [`release_as`](Self::release_as) of an object of type `ty`. In read mode an object the
     /// reader did not make is never released (it was never counted).
     pub(super) fn release_of(
+        &mut self,
+        p: Operand,
+        ty: TyId,
+        weak: bool,
+        last: impl FnOnce(&mut Self),
+    ) {
+        if self.cx.markable(ty) {
+            // Prototype #2730: a marked object's count goes down atomically, never with a lock.
+            let gone = self.temp(Ty::U8);
+            self.assign(Place::local(gone), Rvalue::Use(cint(0, Ty::U8)));
+            let (q, r) = (p.clone(), p.clone());
+            self.marked_split(
+                p,
+                |lw| {
+                    let c = lw.count_addr(q);
+                    lw.call_rt(Rt::ProtoRcDec, vec![c], Some(Place::local(gone)));
+                },
+                |lw| {
+                    lw.release_of_plain(r, ty, weak, |lw| {
+                        lw.assign(Place::local(gone), Rvalue::Use(cint(1, Ty::U8)));
+                    })
+                },
+            );
+            let g = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(
+                    BinOp::Ne,
+                    Operand::Copy(Place::local(gone)),
+                    cint(0, Ty::U8),
+                ),
+            );
+            let (last_bb, join) = (self.new_block(), self.new_block());
+            self.branch(g, last_bb, join);
+            self.switch_to(last_bb);
+            last(self);
+            self.goto(join);
+            self.switch_to(join);
+            return;
+        }
+        self.release_of_plain(p, ty, weak, last)
+    }
+
+    fn release_of_plain(
         &mut self,
         p: Operand,
         ty: TyId,
@@ -208,6 +266,27 @@ impl FnLower<'_, '_> {
     /// Is the counted object `p` of type `ty` referenced once (a branch condition)? A reader of
     /// an `RwLock` never sees an object it shares as unique.
     pub(super) fn unique_of(&mut self, p: Operand, ty: TyId) -> Operand {
+        if self.cx.markable(ty) {
+            // Prototype #2730: a marked object is never treated as unique.
+            let one = self.temp(Ty::U8);
+            let q = p.clone();
+            self.marked_split(
+                p,
+                |lw| lw.assign(Place::local(one), Rvalue::Use(cint(0, Ty::U8))),
+                |lw| {
+                    let b = lw.unique_of_plain(q, ty);
+                    lw.assign(Place::local(one), Rvalue::Cast(b, Ty::U8));
+                },
+            );
+            return self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(BinOp::Ne, Operand::Copy(Place::local(one)), cint(0, Ty::U8)),
+            );
+        }
+        self.unique_of_plain(p, ty)
+    }
+
+    fn unique_of_plain(&mut self, p: Operand, ty: TyId) -> Operand {
         if !self.cx.lock_counted(ty) {
             let c = self.count_place(p);
             return self.rvalue_temp(

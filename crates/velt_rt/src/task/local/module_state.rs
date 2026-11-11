@@ -108,7 +108,14 @@ pub(super) struct PollState {
 /// this thread holds it already). Whether it took it, for [`end_poll`].
 #[inline]
 pub(super) fn start_poll(touched: bool) -> bool {
-    touched && take_if_free()
+    // Prototype #2730: the lock is taken per stretch (at an access of module state or of a
+    // marked object), never at the start of a later poll. VELT_PROTO_RETAKE=1 restores it.
+    touched && retake() && take_if_free()
+}
+
+fn retake() -> bool {
+    static R: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *R.get_or_init(|| std::env::var_os("VELT_PROTO_RETAKE").is_some())
 }
 
 /// End a poll that took the lock.
@@ -451,6 +458,120 @@ pub unsafe extern "C-unwind" fn velt_rt_module_ready(state: *mut u8, n: u64) {
     if let Some(b) = (*BLOCKS.0.get()).iter_mut().find(|b| b.p == state) {
         b.ready = n;
     }
+}
+
+// ---- Prototype #2730: marked (thread-shared) objects ----
+
+/// The bit of a counted object's count word that marks it thread-shared: reachable from written
+/// shared state. Its count is changed atomically, and its fields are accessed with the lock.
+pub const MARKED: u64 = 1 << 60;
+const COUNT_MASK: u64 = (1 << 60) - 1;
+
+/// A field of a marked object is about to be read or written: take the lock for the stretch
+/// (the rest of the poll), unless this thread holds it.
+#[no_mangle]
+pub extern "C-unwind" fn velt_rt_proto_shared_lock() {
+    // SAFETY: as for an access of module state.
+    unsafe { lock_for_access() }
+}
+
+/// End of the handler's stretch (prototype: called by the HTTP server after the handler's
+/// promise settled, where the connection code touches no module state): give the lock back.
+#[no_mangle]
+pub extern "C-unwind" fn velt_rt_proto_stretch_end() {
+    let tcx = super::CURRENT.with(Cell::get);
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives.
+    if let Some(t) = unsafe { tcx.as_ref() } {
+        if t.module.took.get() {
+            t.module.took.set(false);
+            release(IN_POLL);
+        }
+    }
+}
+
+/// One more reference to the marked object whose count word is at `c`.
+///
+/// # Safety
+/// `c` must be a count word.
+#[no_mangle]
+pub unsafe extern "C-unwind" fn velt_rt_proto_rc_inc(c: *mut u64) {
+    (*c.cast::<std::sync::atomic::AtomicU64>()).fetch_add(1, Ordering::Relaxed);
+}
+
+/// Release one reference to the marked object whose count word is at `c`: 1 when it was the
+/// last (the caller drops and frees it).
+///
+/// # Safety
+/// `c` must be a count word.
+#[no_mangle]
+pub unsafe extern "C-unwind" fn velt_rt_proto_rc_dec(c: *mut u64) -> u8 {
+    let old = (*c.cast::<std::sync::atomic::AtomicU64>()).fetch_sub(1, Ordering::Release);
+    if old & COUNT_MASK == 1 {
+        std::sync::atomic::fence(Ordering::Acquire);
+        1
+    } else {
+        0
+    }
+}
+
+use crate::weak::TraceFn as ProtoTrace;
+
+unsafe extern "C" fn proto_visit(
+    ctx: *mut std::ffi::c_void,
+    child: *mut u8,
+    trace: Option<ProtoTrace>,
+) {
+    let work = &mut *ctx.cast::<Vec<(*mut u8, Option<ProtoTrace>)>>();
+    work.push((child, trace));
+}
+
+/// Mark the counted object `obj` and every counted object it reaches (through `trace`, its
+/// trace glue, or null when it refers to nothing counted), stopping at marked ones (cycles).
+/// An explicit work list: no recursion depth limit.
+///
+/// # Safety
+/// `obj` must be null or a counted object of the type `trace` was built for.
+#[no_mangle]
+pub unsafe extern "C-unwind" fn velt_rt_proto_mark(obj: *mut u8, trace: Option<ProtoTrace>) {
+    if obj.is_null() || *obj.sub(8).cast::<u64>() & MARKED != 0 {
+        return;
+    }
+    let mut work: Vec<(*mut u8, Option<ProtoTrace>)> = vec![(obj, trace)];
+    while let Some((o, t)) = work.pop() {
+        if o.is_null() {
+            continue;
+        }
+        let c = o.sub(8).cast::<u64>();
+        if *c & MARKED != 0 {
+            continue;
+        }
+        *c |= MARKED;
+        if let Some(t) = t {
+            (t.0)(o, proto_visit, (&mut work as *mut Vec<_>).cast());
+        }
+    }
+}
+
+/// Mark what the inline value at `p` refers to, through its `TraceIn` glue.
+///
+/// # Safety
+/// `p` must point to a value of the type `trace_in` was built for.
+#[no_mangle]
+pub unsafe extern "C-unwind" fn velt_rt_proto_mark_in(p: *mut u8, trace_in: ProtoTrace) {
+    let mut work: Vec<(*mut u8, Option<ProtoTrace>)> = vec![];
+    (trace_in.0)(p, proto_visit, (&mut work as *mut Vec<_>).cast());
+    for (o, t) in work {
+        velt_rt_proto_mark(o, t);
+    }
+}
+
+/// Is the counted object `obj` marked (for probes)?
+///
+/// # Safety
+/// `obj` must be a counted object.
+#[no_mangle]
+pub unsafe extern "C-unwind" fn velt_rt_proto_is_marked(obj: *mut u8) -> u8 {
+    u8::from(*obj.sub(8).cast::<u64>() & MARKED != 0)
 }
 
 #[cfg(test)]

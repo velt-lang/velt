@@ -39,7 +39,8 @@ pub(crate) use module_state::{
 };
 pub use module_state::{
     velt_rt_module_block, velt_rt_module_ready, velt_rt_module_state, velt_rt_module_with,
-    velt_rt_module_with_end,
+    velt_rt_module_with_end, velt_rt_proto_is_marked, velt_rt_proto_mark, velt_rt_proto_mark_in,
+    velt_rt_proto_rc_dec, velt_rt_proto_rc_inc, velt_rt_proto_shared_lock, velt_rt_proto_stretch_end,
 };
 pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
 pub(crate) use timers::TimerLeaf;

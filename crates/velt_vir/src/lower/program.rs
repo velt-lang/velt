@@ -90,6 +90,7 @@ impl<'h> Cx<'h> {
             fn_tables: vec![],
             unique_params: vec![],
             declared_unique: vec![],
+            markable: None,
             building: FxHashSet::default(),
             asyncs: FxHashMap::default(),
             by_ref_params: FxHashSet::default(),

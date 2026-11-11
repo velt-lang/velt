@@ -125,6 +125,7 @@ mod layout;
 mod leave_levels;
 mod literal_accessors;
 mod literal_moves;
+mod marked;
 mod match_switch;
 mod matching;
 mod module_state;
@@ -497,6 +498,8 @@ struct Cx<'h> {
     /// (boxing/module_reach.rs); those of the function being declared until it is built.
     unique_params: Vec<(FuncId, u32, TyId)>,
     declared_unique: Vec<(u32, TyId)>,
+    /// Prototype #2730: the types module state can reach (marked.rs).
+    markable: Option<std::rc::Rc<marked::Markable>>,
     /// Functions currently being built (eager builds of poll functions detect recursion).
     building: FxHashSet<FuncId>,
     /// Layout facts of every async function instance whose poll function has been built.

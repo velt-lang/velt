@@ -3,7 +3,6 @@
 import { unwrapIo } from "velt/native/result";
 import { velt_rt_tcp_listen, velt_rt_tcp_listen_tls, velt_rt_tcp_listener_port } from "#net-tcp";
 import { TcpListener } from "velt/net/tcp_listener";
-import { moduleStateUsed } from "velt/lang/intrinsics/task";
 
 /**
  * Whether a server in this program may spread its connections over the workers
@@ -13,7 +12,8 @@ import { moduleStateUsed } from "velt/lang/intrinsics/task";
  * compiler knows: the branch it rules out is not built.
  */
 export function spreadsConnections(): bool {
-  return !moduleStateUsed();
+  // Prototype #2730: spread also with module state (the lock is per stretch).
+  return true;
 }
 
 /** Listens on "host:port" (port 0 picks a free port; read it back from `.port`). */
@@ -39,4 +39,14 @@ export async function listenTls(addr: string, opts: TlsListenOptions): Promise<T
   const alpn = (opts.alpn ?? []).join(",");
   const handle = unwrapIo(await velt_rt_tcp_listen_tls(addr, opts.cert, opts.key, alpn));
   return { port: velt_rt_tcp_listener_port(handle), handle: handle };
+}
+
+declare function velt_rt_proto_stretch_end();
+
+/**
+ * Prototype #2730: the end of a handler's stretch. Gives back the lock the task took for module
+ * state or a marked object (the caller touches neither until its next await).
+ */
+export function protoStretchEnd() {
+  velt_rt_proto_stretch_end();
 }
