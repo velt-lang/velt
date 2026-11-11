@@ -1,0 +1,2 @@
+async_closure_generic_promise_result.velt:24:5: error: this async closure modifies captured `m`, so it must stay on the task that created it
+async_closure_generic_promise_result.velt:35:9: but it is stored in a `Holder<Promise<void>>`, which is sent on a channel here

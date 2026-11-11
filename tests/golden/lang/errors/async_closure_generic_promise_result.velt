@@ -1,0 +1,36 @@
+// A generic helper wraps the program's callback in a closure of its type parameter (`() => T`)
+// and keeps it in an object sent on a channel. With `T = Promise<void>` the wrapper is a
+// `() => Promise<void>`, so the capture-changing async closure the callback calls crosses: a
+// result of a type parameter may be a promise (#2781's review: the generic type must match
+// whatever an instantiation of it can).
+import { channel } from "velt/sync";
+
+type Cb = () => void;
+
+class Holder<T> {
+  cbs: (() => T)[] = [];
+}
+
+function wrapIt<T>(f: Cb, t: T, h: Holder<T>): void {
+  h.cbs.push((): T => {
+    f();
+    return t;
+  });
+}
+
+async function main() {
+  let m = 0;
+  const inner = async (): Promise<void> => {
+    m += 1;
+  };
+  const h = new Holder<Promise<void>>();
+  wrapIt<Promise<void>>(
+    (): void => {
+      const p = inner();
+    },
+    Promise.resolve(),
+    h,
+  );
+  const ch = channel<Holder<Promise<void>>>();
+  await ch.send(h);
+}
