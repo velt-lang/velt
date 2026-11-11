@@ -26,6 +26,7 @@ import { Ptr } from "velt/ffi";
 import { fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
 import * as end from "./sched_end";
 import * as io from "./sched_io";
+import * as tb from "./sched_io_table";
 import * as jn from "./sched_join";
 import * as latch from "./sched_latch";
 import * as loop from "./sched_loop";
@@ -132,6 +133,8 @@ export function schedFinish(code: i32): void {
       loop.turn(e);
     }
   }
+  // Streams dropped unclosed stay open to the end, as the runtime's: their buffers go now.
+  tb.releaseBuffers();
 }
 
 /**

@@ -10,7 +10,9 @@
 // listeners (`connectTls`, `listenTls`: TLS in Velt over a plain stream is `startTls`), `fetch`'s
 // pooled connections (`park`/`unpark`), and every socket on an OS without a reactor
 // (std/lang/hooks/reactor_none.velt). A stream of ours `park`ed for `fetch`'s keep-alive pool is
-// closed instead: the pool is the runtime's.
+// closed instead: the pool is the runtime's. What a runtime stream defers (`writeLater`) waits in
+// Velt and is handed to the runtime's `write` (std/net/rt_later.velt): the runtime sends its own
+// deferred bytes only after polls of its own tasks, which never run on this executor's worker.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
@@ -19,6 +21,7 @@ import * as tb from "velt/lang/hooks/sched_io_table";
 import * as fio from "velt/net/fd_io";
 import * as fs from "velt/net/fd_socket";
 import * as rt from "velt/net/rt";
+import * as lat from "velt/net/rt_later";
 
 declare function velt_rt_signal_aborted(s: u64): bool;
 declare async function velt_rt_signal_wait(s: u64): Promise<void>;
@@ -80,21 +83,21 @@ export async function velt_rt_tcp_read_string(s: u64, max: u64): Promise<IoResul
 
 export async function velt_rt_tcp_write(s: u64, data: string): Promise<IoStatus> {
   if (!tb.ours(s)) {
-    return await rt.velt_rt_tcp_write(s, data);
+    return await lat.writeText(s, data);
   }
   return await fio.writeText(s, data);
 }
 
 export async function velt_rt_tcp_write_bytes(s: u64, data: u8[]): Promise<IoStatus> {
   if (!tb.ours(s)) {
-    return await rt.velt_rt_tcp_write_bytes(s, data);
+    return await lat.writeRange(s, data, 0, data.length as u64);
   }
   return await fio.writeRange(s, data, 0, data.length as u64);
 }
 
 export function velt_rt_tcp_try_write(s: u64, data: u8[]): u64 {
   if (!tb.ours(s)) {
-    return rt.velt_rt_tcp_try_write(s, data);
+    return lat.busy(s) ? 0 : rt.velt_rt_tcp_try_write(s, data);
   }
   return fio.tryWriteRange(s, data, 0, data.length as u64);
 }
@@ -115,7 +118,7 @@ export async function velt_rt_tcp_readable(s: u64): Promise<IoStatus> {
 
 export function velt_rt_tcp_write_later(s: u64, data: string): IoResult<u64> {
   if (!tb.ours(s)) {
-    return rt.velt_rt_tcp_write_later(s, data);
+    return lat.writeLaterText(s, data);
   }
   return fio.writeLaterText(s, data);
 }
@@ -127,14 +130,14 @@ export function velt_rt_tcp_write_later_range(
   end: u64,
 ): IoResult<u64> {
   if (!tb.ours(s)) {
-    return rt.velt_rt_tcp_write_later_range(s, data, start, end);
+    return lat.writeLaterRange(s, data, start, end);
   }
   return fio.writeLaterRange(s, data, start, end);
 }
 
 export async function velt_rt_tcp_drained(s: u64, max: u64): Promise<IoStatus> {
   if (!tb.ours(s)) {
-    return await rt.velt_rt_tcp_drained(s, max);
+    return await lat.drained(s, max);
   }
   return await fio.drained(s, max);
 }
@@ -169,20 +172,20 @@ export async function velt_rt_tcp_write_range(
   end: u64,
 ): Promise<IoStatus> {
   if (!tb.ours(s)) {
-    return await rt.velt_rt_tcp_write_range(s, data, start, end);
+    return await lat.writeRange(s, data, start, end);
   }
   return await fio.writeRange(s, data, start, end);
 }
 
 export function velt_rt_tcp_try_write_range(s: u64, data: u8[], start: u64, end: u64): u64 {
   if (!tb.ours(s)) {
-    return rt.velt_rt_tcp_try_write_range(s, data, start, end);
+    return lat.busy(s) ? 0 : rt.velt_rt_tcp_try_write_range(s, data, start, end);
   }
   return fio.tryWriteRange(s, data, start, end);
 }
 
 export function velt_rt_tcp_shutdown(s: u64): IoStatus {
-  return tb.ours(s) ? fio.shutdown(s) : rt.velt_rt_tcp_shutdown(s);
+  return tb.ours(s) ? fio.shutdown(s) : lat.shutdown(s);
 }
 
 export function velt_rt_tcp_peer_addr(s: u64): string {
@@ -193,7 +196,7 @@ export function velt_rt_tcp_abort(s: u64) {
   if (tb.ours(s)) {
     fio.abort(s);
   } else {
-    rt.velt_rt_tcp_abort(s);
+    lat.abort(s);
   }
 }
 
@@ -201,7 +204,7 @@ export function velt_rt_tcp_close(s: u64) {
   if (tb.ours(s)) {
     fio.close(s);
   } else {
-    rt.velt_rt_tcp_close(s);
+    lat.close(s);
   }
 }
 
@@ -225,7 +228,9 @@ export function velt_rt_tcp_park(s: u64, key: string) {
   if (tb.ours(s)) {
     fio.close(s);
   } else {
-    rt.velt_rt_tcp_park(s, key);
+    if (!lat.release(s)) {
+      rt.velt_rt_tcp_park(s, key);
+    }
   }
 }
 

@@ -37,7 +37,7 @@ declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
 declare c("c") function bcopy$text(src: StrBytes, dst: Ptr<u8>, n: usize): void;
 
 /** The address of byte `at` of `data` (which has it). */
-function addressOf(data: u8[], at: u64): usize {
+export function addressOf(data: u8[], at: u64): usize {
   // SAFETY: a copy of nothing; `data` is borrowed for the call.
   return Ptr.addressOf(unsafe { memset$bytes(data, 0, 0) }) + (at as usize);
 }
