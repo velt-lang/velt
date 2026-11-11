@@ -164,27 +164,6 @@ export function pipeCloexec(fds: usize): i32 {
   return unsafe { pipe2(m.ptr(fds), O_CLOEXEC) };
 }
 
-declare c("c") function dlsym(handle: Ptr<u8>, name: readonly u8[]): Ptr<u8> | null;
-
-/**
- * `"environ"` and its NUL, the name `environ()` asks `dlsym` for. Bytes, not a `CString`: velt/ffi/c_string
- * imports velt/encoding, whose error classes extend the prelude's `Error`, and this module is
- * loaded while sema checks (std/lang/hooks/sched.velt is demanded then, #2161 (a1)), where a
- * module that subclasses a class of another module cannot be served.
- */
-const ENVIRON_NAME: readonly u8[] = [0x65, 0x6e, 0x76, 0x69, 0x72, 0x6f, 0x6e, 0];
-
-/**
- * The process's environment as C has it (`char **environ`, NULL-terminated), for a child that
- * keeps it unchanged; 0 when it can't be found. `declare c` can't read a C variable, so its
- * address comes from `dlsym` (`RTLD_DEFAULT`, a null handle here).
- */
-export function environ(): usize {
-  // SAFETY: a NUL-terminated name; `dlsym` returns the variable's address or NULL.
-  const at = m.addr(unsafe { dlsym(m.ptr(0), ENVIRON_NAME) });
-  return at === 0 ? 0 : m.ld(at);
-}
-
 /** Keeps descriptor `fd` the child's: nothing to do here (no `SPAWN_FLAGS`). */
 export function spawnInherit(fa: usize, fd: i32): void {}
 

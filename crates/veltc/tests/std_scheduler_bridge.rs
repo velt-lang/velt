@@ -69,15 +69,55 @@ fn run(dir: &Path, exe: &Path) -> (i32, String) {
     (o.status.code().unwrap_or(-1), format!("{out}{err}"))
 }
 
-/// Builds and runs `src` both ways: each prints `want` and exits with 0.
-fn same_on_both(name: &str, src: &str, want: &str) {
+/// The std seams, by a part of the mangled names of their module's functions: a std build that
+/// uses one has them, so a test can tell the std path ran rather than the runtime's.
+const FS: &str = "P2fsP9rt__sched";
+const STDIN: &str = "P7processP9rt__sched";
+const DNS: &str = "P3dnsP9rt__sched";
+const UDP: &str = "P3udpP10udp__sched";
+const CHILD: &str = "P5childP12child__sched";
+/// A job run on the blocking pool (`sched_blocking.run`'s closure).
+const POOL: &str = "sched__blockingN3run";
+
+/// Asserts that std build `exe` has the functions of each seam in `marks` (and so went through
+/// them), and the runtime build `rt` none of them.
+fn assert_std_path(name: &str, exe: &Path, rt: Option<&Path>, marks: &[&str]) {
+    let bin = std::fs::read(exe).unwrap();
+    let rt_bin = rt.map(|r| std::fs::read(r).unwrap()).unwrap_or_default();
+    for mark in marks {
+        let has = |b: &[u8]| b.windows(mark.len()).any(|w| w == mark.as_bytes());
+        assert!(
+            has(&bin),
+            "{name}: the std build has no `{mark}`: the std path didn't run"
+        );
+        assert!(!has(&rt_bin), "{name}: the runtime build has `{mark}`");
+    }
+}
+
+/// Builds and runs `src` both ways: each prints `want` and exits with 0, and the std build went
+/// through the seams in `marks`.
+fn same_on_both(name: &str, src: &str, want: &str, marks: &[&str]) {
+    let got = equal_on_both(name, src, marks);
+    assert_eq!(got.as_str(), want, "{name}");
+}
+
+/// Builds and runs `src` both ways (the std build through the seams in `marks`): both exit with
+/// 0 and print the same, which is returned.
+fn equal_on_both(name: &str, src: &str, marks: &[&str]) -> String {
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    for std in [false, true] {
-        let exe = build(dir.path(), name, src, std);
-        let (code, out) = run(dir.path(), &exe);
-        assert_eq!((code, out.as_str()), (0, want), "{name}, std: {std}");
-    }
+    let rt = build(dir.path(), name, src, false);
+    let std = build(dir.path(), name, src, true);
+    assert_std_path(name, &std, Some(&rt), marks);
+    let (rt_code, rt_out) = run(dir.path(), &rt);
+    let (std_code, std_out) = run(dir.path(), &std);
+    assert_eq!(
+        (rt_code, rt_out.as_str()),
+        (0, std_out.as_str()),
+        "{name}: runtime vs std"
+    );
+    assert_eq!(std_code, 0, "{name}, std");
+    std_out
 }
 
 /// Runs `exe` with 4 workers and stdin a pipe the test holds: waits for the first output line,
@@ -187,6 +227,7 @@ async function main() {
 }
 "#,
         "right 64\nentries 64 64\nmissing file throws\ngone true\n",
+        &[FS, POOL],
     );
 }
 
@@ -221,6 +262,9 @@ fn a_pending_stdin_read_keeps_the_process_alive_until_its_line_comes() {
     let dir = test_dir::TestDir::new();
     for std in [false, true] {
         let exe = build(dir.path(), "stdin_wait", &stdin_program(false), std);
+        if std {
+            assert_std_path("stdin_wait", &exe, None, &[STDIN, POOL]);
+        }
         let got = run_with_input(dir.path(), &exe, Some("hello\n"), false);
         assert_eq!(
             got,
@@ -242,6 +286,9 @@ fn a_stdin_read_nobody_waits_for_still_ends_with_its_line() {
     let dir = test_dir::TestDir::new();
     for std in [false, true] {
         let exe = build(dir.path(), "stdin_race", &stdin_program(true), std);
+        if std {
+            assert_std_path("stdin_race", &exe, None, &[STDIN, POOL]);
+        }
         let got = run_with_input(dir.path(), &exe, Some("late\n"), false);
         assert_eq!(
             got,
@@ -270,6 +317,9 @@ async function main() {
 "#;
     for std in [false, true] {
         let exe = build(dir.path(), "stdin_lines", src, std);
+        if std {
+            assert_std_path("stdin_lines", &exe, None, &[STDIN, POOL]);
+        }
         let got = run_with_input(dir.path(), &exe, Some("one\ntwo\nthree\nfour\n"), true);
         assert_eq!(
             got,
@@ -322,6 +372,7 @@ async function main() {
 }
 "#,
         "echoed 200 2290\nlocalhost true\n",
+        &[UDP, DNS, POOL],
     );
 }
 
@@ -352,6 +403,7 @@ async function main() {
 }
 "#,
         "0123456 100 100\n",
+        &[UDP],
     );
 }
 
@@ -526,6 +578,7 @@ async function main(): Promise<i32> {
 }
 "#,
         "exec 24\nPIPED TEXT err 10 exit 10 10\nrunning true\nkilled 143\npath 1\nmissing ENOENT true\n",
+        &[CHILD, STDIN, POOL],
     );
 }
 
@@ -563,8 +616,76 @@ async function main(): Promise<i32> {
 "#,
         true,
     );
+    assert_std_path("silent_pipe", &exe, None, &[CHILD]);
     let got = run_with_input(dir.path(), &exe, None, false);
     assert_eq!(got, (Some(0), "started\ngot go\nexit 0\n".to_string()));
+}
+
+#[test]
+fn a_nul_in_a_childs_working_directory_fails_its_start() {
+    if !has_threads() {
+        return;
+    }
+    // The cwd is a C string too: with a NUL in it the start fails, as the runtime's does, where
+    // the std path used to run the child in this program's directory.
+    let out = equal_on_both(
+        "cwd_nul",
+        r#"import { exec } from "velt/process/child";
+import { argv, args } from "velt/process";
+
+async function main(): Promise<i32> {
+  if (args().length > 0) {
+    console.log("child ran");
+    return 0;
+  }
+  try {
+    const r = await exec(argv()[0].clone(), ["x"], { cwd: "/usr\0x" });
+    console.log(`ran ${r.code} ${r.stdout.trim()}`);
+  } catch (err) {
+    console.log(`throws ${err.code} ${err.message.endsWith(": nul byte found in provided data")}`);
+  }
+  return 0;
+}
+"#,
+        &[CHILD],
+    );
+    assert!(
+        out.starts_with("throws ") && out.ends_with(" true\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn socket_and_name_errors_read_as_the_runtimes() {
+    if !has_threads() {
+        return;
+    }
+    // An IPv4 socket sending to an IPv6 address (EAFNOSUPPORT: the runtime's UNKNOWN, as Rust
+    // maps no kind to it) and a name with a NUL (the message of Rust's C string conversion).
+    let out = equal_on_both(
+        "net_errors",
+        r#"import { bindUdp } from "velt/net/udp";
+import { lookup } from "velt/net/dns";
+
+async function main() {
+  const a = await bindUdp("127.0.0.1:0");
+  try {
+    await a.sendTextTo("hi", "[::1]:9");
+    console.log("sent");
+  } catch (e) {
+    console.log(`send ${e.code}`);
+  }
+  a.close();
+  try {
+    await lookup("a\0b");
+  } catch (e) {
+    console.log(`lookup ${e.code} ${e.message.replace("\0", " ")}`);
+  }
+}
+"#,
+        &[UDP, DNS, POOL],
+    );
+    assert!(out.contains("an unexpected NUL byte"), "{out}");
 }
 
 /// Copies directory `from` into `to` (made), recursively.

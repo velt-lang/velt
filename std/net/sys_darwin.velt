@@ -46,8 +46,7 @@ export function codeOf(e: i32): i32 {
       return 9;
     case 32:
       return 10;
-    case 45:
-    case 47:
+    case 78:
       return 12;
     case 9:
       return 16;

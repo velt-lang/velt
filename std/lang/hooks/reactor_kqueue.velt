@@ -259,18 +259,6 @@ export function pipeCloexec(fds: usize): i32 {
   return 0;
 }
 
-declare c("c") function _NSGetEnviron(): Ptr<u8>;
-
-/**
- * The process's environment as C has it (`char **environ`, NULL-terminated), for a child that
- * keeps it unchanged: macOS gives its address through `_NSGetEnviron` (`declare c` can't read a C
- * variable).
- */
-export function environ(): usize {
-  // SAFETY: `_NSGetEnviron` returns the address of `environ`, a pointer.
-  return m.ld(Ptr.addressOf(unsafe { _NSGetEnviron() }));
-}
-
 /** Keeps descriptor `fd` the child's (`SPAWN_FLAGS` closes the others) in file actions `fa`. */
 export function spawnInherit(fa: usize, fd: i32): void {
   // SAFETY: `fa` is an initialized file-actions object.

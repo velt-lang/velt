@@ -145,9 +145,7 @@ export function reapNow(rec: usize): bool {
   if (m.load(rec + C_STATUS) !== RUNNING) {
     return true;
   }
-  if (m.cas32(rec + C_LOCK, 0, 1) !== 0) {
-    m.spinLock(rec + C_LOCK);
-  }
+  lock(rec);
   if (m.load(rec + C_STATUS) === RUNNING) {
     const st = m.zeroed(16);
     // SAFETY: room for the status `int`.
@@ -162,8 +160,24 @@ export function reapNow(rec: usize): bool {
       m.swap(rec + C_STATUS, LOST);
     }
   }
-  m.store32(rec + C_LOCK, 0);
+  unlock(rec);
   return m.load(rec + C_STATUS) !== RUNNING;
+}
+
+/**
+ * Takes record `rec`'s lock, which `reapNow` holds while it reaps: under it, a child found
+ * running is not reaped, so its process id is still its own (a `kill` can't reach a process
+ * that reused it).
+ */
+export function lock(rec: usize): void {
+  if (m.cas32(rec + C_LOCK, 0, 1) !== 0) {
+    m.spinLock(rec + C_LOCK);
+  }
+}
+
+/** Lets go of record `rec`'s lock (`lock`). */
+export function unlock(rec: usize): void {
+  m.store32(rec + C_LOCK, 0);
 }
 
 /** Waits until the child of `rec` was reaped (by whoever gets there first). */

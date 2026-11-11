@@ -263,9 +263,9 @@ export function start(spec: CommandSpec, modes: u32): Started {
     argv.push(a);
   }
   const cArgv = cArray(argv);
-  // A child that keeps the environment gets C's own (no copy); else a copy with its changes.
-  const inherited = spec.env.length === 0 && !spec.clearEnv ? r.environ() : 0;
-  const cEnv = inherited !== 0 ? inherited : cArray(environment(spec));
+  // Always a copy, made under the runtime's environment lock (`velt_rt_env_all`): C's own
+  // `environ` may be reallocated by another worker's `setEnv` while `posix_spawn` reads it.
+  const cEnv = cArray(environment(spec));
   let file: CString | null = null;
   let devNull: CString | null = null;
   let cwd: CString | null = null;
@@ -278,11 +278,14 @@ export function start(spec: CommandSpec, modes: u32): Started {
   } catch (e) {
     out.error = EINVAL;
   }
-  if (cArgv === 0 || cEnv === 0 || file == null || devNull == null) {
+  // A NUL in any of them (the cwd too: without it the child would run in this directory).
+  if (
+    cArgv === 0 || cEnv === 0 || file == null || devNull == null || (spec.cwd != "" && cwd == null)
+  ) {
     if (cArgv !== 0) {
       freeArray(cArgv);
     }
-    if (cEnv !== 0 && inherited === 0) {
+    if (cEnv !== 0) {
       freeArray(cEnv);
     }
     out.error = EINVAL;
@@ -380,8 +383,6 @@ export function start(spec: CommandSpec, modes: u32): Started {
   m.release(attr, OPAQUE);
   m.release(set, OPAQUE);
   freeArray(cArgv);
-  if (inherited === 0) {
-    freeArray(cEnv);
-  }
+  freeArray(cEnv);
   return out;
 }

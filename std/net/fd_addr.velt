@@ -124,7 +124,10 @@ function lookup(host: string, port: string, passive: bool, numeric: bool): IoRes
 export function addressesOf(host: string): IoResult<string[]> {
   const found = lookup(host, "0", false, false);
   if (found.code !== 0) {
-    return { code: 1, message: `getaddrinfo ENOTFOUND ${host}: ${found.message}`, value: [] };
+    // A NUL in the name: the message of Rust's `lookup_host` (its C string conversion), not the
+    // socket-address one `lookup` gives connect and bind.
+    const why = host.includes("\0") ? "file name contained an unexpected NUL byte" : found.message;
+    return { code: 1, message: `getaddrinfo ENOTFOUND ${host}: ${why}`, value: [] };
   }
   const out: string[] = [];
   let ai = found.value;

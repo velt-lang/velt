@@ -122,8 +122,3 @@ export function pipeCloexec(fds: usize): i32 {
 
 /** Nothing to keep here. */
 export function spawnInherit(fa: usize, fd: i32): void {}
-
-/** No environment to give here: 0. */
-export function environ(): usize {
-  return 0;
-}

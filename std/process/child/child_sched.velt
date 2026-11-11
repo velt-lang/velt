@@ -110,13 +110,16 @@ export function velt_rt_child_kill(c: u64, signal: i32): IoStatus {
     return fs.closed();
   }
   let st = fs.ok();
-  // Not reaped: the process id is still our child's (running, or a zombie).
+  // Not reaped, and not until the lock goes (the reaper takes it to reap): the process id is
+  // still our child's (running, or a zombie), not one the OS gave to another process since.
+  cr.lock(rec);
   if (m.load(rec + cr.C_STATUS) === cr.RUNNING) {
     // SAFETY: plain system call.
     if (unsafe { kill(m.ld32(rec + cr.C_PID) as i32, signal) } !== 0) {
       st = fs.osError(r.errno());
     }
   }
+  cr.unlock(rec);
   cr.release(rec);
   return st;
 }
