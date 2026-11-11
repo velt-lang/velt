@@ -1,0 +1,196 @@
+// velt/lang/hooks (internal): the lists of Node's timer order under the executor in Velt
+// (sched_order.velt, #2649), in the timer block (sched_sleep.velt), as the runtime's
+// (velt_rt task/local/order.rs) and Node's (lib/internal/timers.js): one list of timers per delay
+// in whole milliseconds, in the order they were inserted, each with an expiry (its first timer's
+// start plus the delay) and an id (the next number when it was made or moved); the lists in
+// (expiry, id) order in one chain. The immediates (`setImmediate`, delay 0) have a list of their
+// own, inside the block and never in the chain. A list that runs empty is freed. One worker: the
+// block is plain memory the worker alone changes.
+
+import * as m from "./sched_mem";
+import * as sl from "./sched_sleep";
+
+/**
+ * The block's fields for the order: the chain (first, last list), the immediates' list, the last
+ * timer number, the last list id, the `now` of the timers pass under way (and whether one is),
+ * the limit of the check phase under way (and whether one is), the timer whose turn has come and
+ * is not taken yet, the task that took the last turn (until its poll ends), when the worker must
+ * look again (nanoseconds; 0: no timer waits for a time), the timers queued; then what the last
+ * look found (sched_order_pass.velt).
+ */
+export const O_FIRST: usize = sl.TM_ORDER;
+export const O_LAST: usize = sl.TM_ORDER + 8;
+export const O_IMM: usize = sl.TM_ORDER + 16;
+export const O_SEQ: usize = sl.TM_ORDER + 80;
+export const O_IDS: usize = sl.TM_ORDER + 88;
+export const O_PASS: usize = sl.TM_ORDER + 96;
+export const O_PASS_SET: usize = sl.TM_ORDER + 104;
+export const O_CHECK: usize = sl.TM_ORDER + 112;
+export const O_CHECK_SET: usize = sl.TM_ORDER + 120;
+export const O_GRANTED: usize = sl.TM_ORDER + 128;
+export const O_HOLDER: usize = sl.TM_ORDER + 136;
+export const O_WAKE_AT: usize = sl.TM_ORDER + 144;
+export const O_QUEUED: usize = sl.TM_ORDER + 152;
+export const O_LOOK: usize = sl.TM_ORDER + 160;
+
+/** A list's fields: its delay, expiry, id, first and last timer, links in the chain, timers. */
+export const L_MS: usize = 0;
+export const L_EXPIRY: usize = 8;
+export const L_ID: usize = 16;
+export const L_FIRST: usize = 24;
+export const L_LAST: usize = 32;
+export const L_PREV: usize = 40;
+export const L_NEXT: usize = 48;
+export const L_LIVE: usize = 56;
+export const L_SIZE: usize = 64;
+
+/**
+ * A timer's fields (its handle is its address): its delay, start (whole milliseconds), number,
+ * list (0: not queued), links in it, state, the waker of its turn, when its turn may come at the
+ * earliest (nanoseconds: the whole delay after it was inserted), when its last turn was taken
+ * (nanoseconds, and whether it was).
+ */
+export const H_MS: usize = 0;
+export const H_START: usize = 8;
+export const H_SEQ: usize = 16;
+export const H_LIST: usize = 24;
+export const H_PREV: usize = 32;
+export const H_NEXT: usize = 40;
+export const H_STATE: usize = 48;
+export const H_WAKER: usize = 56;
+export const H_AT: usize = 64;
+export const H_RAN: usize = 72;
+export const H_RAN_SET: usize = 80;
+export const H_SIZE: usize = 88;
+
+/** A timer's states: not queued (new, cleared, or its turn taken); queued; its turn has come. */
+export const IDLE: usize = 0;
+export const QUEUED: usize = 1;
+export const GRANTED: usize = 2;
+
+/** Does list `a` come before list `b` ((expiry, id) order)? */
+export function keyLess(a: usize, b: usize): bool {
+  const ea = m.ld(a + L_EXPIRY);
+  const eb = m.ld(b + L_EXPIRY);
+  return ea < eb || (ea === eb && m.ld(a + L_ID) < m.ld(b + L_ID));
+}
+
+/** The list of delay `ms` (not 0) in block `b`'s chain, or 0. */
+function find(b: usize, ms: usize): usize {
+  let l = m.ld(b + O_FIRST);
+  while (l !== 0 && m.ld(l + L_MS) !== ms) {
+    l = m.ld(l + L_NEXT);
+  }
+  return l;
+}
+
+/** Puts list `l` in block `b`'s chain at its place (found from the end: most lists go last). */
+function chainInsert(b: usize, l: usize): void {
+  let at = m.ld(b + O_LAST);
+  while (at !== 0 && keyLess(l, at)) {
+    at = m.ld(at + L_PREV);
+  }
+  const next = at === 0 ? m.ld(b + O_FIRST) : m.ld(at + L_NEXT);
+  m.st(l + L_PREV, at);
+  m.st(l + L_NEXT, next);
+  if (at === 0) {
+    m.st(b + O_FIRST, l);
+  } else {
+    m.st(at + L_NEXT, l);
+  }
+  if (next === 0) {
+    m.st(b + O_LAST, l);
+  } else {
+    m.st(next + L_PREV, l);
+  }
+}
+
+function chainRemove(b: usize, l: usize): void {
+  const prev = m.ld(l + L_PREV);
+  const next = m.ld(l + L_NEXT);
+  if (prev === 0) {
+    m.st(b + O_FIRST, next);
+  } else {
+    m.st(prev + L_NEXT, next);
+  }
+  if (next === 0) {
+    m.st(b + O_LAST, prev);
+  } else {
+    m.st(next + L_PREV, prev);
+  }
+}
+
+/** List `l` of block `b` waits until `expiry`, with a new id (it moves in the chain). */
+export function rekey(b: usize, l: usize, expiry: usize): void {
+  chainRemove(b, l);
+  const id = m.ld(b + O_IDS) + 1;
+  m.st(b + O_IDS, id);
+  m.st(l + L_EXPIRY, expiry);
+  m.st(l + L_ID, id);
+  chainInsert(b, l);
+}
+
+/**
+ * Inserts timer `h` with delay `ms` (0: an immediate), started at `start` (whole milliseconds),
+ * at the end of its list; a new list's expiry is `start + ms`, its id the next.
+ */
+export function insertAt(b: usize, h: usize, ms: usize, start: usize): void {
+  let l = ms === 0 ? b + O_IMM : find(b, ms);
+  if (l === 0) {
+    l = m.zeroed(L_SIZE);
+    m.st(l + L_MS, ms);
+    const id = m.ld(b + O_IDS) + 1;
+    m.st(b + O_IDS, id);
+    m.st(l + L_EXPIRY, start + ms);
+    m.st(l + L_ID, id);
+    chainInsert(b, l);
+  }
+  const seq = m.ld(b + O_SEQ) + 1;
+  m.st(b + O_SEQ, seq);
+  m.st(h + H_MS, ms);
+  m.st(h + H_START, start);
+  m.st(h + H_SEQ, seq);
+  const last = m.ld(l + L_LAST);
+  m.st(h + H_PREV, last);
+  m.st(h + H_NEXT, 0);
+  if (last === 0) {
+    m.st(l + L_FIRST, h);
+  } else {
+    m.st(last + H_NEXT, h);
+  }
+  m.st(l + L_LAST, h);
+  m.st(l + L_LIVE, m.ld(l + L_LIVE) + 1);
+  m.st(h + H_LIST, l);
+  m.st(h + H_STATE, QUEUED);
+  m.st(b + O_QUEUED, m.ld(b + O_QUEUED) + 1);
+}
+
+/** Takes timer `h` out of its list (a list left empty is freed); false if it was not queued. */
+export function take(b: usize, h: usize): bool {
+  const l = m.ld(h + H_LIST);
+  if (l === 0) {
+    return false;
+  }
+  const prev = m.ld(h + H_PREV);
+  const next = m.ld(h + H_NEXT);
+  if (prev === 0) {
+    m.st(l + L_FIRST, next);
+  } else {
+    m.st(prev + H_NEXT, next);
+  }
+  if (next === 0) {
+    m.st(l + L_LAST, prev);
+  } else {
+    m.st(next + H_PREV, prev);
+  }
+  m.st(h + H_LIST, 0);
+  m.st(h + H_STATE, IDLE);
+  m.st(b + O_QUEUED, m.ld(b + O_QUEUED) - 1);
+  const live = m.ld(l + L_LIVE) - 1;
+  m.st(l + L_LIVE, live);
+  if (live === 0 && l !== b + O_IMM) {
+    chainRemove(b, l);
+    m.release(l, L_SIZE);
+  }
+  return true;
+}

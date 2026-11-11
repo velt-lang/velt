@@ -385,6 +385,13 @@ const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_tla_at),
     velt_common::std_hook!(sched_spawn_fut),
     velt_common::std_hook!(sched_pinned),
+    velt_common::std_hook!(sched_sleep),
+    velt_common::std_hook!(sched_timer_new),
+    velt_common::std_hook!(sched_timer_turn),
+    velt_common::std_hook!(sched_timer_again),
+    velt_common::std_hook!(sched_timer_clear),
+    velt_common::std_hook!(sched_timer_free),
+    velt_common::std_hook!(sched_uncaught_now),
 ];
 
 /// Adds [`SCHED_HOOKS`] to `found` the first time, when the executor in Velt is selected.
