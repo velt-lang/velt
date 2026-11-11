@@ -63,7 +63,9 @@ pub(crate) fn lookup(name: &str) -> Option<*const u8> {
 
 /// The C library functions std declares with `declare c("c")` (velt/fs's file descriptors,
 /// std/fs/fd/posix.velt) and the `errno` accessor lowering calls after them (velt_vir's `c_abi`),
-/// by the symbols they link. Their signatures do not matter here, only their addresses.
+/// by the symbols they link, and the rest of the file functions `declare system function` had
+/// (`fdatasync`, `lseek`), so a program's own `declare c("c")` of them still runs under a fully
+/// static `velt run`. Their signatures do not matter here, only their addresses.
 #[cfg(unix)]
 fn system(name: &str) -> Option<*const u8> {
     mod c {
@@ -83,6 +85,7 @@ fn system(name: &str) -> Option<*const u8> {
             #[cfg(not(target_os = "macos"))]
             pub fn fdatasync(fd: c_int) -> c_int;
             pub fn ftruncate(fd: c_int, len: i64) -> c_int;
+            pub fn lseek(fd: c_int, at: i64, whence: c_int) -> i64;
             pub fn unlink(path: *const c_char) -> c_int;
             pub fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
             pub fn fstat(fd: c_int, st: *mut c_void) -> c_int;
@@ -105,6 +108,7 @@ fn system(name: &str) -> Option<*const u8> {
         #[cfg(not(target_os = "macos"))]
         "fdatasync" => c::fdatasync as *const u8,
         "ftruncate" => c::ftruncate as *const u8,
+        "lseek" => c::lseek as *const u8,
         "unlink" => c::unlink as *const u8,
         "fcntl" => c::fcntl as *const u8,
         "fstat" => c::fstat as *const u8,
@@ -158,8 +162,9 @@ mod tests {
         }
     }
 
-    /// Every C function std's fd API declares on this host, and the `errno` accessor, has an
-    /// address (`velt run` calls them in the JIT, also in a static `velt`).
+    /// Every C function std's fd API declares on this host, the `errno` accessor, and `lseek`
+    /// (a program's own declaration of it worked as a system function) have an address
+    /// (`velt run` calls them in the JIT, also in a static `velt`).
     #[cfg(unix)]
     #[test]
     fn covers_std_s_c_functions() {
@@ -177,6 +182,7 @@ mod tests {
             "pwrite",
             "fsync",
             "ftruncate",
+            "lseek",
             "unlink",
             "fcntl",
             "fstat",
