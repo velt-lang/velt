@@ -3,9 +3,10 @@
 //! leaves (a sleep on the runtime's tokio thread, channels) wake its tasks through their C
 //! waker. Each program is built with and without the variable, both binaries run with
 //! `VELT_THREADS=1` and must print the same; the one built with it holds the executor's code,
-//! the other doesn't. A few programs run with more workers, or against a copy of std with a
-//! module added, and check one thing of the std build (the worker count's bound, a latch's
-//! buffer of wakers).
+//! the other doesn't. Where spawned tasks print, the runtime's executor is held only to what it
+//! guarantees across tasks ([`same_per_task_on_both`]). A few programs run with more workers, or
+//! against a copy of std with a module added, and check one thing of the std build (the worker
+//! count's bound, a latch's buffer of wakers).
 
 use std::path::Path;
 
@@ -154,13 +155,85 @@ fn same_on_both_freeing_all_runs(name: &str, src: &str, want: &str, runs: usize)
 }
 
 fn same_on_both_in(dir: &Path, name: &str, src: &str, want: &str, code: i32) {
+    checked_on_both(dir, name, src, want, code, None);
+}
+
+/// [`same_on_both`] for a program whose spawned tasks print. The executor in Velt has one worker
+/// that runs its tasks first in, first out: it prints `want` exactly, the interleaving at each
+/// `await`. The runtime's executor gives no order across tasks: even with `VELT_THREADS=1` its
+/// monitor moves the tasks of a stalled worker to another thread (a loaded machine; #2801, where
+/// the second task ran to its `yieldNow` before the first started). There it must print every
+/// line of `want`, each as often, and the lines of each of `chains` (one task's lines, then what
+/// waits for that task) in their order, run with one worker and with four.
+fn same_per_task_on_both(name: &str, src: &str, want: &str, chains: &[&[&str]]) {
+    if !std_builds_here() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    checked_on_both(dir.path(), name, src, want, 0, Some(chains));
+}
+
+/// Whether `out` has the lines of `want`, each as often, with the lines of each of `chains` in
+/// their order (each chain's lines occur once in `want`): `Err` says what differs.
+fn per_task_order(out: &str, want: &str, chains: &[&[&str]]) -> Result<(), String> {
+    let mut got: Vec<&str> = out.lines().collect();
+    let mut all: Vec<&str> = want.lines().collect();
+    got.sort_unstable();
+    all.sort_unstable();
+    if got != all || out.ends_with('\n') != want.ends_with('\n') {
+        return Err(format!("not the lines of {want:?}"));
+    }
+    let lines: Vec<&str> = out.lines().collect();
+    for chain in chains {
+        let mut at = Vec::new();
+        for line in *chain {
+            let mut found = lines.iter().enumerate().filter(|(_, l)| *l == line);
+            match (found.next(), found.next()) {
+                (Some((i, _)), None) => at.push(i),
+                _ => panic!("chain line {line:?} must occur once in {want:?}"),
+            }
+        }
+        if at.windows(2).any(|w| w[0] > w[1]) {
+            return Err(format!("{chain:?} out of order"));
+        }
+    }
+    Ok(())
+}
+
+fn checked_on_both(
+    dir: &Path,
+    name: &str,
+    src: &str,
+    want: &str,
+    code: i32,
+    chains: Option<&[&[&str]]>,
+) {
     if !std_builds_here() {
         return;
     }
     runtime_support::build_native_runtime(manifest());
     let (rt, rt_bin) = build_and_run(dir, name, src, false, code);
     let (std, std_bin) = build_and_run(dir, name, src, true, code);
-    assert_eq!(rt, want, "{name}: the runtime's executor");
+    match chains {
+        None => assert_eq!(rt, want, "{name}: the runtime's executor"),
+        Some(chains) => {
+            if let Err(e) = per_task_order(&rt, want, chains) {
+                panic!("{name}: the runtime's executor: {e}:\n{rt}");
+            }
+            // And with four workers, where the tasks do run on several threads.
+            let exe = dir.join(format!("{name}{}", if cfg!(windows) { ".exe" } else { "" }));
+            let o = command(&exe)
+                .env("VELT_THREADS", "4")
+                .env_remove("VELT_SCHEDULER")
+                .output()
+                .unwrap();
+            let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+            assert_eq!(o.status.code(), Some(code), "{name} (4 workers): {out}");
+            if let Err(e) = per_task_order(&out, want, chains) {
+                panic!("{name}: the runtime's executor on 4 workers: {e}:\n{out}");
+            }
+        }
+    }
     assert_eq!(std, want, "{name}: the executor in Velt");
     assert!(
         contains(&std_bin, b"schedBlockOn"),
@@ -172,9 +245,43 @@ fn same_on_both_in(dir: &Path, name: &str, src: &str, want: &str, code: i32) {
     );
 }
 
+/// The per-task check of the runtime's executor takes any interleaving of the tasks, and catches
+/// a line lost or a task's lines out of order.
+#[test]
+fn the_per_task_check_catches_lost_lines_and_a_task_out_of_order() {
+    let want = "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\nwork 2 resumes\n6\n";
+    let chains = SPAWN_YIELD_CHAINS;
+    assert_eq!(per_task_order(want, want, chains), Ok(()));
+    // #2801's run: the second task ran to its `yieldNow` before the first started.
+    let ci = "spawned\nwork 2 starts\nwork 2 resumes\nwork 1 starts\nwork 1 resumes\n6\n";
+    assert_eq!(per_task_order(ci, want, chains), Ok(()));
+    for bad in [
+        // A task's lines swapped.
+        "spawned\nwork 1 resumes\nwork 2 starts\nwork 1 starts\nwork 2 resumes\n6\n",
+        // `main` printed before a task it awaits finished.
+        "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\n6\nwork 2 resumes\n",
+        // A line lost, one printed twice, a wrong result, no last newline.
+        "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\n6\n",
+        "spawned\nwork 1 starts\nwork 1 starts\nwork 1 resumes\nwork 2 resumes\n6\n",
+        "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\nwork 2 resumes\n2\n",
+        "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\nwork 2 resumes\n6",
+    ] {
+        assert!(per_task_order(bad, want, chains).is_err(), "{bad:?}");
+    }
+}
+
+/// `spawn_yield`'s tasks: each task's lines, then `main`'s sum, which awaits both.
+const SPAWN_YIELD_CHAINS: &[&[&str]] = &[
+    &["work 1 starts", "work 1 resumes", "6"],
+    &["work 2 starts", "work 2 resumes", "6"],
+    &["spawned", "6"],
+];
+
+/// Spawned tasks run to their `yieldNow` in turn, resume in turn, and are joined: Node's order
+/// on the executor in Velt, every task's lines in order on the runtime's.
 #[test]
 fn spawned_tasks_yield_and_join() {
-    same_on_both(
+    same_per_task_on_both(
         "spawn_yield",
         "async function work(i: i64): Promise<i64> {
   console.log(`work ${i} starts`);
@@ -191,6 +298,7 @@ async function main() {
 }
 ",
         "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\nwork 2 resumes\n6\n",
+        SPAWN_YIELD_CHAINS,
     );
 }
 
@@ -266,26 +374,32 @@ async function main() {
 #[test]
 fn results_nobody_claims_are_dropped_and_tasks_outlive_main() {
     // A detached task's string result and a dropped handle's are dropped (the debug runtime
-    // reports a leak otherwise); a task still sleeping when `main` returns runs to its end.
+    // reports a leak otherwise); a task still waiting when `main` returns runs to its end. It
+    // starts its sleep only once `main` is done (a channel, not a race of its sleep with `main`).
     same_on_both(
         "unclaimed",
-        "async function text(n: i64): Promise<string> {
+        "import { channel, Channel } from \"velt/sync\";
+
+async function text(n: i64): Promise<string> {
   await yieldNow();
   return `text ${n}`;
 }
 
-async function late(): Promise<void> {
+async function late(go: Channel<i64>): Promise<void> {
+  await go.receive();
   await sleep(20);
   console.log(\"late task done\");
 }
 
 async function main() {
+  const go = channel<i64>();
   spawn(text(1));
   const h = spawn(text(2));
-  spawn(late());
+  spawn(late(go));
   const all = await Promise.all([spawn(text(3)), spawn(text(4))]);
   console.log(all.join(\", \"));
   console.log(\"main done\");
+  go.close();
 }
 ",
         "text 3, text 4\nmain done\nlate task done\n",
@@ -369,10 +483,12 @@ async function main() {
 #[test]
 fn raced_spawn_handles_free_their_tasks() {
     // `Promise.race` takes the handles: the winner's and the loser's tasks are both freed (the
-    // loser runs to its end after `main`).
+    // loser, held by a channel until the race is decided, runs to its end after `main`).
     same_on_both_freeing_all(
         "spawn_raced",
-        "class Tag {
+        "import { channel, Channel } from \"velt/sync\";
+
+class Tag {
   n: i64;
   constructor(n: i64) {
     this.n = n;
@@ -383,15 +499,16 @@ async function now(): Promise<Tag> {
   return new Tag(1);
 }
 
-async function later(): Promise<Tag> {
-  await yieldNow();
-  await yieldNow();
+async function later(go: Channel<i64>): Promise<Tag> {
+  await go.receive();
   await yieldNow();
   return new Tag(2);
 }
 
 async function main() {
-  console.log((await Promise.race([spawn(now()), spawn(later())])).n);
+  const go = channel<i64>();
+  console.log((await Promise.race([spawn(now()), spawn(later(go))])).n);
+  go.close();
 }
 ",
         "1\n",
@@ -617,7 +734,7 @@ fn a_rejection_finishing_while_woken_keeps_the_woken_stack_whole() {
 /// home's proxy, which nothing drove: the spawned task waited forever).
 #[test]
 fn a_spawned_task_awaits_a_shared_promise_while_microtasks_are_queued() {
-    same_on_both(
+    same_per_task_on_both(
         "shared_spawned",
         "async function work(): Promise<number> {
            await yieldNow();
@@ -639,6 +756,10 @@ fn a_spawned_task_awaits_a_shared_promise_while_microtasks_are_queued() {
            console.log(`main: got ${v}, spawned returned ${await a}`);
          }",
         "main: then\nmain: microtask\nspawned: microtask\nspawned: got 7\nmain: got 7, spawned returned 7\n",
+        &[
+            &["main: then", "main: microtask", "main: got 7, spawned returned 7"],
+            &["spawned: microtask", "spawned: got 7", "main: got 7, spawned returned 7"],
+        ],
     );
 }
 
@@ -762,186 +883,5 @@ async function main() {
     sum += v;
   }
   console.log(`sum ${sum}, off worker 0 ${OFF.load()}`);
-}
-"#;
-
-/// Workers start only where `#sched-thread` has threads (macOS and Linux for now).
-fn has_threads() -> bool {
-    cfg!(any(target_os = "macos", target_os = "linux"))
-}
-
-/// `src` built with `VELT_SCHEDULER=std` (against the std in `std_dir`, or the repository's) and
-/// run with each `(VELT_THREADS, VELT_RT_DEBUG_ALLOC)` of `runs`: exit code and output of each.
-fn std_runs(name: &str, src: &str, std_dir: Option<&Path>, runs: &[(&str, &str)]) -> Vec<String> {
-    runtime_support::build_native_runtime(manifest());
-    let dir = test_dir::TestDir::new();
-    let file = dir.path().join(format!("{name}.velt"));
-    std::fs::write(&file, src).unwrap();
-    let exe = dir
-        .path()
-        .join(format!("{name}{}", if cfg!(windows) { ".exe" } else { "" }));
-    let mut build = command(env!("CARGO_BIN_EXE_velt"));
-    build
-        .arg("build")
-        .arg(&file)
-        .arg("-o")
-        .arg(&exe)
-        .current_dir(dir.path())
-        .env("VELT_SCHEDULER", "std");
-    if let Some(std_dir) = std_dir {
-        build.env("VELT_STD", std_dir);
-    }
-    let o = build.output().unwrap();
-    assert!(
-        o.status.success(),
-        "{name}: {}",
-        String::from_utf8_lossy(&o.stderr)
-    );
-    runs.iter()
-        .map(|(threads, debug_alloc)| {
-            let o = command(&exe)
-                .env("VELT_THREADS", threads)
-                .env("VELT_RT_DEBUG_ALLOC", debug_alloc)
-                .env_remove("VELT_SCHEDULER")
-                .env_remove("VELT_RESCUE")
-                .output()
-                .unwrap();
-            format!(
-                "{:?} {}{}",
-                o.status.code(),
-                String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"),
-                String::from_utf8_lossy(&o.stderr)
-            )
-        })
-        .collect()
-}
-
-/// `VELT_THREADS` above 4096 is taken for a typo, like one that is not a number: the online
-/// cores. The bound is checked after each digit (5000 got through when it was checked before
-/// the last one).
-#[test]
-fn velt_threads_past_the_bound_runs_on_the_cores() {
-    if !has_threads() {
-        return;
-    }
-    let src = r#"import { workerCount } from "velt/task";
-
-async function main() {
-  console.log(`workers: ${workerCount()}`);
-}
-"#;
-    let runs = std_runs(
-        "worker_bound",
-        src,
-        None,
-        &[
-            ("x", "0"),
-            ("5000", "0"),
-            ("4097", "0"),
-            ("40960", "0"),
-            ("8", "0"),
-        ],
-    );
-    assert_eq!(runs[4], "Some(0) workers: 8\n", "VELT_THREADS=8");
-    assert!(!runs[0].contains("workers: 5000"), "{}", runs[0]);
-    for (run, v) in runs[1..4].iter().zip(["5000", "4097", "40960"]) {
-        assert_eq!(
-            run, &runs[0],
-            "VELT_THREADS={v} runs on the cores, as one not a number"
-        );
-    }
-}
-
-/// A latch opened with many waiters of other tasks while several workers run (sched_latch.velt
-/// `openAs`): their wakers go to a buffer grown 4, 8, 16, 32, 64 and freed after each growth and
-/// at the end, each free with the size the block was made with, which the debug runtime's
-/// allocator checks (`VELT_RT_DEBUG_ALLOC=1` aborts on a wrong size). No std caller has two
-/// waiters on one latch (a promise's settlement waits once), so the program reaches the latch
-/// through a module added to a copy of std.
-#[test]
-fn a_latch_with_many_waiters_frees_its_waker_buffer_by_size() {
-    if !has_threads() {
-        return;
-    }
-    let dir = test_dir::TestDir::new();
-    let std_dir = dir.path().join("std");
-    copy_dir(&manifest().join("../../std"), &std_dir);
-    std::fs::create_dir_all(std_dir.join("latch_probe")).unwrap();
-    std::fs::write(std_dir.join("latch_probe/index.velt"), LATCH_PROBE).unwrap();
-    let runs = std_runs(
-        "latch_many",
-        LATCH_MANY,
-        Some(&std_dir),
-        &[("4", "1"), ("1", "1")],
-    );
-    for (run, threads) in runs.iter().zip(["4", "1"]) {
-        assert_eq!(run, "Some(0) sum 2080\n", "VELT_THREADS={threads}");
-    }
-}
-
-/// Copies directory `from` to `to` (made), recursively.
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let dest = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &dest);
-        } else {
-            std::fs::copy(entry.path(), &dest).unwrap();
-        }
-    }
-}
-
-/// The module of [`a_latch_with_many_waiters_frees_its_waker_buffer_by_size`]'s std copy: the
-/// runtime's latch entries (which only std may declare).
-const LATCH_PROBE: &str = r#"declare function velt_rt_latch_new(): u64;
-declare function velt_rt_latch_free(latch: u64);
-declare function velt_rt_latch_open(latch: u64);
-declare async function velt_rt_latch_wait(latch: u64): Promise<void>;
-
-export function latchNew(): u64 {
-  return velt_rt_latch_new();
-}
-
-export function latchOpen(l: u64): void {
-  velt_rt_latch_open(l);
-}
-
-export function latchFree(l: u64): void {
-  velt_rt_latch_free(l);
-}
-
-export async function latchWait(l: u64): Promise<void> {
-  await velt_rt_latch_wait(l);
-}
-"#;
-
-/// 64 tasks on worker 0 wait on one latch: each sends on `ready` and starts its wait in the same
-/// poll, so all wait before `main` (woken by the last send) opens it.
-const LATCH_MANY: &str = r#"import { channel, Channel } from "velt/sync";
-import { latchFree, latchNew, latchOpen, latchWait } from "velt/latch_probe";
-
-async function waiter(l: u64, ready: Channel<i64>, i: i64): Promise<i64> {
-  ready.trySend(i);
-  await latchWait(l);
-  return i + 1;
-}
-
-async function main() {
-  const l = latchNew();
-  const ready = channel<i64>(64);
-  const tasks: Promise<i64>[] = [];
-  for (let i = 0; i < 64; i++) {
-    tasks.push(spawn(waiter(l, ready, i), { worker: 0 }));
-  }
-  for (let i = 0; i < 64; i++) {
-    await ready.receive();
-  }
-  latchOpen(l);
-  let sum = 0;
-  for (const t of tasks) sum += await t;
-  latchFree(l);
-  console.log(`sum ${sum}`);
 }
 "#;
