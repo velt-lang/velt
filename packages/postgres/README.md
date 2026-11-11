@@ -190,7 +190,13 @@ pool may open another; a one-statement call's connection goes back once its repl
 back.
 
 A connection idle over 100 ms has its socket looked at before a pool hands it out, so one the server
-closed is replaced; one closed within that time fails its next statement with `"ECONNRESET"`.
+closed is replaced. `pool.connect()` and `pool.transaction` look at every idle connection's socket.
+A one-statement call (`query`, `run`, `batch` …) whose connection the server ended within those
+100 ms, so that its reply is the server's FATAL `"57P01"`, `"57P02"` or `"57P03"` or the connection
+closes before any reply, runs once more on a connection whose socket was looked at, or a new one:
+the session ended before the statement ran, so nothing of it was committed. (A `batch` whose own
+statement ends its session before sending anything, such as a `DO` block that calls
+`pg_terminate_backend(pg_backend_pid())`, looks the same, and runs once more too.)
 
 ## How it works
 

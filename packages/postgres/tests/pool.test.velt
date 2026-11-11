@@ -239,3 +239,51 @@ export async function test_waiters_for_one_connection_each_get_their_turns() {
   assert(closed > 0, "the pool's end reached its waiters");
   assertEq(stuck, 0);
 }
+
+async function backendOf(pool: Pool): Promise<i64> throws PgError {
+  const b: Backend | null = await pool.selectOne("SELECT pg_backend_pid()::int8 AS pid");
+  return b?.pid ?? -1;
+}
+
+// A session ended by the server (`pg_terminate_backend`, a restart, a fail-over) while its
+// connection waited idle, too briefly for the pool to look at its socket: the statement that finds
+// the server's FATAL "57P01" first runs once more, on a new connection.
+export async function test_a_connection_whose_session_ended_while_idle_is_not_used() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const admin = await connect(url);
+  const pool = createPool({ url: url, max: 1 });
+  for (let round = 0; round < 3; round++) {
+    const pid = await backendOf(pool);
+    await admin.execute("SELECT pg_terminate_backend($1::int4)", [pid]);
+    // The server's FATAL is on its way, well within the 100 ms the pool trusts an idle connection.
+    // timing: the termination must reach the socket before the next borrow
+    await sleep(20);
+    const next = await backendOf(pool);
+    assert(next > 0 && next != pid, `round ${round}: ${next} after ${pid}`);
+  }
+  admin.close();
+  pool.end();
+}
+
+// A statement that ends its own session ran: it isn't run again.
+export async function test_a_statement_that_ends_its_session_is_not_run_again() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 1 });
+  const pid = await backendOf(pool);
+  let code = "ok";
+  try {
+    await pool.run("SELECT pg_terminate_backend(pg_backend_pid())");
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "57P01");
+  const next = await backendOf(pool);
+  assert(next > 0 && next != pid, `${next} after ${pid}`);
+  pool.end();
+}

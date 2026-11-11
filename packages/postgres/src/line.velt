@@ -47,6 +47,11 @@ export class Line {
    * home for its next call, so nothing else in line can go on until it ends.
    */
   copyOpen: bool = false;
+  /**
+   * The connection ended before any reply to the request reading came, or with only the server's
+   * word that the session had ended: that request never ran (connection.velt's `neverRan`).
+   */
+  endedUnanswered: bool = false;
   /** The server's transaction status after the last reply. */
   status: u8 = 73;
   /** What failed on this client. */

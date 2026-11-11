@@ -94,7 +94,7 @@ async function idleBecomes(pool: PoolHandle, n: i64) {
 // A statement borrowed a connection and its task went away: it goes back once the reply is read.
 export async function test_a_borrowed_connection_comes_back() {
   const pool = poolOf(fakeUrl(await serve([done("UPDATE 1")])));
-  const conn = await borrow(pool);
+  const conn = await borrow(pool, false);
   const s = conn.with((l) => l.sendSimple(0, "a"));
   await holdAndGo(conn, s);
   await idleBecomes(pool, 1);
@@ -104,7 +104,7 @@ export async function test_a_borrowed_connection_comes_back() {
 // A task in the pool's line goes away before it's handed anything.
 export async function test_a_pool_waiter_that_goes_away_gets_nothing() {
   const pool = poolOf(fakeUrl(await serve([])));
-  const conn = await borrow(pool);
+  const conn = await borrow(pool, false);
   const t = pool.with((p) => p.take());
   assertEq(t.status, TAKE_WAIT);
   giveUpWaiting(pool, t.wait);
@@ -116,7 +116,7 @@ export async function test_a_pool_waiter_that_goes_away_gets_nothing() {
 // A task in the pool's line goes away just after it's handed a connection.
 export async function test_a_pool_waiter_gone_after_its_grant_gives_it_back() {
   const pool = poolOf(fakeUrl(await serve([])));
-  const conn = await borrow(pool);
+  const conn = await borrow(pool, false);
   const t = pool.with((p) => p.take());
   assertEq(t.status, TAKE_WAIT);
   release(pool, conn);
@@ -175,7 +175,7 @@ function waitAtHomeAndGo(home: Channel<Input>) {
 // a transaction, holding locks), and the pool may open another.
 export async function test_a_transaction_whose_task_went_away_closes_its_connection() {
   const pool = poolOf(fakeUrl(await serve([])));
-  const conn = await borrow(pool);
+  const conn = await borrow(pool, false);
   leaveMidTransaction(pool, conn);
   assert(conn.with((l) => l.isLost), "closed");
   assertEq(pool.with((p) => p.idleCount), 0);
@@ -192,7 +192,7 @@ function leaveMidTransaction(pool: PoolHandle, conn: Conn) {
 // closed.
 export async function test_a_connection_back_after_the_pool_ended_is_closed() {
   const pool = poolOf(fakeUrl(await serve([])));
-  const conn = await borrow(pool);
+  const conn = await borrow(pool, false);
   pool.with((p) => p.end());
   assert(pool.with((p) => p.arrived(conn)) == null, "nobody waits");
   assert(conn.with((l) => l.isLost), "closed");
