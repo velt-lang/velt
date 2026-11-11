@@ -1,0 +1,320 @@
+// velt/lang/hooks (internal): `sleep` under the executor in Velt (sched.velt, #2649), and the
+// timer block that it shares with Node's timer order (sched_order.velt), made on the first timer
+// of either kind: a program that never sleeps or sets a timer has none, and its polls never look.
+//
+// A `sleep(ms)` is a heap future (rt_abi_async.md §1) due at its deadline, taken when it is
+// created (nanoseconds of the clock `performance.now()` reads), and numbered then. It resumes in
+// timer order, as the runtime's (velt_rt task/local/timers.rs) and Node's: by deadline, then in
+// the order the timers were created; never just because its deadline passed (#589), so the code
+// after `await sleep(0)` runs after the synchronous code that started it.
+// - Polled the first time, it joins the block's list of pending sleeps, sorted by (deadline,
+//   number); most come in that order, so the place is found from the end.
+// - When the worker looks (its park, or every I/O tick of a busy worker: `expire`), the sleeps
+//   whose deadline passed move, in order, to their task's due list (a circular list whose first
+//   entry is the task's `T_TIMERS`) and the task is woken with flag `TIMED` (and `LOCALS`). Its
+//   next poll fires them one at a time, in order: each resumes its waiter at once (the root, or a
+//   promise of the task) and the task's microtasks run before the next (sched_run.velt
+//   `fireDue`), as Node's timer phase runs them. A waiter that polls several of them (`Promise.all` over sleeps) sees
+//   only those fired so far ready, so they finish in timer order whoever polls them; and a due
+//   sleep polled while it is first on its task's due list fires itself, once every sleep fired
+//   before it was seen and no microtask is queued or running (the runtime's rule: no earlier
+//   timer is still to be seen, so its turn has come), so a join polling it after its waiter's
+//   other leaves sees it in the same poll.
+// - A sleep polled by a waker that is not a task's (a Rust combinator) is fired by waking it.
+// A pending sleep keeps the process alive (sched_end.velt `busy`).
+
+import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+
+/**
+ * The timer block's fields: the pending sleeps (first, last), the last sleep number, the sleeps
+ * fired from a due list whose leaf has not seen it yet; after the order's fields, the sleeps on
+ * due lists (a Node timer's turn waits for them: sched_order.velt `step`).
+ */
+export const TM_FIRST: usize = 0;
+export const TM_LAST: usize = 8;
+export const TM_SEQ: usize = 16;
+export const TM_UNSEEN: usize = 24;
+/** Node's timer order (sched_order.velt) owns the fields from here on. */
+export const TM_ORDER: usize = 32;
+export const TM_DUE: usize = 264;
+export const TM_SIZE: usize = 272;
+
+// A sleep: its deadline (nanoseconds), number, waker, links (the pending list, or its task's due
+// list), state, and the task whose due list holds it.
+const S_DEADLINE: usize = 16;
+const S_SEQ: usize = 24;
+const S_WAKER: usize = 32;
+const S_PREV: usize = 40;
+const S_NEXT: usize = 48;
+const S_STATE: usize = 56;
+const S_TASK: usize = 64;
+const S_SIZE: usize = 72;
+
+// A sleep's states: not polled yet; pending; due (on its task's due list); fired (counted in
+// `TM_UNSEEN` until its leaf sees it); seen.
+const NEW: usize = 0;
+const PENDING: usize = 1;
+const DUE: usize = 2;
+const FIRED: usize = 3;
+const SEEN: usize = 4;
+
+/** The clock timers count by: nanoseconds since the process started (`performance.now()`). */
+export function clock(): u64 {
+  return (performance.now() * 1000000.0) as u64;
+}
+
+/** Executor `e`'s timer block, made on first use. */
+export function block(e: usize): usize {
+  const b = m.ld(e + t.E_TIMERS);
+  if (b !== 0) {
+    return b;
+  }
+  return open(e);
+}
+
+@noInline
+function open(e: usize): usize {
+  const b = m.lastingZeroed(TM_SIZE);
+  m.st(e + t.E_TIMERS, b);
+  return b;
+}
+
+/** `velt_rt_sleep`: a sleep of `ms` milliseconds (negative: 0) from now, a heap future. */
+export function sleep(e: usize, ms: i64): usize {
+  const b = block(e);
+  const f = m.alloc(S_SIZE);
+  m.st(f, fnAddress(sleepPoll));
+  m.st(f + 8, fnAddress(sleepDrop));
+  const d = ms < 0 ? 0 : ms;
+  m.st(f + S_DEADLINE, (clock() + (d as u64) * 1000000) as usize);
+  const seq = m.ld(b + TM_SEQ) + 1;
+  m.st(b + TM_SEQ, seq);
+  m.st(f + S_SEQ, seq);
+  m.st(f + S_WAKER, 0);
+  m.st(f + S_PREV, 0);
+  m.st(f + S_NEXT, 0);
+  m.st(f + S_STATE, NEW);
+  m.st(f + S_TASK, 0);
+  return f;
+}
+
+function sleepPoll(f: usize, cx: usize): u32 {
+  const s = m.ld(f + S_STATE);
+  if (s >= FIRED) {
+    if (s === FIRED) {
+      seen(f);
+    }
+    return 1;
+  }
+  if (s === DUE && firesItself(f)) {
+    unlinkDue(m.ld(f + S_TASK), f);
+    m.st(f + S_STATE, SEEN);
+    return 1;
+  }
+  const w = m.ld(cx + 8);
+  const old = m.ld(f + S_WAKER);
+  if (old !== w) {
+    m.st(f + S_WAKER, m.wakerClone(w));
+    if (old !== 0) {
+      m.wakerDrop(old);
+    }
+  }
+  if (s === NEW) {
+    insert(block(t.exec()), f);
+  }
+  return 0;
+}
+
+function sleepDrop(f: usize): void {
+  const s = m.ld(f + S_STATE);
+  if (s === PENDING) {
+    unlinkPending(block(t.exec()), f);
+  } else if (s === DUE) {
+    unlinkDue(m.ld(f + S_TASK), f);
+  } else if (s === FIRED) {
+    seen(f);
+  }
+  const w = m.ld(f + S_WAKER);
+  if (w !== 0) {
+    m.wakerDrop(w);
+  }
+  m.release(f, S_SIZE);
+}
+
+/** Fired sleep `f` was seen (polled ready, or dropped). */
+function seen(f: usize): void {
+  const b = block(t.exec());
+  m.st(b + TM_UNSEEN, m.ld(b + TM_UNSEEN) - 1);
+  m.st(f + S_STATE, SEEN);
+}
+
+/**
+ * May due sleep `f` fire itself now? It is first on its task's due list, that task is being
+ * polled, every sleep fired before it was seen, and no microtask is queued or running.
+ */
+function firesItself(f: usize): bool {
+  const k = m.ld(f + S_TASK);
+  const e = t.exec();
+  return (
+    m.ld(k + t.T_TIMERS) === f &&
+    m.ld(e + t.E_CURRENT) === k &&
+    m.ld(block(e) + TM_UNSEEN) === 0 &&
+    m.ld32(k + t.T_WORD) === 0 &&
+    m.ld(e + t.E_JOB) === 0
+  );
+}
+
+/** Does sleep `a` come before a sleep due at `d` numbered `seq`? */
+@inline
+function before(a: usize, d: usize, seq: usize): bool {
+  const ad = m.ld(a + S_DEADLINE);
+  return ad < d || (ad === d && m.ld(a + S_SEQ) < seq);
+}
+
+/** Puts sleep `f` among the pending ones of block `b`, in order (its place found from the end). */
+function insert(b: usize, f: usize): void {
+  const d = m.ld(f + S_DEADLINE);
+  const seq = m.ld(f + S_SEQ);
+  let at = m.ld(b + TM_LAST);
+  while (at !== 0 && !before(at, d, seq)) {
+    at = m.ld(at + S_PREV);
+  }
+  // `f` goes after `at` (first when 0).
+  const next = at === 0 ? m.ld(b + TM_FIRST) : m.ld(at + S_NEXT);
+  m.st(f + S_PREV, at);
+  m.st(f + S_NEXT, next);
+  if (at === 0) {
+    m.st(b + TM_FIRST, f);
+  } else {
+    m.st(at + S_NEXT, f);
+  }
+  if (next === 0) {
+    m.st(b + TM_LAST, f);
+  } else {
+    m.st(next + S_PREV, f);
+  }
+  m.st(f + S_STATE, PENDING);
+}
+
+function unlinkPending(b: usize, f: usize): void {
+  const prev = m.ld(f + S_PREV);
+  const next = m.ld(f + S_NEXT);
+  if (prev === 0) {
+    m.st(b + TM_FIRST, next);
+  } else {
+    m.st(prev + S_NEXT, next);
+  }
+  if (next === 0) {
+    m.st(b + TM_LAST, prev);
+  } else {
+    m.st(next + S_PREV, prev);
+  }
+  m.st(f + S_STATE, NEW);
+}
+
+/** Appends sleep `f` to task `k`'s due list (circular: the first entry's `S_PREV` is the last). */
+function pushDue(k: usize, f: usize): void {
+  const first = m.ld(k + t.T_TIMERS);
+  if (first === 0) {
+    m.st(f + S_PREV, f);
+    m.st(f + S_NEXT, f);
+    m.st(k + t.T_TIMERS, f);
+  } else {
+    const last = m.ld(first + S_PREV);
+    m.st(f + S_PREV, last);
+    m.st(f + S_NEXT, first);
+    m.st(last + S_NEXT, f);
+    m.st(first + S_PREV, f);
+  }
+  m.st(f + S_TASK, k);
+  m.st(f + S_STATE, DUE);
+  const b = m.ld(t.exec() + t.E_TIMERS);
+  m.st(b + TM_DUE, m.ld(b + TM_DUE) + 1);
+}
+
+function unlinkDue(k: usize, f: usize): void {
+  const next = m.ld(f + S_NEXT);
+  if (next === f) {
+    m.st(k + t.T_TIMERS, 0);
+  } else {
+    const prev = m.ld(f + S_PREV);
+    m.st(prev + S_NEXT, next);
+    m.st(next + S_PREV, prev);
+    if (m.ld(k + t.T_TIMERS) === f) {
+      m.st(k + t.T_TIMERS, next);
+    }
+  }
+  m.st(f + S_TASK, 0);
+  m.st(f + S_STATE, NEW);
+  const b = m.ld(t.exec() + t.E_TIMERS);
+  m.st(b + TM_DUE, m.ld(b + TM_DUE) - 1);
+}
+
+/** The first sleep on task `k`'s due list, or 0. */
+@inline
+export function firstDue(k: usize): usize {
+  return m.ld(k + t.T_TIMERS);
+}
+
+/** The waker of due sleep `f` (borrowed). */
+@inline
+export function waiter(f: usize): usize {
+  return m.ld(f + S_WAKER);
+}
+
+/**
+ * Fires sleep `f`, first on task `k`'s due list: its waker (the reference it held, which the
+ * caller takes).
+ */
+export function fire(k: usize, f: usize): usize {
+  unlinkDue(k, f);
+  m.st(f + S_STATE, FIRED);
+  const b = block(t.exec());
+  m.st(b + TM_UNSEEN, m.ld(b + TM_UNSEEN) + 1);
+  const w = m.ld(f + S_WAKER);
+  m.st(f + S_WAKER, 0);
+  return w;
+}
+
+/** Are sleeps of block `b` on due lists, not fired yet? */
+@inline
+export function due(b: usize): bool {
+  return m.ld(b + TM_DUE) !== 0;
+}
+
+/** Are sleeps pending in block `b`? */
+@inline
+export function pending(b: usize): bool {
+  return m.ld(b + TM_FIRST) !== 0;
+}
+
+/**
+ * The sleeps of block `b` whose deadline passed by `now` go to their tasks' due lists, in order,
+ * and the tasks are woken (flag `TIMED`); the deadline of the first one left (0: none).
+ */
+export function expire(b: usize, now: u64): u64 {
+  let f = m.ld(b + TM_FIRST);
+  while (f !== 0 && (m.ld(f + S_DEADLINE) as u64) <= now) {
+    unlinkPending(b, f);
+    const w = m.ld(f + S_WAKER);
+    const k = t.taskOf(w);
+    if (k === 0) {
+      // Polled by a waker that is not a task's: fired by waking it.
+      m.st(f + S_STATE, SEEN);
+      m.st(f + S_WAKER, 0);
+      m.wakeOwned(w);
+    } else {
+      pushDue(k, f);
+      // With `LOCALS`, so a poll checks one flag for both (sched_run.velt `run`).
+      t.flags(k, t.TIMED | t.LOCALS, 0);
+      t.wake(k);
+    }
+    f = m.ld(b + TM_FIRST);
+  }
+  if (f === 0) {
+    return 0;
+  }
+  return m.ld(f + S_DEADLINE) as u64;
+}

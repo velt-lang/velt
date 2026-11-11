@@ -7,11 +7,12 @@
 //! (`velt_rt_yield_now`), boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`,
 //! `_start_rejecting`), the microtask step of `await` (`velt_rt_await_tick`, `_ready`), the
 //! prelude's microtasks (`velt_rt_microtask`), the process lifetime (keep-alive references,
-//! a due `unref()`'d timer's question, the top-level `await` waiting now: `velt_rt_tla_at`), and
-//! at the end of `velt_main` the tasks still alive. The choice is made
-//! here, at compile time: a program pays no branch for it when it runs. Everything else (`spawn`
-//! of a promise value, combinators, `new Promise`'s latch, timers' order) still goes to the runtime,
-//! whose leaves wake the Velt executor's tasks through their C waker.
+//! a due `unref()`'d timer's question, the top-level `await` waiting now: `velt_rt_tla_at`),
+//! `sleep` (`velt_rt_sleep`) and the prelude's Node timer order (`velt_rt_timer_new`, `_turn`,
+//! `_again`, `_clear`, `_free`), and at the end of `velt_main` the tasks still alive. The choice
+//! is made here, at compile time: a program pays no branch for it when it runs. Everything else
+//! (pinned spawns, combinators, shared promises) still goes to the runtime, whose leaves wake the
+//! Velt executor's tasks through their C waker.
 
 use super::hook_calls::{self as hooks, ty, HookTy};
 use super::rt::Rt;
@@ -19,7 +20,8 @@ use super::FnLower;
 use crate::vir::{Const, Operand, Place, Rvalue, Ty};
 
 /// The externs std declares whose jobs the executor in Velt does: the prelude's microtasks
-/// (std/prelude/promise.velt) and `new Promise`'s latch (std/lang/promise/settle.velt).
+/// (std/prelude/promise.velt), `new Promise`'s latch (std/lang/promise/settle.velt) and the
+/// prelude's timers (std/prelude/timers.velt).
 pub(super) const EXTERNS: &[&str] = &[
     "velt_rt_microtask",
     "velt_rt_latch_new",
@@ -29,11 +31,17 @@ pub(super) const EXTERNS: &[&str] = &[
     "velt_rt_keep_alive_acquire",
     "velt_rt_keep_alive_release",
     UNREF_DUE,
+    "velt_rt_timer_new",
+    "velt_rt_timer_turn",
+    "velt_rt_timer_again",
+    "velt_rt_timer_clear",
+    "velt_rt_timer_free",
+    "velt_rt_uncaught_now",
 ];
 
 /// The prelude's question of a due `unref()`'d timer (std/prelude/timers.velt, an async extern).
-/// The executor itself asks the runtime the same through a `declare c` of that symbol (not
-/// async), which stays the runtime's.
+/// The executor itself asks the runtime the same through a `declare c` of that symbol, which
+/// stays the runtime's (call.rs routes only runtime declarations).
 pub(super) const UNREF_DUE: &str = "velt_rt_timer_unref_due";
 
 impl FnLower<'_, '_> {
@@ -143,6 +151,7 @@ impl FnLower<'_, '_> {
                 | Rt::AwaitReady
                 | Rt::TlaAt
                 | Rt::SpawnTarget
+                | Rt::Sleep
         ) || !self.std_sched()
         {
             return Err((args, dest));
@@ -199,6 +208,11 @@ impl FnLower<'_, '_> {
                     hooks::sched_pinned(self, ty::I64::arg(w.clone())).emit(self);
                     None
                 }
+                (Rt::Sleep, [ms]) => Some(
+                    hooks::sched_sleep(self, ty::I64::arg(ms.clone()))
+                        .emit(self)
+                        .op(),
+                ),
                 (Rt::TlaAt, [site]) => {
                     hooks::sched_tla_at(self, ty::Str::arg(site.clone())).emit(self);
                     None
@@ -234,9 +248,11 @@ impl FnLower<'_, '_> {
         args: &[velt_sema::hir::Expr],
         ret: velt_sema::hir::TyId,
     ) -> Operand {
-        let arg = |lw: &mut Self| match args {
-            [a] => lw.expr(a),
-            _ => super::ice("a latch call takes the latch"),
+        let ops: Vec<Operand> = args.iter().map(|a| self.expr(a)).collect();
+        let arg = |i: usize| {
+            ops.get(i)
+                .cloned()
+                .unwrap_or_else(|| super::ice("an executor extern with fewer arguments"))
         };
         let fut = match symbol {
             "velt_rt_keep_alive_acquire" => {
@@ -247,25 +263,49 @@ impl FnLower<'_, '_> {
             }
             UNREF_DUE => hooks::sched_unref_due(self).emit(self).op(),
             "velt_rt_microtask" => hooks::sched_microtask(self).emit(self).op(),
-            "velt_rt_latch_wait" => {
-                let l = arg(self);
-                hooks::sched_latch_wait(self, ty::U64::arg(l))
+            "velt_rt_latch_wait" => hooks::sched_latch_wait(self, ty::U64::arg(arg(0)))
+                .emit(self)
+                .op(),
+            "velt_rt_timer_turn" => {
+                let (h, gate) = (arg(0), arg(1));
+                hooks::sched_timer_turn(self, ty::U64::arg(h), ty::U64::arg(gate))
                     .emit(self)
                     .op()
             }
             "velt_rt_latch_new" => return hooks::sched_latch_new(self).emit(self).op(),
             "velt_rt_latch_free" => {
-                let l = arg(self);
-                return hooks::sched_latch_free(self, ty::U64::arg(l))
+                return hooks::sched_latch_free(self, ty::U64::arg(arg(0)))
                     .emit(self)
                     .op();
             }
-            _ => {
-                let l = arg(self);
-                return hooks::sched_latch_open(self, ty::U64::arg(l))
+            "velt_rt_latch_open" => {
+                return hooks::sched_latch_open(self, ty::U64::arg(arg(0)))
                     .emit(self)
                     .op();
             }
+            "velt_rt_timer_new" => {
+                return hooks::sched_timer_new(self, ty::I64::arg(arg(0)))
+                    .emit(self)
+                    .op();
+            }
+            "velt_rt_timer_again" => {
+                let (h, ms) = (arg(0), arg(1));
+                return hooks::sched_timer_again(self, ty::U64::arg(h), ty::I64::arg(ms))
+                    .emit(self)
+                    .op();
+            }
+            "velt_rt_timer_clear" => {
+                return hooks::sched_timer_clear(self, ty::U64::arg(arg(0)))
+                    .emit(self)
+                    .op();
+            }
+            "velt_rt_uncaught_now" => return hooks::sched_uncaught_now(self).emit(self).op(),
+            "velt_rt_timer_free" => {
+                return hooks::sched_timer_free(self, ty::U64::arg(arg(0)))
+                    .emit(self)
+                    .op();
+            }
+            _ => super::ice("an executor extern without a hook"),
         };
         let d = self.temp(Ty::Ptr);
         self.assign(Place::local(d), Rvalue::Cast(fut, Ty::Ptr));
