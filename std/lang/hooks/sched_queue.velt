@@ -7,7 +7,7 @@
 // - A task woken by the task running runs next, from a one-task slot (`pushNext`), as with
 //   tokio's LIFO slot: a chain of request and reply between tasks does not wait behind the whole
 //   queue at each step. At most `NEXT_RUNS` in a row, so two tasks waking each other cannot hold
-//   the worker. Only with other threads at the queues (`pushNext`).
+//   the worker. Only with other threads at the queues (`pushNext`, `popNextOwn`).
 // - The second queue waits only while input never runs out, and not for long: every `TRICKLE`th
 //   task comes from it, and once it has waited `FAIR` a fair pass runs every task it holds. Its
 //   clock is the worker's reactor turns (`E_NOW`, `tick`): the wait counts from the first turn
@@ -15,7 +15,8 @@
 //
 // With more than one thread at the queues (`t.M_SHARED`: other workers borrow input and the
 // monitor rescues a stalled worker's tasks), each queue has a lock (`E_QLOCK`) that its worker
-// takes for each operation and others only try; with one worker and no monitor (`E_MODE` 0),
+// takes for each operation and others only try, except for the slot, which the worker fills and
+// empties with a swap (`pushNext`, `popNextOwn`); with one worker and no monitor (`E_MODE` 0),
 // none is taken, and the second queue is not counted either (`E_RLEN`: what the spread and the
 // monitor read): there it counts tasks spawned not yet run, an estimate (sched_loop.velt
 // `interval`), and a fair pass counts the queue when it starts.
@@ -93,30 +94,75 @@ export function pushIo(e: usize, k: usize): void {
  * holds that slot: `k` then joins the input behind it, so tasks one poll wakes in turn run in
  * turn, as Node runs the reactions of promises settled in turn (#2968; the later wake took the
  * slot, and ran first). Both are marked BATCHED: until their poll ends, a task woken in a batch
- * queues its own wakes behind the input too (sched_task.velt). Only with other threads at the queues (`E_MODE` not 0), where the slot
- * keeps a wake on the waker's worker: one thread queues a woken task at the end of the second
- * queue, in the order of the wakes (sched_task.velt `schedule`). With the slot, 64 callers making
- * requests of 4 owner tasks (bench/async/pingpong_pinned.velt) took a step of each owner per
- * request instead of one per batch (1.71G instructions against 1.34G).
+ * queues its own wakes behind the input too (sched_task.velt). Only with other threads at the
+ * queues (`E_MODE` not 0), where the slot keeps a wake on the waker's worker: one thread queues a
+ * woken task at the end of the second queue, in the order of the wakes (sched_task.velt
+ * `schedule`). With the slot, 64 callers making requests of 4 owner tasks
+ * (bench/async/pingpong_pinned.velt) took a step of each owner per request instead of one per
+ * batch (1.71G instructions against 1.34G).
+ *
+ * From worker `e`'s own thread (`mode`: its `E_MODE`), without the queue lock: only this thread
+ * fills the slot, and another takes its task only with a swap (sched_take.velt `takeHalf`), so a
+ * slot read empty stays empty until this thread fills it. The lock is taken only to queue a task
+ * on the input. `E_QSLOW` is set by this thread alone or under the lock, and only this thread
+ * clears it.
  */
 @inline
-export function pushNext(e: usize, k: usize): void {
-  const before = m.ld(e + t.E_NEXT);
+export function pushNext(e: usize, k: usize, mode: u32): void {
+  const before = m.loadRelaxed(e + t.E_NEXT);
   if (before !== 0) {
+    // (A rescue may have taken `before` meanwhile: its mark is then only an extra wait.)
     m.or32(before + t.T_FLAGS, t.BATCHED);
     m.or32(k + t.T_FLAGS, t.BATCHED);
+    lock(e, mode);
     pushIo(e, k);
+    unlock(e, mode);
     return;
   }
   const cur = m.ld(e + t.E_CURRENT);
   if (cur !== 0 && (m.ld32(cur + t.T_FLAGS) & t.BATCHED) !== 0) {
     // Woken in a batch, the task running sends its own wake behind the batch's others (a caller
     // answered with others reaches its owner after theirs, so the owner takes them in one turn).
+    lock(e, mode);
     pushIo(e, k);
+    unlock(e, mode);
     return;
   }
-  m.st(e + t.E_NEXT, k);
+  m.swap(e + t.E_NEXT, k);
   m.st(e + t.E_QSLOW, 1);
+}
+
+/**
+ * The slot's task, taken by worker `e`'s own thread without the queue lock when `pop` would take
+ * it (0: take the lock and `pop`): no fair pass under way, not fresh (the monitor's watch), and
+ * either fewer than `NEXT_RUNS` in a row or no input it would go behind (`popSlow` moves it to the
+ * input queue and takes it back then: the same counts are left here). Other threads only take
+ * tasks away, so what is read here can only have emptied.
+ */
+@inline
+export function popNextOwn(e: usize): usize {
+  const k = m.loadRelaxed(e + t.E_NEXT);
+  if (k === 0 || m.ld(e + t.E_FAIR_LEFT) !== 0 || t.fresh(k)) {
+    return 0;
+  }
+  const runs = m.ld(e + t.E_NEXT_RUNS);
+  if (runs < NEXT_RUNS) {
+    if (m.swap(e + t.E_NEXT, 0) === 0) {
+      return 0;
+    }
+    m.st(e + t.E_NEXT_RUNS, runs + 1);
+    return k;
+  }
+  if (m.loadRelaxed(e + t.E_IHEAD) !== 0 || m.ld(e + t.E_SINCE_REST) >= TRICKLE) {
+    return 0;
+  }
+  if (m.swap(e + t.E_NEXT, 0) === 0) {
+    return 0;
+  }
+  m.st(e + t.E_NEXT_RUNS, 0);
+  m.st(e + t.E_QSLOW, 0);
+  m.st(e + t.E_SINCE_REST, 0);
+  return k;
 }
 
 /** Takes the first task of the second queue (0: none; `mode` as `pushRest`'s). */
@@ -260,6 +306,18 @@ export function len(e: usize): usize {
 @inline
 export function input(e: usize): usize {
   return m.ld(e + t.E_ILEN) + (m.ld(e + t.E_NEXT) !== 0 ? 1 : 0);
+}
+
+/**
+ * Are worker `e`'s queues empty, read by its own thread without the lock? Only that thread
+ * queues tasks there (other threads use its inbox), and other threads only take them away, so
+ * empty stays empty until it queues one (a task put back by another thread's take was queued).
+ */
+@inline
+export function ownEmpty(e: usize): bool {
+  return (
+    (m.loadRelaxed(e + t.E_HEAD) | m.loadRelaxed(e + t.E_IHEAD) | m.loadRelaxed(e + t.E_NEXT)) === 0
+  );
 }
 
 /** Has worker `e` a task queued (read from any thread: a hint)? */
