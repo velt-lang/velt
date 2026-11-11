@@ -12,30 +12,22 @@ import { noInline } from "velt/lang/intrinsics";
  * as `"a"`).
  */
 export function checkPath(what: string, path: readonly u8[]) {
-  const n = path.length as i64;
-  if (n == 0 || path.indexOf(0) != n - 1) {
+  // A plain loop, not `indexOf` (whose vector search every program opening a file would compile):
+  // a path is short, and this runs once per `open` or `unlink`.
+  const n = path.length as usize;
+  if (n == 0 || path[n - 1] != 0) {
     badPath(what);
+  }
+  for (let i: usize = 0; i + 1 < n; i++) {
+    if (path[i] == 0) {
+      badPath(what);
+    }
   }
 }
 
 @noInline
 function badPath(what: string) {
   panic(`${what}: the path must end with its only 0 byte`);
-}
-
-/**
- * Stops the program unless `start..end` is a range of the `n` elements of an array: C gets the
- * address of element `start` and the length `end - start`, and reads or writes that many.
- */
-export function checkRange(what: string, start: usize, end: usize, n: usize) {
-  if (start > end || end > n) {
-    badRange(what, start, end, n);
-  }
-}
-
-@noInline
-function badRange(what: string, start: usize, end: usize, n: usize) {
-  panic(`${what}: bytes ${start}..${end} are outside the buffer of ${n}`);
 }
 
 /**

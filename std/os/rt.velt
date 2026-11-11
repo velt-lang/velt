@@ -1,6 +1,9 @@
 // velt/os (internal): the runtime functions velt/os calls (rt_abi_async.md §14), and
 // `lastOsError`, the error a C call left.
 
+import { errno } from "velt/ffi/errno";
+import { noInline } from "velt/lang/intrinsics";
+
 export declare function velt_rt_os_platform(): string;
 export declare function velt_rt_os_arch(): string;
 export declare function velt_rt_os_cpu_count(): u64;
@@ -21,4 +24,16 @@ const OS_ERROR = new ThreadLocal<i32>(0);
  */
 export function lastOsError(): i32 {
   return OS_ERROR.get();
+}
+
+/**
+ * Stores the C library's `errno` as it is now into this thread's slot, for `lastOsError()`: for
+ * std code that declares a hot C function without `{ errno: true }` (which stores it after every
+ * call, failed or not) and calls this right after a result that says the call failed, before
+ * anything else runs (std/fs/fd/posix.velt). Out of line: it is the failure path.
+ */
+@noInline
+export function keepOsError() {
+  // SAFETY: only reads this thread's `errno`, which the failed call just left.
+  OS_ERROR.set(unsafe { errno() });
 }

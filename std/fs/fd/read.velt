@@ -4,7 +4,6 @@ import { EINTR } from "velt/fs/fd/system";
 import { lastError, readInto } from "#fd-system";
 import { bufferOffset, checkRead, descriptor, readLength, readPosition } from "velt/fs/fd/args";
 import { osError } from "velt/fs/errors";
-import { inline } from "velt/lang/intrinsics";
 import { ArrayBufferView, BufferView } from "velt/lang/typed_array/buffer_view";
 import { VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
 
@@ -17,7 +16,6 @@ import { VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
  * `u8[]` (Node's `Buffer`), a typed array or a `DataView`; `offset` and `length` count bytes of
  * it. Velt's typed API takes positional arguments, not Node's `(fd, buffer, options)` object.
  */
-@inline
 export function readSync(
   fd: number,
   buffer: u8[] | ArrayBufferView,

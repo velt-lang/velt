@@ -2,54 +2,49 @@
 //
 // The guards in front of velt/fs's `unsafe` calls of the C library (std/fs/fd/guards.velt): each
 // lets through what C reads safely and stops the program on anything else, here caught with
-// `catchPanic`.
-import { catchPanic } from "velt/task";
+// `catchVeltPanic` (synchronous, as the guards are; `catchPanic` leaks a caught panic's node,
+// #2818).
 import { describe, expect, it } from "velt/test";
-import { checkCommand, checkPath, checkRange } from "velt/fs/fd/guards";
+import { canCatchPanics, catchVeltPanic } from "velt/task/unwind";
+import { checkCommand, checkPath } from "velt/fs/fd/guards";
 
 /** The message of the panic `f` ends in (without the location after it), or "" when it returns. */
-async function panicOf(f: () => void): Promise<string> {
-  try {
-    await catchPanic(async () => f());
-  } catch (e) {
-    const m: string = e.message;
-    const at = m.lastIndexOf(" at ");
-    return at < 0 ? m : m.slice(0, at);
+function panicOf(f: () => void): string {
+  const m = catchVeltPanic(f);
+  if (m === null) {
+    return "";
   }
-  return "";
+  const at = m.lastIndexOf(" at ");
+  return at < 0 ? m : m.slice(0, at);
 }
 
 const INT_COMMANDS: i32[] = [1, 2, 3, 4];
 
 describe("velt/fs's guards of C calls", () => {
-  it("a path ends with its only 0 byte", async () => {
+  it("a path ends with its only 0 byte", () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
     const ok: u8[] = [97, 0];
-    expect(await panicOf(() => checkPath("open", ok))).toBe("");
+    expect(panicOf(() => checkPath("open", ok))).toBe("");
     const inner: u8[] = [97, 0, 98, 0];
     const missing: u8[] = [97, 98];
     const empty: u8[] = [];
     for (const p of [inner, missing, empty]) {
-      expect(await panicOf(() => checkPath("open", p))).toBe(
+      expect(panicOf(() => checkPath("open", p))).toBe(
         "open: the path must end with its only 0 byte",
       );
     }
   });
 
-  it("a buffer's range is inside the array", async () => {
-    expect(await panicOf(() => checkRange("read", 0, 4, 4))).toBe("");
-    expect(await panicOf(() => checkRange("read", 4, 4, 4))).toBe("");
-    expect(await panicOf(() => checkRange("read", 1, 5, 4))).toBe(
-      "read: bytes 1..5 are outside the buffer of 4",
-    );
-    expect(await panicOf(() => checkRange("write", 3, 2, 4))).toBe(
-      "write: bytes 3..2 are outside the buffer of 4",
-    );
-  });
-
-  it("fcntl gets only the commands whose argument is an int", async () => {
-    expect(await panicOf(() => checkCommand("fcntl", 3, INT_COMMANDS))).toBe("");
+  it("fcntl gets only the commands whose argument is an int", () => {
+    if (!canCatchPanics()) {
+      return;
+    }
+    expect(panicOf(() => checkCommand("fcntl", 3, INT_COMMANDS))).toBe("");
     // F_GETLK (7 on macOS, 5 on Linux) reads a `struct flock *`.
-    expect(await panicOf(() => checkCommand("fcntl", 7, INT_COMMANDS))).toBe(
+    expect(panicOf(() => checkCommand("fcntl", 7, INT_COMMANDS))).toBe(
       "fcntl: command 7 does not take an int argument",
     );
   });
