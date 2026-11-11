@@ -147,16 +147,49 @@ fn a_boundary_in_std_is_reported_at_the_users_call() {
     assert!(!r.contains("channel.velt"), "{r}");
 }
 
+/// A call through a function value or an interface method runs on this task, so a closure passed
+/// to one stays local (#2726): a middleware's `next` shares what it captured and may change it.
 #[test]
-fn closures_passed_to_function_values_are_not_local() {
+fn closures_passed_to_function_values_stay_local() {
+    let p = ok_src(
+        "interface Runner { run(g: () => Promise<void>): Promise<void>; }
+         class Now implements Runner { async run(g: () => Promise<void>): Promise<void> { await g(); } }
+         async function main() {
+           let n = 0;
+           const take = async (g: () => Promise<void>): Promise<void> => { await g(); };
+           await take(async () => { n += 1; });
+           const r: Runner = new Now();
+           await r.run(async () => { n += 1; });
+           console.log(n);
+         }",
+    );
+    assert_eq!(local(&p, "main"), vec![true, true, true]);
+    assert_eq!(cells(&p, "main"), vec!["n".to_string()]);
+}
+
+/// What an unknown callee keeps, it keeps in the heap: a closure passed to one crosses when a
+/// value that crosses holds its function type, here a parameter the callee spawns.
+#[test]
+fn closures_passed_to_function_values_follow_the_heap_rule() {
     let r = err_src(
         "async function main() {
            let n = 0;
-           const take = (g: () => Promise<void>): void => {};
-           take(async () => { n += 1; });
+           const later = (g: () => Promise<void>): void => { spawn(g()); };
+           later(async () => { n += 1; });
          }",
     );
-    assert!(r.contains("passed to a function value"), "{r}");
+    assert!(r.contains("modifies captured `n`"), "{r}");
+    assert!(!r.contains("function value"), "{r}");
+    // A named function used as a value is called the same way.
+    let r = err_src(
+        "function later(g: () => Promise<void>): void { spawn(g()); }
+         async function main() {
+           let n = 0;
+           const l: (g: () => Promise<void>) => void = later;
+           l(async () => { n += 1; });
+         }",
+    );
+    assert!(r.contains("modifies captured `n`"), "{r}");
 }
 
 #[test]

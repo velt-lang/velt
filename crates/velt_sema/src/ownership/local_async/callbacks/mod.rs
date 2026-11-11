@@ -45,11 +45,6 @@ use bodies::Bodies;
 use held::{homes, root};
 use message::{call_site, declaration, report};
 
-/// Whether values reaching `b` run on another thread (rather than maybe staying here).
-fn crosses(b: Boundary) -> bool {
-    !matches!(b, Boundary::FnValue)
-}
-
 /// Report the sync closures that what crosses to another thread reaches, which assign a
 /// variable they captured (module docs); returns the closures reported. `flags` are the
 /// propagated node flags of [`super`] (`STORED` is used). A closure that crosses itself (one of
@@ -60,17 +55,12 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
         .seeds
         .iter()
         .filter(|(_, f, _)| *f == CROSSES)
-        .filter_map(|&(n, _, w)| w.filter(|w| crosses(w.boundary)).map(|w| (n, w)))
+        .filter_map(|&(n, _, w)| w.map(|w| (n, w)))
         .collect();
-    let mut roots: Vec<(TyId, Why)> = g
-        .roots
-        .iter()
-        .filter(|(_, w)| crosses(w.boundary))
-        .copied()
-        .collect();
+    let mut roots: Vec<(TyId, Why)> = g.roots.clone();
     // The closures that cross themselves: a seed, or what a seed holds directly.
     let crossing: FxHashSet<DefId> = (g.seeds.iter())
-        .filter(|(_, f, w)| *f == CROSSES && w.is_some_and(|w| crosses(w.boundary)))
+        .filter(|(_, f, w)| *f == CROSSES && w.is_some())
         .filter_map(|&(n, _, _)| match g.nodes[n] {
             Node::Lit(c) => Some(c),
             _ => None,

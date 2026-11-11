@@ -8,6 +8,12 @@
 //! capture local. Values whose origin the graph does not follow (a field or element read, the
 //! result of a call through a function value, a pattern binding) are *unknown*: when one
 //! crosses, its type is a root of the type-based part (`super::types`).
+//!
+//! A call through a function value, an interface method or an overridden method is not a
+//! boundary (#2726): the call runs on this task, and a callee that keeps an argument keeps it
+//! in the heap, so the argument is *stored* like a value written into a field, and the heap rule
+//! decides whether it crosses. A callee that runs a kept callback on another thread does so
+//! through one of the boundaries here, whose run-time transfer copies what is still shared.
 
 use rustc_hash::FxHashMap;
 
@@ -20,11 +26,6 @@ use crate::hir::{
     StmtKind as S, TyId,
 };
 
-/// A call through a function value: the callee's type, the argument nodes, the call's span, whether
-/// it is in a library (std or a package the program depends on), and the function whose closures
-/// alone the callee may be (a variable of `crate::defined_accessors`), if known.
-pub(super) type Indirect = (TyId, Vec<usize>, Span, bool, Option<DefId>);
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Node {
     /// The closure literal `def` (its value where it is created).
@@ -35,6 +36,11 @@ pub(super) enum Node {
     /// Argument `1` of the call through a function value numbered `0` (`Graph::indirect`).
     Arg(u32, u32),
 }
+
+/// A call through a function value: the callee's type, the argument nodes, the call's span, whether
+/// it is in a library (std or a package the program depends on), and the function whose closures
+/// alone the callee may be (a variable of `crate::defined_accessors`), if known.
+pub(super) type Indirect = (TyId, Vec<usize>, Span, bool, Option<DefId>);
 
 /// Where a value leaves the task that made it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -49,9 +55,6 @@ pub(super) enum Boundary {
     Channel,
     /// A value that settles a promise, which another task may await.
     Settle,
-    /// An argument of a call through a function value, an interface or an overridden method:
-    /// the callee is unknown and may keep it.
-    FnValue,
 }
 
 /// Why a value crosses: the boundary, where (in the program when the boundary is in a library, std
@@ -149,7 +152,6 @@ impl Why {
 
 /// Node flags.
 pub(super) const CROSSES: u8 = 1;
-pub(super) const INDIRECT: u8 = 2;
 pub(super) const STORED: u8 = 4;
 
 /// The call passing an argument into a parameter: its span, and whether it is in a library.
@@ -171,15 +173,20 @@ pub(super) struct Graph {
     /// Calls through a function value: the callee's type, the argument nodes, and the call
     /// (span, in a library). A closure whose parameter crosses makes the matching argument cross.
     pub indirect: Vec<Indirect>,
-    /// The function creating each closure literal.
-    pub parent: FxHashMap<DefId, DefId>,
     /// The type arguments of every direct call of each generic function, with the function
     /// making the call (its own generic parameters may appear in them).
     pub insts: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    /// The function creating each closure literal.
+    pub parent: FxHashMap<DefId, DefId>,
     /// Nodes whose values reach a flag's sink directly.
     pub seeds: Vec<(usize, u8, Option<Why>)>,
-    /// Values of unknown origin that cross (or reach an unknown callee, for function values).
+    /// Values of unknown origin that cross.
     pub roots: Vec<(TyId, Why)>,
+    /// Named functions used as values (called through function values too).
+    pub fn_values: Vec<DefId>,
+    /// Parameters of unknown-origin functions whose type mentions a type parameter: one that
+    /// crosses may carry a closure of any function type (sorted).
+    pub wild: Vec<usize>,
     /// Per closure literal node: its capture locals' nodes.
     pub captures: FxHashMap<usize, Vec<usize>>,
 }
@@ -207,8 +214,8 @@ enum To {
     Drop,
     /// Into a node, passed by the call at the span (an argument), if any.
     Node(usize, Option<(Span, bool)>),
-    /// Into a sink: a boundary (`CROSSES`), an unknown callee (`INDIRECT`) or the heap
-    /// (`STORED`).
+    /// Into a sink: a boundary (`CROSSES`) or the heap (`STORED`), where an unknown callee
+    /// (a call through a function value or an interface) may keep it too.
     Flag(u8, Option<Why>),
 }
 
@@ -239,6 +246,51 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         let ret = w.ret_node(d);
         w.block(&f.body.block, To::Node(ret, None));
     }
+    // Closure literals, named functions used as values and dispatched methods (an interface's
+    // implementations, overriding and overridden methods, and methods called through a generic
+    // bound) are called
+    // where the callee is unknown, whose arguments the graph doesn't follow into their parameters:
+    // those hold values of unknown origin, of their declared types. One that crosses (a callback
+    // that spawns its argument) makes its type a crossing type, so the closures passed to such
+    // calls cross by the heap rule. A parameter whose type is a type parameter (or one that may be
+    // null) stands for any function type: when it crosses, every closure the program stores or passes to an unknown
+    // callee crosses (`Graph::wild`). A function referenced in several places is listed once.
+    let mut called: Vec<DefId> = g.parent.keys().copied().collect();
+    called.extend(g.fn_values.iter().copied());
+    // The methods a virtual, interface or bounded call may reach: those in a class's vtable
+    // (only methods overridden somewhere have a slot) and an interface's implementations. Any
+    // other method is called directly, where the graph follows its arguments.
+    for info in &cx.info {
+        if let DefInfo::Adt(a) = info {
+            called.extend(a.vtable.iter().copied());
+        }
+    }
+    for i in &cx.impls {
+        called.extend(i.methods.iter().copied());
+    }
+    called.sort_by_key(|d| d.0);
+    called.dedup();
+    for c in called {
+        let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+            continue;
+        };
+        // A method's first parameter is `this`, the receiver the graph doesn't track.
+        let this = usize::from(f.self_ty.is_some());
+        // std's generic callbacks (the prelude's `resolve`) are matched by their instantiations
+        // instead (`super::crossing_params`).
+        let std = cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_std);
+        for p in f.params.iter().skip(f.captures.len() + this) {
+            if let Some(&n) = g.ids.get(&Node::Local(c, p.local)) {
+                g.unknown[n] = true;
+                let ty = f.body.locals[p.local.0 as usize].ty;
+                if !std && super::types::bare_param(cx, ty) {
+                    g.wild.push(n);
+                }
+            }
+        }
+    }
+    g.wild.sort_unstable();
+    g.wild.dedup();
     g
 }
 
@@ -295,9 +347,6 @@ impl Walk<'_, '_> {
                 }
             }
             To::Flag(CROSSES, Some(why)) => self.g.roots.push((e.ty, why)),
-            To::Flag(INDIRECT, Some(why)) if super::types::fn_like(self.cx, e.ty) => {
-                self.g.roots.push((e.ty, why))
-            }
             _ => {}
         }
     }
@@ -492,7 +541,11 @@ impl Walk<'_, '_> {
             }
             E::Throw(x) => self.value(x, STORE),
             // A `ConstArray`'s elements are literals, which flow nowhere (as an `ArrayLit`'s).
-            E::Lit(_) | E::ConstArray(_) | E::Global(_) | E::FnRef(..) => self.unknown(e, to),
+            E::FnRef(d, _) => {
+                self.g.fn_values.push(*d);
+                self.unknown(e, to)
+            }
+            E::Lit(_) | E::ConstArray(_) | E::Global(_) => self.unknown(e, to),
         }
     }
 
@@ -579,14 +632,14 @@ impl Walk<'_, '_> {
                 // A variable of `Object.defineProperty`'s rewrite holds only closures of this
                 // function, which keep nothing as a function value might.
                 let cell = self.accessor_cell(f);
-                let why = self.why(e.span, Boundary::FnValue);
                 let call = self.g.indirect.len() as u32;
                 let mut nodes = vec![];
                 for (i, a) in args.iter().enumerate() {
                     let n = self.g.node(Node::Arg(call, i as u32), a.ty);
                     self.value(a, To::Node(n, None));
+                    // The callee runs on this task; what it keeps, it keeps in the heap.
                     if !cell {
-                        self.g.seeds.push((n, INDIRECT, why));
+                        self.g.seeds.push((n, STORED, None));
                     }
                     nodes.push(n);
                 }
@@ -597,14 +650,8 @@ impl Walk<'_, '_> {
                 self.unknown(e, to);
             }
             Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
-                let why = self.why(e.span, Boundary::FnValue);
                 for (i, a) in args.iter().enumerate() {
-                    let to = if i == 0 {
-                        To::Drop
-                    } else {
-                        To::Flag(INDIRECT, why)
-                    };
-                    self.value(a, to);
+                    self.value(a, if i == 0 { To::Drop } else { STORE });
                 }
                 self.unknown(e, to);
             }

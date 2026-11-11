@@ -1,0 +1,35 @@
+// check: no leaks
+// An async closure an unknown callee puts in a `Mutex` copies what it captured for each call, as
+// before #2726: a generic function used as a value, whose parameter of a type parameter stands
+// for any function type, and an interface's implementation, whose parameter's type is the
+// closure's. Neither stops the program in the many-threads check.
+
+type F = () => Promise<i64>;
+
+function keepM<T>(x: T): Mutex<T> {
+  return new Mutex<T>(x);
+}
+
+interface Keeper {
+  keep(f: F): Mutex<F>;
+}
+
+class Locker implements Keeper {
+  keep(f: F): Mutex<F> {
+    return new Mutex<F>(f);
+  }
+}
+
+async function main() {
+  const xs = [1, 2, 3];
+  const k: (f: F) => Mutex<F> = keepM;
+  const m = k(async (): Promise<i64> => xs.length);
+  const p = m.with((f) => f());
+  console.log(await p, xs.length);
+
+  const ys = [1, 2, 3, 4];
+  const keeper: Keeper = new Locker();
+  const m2 = keeper.keep(async (): Promise<i64> => ys.length);
+  const p2 = m2.with((f) => f());
+  console.log(await p2, ys.length);
+}

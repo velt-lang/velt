@@ -1,0 +1,2 @@
+async_closure_unknown_callee_spawns_generic.velt:15:5: error: this async closure modifies captured `d`, so it must stay on the task that created it
+async_closure_unknown_callee_spawns_generic.velt:8:10: but it reaches `spawn` here
