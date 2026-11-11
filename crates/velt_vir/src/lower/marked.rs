@@ -189,7 +189,13 @@ impl FnLower<'_, '_> {
             _ => return None,
         };
         let bty = self.sub(base.ty);
-        let pure = matches!(base.kind, hir::ExprKind::Local(..));
+        let pure = match &base.kind {
+            hir::ExprKind::Local(..) => true,
+            hir::ExprKind::UnwrapSome(inner, _) | hir::ExprKind::Downcast(inner) => {
+                matches!(inner.kind, hir::ExprKind::Local(..))
+            }
+            _ => false,
+        };
         (pure && self.cx.is_class(bty) && self.cx.counted(bty) && self.cx.markable(bty))
             .then_some(&**base)
     }

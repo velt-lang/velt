@@ -1,0 +1,37 @@
+import { workerCount } from "velt/task";
+
+class Node {
+  name: string;
+  next: Node | null = null;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+const first = new Map<string, Node>();
+const second = new Map<string, Node>();
+
+async function churn(id: number): Promise<number> {
+  for (let i = 0; i < 5000; i++) {
+    const a = first.get("a")!;
+    const b = second.get("b");
+    await yieldNow();
+    if (b != undefined) {
+      b.next = a;
+    }
+  }
+  return 0;
+}
+
+async function main() {
+  first.set("a", new Node("a"));
+  second.set("b", new Node("b"));
+  const ps: Promise<number>[] = [];
+  for (let t: i64 = 0; t < 8; t++) {
+    ps.push(spawn(churn(t as number), { worker: t % workerCount() }));
+  }
+  for (const p of ps) {
+    await p;
+  }
+  console.log(`done`);
+}

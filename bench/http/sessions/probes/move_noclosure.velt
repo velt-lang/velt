@@ -1,0 +1,75 @@
+// Probe 2: an object leaves one shared state and is stored into another; cycles; closures
+// captured inside marked objects; objects stored after the await into a marked object.
+
+import { workerCount } from "velt/task";
+
+class Node {
+  name: string;
+  next: Node | null = null;
+  kids: Node[] = [];
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Holder {
+  f: (() => number) | null = null;
+  n: Node | null = null;
+}
+
+const first = new Map<string, Node>();
+const second = new Map<string, Node>();
+const holders: Holder[] = [];
+
+async function churn(id: number): Promise<number> {
+  let sum = 0;
+  for (let i = 0; i < 5000; i++) {
+    const a = first.get("a")!;
+    await yieldNow();
+    a.kids.push(new Node(`k${id}-${i}`));
+    if (a.kids.length > 50) {
+      a.kids = [];
+    }
+    const b = second.get("b");
+    await yieldNow();
+    if (b != undefined) {
+      sum += b.kids.length;
+      b.next = a;
+    }
+    const h = holders[0];
+    await yieldNow();
+    if (false) {
+      sum += h.f!();
+    }
+  }
+  return sum;
+}
+
+async function main() {
+  // A cycle: a -> b -> a.
+  const a = new Node("a");
+  const b = new Node("b");
+  a.next = b;
+  b.next = a;
+  first.set("a", a);
+  // The same object stored into a second map: it stays marked.
+  second.set("b", first.get("a")!.next!);
+  first.delete("b");
+  const h = new Holder();
+  let count = 0;
+  const unusedF = () => {
+    count++;
+    return 1;
+  };
+  h.n = a;
+  holders.push(h);
+  const ps: Promise<number>[] = [];
+  for (let t: i64 = 0; t < 8; t++) {
+    ps.push(spawn(churn(t as number), { worker: t % workerCount() }));
+  }
+  let total = 0;
+  for (const p of ps) {
+    total += await p;
+  }
+  console.log(`total ${total > 0} count ${count} expected ${8 * 5000}`);
+}

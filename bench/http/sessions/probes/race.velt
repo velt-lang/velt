@@ -1,0 +1,36 @@
+// Probe 1: tasks pinned to different workers write the same marked object's fields after an
+// await. Each task does `rounds` of `s.visits++` (a read-modify-write) and a push; with the
+// field accesses under the lock the totals are exact. Prints the totals and the expected count.
+
+import { workerCount } from "velt/task";
+
+class Session {
+  visits: i64 = 0;
+  items: i64[] = [];
+}
+
+const sessions = new Map<string, Session>();
+
+async function worker(rounds: i64): Promise<void> {
+  const s = sessions.get("a")!;
+  for (let i: i64 = 0; i < rounds; i++) {
+    await yieldNow();
+    s.visits++;
+    s.items.push(i);
+  }
+}
+
+async function main() {
+  sessions.set("a", new Session());
+  const tasks: i64 = 8;
+  const rounds: i64 = 20000;
+  const ps: Promise<void>[] = [];
+  for (let t: i64 = 0; t < tasks; t++) {
+    ps.push(spawn(worker(rounds), { worker: t % workerCount() }));
+  }
+  for (const p of ps) {
+    await p;
+  }
+  const s = sessions.get("a")!;
+  console.log(`visits ${s.visits} items ${s.items.length} expected ${tasks * rounds}`);
+}

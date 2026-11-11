@@ -1,0 +1,47 @@
+// Marking walk cost per store: N stores of fresh objects into a module-level Map, (a) a flat
+// object, (b) an object holding an array of 10 children. `store <mode> <n>`.
+
+import { args } from "velt/process";
+
+class Leaf {
+  v: number = 0;
+}
+
+class Flat {
+  id: number;
+  visits: number = 0;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+class Deep {
+  id: number;
+  kids: Leaf[] = [];
+  constructor(id: number) {
+    this.id = id;
+    for (let i = 0; i < 10; i++) {
+      this.kids.push(new Leaf());
+    }
+  }
+}
+
+const flat = new Map<number, Flat>();
+const deep = new Map<number, Deep>();
+
+function main() {
+  const argv = args();
+  const mode = argv.length > 0 ? argv[0] : "flat";
+  const n = argv.length > 1 ? parseInt(argv[1], 10) : 100000;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    if (mode == "flat") {
+      flat.set(i % 1024, new Flat(i));
+      sum += flat.get(i % 1024)!.id;
+    } else if (mode == "deep") {
+      deep.set(i % 1024, new Deep(i));
+      sum += deep.get(i % 1024)!.id;
+    }
+  }
+  console.log(`${mode} ${n} ${sum}`);
+}

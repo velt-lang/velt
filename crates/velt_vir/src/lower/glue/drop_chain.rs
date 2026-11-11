@@ -193,7 +193,7 @@ impl FnLower<'_, '_> {
         if !self.cx.counted(ty) {
             return;
         }
-        if self.cx.weak_capable(ty) || self.cx.lock_counted(ty) {
+        if self.cx.weak_capable(ty) || self.cx.lock_counted(ty) || self.cx.markable(ty) {
             // A weakly held node is never unique by its count word (weak-refs.md), nor one an
             // `RwLock`'s readers share (locks.rs): the release decides, and its last reference
             // continues the loop.
