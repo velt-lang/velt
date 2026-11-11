@@ -65,7 +65,8 @@ enum Key {
 
 /// Merge `func`'s calls of each never-returning callee into one; returns whether any changed.
 pub(crate) fn run(no_return: &NoReturn, func: &mut Function) -> bool {
-    let mut sites: FxHashMap<Key, Vec<usize>> = FxHashMap::default();
+    // Calls unwinding to different pads (vir.rs invariant 14) stay apart.
+    let mut sites: FxHashMap<(Key, Option<BlockId>), Vec<usize>> = FxHashMap::default();
     let mut order = Vec::new();
     for (bi, block) in func.blocks.iter().enumerate() {
         let Terminator::Call {
@@ -73,13 +74,14 @@ pub(crate) fn run(no_return: &NoReturn, func: &mut Function) -> bool {
             args,
             dest: None,
             next,
+            unwind,
         } = &block.term
         else {
             continue;
         };
         let key = match callee {
-            Callee::Func(f) => Key::Func(f.0),
-            Callee::Extern(e) => Key::Extern(e.0),
+            Callee::Func(f) => (Key::Func(f.0), *unwind),
+            Callee::Extern(e) => (Key::Extern(e.0), *unwind),
             Callee::Ptr { .. } => continue,
         };
         let after = &func.blocks[next.0 as usize];
@@ -107,18 +109,22 @@ pub(crate) fn run(no_return: &NoReturn, func: &mut Function) -> bool {
 }
 
 /// The arguments of the call ending block `bi`, and the rest of its terminator.
-fn call_of(func: &Function, bi: usize) -> (&Callee, &[Operand], BlockId) {
+fn call_of(func: &Function, bi: usize) -> (&Callee, &[Operand], BlockId, Option<BlockId>) {
     match &func.blocks[bi].term {
         Terminator::Call {
-            callee, args, next, ..
-        } => (callee, args, *next),
+            callee,
+            args,
+            next,
+            unwind,
+            ..
+        } => (callee, args, *next, *unwind),
         _ => panic!("ICE: cold_calls: a site is not a call"),
     }
 }
 
 /// Make the calls ending `blocks` (same callee) one call.
 fn merge(no_return: &NoReturn, func: &mut Function, blocks: &[usize]) {
-    let (callee, first_args, next) = call_of(func, blocks[0]);
+    let (callee, first_args, next, unwind) = call_of(func, blocks[0]);
     let callee = callee.clone();
     let first_args = first_args.to_vec();
     let params = (no_return.params(&callee))
@@ -148,6 +154,7 @@ fn merge(no_return: &NoReturn, func: &mut Function, blocks: &[usize]) {
             args,
             dest: None,
             next,
+            unwind,
         },
     });
     if !func.locs.is_empty() {

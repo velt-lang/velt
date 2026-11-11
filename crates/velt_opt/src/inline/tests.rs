@@ -395,6 +395,7 @@ fn a_leaf_counts_as_small_up_to_the_leaf_limit() {
         args: vec![copy_local(velt_vir::vir::Local(0))],
         dest: None,
         next: velt_vir::vir::BlockId(last as u32 + 1),
+        unwind: None,
     };
     calling.locs = vec![];
     let calling = pb.add(calling);

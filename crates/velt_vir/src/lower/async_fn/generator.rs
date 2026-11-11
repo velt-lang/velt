@@ -157,6 +157,14 @@ impl FnLower<'_, '_> {
         self.received(dflt, ty)
     }
 
+    /// On the unwind out of the generator's body (cleanup.rs `gen_resume_block`): the generator
+    /// is finished, like a panicked state machine (#2008), not running. Closing or dropping it
+    /// then does nothing (what its state held leaks with it) instead of panicking, which during
+    /// the cleanup of the frame holding it would abort, and `next()` reports done.
+    pub(in crate::lower) fn mark_unwound(&mut self) {
+        self.set_tag(DONE);
+    }
+
     /// The dispatch cases of a running generator, resumed (`GEN_RUNNING`, also `CLOSE_BIT |
     /// GEN_RUNNING`) or closed (`DROP_BIT | GEN_RUNNING`): see [`GEN_RUNNING`].
     pub(super) fn running_case(&mut self) {

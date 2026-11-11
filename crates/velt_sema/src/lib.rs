@@ -84,6 +84,7 @@ pub mod value_params;
 #[doc(hidden)]
 pub use hook_calls::hook_args;
 pub use hooks::NAMES as HOOK_NAMES;
+mod glue_reach;
 pub mod ide;
 mod iface_overloads;
 mod iface_writes;
@@ -91,6 +92,7 @@ mod index_signatures;
 mod infer;
 mod inst_sites;
 mod instantiation_cycles;
+pub mod interface;
 mod interface_merge;
 mod intersection_class_parts;
 mod intersection_members;

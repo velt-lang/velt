@@ -163,6 +163,7 @@ fn program(extra: Extra) -> Program {
                 args: vec![],
                 dest: Some(elem(one)),
                 next,
+                unwind: None,
             };
             fb.term(cont, call);
             cont = next;

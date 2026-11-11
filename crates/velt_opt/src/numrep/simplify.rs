@@ -202,6 +202,7 @@ fn terminator(env: &Env, flow: &Flow, func: &mut Function, bi: usize, st: &State
             args,
             dest,
             next,
+            ..
         } => {
             let arg = args
                 .first()

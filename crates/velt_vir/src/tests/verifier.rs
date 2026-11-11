@@ -394,6 +394,7 @@ fn verify_rejects_a_direct_call_of_a_math_operation() {
                 ],
                 dest: Some(Place::local(Local(1))),
                 next: BlockId(1),
+                unwind: None,
             },
         )
     };
@@ -451,6 +452,7 @@ fn variadic_calls_pass_promoted_further_arguments() {
                     args: vec![i32_(3), i32_(4), extra],
                     dest: Some(Place::local(Local(2))),
                     next: BlockId(1),
+                    unwind: None,
                 },
             ),
             block(vec![], ret_x()),

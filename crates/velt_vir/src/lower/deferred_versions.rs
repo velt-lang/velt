@@ -93,6 +93,7 @@ impl FnLower<'_, '_> {
                     args: vec![],
                     dest: None,
                     next: BlockId(0),
+                    unwind: None,
                 },
             };
             if returns {

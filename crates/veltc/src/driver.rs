@@ -194,6 +194,9 @@ pub struct Session {
     /// `velt dev`: the counted types of the previous version, which lowering starts from, and
     /// after lowering the new version's (`velt_vir::lower_seeded`). `None`: lowering as always.
     pub counted_seed: Option<velt_vir::CountedSeed>,
+    /// `velt dev`: `Some` asks for the checked program's interface summary, which replaces it
+    /// (`velt_sema::interface`). `None`: none is made.
+    pub interfaces: Option<velt_sema::interface::Summary>,
     /// `velt dev`: keep the check of the program (`velt_sema::KeptCheck`, in [`Session::kept`]),
     /// when it can be kept (dev-warm-front-end.md step 3, "C2").
     pub keep_check: bool,
@@ -438,11 +441,13 @@ fn compile_to_vir_linking(
         extra_roots: vec![],
         eager_std: false,
     };
-    let hir = memory::Noted::new(
-        check_program(sess, opts, &scope)?,
-        "hir freed",
-        &sess.lifetimes,
-    );
+    let checked = check_program(sess, opts, &scope)?;
+    if sess.interfaces.is_some() {
+        let t = Instant::now();
+        sess.interfaces = Some(velt_sema::interface::Summary::of(&checked));
+        sess.record("interfaces", t);
+    }
+    let hir = memory::Noted::new(checked, "hir freed", &sess.lifetimes);
 
     let t = Instant::now();
     let std_root = loader::std_root();

@@ -282,6 +282,10 @@ impl<O: Observer> Walk<'_, O> {
                 let &(_, nonnull) = self.tests.iter().find(|&&(l, _)| l == c.local)?;
                 Some(if nonnull { then.0 } else { els.0 } as usize)
             }
+            // A pad (vir.rs invariant 14) is a second path the walk would not see.
+            Terminator::Call {
+                unwind: Some(_), ..
+            } => None,
             Terminator::Call { dest, next, .. } => {
                 let mut ok = true;
                 term_operands(t, &mut |op| ok = ok && self.read(at, op));

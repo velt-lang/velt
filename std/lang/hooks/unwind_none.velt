@@ -4,6 +4,13 @@
 // counts a catch, so nothing is raised: a panic takes `velt_rt_panic`. No unwinder function is
 // named, so the program links where `_Unwind_RaiseException` doesn't exist.
 
+declare function velt_rt_exit(code: i32): never;
+
+/** Never called (nothing unwinds here); ends the process. */
+export function abortProcess(): never {
+  velt_rt_exit(134);
+}
+
 /** Never called (no catch counts here); raises nothing. */
 export function raise(msg: string): void {}
 

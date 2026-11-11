@@ -11,12 +11,15 @@
 //! Only `sema_time_grows_linearly`, which guards every pass at once, measures CPU time.
 
 mod common;
+#[path = "scaling/struct_tuples.rs"]
+mod struct_tuples;
 
 use std::sync::{Mutex, MutexGuard};
 
 use common::hir_walk::func;
 use common::process_work;
 use common::programs::{err_src, load_src, load_src_at, ok_src, repo_root, Loaded};
+use struct_tuples::{any_wrappers, growing_source, implementations};
 use velt_sema::hir::PassMode;
 use velt_sema::{check_work, instantiation_work, InstantiationWork};
 
@@ -328,6 +331,10 @@ fn instantiation_work_grows_linearly() {
     assert_linear_work(&[100, 800], |n| generated_program(n, 8), 1.5);
     assert_linear_work(&[100, 800], |n| generated_program(n, n), 1.5);
     assert_linear_work(&[100, 800], generic_chains, 1.5);
+    assert_linear_work(&[100, 800], implementations, 1.5);
+    assert_linear_work(&[100, 800], growing_source, 1.5);
+    // The types reaching `f0` double per level: compared below the depth limit of what's carried.
+    assert_linear_work(&[6, 12], any_wrappers, 1.5);
 }
 
 /// One test, so the timings don't compete with each other for the CPU.

@@ -19,7 +19,10 @@ pub(crate) fn successors(t: &Terminator) -> Vec<BlockId> {
             .map(|c| c.1)
             .chain(std::iter::once(*default))
             .collect(),
-        Terminator::Call { next, .. } => vec![*next],
+        Terminator::Call { next, unwind, .. } => match unwind {
+            Some(pad) => vec![*next, *pad],
+            None => vec![*next],
+        },
         Terminator::Return(_) | Terminator::Unreachable => vec![],
     }
 }
@@ -46,11 +49,13 @@ pub(super) fn remap_term(t: Terminator, map: impl Fn(BlockId) -> BlockId) -> Ter
             args,
             dest,
             next,
+            unwind,
         } => Terminator::Call {
             callee,
             args,
             dest,
             next: map(next),
+            unwind: unwind.map(&map),
         },
         t @ (Terminator::Return(_) | Terminator::Unreachable) => t,
     }
@@ -146,12 +151,14 @@ impl FnLower<'_, '_> {
         if self.mode == super::LkMode::Read && matches!(callee, vir::Callee::Ptr { .. }) {
             self.cx.facts.read_indirect = true;
         }
+        let unwind = self.cleanup_pad(&callee);
         let next = self.new_block();
         self.terminate(Terminator::Call {
             callee,
             args,
             dest,
             next,
+            unwind,
         });
         self.switch_to(next);
         if noreturn {
@@ -219,6 +226,13 @@ impl FnLower<'_, '_> {
             }
         }
         self.place_sections();
+        // A poll function's pad links, renumbered as `into_parts` renumbers (cleanup.rs).
+        let mut remap = vec![None; self.live.len()];
+        let live = self.live.iter().enumerate().filter(|(_, l)| **l);
+        for (n, (i, _)) in live.enumerate() {
+            remap[i] = Some(BlockId(n as u32));
+        }
+        self.take_pad_links(|b| remap[b.0 as usize]);
         let (locals, blocks, locs) = self.into_parts(&symbol);
         Function {
             locals,

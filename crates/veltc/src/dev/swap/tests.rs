@@ -238,6 +238,7 @@ fn a_version_that_failed_after_lowering_is_not_the_baseline() {
     let mut carried = super::Carried {
         seed: sess.counted_seed.take(),
         own: None,
+        interfaces: None,
         kept: None,
     };
     let failed = host_reload(

@@ -124,6 +124,11 @@ struct Emitter<'a> {
     pad: Option<stop_unwind::Pad>,
     /// The `invoke`s emitted so far (stop_unwind.rs).
     invokes_made: u32,
+    /// The target unwinds (Itanium): calls with an unwind edge become `invoke`s (vir.rs
+    /// invariant 14; design "Cleanup in unwound frames").
+    unwinds: bool,
+    /// The pad blocks invoked so far (each gets a landing block `%lpN`), ascending.
+    pads: std::collections::BTreeSet<u32>,
 }
 
 /// Translate `function` into a complete `define ... { ... }` text.
@@ -174,6 +179,12 @@ pub(crate) fn emit_function(
         block: 0,
         pad: stop_unwind::Pad::of(function, target),
         invokes_made: 0,
+        // A function C calls stops every unwind with its own pad (stop_unwind.rs), so it gets
+        // no cleanup pads: they would only run before its `abort`.
+        unwinds: velt_vir::eh::Catching::of_triple(&target.triple)
+            == velt_vir::eh::Catching::Itanium
+            && !function.stops_unwind,
+        pads: Default::default(),
     };
     emitter.set_location(function.first_loc());
     emitter.entry_block()?;
@@ -191,7 +202,8 @@ pub(crate) fn emit_function(
             .terminator(&block.term)
             .map_err(|e| format!("bb{bi} terminator ({:?}): {e}", block.term))?;
     }
-    let personality = emitter.finish_pad();
+    // At most one of them: a function C calls has only the abort pad, any other only cleanups.
+    let personality = format!("{}{}", emitter.finish_pad(), emitter.landing_blocks());
     let ext_features;
     let features = match (emitter.uses_simd, emitter.simd) {
         (true, crate::simd::Arch::Wasm) => crate::simd::WASM_SIMD,
@@ -299,8 +311,30 @@ impl Emitter<'_> {
             let t = self.memory_type(ty);
             self.line(format!("store {t} {v}, ptr %l{i}, align {align}"));
         }
+        if self.unwinds && has_unwind_edges(function) {
+            // Where a landing block keeps the exception for `velt_eh_resume`.
+            self.line("%velt.exn = alloca ptr, align 8".into());
+        }
         self.line("br label %bb0".into());
         Ok(())
+    }
+
+    /// The landing blocks of the pads invoked (`%lpN`: the exception into the function's slot,
+    /// then the VIR pad, which other pads may also jump to), and the `personality` clause the
+    /// function then needs (empty without them).
+    fn landing_blocks(&mut self) -> &'static str {
+        if self.pads.is_empty() {
+            return "";
+        }
+        self.set_location(None);
+        for pad in std::mem::take(&mut self.pads) {
+            self.label(&format!("lp{pad}"));
+            let lp = self.inst("landingpad { ptr, i32 } cleanup".into());
+            let e = self.inst(format!("extractvalue {{ ptr, i32 }} {lp}, 0"));
+            self.line(format!("store ptr {e}, ptr %velt.exn, align 8"));
+            self.line(format!("br label %bb{pad}"));
+        }
+        " personality ptr @velt_eh_personality"
     }
 
     /// The LLVM type a scalar of type `ty` has in memory.
@@ -362,6 +396,19 @@ impl Emitter<'_> {
             bail!("unknown block bb{}", id.0)
         }
     }
+}
+
+/// Whether any call of `function` has an unwind edge (vir.rs invariant 14).
+fn has_unwind_edges(function: &vir::Function) -> bool {
+    (function.blocks.iter()).any(|b| {
+        matches!(
+            b.term,
+            vir::Terminator::Call {
+                unwind: Some(_),
+                ..
+            }
+        )
+    })
 }
 
 /// The attributes of a function no call of which returns normally (`Function::cold`, or no

@@ -330,10 +330,14 @@ impl FnLower<'_, '_> {
                     args,
                     dest,
                     next,
+                    unwind,
                 }) => {
                     let quiet = self.quiet_call(callee, args);
                     if quiet.is_none() {
                         k.forget_memory(ls);
+                    }
+                    if let Some(pad) = unwind {
+                        edges.push((*pad, k.clone()));
                     }
                     if let Some(p) = dest {
                         let t = quiet

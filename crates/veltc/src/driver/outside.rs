@@ -291,6 +291,7 @@ mod tests {
                     args: vec![],
                     dest: None,
                     next: BlockId(i as u32 + 1),
+                    unwind: None,
                 },
             })
             .collect();

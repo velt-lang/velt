@@ -40,6 +40,7 @@ pub(super) fn insert(program: &mut Program, required: u32) {
             args: vec![Operand::Const(Const::Int(required.into()), Ty::U32)],
             dest: None,
             next: moved,
+            unwind: None,
         },
     };
     let Some(entry) = f.blocks.first_mut() else {

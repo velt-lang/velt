@@ -8,7 +8,7 @@
 // WebAssembly) unwind_none.velt raises nothing and names no unwinder function, and `catchUnwind`
 // is a plain call there.
 
-import { raise } from "#unwind-raise";
+import { abortProcess, raise } from "#unwind-raise";
 
 export { takePanic } from "#unwind-raise";
 
@@ -28,6 +28,14 @@ declare function velt_eh_catches(): u8;
 const CATCHING = new ThreadLocal<u32>(0);
 
 /**
+ * Whether a Velt exception raised on this thread is unwinding: set just before the raise, cleared
+ * by `caughtPanic` when the catch has it. A panic while it is set comes from a drop in a cleanup
+ * pad (design "A panic during a cleanup"): its unwind would drop again what the cleanup is
+ * dropping, so it aborts, as Rust does for a panic while panicking.
+ */
+const UNWINDING = new ThreadLocal<bool>(false);
+
+/**
  * Every panic of a program that calls `catchUnwind`: with a catch running on this thread, prints
  * the message as `velt_rt_panic` does and raises Velt's exception; otherwise `velt_rt_panic`,
  * which ends the process (or unwinds to a runtime `catchPanic`) as in any other program.
@@ -36,7 +44,13 @@ export function panicRaise(msg: string): never {
   if (CATCHING.get() != 0) {
     velt_rt_flush();
     velt_rt_write_str(2, "panic: " + msg + "\n");
+    if (UNWINDING.get()) {
+      velt_rt_write_str(2, "panic while unwinding: aborting\n");
+      abortProcess();
+    }
+    UNWINDING.set(true);
     raise(msg);
+    UNWINDING.set(false);
     // Not claimed: only possible when a frame between the raise and the catch ended the search
     // (the design's "hole", a runtime `catchPanic` polled inside `catchUnwind`, aborts in Rust
     // before this) or the allocation failed. End as an uncaught panic, whose message is printed.
@@ -60,6 +74,11 @@ export function enterCatch(): bool {
 /** Whether `catchUnwind` catches in this program (its `velt_eh_try` has a landing pad). */
 export function catchesPanics(): bool {
   return velt_eh_catches() != 0;
+}
+
+/** The catch took the exception: the unwind is over (`UNWINDING`). */
+export function caughtPanic(): void {
+  UNWINDING.set(false);
 }
 
 /** The `catchUnwind` that `enterCatch` announced (and returned true for) ended. */

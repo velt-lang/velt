@@ -244,14 +244,20 @@ impl Ranges {
                 out.push((default.0 as usize, st));
                 out
             }
-            Terminator::Call { dest, next, .. } => {
+            Terminator::Call {
+                dest, next, unwind, ..
+            } => {
+                // A pad starts with the state before the call: its result isn't written.
+                let pad = unwind.map(|p| (p.0 as usize, st.clone()));
                 let mut s = st;
                 if let Some(d) = dest.as_ref().filter(|d| d.proj.is_empty()) {
                     if let Some(i) = self.slot[d.local.0 as usize] {
                         s[i] = Interval::full(func.locals[d.local.0 as usize].ty);
                     }
                 }
-                vec![(next.0 as usize, s)]
+                let mut out = vec![(next.0 as usize, s)];
+                out.extend(pad);
+                out
             }
             Terminator::Return(_) | Terminator::Unreachable => vec![],
         }

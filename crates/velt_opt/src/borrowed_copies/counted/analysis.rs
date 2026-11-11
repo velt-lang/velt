@@ -579,11 +579,19 @@ impl Cx<'_> {
             .filter(|&b| reach[b] && !cut.contains_key(&b))
             .all(|b| {
                 let block = &self.func.blocks[b];
-                let Terminator::Call { callee, next, .. } = &block.term else {
+                let Terminator::Call {
+                    callee,
+                    next,
+                    unwind,
+                    ..
+                } = &block.term
+                else {
                     return true;
                 };
                 let handed = uses.contains(&(b, block.stmts.len()));
-                let used = handed || live_in[next.0 as usize];
+                let used = handed
+                    || live_in[next.0 as usize]
+                    || unwind.is_some_and(|p| live_in[p.0 as usize]);
                 !used || !self.frees.may_free(callee, handed)
             })
     }

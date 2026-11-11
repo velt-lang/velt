@@ -160,7 +160,10 @@ pub(crate) fn successors(t: &Terminator) -> Vec<BlockId> {
             out.push(*default);
             out
         }
-        Terminator::Call { next, .. } => vec![*next],
+        Terminator::Call { next, unwind, .. } => match unwind {
+            Some(pad) => vec![*next, *pad],
+            None => vec![*next],
+        },
         Terminator::Return(_) | Terminator::Unreachable => vec![],
     }
 }
@@ -177,7 +180,12 @@ pub(crate) fn successors_mut(t: &mut Terminator, f: &mut impl FnMut(&mut BlockId
             cases.iter_mut().for_each(|(_, b)| f(b));
             f(default);
         }
-        Terminator::Call { next, .. } => f(next),
+        Terminator::Call { next, unwind, .. } => {
+            f(next);
+            if let Some(pad) = unwind {
+                f(pad);
+            }
+        }
         Terminator::Return(_) | Terminator::Unreachable => {}
     }
 }

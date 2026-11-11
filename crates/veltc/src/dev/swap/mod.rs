@@ -70,13 +70,15 @@ struct Report {
     details: bool,
 }
 
-/// Build the current sources and take them into the running program if possible.
 /// What a reload takes from the running version, and leaves for the next one.
 pub struct Carried {
     /// Lowering's counted types (velt_vir `lower_seeded`).
     pub seed: Option<velt_vir::CountedSeed>,
     /// The program's own definitions (`super::edits`): what the next save changed.
     pub own: Option<super::edits::Snapshot>,
+    /// The checked program's interfaces (velt_sema `interface`), kept with `-v` to say whether
+    /// a body edit kept everything else's.
+    pub interfaces: Option<velt_sema::interface::Summary>,
     /// With `-v`, the last good build's kept check (velt_sema `KeptCheck`,
     /// dev-warm-front-end.md step 3 "C2"): kept and measured, not used yet.
     pub kept: Option<velt_sema::KeptCheck>,
@@ -93,6 +95,7 @@ pub fn kept_report(kept: &velt_sema::KeptCheck) -> String {
     )
 }
 
+/// Build the current sources and take them into the running program if possible.
 /// `carried`: what the running version leaves; a version that represents a value of the running
 /// one differently restarts.
 fn reload(
@@ -122,6 +125,7 @@ fn reload_with(
     let running = carried.seed.take().unwrap_or_default();
     sess.counted_seed = Some(running.clone());
     sess.keep_check = verbose;
+    sess.interfaces = verbose.then(Default::default);
     let program = driver::compile(&mut sess, opts);
     let next = sess.counted_seed.take();
     // Values the running code made that the new code would count, free or call differently
@@ -129,10 +133,18 @@ fn reload_with(
     let changed = (next.as_ref()).and_then(|next| running.representation_change(next));
     if program.is_ok() {
         let own = super::edits::Snapshot::of_build(&sess, &opts.input);
+        let interfaces = sess.interfaces.take();
         if let (true, Some(before)) = (verbose, &carried.own) {
-            eprintln!("velt dev: edit: {}", super::edits::classify(before, &own));
+            let edit = super::edits::classify(before, &own);
+            eprintln!("velt dev: edit: {edit}");
+            if let (Some(a), Some(b)) = (&carried.interfaces, &interfaces) {
+                if let Some(said) = super::edits::cutoff(&edit, &a.changes(b)) {
+                    eprintln!("velt dev: {said}");
+                }
+            }
         }
         carried.own = Some(own);
+        carried.interfaces = interfaces;
         // The previous version's kept check is dropped first, so the memory said is this one's.
         carried.kept = None;
         carried.kept = sess.kept.take();

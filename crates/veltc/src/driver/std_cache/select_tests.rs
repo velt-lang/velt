@@ -33,6 +33,7 @@ fn func(name: &str, stmts: usize, calls: &[u32], extra: Option<Rvalue>) -> Funct
                 args: vec![],
                 dest: Some(Place::local(Local(0))),
                 next: vir::BlockId(n as u32 + 1),
+                unwind: None,
             },
         });
     }
@@ -184,6 +185,7 @@ fn callback_callers_stay_in_the_program() {
         args: vec![],
         dest: Some(Place::local(Local(0))),
         next: vir::BlockId(1),
+        unwind: None,
     };
     f.blocks.push(BasicBlock {
         stmts: vec![],
@@ -252,6 +254,7 @@ fn code_reaching_a_thread_local_stays_where_it_has_no_data_to_share() {
                 args: vec![],
                 dest: Some(Place::local(Local(0))),
                 next: vir::BlockId(1),
+                unwind: None,
             },
         },
     );
@@ -602,6 +605,7 @@ fn calling_extern(mut f: Function, e: vir::ExternId) -> Function {
                 args: vec![],
                 dest: None,
                 next: vir::BlockId(1),
+                unwind: None,
             },
         },
     );

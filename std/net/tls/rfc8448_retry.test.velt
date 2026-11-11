@@ -15,6 +15,10 @@ import { TlsEngine } from "velt/net/tls/tls_engine";
 import { TlsStream } from "velt/net/tls/tls_stream";
 import { describe, expect, it } from "velt/test";
 
+// The suites in the order the traces' ClientHellos list them (ChaCha20-Poly1305, AES-128-GCM),
+// whatever this CPU would prefer: the transcript hashes depend on it.
+const TRACE_SUITES: usize[] = [0x1303, 0x1301];
+
 // The first ClientHello (X25519 share) (180 bytes).
 const HRR_CLIENT_HELLO =
   "010000b00303b0b1c5a5aa37c5919f2ed1d5c6fff7fcb7849716945a2b8cee9258a346677b6f0000061301130313" +
@@ -149,6 +153,7 @@ async function handshake(t: Playback): Promise<TlsStream> {
       alpn: [],
       fixed: hexDecode(HRR_CLIENT_HELLO),
       fixedRetry: hexDecode(HRR_CLIENT_HELLO_2),
+      suites: TRACE_SUITES.slice(),
       retryKey: hexDecode(HRR_P256_PRIVATE),
     },
     hexDecode(HRR_X25519_PRIVATE),

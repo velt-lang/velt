@@ -13,6 +13,17 @@ declare c("c") function free(p: Ptr<u8>): void;
 declare c("c") function memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
 declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 declare c("c") function _Unwind_RaiseException(e: Ptr<u8>): i32;
+declare c("c") function abort(): void;
+declare function velt_rt_exit(code: i32): never;
+
+/** Ends the process at once (a panic during a cleanup): C's `abort`. */
+export function abortProcess(): never {
+  // SAFETY: `abort` takes nothing; it never returns.
+  unsafe {
+    abort();
+  }
+  velt_rt_exit(134);
+}
 
 /** The unwinder's header in front of Velt's payload (`velt_vir::eh::HEADER_SIZE`). */
 const HEADER: usize = 32;

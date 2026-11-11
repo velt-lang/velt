@@ -232,7 +232,7 @@ fn promotes_loop_slots_and_keeps_behaviour() {
     assert_eq!(expected, (30 + 15 + 15) * 1000 + 150 + 15);
     let mut after = before.clone();
     let aggs = after.aggs.clone();
-    assert!(run(&aggs, &mut after.funcs[0]));
+    assert!(run(&aggs, &mut after.funcs[0], None));
     assert_valid(&after);
     assert_eq!(run_main(&after), expected);
     let poll = &after.funcs[0];
@@ -249,7 +249,7 @@ fn leaves_frames_it_cannot_account_for_alone() {
         let before = program(variant);
         let mut after = before.clone();
         let aggs = after.aggs.clone();
-        run(&aggs, &mut after.funcs[0]);
+        run(&aggs, &mut after.funcs[0], None);
         assert_valid(&after);
         assert_eq!(run_main(&after), run_main(&before));
         let poll = &after.funcs[0];
@@ -269,7 +269,7 @@ fn ignores_functions_that_are_not_poll_functions() {
     let mut p = program(Variant::Plain);
     p.funcs[0].is_poll = false;
     let aggs = p.aggs.clone();
-    assert!(!run(&aggs, &mut p.funcs[0]));
+    assert!(!run(&aggs, &mut p.funcs[0], None));
 }
 
 #[test]
@@ -278,7 +278,7 @@ fn frame_is_noalias_only_when_no_address_leaves_the_function() {
         let mut p = program(variant);
         let expected = run_main(&p);
         let aggs = p.aggs.clone();
-        run(&aggs, &mut p.funcs[0]);
+        run(&aggs, &mut p.funcs[0], None);
         assert_valid(&p);
         assert_eq!(run_main(&p), expected);
         p.funcs[0].param_attr(0).noalias

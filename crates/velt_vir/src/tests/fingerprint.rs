@@ -171,6 +171,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
                 args: vec![Operand::Const(Const::Static(loc), Ty::Ptr)],
                 dest: None,
                 next: BlockId(1),
+                unwind: None,
             },
         },
         BasicBlock {
@@ -180,6 +181,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
                 args: vec![Operand::Const(Const::Int(v.constant), Ty::I64)],
                 dest: Some(Place::local(Local(2))),
                 next: BlockId(2),
+                unwind: None,
             },
         },
         BasicBlock {
@@ -189,6 +191,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
                 args: vec![],
                 dest: None,
                 next: BlockId(3),
+                unwind: None,
             },
         },
         BasicBlock {

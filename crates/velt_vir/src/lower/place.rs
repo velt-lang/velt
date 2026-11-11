@@ -483,7 +483,7 @@ impl FnLower<'_, '_> {
         if let hir::ExprKind::Local(id, _) = &place.kind {
             if let Some(p) = self.local_target(*id) {
                 let v = self.detach(v, place.ty);
-                self.drop_old(*id);
+                self.drop_old(*id, &v);
                 self.store(p, v);
                 self.mark_init(*id);
             }
@@ -659,7 +659,7 @@ impl FnLower<'_, '_> {
         let v = if owns { self.take_owned(v) } else { v };
         match local {
             Some(id) => {
-                self.drop_old(id);
+                self.drop_old(id, &v);
                 self.assign(p, Rvalue::Use(v));
                 self.mark_init(id);
             }

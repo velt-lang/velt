@@ -141,6 +141,16 @@ impl FnCx<'_, '_> {
         Some(args)
     }
 
+    /// Can each of `params` take `undefined`: `void`, `any`, `unknown`, or a type with an
+    /// `undefined` (`T | undefined`, an optional parameter's)?
+    pub(super) fn admit_undefined(&self, params: &[TyId]) -> bool {
+        params.iter().all(|&t| {
+            t == self.cx.ty.unit
+                || self.cx.dynamic(t).is_some()
+                || (self.cx.ty.nothing_of(t)).is_some_and(|n| n.has_undefined())
+        })
+    }
+
     /// The parameter types of a function value of type `t`.
     pub(super) fn fn_params_of(&self, t: TyId) -> Vec<TyId> {
         match self.cx.ty.kind(t) {
