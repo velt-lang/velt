@@ -99,7 +99,12 @@ impl FnCx<'_, '_> {
             return None;
         };
         let l = self.lookup_local(&id.name, id.span)?;
-        let from = self.local_ty(l);
+        // The type the local has here: narrowed by `instanceof` or a guard, the tests below see
+        // that one, not the declared type.
+        let from = match self.peek_ty(expr) {
+            Some(t) => t,
+            None => self.local_ty(l),
+        };
         let from_class = match self.cx.class_of(from) {
             Some((d, _)) if d != class && self.cx.class_extends(class, d) => d,
             _ => return None,
@@ -154,7 +159,12 @@ impl FnCx<'_, '_> {
             return None;
         };
         let l = self.lookup_local(&id.name, id.span)?;
-        let from = self.local_ty(l);
+        // The type the local has here: narrowed by `instanceof` or a guard, the tests below see
+        // that one, not the declared type.
+        let from = match self.peek_ty(expr) {
+            Some(t) => t,
+            None => self.local_ty(l),
+        };
         let (from_class, _) = self.cx.class_of(from)?;
         let mut classes = vec![];
         for &m in &members {
