@@ -21,6 +21,18 @@ impl FnCx<'_, '_> {
         if self.shared_widening_error(expected, found) {
             return;
         }
+        if self.callable_as_object(found.ty, expected) {
+            let (s, d) = (self.cx.display(found.ty), self.cx.display(expected));
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    format!("a function with properties (`{s}`) can't convert to `{d}`, which has no call signature"),
+                    found.span,
+                )
+                .with_note("the value would be a copy of the properties, no longer the function: `typeof` would say \"object\" and `===` would fail, where JavaScript keeps the one value (#2684)")
+                .with_note(format!("give `{d}` a call signature (`(): R;`), or pass an object literal of the properties")),
+            );
+            return;
+        }
         let undefined = |t: TyId| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
         if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span, true)
         {
@@ -189,5 +201,20 @@ impl FnCx<'_, '_> {
                 .map(|x| x.fields.iter().map(|f| f.optional).collect::<Vec<_>>())
         };
         fa == fb && opt(self.cx, da) != opt(self.cx, db)
+    }
+
+    /// Is `from` a function with properties (a callable object type) and `to` an object type
+    /// without a call signature (an anonymous object type or an interface of fields), to which
+    /// it would convert as a copy of its properties, losing the function (#2684)?
+    pub(crate) fn callable_as_object(&self, from: TyId, to: TyId) -> bool {
+        let crate::hir::TyKind::Adt(d, _) = *self.cx.ty.kind(to) else {
+            return false;
+        };
+        let object = self.cx.field_only_of.contains_key(&d)
+            || self
+                .cx
+                .adt(d)
+                .is_some_and(|a| a.kind == crate::hir::AdtKind::Anon);
+        object && self.cx.is_callable_object(from) && !self.cx.is_callable_object(to)
     }
 }

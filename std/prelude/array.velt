@@ -28,7 +28,7 @@
 import { arrayWithCapacity, includesEq, mayAlias, share } from "velt/lang/intrinsics";
 import { floatPosition } from "velt/lang/hooks/number";
 import { ARRAY_GET } from "velt/lang/hooks/keys";
-import { clampPosition } from "velt/lang/array/range";
+import { clampPosition, lastSearchEnd, searchStart } from "velt/lang/array/range";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
@@ -297,11 +297,13 @@ extend<T> Array<T> {
   }
 
   /**
-   * Position of the first element `===` `x`, or -1: objects by identity, numbers by value, so
-   * `NaN` is never found and `null` does not find `undefined` (JS `indexOf` semantics).
+   * Position of the first element `===` `x` from `fromIndex` on (negative: counted from the
+   * end), or -1: objects by identity, numbers by value, so `NaN` is never found and `null` does
+   * not find `undefined` (JS `indexOf` semantics).
    */
-  indexOf(x: T): i64 {
-    for (let i: usize = 0; i < this.length; i++) {
+  indexOf(x: T, fromIndex?: number): i64 {
+    const start = fromIndex === undefined ? 0 : searchStart(fromIndex, this.length);
+    for (let i = start; i < this.length; i++) {
       if (this[i] === x) {
         return i as i64;
       }
@@ -313,9 +315,11 @@ extend<T> Array<T> {
    * Returns the index of the last occurrence of a specified value in an array, or -1 if it is not
    * present. Compares like `indexOf`.
    * @param x - The value to locate in the array.
+   * @param fromIndex - The position to search backward from (negative: counted from the end);
+   * the last element when left out.
    */
-  lastIndexOf(x: T): i64 {
-    let i = this.length;
+  lastIndexOf(x: T, fromIndex?: number): i64 {
+    let i = fromIndex === undefined ? this.length : lastSearchEnd(fromIndex, this.length);
     while (i > 0) {
       i--;
       if (this[i] === x) {
@@ -330,16 +334,18 @@ extend<T> Array<T> {
    * appropriate. Compares like `indexOf` (objects by identity, tuples part by part), except
    * that the number `NaN` finds `NaN` (JS's SameValueZero).
    * @param x - The element to search for.
+   * @param fromIndex - The position to start from (negative: counted from the end).
    */
-  includes(x: T): bool {
-    if (this.indexOf(x) >= 0) {
+  includes(x: T, fromIndex?: number): bool {
+    if (this.indexOf(x, fromIndex) >= 0) {
       return true;
     }
     // Only a value that is not `===` itself can compare otherwise: the number `NaN`.
     if (x === x) {
       return false;
     }
-    for (let i: usize = 0; i < this.length; i++) {
+    const start = fromIndex === undefined ? 0 : searchStart(fromIndex, this.length);
+    for (let i = start; i < this.length; i++) {
       if (includesEq(this[i], x)) {
         return true;
       }

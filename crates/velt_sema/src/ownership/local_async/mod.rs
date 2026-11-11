@@ -48,6 +48,7 @@ mod reach;
 mod record;
 mod targets;
 mod types;
+mod unknown_callees;
 mod values;
 mod views;
 
@@ -85,8 +86,13 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
+    let mut resolved = 0;
+    // The types a stored closure literal's type has in its function's instantiations, by the
+    // function and the type.
+    let mut lit_insts: FxHashMap<(DefId, TyId), Vec<TyId>> = FxHashMap::default();
     loop {
         p.run(cx, &g);
+        resolve_hits(cx, &g, &mut p, &mut resolved);
         types::crossing_fns(cx, &p.roots[rooted..], &mut seen, &mut fns);
         rooted = p.roots.len();
         let mut changed = false;
@@ -103,13 +109,32 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             // A sync closure is matched the same strict way: `resolve`'s `(T) => void` stands for
             // no sync callback the user stores.
             let sync = matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if !f.is_async);
+            // A closure of a generic function's type (std's `uncaughtGet`, a `() => V`) is what
+            // that type is in the function's instantiations (`() => number` from a getter), which
+            // a `() => void` can't hold; one still generic matches anything, as before.
+            let lit = g.tys[n];
+            // Once per function and type: the literals of one generic function share them. A
+            // library function no call instantiates (a method reached only through an interface)
+            // gives none, and its closure's generic type matches anything, as before.
+            let key = (outermost(&g, c), lit);
+            if let std::collections::hash_map::Entry::Vacant(e) = lit_insts.entry(key) {
+                let mut insts = match types::mentions_param(cx, lit) {
+                    true => instances(cx, &g, c, lit),
+                    false => vec![],
+                };
+                if insts.is_empty() {
+                    insts.push(lit);
+                }
+                e.insert(insts);
+            }
+            let lits = &lit_insts[&key];
+            let lit_may_be = |t: TyId| lits.iter().any(|l| types::may_be(cx, *l, t));
             let matches = |t: TyId| match wrapped {
                 Some(inner) => {
-                    types::may_be(cx, inner, t)
-                        || (!types::mentions_param(cx, t) && types::may_be(cx, g.tys[n], t))
+                    types::may_be(cx, inner, t) || (!types::mentions_param(cx, t) && lit_may_be(t))
                 }
-                None if sync => !types::mentions_param(cx, t) && types::may_be(cx, g.tys[n], t),
-                None => types::may_be(cx, g.tys[n], t),
+                None if sync => !types::mentions_param(cx, t) && lit_may_be(t),
+                None => lit_may_be(t),
             };
             // Several crossing types may match: report one in user code, the earliest.
             // A crossing parameter of a generic type (`Graph::wild`) may carry any closure.
@@ -244,6 +269,98 @@ fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
         }
     }
     changed
+}
+
+/// The crossing values of a generic type found since `done` (`Graph::wild`, `Graph::generic_roots`):
+/// each carries
+/// what its type is in the instantiations of its function, a crossing type for the heap rule
+/// (a closure in `Job[]` or `Box<Job>` too). The type in an instantiation that is unknown (no
+/// call gives the type arguments) stays generic, and the parameter may carry any closure.
+fn resolve_hits(cx: &mut Ctx, g: &Graph, p: &mut Propagation, done: &mut usize) {
+    while let Some(&(f, ty, w)) = p.hits.get(*done) {
+        *done += 1;
+        // A method a dispatched call may reach has instantiations no direct call shows (a
+        // `Runner<FnTask>` holding an `Sp<FnTask>`). Its class's type parameters are what every
+        // `new` of the class, and every subclass's `extends`, gives them ([`class_insts`]); its own
+        // type parameters (`run<U>`), which a dispatched call may give anything, and a class whose
+        // objects come from nowhere the graph shows, let the value carry any closure.
+        let owner = outermost(g, f);
+        if g.dispatched.binary_search_by_key(&owner.0, |d| d.0).is_ok() {
+            let insts = match method_class(cx, owner) {
+                Some((_, own)) if types::mentions_param_from(cx, ty, own) => None,
+                Some((class, _)) => class_insts(cx, g, class, 0),
+                None => None,
+            };
+            match insts {
+                Some(sites) => {
+                    for (caller, targs) in sites {
+                        let t = cx.subst(ty, &targs);
+                        for t in instances(cx, g, caller, t) {
+                            push_instance(cx, p, t, w);
+                        }
+                    }
+                    continue;
+                }
+                None => p.wild.push(w),
+            }
+        }
+        for t in instances(cx, g, f, ty) {
+            push_instance(cx, p, t, w);
+        }
+    }
+}
+
+/// What a crossing value of type `t` (an instantiation of a generic one) carries: `t` itself,
+/// for the heap rule, or any closure when `t` is still generic.
+fn push_instance(cx: &Ctx, p: &mut Propagation, t: TyId, w: Why) {
+    if types::mentions_param(cx, t) {
+        // Its type, a type parameter, says nothing to the reader: the label names the boundary.
+        p.wild.push(w);
+    } else {
+        p.roots.push((t, w));
+    }
+}
+
+/// The class of method `m`, with the number of its type parameters (the method's own come after).
+fn method_class(cx: &Ctx, m: DefId) -> Option<(DefId, u32)> {
+    let Some(Def::Fn(f)) = &cx.defs[m.0 as usize] else {
+        return None;
+    };
+    match cx.ty.kind(f.self_ty?) {
+        TyKind::Adt(class, args) => Some((*class, args.len() as u32)),
+        _ => None,
+    }
+}
+
+/// Every instantiation of `class`, with the function it is made in: the type arguments of each
+/// `new` (or literal) of it, and of each subclass's `extends` (`class NumQueue extends
+/// AsyncQueue<number>`), followed through the subclass's own instantiations where that names the
+/// subclass's type parameters. `None` where none is seen (its objects come from somewhere the graph
+/// doesn't show) or the chain is too deep.
+fn class_insts(
+    cx: &mut Ctx,
+    g: &Graph,
+    class: DefId,
+    depth: u32,
+) -> Option<Vec<(DefId, Vec<TyId>)>> {
+    if depth > 8 {
+        return None;
+    }
+    let mut out = g.news.get(&class).cloned().unwrap_or_default();
+    for (sub, base) in types::direct_subclasses(cx, class) {
+        let TyKind::Adt(_, bargs) = cx.ty.kind(base).clone() else {
+            continue;
+        };
+        if bargs.iter().any(|t| types::mentions_param(cx, *t)) {
+            for (caller, sargs) in class_insts(cx, g, sub, depth + 1)? {
+                let args = bargs.iter().map(|t| cx.subst(*t, &sargs)).collect();
+                out.push((caller, args));
+            }
+        } else {
+            out.push((sub, bargs));
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// The function that closure `c` is written in, outside every closure (`c` itself if it is no
@@ -477,8 +594,13 @@ struct Propagation {
     shared: Vec<Option<Why>>,
     work: Vec<(usize, u8)>,
     roots: Vec<(TyId, Why)>,
-    /// Why each crossing parameter of a generic type crosses (`Graph::wild`).
+    /// Why a crossing local of a generic type, with no known instantiation, crosses: it may carry
+    /// any closure (`Graph::wild`).
     wild: Vec<Why>,
+    /// Crossing values of a generic type (`Graph::wild` locals, `Graph::generic_roots`): the
+    /// function, the type and why, to resolve through the function's instantiations
+    /// ([`resolve_hits`]).
+    hits: Vec<(DefId, TyId, Why)>,
 }
 
 impl Propagation {
@@ -490,6 +612,7 @@ impl Propagation {
             work: vec![],
             roots: g.roots.clone(),
             wild: vec![],
+            hits: g.generic_roots.clone(),
         }
     }
 
@@ -564,9 +687,10 @@ impl Propagation {
     fn root(&mut self, cx: &Ctx, g: &Graph, n: usize, f: u8, w: Why) {
         let ty = g.tys[n];
         let rooted = f == CROSSES && (g.unknown[n] || !types::fn_like(cx, ty));
-        // Its type, a type parameter, says nothing to the reader: the label names the boundary.
-        if f == CROSSES && g.wild.binary_search(&n).is_ok() {
-            self.wild.push(w);
+        if let (true, Node::Local(d, _) | Node::Ret(d)) =
+            (rooted && g.wild.binary_search(&n).is_ok(), g.nodes[n])
+        {
+            self.hits.push((d, ty, w));
         }
         if rooted && !matches!(g.nodes[n], Node::Lit(_)) {
             self.roots.push((ty, w));

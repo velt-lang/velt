@@ -1,0 +1,10 @@
+// A union value asserted to its function member when it holds the other member: a `TypeError`
+// (Node would throw when calling it; Velt stops at the assertion).
+type Get = string | (() => string);
+
+function call(g: Get): string {
+    return (g as () => string)();
+}
+
+console.log(call(() => "ok"));
+console.log(call("not a function"));

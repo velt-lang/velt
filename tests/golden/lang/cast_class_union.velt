@@ -1,0 +1,30 @@
+// `x as A | B` of a base class value whose classes extend it: the subclass found at run time
+// (`instanceof`), as tsc allows the assertion (one type assignable to the other).
+class Base {
+    kind = "b";
+}
+class A extends Base {
+    v = "a";
+}
+class B extends Base {
+    v = "bb";
+}
+class C extends Base {
+    w = 1;
+}
+
+function pick(x: Base): string {
+    const ab = x as A | B;
+    return ab instanceof A ? "A:" + ab.v : "B:" + ab.v;
+}
+
+function len(x: Base): number {
+    return (x as A | B).v.length;
+}
+
+const items: Base[] = [new A(), new B(), new A()];
+for (const i of items) {
+    console.log(pick(i), len(i));
+}
+const c: Base = new C();
+console.log(c.kind, c instanceof C);

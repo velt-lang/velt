@@ -1,0 +1,10 @@
+// `globalThis.Text` past the module's own type alias `Text`: lib.dom's interface, as `tsc`
+// reads it, with no other DOM name in the module to load it.
+type Text = { own: string };
+
+function textOf(node: globalThis.Text | null): string {
+  return node == null ? "no text" : node.data;
+}
+
+const t: Text = { own: "mine" };
+console.log(t.own, textOf(null));

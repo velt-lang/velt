@@ -101,6 +101,7 @@ mod intersections;
 mod intrinsic_decls;
 mod js_api;
 mod json;
+mod kept;
 mod kept_consts;
 mod key_groups;
 mod known;
@@ -167,7 +168,8 @@ use velt_common::{Diagnostic, Diagnostics, Span};
 
 pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
-pub use generating::{check_generating, Checked};
+pub use generating::{check_generating, check_generating_kept, Checked};
+pub use kept::{KeptCheck, PendingKept, Refused};
 pub use source_module::SourceModule;
 pub use std_load::{LoadFn, Loads, StdBatch, StdLoads};
 pub use timings::check_rounds;
@@ -280,6 +282,7 @@ fn check_timed(
 ) -> script_locals::Checked {
     // Outlives every `Ctx` below, with the modules the driver generates during the check.
     let generator = gen.and_then(|g| g.generate).map(generated::Generator::new);
+    let input = modules;
     let rewrite_start = std::time::Instant::now();
     let chunks = timings::pass("rewrite: module_chunks", || {
         module_chunks::split(modules, root)
@@ -498,7 +501,43 @@ fn check_timed(
         }
         break generated;
     };
+    // A kept check (`kept`) of a check in which no generator ran.
+    let none_generated = generator.as_ref().is_none_or(|g| g.kept().next().is_none());
+    let kept = (kept::wanted(input) && none_generated).then(|| kept::detach(cx.clone()));
+    let checked = (modules.as_ptr(), modules.len());
     let (program, diags) = program::build_checked(cx, entry, generated);
+    if let Some(kept) = kept {
+        let vec = |v: Option<Vec<SourceModule>>| -> kept::Stage {
+            (v.as_ref().map(|m| m.as_ptr()), Box::new(v))
+        };
+        let stages = vec![
+            vec(chunks.modules),
+            vec(asserted.modules),
+            vec(destructured),
+            vec(flat),
+            vec(merged),
+            vec(callable),
+            (
+                lifted.as_ref().map(|l| l.modules.as_ptr()),
+                Box::new(lifted),
+            ),
+            (
+                overloaded.as_ref().map(|o| o.modules.as_ptr()),
+                Box::new(overloaded),
+            ),
+            vec(rewritten),
+            vec(globals),
+            vec(accessors),
+            vec(branded),
+            (
+                closures.as_ref().map(|c| c.modules.as_ptr()),
+                Box::new(closures),
+            ),
+        ];
+        let loads = loads.map(|l| l.kept.id());
+        let sources = gen.map_or(&[][..], |g| g.sources);
+        kept::offer(kept, input, sources, checked, stages, loads);
+    }
     (
         (Some(Checked::Program(Box::new(program))), diags),
         Default::default(),

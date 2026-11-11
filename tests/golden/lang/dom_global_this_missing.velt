@@ -1,0 +1,3 @@
+// `globalThis.T` for a type that isn't global is refused, as under `tsc` (TS2694).
+let x: globalThis.NoSuchType | null = null;
+console.log(x);

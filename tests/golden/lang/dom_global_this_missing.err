@@ -1,0 +1,1 @@
+dom_global_this_missing.velt:2:8: error: cannot find type `globalThis.NoSuchType` in this scope

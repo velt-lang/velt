@@ -1,0 +1,15 @@
+// A function with properties converted to an object type without a call signature would be a
+// copy of its properties, no longer the function (`typeof` "object", `===` false), where
+// TypeScript keeps the one value: refused (#2684).
+interface O {
+  a: number;
+}
+interface Callable {
+  (): number;
+  a: number;
+}
+const f = Object.assign(() => 1, { a: 2 });
+const c: Callable = f;
+const o: O = f;
+const p: { a: number } = f;
+console.log(typeof c, typeof o, typeof p);

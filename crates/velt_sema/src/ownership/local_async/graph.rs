@@ -184,8 +184,18 @@ pub(super) struct Graph {
     pub roots: Vec<(TyId, Why)>,
     /// Named functions used as values (called through function values too).
     pub fn_values: Vec<DefId>,
-    /// Parameters of unknown-origin functions whose type mentions a type parameter: one that
-    /// crosses may carry a closure of any function type (sorted).
+    /// Values of unknown origin, outside std, of a type that mentions a type parameter, that cross
+    /// where they are read: the function, the type and why (resolved like `wild` locals).
+    pub generic_roots: Vec<(DefId, TyId, Why)>,
+    /// The type arguments of every `new` or literal of each generic class or struct, with the
+    /// function making it.
+    pub news: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    /// The methods a virtual, interface or bounded call may reach (sorted): what such a method's
+    /// type parameters are isn't known from its direct calls alone.
+    pub dispatched: Vec<DefId>,
+    /// Locals and results outside std whose type mentions a type parameter (in node order, so sorted). One that
+    /// crosses carries what its type has in each instantiation of its function
+    /// (`super::instances`), or any closure where no instantiation is known.
     pub wild: Vec<usize>,
     /// Per closure literal node: its capture locals' nodes.
     pub captures: FxHashMap<usize, Vec<usize>>,
@@ -236,61 +246,19 @@ pub(super) fn build(cx: &Ctx) -> Graph {
             continue;
         }
         let library = cx.scopes[info.module].is_library;
+        let std = cx.scopes[info.module].is_std;
         let mut w = Walk {
             cx,
             g: &mut g,
             d,
             f,
             library,
+            std,
         };
         let ret = w.ret_node(d);
         w.block(&f.body.block, To::Node(ret, None));
     }
-    // Closure literals, named functions used as values and dispatched methods (an interface's
-    // implementations, overriding and overridden methods, and methods called through a generic
-    // bound) are called
-    // where the callee is unknown, whose arguments the graph doesn't follow into their parameters:
-    // those hold values of unknown origin, of their declared types. One that crosses (a callback
-    // that spawns its argument) makes its type a crossing type, so the closures passed to such
-    // calls cross by the heap rule. A parameter whose type is a type parameter (or one that may be
-    // null) stands for any function type: when it crosses, every closure the program stores or passes to an unknown
-    // callee crosses (`Graph::wild`). A function referenced in several places is listed once.
-    let mut called: Vec<DefId> = g.parent.keys().copied().collect();
-    called.extend(g.fn_values.iter().copied());
-    // The methods a virtual, interface or bounded call may reach: those in a class's vtable
-    // (only methods overridden somewhere have a slot) and an interface's implementations. Any
-    // other method is called directly, where the graph follows its arguments.
-    for info in &cx.info {
-        if let DefInfo::Adt(a) = info {
-            called.extend(a.vtable.iter().copied());
-        }
-    }
-    for i in &cx.impls {
-        called.extend(i.methods.iter().copied());
-    }
-    called.sort_by_key(|d| d.0);
-    called.dedup();
-    for c in called {
-        let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
-            continue;
-        };
-        // A method's first parameter is `this`, the receiver the graph doesn't track.
-        let this = usize::from(f.self_ty.is_some());
-        // std's generic callbacks (the prelude's `resolve`) are matched by their instantiations
-        // instead (`super::crossing_params`).
-        let std = cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_std);
-        for p in f.params.iter().skip(f.captures.len() + this) {
-            if let Some(&n) = g.ids.get(&Node::Local(c, p.local)) {
-                g.unknown[n] = true;
-                let ty = f.body.locals[p.local.0 as usize].ty;
-                if !std && super::types::bare_param(cx, ty) {
-                    g.wild.push(n);
-                }
-            }
-        }
-    }
-    g.wild.sort_unstable();
-    g.wild.dedup();
+    super::unknown_callees::mark(cx, &mut g);
     g
 }
 
@@ -300,6 +268,8 @@ struct Walk<'a, 'm> {
     d: DefId,
     f: &'a FnDef,
     library: bool,
+    /// Is this function in std (`Graph::generic_roots` leaves std out)?
+    std: bool,
 }
 
 impl Walk<'_, '_> {
@@ -346,7 +316,15 @@ impl Walk<'_, '_> {
                     self.g.inflows[m].push((e.ty, site));
                 }
             }
-            To::Flag(CROSSES, Some(why)) => self.g.roots.push((e.ty, why)),
+            To::Flag(CROSSES, Some(why)) => {
+                self.g.roots.push((e.ty, why));
+                // A value of a generic type that crosses where it is made, with no local in
+                // between (`spawn(gs[0]())`, a field, a call's result), is resolved like a local of
+                // that type.
+                if !self.std && super::types::mentions_param(self.cx, e.ty) {
+                    self.g.generic_roots.push((self.d, e.ty, why));
+                }
+            }
             _ => {}
         }
     }
@@ -486,7 +464,16 @@ impl Walk<'_, '_> {
                 self.value(rhs, to);
             }
             E::Call { callee, args } => self.call(e, callee, args, to),
-            E::New { def, args, .. } => {
+            E::New {
+                def,
+                type_args,
+                args,
+            } => {
+                // Every object of a generic class is made here: its instantiations.
+                if !type_args.is_empty() {
+                    let site = (self.d, type_args.clone());
+                    self.g.news.entry(*def).or_default().push(site);
+                }
                 let ctor = match &self.cx.info[def.0 as usize] {
                     DefInfo::Adt(a) => a.ctor,
                     _ => None,
@@ -494,10 +481,22 @@ impl Walk<'_, '_> {
                 self.pass_to_params(ctor, args, e.span);
                 self.unknown(e, to);
             }
-            E::AdtLit { fields: xs, .. }
-            | E::ArrayLit(xs)
-            | E::Tuple(xs)
-            | E::Variant { args: xs, .. } => {
+            E::AdtLit {
+                def,
+                type_args,
+                fields: xs,
+                ..
+            } => {
+                if !type_args.is_empty() {
+                    let site = (self.d, type_args.clone());
+                    self.g.news.entry(*def).or_default().push(site);
+                }
+                for x in xs {
+                    self.value(x, STORE);
+                }
+                self.unknown(e, to);
+            }
+            E::ArrayLit(xs) | E::Tuple(xs) | E::Variant { args: xs, .. } => {
                 for x in xs {
                     self.value(x, STORE);
                 }
@@ -541,8 +540,13 @@ impl Walk<'_, '_> {
             }
             E::Throw(x) => self.value(x, STORE),
             // A `ConstArray`'s elements are literals, which flow nowhere (as an `ArrayLit`'s).
-            E::FnRef(d, _) => {
+            E::FnRef(d, targs) => {
                 self.g.fn_values.push(*d);
+                // A generic function used as a value is one more instantiation of it.
+                if !targs.is_empty() {
+                    let site = (self.d, targs.clone());
+                    self.g.insts.entry(*d).or_default().push(site);
+                }
                 self.unknown(e, to)
             }
             E::Lit(_) | E::ConstArray(_) | E::Global(_) => self.unknown(e, to),

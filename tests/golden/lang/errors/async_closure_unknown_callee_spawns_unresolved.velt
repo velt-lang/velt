@@ -1,0 +1,29 @@
+// An interface method with a type parameter of its own (`run<U>`), implemented by a generic class
+// made inside a generic function: a dispatched call may give `U` any type, so the parameter stands
+// for any function type, and a closure passed to an unknown callee crosses and must not change
+// what it captured (#2726, #2741). The class's own type parameter comes from its `new`; the
+// method's doesn't.
+
+type Job = () => Promise<void>;
+
+interface Runner {
+  run<U extends Job>(g: U): Promise<void>;
+}
+
+class Spawner<T> implements Runner {
+  async run<U extends Job>(g: U): Promise<void> {
+    await spawn(g());
+  }
+}
+
+function make<A, B>(): Runner {
+  return new Spawner<A>();
+}
+
+async function main() {
+  let n = 0;
+  const r = make<number, string>();
+  await r.run(async (): Promise<void> => {
+    n += 1;
+  });
+}

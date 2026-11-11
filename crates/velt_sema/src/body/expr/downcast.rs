@@ -99,7 +99,12 @@ impl FnCx<'_, '_> {
             return None;
         };
         let l = self.lookup_local(&id.name, id.span)?;
-        let from = self.local_ty(l);
+        // The type the local has here: narrowed by `instanceof` or a guard, the tests below see
+        // that one, not the declared type.
+        let from = match self.peek_ty(expr) {
+            Some(t) => t,
+            None => self.local_ty(l),
+        };
         let from_class = match self.cx.class_of(from) {
             Some((d, _)) if d != class && self.cx.class_extends(class, d) => d,
             _ => return None,
@@ -134,6 +139,68 @@ impl FnCx<'_, '_> {
             els: Box::new(els),
         };
         Some(self.mk(kind, target, span))
+    }
+
+    /// `x as A | B` of a local `x` of a base class of the classes `A` and `B` (each one `x`'s
+    /// type narrows to by `instanceof`), as TypeScript allows it: `x instanceof A ? x : x
+    /// instanceof B ? x : panic`, each arm the value as that member of the union, checked at
+    /// run time as [`Self::class_downcast_cast`] checks one class. `None` for another assertion.
+    pub(super) fn class_union_downcast(
+        &mut self,
+        expr: &velt_syntax::ast::Expr,
+        target: TyId,
+        want: crate::body::Want,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let members = self.cx.union_members(target)?;
+        let velt_syntax::ast::ExprKind::Ident(id) =
+            &super::object_builtins::strip_parens(expr).kind
+        else {
+            return None;
+        };
+        let l = self.lookup_local(&id.name, id.span)?;
+        // The type the local has here: narrowed by `instanceof` or a guard, the tests below see
+        // that one, not the declared type.
+        let from = match self.peek_ty(expr) {
+            Some(t) => t,
+            None => self.local_ty(l),
+        };
+        let (from_class, _) = self.cx.class_of(from)?;
+        let mut classes = vec![];
+        for &m in &members {
+            let (class, _) = self.cx.class_of(m)?;
+            let narrows = class != from_class
+                && self.cx.class_extends(class, from_class)
+                && self.instance_kind(from, class) == Ok(Instance::Maybe(m));
+            if !narrows {
+                return None;
+            }
+            classes.push((class, m));
+        }
+        let name = self.cx.display(target);
+        let msg = format!("TypeError: type assertion failed: the value is not of type `{name}`");
+        let m = self.str_lit(&msg, span);
+        let never = self.cx.ty.never;
+        let mut out = self.intrinsic(hir::Intrinsic::Panic, vec![m], never, span);
+        for (class, member) in classes.into_iter().rev() {
+            let test = self.expr(expr, None, crate::body::Want::Borrow);
+            let cond = self.class_test(test, class, span)?;
+            // The local stays usable after the cast, as after `instanceof`.
+            let value = self.expr(expr, None, crate::body::Want::Borrow);
+            let value = match want {
+                crate::body::Want::Move => self.share_if_place(value),
+                _ => value,
+            };
+            let down = self.mk(hir::ExprKind::Downcast(Box::new(value)), member, span);
+            let then = self.coerce(down, target);
+            let kind = hir::ExprKind::If {
+                cond: Box::new(cond),
+                then: Box::new(then),
+                els: Box::new(out),
+            };
+            out = self.mk(kind, target, span);
+        }
+        Some(out)
     }
 
     /// Fills the open `slots` of class `class` (narrowed from a value of class `from`, its

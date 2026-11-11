@@ -47,6 +47,7 @@ mod ctor;
 pub(crate) mod defaults;
 mod discriminant_facts;
 mod driver;
+mod eq_local_facts;
 pub(crate) mod expr;
 mod field_narrow;
 mod for_any;

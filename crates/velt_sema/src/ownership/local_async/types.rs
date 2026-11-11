@@ -112,7 +112,7 @@ pub(super) fn adt_parts_below(
 }
 
 /// Every class that extends `d`, directly or not.
-fn subclasses(cx: &Ctx, d: crate::hir::DefId) -> Vec<crate::hir::DefId> {
+pub(super) fn subclasses(cx: &Ctx, d: crate::hir::DefId) -> Vec<crate::hir::DefId> {
     let base_of = |i: usize| match &cx.info[i] {
         DefInfo::Adt(a) => a.base.and_then(|b| match cx.ty.kind(b) {
             TyKind::Adt(bd, _) => Some(*bd),
@@ -147,19 +147,34 @@ pub(super) fn mentions_param(cx: &Ctx, t: TyId) -> bool {
     found
 }
 
-/// Is `t` a type parameter, or one that may be null: a value of it may be any function?
-pub(super) fn bare_param(cx: &Ctx, t: TyId) -> bool {
-    match cx.ty.kind(t) {
-        TyKind::Param(_) => true,
-        TyKind::Option(x, _) => matches!(cx.ty.kind(*x), TyKind::Param(_)),
-        _ => false,
+/// Does `t` mention a type parameter numbered `from` or above (a method's own, after its class's)?
+pub(super) fn mentions_param_from(cx: &Ctx, t: TyId, from: u32) -> bool {
+    let mut found = false;
+    cx.ty.visit(t, &mut |k| {
+        found |= matches!(k, TyKind::Param(i) if *i >= from)
+    });
+    found
+}
+
+/// The classes that extend `d` directly, each with the base type it names (`Base<number>`).
+pub(super) fn direct_subclasses(cx: &Ctx, d: crate::hir::DefId) -> Vec<(crate::hir::DefId, TyId)> {
+    let mut out = vec![];
+    for (i, info) in cx.info.iter().enumerate() {
+        if let DefInfo::Adt(a) = info {
+            if let Some(b) = a.base {
+                if matches!(cx.ty.kind(b), TyKind::Adt(bd, _) if *bd == d) {
+                    out.push((crate::hir::DefId(i as u32), b));
+                }
+            }
+        }
     }
+    out
 }
 
 /// Can a closure of type `lit` be a value of the crossing function type `f`? Same parameter
-/// shapes and both results promises (or both not); generic parameters match anything, and
-/// what a function throws, or a promise rejects or resolves with, is not compared (a function
-/// value may be adapted to a wider one).
+/// shapes, both results promises (or both not) and, when not, both `void` (or both not);
+/// generic parameters match anything, and what a function throws, or a promise rejects or
+/// resolves with, is not compared (a function value may be adapted to a wider one).
 pub(super) fn may_be(cx: &Ctx, lit: TyId, f: TyId) -> bool {
     match (cx.ty.kind(lit), cx.ty.kind(f)) {
         (_, TyKind::Closure(_)) | (TyKind::Closure(_), _) => lit == f,
@@ -176,8 +191,15 @@ pub(super) fn may_be(cx: &Ctx, lit: TyId, f: TyId) -> bool {
             },
         ) => {
             let promise = |t: &TyId| matches!(cx.ty.kind(*t), TyKind::Promise(..));
+            // A function returning a value is never held where `void` is expected, nor the
+            // reverse: a value-returning callback is retyped or wrapped in an adapter returning
+            // `void` there (#694), which is the closure matched. A type parameter may be either.
+            let unit = |t: &TyId| cx.ty.kind(*t) == &TyKind::Unit;
+            let param = |t: &TyId| matches!(cx.ty.kind(*t), TyKind::Param(_));
+            let results = promise(r1) || unit(r1) == unit(r2) || param(r1) || param(r2);
             p1.len() == p2.len()
                 && promise(r1) == promise(r2)
+                && results
                 && p1.iter().zip(p2).all(|(a, b)| same_shape(cx, *a, *b, 0))
         }
         _ => false,

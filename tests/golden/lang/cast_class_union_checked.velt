@@ -1,0 +1,21 @@
+// `x as A | B` of a value of neither class: a `TypeError`, where Node would go on with the
+// wrong object (the assertion is checked, as `x as A` is).
+class Base {
+    kind = "b";
+}
+class A extends Base {
+    v = "a";
+}
+class B extends Base {
+    v = "bb";
+}
+class C extends Base {
+    w = 1;
+}
+
+function len(x: Base): number {
+    return (x as A | B).v.length;
+}
+
+console.log(len(new B()));
+console.log(len(new C()));

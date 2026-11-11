@@ -1,0 +1,14 @@
+// A union with a promise member cast to `any` to read `.then` (a promise test): a promise has
+// one owner, so no `any` holds one. Refused, pointing at `instanceof Promise`.
+type View = () => string | null;
+
+function setup(): View | Promise<View> {
+    return () => null;
+}
+
+const r = setup();
+if (r && typeof (r as any).then === "function") {
+    console.log("promise");
+} else {
+    console.log("view");
+}

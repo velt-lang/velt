@@ -1,0 +1,13 @@
+// Equal to an `any`, which may hold `null`, a nullable variable stays nullable.
+class Item {
+  name = "a";
+}
+
+function f(d: any, b: Item | null): string {
+  if (d === b) {
+    return b.name;
+  }
+  return "";
+}
+
+console.log(f(null, null));

@@ -1,0 +1,32 @@
+// A union with a function member asserted to that function type after `typeof` (watch's
+// `typeof source === "function" ? (source as () => T)() : source`): each written function type
+// has its own error site, so the member is the one that differs only in that.
+type Src<T> = T | (() => T);
+
+function watch<T>(source: Src<T>, cb: (v: T) => void): void {
+    const run = () => {
+        const v = typeof source === "function" ? (source as () => T)() : source;
+        cb(v as T);
+    };
+    run();
+}
+
+function run<T>(source: T | (() => T)): T {
+    return typeof source === "function" ? (source as () => T)() : (source as T);
+}
+
+type Get = string | (() => string);
+
+function read(g: Get): string {
+    return typeof g === "function" ? (g as () => string)() : g;
+}
+
+function readOpt(g: Get | undefined): string {
+    if (g === undefined) return "none";
+    return typeof g === "function" ? (g as () => string)() : g;
+}
+
+watch(3, (v) => console.log("watch", v));
+watch(() => "s", (v) => console.log("watch", v));
+console.log(run(5), run(() => "f"));
+console.log(read("a"), read(() => "b"), readOpt(undefined), readOpt(() => "c"));

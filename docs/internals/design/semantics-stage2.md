@@ -280,10 +280,20 @@ whether a value that crosses holds its function type. A closure literal's own pa
 values of unknown origin of their declared types, so a callback that spawns its argument makes the
 closures passed to such calls cross; so do a dispatched method's (one in a class's vtable, an
 overriding or overridden method, or an interface's implementation, which a call through a generic
-bound reaches too). A parameter whose type is a type parameter (`T`, `T | null`) of a function
-outside std stands for any function type, so when it crosses, every closure stored or passed to an
-unknown callee crosses; std's generic callbacks, such as the prelude's `resolve`, are matched by
-their instantiations instead (`crossing_params`). Where the analysis does not follow a path, the transfer at
+bound reaches too). A crossing value whose type mentions a type parameter (`T`, `T[]`, `Box<T>`,
+a `T` read out of one), in a function outside std, crosses with what that type is in the
+function's instantiations: the type arguments of its direct calls and of its uses as a function
+value, followed to their callers where they are generic themselves (#2740, #2741); an element or
+field read, or a call's result, that crosses at once (`spawn(gs[0]())`, `spawn(pick(gs)())`) is
+resolved the same way. A method a dispatched call may reach (a generic class's method through an
+interface) has instantiations its direct calls don't show: its class's type parameters are what
+every `new` of the class gives them, and every subclass's `extends` (`class NumQueue extends
+AsyncQueue<number>`, followed through the subclass's own instantiations where it names its own type
+parameters). Where none of these gives them (no `new` seen), or for the method's own type
+parameters (`run<U>`, which a dispatched call may give anything), the value stands for any
+function type, and every closure stored or passed to an unknown callee crosses. std's generic
+callbacks, such as the prelude's `resolve`, are matched by their instantiations in
+`crossing_params`. Where the analysis does not follow a path, the transfer at
 the boundary still copies what is shared, and the many-threads check catches the rest, with one
 exception: a captured variable's cell. A local closure's cell crosses with the closure at a spawn
 through a function value (callee.rs `call_indirect`) without being separated, so for an assigned

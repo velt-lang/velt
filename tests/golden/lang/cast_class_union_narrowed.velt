@@ -1,0 +1,50 @@
+// `x as A | B` of a local already narrowed to `A` (by `instanceof` or a type guard): the
+// narrowed value converts to the union as it is, as on any other value of `A`; the run-time
+// subclass tests apply only to a value of the base class.
+class Base {
+    kind = "b";
+}
+class A extends Base {
+    v = "a";
+}
+class B extends Base {
+    v = "bb";
+}
+class AA extends A {
+    w = 2;
+}
+
+function isA(x: Base): x is A {
+    return x instanceof A;
+}
+
+function f(x: Base): string {
+    if (x instanceof A) {
+        const y = x as A | B;
+        return "A " + y.v;
+    }
+    return "other";
+}
+
+function g(x: Base): string {
+    if (isA(x)) {
+        return "guard " + (x as A | B).v;
+    }
+    return "other";
+}
+
+function h(x: Base): string {
+    if (x instanceof A) {
+        // A downcast from the narrowed class still tests at run time.
+        return x instanceof AA ? "AA " + (x as AA).w : "plain " + x.v;
+    }
+    return "other";
+}
+
+console.log(f(new A()), f(new B()));
+console.log(g(new A()), g(new B()));
+console.log(h(new AA()), h(new A()), h(new B()));
+let z: Base = new B();
+if (z instanceof B) {
+    console.log((z as A | B).v);
+}

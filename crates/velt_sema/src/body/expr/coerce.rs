@@ -201,6 +201,13 @@ impl FnCx<'_, '_> {
             let f = self.callable_as_fn(h);
             return self.try_coerce(f, exp);
         }
+        // A function with properties as an object type with no call signature (`const o: O =
+        // f` for `interface O { a: number }`): Velt would copy the properties into an object,
+        // no longer the function, where TypeScript keeps the one value (`typeof o` is
+        // "function", `o === f`). Refused rather than wrong (#2684; `callable_as_object`).
+        if self.callable_as_object(h.ty, exp) {
+            return Err(h);
+        }
         if self.cx.dynamic(h.ty).is_some() || self.cx.dynamic(exp).is_some() {
             return self.coerce_dynamic(h, exp, self.adapting);
         }
