@@ -177,6 +177,8 @@ impl PendingKept {
     /// check that made this was given, alive and unchanged since: not other values that happen to
     /// be at the same addresses, which the check can't tell apart (a vector dropped and another
     /// allocated in its place). The kept check reads through borrows into them.
+    // `Refused` hands the caller its vectors back, by value, so the `Err` is large on purpose.
+    #[allow(clippy::result_large_err)]
     pub unsafe fn adopt(
         mut self,
         input: Vec<SourceModule>,

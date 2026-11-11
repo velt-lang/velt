@@ -86,6 +86,8 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     let mut resolved = 0;
+    // The types each stored generic closure literal has in its function's instantiations.
+    let mut lit_insts: FxHashMap<usize, Vec<TyId>> = FxHashMap::default();
     loop {
         p.run(cx, &g);
         resolve_hits(cx, &g, &mut p, &mut resolved);
@@ -105,13 +107,24 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             // A sync closure is matched the same strict way: `resolve`'s `(T) => void` stands for
             // no sync callback the user stores.
             let sync = matches!(&cx.defs[c.0 as usize], Some(Def::Fn(f)) if !f.is_async);
+            // A closure of a generic function's type (std's `uncaughtGet`, a `() => V`) is what
+            // that type is in the function's instantiations (`() => number` from a getter), which
+            // a `() => void` can't hold; one still generic matches anything, as before.
+            let lit = g.tys[n];
+            if let std::collections::hash_map::Entry::Vacant(e) = lit_insts.entry(n) {
+                e.insert(match types::mentions_param(cx, lit) {
+                    true => instances(cx, &g, c, lit),
+                    false => vec![lit],
+                });
+            }
+            let lits = &lit_insts[&n];
+            let lit_may_be = |t: TyId| lits.iter().any(|l| types::may_be(cx, *l, t));
             let matches = |t: TyId| match wrapped {
                 Some(inner) => {
-                    types::may_be(cx, inner, t)
-                        || (!types::mentions_param(cx, t) && types::may_be(cx, g.tys[n], t))
+                    types::may_be(cx, inner, t) || (!types::mentions_param(cx, t) && lit_may_be(t))
                 }
-                None if sync => !types::mentions_param(cx, t) && types::may_be(cx, g.tys[n], t),
-                None => types::may_be(cx, g.tys[n], t),
+                None if sync => !types::mentions_param(cx, t) && lit_may_be(t),
+                None => lit_may_be(t),
             };
             // Several crossing types may match: report one in user code, the earliest.
             // A crossing parameter of a generic type (`Graph::wild`) may carry any closure.
