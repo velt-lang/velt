@@ -25,7 +25,7 @@ use crate::ctx::Ctx;
 use crate::defs::{DefInfo, FnSource};
 use crate::hir::DefId;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct LiteralHosts {
     /// The bodies not yet made sure of, in checking order, with the member names of their
     /// object literals that may hold functions.

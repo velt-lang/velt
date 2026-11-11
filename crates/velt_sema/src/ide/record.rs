@@ -47,6 +47,7 @@ pub(crate) struct LocalTarget {
 }
 
 /// A local visible in `[lo, hi)` of `file`.
+#[derive(Clone)]
 pub(crate) struct ScopeEntry {
     pub file: FileId,
     pub lo: u32,
@@ -55,7 +56,7 @@ pub(crate) struct ScopeEntry {
     pub target: Target,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Recorder {
     pub refs: Vec<(Span, Target)>,
     /// Checked expressions and declared locals: span, type, display context.

@@ -148,6 +148,7 @@ struct Mode {
 }
 
 /// What is checked on demand in one check.
+#[derive(Clone)]
 pub(crate) struct Lazy {
     /// Off for the editor's analysis (`ide`), which checks everything, unless it has a load
     /// callback: then `check_all`.

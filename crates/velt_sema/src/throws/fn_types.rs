@@ -72,7 +72,7 @@ pub(crate) struct FnTypeSeeds {
 }
 
 /// The sites of one check: the sets it applies and what it found.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct FnSites {
     /// The sets this check resolves its sites with.
     pub seeds: FnTypeSeeds,

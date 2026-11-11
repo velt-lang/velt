@@ -25,7 +25,7 @@ use crate::ide::record::Target;
 
 /// The reads of arrays of interface values through interfaces at dynamic arguments (a field,
 /// or a method's result), and the slots adapters read as new arrays.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ArrayReads {
     /// By the read's span. A read checked more than once (a check made to learn a type, then
     /// the real one) keeps what its last check found.
@@ -38,6 +38,7 @@ pub(crate) struct ArrayReads {
 }
 
 /// A read of an array of interface values through slot `slot` of `iface`.
+#[derive(Clone)]
 struct ArrayRead {
     iface: DefId,
     slot: u32,

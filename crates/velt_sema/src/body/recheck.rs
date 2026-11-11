@@ -63,7 +63,7 @@ impl Lens {
 }
 
 /// One body being checked (`Ctx::rechecks`, innermost last).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Frame {
     /// What the bodies it checked meanwhile added: (start, end) of each.
     segments: Vec<(Lens, Lens)>,

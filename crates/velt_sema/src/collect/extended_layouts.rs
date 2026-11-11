@@ -30,7 +30,7 @@ use crate::defs::FieldInfo;
 use crate::hir::{DefId, TyId, TyKind};
 
 /// The layouts extensions may share (`Ctx::objects`).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Layouts {
     /// Base layout (the base's anonymous twin) -> its family.
     pub families: FxHashMap<DefId, Family>,
@@ -49,6 +49,7 @@ pub(crate) struct Layouts {
 }
 
 /// One base layout and the fields its extensions add.
+#[derive(Clone)]
 pub(crate) struct Family {
     /// The extensions' own fields, in order (each extension's twin's `FieldInfo`).
     pub added: Vec<FieldInfo>,

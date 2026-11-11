@@ -169,7 +169,28 @@ What it needs, as separate pull requests, each falling back to the cold front en
   cheap.
 - **C. A kept checking context** (`velt_sema`, dev only): the host keeps the running version's
   `Ctx` and modules; a body is checked again in it, with its closures' definitions replaced and
-  its diagnostics its own.
+  its diagnostics its own. The checked `Ctx` is consumed and changed by the finishing steps
+  (`program.rs`: layouts merged, readonly types erased, the definitions moved into the
+  program), so the host keeps a clone made before them. In three pull requests:
+  - *C1:* `Ctx: Clone`, by derives: what it holds by value is copied, and the `Rc`s in it point
+    to data that doesn't change. A clone shares what it borrows: the modules (unchanged), the std
+    modules loaded on demand (`StdLoads`, which only grows: sound to share) and the driver's
+    generator, whose state generating code adds to. `VELT_SEMA_CLONE_CHECK=1` builds every
+    program also from a clone and compares the two field by field (an `ICE` showing the
+    difference). That shows the clone holds what the finishing steps read and that nothing they
+    change is shared; it doesn't show independence in general (a shared cache keyed by `TyId`
+    passes it, since both builds intern types in the same order). Every golden passes with it
+    on. A clone of `http_hello`'s checked context (5,600 definitions) takes 11–15 ms in a debug
+    compiler.
+  - *C2:* an owning kept check: the rewritten modules a `Ctx<'m>` borrows (`check_timed`'s
+    source rewrites), the loader's modules and the generator's, moved with the clone into one
+    value the dev host keeps; measured for memory. The kept clone has no generator and no std
+    loads of its own: a body checked again that would generate code or load std falls back.
+  - *C3:* a body checked again in a clone of the kept context, with a check of its own: the
+    body checked again in two clones (or in a clone after the original was finished) and
+    compared, since it interns new types in another order than the cold check. Caches outside
+    `Ctx` keyed by `TyId` or `DefId` (`locked_props::MEMO`, cleared only at the start of
+    `module_state::build`) are cleared for each check in a clone, or moved into `Ctx`.
 - **D. Per-function passes** (`velt_sema`): the passes after `check_bodies` run for a set of
   functions with the rest fixed.
 - **E. Splicing into the lowering** (`velt_vir`, dev only): the running version's lowering

@@ -56,8 +56,17 @@ use crate::hir::{Def, DefId, TyId, TyKind};
 
 use graph::{Boundary, Graph, Node, Why, CROSSES, INDIRECT, STORED};
 
-pub(crate) use changes::{check_crossing_changes, Crossing};
+pub(crate) use changes::check_crossing_changes;
 pub(crate) use record::record_changed_captures;
+
+/// A callback that a library runs on other threads: the closure, and where (with the label) the
+/// program hands it to the library.
+#[derive(Clone)]
+pub(crate) struct Crossing {
+    pub closure: DefId,
+    pub at: velt_common::Span,
+    pub label: String,
+}
 
 /// Decide which async closures are local, mark them (`FnDef::shares_captures`), and report the
 /// non-local ones that modify a captured variable.

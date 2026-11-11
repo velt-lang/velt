@@ -3,6 +3,7 @@
 
 use crate::hir::{FloatTy, IntTy, Nothing, TyId, TyKind, TyTable};
 
+#[derive(Clone)]
 pub(crate) struct Types {
     pub table: TyTable,
     pub unit: TyId,

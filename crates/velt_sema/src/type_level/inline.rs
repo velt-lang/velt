@@ -15,6 +15,7 @@ use crate::hir::{TyId, TyKind, TyOp};
 use crate::resolve::TyEnv;
 
 /// One form, as written.
+#[derive(Clone)]
 pub(crate) struct Form {
     module: usize,
     params: Vec<String>,
@@ -31,7 +32,7 @@ pub(crate) struct Form {
 }
 
 /// The forms, and each one's id by where it is written and how.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Forms {
     pub(crate) forms: Vec<Form>,
     ids: FxHashMap<(usize, Vec<String>, String), u32>,

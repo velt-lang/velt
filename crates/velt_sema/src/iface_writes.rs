@@ -22,7 +22,7 @@ use crate::defs::{DefInfo, ParamSig};
 use crate::hir::{AdtKind, DefId, PassMode, TyId, TyKind};
 
 /// The interfaces written through and how their implementations store fields.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct IfaceWrites {
     /// Interfaces with setter slots, and where the first write through each is.
     written: FxHashMap<DefId, Span>,
