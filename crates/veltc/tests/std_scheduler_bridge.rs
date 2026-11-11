@@ -326,6 +326,118 @@ async function main() {
 }
 
 #[test]
+fn a_receive_with_a_limit_keeps_that_many_bytes() {
+    if !has_threads() {
+        return;
+    }
+    // recvFrom(max) under std reads into a buffer of `max` bytes: the datagram's first `max`
+    // bytes come back, a limit above 64 KiB or none keeps it whole, as with the runtime.
+    same_on_both(
+        "udp_max",
+        r#"import { bindUdp } from "velt/net/udp";
+
+async function main() {
+  const a = await bindUdp("127.0.0.1:0");
+  const b = await bindUdp("127.0.0.1:0");
+  const text = "0123456789".repeat(10);
+  await a.sendTextTo(text, `127.0.0.1:${b.port}`);
+  const cut = await b.recvFrom(7);
+  await a.sendTextTo(text, `127.0.0.1:${b.port}`);
+  const whole = await b.recvFrom();
+  await a.sendTextTo(text, `127.0.0.1:${b.port}`);
+  const big = await b.recvFrom(100000);
+  console.log(`${cut.text()} ${whole.data.length} ${big.data.length}`);
+  a.close();
+  b.close();
+}
+"#,
+        "0123456 100 100\n",
+    );
+}
+
+#[test]
+fn a_job_runs_when_the_pool_can_start_no_thread() {
+    if !has_threads() {
+        return;
+    }
+    // With no pool thread running and none able to start (an OS refusing threads, as for a user
+    // at their process limit), the job that asked for one used to wait in the queue for good,
+    // holding its keep-alive reference: the program never ended. Now the thread that queued it
+    // runs the queue. White-box, in a copy of std whose `startDetached` always fails (an
+    // `RLIMIT_NPROC` limit would stop the runtime's own threads first).
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let std_copy = dir.path().join("std");
+    copy_tree(&manifest().join("../../std"), &std_copy);
+    let thread = std_copy.join("lang/hooks/thread_posix.velt");
+    let text = std::fs::read_to_string(&thread).unwrap();
+    let from = "export function startDetached(start: usize, arg: usize): bool {\n";
+    assert!(
+        text.contains(from),
+        "thread_posix.velt has no startDetached"
+    );
+    std::fs::write(
+        &thread,
+        text.replace(from, &format!("{from}  return false;\n")),
+    )
+    .unwrap();
+    let file = dir.path().join("no_threads.velt");
+    std::fs::write(
+        &file,
+        r#"import { readFile, writeFile } from "velt/fs";
+
+async function main() {
+  await writeFile("nt.txt", "pool or not");
+  console.log(await readFile("nt.txt"));
+}
+"#,
+    )
+    .unwrap();
+    let exe = dir.path().join(if cfg!(windows) { "nt.exe" } else { "nt" });
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(dir.path())
+        .env("VELT_STD", &std_copy)
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let mut child = command(&exe)
+        .current_dir(dir.path())
+        .env("VELT_THREADS", "4")
+        .env_remove("VELT_SCHEDULER")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = child.stdout.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut out, &mut text);
+        text
+    });
+    let start = Instant::now();
+    let code = loop {
+        if let Some(st) = child.try_wait().unwrap() {
+            break st.code();
+        }
+        // timing: a hang guard, not an order: a run that ends in time is the result.
+        if start.elapsed() > Duration::from_secs(20) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        // timing: polls for the exit the hang guard above bounds.
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let got = (code, reader.join().unwrap());
+    assert_eq!(got, (Some(0), "pool or not\n".to_string()));
+}
+
+#[test]
 fn child_processes_from_every_worker_run_and_report_their_exit() {
     if !has_threads() {
         return;

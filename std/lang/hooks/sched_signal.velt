@@ -38,6 +38,7 @@ const MAKING = new Atomic<u32>(0);
 declare c("c") function sigaction(sig: i32, act: Ptr<u8>, old: Ptr<u8>): i32;
 declare c("c") function read$signal(fd: i32, buf: Ptr<u8>, n: usize): isize;
 declare c("c") function write$signal(fd: i32, buf: Ptr<u8>, n: usize): isize;
+declare c("c") function close$signal(fd: i32): i32;
 
 /** Can this OS watch signals here? */
 export function supported(): bool {
@@ -74,6 +75,13 @@ function readEnd(): u64 {
       if (s !== 0) {
         PIPE_W.store((writeFd as u64) + 1, "release");
         PIPE_R.store(tb.handleOf(s), "release");
+      } else {
+        // No source for the read end: neither end is used (a later `readEnd` tries again).
+        // SAFETY: both descriptors came from the pipe above and nothing else holds them.
+        unsafe {
+          close$signal(readFd);
+          close$signal(writeFd);
+        }
       }
     }
     m.release(fds, 16);

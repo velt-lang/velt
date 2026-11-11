@@ -31,7 +31,7 @@ export { RawDatagram } from "./rt";
 const SOCK_DGRAM: i32 = 2;
 const AI_ADDRLEN: usize = 16;
 const AI_FAMILY: usize = 4;
-/** The largest UDP payload: every receive takes a buffer this size, then truncates. */
+/** The largest UDP payload: a receive given no `max` (or a larger one) takes a buffer this size. */
 const MAX_DATAGRAM: usize = 65536;
 /** A `sockaddr_storage` and its length word. */
 const SA_SIZE: usize = 128;
@@ -180,7 +180,9 @@ export async function velt_rt_udp_recv_from(u: u64, max: u64): Promise<IoResult<
     return await rt.velt_rt_udp_recv_from(u, max);
   }
   const size = max === 0 || max > (MAX_DATAGRAM as u64) ? MAX_DATAGRAM : max as usize;
-  const buf: u8[] = Buffer.alloc(MAX_DATAGRAM);
+  // The datagram's first `size` bytes are what the caller gets (the rest is dropped, as
+  // the runtime truncates to `max`): the buffer holds no more.
+  const buf: u8[] = Buffer.alloc(size);
   const sa = m.zeroed(SA_SIZE + 8);
   while (true) {
     const s = tb.enter(u);
@@ -191,20 +193,13 @@ export async function velt_rt_udp_recv_from(u: u64, max: u64): Promise<IoResult<
     m.st32(sa + SA_SIZE, SA_SIZE as u32);
     const p = addressOf(buf, 0);
     let n: isize = 0;
-    // SAFETY: `buf` holds MAX_DATAGRAM bytes at `p`; a sockaddr_storage and its length word.
+    // SAFETY: `buf` holds `size` bytes at `p`; a sockaddr_storage and its length word.
     unsafe {
-      n = recvfrom$udp(
-        m.ld(s + io.S_FD) as i32,
-        m.ptr(p),
-        MAX_DATAGRAM,
-        0,
-        m.ptr(sa),
-        m.ptr(sa + SA_SIZE),
-      );
+      n = recvfrom$udp(m.ld(s + io.S_FD) as i32, m.ptr(p), size, 0, m.ptr(sa), m.ptr(sa + SA_SIZE));
     }
     if (n >= 0) {
       tb.leave(s);
-      arrayTruncate(buf, (n as usize) < size ? n as usize : size);
+      arrayTruncate(buf, n as usize);
       const from = fa.addrText(sa);
       m.release(sa, SA_SIZE + 8);
       return fs.value<RawDatagram>({ data: buf, addr: from });

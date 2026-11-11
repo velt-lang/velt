@@ -12,7 +12,8 @@
 //   `max_blocking_threads`). A thread idle for 10 seconds (tokio's `thread_keep_alive`) ends.
 //   Threads start through `@export` + `exportedAddress` + `pthread_create` (`#sched-thread`),
 //   detached; where none can start (the default variant), `supported()` is false and callers
-//   keep the runtime's leaves.
+//   keep the runtime's leaves. When the OS refuses a thread and none is running, the thread
+//   that queued the job runs the queue itself (a blocked worker rather than a job nobody runs).
 // - A job queued or running keeps the process alive (sched_end.velt), as with the runtime, whose
 //   exit waits for tokio's blocking threads, and Node, whose thread-pool requests are referenced:
 //   `submit` takes a keep-alive reference, and the job's end gives it back and wakes worker 0,
@@ -147,12 +148,36 @@ function submit(job: () => void): void {
   unlock(p);
   // SAFETY: `blockingMain` has the C signature of a thread's start routine.
   if (spawn && !th.startDetached(unsafe { exportedAddress(blockingMain) }, p)) {
-    // No thread: the job waits for a running one (none: it never runs, as when the OS refuses
-    // tokio a thread).
+    // No thread: the job waits for a running one. With none running, nothing would ever take
+    // the queue (each job holding its keep-alive reference: a process that never ends), so this
+    // thread runs what is queued itself, blocking its worker as a build without the pool does.
     lock(p);
     m.st(p + P_THREADS, m.ld(p + P_THREADS) - 1);
+    while (m.ld(p + P_THREADS) === 0) {
+      const q = pop(p);
+      if (q === 0) {
+        break;
+      }
+      unlock(p);
+      runJob(q);
+      jobDone(p);
+      lock(p);
+    }
     unlock(p);
   }
+}
+
+/** The queue's first node, taken off it (lock held); 0 when it is empty. */
+function pop(p: usize): usize {
+  const n = m.ld(p + P_HEAD);
+  if (n !== 0) {
+    const after = m.ld(n + N_NEXT);
+    m.st(p + P_HEAD, after);
+    if (after === 0) {
+      m.st(p + P_TAIL, 0);
+    }
+  }
+  return n;
 }
 
 /**
@@ -162,13 +187,8 @@ function submit(job: () => void): void {
 function next(p: usize): usize {
   let since: u64 = 0;
   while (true) {
-    const n = m.ld(p + P_HEAD);
+    const n = pop(p);
     if (n !== 0) {
-      const after = m.ld(n + N_NEXT);
-      m.st(p + P_HEAD, after);
-      if (after === 0) {
-        m.st(p + P_TAIL, 0);
-      }
       return n;
     }
     if (since === 0) {
@@ -213,12 +233,19 @@ function blockingMain(arg: Ptr<u8> | null): Ptr<u8> | null {
       return null;
     }
     runJob(n);
-    m.inc(p + P_DONE);
-    // The job's waiter (if it is still there) was woken by its give; worker 0 looks again
-    // whether the process can end now that this keep-alive reference is gone.
-    const g = t.main();
-    end.keepRelease(g);
-    wk.unpark(g);
+    jobDone(p);
     lock(p);
   }
+}
+
+/**
+ * After a job (lock not held): counted, and its keep-alive reference given back. The job's
+ * waiter (if it is still there) was woken by its give; worker 0 looks again whether the process
+ * can end now that this reference is gone.
+ */
+function jobDone(p: usize): void {
+  m.inc(p + P_DONE);
+  const g = t.main();
+  end.keepRelease(g);
+  wk.unpark(g);
 }
