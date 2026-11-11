@@ -1,0 +1,234 @@
+// velt/lang/string (internal): `indexOf`, `lastIndexOf`, `includes`, `startsWith` and `endsWith`
+// (std/prelude/string.velt), in Velt so that a search is compiled into its caller: a literal
+// needle's length and bytes are constants there (`s.startsWith("http")` is a length check and
+// four byte compares, `s.indexOf(",")` a one-byte scan).
+//
+// Positions count UTF-16 code units (https://veltlang.com/docs/reference/types/ "Strings"). An
+// ASCII string (`strLen(s) == strByteLen(s)`, no call) searches its bytes, whose offsets are its
+// positions. Another string searches its WTF-8 bytes and translates the positions at entry and
+// exit with the runtime's breadcrumbs (`velt_rt_str_unit_to_byte`, `velt_rt_str_byte_to_unit`),
+// which is exact because WTF-8 is self-synchronizing: a match of a needle that starts with a
+// lead byte starts on a code point. A needle that starts with a lone low surrogate or ends with
+// a lone high one ("half needle") can also match half of a pair stored as one 4-byte sequence:
+// those searches compare code units instead (rare: lone surrogates come only from slicing
+// between the halves of a pair, `String.fromCharCode` and JSON escapes).
+//
+// The byte searches are byte_scan.velt (one byte) and needle_scan.velt (longer needles), the
+// code-unit searches code_units.velt.
+
+import { inline, noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { findByte, rfindByte, sameBytes } from "velt/lang/string/byte_scan";
+import {
+  codePoint3,
+  codePoint4,
+  endsWithHigh,
+  isHalfNeedle,
+  unitsFind,
+  unitsRfind,
+} from "velt/lang/string/code_units";
+import { findBytes, rfindBytes } from "velt/lang/string/needle_scan";
+
+/** The byte offset of code unit `unit` of `s` (clamped), times two, plus one when the unit is
+ * the low half of a pair stored as one 4-byte sequence (whose offset it is then). */
+declare function velt_rt_str_unit_to_byte(s: string, unit: u64): u64;
+/** The code unit position of byte offset `byte` of `s`, a code point boundary. */
+declare function velt_rt_str_byte_to_unit(s: string, byte: u64): u64;
+
+/** `i` clamped to `0..=len`. */
+function clamp(i: i64, len: usize): usize {
+  if (i <= 0) {
+    return 0;
+  }
+  return i >= (len as i64) ? len : i as usize;
+}
+
+/** `s.indexOf(needle, from)`: the first match at or after `from` (clamped), or -1; an empty
+ * needle matches at the clamped `from`. */
+@inline
+export function indexOf(s: string, needle: string, from: i64): i64 {
+  const n = strByteLen(s);
+  if (strLen(s) != n) {
+    return indexOfWide(s, needle, from);
+  }
+  const at = clamp(from, n);
+  const m = strByteLen(needle);
+  if (m == 0) {
+    return at as i64;
+  }
+  // An ASCII string holds no needle that starts with a byte that is not ASCII.
+  if (m > n - at || strByteAt(needle, 0) >= 0x80) {
+    return -1;
+  }
+  if (m == 1) {
+    return findByte(s, strByteAt(needle, 0), at, n);
+  }
+  return findBytes(s, needle, m, at, n);
+}
+
+/** `indexOf` of a string that is not ASCII. */
+@noInline
+function indexOfWide(s: string, needle: string, from: i64): i64 {
+  const units = strLen(s);
+  const at = clamp(from, units);
+  const m = strByteLen(needle);
+  if (m == 0) {
+    return at as i64;
+  }
+  if (strLen(needle) > units - at) {
+    return -1;
+  }
+  if (isHalfNeedle(needle, m)) {
+    return unitsFind(s, needle, at);
+  }
+  // Only a half needle can start at the low half of a pair: start after the pair then.
+  const pos = velt_rt_str_unit_to_byte(s, at as u64);
+  const start = ((pos >> 1) + ((pos & 1) * 4)) as usize;
+  const n = strByteLen(s);
+  if (m > n - start) {
+    return -1;
+  }
+  const k =
+    m == 1 ? findByte(s, strByteAt(needle, 0), start, n) : findBytes(s, needle, m, start, n);
+  return k < 0 ? -1 : velt_rt_str_byte_to_unit(s, k as u64) as i64;
+}
+
+/** `s.includes(needle, position)`: as `indexOf(...) >= 0`, but from the start a string that is
+ * not ASCII needs no position translated (a byte search, as for an ASCII one). */
+@inline
+export function includes(s: string, needle: string, position: i64): bool {
+  if (position > 0) {
+    return indexOf(s, needle, position) >= 0;
+  }
+  const n = strByteLen(s);
+  const m = strByteLen(needle);
+  if (m == 0) {
+    return true;
+  }
+  if (m > n) {
+    return false;
+  }
+  if (strLen(s) != n) {
+    if (isHalfNeedle(needle, m)) {
+      return unitsFind(s, needle, 0) >= 0;
+    }
+  } else if (strByteAt(needle, 0) >= 0x80) {
+    return false;
+  }
+  if (m == 1) {
+    return findByte(s, strByteAt(needle, 0), 0, n) >= 0;
+  }
+  return findBytes(s, needle, m, 0, n) >= 0;
+}
+
+/** `s.lastIndexOf(needle, from)`: the last match starting at or before `from` (clamped; JS's
+ * omitted `from` is the largest `i64`), or -1. */
+@inline
+export function lastIndexOf(s: string, needle: string, from: i64): i64 {
+  const n = strByteLen(s);
+  if (strLen(s) != n) {
+    return lastIndexOfWide(s, needle, from);
+  }
+  const at = clamp(from, n);
+  const m = strByteLen(needle);
+  if (m == 0) {
+    return at as i64;
+  }
+  if (m > n || strByteAt(needle, 0) >= 0x80) {
+    return -1;
+  }
+  const last = at < n - m ? at : n - m;
+  if (m == 1) {
+    return rfindByte(s, strByteAt(needle, 0), last + 1);
+  }
+  return rfindBytes(s, needle, m, last);
+}
+
+/** `lastIndexOf` of a string that is not ASCII. */
+@noInline
+function lastIndexOfWide(s: string, needle: string, from: i64): i64 {
+  const units = strLen(s);
+  const nu = strLen(needle);
+  if (nu > units) {
+    return -1;
+  }
+  const at = clamp(from, units);
+  const room = units - nu;
+  const lastUnit = at < room ? at : room;
+  const m = strByteLen(needle);
+  if (m == 0) {
+    return lastUnit as i64;
+  }
+  if (isHalfNeedle(needle, m)) {
+    return unitsRfind(s, needle, lastUnit);
+  }
+  // A match starting at unit `lastUnit` or before starts at its code point or before (inside a
+  // pair, the pair starts at the unit before).
+  const lastByte = (velt_rt_str_unit_to_byte(s, lastUnit as u64) >> 1) as usize;
+  const n = strByteLen(s);
+  // A needle can take more bytes than the string with no more units (a lone surrogate is 3
+  // bytes for one unit, a pair 4 bytes for two).
+  if (m > n) {
+    return -1;
+  }
+  const last = lastByte + m <= n ? lastByte : n - m;
+  const k = m == 1 ? rfindByte(s, strByteAt(needle, 0), last + 1) : rfindBytes(s, needle, m, last);
+  return k < 0 ? -1 : velt_rt_str_byte_to_unit(s, k as u64) as i64;
+}
+
+/** `s.startsWith(prefix)`. A prefix ending with a lone high surrogate also matches the first
+ * half of a pair (`"😀".startsWith("\uD83D")`). */
+@inline
+export function startsWith(s: string, prefix: string): bool {
+  const n = strByteLen(s);
+  const m = strByteLen(prefix);
+  if (m <= n && sameBytes(s, 0, prefix, 0, m)) {
+    return true;
+  }
+  return m >= 3 && strByteAt(prefix, (m - 3) as u64) == 0xed && startsWithHigh(s, prefix, n, m);
+}
+
+/** `startsWith` of a prefix that may end with a lone high surrogate: the bytes before it match
+ * and `s` has a pair there whose high half it is. */
+@noInline
+function startsWithHigh(s: string, prefix: string, n: usize, m: usize): bool {
+  if (!endsWithHigh(prefix, m)) {
+    return false;
+  }
+  const k = m - 3;
+  if (k + 4 > n || strByteAt(s, k as u64) < 0xf0 || !sameBytes(s, 0, prefix, 0, k)) {
+    return false;
+  }
+  const high = 0xd800 + ((codePoint4(s, k) - 0x10000) >> 10);
+  return high == codePoint3(prefix, k);
+}
+
+/** `s.endsWith(suffix)`. A suffix starting with a lone low surrogate also matches the second
+ * half of a pair (`"😀".endsWith("\uDE00")`). */
+@inline
+export function endsWith(s: string, suffix: string): bool {
+  const n = strByteLen(s);
+  const m = strByteLen(suffix);
+  if (m <= n && sameBytes(s, n - m, suffix, 0, m)) {
+    return true;
+  }
+  return m >= 3 && strByteAt(suffix, 0) == 0xed && endsWithLow(s, suffix, n, m);
+}
+
+/** `endsWith` of a suffix that may start with a lone low surrogate: the bytes after it match
+ * and `s` has a pair there whose low half it is. */
+@noInline
+function endsWithLow(s: string, suffix: string, n: usize, m: usize): bool {
+  if ((strByteAt(suffix, 1) & 0xf0) != 0xb0) {
+    return false;
+  }
+  const rest = m - 3;
+  if (rest + 4 > n) {
+    return false;
+  }
+  const k = n - rest - 4;
+  if (strByteAt(s, k as u64) < 0xf0 || !sameBytes(s, n - rest, suffix, 3, rest)) {
+    return false;
+  }
+  const low = 0xdc00 + ((codePoint4(s, k) - 0x10000) & 0x3ff);
+  return low == codePoint3(suffix, 0);
+}

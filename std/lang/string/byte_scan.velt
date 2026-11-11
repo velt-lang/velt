@@ -1,0 +1,182 @@
+// velt/lang/string (internal): the byte scans of the string searches (std/lang/string/search.velt):
+// one byte found sixteen at a time with SIMD compares past 16 bytes, a byte loop below, first
+// or last; and the comparison of two byte ranges.
+
+import { inline, noInline, strByteAt, strLoadU8x16 } from "velt/lang/intrinsics";
+
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+declare function velt_simd_mask8x16_all(m: mask8x16): bool;
+declare function velt_simd_mask8x16_first(m: mask8x16): u64;
+declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
+
+/** The 16 bytes of `s` at `at` that equal `v`'s lanes. */
+export function eqAt(s: string, at: usize, v: u8x16): mask8x16 {
+  return velt_simd_u8x16_eq(strLoadU8x16(s, at as u64), v);
+}
+
+/** Do the `len` bytes of `a` at `ai` equal those of `b` at `bi`? Both ranges are in bounds. A
+ * byte loop below 16 bytes (folded when `len` is a constant), vectors above. */
+@inline
+export function sameBytes(a: string, ai: usize, b: string, bi: usize, len: usize): bool {
+  if (len >= 16) {
+    return sameBytesLong(a, ai, b, bi, len);
+  }
+  for (let k: usize = 0; k < len; k++) {
+    if (strByteAt(a, (ai + k) as u64) != strByteAt(b, (bi + k) as u64)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** `sameBytes` of 16 bytes or more, 16 at a time; the last bytes as the 16 that end the range
+ * (overlapping bytes already compared). */
+@noInline
+function sameBytesLong(a: string, ai: usize, b: string, bi: usize, len: usize): bool {
+  let k: usize = 0;
+  while (k + 16 <= len) {
+    if (!velt_simd_mask8x16_all(eqAt(a, ai + k, strLoadU8x16(b, (bi + k) as u64)))) {
+      return false;
+    }
+    k += 16;
+  }
+  return k == len ||
+    velt_simd_mask8x16_all(eqAt(a, ai + len - 16, strLoadU8x16(b, (bi + len - 16) as u64)));
+}
+
+/** The first offset in `from..n` of `s` holding `b`, or -1. */
+@noInline
+export function findByte(s: string, b: u8, from: usize, n: usize): i64 {
+  if (n - from >= 16) {
+    return findByteLong(s, b, from, n);
+  }
+  for (let i = from; i < n; i++) {
+    if (strByteAt(s, i as u64) == b) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+/** The position of the first set lane of `m`, a mask of the 16 bytes at `at`. */
+function hit(at: usize, m: mask8x16): i64 {
+  return (at + (velt_simd_mask8x16_first(m) as usize)) as i64;
+}
+
+/** `findByte` of 16 bytes or more: one vector first (most searches end there), then four per
+ * step tested as one, then one per step, and the last bytes as the 16 that end at `n`. */
+@noInline
+function findByteLong(s: string, b: u8, from: usize, n: usize): i64 {
+  const v = velt_simd_u8x16_splat(b);
+  let i = from;
+  const m = eqAt(s, i, v);
+  if (velt_simd_mask8x16_any(m)) {
+    return hit(i, m);
+  }
+  i += 16;
+  while (i + 64 <= n) {
+    const m0 = eqAt(s, i, v);
+    const m1 = eqAt(s, i + 16, v);
+    const m2 = eqAt(s, i + 32, v);
+    const m3 = eqAt(s, i + 48, v);
+    const any = velt_simd_mask8x16_or(velt_simd_mask8x16_or(m0, m1), velt_simd_mask8x16_or(m2, m3));
+    if (velt_simd_mask8x16_any(any)) {
+      if (velt_simd_mask8x16_any(m0)) {
+        return hit(i, m0);
+      }
+      if (velt_simd_mask8x16_any(m1)) {
+        return hit(i + 16, m1);
+      }
+      if (velt_simd_mask8x16_any(m2)) {
+        return hit(i + 32, m2);
+      }
+      return hit(i + 48, m3);
+    }
+    i += 64;
+  }
+  while (i + 16 <= n) {
+    const m = eqAt(s, i, v);
+    if (velt_simd_mask8x16_any(m)) {
+      return hit(i, m);
+    }
+    i += 16;
+  }
+  if (i < n) {
+    // None of the bytes before `i` matched, so the first match of the last 16 is past them.
+    const m = eqAt(s, n - 16, v);
+    if (velt_simd_mask8x16_any(m)) {
+      return hit(n - 16, m);
+    }
+  }
+  return -1;
+}
+
+/** The last offset before `end` of `s` holding `b`, or -1. */
+@noInline
+export function rfindByte(s: string, b: u8, end: usize): i64 {
+  if (end >= 16) {
+    return rfindByteLong(s, b, end);
+  }
+  let i = end;
+  while (i > 0) {
+    i--;
+    if (strByteAt(s, i as u64) == b) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+/** The position of the last set lane of `m` (one is set), a mask of the 16 bytes at `at`. */
+function lastHit(at: usize, m: mask8x16): i64 {
+  return (at + 63 - velt_simd_mask8x16_bitmask(m).leadingZeros()) as i64;
+}
+
+/** `rfindByte` of 16 bytes or more, as `findByteLong` from the end. */
+@noInline
+function rfindByteLong(s: string, b: u8, end: usize): i64 {
+  const v = velt_simd_u8x16_splat(b);
+  let i = end - 16;
+  const m = eqAt(s, i, v);
+  if (velt_simd_mask8x16_any(m)) {
+    return lastHit(i, m);
+  }
+  while (i >= 64) {
+    i -= 64;
+    const m0 = eqAt(s, i, v);
+    const m1 = eqAt(s, i + 16, v);
+    const m2 = eqAt(s, i + 32, v);
+    const m3 = eqAt(s, i + 48, v);
+    const any = velt_simd_mask8x16_or(velt_simd_mask8x16_or(m0, m1), velt_simd_mask8x16_or(m2, m3));
+    if (velt_simd_mask8x16_any(any)) {
+      if (velt_simd_mask8x16_any(m3)) {
+        return lastHit(i + 48, m3);
+      }
+      if (velt_simd_mask8x16_any(m2)) {
+        return lastHit(i + 32, m2);
+      }
+      if (velt_simd_mask8x16_any(m1)) {
+        return lastHit(i + 16, m1);
+      }
+      return lastHit(i, m0);
+    }
+  }
+  while (i >= 16) {
+    i -= 16;
+    const m = eqAt(s, i, v);
+    if (velt_simd_mask8x16_any(m)) {
+      return lastHit(i, m);
+    }
+  }
+  if (i > 0) {
+    // None of the bytes from `i` on matched, so the last match of the first 16 is before them.
+    const m = eqAt(s, 0, v);
+    if (velt_simd_mask8x16_any(m)) {
+      return lastHit(0, m);
+    }
+  }
+  return -1;
+}

@@ -64,22 +64,8 @@ const slicePairs = [[0, 5], [6, MAX], [-5, MAX], [-5, -1], [3, 1], [-100, 3], [2
 table("SLICE", "(&str, i64, i64, &str)", slicePairs.map(([a, b]) =>
   [rs(sl), i(a), i(b), rs(b === MAX ? sl.slice(a) : sl.slice(a, b))]));
 
-const hay = "abcabc ab";
-const needles = ["", "a", "bc", "abc", "x", "c ab", "abcabc ab!", "b"];
-const froms = [-5, 0, 1, 3, 4, 9, 10, 100];
-const idx = [], lidx = [];
-for (const n of needles) {
-  for (const fr of froms) idx.push([rs(hay), rs(n), i(fr), String(hay.indexOf(n, fr))]);
-  for (const fr of [...froms, MAX]) lidx.push([rs(hay), rs(n), i(fr),
-    String(fr === MAX ? hay.lastIndexOf(n) : hay.lastIndexOf(n, fr))]);
-}
-table("INDEX_OF", "(&str, &str, i64, i64)", idx);
-table("LAST_INDEX_OF", "(&str, &str, i64, i64)", lidx);
-
-const pairs = [["abc", ""], ["abc", "a"], ["abc", "c"], ["abc", "abc"], ["abc", "abcd"], ["", ""], ["", "a"],
-  ["héllo", "é"], ["héllo", "llo"], ["héllo", "hé"], ["aXbXc", "X"], ["ab", "ba"]];
-table("CONTAINS", "(&str, &str, bool, bool, bool)", pairs.map(([s, n]) =>
-  [rs(s), rs(n), String(s.includes(n)), String(s.startsWith(n)), String(s.endsWith(n))]));
+// indexOf, lastIndexOf, includes, startsWith and endsWith are Velt code (#2198): their cases are
+// tests/golden/lang/string_search.velt.
 
 const splits = [["a,b,,c,", ","], ["", ","], ["", ""], ["abc", ""], ["héllo", ""], ["a--b--c", "--"],
   ["abc", "abc"], ["abc", "x"], ["aaa", "aa"], [",", ","], ["a b  c", " "], ["xéyéz", "é"]];

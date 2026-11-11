@@ -1,0 +1,140 @@
+// `indexOf`, `lastIndexOf`, `includes`, `startsWith` and `endsWith` (std/lang/string/search.velt,
+// #2198): the cases the runtime's Rust tests had, and the edges of the Velt code's paths. The
+// expected output is Node's (this file runs there unchanged, with `main()` called). Lone
+// surrogates come from `String.fromCharCode`.
+
+const HI = String.fromCharCode(0xd83d);
+const LO = String.fromCharCode(0xde00);
+
+function show(s: string): string {
+  return s.length > 24
+    ? `<${s.length} units: ${s.slice(0, 10)}…${s.slice(s.length - 10)}>`
+    : JSON.stringify(s);
+}
+
+/** `indexOf` and `lastIndexOf` of `n` in `s` from each of `froms`, and the other three. */
+function report(s: string, n: string, froms: number[]) {
+  const idx: string[] = [];
+  const last: string[] = [];
+  for (const f of froms) {
+    idx.push(`${s.indexOf(n, f)}`);
+    last.push(`${s.lastIndexOf(n, f)}`);
+  }
+  console.log(
+    `${show(s)} ${show(n)}: indexOf ${idx.join(" ")} | lastIndexOf ${last.join(" ")} | ` +
+      `${s.indexOf(n)} ${s.lastIndexOf(n)} ${s.includes(n)} ${s.startsWith(n)} ${s.endsWith(n)}`,
+  );
+}
+
+function main() {
+  // The runtime's table (crates/velt_rt/scripts/gen_str_table.js), with `from` out of range.
+  const froms = [-5, 0, 1, 3, 4, 9, 10, 100, 9007199254740991];
+  for (const n of [
+    "",
+    "a",
+    "ab",
+    "bc",
+    "abc",
+    "c ",
+    "c ab",
+    "b",
+    "ba",
+    "abcabc ab",
+    "abcabc ab!",
+    "x",
+  ]) {
+    report("abcabc ab", n, froms);
+  }
+  for (const [s, n] of [
+    ["abc", ""],
+    ["abc", "a"],
+    ["abc", "c"],
+    ["abc", "abc"],
+    ["abc", "abcd"],
+    ["", ""],
+    ["", "a"],
+    ["héllo", "é"],
+    ["héllo", "llo"],
+    ["héllo", "hé"],
+    ["aXbXc", "X"],
+    ["ab", "ba"],
+  ]) {
+    report(s, n, [0, 1, 2]);
+  }
+
+  // URLs and overlapping needles.
+  report("http://127.0.0.1:8080/a?b", "/", [0, 8, 21, 22]);
+  report("http://127.0.0.1:8080/a?b", "://", [0, 4, 5]);
+  report("aaab", "ab", [0, 1, 2, 3]);
+  report("aaab", "aab", [0, 1, 2]);
+  report("abab", "ab", [0, 1, 2, 3]);
+
+  // Positions in code units of text that is not ASCII.
+  report("héllo", "l", [0, 2, 3, 4]);
+  report("héllo", "é", [0, 1, 2]);
+  report("I 😀 Velt, 🚀 fast, 🎉 done", ",", [0, 9, 10, 18, 30]);
+  report("I 😀 Velt, 🚀 fast, 🎉 done", "🚀", [0, 11, 12, 13]);
+  report("東京都,大阪府,京都府", "府", [0, 6, 7, 10]);
+
+  // Half needles: a lone surrogate matches half of a pair, and a position between the halves.
+  const emoji = "😀";
+  report(emoji, LO, [0, 1, 2]);
+  report(emoji, HI, [0, 1, 2]);
+  report(emoji, "", [0, 1, 2]);
+  report("a😀b😀", LO + "b", [0, 1, 2, 3, 4]);
+  report("a😀b😀", "b" + HI, [0, 2, 3, 4, 5]);
+  report("a😀b😀", LO + "b" + HI, [0, 2, 3]);
+  report("x" + HI + "y" + LO, HI, [0, 1, 2, 3]);
+  report("x" + HI + "y" + LO, LO, [0, 2, 3, 4]);
+  report("😀😀", "😀", [0, 1, 2, 3]);
+  report("é😀é", "é", [0, 1, 2, 3, 4]);
+  // Needles with more bytes than the string but no more units.
+  report("éa", HI + "a", [0, 1, 2]);
+  report("😀", HI + "a", [0, 1, 2]);
+  report("éé", "a" + LO, [0, 1, 2]);
+  report("😀😀", HI + "é" + HI + "é", [0, 2, 4]);
+
+  // One byte at every position of strings around the vector width (16) and its multiples.
+  for (const len of [1, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 80, 129]) {
+    const at: string[] = [];
+    for (let k = 0; k < len; k++) {
+      const s = "x".repeat(k) + "/" + "x".repeat(len - k - 1);
+      at.push(
+        `${s.indexOf("/")}/${s.lastIndexOf("/")}/${s.indexOf("/", k + 1)}/${s.lastIndexOf("/", k - 1)}`,
+      );
+    }
+    console.log(`len ${len}: ${at.join(" ")}`);
+  }
+  // A needle of several bytes at every position, the last one included.
+  for (const len of [2, 15, 16, 17, 18, 33, 40, 70]) {
+    const at: string[] = [];
+    for (let k = 0; k + 3 <= len; k++) {
+      const s = "ab".repeat(len).slice(0, k) + "xyz" + "ba".repeat(len).slice(0, len - k - 3);
+      at.push(
+        `${s.indexOf("xyz")}/${s.lastIndexOf("xyz")}/${s.indexOf("xyz", k + 1)}/${s.lastIndexOf("xyz", k - 1)}/${s.endsWith("xyz")}`,
+      );
+    }
+    console.log(`len ${len}: ${at.join(" ")}`);
+  }
+  // The same needle more than once in a block of starts.
+  report("ab,ab,ab,ab,ab,ab,ab,ab,ab,ab,ab,", "ab,", [0, 1, 3, 29, 30, 31, 33]);
+
+  // Long needles whose candidates keep failing late (the linear fallback), and long misses.
+  for (const p of [1, 5, 31, 32, 33, 100]) {
+    const unit = "a".repeat(p) + "b";
+    const s = unit.repeat(Math.floor(3000 / (p + 1))) + "a".repeat(p * 3) + "c" + unit.repeat(5);
+    for (const n of [
+      "a".repeat(p * 3) + "c",
+      "c" + unit.repeat(2),
+      unit.repeat(3) + "x",
+      "b" + "a".repeat(p) + "b",
+    ]) {
+      report(s, n, [0, 1000, 2999, 3500]);
+    }
+  }
+  const long = "the quick brown fox jumps over the lazy dog, ".repeat(100);
+  report(long, "lazy dog, the quick brown fox jumps over the lazy cat", [0]);
+  report(long, "dog, the", [0, 1000, 4499]);
+  report(long + "é", "é", [0, 4500]);
+  report("é" + long, "the", [0, 1, 4000]);
+}
