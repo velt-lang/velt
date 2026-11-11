@@ -1,0 +1,29 @@
+// check: no leaks
+// Calling what a getter returns with method syntax (`o.g(args)` with `g` a getter returning a
+// function): TypeScript reads the getter and calls the function, from inside the class
+// (`this.first()`) and outside it (`h.add(1, 2)`), with arguments or none (#2762). A getter
+// returning no function is still called a getter, not a method (lang/errors). The output is
+// Node's.
+
+class Holder {
+  fns: (() => string)[] = [(): string => "hi"];
+  n: number = 3;
+  get first(): () => string {
+    return this.fns[0];
+  }
+  get add(): (a: number, b: number) => number {
+    return (a: number, b: number): number => a + b + this.n;
+  }
+  call(): string {
+    return this.first();
+  }
+}
+
+class Greeter {
+  get greet(): (who: string) => string {
+    return (who: string): string => `hello ${who}`;
+  }
+}
+
+const h = new Holder();
+console.log(h.call(), h.add(1, 2), new Greeter().greet("x"));

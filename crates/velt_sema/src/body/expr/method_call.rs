@@ -285,6 +285,12 @@ impl FnCx<'_, '_> {
         self.check_private(self.method_private_to(&r), &prop.name, prop.span);
         self.rec_method(prop.span, &r);
         if self.is_getter(&r) && !getter {
+            // `o.g(args)` with `g` a getter: TypeScript reads the getter and calls what it returns
+            // (#2762). A getter returning no function is an error naming the fix.
+            let f = self.method_call_at(recv.clone(), prop, &[], &[], None, span, true);
+            if self.callable_value(f.ty) {
+                return self.call_value(f, args, span);
+            }
             self.cx.error(
                 Diagnostic::error(
                     format!("`{}` is a getter, not a method", prop.name),
@@ -466,14 +472,7 @@ impl FnCx<'_, '_> {
             }
             // A field holding a function value, or a `Function` / `any` (issue #926): a dynamic
             // call of the value it holds.
-            if matches!(self.cx.ty.kind(fty), TyKind::FnPtr { .. })
-                || self.cx.generic_sig(fty).is_some()
-                || self.cx.is_callable_object(fty)
-                || matches!(
-                    self.cx.dynamic(fty),
-                    Some(crate::any::Dynamic::Function | crate::any::Dynamic::Any)
-                )
-            {
+            if self.callable_value(fty) {
                 return match self.field_access(recv, prop, Want::Borrow, span) {
                     Some(f) => self.call_value(f, args, span),
                     None => self.error_expr(span),
@@ -656,5 +655,19 @@ impl FnCx<'_, '_> {
         }
         let part = self.js_text(recv, "`x.toString()`");
         Ok(self.concat_parts(vec![part], span))
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// Can a value of type `t` be called (`v(args)`)? A function value, a generic function, a
+    /// callable object, or a `Function` / `any`.
+    pub(super) fn callable_value(&self, t: TyId) -> bool {
+        matches!(self.cx.ty.kind(t), TyKind::FnPtr { .. })
+            || self.cx.generic_sig(t).is_some()
+            || self.cx.is_callable_object(t)
+            || matches!(
+                self.cx.dynamic(t),
+                Some(crate::any::Dynamic::Function | crate::any::Dynamic::Any)
+            )
     }
 }
