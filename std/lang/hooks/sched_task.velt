@@ -250,7 +250,13 @@ export const E_SOLO: usize = 800;
 export const E_JOIN_VT: usize = 808;
 /** Catching panics: 56 bytes of words, laid out in sched_node_catch.velt. */
 export const E_CATCH: usize = 824;
-export const E_SIZE: usize = 880;
+/**
+ * Borrowers leave this worker alone until its polls (`E_POLLS`) reach this count: its input held
+ * only tasks that may not move when one last tried (connections pinned to it), sched_spread.velt
+ * `borrow`.
+ */
+export const E_NOBORROW: usize = 880;
+export const E_SIZE: usize = 888;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */

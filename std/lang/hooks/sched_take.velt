@@ -17,7 +17,8 @@ function take(e: usize, head: usize, n: usize, into: usize): usize {
   const io = head === t.E_IHEAD;
   let chain = into;
   let i: usize = 0;
-  const back: usize[] = [];
+  // Those that stay, newest first (linked through `T_NEXT`, no array: the queue is locked).
+  let back: usize = 0;
   while (i < n) {
     const k = io ? q.popIo(e) : q.popRest(e, t.M_SHARED);
     if (k === 0) {
@@ -27,16 +28,20 @@ function take(e: usize, head: usize, n: usize, into: usize): usize {
       m.st(k + t.T_NEXT, chain);
       chain = k;
     } else {
-      back.push(k);
+      m.st(k + t.T_NEXT, back);
+      back = k;
     }
     i++;
   }
-  for (const k of back) {
+  let k = q.reverse(back);
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
     if (io) {
       q.pushIo(e, k);
     } else {
       q.pushRest(e, k, t.M_SHARED);
     }
+    k = next;
   }
   return chain;
 }

@@ -37,6 +37,12 @@ const HEAVY: usize = 20000;
 export const HELP: usize = 16;
 /** Input waiting on a worker from which a worker that ran out of work borrows half. */
 const BORROW_MIN: usize = 2;
+/**
+ * The polls a worker whose waiting input could not move (all pinned or anchored) runs before
+ * workers try to borrow from it again: a server's connections, pinned to the workers in turn, are
+ * never borrowed, and each try held the busy worker's queue lock while it waited for it.
+ */
+const NOBORROW_POLLS: usize = 32;
 
 /** The clock of the spread: nanoseconds since the process started. */
 @inline
@@ -202,12 +208,17 @@ export function borrow(e: usize): bool {
     if (m.load32(w + t.E_PARK) === 1 || m.load(w + t.E_QUEUED) < BORROW_MIN) {
       continue;
     }
-    if (!q.tryLock(w)) {
+    // Plain reads of its own counts: a hint (a late one costs one look more or less).
+    if (m.ld(w + t.E_POLLS) < m.ld(w + t.E_NOBORROW) || !q.tryLock(w)) {
       continue;
     }
     let k: usize = 0;
-    if (q.input(w) >= BORROW_MIN) {
+    const waiting = q.input(w) >= BORROW_MIN;
+    if (waiting) {
       k = tq.takeHalfInput(w);
+    }
+    if (k === 0 && waiting) {
+      m.st(w + t.E_NOBORROW, m.ld(w + t.E_POLLS) + NOBORROW_POLLS);
     }
     m.store32(w + t.E_QLOCK, 0);
     if (k === 0) {
