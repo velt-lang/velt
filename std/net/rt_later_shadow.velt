@@ -221,7 +221,7 @@ export function dropNext(s: usize): void {
   const next = m.ld(s + NEXT);
   if (next !== 0) {
     m.st(s + NEXT, 0);
-    // SAFETY: the shadow's own heap future, never polled.
+    // SAFETY: the shadow's own heap future, polled by nothing after this (pending or not).
     unsafe {
       futDrop(next);
     }
@@ -230,7 +230,9 @@ export function dropNext(s: usize): void {
 
 /**
  * Drops every shadow's runtime writes (the program ends with only flushers left,
- * sched_detach.velt; every worker idle: no flusher polls them).
+ * sched_detach.velt; every worker idle: no flusher polls them). Each shadow is given up as an
+ * abort, its bytes dropped: a flusher whose wake was already on its way runs once more and
+ * finds nothing to send, instead of handing its dropped batch to the runtime again.
  */
 export function dropFlights(): void {
   const l = list(false);
@@ -250,8 +252,18 @@ export function dropFlights(): void {
       }
     }
     dropNext(s);
+    giveUpShadow(s);
     tb.unlock(s);
     s = m.ld(s + io.S_DUE_NEXT);
   }
   m.store32(l + L_LOCK, 0);
+}
+
+/** Shadow `s` (locked, its writes dropped) is given up: aborted, nothing left to send or shut. */
+function giveUpShadow(s: usize): void {
+  m.st32(s + io.S_FLAGS, (m.ld32(s + io.S_FLAGS) | io.F_ABORTED) & ~io.F_SHUT);
+  m.st(s + FLIGHT_LEN, 0);
+  m.st(s + io.S_OFF, 0);
+  m.st(s + io.S_LEN, 0);
+  wt.wakeAll(s);
 }

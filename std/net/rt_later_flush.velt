@@ -301,8 +301,8 @@ function flightPoll(g: usize, cx: usize): u32 {
   const s = tb.hold(m.ld(g + G_HANDLE) as u64);
   const f = s === 0 ? 0 : m.ld(s + FLIGHT);
   if (f === 0) {
-    // Settled already (`prime`, at a close), or given up (the program ends: the flusher never
-    // runs again): nothing for the flusher to count.
+    // Settled already (`prime`, at a close), or given up (the program ends: the shadow is
+    // aborted, so the flusher finishes): nothing for the flusher to count.
     if (s !== 0) {
       tb.leave(s);
     }
