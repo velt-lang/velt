@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use velt_sema::hir;
 use velt_vir::vir;
 
 use super::{
@@ -99,12 +100,16 @@ fn warm_inner(
             })
         };
         let mut named = vec![];
+        let mut edited_files = vec![];
         for (file, name) in edited {
             let Some(m) = module_of(&file) else {
                 sess.warm_refused = Some(format!("{} is not a module", file.display()));
                 return Ok(None);
             };
             named.push((m.path.clone(), name));
+            if !edited_files.contains(&m.file) {
+                edited_files.push(m.file);
+            }
         }
         let edited = named;
         let sema_opts = velt_sema::CheckOptions {
@@ -124,6 +129,8 @@ fn warm_inner(
             }
         };
         sess.record("sema (warm)", t);
+        sess.splice_files = Some(edited_files);
+        sess.keep_lowering = true;
         lower_checked(sess, opts, VirFor::Jit, checked).map(Some)
     }
 }
@@ -135,4 +142,41 @@ pub fn copy_files(sm: &velt_common::SourceMap) -> velt_common::SourceMap {
         copy.add(f.path.clone(), f.src.clone());
     }
     copy
+}
+
+/// Lowering for `velt dev` (dev-warm-front-end.md step 3 "E"): a warm reload's program into the
+/// kept lowering (`Session::splice_files`), or a program lowered and kept
+/// (`Session::keep_lowering`, seeded builds only), which then holds it. `None`: lower as usual,
+/// `hir` left in place.
+pub(super) fn lower_kept(
+    sess: &mut Session,
+    hir: &mut Option<Box<hir::Program>>,
+    lower_opts: &velt_vir::LowerOptions,
+    seeded: bool,
+) -> Result<Option<vir::Program>, Vec<velt_common::Diagnostic>> {
+    if let Some((files, kept)) = (sess.splice_files.take()).zip(sess.kept_lowering.take()) {
+        if let Some(program) = hir.take() {
+            match kept.splice(program, &files, lower_opts) {
+                Ok((p, kept)) => {
+                    sess.counted_seed = Some(kept.seed().clone());
+                    sess.kept_lowering = Some(kept);
+                    return Ok(Some(p));
+                }
+                Err((why, program)) => {
+                    sess.splice_refused = Some(why);
+                    *hir = Some(program);
+                }
+            }
+        }
+    }
+    if !sess.keep_lowering || !seeded {
+        return Ok(None);
+    }
+    let Some(program) = hir.take() else {
+        return Ok(None);
+    };
+    let (p, seed, kept) = velt_vir::KeptLowering::lower(program, lower_opts)?;
+    sess.counted_seed = Some(seed);
+    sess.kept_lowering = Some(kept);
+    Ok(Some(p))
 }

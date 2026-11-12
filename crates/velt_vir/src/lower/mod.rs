@@ -67,7 +67,9 @@ mod attempt;
 mod bits;
 mod boxes;
 mod boxing;
+mod kept;
 pub use boxing::CountedSeed;
+pub use kept::{KeptLowering, Refused};
 mod c_call;
 mod c_export;
 pub(crate) mod c_global;
@@ -231,6 +233,15 @@ pub(crate) fn lower_program(
     (program, diags)
 }
 
+/// What [`lower_program_kept`] gives: the program, its diagnostics, its counted types, and the
+/// final pass's context.
+type Kept<'h> = (
+    vir::Program,
+    Vec<velt_common::Diagnostic>,
+    Option<CountedSeed>,
+    Option<Cx<'h>>,
+);
+
 /// [`lower_program`], starting from `opts.counted_seed` and returning the final counted types
 /// as a seed when `want_seed` (boxing/seed.rs).
 pub(crate) fn lower_program_seeded(
@@ -242,6 +253,18 @@ pub(crate) fn lower_program_seeded(
     Vec<velt_common::Diagnostic>,
     Option<CountedSeed>,
 ) {
+    let (p, d, s, _) = lower_program_kept(hir, opts, want_seed, false);
+    (p, d, s)
+}
+
+/// [`lower_program_seeded`], also returning the final pass's context when `keep` (kept.rs: a
+/// `velt dev` reload lowers edited functions into it).
+fn lower_program_kept<'h>(
+    hir: &'h hir::Program,
+    opts: &LowerOptions,
+    want_seed: bool,
+    keep: bool,
+) -> Kept<'h> {
     let mut types = hir.types.clone();
     let mut counted = boxing::Boxing::initial(hir);
     let mut no_await_steps = false;
@@ -297,7 +320,7 @@ pub(crate) fn lower_program_seeded(
         cx.shapes_close();
         let next = cx.close_boxing();
         if next == counted && seeded && next.locks_may_follow_seed() {
-            return lower_program_seeded(hir, &boxing::without_seed(opts), want_seed);
+            return lower_program_kept(hir, &boxing::without_seed(opts), want_seed, keep);
         }
         if next == counted {
             // The counted types are complete: this pass's functions are the program's, once
@@ -342,7 +365,10 @@ pub(crate) fn lower_program_seeded(
             cx.unfreeze_module_reach();
             let seed = want_seed.then(|| cx.seed(&next));
             let types_now = cx.types.clone();
-            let program = cx.finish();
+            let (program, cx) = match keep {
+                true => (cx.finish_copy(), Some(cx)),
+                false => (cx.finish(), None),
+            };
             if !no_await_steps && async_fn::await_order::unobservable(&program) {
                 // Lower again without the steps: the program then has no step code at all.
                 no_await_steps = true;
@@ -350,7 +376,7 @@ pub(crate) fn lower_program_seeded(
                 counted_passes += 1;
                 continue;
             }
-            return (program, diags, seed);
+            return (program, diags, seed, cx);
         }
         value_params = cx.value_params.take();
         types = cx.types;

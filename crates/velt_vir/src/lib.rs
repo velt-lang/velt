@@ -257,7 +257,7 @@ pub struct LowerOptions<'a> {
     pub jit: bool,
 }
 
-pub use lower::CountedSeed;
+pub use lower::{CountedSeed, KeptLowering, Refused};
 
 /// One native library to initialize before `main` runs.
 #[derive(Clone, Debug, PartialEq, Eq)]

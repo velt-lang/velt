@@ -244,6 +244,7 @@ fn a_version_that_failed_after_lowering_is_not_the_baseline() {
         kept_files: None,
         warm: true,
         warm_reloads: 0,
+        kept_lowering: None,
     };
     let failed = host_reload(
         &mut session,
@@ -365,6 +366,7 @@ fn warm_reload(
     let cold_build = || {
         let mut sess = Session::new();
         sess.keep_check = true;
+        sess.keep_lowering = true;
         sess.counted_seed = Some(velt_vir::CountedSeed::default());
         driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
         sess
@@ -374,10 +376,15 @@ fn warm_reload(
         sess = cold_build();
     }
     assert!(sess.kept.is_some(), "a dev build keeps its check");
+    assert!(
+        sess.kept_lowering.is_some(),
+        "a dev build keeps its lowering"
+    );
     let base = super::super::edits::Snapshot::of_build(&sess, &opts.input);
     let cold_files = driver::copy_files(&sess.sm);
     let mut warm = Session::new();
     warm.kept = sess.kept.take();
+    warm.kept_lowering = sess.kept_lowering.take();
     warm.counted_seed = sess.counted_seed.take();
     write(edited);
     let input = opts.input.clone();
@@ -393,10 +400,22 @@ fn warm_reload(
     cold.counted_seed = Some(velt_vir::CountedSeed::default());
     let cold = driver::compile_for_jit(&mut cold, &opts).unwrap_or_else(|e| panic!("{e:?}"));
     let warm = match out.unwrap_or_else(|e| panic!("{e:?}")) {
-        Some(p) => Ok(p.to_string()),
+        Some(p) => match warm.splice_refused.take() {
+            None => Ok(p.to_string()),
+            Some(why) => Err(format!("lowered whole: {why}")),
+        },
         None => Err(warm.warm_refused.take().unwrap_or_default()),
     };
-    (warm, cold.to_string())
+    let cold = without_static_ids(&cold.to_string());
+    let warm = warm.map(|w| without_static_ids(&w));
+    if let (Ok(w), Some(dir)) = (&warm, std::env::var_os("VELT_SPLICE_DUMP")) {
+        if *w != cold {
+            let dir = PathBuf::from(dir);
+            std::fs::write(dir.join("warm.vir"), w).expect("written");
+            std::fs::write(dir.join("cold.vir"), &cold).expect("written");
+        }
+    }
+    (warm, cold)
 }
 
 const WARM_MAIN: &str = "import { label } from \"./util\";
@@ -486,4 +505,34 @@ fn a_body_edit_beside_generated_code_reloads_warm() {
         (Ok(warm), cold) => assert_eq!(warm, cold),
         (Err(why), _) => assert!(why.contains("generated"), "{why}"),
     }
+}
+
+/// `vir` with each `static#N` named by its data, and the statics' own lines left out: a splice
+/// adds the data of new literals after the kept lowering's, where a cold lowering numbers them in
+/// the order it meets them, and leaves the data of literals edited away unused.
+fn without_static_ids(vir: &str) -> String {
+    let mut data = std::collections::HashMap::new();
+    for line in vir.lines() {
+        if let Some(rest) = line.strip_prefix("static#") {
+            if let Some((n, def)) = rest.split_once(' ') {
+                data.insert(format!("static#{n}"), format!("static[{def}]"));
+            }
+        }
+    }
+    let mut out = String::new();
+    for line in vir.lines().filter(|l| !l.starts_with("static#")) {
+        let mut line = line.to_string();
+        let mut at = 0;
+        while let Some(i) = line[at..].find("static#") {
+            let start = at + i;
+            let end = (line[start + 7..].find(|c: char| !c.is_ascii_digit()))
+                .map_or(line.len(), |e| start + 7 + e);
+            let named = data.get(&line[start..end]).cloned().unwrap_or_default();
+            line.replace_range(start..end, &named);
+            at = start + named.len();
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
 }

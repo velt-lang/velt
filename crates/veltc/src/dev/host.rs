@@ -53,6 +53,7 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
     // Lowering's counted types, carried from each version to the next (dev-warm-front-end.md).
     sess.counted_seed = Some(velt_vir::CountedSeed::default());
     sess.keep_check = args.build.verbose || super::swap::warm_enabled();
+    sess.keep_lowering = super::swap::warm_enabled();
     sess.interfaces = args.build.verbose.then(Default::default);
     session.set_debug_info(std::env::var_os(DEBUG_INFO_ENV).is_none_or(|v| v != "0"));
     let loaded = compile_and_load(&mut sess, &opts, &mut session);
@@ -92,6 +93,7 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
                     kept_files,
                     warm: super::swap::warm_enabled(),
                     warm_reloads: 0,
+                    kept_lowering: sess.kept_lowering.take(),
                 };
                 super::swap::serve_reloads(channel, opts.clone(), session, state, &args.build)
             }

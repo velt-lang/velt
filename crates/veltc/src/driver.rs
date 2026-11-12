@@ -206,6 +206,15 @@ pub struct Session {
     pub kept: Option<velt_sema::KeptCheck>,
     /// Why a warm reload (`compile_for_jit_warm`) needs the cold front end.
     pub warm_refused: Option<String>,
+    /// `velt dev`: keep the lowering of a JIT build ([`Session::kept_lowering`]).
+    pub keep_lowering: bool,
+    /// The kept lowering (velt_vir `KeptLowering`): a warm reload lowers its edited files into
+    /// it ([`Session::splice_files`]).
+    pub kept_lowering: Option<velt_vir::KeptLowering>,
+    /// A warm reload's edited files, whose functions are lowered into the kept lowering.
+    pub splice_files: Option<Vec<velt_common::FileId>>,
+    /// Why the kept lowering could not take a warm reload.
+    pub splice_refused: Option<String>,
     /// The check's kept check and what it borrows, until the driver hands them over.
     pub(crate) pending_kept: Option<KeptHandover>,
     /// `-v`: say at once that the build waits for another of its output (`std_cache::Place::lock`).
@@ -477,7 +486,7 @@ fn lower_checked(
         sess.interfaces = Some(velt_sema::interface::Summary::of(&checked));
         sess.record("interfaces", t);
     }
-    let hir = memory::Noted::new(checked, "hir freed", &sess.lifetimes);
+    let mut hir = memory::Noted::new(Some(Box::new(checked)), "hir freed", &sess.lifetimes);
 
     let t = Instant::now();
     let std_root = loader::std_root();
@@ -489,8 +498,12 @@ fn lower_checked(
     };
     let target = opts.target();
     let line_info = opts.has_line_info();
+    // Lowering reads the source map and the counted types while the session lends its kept
+    // lowering.
+    let sm = std::mem::take(&mut sess.sm);
+    let seed_in = sess.counted_seed.take();
     let lower_opts = velt_vir::LowerOptions {
-        source_map: Some(&sess.sm),
+        source_map: Some(&sm),
         std_root: std_root.as_deref(),
         native_inits: &native_inits,
         // A debug compiler links the debug runtime, which checks that no two tasks use one
@@ -504,27 +517,43 @@ fn lower_checked(
         // Generic instances shared by shape: debug builds only, for now (shape-sharing.md).
         shapes: !opts.release,
         no_cpu_extensions: Backend::of_build(opts) == Backend::Cranelift,
-        counted_seed: sess.counted_seed.as_ref(),
+        counted_seed: seed_in.as_ref(),
         jit: dest == VirFor::Jit,
     };
-    let lowered = match sess.counted_seed.is_some() {
-        true => velt_vir::lower_seeded(&hir, &lower_opts).map(|(p, seed)| (p, Some(seed))),
-        false => velt_vir::lower_checked(&hir, &lower_opts).map(|p| (p, None)),
-    };
-    let mut program = match lowered {
-        Ok((p, seed)) => {
-            if seed.is_some() {
-                sess.counted_seed = seed;
+    let lowered = match warm::lower_kept(sess, &mut hir, &lower_opts, seed_in.is_some()) {
+        Ok(Some(p)) => Ok(p),
+        Ok(None) => match hir.as_deref() {
+            Some(hir) if seed_in.is_some() => {
+                velt_vir::lower_seeded(hir, &lower_opts).map(|(p, seed)| {
+                    sess.counted_seed = Some(seed);
+                    p
+                })
             }
-            p
-        }
+            Some(hir) => velt_vir::lower_checked(hir, &lower_opts),
+            None => return Err(BuildError::Ice("no checked program".into())),
+        },
+        Err(diags) => Err(diags),
+    };
+    sess.sm = sm;
+    // A lowering that gives no counted types (a splice) keeps them.
+    if sess.counted_seed.is_none() {
+        sess.counted_seed = seed_in;
+    }
+    let mut program = match lowered {
+        Ok(p) => p,
         Err(diags) => {
             sess.diagnostics.extend(diags);
             sess.stop_if_errors()?;
             return Err(BuildError::Ice("lowering reported no errors".into()));
         }
     };
-    host_modules::check_build(sess, opts, &hir, &program)?;
+    // A kept lowering holds the program it lowered.
+    let kept = sess.kept_lowering.take();
+    let lowered_hir = (kept.as_ref().map(|k| k.hir()))
+        .or(hir.as_deref())
+        .ok_or_else(|| BuildError::Ice("no checked program".into()))?;
+    host_modules::check_build(sess, opts, lowered_hir, &program)?;
+    sess.kept_lowering = kept;
     // Nothing after lowering reads the HIR: freed before the VIR is verified and optimized.
     drop(hir);
     if !line_info && !opts.report_numbers {

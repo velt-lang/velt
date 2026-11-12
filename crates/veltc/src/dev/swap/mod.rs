@@ -92,6 +92,9 @@ pub struct Carried {
     pub warm: bool,
     /// How many saves were checked from `kept`.
     pub warm_reloads: usize,
+    /// The last version's lowering (velt_vir `KeptLowering`): a warm reload lowers the edited
+    /// files' functions into it.
+    pub kept_lowering: Option<velt_vir::KeptLowering>,
 }
 
 /// Whether `velt dev` keeps a check to reload body edits from (`VELT_DEV_WARM=off` turns it off).
@@ -140,6 +143,7 @@ fn reload_with(
     let running = carried.seed.take().unwrap_or_default();
     sess.counted_seed = Some(running.clone());
     sess.keep_check = verbose || warm_enabled();
+    sess.keep_lowering = warm_enabled();
     sess.interfaces = verbose.then(Default::default);
     // A save that edits function bodies alone is checked from the kept check; anything else, or
     // anything it refuses, goes through the cold front end (which keeps a new check).
@@ -149,12 +153,17 @@ fn reload_with(
     let kept = carried.kept.take_if(|_| carried.warm);
     if let (Some(kept), Some((base, cold_files))) = (kept, base) {
         sess.kept = Some(kept);
+        sess.kept_lowering = carried.kept_lowering.take();
         let input = opts.input.clone();
         let edited = move |s: &Session| {
             super::edits::located(&base, &super::edits::Snapshot::of_build(s, &input))
         };
         let out = driver::compile_for_jit_warm(&mut sess, opts, cold_files, edited);
         carried.kept = sess.kept.take();
+        carried.kept_lowering = sess.kept_lowering.take();
+        if let (true, Some(why)) = (verbose, sess.splice_refused.take()) {
+            eprintln!("velt dev: lowered whole: {why}");
+        }
         match out {
             Ok(Some(p)) => {
                 warm = true;
@@ -172,6 +181,7 @@ fn reload_with(
                 sess.show_details = details;
                 sess.counted_seed = Some(running.clone());
                 sess.keep_check = true;
+                sess.keep_lowering = true;
                 sess.interfaces = verbose.then(Default::default);
             }
             Err(e) => program = Some(Err(e)),
@@ -201,6 +211,7 @@ fn reload_with(
             carried.kept = sess.kept.take();
             carried.kept_own = carried.kept.as_ref().map(|_| own.clone());
             carried.kept_files = carried.kept.as_ref().map(|_| driver::copy_files(&sess.sm));
+            carried.kept_lowering = sess.kept_lowering.take();
             if let (true, Some(kept)) = (verbose, &carried.kept) {
                 eprintln!("velt dev: {}", kept_report(kept));
             }

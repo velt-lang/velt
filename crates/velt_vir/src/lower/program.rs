@@ -193,6 +193,32 @@ impl<'h> Cx<'h> {
         }
     }
 
+    /// [`Self::finish`], keeping the context (kept.rs): the program is a copy.
+    pub(super) fn finish_copy(&mut self) -> vir::Program {
+        self.fill_registry();
+        self.prune_glue_slots();
+        let mut funcs: Vec<Function> = (self.funcs.iter())
+            .map(|f| f.clone().unwrap_or_else(|| ice("function never lowered")))
+            .collect();
+        super::keys::disambiguate(&mut funcs);
+        vir::Program {
+            aggs: self.aggs.clone(),
+            funcs,
+            externs: self.externs.clone(),
+            statics: self.statics.clone(),
+            files: self
+                .locs
+                .as_ref()
+                .map(|m| m.files.clone())
+                .unwrap_or_default(),
+            debug_types: self
+                .debug
+                .as_ref()
+                .map(|d| d.types.clone())
+                .unwrap_or_default(),
+        }
+    }
+
     /// The function built for `work`; queued for building on first request.
     /// The function for `work`, whose address may be taken: it may run in any mode.
     pub(super) fn func(&mut self, work: Work) -> FuncId {
@@ -594,7 +620,7 @@ pub(super) fn work_target(work: &mut Work) -> Option<(&mut DefId, &mut Vec<TyId>
     }
 }
 
-fn work_def(work: &Work) -> Option<DefId> {
+pub(super) fn work_def(work: &Work) -> Option<DefId> {
     match work {
         Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => work_def(w),
         Work::Fn(d, _)
