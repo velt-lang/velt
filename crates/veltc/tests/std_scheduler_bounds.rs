@@ -162,6 +162,10 @@ fn a_latch_with_many_waiters_frees_its_waker_buffer_by_size() {
 /// (`join`, [`FOLLOWS`], the program where Windows lost its output), a timed wait that expires
 /// ([`DEADLINE`]) and a sleep ([`SLEEPER`]). The copies without parts of the fix show which
 /// window each covers: each ends the program early where it must ("Some(0) ", nothing printed).
+/// Runs of each program of [`a_wake_delivered_while_worker_0_scans_keeps_the_program_alive`]: a
+/// broken copy must end early in one of them, a fixed copy must print in all.
+const BROKEN_RUNS: usize = 8;
+
 #[test]
 fn a_wake_delivered_while_worker_0_scans_keeps_the_program_alive() {
     if !has_threads() {
@@ -204,20 +208,25 @@ fn a_wake_delivered_while_worker_0_scans_keeps_the_program_alive() {
                 "sleeper" => (SLEEPER, "Some(0) slept\n"),
                 _ => (DEADLINE, "Some(0) readable false\n"),
             };
+            // The pauses make the window likely, not certain, on a loaded machine (a worker can
+            // still win the race once in a while): a copy without part of the fix must end early
+            // in at least one of its runs, and the fixed copies must print in every run.
             let runs = std_runs_with(
                 &format!("{program}_{variant}"),
                 src,
                 Some(&std_dir),
-                &[("4", "0")],
+                &[("4", "0"); BROKEN_RUNS],
                 &[("VELT_RESCUE", "0")],
             );
             if ends_early {
-                assert_eq!(
-                    runs[0], "Some(0) ",
-                    "{variant}, {program}: did not end early"
+                assert!(
+                    runs.iter().any(|run| run == "Some(0) "),
+                    "{variant}, {program}: did not end early in any of {BROKEN_RUNS} runs: {runs:?}"
                 );
             } else {
-                assert_eq!(runs[0], want, "{variant}, {program}");
+                for run in &runs {
+                    assert_eq!(run, want, "{variant}, {program}");
+                }
             }
         }
     }
