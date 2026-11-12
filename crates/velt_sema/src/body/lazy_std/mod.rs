@@ -208,6 +208,12 @@ impl Lazy {
         }
     }
 
+    /// Definition `d`, checked whether or not it is live, calls hook `HOOKS[hook]` by its role
+    /// while the hook's module is not loaded: demand it once `d` is live.
+    pub(crate) fn defer_hook_call(&mut self, d: DefId, hook: usize) {
+        self.live.hook_calls.entry(d).or_default().push(hook);
+    }
+
     /// A generated module added during the check (`Ctx::add_module`): checked eagerly, as any
     /// non-std module.
     pub(crate) fn add_module(&mut self) {

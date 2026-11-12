@@ -28,7 +28,6 @@ import {
 import { findBytes, rfindBytes } from "velt/lang/string/needle_scan";
 import { byteToUnit, unitToByte } from "velt/lang/string/positions";
 
-
 /** `i` clamped to `0..=len`. */
 function clamp(i: i64, len: usize): usize {
   if (i <= 0) {
@@ -99,22 +98,24 @@ function indexOfWide(s: string, needle: string, from: i64): i64 {
 }
 
 /** `s.includes(needle, position)`: as `indexOf(...) >= 0`. Compiled into the caller is only a
- * one-byte needle from the start, a byte search in any string (no position to translate). */
+ * one-byte needle from the start, a byte search in any string (no position to translate). A
+ * search from the start, the usual case, never reaches the position translation: with a constant
+ * `position` of 0 the code that needs it is not compiled into the program at all. */
 @inline
 export function includes(s: string, needle: string, position: i64): bool {
-  if (position <= 0 && strByteLen(needle) == 1) {
-    return findByte(s, strByteAt(needle, 0), 0, strByteLen(s)) >= 0;
-  }
-  return includesBody(s, needle, position);
-}
-
-/** `includes` past its front: from the start a string that is not ASCII needs no position
- * translated either. */
-@noInline
-function includesBody(s: string, needle: string, position: i64): bool {
   if (position > 0) {
     return indexOfBody(s, needle, position) >= 0;
   }
+  if (strByteLen(needle) == 1) {
+    return findByte(s, strByteAt(needle, 0), 0, strByteLen(s)) >= 0;
+  }
+  return includesBody(s, needle);
+}
+
+/** `includes` from the start past its front: a string that is not ASCII needs no position
+ * translated either. */
+@noInline
+function includesBody(s: string, needle: string): bool {
   const n = strByteLen(s);
   const m = strByteLen(needle);
   if (m == 0) {
