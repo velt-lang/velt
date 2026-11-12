@@ -606,7 +606,8 @@ fn analyze(
     // generated code's check only when the edit demands other instances of it.
     if cx.body_records.is_some() {
         generated_phase(cx);
-        cx.kept_demand = Some(demanded(cx));
+        // What the phase demanded last; nothing when it had no generated code to check.
+        cx.kept_demand = cx.gen.binding.last_found.clone();
         kept::stash(cx);
         analyze_after_phase(cx);
     } else {

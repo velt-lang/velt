@@ -58,7 +58,14 @@ impl Delta {
     /// Make `program` (the last version, its functions possibly optimized since) this version:
     /// the indices of the functions it changed.
     pub fn apply(self, program: &mut vir::Program) -> Vec<usize> {
-        let placeholder = |i: usize| vir::Function::new(format!("#{i}"), vec![], vir::Ty::Unit, vir::Linkage::Internal);
+        let placeholder = |i: usize| {
+            vir::Function::new(
+                format!("#{i}"),
+                vec![],
+                vir::Ty::Unit,
+                vir::Linkage::Internal,
+            )
+        };
         while program.funcs.len() < self.len {
             let i = program.funcs.len();
             program.funcs.push(placeholder(i));
@@ -121,7 +128,9 @@ impl KeptLowering {
     /// The checked program lowered last, the context dropped.
     pub fn into_hir(mut self) -> Box<hir::Program> {
         self.cx = None;
-        self.hir.take().unwrap_or_else(|| super::ice("a kept lowering without its program"))
+        self.hir
+            .take()
+            .unwrap_or_else(|| super::ice("a kept lowering without its program"))
     }
 
     /// The checked program lowered last.
@@ -292,8 +301,16 @@ impl Cx<'_> {
             aggs: self.aggs.clone(),
             externs: self.externs.clone(),
             statics: self.statics.clone(),
-            files: self.locs.as_ref().map(|m| m.files.clone()).unwrap_or_default(),
-            debug_types: self.debug.as_ref().map(|d| d.types.clone()).unwrap_or_default(),
+            files: self
+                .locs
+                .as_ref()
+                .map(|m| m.files.clone())
+                .unwrap_or_default(),
+            debug_types: self
+                .debug
+                .as_ref()
+                .map(|d| d.types.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -308,8 +325,9 @@ impl Cx<'_> {
             };
             let locals = std::mem::take(&mut full.locals);
             let locs = std::mem::take(&mut full.locs);
-            let stmts: Vec<Vec<vir::Stmt>> =
-                (full.blocks.iter_mut()).map(|b| std::mem::take(&mut b.stmts)).collect();
+            let stmts: Vec<Vec<vir::Stmt>> = (full.blocks.iter_mut())
+                .map(|b| std::mem::take(&mut b.stmts))
+                .collect();
             let mut body = full.clone();
             body.locals = locals;
             body.locs = locs;

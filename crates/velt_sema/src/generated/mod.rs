@@ -246,6 +246,9 @@ pub(crate) struct Binding {
     pub walked: demand::Walked,
     /// Some instance offered from an earlier build was not bound: its types changed.
     pub stale: bool,
+    /// The instances the phase's last demand computation found, without where (a kept check
+    /// compares a reload's with them, `crate::reanalyze`).
+    pub last_found: Option<Vec<(crate::hir::DefId, Vec<crate::hir::TyId>)>>,
     /// Top-level non-generic aliases by their type (module, name, without its nothing): how
     /// generated code names a type it cannot write out ([`spell`]).
     pub alias_homes: rustc_hash::FxHashMap<crate::hir::TyId, (usize, String, bool)>,

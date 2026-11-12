@@ -215,7 +215,9 @@ pub(crate) fn run_helpers_into(
             continue;
         };
         let ci = callee.0 as usize;
-        let Some(body) = bodies.get(&ci).filter(|_| helpers.get(ci).copied().unwrap_or(false))
+        let Some(body) = bodies
+            .get(&ci)
+            .filter(|_| helpers.get(ci).copied().unwrap_or(false))
         else {
             continue;
         };

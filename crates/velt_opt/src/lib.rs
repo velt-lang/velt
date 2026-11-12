@@ -177,7 +177,12 @@ pub fn optimize_debug_kept(program: &mut vir::Program, t: &mut PassTimings) -> D
     }
     let calls: Vec<_> = program.funcs.iter().map(numrep::params::calls_of).collect();
     let params = numrep::params::merge(&program.funcs, &program.statics, &calls);
-    debug_passes(program, params.clone(), (0..program.funcs.len()).collect(), t);
+    debug_passes(
+        program,
+        params.clone(),
+        (0..program.funcs.len()).collect(),
+        t,
+    );
     DebugKept {
         helpers,
         helper_bodies,
@@ -202,7 +207,10 @@ pub fn optimize_debug_delta(
     for &i in changed {
         let was = kept.helpers.get(i).copied().unwrap_or(false);
         if was || now.contains(&i) {
-            return Err(format!("`{}` is inlined into its callers", program.funcs[i].symbol));
+            return Err(format!(
+                "`{}` is inlined into its callers",
+                program.funcs[i].symbol
+            ));
         }
     }
     kept.helpers.resize(n, false);

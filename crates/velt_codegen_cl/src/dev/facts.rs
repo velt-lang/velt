@@ -82,7 +82,9 @@ impl Facts {
             facts.main.extend(main);
             facts.funcs.insert(func.symbol.clone(), fn_facts);
         }
-        facts.address_taken.extend(facts.funcs.values().flat_map(|f| f.address_refs.clone()));
+        facts
+            .address_taken
+            .extend(facts.funcs.values().flat_map(|f| f.address_refs.clone()));
         facts.module_state = module_state(program, &canon);
         facts
     }
@@ -122,7 +124,9 @@ impl Facts {
             };
             facts.funcs.insert(func.symbol.clone(), fn_facts);
         }
-        facts.address_taken.extend(facts.funcs.values().flat_map(|f| f.address_refs.clone()));
+        facts
+            .address_taken
+            .extend(facts.funcs.values().flat_map(|f| f.address_refs.clone()));
         facts.module_state = module_state(program, &canon);
         facts
     }

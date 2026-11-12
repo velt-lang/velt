@@ -221,7 +221,10 @@ fn apply(sess: &mut Session, delta: velt_vir::Delta) -> Result<(vir::Program, Ve
 
 /// The debug pipeline over a program lowered and kept for `velt dev`, keeping what it learns
 /// (`Session::debug_kept`), then verification.
-pub(super) fn optimize_kept(sess: &mut Session, program: &mut vir::Program) -> Result<(), BuildError> {
+pub(super) fn optimize_kept(
+    sess: &mut Session,
+    program: &mut vir::Program,
+) -> Result<(), BuildError> {
     let t = Instant::now();
     let mut passes = velt_opt::PassTimings::new();
     sess.debug_kept = Some(velt_opt::optimize_debug_kept(program, &mut passes));

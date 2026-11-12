@@ -88,6 +88,12 @@ pub(crate) fn run(cx: &mut Ctx) {
             Some(k) => k,
             None => {
                 let found = crate::timings::pass("generated::demand", || demand::compute(cx));
+                cx.gen.binding.last_found = Some(
+                    found
+                        .iter()
+                        .map(|(g, targs, _)| (*g, targs.clone()))
+                        .collect(),
+                );
                 let keyed =
                     crate::timings::pass("generated::keys", || keys(cx, &mut builder, &found));
                 for (key, _, tys) in &keyed {

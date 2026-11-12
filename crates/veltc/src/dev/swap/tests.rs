@@ -369,8 +369,7 @@ fn warm_reload(
         sess.keep_check = true;
         sess.keep_lowering = true;
         sess.counted_seed = Some(velt_vir::CountedSeed::default());
-        let program =
-            driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+        let program = driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
         sess.dev_program = Some(program);
         sess
     };
@@ -390,7 +389,10 @@ fn warm_reload(
     warm.kept_lowering = sess.kept_lowering.take();
     warm.dev_program = sess.dev_program.take();
     warm.debug_kept = sess.debug_kept.take();
-    assert!(warm.debug_kept.is_some(), "a dev build keeps its optimizer's facts");
+    assert!(
+        warm.debug_kept.is_some(),
+        "a dev build keeps its optimizer's facts"
+    );
     warm.counted_seed = sess.counted_seed.take();
     write(edited);
     let input = opts.input.clone();
@@ -406,8 +408,13 @@ fn warm_reload(
     cold.counted_seed = Some(velt_vir::CountedSeed::default());
     let cold = driver::compile_for_jit(&mut cold, &opts).unwrap_or_else(|e| panic!("{e:?}"));
     let warm = match out.unwrap_or_else(|e| panic!("{e:?}")) {
-        Some(p) => match warm.splice_refused.take() {
-            None => Ok(p.to_string()),
+        // A kept program keeps the functions nothing reaches any more (the ids are the kept
+        // lowering's); the cold build drops them.
+        Some(mut p) => match warm.splice_refused.take() {
+            None => {
+                velt_opt::remove_unused_functions(&mut p);
+                Ok(p.to_string())
+            }
             Some(why) => Err(format!("lowered whole: {why}")),
         },
         None => Err(warm.warm_refused.take().unwrap_or_default()),
@@ -453,6 +460,14 @@ fn a_body_edit_reloads_warm_to_the_cold_program() {
         vec![("util.velt", WARM_UTIL.replace("n=", "N="))],
         // A length-changing edit of the last definition of its file moves nothing.
         vec![("util.velt", WARM_UTIL.replace("n=", "count="))],
+        // A loop whose counter the debug optimizer narrows to an integer (`numrep`).
+        vec![(
+            "main.velt",
+            WARM_MAIN.replace(
+                "let s = 0;",
+                "let s = 0;\n  for (let i = 0; i < 10; i++) { s += i; }",
+            ),
+        )],
         vec![
             ("main.velt", WARM_MAIN.replace("x * 2", "x + 2")),
             ("util.velt", WARM_UTIL.replace("n=", "#=")),
@@ -541,4 +556,26 @@ fn without_static_ids(vir: &str) -> String {
         out.push('\n');
     }
     out
+}
+
+/// An edit whose calls pass another constant to a function the debug optimizer narrowed by its
+/// callers' constants (`numrep` parameter facts) lowers the program whole: the function, not
+/// edited, would be optimized otherwise.
+#[test]
+fn an_edit_changing_a_parameter_fact_is_optimized_whole() {
+    const MAIN: &str = "function steps(n: number): number {
+  let s = 0;
+  for (let i = 0; i < n; i++) { s += i; }
+  return s;
+}
+function other(): number { return 1; }
+function main() {
+  console.log(steps(5), other());
+}
+";
+    let edited = MAIN.replace("return 1;", "return steps(7000000000);");
+    match warm_reload(&[("main.velt", MAIN)], &[("main.velt", &edited)]) {
+        (Err(why), _) => assert!(why.contains("parameter"), "{why}"),
+        (Ok(_), _) => panic!("the optimizer took a changed parameter fact"),
+    }
 }

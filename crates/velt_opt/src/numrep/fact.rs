@@ -16,7 +16,7 @@ pub(super) const TWO_53: f64 = 9_007_199_254_740_992.0;
 
 /// What is known about one numeric value.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Fact {
+pub(crate) struct Fact {
     /// Smallest non-NaN value (`-∞` allowed).
     pub lo: f64,
     /// Largest non-NaN value (`+∞` allowed).
