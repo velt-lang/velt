@@ -348,6 +348,7 @@ impl FnCx<'_, '_> {
                 if want != Want::BorrowMut {
                     s.array_used_in_place(&v);
                 }
+                let v = s.widen_str_literals(v);
                 s.index_of(v, index, want, span)
             });
         }
@@ -365,6 +366,7 @@ impl FnCx<'_, '_> {
             return h;
         }
         let obj = self.receiver_expr(object);
+        let obj = self.widen_str_literals(obj);
         let obj = self.record_present_index(obj, index);
         if want != Want::BorrowMut {
             self.array_used_in_place(&obj);

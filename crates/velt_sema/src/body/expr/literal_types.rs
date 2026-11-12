@@ -171,6 +171,15 @@ impl FnCx<'_, '_> {
         w != t && w == self.cx.ty.i64
     }
 
+    /// `h` of a string literal type or a union of them (`"x" | "y"`) as the `string` it is, for
+    /// what reads a string's characters: `for...of`, `s[0]`, `[...s]`.
+    pub(crate) fn widen_str_literals(&mut self, h: hir::Expr) -> hir::Expr {
+        match h.ty != self.cx.ty.str_ && self.cx.widened(h.ty) == self.cx.ty.str_ {
+            true => self.widen_value(h),
+            false => h,
+        }
+    }
+
     /// Members of a literal type or a union of literals are its base type's (`l.length`,
     /// `kind.toUpperCase()` on `"lo" | "mid"`), unless the union itself has the member (an
     /// `extend` block on it).

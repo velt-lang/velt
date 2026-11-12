@@ -104,10 +104,12 @@ impl Cx<'_> {
         }
     }
 
-    /// [`Self::holds_dynamic`], or a class instance (`Intrinsic::HoldsDynamicOrClass`).
+    /// [`Self::holds_dynamic`], or a class instance (`Intrinsic::HoldsDynamicOrClass`). A union
+    /// (`"x" | "y"`, an `Adt` of an enum definition) is neither.
     pub(super) fn holds_dynamic_or_class(&mut self, t: TyId) -> bool {
+        let class = |d: &hir::Def| matches!(d, hir::Def::Adt(a) if a.kind == hir::AdtKind::Class);
         self.holds_dynamic(t)
-            || matches!(self.raw_kind(t), TyKind::Adt(d, _) if self.adt_def(*d).kind == hir::AdtKind::Class)
+            || matches!(self.raw_kind(t), TyKind::Adt(d, _) if class(self.hir.def(*d)))
     }
 
     /// Is `t` `object` or `Function` (issue #926)?
