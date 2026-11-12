@@ -130,6 +130,7 @@ fn new_fut(shared: Arc<Shared>, start: Option<Work>) -> *mut VeltFut {
 
 pub(super) unsafe extern "C-unwind" fn native_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let m = meta(f);
+    let started = m.start.is_some();
     if let Some(mut work) = m.start.take() {
         let shared = m.shared.clone();
         let size = shared.size;
@@ -158,6 +159,12 @@ pub(super) unsafe extern "C-unwind" fn native_poll(f: *mut VeltFut, cx: *mut c_v
             if m.pending.is_none() {
                 m.pending = Some(crate::task::quiet::Pending::new());
             }
+            PENDING
+        }
+        // Done before the poll that started it ends: a library's result is an I/O event, which
+        // waits for a wake like the others (task/leaf.rs `run_blocking`, #2820).
+        Slot::Ready(_) if started => {
+            with_context(cx, |c| c.waker().wake_by_ref());
             PENDING
         }
         Slot::Ready(_) => {

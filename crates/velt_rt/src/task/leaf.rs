@@ -111,7 +111,28 @@ where
     R: Send + 'static,
     F: FnOnce() -> R + Send + 'static,
 {
-    match super::runtime::spawn_blocking(f).await {
+    let mut h = super::runtime::spawn_blocking(f);
+    // The poll that hands `f` over does not finish, even when a fast blocking thread is already
+    // done: its result is an I/O event, which JS handles only after the reactions of the
+    // promises settled by then (a `Promise.race` against a settled promise, #2820). Such a result
+    // waits for one wake, like any other.
+    let mut first = true;
+    let mut early = None;
+    let done = std::future::poll_fn(|cx| {
+        if let Some(r) = early.take() {
+            return Poll::Ready(r);
+        }
+        let r = Pin::new(&mut h).poll(cx);
+        if std::mem::take(&mut first) {
+            if let Poll::Ready(r) = r {
+                early = Some(r);
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+        }
+        r
+    });
+    match done.await {
         Ok(v) => v,
         Err(e) => crate::panic::fatal(&format!("blocking runtime operation failed: {e}")),
     }
