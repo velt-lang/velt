@@ -165,6 +165,9 @@ pub(super) unsafe extern "C-unwind" fn native_poll(f: *mut VeltFut, cx: *mut c_v
         // waits for a wake like the others (task/leaf.rs `run_blocking`, #2820).
         Slot::Ready(_) if started => {
             with_context(cx, |c| c.waker().wake_by_ref());
+            if m.pending.is_none() {
+                m.pending = Some(crate::task::quiet::Pending::new());
+            }
             PENDING
         }
         Slot::Ready(_) => {
