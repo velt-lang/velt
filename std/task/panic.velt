@@ -1,12 +1,6 @@
 // velt/task (internal): `catchPanic`, a promise whose panics are caught, and its `PanicError`.
 
-import {
-  velt_rt_catch_arm,
-  velt_rt_catch_free,
-  velt_rt_catch_message,
-  velt_rt_catch_settled,
-  velt_rt_catch_take,
-} from "velt/task/rt";
+import { arm, free, message, settled, take } from "#task-catch";
 
 /** Thrown by `catchPanic` when the code it ran panicked; `message` is the panic's message. */
 export class PanicError extends Error {
@@ -30,24 +24,28 @@ export class PanicError extends Error {
  * `body` is called, so `body` should be the async call itself (`() => handle(req)`): a body
  * that returns a promise it did not make (`() => p`) catches nothing, and a non-async body that
  * starts another promise before the one it returns guards that other one instead. A panic in a
- * task the body `spawn`s ends the process, as before.
+ * task the body `spawn`s ends the process, as before; under the executor in Velt
+ * (`VELT_SCHEDULER=std`) such a task catches too, and its panic is raised again where it is
+ * joined. Where generated code doesn't catch panics (Windows and the `velt dev` JIT under that
+ * executor), a panic here ends the process as an uncaught one does.
  */
 export async function catchPanic<T, E>(
   body: () => Promise<T, E>,
 ): Promise<T> throws E | PanicError {
-  velt_rt_catch_arm();
-  // Storing the promise starts it, which takes the arming (task/local/catch.rs).
+  arm();
+  // Storing the promise starts it, which takes the arming (the runtime's task/local/catch.rs, or
+  // the executor in Velt's std/task/catch_sched.velt).
   const p = body();
-  const h = velt_rt_catch_take();
+  const h = take();
   if (h == 0) {
     return await p;
   }
-  const panicked = await velt_rt_catch_settled(h);
+  const panicked = await settled(h);
   if (panicked) {
-    const msg = velt_rt_catch_message(h);
-    velt_rt_catch_free(h);
+    const msg = message(h);
+    free(h);
     throw new PanicError(msg);
   }
-  velt_rt_catch_free(h);
+  free(h);
   return await p;
 }

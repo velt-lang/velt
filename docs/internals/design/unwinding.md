@@ -338,10 +338,24 @@ What replaces the runtime's catch (`velt_rt_catch_*`, the catch at a started pro
   const e = unsafe { catchUnwind(() => { r = futPoll(node.fut, cx); }) };
   ```
 
-  The closure lives on the stack (it doesn't escape); its cost is one indirect call more than
-  a plain poll, paid only by catching nodes, as `MAY_CATCH` arranges today. A direct form,
-  `catchPoll(f, cx)` lowered to a `velt_eh_try_poll(fut, cx)` that calls the header's poll
-  through the catch, saves the closure if it measures worth it.
+  As built (std/task/catch_sched.velt `caughtPoll`), there is no function value: the poll,
+  state and `cx` wait in the worker's argument words (`E_CATCH_ARGS`), which a nested catching
+  poll writes only after the outer one read them, and the result comes back there;
+  `catchUnwindAt(fnAddress(pollArgs), args)` (an intrinsic beside `catchUnwind`) has
+  `velt_eh_try` call `pollArgs` with their address, so no closure, environment or thunk sits in
+  between. Its cost is the indirect calls through `velt_eh_try`, paid only by catching nodes. A
+  direct form, `catchPoll(f, cx)` lowered to a `velt_eh_try_poll(fut, cx)` that calls the
+  header's poll through the catch, would save one more call if it measures worth it. A guarded
+  promise that finished without a panic before `catchPanic` waits for it (a handler that never
+  waits) is not waited for: `take` gives it back and `catchPanic` takes its result. One still
+  running is waited for through a settled future that is a header inside its node (the started
+  node's lazy drop word and the free word after it, `N_SETTLE`; its `bool` result goes in the
+  word after those, the node's unhandled-rejection link, unused while `catchPanic` holds the
+  promise), so nothing is allocated. That future doesn't adopt the guarded promise while it
+  drives itself (its last poll was its own run, flag `ADOPTED` clear: `drivesItself`): its first
+  run (in its start) returned pending with its own waker, so an adoption would only poll a state
+  that waits for that wake; the future registers as the awaiter, the node's wake runs it among
+  its task's woken nodes, and its finish wakes the future.
 - **When the poll panicked**, the node becomes *panicked*: finished, its result slot never read,
   transferred or dropped, its state machine never polled or dropped, the node never freed (a
   leaf inside the leaked state may still wake it). The message moves into the node.
@@ -356,6 +370,64 @@ What replaces the runtime's catch (`velt_rt_catch_*`, the catch at a started pro
   caller runs aborts at its boundary on a Velt exception (decision (b) of #2649: its frame gets a
   catch-all landing pad that calls `abort`, or `nounwind`).
 
+**Built** (behind `VELT_SCHEDULER=std`, #2667; std/task/catch_sched.velt, the `std-scheduler`
+variant of `#task-catch`, whose default variant std/task/catch_rt.velt calls `velt_rt_catch_*`):
+
+- `catchPanic` keeps the arm/take shape and its documented limits, so both executors behave the
+  same: `arm` raises the low bit of the worker's `E_CATCHING` word; the next promise started
+  takes it (flag `CATCHES`, `E_GUARDED` holds it). The design's "marks the node it starts
+  itself" needs the promise's address before its start, which std code cannot get from the
+  value `body()` returns without a new intrinsic; the arming is one word on the worker, read
+  once per start (`schedStart` loads `E_CATCHING`; 0 skips everything).
+- `E_CATCHING` also counts the catching polls running on the worker (twice their number), so a
+  promise started while one runs catches too, as the runtime's `catches_here` arranges.
+- The executor polls only `CATCHES` nodes through the catch: `run` tests the flag with the
+  flags it reads anyway; an owner adopting a node (polling it with its own context) catches
+  when the node does or a catching poll runs, so a panic never unwinds through the adoption's
+  bookkeeping. The catching poll (`caughtPoll`) and the raise again (`again`) are reached
+  through function addresses in worker 0's block that `arm` stores: a program that never calls
+  `catchPanic` has no `catchUnwind` in its live code, so no `velt_eh_try`, no panic hook and no
+  cleanup pads (test `only_a_program_that_catches_has_the_catch`).
+- A panicked node keeps its exception (the message) in place of its poll, is finished, never
+  freed (one reference more), its result drop cleared and its rejection flag dropped; `nodePoll`
+  on it raises the panic again through `raiseAgain` (std/lang/hooks/unwind.velt), which prints
+  nothing (the message was printed at the panic) and, with no catch running on the thread, ends
+  the process with 101. `catchPanic` waits for the guarded node with `nodeSettled` (through the
+  settled header in its node), which doesn't claim the result or raise.
+- **Tasks spawned while a catching poll runs catch too** (decision recorded on #2667, owner
+  away): their root is polled through the catch (task flag `CATCHES`); a panic makes the task
+  done with no result (`PANICKED`, join word `J_PANICKED`; nothing transferred, copied or
+  dropped) and its join handle's header gets `joinPanicked`, which raises the panic again in the
+  joiner, on whichever worker that runs. The header changes because `joinPoll` (and a solo
+  worker's `joinPollSolo`, `VELT_THREADS=1`) is `@export`ed, and a C-callable frame ends any
+  unwinding. The straight path of a task's poll (sched_run.velt `run`) tests `CATCHES` in the
+  mask it tests already, so tasks that don't catch pay nothing for it. A panicked task nobody joins ends there; the
+  process goes on. This differs from the runtime's executor, where a panic in a spawned task
+  ends the process: under the runtime the task's poll is a Rust frame no catch reaches, while
+  here the task runs on the same executor, and an HTTP handler that spawns work keeps serving.
+- **Shared promises** (a promise read where it stays, `kept[0]`, or awaited at two places) still
+  go through the runtime's hub (velt_rt task/shared.rs), whose first waiter drives the promise
+  with the poll it found when the promise was shared. Two rules keep a panic from getting stuck
+  there. A raise that unwinds through the hub's frame drops the driver's place at the head of
+  the waiters (`DriverGone`), so the next await drives and is raised the panic in turn. And a
+  task's join that the hub polls through the header from before the panic (`joinPoll`) is woken
+  once to poll again (a joiner that read the header just before the switch then gets
+  `joinPanicked`); a second such poll ends the process with 101, as an uncaught panic, since
+  that `@export` frame can't unwind to a catch. That leaves one gap: a task that panicked after
+  its join was shared, joined through one of the runtime's shared-promise paths (the hub, and
+  `Promise.race`, which also polls through the runtime) inside another `catchPanic`, ends the
+  process with 101 instead of being caught. Moving shared promises and the combinators into std
+  closes it.
+- **Where generated code doesn't catch** (`velt_eh_catches() == 0`: Windows until its
+  structured exceptions are built, the `velt dev` JIT until its tables are registered),
+  `catchPanicRaw` calls the poll plainly and a panic under `catchPanic` ends the process with
+  101, as an uncaught one does (decision recorded on #2667: no runtime catch as a fallback,
+  owner decision 3 of #2649). WebAssembly ignores `VELT_SCHEDULER` and keeps the runtime's
+  executor and catch.
+- **Leaks:** the cleanup pads (#2680) drop what the abandoned frames held, as under the runtime's
+  catch; the panicked node's own state (and a panicked task's root) stays leaked by design, since
+  a leaf in it may still wake it.
+
 Deleted from velt_rt when the executor switches: `velt_rt_catch_arm`, `_take`, `_settled`,
 `_message`, `_free` (rt_abi_async.md §1.5); `panic::{catch, Catching, CATCHING, MAY_CATCH,
 VeltPanic, unwind, raise}`; `task/local/catch.rs`, `node/panicked.rs`; the `count_caught` leak
@@ -366,7 +438,8 @@ report becomes std's. `velt_rt_panic` keeps only "print, exit 101" and can move 
 The prototype's, all additive:
 
 - `hir::Intrinsic::CatchUnwind` (velt_sema `hir/intrinsic.rs`) and its declaration in
-  `std/lang/intrinsics/unwind.velt`.
+  `std/lang/intrinsics/unwind.velt`; `hir::Intrinsic::CatchUnwindAt` (#2667: the function at an
+  address called with one argument, `velt_eh_try(code, arg)`, for the executor's catching poll).
 - velt_common: hook `panic_raise` (`std/lang/hooks/unwind::panicRaise`, `(&string) -> never`,
   `constructs(CatchUnwind)`), construct `Construct::CatchUnwind` (its own bit in sema's
   `demanded_for`, so it demands only the panic hook), std module `lang_hooks_unwind`, loaded on
@@ -551,7 +624,13 @@ program with and without pads); a program built with it leaks as before #2667.
   `%lpN: landingpad { ptr, i32 } cleanup`, which stores the exception pointer in the function's
   exception slot (an `alloca` in the entry block) and branches to the VIR pad, which other pads
   may also jump to. `velt_eh_resume` is `resume { ptr, i32 }` of the slot. A function with an
-  `invoke` names `personality ptr @velt_eh_personality`.
+  `invoke` names `personality ptr @velt_eh_personality`. LLVM's inliner prices the pads as if
+  they ran on every call (a pad with one drop added 50 to `Out.bytes` in http-server, 275 for a
+  threshold of 250), so a function that is small outside its pads (`inlining::small_with_pads`:
+  at most velt_opt's `SMALL_COST` of the blocks the entry reaches through normal edges) gets
+  `inlinehint` (threshold 325 at `-O3`), and velt_opt's single-call-site rule compares
+  `ONCE_COST` with the code outside the pads (`inline::hot_cost`: `Request`'s constructor). Both
+  apply only to functions with unwind edges, so a program that doesn't catch is unchanged.
 - **Cranelift.** A call with an unwind edge is a `try_call` (`try_call_indirect`) whose default
   handler is a landing block per pad that stores the exception (payload register 0) in a
   variable and jumps to the pad; `velt_eh_resume` calls `_Unwind_Resume` with it. `try_call`

@@ -224,7 +224,11 @@ pub(crate) fn emit_function(
         define_prefix(function, how)?,
         global_name(&function.symbol),
         definition_params(function)?,
-        inline_attrs(function, caps.too_large(index)),
+        inline_attrs(
+            function,
+            caps.too_large(index),
+            !function.stops_unwind && crate::inlining::small_with_pads(function)
+        ),
         emitter.body
     ))
 }
@@ -423,14 +427,17 @@ fn has_unwind_edges(function: &vir::Function) -> bool {
 /// returns stays `cold noinline` even when marked `@inline`: the two attributes conflict, and its
 /// calls are rare.
 ///
-/// An unmarked function that can grow too large to inline (`inlining::Caps`) gets `noinline`.
-fn inline_attrs(function: &vir::Function, too_large: bool) -> &'static str {
+/// An unmarked function that can grow too large to inline (`inlining::Caps`) gets `noinline`,
+/// and one that is small but for its cleanup pads (`small_with_pads`,
+/// `inlining::small_with_pads`) `inlinehint`.
+fn inline_attrs(function: &vir::Function, too_large: bool, small_with_pads: bool) -> &'static str {
     let returns = (function.blocks.iter()).any(|b| matches!(b.term, vir::Terminator::Return(_)));
     if function.cold || !returns {
         return " cold noinline";
     }
     match function.inline {
         vir::Inline::Default if too_large => " noinline",
+        vir::Inline::Default if small_with_pads => " inlinehint",
         vir::Inline::Default => "",
         vir::Inline::Always => " alwaysinline",
         vir::Inline::Never => " noinline",

@@ -1,0 +1,192 @@
+// velt/lang/hooks (internal): catching a Velt panic in the executor in Velt (sched.velt, #2667;
+// docs/internals/design/unwinding.md "The executor in Velt"): the promises (sched_node.velt) and
+// task roots (sched_run.velt) polled through the catch, and the worker's words for it.
+//
+// Only a promise flagged `CATCHES` (`catchPanic`'s, std/task/catch_sched.velt, and every promise
+// started while a catching poll runs) and the root of a task spawned while one runs are polled
+// through the catch. The catching poll itself (`catchUnwind`) and the raise in an awaiter are
+// std/task/catch_sched.velt's, reached through function addresses that its `arm` stores in
+// worker 0's block: a program that never calls `catchPanic` has no `catchUnwind` in its live
+// code, so no catch, no panic hook and no cleanup pads.
+
+import { noInline, statePoll } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as t from "./sched_task";
+
+/**
+ * The worker block's catch words (inside sched_task.velt's `E_CATCH`): twice the catching polls
+ * running on this worker, plus 1 while `catchPanic` is armed (its next started promise catches);
+ * the promise that took the arming (with a reference); the arguments of a catching poll (its
+ * poll, its state, then its `cx`, which its result replaces, or the exception when it panicked).
+ * Worker 0's: the catching poll and the raise in an awaiter (function addresses; 0 until a
+ * program arms `catchPanic`).
+ */
+export const E_CATCHING: usize = 824;
+export const E_GUARDED: usize = 832;
+export const E_CATCH_ARGS: usize = 840;
+export const E_CATCH_POLL: usize = 864;
+export const E_CATCH_AGAIN: usize = 872;
+
+/**
+ * A started node's words from its (lazy) drop glue on, which it no longer reads
+ * (sched_node.velt `N_DROP`): the guarded promise's settled future, a header of two words whose
+ * result is the word after (the node's unhandled-rejection link, unused while its owner,
+ * `catchPanic`, holds it: std/task/catch_sched.velt `settled`).
+ */
+export const N_SETTLE: usize = 88;
+
+/**
+ * Task flags: spawned while a catching poll ran, its root is polled through the catch; a panic
+ * there made it panicked: done, its result never written, the panic raised again in whoever joins
+ * it. The join word's `J_PANICKED` says so to the join handle.
+ */
+export const T_CATCHES: u32 = 16384;
+export const T_PANICKED: u32 = 32768;
+export const J_PANICKED: u32 = 16;
+/**
+ * The join word: a poll through the header read before the panic (`joinPoll`) was answered once
+ * with a wake to poll again (sched_join.velt `joinPollAs`).
+ */
+export const J_STALE: u32 = 32;
+
+/** Task `k`, spawned now on worker `e`, catches when a catching poll runs there. */
+export function spawned(e: usize, k: usize): void {
+  if (m.ld(e + E_CATCHING) >= 2) {
+    t.flags(k, T_CATCHES, 0);
+  }
+}
+
+/**
+ * Polls the state at `state` with its poll `poll` and `cx` through the catch
+ * (std/task/catch_sched.velt `caughtPoll`) on worker `e`: 0 pending, 1 ready, 2 panicked (the
+ * exception at `panicOfPoll(e)`).
+ */
+export function caughtPoll(e: usize, poll: usize, state: usize, cx: usize): u32 {
+  const a = e + E_CATCH_ARGS;
+  m.st(a, poll);
+  m.st(a + 8, state);
+  // SAFETY: the catching poll takes (arguments, cx) and polls the state they name with `cx`.
+  return unsafe { statePoll(m.ld(t.main() + E_CATCH_POLL), a, cx) };
+}
+
+/** The exception of the catching poll on worker `e` that returned 2. */
+export function caughtPanic(e: usize): usize {
+  return m.ld(e + E_CATCH_ARGS + 16);
+}
+
+/** The panic held by exception `x`, raised again where its promise is awaited: never returns. */
+@noInline
+export function again(x: usize): void {
+  // SAFETY: `E_CATCH_AGAIN` takes the exception that holds the message; it raises, never returns.
+  unsafe {
+    statePoll(m.ld(t.main() + E_CATCH_AGAIN), x, 0);
+  }
+}
+
+/**
+ * Node `n`, starting while this worker's `E_CATCHING` is `catching` (not 0), catches: it took
+ * `catchPanic`'s arming (the low bit, which it clears; `E_GUARDED` gets it with a reference), or
+ * it starts while a catching poll runs.
+ */
+@noInline
+export function catchesFrom(n: usize, catching: usize): void {
+  nd.setFlags(n, nd.CATCHES);
+  if ((catching & 1) !== 0) {
+    const e = t.exec();
+    m.st(e + E_CATCHING, catching & ~1);
+    m.inc(n + nd.N_REFS);
+    m.st(e + E_GUARDED, n + nd.N_HEAD);
+  }
+}
+
+/** Polls node `n`'s state with `cx` through the catch (worker `e`). */
+function nodePollCaught(e: usize, n: usize, cx: usize): u32 {
+  return caughtPoll(e, m.ld(n + nd.N_POLL), n + nd.N_HEAD + 16, cx);
+}
+
+/** sched_node.velt `run`'s poll of catching node `n`: whether it finished (panicked or not). */
+@noInline
+export function runCaught(n: usize): bool {
+  const e = t.exec();
+  nd.setFlags(n, nd.RUNNING);
+  const r = nodePollCaught(e, n, n + nd.N_CX);
+  m.and32(n + nd.N_FLAGS, ~(nd.RUNNING | nd.ADOPTED));
+  if (r === 2) {
+    panicked(n, caughtPanic(e));
+    return true;
+  }
+  return r === 1;
+}
+
+/**
+ * sched_node.velt `pollNode`'s adoption of node `n` under a catch (worker `e`, task `task`, the
+ * owner's `cx`; `claim`: the owner takes the result). The node's own poll catches, so a panic
+ * never unwinds through the adoption's bookkeeping; a panicked node is raised again in the owner.
+ */
+@noInline
+export function adoptCaught(e: usize, task: usize, n: usize, cx: usize, claim: bool): u32 {
+  m.or32(n + nd.N_FLAGS, nd.RUNNING | nd.ADOPTED);
+  m.st(e + t.E_ADOPTING, 1);
+  const r = nodePollCaught(e, n, cx);
+  m.st(e + t.E_ADOPTING, 0);
+  m.and32(n + nd.N_FLAGS, ~nd.RUNNING);
+  if (r === 0) {
+    return nd.awaitNode(n, cx);
+  }
+  if (r === 1) {
+    nd.adoptedDone(task, n, claim ? nd.FINISHED | nd.DELIVERED : nd.FINISHED);
+    return 1;
+  }
+  panicked(n, caughtPanic(e));
+  nd.adoptedDone(task, n, nd.FINISHED);
+  if (claim) {
+    again(m.ld(n + nd.N_POLL));
+  }
+  return 1;
+}
+
+/**
+ * Node `n`'s poll panicked with exception `x`: it is finished with no result (nothing dropped,
+ * reported or handed over), never freed, and keeps `x`, the message, for its owner.
+ */
+function panicked(n: usize, x: usize): void {
+  m.st(n + nd.N_RESULT_DROP, 0);
+  m.and32(n + nd.N_FLAGS, ~nd.REJECTING);
+  m.st(n + nd.N_POLL, x);
+  m.inc(n + nd.N_REFS);
+  nd.setFlags(n, nd.PANICKED);
+}
+
+/**
+ * Does catching promise `f` (a started node) drive itself: not finished, and its last poll was
+ * its own run, not an adoption (`ADOPTED`)? Then that run returned pending with the node's own
+ * waker (`N_CX`, the node: `start` and `run` poll it with nothing else), so the node is polled
+ * again when a leaf wakes it: the wake puts it among its task's woken nodes (it is then
+ * `QUEUED`; a wake before this, during that run, already did), which the task runs before its
+ * root (sched_run.velt `runWoken`, `run` here: `runCaught`), and its finish wakes its awaiter.
+ * An owner gains nothing by polling it before that wake: its state waits for it.
+ */
+export function drivesItself(f: usize): bool {
+  return (m.load32(nd.nodeOf(f) + nd.N_FLAGS) & (nd.FINISHED | nd.ADOPTED)) === 0;
+}
+
+/** Did promise `f` (a started node) finish without a panic? */
+export function finishedWell(f: usize): bool {
+  return (m.load32(nd.nodeOf(f) + nd.N_FLAGS) & (nd.FINISHED | nd.PANICKED)) === nd.FINISHED;
+}
+
+/** Did promise `f` (a started node) panic? */
+export function isPanicked(f: usize): bool {
+  return (m.load32(nd.nodeOf(f) + nd.N_FLAGS) & nd.PANICKED) !== 0;
+}
+
+/** The exception of panicked promise `f`, which holds its message. */
+export function panicOf(f: usize): usize {
+  return m.ld(nd.nodeOf(f) + nd.N_POLL);
+}
+
+/** Gives back a reference to promise `f`'s node. */
+export function releasePromise(f: usize): void {
+  nd.release(nd.nodeOf(f));
+}

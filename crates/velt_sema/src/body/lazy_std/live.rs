@@ -566,7 +566,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             ..
         } => w.conversions.push(e.ty),
         E::Call {
-            callee: Callee::Intrinsic(I::CatchUnwind),
+            callee: Callee::Intrinsic(I::CatchUnwind | I::CatchUnwindAt),
             ..
         } => w.catch_unwind = true,
         E::Call {

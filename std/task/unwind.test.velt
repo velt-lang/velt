@@ -3,7 +3,9 @@
 // exception passes through is veltc's `unwinding` test: the test runner polls tests in a task
 // whose Rust frames would claim it (and abort) before the end of the stack.
 import { describe, expect, it } from "velt/test";
-import { canCatchPanics, catchVeltPanic } from "velt/task/unwind";
+import { fnAddress } from "velt/lang/intrinsics";
+import { panicText } from "velt/lang/hooks/unwind";
+import { canCatchPanics, catchPanicAt, catchVeltPanic } from "velt/task/unwind";
 
 declare function velt_rt_xfer_suspend(): u32;
 declare function velt_rt_xfer_resume(depth: u32): void;
@@ -58,6 +60,16 @@ function owning(n: number, xs: number[]): number {
     return xs[xs.length + 3];
   }
   return owning(n - 1, xs) + (s.length as number) + (a.length as number) + v.n + c.n;
+}
+
+// `catchPanicAt`'s function: called at its address with one number, no function value.
+let calledWith: usize = 0;
+
+function atAddress(a: usize): void {
+  calledWith = a;
+  if (a === 7) {
+    panic("at 7");
+  }
 }
 
 async function run(f: () => number): Promise<number> {
@@ -152,5 +164,27 @@ describe("catchVeltPanic", () => {
     const pair = [shared, shared];
     const got = await spawn(async () => pair[0] === pair[1] ? pair[0].n : -1);
     expect(got).toBe(3);
+  });
+});
+
+describe("catchPanicAt", () => {
+  it("calls the function at an address with its argument", () => {
+    // SAFETY: `atAddress` takes one number; nothing panics, so no exception object.
+    const e = unsafe { catchPanicAt(fnAddress(atAddress), 5) };
+    expect(e).toBe(0);
+    expect(calledWith).toBe(5);
+  });
+
+  it("catches a panic there and gives the exception", () => {
+    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    if (!canCatchPanics()) {
+      return;
+    }
+    // SAFETY: `atAddress` takes one number; the exception object is read here, and leaked.
+    const e = unsafe { catchPanicAt(fnAddress(atAddress), 7) };
+    expect(calledWith).toBe(7);
+    expect(e === 0).toBe(false);
+    // SAFETY: the exception `catchPanicAt` returned, not freed.
+    expect(unsafe { panicText(e) }.startsWith("at 7")).toBe(true);
   });
 });

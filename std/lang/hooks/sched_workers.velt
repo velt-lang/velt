@@ -15,7 +15,7 @@ import * as loop from "./sched_loop";
 import * as mk from "./sched_make";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
-import * as node from "./sched_node";
+import * as nw from "./sched_node_wake";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as tb from "./sched_io_table";
@@ -38,10 +38,10 @@ export function start(): usize {
     m.st(e + t.E_VT + 8, exportedAddress(wk.wakerWake));
     m.st(e + t.E_VT + 16, exportedAddress(wk.wakerWakeByRef));
     m.st(e + t.E_VT + 24, exportedAddress(wk.wakerDrop));
-    m.st(e + t.E_NODE_VT, exportedAddress(node.nodeClone));
-    m.st(e + t.E_NODE_VT + 8, exportedAddress(node.nodeWake));
-    m.st(e + t.E_NODE_VT + 16, exportedAddress(node.nodeWakeByRef));
-    m.st(e + t.E_NODE_VT + 24, exportedAddress(node.nodeDropRef));
+    m.st(e + t.E_NODE_VT, exportedAddress(nw.nodeClone));
+    m.st(e + t.E_NODE_VT + 8, exportedAddress(nw.nodeWake));
+    m.st(e + t.E_NODE_VT + 16, exportedAddress(nw.nodeWakeByRef));
+    m.st(e + t.E_NODE_VT + 24, exportedAddress(nw.nodeDropRef));
   }
   m.st(e + t.E_IO, io.open(e + t.E_TICK));
   m.st(e + t.E_MAIN, e);

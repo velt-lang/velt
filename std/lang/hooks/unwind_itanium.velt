@@ -49,6 +49,15 @@ export function raise(msg: string): void {
 }
 
 /**
+ * The message of the exception object at `e` (from `catchUnwind`), which stays the caller's.
+ * Unsafe: `e` must be a Velt exception that `catchUnwind` returned, not freed.
+ */
+export unsafe function panicText(e: usize): string {
+  // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
+  return unsafe { readCString(ptrOf<u8>(e + HEADER)) };
+}
+
+/**
  * The message of the exception object at `e` (from `catchUnwind`), which it frees. Unsafe: `e`
  * must be a Velt exception that `catchUnwind` returned, taken once.
  */

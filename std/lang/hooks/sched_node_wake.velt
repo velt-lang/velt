@@ -1,0 +1,53 @@
+// velt/lang/hooks (internal): a started promise's waker table in the executor in Velt
+// (sched_node.velt; rt_abi_async.md §1): C calls these, from any thread. A wake puts the node
+// once among its task's woken nodes (holding a reference) and wakes the task.
+
+import { export as cExport } from "velt/ffi";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+@cExport("std_sched_node_clone")
+export function nodeClone(w: usize): usize {
+  m.inc(w + nd.N_REFS);
+  return w;
+}
+
+@cExport("std_sched_node_wake")
+export function nodeWake(w: usize): void {
+  wake(w);
+  nd.release(w);
+}
+
+@cExport("std_sched_node_wake_by_ref")
+export function nodeWakeByRef(w: usize): void {
+  wake(w);
+}
+
+@cExport("std_sched_node_drop_ref")
+export function nodeDropRef(w: usize): void {
+  nd.release(w);
+}
+
+/** Wakes node `n`: once among its task's woken nodes (holding a reference), its task woken. */
+function wake(n: usize): void {
+  let fl = m.load32(n + nd.N_FLAGS);
+  while (true) {
+    if ((fl & (nd.FINISHED | nd.QUEUED)) !== 0 || (fl & nd.STARTED) === 0) {
+      return;
+    }
+    const was = m.cas32(n + nd.N_FLAGS, fl, fl | nd.QUEUED);
+    if (was === fl) {
+      break;
+    }
+    fl = was;
+  }
+  m.inc(n + nd.N_REFS);
+  const task = m.ld(n + nd.N_TASK);
+  m.pushStack(task + t.T_WOKEN, n, nd.N_NEXT);
+  const e = t.here();
+  if (!(e !== 0 && m.ld(e + t.E_CURRENT) === task)) {
+    wk.wake(task);
+  }
+}

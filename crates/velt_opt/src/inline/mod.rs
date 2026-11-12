@@ -79,6 +79,53 @@ pub(crate) fn cost(func: &Function) -> u64 {
     (stmts + func.blocks.len()) as u64
 }
 
+/// [`cost`] without `func`'s cleanup pads (vir.rs invariant 14: the blocks only an unwind edge
+/// reaches, which run only while a panic unwinds through the frame); a function without unwind
+/// edges (every function of a program that doesn't catch) has its [`cost`].
+pub(crate) fn hot_cost(func: &Function) -> u64 {
+    let unwind = |t: &Terminator| match t {
+        Terminator::Call {
+            unwind: Some(u), ..
+        } => Some(u.0 as usize),
+        _ => None,
+    };
+    let pads: Vec<usize> = func.blocks.iter().filter_map(|b| unwind(&b.term)).collect();
+    if pads.is_empty() {
+        return cost(func);
+    }
+    // The blocks the entry reaches through normal edges; then, from the pads, those it doesn't.
+    let n = func.blocks.len();
+    let mut normal = vec![false; n];
+    let mut work = vec![0];
+    while let Some(b) = work.pop() {
+        if b < n && !normal[b] {
+            normal[b] = true;
+            let t = &func.blocks[b].term;
+            let u = unwind(t);
+            work.extend(
+                (successors(t).into_iter().map(|s| s.0 as usize)).filter(|s| Some(*s) != u),
+            );
+        }
+    }
+    let mut pad = vec![false; n];
+    work = pads;
+    while let Some(b) = work.pop() {
+        if b < n && !normal[b] && !pad[b] {
+            pad[b] = true;
+            work.extend(
+                successors(&func.blocks[b].term)
+                    .into_iter()
+                    .map(|s| s.0 as usize),
+            );
+        }
+    }
+    let hot = (func.blocks.iter().zip(&pad)).filter(|(_, p)| !**p);
+    let stmts: usize = (hot.clone())
+        .map(|(b, _)| b.stmts.iter().filter(|s| !matches!(s, Stmt::Nop)).count())
+        .sum();
+    (stmts + hot.count()) as u64
+}
+
 /// Program-wide code growth allowance for inlining, shared by all pipeline rounds.
 pub(crate) struct Budget {
     remaining: u64,
@@ -294,7 +341,9 @@ fn decide(
         && !recursive
         && state.call_sites[ci] == 1
         && !state.address_taken[ci];
-    if once && size <= ONCE_COST {
+    // Its cleanup pads (a program that catches) don't count here: the copy replaces the callee,
+    // and what it adds to the caller's hot code is the rest (`hot_cost`).
+    if once && hot_cost(target) <= ONCE_COST {
         return Some(Decision::Free);
     }
     if recursive {

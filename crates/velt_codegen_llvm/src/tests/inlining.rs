@@ -241,3 +241,101 @@ fn main_calling_named(pb: &mut ProgramBuilder, name: &str, callees: &[FuncId]) -
     fb.ret(b, Operand::Const(Const::Unit, Unit));
     pb.add(fb.finish())
 }
+
+/// An internal function `name`: a call of `g` (with an unwind edge to a cleanup pad of `pad`
+/// blocks each calling `sink`, then `velt_eh_resume`, when `unwinds`), then `hot` blocks calling
+/// `sink`, then a return (`calls`: `g`, `sink`, `velt_eh_resume`). Without the edge the pad's
+/// blocks are unreachable.
+fn with_pad(
+    pb: &mut ProgramBuilder,
+    name: &str,
+    calls: [Callee; 3],
+    hot: usize,
+    pad: usize,
+    unwinds: bool,
+) {
+    let [g, sink, resume] = calls;
+    let mut fb = FuncBuilder::internal(name, &[], Unit);
+    let entry = fb.block();
+    let first_pad = fb.block();
+    let mut b = first_pad;
+    for k in 0..pad {
+        b = fb.call(b, sink.clone(), vec![int(k as i128, I64)], None);
+    }
+    let dead = fb.block();
+    fb.term(
+        b,
+        Terminator::Call {
+            callee: resume,
+            args: vec![],
+            dest: None,
+            next: dead,
+            unwind: None,
+        },
+    );
+    fb.term(dead, Terminator::Unreachable);
+    let mut b = fb.block();
+    fb.term(
+        entry,
+        Terminator::Call {
+            callee: g,
+            args: vec![],
+            dest: None,
+            next: b,
+            unwind: unwinds.then_some(first_pad),
+        },
+    );
+    for k in 0..hot {
+        b = fb.call(b, sink.clone(), vec![int(k as i128, I64)], None);
+    }
+    fb.ret(b, Operand::Const(Const::Unit, Unit));
+    pb.add(fb.finish());
+}
+
+/// A function small but for its cleanup pads (a program that catches panics) gets `inlinehint`:
+/// LLVM prices pads as if they ran on every call, so without it such a callee (http-server's
+/// `Out.bytes`) stays a call where the program that doesn't catch inlines it. One whose code
+/// outside its pads is not small, and any function without unwind edges, gets nothing.
+#[test]
+fn a_function_small_but_for_its_cleanup_pads_gets_inlinehint() {
+    let mut pb = ProgramBuilder::new();
+    let sink = pb.ext("sink", &[I64], Unit, false);
+    let mut fb = FuncBuilder::internal("g", &[], Unit);
+    let b = fb.block();
+    fb.ret(b, Operand::Const(Const::Unit, Unit));
+    let g = pb.add(fb.finish());
+    let resume = pb.ext(velt_vir::eh::RESUME, &[], Unit, true);
+    let calls = || {
+        [
+            Callee::Func(g),
+            Callee::Extern(sink),
+            Callee::Extern(resume),
+        ]
+    };
+    // Outside its pads: the entry, the block after the call, `hot` more and the return: SMALL.
+    let small = SMALL as usize - 2;
+    with_pad(&mut pb, "padded", calls(), small, 50, true);
+    with_pad(&mut pb, "plain", calls(), small, 50, false);
+    with_pad(&mut pb, "large", calls(), small + 1, 5, true);
+    main_calling(&mut pb, &[]);
+    let p = pb.finish();
+    let small_with_pads = |name: &str| {
+        let f = p.funcs.iter().find(|f| f.symbol == name).unwrap();
+        crate::inlining::small_with_pads(f)
+    };
+    assert!(small_with_pads("padded"));
+    assert!(!small_with_pads("plain"));
+    assert!(!small_with_pads("large"));
+    let ir = crate::emit_ir(&p, "x86_64-unknown-linux-gnu").unwrap();
+    let head = |name: &str| {
+        let at = ir
+            .find(&format!("@\"{name}\"() "))
+            .or_else(|| ir.find(&format!("@{name}() ")));
+        let line = &ir[at.unwrap_or_else(|| panic!("no {name} in\n{ir}"))..];
+        line[..line.find('\n').unwrap()].to_string()
+    };
+    assert!(head("padded").contains(" inlinehint"), "{}", head("padded"));
+    assert!(head("padded").contains("personality"), "{}", head("padded"));
+    assert!(!head("plain").contains("inlinehint"), "{}", head("plain"));
+    assert!(!head("large").contains("inlinehint"), "{}", head("large"));
+}

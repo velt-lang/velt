@@ -59,7 +59,39 @@ const PROBE: &str = r#"
 import { Ptr, StrBytes } from "velt/ffi";
 import { ptrAddress, ptrOf } from "velt/ffi/ptr";
 
+import { fnAddress } from "velt/lang/intrinsics";
+import { catchUnwindAt } from "velt/lang/intrinsics/unwind";
+import { caughtPanic, enterCatch, leaveCatch, takePanic } from "velt/lang/hooks/unwind";
+
 export { catchVeltPanic } from "velt/task/unwind";
+
+let atArg: usize = 0;
+
+function atAddress(a: usize): void {
+  atArg = a;
+  if (a === 7) {
+    panic("at 7");
+  }
+}
+
+/**
+ * The intrinsic `catchUnwindAt` of `atAddress` called with `a`, with only the hooks' bookkeeping
+ * around it (not `catchPanicAt`): the panic's message or "null", and the argument `atAddress` got.
+ */
+export function caughtAt(a: usize): string {
+  if (!enterCatch()) {
+    return "no catch";
+  }
+  // SAFETY: `atAddress` takes one number; the exception is taken once, below.
+  const e = unsafe { catchUnwindAt(fnAddress(atAddress), a) };
+  leaveCatch();
+  if (e !== 0) {
+    caughtPanic();
+  }
+  // SAFETY: `e`, when not 0, is the exception `catchUnwindAt` returned, taken here once.
+  const m = e === 0 ? "null" : unsafe { takePanic(e) }.split(" at ")[0];
+  return `${m} ${atArg}`;
+}
 
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
@@ -86,7 +118,7 @@ export function raiseForeign(): void {
 
 #[cfg(not(windows))]
 const MAIN: &str = r#"
-import { catchVeltPanic } from "velt/zz_unwind";
+import { catchVeltPanic, caughtAt } from "velt/zz_unwind";
 
 function deep(n: number, xs: number[]): number {
   if (n == 0) {
@@ -111,6 +143,8 @@ function main() {
   let inner: string | null = null;
   const outer = catchVeltPanic(() => { inner = catchVeltPanic(() => { panic("inner"); }); });
   console.log(first(outer), first(inner));
+  console.log(caughtAt(5));
+  console.log(caughtAt(7));
   panic("uncaught");
 }
 "#;
@@ -120,6 +154,8 @@ const OUT: &str = "null 1
 boom
 index out of bounds: the len is 3 but the index is 6 0
 null inner
+null 5
+at 7 7
 ";
 
 /// Another language's exception raised inside a catch.
@@ -153,7 +189,12 @@ fn a_velt_panic_is_caught_with_every_backend() {
         );
         // The uncaught panic ends the process as before; each caught one was printed too.
         assert_eq!(out.status.code(), Some(101), "{args:?}: {stderr}");
-        for msg in ["panic: boom", "panic: inner", "panic: uncaught"] {
+        for msg in [
+            "panic: boom",
+            "panic: inner",
+            "panic: at 7",
+            "panic: uncaught",
+        ] {
             assert!(stderr.contains(msg), "{args:?}: {stderr}");
         }
     }

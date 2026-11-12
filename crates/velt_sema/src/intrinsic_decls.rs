@@ -128,6 +128,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("statePoll", Op(I::StatePoll)),
     // unwind.velt
     ("catchUnwind", Op(I::CatchUnwind)),
+    ("catchUnwindAt", Op(I::CatchUnwindAt)),
     // slot.velt
     ("promiseAt", Op(I::PromiseAt)),
     ("rawAlloc", Op(I::RawAlloc)),

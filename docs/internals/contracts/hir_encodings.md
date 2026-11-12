@@ -142,6 +142,16 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   on the thread (`velt_rt_throw_loc`), or `""` (also when lowering emits no locations);
   `Intrinsic::Inspect` (`inspect(x)`, borrowed) is `x` as Node's `util.inspect`
   writes it. Each yields an owned string.
+- Catching a Velt panic that unwinds (std only, unsafe; std/lang/intrinsics/unwind.velt,
+  docs/internals/design/unwinding.md): `Intrinsic::CatchUnwind` (`catchUnwind(f: () => void)
+  -> usize`, `f` borrowed) is the call `velt_eh_try(code, env)` of `f`'s function value
+  (`velt_vir::eh`; the backend defines `velt_eh_try`): 0 when `f` returned, else the address of
+  the Velt exception object that unwound out of it. `Intrinsic::CatchUnwindAt` (`catchUnwindAt(code:
+  usize, arg: usize) -> usize`, #2667) is `velt_eh_try(code, arg)` itself: `code` is an
+  `fnAddress` of a function taking one pointer-sized number, called with `arg`, with no function
+  value, closure environment or thunk in between (the executor in Velt's catching poll). Both
+  count as `Construct::CatchUnwind` (they demand the `panic_raise` hook and make the program's
+  calls get cleanup pads); neither adds a runtime extern.
 - Hybrid promises: sema rejects an expression statement of type `Promise<T>` or `Promise<T>[]`
   other than a `spawn(...)` call ("floating promise"). `Intrinsic::PromiseRace`
   (`Promise.race(ps: Promise<T, E>[]): Promise<T, E>`, `ps` owned) and the std-only

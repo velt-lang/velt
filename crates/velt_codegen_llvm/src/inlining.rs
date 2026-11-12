@@ -49,6 +49,76 @@ pub(crate) fn cost(func: &vir::Function) -> u64 {
     (stmts + func.blocks.len()) as u64
 }
 
+/// Whether `func` has cleanup pads (vir.rs invariant 14; only in a program that catches panics)
+/// and is small without them: at most [`SMALL`] in statements and blocks once the blocks only
+/// an unwind edge reaches are left out. Such a function gets `inlinehint` (function/mod.rs):
+/// LLVM's inliner prices a pad's drops and `resume` as if they ran on every call, so a callee
+/// that LLVM inlines in a program that doesn't catch (`Out.bytes` into `writeHead` in
+/// http-server: cost 225 of 250) is kept a call in one that does (275 of 250, one pad with one
+/// drop); the hint raises its threshold (325 at `-O3`) by about what a few pads cost. A function
+/// without unwind edges never gets it, so a program that doesn't catch is unchanged.
+pub(crate) fn small_with_pads(func: &vir::Function) -> bool {
+    let Some(pad) = pad_blocks(func) else {
+        return false;
+    };
+    let hot = (func.blocks.iter().zip(&pad)).filter(|(_, p)| !**p);
+    let stmts: usize = (hot.clone())
+        .map(|(b, _)| {
+            (b.stmts.iter())
+                .filter(|s| !matches!(s, vir::Stmt::Nop))
+                .count()
+        })
+        .sum();
+    (stmts + hot.count()) as u64 <= SMALL
+}
+
+/// Per block of `func`, whether only unwind edges reach it (a cleanup pad: the entry doesn't
+/// reach it through normal edges); `None` when no call of `func` has an unwind edge.
+fn pad_blocks(func: &vir::Function) -> Option<Vec<bool>> {
+    let pads: Vec<usize> = (func.blocks.iter())
+        .filter_map(|b| match b.term {
+            Terminator::Call {
+                unwind: Some(u), ..
+            } => Some(u.0 as usize),
+            _ => None,
+        })
+        .collect();
+    if pads.is_empty() {
+        return None;
+    }
+    let n = func.blocks.len();
+    // From `starts` through the normal edges, and through unwind edges too when `unwinds`.
+    let reach = |starts: Vec<usize>, seen: &mut [bool], unwinds: bool| {
+        let mut work = starts;
+        while let Some(b) = work.pop() {
+            if b >= n || seen[b] {
+                continue;
+            }
+            seen[b] = true;
+            match &func.blocks[b].term {
+                Terminator::Goto(t) => work.push(t.0 as usize),
+                Terminator::Branch { then, els, .. } => {
+                    work.extend([then.0 as usize, els.0 as usize]);
+                }
+                Terminator::Switch { cases, default, .. } => {
+                    work.extend(cases.iter().map(|(_, t)| t.0 as usize));
+                    work.push(default.0 as usize);
+                }
+                Terminator::Call { next, unwind, .. } => {
+                    work.push(next.0 as usize);
+                    work.extend(unwind.filter(|_| unwinds).map(|u| u.0 as usize));
+                }
+                Terminator::Return(_) | Terminator::Unreachable => {}
+            }
+        }
+    };
+    let mut normal = vec![false; n];
+    reach(vec![0], &mut normal, false);
+    let mut pad = normal.clone();
+    reach(pads, &mut pad, true);
+    Some((0..n).map(|b| pad[b] && !normal[b]).collect())
+}
+
 /// The caps of a program (module docs).
 #[derive(Debug, Default)]
 pub(crate) struct Caps {

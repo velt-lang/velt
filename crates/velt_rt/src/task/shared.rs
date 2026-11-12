@@ -571,8 +571,15 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
                         crate::panic::raise(&msg)
                     }
                 }
-            } else if (h.poll)(h.orig, cx) != READY {
-                return PENDING;
+            } else {
+                // Velt's own raise (the executor in Velt's catch, #2667) may unwind through
+                // here: the next waiter then drives, not waiting for a driver that is gone.
+                let guard = DriverGone { h: h.as_ref(), me };
+                let r = (h.poll)(h.orig, cx);
+                std::mem::forget(guard);
+                if r != READY {
+                    return PENDING;
+                }
             }
             st = h.st.lock();
         }
@@ -622,6 +629,24 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
         None => std::ptr::copy_nonoverlapping(result, slot(f), h.size),
     }
     READY
+}
+
+/// Dropped only when the poll of the first waiter `me`, driving `h`'s original, unwinds: it leaves
+/// the waiters and wakes the next one to drive ([`poll_holder`]).
+struct DriverGone<'a> {
+    h: &'a Hub,
+    me: usize,
+}
+
+impl Drop for DriverGone<'_> {
+    fn drop(&mut self) {
+        let mut st = self.h.st.lock();
+        st.waiters.retain(|(x, ..)| *x != self.me);
+        if let Some(w) = st.waiters.first().map(|(_, w, _)| w.clone()) {
+            drop(st);
+            w.wake();
+        }
+    }
 }
 
 /// The original future of `h` finished: keep its result in the hub (`st` is its locked state, not

@@ -118,4 +118,29 @@ impl FnLower<'_, '_> {
             Rvalue::Cast(Operand::Copy(Place::local(out)), Ty::U64),
         )
     }
+
+    /// `catchUnwindAt(code, arg)`: `velt_eh_try(code, arg)`, the C function at `code` called
+    /// with `arg` under the catch, with no function value (`crate::eh`).
+    pub(super) fn catch_unwind_at(&mut self, code: &hir::Expr, arg: &hir::Expr) -> Operand {
+        let [code, arg] = [code, arg].map(|e| {
+            let v = self.expr(e);
+            self.rvalue_temp(Ty::Ptr, Rvalue::Cast(v, Ty::Ptr))
+        });
+        if self.dead() {
+            return super::unit();
+        }
+        let (params, ret) = crate::eh::try_signature();
+        let id = self.cx.extern_sym(crate::eh::TRY, params, ret, false);
+        let out = self.temp(ret);
+        self.call(
+            vir::Callee::Extern(id),
+            vec![code, arg],
+            Some(Place::local(out)),
+            false,
+        );
+        self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Cast(Operand::Copy(Place::local(out)), Ty::U64),
+        )
+    }
 }
