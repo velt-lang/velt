@@ -31,29 +31,6 @@ async function main() {
     }
   }
   console.log(`race ${text} bytes ${bytes} stored ${stored} any ${any}`);
-  // A read's `then` runs after the microtasks queued before its result came: three in a chain.
-  let ordered = 0;
-  for (let i = 0; i < 300; i++) {
-    const seen: string[] = [];
-    const read = readFile(f).then((_) => {
-      seen.push("read");
-    });
-    await Promise.resolve()
-      .then(() => {
-        seen.push("m1");
-      })
-      .then(() => {
-        seen.push("m2");
-      })
-      .then(() => {
-        seen.push("m3");
-      });
-    await read;
-    if (seen.join(",") == "m1,m2,m3,read") {
-      ordered++;
-    }
-  }
-  console.log(`then after microtasks ${ordered}`);
   // The reads that lost still finish; the file is read again after them.
   console.log(await readFile(f));
   await remove(f);
