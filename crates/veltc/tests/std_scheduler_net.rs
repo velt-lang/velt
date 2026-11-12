@@ -725,7 +725,7 @@ async function main() {
 /// 10 runs.
 #[test]
 fn the_program_runs_on_while_another_worker_waits_for_a_connect() {
-    if !cfg!(any(target_os = "macos", target_os = "linux")) {
+    if !cfg!(any(target_os = "macos", target_os = "linux", windows)) {
         return;
     }
     runtime_support::build_native_runtime(manifest());
@@ -761,7 +761,7 @@ async function main() {
 "#;
     let file = dir.path().join("connects.velt");
     std::fs::write(&file, src).unwrap();
-    let exe = dir.path().join("connects");
+    let exe = dir.path().join(if cfg!(windows) { "connects.exe" } else { "connects" });
     let o = command(env!("CARGO_BIN_EXE_velt"))
         .arg("build")
         .arg(&file)

@@ -15,9 +15,9 @@ fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Workers start only where `#sched-thread` has threads (macOS and Linux for now).
+/// Workers start only where `#sched-thread` has threads (macOS, Linux and Windows).
 fn has_threads() -> bool {
-    cfg!(any(target_os = "macos", target_os = "linux"))
+    cfg!(any(target_os = "macos", target_os = "linux", windows))
 }
 
 /// `src` built with `VELT_SCHEDULER=std` (against the std in `std_dir`, or the repository's) and
