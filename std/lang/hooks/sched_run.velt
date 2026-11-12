@@ -381,6 +381,15 @@ function finish(e: usize, k: usize): void {
     return;
   }
   m.store32(k + t.T_STATE, t.DONE);
+  // A promise woken while it waited, that finished before the task took it (its owner adopted
+  // it, or a microtask ran it), is still on the woken stack with a reference: given back.
+  let n = node.takeWoken(k);
+  while (n !== 0) {
+    const next = node.nextWoken(n);
+    node.run(k, n, true);
+    node.release(n);
+    n = next;
+  }
   micro.free(k);
   // Not the root of `main`, or that root counted as live.
   if (m.ld32(e + t.E_SOLO) === 0) {
