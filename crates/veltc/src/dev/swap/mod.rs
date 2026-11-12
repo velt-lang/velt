@@ -152,6 +152,7 @@ fn reload_with(
     // anything it refuses, goes through the cold front end (which keeps a new check).
     let mut warm = false;
     let mut program = None;
+    let mut snapshot = None;
     // Only the version taken in last is what a splice changes; a cold build keeps none.
     let last_program = carried.dev_program.take();
     let base = (carried.kept_own.clone()).zip(carried.kept_files.as_ref());
@@ -164,10 +165,19 @@ fn reload_with(
             sess.debug_kept = Some(kept);
         }
         let input = opts.input.clone();
+        // The snapshot is taken once: the reload's change detection and the next one's base.
+        let taken = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let (cell, prev) = (taken.clone(), carried.own.clone());
         let edited = move |s: &Session| {
-            super::edits::located(&base, &super::edits::Snapshot::of_build(s, &input))
+            let now = super::edits::Snapshot::of_build_after(s, &input, prev.as_ref());
+            let found = super::edits::located(&base, &now);
+            if let Ok(mut cell) = cell.lock() {
+                *cell = Some(now);
+            }
+            found
         };
         let out = driver::compile_for_jit_warm(&mut sess, opts, cold_files, edited);
+        snapshot = taken.lock().ok().and_then(|mut c| c.take());
         carried.kept = sess.kept.take();
         carried.kept_lowering = sess.kept_lowering.take();
         if let (true, Some(why)) = (verbose, sess.splice_refused.take()) {
@@ -202,7 +212,12 @@ fn reload_with(
     // (a class that is counted in one version only, #2653): only a restart is safe.
     let changed = (next.as_ref()).and_then(|next| running.representation_change(next));
     if program.is_ok() {
-        let own = super::edits::Snapshot::of_build(&sess, &opts.input);
+        let own = match snapshot.take().filter(|_| warm) {
+            Some(own) => own,
+            None => {
+                super::edits::Snapshot::of_build_after(&sess, &opts.input, carried.own.as_ref())
+            }
+        };
         let interfaces = sess.interfaces.take();
         if let (true, Some(before)) = (verbose, &carried.own) {
             let edit = super::edits::classify(before, &own);

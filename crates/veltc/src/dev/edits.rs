@@ -26,6 +26,8 @@ pub struct Snapshot {
 /// One file: its definitions in order, and what lies outside them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct File {
+    /// Its text, which a later snapshot of the same text reuses the parse of.
+    src: String,
     defs: Vec<Def>,
     /// The text between and around the definitions (comments, blank lines).
     rest: String,
@@ -67,6 +69,16 @@ impl Snapshot {
     /// The program's own files of a build: those under the root module's directory that are not
     /// std's (a path dependency's files outside it are a package's).
     pub fn of_build(sess: &crate::driver::Session, root: &Path) -> Snapshot {
+        Snapshot::of_build_after(sess, root, None)
+    }
+
+    /// [`Snapshot::of_build`], each file whose text `prev` has as it is taken from `prev`
+    /// without parsing it again.
+    pub fn of_build_after(
+        sess: &crate::driver::Session,
+        root: &Path,
+        prev: Option<&Snapshot>,
+    ) -> Snapshot {
         let dir = own_dir(root);
         let std: HashSet<FileId> = sess.std_files.iter().copied().collect();
         let (own, others): (Vec<_>, Vec<_>) = (sess.sm.files())
@@ -75,8 +87,10 @@ impl Snapshot {
                 let path = std::fs::canonicalize(&f.path).unwrap_or_else(|_| f.path.clone());
                 path.starts_with(&dir)
             });
-        let mut snapshot =
-            Snapshot::of(own.iter().map(|(_, f)| (f.path.as_path(), f.src.as_str())));
+        let mut snapshot = Snapshot::of_after(
+            own.iter().map(|(_, f)| (f.path.as_path(), f.src.as_str())),
+            prev,
+        );
         snapshot.others = (others.iter())
             .map(|(_, f)| {
                 use std::hash::{Hash, Hasher};
@@ -91,8 +105,22 @@ impl Snapshot {
 
     /// The definitions of the given files (path, source), parsed on their own.
     pub fn of<'a>(files: impl IntoIterator<Item = (&'a Path, &'a str)>) -> Snapshot {
+        Snapshot::of_after(files, None)
+    }
+
+    /// [`Snapshot::of`], reusing what `prev` has of a file of the same path and text.
+    fn of_after<'a>(
+        files: impl IntoIterator<Item = (&'a Path, &'a str)>,
+        prev: Option<&Snapshot>,
+    ) -> Snapshot {
         let files = (files.into_iter())
-            .map(|(path, src)| (path.to_path_buf(), File::of(src)))
+            .map(|(path, src)| {
+                let kept = prev
+                    .and_then(|p| p.files.get(path))
+                    .filter(|f| f.src == src);
+                let file = kept.cloned().unwrap_or_else(|| File::of(src));
+                (path.to_path_buf(), file)
+            })
             .collect();
         Snapshot {
             files,
@@ -114,7 +142,10 @@ fn own_dir(root: &Path) -> PathBuf {
 impl File {
     fn of(src: &str) -> File {
         let (module, _) = velt_syntax::parse_file(FileId(0), src);
-        let mut file = File::default();
+        let mut file = File {
+            src: src.to_string(),
+            ..File::default()
+        };
         let mut at = 0usize;
         // In source order, without the function the parser makes of the top-level statements
         // (`velt_syntax::is_script_main`, after the declarations and spanning them): the
