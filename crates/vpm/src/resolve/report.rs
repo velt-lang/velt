@@ -1,8 +1,6 @@
 //! Human-readable resolution failures: every conflicting requirement is shown with the chain of
 //! packages that introduced it, so the user can see which dependency to change.
 
-use std::path::Path;
-
 use super::{Requirement, Selected, Source, Want};
 
 /// `req` cannot be satisfied by the already-selected package `sel`.
@@ -65,14 +63,22 @@ pub(super) fn overridden_version(req: &Requirement, sel: &Selected) -> String {
     out
 }
 
-/// Nothing matches `req`. `available` lists the published versions if the package exists.
-pub(super) fn no_match(req: &Requirement, available: Option<&str>, registry: &Path) -> String {
+/// The locked version `version` of `name` is not in `registry` (a URL or a directory).
+pub(super) fn locked_elsewhere(name: &str, version: &semver::Version, registry: &str) -> String {
+    format!(
+        "`{name}` {version} in {LOCK_FILE} is not in the registry `{registry}`; was it locked from another registry? Set $VELT_REGISTRY or `registry` in package.velt to that registry, or run `velt update` to pick versions from this one",
+        LOCK_FILE = crate::lockfile::LOCK_FILE
+    )
+}
+
+/// Nothing matches `req`. `available` lists the published versions if the package exists;
+/// `registry` is the registry asked ([`crate::Locations::describe`]: a URL or a directory).
+pub(super) fn no_match(req: &Requirement, available: Option<&str>, registry: &str) -> String {
     let by = req.chain.join(" → ");
     match (&req.want, available) {
         (Want::Registry(_), None) => format!(
-            "package `{}` is not in the registry `{}` (required by {by})",
+            "package `{}` is not in the registry `{registry}` (required by {by})",
             req.name,
-            registry.display()
         ),
         (Want::Registry(_), Some(versions)) => format!(
             "no version of `{}` matches {} (required by {by}); available: {versions}",

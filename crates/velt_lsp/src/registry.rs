@@ -4,6 +4,7 @@
 //! "unavailable" (the registry could not be reached: the editor stays quiet about it).
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -164,28 +165,50 @@ impl RegistryData {
     }
 }
 
-/// The registry a manifest's dependencies come from: `$VELT_REGISTRY`, else its `registry`
-/// field, else the local registry. `None` when no registry can be located, and when the
-/// manifest names a plain `http://` registry on another machine: opening a checkout must not
-/// make the editor talk to hosts it names (an internal network address, say) unless the
-/// connection is TLS or stays on this machine. `velt install` still uses such a registry.
-pub fn locations_for(manifest_text: &str) -> Option<Locations> {
-    let loc = Locations::from_env().ok()?;
-    registry_for(loc, manifest_text)
+/// The registry a manifest's dependencies come from, as `velt install` picks it
+/// ([`vpm::locations`]): `$VELT_REGISTRY` set to a URL, else its `registry` field, else
+/// `$VELT_REGISTRY`'s directory, else the public registry. `None` when no registry can be
+/// located, and when the manifest names a plain `http://` registry on another machine: opening a
+/// checkout must not make the editor talk to hosts it names (an internal network address, say)
+/// unless the connection is TLS or stays on this machine. `velt install` still uses such a
+/// registry. A member of a workspace (the manifest is in `dir`) uses the workspace's `registry`,
+/// as every `velt` command does ([`Locations::for_package`]); `None` while that workspace's
+/// file can't be read.
+pub fn locations_for(manifest_text: &str, dir: Option<&Path>) -> Option<Locations> {
+    registry_for(env_locations()?, manifest_text, dir)
 }
 
-fn registry_for(mut loc: Locations, manifest_text: &str) -> Option<Locations> {
-    if loc.remote.is_some() {
+/// The registry the environment names ([`Locations::from_env`]).
+#[cfg(not(test))]
+fn env_locations() -> Option<Locations> {
+    Locations::from_env().ok()
+}
+
+/// Unit tests never ask the public registry: without a `registry` field a manifest's
+/// dependencies come from a local directory registry that has no packages.
+#[cfg(test)]
+fn env_locations() -> Option<Locations> {
+    let home = std::env::temp_dir().join(format!("velt_lsp_home_{}", std::process::id()));
+    Some(Locations::under(&home))
+}
+
+fn registry_for(loc: Locations, manifest_text: &str, dir: Option<&Path>) -> Option<Locations> {
+    if loc.remote.is_some() && !loc.remote_is_default {
         return Some(loc); // the user's own $VELT_REGISTRY
     }
-    let named = vpm::manifest::ide::registry::top_level_string(manifest_text, "registry")
+    // A workspace file that can't be read (mid-edit, say) gives no registry data at all: it may
+    // name a private registry, and `velt` commands refuse it too.
+    let workspace = match dir.map(vpm::workspace::listing) {
+        Some(Err(_)) => return None,
+        Some(Ok(ws)) => ws.and_then(|ws| ws.registry),
+        None => None,
+    };
+    let named = workspace
+        .or_else(|| vpm::manifest::ide::registry::top_level_string(manifest_text, "registry"))
         .filter(|url| vpm::locations::is_url(url));
     match named {
         Some(url) if !vpm::remote::is_tls_or_loopback(&url) => None,
-        named => {
-            loc.remote = named;
-            Some(loc)
-        }
+        named => Some(loc.with_registry(named.as_deref())),
     }
 }
 
@@ -218,7 +241,7 @@ mod tests {
     fn a_manifests_registry_is_asked_over_tls_or_on_this_machine_only() {
         let local = Locations::under(Path::new("/h"));
         let with = |url: &str| format!("export const pkg: Package = {{ registry: \"{url}\" }};");
-        let remote = |text: &str| registry_for(local.clone(), text).map(|l| l.remote);
+        let remote = |text: &str| registry_for(local.clone(), text, None).map(|l| l.remote);
         assert_eq!(
             remote(&with("https://r.example")),
             Some(Some("https://r.example".into()))
@@ -237,16 +260,60 @@ mod tests {
             Some(None),
             "the local registry"
         );
-        // `$VELT_REGISTRY` is the user's choice and always wins.
+        // Without a `registry` field: the public registry (or `$VELT_REGISTRY`'s directory).
+        let default = Locations::from_vars("/h".into(), None);
+        assert_eq!(
+            registry_for(default.clone(), "export const pkg: Package = {};", None).unwrap(),
+            default
+        );
+        assert_eq!(
+            registry_for(default, &with("https://r.example"), None)
+                .unwrap()
+                .remote
+                .as_deref(),
+            Some("https://r.example")
+        );
+        // `$VELT_REGISTRY` set to a URL is the user's choice and always wins.
         let mut env = local.clone();
         env.remote = Some("http://10.0.0.5".into());
         assert_eq!(
-            registry_for(env, &with("https://r.example"))
+            registry_for(env, &with("https://r.example"), None)
                 .unwrap()
                 .remote
                 .as_deref(),
             Some("http://10.0.0.5")
         );
+    }
+
+    #[test]
+    fn a_workspace_member_asks_the_workspaces_registry() {
+        let tmp = std::env::temp_dir().join(format!("velt_lsp_ws_registry_{}", std::process::id()));
+        let member = tmp.join("m");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            tmp.join(vpm::workspace::WORKSPACE_FILE),
+            "export const workspace: Workspace = { members: [\"m\"], registry: \"https://private.example\" };",
+        )
+        .unwrap();
+        let text = "export const pkg: Package = { name: \"m\", version: \"0.1.0\" };";
+        std::fs::write(member.join(vpm::manifest::MANIFEST_FILE), text).unwrap();
+        let default = Locations::from_vars("/h".into(), None);
+        let asked = registry_for(default.clone(), text, Some(&member)).unwrap();
+        assert_eq!(asked.remote.as_deref(), Some("https://private.example"));
+        // Outside the workspace: the public registry.
+        let alone = registry_for(default.clone(), text, Some(&std::env::temp_dir())).unwrap();
+        assert_eq!(
+            alone.remote.as_deref(),
+            Some(vpm::locations::DEFAULT_REGISTRY)
+        );
+        // A workspace file that doesn't parse (mid-edit): no registry is asked, not the default.
+        std::fs::write(
+            tmp.join(vpm::workspace::WORKSPACE_FILE),
+            "export const workspace: Workspace = { members: [\"m\"], registry: ",
+        )
+        .unwrap();
+        assert_eq!(registry_for(default, text, Some(&member)), None);
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]

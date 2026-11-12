@@ -6,7 +6,7 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
     ("VELT_HOME", "vpm home (default ~/.velt: cache/, registry/)"),
     (
         "VELT_REGISTRY",
-        "package registry: a directory (default $VELT_HOME/registry) or an http(s):// URL",
+        "package registry: an http(s):// URL or a directory (default https://registry.veltpm.com)",
     ),
     (
         "VELT_REGISTRY_TOKEN",

@@ -21,7 +21,7 @@ fn velt(cwd: &Path, args: &[&str]) -> Output {
         .args(args)
         .current_dir(cwd)
         .env("VELT_HOME", cwd.join("../../home"))
-        .env_remove("VELT_REGISTRY")
+        .env("VELT_REGISTRY", cwd.join("../../home/registry"))
         .env_remove("VELT_LAUNCHER")
         .output()
         .unwrap()

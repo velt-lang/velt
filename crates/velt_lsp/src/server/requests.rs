@@ -167,7 +167,12 @@ impl Server<'_> {
                         return Ok(json(Some(Vec::<lsp_types::CompletionItem>::new())));
                     }
                     let at = LineIndex::new(text).offset(pos.position);
-                    return Ok(json(manifest::completion(text, at, &self.registry)));
+                    let dir = self
+                        .docs
+                        .get(&pos.text_document.uri)
+                        .and_then(|d| d.path.parent().map(std::path::Path::to_path_buf));
+                    let list = manifest::completion(text, at, &self.registry, dir.as_deref());
+                    return Ok(json(list));
                 }
                 Ok(json(self.completion(pos, trigger)))
             }

@@ -13,7 +13,7 @@ fn velt(dir: &Path, home: &Path, args: &[&str]) -> std::process::Output {
         .args(args)
         .current_dir(dir)
         .env("VELT_HOME", home)
-        .env_remove("VELT_REGISTRY")
+        .env("VELT_REGISTRY", home.join("registry"))
         .env_remove("VELT_REGISTRY_TOKEN")
         .output()
         .expect("run velt")
@@ -36,7 +36,7 @@ fn velt_as(token: &str, dir: &Path, home: &Path, args: &[&str]) -> std::process:
         .args(args)
         .current_dir(dir)
         .env("VELT_HOME", home)
-        .env_remove("VELT_REGISTRY")
+        .env("VELT_REGISTRY", home.join("registry"))
         .env("VELT_REGISTRY_TOKEN", token)
         .output()
         .expect("run velt")
@@ -47,6 +47,7 @@ fn spawn_login(home: &Path, sub: &str, url: &str) -> Child {
     crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args([sub, url])
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .env_remove("VELT_REGISTRY_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -180,6 +181,35 @@ fn share_a_package_through_the_registry_server() {
         "{}",
         String::from_utf8_lossy(&added.stderr)
     );
+    // Errors name the registry asked, by its URL.
+    let missing = velt(&app, &home_b, &["add", "nothing-here"]);
+    assert!(
+        text(&missing).contains(&format!(
+            "package `nothing-here` is not in the registry `{url}`"
+        )),
+        "{}",
+        text(&missing)
+    );
+    let mut manifest = vpm::Manifest::from_dir(&app).expect("manifest");
+    let mut with_missing = manifest.clone();
+    with_missing
+        .dependencies
+        .insert("nothing-here".into(), vpm::Dependency::Version("1".into()));
+    std::fs::write(
+        app.join(vpm::manifest::MANIFEST_FILE),
+        with_missing.to_velt(),
+    )
+    .expect("write");
+    let unresolved = velt(&app, &home_b, &["install"]);
+    assert!(
+        text(&unresolved).contains(&format!(
+            "package `nothing-here` is not in the registry `{url}` (required by"
+        )),
+        "{}",
+        text(&unresolved)
+    );
+    manifest.registry = Some(url.clone());
+    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).expect("write");
     let lock = std::fs::read_to_string(app.join("velt.lock.json")).expect("lock");
     assert!(
         lock.contains("\"name\": \"greet\"") && lock.contains("sha256:"),
@@ -302,5 +332,275 @@ fn a_token_without_users_does_not_start_an_open_server() {
         text(&refused).contains("velt registry user add"),
         "{}",
         text(&refused)
+    );
+}
+
+/// `velt login --token-stdin` / `velt logout` without a URL in `dir`, with `token` on stdin and
+/// `$VELT_REGISTRY` set to `registry` (or unset).
+fn velt_login_here(
+    dir: &Path,
+    home: &Path,
+    sub: &str,
+    registry: Option<&str>,
+    token: &str,
+) -> std::process::Output {
+    use std::io::Write;
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    cmd.arg(sub);
+    if sub == "login" {
+        // Never the browser flow: with no URL that would be registry.veltpm.com.
+        cmd.arg("--token-stdin");
+    }
+    cmd.current_dir(dir)
+        .env("VELT_HOME", home)
+        .env_remove("VELT_REGISTRY_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match registry {
+        Some(r) => cmd.env("VELT_REGISTRY", r),
+        None => cmd.env_remove("VELT_REGISTRY"),
+    };
+    let mut child = cmd.spawn().expect("run velt");
+    let mut stdin = child.stdin.take().expect("stdin");
+    match stdin.write_all(format!("{token}\n").as_bytes()) {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+        written => written.expect("token"),
+    }
+    drop(stdin);
+    child.wait_with_output().expect("run velt")
+}
+
+/// Without a URL, `velt login` stores the token for the registry `velt publish` would use:
+/// https://registry.veltpm.com by default (storing a token asks no registry), the package's
+/// `registry`, and never a local directory registry.
+#[test]
+fn login_without_a_url_signs_in_to_the_packages_registry_by_default_veltpm() {
+    let tmp = test_dir::TestDir::new();
+    let home = tmp.path().join("home");
+    let stored =
+        |home: &Path| std::fs::read_to_string(home.join("credentials.json")).unwrap_or_default();
+    let login = velt_login_here(tmp.path(), &home, "login", None, "t0ken");
+    assert!(login.status.success(), "{}", text(&login));
+    assert!(
+        text(&login).contains("the token for https://registry.veltpm.com"),
+        "{}",
+        text(&login)
+    );
+    assert!(
+        stored(&home).contains("\"https://registry.veltpm.com\""),
+        "{}",
+        stored(&home)
+    );
+
+    // In a package whose `registry` is a server on this machine (nothing listens on port 9:
+    // `logout` can't revoke the token there, warns, and removes it).
+    let lib = tmp.path().join("lib");
+    assert!(velt(tmp.path(), &home, &["new", "lib", "--lib"])
+        .status
+        .success());
+    let mut manifest = vpm::Manifest::from_dir(&lib).expect("manifest");
+    manifest.registry = Some("http://127.0.0.1:9".into());
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).expect("write");
+    let login = velt_login_here(&lib, &home, "login", None, "t0ken");
+    assert!(login.status.success(), "{}", text(&login));
+    assert!(
+        stored(&home).contains("\"http://127.0.0.1:9\""),
+        "{}",
+        stored(&home)
+    );
+    let logout = velt_login_here(&lib, &home, "logout", None, "");
+    assert!(text(&logout).contains("Removed"), "{}", text(&logout));
+    assert!(!stored(&home).contains("127.0.0.1:9"), "{}", stored(&home));
+
+    // `$VELT_REGISTRY` set to a directory, outside a package: no server to sign in to.
+    let dir = tmp.path().join("registry").to_string_lossy().into_owned();
+    let refused = velt_login_here(tmp.path(), &home, "login", Some(&dir), "t0ken");
+    assert!(!refused.status.success());
+    assert!(
+        text(&refused).contains("is a local directory registry"),
+        "{}",
+        text(&refused)
+    );
+}
+
+/// `velt` with `$VELT_REGISTRY` set to `registry` (`None`: unset, the public registry).
+fn velt_on(
+    dir: &Path,
+    home: &Path,
+    registry: Option<&Path>,
+    args: &[&str],
+) -> std::process::Output {
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    cmd.args(args)
+        .current_dir(dir)
+        .env("VELT_HOME", home)
+        .env_remove("VELT_REGISTRY_TOKEN");
+    match registry {
+        Some(r) => cmd.env("VELT_REGISTRY", r),
+        None => cmd.env_remove("VELT_REGISTRY"),
+    };
+    cmd.output().expect("run velt")
+}
+
+/// A member of a workspace leaves `registry` to the workspace: every command that picks a
+/// registry from the current directory uses the workspace's, never the public default (a private
+/// workspace's package must not be uploaded publicly). Port 9 on this machine is closed: the
+/// errors name the registry without any network.
+#[test]
+fn a_workspace_member_uses_the_workspaces_registry() {
+    let tmp = test_dir::TestDir::new();
+    let home = tmp.path().join("home");
+    let private = "http://127.0.0.1:9";
+    std::fs::write(
+        tmp.path().join("velt.workspace.velt"),
+        format!("export const workspace: Workspace = {{ members: [\"m\"], registry: \"{private}\" }};\n"),
+    )
+    .expect("write");
+    let new = velt_on(tmp.path(), &home, None, &["new", "m", "--lib"]);
+    assert!(new.status.success(), "{}", text(&new));
+    let member = tmp.path().join("m");
+
+    let login = velt_login_here(&member, &home, "login", None, "t0ken");
+    assert!(login.status.success(), "{}", text(&login));
+    assert!(
+        text(&login).contains(&format!("the token for {private}")),
+        "{}",
+        text(&login)
+    );
+    for args in [
+        &["publish"][..],
+        &["add", "json"],
+        &["search", "json"],
+        &["yank", "m@0.1.0"],
+        &["owner", "list", "m"],
+    ] {
+        let out = velt_on(&member, &home, None, args);
+        assert!(!out.status.success(), "{args:?}: {}", text(&out));
+        assert!(
+            text(&out).contains(private) && !text(&out).contains("veltpm.com"),
+            "{args:?} asks the workspace's registry: {}",
+            text(&out)
+        );
+    }
+    // From the workspace root too.
+    let out = velt_on(tmp.path(), &home, None, &["search", "json"]);
+    assert!(text(&out).contains(private), "{}", text(&out));
+}
+
+/// `velt.lock.json` doesn't say which registry its packages came from. A locked version the
+/// requirement still accepts but the current registry doesn't have is an error, not a silent
+/// switch to another version of that name from another registry (as when the default registry
+/// changed from `~/.velt/registry` to https://registry.veltpm.com).
+#[test]
+fn a_lock_from_another_registry_is_not_silently_re_resolved() {
+    let tmp = test_dir::TestDir::new();
+    let home = tmp.path().join("home");
+    let (reg_a, reg_b) = (tmp.path().join("reg-a"), tmp.path().join("reg-b"));
+    let lib = tmp.path().join("greet");
+    assert!(velt(tmp.path(), &home, &["new", "greet", "--lib"])
+        .status
+        .success());
+    let published = velt_on(&lib, &home, Some(&reg_a), &["publish"]);
+    assert!(published.status.success(), "{}", text(&published));
+    // Registry B has another `greet`: 1.2.0, and a 0.1.0 with other content.
+    std::fs::write(lib.join("src/extra.velt"), "export const OTHER: i64 = 2;\n").expect("write");
+    let published = velt_on(&lib, &home, Some(&reg_b), &["publish"]);
+    assert!(published.status.success(), "{}", text(&published));
+    let mut manifest = vpm::Manifest::from_dir(&lib).expect("manifest");
+    manifest.package.version = "0.2.0".into();
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).expect("write");
+    let published = velt_on(&lib, &home, Some(&reg_b), &["publish"]);
+    assert!(published.status.success(), "{}", text(&published));
+
+    let app = tmp.path().join("app");
+    assert!(velt(tmp.path(), &home, &["new", "app"]).status.success());
+    let added = velt_on(&app, &home, Some(&reg_a), &["add", "greet@>=0.1"]);
+    assert!(added.status.success(), "{}", text(&added));
+    let lock = std::fs::read_to_string(app.join("velt.lock.json")).expect("lock");
+
+    // Same version, other content: the checksum error says the registry may have changed.
+    let other = velt_on(&app, &home, Some(&reg_b), &["install"]);
+    assert!(!other.status.success());
+    assert!(
+        text(&other).contains("checksum mismatch for `greet` 0.1.0")
+            && text(&other).contains("written against another registry"),
+        "{}",
+        text(&other)
+    );
+    // The locked version is missing from the registry asked: an error naming it, and the lock
+    // stays as it was.
+    std::fs::remove_dir_all(reg_b.join("greet/0.1.0")).expect("remove");
+    let mut index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(reg_b.join("greet/index.json")).expect("index"),
+    )
+    .expect("json");
+    index["versions"]
+        .as_array_mut()
+        .expect("versions")
+        .retain(|v| v["version"] != "0.1.0");
+    std::fs::write(reg_b.join("greet/index.json"), index.to_string()).expect("write");
+    let moved = velt_on(&app, &home, Some(&reg_b), &["install"]);
+    assert!(!moved.status.success(), "{}", text(&moved));
+    assert!(
+        text(&moved).contains(&format!(
+            "`greet` 0.1.0 in velt.lock.json is not in the registry `{}`; was it locked from another registry?",
+            reg_b.display()
+        )),
+        "{}",
+        text(&moved)
+    );
+    assert_eq!(
+        std::fs::read_to_string(app.join("velt.lock.json")).expect("lock"),
+        lock
+    );
+    // `velt update` picks from the registry asked.
+    let updated = velt_on(&app, &home, Some(&reg_b), &["update"]);
+    assert!(updated.status.success(), "{}", text(&updated));
+    assert!(std::fs::read_to_string(app.join("velt.lock.json"))
+        .expect("lock")
+        .contains("\"version\": \"0.2.0\""));
+}
+
+/// `~/.velt/registry` was the default registry. When nothing names one and it holds packages,
+/// commands say that it is no longer used and how to keep it (no registry is asked here: the
+/// package has no dependencies).
+#[test]
+fn an_unused_home_registry_with_packages_gets_a_warning() {
+    let tmp = test_dir::TestDir::new();
+    let home = tmp.path().join("home");
+    let app = tmp.path().join("app");
+    assert!(velt(tmp.path(), &home, &["new", "app"]).status.success());
+    let quiet = velt_on(&app, &home, None, &["install"]);
+    assert!(quiet.status.success(), "{}", text(&quiet));
+    assert!(
+        !text(&quiet).contains("no longer the default"),
+        "{}",
+        text(&quiet)
+    );
+
+    let lib = tmp.path().join("greet");
+    assert!(velt(tmp.path(), &home, &["new", "greet", "--lib"])
+        .status
+        .success());
+    // Published into `$VELT_HOME/registry`, as a velt before this default did.
+    assert!(velt(&lib, &home, &["publish"]).status.success());
+    let warned = velt_on(&app, &home, None, &["install"]);
+    assert!(warned.status.success(), "{}", text(&warned));
+    let dir = home.join("registry");
+    assert!(
+        text(&warned).contains(&format!(
+            "`{}` holds packages but is no longer the default registry",
+            dir.display()
+        )) && text(&warned).contains(&format!("set VELT_REGISTRY={}", dir.display())),
+        "{}",
+        text(&warned)
+    );
+    // Using it again: no warning.
+    let used = velt(&app, &home, &["install"]);
+    assert!(
+        !text(&used).contains("no longer the default"),
+        "{}",
+        text(&used)
     );
 }

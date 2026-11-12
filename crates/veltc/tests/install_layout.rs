@@ -82,7 +82,7 @@ fn velt(prefix: &Path, cwd: &Path, home: &Path, args: &[&str]) -> Output {
         .env_remove("VELT_SHARE")
         .env_remove("VELT_RT_LIB")
         .env_remove("VELT_RT_LINK")
-        .env_remove("VELT_REGISTRY")
+        .env("VELT_REGISTRY", home.join("registry"))
         .env_remove("VELT_LAUNCHER")
         .env_remove("VELT_TOOLCHAIN_SELECTED")
         .output()

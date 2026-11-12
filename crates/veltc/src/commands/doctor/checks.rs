@@ -252,19 +252,18 @@ fn velt_home() -> Check {
         Ok(loc) => loc,
         Err(msg) => return Check::bad("velt home", Status::Fail, msg, hint),
     };
-    for dir in [&loc.registry, &loc.cache] {
+    // A remote registry (by default the public one) has no directory here to write.
+    let local = loc.remote.is_none().then_some(&loc.registry);
+    for dir in local.into_iter().chain([&loc.cache]) {
         if let Err(msg) = probe_writable(dir) {
             return Check::bad("velt home", Status::Fail, msg, hint);
         }
     }
-    Check::ok(
-        "velt home",
-        format!(
-            "registry {}, cache {}",
-            loc.registry.display(),
-            loc.cache.display()
-        ),
-    )
+    let found = format!("registry {}, cache {}", loc.describe(), loc.cache.display());
+    match loc.unused_local_registry() {
+        Some(warning) => Check::bad("velt home", Status::Warn, found, warning),
+        None => Check::ok("velt home", found),
+    }
 }
 
 /// Create `dir` if needed, then write and delete a probe file in it.

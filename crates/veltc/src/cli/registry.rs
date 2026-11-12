@@ -107,7 +107,7 @@ pub(super) fn parse_search(args: Vec<OsString>) -> Result<Command, String> {
     })
 }
 
-/// `velt login <registry-url> [--device | --token-stdin]` / `velt logout <registry-url>`.
+/// `velt login [<registry-url>] [--device | --token-stdin]` / `velt logout [<registry-url>]`.
 pub(super) fn parse_login(sub: &str, args: Vec<OsString>) -> Result<Command, String> {
     let mut args = strings(args)?;
     let mut how = LoginHow::Auto;
@@ -130,22 +130,28 @@ pub(super) fn parse_login(sub: &str, args: Vec<OsString>) -> Result<Command, Str
     if let Some(flag) = args.iter().find(|a| a.starts_with('-')) {
         return Err(super::unknown_option(sub, flag));
     }
-    let [url] = args.as_slice() else {
-        return Err(format!(
-            "usage: velt {sub} <registry-url>{} (e.g. `velt {sub} https://registry.example.com`)",
-            if sub == "login" {
-                " [--device | --token-stdin]"
-            } else {
-                ""
-            }
-        ));
+    let url = match args.as_slice() {
+        [] => None,
+        [url] => Some(url.clone()),
+        _ => return Err(login_usage(sub)),
     };
-    let url = url.clone();
     Ok(if sub == "login" {
         Command::Login { url, how }
     } else {
         Command::Logout { url }
     })
+}
+
+/// The usage line of `velt login` / `velt logout` (`sub`).
+fn login_usage(sub: &str) -> String {
+    let flags = if sub == "login" {
+        " [--device | --token-stdin]"
+    } else {
+        ""
+    };
+    format!(
+        "usage: velt {sub} [<registry-url>]{flags} (e.g. `velt {sub} https://registry.example.com`)"
+    )
 }
 
 /// The words, `--dir` and `--open` of a `velt registry user|owner …` command.
@@ -319,17 +325,46 @@ mod tests {
             assert_eq!(
                 p(&args).unwrap(),
                 Command::Login {
-                    url: url.into(),
+                    url: Some(url.into()),
                     how
                 }
             );
         }
         let both = p(&["login", url, "--device", "--token-stdin"]).unwrap_err();
         assert!(both.contains("choose one"), "{both}");
-        assert!(p(&["login", "--device"])
-            .unwrap_err()
-            .starts_with("usage: velt login"));
+        assert_eq!(
+            p(&["login", "--device"]).unwrap(),
+            Command::Login {
+                url: None,
+                how: LoginHow::Device
+            }
+        );
         let logout = p(&["logout", url, "--device"]).unwrap_err();
         assert!(logout.contains("unknown option `--device`"), "{logout}");
+    }
+
+    #[test]
+    fn login_and_logout_take_an_optional_registry() {
+        let url = "https://r.example.com";
+        assert_eq!(
+            p(&["login", url]).unwrap(),
+            Command::Login {
+                url: Some(url.into()),
+                how: LoginHow::Auto
+            }
+        );
+        assert_eq!(
+            p(&["login"]).unwrap(),
+            Command::Login {
+                url: None,
+                how: LoginHow::Auto
+            }
+        );
+        assert_eq!(p(&["logout"]).unwrap(), Command::Logout { url: None });
+        let two = p(&["logout", url, url]).unwrap_err();
+        assert!(
+            two.starts_with("usage: velt logout [<registry-url>]"),
+            "{two}"
+        );
     }
 }

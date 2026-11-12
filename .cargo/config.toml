@@ -14,3 +14,8 @@ CFLAGS_aarch64_unknown_linux_gnu = "-std=gnu17"
 # target directory has one (`velt-build-cache` in it, crates/veltc/src/build_cache.rs). A variable
 # already set in the environment wins.
 VELT_BUILD_CACHE_SIZE = "500M"
+
+# Nothing cargo runs here (tests, goldens, `cargo run -p veltc`) asks the public registry
+# https://registry.veltpm.com (crates/vpm/src/remote.rs): a test that names no local registry
+# fails instead of reaching the network. Set it empty to try the public registry.
+VELT_DENY_DEFAULT_REGISTRY = "1"

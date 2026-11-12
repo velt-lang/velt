@@ -558,7 +558,7 @@ fn check_locked_checksums(old: &Lockfile, new: &Lockfile) -> Result<(), String> 
         }
         if locked.checksum != pkg.checksum {
             let now = match pkg.source == REGISTRY_SOURCE {
-                true => "the registry has {} (the published package changed)",
+                true => "the registry has {} (the published package changed, or velt.lock.json was written against another registry: check $VELT_REGISTRY and `registry`)",
                 false => "the fetched tree hashes to {} (it changed in the cache: delete it there to fetch it again)",
             };
             let now = now.replace("{}", pkg.checksum.as_deref().unwrap_or("none"));

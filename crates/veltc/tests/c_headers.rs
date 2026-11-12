@@ -47,6 +47,7 @@ fn velt(dir: &Path, home: &Path, args: &[&str]) -> Output {
         .current_dir(dir.join("app"))
         .env("NO_COLOR", "1")
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .output()
         .unwrap()
 }
@@ -218,6 +219,7 @@ fn check_without_zig(dir: &Path, home: &Path, target: &str) -> Output {
         .current_dir(dir.join("app"))
         .env("NO_COLOR", "1")
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .env("VELT_ZIG", dir.join("no-zig"))
         .output()
         .unwrap()
@@ -489,7 +491,7 @@ fn an_unchanged_build_with_a_registry_package_is_not_compiled_again() {
             .current_dir(&bind)
             .env("NO_COLOR", "1")
             .env("VELT_HOME", &home)
-            .env_remove("VELT_REGISTRY")
+            .env("VELT_REGISTRY", home.join("registry"))
             .output()
             .unwrap();
         assert!(o.status.success(), "{args:?}: {}", output(&o));
@@ -617,6 +619,7 @@ fn check_from_git(dir: &Path, home: &Path) -> Output {
         .current_dir(dir.join("app"))
         .env("NO_COLOR", "1")
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .env("VELT_ZIG", dir.join("no-zig"))
         .output()
         .unwrap()
@@ -639,6 +642,7 @@ fn a_fetched_package_s_declarations_are_compared_with_its_record() {
         .current_dir(&bind)
         .env("NO_COLOR", "1")
         .env("VELT_HOME", &home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", output(&o));
@@ -707,6 +711,7 @@ fn record_and_commit(dir: &Path, home: &Path) {
         .current_dir(&bind)
         .env("NO_COLOR", "1")
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", output(&o));
@@ -866,6 +871,7 @@ fn a_package_without_c_functions_has_no_record() {
         .current_dir(&bind)
         .env("NO_COLOR", "1")
         .env("VELT_HOME", &home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", output(&o));

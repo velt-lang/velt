@@ -36,7 +36,7 @@ fn velt_with_home(dir: &Path, home: &Path, args: &[&str]) -> Output {
         .args(args)
         .current_dir(dir)
         .env("VELT_HOME", home)
-        .env_remove("VELT_REGISTRY")
+        .env("VELT_REGISTRY", home.join("registry"))
         .env_remove("VELT_LAUNCHER")
         .env("NO_COLOR", "1")
         .output()

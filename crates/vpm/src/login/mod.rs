@@ -89,7 +89,7 @@ pub fn discover(api: &str) -> Result<Option<Discovery>, String> {
         #[serde(default)]
         device: bool,
     }
-    let resp = velt_http::fetch_within(
+    let resp = crate::remote::fetch_within(
         "GET",
         &endpoint(api, ""),
         &[("Accept", "application/json")],
@@ -265,7 +265,7 @@ enum Answer {
 /// carry a token); only its `error` word, through [`shown`].
 fn post(api: &str, rest: &str, body: &str) -> Result<Answer, String> {
     crate::credentials::check_transport(api, "the sign-in")?;
-    let resp = velt_http::fetch_within(
+    let resp = crate::remote::fetch_within(
         "POST",
         &endpoint(api, rest),
         &[

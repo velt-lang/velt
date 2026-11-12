@@ -16,6 +16,11 @@ fn home_defaults_to_dot_velt_and_env_overrides_it() {
     let loc = Locations::from_env().unwrap();
     assert_eq!(loc.registry, user.join(".velt").join("registry"));
     assert_eq!(loc.cache, user.join(".velt").join("cache"));
+    // Nothing set: the public registry.
+    assert_eq!(
+        loc.remote.as_deref(),
+        Some(vpm::locations::DEFAULT_REGISTRY)
+    );
 
     let home = tmp.path().join("custom");
     let registry = tmp.path().join("shared-registry");
@@ -24,4 +29,12 @@ fn home_defaults_to_dot_velt_and_env_overrides_it() {
     let loc = Locations::from_env().unwrap();
     assert_eq!(loc.cache, home.join("cache"));
     assert_eq!(loc.registry, registry);
+    assert_eq!(loc.remote, None, "a directory is a local registry");
+
+    std::env::set_var("VELT_REGISTRY", "https://registry-staging.veltpm.com");
+    let loc = Locations::from_env().unwrap();
+    assert_eq!(
+        loc.remote.as_deref(),
+        Some("https://registry-staging.veltpm.com")
+    );
 }

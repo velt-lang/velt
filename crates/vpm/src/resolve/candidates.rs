@@ -62,6 +62,20 @@ impl<'a> Provider<'a> {
         match &req.want {
             Want::Registry(version_req) => {
                 let locked = self.locked_version(&req.name);
+                let in_registry = self.index(&req.name)?.is_some_and(|index| {
+                    locked
+                        .as_ref()
+                        .is_none_or(|v| index.versions.iter().any(|e| e.semver() == *v))
+                });
+                // A locked version the requirement still accepts must come from this registry:
+                // when it isn't there the lock was written against another one (the default
+                // registry changed, say), and picking another version of the same name here
+                // would silently swap the package's origin.
+                if let Some(v) = locked.as_ref().filter(|v| version_req.matches(v)) {
+                    if !in_registry {
+                        return Err(report::locked_elsewhere(&req.name, v, &self.loc.describe()));
+                    }
+                }
                 let Some(index) = self.index(&req.name)? else {
                     return Ok(vec![]);
                 };
@@ -145,7 +159,7 @@ impl<'a> Provider<'a> {
             }
             _ => None,
         };
-        report::no_match(req, available.as_deref(), &self.loc.registry)
+        report::no_match(req, available.as_deref(), &self.loc.describe())
     }
 
     /// Whether registry version `name` `version` is yanked.

@@ -29,6 +29,57 @@ use crate::registry::{parse_index, Index, IndexEntry};
 /// Environment variable whose token overrides the stored ones ([`crate::credentials`]).
 pub use crate::credentials::TOKEN_VAR;
 
+/// Set (non-empty) for everything cargo runs in velt's own repository (`.cargo/config.toml`):
+/// requests to the public registry ([`crate::locations::DEFAULT_REGISTRY`]) fail, so a test that
+/// doesn't name a local registry fails loudly instead of reaching registry.veltpm.com. Set it
+/// empty to ask the public registry anyway (`VELT_DENY_DEFAULT_REGISTRY= cargo run …`).
+pub const DENY_DEFAULT_VAR: &str = "VELT_DENY_DEFAULT_REGISTRY";
+
+/// The error for a request to the public registry while [`DENY_DEFAULT_VAR`] is set.
+fn check_default_allowed(url: &str) -> Result<(), String> {
+    default_refused(
+        url,
+        std::env::var_os(DENY_DEFAULT_VAR).is_some_and(|v| !v.is_empty()),
+    )
+}
+
+/// [`check_default_allowed`] with the variable read (`deny`).
+fn default_refused(url: &str, deny: bool) -> Result<(), String> {
+    let default = crate::locations::DEFAULT_REGISTRY;
+    let public = url
+        .strip_prefix(default)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?']));
+    if public && deny {
+        return Err(format!(
+            "refusing to ask {default}: ${DENY_DEFAULT_VAR} is set (a test must name a local registry with $VELT_REGISTRY or `registry`; set the variable empty to use the public registry)"
+        ));
+    }
+    Ok(())
+}
+
+/// [`velt_http::fetch`] for every request vpm makes to a registry ([`check_default_allowed`]).
+pub(crate) fn fetch(
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> Result<velt_http::Response, String> {
+    check_default_allowed(url)?;
+    velt_http::fetch(method, url, headers, body)
+}
+
+/// [`velt_http::fetch_within`] for every request vpm makes to a registry.
+pub(crate) fn fetch_within(
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    limits: velt_http::Limits,
+) -> Result<velt_http::Response, String> {
+    check_default_allowed(url)?;
+    velt_http::fetch_within(method, url, headers, body, limits)
+}
+
 fn api(url: &str, name: &str, rest: &str) -> String {
     format!("{}/api/v1/{name}/{rest}", url.trim_end_matches('/'))
 }
@@ -44,7 +95,7 @@ pub fn read_index_within(
     name: &str,
     limits: velt_http::Limits,
 ) -> Result<Option<Index>, String> {
-    let resp = velt_http::fetch_within("GET", &api(url, name, "index"), &[], b"", limits)?;
+    let resp = fetch_within("GET", &api(url, name, "index"), &[], b"", limits)?;
     match resp.status {
         // A server from before the index was JSON answers with `index.toml`, typed as TOML.
         200 if is_toml(resp.header("content-type")) => Err(format!(
@@ -77,7 +128,7 @@ pub fn download(
     checksum: &str,
     dest: &Path,
 ) -> Result<PathBuf, String> {
-    let resp = velt_http::fetch("GET", &api(url, name, &version.to_string()), &[], b"")?;
+    let resp = fetch("GET", &api(url, name, &version.to_string()), &[], b"")?;
     if resp.status != 200 {
         return Err(format!(
             "registry {url}: {} downloading `{name}` {version}: {}",
@@ -110,7 +161,7 @@ pub fn download_native(
     dest: &Path,
 ) -> Result<(), String> {
     let path = format!("{version}/native/{target}");
-    let resp = velt_http::fetch("GET", &api(url, name, &path), &[], b"")?;
+    let resp = fetch("GET", &api(url, name, &path), &[], b"")?;
     if resp.status != 200 {
         return Err(format!(
             "registry {url}: {} downloading the {target} native library of `{name}` {version}: {}",
@@ -204,7 +255,7 @@ fn write(
     if token.is_some() {
         headers.push(("Authorization", auth.as_str()));
     }
-    let resp = velt_http::fetch(method, target, &headers, body)?;
+    let resp = fetch(method, target, &headers, body)?;
     let text = resp.body_text().trim().to_string();
     match resp.status {
         200..=299 => Ok(text),
@@ -237,7 +288,7 @@ pub fn yank(url: &str, name: &str, version: &str, yanked: bool) -> Result<(), St
 /// The owners of `name`.
 pub fn owners(url: &str, name: &str) -> Result<Vec<String>, String> {
     check_names(&[name], &[])?;
-    let resp = velt_http::fetch("GET", &api(url, name, "owners"), &[], b"")?;
+    let resp = fetch("GET", &api(url, name, "owners"), &[], b"")?;
     match resp.status {
         200 => Ok(resp.body_text().lines().map(str::to_string).collect()),
         404 => Err(format!("`{name}` is not in the registry {url}")),
@@ -271,7 +322,7 @@ fn scope_owners_url(url: &str, scope: &str) -> Result<String, String> {
 
 /// The owners of the scope `scope` (without `@`).
 pub fn scope_owners(url: &str, scope: &str) -> Result<Vec<String>, String> {
-    let resp = velt_http::fetch("GET", &scope_owners_url(url, scope)?, &[], b"")?;
+    let resp = fetch("GET", &scope_owners_url(url, scope)?, &[], b"")?;
     match resp.status {
         200 => Ok(resp.body_text().lines().map(str::to_string).collect()),
         404 => Err(format!(
@@ -306,7 +357,7 @@ pub fn revoke_token(url: &str, token: &str) -> Result<Revoked, String> {
     crate::credentials::check_transport(url, "the token")?;
     let auth = format!("Bearer {token}");
     let target = format!("{}/api/v1/token", url.trim_end_matches('/'));
-    let resp = velt_http::fetch("DELETE", &target, &[("Authorization", auth.as_str())], b"")?;
+    let resp = fetch("DELETE", &target, &[("Authorization", auth.as_str())], b"")?;
     match resp.status {
         200..=299 => Ok(Revoked::Revoked),
         401 => Ok(Revoked::NotValid),
@@ -348,7 +399,7 @@ pub fn search_within(
         url.trim_end_matches('/'),
         crate::search::encode_query(query)
     );
-    let resp = velt_http::fetch_within("GET", &target, &[], b"", limits)?;
+    let resp = fetch_within("GET", &target, &[], b"", limits)?;
     if resp.status != 200 {
         return Err(format!(
             "registry {url}: {} searching: {}",
@@ -362,6 +413,22 @@ pub fn search_within(
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn the_public_registry_is_refused_while_the_variable_is_set() {
+        let default = crate::locations::DEFAULT_REGISTRY;
+        let index = format!("{default}/api/v1/json/index");
+        let err = super::default_refused(&index, true).unwrap_err();
+        assert!(
+            err.starts_with(&format!("refusing to ask {default}")),
+            "{err}"
+        );
+        assert!(super::default_refused(default, true).is_err());
+        assert!(super::default_refused(&index, false).is_ok());
+        // Other registries, also with the same prefix, are asked.
+        assert!(super::default_refused("https://registry.veltpm.com.example/x", true).is_ok());
+        assert!(super::default_refused("http://127.0.0.1:9/api/v1/x/index", true).is_ok());
+    }
 
     use velt_http::{Request, Response, Server};
 

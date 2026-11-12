@@ -64,6 +64,7 @@ fn run_tests(dir: &Path, release: bool) -> Option<String> {
     let out = command
         .current_dir(tmp.path())
         .env("VELT_HOME", tmp.path().join("home"))
+        .env("VELT_REGISTRY", tmp.path().join("home").join("registry"))
         .env_remove("CLICOLOR_FORCE")
         .env("NO_COLOR", "1")
         .output()

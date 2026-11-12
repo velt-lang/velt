@@ -1,4 +1,5 @@
-//! `velt login <url> [--device | --token-stdin]`: sign in to a registry and store its token.
+//! `velt login [<url>] [--device | --token-stdin]`: sign in to a registry and store its token
+//! (without a URL, the registry `velt publish` would use here: `super::registry::login_registry`).
 //!
 //! In a terminal, `velt login` asks the registry for browser sign-in (`GET /api/v1/login`,
 //! [`vpm::login`]) and opens the browser at its page; `--device` signs in with a code entered on
@@ -10,9 +11,11 @@ use std::io::{BufRead, IsTerminal};
 use crate::cli::registry::LoginHow as How;
 use crate::style;
 
-/// Signs in to the registry at `url` and stores its token.
-pub fn login_command(url: &str, how: How) -> Result<(), String> {
-    let key = vpm::credentials::registry_key(url)?;
+/// Signs in to the registry at `url` (`None`: the current package's, by default the public one)
+/// and stores its token.
+pub fn login_command(url: Option<&str>, how: How) -> Result<(), String> {
+    let url = super::registry::login_registry("login", url)?;
+    let key = vpm::credentials::registry_key(&url)?;
     vpm::credentials::check_transport(&key, "a registry token")?;
     let interactive = std::io::stdin().is_terminal();
     if how == How::TokenStdin || how == How::Auto && !interactive {

@@ -50,7 +50,7 @@ impl std::fmt::Debug for Started {
 /// `POST <api>/api/v1/login/device`: a new device sign-in.
 pub fn start(api: &str) -> Result<Started, String> {
     crate::credentials::check_transport(api, "the sign-in")?;
-    let resp = velt_http::fetch_within(
+    let resp = crate::remote::fetch_within(
         "POST",
         &super::endpoint(api, "/device"),
         &[("Accept", "application/json")],
