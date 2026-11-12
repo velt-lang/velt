@@ -216,6 +216,12 @@ export function waitAfterWake<T>(h: shared<HandOff<T>>): Promise<T | null> {
   return startWait<T>(h.block, true);
 }
 
+/** `h.park()` with `waitAfterWake`'s deferral: a runtime wait, dropped as a race loser. */
+export function parkAfterWake<T>(h: shared<HandOff<T>>): Promise<void> {
+  // SAFETY: `parkFuture` makes a heap future of this block, given up to the promise.
+  return unsafe { promiseAt<void>(parkFuture(h.block, true)) };
+}
+
 /** A `wait()` on block `b` (`defer`: `waitAfterWake`), counted. */
 function startWait<T>(b: usize, defer: bool): Promise<T | null> {
   m.inc(b + B_REFS);
@@ -313,9 +319,10 @@ function wakeWaiter(b: usize): void {
 
 // The park future: a heap future (rt_abi_async.md §1; its header, then the block, then whether
 // it saw the end of the wait, or `F_FIRST`: `waitAfterWake`'s before its first poll) with no
-// result, holding a count of the block. Its poll and drop are C functions (`fnAddress`, a stand-in for `exportedAddress`, #2203 step 5). It lives in the
-// block, so a wait allocates nothing more: a hand-off has one waiter. A second park while that
-// one is alive (two `park()`s held at once) gets one of its own.
+// result, holding a count of the block. Its poll and drop are C functions (`fnAddress`, a
+// stand-in for `exportedAddress`, #2203 step 5). It lives in the block, so a wait allocates
+// nothing more: a hand-off has one waiter. A second park while that one is alive (two `park()`s
+// held at once) gets one of its own.
 
 const F_BLOCK: usize = 16;
 const F_DONE: usize = 24;
@@ -364,6 +371,9 @@ function parkPoll(f: usize, cx: usize): u32 {
     register(b, w);
     s = m.load32(b + B_STATE);
     if (s === WAITING || s === FILLING) {
+      // Waiting for a giver (a first poll that found one writing the item too): the poll its
+      // wake brings ends the wait, not deferred again.
+      m.st(f + F_DONE, F_WAITING);
       return 0;
     }
   }
