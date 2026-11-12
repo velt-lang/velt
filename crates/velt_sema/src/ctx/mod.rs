@@ -460,7 +460,9 @@ pub(crate) struct Ctx<'m> {
     pub closure_defs: Vec<DefId>,
     /// Arrows and calls whose value is of widening literal types (1: `id(a)` of `const a = c ?
     /// "x" : "y"`), or a function whose calls give one (2: `() => a`; 3: `() => () => a`), by
-    /// their spans (`body::expr::widening_consts`).
+    /// their spans (`body::expr::widening_consts`). A trial check that is dropped (an overload
+    /// attempt, a recheck) may leave a record behind; it is the same expression's, and only a
+    /// `let`, a property or an inferred type argument taken from that expression reads it.
     pub widening_values: FxHashMap<velt_common::Span, u8>,
     /// The modules of the JS API (`body::expr::numbers::is_js_api`): each prelude module
     /// (`None`: all of it), and each module the prelude's globals re-export from, with the
