@@ -351,7 +351,11 @@ What replaces the runtime's catch (`velt_rt_catch_*`, the catch at a started pro
   running is waited for through a settled future that is a header inside its node (the started
   node's lazy drop word and the free word after it, `N_SETTLE`; its `bool` result goes in the
   word after those, the node's unhandled-rejection link, unused while `catchPanic` holds the
-  promise), so nothing is allocated.
+  promise), so nothing is allocated. That future doesn't adopt the guarded promise while it
+  drives itself (its last poll was its own run, flag `ADOPTED` clear: `drivesItself`): its first
+  run (in its start) returned pending with its own waker, so an adoption would only poll a state
+  that waits for that wake; the future registers as the awaiter, the node's wake runs it among
+  its task's woken nodes, and its finish wakes the future.
 - **When the poll panicked**, the node becomes *panicked*: finished, its result slot never read,
   transferred or dropped, its state machine never polled or dropped, the node never freed (a
   leaf inside the leaked state may still wake it). The message moves into the node.
@@ -620,7 +624,13 @@ program with and without pads); a program built with it leaks as before #2667.
   `%lpN: landingpad { ptr, i32 } cleanup`, which stores the exception pointer in the function's
   exception slot (an `alloca` in the entry block) and branches to the VIR pad, which other pads
   may also jump to. `velt_eh_resume` is `resume { ptr, i32 }` of the slot. A function with an
-  `invoke` names `personality ptr @velt_eh_personality`.
+  `invoke` names `personality ptr @velt_eh_personality`. LLVM's inliner prices the pads as if
+  they ran on every call (a pad with one drop added 50 to `Out.bytes` in http-server, 275 for a
+  threshold of 250), so a function that is small outside its pads (`inlining::small_with_pads`:
+  at most velt_opt's `SMALL_COST` of the blocks the entry reaches through normal edges) gets
+  `inlinehint` (threshold 325 at `-O3`), and velt_opt's single-call-site rule compares
+  `ONCE_COST` with the code outside the pads (`inline::hot_cost`: `Request`'s constructor). Both
+  apply only to functions with unwind edges, so a program that doesn't catch is unchanged.
 - **Cranelift.** A call with an unwind edge is a `try_call` (`try_call_indirect`) whose default
   handler is a landing block per pad that stores the exception (payload register 0) in a
   variable and jumps to the pad; `velt_eh_resume` calls `_Unwind_Resume` with it. `try_call`

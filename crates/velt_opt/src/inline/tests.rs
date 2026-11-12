@@ -515,3 +515,88 @@ fn always_inline_callee_is_inlined_whatever_its_size() {
         assert_eq!(calls_to(&p.funcs[2], small), 0, "{marker:?}");
     }
 }
+
+/// `name(x)`: a call of `g` with an unwind edge to a cleanup pad of `pad` additions then
+/// `velt_eh_resume` (`resume`), then `hot` additions and the return.
+fn padded(
+    name: &str,
+    g: FuncId,
+    resume: velt_vir::vir::ExternId,
+    hot: usize,
+    pad: usize,
+) -> Function {
+    use velt_vir::vir::Terminator;
+    let mut fb = FuncBuilder::internal(name, &[Ty::I64], Ty::I64);
+    let x = fb.param(0);
+    let (entry, body, pad_block, dead) = (fb.block(), fb.block(), fb.block(), fb.block());
+    fb.term(
+        entry,
+        Terminator::Call {
+            callee: Callee::Func(g),
+            args: vec![],
+            dest: None,
+            next: body,
+            unwind: Some(pad_block),
+        },
+    );
+    for _ in 0..hot {
+        fb.assign(body, x, bin(BinOp::Add, copy_local(x), int(1, Ty::I64)));
+    }
+    fb.ret(body, copy_local(x));
+    for _ in 0..pad {
+        fb.assign(
+            pad_block,
+            x,
+            bin(BinOp::Add, copy_local(x), int(2, Ty::I64)),
+        );
+    }
+    fb.term(
+        pad_block,
+        Terminator::Call {
+            callee: Callee::Extern(resume),
+            args: vec![],
+            dest: None,
+            next: dead,
+            unwind: None,
+        },
+    );
+    fb.term(dead, Terminator::Unreachable);
+    fb.finish()
+}
+
+/// A callee called once is inlined up to `ONCE_COST` of code outside its cleanup pads (a program
+/// that catches panics): the copy replaces it, and its pads run only while a panic unwinds. So
+/// a constructor that its pads take past the limit (`Request`'s in http-server) is still inlined;
+/// the same code all on its normal path is not, and `hot_cost` of a function without unwind
+/// edges is its `cost`.
+#[test]
+fn a_callee_called_once_is_inlined_whatever_its_cleanup_pads_add() {
+    let mut pb = ProgramBuilder::new();
+    let resume = pb.ext(velt_vir::eh::RESUME, &[], Ty::Unit, true);
+    let mut fb = FuncBuilder::internal("g", &[], Ty::Unit);
+    let b = fb.block();
+    fb.ret(b, Operand::Const(Const::Unit, Ty::Unit));
+    let mut g = fb.finish();
+    // Kept a call, so `with_pads` keeps its unwind edge.
+    g.inline = Inline::Never;
+    let g = pb.add(g);
+    let with_pads = pb.add(padded("with_pads", g, resume, 1_000, 1_500));
+    let plain = pb.add(adder("plain", 2_500, Linkage::Internal));
+    pb.add(caller(&[with_pads, plain], 1));
+    let mut p = pb.finish();
+    let f = &p.funcs[with_pads.0 as usize];
+    assert!(
+        cost(f) > ONCE_COST && hot_cost(f) <= ONCE_COST,
+        "{} {}",
+        cost(f),
+        hot_cost(f)
+    );
+    assert_eq!(
+        hot_cost(&p.funcs[plain.0 as usize]),
+        cost(&p.funcs[plain.0 as usize])
+    );
+    inline(&mut p);
+    let main = p.funcs.iter().find(|f| f.symbol == "main").unwrap();
+    assert_eq!(calls_to(main, with_pads), 0);
+    assert_eq!(calls_to(main, plain), 1);
+}
