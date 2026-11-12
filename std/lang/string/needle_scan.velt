@@ -61,7 +61,7 @@ function findBytesLong(s: string, needle: string, m: usize, from: usize, end: us
       }
       spent += m * bits.countOnes();
       if (m > SHORT_NEEDLE && spent > 4 * (i + 32 - from) + 1024) {
-        return findTwoWay(s, needle, m, i + 32, end + m);
+        return findTwoWay(s, needle, 0, m, i + 32, end + m, 0);
       }
     }
     i += 32;
@@ -142,7 +142,7 @@ function rfindBytesLong(s: string, needle: string, m: usize, last: usize): i64 {
       }
       spent += m * bits.countOnes();
       if (m > SHORT_NEEDLE && spent > 4 * (last + 1 - at) + 1024) {
-        return rfindTwoWay(s, needle, m, at);
+        return rfindTwoWay(s, needle, 0, m, at, 0);
       }
     }
     top = at;
