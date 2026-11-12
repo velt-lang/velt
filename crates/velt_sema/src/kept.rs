@@ -383,7 +383,7 @@ impl KeptCheck {
                 .map(|name| find_fn(&cx, name))
                 .collect::<Result<Vec<_>, String>>()?;
             let from = check_again(&mut cx, &defs, |_, _| Ok(()))?;
-            finish(cx, opts, from)
+            finish(cx, opts, from).map(|(p, _)| p)
         })
     }
 
@@ -393,14 +393,16 @@ impl KeptCheck {
     /// each one's first check is undone, it is given its body from `modules`, checked again, and
     /// the passes after the bodies' check run (`crate::reanalyze`). `Err` says why the edit needs
     /// the cold check: a module that moved, one the source rewrites change, a function that isn't
-    /// a declaration or wasn't recorded, or what `reanalyze` refuses.
+    /// a declaration or wasn't recorded, or what `reanalyze` refuses. With the program come its
+    /// diagnostics, as the cold check gives them: the warnings of the code the edit left alone
+    /// (an edited body that reports anything is refused).
     pub fn reload(
         &self,
         modules: &[SourceModule],
         root: usize,
         edited: &[(String, String)],
         opts: crate::CheckOptions,
-    ) -> Result<Box<crate::hir::Program>, String> {
+    ) -> Result<(Box<crate::hir::Program>, velt_common::Diagnostics), String> {
         struct Shared<'a>(&'a Ctx<'static>, &'a [SourceModule]);
         // SAFETY: as in `reload_unchanged`; the edited modules are only read.
         unsafe impl Sync for Shared<'_> {}
@@ -561,14 +563,14 @@ fn check_again(
 }
 
 /// The passes after the bodies' check, on a context whose edited bodies were checked again;
-/// any diagnostic past the first `from` refuses the reload.
+/// any diagnostic past the first `from` refuses the reload. The program and its diagnostics.
 fn finish(
     cx: Ctx<'static>,
     opts: crate::CheckOptions,
     from: usize,
-) -> Result<Box<crate::hir::Program>, String> {
+) -> Result<(Box<crate::hir::Program>, velt_common::Diagnostics), String> {
     match crate::kept_reload::reanalyze(cx, opts, from) {
-        Ok(program) => Ok(Box::new(program)),
+        Ok((program, diags)) => Ok((Box::new(program), diags)),
         Err(why) => Err(format!("the cold check: {why}")),
     }
 }

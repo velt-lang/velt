@@ -101,9 +101,10 @@ impl Differential {
         let built = driver::compile_for_jit(&mut cold, &self.opts);
         let diags = cold.render_diagnostics();
         let built = built.unwrap_or_else(|e| panic!("warm, but cold fails: {e:?}\n{diags}"));
-        assert!(
-            diags.trim().is_empty(),
-            "{files:?}: warm reports nothing, cold: {diags}"
+        let warm_diags = warm.render_diagnostics();
+        assert_eq!(
+            warm_diags, diags,
+            "{files:?}: the warm diagnostics, then the cold ones"
         );
         let (warm, cold) = (program.to_string(), built.to_string());
         if warm != cold {
@@ -575,4 +576,33 @@ function twice(n: number): number { return n * 2; }
         assert_eq!(carried.warm_reloads, usize::from(warm), "warm: {warm}");
         assert!(carried.kept.is_some(), "a check is kept for the next save");
     }
+}
+
+/// A warning in code the edit leaves alone is reported on a warm reload too, as on every cold
+/// one (`velt dev` prints each reload's diagnostics): the reload gives the kept check's warnings.
+#[test]
+fn a_warm_reload_reports_the_warnings_of_the_untouched_code() {
+    let src = "function main() { console.log(f(), g()); }
+function f(x?: number): number {
+  if (x === null) return 1;
+  return x ?? 0;
+}
+function g(): number { return 2; }
+";
+    let out = edit(src, "return 2;", "return 3 + 4;");
+    assert!(matches!(out[0], Reload::Warm), "{out:?}");
+    // The comparison (`Differential::reload`) checks the warm diagnostics against the cold ones;
+    // here, also that there is one.
+    let mut d = Differential::start(&[("main.velt", src)]).expect("the program builds");
+    let edited = src.replace("return 2;", "return 5;");
+    write(d.dir.path(), &[("main.velt", &edited)]);
+    let mut warm = Session::new();
+    warm.kept = d.kept.take();
+    warm.counted_seed = Some(velt_vir::CountedSeed::default());
+    let (base, input) = (d.base.clone(), d.opts.input.clone());
+    let located_now = move |s: &Session| located(&base, &Snapshot::of_build(s, &input));
+    let out = driver::compile_for_jit_warm(&mut warm, &d.opts, &d.cold_files, located_now);
+    assert!(matches!(out, Ok(Some(_))), "{:?}", warm.warm_refused);
+    let said = warm.render_diagnostics();
+    assert!(said.contains("is always false"), "{said}");
 }

@@ -112,7 +112,12 @@ fn warm_inner(
             eager_std: scope.eager_std,
         };
         let checked = match kept.reload(&loaded.modules, loaded.root, &edited, sema_opts) {
-            Ok(p) => *p,
+            Ok((p, diags)) => {
+                // What the cold front end would report: the warnings of the code the edit left
+                // alone, printed again on every reload.
+                sess.diagnostics.extend(diags);
+                *p
+            }
             Err(why) => {
                 sess.warm_refused = Some(why);
                 return Ok(None);

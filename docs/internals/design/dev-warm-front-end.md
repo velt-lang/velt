@@ -227,11 +227,14 @@ What it needs, as separate pull requests, each falling back to the cold front en
       type), changes: other bodies' checks read them;
     - walking the live code again makes anything new live or demands a std module: the kept
       check loads no std and checks no std body late;
-    - the reload reports any diagnostic (warnings included, which the cold build then shows),
-      needs another round of the throws sets, the sharing retry, or generated code the kept
-      check did not generate;
+    - the edited bodies report any diagnostic (warnings included, which the cold build then
+      shows), or the reload needs another round of the throws sets, the sharing retry, or
+      generated code the kept check did not generate;
     - the warm path fails with an internal error (a panic): the kept check is dropped and the
       cold build keeps a new one.
+
+    A warm reload reports what a cold one would: the warnings of the code the edit left alone,
+    kept in the context, are printed again on every reload.
 
     Not done: checking the body in two clones and comparing them. Instead, a differential
     test (`dev/swap/warm_tests.rs`) compares warm reloads of random body edits of golden

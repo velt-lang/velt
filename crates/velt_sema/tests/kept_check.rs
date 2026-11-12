@@ -260,7 +260,7 @@ fn assert_warm_reload_from(base: &str, edited: &str, functions: &[&str], spans: 
     let names: Vec<(String, String)> = (functions.iter())
         .map(|s| ("main".to_string(), s.to_string()))
         .collect();
-    let warm = kept
+    let (warm, _) = kept
         .reload(&l.modules, l.root, &names, CheckOptions::default())
         .unwrap_or_else(|e| panic!("{e}"));
     // A closure the edit adds, and the types only it uses, get other ids in the reload (made
@@ -395,7 +395,7 @@ fn a_reload_of_an_edit_changing_an_inferred_result_falls_back_or_matches() {
     let (_, kept) = program_and_kept(BODIES);
     let l = load_src(&edited);
     let names = vec![("main".to_string(), "total".to_string())];
-    if let Ok(warm) = kept.reload(&l.modules, l.root, &names, CheckOptions::default()) {
+    if let Ok((warm, _)) = kept.reload(&l.modules, l.root, &names, CheckOptions::default()) {
         let (cold, _) = program_and_kept(&edited);
         assert_eq!(canonical(cold), canonical(warm));
     }

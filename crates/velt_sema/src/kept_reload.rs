@@ -221,12 +221,13 @@ pub(crate) fn signature(
 /// The rest of `crate::analyze` for a clone of a kept check whose edited bodies were checked
 /// again (`kept`), and what the round loop of `check_timed` would do with it: the program, or why it
 /// needs the cold check (another round, a generator, a diagnostic past the first `before`, which
-/// the cold check reports).
+/// the cold check reports). With the program, its diagnostics (the warnings of the code the edit
+/// left alone).
 pub(crate) fn reanalyze(
     mut cx: Ctx,
     opts: crate::CheckOptions,
     before: usize,
-) -> Result<crate::hir::Program, String> {
+) -> Result<(crate::hir::Program, velt_common::Diagnostics), String> {
     let root = cx.root;
     crate::analyze_after_bodies(&mut cx);
     let root_mod = cx.modules[root];
@@ -260,6 +261,6 @@ pub(crate) fn reanalyze(
     let (program, diags) = crate::program::build_checked(cx, entry, generated);
     match diags.len() > before {
         true => Err("it reports something".into()),
-        false => Ok(program),
+        false => Ok((program, diags)),
     }
 }
