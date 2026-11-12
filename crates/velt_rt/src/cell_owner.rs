@@ -23,6 +23,13 @@
 //!   it on first use;
 //! - `cell_free` forgets the cell (a new cell at the same address is recorded anew anyway).
 //!
+//! Module state is the exception (#2737): a closure stored there (a module-level array of
+//! callbacks) is reached by every task that uses module state, and its cells with it. Those
+//! tasks hold the module lock for the whole of each poll (task/local/module_state.rs), as does
+//! the task that put the closure there, so their uses never overlap, as in Node. A use from
+//! another task while the user holds the module lock makes the cell *guarded*: from then on
+//! every use must hold the lock, and one that doesn't aborts.
+//!
 //! The release runtime keeps the symbols as empty functions (release programs never call them),
 //! so the cell layout and the generated code of release builds are unchanged.
 
@@ -40,6 +47,9 @@ mod table {
         pub thread: String,
         pub name: String,
     }
+
+    /// [`Entry::owner`] of a cell that tasks holding the module lock share (see the module docs).
+    pub const GUARDED: u64 = u64::MAX;
 
     pub(super) static CELLS: Mutex<Option<HashMap<usize, Entry>>> = Mutex::new(None);
 
@@ -115,13 +125,20 @@ pub extern "C" fn velt_rt_cell_use(cell: *const u8) {
                 e.owner = me;
                 e.thread = table::thread();
                 None
-            } else if e.owner != me {
-                Some((e.name.clone(), e.owner, e.thread.clone()))
-            } else {
+            } else if e.owner == me {
                 None
+            } else if crate::task::local::module_held() {
+                // Reached through module state: every user holds the module lock.
+                e.owner = table::GUARDED;
+                None
+            } else {
+                Some((e.name.clone(), e.owner, e.thread.clone()))
             }
         });
         if let Some((name, owner, thread)) = clash {
+            if owner == table::GUARDED {
+                report_unlocked(&name, me);
+            }
             report(&name, owner, &thread, me);
         }
     }
@@ -191,6 +208,23 @@ fn report(name: &str, owner: u64, owner_thread: &str, me: u64) -> ! {
          shared with another task or HTTP request instead of copied, so both would change the \
          variable (and its reference count) at the same time. Keep one value every task shares \
          in `shared(...)` instead (a `shared(new Mutex(...))` for anything but a 64-bit integer).\n"
+    );
+    let _ = std::io::stderr().write_all(msg.as_bytes());
+    std::process::abort()
+}
+
+/// A guarded cell (shared through module state) used by task `me` without the module lock.
+#[cfg(debug_assertions)]
+#[cold]
+fn report_unlocked(name: &str, me: u64) -> ! {
+    use std::io::Write;
+    crate::io::try_flush_stdout();
+    let msg = format!(
+        "velt debug-cells: captured variable `{name}` is shared through module state, and task \
+         {me} (on {}) used it without the module lock, so it may change at the same time as \
+         another task's use. A closure that assigns a variable it captured was given to a task \
+         that does not use module state instead of copied.\n",
+        table::thread()
     );
     let _ = std::io::stderr().write_all(msg.as_bytes());
     std::process::abort()
