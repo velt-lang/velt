@@ -39,7 +39,7 @@ mod int32;
 mod int_compare;
 mod liveness;
 mod narrow;
-mod params;
+pub(crate) mod params;
 mod print;
 mod reads;
 mod refine;
@@ -113,6 +113,16 @@ impl<'p> Env<'p> {
         aggs: &[AggLayout],
         statics: &[StaticData],
     ) -> Env<'p> {
+        Env::with_params(externs, funcs, aggs, params::of(funcs, statics))
+    }
+
+    /// [`Env::of`] with the parameter facts given (`params::merge`).
+    pub fn with_params(
+        externs: &'p [ExternFn],
+        funcs: &[Function],
+        aggs: &[AggLayout],
+        params: params::ParamFacts,
+    ) -> Env<'p> {
         let float_index = instances_of(funcs, &[FLOAT_INDEX]);
         let array = aggs
             .iter()
@@ -127,7 +137,7 @@ impl<'p> Env<'p> {
             float_index,
             array,
             field_tys,
-            params: params::of(funcs, statics),
+            params,
             formatters: print::pairs(funcs),
         }
     }

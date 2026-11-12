@@ -69,7 +69,7 @@ mod boxes;
 mod boxing;
 mod kept;
 pub use boxing::CountedSeed;
-pub use kept::{KeptLowering, Refused};
+pub use kept::{Delta, KeptLowering, Refused};
 mod c_call;
 mod c_export;
 pub(crate) mod c_global;
@@ -519,6 +519,8 @@ struct Cx<'h> {
     declared_unique: Vec<(u32, TyId)>,
     /// Functions currently being built (eager builds of poll functions detect recursion).
     building: FxHashSet<FuncId>,
+    /// The functions built since it was set (kept.rs: what a splice lowered).
+    built_log: Option<Vec<FuncId>>,
     /// Layout facts of every async function instance whose poll function has been built.
     asyncs: FxHashMap<(DefId, Vec<TyId>), async_fn::AsyncInfo>,
     /// Closure instances whose declared scalar params are passed by pointer: `Mutex.with`

@@ -144,24 +144,43 @@ pub fn copy_files(sm: &velt_common::SourceMap) -> velt_common::SourceMap {
     copy
 }
 
+/// What a lowering for `velt dev` ([`lower_kept`]) leaves to the optimizer.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum DevOpt {
+    /// The whole program, for the debug pipeline to optimize and keep
+    /// (`velt_opt::optimize_debug_kept`, `Session::debug_kept`).
+    Whole,
+    /// Nothing: the last version's program with the spliced functions (these) optimized.
+    Done(Vec<usize>),
+}
+
 /// Lowering for `velt dev` (dev-warm-front-end.md step 3 "E"): a warm reload's program into the
-/// kept lowering (`Session::splice_files`), or a program lowered and kept
-/// (`Session::keep_lowering`, seeded builds only), which then holds it. `None`: lower as usual,
-/// `hir` left in place.
+/// kept lowering (`Session::splice_files`), applied to the last version's optimized program
+/// (`Session::dev_program`), whose changed functions alone are optimized; or a program lowered
+/// and kept (`Session::keep_lowering`, seeded builds only), which then holds it. `None`: lower
+/// as usual, `hir` left in place.
 pub(super) fn lower_kept(
     sess: &mut Session,
     hir: &mut Option<Box<hir::Program>>,
     lower_opts: &velt_vir::LowerOptions,
     seeded: bool,
-) -> Result<Option<vir::Program>, Vec<velt_common::Diagnostic>> {
+) -> Result<Option<(vir::Program, DevOpt)>, Vec<velt_common::Diagnostic>> {
+    let ready = sess.dev_program.is_some() && sess.debug_kept.is_some();
     if let Some((files, kept)) = (sess.splice_files.take()).zip(sess.kept_lowering.take()) {
-        if let Some(program) = hir.take() {
+        if let Some(program) = hir.take_if(|_| ready) {
             match kept.splice(program, &files, lower_opts) {
-                Ok((p, kept)) => {
-                    sess.counted_seed = Some(kept.seed().clone());
-                    sess.kept_lowering = Some(kept);
-                    return Ok(Some(p));
-                }
+                Ok((delta, kept)) => match apply(sess, delta) {
+                    Ok((p, changed)) => {
+                        sess.counted_seed = Some(kept.seed().clone());
+                        sess.kept_lowering = Some(kept);
+                        return Ok(Some((p, DevOpt::Done(changed))));
+                    }
+                    // The spliced program lowered whole instead.
+                    Err(why) => {
+                        sess.splice_refused = Some(why);
+                        *hir = Some(kept.into_hir());
+                    }
+                },
                 Err((why, program)) => {
                     sess.splice_refused = Some(why);
                     *hir = Some(program);
@@ -169,6 +188,8 @@ pub(super) fn lower_kept(
             }
         }
     }
+    sess.dev_program = None;
+    sess.debug_kept = None;
     if !sess.keep_lowering || !seeded {
         return Ok(None);
     }
@@ -178,5 +199,42 @@ pub(super) fn lower_kept(
     let (p, seed, kept) = velt_vir::KeptLowering::lower(program, lower_opts)?;
     sess.counted_seed = Some(seed);
     sess.kept_lowering = Some(kept);
-    Ok(Some(p))
+    Ok(Some((p, DevOpt::Whole)))
+}
+
+/// `delta` applied to the last version's program, its changed functions optimized
+/// (`velt_opt::optimize_debug_delta`); why not when the optimizer refuses.
+fn apply(sess: &mut Session, delta: velt_vir::Delta) -> Result<(vir::Program, Vec<usize>), String> {
+    let (Some(mut program), Some(mut kept)) = (sess.dev_program.take(), sess.debug_kept.take())
+    else {
+        return Err("no program kept".into());
+    };
+    let changed = delta.apply(&mut program);
+    let t = Instant::now();
+    let mut passes = velt_opt::PassTimings::new();
+    velt_opt::optimize_debug_delta(&mut program, &mut kept, &changed, &mut passes)?;
+    sess.record("optimize", t);
+    sess.record_details("optimize", passes.entries());
+    sess.debug_kept = Some(kept);
+    Ok((program, changed))
+}
+
+/// The debug pipeline over a program lowered and kept for `velt dev`, keeping what it learns
+/// (`Session::debug_kept`), then verification.
+pub(super) fn optimize_kept(sess: &mut Session, program: &mut vir::Program) -> Result<(), BuildError> {
+    let t = Instant::now();
+    let mut passes = velt_opt::PassTimings::new();
+    sess.debug_kept = Some(velt_opt::optimize_debug_kept(program, &mut passes));
+    let verify_start = Instant::now();
+    let verified = velt_vir::verify(program);
+    let mut steps = passes.entries().to_vec();
+    steps.push(("verify", verify_start.elapsed()));
+    sess.record("optimize", t);
+    sess.record_details("optimize", &steps);
+    verified.map_err(|errs| {
+        BuildError::Ice(format!(
+            "VIR verification failed after optimization:\n  {}",
+            errs.join("\n  ")
+        ))
+    })
 }

@@ -245,6 +245,7 @@ fn a_version_that_failed_after_lowering_is_not_the_baseline() {
         warm: true,
         warm_reloads: 0,
         kept_lowering: None,
+        dev_program: None,
     };
     let failed = host_reload(
         &mut session,
@@ -368,7 +369,9 @@ fn warm_reload(
         sess.keep_check = true;
         sess.keep_lowering = true;
         sess.counted_seed = Some(velt_vir::CountedSeed::default());
-        driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+        let program =
+            driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+        sess.dev_program = Some(program);
         sess
     };
     let mut sess = cold_build();
@@ -385,6 +388,9 @@ fn warm_reload(
     let mut warm = Session::new();
     warm.kept = sess.kept.take();
     warm.kept_lowering = sess.kept_lowering.take();
+    warm.dev_program = sess.dev_program.take();
+    warm.debug_kept = sess.debug_kept.take();
+    assert!(warm.debug_kept.is_some(), "a dev build keeps its optimizer's facts");
     warm.counted_seed = sess.counted_seed.take();
     write(edited);
     let input = opts.input.clone();

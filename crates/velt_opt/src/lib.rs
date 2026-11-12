@@ -150,6 +150,127 @@ pub fn debug_inlined(funcs: &[vir::Function]) -> Vec<bool> {
     helpers
 }
 
+/// What `velt dev` keeps of the debug pipeline's run over a program ([`optimize_debug_kept`]),
+/// to optimize only the functions a later version changes ([`optimize_debug_delta`]) to what
+/// the whole run would make of them.
+pub struct DebugKept {
+    /// The helpers inlined into their callers ([`debug_inlined`]).
+    helpers: Vec<bool>,
+    /// Their bodies as lowered, which the inliner copies.
+    helper_bodies: rustc_hash::FxHashMap<usize, vir::Function>,
+    /// Each function's part of the parameter facts, after inlining (`numrep::params`).
+    calls: Vec<numrep::params::Calls>,
+    /// The parameter facts the run used.
+    params: numrep::params::ParamFacts,
+}
+
+/// The debug pipeline ([`OptLevel::None`]) over `program`, keeping what
+/// [`optimize_debug_delta`] needs.
+pub fn optimize_debug_kept(program: &mut vir::Program, t: &mut PassTimings) -> DebugKept {
+    let helpers = debug_inlined(&program.funcs);
+    let helper_bodies = (helpers.iter().enumerate())
+        .filter(|(_, h)| **h)
+        .map(|(i, _)| (i, program.funcs[i].clone()))
+        .collect();
+    if helpers.contains(&true) {
+        t.time("inline", || inline::run_helpers(program, &helpers));
+    }
+    let calls: Vec<_> = program.funcs.iter().map(numrep::params::calls_of).collect();
+    let params = numrep::params::merge(&program.funcs, &program.statics, &calls);
+    debug_passes(program, params.clone(), (0..program.funcs.len()).collect(), t);
+    DebugKept {
+        helpers,
+        helper_bodies,
+        calls,
+        params,
+    }
+}
+
+/// The debug pipeline over the functions `changed` of `program`, whose other functions are as
+/// the last run over it ([`optimize_debug_kept`]) left them. Refused, and nothing is changed,
+/// when that would change what the run makes of another function: a changed function is (or
+/// was) a helper the others inline, or the calls change a parameter fact.
+pub fn optimize_debug_delta(
+    program: &mut vir::Program,
+    kept: &mut DebugKept,
+    changed: &[usize],
+    t: &mut PassTimings,
+) -> Result<(), String> {
+    let n = program.funcs.len();
+    // The helpers of the changed functions, as the whole run would find them.
+    let now = debug_inlined_at(&program.funcs, &kept.helpers, changed);
+    for &i in changed {
+        let was = kept.helpers.get(i).copied().unwrap_or(false);
+        if was || now.contains(&i) {
+            return Err(format!("`{}` is inlined into its callers", program.funcs[i].symbol));
+        }
+    }
+    kept.helpers.resize(n, false);
+    let mut calls = kept.calls.clone();
+    calls.resize(n, Default::default());
+    let mut inlined: Vec<(usize, vir::Function)> = vec![];
+    for &i in changed {
+        let before = program.funcs[i].clone();
+        inline::run_helpers_into(program, i, &kept.helpers, &kept.helper_bodies);
+        calls[i] = numrep::params::calls_of(&program.funcs[i]);
+        inlined.push((i, before));
+    }
+    let params = numrep::params::merge(&program.funcs, &program.statics, &calls);
+    if params != kept.params {
+        for (i, before) in inlined {
+            program.funcs[i] = before;
+        }
+        return Err("the calls change what a parameter is known to hold".into());
+    }
+    kept.calls = calls;
+    debug_passes(program, params, changed.to_vec(), t);
+    Ok(())
+}
+
+/// Which of the functions `changed` [`debug_inlined`] would make helpers, the others' as
+/// `helpers` says.
+fn debug_inlined_at(funcs: &[vir::Function], helpers: &[bool], changed: &[usize]) -> Vec<usize> {
+    let int32 = numrep::int32_helpers(funcs);
+    let mut mask: Vec<bool> = (0..funcs.len())
+        .map(|i| helpers.get(i).copied().unwrap_or(false) || int32[i])
+        .collect();
+    for &i in changed {
+        mask[i] = int32[i];
+    }
+    let before = mask.clone();
+    inline::std_forwarders(funcs, &mut mask);
+    (changed.iter().copied())
+        .filter(|&i| (mask[i] && !before[i]) || int32[i])
+        .collect()
+}
+
+/// The debug pipeline's per-function passes over the functions `which`, with the parameter
+/// facts `params`.
+fn debug_passes(
+    program: &mut vir::Program,
+    params: numrep::params::ParamFacts,
+    which: Vec<usize>,
+    t: &mut PassTimings,
+) {
+    let env = numrep::Env::with_params(&program.externs, &program.funcs, &program.aggs, params);
+    let mut wanted = vec![false; program.funcs.len()];
+    which.iter().for_each(|&i| wanted[i] = true);
+    // Each function on its own, on every core: the passes read only `env` and the aggregates.
+    // A pass's time is then the sum over the threads.
+    let mut bodies: Vec<&mut vir::Function> = (program.funcs.iter_mut().enumerate())
+        .filter(|(i, f)| wanted[*i] && !f.blocks.is_empty())
+        .map(|(_, f)| f)
+        .collect();
+    let aggs = &program.aggs;
+    let per_thread = parallel::for_each(&mut bodies, PassTimings::new, |t, func| {
+        t.time("simplify_cfg", || simplify_cfg::run(func));
+        if t.time("numrep", || numrep::run(&env, func)) {
+            numrep_cleanup(aggs, func, t);
+        }
+    });
+    per_thread.iter().for_each(|thread| t.add(thread));
+}
+
 /// The `number` variables inside loops of the (optimized) `program` that stay doubles, with
 /// why, per function symbol (`velt build --report numbers`).
 pub fn number_report(program: &vir::Program) -> Vec<(String, Vec<Unnarrowed>)> {
@@ -261,23 +382,8 @@ fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTiming
             if helpers.contains(&true) {
                 t.time("inline", || inline::run_helpers(program, &helpers));
             }
-            let env = numrep::Env::of(
-                &program.externs,
-                &program.funcs,
-                &program.aggs,
-                &program.statics,
-            );
-            // Each function on its own, on every core: the passes read only `env` and the
-            // aggregates. A pass's time is then the sum over the threads.
-            let mut bodies: Vec<&mut vir::Function> = with_bodies(&mut program.funcs).collect();
-            let aggs = &program.aggs;
-            let per_thread = parallel::for_each(&mut bodies, PassTimings::new, |t, func| {
-                t.time("simplify_cfg", || simplify_cfg::run(func));
-                if t.time("numrep", || numrep::run(&env, func)) {
-                    numrep_cleanup(aggs, func, t);
-                }
-            });
-            per_thread.iter().for_each(|thread| t.add(thread));
+            let params = numrep::params::of(&program.funcs, &program.statics);
+            debug_passes(program, params, (0..program.funcs.len()).collect(), t);
         }
         OptLevel::Speed => {
             t.time("dead_funcs", || dead_funcs::run(program));

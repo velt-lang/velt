@@ -215,6 +215,13 @@ pub struct Session {
     pub splice_files: Option<Vec<velt_common::FileId>>,
     /// Why the kept lowering could not take a warm reload.
     pub splice_refused: Option<String>,
+    /// The last `velt dev` version's optimized program, which a splice changes.
+    pub dev_program: Option<vir::Program>,
+    /// What the debug pipeline kept of its run over [`Session::dev_program`].
+    pub debug_kept: Option<velt_opt::DebugKept>,
+    /// The functions a splice changed in the program the build gives (a JIT reload compares
+    /// only those with the running version).
+    pub dev_changed: Option<Vec<usize>>,
     /// The check's kept check and what it borrows, until the driver hands them over.
     pub(crate) pending_kept: Option<KeptHandover>,
     /// `-v`: say at once that the build waits for another of its output (`std_cache::Place::lock`).
@@ -520,8 +527,12 @@ fn lower_checked(
         counted_seed: seed_in.as_ref(),
         jit: dest == VirFor::Jit,
     };
+    let mut dev_opt = None;
     let lowered = match warm::lower_kept(sess, &mut hir, &lower_opts, seed_in.is_some()) {
-        Ok(Some(p)) => Ok(p),
+        Ok(Some((p, how))) => {
+            dev_opt = Some(how);
+            Ok(p)
+        }
         Ok(None) => match hir.as_deref() {
             Some(hir) if seed_in.is_some() => {
                 velt_vir::lower_seeded(hir, &lower_opts).map(|(p, seed)| {
@@ -564,7 +575,11 @@ fn lower_checked(
     sess.record("lower", t);
 
     let t = Instant::now();
-    let verified = velt_vir::verify(&program);
+    let verified = match &dev_opt {
+        // The functions of the last version passed already.
+        Some(warm::DevOpt::Done(changed)) => velt_vir::verify_changed(&program, changed),
+        _ => velt_vir::verify(&program),
+    };
     sess.record("verify", t);
     if let Err(errs) = verified {
         return Err(BuildError::Ice(format!(
@@ -579,7 +594,11 @@ fn lower_checked(
         true => std_cache::wanted(opts),
         false => std_cache::Use::Off,
     };
-    std_cache::stage::optimize(sess, opts, &target, std_use, &mut program)?;
+    match dev_opt {
+        Some(warm::DevOpt::Done(changed)) => sess.dev_changed = Some(changed),
+        Some(warm::DevOpt::Whole) => warm::optimize_kept(sess, &mut program)?,
+        None => std_cache::stage::optimize(sess, opts, &target, std_use, &mut program)?,
+    }
     if opts.report_numbers {
         sess.reports.push(crate::numbers_report::render(&program));
         if !line_info {

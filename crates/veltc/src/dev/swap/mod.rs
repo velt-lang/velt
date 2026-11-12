@@ -95,6 +95,9 @@ pub struct Carried {
     /// The last version's lowering (velt_vir `KeptLowering`): a warm reload lowers the edited
     /// files' functions into it.
     pub kept_lowering: Option<velt_vir::KeptLowering>,
+    /// The running version's optimized program, and what the debug pipeline kept of it: a
+    /// splice changes only some of its functions (`driver::Session::dev_program`).
+    pub dev_program: Option<(velt_vir::vir::Program, velt_opt::DebugKept)>,
 }
 
 /// Whether `velt dev` keeps a check to reload body edits from (`VELT_DEV_WARM=off` turns it off).
@@ -149,11 +152,17 @@ fn reload_with(
     // anything it refuses, goes through the cold front end (which keeps a new check).
     let mut warm = false;
     let mut program = None;
+    // Only the version taken in last is what a splice changes; a cold build keeps none.
+    let last_program = carried.dev_program.take();
     let base = (carried.kept_own.clone()).zip(carried.kept_files.as_ref());
     let kept = carried.kept.take_if(|_| carried.warm);
     if let (Some(kept), Some((base, cold_files))) = (kept, base) {
         sess.kept = Some(kept);
         sess.kept_lowering = carried.kept_lowering.take();
+        if let Some((program, kept)) = last_program {
+            sess.dev_program = Some(program);
+            sess.debug_kept = Some(kept);
+        }
         let input = opts.input.clone();
         let edited = move |s: &Session| {
             super::edits::located(&base, &super::edits::Snapshot::of_build(s, &input))
@@ -241,7 +250,14 @@ fn reload_with(
     }
     let start = Instant::now();
     let mut steps = vec![];
-    let outcome = session.reload_timed(&program, &mut steps);
+    let outcome = match sess.dev_changed.take() {
+        Some(changed) => session.reload_changed(&program, &changed, &mut steps),
+        None => session.reload_timed(&program, &mut steps),
+    };
+    // The version taken in is what the next splice changes.
+    if let (Ok(Reload::Swapped { .. }), true) = (&outcome, carried.kept_lowering.is_some()) {
+        carried.dev_program = sess.debug_kept.take().map(|kept| (program, kept));
+    }
     sess.timings.push(("jit", start.elapsed()));
     sess.record_details("jit", &steps);
     report(&sess, verbose);

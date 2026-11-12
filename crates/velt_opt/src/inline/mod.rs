@@ -196,6 +196,37 @@ pub(crate) fn run(program: &mut Program, budget: &mut Budget, served: crate::Ser
 /// Inline every direct call to a function marked in `helpers` (debug builds: the compiler's
 /// small helpers only, so user code keeps its calls and stays debuggable). Helpers must not
 /// call each other.
+/// [`run_helpers`] into function `fi` alone, the helpers' bodies from `bodies` (as they were
+/// when they were lowered: `velt dev`'s kept debug pipeline, lib.rs).
+pub(crate) fn run_helpers_into(
+    program: &mut Program,
+    fi: usize,
+    helpers: &[bool],
+    bodies: &rustc_hash::FxHashMap<usize, velt_vir::vir::Function>,
+) {
+    let original_blocks = program.funcs[fi].blocks.len();
+    for bi in 0..original_blocks {
+        let Terminator::Call {
+            callee: Callee::Func(callee),
+            args,
+            ..
+        } = &program.funcs[fi].blocks[bi].term
+        else {
+            continue;
+        };
+        let ci = callee.0 as usize;
+        let Some(body) = bodies.get(&ci).filter(|_| helpers.get(ci).copied().unwrap_or(false))
+        else {
+            continue;
+        };
+        if body.blocks.is_empty() || !splice::arity_matches(args, body) {
+            continue;
+        }
+        let resume = splice::resume_extern(&program.externs);
+        splice::inline_call(&program.aggs, &mut program.funcs[fi], bi, body, resume);
+    }
+}
+
 pub(crate) fn run_helpers(program: &mut Program, helpers: &[bool]) -> bool {
     let mut changed = false;
     for fi in 0..program.funcs.len() {

@@ -94,6 +94,7 @@ impl<'h> Cx<'h> {
             unique_params: vec![],
             declared_unique: vec![],
             building: FxHashSet::default(),
+            built_log: None,
             asyncs: FxHashMap::default(),
             by_ref_params: FxHashSet::default(),
             lay: Layouts::default(),
@@ -393,6 +394,9 @@ impl<'h> Cx<'h> {
         self.bind_unique_params(fid);
         super::lower_profile::leave(prof, &func);
         self.funcs[fid.0 as usize] = Some(func);
+        if let Some(log) = self.built_log.as_mut() {
+            log.push(fid);
+        }
         self.building.remove(&fid);
         self.glue_slots.leave();
         self.claim_deferred(fid, deferred_mark);

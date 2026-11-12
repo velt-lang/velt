@@ -94,6 +94,7 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
                     warm: super::swap::warm_enabled(),
                     warm_reloads: 0,
                     kept_lowering: sess.kept_lowering.take(),
+                    dev_program: sess.dev_program.take().zip(sess.debug_kept.take()),
                 };
                 super::swap::serve_reloads(channel, opts.clone(), session, state, &args.build)
             }
@@ -134,5 +135,9 @@ fn compile_and_load(
         .map_err(|e| BuildError::Failed(format!("code generation failed: {e}")));
     sess.timings.push(("jit", start.elapsed()));
     sess.record_details("jit", &steps);
+    // What the reload loop's first splice changes (`swap::Carried::dev_program`).
+    if loaded.is_ok() && sess.kept_lowering.is_some() {
+        sess.dev_program = Some(program);
+    }
     loaded
 }

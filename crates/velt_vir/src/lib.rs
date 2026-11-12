@@ -257,7 +257,7 @@ pub struct LowerOptions<'a> {
     pub jit: bool,
 }
 
-pub use lower::{CountedSeed, KeptLowering, Refused};
+pub use lower::{CountedSeed, Delta, KeptLowering, Refused};
 
 /// One native library to initialize before `main` runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -312,6 +312,12 @@ pub fn lower_seeded(
         true => Ok((p, seed.unwrap_or_default())),
         false => Err(diags),
     }
+}
+
+/// [`verify`] of a program whose functions other than `changed` passed it before (`velt dev`'s
+/// spliced versions, `KeptLowering`).
+pub fn verify_changed(program: &vir::Program, changed: &[usize]) -> Result<(), Vec<String>> {
+    verify::verify_changed(program, changed)
 }
 
 /// CONTRACT: check VIR invariants (see vir.rs header). Returns human-readable errors.
