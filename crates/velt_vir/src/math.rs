@@ -437,13 +437,11 @@ impl Effects {
 }
 
 /// The runtime functions besides the [`MathOp`]s whose effects are not [`Effects::Any`].
-const EFFECTS: [(&str, Effects); 7] = [
+const EFFECTS: [(&str, Effects); 5] = [
     ("velt_rt_str_cmp", Effects::ReadOnly),
     ("velt_rt_str_eq", Effects::ReadOnly),
     ("velt_rt_str_hash", Effects::ReadOnly),
     ("velt_rt_str_char_code_at", Effects::ReadCaching),
-    ("velt_rt_str_unit_to_byte", Effects::ReadCaching),
-    ("velt_rt_str_byte_to_unit", Effects::ReadCaching),
     ("velt_rt_array_view_cold", Effects::Cold),
 ];
 
@@ -574,7 +572,7 @@ mod tests {
             assert_eq!(effects(op.symbol()), Effects::None, "{op:?}");
         }
         assert_eq!(effects("velt_rt_str_cmp"), Effects::ReadOnly);
-        assert_eq!(effects("velt_rt_str_unit_to_byte"), Effects::ReadCaching);
+        assert_eq!(effects("velt_rt_str_char_code_at"), Effects::ReadCaching);
         assert_eq!(effects("velt_rt_array_view_cold"), Effects::Cold);
         assert_eq!(effects("velt_simd_u8x16_eq"), Effects::ReadOnly);
         assert_eq!(effects("velt_simd_u8x16_load"), Effects::ReadOnly);
