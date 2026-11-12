@@ -1,5 +1,6 @@
 // velt/net (tests): white-box tests of the shadows of runtime streams (rt_later_shadow.velt),
-// run by `velt test std/`.
+// run from a copy of std by crates/veltc/tests/std_scheduler_rt_streams.rs (macOS and Linux:
+// the scheduler's modules don't link on Windows).
 //
 // The end of a program gives the flushers of deferred bytes up (`dropFlights`). A flusher whose
 // wake was on its way then runs once more: the shadow it finds must have nothing left to send,

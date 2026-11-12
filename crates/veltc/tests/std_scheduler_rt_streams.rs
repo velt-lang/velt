@@ -16,6 +16,7 @@ use no_window::command;
 
 mod no_window;
 mod runtime_support;
+mod std_unix;
 mod test_dir;
 
 /// `src` built (with `VELT_SCHEDULER=std` when `std`): the binary.
@@ -147,6 +148,19 @@ fn same_on_both_counted(name: &str, src: &str, want: &str, marker: &[u8], counte
             }
         }
     }
+}
+
+/// The shadows' white-box tests (std_unix/net/rt_later_shadow.test.velt): every flag of a
+/// stream's flags word is a bit of its own, and a flusher given up at the end finds nothing left
+/// to send. They import the scheduler's modules, which only link on macOS and Linux.
+#[cfg(unix)]
+#[test]
+fn rt_later_shadow_white_box_tests_pass() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    std_unix::velt_test_in_std_copy(
+        "net/rt_later_shadow.test.velt",
+        include_str!("std_unix/net/rt_later_shadow.test.velt"),
+    );
 }
 
 /// The issue's case and its neighbours on a `streamPair`: deferred bytes reach the peer once
