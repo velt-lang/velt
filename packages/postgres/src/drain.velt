@@ -1,0 +1,26 @@
+// postgres (internal): what happens when the task holding a connection's `Input` is gone: another
+// task reads what the server still owes that request, so the line goes on.
+
+import { PgStream } from "./transport";
+import { Conn } from "./line";
+import { Input } from "./input";
+import { finish, readWhole } from "./connection";
+import { giveBackBorrowed } from "./pool_state";
+
+/** Reads the reply of the request whose `Input` was dropped, holding `leftover` of it. */
+export async function drainAbandoned(conn: Conn, stream: PgStream, leftover: u8[]) {
+  const none = conn.with((l) => l.noStatement);
+  const input = new Input(stream, none);
+  input.conn = conn;
+  input.buffer.load(leftover);
+  input.begin(none);
+  try {
+    await readWhole(conn, input);
+  } catch (e) {
+    // The connection is gone, and so whoever waits on it knows.
+    giveBackBorrowed(conn);
+    return;
+  }
+  finish(conn, input);
+  giveBackBorrowed(conn);
+}

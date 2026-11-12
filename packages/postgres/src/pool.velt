@@ -3,114 +3,284 @@
 // `Pool` is a Copy handle: pass and capture it freely (concurrent queries run on separate
 // connections) and release it once with `end()`.
 
-import {
-  velt_postgres__bind_abort,
-  velt_postgres__bind_begin,
-  velt_postgres__pool_batch,
-  velt_postgres__pool_connect,
-  velt_postgres__pool_end,
-  velt_postgres__pool_execute,
-  velt_postgres__pool_execute_bound,
-  velt_postgres__pool_idle,
-  velt_postgres__pool_new,
-  velt_postgres__pool_query_batch,
-  velt_postgres__pool_query_bound,
-  velt_postgres__pool_query_rows,
-} from "./native";
-import { bindParams } from "velt/db";
-import { check, PgError, unwrap } from "./errors";
-import { counts, cursorRow, cursorRows, firstRows, rowSets } from "./rows";
 import { Client } from "./client";
+import { parseConfig } from "./config";
+import { errorOf, PgError } from "./errors";
+import { closed } from "./failure";
+import { stillAlive } from "./connection";
+import { Conn } from "./line";
+import {
+  batchAll,
+  batchCounts,
+  batchFirst,
+  executeOne,
+  queryAll,
+  queryFirst,
+  runBare,
+  selectAll,
+  selectFirst,
+} from "./ops";
 import { PoolOptions } from "./pool_options";
+import {
+  connectionGone,
+  PoolHandle,
+  PoolState,
+  poolClosed,
+  release,
+  TAKE_ENDED,
+  TAKE_IDLE,
+  TAKE_OPEN,
+} from "./pool_state";
+import { simple } from "./connection";
+import { openConnection } from "./startup";
+import { Lent } from "./lent";
+import { TcpStream } from "velt/net";
+import { Opening } from "./opening";
+import { WaitingForPool } from "./waiting_for_pool";
+
+// Opens a connection under the leave `take` or a waiter's grant gave.
+async function open(pool: PoolHandle): Promise<Conn> throws PgError {
+  const opening = new Opening(pool);
+  const config = pool.with((p) => p.config);
+  const conn = await openConnection(config);
+  opening.released = true;
+  const owner = pool;
+  conn.with((l) => {
+    l.pool = owner;
+  });
+  return conn;
+}
+
+// velt/net's direct TLS (`verify-ca`, `verify-full`) decrypts only while someone waits on the
+// socket: a wait that ends after one look (its signal is already aborted, so no timer is made) lets
+// it take what has come (a FATAL, the end of the stream) before `stillAlive` reads. Only these
+// connections pay for it.
+async function settled(pool: PoolHandle, conn: Conn, socket: TcpStream) {
+  const lent = new Lent(pool, conn, conn.with((l) => l.generation));
+  const now = conn.with((l) => l.stopAtOnce());
+  try {
+    await socket.readableWithin(-1, now);
+  } catch (e) {
+    // `stillAlive`'s read reports it.
+  }
+  lent.released = true;
+}
+
+/**
+ * A connection for this task, waiting for one when all `max` are busy. An idle connection has its
+ * socket looked at first, without waiting: a session the server ended while it was idle has sent
+ * its FATAL or closed, and is dropped for another. A statement is never sent twice: one whose
+ * session ends after this fails with that error, since the server may have run it.
+ */
+export async function borrow(pool: PoolHandle): Promise<Conn> throws PgError {
+  while (true) {
+    const t = pool.with((p) => p.take());
+    if (t.status == TAKE_IDLE) {
+      const conn = t.conn;
+      if (conn != null) {
+        const direct = conn.with((l) => l.directSocket);
+        if (direct != null) {
+          await settled(pool, conn, direct);
+        }
+        if (stillAlive(conn)) {
+          return conn;
+        }
+        connectionGone(pool);
+      }
+      continue;
+    }
+    if (t.status == TAKE_OPEN) {
+      return await open(pool);
+    }
+    if (t.status == TAKE_ENDED) {
+      throw poolClosed();
+    }
+    const ch = t.wait;
+    if (ch != null) {
+      const waiting = new WaitingForPool(pool, ch);
+      const g = await ch.receive();
+      waiting.released = true;
+      if (g == null) {
+        // The pool ended, which closed the channel.
+        throw poolClosed();
+      }
+      pool.with((p) => p.reuse(ch));
+      const conn = g.conn;
+      if (conn != null) {
+        return conn;
+      }
+      return await open(pool);
+    }
+  }
+}
 
 /**
  * Up to `max` connections, opened on demand and reused. `query` & co. borrow a connection
  * for one statement; `connect()` and `transaction` keep one for longer.
  */
 export struct Pool {
-  private handle: u64;
+  private handle: PoolHandle;
 
   /** A pool for `opts.url`: what `createPool(opts)` does. */
   static create(opts: PoolOptions): Pool {
     const max = opts.max ?? 10;
-    return { handle: unwrap(velt_postgres__pool_new(opts.url, max as u32)) };
+    const state = new PoolState(parseConfig(opts.url), max == 0 ? 10 : max);
+    return { handle: shared(new Mutex<PoolState>(state)) };
   }
 
   async query<T, P>(sql: string, params: P): Promise<T[]> {
-    return cursorRows<T>(0, await this.open(sql, params, false));
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    try {
+      const out: T[] = await queryAll<T, P>(conn, 0, sql, params);
+      release(pool, conn);
+      return out;
+    } catch (e) {
+      release(pool, conn);
+      throw e;
+    }
   }
 
   async queryOne<T, P>(sql: string, params: P): Promise<T | null> {
-    return cursorRow<T>(0, await this.open(sql, params, true));
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    try {
+      const out: T | null = await queryFirst<T, P>(conn, 0, sql, params);
+      release(pool, conn);
+      return out;
+    } catch (e) {
+      release(pool, conn);
+      throw e;
+    }
   }
 
   async execute<P>(sql: string, params: P): Promise<i64> {
-    const sink = velt_postgres__bind_begin();
-    if (bindParams<P>(sink, params)) {
-      return unwrap(await velt_postgres__pool_execute_bound(this.handle, sql, sink));
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    try {
+      const n = await executeOne<P>(conn, 0, sql, params);
+      release(pool, conn);
+      return n;
+    } catch (e) {
+      release(pool, conn);
+      throw e;
     }
-    velt_postgres__bind_abort(sink);
-    return unwrap(await velt_postgres__pool_execute(this.handle, sql, JSON.stringify(params)));
   }
 
   async select<T>(sql: string): Promise<T[]> {
-    const cursor = unwrap(await velt_postgres__pool_query_rows(this.handle, sql, "", false));
-    return cursorRows<T>(0, cursor);
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    try {
+      const out: T[] = await selectAll<T>(conn, 0, sql);
+      release(pool, conn);
+      return out;
+    } catch (e) {
+      release(pool, conn);
+      throw e;
+    }
   }
 
   async selectOne<T>(sql: string): Promise<T | null> {
-    const cursor = unwrap(await velt_postgres__pool_query_rows(this.handle, sql, "", true));
-    return cursorRow<T>(0, cursor);
-  }
-
-  // As `Client.open`, on one of the pool's connections.
-  private async open<P>(sql: string, params: P, firstOnly: bool): Promise<u64> {
-    const sink = velt_postgres__bind_begin();
-    if (bindParams<P>(sink, params)) {
-      return unwrap(await velt_postgres__pool_query_bound(this.handle, sql, sink, firstOnly));
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    try {
+      const out: T | null = await selectFirst<T>(conn, 0, sql);
+      release(pool, conn);
+      return out;
+    } catch (e) {
+      release(pool, conn);
+      throw e;
     }
-    velt_postgres__bind_abort(sink);
-    const text = JSON.stringify(params);
-    return unwrap(await velt_postgres__pool_query_rows(this.handle, sql, text, firstOnly));
   }
 
   async run(sql: string): Promise<i64> {
-    return unwrap(await velt_postgres__pool_execute(this.handle, sql, ""));
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    try {
+      const n = await runBare(conn, 0, sql);
+      release(pool, conn);
+      return n;
+    } catch (e) {
+      release(pool, conn);
+      throw e;
+    }
   }
 
   async batch(sql: string): Promise<void> {
-    check(await velt_postgres__pool_batch(this.handle, sql));
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    try {
+      await simple(conn, 0, sql);
+      release(pool, conn);
+    } catch (e) {
+      release(pool, conn);
+      throw e;
+    }
   }
 
   /** The batch forms run on one of the pool's connections. */
   async batchQuery<T, P>(sql: string, paramSets: P[]): Promise<T[][]> {
-    const r = await velt_postgres__pool_query_batch(this.handle, sql, JSON.stringify(paramSets), 0);
-    return rowSets<T>(0, unwrap(r));
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    try {
+      const out: T[][] = await batchAll<T, P>(conn, 0, sql, paramSets);
+      release(pool, conn);
+      return out;
+    } catch (e) {
+      release(pool, conn);
+      throw e;
+    }
   }
 
   async batchQueryOne<T, P>(sql: string, paramSets: P[]): Promise<(T | null)[]> {
-    const r = await velt_postgres__pool_query_batch(this.handle, sql, JSON.stringify(paramSets), 1);
-    return firstRows<T>(0, unwrap(r));
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    try {
+      const out: (T | null)[] = await batchFirst<T, P>(conn, 0, sql, paramSets);
+      release(pool, conn);
+      return out;
+    } catch (e) {
+      release(pool, conn);
+      throw e;
+    }
   }
 
   async batchExecute<P>(sql: string, paramSets: P[]): Promise<i64[]> {
-    const r = await velt_postgres__pool_query_batch(this.handle, sql, JSON.stringify(paramSets), 2);
-    return counts(0, unwrap(r));
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    try {
+      const out = await batchCounts<P>(conn, 0, sql, paramSets);
+      release(pool, conn);
+      return out;
+    } catch (e) {
+      release(pool, conn);
+      throw e;
+    }
   }
 
   /** A dedicated connection until its `close()`, which returns it to the pool. */
   async connect(): Promise<Client> {
-    return Client.fromHandle(unwrap(await velt_postgres__pool_connect(this.handle)));
+    const conn = await borrow(this.handle);
+    return Client.of(conn, conn.with((l) => l.lease()));
   }
 
-  /** `Client.transaction` on a dedicated connection, returned to the pool afterwards. */
+  /**
+   * `Client.transaction` on a dedicated connection, returned to the pool afterwards. If the task
+   * goes away inside it, the connection is closed (the server rolls back) and not returned.
+   */
   async transaction<T, E>(fn: (tx: Client) => Promise<T, E>): Promise<T> throws PgError | E {
-    const client = await this.connect();
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    const generation = conn.with((l) => l.lease());
+    const lent = new Lent(pool, conn, generation);
+    const client = Client.of(conn, generation);
     try {
       const result = await client.transaction(fn);
+      lent.released = true;
       client.close();
       return result;
     } catch (e) {
+      lent.released = true;
       client.close();
       throw e;
     }
@@ -118,7 +288,7 @@ export struct Pool {
 
   /** Connections waiting idle in the pool. */
   get idleCount(): i64 {
-    return velt_postgres__pool_idle(this.handle) as i64;
+    return this.handle.with((p) => p.idleCount);
   }
 
   /**
@@ -126,8 +296,7 @@ export struct Pool {
    * client) finishes; later operations throw "ECLOSED".
    */
   end() {
-    // The handle is generational: once ended, this and every copy of it throw "ECLOSED".
-    velt_postgres__pool_end(this.handle);
+    this.handle.with((p) => p.end());
   }
 }
 

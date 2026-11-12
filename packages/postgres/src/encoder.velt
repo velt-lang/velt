@@ -1,0 +1,381 @@
+// postgres (internal): `Encoder`, a request's `Bind` messages, written as `writeParams` hands over the
+// values, each encoded right away for the type the server inferred: integers range-checked, floats,
+// `bool`, text types, `bytea` and JSON in binary. A string for any other type goes in PostgreSQL's
+// text format and the server parses it. Anything else is a clear `EINVAL`. The first value (or
+// `object()`) says whether they bind by name, which finds the statement; on a miss nothing is
+// written, and the caller prepares it and starts over.
+
+import { ParamSink } from "velt/db";
+import { Failure, invalid } from "./failure";
+import { floatInBinary, textInBinary } from "./binary_values";
+import { Out } from "./frontend";
+import {
+  C_BOOL,
+  C_BYTEA,
+  C_FLOAT4,
+  C_FLOAT8,
+  C_INT2,
+  C_INT4,
+  C_INT8,
+  C_NUMERIC,
+  C_OID,
+} from "./pg_type";
+import { Prepared } from "./prepared";
+import { StatementCache } from "./statement_cache";
+
+// 2^63, where integers stop fitting in an `i64`.
+const TWO_63: f64 = 9223372036854775808.0;
+
+/** Writes a request's `Bind` messages (see the module header). */
+export class Encoder implements ParamSink {
+  out: Out;
+  /** `none` until the first value finds it. */
+  statement: shared<Prepared>;
+  missed: bool = false;
+  named: bool = false;
+  problem: Failure | null = null;
+  private statements: StatementCache;
+  private none: shared<Prepared>;
+  private sql: string = "";
+  private found: bool = false;
+  // The caller has no values at all (`select`, `run`), not an empty list of them.
+  private bare: bool = false;
+  private lengthAt: i64 = 0;
+  private formatsAt: i64 = 0;
+  private valuesAt: i64 = 0;
+  private count: i64 = 0;
+  private values: i64 = 0;
+  private byName: bool = false;
+  private pending: string = "";
+  private hint: i64 = 0;
+  private inOrder: bool = true;
+  private starts: i64[] = [];
+  private ends: i64[] = [];
+
+  constructor(out: Out, statements: StatementCache, none: shared<Prepared>) {
+    this.out = out;
+    this.statements = statements;
+    this.none = none;
+    this.statement = none;
+  }
+
+  /** Before a request's first set of values. */
+  start(sql: string, bare: bool = false) {
+    this.sql = sql;
+    this.bare = bare;
+    this.found = false;
+    this.missed = false;
+    this.named = false;
+    this.problem = null;
+    this.statement = this.none;
+  }
+
+  private first(named: bool): bool {
+    if (this.found) {
+      return true;
+    }
+    if (this.missed || this.problem != null) {
+      return false;
+    }
+    this.named = named;
+    const s = this.statements.get(this.sql, named);
+    if (s == null) {
+      this.missed = true;
+      return false;
+    }
+    this.statement = s;
+    this.found = true;
+    this.openBind();
+    return true;
+  }
+
+  // Begins the `Bind`, every format binary until a value says otherwise.
+  private openBind() {
+    const o = this.out;
+    const n = this.statement.paramCodecs.length as i64;
+    this.count = n;
+    this.values = 0;
+    this.byName = false;
+    // The tag, the length (written at the end), the unnamed portal.
+    o.room(6);
+    o.put8(66);
+    this.lengthAt = o.len;
+    o.put32(0);
+    o.put8(0);
+    o.cstr(this.statement.name);
+    // The formats, and the count of values.
+    o.room(4 + 2 * n);
+    o.put16(n);
+    this.formatsAt = o.len;
+    const b = o.bytes;
+    let p = o.len;
+    for (let i: i64 = 0; i < n; i++) {
+      b[p] = 0;
+      b[p + 1] = 1;
+      p += 2;
+    }
+    o.len = p;
+    o.put16(n);
+    this.valuesAt = o.len;
+  }
+
+  /** Ends a set of values: `Bind` is whole. False on a miss or a problem. */
+  endSet(): bool {
+    if (!this.found && !this.first(false)) {
+      return false;
+    }
+    if (this.problem != null) {
+      return false;
+    }
+    if (this.byName) {
+      if (!this.endNamed()) {
+        return false;
+      }
+    } else if (this.values != this.count) {
+      const given = this.bare ? "none" : `${this.values}`;
+      this.problem = invalid(
+        `the statement takes ${this.count} parameter(s) but ${given} were given`,
+      );
+      return false;
+    }
+    // Every result column in binary.
+    const o = this.out;
+    o.room(4);
+    o.put16(1);
+    o.put16(1);
+    o.end(this.lengthAt);
+    return true;
+  }
+
+  /** The next set of values goes in a new `Bind`, after the caller's `Execute`. */
+  nextSet() {
+    this.openBind();
+  }
+
+  private endNamed(): bool {
+    const n = this.count;
+    const names = this.statement.names;
+    for (let i: i64 = 0; i < n; i++) {
+      if (this.starts[i] < 0) {
+        this.problem = invalid(`missing parameter "${names[i]}" (placeholder $${i + 1})`);
+        return false;
+      }
+    }
+    if (!this.inOrder) {
+      const o = this.out;
+      const values = o.bytes.slice(this.valuesAt, o.len);
+      o.len = this.valuesAt;
+      for (let i: i64 = 0; i < n; i++) {
+        o.raw(values, this.starts[i] - this.valuesAt, this.ends[i] - this.valuesAt);
+      }
+    }
+    return true;
+  }
+
+  // --- ParamSink ---
+
+  object(): void {
+    if (!this.first(true) || this.problem != null) {
+      return;
+    }
+    if (!this.statement.named) {
+      // A later set of a batch: an object for a statement prepared for an array.
+      if (this.count != 0) {
+        this.problem = invalid(
+          `the statement takes ${this.count} parameter(s) but none were given`,
+        );
+      }
+      return;
+    }
+    this.byName = true;
+    this.inOrder = true;
+    this.hint = 0;
+    const n = this.count;
+    while ((this.starts.length as i64) < n) {
+      this.starts.push(-1);
+      this.ends.push(0);
+    }
+    for (let i: i64 = 0; i < n; i++) {
+      this.starts[i] = -1;
+    }
+  }
+
+  name(name: string): void {
+    this.pending = name;
+  }
+
+  // The parameter the next value goes to, or -1 for none. An object's members mostly come in the
+  // order of the SQL's parameters, so the search starts after the last match.
+  private place(): i64 {
+    if (!this.first(false) || this.problem != null) {
+      return -1;
+    }
+    if (!this.byName) {
+      const i = this.values;
+      this.values = i + 1;
+      return i < this.count ? i : -1;
+    }
+    const n = this.count;
+    const names = this.statement.names;
+    for (let tried: i64 = 0; tried < n; tried++) {
+      const i = this.hint + tried < n ? this.hint + tried : this.hint + tried - n;
+      if (names[i] == this.pending) {
+        this.inOrder = this.inOrder && i == this.hint && tried == 0;
+        this.hint = i + 1 < n ? i + 1 : 0;
+        this.starts[i] = this.out.len;
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private placed(i: i64) {
+    if (this.byName) {
+      this.ends[i] = this.out.len;
+    }
+  }
+
+  private wrong(what: string, i: i64) {
+    const name = this.statement.paramNames[i];
+    this.problem = invalid(
+      `parameter $${i + 1}: cannot bind ${what} to a parameter of type ${name}`,
+    );
+  }
+
+  // In PostgreSQL's input syntax, for the server to parse.
+  private serverText(i: i64, s: string) {
+    const o = this.out;
+    o.bytes[this.formatsAt + 2 * i + 1] = 0;
+    o.i32(Buffer.byteLength(s) as i64);
+    o.text(s);
+  }
+
+  int(v: i64): void {
+    const i = this.place();
+    if (i < 0) {
+      return;
+    }
+    const o = this.out;
+    const codec = this.statement.paramCodecs[i];
+    if (codec == C_INT4 || codec == C_OID) {
+      const low: i64 = codec == C_INT4 ? -2147483648 : 0;
+      const high: i64 = codec == C_INT4 ? 2147483647 : 4294967295;
+      if (v < low || v > high) {
+        this.outOfRange(v, i);
+      } else {
+        o.room(8);
+        o.put32(4);
+        o.put32(v);
+      }
+    } else if (codec == C_INT8) {
+      o.room(12);
+      o.put32(8);
+      o.put32(v >> 32);
+      o.put32(v);
+    } else if (codec == C_INT2) {
+      if (v < -32768 || v > 32767) {
+        this.outOfRange(v, i);
+      } else {
+        o.room(6);
+        o.put32(2);
+        o.put16(v);
+      }
+    } else if (codec == C_FLOAT8 || codec == C_FLOAT4) {
+      floatInBinary(this.out, v as f64, codec);
+    } else if (codec == C_NUMERIC) {
+      this.serverText(i, `${v}`);
+    } else if (!textInBinary(this.out, `${v}`, codec)) {
+      this.wrong("an integer", i);
+    }
+    this.placed(i);
+  }
+
+  private outOfRange(v: i64, i: i64) {
+    this.problem = invalid(
+      `parameter $${i + 1}: ${v} is out of range for ${this.statement.paramNames[i]}`,
+    );
+  }
+
+  uint(v: u64): void {
+    if (v <= 9223372036854775807u64) {
+      this.int(v as i64);
+    } else {
+      this.real(v as f64);
+    }
+  }
+
+  float(v: f64): void {
+    if (v !== v || v == Infinity || v == -Infinity) {
+      this.null();
+    } else if (Math.trunc(v) == v && v >= -TWO_63 && v < TWO_63) {
+      this.int(v as i64);
+    } else {
+      this.real(v);
+    }
+  }
+
+  private real(v: f64) {
+    const i = this.place();
+    if (i < 0) {
+      return;
+    }
+    const codec = this.statement.paramCodecs[i];
+    if (codec == C_FLOAT8 || codec == C_FLOAT4) {
+      floatInBinary(this.out, v, codec);
+    } else if (codec == C_NUMERIC) {
+      this.serverText(i, `${v}`);
+    } else if (!textInBinary(this.out, `${v}`, codec)) {
+      this.wrong("a float", i);
+    }
+    this.placed(i);
+  }
+
+  bool(v: bool): void {
+    const i = this.place();
+    if (i < 0) {
+      return;
+    }
+    const codec = this.statement.paramCodecs[i];
+    if (codec == C_BOOL) {
+      this.out.i32(1);
+      this.out.u8(v ? 1 : 0);
+    } else if (!textInBinary(this.out, v ? "true" : "false", codec)) {
+      this.wrong("a bool", i);
+    }
+    this.placed(i);
+  }
+
+  null(): void {
+    const i = this.place();
+    if (i < 0) {
+      return;
+    }
+    this.out.i32(-1);
+    this.placed(i);
+  }
+
+  text(v: string): void {
+    const i = this.place();
+    if (i < 0) {
+      return;
+    }
+    if (!textInBinary(this.out, v, this.statement.paramCodecs[i])) {
+      this.serverText(i, v);
+    }
+    this.placed(i);
+  }
+
+  blob(v: u8[]): void {
+    const i = this.place();
+    if (i < 0) {
+      return;
+    }
+    if (this.statement.paramCodecs[i] == C_BYTEA) {
+      this.out.i32(v.length as i64);
+      this.out.raw(v);
+    } else {
+      this.wrong("a u8[]", i);
+    }
+    this.placed(i);
+  }
+}

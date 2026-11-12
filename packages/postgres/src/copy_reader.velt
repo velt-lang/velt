@@ -1,32 +1,27 @@
 // postgres (internal): `CopyReader`, the data side of `COPY … TO STDOUT`.
 
-import {
-  velt_postgres__copy_close,
-  velt_postgres__copy_read,
-  velt_postgres__copy_read_bytes,
-} from "./native";
-import { PgError, unwrap } from "./errors";
+import { CopyHandle, copyClose, copyRead } from "./copy_state";
+import { PgError } from "./errors";
 
 /**
  * The data side of `client.copyTo(sql)`, as it arrives: each `read()` returns what has been
  * received so far (whole rows in the text and CSV formats), null at the end.
  */
 export struct CopyReader implements AsyncIterable<string, PgError> {
-  private handle: u64;
+  private handle: CopyHandle;
 
-  /** The package's own: the reader of a handle its native library returned. */
-  static fromHandle(handle: u64): CopyReader {
+  /** The package's own: the reader of a started copy. */
+  static of(handle: CopyHandle): CopyReader {
     return { handle: handle };
   }
 
   /** The next rows as text, or null at the end (then the reader is released). */
   async read(): Promise<string | null> {
-    const chunk = unwrap(await velt_postgres__copy_read(this.handle));
+    const chunk = await copyRead(this.handle);
     if (chunk.length == 0) {
-      this.close();
       return null;
     }
-    return chunk;
+    return chunk.utf8Slice();
   }
 
   /**
@@ -45,9 +40,8 @@ export struct CopyReader implements AsyncIterable<string, PgError> {
 
   /** The next bytes (the binary format), or null at the end (then the reader is released). */
   async readBytes(): Promise<u8[] | null> {
-    const chunk = unwrap(await velt_postgres__copy_read_bytes(this.handle));
+    const chunk = await copyRead(this.handle);
     if (chunk.length == 0) {
-      this.close();
       return null;
     }
     return chunk;
@@ -55,6 +49,6 @@ export struct CopyReader implements AsyncIterable<string, PgError> {
 
   /** Stops reading (the rest is discarded) and releases the reader. */
   close() {
-    velt_postgres__copy_close(this.handle);
+    copyClose(this.handle);
   }
 }

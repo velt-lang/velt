@@ -1,0 +1,44 @@
+// postgres (internal): `Failure`, what went wrong, as a plain value that crosses between tasks.
+
+/** A failure on its way to a `PgError`; the fields mean what `PgError`'s do. */
+export struct Failure {
+  code: string;
+  message: string;
+  detail: string | null;
+  constraint: string | null;
+}
+
+/** A failure outside the server. */
+export function failure(code: string, message: string): Failure {
+  return { code: code, message: message, detail: null, constraint: null };
+}
+
+/** A bad argument: connection string, parameters, placeholder names, transaction nesting. */
+export function invalid(message: string): Failure {
+  return failure("EINVAL", message);
+}
+
+/** Use of a closed client, a released reader or writer, or an ended pool. */
+export function closed(what: string): Failure {
+  return failure("ECLOSED", `the ${what} is closed`);
+}
+
+/** The connection is gone. */
+export function connectionClosed(): Failure {
+  return failure("ECONNRESET", "connection closed");
+}
+
+/** A failed socket operation. */
+export function ioFailure(code: string, message: string): Failure {
+  return failure(code, `error communicating with the server: ${message}`);
+}
+
+/** Bytes from the server that do not follow the protocol: the connection ends. */
+export function protocol(message: string): Failure {
+  return failure("UNKNOWN", `error parsing response from server: ${message}`);
+}
+
+/** The server's password exchange could not go on. */
+export function authentication(message: string): Failure {
+  return failure("UNKNOWN", `authentication error: ${message}`);
+}

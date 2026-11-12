@@ -1,0 +1,136 @@
+// postgres (internal): reading the protocol's backend messages: a tag byte and a big-endian length
+// that counts itself, then the body. Nothing here trusts the server: a helper takes the end of the
+// bytes it may look at, and what falls outside is reported, never read.
+
+import { Failure } from "./failure";
+
+// Message tags, as the protocol's documentation names them.
+export const AUTHENTICATION: u8 = 82;
+export const BACKEND_KEY_DATA: u8 = 75;
+export const BIND_COMPLETE: u8 = 50;
+export const CLOSE_COMPLETE: u8 = 51;
+export const COMMAND_COMPLETE: u8 = 67;
+export const COPY_DATA: u8 = 100;
+export const COPY_DONE: u8 = 99;
+export const COPY_IN_RESPONSE: u8 = 71;
+export const COPY_OUT_RESPONSE: u8 = 72;
+export const COPY_BOTH_RESPONSE: u8 = 87;
+export const DATA_ROW: u8 = 68;
+export const EMPTY_QUERY: u8 = 73;
+export const ERROR_RESPONSE: u8 = 69;
+export const NEGOTIATE_VERSION: u8 = 118;
+export const NO_DATA: u8 = 110;
+export const NOTICE_RESPONSE: u8 = 78;
+export const NOTIFICATION_RESPONSE: u8 = 65;
+export const PARAMETER_DESCRIPTION: u8 = 116;
+export const PARAMETER_STATUS: u8 = 83;
+export const PARSE_COMPLETE: u8 = 49;
+export const PORTAL_SUSPENDED: u8 = 115;
+export const READY_FOR_QUERY: u8 = 90;
+export const ROW_DESCRIPTION: u8 = 84;
+
+/** The largest message taken from a server: PostgreSQL's own limit on one value. */
+export const MAX_FRAME: i64 = 1073741823;
+
+/** The big-endian unsigned 32 bits at `p`. */
+export function u32At(b: u8[], p: i64): i64 {
+  return ((b[p] as i64) << 24) |
+    ((b[p + 1] as i64) << 16) |
+    ((b[p + 2] as i64) << 8) |
+    (b[p + 3] as i64);
+}
+
+/** The big-endian signed 32 bits at `p`. */
+export function i32At(b: u8[], p: i64): i64 {
+  const v = u32At(b, p);
+  return v >= 2147483648 ? v - 4294967296 : v;
+}
+
+/** The big-endian unsigned 16 bits at `p`. */
+export function u16At(b: u8[], p: i64): i64 {
+  return ((b[p] as i64) << 8) | (b[p + 1] as i64);
+}
+
+/** The big-endian signed 16 bits at `p`. */
+export function i16At(b: u8[], p: i64): i64 {
+  const v = u16At(b, p);
+  return v >= 32768 ? v - 65536 : v;
+}
+
+/** The big-endian signed 64 bits at `p`. */
+export function i64At(b: u8[], p: i64): i64 {
+  return (u32At(b, p) << 32) | u32At(b, p + 4);
+}
+
+/**
+ * How many bytes the message at `b[p..end]` takes, tag included: 0 if it has not all arrived, -1 if
+ * its length can't be one.
+ */
+export function frameSize(b: u8[], p: i64, end: i64): i64 {
+  if (end - p < 5) {
+    return 0;
+  }
+  const len = u32At(b, p + 1);
+  if (len < 4 || len > MAX_FRAME) {
+    return -1;
+  }
+  return end - p > len ? len + 1 : 0;
+}
+
+/** The position of the NUL ending the string at `from`, before `to`; -1 if there is none. */
+export function cstrEnd(b: u8[], from: i64, to: i64): i64 {
+  for (let i = from; i < to; i++) {
+    if (b[i] == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** The fields of an `ErrorResponse` body `b[from..to]` (its tag and length left out). */
+export function errorFields(b: u8[], from: i64, to: i64): Failure {
+  let code = "UNKNOWN";
+  let message = "";
+  let detail: string | null = null;
+  let constraint: string | null = null;
+  let p = from;
+  while (p < to && b[p] != 0) {
+    const field = b[p];
+    const stop = cstrEnd(b, p + 1, to);
+    if (stop < 0) {
+      break;
+    }
+    if (field == 67) {
+      code = b.utf8Slice(p + 1, stop);
+    } else if (field == 77) {
+      message = b.utf8Slice(p + 1, stop);
+    } else if (field == 68) {
+      detail = b.utf8Slice(p + 1, stop);
+    } else if (field == 110) {
+      constraint = b.utf8Slice(p + 1, stop);
+    }
+    p = stop + 1;
+  }
+  return { code: code, message: message, detail: detail, constraint: constraint };
+}
+
+/** The count at the end of a `CommandComplete` tag `b[from..to]` (`UPDATE 3`, `INSERT 0 1`); else 0. */
+export function rowsAffected(b: u8[], from: i64, to: i64): i64 {
+  let p = to;
+  let n: i64 = 0;
+  let scale: i64 = 1;
+  while (p > from) {
+    const c = b[p - 1];
+    if (c < 48 || c > 57) {
+      break;
+    }
+    // More digits than an i64 holds aren't a count.
+    if (scale > 1000000000000000000) {
+      return 0;
+    }
+    n += ((c as i64) - 48) * scale;
+    scale *= 10;
+    p--;
+  }
+  return p > from && b[p - 1] == 32 ? n : 0;
+}

@@ -1,0 +1,184 @@
+// postgres (internal): the server's description of a statement, and what `Prepared` needs of it: the
+// types by name and codec, from pg_type.velt, or from the catalog for one it doesn't know.
+
+import { cstrEnd, i16At, PARAMETER_DESCRIPTION, ROW_DESCRIPTION, u16At, u32At } from "./backend";
+import { PgError } from "./errors";
+import { invalid, protocol } from "./failure";
+import { catalogType, knownType, PgType } from "./pg_type";
+import { finish, lose, noted, refused, replyTo } from "./connection";
+import { Input } from "./input";
+import { FAILED } from "./builder";
+import { Conn } from "./line";
+import { Prepared } from "./prepared";
+import { rewriteNamed } from "./placeholders";
+
+// Domains over domains, and arrays of them, end here if a catalog says they don't.
+const MAX_TYPE_DEPTH: i64 = 8;
+
+/** What a statement's description says. */
+struct Description {
+  params: i64[];
+  names: string[];
+  types: i64[];
+  problem: string;
+}
+
+// Reads `ParameterDescription` and `RowDescription` out of a whole reply.
+function described(input: Input): Description {
+  const d: Description = { params: [], names: [], types: [], problem: "" };
+  const b = input.buffer.bytes;
+  let p = input.buffer.pos;
+  const stop = input.replyEnd;
+  while (p < stop) {
+    const tag = b[p];
+    const size = u32At(b, p + 1) + 1;
+    const end = p + size;
+    if (tag == PARAMETER_DESCRIPTION) {
+      // The count is unsigned: a statement may have up to 65535 parameters.
+      if (size < 7 || u16At(b, p + 5) * 4 > end - (p + 7)) {
+        return { ...d, problem: "a bad ParameterDescription" };
+      }
+      const n = u16At(b, p + 5);
+      for (let i: i64 = 0; i < n; i++) {
+        d.params.push(u32At(b, p + 7 + 4 * i));
+      }
+    } else if (tag == ROW_DESCRIPTION) {
+      if (size < 7 || i16At(b, p + 5) < 0) {
+        return { ...d, problem: "a bad RowDescription" };
+      }
+      const n = i16At(b, p + 5);
+      let at = p + 7;
+      for (let i: i64 = 0; i < n; i++) {
+        const nameEnd = cstrEnd(b, at, end);
+        // The name's NUL, then table OID 4, attribute 2, type 4, size 2, modifier 4, format 2.
+        if (nameEnd < 0 || end - nameEnd < 19) {
+          return { ...d, problem: "a bad RowDescription" };
+        }
+        d.names.push(b.utf8Slice(at, nameEnd));
+        d.types.push(u32At(b, nameEnd + 7));
+        at = nameEnd + 19;
+      }
+    }
+    p = end;
+  }
+  return d;
+}
+
+// The cells of the first row of a text-format reply; none if it has no rows.
+function firstTextRow(input: Input): string[] {
+  const out: string[] = [];
+  const b = input.buffer.bytes;
+  let p = input.buffer.pos;
+  const stop = input.replyEnd;
+  while (p < stop) {
+    const size = u32At(b, p + 1) + 1;
+    if (b[p] == 68) {
+      const end = p + size;
+      if (size < 7) {
+        return out;
+      }
+      const n = i16At(b, p + 5);
+      let at = p + 7;
+      for (let c: i64 = 0; c < n && end - at >= 4; c++) {
+        const len = u32At(b, at);
+        at += 4;
+        // NULL, or past the message's end.
+        if (len >= 2147483648 || len > end - at) {
+          out.push("");
+        } else {
+          out.push(b.utf8Slice(at, at + len));
+          at += len;
+        }
+      }
+      return out;
+    }
+    p += size;
+  }
+  return out;
+}
+
+// The type with this OID, from the catalog if it isn't known here.
+async function typeOf(
+  conn: Conn,
+  generation: i64,
+  oid: i64,
+  depth: i64,
+): Promise<PgType> throws PgError {
+  const known = knownType(oid);
+  if (known != null) {
+    return known;
+  }
+  const cached = conn.with((l) => l.cachedType(oid));
+  if (cached != null) {
+    return cached;
+  }
+  const sql = `SELECT t.typname, t.typtype, t.typcategory, t.typelem::int8, t.typbasetype::int8 FROM pg_catalog.pg_type t WHERE t.oid = ${oid}`;
+  const s = conn.with((l) => l.sendSimple(generation, sql));
+  if (s.status == FAILED) {
+    throw refused(conn, s);
+  }
+  const input = await replyTo(conn, s, "");
+  const row = firstTextRow(input);
+  finish(conn, input);
+  let t: PgType = { name: `oid ${oid}`, param: 0, chain: [0] };
+  if (row.length >= 5) {
+    const typtype = row[1];
+    const category = row[2];
+    const inner = typtype == "d" ? Number(row[4]) : category == "A" ? Number(row[3]) : 0;
+    let innerType: PgType | null = null;
+    if (inner != 0 && depth < MAX_TYPE_DEPTH) {
+      innerType = await typeOf(conn, generation, inner as i64, depth + 1);
+    }
+    t = catalogType(row[0], typtype, category, innerType);
+  }
+  const made = t;
+  conn.with((l) => l.cacheType(oid, made));
+  return t;
+}
+
+/** Prepares `sql` on the connection, and remembers it. */
+export async function prepare(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  named: bool,
+): Promise<void> throws PgError {
+  let text = sql;
+  let names: string[] = [];
+  if (named) {
+    const r = rewriteNamed(sql);
+    if (r.problem.length > 0) {
+      throw noted(conn, invalid(r.problem));
+    }
+    text = r.sql;
+    names = r.names;
+  }
+  const name = conn.with((l) => l.statementName());
+  const s = conn.with((l) => l.sendPrepare(generation, name, text));
+  if (s.status == FAILED) {
+    throw refused(conn, s);
+  }
+  const input = await replyTo(conn, s, "");
+  const d = described(input);
+  if (d.problem.length > 0) {
+    throw lose(conn, input, protocol(d.problem));
+  }
+  finish(conn, input);
+  const params: PgType[] = [];
+  for (const oid of d.params) {
+    params.push(await typeOf(conn, generation, oid, 0));
+  }
+  const columns: PgType[] = [];
+  for (const oid of d.types) {
+    columns.push(await typeOf(conn, generation, oid, 0));
+  }
+  if (named && names.length != params.length) {
+    // The server infers one type per `$n`; a statement can't have fewer without an error.
+    throw noted(
+      conn,
+      invalid(`the statement takes ${params.length} parameter(s) but names ${names.length}`),
+    );
+  }
+  const statement = shared(new Prepared(name, names, named, params, d.names, columns));
+  conn.with((l) => l.addStatement(sql, statement));
+}

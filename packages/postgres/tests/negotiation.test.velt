@@ -1,0 +1,179 @@
+// Opening a connection against fake servers, no PostgreSQL needed: how each `sslmode` takes the
+// server's answer to `SSLRequest`, the deadline every handshake ends by, and the user an md5 hash is
+// made for.
+import { utf8Encode } from "velt/encoding";
+import { listen, TcpStream } from "velt/net";
+import { removeEnv, setEnv } from "velt/process";
+import { timeout, TimeoutError } from "velt/task";
+import { connect } from "../src/lib";
+import { parseConfig } from "../src/config";
+import { md5Hex } from "../src/md5";
+import { openConnection } from "../src/startup";
+import { ascii, be32, join, msg, ready, serveTlsProbes, TlsProbes } from "./support/fake";
+
+function seenBy(probes: shared<Mutex<TlsProbes>>): string {
+  return probes.with((p) => p.seen.join(","));
+}
+
+// "connected", or the failure's code.
+async function connectAs(port: number, mode: string): Promise<string> {
+  try {
+    const db = await connect(`postgres://fake@127.0.0.1:${port}/db?sslmode=${mode}`);
+    db.close();
+    return "connected";
+  } catch (e) {
+    return e.code.clone();
+  }
+}
+
+// An answer that is neither `S` nor `N` is an error: nothing goes out in plain text after it, not
+// even the startup message, which a password may follow.
+export async function test_an_answer_but_s_or_n_is_refused() {
+  for (const answer of ["E", "x"]) {
+    for (const mode of ["prefer", "require"]) {
+      const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
+      const port = await serveTlsProbes(probes, answer, 1);
+      assertEq(await connectAs(port, mode), "ETLS");
+      assertEq(seenBy(probes), "ssl");
+    }
+  }
+}
+
+// `N` means no TLS: plain text under `prefer` only.
+export async function test_require_refuses_a_server_without_tls() {
+  const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
+  const port = await serveTlsProbes(probes, "N", 1);
+  assertEq(await connectAs(port, "require"), "ETLS");
+  assertEq(seenBy(probes), "ssl");
+}
+
+// `S` upgrades the same socket: the ClientHello follows the answer on it.
+export async function test_s_upgrades_the_socket_it_was_sent_on() {
+  for (const mode of ["prefer", "require"]) {
+    const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
+    const port = await serveTlsProbes(probes, "S", 1);
+    assertEq(await connectAs(port, mode), "ETLS");
+    assertEq(seenBy(probes), "ssl,tls");
+  }
+}
+
+// A server that accepts and then says nothing more: after `S` with `answer`, or at once.
+async function silentServer(answer: string): Promise<number> {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    const s = await l.accept();
+    l.close();
+    try {
+      if (answer.length > 0) {
+        await s.read();
+        await s.writeBytes(ascii(answer));
+      }
+      while ((await s.read()).length > 0) {}
+    } catch (e) {}
+    s.close();
+  });
+  return l.port;
+}
+
+// How opening `url` within `ms` ends: the failure's code, "connected", or "hung" when the driver's
+// own deadline never came.
+async function openWithin(url: string, ms: i64): Promise<string> {
+  const c = parseConfig(url);
+  c.startupTimeoutMs = ms;
+  try {
+    // timing: a hang guard far past the deadline under test
+    const conn = await timeout(openConnection(c), ms + 10000);
+    conn.with((l) => l.shutDownWhenIdle());
+    return "connected";
+  } catch (e) {
+    if (e instanceof TimeoutError) {
+      return "hung";
+    }
+    return e.code.clone();
+  }
+}
+
+// A server that never answers the ClientHello: the handshake ends by the connection's deadline,
+// with or without `connect_timeout`.
+export async function test_a_tls_handshake_ends_by_the_deadline() {
+  assertEq(
+    await openWithin(`postgres://fake@127.0.0.1:${await silentServer("S")}/db?sslmode=prefer`, 300),
+    "ETIMEDOUT",
+  );
+  assertEq(
+    await openWithin(
+      `postgres://fake@127.0.0.1:${await silentServer("S")}/db?sslmode=require`,
+      300,
+    ),
+    "ETIMEDOUT",
+  );
+  assertEq(
+    await openWithin(
+      `postgres://fake@127.0.0.1:${await silentServer("")}/db?sslmode=verify-full`,
+      300,
+    ),
+    "ETIMEDOUT",
+  );
+}
+
+export async function test_connect_timeout_sets_the_deadline() {
+  assertEq(parseConfig("postgres://u@h/d?connect_timeout=3").startupTimeoutMs, 3000);
+  assertEq(parseConfig("postgres://u@h/d").startupTimeoutMs, 30000);
+  assertEq(parseConfig("postgres://u@h/d?connect_timeout=0").startupTimeoutMs, 30000);
+}
+
+const SALT: u8[] = [1, 2, 3, 4];
+
+// A server that asks for an md5 password and records what it gets. Its port.
+async function md5Server(got: shared<Mutex<string[]>>): Promise<number> {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    const s = await l.accept();
+    l.close();
+    try {
+      await s.read();
+      await s.writeBytes(msg("R", join([be32(5), SALT])));
+      const answer = await s.read();
+      // 'p', the length, the hash and its NUL.
+      const text = answer.length > 6 ? answer.utf8Slice(5, answer.length - 1) : "";
+      got.with((g) => g.push(text));
+      await s.writeBytes(join([msg("R", be32(0)), ready()]));
+      while ((await s.read()).length > 0) {}
+    } catch (e) {}
+    s.close();
+  });
+  return l.port;
+}
+
+function md5For(password: string, user: string): string {
+  const inner = md5Hex(utf8Encode(`${password}${user}`));
+  return `md5${md5Hex(utf8Encode(inner).concat(SALT))}`;
+}
+
+// With no user in the connection string, the md5 hash is made for the user the startup message
+// names: `USER`, else `USERNAME` (Windows).
+export async function test_md5_hashes_for_the_user_the_startup_names() {
+  const user = process.env.USER;
+  const username = process.env.USERNAME;
+  removeEnv("USER");
+  setEnv("USERNAME", "winuser");
+  const got = shared(new Mutex<string[]>([]));
+  const port = await md5Server(got);
+  let outcome = "connected";
+  try {
+    const db = await connect(`host=127.0.0.1 port=${port} password=secret sslmode=disable`);
+    db.close();
+  } catch (e) {
+    outcome = e.code.clone();
+  }
+  if (user != null) {
+    setEnv("USER", user);
+  }
+  if (username != null) {
+    setEnv("USERNAME", username);
+  } else {
+    removeEnv("USERNAME");
+  }
+  assertEq(outcome, "connected");
+  assertEq(got.with((g) => g.join(",")), md5For("secret", "winuser"));
+}

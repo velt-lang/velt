@@ -1,0 +1,198 @@
+// postgres (internal): `PgType`, what the driver knows of a type: how it decodes values of it for a
+// row, and how it takes a parameter. The common types are known by OID; any other is read from the
+// server's catalog once per connection (statement.velt), as enums, domains and `citext` have OIDs
+// that differ per database.
+
+// How values are read or written: a codec. A domain decodes as its base type.
+export const C_OTHER: u8 = 0;
+export const C_BOOL: u8 = 1;
+export const C_INT2: u8 = 2;
+export const C_INT4: u8 = 3;
+export const C_INT8: u8 = 4;
+export const C_OID: u8 = 5;
+export const C_FLOAT4: u8 = 6;
+export const C_FLOAT8: u8 = 7;
+/** Text types and enums: the binary form is the UTF-8 text. */
+export const C_TEXT: u8 = 8;
+export const C_BYTEA: u8 = 9;
+export const C_JSON: u8 = 10;
+export const C_JSONB: u8 = 11;
+export const C_NUMERIC: u8 = 12;
+export const C_UUID: u8 = 13;
+export const C_DATE: u8 = 14;
+export const C_TIME: u8 = 15;
+export const C_TIMESTAMP: u8 = 16;
+export const C_TIMESTAMPTZ: u8 = 17;
+export const C_INTERVAL: u8 = 18;
+export const C_MONEY: u8 = 19;
+export const C_INET: u8 = 20;
+export const C_MACADDR: u8 = 21;
+export const C_ARRAY: u8 = 22;
+
+/** How far arrays and domains nest in a column's `chain`; deeper ones aren't decoded. */
+export const CHAIN: i64 = 4;
+
+/** What the driver knows of a type (see the module header). */
+export struct PgType {
+  name: string;
+  /** How a parameter of this type takes values: a domain's or array's only as a string. */
+  param: u8;
+  /** How a value of it decodes, and then its elements': nothing past the first `C_OTHER`. */
+  chain: u8[];
+}
+
+function plain(name: string, codec: u8): PgType {
+  return { name: name, param: codec, chain: [codec] };
+}
+
+function arrayOf(name: string, codec: u8): PgType {
+  return { name: name, param: C_OTHER, chain: [C_ARRAY, codec] };
+}
+
+/** The type with this OID when it's one of those known here. */
+export function knownType(oid: i64): PgType | null {
+  switch (oid) {
+    case 16:
+      return plain("bool", C_BOOL);
+    case 17:
+      return plain("bytea", C_BYTEA);
+    case 18:
+      return plain("char", C_TEXT);
+    case 19:
+      return plain("name", C_TEXT);
+    case 20:
+      return plain("int8", C_INT8);
+    case 21:
+      return plain("int2", C_INT2);
+    case 23:
+      return plain("int4", C_INT4);
+    case 25:
+      return plain("text", C_TEXT);
+    case 26:
+      return plain("oid", C_OID);
+    case 114:
+      return plain("json", C_JSON);
+    case 650:
+      return plain("cidr", C_INET);
+    case 700:
+      return plain("float4", C_FLOAT4);
+    case 701:
+      return plain("float8", C_FLOAT8);
+    case 705:
+      return plain("unknown", C_TEXT);
+    case 774:
+      return plain("macaddr8", C_MACADDR);
+    case 790:
+      return plain("money", C_MONEY);
+    case 829:
+      return plain("macaddr", C_MACADDR);
+    case 869:
+      return plain("inet", C_INET);
+    case 1042:
+      return plain("bpchar", C_TEXT);
+    case 1043:
+      return plain("varchar", C_TEXT);
+    case 1082:
+      return plain("date", C_DATE);
+    case 1083:
+      return plain("time", C_TIME);
+    case 1114:
+      return plain("timestamp", C_TIMESTAMP);
+    case 1184:
+      return plain("timestamptz", C_TIMESTAMPTZ);
+    case 1186:
+      return plain("interval", C_INTERVAL);
+    case 1700:
+      return plain("numeric", C_NUMERIC);
+    case 2950:
+      return plain("uuid", C_UUID);
+    case 3802:
+      return plain("jsonb", C_JSONB);
+    case 199:
+      return arrayOf("_json", C_JSON);
+    case 651:
+      return arrayOf("_cidr", C_INET);
+    case 775:
+      return arrayOf("_macaddr8", C_MACADDR);
+    case 791:
+      return arrayOf("_money", C_MONEY);
+    case 1000:
+      return arrayOf("_bool", C_BOOL);
+    case 1001:
+      return arrayOf("_bytea", C_BYTEA);
+    case 1002:
+      return arrayOf("_char", C_TEXT);
+    case 1003:
+      return arrayOf("_name", C_TEXT);
+    case 1005:
+      return arrayOf("_int2", C_INT2);
+    case 1007:
+      return arrayOf("_int4", C_INT4);
+    case 1009:
+      return arrayOf("_text", C_TEXT);
+    case 1014:
+      return arrayOf("_bpchar", C_TEXT);
+    case 1015:
+      return arrayOf("_varchar", C_TEXT);
+    case 1016:
+      return arrayOf("_int8", C_INT8);
+    case 1021:
+      return arrayOf("_float4", C_FLOAT4);
+    case 1022:
+      return arrayOf("_float8", C_FLOAT8);
+    case 1028:
+      return arrayOf("_oid", C_OID);
+    case 1040:
+      return arrayOf("_macaddr", C_MACADDR);
+    case 1041:
+      return arrayOf("_inet", C_INET);
+    case 1115:
+      return arrayOf("_timestamp", C_TIMESTAMP);
+    case 1182:
+      return arrayOf("_date", C_DATE);
+    case 1183:
+      return arrayOf("_time", C_TIME);
+    case 1185:
+      return arrayOf("_timestamptz", C_TIMESTAMPTZ);
+    case 1187:
+      return arrayOf("_interval", C_INTERVAL);
+    case 1231:
+      return arrayOf("_numeric", C_NUMERIC);
+    case 2951:
+      return arrayOf("_uuid", C_UUID);
+    case 3807:
+      return arrayOf("_jsonb", C_JSONB);
+    default:
+      return null;
+  }
+}
+
+/** A type read from the catalog; `inner` is the type of its elements (`A`) or base (`d`). */
+export function catalogType(
+  name: string,
+  typtype: string,
+  category: string,
+  inner: PgType | null,
+): PgType {
+  if (typtype == "e" || name == "citext") {
+    return plain(name, C_TEXT);
+  }
+  if (inner != null && (typtype == "d" || category == "A")) {
+    const chain: u8[] = typtype == "d" ? inner.chain.slice() : [C_ARRAY, ...inner.chain];
+    return { name: name, param: C_OTHER, chain: chain };
+  }
+  return plain(name, C_OTHER);
+}
+
+/** Whether a value of the type with this `chain` decodes (ranges, composites and so on don't). */
+export function decodable(chain: u8[]): bool {
+  if (chain.length as i64 > CHAIN) {
+    return false;
+  }
+  for (const c of chain) {
+    if (c == C_OTHER) {
+      return false;
+    }
+  }
+  return true;
+}

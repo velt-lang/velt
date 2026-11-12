@@ -1,0 +1,232 @@
+// Shared by the tests that need no PostgreSQL: a fake server on a free port that speaks just enough
+// of the protocol, sending what a test scripts, so that what a real server never sends can be sent.
+
+import { listen, TcpStream } from "velt/net";
+
+/** A backend message. */
+export function msg(tag: string, body: u8[] = []): u8[] {
+  const n = (body.length as i64) + 4;
+  const head: u8[] = [
+    tag.charCodeAt(0) as u8,
+    (n >> 24) as u8,
+    (n >> 16) as u8,
+    (n >> 8) as u8,
+    n as u8,
+  ];
+  return head.concat(body);
+}
+
+export function be16(v: i64): u8[] {
+  return [(v >> 8) as u8, v as u8];
+}
+
+export function be32(v: i64): u8[] {
+  return [(v >> 24) as u8, (v >> 16) as u8, (v >> 8) as u8, v as u8];
+}
+
+/** The bytes of `s` and a NUL. */
+export function cstr(s: string): u8[] {
+  const b: u8[] = Buffer.alloc(Buffer.byteLength(s) + 1);
+  b.write(s, 0);
+  return b;
+}
+
+/** The bytes of `s`. */
+export function ascii(s: string): u8[] {
+  const b: u8[] = Buffer.alloc(Buffer.byteLength(s));
+  b.write(s, 0);
+  return b;
+}
+
+export function join(parts: u8[][]): u8[] {
+  let out: u8[] = [];
+  for (const p of parts) {
+    out = out.concat(p);
+  }
+  return out;
+}
+
+export function ready(): u8[] {
+  const idle: u8[] = [73];
+  return msg("Z", idle);
+}
+
+export function complete(tag: string): u8[] {
+  return msg("C", cstr(tag));
+}
+
+export function serverError(code: string, message: string): u8[] {
+  return msg("E", join([cstr(`S${"ERROR"}`), cstr(`C${code}`), cstr(`M${message}`), [0]]));
+}
+
+/** `ParameterDescription`. */
+export function paramTypes(oids: i64[]): u8[] {
+  const parts: u8[][] = [be16(oids.length as i64)];
+  for (const oid of oids) {
+    parts.push(be32(oid));
+  }
+  return msg("t", join(parts));
+}
+
+/** `RowDescription` of columns named by `names`, of the types `oids`, in binary. */
+export function rowTypes(names: string[], oids: i64[]): u8[] {
+  const parts: u8[][] = [be16(names.length as i64)];
+  for (let i: usize = 0; i < names.length; i++) {
+    parts.push(cstr(names[i]));
+    parts.push(be32(0));
+    parts.push(be16(0));
+    parts.push(be32(oids[i]));
+    parts.push(be16(-1));
+    parts.push(be32(-1));
+    parts.push(be16(1));
+  }
+  return msg("T", join(parts));
+}
+
+/** A `DataRow` of the values `cells` (null: NULL). */
+export function row(cells: (u8[] | null)[]): u8[] {
+  const parts: u8[][] = [be16(cells.length as i64)];
+  for (const c of cells) {
+    if (c == null) {
+      parts.push(be32(-1));
+    } else {
+      parts.push(be32(c.length as i64));
+      parts.push(c);
+    }
+  }
+  return msg("D", join(parts));
+}
+
+/** The reply to `Parse`, `Describe` and `Sync` of a statement with these types. */
+export function prepared(params: i64[], names: string[], oids: i64[]): u8[] {
+  const noData = msg("n");
+  return join([
+    msg("1"),
+    paramTypes(params),
+    names.length == 0 ? noData : rowTypes(names, oids),
+    ready(),
+  ]);
+}
+
+// The whole of the startup message, then the answer that lets the client in.
+async function letIn(s: TcpStream) {
+  await s.read();
+  const ok = be32(0);
+  await s.writeBytes(join([msg("R", ok), ready()]));
+}
+
+/**
+ * A server on a free port for one connection: after the startup it reads once per entry of `script`
+ * and answers with that entry; one with `gap` sends its bytes in pieces of that many bytes. It stays
+ * open until the peer leaves. Its port.
+ */
+export async function serve(script: u8[][], piece: i64 = 0): Promise<number> {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    const s = await l.accept();
+    l.close();
+    try {
+      await letIn(s);
+      for (const answer of script) {
+        await s.read();
+        await sendIn(s, answer, piece);
+      }
+      while ((await s.read()).length > 0) {}
+    } catch (e) {
+      // A client that left with replies unread resets the connection, as TCP does: it's done.
+    }
+    s.close();
+  });
+  return l.port;
+}
+
+async function sendIn(s: TcpStream, bytes: u8[], piece: i64) {
+  if (piece <= 0) {
+    await s.writeBytes(bytes);
+    return;
+  }
+  const n = bytes.length as i64;
+  for (let at: i64 = 0; at < n; at += piece) {
+    await s.writeBytes(bytes, at as number, (at + piece < n ? at + piece : n) as number);
+    await yieldNow();
+  }
+}
+
+/**
+ * A server that closes the connection right after answering the last entry of `script`. Its port.
+ */
+export async function serveThenClose(script: u8[][]): Promise<number> {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    const s = await l.accept();
+    l.close();
+    try {
+      await letIn(s);
+      for (const answer of script) {
+        await s.read();
+        await s.writeBytes(answer);
+      }
+    } catch (e) {}
+    s.close();
+  });
+  return l.port;
+}
+
+/** How `serveTlsProbes` answers a client. */
+export class TlsProbes {
+  /** What each connection opened with, in order: "ssl", "tls" or "startup". */
+  seen: string[] = [];
+}
+
+/**
+ * A server on a free port for a TLS negotiation: it answers `SSLRequest` with `answer` (one byte),
+ * closes on a TLS ClientHello, and lets a startup in. It serves `connections` connections. Its port.
+ */
+export async function serveTlsProbes(
+  probes: shared<Mutex<TlsProbes>>,
+  answer: string,
+  connections: i64,
+): Promise<number> {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    for (let i: i64 = 0; i < connections; i++) {
+      const s = await l.accept();
+      try {
+        await tlsProbe(s, probes, answer);
+      } catch (e) {
+        // A client that goes away is what's being tested.
+      }
+      s.close();
+    }
+    l.close();
+  });
+  return l.port;
+}
+
+async function tlsProbe(s: TcpStream, probes: shared<Mutex<TlsProbes>>, answer: string) {
+  while (true) {
+    const first = await s.read();
+    if (first.length == 0) {
+      return;
+    }
+    const isRequest = first.length == 8 && first[4] == 4 && first[5] == 210;
+    const kind = isRequest ? "ssl" : first[0] == 22 ? "tls" : "startup";
+    probes.with((p) => p.seen.push(kind));
+    if (isRequest) {
+      await s.writeBytes(ascii(answer));
+      continue;
+    }
+    if (kind == "tls") {
+      return;
+    }
+    const ok = be32(0);
+    await s.writeBytes(join([msg("R", ok), ready()]));
+    while ((await s.read()).length > 0) {}
+    return;
+  }
+}
+
+/** A URL for a server on `port`. */
+export function fakeUrl(port: number): string {
+  return `postgres://fake@127.0.0.1:${port}/db?sslmode=disable`;
+}

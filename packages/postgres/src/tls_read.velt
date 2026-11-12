@@ -1,0 +1,8 @@
+// postgres (internal): `TlsRead`, what a read on a TLS connection found (transport.velt).
+
+/** What a read on a TLS connection found: the bytes (`TcpStream.tryRead`), and whether more wait. */
+export struct TlsRead {
+  n: number | null;
+  /** A `tryRead` now may find bytes that waiting on the socket wouldn't announce. */
+  more: bool;
+}

@@ -1,0 +1,78 @@
+// The line for replies on its own, no server.
+import { streamPair } from "velt/net";
+import { channel } from "velt/sync";
+import { Input } from "../src/input";
+import { Line } from "../src/line";
+import { Prepared } from "../src/prepared";
+import { plainStream } from "../src/transport";
+
+const IDLE: u8 = 73;
+
+function none(): shared<Prepared> {
+  return shared(new Prepared("", [], false, [], [], []));
+}
+
+function line(): Line {
+  const [a, b] = streamPair();
+  b.close();
+  return new Line(plainStream(a), channel<Input>(1), none());
+}
+
+// Requests keep coming while replies come, so the line never empties.
+export function test_the_line_does_not_grow_while_it_never_empties() {
+  const l = line();
+  assert(l.sendSimple(1, "a").first, "the first has nobody ahead");
+  for (let i: i64 = 0; i < 10000; i++) {
+    const s = l.sendSimple(1, "x");
+    assert(!s.first, "someone is ahead");
+    const n = l.next(IDLE);
+    assert(!n.idle, "the line has not emptied");
+  }
+  assert(l.allocated < 200, `${l.allocated} places for 2 requests in flight`);
+  const n = l.next(IDLE);
+  assert(n.idle, "now it has");
+  assert(l.sendSimple(1, "y").first, "nobody is ahead again");
+}
+
+// What a reply's end hands on goes to the next request's own channel, in order.
+export function test_replies_go_in_the_order_of_the_requests() {
+  const [x, y] = streamPair();
+  const n0 = none();
+  const l = new Line(plainStream(x), channel<Input>(1), n0);
+  const a = l.sendSimple(1, "a");
+  const b = l.sendSimple(1, "b");
+  const c = l.sendSimple(1, "c");
+  assert(a.first && !b.first && !c.first, "one is first");
+  l.next(IDLE).turn.trySend(new Input(plainStream(x), n0));
+  assert(c.turn.tryReceive() == null, "not c's turn");
+  assert(b.turn.tryReceive() != null, "b's");
+  l.next(IDLE).turn.trySend(new Input(plainStream(x), n0));
+  assert(c.turn.tryReceive() != null, "c's");
+  assert(l.next(IDLE).idle, "and then nobody");
+  x.close();
+  y.close();
+}
+
+// What's sent during a `COPY … FROM STDIN` waits behind its data.
+export async function test_requests_wait_behind_a_copy_s_data() {
+  const [x, y] = streamPair();
+  const l = new Line(plainStream(x), channel<Input>(1), none());
+  const copy = l.sendCopy(1, "COPY t FROM STDIN", true);
+  assert(copy.first, "it goes first");
+  l.sendSimple(1, "SELECT 1");
+  // Let what was queued go out.
+  await yieldNow();
+  await x.drained(0);
+  const buf: u8[] = Buffer.alloc(1024);
+  await y.readable();
+  const got = (y.tryRead(buf, 0, 1024) ?? 0) as i64;
+  assertEq(buf.utf8Slice(5, got - 1), "COPY t FROM STDIN");
+  l.endCopy();
+  await yieldNow();
+  await x.drained(0);
+  await y.readable();
+  const later = (y.tryRead(buf, 0, 1024) ?? 0) as i64;
+  assertEq(buf.utf8Slice(5, later - 1), "SELECT 1");
+  x.close();
+  y.close();
+}

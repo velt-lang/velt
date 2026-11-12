@@ -1,0 +1,12 @@
+// postgres (internal): `Taken`, what `PoolState.take` found (pool_state.velt).
+
+import { Channel } from "velt/sync";
+import { Grant } from "./grant";
+import { Conn } from "./line";
+
+/** What `take` found. */
+export struct Taken {
+  status: u8;
+  conn: Conn | null;
+  wait: Channel<Grant> | null;
+}

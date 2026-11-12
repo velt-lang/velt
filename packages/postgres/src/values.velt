@@ -1,0 +1,128 @@
+// postgres (internal): one value of a row in the binary format, by its codec (pg_type.velt). Each
+// function looks only at `b[from..from + len]`, and says when the bytes can't be that type.
+
+import { i16At, i32At, i64At, u32At } from "./backend";
+import { inet, macaddr } from "./network";
+import {
+  C_DATE,
+  C_FLOAT4,
+  C_INET,
+  C_INT2,
+  C_INT4,
+  C_INT8,
+  C_INTERVAL,
+  C_MACADDR,
+  C_MONEY,
+  C_NUMERIC,
+  C_OID,
+  C_TIME,
+  C_TIMESTAMP,
+  C_TIMESTAMPTZ,
+  C_UUID,
+} from "./pg_type";
+import { date, interval, money, numeric, Rendered, time, timestamp } from "./temporal";
+
+/** An integer, or why not. */
+struct IntegerValue {
+  value: i64;
+  problem: string;
+}
+
+/** A float, or why not. */
+struct FloatValue {
+  value: f64;
+  problem: string;
+}
+
+function widthProblem(want: i64, got: i64): string {
+  return `expected ${want} bytes, got ${got}`;
+}
+
+/** An `int2`, `int4`, `int8` or `oid` value. */
+export function integerValue(b: u8[], from: i64, len: i64, codec: u8): IntegerValue {
+  const want: i64 = codec == C_INT2 ? 2 : codec == C_INT8 ? 8 : 4;
+  if (len != want) {
+    return { value: 0, problem: widthProblem(want, len) };
+  }
+  const v =
+    codec == C_INT4
+      ? i32At(b, from)
+      : codec == C_INT8 ? i64At(b, from) : codec == C_OID ? u32At(b, from) : i16At(b, from);
+  return { value: v, problem: "" };
+}
+
+/** A `float4` or `float8` value. */
+export function floatValue(b: u8[], from: i64, len: i64, codec: u8): FloatValue {
+  const want: i64 = codec == C_FLOAT4 ? 4 : 8;
+  if (len != want) {
+    return { value: 0.0, problem: widthProblem(want, len) };
+  }
+  if (codec == C_FLOAT4) {
+    return { value: f32.fromBits(u32At(b, from) as u32) as f64, problem: "" };
+  }
+  return { value: f64.fromBits(i64At(b, from) as u64), problem: "" };
+}
+
+/** `uuid`: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx". */
+function uuid(b: u8[], from: i64, len: i64): Rendered {
+  if (len != 16) {
+    return { text: "", problem: widthProblem(16, len) };
+  }
+  const s = new StringBuilder();
+  for (let i: i64 = 0; i < 16; i++) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) {
+      s.append("-");
+    }
+    s.append((b[from + i] as i64).toString(16).padStart(2, "0"));
+  }
+  return { text: s.toString(), problem: "" };
+}
+
+/** A value that is text only once rendered. */
+export function renderValue(b: u8[], from: i64, len: i64, codec: u8): Rendered {
+  if (codec == C_NUMERIC) {
+    return numeric(b, from, len);
+  }
+  if (codec == C_UUID) {
+    return uuid(b, from, len);
+  }
+  if (codec == C_DATE) {
+    return date(b, from, len);
+  }
+  if (codec == C_TIME) {
+    return time(b, from, len);
+  }
+  if (codec == C_TIMESTAMP) {
+    return timestamp(b, from, len, false);
+  }
+  if (codec == C_TIMESTAMPTZ) {
+    return timestamp(b, from, len, true);
+  }
+  if (codec == C_INTERVAL) {
+    return interval(b, from, len);
+  }
+  if (codec == C_MONEY) {
+    return money(b, from, len);
+  }
+  if (codec == C_INET) {
+    return inet(b, from, len);
+  }
+  if (codec == C_MACADDR) {
+    return macaddr(b, from, len);
+  }
+  return { text: "", problem: `a value of codec ${codec}` };
+}
+
+/** `b[from..from + len]` as a JSON array of its bytes. */
+export function byteArrayJson(b: u8[], from: i64, len: i64): string {
+  const s = new StringBuilder();
+  s.append("[");
+  for (let i: i64 = 0; i < len; i++) {
+    if (i > 0) {
+      s.append(",");
+    }
+    s.appendInt(b[from + i] as i64);
+  }
+  s.append("]");
+  return s.toString();
+}

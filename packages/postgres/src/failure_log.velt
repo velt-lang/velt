@@ -1,0 +1,50 @@
+// postgres (internal): `FailureLog`, the failed operations of a client. `Client.transaction` compares
+// the count before and after its callback, so a failure the callback caught still rolls the
+// transaction back, and it reports the first one since then (later ones are usually "25P02", "current
+// transaction is aborted").
+
+import { Failure } from "./failure";
+
+// Failures remembered (older ones are dropped).
+const RECENT_ERRORS: usize = 32;
+
+struct Noted {
+  sequence: u64;
+  failure: Failure;
+}
+
+/** A client's failed operations (see the module header). */
+export class FailureLog {
+  count: u64 = 0;
+  private recent: Noted[] = [];
+
+  note(f: Failure) {
+    this.count++;
+    if (this.recent.length == RECENT_ERRORS) {
+      this.recent.shift();
+    }
+    this.recent.push({ sequence: this.count, failure: f });
+  }
+
+  /** Sets the count back: a nested transaction handed its failure to its caller as a thrown error. */
+  reset(count: u64) {
+    this.count = count;
+    this.recent = this.recent.filter((n) => n.sequence <= count);
+  }
+
+  /** The first failure after `count` failures. */
+  after(count: u64): Failure | null {
+    for (const n of this.recent) {
+      if (n.sequence > count) {
+        return n.failure;
+      }
+    }
+    return null;
+  }
+
+  /** A new user of the connection starts clean. */
+  clear() {
+    this.count = 0;
+    this.recent = [];
+  }
+}

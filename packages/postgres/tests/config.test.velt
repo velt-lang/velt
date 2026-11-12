@@ -1,0 +1,95 @@
+// Connection strings on their own, no server.
+import {
+  parseConfig,
+  SSL_DISABLE,
+  SSL_PREFER,
+  SSL_REQUIRE,
+  SSL_VERIFY_CA,
+  SSL_VERIFY_FULL,
+} from "../src/config";
+
+function rejected(s: string): string {
+  try {
+    parseConfig(s);
+  } catch (e) {
+    return e.code.clone();
+  }
+  return "accepted";
+}
+
+export function test_urls() {
+  const c = parseConfig(
+    "postgres://u:p%40ss@db.example:6543/app%20x?application_name=x&connect_timeout=5",
+  );
+  assertEq(c.user, "u");
+  assertEq(c.password, "p@ss");
+  assertEq(c.hosts, ["db.example"]);
+  assertEq(c.ports, [6543]);
+  assertEq(c.dbname, "app x");
+  assertEq(c.applicationName, "x");
+  assertEq(c.connectTimeoutMs, 5000);
+  assertEq(c.sslMode, SSL_PREFER);
+  const v6 = parseConfig("postgresql://[::1]:5433,other:5434/d");
+  assertEq(v6.hosts, ["::1", "other"]);
+  assertEq(v6.ports, [5433, 5434]);
+  const noPort = parseConfig("postgres://h");
+  assertEq(noPort.hosts, ["h"]);
+  assertEq(noPort.ports.length, 0);
+}
+
+export function test_keywords() {
+  const c = parseConfig("host=localhost user=me dbname='a b' password='it\\'s' port=7");
+  assertEq(c.hosts, ["localhost"]);
+  assertEq(c.user, "me");
+  assertEq(c.dbname, "a b");
+  assertEq(c.password, "it's");
+  assertEq(c.ports, [7]);
+}
+
+export function test_ssl_modes() {
+  assertEq(parseConfig("postgres://u@h/d?sslmode=disable").sslMode, SSL_DISABLE);
+  assertEq(parseConfig("postgres://u@h/d?sslmode=require").sslMode, SSL_REQUIRE);
+  assertEq(parseConfig("host=localhost user=me sslmode=verify-ca dbname=x").sslMode, SSL_VERIFY_CA);
+  assertEq(parseConfig("postgresql://u@h/d?sslmode=verify-full").sslMode, SSL_VERIFY_FULL);
+}
+
+export function test_bad_strings() {
+  for (const bad of [
+    "postgres://u@h/d?sslmode=sometimes",
+    "nonsense=1",
+    "postgres://[bad",
+    "postgres://h:port/d",
+    "postgres://h/d?flag",
+    "host='unterminated",
+    "host",
+    "port=99999 host=h",
+  ]) {
+    assertEq(rejected(bad), "EINVAL");
+  }
+  assertEq(rejected("postgres://u@h/d?sslmode=verify-ca&sslrootcert=/no/such.pem"), "ETLS");
+}
+
+function messageOf(s: string): string {
+  try {
+    parseConfig(s);
+  } catch (e) {
+    return e.message.clone();
+  }
+  return "accepted";
+}
+
+// Errors end up in logs: a string that looks like a URL with a password is never quoted in one.
+export function test_errors_never_quote_a_password() {
+  for (const s of [
+    "postgress://app:hunter2@db/app",
+    "postgresql+ssl://app:hunter2@db/app?sslmode=require",
+    "app:hunter2@db/app",
+    "postgres://app:hunter2@db/app?hunter2@x",
+  ]) {
+    const m = messageOf(s);
+    assert(m.startsWith("invalid connection string"), m);
+    assert(!m.includes("hunter2"), m);
+  }
+  // Keys that can't hold one are still named.
+  assert(messageOf("nonsense=1").includes("`nonsense`"), messageOf("nonsense=1"));
+}

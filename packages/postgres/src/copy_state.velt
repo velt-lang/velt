@@ -1,0 +1,370 @@
+// postgres (internal): `COPY`, streamed. While a copy runs the request stays first in line, and the
+// `Input` waits at home between its calls. `COPY … FROM STDIN` goes by the simple protocol: when the
+// server finds an error in the data it says so and goes on, ignoring what still comes, so `end()`
+// reads the error. A released reader or writer drops the `Input`, which reads what is left
+// (drain.velt), so the connection goes on.
+
+import { IoError } from "velt/io";
+import { PgStream } from "./transport";
+import { Channel } from "velt/sync";
+import {
+  COPY_DATA,
+  frameSize,
+  NOTICE_RESPONSE,
+  NOTIFICATION_RESPONSE,
+  PARAMETER_STATUS,
+  u32At,
+} from "./backend";
+import { finish, lose, noted, park, readWhole, refused, takeTurn } from "./connection";
+import { errorOf, PgError } from "./errors";
+import { closed, connectionClosed, failure, ioFailure, protocol } from "./failure";
+import { copyDone, copyFail, Out } from "./frontend";
+import { Input } from "./input";
+import { refuseCopy } from "./reply";
+import { FAILED } from "./builder";
+import { Conn } from "./line";
+
+// A `read()` returns at most about this many bytes (more if one message is larger).
+const READ_BATCH: i64 = 64 * 1024;
+
+// Small writes go out together in messages of about this size.
+const WRITE_BATCH: i64 = 4 * 1024;
+
+// A writer with this many bytes still to go out waits for the server to read them.
+const MAX_QUEUED: i64 = 256 * 1024;
+
+const DATA_TAG: i64 = 100;
+
+/** What the copies of a reader's or writer's handle share. */
+export class CopyState {
+  conn: Conn;
+  stream: PgStream;
+  home: Channel<Input>;
+  open: bool = true;
+  private out: Out = new Out(WRITE_BATCH + 256);
+  private lengthAt: i64 = -1;
+  /** Bytes still to go out, as of the last write. */
+  backlog: i64 = 0;
+  /** Why the last write failed. */
+  sendProblem: string = "";
+
+  constructor(conn: Conn, stream: PgStream, home: Channel<Input>) {
+    this.conn = conn;
+    this.stream = stream;
+    this.home = home;
+  }
+
+  private opened(): Out {
+    if (this.lengthAt < 0) {
+      this.lengthAt = this.out.begin(DATA_TAG);
+    }
+    return this.out;
+  }
+
+  /** Takes a chunk of text. */
+  add(data: string) {
+    this.opened().text(data);
+    this.flushIfFull();
+  }
+
+  /** Takes a chunk of bytes. */
+  addBytes(data: u8[]) {
+    this.opened().raw(data);
+    this.flushIfFull();
+  }
+
+  private flushIfFull() {
+    if (this.out.len >= WRITE_BATCH) {
+      this.flush();
+    }
+  }
+
+  // What's waiting goes out with this task's next wait.
+  private flush() {
+    const o = this.out;
+    if (this.lengthAt >= 0) {
+      o.end(this.lengthAt);
+      this.lengthAt = -1;
+    }
+    if (o.len == 0) {
+      return;
+    }
+    try {
+      this.backlog = this.stream.writeBytesLater(o.bytes, 0, o.len as number);
+    } catch (e) {
+      this.sendProblem = e.message;
+    }
+    o.len = 0;
+    // One huge chunk doesn't keep its size for the rest of the copy.
+    if ((o.bytes.length as i64) > 16 * WRITE_BATCH) {
+      this.out = new Out(WRITE_BATCH + 256);
+    }
+  }
+
+  /** The data has all been given: `CopyDone` goes after it. */
+  done() {
+    this.flush();
+    copyDone(this.out);
+    this.flush();
+  }
+
+  /** The copy is given up: `CopyFail` goes after what's been sent. */
+  fail() {
+    const o = this.out;
+    o.len = 0;
+    this.lengthAt = -1;
+    copyFail(o, "COPY aborted");
+    this.flush();
+  }
+
+  /** Marks it released; true the first time. */
+  release(): bool {
+    const was = this.open;
+    this.open = false;
+    if (was) {
+      this.conn.with((l) => {
+        l.copyOpen = false;
+      });
+    }
+    return was;
+  }
+}
+
+/** A copy's handle. */
+export type CopyHandle = shared<Mutex<CopyState>>;
+
+// Sends `COPY` and waits for the server to start it; the `Input` then waits at home.
+async function start(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+  from: bool,
+): Promise<CopyHandle> throws PgError {
+  const s = conn.with((l) => l.sendCopy(generation, sql, from));
+  if (s.status == FAILED) {
+    throw refused(conn, s);
+  }
+  const input = await takeTurn(conn, s);
+  input.stopAtCopy = true;
+  await readWhole(conn, input);
+  if (input.copyStarted) {
+    input.stopAtCopy = false;
+    if (input.copyFromStream != from) {
+      // The statement copies the other way. A server waiting for data is told none will come; one
+      // sending data has the rest read by the `Input` dropped here, which then reads the reply.
+      if (input.copyFromStream) {
+        refuseCopy(input);
+      }
+      throw noted(conn, failure("UNKNOWN", "unexpected message from server"));
+    }
+    const stream = input.stream;
+    const home = conn.with((l) => {
+      l.copyOpen = true;
+      return l.homeChannel;
+    });
+    park(home, input);
+    return shared(new Mutex<CopyState>(new CopyState(conn, stream, home)));
+  }
+  const problem =
+    input.errorAt >= 0 ? input.serverError() : failure("UNKNOWN", "unexpected message from server");
+  finish(conn, input);
+  throw noted(conn, problem);
+}
+
+/** Starts `COPY … FROM STDIN`. */
+export async function startCopyFrom(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+): Promise<CopyHandle> throws PgError {
+  return await start(conn, generation, sql, true);
+}
+
+/** Starts `COPY … TO STDOUT`. */
+export async function startCopyTo(
+  conn: Conn,
+  generation: i64,
+  sql: string,
+): Promise<CopyHandle> throws PgError {
+  return await start(conn, generation, sql, false);
+}
+
+// Waits while too much is queued for a server that doesn't read yet; a failed send is reported.
+async function pace(h: CopyHandle, stream: PgStream, conn: Conn) {
+  const late = h.with((c) => (c.backlog >= MAX_QUEUED ? 1 : c.sendProblem.length > 0 ? 2 : 0));
+  if (late == 2) {
+    const why = h.with((c) => c.sendProblem);
+    throw noted(conn, ioFailure("ECONNRESET", why));
+  }
+  if (late == 1) {
+    try {
+      await stream.tcp.drained(MAX_QUEUED as number);
+    } catch (e) {
+      throw noted(conn, e instanceof IoError ? ioFailure(e.code, e.message) : connectionClosed());
+    }
+  }
+}
+
+/** Sends a chunk of text. */
+export async function copyWrite(h: CopyHandle, data: string) {
+  const open = h.with((c) => {
+    if (!c.open) {
+      return false;
+    }
+    c.add(data);
+    return true;
+  });
+  if (!open) {
+    throw errorOf(closed("copy writer"));
+  }
+  const stream = h.with((c) => c.stream);
+  const conn = h.with((c) => c.conn);
+  await pace(h, stream, conn);
+}
+
+/** Sends a chunk of bytes. */
+export async function copyWriteBytes(h: CopyHandle, data: u8[]) {
+  const open = h.with((c) => {
+    if (!c.open) {
+      return false;
+    }
+    c.addBytes(data);
+    return true;
+  });
+  if (!open) {
+    throw errorOf(closed("copy writer"));
+  }
+  const stream = h.with((c) => c.stream);
+  const conn = h.with((c) => c.conn);
+  await pace(h, stream, conn);
+}
+
+/** Completes the copy; the rows copied. */
+export async function copyEnd(h: CopyHandle): Promise<i64> throws PgError {
+  if (!h.with((c) => c.release())) {
+    throw errorOf(closed("copy writer"));
+  }
+  h.with((c) => c.done());
+  const conn = h.with((c) => c.conn);
+  const home = h.with((c) => c.home);
+  conn.with((l) => l.endCopy());
+  const input = home.tryReceive();
+  if (input == null) {
+    throw errorOf(connectionClosed());
+  }
+  input.parked = false;
+  input.continueReply();
+  await readWhole(conn, input);
+  if (input.errorAt >= 0) {
+    const f = input.serverError();
+    finish(conn, input);
+    throw noted(conn, f);
+  }
+  const n = input.affected();
+  finish(conn, input);
+  return n;
+}
+
+/** Cancels the copy: the server rolls the statement back. */
+export function copyAbort(h: CopyHandle) {
+  if (!h.with((c) => c.release())) {
+    return;
+  }
+  h.with((c) => c.fail());
+  const conn = h.with((c) => c.conn);
+  const home = h.with((c) => c.home);
+  conn.with((l) => l.endCopy());
+  const input = home.tryReceive();
+  if (input != null) {
+    // Dropped: it reads the server's answer.
+    input.parked = false;
+  }
+}
+
+/** The next chunks as they arrive, up to `READ_BATCH` bytes; empty at the end. */
+export async function copyRead(h: CopyHandle): Promise<u8[]> throws PgError {
+  if (!h.with((c) => c.open)) {
+    throw errorOf(closed("copy reader"));
+  }
+  const conn = h.with((c) => c.conn);
+  const home = h.with((c) => c.home);
+  const input = home.tryReceive();
+  if (input == null) {
+    h.with((c) => c.release());
+    throw errorOf(connectionClosed());
+  }
+  input.parked = false;
+  const out = new Out(1024);
+  while (true) {
+    const buf = input.buffer;
+    const b = buf.bytes;
+    let p = buf.pos;
+    while (out.len < READ_BATCH) {
+      const size = frameSize(b, p, buf.end);
+      if (size < 0) {
+        h.with((c) => c.release());
+        throw lose(conn, input, protocol(`a message of ${u32At(b, p + 1)} bytes`));
+      }
+      if (size == 0) {
+        break;
+      }
+      const tag = b[p];
+      if (tag == COPY_DATA) {
+        out.raw(b, p + 5, p + size);
+      } else if (
+        tag != NOTICE_RESPONSE && tag != PARAMETER_STATUS && tag != NOTIFICATION_RESPONSE
+      ) {
+        break;
+      }
+      p += size;
+    }
+    buf.pos = p;
+    if (out.len > 0) {
+      park(home, input);
+      return out.bytes.slice(0, out.len);
+    }
+    const size = frameSize(b, p, buf.end);
+    if (size > 0) {
+      // The stream's end: `CopyDone`, its completion, or an error, and `ReadyForQuery`.
+      h.with((c) => c.release());
+      input.continueReply();
+      await readWhole(conn, input);
+      if (input.errorAt >= 0) {
+        const f = input.serverError();
+        finish(conn, input);
+        throw noted(conn, f);
+      }
+      finish(conn, input);
+      return [];
+    }
+    buf.makeRoom();
+    let more = false;
+    try {
+      more = await input.fill();
+    } catch (e) {
+      h.with((c) => c.release());
+      throw lose(
+        conn,
+        input,
+        e instanceof IoError ? ioFailure(e.code, e.message) : connectionClosed(),
+      );
+    }
+    if (!more) {
+      h.with((c) => c.release());
+      throw lose(conn, input, connectionClosed());
+    }
+  }
+}
+
+/** Stops reading: the rest is discarded. */
+export function copyClose(h: CopyHandle) {
+  if (!h.with((c) => c.release())) {
+    return;
+  }
+  const home = h.with((c) => c.home);
+  const input = home.tryReceive();
+  if (input != null) {
+    // Dropped: it reads what is left.
+    input.parked = false;
+  }
+}

@@ -1,0 +1,174 @@
+// postgres (internal): reading a reply into an `Input`'s buffer: the whole messages that have arrived
+// are walked once, and what the request needs of them is noted. Decoding comes after, right out of the
+// buffer, when the reply has all come.
+
+import {
+  COMMAND_COMPLETE,
+  COPY_BOTH_RESPONSE,
+  COPY_IN_RESPONSE,
+  COPY_OUT_RESPONSE,
+  DATA_ROW,
+  EMPTY_QUERY,
+  ERROR_RESPONSE,
+  frameSize,
+  PORTAL_SUSPENDED,
+  READY_FOR_QUERY,
+  rowsAffected,
+  u32At,
+} from "./backend";
+import { failure, protocol } from "./failure";
+import { copyFail, Out } from "./frontend";
+import { Input } from "./input";
+
+/**
+ * Takes the whole messages that have arrived, after making room for more (`Input.readSome`): true
+ * when the reply is whole (`done`), or `broken`, or at the start of a COPY when asked to stop there.
+ */
+export function scanArrived(input: Input): bool {
+  if (scanned(input)) {
+    return true;
+  }
+  const shift = input.buffer.makeRoom();
+  if (shift != 0) {
+    shifted(input, shift);
+  }
+  return false;
+}
+
+function shifted(input: Input, by: i64) {
+  input.scan -= by;
+  if (input.errorAt >= 0) {
+    input.errorAt -= by;
+  }
+  if (input.completeAt >= 0) {
+    input.completeAt -= by;
+  }
+}
+
+// Takes the whole messages that have arrived; true when there is nothing more to wait for.
+function scanned(input: Input): bool {
+  const buf = input.buffer;
+  const b = buf.bytes;
+  const end = buf.end;
+  let p = input.scan;
+  while (true) {
+    const size = frameSize(b, p, end);
+    if (size == 0) {
+      input.scan = p;
+      return false;
+    }
+    if (size < 0) {
+      input.broken = protocol(`a message of ${u32At(b, p + 1)} bytes`);
+      return true;
+    }
+    const tag = b[p];
+    if (tag == DATA_ROW) {
+      // Read when the rows are.
+    } else if (tag == COMMAND_COMPLETE || tag == EMPTY_QUERY || tag == PORTAL_SUSPENDED) {
+      input.completeAt = p;
+      input.completeSize = size;
+    } else if (tag == READY_FOR_QUERY) {
+      if (size != 6) {
+        input.broken = protocol("a ReadyForQuery of the wrong size");
+        return true;
+      }
+      input.status = b[p + 5];
+      input.scan = p + size;
+      input.replyEnd = input.scan;
+      input.done = true;
+      input.at = buf.pos;
+      return true;
+    } else if (tag == ERROR_RESPONSE) {
+      if (input.errorAt < 0) {
+        input.errorAt = p;
+        input.errorSize = size;
+      }
+    } else if (tag == COPY_IN_RESPONSE || tag == COPY_OUT_RESPONSE || tag == COPY_BOTH_RESPONSE) {
+      if (input.stopAtCopy) {
+        buf.pos = p + size;
+        input.scan = p + size;
+        input.copyStarted = true;
+        input.copyFromStream = tag == COPY_IN_RESPONSE;
+        return true;
+      }
+      if (tag != COPY_OUT_RESPONSE) {
+        refuseCopy(input);
+      }
+    }
+    p += size;
+  }
+}
+
+/**
+ * The server waits for COPY data nobody will send: a script's `COPY … FROM STDIN`, a `copyFrom`
+ * whose caller is gone, or a `copyTo` of a statement that copies in. The reply then ends with the
+ * error this makes.
+ */
+export function refuseCopy(input: Input) {
+  const o = new Out(64);
+  copyFail(o, "no COPY data will be sent");
+  try {
+    input.stream.writeBytesLater(o.bytes, 0, o.len as number);
+  } catch (e) {
+    // The read that comes next reports the connection's end.
+  }
+}
+
+/** Reads what has come on an idle connection: false if it's over, or says something is wrong. */
+export function quiet(input: Input): bool {
+  const buf = input.buffer;
+  try {
+    while (true) {
+      buf.makeRoom();
+      const n = input.readSome();
+      if (n < 0) {
+        return false;
+      }
+      if (n == 0) {
+        break;
+      }
+    }
+  } catch (e) {
+    return false;
+  }
+  let p = buf.pos;
+  while (true) {
+    const size = frameSize(buf.bytes, p, buf.end);
+    if (size < 0) {
+      return false;
+    }
+    if (size == 0) {
+      buf.pos = p;
+      return true;
+    }
+    if (buf.bytes[p] == ERROR_RESPONSE) {
+      return false;
+    }
+    p += size;
+  }
+}
+
+/** Per execution of a whole reply, its rows affected, or the failure of one missing. */
+export function counts(input: Input, n: i64): i64[] {
+  const out: i64[] = [];
+  const b = input.buffer.bytes;
+  const stop = input.replyEnd;
+  let p = input.at;
+  while (p < stop) {
+    const tag = b[p];
+    const size = u32At(b, p + 1) + 1;
+    if (tag == COMMAND_COMPLETE) {
+      out.push(rowsAffected(b, p + 5, p + size - 1));
+    } else if (tag == EMPTY_QUERY) {
+      out.push(0);
+    }
+    p += size;
+  }
+  if ((out.length as i64) != n) {
+    input.failure = failure(
+      "UNKNOWN",
+      `unexpected batch reply: ${out.length} results for ${n} executions`,
+    );
+  }
+  return out;
+}

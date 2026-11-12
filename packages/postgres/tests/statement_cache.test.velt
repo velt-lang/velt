@@ -1,0 +1,46 @@
+// A connection's statement cache on its own: what `get` finds after the same text again, after the
+// other binding (object or array) of it, after `remove` and after `insert` of the same text.
+import { Prepared } from "../src/prepared";
+import { StatementCache } from "../src/statement_cache";
+
+function statement(name: string, named: bool): shared<Prepared> {
+  return shared(new Prepared(name, [], named, [], [], []));
+}
+
+function nameOf(cache: StatementCache, sql: string, named: bool): string {
+  const s = cache.get(sql, named);
+  return s == null ? "none" : s.name;
+}
+
+export function test_the_same_text_again_finds_its_statement() {
+  const cache = new StatementCache();
+  cache.insert("SELECT 1", statement("s1", false));
+  cache.insert("SELECT 2", statement("s2", false));
+  assertEq(nameOf(cache, "SELECT 1", false), "s1");
+  assertEq(nameOf(cache, "SELECT 1", false), "s1");
+  assertEq(nameOf(cache, "SELECT 2", false), "s2");
+  assertEq(nameOf(cache, "SELECT 1", false), "s1");
+  // The object binding of the same text is another statement.
+  assertEq(nameOf(cache, "SELECT 1", true), "none");
+  cache.insert("SELECT 1", statement("s3", true));
+  assertEq(nameOf(cache, "SELECT 1", true), "s3");
+  assertEq(nameOf(cache, "SELECT 1", false), "s1");
+}
+
+export function test_a_removed_statement_is_not_found_again() {
+  const cache = new StatementCache();
+  cache.insert("SELECT 1", statement("s1", false));
+  assertEq(nameOf(cache, "SELECT 1", false), "s1");
+  cache.remove("SELECT 1", false);
+  assertEq(nameOf(cache, "SELECT 1", false), "none");
+  assertEq(cache.closing.join(","), "s1");
+}
+
+export function test_a_text_prepared_again_finds_the_new_statement() {
+  const cache = new StatementCache();
+  cache.insert("SELECT 1", statement("s1", false));
+  assertEq(nameOf(cache, "SELECT 1", false), "s1");
+  cache.insert("SELECT 1", statement("s2", false));
+  assertEq(nameOf(cache, "SELECT 1", false), "s2");
+  assertEq(cache.closing.join(","), "s1");
+}

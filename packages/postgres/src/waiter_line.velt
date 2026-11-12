@@ -1,0 +1,164 @@
+// postgres (internal): `WaiterLine`, the tasks waiting for a pool's connection (pool_state.velt), in
+// the order they came.
+//
+// A socket follows the task that reads it, which costs system calls and wakes other threads, so a
+// connection that comes back goes to a waiter on the worker it came back on, when one is among the
+// first `LOOK_AHEAD` in line; a worker that holds more than one connection hands it to such a waiter
+// on a worker that holds none, to spread them. The first in line lets others ahead at most
+// `MAX_SKIPS` times in a row.
+//
+// Whoever is chosen is the first in line of its own worker, so each worker's waiters are linked in
+// order, and choosing looks at each worker's first rather than along the line. A waiter served ahead
+// of its turn keeps its place, marked served, until the front of the line passes it.
+
+import { Waiter } from "./waiter";
+
+// How many waiters from the front a connection looks at, and how many times in a row the first in
+// line lets another go ahead.
+const LOOK_AHEAD: i64 = 64;
+const MAX_SKIPS: i64 = 64;
+
+// Past this many places passed at the front, the line is cut down.
+const COMPACT_FROM: usize = 32;
+
+// The worker of a place whose waiter was served ahead of its turn.
+const SERVED: i64 = -1;
+
+// The connections worker `w` holds, of `held` (indexed by worker).
+function heldOn(held: i64[], w: i64): i64 {
+  return w < (held.length as i64) ? held[w] : 0;
+}
+
+/**
+ * The tasks waiting for a connection (see the module header). A waiter's place is its number in
+ * arrival order; `waiters[0]` is place `base`.
+ */
+export class WaiterLine<C> {
+  private waiters: Waiter<C>[] = [];
+  private base: i64 = 0;
+  // The first waiter not served yet, or the end of `waiters`.
+  private first: usize = 0;
+  // Places after `first` whose waiter was served ahead of its turn.
+  private served: i64 = 0;
+  private skips: i64 = 0;
+  // Per worker: the place of its first and last waiter, or -1.
+  private heads: i64[] = [];
+  private tails: i64[] = [];
+
+  /** Whether anybody waits. */
+  get anyone(): bool {
+    return this.first < (this.waiters.length as usize);
+  }
+
+  /** A task on worker `worker` waits on `ch`. */
+  add(ch: C, worker: i64) {
+    const place = this.base + (this.waiters.length as i64);
+    this.waiters.push({ ch: ch, worker: worker, next: -1 });
+    while ((this.heads.length as i64) <= worker) {
+      this.heads.push(-1);
+      this.tails.push(-1);
+    }
+    const last = this.tails[worker];
+    if (last >= 0) {
+      const at = last - this.base;
+      const w = this.waiters[at];
+      this.waiters[at] = { ch: w.ch, worker: w.worker, next: place };
+    } else {
+      this.heads[worker] = place;
+    }
+    this.tails[worker] = place;
+  }
+
+  /**
+   * The waiter a connection that came back on worker `here` goes to, which leaves the line; null if
+   * nobody waits. `held` counts the connections each worker holds.
+   */
+  next(here: i64, held: i64[]): Waiter<C> | null {
+    const first = this.first;
+    const n = this.waiters.length as usize;
+    if (first >= n) {
+      return null;
+    }
+    const front = this.base + (first as i64);
+    let chosen = front;
+    if (this.skips < MAX_SKIPS) {
+      const p = this.preferred(front, here, held);
+      if (p >= 0) {
+        chosen = p;
+      }
+    }
+    const at = chosen - this.base;
+    const w = this.waiters[at];
+    // The first of its worker's waiters: the next of them is first now.
+    this.heads[w.worker] = w.next;
+    if (w.next < 0) {
+      this.tails[w.worker] = -1;
+    }
+    if (chosen == front) {
+      this.skips = 0;
+      let k = first + 1;
+      while (k < n && this.waiters[k].worker == SERVED) {
+        k++;
+        this.served--;
+      }
+      this.first = k;
+    } else {
+      this.skips++;
+      this.served++;
+      this.waiters[at] = { ch: w.ch, worker: SERVED, next: -1 };
+    }
+    if (this.first >= COMPACT_FROM && this.first * 2 >= n) {
+      this.waiters = this.waiters.slice(this.first as i64);
+      this.base += this.first as i64;
+      this.first = 0;
+    }
+    return w;
+  }
+
+  // The place of the waiter the rule prefers to the first in line, or -1: the first on a worker
+  // that holds no connection if `here` holds more than one, else the first on `here`, if it is among
+  // the first `LOOK_AHEAD` waiters.
+  private preferred(front: i64, here: i64, held: i64[]): i64 {
+    if (heldOn(held, here) > 1) {
+      let best: i64 = -1;
+      const workers = this.heads.length as i64;
+      for (let w: i64 = 0; w < workers; w++) {
+        const h = this.heads[w];
+        if (h >= 0 && (best < 0 || h < best) && heldOn(held, w) == 0) {
+          best = h;
+        }
+      }
+      if (best >= 0 && this.near(front, best)) {
+        return best;
+      }
+    }
+    const local = here < (this.heads.length as i64) ? this.heads[here] : -1;
+    return local >= 0 && this.near(front, local) ? local : -1;
+  }
+
+  // Whether the waiter at `place` is among the first `LOOK_AHEAD` waiters from `front`. The places
+  // served between don't count; a place served after `place` was among the first when it was
+  // served, and so is `place` still, which this gives too.
+  private near(front: i64, place: i64): bool {
+    return place - front - this.served < LOOK_AHEAD;
+  }
+
+  /** Empties the line: what the waiters not served yet wait on. */
+  takeAll(): C[] {
+    const out: C[] = [];
+    for (let k = this.first; k < (this.waiters.length as usize); k++) {
+      const w = this.waiters[k];
+      if (w.worker != SERVED) {
+        out.push(w.ch);
+      }
+    }
+    this.waiters = [];
+    this.base = 0;
+    this.first = 0;
+    this.served = 0;
+    this.skips = 0;
+    this.heads = [];
+    this.tails = [];
+    return out;
+  }
+}

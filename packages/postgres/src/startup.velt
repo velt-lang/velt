@@ -1,0 +1,280 @@
+// postgres (internal): opening a connection: the socket (TCP, or TLS on velt/net), the startup message
+// and the password exchange (trust, cleartext, md5, SCRAM-SHA-256), up to the server's first
+// `ReadyForQuery`.
+
+import { utf8Encode } from "velt/encoding";
+import { PgStream } from "./transport";
+import { channel } from "velt/sync";
+import {
+  AUTHENTICATION,
+  ERROR_RESPONSE,
+  errorFields,
+  frameSize,
+  READY_FOR_QUERY,
+  u32At,
+  cstrEnd,
+} from "./backend";
+import { PgConfig } from "./config";
+import { errorOf, PgError } from "./errors";
+import { authentication, connectionClosed, Failure, failure, invalid, protocol } from "./failure";
+import { Out, passwordMessage, saslInitial, saslResponse, startup } from "./frontend";
+import { Input } from "./input";
+import { Conn, Line } from "./line";
+import { md5Hex } from "./md5";
+import { Prepared } from "./prepared";
+import { addressOf, ioError, socket } from "./socket";
+import { Scram } from "./scram";
+
+const AUTH_OK: i64 = 0;
+const AUTH_CLEARTEXT: i64 = 3;
+const AUTH_MD5: i64 = 5;
+const AUTH_SASL: i64 = 10;
+const AUTH_SASL_CONTINUE: i64 = 11;
+const AUTH_SASL_FINAL: i64 = 12;
+
+const SCRAM_SHA_256 = "SCRAM-SHA-256";
+
+/** The user to log in as: the connection string's, or as libpq has it, the system's. */
+export function userOf(c: PgConfig): string {
+  return c.user ?? process.env.USER ?? process.env.USERNAME ?? "";
+}
+
+// The `StartupMessage`'s parameters.
+function startupPairs(c: PgConfig): string[] {
+  const user = userOf(c);
+  const pairs = ["client_encoding", "UTF8", "user", user];
+  const db = c.dbname;
+  if (db != null) {
+    pairs.push("database");
+    pairs.push(db);
+  }
+  const app = c.applicationName;
+  if (app != null) {
+    pairs.push("application_name");
+    pairs.push(app);
+  }
+  const options = c.options;
+  if (options != null) {
+    pairs.push("options");
+    pairs.push(options);
+  }
+  return pairs;
+}
+
+// The next whole message: its position in the buffer, which is past it afterwards.
+async function nextMessage(input: Input, deadline: f64): Promise<i64> throws PgError {
+  const buf = input.buffer;
+  while (true) {
+    const size = frameSize(buf.bytes, buf.pos, buf.end);
+    if (size < 0) {
+      throw errorOf(protocol(`a message of ${u32At(buf.bytes, buf.pos + 1)} bytes`));
+    }
+    if (size > 0) {
+      const at = buf.pos;
+      buf.pos = at + size;
+      return at;
+    }
+    buf.makeRoom();
+    const s = input.stream;
+    const left = deadline - performance.now();
+    let n: number | null = 0;
+    try {
+      if (left <= 0 || (!s.buffered() && !(await s.tcp.readableWithin(left)))) {
+        throw new PgError(
+          "ETIMEDOUT",
+          "the server did not finish the connection's startup in time",
+        );
+      }
+      n = s.tryRead(buf.bytes, buf.end as number, buf.bytes.length as number);
+    } catch (e) {
+      throw ioError(e);
+    }
+    if (n == null) {
+      throw errorOf(connectionClosed());
+    }
+    buf.end += n as i64;
+  }
+}
+
+async function send(s: PgStream, o: Out) {
+  await s.writeBytes(o.bytes, 0, o.len as number);
+  o.len = 0;
+}
+
+function missingPassword(): PgError {
+  return errorOf(invalid("invalid configuration: password missing"));
+}
+
+// The exchange the server asked for with `AuthenticationSASL`, up to its last message.
+async function scram(c: PgConfig, input: Input, at: i64, deadline: f64) {
+  const b = input.buffer.bytes;
+  const size = u32At(b, at + 1) + 1;
+  let offered = false;
+  let p = at + 9;
+  while (p < at + size && b[p] != 0) {
+    const stop = cstrEnd(b, p, at + size);
+    if (stop < 0) {
+      throw errorOf(authentication("a bad list of SASL mechanisms"));
+    }
+    offered = offered || b.utf8Equals(SCRAM_SHA_256, p, stop);
+    p = stop + 1;
+  }
+  if (!offered) {
+    throw errorOf(authentication("the server offers no SASL mechanism this driver supports"));
+  }
+  const password = c.password;
+  if (password == null) {
+    throw missingPassword();
+  }
+  const s = new Scram(password);
+  const o = new Out(256);
+  saslInitial(o, SCRAM_SHA_256, s.first());
+  await send(input.stream, o);
+
+  const challenge = await saslStep(input, deadline, AUTH_SASL_CONTINUE);
+  const reply = s.final(challenge);
+  if (s.problem.length > 0) {
+    throw errorOf(authentication(s.problem));
+  }
+  saslResponse(o, reply);
+  await send(input.stream, o);
+
+  const last = await saslStep(input, deadline, AUTH_SASL_FINAL);
+  if (!s.verify(last)) {
+    throw errorOf(authentication(s.problem));
+  }
+}
+
+// The text of the next message of the exchange, which must be `want`.
+async function saslStep(input: Input, deadline: f64, want: i64): Promise<string> throws PgError {
+  while (true) {
+    const at = await nextMessage(input, deadline);
+    const b = input.buffer.bytes;
+    const size = u32At(b, at + 1) + 1;
+    const tag = b[at];
+    if (tag == ERROR_RESPONSE) {
+      throw errorOf(errorFields(b, at + 5, at + size));
+    }
+    if (tag == AUTHENTICATION) {
+      if (size < 9 || u32At(b, at + 5) != want) {
+        throw errorOf(authentication("an unexpected step in the SCRAM exchange"));
+      }
+      return b.utf8Slice(at + 9, at + size);
+    }
+    // A notice may come anywhere.
+  }
+}
+
+// Answers what the server asks, until `ReadyForQuery`.
+async function authenticate(c: PgConfig, input: Input, deadline: f64) {
+  while (true) {
+    const at = await nextMessage(input, deadline);
+    const b = input.buffer.bytes;
+    const size = u32At(b, at + 1) + 1;
+    const tag = b[at];
+    if (tag == READY_FOR_QUERY) {
+      if (size == 6) {
+        input.status = b[at + 5];
+      }
+      return;
+    }
+    if (tag == ERROR_RESPONSE) {
+      throw errorOf(errorFields(b, at + 5, at + size));
+    }
+    if (tag != AUTHENTICATION) {
+      // Parameters, the key for cancelling, notices.
+      continue;
+    }
+    if (size < 9) {
+      throw errorOf(protocol("a short Authentication message"));
+    }
+    const kind = u32At(b, at + 5);
+    if (kind == AUTH_OK) {
+      continue;
+    }
+    if (kind == AUTH_SASL) {
+      await scram(c, input, at, deadline);
+      continue;
+    }
+    const password = c.password;
+    if (password == null) {
+      throw missingPassword();
+    }
+    const o = new Out(128);
+    if (kind == AUTH_CLEARTEXT) {
+      passwordMessage(o, password);
+    } else if (kind == AUTH_MD5 && size >= 13) {
+      const user = userOf(c);
+      const inner = md5Hex(utf8Encode(`${password}${user}`));
+      const salted = utf8Encode(inner).concat(b.slice(at + 9, at + 13));
+      passwordMessage(o, `md5${md5Hex(salted)}`);
+    } else {
+      throw errorOf(
+        authentication(
+          `the server asks for authentication method ${kind}, which this driver does not support`,
+        ),
+      );
+    }
+    await send(input.stream, o);
+  }
+}
+
+// One host: the socket, then the startup over it; the connection.
+async function attempt(
+  c: PgConfig,
+  host: string,
+  address: string,
+  none: shared<Prepared>,
+): Promise<Conn> throws PgError {
+  const deadline = performance.now() + (c.startupTimeoutMs as f64);
+  const stream = await socket(c, address, host, deadline);
+  const input = new Input(stream, none);
+  try {
+    const o = new Out(256);
+    startup(o, startupPairs(c));
+    await send(stream, o);
+    await authenticate(c, input, deadline);
+  } catch (e) {
+    stream.abort();
+    stream.close();
+    throw ioError(e);
+  }
+  const home = channel<Input>(1);
+  const line = new Line(stream, home, none);
+  line.status = input.status;
+  const conn: Conn = shared(new Mutex<Line>(line));
+  input.conn = conn;
+  input.parked = true;
+  home.trySend(input);
+  return conn;
+}
+
+/** Connects to the first host in `c` that accepts; hosts are tried in order. */
+export async function openConnection(c: PgConfig): Promise<Conn> throws PgError {
+  if (c.requireBinding) {
+    throw errorOf(authentication("channel binding is required, and this driver does not offer it"));
+  }
+  const count = c.hosts.length > c.hostaddrs.length ? c.hosts.length : c.hostaddrs.length;
+  if (count == 0) {
+    throw errorOf(invalid("the connection string names no host"));
+  }
+  const none = shared(new Prepared("", [], false, [], [], []));
+  let last: PgError | null = null;
+  for (let i: usize = 0; i < count; i++) {
+    const port = i < c.ports.length ? c.ports[i] : c.ports.length > 0 ? c.ports[0] : 5432;
+    const name = i < c.hosts.length ? c.hosts[i] : "";
+    const target = i < c.hostaddrs.length ? c.hostaddrs[i] : name;
+    try {
+      if (target.startsWith("/")) {
+        throw new PgError(
+          "ENOTSUP",
+          `host "${target}" is a Unix-domain socket, which velt/net can't open: connect over TCP`,
+        );
+      }
+      return await attempt(c, name.length > 0 ? name : target, addressOf(target, port), none);
+    } catch (e) {
+      last = ioError(e);
+    }
+  }
+  throw last ?? errorOf(invalid("the connection string names no host"));
+}

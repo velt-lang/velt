@@ -1,0 +1,33 @@
+// postgres (internal): `WaitingForPool`, a task in a pool's line (pool.velt).
+
+import { Channel } from "velt/sync";
+import { Grant } from "./grant";
+import { connectionGone, PoolHandle, release } from "./pool_state";
+
+/** A task waiting in a pool's line; if it goes away, what it was handed must not be lost. */
+export class WaitingForPool {
+  private pool: PoolHandle;
+  private ch: Channel<Grant>;
+  released: bool = false;
+
+  constructor(pool: PoolHandle, ch: Channel<Grant>) {
+    this.pool = pool;
+    this.ch = ch;
+  }
+
+  [Symbol.dispose]() {
+    if (this.released) {
+      return;
+    }
+    this.ch.close();
+    const g = this.ch.tryReceive();
+    if (g != null) {
+      const conn = g.conn;
+      if (conn != null) {
+        release(this.pool, conn);
+      } else {
+        connectionGone(this.pool);
+      }
+    }
+  }
+}

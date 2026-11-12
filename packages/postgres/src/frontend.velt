@@ -1,0 +1,269 @@
+// postgres (internal): `Out`, a growing byte buffer, and the protocol's frontend messages: a tag
+// byte, a length that counts itself, and a body (https://www.postgresql.org/docs/current/protocol-message-formats.html).
+// A `Bind` is written by `Encoder` (encoder.velt), which knows the statement's types.
+
+// StartupMessage's protocol version 3.0, and the code of an SSLRequest.
+const PROTOCOL_3_0: i64 = 196608;
+const SSL_REQUEST: i64 = 80877103;
+
+/** `src[from..to]` to `dst` at `at`; the caller has checked they are inside both. */
+export function copyBytes(src: u8[], dst: u8[], at: i64, from: i64, to: i64) {
+  try {
+    src.copy(dst, at as number, from as number, to as number);
+  } catch (e) {
+    panic("ICE: postgres: a copy outside an array");
+  }
+}
+
+/** Bytes being written: `bytes[0..len]`. */
+export class Out {
+  bytes: u8[];
+  len: i64 = 0;
+
+  constructor(capacity: i64 = 256) {
+    this.bytes = Buffer.allocUnsafe(capacity as usize);
+  }
+
+  /** Makes room for `n` more bytes. */
+  room(n: i64) {
+    const size = this.bytes.length as i64;
+    if (this.len + n > size) {
+      this.grow(n);
+    }
+  }
+
+  private grow(n: i64) {
+    let size = (this.bytes.length as i64) * 2;
+    while (size < this.len + n) {
+      size *= 2;
+    }
+    const bigger: u8[] = Buffer.allocUnsafe(size as usize);
+    copyBytes(this.bytes, bigger, 0, 0, this.len);
+    this.bytes = bigger;
+  }
+
+  u8(v: i64) {
+    this.room(1);
+    this.put8(v);
+  }
+
+  i16(v: i64) {
+    this.room(2);
+    this.put16(v);
+  }
+
+  i32(v: i64) {
+    this.room(4);
+    this.put32(v);
+  }
+
+  // The `put` writers take room `room` made for them: a message's fixed part asks for its room once.
+  // (An index past the bytes still panics, as any index does.)
+
+  /** A byte, in room made for it. */
+  put8(v: i64) {
+    this.bytes[this.len] = v as u8;
+    this.len += 1;
+  }
+
+  /** A big-endian `i16`, in room made for it. */
+  put16(v: i64) {
+    const b = this.bytes;
+    const at = this.len;
+    b[at] = (v >> 8) as u8;
+    b[at + 1] = v as u8;
+    this.len = at + 2;
+  }
+
+  /** A big-endian `i32`, in room made for it. */
+  put32(v: i64) {
+    const b = this.bytes;
+    const at = this.len;
+    b[at] = (v >> 24) as u8;
+    b[at + 1] = (v >> 16) as u8;
+    b[at + 2] = (v >> 8) as u8;
+    b[at + 3] = v as u8;
+    this.len = at + 4;
+  }
+
+  i64(v: i64) {
+    this.i32(v >> 32);
+    this.i32(v);
+  }
+
+  /** Overwrites the big-endian `i32` at `at`. */
+  patch32(at: i64, v: i64) {
+    const b = this.bytes;
+    b[at] = (v >> 24) as u8;
+    b[at + 1] = (v >> 16) as u8;
+    b[at + 2] = (v >> 8) as u8;
+    b[at + 3] = v as u8;
+  }
+
+  /** The UTF-8 bytes of `s`. */
+  text(s: string) {
+    const n = Buffer.byteLength(s) as i64;
+    this.room(n);
+    if (n > 0) {
+      try {
+        this.bytes.write(s, this.len as number);
+      } catch (e) {
+        panic("ICE: postgres: a write outside the room made for it");
+      }
+      this.len += n;
+    }
+  }
+
+  /** The UTF-8 bytes of `s` and a NUL. */
+  cstr(s: string) {
+    this.text(s);
+    this.u8(0);
+  }
+
+  /** The bytes `src[from..to]`. */
+  raw(src: u8[], from: i64 = 0, to: i64 = -1) {
+    const end = to < 0 ? (src.length as i64) : to;
+    const n = end - from;
+    this.room(n);
+    if (n > 0) {
+      copyBytes(src, this.bytes, this.len, from, end);
+      this.len += n;
+    }
+  }
+
+  /** Starts a message with `tag`; `end` with what this returns finishes it. */
+  begin(tag: i64): i64 {
+    this.u8(tag);
+    const at = this.len;
+    this.i32(0);
+    return at;
+  }
+
+  /** Writes the length of the message `begin` started, at the position it returned. */
+  end(at: i64) {
+    this.patch32(at, this.len - at);
+  }
+}
+
+/** `StartupMessage`: `pairs` of name and value in turn. */
+export function startup(o: Out, pairs: string[]) {
+  const at = o.len;
+  o.i32(0);
+  o.i32(PROTOCOL_3_0);
+  for (const s of pairs) {
+    o.cstr(s);
+  }
+  o.u8(0);
+  o.patch32(at, o.len - at);
+}
+
+/** `SSLRequest`, answered with one byte: 'S' or 'N'. */
+export function sslRequest(o: Out) {
+  o.i32(8);
+  o.i32(SSL_REQUEST);
+}
+
+/** `PasswordMessage` (cleartext or md5). */
+export function passwordMessage(o: Out, password: string) {
+  const at = o.begin(112);
+  o.cstr(password);
+  o.end(at);
+}
+
+/** `SASLInitialResponse`. */
+export function saslInitial(o: Out, mechanism: string, data: string) {
+  const at = o.begin(112);
+  o.cstr(mechanism);
+  o.i32(Buffer.byteLength(data) as i64);
+  o.text(data);
+  o.end(at);
+}
+
+/** `SASLResponse`. */
+export function saslResponse(o: Out, data: string) {
+  const at = o.begin(112);
+  o.text(data);
+  o.end(at);
+}
+
+/** `Query`: the simple protocol. */
+export function query(o: Out, sql: string) {
+  const at = o.begin(81);
+  o.cstr(sql);
+  o.end(at);
+}
+
+/** `Parse` of `sql` as the statement `name`, the server inferring every parameter's type. */
+export function parse(o: Out, name: string, sql: string) {
+  const at = o.begin(80);
+  o.cstr(name);
+  o.cstr(sql);
+  o.i16(0);
+  o.end(at);
+}
+
+/** `Describe` of the statement `name`. */
+export function describeStatement(o: Out, name: string) {
+  const at = o.begin(68);
+  o.u8(83);
+  o.cstr(name);
+  o.end(at);
+}
+
+/** `Close` of the statement `name`. */
+export function closeStatement(o: Out, name: string) {
+  const at = o.begin(67);
+  o.u8(83);
+  o.cstr(name);
+  o.end(at);
+}
+
+/** `Execute` of the unnamed portal, for all its rows. */
+export function execute(o: Out) {
+  o.room(10);
+  const b = o.bytes;
+  const at = o.len;
+  b[at] = 69;
+  b[at + 1] = 0;
+  b[at + 2] = 0;
+  b[at + 3] = 0;
+  b[at + 4] = 9;
+  b[at + 5] = 0;
+  b[at + 6] = 0;
+  b[at + 7] = 0;
+  b[at + 8] = 0;
+  b[at + 9] = 0;
+  o.len = at + 10;
+}
+
+/** `Sync`: the end of a request. */
+export function sync(o: Out) {
+  o.room(5);
+  const b = o.bytes;
+  const at = o.len;
+  b[at] = 83;
+  b[at + 1] = 0;
+  b[at + 2] = 0;
+  b[at + 3] = 0;
+  b[at + 4] = 4;
+  o.len = at + 5;
+}
+
+/** `CopyDone`. */
+export function copyDone(o: Out) {
+  o.u8(99);
+  o.i32(4);
+}
+
+/** `CopyFail`. */
+export function copyFail(o: Out, why: string) {
+  const at = o.begin(102);
+  o.cstr(why);
+  o.end(at);
+}
+
+/** `Terminate`. */
+export function terminate(o: Out) {
+  o.u8(88);
+  o.i32(4);
+}

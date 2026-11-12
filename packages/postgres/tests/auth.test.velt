@@ -1,0 +1,131 @@
+// The password exchanges on their own, no server: SCRAM against RFC 7677's test vector, PBKDF2
+// against RFC 7914's, MD5 against RFC 1321's.
+import { hexEncode, utf8Encode } from "velt/encoding";
+import { md5Hex } from "../src/md5";
+import { pbkdf2, Scram } from "../src/scram";
+
+export function test_md5_vectors() {
+  assertEq(md5Hex(utf8Encode("")), "d41d8cd98f00b204e9800998ecf8427e");
+  assertEq(md5Hex(utf8Encode("abc")), "900150983cd24fb0d6963f7d28e17f72");
+  assertEq(
+    md5Hex(
+      utf8Encode(
+        "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+      ),
+    ),
+    "57edf4a22be3c955ac49da2e2107b67a",
+  );
+  // Lengths around the block's padding boundary.
+  assertEq(md5Hex(utf8Encode("a".repeat(55))), "ef1772b6dff9a122358552954ad0df65");
+  assertEq(md5Hex(utf8Encode("a".repeat(56))), "3b0c8ac703f828b04c6c197006d17218");
+  assertEq(md5Hex(utf8Encode("a".repeat(64))), "014842d480b571495a4a0363793f7367");
+}
+
+// What libpq sends for user "postgres", password "secret", salt 01 02 03 04.
+export function test_md5_password_response() {
+  const inner = md5Hex(utf8Encode("secretpostgres"));
+  const salt: u8[] = [1, 2, 3, 4];
+  const outer = md5Hex(utf8Encode(inner).concat(salt));
+  assertEq(inner.length, 32);
+  assertEq(outer.length, 32);
+  assert(outer != inner, "the salt changes the hash");
+}
+
+export function test_pbkdf2_vector() {
+  // RFC 7914, section 11, dkLen cut to one block.
+  const out = pbkdf2(utf8Encode("passwd"), utf8Encode("salt"), 1);
+  assertEq(hexEncode(out), "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc");
+  const many = pbkdf2(utf8Encode("Password"), utf8Encode("NaCl"), 80000);
+  assertEq(hexEncode(many), "4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56");
+}
+
+// RFC 7677's exchange; a PostgreSQL client sends the name empty, so the signature differs from the
+// RFC's with `n=`, as computed with Python's hashlib below.
+const NONCE = "rOprNGfwEbeRWgbNEkqO";
+const SERVER_FIRST =
+  "r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096";
+
+export function test_scram_first_message() {
+  const s = new Scram("pencil", NONCE);
+  assertEq(s.first(), `n,,n=,r=${NONCE}`);
+}
+
+export function test_scram_exchange_with_the_empty_name() {
+  const s = new Scram("pencil", NONCE);
+  const reply = s.final(SERVER_FIRST);
+  assertEq(s.problem, "");
+  assert(reply.startsWith("c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p="), reply);
+  assertEq(reply.slice(reply.indexOf(",p=") + 3), EXPECTED_PROOF);
+  assert(s.verify(`v=${EXPECTED_SERVER_SIGNATURE}`), s.problem);
+}
+
+const EXPECTED_PROOF = "qvT2SWdEH5Q06albL+hjSYuUhCG7VndFyzIb7CK4n9k=";
+const EXPECTED_SERVER_SIGNATURE = "3HO6Qt1M4MKJrmlKaoOqLAI0/0TV0HZe7J9H3MBtSOg=";
+
+function proofOf(password: string): string {
+  const s = new Scram(password, NONCE);
+  const reply = s.final(SERVER_FIRST);
+  return reply.slice(reply.indexOf(",p=") + 3);
+}
+
+// No SASLprep: a password's own UTF-8 bytes, as computed with Python's hashlib. For one already in
+// its normal form that is what SASLprep would give. U+2168 is the limit: SASLprep makes it "IX", so a
+// server that prepared it expects the second proof, and this one is refused.
+export function test_scram_uses_the_password_as_it_is() {
+  assertEq(proofOf("pässwörd"), "p45sT3IzJIZAhH3e3k7+nQUG8s3REE6aihsNfY6YJLo=");
+  assertEq(proofOf("\u2168"), "AqLT8T409h6JTQPerK1DoHZrns+rY2eNJ06aa6YJrVM=");
+  assert(proofOf("\u2168") != "2b5mOdeOFNUaOWSdK05u8Z+vtErTpXDPfs6KR0NuxVw=", "not prepared");
+}
+
+// RFC 7677, section 3, exactly.
+export function test_scram_rfc_7677_vector() {
+  const s = new Scram("pencil", NONCE, "user");
+  assertEq(s.first(), "n,,n=user,r=rOprNGfwEbeRWgbNEkqO");
+  assertEq(
+    s.final(SERVER_FIRST),
+    "c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=",
+  );
+  assert(s.verify("v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4="), s.problem);
+}
+
+export function test_scram_refuses_a_wrong_server_signature() {
+  const s = new Scram("pencil", NONCE);
+  s.final(SERVER_FIRST);
+  assert(
+    !s.verify("v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4="),
+    "the RFC's signature, for n=user",
+  );
+  assertEq(s.problem, "the SCRAM server signature does not match");
+}
+
+export function test_scram_refuses_what_a_hostile_server_sends() {
+  const refused = (first: string): string => {
+    const s = new Scram("pencil", NONCE);
+    s.final(first);
+    return s.problem;
+  };
+  assertEq(refused("garbage"), "invalid SCRAM server-first message");
+  assertEq(refused(`r=${NONCE}x,s=AAAA`), "invalid SCRAM server-first message");
+  assertEq(refused(`r=${NONCE}x,s=AAAA,i=0`), "invalid SCRAM server-first message");
+  assertEq(refused(`r=${NONCE}x,s=AAAA,i=x`), "invalid SCRAM server-first message");
+  assertEq(refused(`r=other,s=AAAA,i=1`), "the SCRAM nonce from the server does not extend ours");
+  // Its own nonce back, with nothing of the server's.
+  assertEq(
+    refused(`r=${NONCE},s=AAAA,i=1`),
+    "the SCRAM nonce from the server does not extend ours",
+  );
+  assertEq(refused(`r=${NONCE}x,s=!!!,i=1`), "invalid SCRAM salt");
+  assertEq(
+    refused(`r=${NONCE}x,s=AAAA,i=999999999`),
+    "the server asks for 999999999 SCRAM iterations",
+  );
+  const s = new Scram("pencil", NONCE);
+  assert(!s.verify("v=AAAA"), "a final message before the first");
+  const e = new Scram("pencil", NONCE);
+  e.final(SERVER_FIRST);
+  assert(!e.verify("e=invalid-proof"), "an error from the server");
+  assertEq(e.problem, "SCRAM failed: invalid-proof");
+  const g = new Scram("pencil", NONCE);
+  g.final(SERVER_FIRST);
+  assert(!g.verify("nonsense"), "not a final message");
+}

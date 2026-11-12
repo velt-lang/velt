@@ -1,0 +1,195 @@
+// What a connection does over the TLS `prefer` and `require` give it, on a real server: reads in
+// whichever task holds the `Input`, writes under the connection's lock, both through one TLS
+// connection. Needs VELT_TEST_PG_TLS_UNTRUSTED_URL (a server with TLS, without `sslmode`).
+import { connect, createPool } from "../src/lib";
+import { simple, takeTurn } from "../src/connection";
+import { parseConfig } from "../src/config";
+import { Input } from "../src/input";
+import { Conn } from "../src/line";
+import { Sent } from "../src/sent";
+import { openConnection } from "../src/startup";
+
+class Num {
+  n: i64;
+
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class Ssl {
+  ssl: bool;
+
+  constructor(ssl: bool) {
+    this.ssl = ssl;
+  }
+}
+
+function tlsUrl(): string | null {
+  const url = process.env.VELT_TEST_PG_TLS_UNTRUSTED_URL ?? "";
+  return url.length == 0 ? null : `${url}${url.includes("?") ? "&" : "?"}sslmode=require`;
+}
+
+// Bytes both ways, more than the socket and a TLS record hold, with the server's answer read after.
+export async function test_copy_both_ways() {
+  const url = tlsUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await connect(url);
+  const on: Ssl | null = await db.selectOne(
+    "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
+  );
+  assertEq(on?.ssl, true);
+  await db.batch("CREATE TEMP TABLE tls_copy (id INTEGER, name TEXT)");
+  const w = await db.copyFrom("COPY tls_copy (id, name) FROM STDIN (FORMAT csv)");
+  const name = "n".repeat(1000);
+  for (let i: i64 = 0; i < 4000; i++) {
+    await w.write(`${i},${name}\n`);
+  }
+  assertEq(await w.end(), 4000);
+  const r = await db.copyTo("COPY (SELECT * FROM tls_copy ORDER BY id) TO STDOUT (FORMAT csv)");
+  let bytes: i64 = 0;
+  while (true) {
+    const chunk = await r.read();
+    if (chunk == null) {
+      break;
+    }
+    bytes += chunk.length as i64;
+  }
+  assertEq(bytes, (4000 * 1002 + 10 + 2 * 90 + 3 * 900 + 4 * 3000) as i64);
+  const count: Num | null = await db.selectOne("SELECT count(*)::int8 AS n FROM tls_copy");
+  assertEq(count?.n, 4000);
+  db.close();
+}
+
+async function asks(pool: Conn, i: i64): Promise<i64> {
+  return await simple(pool, 1, `SELECT ${i} FROM generate_series(1, ${(i % 7) + 1})`);
+}
+
+// Requests from many tasks on one connection: each writes under the lock and reads its own reply.
+export async function test_tasks_share_a_connection() {
+  const url = tlsUrl();
+  if (url == null) {
+    return;
+  }
+  const conn = await openConnection(parseConfig(url));
+  const tasks: Promise<i64>[] = [];
+  for (let i: i64 = 0; i < 200; i++) {
+    tasks.push(spawn(asks(conn, i)));
+  }
+  for (let i: i64 = 0; i < 200; i++) {
+    assertEq(await tasks[i], (i % 7) + 1);
+  }
+  conn.with((l) => l.shutDownWhenIdle());
+}
+
+async function holdPartly(conn: Conn, s: Sent) {
+  const input: Input = await takeTurn(conn, s);
+  await input.fill();
+  assert(input.buffer.end > 0, "something arrived");
+}
+
+// The task reading a reply larger than a record goes away: another task reads the rest through the
+// same TLS connection, and the next request gets its own reply.
+export async function test_a_reader_that_goes_away_mid_reply_leaves_the_stream_in_step() {
+  const url = tlsUrl();
+  if (url == null) {
+    return;
+  }
+  const conn = await openConnection(parseConfig(url));
+  const s = conn.with(
+    (l) => l.sendSimple(1, "SELECT repeat('x', 100000) FROM generate_series(1, 4)"),
+  );
+  await holdPartly(conn, s);
+  assertEq(await simple(conn, 1, "SELECT 1"), 1);
+  conn.with((l) => l.shutDownWhenIdle());
+}
+
+// A server that ends a session mid-way is the end of the connection, and only of that one.
+export async function test_the_server_ending_a_session_fails_its_connection() {
+  const url = tlsUrl();
+  if (url == null) {
+    return;
+  }
+  const db = await connect(url);
+  const other = await connect(url);
+  const me: Num | null = await db.selectOne("SELECT pg_backend_pid()::int8 AS n");
+  await other.batch(`SELECT pg_terminate_backend(${me?.n ?? 0})`);
+  let code = "";
+  try {
+    while (true) {
+      await db.run("SELECT 1");
+    }
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assert(code.length > 0, "the next request fails");
+  const still: Num | null = await other.selectOne("SELECT 2::int8 AS n");
+  assertEq(still?.n, 2);
+  other.close();
+  db.close();
+}
+
+// A pool's connections go back and are reused across tasks, which is a `TlsStream` changing threads.
+export async function test_a_pool_lends_a_connection_to_one_task_after_another() {
+  const url = tlsUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 2 });
+  const tasks: Promise<i64>[] = [];
+  for (let i: i64 = 0; i < 50; i++) {
+    tasks.push(spawn(pool.run("SELECT 1")));
+  }
+  for (const t of tasks) {
+    assertEq(await t, 1);
+  }
+  pool.end();
+}
+
+// A pool's idle TLS connection whose session the server ended: the pool finds the server's bytes
+// on the socket before it lends the connection, and opens another.
+async function dropsAnEndedConnection(url: string) {
+  const admin = await connect(url);
+  const pool = createPool({ url: url, max: 1 });
+  for (let round = 0; round < 5; round++) {
+    const me: Num | null = await pool.selectOne("SELECT pg_backend_pid()::int8 AS n");
+    const pid = me?.n ?? 0;
+    await admin.execute("SELECT pg_terminate_backend($1::int4)", [pid]);
+    // Once the backend has left pg_stat_activity, its FATAL and the socket's end have been sent.
+    let left = false;
+    for (let i = 0; i < 1000 && !left; i++) {
+      const c: Num | null = await admin.queryOne(
+        "SELECT count(*)::int8 AS n FROM pg_stat_activity WHERE pid = $1::int4",
+        [pid],
+      );
+      left = c?.n == 0;
+      if (!left) {
+        // timing: polls for the backend's exit
+        await sleep(5);
+      }
+    }
+    assert(left, `round ${round}: backend ${pid} still there`);
+    const next: Num | null = await pool.selectOne("SELECT pg_backend_pid()::int8 AS n");
+    assert((next?.n ?? 0) > 0 && next?.n != pid, `round ${round}: ${next?.n} after ${pid}`);
+  }
+  admin.close();
+  pool.end();
+}
+
+// TLS after `SSLRequest` (`require`).
+export async function test_a_pool_drops_an_idle_connection_the_server_ended() {
+  const url = tlsUrl();
+  if (url != null) {
+    await dropsAnEndedConnection(url);
+  }
+}
+
+// velt/net's direct TLS (`verify-full`), on VELT_TEST_PG_TLS_URL.
+export async function test_a_verify_full_pool_drops_an_idle_connection_the_server_ended() {
+  const url = process.env.VELT_TEST_PG_TLS_URL ?? "";
+  if (url.length > 0) {
+    await dropsAnEndedConnection(url);
+  }
+}

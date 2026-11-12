@@ -1,0 +1,100 @@
+// postgres (internal): binary `inet`, `cidr` and `macaddr` values as the text PostgreSQL prints.
+//
+// `inet` and `cidr`: family (2 IPv4, 3 IPv6), prefix bits, an is-cidr flag, the address length, then
+// the address. An `inet` whose prefix covers the whole address prints without it ("10.0.0.1",
+// "10.0.0.0/8"); a `cidr` always has it. IPv6 addresses are compressed as RFC 5952 says
+// ("2001:db8::1"), and an IPv4-mapped one ends in dotted form ("::ffff:1.2.3.4"). `macaddr`: six
+// bytes, "08:00:2b:01:02:03"; `macaddr8`: eight.
+
+import { u16At } from "./backend";
+import { Rendered } from "./temporal";
+
+function ok(text: string): Rendered {
+  return { text: text, problem: "" };
+}
+
+function v4(b: u8[], at: i64): string {
+  return `${b[at]}.${b[at + 1]}.${b[at + 2]}.${b[at + 3]}`;
+}
+
+function v6(b: u8[], at: i64): string {
+  // The IPv4-mapped form, and the deprecated IPv4-compatible one Rust's formatter also prints.
+  let leadingZeros = true;
+  for (let i: i64 = 0; i < 10; i++) {
+    leadingZeros = leadingZeros && b[at + i] == 0;
+  }
+  if (leadingZeros && b[at + 10] == 255 && b[at + 11] == 255) {
+    return `::ffff:${v4(b, at + 12)}`;
+  }
+  // The longest run of two or more zero groups, the first if several tie.
+  let best: i64 = -1;
+  let bestLen: i64 = 0;
+  let run: i64 = -1;
+  for (let g: i64 = 0; g < 8; g++) {
+    if (u16At(b, at + 2 * g) == 0) {
+      if (run < 0) {
+        run = g;
+      }
+      if (g - run + 1 > bestLen) {
+        best = run;
+        bestLen = g - run + 1;
+      }
+    } else {
+      run = -1;
+    }
+  }
+  if (bestLen < 2) {
+    best = -1;
+  }
+  const s = new StringBuilder();
+  let g: i64 = 0;
+  while (g < 8) {
+    if (g == best) {
+      s.append("::");
+      g += bestLen;
+      continue;
+    }
+    if (g > 0 && g != best + bestLen) {
+      s.append(":");
+    }
+    s.append(u16At(b, at + 2 * g).toString(16));
+    g++;
+  }
+  return s.toString();
+}
+
+/** `inet` or `cidr`. */
+export function inet(b: u8[], from: i64, len: i64): Rendered {
+  const problem: Rendered = { text: "", problem: "bad inet value" };
+  if (len < 4) {
+    return problem;
+  }
+  const family = b[from];
+  const bits = b[from + 1] as i64;
+  const isCidr = b[from + 2] != 0;
+  const size = b[from + 3] as i64;
+  let text: string;
+  let maxBits: i64;
+  if (family == 2 && size == 4 && len == 8) {
+    text = v4(b, from + 4);
+    maxBits = 32;
+  } else if (family == 3 && size == 16 && len == 20) {
+    text = v6(b, from + 4);
+    maxBits = 128;
+  } else {
+    return problem;
+  }
+  return ok(!isCidr && bits == maxBits ? text : `${text}/${bits}`);
+}
+
+/** `macaddr` (6 bytes) or `macaddr8` (8 bytes). */
+export function macaddr(b: u8[], from: i64, len: i64): Rendered {
+  if (len != 6 && len != 8) {
+    return { text: "", problem: "bad macaddr value" };
+  }
+  const parts: string[] = [];
+  for (let i: i64 = 0; i < len; i++) {
+    parts.push((b[from + i] as i64).toString(16).padStart(2, "0"));
+  }
+  return ok(parts.join(":"));
+}

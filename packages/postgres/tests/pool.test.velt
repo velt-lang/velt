@@ -4,6 +4,7 @@
 // end. Needs VELT_TEST_PG_URL (tests/support/pg.velt).
 import { connect, createPool, Client, PgError, Pool } from "../src/lib";
 import { uuidv4 } from "velt/random/uuid";
+import { timeout, TimeoutError } from "velt/task";
 import { pgUrl } from "./support/pg";
 
 class Count {
@@ -11,6 +12,14 @@ class Count {
 
   constructor(n: i64) {
     this.n = n;
+  }
+}
+
+class Value {
+  v: i64;
+
+  constructor(v: i64) {
+    this.v = v;
   }
 }
 
@@ -174,4 +183,120 @@ export async function test_ended_pool_fails() {
     code = e.code.clone();
   }
   assertEq(code, "ECLOSED");
+}
+
+// One task's turns on a busy pool: how many queries got their own value back.
+async function turns(pool: Pool, t: i64, n: i64): Promise<i64> throws PgError {
+  let right: i64 = 0;
+  for (let k: i64 = 0; k < n; k++) {
+    const want = t * 1000 + k;
+    const r: Value | null = await pool.queryOne("SELECT $1::int8 AS v", [want]);
+    if (r != null && r.v == want) {
+      right++;
+    }
+  }
+  return right;
+}
+
+// Many tasks wait for one connection, again and again (each wait's channel serves the next waits);
+// every one gets its turn, and those still waiting when the pool ends hear so.
+export async function test_waiters_for_one_connection_each_get_their_turns() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 1 });
+  const tasks: Promise<i64, PgError>[] = [];
+  for (let t: i64 = 0; t < 20; t++) {
+    tasks.push(spawn(turns(pool, t, 25)));
+  }
+  let right: i64 = 0;
+  for (const n of await timeout(Promise.all(tasks), 60000)) {
+    right += n;
+  }
+  assertEq(right, 500);
+
+  // Waiters when the pool ends: they fail, none hangs.
+  const limited: Promise<i64, PgError | TimeoutError>[] = [];
+  for (let t: i64 = 0; t < 8; t++) {
+    limited.push(spawn(timeout(spawn(turns(pool, t, 25)), 20000)));
+  }
+  await pool.run("SELECT 1");
+  pool.end();
+  let closed: i64 = 0;
+  let stuck: i64 = 0;
+  for (const p of limited) {
+    try {
+      await p;
+    } catch (e) {
+      if (e instanceof PgError && e.code == "ECLOSED") {
+        closed++;
+      } else if (e instanceof TimeoutError) {
+        stuck++;
+      }
+    }
+  }
+  assert(closed > 0, "the pool's end reached its waiters");
+  assertEq(stuck, 0);
+}
+
+async function backendOf(pool: Pool): Promise<i64> throws PgError {
+  const b: Backend | null = await pool.selectOne("SELECT pg_backend_pid()::int8 AS pid");
+  return b?.pid ?? -1;
+}
+
+// A session ended by the server (`pg_terminate_backend`, a restart, a fail-over) while its
+// connection waited idle, however briefly: the pool finds the server's FATAL "57P01" on the socket
+// before it lends the connection, and opens another. (One ended after that check fails its
+// statement, which the server may have run.)
+export async function test_a_connection_whose_session_ended_while_idle_is_not_used() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const admin = await connect(url);
+  const pool = createPool({ url: url, max: 1 });
+  for (let round = 0; round < 3; round++) {
+    const pid = await backendOf(pool);
+    await admin.execute("SELECT pg_terminate_backend($1::int4)", [pid]);
+    // The server's FATAL is sent before the backend leaves pg_stat_activity: once it has left, the
+    // FATAL is on the idle connection's socket.
+    let left = false;
+    for (let i = 0; i < 1000 && !left; i++) {
+      const c: Count | null = await admin.queryOne(
+        "SELECT count(*)::int8 AS n FROM pg_stat_activity WHERE pid = $1::int4",
+        [pid],
+      );
+      left = c?.n == 0;
+      if (!left) {
+        // timing: polls for the backend's exit
+        await sleep(5);
+      }
+    }
+    assert(left, `round ${round}: backend ${pid} still there`);
+    const next = await backendOf(pool);
+    assert(next > 0 && next != pid, `round ${round}: ${next} after ${pid}`);
+  }
+  admin.close();
+  pool.end();
+}
+
+// A statement that ends its own session ran: it fails, and isn't run again.
+export async function test_a_statement_that_ends_its_session_is_not_run_again() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 1 });
+  const pid = await backendOf(pool);
+  let code = "ok";
+  try {
+    await pool.run("SELECT pg_terminate_backend(pg_backend_pid())");
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "57P01");
+  const next = await backendOf(pool);
+  assert(next > 0 && next != pid, `${next} after ${pid}`);
+  pool.end();
 }

@@ -1,0 +1,45 @@
+// postgres (internal): TLS without a certificate check, for `prefer` and `require`: velt/net's
+// `startTls` over the plain socket that `SSLRequest` was answered `S` on.
+
+import { startTls, TcpStream, TlsStream } from "velt/net";
+import { timeout } from "velt/task";
+import { PgStream } from "./transport";
+
+/**
+ * The handshake over `plain`, bounded by `ms`. A failure closes `plain` and throws what the
+ * handshake threw (a `TimeoutError` for `ms`).
+ */
+export async function uncheckedTls(
+  plain: TcpStream,
+  name: string,
+  alpn: string,
+  ms: i64,
+): Promise<PgStream> {
+  let tls: TlsStream;
+  try {
+    tls = await timeout(
+      startTls(plain, { serverName: serverNameOf(name), verify: false, alpn: [alpn] }),
+      ms,
+    );
+  } catch (e) {
+    // A handshake that lost to the deadline is waiting on `plain`: this ends it.
+    plain.abort();
+    plain.close();
+    throw e;
+  }
+  return { tcp: plain, tls: shared(new Mutex<TlsStream>(tls)), direct: false };
+}
+
+// SNI takes a name, not an address.
+function serverNameOf(host: string): string {
+  if (host.includes(":")) {
+    return "";
+  }
+  for (let i: i64 = 0; i < (host.length as i64); i++) {
+    const c = host.charCodeAt(i) as i64;
+    if (c != 46 && (c < 48 || c > 57)) {
+      return host;
+    }
+  }
+  return "";
+}
