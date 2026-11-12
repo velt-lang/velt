@@ -11,9 +11,9 @@
 //! - `velt_rt_str_hash`: an inline string of at most 8 bytes (most `Map<string, V>` keys) hashes
 //!   from the first word of the value, masked to its length.
 //! - `velt_rt_str_cmp` against a one-byte literal: see `string_compare`.
-//! - `velt_rt_str_slice(s, i, i + 1)` (`s[i]`, `charAt`, `slice`) of an ASCII string (unit count
-//!   == byte count, so positions mean the same in bytes and code units) with `0 <= i < len`:
-//!   the one-byte inline string `{s[i], 0, (0x80 | 1) << 56}`.
+//!
+//! (`slice`'s one unit of an ASCII string, which was here, is std's own code now:
+//! std/prelude/string.velt, #2198.)
 //!
 //! The layout is rt_abi.md "Strings": `{w0, w1, w2}`, inline when the top bit of `w2` is set
 //! (byte length in bits 56..61, `0x40` of byte 23 set when non-ASCII, text in the value itself),
@@ -140,43 +140,6 @@ call:
     )
 }
 
-/// `w2` of a one-byte inline ASCII string, `(0x80 | 1) << 56`, as an `i64`.
-const INLINE_ONE_W2: i64 = (0x81u64 << 56) as i64;
-
-/// `velt_rt_str_slice(ptr s, i64 start, i64 end, ptr out)`.
-fn slice_helper() -> String {
-    format!(
-        "define internal void @velt.str_slice(ptr %s, i64 %start, i64 %end, ptr %out) alwaysinline nounwind {{
-{}  %units = lshr i64 %s.w1, 32
-  %bytes = and i64 %s.w1, 4294967295
-  %heap.ascii = icmp eq i64 %units, %bytes
-  %form = and i64 %s.top, 192
-  %inl.ascii = icmp eq i64 %form, 128
-  %ascii = select i1 %s.inl, i1 %inl.ascii, i1 %heap.ascii
-  %inside = icmp ult i64 %start, %s.len
-  %next = add i64 %start, 1
-  %one = icmp eq i64 %end, %next
-  %ok = and i1 %ascii, %inside
-  %fast = and i1 %ok, %one
-  br i1 %fast, label %byte, label %call
-byte:
-  %at = getelementptr inbounds i8, ptr %s.data, i64 %start
-  %c = load i8, ptr %at, align 1
-  %w0 = zext i8 %c to i64
-  store i64 %w0, ptr %out, align 8
-  %o1 = getelementptr inbounds i8, ptr %out, i64 8
-  store i64 0, ptr %o1, align 8
-  %o2 = getelementptr inbounds i8, ptr %out, i64 16
-  store i64 {INLINE_ONE_W2}, ptr %o2, align 8
-  ret void
-call:
-  call void @velt_rt_str_slice(ptr %s, i64 %start, i64 %end, ptr %out)
-  ret void
-}}",
-        view("s")
-    )
-}
-
 /// The helper to call instead of the runtime string function `symbol` (of VIR signature
 /// `params -> ret`), with the module-level definitions it needs; `None` for other functions (or
 /// an unexpected signature, e.g. a user `declare` of the same name). `ptr32`: the target's
@@ -187,7 +150,7 @@ pub(crate) fn fast_path(
     ret: Ty,
     ptr32: bool,
 ) -> Option<(&'static str, Vec<String>)> {
-    use Ty::{Ptr, Unit, I64, U64, U8};
+    use Ty::{Ptr, Unit, U64, U8};
     let size_t = if ptr32 { "i32" } else { "i64" };
     let (name, defs) = match (symbol, params, ret) {
         ("velt_rt_str_drop", [Ptr], Unit) => ("@velt.str_drop", vec![drop_helper()]),
@@ -201,9 +164,6 @@ pub(crate) fn fast_path(
             ],
         ),
         ("velt_rt_str_hash", [Ptr], U64) => ("@velt.str_hash", vec![hash_helper()]),
-        ("velt_rt_str_slice", [Ptr, I64, I64, Ptr], Unit) => {
-            ("@velt.str_slice", vec![slice_helper()])
-        }
         _ => return None,
     };
     Some((name, defs))
@@ -220,8 +180,9 @@ mod tests {
         assert!(fast_path("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8, false).is_some());
         assert!(fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::U64, false).is_some());
         assert!(fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::I64, false).is_none());
+        // std's `slice` makes one unit of an ASCII string itself (std/prelude/string.velt, #2198).
         let slice = [Ty::Ptr, Ty::I64, Ty::I64, Ty::Ptr];
-        assert!(fast_path("velt_rt_str_slice", &slice, Ty::Unit, false).is_some());
+        assert!(fast_path("velt_rt_str_slice", &slice, Ty::Unit, false).is_none());
         assert!(fast_path(
             "velt_rt_str_concat",
             &[Ty::Ptr, Ty::Ptr, Ty::Ptr],
@@ -276,11 +237,5 @@ mod tests {
         let (_, defs) = eq(false);
         assert!(defs[0].contains("@memcmp(ptr %a.data, ptr %b.data, i64 %a.len)"));
         assert!(defs[1].contains("@memcmp(ptr, ptr, i64)"));
-    }
-
-    #[test]
-    fn the_inline_one_byte_tag_is_0x81() {
-        assert_eq!((INLINE_ONE_W2 as u64) >> 56, 0x81);
-        assert_eq!(INLINE_ONE_W2 as u64 & ((1 << 56) - 1), 0);
     }
 }

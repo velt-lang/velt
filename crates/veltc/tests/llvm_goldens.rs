@@ -62,8 +62,8 @@ fn goldens_split_into_codegen_units() {
 
 /// The LLVM backend's inline helpers, against Node's output: `%` on `f64` (its whole-number fast
 /// path and `fmod` fallback), the int32 operators (`@velt.to_int32`, `mul_int32`, `add_int32`,
-/// `clz32`) and the string helpers (`@velt.str_drop`, `str_eq`, `str_cmp`, `str_slice`,
-/// `str_hash`: keys hashed inline and by the runtime must agree), with `charCodeAt` and the `Map` probes
+/// `clz32`) and the string helpers (`@velt.str_drop`, `str_eq`, `str_cmp`, `str_hash`: keys
+/// hashed inline and by the runtime must agree), with `charCodeAt` and the `Map` probes
 /// `velt_opt` merges alongside, and the f16/bf16 square root (`@velt.sqrt_f32` and the
 /// narrowing helpers), the vector sums (`sumWide()`: `psadbw` and `pmaddwd` on x86), and integers
 /// compared with whole doubles (`numrep`'s `int_compare`, with `bitand`/`bitor` on `bool`). Each

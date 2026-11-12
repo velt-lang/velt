@@ -1,0 +1,117 @@
+// `slice`, `substring`, `charAt`, `at` and `s[i]` (#2198): every bound of short strings of each
+// kind (ASCII, two- and three-byte characters, pairs, lone surrogates; literal, built at run time,
+// and a slice), bounds that split a pair at either end, and long strings whose positions go
+// through the breadcrumbs. The expected output is Node's (this file runs there unchanged, with
+// `main()` called). Results are printed as their code units, so lone surrogates show as such.
+
+const HI = String.fromCharCode(0xd83d);
+const LO = String.fromCharCode(0xde00);
+
+/** The code units of `s` in hex, or `undefined`. */
+function units(s: string | undefined): string {
+  if (s === undefined) {
+    return "undefined";
+  }
+  const out: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    out.push(s.charCodeAt(i).toString(16));
+  }
+  return `[${out.join(" ")}]`;
+}
+
+/** `s` built at run time, so it is a heap string. */
+function built(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    out += s.charAt(i);
+  }
+  return out;
+}
+
+/** Every `slice` and `substring` of `s` between the bounds `-n-2..n+2`, and each index read. */
+function every(name: string, s: string) {
+  const n = s.length;
+  const slices: string[] = [];
+  const subs: string[] = [];
+  for (let a = -n - 2; a <= n + 2; a++) {
+    for (let b = -n - 2; b <= n + 2; b++) {
+      slices.push(units(s.slice(a, b)));
+      subs.push(units(s.substring(a, b)));
+    }
+  }
+  const reads: string[] = [];
+  for (let i = -n - 2; i <= n + 2; i++) {
+    reads.push(`${units(s.charAt(i))}${units(s.at(i))}${units(s.slice(i))}`);
+  }
+  console.log(`${name} (${n} units)`);
+  console.log(`  slice ${slices.join("")}`);
+  console.log(`  substring ${subs.join("")}`);
+  console.log(`  reads ${reads.join(" ")}`);
+}
+
+/** Bounds near `k` of a long string, through slice, substring, charAt, at and indexing. */
+function near(name: string, s: string, ks: number[]) {
+  const out: string[] = [];
+  for (const k of ks) {
+    out.push(
+      `${k}: ${units(s.slice(k, k + 3))} ${units(s.slice(k - 2, k))} ${units(s.substring(k + 1, k - 1))} ` +
+        `${units(s.charAt(k))} ${units(s.at(k))} ${units(s.at(-k))} ${k < s.length ? units(s[k]) : "-"} ${s.slice(k).length} ${s.slice(-k).length}`,
+    );
+  }
+  console.log(`${name} (${s.length} units)`);
+  for (const line of out) {
+    console.log(`  ${line}`);
+  }
+}
+
+function main() {
+  const shorts = [
+    ["empty", ""],
+    ["ascii", "abcd"],
+    ["two-byte", "aéb"],
+    ["three-byte", "日本x"],
+    ["pair", "a😀b"],
+    ["pairs", "😀😀"],
+    ["lone high", `a${HI}b`],
+    ["lone low", `${LO}a`],
+    ["lone both", `${LO}${HI}`],
+    ["mixed", `é😀${HI}日a${LO}`],
+  ];
+  for (const [name, s] of shorts) {
+    every(name, s);
+    every(`${name}, built`, built(s));
+  }
+  // A slice of a longer buffer, then slices of it.
+  const parent = built("xx😀é日😀a".repeat(8));
+  every("a slice", parent.slice(3, 13));
+
+  // Long strings: their positions go through the breadcrumbs (64 units each).
+  const long = built("é日😀a".repeat(400));
+  near("long", long, [0, 1, 2, 3, 63, 64, 65, 127, 128, 1000, 1001, 2000, 2398, 2399, 2400]);
+  const asciiLong = "the quick brown fox ".repeat(50);
+  near("long ascii", asciiLong, [0, 1, 19, 20, 500, 998, 999, 1000]);
+  near("long, a slice", long.slice(1, 2001), [0, 1, 2, 63, 64, 999, 1000, 1999, 2000]);
+
+  // A slice that shares a long buffer, sliced again near both ends.
+  const piece = long.slice(100, 1900);
+  console.log(
+    `${piece.length} ${units(piece.slice(0, 4))} ${units(piece.slice(-4))} ${units(piece.substring(1797, 1802))}`,
+  );
+
+  // Indices that are not integers: NaN is 0, fractions truncate toward 0, infinities clamp.
+  const odd = [NaN, 0.5, 1.5, 2.9, -0.5, -1.5, -2.9, Infinity, -Infinity];
+  const w = "a😀é";
+  for (const x of odd) {
+    console.log(
+      `${x}: ${units(w.slice(x))} ${units(w.slice(0, x))} ${units(w.substring(x))} ${units(w.substring(0, x))} ` +
+        `${units(w.charAt(x))} ${units(w.at(x))}`,
+    );
+  }
+
+  // `s[i]` (in range: past the end Velt's is "", its type being `string`, where JS's is
+  // `undefined`), `charAt` and `at` of literals and out of range.
+  const lit = "ab😀";
+  console.log(
+    `${units(lit[0])} ${units(lit[2])} ${units(lit[3])} ${units(lit.charAt(-1))} ${units(lit.at(-1))} ${units(lit.at(-5))}`,
+  );
+}
