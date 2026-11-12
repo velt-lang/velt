@@ -378,6 +378,169 @@ pub(crate) fn leave(cx: &mut Ctx, start: Lens) {
     }
 }
 
+/// What a body's check added, recorded for a kept check (crate `kept`, dev-warm-front-end.md
+/// step 3 "C3"), which checks the body again long after the lists grew past it: where its
+/// additions start and end in each list, the segments of the bodies it checked meanwhile (theirs,
+/// not its own), its function's closure count then, and whether its result was inferred.
+#[derive(Clone)]
+pub(crate) struct BodyRecord {
+    start: Lens,
+    end: Lens,
+    segments: Vec<(Lens, Lens)>,
+    closures: Option<(String, Option<u32>)>,
+    inferred: bool,
+}
+
+/// Records `def`'s check, which started at `mark` and is done but for leaving its frame, when the
+/// context records bodies (`Ctx::body_records`).
+pub(crate) fn record(cx: &mut Ctx, def: DefId, mark: &Mark, inferred: bool) {
+    if cx.body_records.is_none() {
+        return;
+    }
+    let segments = (cx.rechecks.last()).map_or_else(Vec::new, |f| f.segments.clone());
+    let end = Lens::now(cx);
+    let record = BodyRecord {
+        start: mark.lens,
+        end,
+        segments,
+        closures: mark.closures.clone(),
+        inferred,
+    };
+    if let Some(records) = cx.body_records.as_mut() {
+        records.insert(def, record);
+    }
+}
+
+/// One body's own additions to a list, by index: `[start, end)` but for the segments of the
+/// bodies it checked meanwhile.
+type Own = (usize, usize, Vec<(usize, usize)>);
+
+/// Drops `v`'s elements that lie in any of `own` (indices of `v` as it is) and returns them, in
+/// order; later elements move down. One pass, so every range is read against the same list.
+fn drop_own<T>(v: &mut Vec<T>, own: &[Own]) -> Vec<T> {
+    let Some(from) = own.iter().map(|(s, _, _)| *s).min() else {
+        return vec![];
+    };
+    let tail = v.split_off(from.min(v.len()));
+    let mut dropped = vec![];
+    for (i, x) in tail.into_iter().enumerate() {
+        let i = from + i;
+        let mine = |(s, e, keep): &Own| {
+            (*s..*e).contains(&i) && !keep.iter().any(|&(a, b)| (a..b).contains(&i))
+        };
+        match own.iter().any(mine) {
+            true => dropped.push(x),
+            false => v.push(x),
+        }
+    }
+    dropped
+}
+
+/// Undoes what the checks of `defs` added, by their records, so that `ensure_body` checks each
+/// again as if for the first time: what the bodies they checked meanwhile added stays, their
+/// closures are created again under their names (`reuse_closure`), and they are unchecked.
+/// All at once, against the lists as the records saw them: once a body's additions are gone, the
+/// records of the bodies after it no longer match the lists, so a context forgets once (a kept
+/// check forgets in a clone it throws away after). `Err` names a body that was not recorded
+/// (nothing changed then).
+pub(crate) fn forget_all(cx: &mut Ctx, defs: &[DefId]) -> Result<(), DefId> {
+    let mut records = vec![];
+    for &def in defs {
+        match cx.body_records.as_ref().and_then(|m| m.get(&def)) {
+            Some(r) => records.push((def, r.clone())),
+            None => return Err(def),
+        }
+    }
+    // What the generated-code demand walked of the bodies (`generated::demand::Walked`) holds
+    // these bodies' calls as they were: walked again.
+    cx.gen.binding.walked = Default::default();
+    let own = |f: &dyn Fn(&Lens) -> usize| -> Vec<Own> {
+        (records.iter())
+            .map(|(_, r)| {
+                let keep = r.segments.iter().map(|(a, b)| (f(a), f(b))).collect();
+                (f(&r.start), f(&r.end), keep)
+            })
+            .collect()
+    };
+    drop_own(&mut cx.diags, &own(&|l| l.diags));
+    drop_own(&mut cx.throw_checks, &own(&|l| l.throw_checks));
+    drop_own(&mut cx.fresh_checks, &own(&|l| l.fresh_checks));
+    let copies = |i: usize| own(&move |l: &Lens| l.object_copies[i]);
+    let c = &mut cx.object_copies;
+    drop_own(&mut c.copies, &copies(0));
+    drop_own(&mut c.writes, &copies(1));
+    drop_own(&mut c.seen, &copies(2));
+    drop_own(&mut c.in_optional, &copies(3));
+    drop_own(&mut c.null_literals, &copies(4));
+    drop_own(&mut c.record_writes, &copies(5));
+    drop_own(&mut c.view_casts, &copies(6));
+    drop_own(&mut c.frozen, &copies(7));
+    drop_own(&mut cx.fn_values, &own(&|l| l.fn_values));
+    let own_fns = drop_own(&mut cx.fn_defs, &own(&|l| l.fn_defs));
+    let own_fns = keep_impl_fns(cx, own_fns);
+    let mut own_closures = drop_own(&mut cx.closure_defs, &own(&|l| l.closures));
+    let kept: Vec<DefId> = (own_closures.iter().copied())
+        .filter(|c| cx.object_impls.keeps(*c))
+        .collect();
+    own_closures.retain(|c| !kept.contains(c));
+    cx.closure_defs.extend(kept.iter().copied());
+    for c in &own_closures {
+        cx.callback_wrappers.remove(c);
+    }
+    // A generator's value wrapper (`gen_value.rs`) made by a forgotten check is made again by the
+    // new one, with what its check adds (the copies of its coercions went with the old one's).
+    (cx.generator_values).retain(|_, (c, _)| !own_closures.contains(c));
+    drop_own(&mut cx.rec.reported, &own(&|l| l.reported));
+    drop_own(&mut cx.rec.completed, &own(&|l| l.completed));
+    cx.rec.completed.retain(|(d, _)| !defs.contains(d));
+    let consts = drop_own(&mut cx.kept_consts, &own(&|l| l.kept));
+    crate::kept_consts::unkeep(cx, consts);
+    let values = drop_own(&mut cx.objects.class_values, &own(&|l| l.class_values));
+    cx.drop_class_values(values);
+    for d in own_fns.iter().filter(|d| !own_closures.contains(d)) {
+        drop_orphan(cx, *d);
+    }
+    // The closures are created again, in order, under the names they had.
+    renumber(cx, &own_closures, &kept);
+    // What the checks recorded by the place of an expression inside the bodies: the new bodies
+    // record their own, and an old place left behind would be read for whatever is now there.
+    let place = |d: DefId| match cx.fn_info(d).source {
+        Some(crate::defs::FnSource::Decl(decl)) => decl.body.span,
+        _ => cx.fn_info(d).span,
+    };
+    let places: Vec<velt_common::Span> = defs.iter().map(|&d| place(d)).collect();
+    let inside = |s: &velt_common::Span| {
+        (places.iter()).any(|p| p.file == s.file && p.lo <= s.lo && s.hi <= p.hi)
+    };
+    cx.fn_shapes.retain(|s, _| !inside(s));
+    cx.frozen_elems.retain(|s| !inside(s));
+    cx.loop_roots.retain(|s, _| !inside(s));
+    cx.late_consts.retain(|s| !inside(s));
+    for (def, r) in &records {
+        cx.literal_types.remove(def);
+        if let Some((name, count)) = &r.closures {
+            match count {
+                Some(n) => cx.closure_counts.insert(name.clone(), *n),
+                None => cx.closure_counts.remove(name),
+            };
+        }
+        cx.defs[def.0 as usize] = None;
+        let f = cx.fn_info_mut(*def);
+        f.state = BodyState::Unchecked;
+        if r.inferred {
+            f.ret_source = RetSource::Body;
+        }
+    }
+    Ok(())
+}
+
+/// When `def`'s recorded check started, in the order bodies were checked (how many were done
+/// then): edited bodies are checked again in the order of their first checks.
+pub(crate) fn recorded_at(cx: &Ctx, def: DefId) -> Option<usize> {
+    let r = cx.body_records.as_ref()?.get(&def)?;
+    Some(r.start.completed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

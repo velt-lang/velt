@@ -103,6 +103,7 @@ mod js_api;
 mod json;
 mod kept;
 mod kept_consts;
+mod kept_reload;
 mod key_groups;
 mod known;
 mod layout_merge;
@@ -170,6 +171,7 @@ pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
 pub use generating::{check_generating, check_generating_kept, Checked};
 pub use kept::{KeptCheck, PendingKept, Refused};
+pub use kept_reload::member_name;
 pub use source_module::SourceModule;
 pub use std_load::{LoadFn, Loads, StdBatch, StdLoads};
 pub use timings::check_rounds;
@@ -351,6 +353,36 @@ fn check_timed(
         record_accessors,
         gen_throw,
     } = timings::pass("source scans", || source_scans::program(modules));
+    // What a kept check's reload compares with the edited program's (`kept::probe`), which
+    // stops here.
+    let facts = kept::wants_facts(input).then(|| {
+        let lifted = lifted
+            .as_ref()
+            .map(|l| (&l.local_fns, &l.all_fns, &l.unsafe_fns));
+        let closures = closures.as_ref().map(|c| (&c.diags, &c.kept, &c.groups));
+        let rest: [&dyn std::fmt::Debug; 16] = [
+            &null_proto,
+            &ctor_reads,
+            &record_accessors,
+            &gen_throw,
+            &merge_diags,
+            &global_ns,
+            &ns_private,
+            &alias_blocked,
+            &lifted,
+            &overloaded.as_ref().map(|o| &o.methods),
+            &brands,
+            &global_props,
+            &chunks.promoted,
+            &asserted.rmw,
+            &closures,
+            &root,
+        ];
+        std::sync::Arc::new(kept::Facts::of(modules, &rest))
+    });
+    if kept::probed(&facts.as_deref().cloned()) {
+        return ((None, vec![]), Default::default());
+    }
     // What a round found it needed once it was too late to demand or check it.
     let assumed = std::cell::RefCell::new(body::lazy_std::Assumed::default());
     let new_cx = |round: &'static str,
@@ -369,6 +401,9 @@ fn check_timed(
         cx.union_views.assumed = views.clone();
         cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
+        // A check that keeps itself records its bodies, for the kept check to check them again.
+        cx.body_records = kept::wanted(input).then(Default::default);
+        cx.source_facts = facts.clone();
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
         cx.global_namespaces = global_ns.clone();
@@ -565,7 +600,13 @@ fn analyze(
     root_mod: &SourceModule,
     opts: CheckOptions,
 ) -> Option<hir::DefId> {
-    analyze_bodies(cx);
+    check_definitions(cx);
+    // A check that keeps itself keeps this point too: a reload checks edited bodies again from
+    // here and runs the rest (`reanalyze`).
+    if cx.body_records.is_some() {
+        kept::stash(cx);
+    }
+    analyze_after_bodies(cx);
     let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
     alias_expand::check_unused_aliases(cx);
     entry
@@ -585,8 +626,15 @@ pub(crate) fn error_count(cx: &ctx::Ctx) -> usize {
     cx.diags.iter().filter(|d| d.is_error()).count()
 }
 
-/// Steps 1–5: every definition and body checked, ownership and throws inferred, moves checked.
+/// Steps 1–5: every definition and body checked ([`check_definitions`]), then ownership and
+/// throws inferred and moves checked ([`analyze_after_bodies`]).
 fn analyze_bodies(cx: &mut ctx::Ctx) {
+    check_definitions(cx);
+    analyze_after_bodies(cx);
+}
+
+/// Every definition collected and every body checked.
+fn check_definitions(cx: &mut ctx::Ctx) {
     timings::pass("script_tdz::check", || script_tdz::check(cx));
     timings::pass("collect::collect", || collect::collect(cx));
     cx.collected_defs = cx.defs.len();
@@ -596,6 +644,10 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
         body::expr::virtual_defaults::build_fill_bodies(cx, 0)
     });
     timings::pass("body::check_bodies", || body::check_bodies(cx));
+}
+
+/// What follows the bodies' check: generated code, ownership and throws inferred, moves checked.
+fn analyze_after_bodies(cx: &mut ctx::Ctx) {
     timings::pass("generated::phase", || generated::phase::run(cx));
     timings::pass("global_this::check_sites", || global_this::check_sites(cx));
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));

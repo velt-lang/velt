@@ -52,7 +52,7 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
     let mut session = DevSession::new(&symbols);
     // Lowering's counted types, carried from each version to the next (dev-warm-front-end.md).
     sess.counted_seed = Some(velt_vir::CountedSeed::default());
-    sess.keep_check = args.build.verbose;
+    sess.keep_check = args.build.verbose || super::swap::warm_enabled();
     sess.interfaces = args.build.verbose.then(Default::default);
     session.set_debug_info(std::env::var_os(DEBUG_INFO_ENV).is_none_or(|v| v != "0"));
     let loaded = compile_and_load(&mut sess, &opts, &mut session);
@@ -81,11 +81,17 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
                     eprintln!("velt dev: {}", super::swap::kept_report(k));
                 }
                 let interfaces = sess.interfaces.take();
+                let kept_own = kept.as_ref().and(own.clone());
+                let kept_files = kept.as_ref().map(|_| driver::copy_files(&sess.sm));
                 let state = super::swap::Carried {
                     seed,
                     own,
                     interfaces,
                     kept,
+                    kept_own,
+                    kept_files,
+                    warm: super::swap::warm_enabled(),
+                    warm_reloads: 0,
                 };
                 super::swap::serve_reloads(channel, opts.clone(), session, state, &args.build)
             }

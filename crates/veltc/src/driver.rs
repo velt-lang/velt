@@ -25,6 +25,8 @@ mod recover;
 mod std_load;
 use std_load::load_options;
 pub(crate) use std_load::StdLoad;
+mod warm;
+pub use warm::{compile_for_jit_warm, copy_files};
 pub(crate) mod stamp;
 mod std_cache;
 mod timings;
@@ -202,6 +204,8 @@ pub struct Session {
     pub keep_check: bool,
     /// The kept check of the last build, owning the program's parsed modules.
     pub kept: Option<velt_sema::KeptCheck>,
+    /// Why a warm reload (`compile_for_jit_warm`) needs the cold front end.
+    pub warm_refused: Option<String>,
     /// The check's kept check and what it borrows, until the driver hands them over.
     pub(crate) pending_kept: Option<KeptHandover>,
     /// `-v`: say at once that the build waits for another of its output (`std_cache::Place::lock`).
@@ -458,6 +462,16 @@ fn compile_to_vir_linking(
         eager_std: false,
     };
     let checked = check_program(sess, opts, &scope)?;
+    lower_checked(sess, opts, dest, checked)
+}
+
+/// Lowering, verification and the optimizer for a checked program (`compile_to_vir_linking`).
+fn lower_checked(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    dest: VirFor,
+    checked: hir::Program,
+) -> Result<vir::Program, BuildError> {
     if sess.interfaces.is_some() {
         let t = Instant::now();
         sess.interfaces = Some(velt_sema::interface::Summary::of(&checked));

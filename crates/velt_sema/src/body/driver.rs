@@ -476,6 +476,7 @@ pub(crate) fn ensure_body(cx: &mut Ctx, def: DefId) {
     if copy_of.is_some() {
         drop_repeated_diags(cx, def, diags_before);
     }
+    recheck::record(cx, def, &mark, inferred);
     recheck::leave(cx, mark.lens());
     cx.defs[def.0 as usize] = Some(Def::Fn(fndef));
     cx.fn_info_mut(def).state = BodyState::Done;
