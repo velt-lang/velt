@@ -567,7 +567,8 @@ fn a_node_woken_from_another_worker_after_its_task_ended_is_freed() {
     }
     let dir = test_dir::TestDir::new();
     let pushed = "  m.inc(n + nd.N_REFS);\n  const task = m.ld(n + nd.N_TASK);\n  m.pushStack(task + t.T_WOKEN, n, nd.N_NEXT);\n";
-    let pause = "  if (t.here() !== m.ld(m.ld(n + nd.N_TASK) + t.T_HOME)) {\n    pause(300);\n  }\n";
+    let pause =
+        "  if (t.here() !== m.ld(m.ld(n + nd.N_TASK) + t.T_HOME)) {\n    pause(300);\n  }\n";
     let checked = "    nd.giveBackWoken(task);\n    return;\n";
     let woken = "  if (w !== 0) {\n    wakeOwned(w);\n  }\n}\n";
     let late = "  if (w !== 0) {\n    const late = wakerClone(w);\n    wakeOwned(w);\n    pause(100);\n    wakeOwned(late);\n  }\n}\n";

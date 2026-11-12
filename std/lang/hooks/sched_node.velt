@@ -330,9 +330,13 @@ export function start(
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
 }
 
-/** Has node promise `f` settled with its result still in its slot (`velt_rt_fut_peek`)? */
+/**
+ * Has node promise `f` settled with its result still in its slot (`velt_rt_fut_peek`)? A panicked
+ * node is finished with nothing in its slot (sched_node_catch.velt `panicked`): not settled, as
+ * with the runtime's `node::peek`.
+ */
 export function peek(f: usize): bool {
-  return (m.load32(nodeOf(f) + N_FLAGS) & (FINISHED | DELIVERED)) === FINISHED;
+  return (m.load32(nodeOf(f) + N_FLAGS) & (FINISHED | DELIVERED | PANICKED)) === FINISHED;
 }
 
 /** Promise `f`, if it is a node, drops a result nobody claims with `qdrop` (a combinator's). */
