@@ -257,7 +257,13 @@ export const E_CATCH: usize = 824;
  * sched_spread.velt `lend`.
  */
 export const E_NOBORROW: usize = 880;
-export const E_SIZE: usize = 888;
+/**
+ * The task whose result nobody claimed this thread is dropping (sched_join.velt `dropResult`), 0
+ * when none: an uncaught rejection's report in that drop ends the program, which gives the
+ * task's reference back first (sched_exit.velt).
+ */
+export const E_DROPPING: usize = 888;
+export const E_SIZE: usize = 896;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */

@@ -377,6 +377,8 @@ hooks! {
     sched_child_write => process_child_reactor, "velt_rt_child_write", sig(async (u64, move string) -> IoStatus);
     sched_child_close_stdin => process_child_reactor, "velt_rt_child_close_stdin", sig(async (u64) -> IoStatus);
     sched_child_output => process_child_reactor, "velt_rt_child_output", sig(async (move CommandSpec, move string) -> IoResult(RawOutput));
+    /// The exit after an uncaught error's report (`velt_rt_exit(code)` there): `(code)`.
+    sched_exit => lang_hooks_sched, "schedExit", sig((i32) -> never), lowered;
     /// Module state's `velt_rt_module_state` (`(desc, slot)`), `_block` and `_ready` (workers).
     sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
     sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;

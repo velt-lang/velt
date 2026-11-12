@@ -283,6 +283,39 @@ export function fire(k: usize, f: usize): usize {
   return w;
 }
 
+/**
+ * Task `k`, which never runs again (the program ends on an uncaught error: sched_exit.velt), gives
+ * back its sleeps pending in block `b` (its worker's) and those due on its list: each leaves its
+ * list, drops its waker and is freed. `k`'s state, which still points at them, is never polled
+ * or dropped.
+ */
+export function forget(b: usize, k: usize): void {
+  let p = m.ld(b + TM_FIRST);
+  while (p !== 0) {
+    const next = m.ld(p + S_NEXT);
+    if (wk.taskOf(m.ld(p + S_WAKER)) === k) {
+      unlinkPending(b, p);
+      gone(p);
+    }
+    p = next;
+  }
+  let d = m.ld(k + t.T_TIMERS);
+  while (d !== 0) {
+    unlinkDue(k, d);
+    gone(d);
+    d = m.ld(k + t.T_TIMERS);
+  }
+}
+
+/** Sleep `f`, on no list: its waker dropped, freed. */
+function gone(f: usize): void {
+  const w = m.ld(f + S_WAKER);
+  if (w !== 0) {
+    m.wakerDrop(w);
+  }
+  m.release(f, S_SIZE);
+}
+
 /** Are sleeps of block `b` on due lists, not fired yet? */
 @inline
 export function due(b: usize): bool {

@@ -25,6 +25,7 @@
 import { Ptr } from "velt/ffi";
 import { fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
 import * as end from "./sched_end";
+import * as ex from "./sched_exit";
 import * as io from "./sched_io";
 import * as tb from "./sched_io_table";
 import * as jn from "./sched_join";
@@ -48,9 +49,6 @@ import * as tm from "./sched_timers";
 import * as workers from "./sched_workers";
 import * as mk from "./sched_make";
 import * as wk from "./sched_wake";
-
-/** The runtime's `velt_rt_uncaught_now`: the report shows where the callback threw. */
-declare c("c") function velt_rt_uncaught_now$rt(): void;
 
 /** The executor, started on first use (by the worker: `main`'s thread). */
 @inline
@@ -429,11 +427,12 @@ export function schedTimerFree(h: u64): void {
  * callback threw, reported at once (sched_node.velt), not after the task's microtasks.
  */
 export function schedUncaughtNow(): void {
-  m.st(exec() + t.E_UNCAUGHT, 1);
-  // SAFETY: the runtime's entry takes nothing; it records where the error was thrown.
-  unsafe {
-    velt_rt_uncaught_now$rt();
-  }
+  ex.uncaughtNow(exec());
+}
+
+/** The exit after an uncaught error's report: `velt_rt_exit(code)` (sched_exit.velt). */
+export function schedExit(code: i32): never {
+  ex.exitUncaught(code);
 }
 
 /** `velt_rt_tla_at`: the top-level `await` at `site` suspends. */

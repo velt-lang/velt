@@ -132,7 +132,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let ep = proj(&proj(&rp, Proj::Cast(ev)), Proj::Field(1));
         lw.report_uncaught(&ep, err);
         lw.drop_glue(ep, err);
-        lw.call_rt(Rt::Exit, vec![cint(1, Ty::I32)], None);
+        lw.exit_uncaught();
         lw.switch_to(ok_bb);
         if lw.cx.ty(ret) != Ty::Unit {
             let ov = lw.cx.view(rty, 0);

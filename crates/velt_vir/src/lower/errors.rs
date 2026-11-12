@@ -67,7 +67,7 @@ impl FnLower<'_, '_> {
         if vt != Ty::Unit {
             self.drop_glue(p, from);
         }
-        self.call_rt(Rt::Exit, vec![cint(1, Ty::I32)], None);
+        self.exit_uncaught();
     }
 
     /// Write `Err(err)` through the out-pointer (`ret_ty` is the declared or implied Result).

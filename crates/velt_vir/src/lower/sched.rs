@@ -52,6 +52,20 @@ impl FnLower<'_, '_> {
         (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
     }
 
+    /// The exit with 1 after an uncaught error's report: under the executor in Velt its hook
+    /// (`sched_exit`: the executor gives back the blocks it holds for the leak counters first),
+    /// else `velt_rt_exit`.
+    pub(super) fn exit_uncaught(&mut self) {
+        if !self.std_sched() {
+            return self.call_rt(Rt::Exit, vec![cint(1, Ty::I32)], None);
+        }
+        if self.dead() {
+            return;
+        }
+        hooks::sched_exit(self, ty::I32::arg(cint(1, Ty::I32))).emit(self);
+        self.terminate(crate::vir::Terminator::Unreachable);
+    }
+
     /// `op` (a pointer or an integer) as a `usize` argument.
     fn as_usize(&mut self, op: Operand) -> Operand {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))
