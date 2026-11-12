@@ -330,6 +330,11 @@ export function start(
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
 }
 
+/** Has node promise `f` settled with its result still in its slot (`velt_rt_fut_peek`)? */
+export function peek(f: usize): bool {
+  return (m.load32(nodeOf(f) + N_FLAGS) & (FINISHED | DELIVERED)) === FINISHED;
+}
+
 /** Promise `f`, if it is a node, drops a result nobody claims with `qdrop` (a combinator's). */
 export function handled(f: usize, qdrop: usize, hdrPoll: usize): void {
   if (f !== 0 && m.ld(f) === hdrPoll && (m.load32(nodeOf(f) + N_FLAGS) & PANICKED) === 0) {

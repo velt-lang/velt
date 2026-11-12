@@ -37,6 +37,7 @@ import * as node from "./sched_node";
 import * as nc from "./sched_node_catch";
 import * as off from "./sched_off";
 import { taskId } from "./sched_id";
+import * as pk from "./sched_peek";
 import * as run from "./sched_run";
 import * as sl from "./sched_sleep";
 import * as sp from "./sched_spread";
@@ -298,6 +299,11 @@ export function schedDetach(f: usize, qdrop: usize): void {
   const c = m.ld(e + nc.E_CATCHING) & ~1;
   node.start(m.ld(e + t.E_CURRENT), f, qdrop, false, fnAddress(node.nodePoll), c);
   node.nodeDrop(f);
+}
+
+/** `velt_rt_fut_peek` (what `console.log` prints of a promise): sched_peek.velt. */
+export function schedPeek(f: usize): u32 {
+  return pk.peek(f);
 }
 
 /**

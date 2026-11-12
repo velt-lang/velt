@@ -24,6 +24,8 @@ const GOLDENS: &[&str] = &[
     "std/net_close_wakes",
     // The throw location of a promise claimed on another worker (sched_node_loc.velt).
     "lang/uncaught_location_other_worker",
+    // `console.log` of a settled promise prints its value (sched_peek.velt).
+    "lang/print_promise",
     // A promise woken on its task's stack that finished before the task took it gives its
     // reference back when the task ends (sched_run.velt `finish`): a `then` on a shared promise,
     // and a detached promise driving a combinator.
