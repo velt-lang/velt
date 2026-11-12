@@ -6,16 +6,19 @@
 // two reads) would loop in one poll for as long as that lasts: a parser reads, a response is
 // written, the next read finds the next request, and the task's other promises (every connection
 // of a server that drives them from one task, the accept loop) and the worker's other tasks wait
-// for it. So a task poll may complete `BUDGET` socket operations (reads, accepts); past that, a read
-// finds nothing yet and a wait for readability yields: it wakes its own task and stays pending, so
-// the poll ends and the task runs again behind what is queued, the reactor looked at in between.
+// for it. So a task poll may complete `BUDGET` socket operations (reads, accepts); past that, a
+// read finds nothing yet and a wait for readability yields: it wakes its own task and stays
+// pending, so the poll ends and the task runs again behind what is queued, the reactor looked at in
+// between.
 //
 // The budget is per thread, refilled when the poll changes: a poll is told apart by its task and
 // the worker's I/O tick (sched_loop.velt `ioCountdown`: it moves at every poll), so the executor's
 // loop pays nothing. Two polls taken for one (the same task 61 polls later at the same tick) only
-// yield once early. A task that drives started promises refills it for each promise it runs and
-// for its root after them (`refill`): each gets a budget of its own, and one that spent its budget
-// runs again after the others (a server's connections take turns, its accept loop among them).
+// yield once early. A task that drives started promises refills it for each woken promise it runs
+// and for its root after them (`refill`): each gets a budget of its own, and one that spent its
+// budget runs again after the others (a server's connections take turns, its accept loop among
+// them). A started promise's first run spends its starter's budget, so an accept loop that starts
+// one per connection yields too.
 
 import { inline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
@@ -24,7 +27,7 @@ import * as t from "./sched_task";
 /** Socket operations one task poll completes without a wait (tokio's and the runtime's figure). */
 export const BUDGET: u64 = 128;
 
-/** This thread's budget: the poll's key (bits 16..63) and the operations it spent (0..15). */
+/** This thread's budget: the poll's key (bits 16..63) and the operations it spent (bits 0..15). */
 const SPENT = new ThreadLocal<u64>(0);
 
 /** The key of the task poll running on this thread; 0 outside one (no budget applies). */
@@ -60,9 +63,9 @@ export function spend(): bool {
 }
 
 /**
- * A fresh budget for the next turn of the running poll: a promise its task runs, or its root after
- * them (sched_node.velt `run`, sched_run.velt `runWoken`), so that one connection of a server whose
- * task drives them all spends only its own.
+ * A fresh budget for the next turn of the running poll: a woken promise its task runs, or its root
+ * after them (sched_node.velt `run`, sched_run.velt `runWoken`), so that one connection of a server
+ * whose task drives them all spends only its own.
  */
 @inline
 export function refill(): void {

@@ -339,8 +339,12 @@ export function run(task: usize, n: usize, taken: bool): void {
   if ((fl & (FINISHED | RUNNING)) !== 0) {
     return;
   }
-  // A turn of its own: its socket operations spend a budget of its own (sched_budget.velt).
-  bd.refill();
+  // A woken node's turn is its own: its socket operations spend a budget of its own
+  // (sched_budget.velt). A started promise's first run (`start`) spends its starter's, as the
+  // runtime's coop has it, or an accept loop starting one per connection would never yield.
+  if (taken) {
+    bd.refill();
+  }
   if ((fl & CATCHES) !== 0) {
     if (!nc.runCaught(n)) {
       return;

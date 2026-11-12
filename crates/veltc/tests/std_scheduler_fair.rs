@@ -2,10 +2,11 @@
 //! #2815): a connection whose peer always has sent more completes every read without a wait, and
 //! used to keep its poll going for as long as that lasted, holding back the rest of its task (a
 //! server that drives every connection from one task, as http-server's `acceptAll`) and the rest
-//! of its worker (a server task pinned beside it). Each program streams into one connection from
-//! one worker for three seconds while another worker sends a ping on a second connection; the ping
-//! must be answered while the stream still runs. Built with `VELT_SCHEDULER=std`, run with
-//! `VELT_THREADS=4`.
+//! of its worker (a server task pinned beside it). No clock decides a verdict: a client first
+//! writes a backlog that sits in the socket buffers, a ping connects only after it, and the server
+//! records whether the ping was answered before its drain reached the end of the backlog (without
+//! a budget the drain reads it all in one go). The accept loop's test queues connections before
+//! the server accepts any. Built with `VELT_SCHEDULER=std`, run with `VELT_THREADS=4`.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -54,7 +55,7 @@ fn run_std(name: &str, src: &str) -> String {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    // A watchdog, not a synchronization: the stream ends after three seconds either way.
+    // A watchdog, not a synchronization: every program ends once its clients are served.
     let start = Instant::now();
     while child.try_wait().unwrap().is_none() {
         if start.elapsed() > Duration::from_secs(60) {
@@ -71,13 +72,158 @@ fn run_std(name: &str, src: &str) -> String {
     )
 }
 
-/// The clients and the two connections' servers; `SERVE` (each program's) accepts both.
+/// The backlog's clients and servers; `SERVE` (each program's) accepts both connections.
 const COMMON: &str = r#"import { listen, connect, TcpListener, TcpStream } from "velt/net";
 import { channel, Channel } from "velt/sync";
 
-// Reads in small pieces until the end, as a parser does: with a peer that writes faster, every
-// read finds bytes.
-async function drain(s: TcpStream): Promise<void> {
+// Fits in the loopback socket buffers, so the client's writes finish without the server reading;
+// 4096 reads of 16 bytes, far more than one turn's budget.
+const BACKLOG: usize = 65536;
+// 1 once the drain has read the whole backlog.
+const DRAINED = new Atomic<i64>(0);
+// 1: the ping was answered before the drain reached the end of the backlog; 2: after.
+const ANSWERED = new Atomic<i64>(0);
+
+// Reads in small pieces until the end, as a parser does: every read finds bytes until the end of
+// the backlog.
+async function drain(s: TcpStream, started: Channel<i64>): Promise<void> {
+  await started.send(1);
+  const buf: u8[] = Buffer.alloc(16);
+  let total: usize = 0;
+  while (true) {
+    const n = s.tryRead(buf);
+    if (n == null) {
+      break;
+    }
+    total += n as usize;
+    if (total >= BACKLOG) {
+      DRAINED.store(1);
+    }
+    if (n == 0) {
+      await s.readable();
+    }
+  }
+  s.close();
+}
+
+async function pong(s: TcpStream): Promise<void> {
+  const got = await s.readString();
+  ANSWERED.store(DRAINED.load() == 0 ? 1 : 2);
+  await s.write(`${got} -> pong`);
+  s.close();
+}
+
+// Writes the backlog, says so, and holds the connection open until the ping has its answer.
+async function hot(port: i64, written: Channel<i64>, done: Channel<i64>): Promise<void> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.writeBytes(Buffer.alloc(BACKLOG));
+  await written.send(1);
+  await done.receive();
+  c.close();
+}
+
+// Sends its ping in full before the server starts to read either connection.
+async function ping(port: i64, pinged: Channel<i64>): Promise<bool> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write("ping");
+  c.shutdown();
+  await pinged.send(1);
+  const got = await c.readString();
+  c.close();
+  return got == "ping -> pong";
+}
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  const port = l.port as i64;
+  const pinged = channel<i64>();
+  const server = spawn(serve(l, pinged), { worker: 0 });
+  const written = channel<i64>();
+  const done = channel<i64>();
+  const h = spawn(hot(port, written, done), { worker: 1 });
+  await written.receive();
+  const ok = await spawn(ping(port, pinged), { worker: 2 });
+  await done.send(1);
+  await h;
+  await server;
+  console.log(`ping answered before the backlog was read: ${ok && ANSWERED.load() == 1}`);
+}
+"#;
+
+const WANT: &str = "ping answered before the backlog was read: true\n";
+
+/// Both connections are promises of the server's one task (http-server's `acceptAll`): the
+/// draining one's reads spend the turn's budget, then it waits behind the ping's promise.
+#[test]
+fn a_connection_that_always_has_input_lets_the_other_promises_of_its_task_run() {
+    if !has_threads() {
+        return;
+    }
+    let src = format!(
+        "{COMMON}
+async function serve(l: TcpListener, pinged: Channel<i64>): Promise<void> {{
+  const a = await l.accept();
+  const b = await l.accept();
+  await pinged.receive();
+  const started = channel<i64>(1);
+  const hotDrain = drain(a, started);
+  const cold = pong(b);
+  await cold;
+  await hotDrain;
+  l.close();
+}}
+"
+    );
+    assert_eq!(run_std("fair_promises", &src), WANT);
+}
+
+/// Each connection a task pinned to the server's worker (http-server's `acceptSpread` gives a
+/// worker several): the draining task's poll ends once its budget is spent, so the server task
+/// and the ping's task, spawned once the drain has started, run on that worker (pinned tasks are
+/// never moved off it).
+#[test]
+fn a_connection_that_always_has_input_lets_the_other_tasks_of_its_worker_run() {
+    if !has_threads() {
+        return;
+    }
+    let src = format!(
+        "{COMMON}
+async function serve(l: TcpListener, pinged: Channel<i64>): Promise<void> {{
+  const a = await l.accept();
+  const b = await l.accept();
+  await pinged.receive();
+  const started = channel<i64>(1);
+  const hotDrain = spawn(drain(a, started), {{ worker: 0 }});
+  await started.receive();
+  const cold = spawn(pong(b), {{ worker: 0 }});
+  await cold;
+  await hotDrain;
+  l.close();
+}}
+"
+    );
+    assert_eq!(run_std("fair_tasks", &src), WANT);
+}
+
+/// An accept loop that starts a promise per connection (http-server's `acceptAll`): a started
+/// promise's first run spends its starter's budget rather than refilling it, so the loop's turn
+/// ends after 128 socket operations (accepts and the connections' first reads) and a task pinned
+/// to the same worker runs before the queued connections are all accepted. 100 connections, as
+/// macOS keeps at most 128 waiting; each sends 64 bytes read in 16-byte pieces (600 operations).
+#[test]
+fn an_accept_loop_that_starts_a_promise_per_connection_lets_the_other_tasks_of_its_worker_run() {
+    if !has_threads() {
+        return;
+    }
+    let src = r#"import { listen, connect, TcpListener, TcpStream } from "velt/net";
+import { channel, Channel } from "velt/sync";
+
+const N: i64 = 100;
+const ACCEPTED = new Atomic<i64>(0);
+// The connections accepted when the pinned task ran.
+const SEEN = new Atomic<i64>(-1);
+
+async function handle(s: TcpStream): Promise<void> {
   const buf: u8[] = Buffer.alloc(16);
   while (true) {
     const n = s.tryRead(buf);
@@ -91,92 +237,48 @@ async function drain(s: TcpStream): Promise<void> {
   s.close();
 }
 
-async function pong(s: TcpStream): Promise<void> {
-  const got = await s.readString();
-  await s.write(`${got} -> pong`);
-  s.close();
+async function pinned(): Promise<void> {
+  SEEN.store(ACCEPTED.load());
 }
 
-async function stream(port: i64, started: Channel<i64>): Promise<i64> {
-  const c = await connect(`127.0.0.1:${port}`);
-  const chunk: u8[] = Buffer.alloc(65536);
-  const until = Date.now() + 3000;
-  let first = true;
-  while (Date.now() < until) {
-    await c.writeBytes(chunk);
-    if (first) {
-      first = false;
-      await started.send(1);
-    }
+async function serve(l: TcpListener, ready: Channel<i64>): Promise<void> {
+  await ready.receive();
+  const other = spawn(pinned(), { worker: 0 });
+  const conns: Promise<void>[] = [];
+  for (let i: i64 = 0; i < N; i++) {
+    const s = await l.accept();
+    ACCEPTED.store(i + 1);
+    conns.push(handle(s));
   }
-  c.close();
-  return Date.now() as i64;
+  for (const p of conns) {
+    await p;
+  }
+  await other;
+  l.close();
 }
 
-async function ping(port: i64): Promise<i64> {
-  const c = await connect(`127.0.0.1:${port}`);
-  await c.write("ping");
-  c.shutdown();
-  const got = await c.readString();
-  c.close();
-  return got == "ping -> pong" ? Date.now() as i64 : -1;
+// Every connection is queued, its bytes sent and its end too, before the server accepts one.
+async function clients(port: i64, ready: Channel<i64>): Promise<void> {
+  for (let i: i64 = 0; i < N; i++) {
+    const c = await connect(`127.0.0.1:${port}`);
+    await c.writeBytes(Buffer.alloc(64));
+    c.close();
+  }
+  await ready.send(1);
 }
 
 async function main() {
   const l = await listen("127.0.0.1:0");
-  const port = l.port as i64;
-  const server = spawn(serve(l), { worker: 0 });
-  const started = channel<i64>();
-  const hot = spawn(stream(port, started), { worker: 1 });
-  await started.receive();
-  const answered = await spawn(ping(port), { worker: 2 });
-  const end = await hot;
+  const ready = channel<i64>();
+  const server = spawn(serve(l, ready), { worker: 0 });
+  await spawn(clients(l.port as i64, ready), { worker: 1 });
   await server;
-  console.log(`answered while the other connection streamed: ${answered > 0 && answered < end}`);
+  const seen = SEEN.load();
+  console.log(`the pinned task ran before the queued connections were accepted: ${seen >= 0 && seen < N}`);
 }
 "#;
-
-const WANT: &str = "answered while the other connection streamed: true\n";
-
-/// Both connections are promises of the server's one task (http-server's `acceptAll`): the
-/// streaming one's reads spend its own budget, then it waits behind the accept and the ping.
-#[test]
-fn a_connection_that_always_has_input_lets_the_other_promises_of_its_task_run() {
-    if !has_threads() {
-        return;
-    }
-    let src = format!(
-        "{COMMON}
-async function serve(l: TcpListener): Promise<void> {{
-  const hot = drain(await l.accept());
-  const cold = pong(await l.accept());
-  await cold;
-  await hot;
-  l.close();
-}}
-"
+    assert_eq!(
+        run_std("fair_accept", src),
+        "the pinned task ran before the queued connections were accepted: true\n"
     );
-    assert_eq!(run_std("fair_promises", &src), WANT);
-}
-
-/// Each connection a task pinned to the server's worker (http-server's `acceptSpread` gives a
-/// worker several): the streaming task's poll ends once its budget is spent, so the accept loop
-/// and the ping's task on that worker run (pinned tasks are never moved off it).
-#[test]
-fn a_connection_that_always_has_input_lets_the_other_tasks_of_its_worker_run() {
-    if !has_threads() {
-        return;
-    }
-    let src = format!(
-        "{COMMON}
-async function serve(l: TcpListener): Promise<void> {{
-  const hot = spawn(drain(await l.accept()), {{ worker: 0 }});
-  const cold = spawn(pong(await l.accept()), {{ worker: 0 }});
-  await cold;
-  await hot;
-  l.close();
-}}
-"
-    );
-    assert_eq!(run_std("fair_tasks", &src), WANT);
 }
