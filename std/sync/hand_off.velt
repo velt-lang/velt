@@ -102,7 +102,9 @@ export class HandOff<T> {
    * abandoned started: use `park()` where a waiter may leave.
    */
   wait(): Promise<T | null> {
-    return startWait<T>(this.block, false);
+    m.inc(this.block + B_REFS);
+    addWaits(this.block, 1);
+    return waitOn<T>(this.block);
   }
 
   /**
@@ -217,32 +219,21 @@ class WaitCount<T> {
 }
 
 /**
- * `h.wait()`, but an item already given at its first poll comes at the next one, after a wake: a
- * blocking pool's result is an I/O event, which JS handles after the reactions of the promises
- * settled by then (a race against a settled promise, #2820; std/lang/hooks/sched_blocking.velt).
+ * `h.park()`, but an item already given at its first poll ends the wait at the next one, after a
+ * wake: a blocking pool's result is an I/O event, which JS handles after the reactions of the
+ * promises settled by then (a race against a settled promise, #2820;
+ * std/lang/hooks/sched_blocking.velt). A runtime wait, dropped as a race loser.
  */
-export function waitAfterWake<T>(h: shared<HandOff<T>>): Promise<T | null> {
-  return startWait<T>(h.block, true);
-}
-
-/** `h.park()` with `waitAfterWake`'s deferral: a runtime wait, dropped as a race loser. */
 export function parkAfterWake<T>(h: shared<HandOff<T>>): Promise<void> {
   // SAFETY: `parkFuture` makes a heap future of this block, given up to the promise.
   return unsafe { promiseAt<void>(parkFuture(h.block, true)) };
 }
 
-/** A `wait()` on block `b` (`defer`: `waitAfterWake`), counted. */
-function startWait<T>(b: usize, defer: bool): Promise<T | null> {
-  m.inc(b + B_REFS);
-  addWaits(b, 1);
-  return waitOn<T>(b, defer);
-}
-
 /** `HandOff.wait` on block `b`, which holds a count for it (given back even when dropped). */
-async function waitOn<T>(b: usize, defer: bool): Promise<T | null> {
+async function waitOn<T>(b: usize): Promise<T | null> {
   using count = new WaitCount<T>(b);
   // SAFETY: `parkFuture` makes a heap future of this block, given up to the promise.
-  await unsafe { promiseAt<void>(parkFuture(b, defer)) };
+  await unsafe { promiseAt<void>(parkFuture(b, false)) };
   return claimFrom<T>(b);
 }
 
@@ -327,7 +318,7 @@ function wakeWaiter(b: usize): void {
 }
 
 // The park future: a heap future (rt_abi_async.md §1; its header, then the block, then whether
-// it saw the end of the wait, or `F_FIRST`: `waitAfterWake`'s before its first poll) with no
+// it saw the end of the wait, or `F_FIRST`: `parkAfterWake`'s before its first poll) with no
 // result, holding a count of the block. Its poll and drop are C functions (`fnAddress`, a
 // stand-in for `exportedAddress`, #2203 step 5). It lives in the block, so a wait allocates
 // nothing more: a hand-off has one waiter. A second park while that one is alive (two `park()`s

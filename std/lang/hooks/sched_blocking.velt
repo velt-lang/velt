@@ -21,13 +21,19 @@
 //   else).
 // - A result is never delivered at the poll that queued its job, even when a pool thread
 //   finished the job before that poll ended: that poll wakes its task and returns pending, and
-//   the next one delivers it (`waitAfterWake`). A blocking result is an I/O event, which JS
+//   the next one delivers it (`parkAfterWake`). A blocking result is an I/O event, which JS
 //   handles only after the reactions of the promises settled by then: `Promise.race([readFile(f),
 //   Promise.resolve("first")])` gives "first" (#2820, as the runtime's `run_blocking`). A result
-//   not ready by then, the usual case, takes the same path as before. (Left: a result given
-//   after that poll whose wake has not reached the task yet, taken by a race's first look, #2848.)
+//   not ready by then, the usual case, takes the same path as before.
 // - A job runs to its end: dropping the promise (a `Promise.race` loser) leaves the work running
 //   and drops its result when it is done, as tokio does with a blocking task's handle.
+// - The waiter parks in `run`'s own frame (`parkAfterWake`, a heap future polled by whoever
+//   awaits `run`), then claims the item; it doesn't go through a wait whose promise starts: that
+//   promise's first poll and the adopting poll of the promise awaiting it (sched_node.velt) both
+//   came in the poll that queued the job, and a result a pool thread gave between the two,
+//   before its wake, ended the read in that poll. A settled promise raced after `readFile(f)`
+//   then lost (#2848). Now only that first poll can see a result so early, as with the
+//   runtime's blocking leaf.
 //
 // The pool's block (calloc'd once, its address in `POOL`, never freed): a spin lock, the word
 // idle threads sleep on (bumped when one is woken), the queue of jobs (a FIFO of nodes: the next
@@ -37,7 +43,7 @@
 
 import { Ptr, export as cExport } from "velt/ffi";
 import { exportedAddress, inline, slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
-import { HandOff, waitAfterWake } from "velt/sync/hand_off";
+import { HandOff, parkAfterWake } from "velt/sync/hand_off";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
 import * as end from "./sched_end";
@@ -84,8 +90,8 @@ export async function run<T>(work: () => T): Promise<T> {
   submit(() => {
     const left = h.give(work());
   });
-  const v = await waitAfterWake<T>(h);
-  return v!;
+  await parkAfterWake<T>(h);
+  return h.claim()!;
 }
 
 /** Jobs the pool finished since it started (tests read it to see the pool ran them). */

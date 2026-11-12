@@ -758,3 +758,85 @@ describe("signals", () => {
     );
     assert!(o.status.success() && out.contains("1 passed"), "{out}");
 }
+
+#[test]
+fn a_result_given_before_its_wake_loses_a_race_to_a_settled_promise() {
+    if !has_threads() {
+        return;
+    }
+    // A pool thread that gives a read's result after the poll that started `readFile(f)` but
+    // before its wake reached the task: the read used to finish in that same poll, because the
+    // job's wait was a started promise whose first poll and the adopting poll of `readFile`'s
+    // own promise both looked at the hand-off (#2848). So `readFile(f)` had settled before
+    // `Promise.resolve("first")` was made, and won the race at index 0; Node gives "first".
+    // White-box and without timing, in a copy of std where a waiting park's first poll returns
+    // only once the item is given, and a giver wakes its waiter only once the item was taken
+    // (or after a bounded spin, so the fixed pool, which takes it only after the wake, goes on).
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let std_copy = dir.path().join("std");
+    copy_tree(&manifest().join("../../std"), &std_copy);
+    let hand_off = std_copy.join("sync/hand_off.velt");
+    let text = std::fs::read_to_string(&hand_off).unwrap();
+    let parked = "    s = m.cas32(b + B_STATE, EMPTY, WAITING);\n    if (s === EMPTY) {\n";
+    let given = "    m.store32(b + B_STATE, GIVEN);\n";
+    assert!(
+        text.matches(parked).count() == 1 && text.matches(given).count() == 1,
+        "hand_off.velt's park or give changed"
+    );
+    let text = text
+        .replace(
+            parked,
+            &format!("{parked}      while (m.load32(b + B_STATE) !== GIVEN) {{\n        atomicSpinHint();\n      }}\n"),
+        )
+        .replace(
+            given,
+            &format!("{given}    for (let i = 0; i < 30000000 && m.load32(b + B_STATE) === GIVEN; i++) {{\n      atomicSpinHint();\n    }}\n"),
+        );
+    std::fs::write(&hand_off, text).unwrap();
+    let file = dir.path().join("given_early.velt");
+    std::fs::write(
+        &file,
+        r#"import { readFile, writeFile } from "velt/fs";
+
+async function main() {
+  await writeFile("ge.txt", "read");
+  console.log(await Promise.race<string>([readFile("ge.txt"), Promise.resolve("first")]));
+  const p = readFile("ge.txt");
+  console.log(await Promise.race<string>([p, Promise.resolve("first")]));
+  console.log(await readFile("ge.txt"));
+}
+"#,
+    )
+    .unwrap();
+    let exe = dir.path().join(if cfg!(windows) { "ge.exe" } else { "ge" });
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(dir.path())
+        .env("VELT_STD", &std_copy)
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    for threads in ["1", "4"] {
+        let o = command(&exe)
+            .current_dir(dir.path())
+            .env("VELT_THREADS", threads)
+            .env_remove("VELT_SCHEDULER")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let got = (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+        );
+        assert_eq!(
+            got,
+            (Some(0), "first\nfirst\nread\n".to_string()),
+            "{threads} workers"
+        );
+    }
+}
