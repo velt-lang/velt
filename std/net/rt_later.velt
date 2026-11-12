@@ -1,0 +1,195 @@
+// velt/net (internal): deferred writes (`writeLater`, `drained`) on a stream the runtime owns
+// (`streamPair`, `connectTls`, a runtime TLS listener's streams) in a build with the executor in
+// Velt (`VELT_SCHEDULER=std`, std/net/tcp_sched.velt), #2817.
+//
+// The runtime collects such bytes on its thread's list and sends them after each poll of one of
+// its own tasks, which never runs on the executor's worker: they would never be sent. Here they
+// wait in a shadow of the stream instead (std/net/rt_later_shadow.velt), which a flusher task
+// hands to the runtime's `write` once the writer's poll ends (std/net/rt_later_flush.velt).
+//
+// - While the flusher runs, every write goes behind its bytes: `write` joins the buffer and waits
+//   for its bytes to be sent, `tryWrite` takes nothing, and a `shutdown` happens once the
+//   flusher is done (the runtime does the same with its own deferred bytes).
+// - `close` closes the handle at once, as the runtime's does: later operations report `EBADF`,
+//   waits for input end, and what is still buffered is sent all the same.
+// - Only a program that defers bytes on a runtime stream compiles any of this: `writeLaterRange`
+//   marks the program (`noteStdUse`), and std/net/tcp_sched.velt calls the other functions only
+//   then (`stdUsed`).
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { utf8Encode } from "velt/encoding/utf8";
+import { noteStdUse, promiseAt } from "velt/lang/intrinsics";
+import * as io from "velt/lang/hooks/sched_io";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as wt from "velt/lang/hooks/sched_io_wait";
+import * as wr from "velt/lang/hooks/sched_io_write";
+import { addressOf } from "velt/net/fd_io";
+import { closed, failed, value } from "velt/net/fd_socket";
+import * as rt from "velt/net/rt";
+import * as fl from "velt/net/rt_later_flush";
+import * as sh from "velt/net/rt_later_shadow";
+
+/** Waits on shadow handle `h` for `kind` with `arg`. */
+async function waitOn(h: u64, kind: u32, arg: u64): Promise<void> {
+  // SAFETY: `waitFor` makes a heap future, given up to the promise.
+  await unsafe { promiseAt<void>(wt.waitFor(h, kind, arg, 0)) };
+}
+
+/** `writeLater` of `data[start..end]` on runtime stream `rh`: the bytes still to send. */
+export function writeLaterRange(rh: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
+  noteStdUse("rt-later");
+  let s = sh.shadowOf(rh, false);
+  if (s === 0) {
+    if (sh.wasClosed(rh)) {
+      return failed(closed(), 0);
+    }
+    if (start >= end) {
+      // Nothing deferred: no shadow either.
+      return value(0);
+    }
+    s = sh.shadowOf(rh, true);
+    if (s === 0) {
+      return failed({ code: 4, message: "too many streams with deferred bytes" }, 0);
+    }
+  }
+  const st = sh.status(s);
+  if (st.code !== 0) {
+    tb.leave(s);
+    return failed(st, 0);
+  }
+  let startIt = false;
+  if (start < end) {
+    wr.append(s, addressOf(data, start), (end - start) as usize);
+    startIt = !sh.flushing(s);
+  }
+  const left = (m.ld(s + io.S_QUEUED) - m.ld(s + io.S_WRITTEN)) as u64;
+  if (startIt) {
+    const h = fl.startFlusher(s);
+    tb.leave(s);
+    spawn(fl.flush(h, rh));
+  } else {
+    tb.leave(s);
+  }
+  return value(left);
+}
+
+/** `writeLater` of a string's UTF-8 on runtime stream `rh`. */
+export function writeLaterText(rh: u64, data: string): IoResult<u64> {
+  const bytes = utf8Encode(data);
+  return writeLaterRange(rh, bytes, 0, bytes.length as u64);
+}
+
+/** `write` of `data[start..end]` on runtime stream `rh`: behind its deferred bytes. */
+export async function writeRange(rh: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
+  const s = sh.shadowOf(rh, false);
+  if (s !== 0) {
+    const st = sh.status(s);
+    if (st.code !== 0 || (sh.flushing(s) && start >= end)) {
+      tb.leave(s);
+      return st;
+    }
+    if (!sh.flushing(s)) {
+      tb.leave(s);
+      return await rt.velt_rt_tcp_write_range(rh, data, start, end);
+    }
+    wr.append(s, addressOf(data, start), (end - start) as usize);
+    const mark = m.ld(s + io.S_QUEUED) as u64;
+    const h = tb.handleOf(s);
+    tb.leave(s);
+    await waitOn(h, io.K_WRITTEN, mark);
+    return sh.outcomeNow(h);
+  }
+  return await rt.velt_rt_tcp_write_range(rh, data, start, end);
+}
+
+/** `write` of a string on runtime stream `rh`. */
+export async function writeText(rh: u64, data: string): Promise<IoStatus> {
+  const s = sh.shadowOf(rh, false);
+  if (s === 0) {
+    return await rt.velt_rt_tcp_write(rh, data);
+  }
+  tb.leave(s);
+  const bytes = utf8Encode(data);
+  return await writeRange(rh, bytes, 0, bytes.length as u64);
+}
+
+/** Has runtime stream `rh` deferred bytes buffered or being written (or is it closing)? */
+export function busy(rh: u64): bool {
+  const s = sh.shadowOf(rh, false);
+  if (s === 0) {
+    return false;
+  }
+  const b = sh.flushing(s);
+  tb.leave(s);
+  return b;
+}
+
+/** `drained(max)` on runtime stream `rh`: at most `max` of its bytes still to send. */
+export async function drained(rh: u64, max: u64): Promise<IoStatus> {
+  const s = sh.shadowOf(rh, false);
+  if (s === 0) {
+    return await rt.velt_rt_tcp_drained(rh, max);
+  }
+  const st = sh.status(s);
+  const met = wt.satisfied(s, io.K_DRAINED, max as usize);
+  const h = tb.handleOf(s);
+  tb.leave(s);
+  if (st.code !== 0 || met) {
+    return st;
+  }
+  await waitOn(h, io.K_DRAINED, max);
+  return sh.outcomeNow(h);
+}
+
+/** `shutdown` of runtime stream `rh`: once its deferred bytes are sent. */
+export function shutdown(rh: u64): IoStatus {
+  const s = sh.shadowOf(rh, false);
+  if (s === 0) {
+    return rt.velt_rt_tcp_shutdown(rh);
+  }
+  const st = sh.status(s);
+  if (st.code === 0 && sh.flushing(s)) {
+    m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_SHUT);
+  }
+  const later = st.code === 0 && sh.flushing(s);
+  tb.leave(s);
+  if (st.code !== 0 || later) {
+    return st;
+  }
+  return rt.velt_rt_tcp_shutdown(rh);
+}
+
+/** `abort` of runtime stream `rh`: its deferred bytes are dropped, and later ones refused. */
+export function abort(rh: u64): void {
+  rt.velt_rt_tcp_abort(rh);
+  const s = sh.shadowOf(rh, false);
+  if (s !== 0) {
+    fl.abort(s);
+  }
+}
+
+/**
+ * Runtime stream `rh` goes back to the runtime (`close`, `park`), which the caller does next:
+ * what is still deferred is handed to the runtime's `write` first.
+ */
+export function release(rh: u64): void {
+  sh.closedNow(rh);
+  const s = sh.shadowOf(rh, false);
+  if (s !== 0) {
+    fl.close(s, rh);
+  }
+}
+
+/** `close` of runtime stream `rh`: at once; its deferred bytes are still sent. */
+export function close(rh: u64): void {
+  release(rh);
+  rt.velt_rt_tcp_close(rh);
+}
+
+/** `park` of runtime stream `rh` in the runtime's pool under `key`. */
+export function park(rh: u64, key: string): void {
+  release(rh);
+  rt.velt_rt_tcp_park(rh, key);
+}

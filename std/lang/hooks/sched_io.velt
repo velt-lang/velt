@@ -117,7 +117,9 @@ export const ERR: u32 = 8;
 
 /**
  * A source's flags: on the due list; shut down writing once the buffer is sent (and done so);
- * close the descriptor once the buffer is sent; aborted; a listener.
+ * close the descriptor once the buffer is sent; aborted; a listener; a runtime stream's shadow
+ * (std/net/rt_later.velt: no descriptor, never on a reactor or a due list) and its flusher
+ * running.
  */
 export const F_DUE: u32 = 1;
 export const F_SHUT: u32 = 2;
@@ -127,6 +129,16 @@ export const F_ABORTED: u32 = 16;
 export const F_LISTENER: u32 = 32;
 /** A pipe (a child process's): read with `read`, not `recv` (std/net/fd_io.velt). */
 export const F_PIPE: u32 = 64;
+export const F_RUNTIME: u32 = 128;
+export const F_FLUSHING: u32 = 256;
+/**
+ * A runtime stream's shadow (std/net/rt_later_flush.velt): its flight was polled by its flusher
+ * (so it waits for the stream's turn already); the write `close` made for the rest is done
+ * (counted once the flight before it is). Every flag of `S_FLAGS` is declared here, each its own
+ * bit (crates/veltc/tests/std_unix/net/rt_later_shadow.test.velt checks that).
+ */
+export const F_POLLED: u32 = 512;
+export const F_NEXT_DONE: u32 = 1024;
 
 /**
  * What a waiter waits for: readable, writable (a connect), its bytes written (`arg`: the count
@@ -364,7 +376,9 @@ export function register(fd: i32, flags: u32, ready: u32): usize {
  * handles dead, back to the table's free list (its lock stays the caller's to give back).
  */
 export function free(s: usize): void {
-  m.dec(m.ld(s + S_IOB) + IO_LIVE);
+  if ((m.ld32(s + S_FLAGS) & F_RUNTIME) === 0) {
+    m.dec(m.ld(s + S_IOB) + IO_LIVE);
+  }
   wt.wakeAll(s);
   const buf = m.ld(s + S_BUF);
   if (buf !== 0) {

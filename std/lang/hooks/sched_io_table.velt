@@ -264,7 +264,7 @@ function follow(s: usize): void {
   }
   const hb = m.ld(m.ld(k + t.T_HOME) + t.E_IO);
   const ob = m.ld(s + io.S_IOB);
-  if (ob === hb || (m.ld32(s + io.S_FLAGS) & io.F_LISTENER) !== 0) {
+  if (ob === hb || (m.ld32(s + io.S_FLAGS) & (io.F_LISTENER | io.F_RUNTIME)) !== 0) {
     return;
   }
   moveTo(s, ob, hb);
@@ -278,7 +278,7 @@ function follow(s: usize): void {
  * that may not move (pinned, anchored) or while tasks stay on their worker.
  */
 function join(k: usize, s: usize): void {
-  if ((m.ld32(s + io.S_FLAGS) & io.F_LISTENER) !== 0 || !t.movable(k)) {
+  if ((m.ld32(s + io.S_FLAGS) & (io.F_LISTENER | io.F_RUNTIME)) !== 0 || !t.movable(k)) {
     return;
   }
   const h = m.ld(m.ld(s + io.S_IOB) + io.IO_TICK_AT) - t.E_TICK;
@@ -317,4 +317,36 @@ export function forget(h: u64): void {
 /** Moves source `s`'s generation on: handles to it find nothing from now on. */
 export function bump(s: usize): void {
   m.store32(s + io.S_GEN, (m.load32(s + io.S_GEN) + 1) & 0x7fffffff);
+}
+
+/**
+ * The end of the program (sched.velt `schedFinish`, no task left, and sched_end.velt's end of a
+ * `main` that can never finish; every worker idle then): gives back the send buffers of the
+ * sources still open. Not at `process.exit`: lowering ends the process in the runtime
+ * (`velt_rt_exit`), with no hook of std's on the way, and the other workers may still be using
+ * their sources then; a leak check of a program that exits so counts those buffers. A `TcpStream` is a Copy handle that only `close()` releases, so a
+ * stream dropped unclosed stays open until the process ends, as the runtime's do; the runtime's
+ * memory is its own, but these buffers are the program's blocks, which a leak check counts. The
+ * slots are read without the table's lock (chunks are never freed or moved; `give`, which takes
+ * it, runs with a source's lock held).
+ */
+export function releaseBuffers(): void {
+  const tb = TABLE.load("acquire") as usize;
+  if (tb === 0) {
+    return;
+  }
+  const n = m.load(tb + TB_LEN);
+  for (let slot: usize = 0; slot < n; slot++) {
+    const s = m.ld(m.ld(tb + TB_CHUNKS + 8 * (slot >> CHUNK_BITS)) + 8 * (slot & (CHUNK - 1)));
+    lock(s);
+    const buf = m.ld(s + io.S_BUF);
+    if (buf !== 0) {
+      m.release(buf, m.ld(s + io.S_CAP));
+      m.st(s + io.S_BUF, 0);
+      m.st(s + io.S_CAP, 0);
+      m.st(s + io.S_OFF, 0);
+      m.st(s + io.S_LEN, 0);
+    }
+    unlock(s);
+  }
 }

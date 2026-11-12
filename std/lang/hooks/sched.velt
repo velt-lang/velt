@@ -8,10 +8,10 @@
 // `schedAwaitReady`, `schedMicrotask`, sched_micro.velt), the process lifetime (keep-alive
 // references, a due `unref()`'d timer's question, the top-level `await` waiting: sched_end.velt),
 // `sleep` (`schedSleep`, sched_sleep.velt) and Node's timer order (`schedTimer*`,
-// sched_order.velt; off the worker, the runtime's: sched_off.velt); `schedFinish` drives the
-// tasks still alive once `main` is done. The runtime's other leaves (channels, files, sockets)
-// stay Rust: they wake a task through its C waker (rt_abi_async.md §1) from any thread, which queues it and
-// unparks the worker. The layout of the executor and its tasks is in sched_task.velt.
+// sched_timers.velt); `schedFinish` drives the tasks still alive once `main` is done. The
+// runtime's other leaves (channels, files, sockets) stay Rust: they wake a task through its C
+// waker (rt_abi_async.md §1) from any thread, which queues it and unparks the worker. The
+// layout of the executor and its tasks is in sched_task.velt.
 //
 // A poll of a task (`run`): the started promises woken since its last poll, then its root, then
 // its microtasks; each piece only when the task has them (a flag, a list, a queue made on first
@@ -26,6 +26,7 @@ import { Ptr } from "velt/ffi";
 import { fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
 import * as end from "./sched_end";
 import * as io from "./sched_io";
+import * as tb from "./sched_io_table";
 import * as jn from "./sched_join";
 import * as latch from "./sched_latch";
 import * as loop from "./sched_loop";
@@ -35,11 +36,11 @@ import * as mod from "./sched_module";
 import * as node from "./sched_node";
 import * as nc from "./sched_node_catch";
 import * as off from "./sched_off";
-import * as order from "./sched_order";
 import * as run from "./sched_run";
 import * as sl from "./sched_sleep";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
+import * as tm from "./sched_timers";
 import * as workers from "./sched_workers";
 import * as mk from "./sched_make";
 import * as wk from "./sched_wake";
@@ -50,11 +51,7 @@ declare c("c") function velt_rt_uncaught_now$rt(): void;
 /** The executor, started on first use (by the worker: `main`'s thread). */
 @inline
 function exec(): usize {
-  const e = t.exec();
-  if (e !== 0) {
-    return e;
-  }
-  return workers.start();
+  return workers.started();
 }
 
 /**
@@ -132,6 +129,8 @@ export function schedFinish(code: i32): void {
       loop.turn(e);
     }
   }
+  // Streams dropped unclosed stay open to the end, as the runtime's: their buffers go now.
+  tb.releaseBuffers();
 }
 
 /**
@@ -377,48 +376,27 @@ export function schedSleep(ms: i64): usize {
  * set; off the worker, the runtime's handle, bit 0 clear).
  */
 export function schedTimerNew(ms: i64): u64 {
-  if (!t.onWorker()) {
-    return off.timerNew(ms);
-  }
-  const e = exec();
-  sp.anchor();
-  return order.timerNew(e, ms) | 1;
+  return tm.timerNew(ms);
 }
 
 /** `velt_rt_timer_turn`: a heap future that completes once timer `h`'s turn has come. */
 export function schedTimerTurn(h: u64, gate: u64): usize {
-  if ((h & 1) === 0) {
-    return off.timerTurn(h, gate);
-  }
-  exec();
-  return order.turn((h & ~1) as usize);
+  return tm.turn(h, gate);
 }
 
 /** `velt_rt_timer_again`: an interval's timer `h` queued again, `ms` after its last turn. */
 export function schedTimerAgain(h: u64, ms: i64): void {
-  if ((h & 1) === 0) {
-    off.timerAgain(h, ms);
-    return;
-  }
-  order.timerAgain(exec(), (h & ~1) as usize, ms);
+  tm.again(h, ms);
 }
 
 /** `velt_rt_timer_clear`: timer `h` leaves the order (`clearTimeout`). */
 export function schedTimerClear(h: u64): void {
-  if ((h & 1) === 0) {
-    off.timerClear(h);
-    return;
-  }
-  order.timerClear(exec(), (h & ~1) as usize);
+  tm.clear(h);
 }
 
 /** `velt_rt_timer_free`: timer `h` leaves the order and its handle is freed. */
 export function schedTimerFree(h: u64): void {
-  if ((h & 1) === 0) {
-    off.timerFree(h);
-    return;
-  }
-  order.timerFree(exec(), (h & ~1) as usize);
+  tm.free(h);
 }
 
 /**

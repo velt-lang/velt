@@ -4,7 +4,7 @@
 // in all (else the online cores).
 
 import { Ptr, export as cExport } from "velt/ffi";
-import { exportedAddress, noInline } from "velt/lang/intrinsics";
+import { exportedAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
 import { processEnv } from "./process";
@@ -27,6 +27,16 @@ declare c("c") function velt_rt_latch_open$rt(l: u64): void;
 
 /** The most workers `VELT_THREADS` may ask for (more is taken for a typo: the cores instead). */
 const MAX_WORKERS: usize = 4096;
+
+/** The executor, started on first use (by the worker: `main`'s thread). */
+@inline
+export function started(): usize {
+  const e = t.exec();
+  if (e !== 0) {
+    return e;
+  }
+  return start();
+}
 
 /** Starts the executor on this thread (worker 0) and the other workers: worker 0's block. */
 @noInline

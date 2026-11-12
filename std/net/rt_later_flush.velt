@@ -1,0 +1,333 @@
+// velt/net (internal): the flushers of runtime streams' deferred bytes under the executor in Velt
+// (std/net/rt_later.velt, #2817; the shadows that hold the bytes: std/net/rt_later_shadow.velt).
+//
+// - The flusher (`flush`, one per shadow while it has bytes: `F_FLUSHING`) hands the buffered
+//   bytes to the runtime's `write` one batch at a time, called through its C entry
+//   (`velt_rt_tcp_write_range$rt`) so the write is a heap future of the shadow's (`FLIGHT`). The
+//   batch stays in the buffer until it is written (the runtime copies what it does not write at
+//   once); the runtime orders writes by their call, so a later write goes after it.
+// - `close` (and `park`) close the runtime's handle at once, as the runtime's own do: what is
+//   still buffered is handed to the runtime's `write` first (`NEXT` while a batch is in flight),
+//   which goes on after the close.
+// - The flushers are tasks that do not keep the process alive after `main`
+//   (sched_detach.velt): `giveUp` drops their writes.
+
+import { IoStatus } from "velt/native/status";
+import { Ptr } from "velt/ffi/ptr";
+import {
+  fnAddress,
+  futDrop,
+  futPoll,
+  promiseAt,
+  slotPut,
+  slotSize,
+  slotTake,
+} from "velt/lang/intrinsics";
+import * as dt from "velt/lang/hooks/sched_detach";
+import * as io from "velt/lang/hooks/sched_io";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as t from "velt/lang/hooks/sched_task";
+import * as wt from "velt/lang/hooks/sched_io_wait";
+import * as rt from "velt/net/rt";
+import { dropNext, fail, FLIGHT, FLIGHT_LEN, NEXT } from "velt/net/rt_later_shadow";
+import * as sh from "velt/net/rt_later_shadow";
+
+/** The runtime's `write` of `data[start..end]` (a `VeltBytes`): a new heap future. */
+declare c("c") function velt_rt_tcp_write_range$rt(
+  s: u64,
+  data: Ptr<u8>,
+  start: u64,
+  end: u64,
+): Ptr<u8>;
+
+/** The most bytes one write hands over. */
+const MAX_BATCH: usize = 1 << 30;
+
+/** A flight's wait found its write settled already (no runtime code). */
+const SETTLED: i32 = -1;
+
+/** The runtime's code for a closed handle. */
+const EBADF: i32 = 16;
+
+/** A flight's wait (a heap future: poll, drop, the status, the shadow's handle). */
+const G_RESULT: usize = 16;
+const G_HANDLE: usize = 48;
+const G_SIZE: usize = 64;
+
+/**
+ * The runtime's `write` of the `n` bytes at `p` on runtime stream `rh`: its heap future. The
+ * bytes are read during the call only.
+ */
+function launch(rh: u64, p: usize, n: usize): usize {
+  const vb = m.alloc(32);
+  m.st(vb, p);
+  m.st(vb + 8, n);
+  m.st(vb + 16, 0);
+  // SAFETY: a `VeltBytes` that borrows `n` bytes at `p` (capacity 0: borrowed), which the call
+  // writes or copies; a new heap future comes back, owned by the shadow.
+  const f = m.addr(unsafe { velt_rt_tcp_write_range$rt(rh, m.ptr(vb), 0, n as u64) });
+  m.release(vb, 32);
+  return f;
+}
+
+/** Starts shadow `s`'s flusher (locked; it has bytes and none runs): its handle. */
+export function startFlusher(s: usize): u64 {
+  m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_FLUSHING);
+  dt.up(fnAddress(giveUp));
+  return tb.handleOf(s);
+}
+
+/**
+ * Shadow handle `h`'s flusher: hands the buffered bytes of runtime stream `rh` to the runtime's
+ * `write`, one batch at a time, until none are left; then a shutdown asked for meanwhile, or
+ * the shadow's end once it was closed.
+ */
+export async function flush(h: u64, rh: u64): Promise<void> {
+  while (true) {
+    const s = tb.hold(h);
+    if (s === 0) {
+      dt.down();
+      return;
+    }
+    if (m.ld(s + FLIGHT) === 0 && !launchNext(s, rh)) {
+      finish(s, rh);
+      return;
+    }
+    const k = slotSize<IoStatus>();
+    if (k > G_HANDLE - G_RESULT) {
+      panic("ICE: an IoStatus does not fit a flight's wait");
+    }
+    tb.leave(s);
+    const g = m.alloc(G_SIZE);
+    m.st(g, fnAddress(flightPoll));
+    m.st(g + 8, fnAddress(flightDrop));
+    m.st(g + G_HANDLE, h as usize);
+    // SAFETY: a heap future made here (its result an `IoStatus`), given up to the promise.
+    const st = await unsafe { promiseAt<IoStatus>(g) };
+    const after = tb.hold(h);
+    if (after === 0) {
+      dt.down();
+      return;
+    }
+    if (st.code !== SETTLED) {
+      settle(after, st);
+    }
+    tb.leave(after);
+  }
+}
+
+/** Hands shadow `s`'s next batch to the runtime (locked): false when there is nothing to send. */
+function launchNext(s: usize, rh: u64): bool {
+  const n = m.ld(s + io.S_LEN);
+  const fl = m.ld32(s + io.S_FLAGS);
+  if (n === 0 || (fl & (io.F_CLOSING | io.F_ABORTED)) !== 0 || m.ld32(s + io.S_ERR) !== 0) {
+    return false;
+  }
+  const batch = n < MAX_BATCH ? n : MAX_BATCH;
+  m.st(s + FLIGHT, launch(rh, m.ld(s + io.S_BUF) + m.ld(s + io.S_OFF), batch));
+  m.st(s + FLIGHT_LEN, batch);
+  m.st32(s + io.S_FLAGS, fl & ~io.F_POLLED);
+  return true;
+}
+
+/** Shadow `s`'s flight ended with `st` (locked): its bytes are sent, or the shadow failed. */
+function settle(s: usize, st: IoStatus): void {
+  const n = m.ld(s + FLIGHT_LEN);
+  m.st(s + FLIGHT_LEN, 0);
+  if (
+    st.code === 0 && m.ld32(s + io.S_ERR) === 0 && (m.ld32(s + io.S_FLAGS) & io.F_ABORTED) === 0
+  ) {
+    m.st(s + io.S_OFF, m.ld(s + io.S_OFF) + n);
+    m.st(s + io.S_LEN, m.ld(s + io.S_LEN) - n);
+    m.st(s + io.S_WRITTEN, m.ld(s + io.S_WRITTEN) + n);
+    const fl = m.ld32(s + io.S_FLAGS);
+    const next = m.ld(s + NEXT);
+    if (next !== 0) {
+      m.st(s + NEXT, 0);
+      m.st(s + FLIGHT, next);
+      m.st(s + FLIGHT_LEN, m.ld(s + io.S_LEN));
+      m.st32(s + io.S_FLAGS, fl & ~io.F_POLLED);
+    } else if ((fl & io.F_NEXT_DONE) !== 0) {
+      // The rest went out right after: written too.
+      m.st(s + io.S_WRITTEN, m.ld(s + io.S_WRITTEN) + m.ld(s + io.S_LEN));
+      m.st(s + io.S_OFF, 0);
+      m.st(s + io.S_LEN, 0);
+      m.st32(s + io.S_FLAGS, fl & ~io.F_NEXT_DONE);
+    }
+    wt.wakeAll(s);
+    return;
+  }
+  dropNext(s);
+  if (st.code === EBADF) {
+    // Closed through a handle this program closed long ago (`wasClosed` no longer knew it):
+    // nothing more to do here, and the handle's operations go to the runtime again.
+    m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_CLOSING);
+  }
+  if ((m.ld32(s + io.S_FLAGS) & io.F_ABORTED) !== 0) {
+    m.st(s + io.S_OFF, 0);
+    m.st(s + io.S_LEN, 0);
+    wt.wakeAll(s);
+    return;
+  }
+  fail(s, st);
+}
+
+/** Shadow `s`'s flusher found nothing more to send (locked): what was asked for meanwhile. */
+function finish(s: usize, rh: u64): void {
+  const fl = m.ld32(s + io.S_FLAGS) & ~io.F_FLUSHING;
+  m.st32(s + io.S_FLAGS, fl & ~io.F_SHUT);
+  dt.down();
+  if ((fl & io.F_CLOSING) !== 0) {
+    sh.drop(s, rh);
+    return;
+  }
+  if ((fl & io.F_SHUT) !== 0) {
+    rt.velt_rt_tcp_shutdown(rh);
+  }
+  if (m.ld32(s + io.S_ERR) === 0 && m.ld(s + io.S_CAP) > 64 * 1024) {
+    m.release(m.ld(s + io.S_BUF), m.ld(s + io.S_CAP));
+    m.st(s + io.S_BUF, 0);
+    m.st(s + io.S_CAP, 0);
+    m.st(s + io.S_OFF, 0);
+  }
+  tb.leave(s);
+}
+
+/**
+ * Runtime stream `rh`, with shadow `s` (locked), is closed or parked now: what it still buffers
+ * is handed to the runtime's `write` before the caller gives the handle back (and a shutdown
+ * asked for behind it to the runtime's), and the shadow, closed, goes once those writes are done
+ * (at once when nothing is left).
+ */
+export function close(s: usize, rh: u64): void {
+  const fl = m.ld32(s + io.S_FLAGS);
+  if ((fl & io.F_CLOSING) !== 0) {
+    tb.leave(s);
+    return;
+  }
+  m.st32(s + io.S_FLAGS, fl | io.F_CLOSING);
+  if ((fl & io.F_FLUSHING) === 0) {
+    sh.drop(s, rh);
+    return;
+  }
+  if (m.ld32(s + io.S_ERR) === 0 && (fl & io.F_ABORTED) === 0) {
+    const sent = m.ld(s + FLIGHT_LEN);
+    const rest = m.ld(s + io.S_LEN) - sent;
+    if (rest !== 0) {
+      const f = launch(rh, m.ld(s + io.S_BUF) + m.ld(s + io.S_OFF) + sent, rest);
+      if (m.ld(s + FLIGHT) === 0) {
+        m.st(s + FLIGHT, f);
+        m.st(s + FLIGHT_LEN, rest);
+        m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) & ~io.F_POLLED);
+      } else {
+        m.st(s + NEXT, f);
+      }
+    }
+    if ((fl & io.F_SHUT) !== 0) {
+      // Asked for behind the deferred bytes: the runtime's own shutdown waits for the writes
+      // that hold or wait for the stream's turn, which a write takes at its first poll.
+      m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) & ~io.F_SHUT);
+      prime(s);
+      rt.velt_rt_tcp_shutdown(rh);
+    }
+  }
+  tb.leave(s);
+}
+
+/**
+ * Polls shadow `s`'s writes that no flusher polled yet once (locked), with a waker that does
+ * nothing (the flusher's poll brings its own): each takes the stream's turn or waits for it.
+ */
+function prime(s: usize): void {
+  // The executor's probe context (sched_end.velt `open`): its waker does nothing.
+  const cx = t.main() + t.E_PROBE_CX;
+  while (m.ld(s + FLIGHT) !== 0 && (m.ld32(s + io.S_FLAGS) & io.F_POLLED) === 0) {
+    const f = m.ld(s + FLIGHT);
+    m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_POLLED);
+    // SAFETY: the shadow's live heap future, polled under its lock.
+    if (unsafe { futPoll(f, cx) } === 0) {
+      break;
+    }
+    // SAFETY: the completed write's status, moved out once.
+    const st = unsafe { slotTake<IoStatus>(f + G_RESULT) };
+    m.st(s + FLIGHT, 0);
+    // SAFETY: completed, polled no more.
+    unsafe {
+      futDrop(f);
+    }
+    settle(s, st);
+  }
+  const next = m.ld(s + NEXT);
+  // SAFETY: as above.
+  if (next !== 0 && unsafe { futPoll(next, cx) } !== 0) {
+    // SAFETY: as above.
+    const st = unsafe { slotTake<IoStatus>(next + G_RESULT) };
+    m.st(s + NEXT, 0);
+    // SAFETY: as above.
+    unsafe {
+      futDrop(next);
+    }
+    if (st.code === 0) {
+      m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_NEXT_DONE);
+    } else {
+      fail(s, st);
+    }
+  }
+}
+
+/** Runtime stream `rh`'s shadow `s` (locked): aborted, its bytes dropped, later ones refused. */
+export function abort(s: usize): void {
+  if ((m.ld32(s + io.S_FLAGS) & io.F_CLOSING) === 0) {
+    m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_ABORTED);
+    if (m.ld(s + FLIGHT) === 0) {
+      m.st(s + io.S_OFF, 0);
+      m.st(s + io.S_LEN, 0);
+    }
+    wt.wakeAll(s);
+  }
+  tb.leave(s);
+}
+
+/** Polls the flight of the shadow whose handle wait `g` holds (a heap future's poll). */
+function flightPoll(g: usize, cx: usize): u32 {
+  const s = tb.hold(m.ld(g + G_HANDLE) as u64);
+  const f = s === 0 ? 0 : m.ld(s + FLIGHT);
+  if (f === 0) {
+    // Settled already (`prime`, at a close), or given up (the program ends: the shadow is
+    // aborted, so the flusher finishes): nothing for the flusher to count.
+    if (s !== 0) {
+      tb.leave(s);
+    }
+    // SAFETY: the result slot has room for an `IoStatus` and holds none.
+    unsafe {
+      slotPut<IoStatus>(g + G_RESULT, { code: SETTLED, message: "" });
+    }
+    return 1;
+  }
+  m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_POLLED);
+  // SAFETY: the shadow's live heap future, polled under its lock by this task alone.
+  const r = unsafe { futPoll(f, cx) };
+  if (r !== 0) {
+    // The runtime's status, moved as it is (a heap future's drop never drops its result).
+    m.copy(g + G_RESULT, f + G_RESULT, slotSize<IoStatus>());
+    m.st(s + FLIGHT, 0);
+    // SAFETY: completed, polled no more.
+    unsafe {
+      futDrop(f);
+    }
+  }
+  tb.leave(s);
+  return r;
+}
+
+/** Frees wait `g` (a heap future's drop; never its result). */
+function flightDrop(g: usize): void {
+  m.release(g, G_SIZE);
+}
+
+/** The program ends with only flushers left (sched_detach.velt): their writes are dropped. */
+function giveUp(a: usize): usize {
+  sh.dropFlights();
+  return a;
+}

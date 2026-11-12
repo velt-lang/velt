@@ -1,0 +1,43 @@
+// velt/lang/hooks (internal): tasks that do not keep the process alive after `main` (#2817):
+// the flushers of bytes deferred on a runtime stream under the executor in Velt
+// (std/net/rt_later_shadow.velt). The runtime sends its own deferred bytes from a background task
+// that never holds the process: a program whose `main` returns with bytes still unsent (a peer
+// that never reads) ends at once. A flusher here waits for the runtime's `write`, a leaf that
+// counts as pending I/O, so the end of the program (sched_end.velt `mayPark`) gives the flushers
+// up when they are the only live tasks and nothing else can happen: `giveUp` drops their writes.
+//
+// Only a program that defers bytes on a runtime stream compiles any of this (`stdUsed`).
+
+import { addressCall } from "velt/lang/intrinsics";
+
+/** The flushers running. */
+const COUNT = new Atomic<u64>(0);
+/** The address of the function that drops every flusher's write (`giveUp`), set with the first. */
+const GIVE_UP = new Atomic<u64>(0);
+
+/** A flusher starts; `giveUp` is the address of the function that drops every flusher's write. */
+export function up(giveUp: usize): void {
+  GIVE_UP.store(giveUp as u64, "release");
+  COUNT.add(1);
+}
+
+/** A flusher is done. */
+export function down(): void {
+  COUNT.sub(1);
+}
+
+/** The flushers running. */
+export function count(): usize {
+  return COUNT.load() as usize;
+}
+
+/** Drops every flusher's write (worker 0 at the end of the program, every worker idle). */
+export function giveUp(): void {
+  const f = GIVE_UP.load("acquire") as usize;
+  if (f !== 0) {
+    // SAFETY: the address of a function that takes and returns a pointer-sized number.
+    unsafe {
+      addressCall(f, 0);
+    }
+  }
+}
