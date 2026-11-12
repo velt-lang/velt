@@ -76,7 +76,13 @@ const CLAIMS: &[(&str, Claim)] = &[
     ("declare-fn", Claim::Behaviour),
     ("decorator", Claim::Rejected),
     ("jsx-pragma-comment", Claim::Behaviour),
-    ("int-division", Claim::Behaviour),
+    (
+        "int-division",
+        Claim::Unprovable(
+            "integer types come only from Velt's names, which `velt-number-type` reports and \
+             `tsc` rejects; a union of integer literal types divides as numbers (#2686)",
+        ),
+    ),
     ("object-in-template", Claim::Behaviour),
     ("default-sort", Claim::Behaviour),
     ("json-map", Claim::Behaviour),
