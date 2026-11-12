@@ -426,6 +426,25 @@ export function takeWoken(task: usize): usize {
   return rev;
 }
 
+/**
+ * Gives back the references of the finished nodes on the woken stack of task `task`, which has
+ * ended: each node's last one frees it (and gives back its reference to the task).
+ * sched_node_wake.velt `wake` calls it when it pushed a node after the task ended: the node
+ * finished on its worker after the waker took its `QUEUED` flag (a microtask's run does not look
+ * at it), and the task's end (sched_run.velt `finish`) found the stack empty. `finish` marks the task done before it takes
+ * the stack, and the push comes before the waker reads the state (both sequentially
+ * consistent), so one of the two gives the references back. The node's reference keeps the task
+ * alive until then; nothing is woken.
+ */
+export function giveBackWoken(task: usize): void {
+  for (let n = takeWoken(task); n !== 0;) {
+    const next = nextWoken(n);
+    m.and32(n + N_FLAGS, ~QUEUED);
+    release(n);
+    n = next;
+  }
+}
+
 /** The node after `n` in a list `takeWoken` gave. */
 export function nextWoken(n: usize): usize {
   return m.ld(n + N_TAKEN_NEXT);

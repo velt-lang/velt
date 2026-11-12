@@ -26,11 +26,15 @@ const GOLDENS: &[&str] = &[
     "lang/uncaught_location_other_worker",
     // `console.log` of a settled promise prints its value (sched_peek.velt).
     "lang/print_promise",
+    "lang/print_limits",
     // A promise woken on its task's stack that finished before the task took it gives its
     // reference back when the task ends (sched_run.velt `finish`): a `then` on a shared promise,
     // and a detached promise driving a combinator.
     "m3/promise_several_consumers",
     "lang/proxy_throws_settled_own",
+    "lang/promise_shared",
+    // http-server's readable wait with a signal (a `within` read twice).
+    "std/http_server/serve_counts_hits",
 ];
 
 /// `file` built with `VELT_SCHEDULER=std` (from its folder, so a golden finds its packages) into

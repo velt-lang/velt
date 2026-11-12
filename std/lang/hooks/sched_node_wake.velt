@@ -46,6 +46,11 @@ function wake(n: usize): void {
   m.inc(n + nd.N_REFS);
   const task = m.ld(n + nd.N_TASK);
   m.pushStack(task + t.T_WOKEN, n, nd.N_NEXT);
+  if (m.load32(task + t.T_STATE) === t.DONE) {
+    // Pushed too late: the task ended meanwhile (sched_node.velt `giveBackWoken`).
+    nd.giveBackWoken(task);
+    return;
+  }
   const e = t.here();
   if (!(e !== 0 && m.ld(e + t.E_CURRENT) === task)) {
     wk.wake(task);
