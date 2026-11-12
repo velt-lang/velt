@@ -416,7 +416,9 @@ fn a_job_runs_when_the_pool_can_start_no_thread() {
     // at their process limit), the job that asked for one used to wait in the queue for good,
     // holding its keep-alive reference: the program never ended. Now the thread that queued it
     // runs the queue. White-box, in a copy of std whose `startDetached` always fails (an
-    // `RLIMIT_NPROC` limit would stop the runtime's own threads first).
+    // `RLIMIT_NPROC` limit would stop the runtime's own threads first). The job is then done
+    // before the poll that queued it ends, every time: its result still waits for a wake, so a
+    // settled promise wins a race against it (#2820), as in Node; it used to lose every time.
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
     let std_copy = dir.path().join("std");
@@ -441,6 +443,7 @@ fn a_job_runs_when_the_pool_can_start_no_thread() {
 async function main() {
   await writeFile("nt.txt", "pool or not");
   console.log(await readFile("nt.txt"));
+  console.log(await Promise.race<string>([readFile("nt.txt"), Promise.resolve("first")]));
 }
 "#,
     )
@@ -486,7 +489,7 @@ async function main() {
         std::thread::sleep(Duration::from_millis(20));
     };
     let got = (code, reader.join().unwrap());
-    assert_eq!(got, (Some(0), "pool or not\n".to_string()));
+    assert_eq!(got, (Some(0), "pool or not\nfirst\n".to_string()));
 }
 
 #[test]
