@@ -172,7 +172,8 @@ impl RegistryData {
 /// checkout must not make the editor talk to hosts it names (an internal network address, say)
 /// unless the connection is TLS or stays on this machine. `velt install` still uses such a
 /// registry. A member of a workspace (the manifest is in `dir`) uses the workspace's `registry`,
-/// as every `velt` command does ([`Locations::for_package`]).
+/// as every `velt` command does ([`Locations::for_package`]); `None` while that workspace's
+/// file can't be read.
 pub fn locations_for(manifest_text: &str, dir: Option<&Path>) -> Option<Locations> {
     registry_for(env_locations()?, manifest_text, dir)
 }
@@ -195,10 +196,13 @@ fn registry_for(loc: Locations, manifest_text: &str, dir: Option<&Path>) -> Opti
     if loc.remote.is_some() && !loc.remote_is_default {
         return Some(loc); // the user's own $VELT_REGISTRY
     }
-    // A workspace that can't be read names nothing; `velt` commands report it.
-    let workspace = dir
-        .and_then(|d| vpm::workspace::listing(d).ok().flatten())
-        .and_then(|ws| ws.registry);
+    // A workspace file that can't be read (mid-edit, say) gives no registry data at all: it may
+    // name a private registry, and `velt` commands refuse it too.
+    let workspace = match dir.map(vpm::workspace::listing) {
+        Some(Err(_)) => return None,
+        Some(Ok(ws)) => ws.and_then(|ws| ws.registry),
+        None => None,
+    };
     let named = workspace
         .or_else(|| vpm::manifest::ide::registry::top_level_string(manifest_text, "registry"))
         .filter(|url| vpm::locations::is_url(url));
@@ -297,11 +301,18 @@ mod tests {
         let asked = registry_for(default.clone(), text, Some(&member)).unwrap();
         assert_eq!(asked.remote.as_deref(), Some("https://private.example"));
         // Outside the workspace: the public registry.
-        let alone = registry_for(default, text, Some(&std::env::temp_dir())).unwrap();
+        let alone = registry_for(default.clone(), text, Some(&std::env::temp_dir())).unwrap();
         assert_eq!(
             alone.remote.as_deref(),
             Some(vpm::locations::DEFAULT_REGISTRY)
         );
+        // A workspace file that doesn't parse (mid-edit): no registry is asked, not the default.
+        std::fs::write(
+            tmp.join(vpm::workspace::WORKSPACE_FILE),
+            "export const workspace: Workspace = { members: [\"m\"], registry: ",
+        )
+        .unwrap();
+        assert_eq!(registry_for(default, text, Some(&member)), None);
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
