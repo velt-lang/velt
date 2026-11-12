@@ -6,11 +6,15 @@
 //! would. The `as const` form (`c ? ("x" as const) : ("y" as const)`) keeps its literals
 //! everywhere, and so does a value checked against a literal type.
 //!
-//! Such values are found by their expressions ([`FnCx::widening_expr`]): a local constant is
-//! recorded in `Frame::widening_consts`, a module constant is read from its initializer, an
-//! arrow in `Ctx::widening_fns`. A value written as one of them (`let w = a`, `{ m: a }`) is
-//! widened where it is stored ([`FnCx::widened_ref`]); a type argument inferred from one widens
-//! by TypeScript's rule ([`FnCx::widened_candidate`]).
+//! Velt's types have no fresh flag, so freshness is tracked on the checked values instead
+//! ([`FnCx::fresh_depth`]): a local constant is recorded in `Frame::widening_consts`, a module
+//! constant is read from its initializer, and every call and arrow is recorded in
+//! `Ctx::widening_values` as it is checked. A call gives widening literals when a type
+//! parameter at the top level of its result was inferred from them, whatever the callee's form
+//! (`id(a)`, `new B().id(a)`, `B.id(a)`, `unbox({ v: a })`), or when its callee is a function
+//! whose calls give them (`(() => a)()`, `nested()()`). A value of widening literals is widened
+//! where it is stored (`let w = a`, `{ m: a }`; [`FnCx::widened_ref`]), and a type argument
+//! inferred from one widens by TypeScript's rule ([`FnCx::widened_candidate`]).
 
 use velt_syntax::ast;
 
@@ -24,30 +28,56 @@ use crate::hir::{self, TyId, TyKind};
 impl FnCx<'_, '_> {
     /// `h`, the checked `e`, widened (`"x" | "y"` to `string`) when `e` gives a value of
     /// widening literal types.
+    /// `opt(a)` of `T | undefined` widens its `T` (`string | undefined`).
     pub(crate) fn widened_ref(&mut self, e: &ast::Expr, h: hir::Expr) -> hir::Expr {
-        match self.widening_expr(e) {
-            true => self.widen_value(h),
-            false => h,
+        if !self.widening_expr(e) {
+            return h;
         }
+        let TyKind::Option(inner, n) = *self.cx.ty.kind(h.ty) else {
+            return self.widen_value(h);
+        };
+        let wide = self.cx.widened(inner);
+        if wide == inner {
+            return h;
+        }
+        let target = self.cx.ty.option_of(wide, n);
+        self.try_coerce(h, target).unwrap_or_else(|h| h)
     }
 
     /// Does `e` (checked) give a value of widening literal types (module docs)? A literal arm
     /// of a conditional or of `||` is one too, as TypeScript's fresh literal is.
     pub(crate) fn widening_expr(&mut self, e: &ast::Expr) -> bool {
+        self.fresh_depth(e) == 1
+    }
+
+    /// How `e` (checked) gives widening literals, as tsc's fresh literal types flow: 1 when its
+    /// value is of such types, `n + 1` when it is a function whose calls give depth `n` (`() =>
+    /// a` is 2), 0 otherwise. A call's depth was recorded when it was checked
+    /// ([`Self::note_widening_call`]), an arrow's when its body was.
+    pub(crate) fn fresh_depth(&mut self, e: &ast::Expr) -> u8 {
         use ast::BinaryOp as B;
         match &e.kind {
-            ast::ExprKind::Paren(x) | ast::ExprKind::NonNull(x) => self.widening_expr(x),
-            ast::ExprKind::Ident(id) => self.widening_name(id),
+            // `await f()` of an async arrow whose result is of widening literals.
+            ast::ExprKind::Paren(x) | ast::ExprKind::NonNull(x) | ast::ExprKind::Await(x) => {
+                self.fresh_depth(x)
+            }
+            ast::ExprKind::Ident(id) if self.widening_name(id) => 1,
+            ast::ExprKind::Ident(id) => match self.local_widening_fn(id) {
+                Some(d) => d,
+                None => self.global_widening_fn(id),
+            },
             ast::ExprKind::Cond { then, els, .. } => {
-                self.widening_arm(then) || self.widening_arm(els)
+                (self.widening_arm(then) || self.widening_arm(els)) as u8
             }
             ast::ExprKind::Binary {
                 op: B::And | B::Or | B::Nullish,
                 lhs,
                 rhs,
-            } => self.widening_arm(lhs) || self.widening_arm(rhs),
-            ast::ExprKind::Call { callee, args, .. } => self.widening_call(callee, args),
-            _ => false,
+            } => (self.widening_arm(lhs) || self.widening_arm(rhs)) as u8,
+            ast::ExprKind::Call { .. } | ast::ExprKind::Arrow { .. } => {
+                self.cx.widening_values.get(&e.span).copied().unwrap_or(0)
+            }
+            _ => 0,
         }
     }
 
@@ -72,60 +102,73 @@ impl FnCx<'_, '_> {
         plain_lit(strip_parens(e)) || self.widening_expr(e)
     }
 
-    /// `f(…)` gives a value of widening literal types: `f` is an arrow whose result is one, or
-    /// a generic function whose result is its type parameter `T` (`T | undefined`), inferred
-    /// from an argument of such a value for a parameter of type `T`, where TypeScript keeps the
-    /// argument's type as it is (`id(a)`; [`Self::widened_candidate`]).
-    fn widening_call(&mut self, callee: &ast::Expr, args: &[ast::Expr]) -> bool {
-        let ast::ExprKind::Ident(id) = &strip_parens(callee).kind else {
-            return false;
+    /// After the call `e` of `callee` was checked: record what it gives (`fresh_depth`). It
+    /// gives widening literals when `inferred` (a type parameter at the top level of its
+    /// result was inferred from them: `id(a)`, `new B().id(a)`, `unbox({ v: a })`;
+    /// [`Self::gives_widening`]), or what `callee`'s calls give (`(() => a)()`, `nested()()`).
+    pub(super) fn note_widening_call(&mut self, e: &ast::Expr, callee: &ast::Expr, inferred: bool) {
+        let depth = match inferred {
+            true => 1,
+            false => self.fresh_depth(callee).saturating_sub(1),
         };
-        if let Some(widening) = self.local_widening_fn(id) {
-            return widening;
+        if depth > 0 {
+            self.cx.widening_values.insert(e.span, depth);
         }
-        let Some(Item::Def(d)) = self.cx.lookup_item_at(self.module, &id.name, id.span) else {
-            return false;
-        };
-        match self.cx.info.get(d.0 as usize) {
-            Some(DefInfo::Fn(_)) => {}
-            // A module constant `const f = () => a`.
-            Some(DefInfo::Global(g)) => {
-                let arrow = g.src.init.map(strip_parens).filter(|_| !g.mutable);
-                return arrow.is_some_and(|e| self.cx.widening_fns.contains(&e.span));
-            }
-            _ => return false,
-        }
-        let f = self.cx.fn_info(d);
-        if f.generics.names.is_empty() {
-            return false;
-        }
-        let (ret, constraints) = (f.ret, f.generics.constraints.clone());
-        let params: Vec<TyId> = f.params.iter().map(|p| p.ty).collect();
-        let rets = self.top_params(ret);
-        for (p, a) in params.iter().zip(args) {
-            let kept = self.top_params(*p).into_iter().any(|k| {
-                let c = constraints.get(k as usize).copied().flatten();
-                rets.contains(&k) && !self.primitive_constraint(c)
-            });
-            if kept && self.widening_expr(a) {
-                return true;
-            }
-        }
-        false
     }
 
-    /// For a local `id` names (in this function or an enclosing one): is it a constant holding
-    /// an arrow whose result is of widening literal types? `None` when `id` names no local.
-    fn local_widening_fn(&self, id: &ast::Ident) -> Option<bool> {
+    /// Does the argument `e` for a parameter of type `pty` of the generic callable `c` make its
+    /// result one of widening literals? So it does when `e` holds them (anywhere: `unbox({ v: a
+    /// })`, `apply(() => a)`) for a type parameter of `pty` that is at the top level of the
+    /// result and has no primitive constraint: TypeScript infers that parameter as the fresh
+    /// literals (with a primitive constraint, as regular ones; `getCovariantInference`).
+    pub(super) fn gives_widening(
+        &mut self,
+        c: &super::args::Callable,
+        e: &ast::Expr,
+        pty: TyId,
+    ) -> bool {
+        if c.slot_names.is_empty() || self.fresh_call {
+            return false;
+        }
+        let rets = self.top_params(c.ret);
+        if rets.is_empty() {
+            return false;
+        }
+        let mut ps = vec![];
+        crate::types::collect_params(&self.cx.ty, pty, &mut ps);
+        let kept = ps.into_iter().any(|k| {
+            let constraint = c.constraints.get(k as usize).copied().flatten();
+            rets.contains(&k) && !self.primitive_constraint(constraint)
+        });
+        kept && (self.fresh_depth(e) > 0 || self.holds_widening(e))
+    }
+
+    /// For a local `id` names (in this function or an enclosing one): the depth (`fresh_depth`)
+    /// of the function value it holds, a constant. `None` when `id` names no local.
+    fn local_widening_fn(&self, id: &ast::Ident) -> Option<u8> {
         let frames = std::iter::once(&self.f).chain(self.outer.iter().rev());
         for f in frames {
             if let Some(l) = frame_lookup(f, &id.name) {
                 if f.kinds[l.0 as usize] != LocalKind::Capture {
-                    return Some(f.widening_fn_locals.contains(&l));
+                    return Some(f.widening_fn_locals.get(&l).copied().unwrap_or(0));
                 }
             }
         }
         None
+    }
+
+    /// The depth (`fresh_depth`) of the function value the module constant `id` names holds
+    /// (`const f = () => a`), 0 for anything else.
+    fn global_widening_fn(&self, id: &ast::Ident) -> u8 {
+        let Some(Item::Def(d)) = self.cx.lookup_item_at(self.module, &id.name, id.span) else {
+            return 0;
+        };
+        let Some(DefInfo::Global(g)) = self.cx.info.get(d.0 as usize) else {
+            return 0;
+        };
+        let init = g.src.init.map(strip_parens).filter(|_| !g.mutable);
+        let depth = init.and_then(|e| self.cx.widening_values.get(&e.span).copied());
+        depth.filter(|d| *d > 1).unwrap_or(0)
     }
 
     /// The type parameters at the top level of `t`: `T`, a member of `T | U` or `T | undefined`.
@@ -221,8 +264,8 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// The initializer `e` of local `name` declared by `v` without a type: a `let` (or `var`)
-    /// of a value of widening literals is of their base type (`let w = a` is a `string`).
+    /// The initializer `e` of local `name` declared by `v` without a type: a `let` of a value
+    /// of widening literals is of their base type (`let w = a` is a `string`).
     pub(crate) fn untyped_init(
         &mut self,
         v: &ast::VarDecl,
@@ -264,11 +307,15 @@ impl FnCx<'_, '_> {
         let Some(l) = frame_lookup(&self.f, &name.name) else {
             return;
         };
-        if self.cx.widening_fns.contains(&strip_parens(init).span) {
-            self.f.widening_fn_locals.insert(l);
+        let depth = match widening_cond(strip_parens(init)) {
+            true => 1,
+            false => self.fresh_depth(init),
+        };
+        if depth > 1 {
+            self.f.widening_fn_locals.insert(l, depth);
             return;
         }
-        if !widening_cond(strip_parens(init)) && !self.widening_expr(init) {
+        if depth == 0 {
             return;
         }
         let ty = self.f.locals[l.0 as usize].ty;

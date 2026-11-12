@@ -162,6 +162,12 @@ impl FnCx<'_, '_> {
         if self.cx.ty.has_error(h.ty) {
             return self.error_expr(span);
         }
+        // `Promise.resolve(a)` of widening literals is a `Promise<string>`: TypeScript widens its
+        // `T`, inferred at the top level of the parameter but not of the result.
+        let h = match value.is_none() && self.widening_expr(arg) {
+            true => self.widen_value(h),
+            false => h,
+        };
         // `R | Promise<R>`: each promise member itself, each other member resolved.
         let h = match self.resolve_promise_union(h, value, span) {
             Ok(p) => return p,

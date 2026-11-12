@@ -399,7 +399,10 @@ impl FnCx<'_, '_> {
                 args,
                 optional,
             } => {
+                let outer = std::mem::take(&mut self.fresh_call);
                 let call = self.call(callee, type_args, args, *optional, exp, span);
+                let inferred = std::mem::replace(&mut self.fresh_call, outer);
+                self.note_widening_call(e, callee, inferred && type_args.is_empty());
                 self.predicate_checked(call, span)
             }
             A::New { class, args } => self.new_expr(class, args, exp, span),

@@ -411,6 +411,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Checking `e as const`: an object literal's properties keep widening literals
     /// (`widening_consts`), as TypeScript's const context does.
     pub in_as_const: bool,
+    /// The generic call being checked gives a value of widening literals: its result is a type
+    /// parameter inferred from one (`id(a)`; `widening_consts`).
+    pub fresh_call: bool,
     /// The fixed parameters at a rest position the next `forwarding` passes (`fn_value_as_generic`).
     pub forwarding_items: std::cell::Cell<usize>,
     /// The next generic function value's call is `generic_as_generic`'s forwarding one.
@@ -461,6 +464,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             kept_arms: None,
             kept_plain_arms: false,
             in_as_const: false,
+            fresh_call: false,
             forwarding_items: Default::default(),
             forward_unbounded: Default::default(),
             dynamic_raw: None,

@@ -557,6 +557,7 @@ impl FnCx<'_, '_> {
                 self.add_literal_key(k, h.ty, slots);
             }
             let candidate = self.widened_candidate(c, &args[i], p.ty, h.ty);
+            self.fresh_call |= self.gives_widening(c, &args[i], p.ty);
             self.cx.match_ty(p.ty, candidate, slots);
             self.infer_from_generic(p.ty, h.ty, slots);
             self.never_element(p.ty, h.ty, slots);

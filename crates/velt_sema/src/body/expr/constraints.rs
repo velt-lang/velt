@@ -9,6 +9,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::args::Callable;
+use super::object_builtins::strip_parens;
 use crate::body::FnCx;
 use crate::defs::Bound;
 use crate::hir::{TyId, TyKind};
@@ -35,7 +36,10 @@ impl FnCx<'_, '_> {
         }
         // `useK({ kind: a })` of a constant of widening literals: checked against the
         // constraint, which keeps them (`widening_consts`).
-        let literal = matches!(arg.kind, ast::ExprKind::Object(_) | ast::ExprKind::Array(_));
+        let literal = matches!(
+            strip_parens(arg).kind,
+            ast::ExprKind::Object(_) | ast::ExprKind::Array(_)
+        );
         let widening = literal && !has_literal(arg) && self.holds_widening(arg);
         if !has_literal(arg) && !widening {
             return expected;
