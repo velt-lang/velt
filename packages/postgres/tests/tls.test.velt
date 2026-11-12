@@ -147,3 +147,37 @@ export async function test_a_pool_lends_a_connection_to_one_task_after_another()
   }
   pool.end();
 }
+
+// A pool's idle TLS connection whose session the server ended: the pool finds the server's bytes
+// on the socket before it lends the connection, and opens another.
+export async function test_a_pool_drops_an_idle_connection_the_server_ended() {
+  const url = tlsUrl();
+  if (url == null) {
+    return;
+  }
+  const admin = await connect(url);
+  const pool = createPool({ url: url, max: 1 });
+  for (let round = 0; round < 3; round++) {
+    const me: Num | null = await pool.selectOne("SELECT pg_backend_pid()::int8 AS n");
+    const pid = me?.n ?? 0;
+    await admin.execute("SELECT pg_terminate_backend($1::int4)", [pid]);
+    // Once the backend has left pg_stat_activity, its FATAL and the socket's end have been sent.
+    let left = false;
+    for (let i = 0; i < 1000 && !left; i++) {
+      const c: Num | null = await admin.queryOne(
+        "SELECT count(*)::int8 AS n FROM pg_stat_activity WHERE pid = $1::int4",
+        [pid],
+      );
+      left = c?.n == 0;
+      if (!left) {
+        // timing: polls for the backend's exit
+        await sleep(5);
+      }
+    }
+    assert(left, `round ${round}: backend ${pid} still there`);
+    const next: Num | null = await pool.selectOne("SELECT pg_backend_pid()::int8 AS n");
+    assert((next?.n ?? 0) > 0 && next?.n != pid, `round ${round}: ${next?.n} after ${pid}`);
+  }
+  admin.close();
+  pool.end();
+}

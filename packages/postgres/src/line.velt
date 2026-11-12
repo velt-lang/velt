@@ -6,11 +6,12 @@ import { Channel, channel } from "velt/sync";
 import { Builder, FAILED, NOT_PREPARED, SENT } from "./builder";
 import { closed, connectionClosed, Failure } from "./failure";
 import { FailureLog } from "./failure_log";
-import { describeStatement, Out, parse, query, terminate } from "./frontend";
+import { copyBytes, describeStatement, Out, parse, query, terminate } from "./frontend";
 import { Input } from "./input";
 import { PgType } from "./pg_type";
 import { PoolHandle } from "./pool_state";
 import { Prepared } from "./prepared";
+import { ReadBuffer } from "./read_buffer";
 import { Sent } from "./sent";
 
 /** A connection shared by every copy of its handle. */
@@ -27,6 +28,14 @@ struct Next {
 
 // How many channels a connection keeps for requests to wait on, instead of making one each.
 const MAX_FREE: usize = 16;
+
+// How many bytes `peek` reads at most.
+const PEEK: number = 64;
+
+/** What `peek` found: nothing, the end of the stream (or a failure), or something to look at. */
+export const PEEK_QUIET: i64 = 0;
+export const PEEK_ENDED: i64 = -1;
+export const PEEK_CLOSER: i64 = -2;
 
 // Past this many answered places at the front of the line, `pass` drops them once they are half of
 // it: a line that never empties stays as long as what is in flight.
@@ -69,6 +78,9 @@ export class Line {
   private closing: bool = false;
   // Types read from the catalog, by OID.
   private types: Map<i64, PgType> = new Map<i64, PgType>();
+  // What `peek` read.
+  private peeked: u8[] = Buffer.alloc(PEEK as usize);
+  private peekedLen: i64 = 0;
 
   constructor(stream: PgStream, home: Channel<Input>, none: shared<Prepared>) {
     this.stream = stream;
@@ -323,6 +335,38 @@ export class Line {
       ch.close();
     }
     this.free = [];
+  }
+
+  /**
+   * An idle connection's socket, read without waiting and without its `Input`: `PEEK_QUIET`,
+   * `PEEK_ENDED`, or `PEEK_CLOSER` when bytes came, which `handPeeked` gives the `Input` to look at.
+   * On TLS the socket's own bytes are read, a cheap read where TLS's would cost more than the
+   * query: anything there (the server's FATAL, a notification) ends the connection, since its TLS
+   * stream can't go on without those bytes. What TLS already holds is the `Input`'s to read.
+   */
+  peek(): i64 {
+    const s = this.stream;
+    try {
+      const n = s.tcp.tryRead(this.peeked, 0, s.tls == null ? PEEK : 1);
+      if (n == null || (n > 0 && s.tls != null)) {
+        return PEEK_ENDED;
+      }
+      this.peekedLen = n as i64;
+      return n == 0 ? PEEK_QUIET : PEEK_CLOSER;
+    } catch (e) {
+      return PEEK_ENDED;
+    }
+  }
+
+  /** What `peek` read goes to the end of `buf`, the `Input`'s. */
+  handPeeked(buf: ReadBuffer) {
+    const n = this.peekedLen;
+    if (n > 0) {
+      buf.makeRoom();
+      copyBytes(this.peeked, buf.bytes, buf.end, 0, n);
+      buf.end += n;
+      this.peekedLen = 0;
+    }
   }
 
   get isLost(): bool {

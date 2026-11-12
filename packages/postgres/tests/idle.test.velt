@@ -75,8 +75,8 @@ export async function test_tasks_sharing_a_client_each_find_its_reading_end() {
   c.close();
 }
 
-// A connection idle long enough has its socket looked at before it is lent, which takes the
-// `Input` from the line and puts it back, while other tasks wait for the connection.
+// An idle connection has its socket looked at before it is lent, again and again, while other
+// tasks wait for the connection.
 export async function test_an_idle_check_leaves_the_reading_end_for_the_next_query() {
   const url = pgUrl();
   if (url == null) {
@@ -84,7 +84,7 @@ export async function test_an_idle_check_leaves_the_reading_end_for_the_next_que
   }
   const pool = createPool({ url: url, max: 1 });
   for (let round: i64 = 0; round < 3; round++) {
-    // timing: longer than the pool's wait before it looks at an idle socket
+    // timing: the connection waits idle between the rounds
     await sleep(150);
     const tasks: Promise<i64, PgError>[] = [];
     for (let t: i64 = 0; t < 8; t++) {
@@ -152,5 +152,31 @@ export async function test_a_new_connection_and_a_reopened_one_are_ready() {
     again.push(spawn(onPool(pool, t, 5)));
   }
   assertEq(await total(again), 40);
+  pool.end();
+}
+
+// A notification that came while the connection was idle is handed to its reading end, which skips
+// it: the connection is lent as it is, and its next reply is read in step.
+export async function test_a_notification_while_idle_keeps_the_connection() {
+  const url = pgUrl();
+  if (url == null) {
+    return;
+  }
+  const pool = createPool({ url: url, max: 1 });
+  const admin = await connect(url);
+  await pool.run("LISTEN velt_idle_check");
+  const first: Pid | null = await pool.selectOne("SELECT pg_backend_pid()::int8 AS pid");
+  for (let round: i64 = 0; round < 3; round++) {
+    await admin.run(
+      "NOTIFY velt_idle_check, 'a payload long enough to come in more than one read'",
+    );
+    // timing: the notification reaches the idle connection's socket
+    await sleep(20);
+    const r: Value | null = await pool.queryOne("SELECT $1::int8 AS v", [round]);
+    assertEq(r?.v, round);
+  }
+  const after: Pid | null = await pool.selectOne("SELECT pg_backend_pid()::int8 AS pid");
+  assertEq(after?.pid, first?.pid);
+  admin.close();
   pool.end();
 }

@@ -22,7 +22,7 @@ import { connectionClosed, Failure, ioFailure } from "./failure";
 import { Input } from "./input";
 import { quiet, scanArrived } from "./reply";
 import { FAILED } from "./builder";
-import { Conn } from "./line";
+import { Conn, PEEK_ENDED, PEEK_QUIET } from "./line";
 import { Sent } from "./sent";
 
 // SQLSTATEs after which a cached statement must be prepared again: its plan no longer matches the
@@ -261,9 +261,18 @@ export async function simple(
 
 /**
  * Whether an idle connection's socket looks usable: nothing but what a server may send unasked has
- * come. A connection found dead is ended.
+ * come. A connection found dead is ended. Nearly always the socket has nothing, and one read that
+ * doesn't wait says so; bytes that came are handed to the `Input` to look at.
  */
 export function stillAlive(conn: Conn): bool {
+  const found = conn.with((l) => l.peek());
+  if (found == PEEK_QUIET) {
+    return true;
+  }
+  if (found == PEEK_ENDED) {
+    conn.with((l) => l.lost());
+    return false;
+  }
   const home = conn.with((l) => l.homeChannel);
   const input = home.tryReceive();
   if (input == null) {
@@ -271,6 +280,8 @@ export function stillAlive(conn: Conn): bool {
     conn.with((l) => l.lost());
     return false;
   }
+  const buf = input.buffer;
+  conn.with((l) => l.handPeeked(buf));
   if (!quiet(input)) {
     input.parked = true;
     conn.with((l) => l.lost());
