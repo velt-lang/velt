@@ -210,7 +210,8 @@ impl Cx<'_> {
     /// Lower the functions defined in `files` again, then what they reach that is not lowered
     /// yet, and the functions built from everything else (`velt_main`, the function tables).
     fn relower(&mut self, files: &[FileId]) -> Result<Vec<usize>, String> {
-        let edited = |d: DefId| match self.hir.def(d) {
+        let hir = self.hir;
+        let edited = |d: DefId| match hir.def(d) {
             hir::Def::Fn(f) => files.contains(&f.span.file),
             _ => false,
         };
@@ -240,6 +241,9 @@ impl Cx<'_> {
         let placement = self.uses_placement;
         let counted = self.boxing.clone();
         let facts = self.facts.clone();
+        // What lowering memoized of an edited function's body, which callers in other files read
+        // when they were lowered: answered again, and compared below.
+        let asked = self.forget_answers(&edited);
         self.built_log = Some(vec![]);
         for (id, work) in &redo {
             self.build_now(*id, work);
@@ -254,6 +258,7 @@ impl Cx<'_> {
         if self.uses_placement != placement {
             return Err("the edit pins a task".into());
         }
+        self.same_answers(asked)?;
         self.build_fn_tables();
         // What lowering learns of the program as it goes (`boxing::Facts`) only grows: the same
         // facts after the edited functions are lowered again mean no other function would be
@@ -348,5 +353,70 @@ impl Cx<'_> {
             }
             self.build_now(fid, &work);
         }
+    }
+}
+
+/// What [`Cx::forget_answers`] took of the memoized answers about edited functions.
+struct Asked {
+    quiet: Vec<((DefId, super::quiet::Quiet), bool)>,
+    states: Vec<((DefId, Vec<velt_sema::hir::TyId>), StateShape)>,
+}
+
+/// What a call of an async function instance reads of its state (`async_fn::AsyncInfo`): the
+/// state's size and alignment, where each input goes, and the result's type.
+#[derive(PartialEq)]
+struct StateShape {
+    size: u32,
+    align: u32,
+    offsets: Vec<u32>,
+    inputs: Vec<Option<u32>>,
+    result: vir::Ty,
+}
+
+impl Cx<'_> {
+    fn state_shape(&self, info: &super::async_fn::AsyncInfo) -> StateShape {
+        let layout = &self.aggs[info.state.0 as usize];
+        StateShape {
+            size: layout.size,
+            align: layout.align,
+            offsets: layout.fields.iter().map(|(_, o)| *o).collect(),
+            inputs: info.inputs.clone(),
+            result: info.result,
+        }
+    }
+
+    /// Take out the memoized answers about the functions `edited` decides (whether one is
+    /// quiet, the state layout of an async one), so that lowering them again answers anew: a
+    /// caller lowered again with them reads the new answer, while callers kept read the old.
+    fn forget_answers(&mut self, edited: &dyn Fn(DefId) -> bool) -> Asked {
+        let quiet: Vec<_> = (self.quiet.iter())
+            .filter(|((d, _), _)| edited(*d))
+            .map(|(k, v)| (*k, *v))
+            .collect();
+        self.quiet.retain(|(d, _), _| !edited(*d));
+        let states: Vec<_> = (self.asyncs.iter())
+            .filter(|((d, _), _)| edited(*d))
+            .map(|(k, info)| (k.clone(), self.state_shape(info)))
+            .collect();
+        self.asyncs.retain(|(d, _), _| !edited(*d));
+        Asked { quiet, states }
+    }
+
+    /// The answers taken by [`Cx::forget_answers`] are what lowering answers now; why not.
+    fn same_answers(&mut self, asked: Asked) -> Result<(), String> {
+        for ((d, level), was) in asked.quiet {
+            if self.quiet_as(d, level) != was {
+                let name = &self.fn_def(d).name;
+                return Err(format!("the edit changes whether `{name}` runs user code"));
+            }
+        }
+        for (key, was) in asked.states {
+            let now = self.asyncs.get(&key).map(|info| self.state_shape(info));
+            if now.as_ref() != Some(&was) {
+                let name = &self.fn_def(key.0).name;
+                return Err(format!("the edit changes the state of async `{name}`"));
+            }
+        }
+        Ok(())
     }
 }

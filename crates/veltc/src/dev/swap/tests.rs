@@ -464,12 +464,13 @@ fn a_body_edit_reloads_warm_to_the_cold_program() {
         vec![("util.velt", WARM_UTIL.replace("n=", "N="))],
         // A length-changing edit of the last definition of its file moves nothing.
         vec![("util.velt", WARM_UTIL.replace("n=", "count="))],
-        // A loop whose counter the debug optimizer narrows to an integer (`numrep`).
+        // A loop whose counter the debug optimizer narrows to an integer (`numrep`), in `main`,
+        // the last definition, so that the edit's length moves nothing.
         vec![(
             "main.velt",
             WARM_MAIN.replace(
-                "let s = 0;",
-                "let s = 0;\n  for (let i = 0; i < 10; i++) { s += i; }",
+                "  console.log(label(t.n));",
+                "  let s = 0;\n  for (let i = 0; i < 10; i++) { s += i; }\n  console.log(label(t.n + s));",
             ),
         )],
         vec![
@@ -535,7 +536,7 @@ fn a_body_edit_beside_generated_code_reloads_warm() {
 /// `vir` with each `static#N` named by its data, and the statics' own lines left out: a splice
 /// adds the data of new literals after the kept lowering's, where a cold lowering numbers them in
 /// the order it meets them, and leaves the data of literals edited away unused.
-fn without_static_ids(vir: &str) -> String {
+pub(super) fn without_static_ids(vir: &str) -> String {
     let mut data = std::collections::HashMap::new();
     for line in vir.lines() {
         if let Some(rest) = line.strip_prefix("static#") {
@@ -567,15 +568,16 @@ fn without_static_ids(vir: &str) -> String {
 /// edited, would be optimized otherwise.
 #[test]
 fn an_edit_changing_a_parameter_fact_is_optimized_whole() {
-    const MAIN: &str = "function steps(n: number): number {
+    // `other`, edited, is the last definition: the edit's length moves nothing.
+    const MAIN: &str = "function main() {
+  console.log(steps(5), other());
+}
+function steps(n: number): number {
   let s = 0;
   for (let i = 0; i < n; i++) { s += i; }
   return s;
 }
 function other(): number { return 1; }
-function main() {
-  console.log(steps(5), other());
-}
 ";
     let edited = MAIN.replace("return 1;", "return steps(7000000000);");
     match warm_reload(&[("main.velt", MAIN)], &[("main.velt", &edited)]) {

@@ -170,7 +170,7 @@ fn reload_with(
         let (cell, prev) = (taken.clone(), carried.own.clone());
         let edited = move |s: &Session| {
             let now = super::edits::Snapshot::of_build_after(s, &input, prev.as_ref());
-            let found = super::edits::located(&base, &now);
+            let found = super::edits::located_since(&base, prev.as_ref(), &now);
             if let Ok(mut cell) = cell.lock() {
                 *cell = Some(now);
             }
@@ -288,5 +288,7 @@ fn reload_with(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod warm_harness;
 #[cfg(test)]
 mod warm_tests;

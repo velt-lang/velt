@@ -14,6 +14,10 @@ use super::{
     VirFor,
 };
 
+/// What a reload's change detection gives (`compile_for_jit_warm`'s `edited`): each edited
+/// function with its file, or why the edit needs the cold front end.
+type Located<'a> = dyn Fn(&Session) -> Result<Vec<(PathBuf, String)>, String> + 'a;
+
 /// A `velt dev` reload of an edit of function bodies alone (`edited`, named as sema names them),
 /// from the running version's kept check (`sess.kept`, which stays there) and the source files of
 /// the build that made it (`cold_files`) (dev-warm-front-end.md step 3): the program loaded and
@@ -276,7 +280,7 @@ fn reparsed(
     sess: &mut Session,
     kept: &velt_sema::KeptCheck,
     cold_files: &velt_common::SourceMap,
-    edited: &dyn Fn(&Session) -> Result<Vec<(PathBuf, String)>, String>,
+    edited: &Located<'_>,
     sema_opts: velt_sema::CheckOptions,
 ) -> Fast {
     let (paths, files) = (kept.module_paths(), kept.module_files());

@@ -268,6 +268,26 @@ pub fn located(old: &Snapshot, new: &Snapshot) -> Result<Vec<(PathBuf, String)>,
     Ok(changed)
 }
 
+/// The function bodies a warm reload checks and lowers again: those changed from `base` (the kept
+/// check's sources) to `new`, and those changed from `last` (the running version's) to `new`. A
+/// body edited and then undone is the kept check's again, but not the running version's: its file
+/// is lowered again all the same.
+pub fn located_since(
+    base: &Snapshot,
+    last: Option<&Snapshot>,
+    new: &Snapshot,
+) -> Result<Vec<(PathBuf, String)>, String> {
+    let mut found = located(base, new)?;
+    if let Some(last) = last {
+        for edit in located(last, new)? {
+            if !found.contains(&edit) {
+                found.push(edit);
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// What the interface summaries (velt_sema `interface`, design step 3 "B") of the running and
 /// the new version say of a body edit: whether everything but the edited functions' bodies kept
 /// its interface, which is when the fast path would have been sound. Closures of an edited
