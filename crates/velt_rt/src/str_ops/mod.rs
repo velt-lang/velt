@@ -89,21 +89,6 @@ pub fn is_js_whitespace(c: char) -> bool {
         )
 }
 
-/// Is `i` a code point boundary of the WTF-8 `s` (as `str::is_char_boundary`)?
-#[inline]
-fn is_boundary(s: &[u8], i: usize) -> bool {
-    i == 0 || i >= s.len() || !crate::str::wtf8::is_continuation(s[i])
-}
-
-/// Largest code point boundary `<= i` (and `<= s.len()`).
-fn floor_boundary(s: &[u8], i: usize) -> usize {
-    let mut i = i.min(s.len());
-    while !is_boundary(s, i) {
-        i -= 1;
-    }
-    i
-}
-
 /// Is the code point `cp` (a surrogate code point is not) JS whitespace?
 fn is_js_whitespace_cp(cp: u32) -> bool {
     char::from_u32(cp).is_some_and(is_js_whitespace)
@@ -117,9 +102,4 @@ fn relative_index(i: i64, len: usize) -> usize {
     } else {
         (i as u64).min(len as u64) as usize
     }
-}
-
-/// JS position argument (`indexOf`, `lastIndexOf`): clamped to `0..=len`.
-fn clamp_position(i: i64, len: usize) -> usize {
-    i.clamp(0, len as i64) as usize
 }

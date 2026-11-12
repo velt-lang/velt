@@ -267,40 +267,29 @@ fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
                     model::char_code_at(&s, i),
                 )
             }
-            3 => {
-                let from = gen_pos(rng, s.len());
-                let op = format!("{}.indexOf({}, {from})", show(&s), show(&n));
+            3..=5 => {
+                // The runtime's position translation: a unit's byte offset (the pair's when it is
+                // the low half of one) and back.
+                let u = rng.below(s.len() + 1);
+                let low = u > 0
+                    && u < s.len()
+                    && (0xD800..0xDC00).contains(&s[u - 1])
+                    && (0xDC00..0xE000).contains(&s[u]);
+                let start = u - low as usize;
+                let want = (wtf8_encode(&s[..start]).len() as u64) << 1 | low as u64;
+                let op = format!("{} unit {u}", show(&s));
                 diff(
-                    op,
-                    velt_rt_str_index_of(rs, rn, from),
-                    model::index_of(&s, &n, from),
-                )
-            }
-            4 => {
-                let from = gen_pos(rng, s.len());
-                let op = format!("{}.lastIndexOf({}, {from})", show(&s), show(&n));
-                diff(
-                    op,
-                    velt_rt_str_last_index_of(rs, rn, from),
-                    model::last_index_of(&s, &n, from),
-                )
-            }
-            5 => {
-                let m = format!("{} / {}", show(&s), show(&n));
-                diff(
-                    format!("includes {m}"),
-                    velt_rt_str_includes(rs, rn) != 0,
-                    model::includes(&s, &n),
+                    format!("{op} to byte"),
+                    {
+                        let pos = (*rs).unit_to_byte(u);
+                        (pos.byte as u64) << 1 | pos.low_half as u64
+                    },
+                    want,
                 )?;
                 diff(
-                    format!("startsWith {m}"),
-                    velt_rt_str_starts_with(rs, rn) != 0,
-                    model::starts_with(&s, &n),
-                )?;
-                diff(
-                    format!("endsWith {m}"),
-                    velt_rt_str_ends_with(rs, rn) != 0,
-                    model::ends_with(&s, &n),
+                    format!("{op} and back"),
+                    (*rs).byte_to_unit((want >> 1) as usize) as u64,
+                    start as u64,
                 )
             }
             6 => {

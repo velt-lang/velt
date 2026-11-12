@@ -42,6 +42,15 @@ impl FnCx<'_, '_> {
             let msg = format!("the hook `{role}` is not a function");
             return self.hook_call_error(&msg, first.span, args);
         }
+        if self.defers_hook(h) {
+            // Checked whether or not it is live: the module is demanded once it is.
+            let i = HOOKS.iter().position(|x| x.name == h.name);
+            if let (Some(d), Some(i)) = (self.body_def, i) {
+                self.cx.lazy.defer_hook_call(d, i);
+            }
+            self.check_args_loose(rest);
+            return self.error_expr(span);
+        }
         self.cx.demand_std(&h.module());
         let Some(Item::Def(d)) = self.cx.std_def(&h.qualified()) else {
             let msg = format!("the hook `{role}` ({}) is not loaded", h.qualified());
@@ -49,6 +58,15 @@ impl FnCx<'_, '_> {
         };
         let name = h.item.to_string();
         self.fn_call(d, &name, type_args, rest, exp, span)
+    }
+
+    /// Is this body checked whether or not it is live (the editor's analysis checks every body; a
+    /// check without a load callback cannot add the module), with hook `h`'s module not loaded?
+    /// Then the call is left unchecked and its module demanded only if the body is live
+    /// (`lazy_std::live`'s `demand_hook_calls`), as `velt check` would.
+    fn defers_hook(&mut self, h: &velt_common::std_hooks::Hook) -> bool {
+        let loaded = self.cx.std_def(&h.qualified()).is_some();
+        !loaded && (self.cx.lazy.check_all || self.cx.loads.is_none())
     }
 
     /// Reports `msg` at `span` and checks `args` loosely; an error expression.

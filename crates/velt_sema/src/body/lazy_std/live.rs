@@ -89,6 +89,10 @@ pub(crate) struct Live {
     int_text: FxHashMap<TyId, bool>,
     /// Live code prints a float: `console.log`'s float writer is needed (`number_text.rs`).
     pub(super) prints_float: bool,
+    /// Per definition: the hooks (`HOOKS` indexes) its `hookCall`s name whose modules were not
+    /// loaded when it was checked without being live (the editor's analysis, or a check without
+    /// a load callback): demanded once it is live ([`demand_hook_calls`]).
+    pub(crate) hook_calls: FxHashMap<DefId, Vec<usize>>,
 }
 
 impl Live {
@@ -282,7 +286,10 @@ fn walk_set(cx: &mut Ctx) {
             let start = w.start();
             if !walk_def(cx, d, &mut w) {
                 pending.push(d);
-            } else if program_code(cx, d) {
+                continue;
+            }
+            demand_hook_calls(cx, d);
+            if program_code(cx, d) {
                 note_program_code(cx, &w, start);
             }
         }
@@ -291,6 +298,20 @@ fn walk_set(cx: &mut Ctx) {
     }
     // Not checked: a hook waiting, or a definition with no code yet. Walked once it has.
     cx.lazy.live.todo.extend(pending);
+}
+
+/// Demand the modules of the hooks live definition `d` calls by role ([`Live::hook_calls`]), and
+/// make the hooks live.
+fn demand_hook_calls(cx: &mut Ctx, d: DefId) {
+    let Some(hooks) = cx.lazy.live.hook_calls.remove(&d) else {
+        return;
+    };
+    for h in hooks.into_iter().map(|i| &HOOKS[i]) {
+        cx.demand_std(&h.module());
+        if let Some(crate::ctx::Item::Def(f)) = cx.std_def(&h.qualified()) {
+            mark(cx, f);
+        }
+    }
 }
 
 /// The definitions [`assume`]d that exist by now live: a class with its methods. Each is found by

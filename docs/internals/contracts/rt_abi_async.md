@@ -1010,10 +1010,6 @@ U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 |---|---|---|
 | `velt_rt_str_slice` | `(const VeltStr* s, i64 start, i64 end, VeltStr* out)` | JS `slice`: negative = from end, clamped, empty if `start >= end`; omitted `end` = `i64::MAX` |
 | `velt_rt_str_byte_slice` | `(const VeltStr* s, u64 start, u64 end, VeltStr* out)` | bytes `start..end` of the WTF-8 (velt/encoding `utf8Substring`); the caller checks `start <= end <= len` and code point boundaries |
-| `velt_rt_str_index_of` | `(const VeltStr* s, const VeltStr* needle, i64 from) -> i64` | `from` clamped to `0..=len` (omitted = 0); -1 if absent; empty needle ⇒ clamped `from` |
-| `velt_rt_str_last_index_of` | `(const VeltStr* s, const VeltStr* needle, i64 from) -> i64` | last match starting `<= from`; omitted `from` = `i64::MAX` |
-| `velt_rt_str_includes` | `(const VeltStr* s, const VeltStr* needle) -> u8` | (a `position` arg ⇒ use `index_of(s, n, pos) >= 0`) |
-| `velt_rt_str_starts_with` / `_ends_with` | `(const VeltStr* s, const VeltStr* affix) -> u8` | |
 | `velt_rt_str_eq` | `(const VeltStr* a, const VeltStr* b) -> u8` | `==` fast path: length check + one memcmp |
 | `velt_rt_str_join` | `(const VeltStrArray* parts, const VeltStr* sep, VeltStr* out)` | `parts.join(sep)`: sums the pieces' lengths and unit counts, then writes the result once (inline, or a heap buffer of exactly its size) |
 | `velt_rt_str_split` | `(const VeltStr* s, const VeltStr* sep, VeltStrArray* out)` | JS semantics: `"a,b,".split(",")` = `["a","b",""]`, `"".split(",")` = `[""]`, `"".split("")` = `[]`, `split("")` = code units (a pair gives its two halves). Drop with `velt_rt_str_array_drop` (§4). |

@@ -260,6 +260,19 @@ hooks! {
     float_push => lang_hooks_number_float, "floatPush", sig((&mut string, f64) -> void), lowered, fallback,
         replaces("velt_rt_strbuf_push_f64"), bench("float_to_string");
 
+    // velt/lang/string/search: the string searches (#2198), which the prelude's methods call by
+    // role (`hookCall`), so a program loads them only when live code calls one.
+    /// `s.indexOf(needle, from)`.
+    string_index_of => lang_string_search, "indexOf", sig((&string, &string, i64) -> i64);
+    /// `s.lastIndexOf(needle, from)`.
+    string_last_index_of => lang_string_search, "lastIndexOf", sig((&string, &string, i64) -> i64);
+    /// `s.includes(needle, position)`.
+    string_includes => lang_string_search, "includes", sig((&string, &string, i64) -> bool);
+    /// `s.startsWith(prefix)`.
+    string_starts_with => lang_string_search, "startsWith", sig((&string, &string) -> bool);
+    /// `s.endsWith(suffix)`.
+    string_ends_with => lang_string_search, "endsWith", sig((&string, &string) -> bool);
+
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).
     /// The epoch of the runtime's cache of the last position translation (`velt_rt`

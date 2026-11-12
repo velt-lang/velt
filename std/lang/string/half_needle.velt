@@ -1,0 +1,104 @@
+// velt/lang/string (internal): `indexOf` and `lastIndexOf` of a half needle (search.velt) in
+// linear time. A half needle starts with a lone low surrogate or ends with a lone high one; in the
+// string, that half may be a lone surrogate (three bytes) or the half of a pair (one four-byte
+// sequence). Between the halves is the needle's middle, whole code points, whose bytes match where
+// the needle's units do. So the middle's matches are found with Two-Way (two_way.velt, given the
+// middle as a range of the needle's bytes), which checks each one's halves (`halfStart`) and goes
+// on in linear time when they are missing. A needle whose middle is under two bytes (seven bytes
+// at most in all) compares code units at every position (code_units.velt), also linear.
+
+import { noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { codePoint3, halfStart, unitsFind, unitsRfind } from "velt/lang/string/code_units";
+import { byteToUnit, unitToByte } from "velt/lang/string/positions";
+import { findTwoWay, rfindTwoWay } from "velt/lang/string/two_way";
+
+/** Does `needle` (`m` bytes) start with a lone low surrogate (`ED B0..BF ..`)? */
+function lowFirst(needle: string, m: usize): bool {
+  return m >= 3 && strByteAt(needle, 0) == 0xed && (strByteAt(needle, 1) & 0xf0) == 0xb0;
+}
+
+/** Does `needle` (`m` bytes) end with a lone high surrogate (`ED A0..AF ..`)? */
+function highLast(needle: string, m: usize): bool {
+  return m >= 3 &&
+    strByteAt(needle, (m - 3) as u64) == 0xed &&
+    (strByteAt(needle, (m - 2) as u64) & 0xf0) == 0xa0;
+}
+
+/** `halfStart`'s condition for `needle` (`m` bytes): its first low half, its last high half. */
+function condition(needle: string, m: usize): u64 {
+  let half: u64 = 0;
+  if (lowFirst(needle, m)) {
+    half = half | ((1 as u64) << 63) | (codePoint3(needle, 0) as u64);
+  }
+  if (highLast(needle, m)) {
+    half = half | ((1 as u64) << 62) | ((codePoint3(needle, m - 3) as u64) << 16);
+  }
+  return half;
+}
+
+/** The unit at position `pos` (`byte << 1 | low half`) of `s`. */
+function unitOf(s: string, pos: u64): usize {
+  return byteToUnit(s, (pos >> 1) as usize) + ((pos & 1) as usize);
+}
+
+/** `s.indexOf(needle)` of a half needle from unit `from`: the first match at or after it, or -1. */
+@noInline
+export function halfFind(s: string, needle: string, from: usize): i64 {
+  const n = strByteLen(s);
+  const m = strByteLen(needle);
+  const half = condition(needle, m);
+  const start: usize = ((half >> 63) & 1) != 0 ? 3 : 0;
+  const end = ((half >> 62) & 1) != 0 ? m - 3 : m;
+  if (end < start + 2) {
+    return unitsFind(s, needle, from);
+  }
+  const len = end - start;
+  // The middle of a match from unit `from` on starts at that unit's code point or after it.
+  let at = (unitToByte(s, from) >> 1) as usize;
+  while (at + len <= n) {
+    const k = findTwoWay(s, needle, start, len, at, n, half);
+    if (k < 0) {
+      return -1;
+    }
+    const unit = unitOf(s, halfStart(s, k as usize, len, half));
+    if (unit >= from) {
+      return unit as i64;
+    }
+    at = (k as usize) + 1;
+  }
+  return -1;
+}
+
+/** `s.lastIndexOf(needle)` of a half needle up to unit `last`: the last match starting at or
+ * before it, or -1. */
+@noInline
+export function halfRfind(s: string, needle: string, last: usize): i64 {
+  const n = strByteLen(s);
+  const m = strByteLen(needle);
+  const half = condition(needle, m);
+  const start: usize = ((half >> 63) & 1) != 0 ? 3 : 0;
+  const end = ((half >> 62) & 1) != 0 ? m - 3 : m;
+  if (end < start + 2) {
+    return unitsRfind(s, needle, last);
+  }
+  const len = end - start;
+  if (len > n) {
+    return -1;
+  }
+  // A match starting at unit `last` or before has its middle at most four bytes after that
+  // unit's code point (past the pair whose low half it starts at).
+  const near = ((unitToByte(s, last) >> 1) as usize) + 5;
+  let top = near < n - len + 1 ? near : n - len + 1;
+  while (top > 0) {
+    const k = rfindTwoWay(s, needle, start, len, top, half);
+    if (k < 0) {
+      return -1;
+    }
+    const unit = unitOf(s, halfStart(s, k as usize, len, half));
+    if (unit <= last) {
+      return unit as i64;
+    }
+    top = k as usize;
+  }
+  return -1;
+}
