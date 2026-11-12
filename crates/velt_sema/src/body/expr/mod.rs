@@ -300,6 +300,9 @@ impl FnCx<'_, '_> {
             true => self.unbrand_instance(h),
             false => h,
         };
+        if self.logical_lhs.last() == Some(&e.span) {
+            self.logical_lhs_tys.insert(e.span, h.ty);
+        }
         if want == Want::Move {
             // `const t = (K ?? d)!`, `K!.a`, `N.a`: what a module constant gives taken over.
             self.per_use_taken(e, h.ty);
@@ -346,6 +349,14 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             A::Unary { op, expr } => self.unary(*op, expr, exp, span),
+            A::Binary { op, lhs, rhs }
+                if matches!(op, ast::BinaryOp::Or | ast::BinaryOp::Nullish) =>
+            {
+                self.logical_lhs.push(lhs.span);
+                let h = self.binary(*op, lhs, rhs, exp, span);
+                self.logical_lhs.pop();
+                h
+            }
             A::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, exp, span),
             A::Assign {
                 op: Some(op),

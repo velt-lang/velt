@@ -1,6 +1,7 @@
 // A value of a declared literal union is not widening: a `let` taken from a method call or an
-// IIFE that gives it back keeps the union, so another string is an error, as in TypeScript
-// (#2686).
+// IIFE that gives it back keeps the union, so another string is an error, as in TypeScript; so
+// does `m ?? "z"` when `m` can't be nullish, but `n ?? "z"` of an `n` that may be `undefined`
+// and `e || "z"` of an `e` that may be `""` widen (#2686).
 class B {
   id<T>(x: T): T {
     return x;
@@ -11,9 +12,18 @@ function f(m: "x" | "y") {
   w1 = "o";
   let w2 = (() => m)();
   w2 = "o";
-  return w1 + w2;
+  let w3 = m ?? "z";
+  w3 = "o";
+  return w1 + w2 + w3;
+}
+function g(n: "x" | "y" | undefined, e: "" | "y") {
+  let v1 = n ?? "z";
+  v1 = "o";
+  let v2 = e || "z";
+  v2 = "o";
+  return v1 + v2;
 }
 function main() {
-  console.log(f("x"));
+  console.log(f("x"), g(undefined, ""));
 }
 main();

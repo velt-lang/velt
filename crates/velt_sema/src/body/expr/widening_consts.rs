@@ -70,10 +70,13 @@ impl FnCx<'_, '_> {
                 (self.widening_arm(then) || self.widening_arm(els)) as u8
             }
             ast::ExprKind::Binary {
-                op: B::And | B::Or | B::Nullish,
+                op: op @ (B::And | B::Or | B::Nullish),
                 lhs,
                 rhs,
-            } => (self.widening_arm(lhs) || self.widening_arm(rhs)) as u8,
+            } => {
+                let right = self.right_arm_counts(*op, lhs) && self.widening_arm(rhs);
+                (self.widening_arm(lhs) || right) as u8
+            }
             ast::ExprKind::Call { .. } | ast::ExprKind::Arrow { .. } => {
                 self.cx.widening_values.get(&e.span).copied().unwrap_or(0)
             }
@@ -96,6 +99,40 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Paren(inner) => self.holds_widening(inner),
             _ => self.widening_expr(e),
         }
+    }
+
+    /// Can `lhs op rhs` give `rhs`? tsc drops the right operand from the type when the left
+    /// can't be nullish (`??`) or falsy (`||`): `m ?? "z"` of `m: "x" | "y"` is `m`'s type.
+    fn right_arm_counts(&mut self, op: ast::BinaryOp, lhs: &ast::Expr) -> bool {
+        let Some(&t) = self.logical_lhs_tys.get(&lhs.span) else {
+            return true;
+        };
+        match op {
+            ast::BinaryOp::Nullish => {
+                self.cx.ty.opt_payload(t).is_some() || self.cx.maybe_dynamic(t)
+            }
+            ast::BinaryOp::Or => self.maybe_falsy(t),
+            _ => true,
+        }
+    }
+
+    /// Can a value of type `t` be falsy? A literal type, or a union of them, only when one of
+    /// them is (`""`, `0`, `false`); other types are taken as possibly falsy.
+    fn maybe_falsy(&mut self, t: TyId) -> bool {
+        if self.cx.widened(t) == t {
+            return true;
+        }
+        let members = self.cx.union_members(t).unwrap_or_else(|| vec![t]);
+        members.iter().any(|&m| match self.cx.lit_value(m) {
+            Some(hir::LitValue::Str(s)) => s.is_empty(),
+            Some(hir::LitValue::Int(_, n)) => n == 0,
+            Some(hir::LitValue::Float(_, bits)) => {
+                let f = f64::from_bits(bits);
+                f == 0.0 || f.is_nan()
+            }
+            Some(hir::LitValue::Bool(b)) => !b,
+            None => true,
+        })
     }
 
     fn widening_arm(&mut self, e: &ast::Expr) -> bool {
