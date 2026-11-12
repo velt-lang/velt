@@ -259,10 +259,11 @@ fn velt_home() -> Check {
             return Check::bad("velt home", Status::Fail, msg, hint);
         }
     }
-    Check::ok(
-        "velt home",
-        format!("registry {}, cache {}", loc.describe(), loc.cache.display()),
-    )
+    let found = format!("registry {}, cache {}", loc.describe(), loc.cache.display());
+    match loc.unused_local_registry() {
+        Some(warning) => Check::bad("velt home", Status::Warn, found, warning),
+        None => Check::ok("velt home", found),
+    }
 }
 
 /// Create `dir` if needed, then write and delete a probe file in it.

@@ -212,7 +212,7 @@ pub fn publish_with_native(
     bundles: &BTreeMap<String, PathBuf>,
 ) -> Result<IndexEntry, String> {
     let manifest = Manifest::from_dir(root)?;
-    let loc = &loc.clone().with_manifest(&manifest);
+    let loc = &loc.clone().for_package(root, &manifest)?;
     check_bundles(&manifest, bundles)?;
     if let Some(native) = &manifest.native {
         let lock = root.join(&native.path).join("Cargo.lock");
@@ -259,7 +259,7 @@ pub fn add_native(
     bundles: &BTreeMap<String, PathBuf>,
 ) -> Result<IndexEntry, String> {
     let manifest = Manifest::from_dir(root)?;
-    let loc = &loc.clone().with_manifest(&manifest);
+    let loc = &loc.clone().for_package(root, &manifest)?;
     if !manifest.has_bundles() {
         return Err(format!(
             "package `{}` has no `native` in package.velt",

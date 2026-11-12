@@ -46,7 +46,7 @@ pub fn diagnostics(
             dir,
         ));
     }
-    if let Some(loc) = locations_for(text) {
+    if let Some(loc) = locations_for(text, dir) {
         let registry = loc.describe();
         let lock = lockfile(dir);
         diags.extend(reg::diagnostics(
@@ -106,10 +106,15 @@ fn known_index<'a>(
 /// Completions at byte `offset` of manifest `text`: the schema's, plus versions or package names
 /// from the registry. Completion waits a little for registry data on its way, and is marked
 /// incomplete if it is still missing (the editor asks again on the next keystroke).
-pub fn completion(text: &str, offset: u32, data: &RegistryData) -> CompletionList {
+pub fn completion(
+    text: &str,
+    offset: u32,
+    data: &RegistryData,
+    dir: Option<&Path>,
+) -> CompletionList {
     let mut items = ide::completions(text, offset);
     let mut incomplete = false;
-    if let (Some(c), Some(loc)) = (reg::cursor(text, offset), locations_for(text)) {
+    if let (Some(c), Some(loc)) = (reg::cursor(text, offset), locations_for(text, dir)) {
         match &c.ask {
             reg::Ask::Versions { name } => match data
                 .settle(COMPLETION_WAIT, || data.index(&loc, name))
@@ -165,7 +170,7 @@ fn item(index: &LineIndex, c: ide::Completion) -> CompletionItem {
 pub fn hover(text: &str, offset: u32, data: &RegistryData, dir: Option<&Path>) -> Option<Hover> {
     let (markdown, range) = match reg::dependency_at(text, offset) {
         Some(dep) => {
-            let loc = locations_for(text)?;
+            let loc = locations_for(text, dir)?;
             let index = match data.index(&loc, &dep.name) {
                 Lookup::Ready(index) => index,
                 Lookup::Pending | Lookup::Unavailable
@@ -202,7 +207,7 @@ pub fn code_actions(
     data: &RegistryData,
     dir: Option<&Path>,
 ) -> Vec<CodeActionOrCommand> {
-    let Some(loc) = locations_for(text) else {
+    let Some(loc) = locations_for(text, dir) else {
         return vec![];
     };
     let index = LineIndex::new(text);

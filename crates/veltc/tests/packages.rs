@@ -71,12 +71,11 @@ fn run_tests(package: &Path, release: bool) -> Option<String> {
             command.env("VELT_RT_DEBUG_ALLOC", "1");
         }
     }
+    let registry = test_dir::TestDir::new();
     let out = command
         .current_dir(package)
-        .env(
-            "VELT_REGISTRY",
-            std::env::temp_dir().join("velt-packages-test-registry"),
-        )
+        // A registry of their own: never the public one (they have only path dependencies).
+        .env("VELT_REGISTRY", registry.path())
         .env_remove("CLICOLOR_FORCE")
         .env("NO_COLOR", "1")
         .output()

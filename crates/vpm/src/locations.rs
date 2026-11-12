@@ -4,11 +4,14 @@
 //! wins:
 //!
 //! 1. `$VELT_REGISTRY` set to an `http(s)://` URL: that registry server;
-//! 2. the root package's `registry: "…"` in `package.velt` ([`Locations::with_manifest`]);
+//! 2. the root package's `registry: "…"` in `package.velt`, or for a member of a workspace the
+//!    workspace's (members leave `registry` to it): [`Locations::for_package`];
 //! 3. `$VELT_REGISTRY` set to a directory: that local directory registry;
 //! 4. the public registry, [`DEFAULT_REGISTRY`].
 //!
-//! [`Locations::from_env`] reads the environment (1, 3, 4); [`Locations::under`] is a local
+//! [`Locations::from_env`] reads the environment (1, 3, 4) and [`Locations::for_dir`] adds the
+//! package or workspace around a directory: every command asks it, so a member of a private
+//! workspace never reaches the public registry. [`Locations::under`] is a local
 //! directory registry under one home, what tests use. Everything else in vpm takes a
 //! [`Locations`] explicitly so tests can use isolated temp dirs without touching process-wide
 //! environment variables, and never ask the public registry.
@@ -16,6 +19,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::manifest::Manifest;
+use crate::workspace::WorkspaceFile;
 
 /// The public registry: where packages come from and go to when neither `$VELT_REGISTRY` nor the
 /// root package's `registry` names another one (and where `velt login` signs in by default).
@@ -95,7 +99,36 @@ impl Locations {
         loc
     }
 
+    /// The registry of the package or workspace around `dir` (the current directory of a
+    /// command): [`Locations::for_package`] for the nearest package, else the `registry` of the
+    /// workspace whose root (or a directory between it and its members) `dir` is in.
+    pub fn for_dir(self, dir: &Path) -> Result<Locations, String> {
+        let dir = crate::relpath::absolute(dir);
+        if let Some(root) = crate::manifest::find_package_root(&dir) {
+            let manifest = Manifest::from_dir(&root)?;
+            return self.for_package(&root, &manifest);
+        }
+        match crate::workspace::find_root(&dir) {
+            Some(ws) => {
+                let file = WorkspaceFile::from_path(&ws.join(crate::workspace::WORKSPACE_FILE))?;
+                Ok(self.with_registry(file.registry.as_deref()))
+            }
+            None => Ok(self),
+        }
+    }
+
+    /// The registry of the package rooted at `root` with `manifest`: the `registry` of the
+    /// workspace that lists it as a member (members may not set their own), else its own.
+    pub fn for_package(self, root: &Path, manifest: &Manifest) -> Result<Locations, String> {
+        let registry = match crate::workspace::listing(root)? {
+            Some(ws) => ws.registry.or_else(|| manifest.registry.clone()),
+            None => manifest.registry.clone(),
+        };
+        Ok(self.with_registry(registry.as_deref()))
+    }
+
     /// Apply the root package's `registry` (unless `$VELT_REGISTRY` already chose a remote one).
+    /// Ignores a workspace: commands use [`Locations::for_package`].
     pub fn with_manifest(self, manifest: &Manifest) -> Locations {
         self.with_registry(manifest.registry.as_deref())
     }
@@ -120,6 +153,19 @@ impl Locations {
             remote_is_default: false,
             ..self.clone()
         }
+    }
+
+    /// A warning when nothing names a registry, so packages come from [`DEFAULT_REGISTRY`], but
+    /// the directory that was the default before (`<home>/registry`) holds packages: they are
+    /// no longer used, and a `velt install` would look for them in the public registry.
+    pub fn unused_local_registry(&self) -> Option<String> {
+        if !self.remote_is_default || crate::registry::package_names(&self.registry).is_empty() {
+            return None;
+        }
+        let dir = self.registry.display();
+        Some(format!(
+            "`{dir}` holds packages but is no longer the default registry: packages come from {DEFAULT_REGISTRY}; set VELT_REGISTRY={dir} to keep using it"
+        ))
     }
 
     /// The registry for messages: its URL or directory.
@@ -227,6 +273,30 @@ mod tests {
         assert_eq!(loc.remote.as_deref(), Some(url));
         let loc = loc.with_manifest(&manifest(Some("https://r.example")));
         assert_eq!(loc.describe(), url);
+    }
+
+    #[test]
+    fn a_home_registry_with_packages_is_reported_when_unused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().to_path_buf();
+        let default = Locations::from_vars(home.clone(), None);
+        assert_eq!(default.unused_local_registry(), None, "no packages there");
+        std::fs::create_dir_all(home.join("registry/greet")).unwrap();
+        std::fs::write(home.join("registry/greet/index.json"), "{\"versions\": []}").unwrap();
+        let warning = default.unused_local_registry().unwrap();
+        assert!(
+            warning.contains("is no longer the default registry")
+                && warning.contains(&format!(
+                    "VELT_REGISTRY={}",
+                    home.join("registry").display()
+                )),
+            "{warning}"
+        );
+        // Used (or replaced by a named registry): nothing to say.
+        let local = Locations::from_vars(home.clone(), Some(home.join("registry")));
+        assert_eq!(local.unused_local_registry(), None);
+        let named = default.with_manifest(&manifest(Some("https://r.example")));
+        assert_eq!(named.unused_local_registry(), None);
     }
 
     #[test]

@@ -400,8 +400,16 @@ The registry, first match wins (`vpm::Locations`): `$VELT_REGISTRY` set to an `h
 the root package's (or workspace's) `registry`; `$VELT_REGISTRY` set to a directory, a local
 directory registry; else the public registry `https://registry.veltpm.com`
 (`vpm::locations::DEFAULT_REGISTRY`). So `velt add`, `install`, `publish`, `yank`, `owner` and
-`search` ask https://registry.veltpm.com unless one of those names another. Errors name the
-registry asked: its URL, or a local registry's directory. `velt registry serve` and
+`search` ask https://registry.veltpm.com unless one of those names another. A member of a
+workspace (listed by its globs) uses the workspace's `registry` in every command, and so does a
+command run in the workspace's root (`vpm::Locations::for_dir`). Errors name the registry asked:
+its URL, or a local registry's directory. `velt.lock.json` records no registry: a locked registry
+version that the requirement still accepts but the registry asked doesn't have is an error
+("`<name>` <version> in velt.lock.json is not in the registry `<registry>`; was it locked from
+another registry? …"), never a silent pick of another version; `velt update` re-resolves. When
+nothing names a registry and `$VELT_HOME/registry` (the default before) holds packages, `add`,
+`install`, `update` and `publish` warn that it is no longer used and how to keep it
+(`VELT_REGISTRY=<dir>`), and `velt doctor` shows that as a warning. `velt registry serve` and
 `velt registry user|owner` work on a directory: `--dir`, else `$VELT_REGISTRY`'s directory, else
 `$VELT_HOME/registry`.
 

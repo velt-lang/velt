@@ -110,16 +110,12 @@ pub fn admin_owner_command(
     Ok(())
 }
 
-/// The registry of the package around the current directory, else `$VELT_REGISTRY`'s, else the
-/// public registry ([`vpm::Locations::from_env`]).
-fn locations() -> Result<vpm::Locations, String> {
-    let loc = vpm::Locations::from_env()?;
+/// The registry of the package or workspace around the current directory, else
+/// `$VELT_REGISTRY`'s, else the public registry ([`vpm::Locations::for_dir`]).
+pub(crate) fn locations() -> Result<vpm::Locations, String> {
     let cwd =
         std::env::current_dir().map_err(|e| format!("cannot read the current directory: {e}"))?;
-    match vpm::manifest::find_package_root(&cwd) {
-        Some(root) => Ok(loc.with_manifest(&vpm::Manifest::from_dir(&root)?)),
-        None => Ok(loc),
-    }
+    vpm::Locations::from_env()?.for_dir(&cwd)
 }
 
 /// `velt yank <pkg>@<version> [--undo]`.

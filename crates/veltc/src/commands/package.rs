@@ -12,11 +12,27 @@ use vpm::{InstallOptions, Locations};
 use super::project::Project;
 use crate::style;
 
+/// The registry of the package rooted at `root`: its workspace's when it is a member
+/// ([`Locations::for_package`]).
+fn registry_of(root: &std::path::Path) -> Result<Locations, String> {
+    let loc = Locations::from_env()?.for_package(root, &vpm::Manifest::from_dir(root)?)?;
+    warn_unused_local_registry(&loc);
+    Ok(loc)
+}
+
+/// Warn when `~/.velt/registry` holds packages that the default registry replaced
+/// ([`Locations::unused_local_registry`]).
+pub(crate) fn warn_unused_local_registry(loc: &Locations) {
+    if let Some(warning) = loc.unused_local_registry() {
+        style::warning(&warning);
+    }
+}
+
 /// `velt add <name>[@<req>] [--path <dir>]`: edit package.velt, then install; the manifest is
 /// restored if the install fails.
 pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<(), String> {
     let project_root = Project::current_root()?;
-    let loc = Locations::from_env()?.with_manifest(&vpm::Manifest::from_dir(&project_root)?);
+    let loc = registry_of(&project_root)?;
     let version = match (version, &path) {
         (None, None) => Some(latest_version(&loc, name)?),
         (v, _) => v,
@@ -43,7 +59,7 @@ pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<
 /// `strip` and `path` as the archive needs) under the package's own name, then install.
 pub fn add_url(url: &str, path: Option<String>) -> Result<(), String> {
     let project_root = Project::current_root()?;
-    let loc = Locations::from_env()?.with_manifest(&vpm::Manifest::from_dir(&project_root)?);
+    let loc = registry_of(&project_root)?;
     let (name, found) = vpm::url_source::entry_for(&loc, url, path.as_deref())?;
     // The name is the archive's own, not the user's: never a silent replace of an entry.
     vpm::url_source::check_replace(&vpm::Manifest::from_dir(&project_root)?, &name, &found)?;
@@ -163,6 +179,7 @@ fn latest_version(loc: &Locations, name: &str) -> Result<String, String> {
 
 /// `velt install [--locked]` and `velt update`.
 pub fn install(opts: InstallOptions) -> Result<(), String> {
+    warn_unused_local_registry(&super::registry::locations()?);
     let installed = match workspace_without_package()? {
         Some(ws) => vpm::install::workspace::install(&ws, None, &Locations::from_env()?, opts)?,
         None => vpm::install(&Project::current_root()?, &Locations::from_env()?, opts)?,
@@ -203,7 +220,9 @@ fn workspace_without_package() -> Result<Option<vpm::workspace::Workspace>, Stri
 }
 
 /// `velt publish`: copy the current package into a local directory registry, or upload it to
-/// the remote one (by default the public registry, [`vpm::locations::DEFAULT_REGISTRY`]), with a prebuilt native library for every `native` target. `--native-only` adds
+/// the remote one (by default the public registry, [`vpm::locations::DEFAULT_REGISTRY`]; a
+/// workspace member's is the workspace's), with a prebuilt native library for every `native`
+/// target. `--native-only` adds
 /// libraries for targets not yet published to the published version. A package with C
 /// libraries has its declarations checked against their headers first (`velt native headers`),
 /// and publishes the record.
@@ -220,7 +239,8 @@ pub fn publish(native_artifacts: Option<&Path>, native_only: bool) -> Result<(),
             );
         }
     }
-    let loc = Locations::from_env()?.with_manifest(&manifest);
+    let loc = Locations::from_env()?.for_package(&root, &manifest)?;
+    warn_unused_local_registry(&loc);
     let bundles = collect_bundles(&root, &manifest, native_artifacts, native_only)?;
     let entry = if native_only {
         vpm::registry::add_native(&root, &loc, &bundles)?

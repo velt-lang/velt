@@ -380,7 +380,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "publish",
         summary: "Publish the package to the registry",
         usage: &["publish [--native-artifacts <dir>] [--native-only]"],
-        about: "Publishes to $VELT_REGISTRY when it is a URL, else the package's `registry`, \
+        about: "Publishes to $VELT_REGISTRY when it is a URL, else the package's `registry` \
+                (a workspace member's is the workspace's), \
                 else $VELT_REGISTRY's directory, else https://registry.veltpm.com. A package with `native` in package.velt also publishes a \
                 prebuilt native library for every target it lists: from <dir>/<triple>/, else \
                 target/velt-native/<triple>/ (the host's is built if missing; every target's, for \

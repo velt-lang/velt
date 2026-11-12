@@ -63,6 +63,14 @@ pub(super) fn overridden_version(req: &Requirement, sel: &Selected) -> String {
     out
 }
 
+/// The locked version `version` of `name` is not in `registry` (a URL or a directory).
+pub(super) fn locked_elsewhere(name: &str, version: &semver::Version, registry: &str) -> String {
+    format!(
+        "`{name}` {version} in {LOCK_FILE} is not in the registry `{registry}`; was it locked from another registry? Set $VELT_REGISTRY or `registry` in package.velt to that registry, or run `velt update` to pick versions from this one",
+        LOCK_FILE = crate::lockfile::LOCK_FILE
+    )
+}
+
 /// Nothing matches `req`. `available` lists the published versions if the package exists;
 /// `registry` is the registry asked ([`crate::Locations::describe`]: a URL or a directory).
 pub(super) fn no_match(req: &Requirement, available: Option<&str>, registry: &str) -> String {

@@ -88,6 +88,18 @@ pub fn find_root(start: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// The file of the workspace that lists the package rooted at `root` as a member (by its globs
+/// alone, as [`crate::install`] decides membership), or `None` for a package on its own.
+pub fn listing(root: &Path) -> Result<Option<WorkspaceFile>, String> {
+    let root = relpath::normalize(&relpath::absolute(root));
+    let Some(ws_root) = find_root(&root) else {
+        return Ok(None);
+    };
+    let file = WorkspaceFile::from_path(&ws_root.join(WORKSPACE_FILE))?;
+    let listed = velt_toolchain::members::lists(&file.members, &relpath::relative(&root, &ws_root));
+    Ok(listed.then_some(file))
+}
+
 impl WorkspaceFile {
     /// Read and validate the workspace file at `path`, never past
     /// [`crate::manifest::read::MAX_BYTES`].
