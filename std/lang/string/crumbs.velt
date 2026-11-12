@@ -1,0 +1,233 @@
+// velt/lang/string (internal): the breadcrumb tables of long non-ASCII heap strings, which Velt
+// code and the runtime (velt_rt `str/crumbs.rs`) both read, build and extend: one table per
+// buffer, in the buffer's header, the same bytes and the same protocol on both sides
+// (rt_abi.md "Breadcrumbs", #2198).
+//
+// - A non-ASCII heap buffer is `[crumbs][lone: u64][count: u64][text]`: `crumbs` (an address in
+//   8 bytes on every target, 24 bytes before the text) is null, `REMEMBERED` (1: no table, but a
+//   thread remembers a position in a slice of it, so freeing it bumps the epoch) or a table.
+// - A table is `[len: u64][cap: u64][prev: u64 address][entries: u32 × cap]` on every target:
+//   entry `k` is the byte offset of unit `k × STRIDE`, with `LOW_HALF` set when that unit is the
+//   second half of the 4-byte sequence there. Entries below `len` never change; an entry is
+//   written (relaxed) before `len` covers it (a `max` with release), and read after `len`
+//   (acquire) does.
+// - Extending a table that has room writes the entries past `len` (two threads write the same
+//   values: the text is immutable while two can read it). A table without room is replaced by a
+//   copy twice its size, published with a compare-and-swap of the header field; the copy keeps the
+//   old one alive as `prev` (another thread may read it), and the runtime frees the chain with the
+//   buffer. A copy that loses the swap is freed at once and the winner extended.
+// - Tables come from `rawAlloc` (the allocator compiled code uses, aligned to 8), which the
+//   runtime's own tables use too, so either side frees the other's.
+
+import { Ptr } from "velt/ffi";
+import {
+  addressLoad,
+  addressStore,
+  noInline,
+  ptrAtomicCas,
+  ptrAtomicLoad,
+  ptrAtomicRmw,
+  ptrAtomicStore,
+  rawAlloc,
+  rawFree,
+  strByteAt,
+} from "velt/lang/intrinsics";
+
+/** Units between two breadcrumbs, and the longest string a scan alone translates. */
+export const STRIDE: usize = 64;
+
+/** An entry's top bit: its unit is the low half of the 4-byte sequence at its offset. */
+export const LOW_HALF: u32 = 0x80000000;
+
+/** Bytes before a non-ASCII buffer's text: `crumbs`, `lone` and `count`. */
+const HEADER: usize = 24;
+
+/** The `crumbs` field of a buffer whose slices' positions a thread remembers. */
+const REMEMBERED: usize = 1;
+
+/** Bytes of each header field (an address or a count) on every target: a `usize` is 64-bit on
+ * wasm32 too, and the runtime's fields are 8 bytes there as well. */
+const WORD: usize = 8;
+
+/** The address of the `crumbs` field of the non-ASCII buffer whose text is at `data`. */
+function field(data: usize): usize {
+  return data - HEADER;
+}
+
+/** The table in a `crumbs` field value: 0 for none. */
+function tableOf(v: usize): usize {
+  return v == REMEMBERED ? 0 : v;
+}
+
+/** The entries in use of table `t`. */
+export function tableLen(t: usize): usize {
+  // SAFETY: `t` is a live table; `len` is its first word.
+  return unsafe { ptrAtomicLoad(Ptr.at<usize>(t), "acquire") };
+}
+
+/** The entries table `t` has room for. */
+function tableCap(t: usize): usize {
+  // SAFETY: `t` is a live table; `cap` never changes.
+  return unsafe { addressLoad<usize>(t + WORD) };
+}
+
+/** Entry `k` (below `len`) of table `t`. */
+export function entry(t: usize, k: usize): u32 {
+  // SAFETY: `t` is a live table with more than `k` entries in use.
+  return unsafe { ptrAtomicLoad(Ptr.at<u32>(t + 3 * WORD + 4 * k), "relaxed") };
+}
+
+/** Writes entry `k` (below `cap`) of table `t`. */
+function setEntry(t: usize, k: usize, e: u32): void {
+  // SAFETY: `t` is a live table with room for `k + 1` entries.
+  unsafe {
+    ptrAtomicStore(Ptr.at<u32>(t + 3 * WORD + 4 * k), e, "relaxed");
+  }
+  ;
+}
+
+/** Where a scan may start for entry `k` with value `e`: the code point's byte offset in the high
+ * 32 bits, the index of its first unit in the low ones. */
+export function startOf(e: u32, k: usize): u64 {
+  const unit = (k * STRIDE) as u64 - ((e & LOW_HALF) != 0 ? 1 : 0);
+  return (((e & ~LOW_HALF) as u64) << 32) | unit;
+}
+
+/** The entry for a position `pos` (`byte << 1 | low half`). */
+export function encode(pos: u64): u32 {
+  return ((pos >> 1) as u32) | ((pos & 1) != 0 ? LOW_HALF : 0);
+}
+
+/**
+ * From the code point at `byte` of `s`, whose first unit is `unit`, forward to unit `target`
+ * (`target >= unit`, at most the length): the position, `byte << 1 | low half`.
+ */
+export function scanForward(s: string, from: usize, first: usize, target: usize): u64 {
+  let byte = from;
+  let unit = first;
+  while (unit < target) {
+    const lead = strByteAt(s, byte as u64);
+    if (lead < 0x80) {
+      byte += 1;
+      unit += 1;
+      continue;
+    }
+    const w: usize = lead >= 0xf0 ? 2 : 1;
+    if (unit + w > target) {
+      return ((byte as u64) << 1) | 1;
+    }
+    byte += lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+    unit += w;
+  }
+  return (byte as u64) << 1;
+}
+
+/** Fills table `t` (room for `want` entries) for `s` (`units` long) up to `want` entries and
+ * publishes them; another thread may fill the same entries meanwhile, with the same values. */
+function fill(t: usize, s: string, want: usize): void {
+  let len = tableLen(t);
+  if (len >= want) {
+    return;
+  }
+  let start: u64 = 0;
+  if (len == 0) {
+    setEntry(t, 0, 0);
+    len = 1;
+  } else {
+    start = startOf(entry(t, len - 1), len - 1);
+  }
+  while (len < want) {
+    const pos = scanForward(s, (start >> 32) as usize, (start & 0xffffffff) as usize, len * STRIDE);
+    const e = encode(pos);
+    setEntry(t, len, e);
+    start = startOf(e, len);
+    len += 1;
+  }
+  // SAFETY: `t` is a live table; `len` only grows.
+  unsafe {
+    ptrAtomicRmw(Ptr.at<usize>(t), "max", len, "release");
+  }
+  ;
+}
+
+/** A new table with room for `cap` entries holding the first `n` entries of `old` (0: none). */
+function allocTable(cap: usize, old: usize, n: usize): usize {
+  const t = rawAlloc(3 * WORD + 4 * cap);
+  // SAFETY: a fresh block with room for the header and `cap >= n` entries.
+  unsafe {
+    addressStore<usize>(t, n);
+    addressStore<usize>(t + WORD, cap);
+    addressStore<usize>(t + 2 * WORD, 0);
+  }
+  for (let k: usize = 0; k < n; k++) {
+    setEntry(t, k, entry(old, k));
+  }
+  return t;
+}
+
+/**
+ * The breadcrumb table of the non-ASCII heap string `s` (not a slice; its text at `data`, more
+ * than `STRIDE` units, `units` long) with at least `k + 1` entries: built on first use, extended
+ * when the string grew since.
+ */
+export function crumbs(s: string, data: usize, units: usize, k: usize): usize {
+  // SAFETY: `s` is a live heap string, so its buffer and its header are.
+  const t = tableOf(unsafe { ptrAtomicLoad(Ptr.at<usize>(field(data)), "acquire") });
+  if (t != 0 && k < tableLen(t)) {
+    return t;
+  }
+  return build(s, data, units);
+}
+
+/** `crumbs` when the table is missing or too short (see the module docs). */
+@noInline
+function build(s: string, data: usize, units: usize): usize {
+  const want = (units + STRIDE - 1) / STRIDE;
+  // SAFETY: as in `crumbs`: the header field of a live buffer.
+  const at = unsafe { Ptr.at<usize>(field(data)) };
+  // SAFETY: as above.
+  let seen = unsafe { ptrAtomicLoad(at, "acquire") };
+  while (true) {
+    const current = tableOf(seen);
+    if (current != 0 && tableCap(current) >= want) {
+      fill(current, s, want);
+      return current;
+    }
+    const n = current == 0 ? 0 : tableLen(current);
+    const twice = current == 0 ? 0 : 2 * tableCap(current);
+    const t = allocTable(want > twice ? want : twice, current, n);
+    fill(t, s, want);
+    // SAFETY: `t` is ours until published; the swap publishes it.
+    unsafe {
+      addressStore<usize>(t + 2 * WORD, current);
+    }
+    ;
+    // SAFETY: as in `crumbs`.
+    const won = unsafe { ptrAtomicCas(at, seen, t, "acqrel", "acquire") };
+    if (won == seen) {
+      return t;
+    }
+    // Another thread published first: ours goes (its `prev` stays with the published table).
+    // SAFETY: `t` was never published, and nothing else holds it.
+    unsafe {
+      rawFree(t, 3 * WORD + 4 * tableCap(t));
+    }
+    ;
+    seen = won;
+  }
+  return 0;
+}
+
+/** Notes that a thread remembers a position in a slice of the non-ASCII buffer whose text is at
+ * `data`, so that freeing it bumps the epoch: `REMEMBERED` unless it has a table. */
+export function markRemembered(data: usize): void {
+  // SAFETY: the caller holds a slice of the buffer, so its header is live.
+  const at = unsafe { Ptr.at<usize>(field(data)) };
+  // SAFETY: as above.
+  unsafe {
+    if (ptrAtomicLoad(at, "relaxed") == 0) {
+      // Losing the race to a table is fine: a table bumps the epoch too.
+      ptrAtomicCas(at, 0, REMEMBERED, "release", "relaxed");
+    }
+  }
+}

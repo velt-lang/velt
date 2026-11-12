@@ -183,7 +183,7 @@ impl VeltStr {
         if !head.is_ascii() && !header {
             return false;
         }
-        if header && !heap::crumbs(self.ptr()).load(Ordering::Relaxed).is_null() {
+        if header && heap::crumbs(self.ptr()).load(Ordering::Relaxed) != 0 {
             return false;
         }
         if head.may_have_lone() && head.lone() > 0 {

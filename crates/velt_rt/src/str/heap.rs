@@ -2,8 +2,9 @@
 //! bytes; the count lives in the 8 bytes before them, so retaining never needs to know more.
 //!
 //! - ASCII strings: `[count: AtomicU64][cap bytes]`.
-//! - Non-ASCII strings: `[crumbs: AtomicPtr<u8>][lone: u64][count: AtomicU64][cap bytes]`.
-//!   `crumbs` points at the breadcrumb table (`crumbs.rs`; null until a position in a long
+//! - Non-ASCII strings: `[crumbs: AtomicU64][lone: u64][count: AtomicU64][cap bytes]`.
+//!   `crumbs` (an address in 8 bytes on every target, as std/lang/string/crumbs.velt reads it, whose
+//!   `usize` is 64-bit on wasm32 too) points at the breadcrumb table (`crumbs.rs`; null until a position in a long
 //!   string is first translated, or [`REMEMBERED`]) and `lone` counts the lone surrogates.
 //!   Which layout a buffer has follows from the string value (`units != bytes`, or a slice's
 //!   own bit), so release, grow and free take it as `header`.
@@ -13,7 +14,7 @@
 //! nobody else can be adding one concurrently) frees it after a plain load.
 
 use std::alloc::{self, Layout};
-use std::sync::atomic::{fence, AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicU64, Ordering};
 
 use super::stats;
 
@@ -75,22 +76,28 @@ unsafe fn lone_field<'a>(data: *mut u8) -> &'a AtomicU64 {
 ///
 /// # Safety
 /// `data` must be a live buffer from [`alloc`] with a header.
-pub(super) unsafe fn crumbs<'a>(data: *mut u8) -> &'a AtomicPtr<u8> {
-    &*(data.sub(HEADER) as *const AtomicPtr<u8>)
+pub(super) unsafe fn crumbs<'a>(data: *mut u8) -> &'a AtomicU64 {
+    &*(data.sub(HEADER) as *const AtomicU64)
 }
 
 /// The `crumbs` field of a buffer that has no breadcrumb table but whose slices' positions a
 /// thread remembers (`recent.rs`): like a table, it makes freeing the buffer bump the epoch.
-pub(super) const REMEMBERED: *mut u8 = std::ptr::without_provenance_mut(1);
+pub(super) const REMEMBERED: u64 = 1;
 
 /// The breadcrumb table in a `crumbs` field value: null for none (or [`REMEMBERED`]).
 #[inline]
-pub(super) fn table_of(field: *mut u8) -> *mut u8 {
+pub(super) fn table_of(field: u64) -> *mut u8 {
     if field == REMEMBERED {
         std::ptr::null_mut()
     } else {
-        field
+        std::ptr::with_exposed_provenance_mut(field as usize)
     }
+}
+
+/// The `crumbs` field value of table `t`.
+#[inline]
+pub(super) fn field_of(t: *mut u8) -> u64 {
+    t.expose_provenance() as u64
 }
 
 /// Note that a thread remembers a position in a slice of the non-ASCII buffer at `data`, so
@@ -103,14 +110,9 @@ pub(super) fn table_of(field: *mut u8) -> *mut u8 {
 #[inline]
 pub(super) unsafe fn mark_remembered(data: *mut u8) {
     let field = crumbs(data);
-    if field.load(Ordering::Relaxed).is_null() {
+    if field.load(Ordering::Relaxed) == 0 {
         // Losing the race to a table is fine: a table bumps the epoch too.
-        let _ = field.compare_exchange(
-            std::ptr::null_mut(),
-            REMEMBERED,
-            Ordering::Release,
-            Ordering::Relaxed,
-        );
+        let _ = field.compare_exchange(0, REMEMBERED, Ordering::Release, Ordering::Relaxed);
     }
 }
 
@@ -128,7 +130,7 @@ pub(super) fn alloc(cap: usize, header: bool) -> *mut u8 {
     unsafe {
         let data = base.add(prefix(header));
         if header {
-            (base as *mut AtomicPtr<u8>).write(AtomicPtr::new(std::ptr::null_mut()));
+            (base as *mut AtomicU64).write(AtomicU64::new(0));
             (data.sub(16) as *mut AtomicU64).write(AtomicU64::new(0));
         }
         (data.sub(COUNT) as *mut AtomicU64).write(AtomicU64::new(1));
@@ -141,7 +143,7 @@ pub(super) fn alloc(cap: usize, header: bool) -> *mut u8 {
 /// # Safety
 /// `data` must come from [`alloc`] with capacity `cap` and the same `header`, and have count 1.
 pub(super) unsafe fn grow(data: *mut u8, cap: usize, new_cap: usize, header: bool) -> *mut u8 {
-    if header && !crumbs(data).load(Ordering::Relaxed).is_null() {
+    if header && crumbs(data).load(Ordering::Relaxed) != 0 {
         // The buffer may move: positions remembered for it must not apply to a new string at
         // this address (`recent.rs`).
         super::recent::buffer_gone();
@@ -243,7 +245,7 @@ pub(super) unsafe fn release(data: *mut u8, cap: usize, header: bool) {
 unsafe fn free_with_header(data: *mut u8, cap: usize) {
     // The last reference: nobody reads the table any more.
     let table = crumbs(data).load(Ordering::Acquire);
-    if !table.is_null() {
+    if table != 0 {
         // Positions remembered for this string must not apply to a new one at this address.
         super::recent::buffer_gone();
     }

@@ -51,9 +51,10 @@ fn breadcrumbs_built_by_two_threads_at_once() {
             .collect();
         threads.into_iter().for_each(|t| t.join().unwrap());
         // Built once and published: the string's own value sees the table.
-        assert!(!unsafe { heap::crumbs(s.0.ptr()) }
-            .load(std::sync::atomic::Ordering::Acquire)
-            .is_null());
+        assert_ne!(
+            unsafe { heap::crumbs(s.0.ptr()) }.load(std::sync::atomic::Ordering::Acquire),
+            0
+        );
     }
 }
 

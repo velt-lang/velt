@@ -34,9 +34,13 @@
 //! reference model in tests/abi/utf16_model.rs.
 
 use std::alloc::{self, Layout};
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use super::{heap, recent, work, wtf8, VeltStr};
+
+/// The alignment tables are allocated with, on every target: std's `rawAlloc`'s (Velt code builds
+/// tables too, std/lang/string/crumbs.velt).
+const TABLE_ALIGN: u64 = 8;
 
 /// Units between two breadcrumbs, and the longest string translated by a scan alone.
 pub const STRIDE: usize = 64;
@@ -65,15 +69,21 @@ pub struct BytePos {
 /// for every `k * STRIDE` below the string's unit count when it was built or last extended.
 /// Entries below `len` never change; entries are written before `len` covers them (release) and
 /// read after it does (acquire).
+///
+/// Each header field takes 8 bytes on every target, as std/lang/string/crumbs.velt (whose `usize`
+/// is 64-bit on wasm32 too) lays it out: 24 bytes, then the entries.
 #[repr(C)]
 struct Table {
     /// Entries in use.
-    len: AtomicUsize,
+    len: AtomicU64,
     /// Entries the allocation holds.
-    cap: usize,
-    /// A table this one replaced while another thread might still read it (freed with this one).
-    prev: *mut Table,
+    cap: u64,
+    /// The address of a table this one replaced while another thread might still read it (freed
+    /// with this one), or 0.
+    prev: u64,
 }
+
+const _: () = assert!(std::mem::size_of::<Table>() == 24);
 
 impl Table {
     fn layout(cap: usize) -> Layout {
@@ -87,7 +97,7 @@ impl Table {
     /// # Safety
     /// `t` must be a live table.
     unsafe fn entries<'a>(t: *mut Table) -> &'a [AtomicU32] {
-        std::slice::from_raw_parts(Table::data(t), (*t).len.load(Ordering::Acquire))
+        std::slice::from_raw_parts(Table::data(t), (*t).len.load(Ordering::Acquire) as usize)
     }
 
     unsafe fn data(t: *mut Table) -> *const AtomicU32 {
@@ -105,17 +115,18 @@ impl Table {
     /// A new table with room for `cap` entries holding `old`'s entries.
     fn alloc(cap: usize, old: &[AtomicU32]) -> *mut Table {
         let l = Table::layout(cap);
-        // SAFETY: the layout has a non-zero size (the header).
-        let t = unsafe { alloc::alloc(l) } as *mut Table;
+        // Through the allocator compiled code uses, as std's `rawAlloc` is (aligned to 8): a table
+        // Velt code built is freed here (`free_chain`), and both are counted alike (#2198).
+        let t = crate::mem::velt_rt_alloc(l.size() as u64, TABLE_ALIGN) as *mut Table;
         if t.is_null() {
             alloc::handle_alloc_error(l);
         }
         // SAFETY: fresh allocation with room for the header and `cap >= old.len()` entries.
         unsafe {
             t.write(Table {
-                len: AtomicUsize::new(old.len()),
-                cap,
-                prev: std::ptr::null_mut(),
+                len: AtomicU64::new(old.len() as u64),
+                cap: cap as u64,
+                prev: 0,
             });
             let data = Table::data(t) as *mut AtomicU32;
             for (k, e) in old.iter().enumerate() {
@@ -134,9 +145,9 @@ impl Table {
     /// `t` must be a live table with room for them, built for a prefix of `bytes`.
     unsafe fn fill(t: *mut Table, bytes: &[u8], units: usize) {
         let want = units.div_ceil(STRIDE);
-        debug_assert!(want <= (*t).cap);
+        debug_assert!(want as u64 <= (*t).cap);
         let data = Table::data(t);
-        let mut len = (*t).len.load(Ordering::Acquire);
+        let mut len = (*t).len.load(Ordering::Acquire) as usize;
         if len >= want {
             return;
         }
@@ -156,7 +167,7 @@ impl Table {
             (byte, unit) = start_of(encode(pos), len);
             len += 1;
         }
-        (*t).len.fetch_max(len, Ordering::Release);
+        (*t).len.fetch_max(len as u64, Ordering::Release);
     }
 }
 
@@ -278,8 +289,9 @@ pub(super) unsafe fn free(t: *mut u8) {
 #[cold]
 unsafe fn free_chain(mut t: *mut Table) {
     while !t.is_null() {
-        let prev = (*t).prev;
-        alloc::dealloc(t as *mut u8, Table::layout((*t).cap));
+        let prev = heap::table_of((*t).prev) as *mut Table;
+        let size = Table::layout((*t).cap as usize).size() as u64;
+        crate::mem::velt_rt_free(t as *mut u8, size, TABLE_ALIGN);
         t = prev;
     }
 }
@@ -425,7 +437,7 @@ impl VeltStr {
     unsafe fn crumbs(&self, k: usize) -> *mut Table {
         let field = heap::crumbs(self.ptr());
         let current = heap::table_of(field.load(Ordering::Acquire)) as *mut Table;
-        if !current.is_null() && k < (*current).len.load(Ordering::Acquire) {
+        if !current.is_null() && (k as u64) < (*current).len.load(Ordering::Acquire) {
             return current;
         }
         self.build_crumbs()
@@ -444,24 +456,28 @@ impl VeltStr {
         let mut seen = field.load(Ordering::Acquire);
         loop {
             let current = heap::table_of(seen) as *mut Table;
-            if !current.is_null() && (*current).cap >= want {
+            if !current.is_null() && (*current).cap >= want as u64 {
                 Table::fill(current, bytes, units);
                 return current;
             }
             let (old, cap) = if current.is_null() {
                 (&[][..], want)
             } else {
-                (Table::entries(current), want.max((*current).cap * 2))
+                (
+                    Table::entries(current),
+                    want.max((*current).cap as usize * 2),
+                )
             };
             let t = Table::alloc(cap, old);
             Table::fill(t, bytes, units);
-            (*t).prev = current;
-            match field.compare_exchange(seen, t as *mut u8, Ordering::AcqRel, Ordering::Acquire) {
+            (*t).prev = heap::field_of(current as *mut u8);
+            let mine = heap::field_of(t as *mut u8);
+            match field.compare_exchange(seen, mine, Ordering::AcqRel, Ordering::Acquire) {
                 Ok(_) => return t,
                 Err(won) => {
                     // Another thread published first: drop ours (not its `prev`, which stays
                     // with the published table) and extend theirs.
-                    (*t).prev = std::ptr::null_mut();
+                    (*t).prev = 0;
                     free_chain(t);
                     seen = won;
                 }
