@@ -19,10 +19,9 @@ interface Logger {
 }
 
 async function main() {
+  // The spawned job prints nothing: its order against this task's output isn't fixed.
   const s: Sender = { put: send };
-  s.put(async () => {
-    console.log("sent");
-  });
+  s.put(async () => {});
   let n = 0;
   const log: Logger = {
     put: (j: Job): void => {
