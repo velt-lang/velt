@@ -396,6 +396,17 @@ const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_module_state),
     velt_common::std_hook!(sched_module_block),
     velt_common::std_hook!(sched_module_ready),
+    velt_common::std_hook!(sched_task_id),
+];
+
+/// The debug cell check's hooks under the executor in Velt (sched_cells.velt): only a debug
+/// compiler emits the checks (velt_vir `LowerOptions::cell_checks`), so only it loads them.
+const SCHED_CELL_HOOKS: &[&str] = &[
+    velt_common::std_hook!(sched_cell_new),
+    velt_common::std_hook!(sched_cell_use),
+    velt_common::std_hook!(sched_cell_give),
+    velt_common::std_hook!(sched_cell_copy),
+    velt_common::std_hook!(sched_cell_free),
 ];
 
 /// Adds [`SCHED_HOOKS`] to `found` the first time, when the executor in Velt is selected and
@@ -415,6 +426,10 @@ fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
     cx.lazy.sched_hooks = true;
     cx.demand_std(velt_common::std_module!(lang_hooks_sched));
     found.extend(SCHED_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
+    if cfg!(debug_assertions) {
+        cx.demand_std(velt_common::std_module!(lang_hooks_sched_cells));
+        found.extend(SCHED_CELL_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
+    }
 }
 
 /// Check the definition `d` if it is deferred and unchecked: whether it did.

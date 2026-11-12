@@ -1,0 +1,362 @@
+// velt/lang/hooks (internal): the debug cell check of the executor in Velt (#2649 P2c, #2832):
+// `velt_rt_cell_new` / `_use` / `_give` / `_copy` / `_free`'s jobs, which lowering routes here
+// in debug builds under `VELT_SCHEDULER=std` (the runtime's check keys a cell's owner by the
+// runtime's task id, which is 0 for every task of this executor). The rules are the runtime's
+// (velt_rt cell_owner.rs, #916, #2830), keyed by `taskId()`:
+// - `new` records the task making the cell as its owner (none outside a task: unowned);
+// - `use` (a count change, or the call of a closure that assigns the variable) from a task claims
+//   an unowned cell, and stops the program when another task owns it; outside a task nothing is
+//   checked or claimed;
+// - `give` (the transfer glue moving the only reference to another task) and `copy` (the
+//   transfer's fresh copy) leave the cell unowned, for the receiving task to claim;
+// - `free` forgets it;
+// - module state (#2830): a use from another task while the user holds the module lock
+//   (sched_module.velt) makes the cell *guarded*; from then on every use must hold the lock, and
+//   one that doesn't stops the program.
+//
+// The table lives outside the program's memory (the C library's, so the leak counters don't see
+// it): open addressing, behind one lock word. An entry: the cell's address (0: empty, 1: removed),
+// its owner (0: none, `GUARDED`), its variable's name (a copy: its byte length, then its bytes;
+// 0: none) and the worker that claimed it, for the message.
+
+import { addressLoad, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as mod from "./sched_module";
+import { taskId } from "./sched_id";
+import * as t from "./sched_task";
+
+/** The C library's `abort`: the report is the last thing the program does. */
+declare c("c") function abort(): void;
+
+/** The owner of a guarded cell. */
+export const GUARDED: usize = 0xffff_ffff_ffff_ffff;
+
+/** The table's header (0 until the first cell): lock word, entries, capacity, entries in use. */
+const TABLE = new Atomic<u64>(0);
+
+const H_LOCK: usize = 0;
+const H_ENTRIES: usize = 8;
+const H_CAP: usize = 16;
+const H_USED: usize = 24;
+
+const E_CELL: usize = 0;
+const E_OWNER: usize = 8;
+const E_NAME: usize = 16;
+const E_WORKER: usize = 24;
+const ENTRY: usize = 32;
+
+const EMPTY: usize = 0;
+const REMOVED: usize = 1;
+
+/** The table's header, made on first use. */
+function table(): usize {
+  const h = TABLE.load("acquire") as usize;
+  if (h !== 0) {
+    return h;
+  }
+  const n = m.lastingZeroed(32);
+  m.st(n + H_ENTRIES, m.lastingZeroed(64 * ENTRY));
+  m.st(n + H_CAP, 64);
+  const was = TABLE.compareExchange(0, n as u64, "acqrel", "acquire") as usize;
+  if (was === 0) {
+    return n;
+  }
+  m.lastingRelease(m.ld(n + H_ENTRIES));
+  m.lastingRelease(n);
+  return was;
+}
+
+function lock(h: usize): void {
+  if (m.cas32(h + H_LOCK, 0, 1) !== 0) {
+    m.spinLock(h + H_LOCK);
+  }
+}
+
+function unlock(h: usize): void {
+  m.store32(h + H_LOCK, 0);
+}
+
+function slotOf(cell: usize, cap: usize): usize {
+  return ((cell >> 4) * 0x9e37_79b9_7f4a_7c15) & (cap - 1);
+}
+
+/** The entry of `cell` (lock held), or 0; with `add`, a new one when it has none. */
+function find(h: usize, cell: usize, add: bool): usize {
+  if (add && (m.ld(h + H_USED) + 1) * 10 >= m.ld(h + H_CAP) * 7) {
+    grow(h);
+  }
+  const cap = m.ld(h + H_CAP);
+  const es = m.ld(h + H_ENTRIES);
+  let i = slotOf(cell, cap);
+  let free: usize = 0;
+  while (true) {
+    const e = es + i * ENTRY;
+    const k = m.ld(e + E_CELL);
+    if (k === cell) {
+      return e;
+    }
+    if (k === EMPTY) {
+      if (!add) {
+        return 0;
+      }
+      const at = free !== 0 ? free : e;
+      if (at === e) {
+        m.st(h + H_USED, m.ld(h + H_USED) + 1);
+      }
+      m.st(at + E_CELL, cell);
+      m.st(at + E_OWNER, 0);
+      m.st(at + E_NAME, 0);
+      m.st(at + E_WORKER, 0);
+      return at;
+    }
+    if (k === REMOVED && free === 0) {
+      free = e;
+    }
+    i = (i + 1) & (cap - 1);
+  }
+  return 0;
+}
+
+/** Twice the capacity, the live entries moved over (lock held). */
+function grow(h: usize): void {
+  const cap = m.ld(h + H_CAP);
+  const old = m.ld(h + H_ENTRIES);
+  const n = cap * 2;
+  const es = m.lastingZeroed(n * ENTRY);
+  let used: usize = 0;
+  for (let i: usize = 0; i < cap; i++) {
+    const e = old + i * ENTRY;
+    const k = m.ld(e + E_CELL);
+    if (k === EMPTY || k === REMOVED) {
+      continue;
+    }
+    let j = slotOf(k, n);
+    while (m.ld(es + j * ENTRY + E_CELL) !== EMPTY) {
+      j = (j + 1) & (n - 1);
+    }
+    m.copy(es + j * ENTRY, e, ENTRY);
+    used++;
+  }
+  m.st(h + H_ENTRIES, es);
+  m.st(h + H_CAP, n);
+  m.st(h + H_USED, used);
+  m.lastingRelease(old);
+}
+
+/** A copy of `name`'s bytes (its byte length, then the bytes), outside the program's memory. */
+function nameCopy(name: string): usize {
+  const len = strByteLen(name);
+  const p = m.lastingZeroed(8 + len);
+  m.st(p, len);
+  m.copy(p + 8, strDataAddress(name), len);
+  return p;
+}
+
+function nameFree(p: usize): void {
+  if (p !== 0) {
+    m.lastingRelease(p);
+  }
+}
+
+/** The name copy at `p` as a string (`?` for none). */
+function nameText(p: usize): string {
+  if (p === 0) {
+    return "?";
+  }
+  // The name is a variable's, valid UTF-8 from the source: decoded here by hand, since the
+  // encoding module (its `Error` classes) can't be loaded under the hooks.
+  const len = m.ld(p);
+  let text = "";
+  let i: usize = 0;
+  while (i < len) {
+    // SAFETY: `p` holds `len` bytes after its length word.
+    const b = unsafe { addressLoad<u8>(p + 8 + i) } as u32;
+    let n: usize = 1;
+    let cp = b;
+    if (b >= 0xf0) {
+      n = 4;
+      cp = b & 0x07;
+    } else if (b >= 0xe0) {
+      n = 3;
+      cp = b & 0x0f;
+    } else if (b >= 0xc0) {
+      n = 2;
+      cp = b & 0x1f;
+    }
+    if (i + n > len) {
+      break;
+    }
+    for (let k: usize = 1; k < n; k++) {
+      // SAFETY: as above; `i + k < len`.
+      cp = (cp << 6) | ((unsafe { addressLoad<u8>(p + 8 + i + k) } as u32) & 0x3f);
+    }
+    if (cp >= 0x10000) {
+      text += String.fromCharCode((0xd800 + ((cp - 0x10000) >> 10)) as number);
+      text += String.fromCharCode((0xdc00 + ((cp - 0x10000) & 0x3ff)) as number);
+    } else {
+      text += String.fromCharCode(cp as number);
+    }
+    i += n;
+  }
+  return text;
+}
+
+/** The index of the worker running this thread's code (0 off the workers). */
+function worker(): usize {
+  const w = t.here();
+  if (w === 0) {
+    return 0;
+  }
+  return m.ld(w + t.E_INDEX) % m.ld(m.ld(w + t.E_MAIN) + t.E_COUNT);
+}
+
+/** `velt_rt_cell_new`: a new cell at `cell`, holding variable `name`, owned by this task. */
+export function schedCellNew(cell: usize, name: string): void {
+  cellNew(cell, name, taskId() as usize);
+}
+
+/** `velt_rt_cell_use`: this task uses `cell` (changes its count, or calls a closure assigning it). */
+export function schedCellUse(cell: usize): void {
+  const me = taskId() as usize;
+  const owner = cellUse(cell, me, mod.held());
+  if (owner === 0) {
+    return;
+  }
+  const h = table();
+  lock(h);
+  const e = find(h, cell, false);
+  const name = e === 0 ? 0 : m.ld(e + E_NAME);
+  const at = e === 0 ? 0 : m.ld(e + E_WORKER);
+  unlock(h);
+  if (owner === GUARDED) {
+    reportUnlocked(nameText(name), me);
+  }
+  report(nameText(name), owner, at, me);
+}
+
+/** [`schedCellNew`] for task `owner` (0: none); the tests call it with ids of their own. */
+export function cellNew(cell: usize, name: string, owner: usize): void {
+  const copy = nameCopy(name);
+  const h = table();
+  lock(h);
+  const e = find(h, cell, true);
+  nameFree(m.ld(e + E_NAME));
+  m.st(e + E_OWNER, owner);
+  m.st(e + E_NAME, copy);
+  m.st(e + E_WORKER, worker());
+  unlock(h);
+}
+
+/**
+ * Task `me` (0: outside a task) uses `cell`, holding the module lock when `held`: 0 when that's
+ * allowed (claiming the cell, or guarding it), otherwise the owner it collides with (`GUARDED`:
+ * a guarded cell used without the lock). [`schedCellUse`] stops the program on the latter.
+ */
+export function cellUse(cell: usize, me: usize, held: bool): usize {
+  if (me === 0) {
+    return 0;
+  }
+  const h = table();
+  lock(h);
+  const e = find(h, cell, true);
+  const owner = m.ld(e + E_OWNER);
+  if (owner === 0) {
+    m.st(e + E_OWNER, me);
+    m.st(e + E_WORKER, worker());
+  } else if (owner !== me && held) {
+    // Reached through module state: every user holds the module lock.
+    m.st(e + E_OWNER, GUARDED);
+  } else if (owner !== me) {
+    unlock(h);
+    return owner;
+  }
+  unlock(h);
+  return 0;
+}
+
+/** The owner of `cell` (0: none or not recorded) and its variable's name, for the tests. */
+export function cellOwner(cell: usize): usize {
+  const h = table();
+  lock(h);
+  const e = find(h, cell, false);
+  const owner = e === 0 ? 0 : m.ld(e + E_OWNER);
+  unlock(h);
+  return owner;
+}
+
+export function cellName(cell: usize): string {
+  const h = table();
+  lock(h);
+  const e = find(h, cell, false);
+  const name = e === 0 ? 0 : m.ld(e + E_NAME);
+  const text = nameText(name);
+  unlock(h);
+  return text;
+}
+
+/** `velt_rt_cell_give`: the only reference to `cell` moves to another task: unowned until used. */
+export function schedCellGive(cell: usize): void {
+  const h = table();
+  lock(h);
+  const e = find(h, cell, false);
+  if (e !== 0) {
+    m.st(e + E_OWNER, 0);
+  }
+  unlock(h);
+}
+
+/** `velt_rt_cell_copy`: `cell` is a fresh copy of `from` for another task: unowned until used. */
+export function schedCellCopy(cell: usize, from: usize): void {
+  const h = table();
+  lock(h);
+  const f = find(h, from, false);
+  const fromName = f === 0 ? 0 : m.ld(f + E_NAME);
+  let copy: usize = 0;
+  if (fromName !== 0) {
+    const len = m.ld(fromName);
+    copy = m.lastingZeroed(8 + len);
+    m.copy(copy, fromName, 8 + len);
+  }
+  const e = find(h, cell, true);
+  nameFree(m.ld(e + E_NAME));
+  m.st(e + E_OWNER, 0);
+  m.st(e + E_NAME, copy);
+  m.st(e + E_WORKER, 0);
+  unlock(h);
+}
+
+/** `velt_rt_cell_free`: `cell` is about to be freed: forget it. */
+export function schedCellFree(cell: usize): void {
+  const h = table();
+  lock(h);
+  const e = find(h, cell, false);
+  if (e !== 0) {
+    nameFree(m.ld(e + E_NAME));
+    m.st(e + E_CELL, REMOVED);
+    m.st(e + E_NAME, 0);
+  }
+  unlock(h);
+}
+
+/** Two tasks used one cell: the runtime's message (cell_owner.rs `report`), then stop. */
+function report(name: string, owner: usize, at: usize, me: usize): void {
+  const v = name == "?" ? "a captured variable" : `captured variable \`${name}\``;
+  console.error(
+    `velt debug-cells: ${v} was used by two tasks: it belongs to task ${owner} (on worker ${at}), and task ${me} (on worker ${worker()}) used it too. A closure that assigns a variable it captured was shared with another task or HTTP request instead of copied, so both would change the variable (and its reference count) at the same time. Keep one value every task shares in \`shared(...)\` instead (a \`shared(new Mutex(...))\` for anything but a 64-bit integer).`,
+  );
+  // SAFETY: no precondition; the program ends here.
+  unsafe {
+    abort();
+  }
+}
+
+/** A guarded cell used without the module lock (cell_owner.rs `report_unlocked`), then stop. */
+function reportUnlocked(name: string, me: usize): void {
+  console.error(
+    `velt debug-cells: captured variable \`${name}\` is shared through module state, and task ${me} (on worker ${worker()}) used it without the module lock, so it may change at the same time as another task's use. A closure that assigns a variable it captured was given to a task that does not use module state instead of copied.`,
+  );
+  // SAFETY: no precondition; the program ends here.
+  unsafe {
+    abort();
+  }
+}

@@ -150,6 +150,10 @@ impl FnLower<'_, '_> {
                 | Rt::TlaAt
                 | Rt::SpawnTarget
                 | Rt::Sleep
+                | Rt::CellUse
+                | Rt::CellGive
+                | Rt::CellCopy
+                | Rt::CellFree
         ) || !self.std_sched()
         {
             return Err((args, dest));
@@ -211,6 +215,23 @@ impl FnLower<'_, '_> {
                         .emit(self)
                         .op(),
                 ),
+                // The debug cell check (sched_cells.velt): the runtime's keys a cell's owner by
+                // its own task id, which is 0 for this executor's tasks.
+                (Rt::CellUse | Rt::CellGive | Rt::CellFree, [cell]) => {
+                    let c = ty::USize::arg(self.as_usize(cell.clone()));
+                    match r {
+                        Rt::CellUse => hooks::sched_cell_use(self, c).emit(self),
+                        Rt::CellGive => hooks::sched_cell_give(self, c).emit(self),
+                        _ => hooks::sched_cell_free(self, c).emit(self),
+                    };
+                    None
+                }
+                (Rt::CellCopy, [cell, from]) => {
+                    let (cell, from) = (self.as_usize(cell.clone()), self.as_usize(from.clone()));
+                    hooks::sched_cell_copy(self, ty::USize::arg(cell), ty::USize::arg(from))
+                        .emit(self);
+                    None
+                }
                 (Rt::TlaAt, [site]) => {
                     hooks::sched_tla_at(self, ty::Str::arg(site.clone())).emit(self);
                     None
@@ -236,6 +257,17 @@ impl FnLower<'_, '_> {
             self.assign(d, Rvalue::Cast(v, ret));
         }
         Ok(())
+    }
+
+    /// `velt_rt_cell_new`'s job under the executor in Velt (sched_cells.velt): the new cell `ptr`
+    /// of the variable whose name is at `name` (a string's address). False (nothing emitted) for the runtime's executor.
+    pub(super) fn sched_cell_new(&mut self, ptr: Operand, name: Operand) -> bool {
+        if !self.std_sched() {
+            return false;
+        }
+        let ptr = self.as_usize(ptr);
+        hooks::sched_cell_new(self, ty::USize::arg(ptr), ty::Str::arg(name)).emit(self);
+        true
     }
 
     /// A call of extern `symbol` (one of [`EXTERNS`]) with `args`, of result type `ret`, as the

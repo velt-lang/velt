@@ -1,0 +1,122 @@
+// velt/lang/hooks (tests): the debug cell check of the executor in Velt (#2832), run by
+// `velt test std/`. Tasks are played by ids passed in (any nonzero number), as velt_rt's
+// tests/abi/cells.rs plays them for the runtime's check; cells are distinct addresses (the table
+// only keys on them).
+import { describe, expect, it } from "velt/test";
+import {
+  cellName,
+  cellNew,
+  cellOwner,
+  cellUse,
+  GUARDED,
+  schedCellCopy,
+  schedCellFree,
+  schedCellGive,
+} from "velt/lang/hooks/sched_cells";
+
+/** A fresh cell address for each test (never a real cell; above the table's markers 0 and 1). */
+const NEXT = new Atomic<u64>(0x1000);
+
+function cell(): usize {
+  return NEXT.add(16, "relaxed") as usize;
+}
+
+describe("cell owners", () => {
+  it("lets the owning task use its cell", () => {
+    const c = cell();
+    cellNew(c, "last", 7);
+    expect(cellUse(c, 7, false)).toBe(0);
+    expect(cellOwner(c)).toBe(7);
+  });
+
+  it("reports another task using the cell", () => {
+    const c = cell();
+    cellNew(c, "last", 7);
+    expect(cellUse(c, 8, false)).toBe(7);
+    expect(cellOwner(c)).toBe(7);
+  });
+
+  it("checks nothing outside a task", () => {
+    const c = cell();
+    cellNew(c, "last", 7);
+    expect(cellUse(c, 0, false)).toBe(0);
+    expect(cellOwner(c)).toBe(7);
+  });
+
+  it("gives a cell made outside a task to the first task using it", () => {
+    const c = cell();
+    cellNew(c, "last", 0);
+    expect(cellUse(c, 9, false)).toBe(0);
+    expect(cellUse(c, 10, false)).toBe(9);
+  });
+
+  it("gives a moved cell to the task receiving it", () => {
+    const c = cell();
+    cellNew(c, "last", 7);
+    schedCellGive(c);
+    expect(cellUse(c, 8, false)).toBe(0);
+    expect(cellUse(c, 7, false)).toBe(8);
+  });
+
+  it("gives a copy no owner, and its variable's name", () => {
+    const from = cell();
+    const c = cell();
+    cellNew(from, "total", 7);
+    schedCellCopy(c, from);
+    expect(cellName(c)).toBe("total");
+    expect(cellUse(c, 8, false)).toBe(0);
+    expect(cellUse(from, 7, false)).toBe(0);
+  });
+
+  it("forgets a freed cell", () => {
+    const c = cell();
+    cellNew(c, "last", 7);
+    schedCellFree(c);
+    expect(cellOwner(c)).toBe(0);
+    expect(cellUse(c, 8, false)).toBe(0);
+  });
+});
+
+describe("module state", () => {
+  it("guards a cell other tasks use holding the module lock", () => {
+    const c = cell();
+    cellNew(c, "hits", 7);
+    expect(cellUse(c, 8, true)).toBe(0);
+    expect(cellOwner(c)).toBe(GUARDED);
+    expect(cellUse(c, 7, true)).toBe(0);
+    expect(cellUse(c, 9, true)).toBe(0);
+  });
+
+  it("reports a guarded cell used without the lock", () => {
+    const c = cell();
+    cellNew(c, "hits", 7);
+    expect(cellUse(c, 8, true)).toBe(0);
+    expect(cellUse(c, 9, false)).toBe(GUARDED);
+  });
+});
+
+describe("the table", () => {
+  it("keeps names that are not ASCII", () => {
+    const c = cell();
+    cellNew(c, "zähler😀", 7);
+    expect(cellName(c)).toBe("zähler😀");
+  });
+
+  it("keeps every cell as it grows", () => {
+    const cs: usize[] = [];
+    for (let i: u64 = 0; i < 500; i++) {
+      const c = cell();
+      cellNew(c, "v", (i + 1) as usize);
+      cs.push(c);
+    }
+    for (let i: u64 = 0; i < 500; i++) {
+      expect(cellOwner(cs[i as i64])).toBe((i + 1) as usize);
+      if (i % 2 === 0) {
+        schedCellFree(cs[i as i64]);
+      }
+    }
+    for (let i: u64 = 0; i < 500; i++) {
+      expect(cellOwner(cs[i as i64])).toBe(i % 2 === 0 ? 0 : ((i + 1) as usize));
+    }
+  });
+});

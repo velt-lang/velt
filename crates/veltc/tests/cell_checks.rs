@@ -16,12 +16,23 @@ const CELL: &str = "function main() {
 ";
 
 fn velt(dir: &test_dir::TestDir, args: &[&str]) -> std::process::Output {
+    velt_on(dir, args, None)
+}
+
+/// [`velt`] with `VELT_SCHEDULER` set to `scheduler` (removed for `None`).
+fn velt_on(
+    dir: &test_dir::TestDir,
+    args: &[&str],
+    scheduler: Option<&str>,
+) -> std::process::Output {
     std::fs::write(dir.path().join("main.velt"), CELL).unwrap();
-    let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(args)
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
+    let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    cmd.args(args).current_dir(dir.path());
+    match scheduler {
+        Some(s) => cmd.env("VELT_SCHEDULER", s),
+        None => cmd.env_remove("VELT_SCHEDULER"),
+    };
+    let out = cmd.output().unwrap();
     assert!(
         out.status.success(),
         "{}",
@@ -49,11 +60,35 @@ fn debug_builds_report_cells_and_release_builds_do_not() {
     assert!(!release.contains("velt_rt_cell_"), "{release}");
 }
 
+/// #2832: under the executor in Velt the check is std's (std/lang/hooks/sched_cells.velt), keyed
+/// by its task ids: debug builds call its hooks instead of the runtime's, release builds neither.
+#[test]
+fn debug_builds_under_std_report_cells_to_std() {
+    let dir = test_dir::TestDir::new();
+    let debug = velt_on(&dir, &["build", "main.velt", "--emit", "vir"], Some("std"));
+    let debug = String::from_utf8_lossy(&debug.stdout);
+    let checked = cfg!(debug_assertions);
+    for hook in ["schedCellNew", "schedCellUse", "schedCellFree"] {
+        assert_eq!(debug.contains(hook), checked, "{hook}:\n{debug}");
+    }
+    assert!(!debug.contains("velt_rt_cell_"), "{debug}");
+    let release = velt_on(
+        &dir,
+        &["build", "--release", "main.velt", "--emit", "vir"],
+        Some("std"),
+    );
+    let release = String::from_utf8_lossy(&release.stdout);
+    assert!(!release.contains("schedCell"), "{release}");
+    assert!(!release.contains("velt_rt_cell_"), "{release}");
+}
+
 #[test]
 fn a_cell_used_by_one_task_runs() {
-    let dir = test_dir::TestDir::new();
-    let out = velt(&dir, &["run", "main.velt"]);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "a\n");
+    for scheduler in [None, Some("std")] {
+        let dir = test_dir::TestDir::new();
+        let out = velt_on(&dir, &["run", "main.velt"], scheduler);
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "a\n", "{scheduler:?}");
+    }
 }
 
 /// #2737: a closure stored in module state and called from tasks on several workers shares its
@@ -88,19 +123,25 @@ async function main() {
 
 #[test]
 fn a_closure_in_module_state_called_from_several_tasks_runs() {
-    let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.velt"), MODULE_STATE).unwrap();
-    let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["run", "main.velt"])
-        .env("VELT_THREADS", "4")
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "{stderr}");
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "hits 640\n",
-        "{stderr}"
-    );
+    // Under std too (#2832): its check knows the module lock (sched_module.velt `held`).
+    for scheduler in [None, Some("std")] {
+        let dir = test_dir::TestDir::new();
+        std::fs::write(dir.path().join("main.velt"), MODULE_STATE).unwrap();
+        let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+        cmd.args(["run", "main.velt"])
+            .env("VELT_THREADS", "4")
+            .current_dir(dir.path());
+        match scheduler {
+            Some(s) => cmd.env("VELT_SCHEDULER", s),
+            None => cmd.env_remove("VELT_SCHEDULER"),
+        };
+        let out = cmd.output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{scheduler:?}: {stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "hits 640\n",
+            "{scheduler:?}: {stderr}"
+        );
+    }
 }

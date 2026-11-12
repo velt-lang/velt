@@ -337,6 +337,14 @@ hooks! {
     /// `velt_rt_task_id`'s (std/lang/promise/settle.velt's extern): the id of the task being
     /// polled, 0 outside a task.
     sched_task_id => lang_hooks_sched, "schedTaskId", sig(() -> u64), lowered;
+    // sched_cells.velt: the debug cell check under the executor in Velt (debug builds).
+    /// `velt_rt_cell_new`'s (`(cell, name)`), `_use`'s, `_give`'s (`(cell)`), `_copy`'s
+    /// (`(cell, from)`) and `_free`'s.
+    sched_cell_new => lang_hooks_sched_cells, "schedCellNew", sig((usize, &string) -> void), lowered;
+    sched_cell_use => lang_hooks_sched_cells, "schedCellUse", sig((usize) -> void), lowered;
+    sched_cell_give => lang_hooks_sched_cells, "schedCellGive", sig((usize) -> void), lowered;
+    sched_cell_copy => lang_hooks_sched_cells, "schedCellCopy", sig((usize, usize) -> void), lowered;
+    sched_cell_free => lang_hooks_sched_cells, "schedCellFree", sig((usize) -> void), lowered;
     /// Module state's `velt_rt_module_state` (`(desc, slot)`), `_block` and `_ready` (workers).
     sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
     sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;

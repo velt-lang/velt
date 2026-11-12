@@ -3,7 +3,7 @@
 // first use from a process-wide counter, so it is never 0 for a task and never reused (the
 // runtime executor's rule, velt_rt task/local/mod.rs). `new Promise` compares ids to decide
 // whether a settled value stays on its task or is copied for another (std/lang/promise/
-// settle.velt); part 2 (#2832) keys the debug cell check's owners by it.
+// settle.velt), and the debug cell check keys a captured variable's owner by it (#2832).
 //
 // Off the workers, code the runtime runs as its own tasks (a C library's callback, a runtime
 // leaf's thread: sched_off.velt) has the runtime's ids. Std's ids have bit 63 set, so the two
