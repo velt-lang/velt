@@ -78,17 +78,15 @@ export const P_FULL: usize = l.O_WAITER + 8;
 @inline
 export function busy(b: usize, h: usize): bool {
   // A timer that names no task (every timer with one worker: sched_order.velt `inserted`) costs
-  // the look one load.
+  // the look one load; one of the task whose step looks (the common case: a task's own timer at
+  // its poll's end), two.
   const k = m.ld(h + l.H_TASK);
-  return k !== 0 && busyTask(b, k);
+  return k !== 0 && k !== m.ld(b + P_CUR) && busyTask(b, k);
 }
 
-/** `busy` for a timer of task `k`. */
+/** `busy` for a timer of task `k`, not the one whose step looks. */
 @noInline
 function busyTask(b: usize, k: usize): bool {
-  if (k === m.ld(b + P_CUR)) {
-    return false;
-  }
   const n = m.ld(b + P_BUSY_N);
   for (let i: usize = 0; i < n; i++) {
     if (m.ld(b + P_BUSY + 8 * i) === k) {
@@ -182,6 +180,17 @@ export function wakeAt(b: usize): usize {
   return best;
 }
 
+/**
+ * When the loop must look again with no task busy (one worker for good: sched_order.velt
+ * `stepAlone`): the first list's expiry, as Node's loop wakes (no later than `wakeAt`; a list
+ * whose first timer is due later is passed over then and gets its new place); 0: no list.
+ */
+@inline
+export function firstExpiry(b: usize): usize {
+  const first = m.ld(b + l.O_FIRST);
+  return first !== 0 ? m.ld(first + l.L_EXPIRY) : 0;
+}
+
 /** What comes next, without changing anything (into `P_*`). */
 function peek(b: usize): void {
   m.st(b + P_NEXT, 0);
@@ -254,6 +263,14 @@ function peek(b: usize): void {
 export function look(b: usize): void {
   m.st(b + P_BUSY_N, 0);
   m.st(b + P_FULL, 0);
+  lookAlone(b);
+}
+
+/**
+ * `look` when no task can be busy (one worker for good: no timer names a task), so that no busy
+ * task is remembered and the look never runs out of room for them.
+ */
+export function lookAlone(b: usize): void {
   peek(b);
   if (m.ld(b + P_IN_PASS) !== 0 && m.ld(b + l.O_PASS_SET) !== 0) {
     const now = m.ld(b + l.O_PASS);
