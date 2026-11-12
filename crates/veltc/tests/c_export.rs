@@ -183,6 +183,7 @@ fn velt(dir: &Path, home: &Path, args: &[&str]) -> Output {
         .current_dir(dir)
         .env("NO_COLOR", "1")
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .output()
         .unwrap()
 }

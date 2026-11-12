@@ -60,6 +60,7 @@ impl Package {
             .args(args)
             .current_dir(&self.dir)
             .env("VELT_HOME", self.dir.join("home"))
+            .env("VELT_REGISTRY", self.dir.join("home").join("registry"))
             .env_remove("VELT_LAUNCHER")
             .env_remove("VELT_RC_STATS");
         for (k, v) in env {

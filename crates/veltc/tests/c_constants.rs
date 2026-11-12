@@ -50,6 +50,7 @@ fn velt_in(dir: &Path, home: &Path, args: &[&str]) -> Output {
         .current_dir(dir)
         .env("NO_COLOR", "1")
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .output()
         .unwrap()
 }
@@ -419,6 +420,7 @@ fn fetched(dir: &Path, home: &Path, args: &[&str]) -> Output {
         .current_dir(dir.join("app"))
         .env("NO_COLOR", "1")
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .env("VELT_ZIG", dir.join("no-zig"))
         .output()
         .unwrap()

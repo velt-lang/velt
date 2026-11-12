@@ -18,7 +18,8 @@ fn velt_test(dir: &Path, args: &[&str]) -> Output {
         .args(["test", "--no-cache"])
         .args(args)
         .current_dir(dir)
-        .env("VELT_HOME", dir.join("home"));
+        .env("VELT_HOME", dir.join("home"))
+        .env("VELT_REGISTRY", dir.join("home").join("registry"));
     command.output().unwrap()
 }
 
@@ -388,6 +389,7 @@ fn a_leak_check_without_block_counts_fails_the_file() {
         .args(["test", "--no-cache", "t"])
         .current_dir(dir)
         .env("VELT_HOME", dir.join("home"))
+        .env("VELT_REGISTRY", dir.join("home").join("registry"))
         .env("VELT_RC_STATS", "1")
         .output()
         .unwrap();
@@ -436,6 +438,7 @@ fn the_wait_for_a_process_to_end_starts_after_its_tests() {
         .args(["test", "--no-cache", "t"])
         .current_dir(dir)
         .env("VELT_HOME", dir.join("home"))
+        .env("VELT_REGISTRY", dir.join("home").join("registry"))
         .env("VELT_RC_STATS", "1")
         .env("VELT_TEST_LEAK_WAIT", "2000")
         .output()
@@ -480,6 +483,7 @@ fn a_test_that_never_ends_times_out() {
         .args(["test", "--no-cache", "t"])
         .current_dir(dir)
         .env("VELT_HOME", dir.join("home"))
+        .env("VELT_REGISTRY", dir.join("home").join("registry"))
         .env("VELT_TEST_TIMEOUT", "3000")
         .output()
         .unwrap();
@@ -628,6 +632,7 @@ fn concurrent_runs_never_start_a_program_being_linked() {
                                 .arg(tests)
                                 .current_dir(&cwd)
                                 .env("VELT_HOME", dir.join("home"))
+                                .env("VELT_REGISTRY", dir.join("home").join("registry"))
                                 .output()
                                 .unwrap()
                         })

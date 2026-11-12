@@ -18,7 +18,8 @@ fn velt_test(dir: &Path, args: &[&str]) -> Output {
         .arg("test")
         .args(args)
         .current_dir(dir)
-        .env("VELT_HOME", dir.join("home"));
+        .env("VELT_HOME", dir.join("home"))
+        .env("VELT_REGISTRY", dir.join("home").join("registry"));
     command.output().unwrap()
 }
 

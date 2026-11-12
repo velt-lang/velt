@@ -19,7 +19,8 @@ fn velt_test(dir: &Path, args: &[&str]) -> Output {
         .args(["test", "--no-cache"])
         .args(args)
         .current_dir(dir)
-        .env("VELT_HOME", dir.join("home"));
+        .env("VELT_HOME", dir.join("home"))
+        .env("VELT_REGISTRY", dir.join("home").join("registry"));
     command.output().unwrap()
 }
 

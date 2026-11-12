@@ -19,6 +19,7 @@ fn vir(golden: &str, check: bool) -> Vec<u8> {
     cmd.current_dir(&root)
         .args(["build", golden, "--emit", "vir"])
         .env("VELT_HOME", home.path())
+        .env("VELT_REGISTRY", home.path().join("registry"))
         .env("VELT_BUILD_CACHE", "off")
         .env("VELT_BUILD_STAMP", "off")
         .env_remove("VELT_SEMA_CLONE_CHECK");

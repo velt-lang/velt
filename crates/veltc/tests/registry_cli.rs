@@ -47,6 +47,7 @@ fn spawn_login(home: &Path, sub: &str, url: &str) -> Child {
     crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args([sub, url])
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .env_remove("VELT_REGISTRY_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

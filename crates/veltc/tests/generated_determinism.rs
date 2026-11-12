@@ -26,6 +26,7 @@ fn build_once() -> (Vec<(String, Vec<u8>)>, Vec<u8>) {
         .arg(program())
         .args(["--emit", "vir"])
         .env("VELT_HOME", tmp.path().join("home"))
+        .env("VELT_REGISTRY", tmp.path().join("home").join("registry"))
         .env("VELT_BUILD_CACHE", "off")
         .env("VELT_BUILD_STAMP", "off")
         .env("VELT_EMIT_GENERATED", &generated)

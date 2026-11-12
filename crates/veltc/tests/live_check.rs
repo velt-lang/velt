@@ -23,6 +23,7 @@ fn build(dir: &Path, args: &[&str], check: &str) -> Vec<u8> {
         .args(["--emit", "vir"])
         .env("VELT_LIVE_CHECK", check)
         .env("VELT_HOME", home.path())
+        .env("VELT_REGISTRY", home.path().join("registry"))
         .env("VELT_BUILD_CACHE", "off")
         .env("VELT_BUILD_STAMP", "off")
         .output()

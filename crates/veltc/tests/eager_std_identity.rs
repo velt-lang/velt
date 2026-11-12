@@ -62,6 +62,7 @@ fn vir(file: &Path, home: &Path, eager: bool) -> (bool, Vec<u8>, Vec<u8>) {
         .arg(file)
         .args(["--emit", "vir"])
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .env("VELT_BUILD_CACHE", "off")
         .env("VELT_BUILD_STAMP", "off");
     match eager {
@@ -322,6 +323,7 @@ fn a_module_with_every_kind_of_item_collects_in_the_check_as_up_front() {
             .args(["--emit", "vir"])
             .env("VELT_STD", &std)
             .env("VELT_HOME", tmp.path().join("home"))
+            .env("VELT_REGISTRY", tmp.path().join("home").join("registry"))
             .env("VELT_BUILD_CACHE", "off")
             .env("VELT_BUILD_STAMP", "off");
         if eager {
@@ -346,6 +348,7 @@ fn a_module_with_every_kind_of_item_collects_in_the_check_as_up_front() {
         .current_dir(tmp.path())
         .env("VELT_STD", &std)
         .env("VELT_HOME", tmp.path().join("home"))
+        .env("VELT_REGISTRY", tmp.path().join("home").join("registry"))
         .env("VELT_BUILD_CACHE", "off")
         .env("VELT_BUILD_STAMP", "off")
         .output()
@@ -430,6 +433,7 @@ fn velt_with_std(std: &Path, dir: &Path) -> std::process::Command {
     c.current_dir(dir)
         .env("VELT_STD", std)
         .env("VELT_HOME", dir.join("home"))
+        .env("VELT_REGISTRY", dir.join("home").join("registry"))
         .env("VELT_BUILD_CACHE", "off")
         .env("VELT_BUILD_STAMP", "off")
         .env_remove("VELT_EAGER_STD");

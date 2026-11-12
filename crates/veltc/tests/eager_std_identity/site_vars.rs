@@ -145,6 +145,7 @@ fn vir(file: &Path, home: &Path, mode: Mode) -> (bool, String, usize) {
         .args(["--emit", "vir"])
         .current_dir(file.parent().unwrap())
         .env("VELT_HOME", home)
+        .env("VELT_REGISTRY", home.join("registry"))
         .env("VELT_BUILD_CACHE", "off")
         .env("VELT_BUILD_STAMP", "off")
         .env("VELT_SEMA_TIMINGS", "1");
