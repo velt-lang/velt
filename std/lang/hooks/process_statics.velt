@@ -1,0 +1,12 @@
+// velt/lang/hooks (internal): the process-wide statics the runtime reads and writes (#2779), each
+// named by velt_common's `std_hooks.rs` (a `process_static` entry). Each is a static atomic: one
+// word of the program's data, no module state. `velt_main` hands the runtime their addresses
+// first thing (`velt_rt_statics`, rt_abi.md "Process statics"), so the word is Velt's and the
+// runtime only uses it.
+
+/**
+ * The epoch of the runtime's cache of the last position translation per thread (`velt_rt`
+ * `str/recent.rs`): bumped when a string buffer the cache may remember is freed or moved, which
+ * makes every remembered heap position stale.
+ */
+export const STR_EPOCH = new Atomic<u64>(0);

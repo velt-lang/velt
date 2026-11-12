@@ -76,6 +76,8 @@ pub mod proxy_array;
 #[path = "../../velt_rt/src/result.rs"]
 pub mod result;
 pub mod shared;
+#[path = "../../velt_rt/src/statics.rs"]
+pub mod statics;
 #[path = "../../velt_rt/src/str/mod.rs"]
 pub mod str;
 #[path = "../../velt_rt/src/str_array.rs"]

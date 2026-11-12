@@ -48,6 +48,13 @@ fn seed_std(cx: &mut Ctx, from: usize) {
         .filter(|h| h.lowered && h.constructs.is_empty())
     {
         if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
+            // A process static (#2779): `velt_main` hands the runtime its address in every
+            // program, so it is checked in every program. Checked, not live: its `Atomic<u64>`
+            // is no construct of the program's (no integer hook for it).
+            if matches!(h.sig, velt_common::hook_sig::Sig::ProcessStatic) {
+                super::super::check_found(cx, d);
+                continue;
+            }
             hooks.insert(d);
             if h.fallback || super::super::RECORD_HOOKS.contains(&h.qualified().as_str()) {
                 cx.lazy.live.waiting.insert(d);

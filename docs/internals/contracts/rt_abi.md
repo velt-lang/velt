@@ -656,18 +656,36 @@ the same block, still initialized up to `s`, with the lock still held. The compi
 instead of calling again (`velt_opt` `module_state`, #1571), so a runtime change must keep this
 [additive, #1571].
 
-## Static atomics at exit [additive]
+## Process statics [#2779; replaces `velt_rt_statics_drop`]
 
 ```c
-void velt_rt_statics_drop(void (*f)(void));
+typedef struct {
+    uint64_t size;        // bytes of the table; the runtime reads only the slots it covers
+    uint64_t drop;        // address of: void (*)(void), releasing the static atomics' references; or 0
+    uint64_t str_epoch;   // address of: _Atomic uint64_t, std's STR_EPOCH; or 0
+} VeltStatics;            // later slots are appended: an older table has a smaller size
+void velt_rt_statics(const VeltStatics *t);
 ```
 
-A program with static atomics holding a reference (a module `const X = new Atomic<shared<T> |
-null>(null)`, hir_encodings.md "Static atomics") calls it from `velt_main` before returning,
-with a generated function that releases the reference each such word holds and stores null
-into it. The runtime calls `f` once at exit, after dropping the module state, and only when it
-drops the module state (the leak counters of the debug runtime, `VELT_RC_STATS=1`; § Module
-state). The WebAssembly runtime ignores it.
+Each address takes an 8-byte slot on every target: on wasm32 it is the slot's first half, the
+second half zero (as in the symbol registry's table), so the layout is the same everywhere
+(`velt_rt` `statics.rs` asserts the offsets).
+
+`velt_main` calls it first thing, before anything can free a string, with a read-only table in
+the program's data. No call when every field would be NULL.
+
+- `drop`: in a program with static atomics holding a reference (a module `const X = new
+  Atomic<shared<T> | null>(null)`, hir_encodings.md "Static atomics"), a generated function that
+  releases the reference each such word holds and stores null into it. The runtime calls it once
+  at exit, after dropping the module state, and only when it drops the module state (the leak
+  counters of the debug runtime, `VELT_RC_STATS=1`; § Module state). The WebAssembly runtime
+  ignores it.
+- `str_epoch`: std's process static `STR_EPOCH` (velt_common `std_hooks.rs` `str_epoch`, a
+  `process_static` entry; std/lang/hooks/process_statics.velt), the epoch of the per-thread
+  position cache (`velt_rt` `str/recent.rs`). The runtime raises it above every epoch it gave out
+  before and uses it from then on: it bumps the word when a buffer the cache may remember is freed
+  or moved. The word is Velt's, so the runtime needs no symbol of the program (the shared runtime
+  of debug builds is linked before the program exists).
 
 ## Array length limit [additive, #1572]
 

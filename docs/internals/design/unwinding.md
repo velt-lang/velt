@@ -432,7 +432,7 @@ code), or the design states why no Velt panic can pass it:
 - `DataFn`, `TransferFn` and `DropFn` in `velt_rt/src/fn_props.rs`;
 - `WorkFn` and `DropCtxFn` in `velt_rt/src/native/mod.rs`;
 - `DropFn` in `velt_rt/src/transfer_map.rs` (the deferred releases `velt_rt_xfer_end` runs);
-- `velt_rt_statics_drop`'s function (`velt_rt/src/entry.rs`, run at exit);
+- the drop function of `velt_rt_statics`'s table (`velt_rt/src/entry.rs`, run at exit);
 - the entry chain above `velt_main` (`main`, `velt_rt_start`, `run_main`'s `program`): only a
   raise nobody claims reaches it, which the count rules out outside the hole.
 

@@ -1,0 +1,28 @@
+// velt/lang/hooks (tests): the process statics (#2779), run by `velt test std/`: the runtime uses
+// std's word, which `velt_main` handed it, and bumps it.
+import { describe, expect, it } from "velt/test";
+import { STR_EPOCH } from "velt/lang/hooks/process_statics";
+
+/** A string of `n` copies of `piece`, built at run time (a heap string). */
+function built(piece: string, n: i64): string {
+  let s = "";
+  for (let i: i64 = 0; i < n; i++) {
+    s += piece;
+  }
+  return s;
+}
+
+/** Reads a position in the middle of a long string that is not ASCII (so the runtime translates
+ * it and remembers the string), then lets the string go. */
+function translateAndFree(): i64 {
+  const s = built("é日😀a", 100);
+  return s.charCodeAt(250);
+}
+
+describe("STR_EPOCH", () => {
+  it("is the epoch the runtime bumps when a remembered string is freed", () => {
+    const before = STR_EPOCH.load();
+    expect(translateAndFree()).toBe(233);
+    expect(STR_EPOCH.load() > before).toBe(true);
+  });
+});

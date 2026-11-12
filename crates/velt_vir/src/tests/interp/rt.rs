@@ -137,7 +137,11 @@ impl Interp<'_> {
                 self.new_str(a[1], if a[0] & 1 == 1 { b"true" } else { b"false" })
             }
             "velt_rt_str_clone" | "velt_rt_str_own" => self.str_clone(a[0], a[1]),
-            "velt_rt_statics_drop" => self.statics_drop = Some(a[0]),
+            "velt_rt_statics" => {
+                // The table's drop function, if its size covers it and it is set.
+                let drop = (self.read_u64(a[0]) >= 16).then(|| self.read_u64(a[0] + 8));
+                self.statics_drop = drop.filter(|f| *f != 0);
+            }
             "velt_rt_str_drop" => {
                 if let Some(p) = self.str_heap(a[0]) {
                     self.heap_free(p);

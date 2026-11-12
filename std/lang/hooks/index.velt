@@ -20,6 +20,7 @@ import "./iter";
 import "./keys";
 import "./number";
 import "./process";
+import "./process_statics";
 import "./record";
 import "./string";
 import "./syntax";

@@ -53,6 +53,9 @@ pub enum Sig {
     /// A `declare decorator function` the compiler acts on where it is used (`@inline`): its
     /// declaration says what it takes and where it applies, so the table gives no signature.
     Decorator,
+    /// A process static (#2779): a module constant `new Atomic<u64>(0)` whose word the runtime
+    /// reads and writes, given its address at start (`velt_rt_statics`).
+    ProcessStatic,
 }
 
 /// A function hook's signature.
@@ -214,6 +217,7 @@ impl fmt::Display for Sig {
             Sig::Fn(s) => s,
             Sig::Class => return f.write_str("class"),
             Sig::Decorator => return f.write_str("decorator"),
+            Sig::ProcessStatic => return f.write_str("process_static"),
         };
         if s.generics > 0 {
             let names: Vec<String> = (0..s.generics).map(|i| T::Param(i).to_string()).collect();
@@ -243,6 +247,9 @@ macro_rules! hook_sig {
     };
     (decorator) => {
         $crate::hook_sig::Sig::Decorator
+    };
+    (process_static) => {
+        $crate::hook_sig::Sig::ProcessStatic
     };
     (sig(< $($g:ident),* > ( $($p:tt)* ) -> $r:tt $(($($ra:tt)*))? $(throws $e:tt $(($($ea:tt)*))?)?)) => {
         $crate::hook_sig::Sig::Fn($crate::hook_sig::FnSig {

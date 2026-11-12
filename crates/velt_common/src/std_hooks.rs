@@ -260,6 +260,13 @@ hooks! {
     float_push => lang_hooks_number_float, "floatPush", sig((&mut string, f64) -> void), lowered, fallback,
         replaces("velt_rt_strbuf_push_f64"), bench("float_to_string");
 
+    // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
+    // `velt_main` hands it first thing (`velt_rt_statics`).
+    /// The epoch of the runtime's cache of the last position translation (`velt_rt`
+    /// `str/recent.rs`): bumped by the runtime when a string buffer it may have remembered is
+    /// freed or moved.
+    str_epoch => lang_hooks_process_statics, "STR_EPOCH", process_static, lowered;
+
     // process.velt: the builtin `process` namespace (`velt_sema` `process.rs`).
     /// `process.stdout.write(s)` / `process.stderr.write(s)`.
     process_write => lang_hooks_process, "processWrite", sig((u32, &string) -> bool);

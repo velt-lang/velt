@@ -189,7 +189,8 @@ where LLVM would reload them after every acquire, fence or call (see "Frozen fie
   per constant, so a swap keeps its value. `new Atomic<shared<T> | null>(null)` is one too, and
   its word owns the reference it holds: as the runtime drops the module state at exit for the
   leak counters (`VELT_RC_STATS=1`), it calls a function `velt_main` handed it
-  (`velt_rt_statics_drop`, velt_vir `lower/static_atomic.rs`) that releases those references.
+  (in the table of `velt_rt_statics`, velt_vir `lower/static_atomic.rs`) that releases those
+  references.
 - ``` `Atomic<T>` needs a number type, `bool`, `string` or a `shared` value, found `string | null` ```
   (a type parameter too: the instruction depends on the type).
 - `mismatched types` for an ordering the operation cannot have (``expected "relaxed" | "acquire"

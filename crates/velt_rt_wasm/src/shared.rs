@@ -31,10 +31,20 @@ pub extern "C" fn velt_rt_module_with() -> u8 {
 #[no_mangle]
 pub extern "C" fn velt_rt_module_with_end(_took: u8) {}
 
-/// `velt_rt_statics_drop`: the WebAssembly runtime has no leak counters, so nothing is dropped
-/// at exit.
+/// `velt_rt_statics` (rt_abi.md "Process statics"): the WebAssembly runtime has no leak counters,
+/// so the drop function goes unused; the position cache takes std's epoch as the native runtime's
+/// does.
+///
+/// # Safety
+/// As `velt_rt`'s: `t` is a table laid out as `Statics`, its addresses living as long as the
+/// process.
 #[no_mangle]
-pub extern "C" fn velt_rt_statics_drop(_f: extern "C" fn()) {}
+pub unsafe extern "C" fn velt_rt_statics(t: *const crate::statics::Statics) {
+    let (_, epoch) = crate::statics::fields(t);
+    if !epoch.is_null() {
+        crate::str::use_epoch(epoch);
+    }
+}
 
 /// Initialize the 8-byte lock word at `p` (unlocked).
 #[no_mangle]
