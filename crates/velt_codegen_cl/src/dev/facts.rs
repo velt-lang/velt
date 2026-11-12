@@ -113,7 +113,9 @@ impl Facts {
 }
 
 /// The module state of `program`: its descriptor is the static every function reaching the
-/// block passes to `velt_rt_module_state`.
+/// block passes to `velt_rt_module_state`, or under the executor in Velt (`VELT_SCHEDULER=std`)
+/// to its std hooks instead (sched_module.velt: `schedModuleState`, `schedModuleBlock`), which
+/// take it cast to a `usize`.
 fn module_state(program: &Program, canon: &Canon) -> Option<ModuleState> {
     // `velt_rt_module_state(desc, slot)` for a slot, `velt_rt_module_block(desc)` for the block.
     let reaches = |e: usize| {
@@ -121,6 +123,11 @@ fn module_state(program: &Program, canon: &Canon) -> Option<ModuleState> {
             e.symbol == "velt_rt_module_state" || e.symbol == "velt_rt_module_block"
         })
     };
+    let hooks = [
+        velt_vir::mangle::mangle(velt_common::std_hook!(sched_module_state)),
+        velt_vir::mangle::mangle(velt_common::std_hook!(sched_module_block)),
+    ];
+    let hook = |f: usize| (program.funcs.get(f)).is_some_and(|f| hooks.contains(&f.symbol));
     let mut desc = None;
     let mut users = vec![];
     for func in &program.funcs {
@@ -133,6 +140,11 @@ fn module_state(program: &Program, canon: &Canon) -> Option<ModuleState> {
                 Some(Operand::Const(Const::Static(s), _)) => Some(*s),
                 _ => None,
             },
+            Terminator::Call {
+                callee: Callee::Func(f),
+                args,
+                ..
+            } if hook(f.0 as usize) => args.first().and_then(|a| cast_static(func, a)),
             _ => None,
         });
         if let Some(s) = passed {
@@ -171,6 +183,23 @@ fn module_state(program: &Program, canon: &Canon) -> Option<ModuleState> {
         users,
         layout,
     })
+}
+
+/// The static `arg` holds when it is a local `func` assigns a static's address cast to an
+/// integer (`desc as usize`, how module state passes its descriptor to the std hooks).
+fn cast_static(func: &Function, arg: &Operand) -> Option<StaticId> {
+    let Operand::Copy(p) = arg else {
+        return None;
+    };
+    func.blocks
+        .iter()
+        .flat_map(|b| &b.stmts)
+        .find_map(|s| match s {
+            Stmt::Assign(to, Rvalue::Cast(Operand::Const(Const::Static(s), _), _)) if to == p => {
+                Some(*s)
+            }
+            _ => None,
+        })
 }
 
 /// The aggregate `func` reads or writes its first parameter (the block) as.
