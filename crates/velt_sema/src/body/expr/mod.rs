@@ -241,6 +241,7 @@ mod union_view;
 mod unique_symbol_eq;
 pub(crate) mod virtual_defaults;
 mod widen_fresh;
+pub(crate) mod widening_consts;
 mod written_order;
 
 use velt_common::Span;
@@ -300,6 +301,9 @@ impl FnCx<'_, '_> {
             true => self.unbrand_instance(h),
             false => h,
         };
+        if self.logical_lhs.last() == Some(&e.span) {
+            self.logical_lhs_tys.insert(e.span, h.ty);
+        }
         if want == Want::Move {
             // `const t = (K ?? d)!`, `K!.a`, `N.a`: what a module constant gives taken over.
             self.per_use_taken(e, h.ty);
@@ -346,6 +350,14 @@ impl FnCx<'_, '_> {
                 self.error_expr(span)
             }
             A::Unary { op, expr } => self.unary(*op, expr, exp, span),
+            A::Binary { op, lhs, rhs }
+                if matches!(op, ast::BinaryOp::Or | ast::BinaryOp::Nullish) =>
+            {
+                self.logical_lhs.push(lhs.span);
+                let h = self.binary(*op, lhs, rhs, exp, span);
+                self.logical_lhs.pop();
+                h
+            }
             A::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, exp, span),
             A::Assign {
                 op: Some(op),
@@ -399,7 +411,10 @@ impl FnCx<'_, '_> {
                 args,
                 optional,
             } => {
+                let outer = std::mem::take(&mut self.fresh_call);
                 let call = self.call(callee, type_args, args, *optional, exp, span);
+                let inferred = std::mem::replace(&mut self.fresh_call, outer);
+                self.note_widening_call(e, callee, inferred && type_args.is_empty());
                 self.predicate_checked(call, span)
             }
             A::New { class, args } => self.new_expr(class, args, exp, span),

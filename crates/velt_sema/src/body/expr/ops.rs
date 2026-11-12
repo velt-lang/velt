@@ -466,12 +466,7 @@ impl FnCx<'_, '_> {
             },
             _ => (self.record_operand(l), self.record_operand(r)),
         };
-        // Literal types take part in operators as their base type (`c.kind + "!"`).
-        let (l, r) = if l.ty != r.ty || self.cx.lit_value(l.ty).is_some() {
-            (self.widen_value(l), self.widen_value(r))
-        } else {
-            (l, r)
-        };
+        let (l, r) = self.literal_operand_bases(op, l, r);
         // `"k" + n`: the number is written as `String(n)` writes it.
         let s = self.cx.ty.str_;
         if op == B::Add

@@ -99,16 +99,29 @@ fn findings_in_the_folders_come_live_with_their_fix() {
 fn typed_findings_come_live() {
     let tmp = package();
     let mut client = Client::start();
-    let text = "export function half(x: 1 | 3): string {\n  return `${x / 2}`;\n}\n";
-    let doc = uri_in(&tmp, "shared/lookup.ts");
+    // Integer division needs declared integers: a union of integer literal types divides as
+    // numbers (#2686). Each `i64` is a finding of its own (`velt-number-type`).
+    let text = "export function pages(items: i64, per: i64): i64 {\n  return items / per;\n}\n";
+    let division = |diags: &[Value]| {
+        let found = sources(diags);
+        found
+            .iter()
+            .filter(|s| **s == ts_compat("int-division"))
+            .count()
+    };
+    let doc = uri_in(&tmp, "shared/lookup.velt");
     client.open(&doc, text);
     let diags = published(&mut client, &doc);
-    assert_eq!(sources(&diags), [ts_compat("int-division")]);
-    let offered = actions(&mut client, &doc, text, "x / 2", &diags);
-    let fixed = apply(text, find(&offered, "divide as numbers: `as number`"), &doc);
-    assert!(fixed.contains("return `${(x as number) / 2}`;"), "{fixed}");
+    assert_eq!(division(&diags), 1, "{diags:?}");
+    let offered = actions(&mut client, &doc, text, "items / per", &diags);
+    let fixed = apply(
+        text,
+        find(&offered, "truncate with `Math.trunc` in both languages"),
+        &doc,
+    );
+    assert!(fixed.contains("return Math.trunc(items / per);"), "{fixed}");
     client.change(&doc, 2, &fixed);
-    assert_eq!(published(&mut client, &doc), [] as [Value; 0]);
+    assert_eq!(division(&published(&mut client, &doc)), 0);
 
     client.change(
         &doc,

@@ -1,0 +1,21 @@
+// A number literal type (`1 | 2`) is a JS number in arithmetic: `a / b` divides as numbers do,
+// not as integers, as in Node (#2686).
+type D = 1 | 2;
+function f(a: D, b: D) {
+  return a / b;
+}
+function g(a: 1 | 2 | 4, b: 1 | 2 | 4) {
+  return [a / b, a % b, (a + b) / 4, a - b, a * b, a ** b];
+}
+console.log(f(1, 2), g(1, 4).join());
+const c = Math.random() > 2;
+const x: D = c ? 2 : 1;
+const y: D = 2;
+console.log(x / y, x / 4, x < y);
+function k(a: "a" | "b", b: "a" | "b") {
+  return a < b;
+}
+function m(a: true | false, b: boolean) {
+  return a === b;
+}
+console.log(k("a", "b"), m(true, true));

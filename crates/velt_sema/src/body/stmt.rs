@@ -490,7 +490,7 @@ impl FnCx<'_, '_> {
                         (v.ty.as_ref()).and_then(|w| self.cx.site_in(w.span, t).or(Some(w.span)));
                     self.stored_into(site, |s| s.expr_coerce(e, t, Want::Move))
                 }
-                None => self.copy_init(e, name, Want::Move),
+                None => self.untyped_init(v, e, name),
             }),
         };
         // `let x: T;` that a closure assigns: a `T | undefined` underneath (`late_let_read`).

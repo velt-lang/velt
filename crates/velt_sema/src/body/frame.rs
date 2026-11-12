@@ -198,6 +198,13 @@ pub(crate) struct Frame {
     /// `const k = "a"` without a type: the literal each such local holds, which a `case k:`
     /// selects like the literal itself (TypeScript gives the constant the literal type).
     pub const_lits: FxHashMap<LocalId, velt_syntax::ast::SignedLit>,
+    /// `const a = c ? "x" : "y"`: constants of widening literal types (`widening_consts`).
+    pub widening_consts: rustc_hash::FxHashSet<LocalId>,
+    /// An arrow's expression body gives a value of widening literal types (1), or a function
+    /// whose calls give one (2 and up; `widening_consts::FnCx::fresh_depth`).
+    pub widening_result: u8,
+    /// `const f = () => a` of such an arrow, by depth: a call `f()` gives widening literals too.
+    pub widening_fn_locals: FxHashMap<LocalId, u8>,
     /// Generated code's `const` locals initialized by an object or struct literal (also
     /// `__construct<T>(…)`): values it is building, whose readonly fields it may set.
     pub built_locals: rustc_hash::FxHashSet<LocalId>,
@@ -306,6 +313,9 @@ impl Frame {
             checked_predicates: FxHashMap::default(),
             truthy_returns: false,
             const_lits: FxHashMap::default(),
+            widening_consts: Default::default(),
+            widening_result: 0,
+            widening_fn_locals: Default::default(),
             built_locals: Default::default(),
             regex_consts: FxHashMap::default(),
             untyped_lets: FxHashMap::default(),

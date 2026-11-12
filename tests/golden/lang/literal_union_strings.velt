@@ -1,0 +1,39 @@
+// A string literal union (a `const`'s `c ? "x" : "y"`, its `as const` form, a parameter's
+// `"pq" | "rs"`) is a string to `for...of`, indexing (also `m?.[0]`), spreading, `Array.from`,
+// `new Set` and array destructuring, and to a generic `T extends string` that concatenates it
+// (#2686).
+const c = Math.random() > 2;
+const a1 = c ? "x" : "y";
+const a2 = c ? ("xy" as const) : ("zw" as const);
+for (const ch of a1) console.log(ch);
+console.log(a1[0], [...a1].length);
+for (const ch of a2) console.log(ch);
+console.log(a2[1], [...a2].join("-"));
+function f(m: "pq" | "rs") {
+  for (const ch of m) console.log(ch);
+  return m[0] + [...m].length;
+}
+console.log(f("rs"));
+function g<T extends string>(x: T) {
+  return x + "!";
+}
+const s: string = g(a1);
+console.log(s, g(a2), f("pq"));
+function h(m: "x" | "y") {
+  return g(m);
+}
+console.log(h("y"));
+function first(m?: "pq" | "rs") {
+  return m?.[0];
+}
+console.log(first("rs"), first());
+const s2 = c ? "ab" : "cd";
+console.log(Array.from(s2).length, Array.from(s2, (ch) => ch + ch).join(), new Set(s2).size);
+const [h0, h1] = s2;
+const [p0, ...ps] = a2;
+console.log(h0, h1, p0, ps.join(), new Map([[s2, 1]]).get("cd"));
+function chars(m: "pq" | "rs") {
+  const [x0, x1] = m;
+  return [...new Set(m)].join("") + Array.from(m).length + x0 + x1;
+}
+console.log(chars("pq"));

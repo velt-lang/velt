@@ -1,0 +1,81 @@
+// A call gives the widening literals of `const a1 = c ? "x" : "y"` back whatever its callee's
+// form (a method, a static method, an IIFE, a curried call, a generic result inferred inside an
+// object literal, an optional result, an awaited async arrow), so a `let` taken from one is a
+// `string`, as in TypeScript; `Promise.resolve` widens its `T` (#2686). Values that are not
+// widening keep their union.
+class B {
+  id<T>(x: T): T {
+    return x;
+  }
+  static sid<T>(x: T): T {
+    return x;
+  }
+}
+type Box<T> = { v: T };
+function unbox<T>(b: Box<T>): T {
+  return b.v;
+}
+type K = { kind: "x" | "y" | "z" };
+function useK<T extends K>(k: T): T {
+  return k;
+}
+function opt<T>(x: T): T | undefined {
+  return x;
+}
+const c = Math.random() > 2;
+const a1 = c ? "x" : "y";
+let m1 = new B().id(a1);
+m1 = "o1";
+let m2 = B.sid(a1);
+m2 = "o2";
+let m3 = (() => a1)();
+m3 = "o3";
+const mnested = () => () => a1;
+let m4 = mnested()();
+m4 = "o4";
+let m5 = unbox({ v: a1 });
+m5 = "o5";
+console.log(m1, m2, m3, m4, m5);
+Promise.resolve(a1).then((v) => {
+  let w = v;
+  w = "o6";
+  console.log(w);
+});
+function main() {
+  const a2 = c ? "x" : "y";
+  let w1 = new B().id(a2);
+  w1 = "p1";
+  let w2 = B.sid(a2);
+  w2 = "p2";
+  let w3 = (() => a2)();
+  w3 = "p3";
+  const nested = () => () => a2;
+  let w4 = nested()();
+  w4 = "p4";
+  let w5 = unbox({ v: a2 });
+  w5 = "p5";
+  const inner = nested();
+  let w6 = inner();
+  w6 = "p6";
+  console.log(w1, w2, w3, w4, w5, w6);
+  Promise.resolve(a2).then((v) => {
+    let w = v;
+    w = "p7";
+    console.log(w);
+  });
+  const typed: "x" | "y" = a2;
+  const k1 = new B().id(typed);
+  const k2: "x" | "y" = k1;
+  const k3: "x" | "y" = (() => typed)();
+  console.log(k2, k3, useK(({ kind: a2 })).kind, useK({ kind: a2 }).kind);
+  let o1 = opt(a2);
+  o1 = "p8";
+  console.log(o1);
+}
+main();
+async function later() {
+  let w = await (async () => a1)();
+  w = "o9";
+  console.log(w);
+}
+later();

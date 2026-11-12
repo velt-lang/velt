@@ -46,7 +46,15 @@ impl FnCx<'_, '_> {
             true => self.any_ty(),
             false => any,
         };
-        self.prop_value(name, value, any)
+        // `{ m: a }` (or `{ a }`) of a value of widening literals: a `string` field, unless
+        // under `as const`.
+        let h = self.prop_value(name, value, any);
+        match (any, value) {
+            _ if self.in_as_const => h,
+            (None, Some(v)) => self.widened_ref(v, h),
+            (None, None) if self.widening_name(name) => self.widen_value(h),
+            _ => h,
+        }
     }
 
     /// The generic function of this module's scope (not a local) `id` names.

@@ -128,7 +128,7 @@ fn runnable_samples() -> Vec<(String, String)> {
 /// floor is also checked in every pull request (`enough_behaviour_samples_run`): a change that
 /// drops samples (a lint rule removed, a `main` renamed) lowers it in the same pull request
 /// instead of turning the nightly red.
-const MIN_RUNNABLE_SAMPLES: usize = 4;
+const MIN_RUNNABLE_SAMPLES: usize = 3;
 
 #[test]
 fn enough_behaviour_samples_run() {

@@ -342,6 +342,7 @@ impl FnCx<'_, '_> {
         let it = self.receiver_expr(iter);
         let it = self.record_present_iter(it, iter, "");
         let it = self.unbrand(it);
+        let it = self.widen_str_literals(it);
         // `for (const x of s)` over a `shared<T>`: the value inside (#36), whatever it iterates
         // (an array, a string, a `Map`, a `Set`, a typed array).
         let it = match *self.cx.ty.kind(it.ty) {

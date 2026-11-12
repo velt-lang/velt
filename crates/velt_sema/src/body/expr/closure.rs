@@ -377,6 +377,9 @@ impl FnCx<'_, '_> {
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
         let frame = std::mem::replace(&mut self.f, parent);
+        if frame.widening_result > 0 {
+            (self.cx.widening_values).insert(span, frame.widening_result.saturating_add(1));
+        }
         self.finish_trap(&frame);
         // Reads outside the body's statements (an expression body) check at its start.
         let late = self.late_check_stmts(frame.late.checks.clone(), span);
@@ -508,7 +511,12 @@ impl FnCx<'_, '_> {
                         self.expr_stmt(void_op(e).unwrap_or(e))
                     }
                     Some(r) => self.returned(e, r),
-                    None => self.expr(e, None, Want::Move),
+                    // `() => a` of a constant of widening literals: so is a call's result.
+                    None => {
+                        let h = self.expr(e, None, Want::Move);
+                        self.f.widening_result = self.fresh_depth(e);
+                        h
+                    }
                 };
                 let h = match (self.f.ret, self.promise_value(h.ty)) {
                     // An async arrow giving a promise: its result is the promise's value.

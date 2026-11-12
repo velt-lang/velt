@@ -1,0 +1,17 @@
+// Operators take a union of literals a `const` keeps (`"\"" | "'"`) as its base type, as in
+// TypeScript: `q + q` concatenates (packages/sqlite's printf), `<` compares the strings and
+// `===` compares the values (#2686).
+const c = Math.random() > 2;
+const q = c ? "\"" : "'";
+const r = c ? "a" : "b";
+let acc = "";
+acc += q;
+acc += q + r;
+console.log(q + q, q + r, ["a", "b"].join(q + q), "x" + q, q + 1, q < r, q >= q);
+console.log(`${q}${r}`, q.length, acc, r + q + r);
+function main() {
+  const k = c ? "k" : "j";
+  const n = k + k;
+  console.log(n, k < k, k === "j", k !== k, (k + "!").length);
+}
+main();

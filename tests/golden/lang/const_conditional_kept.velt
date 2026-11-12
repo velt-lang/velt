@@ -1,0 +1,45 @@
+// Where TypeScript keeps the literals a `const` keeps from a conditional (#2686): a generic
+// call that gives its argument back (`id`, `first`, `opt`: the type parameter is at the top
+// level of the result), `as const`, an object literal checked against a constrained type
+// parameter, and an arrow's result inferred for a type parameter (`map`). A module constant
+// read from a function keeps them too.
+function id<T>(x: T): T {
+  return x;
+}
+function first<T>(x: T, y: T): T {
+  return x;
+}
+function opt<T>(x: T | undefined): T | undefined {
+  return x;
+}
+type K = { kind: "x" | "y" };
+function useK<T extends K>(o: T): T {
+  return o;
+}
+function only(s: "x" | "y"): string {
+  return s;
+}
+const flag = Math.random() > 2;
+const mode = flag ? "blocking" : "stream";
+const m2 = id(mode);
+function check(): "blocking" | "stream" {
+  return m2;
+}
+function main() {
+  const c = Math.random() > 2;
+  const a1 = c ? "x" : "y";
+  const r = id(a1);
+  const t: "x" | "y" = r;
+  const t2: "x" | "y" = id(a1);
+  const t3: "x" | "y" = first(a1, a1);
+  const t4: "x" | "y" | undefined = opt(a1);
+  const o = { m: a1 } as const;
+  const t5: "x" | "y" = o.m;
+  const k = useK({ kind: a1 });
+  const t6: "x" | "y" = k.kind;
+  const l = ["q"].map(() => a1);
+  const t7: ("x" | "y")[] = l;
+  const b = a1!;
+  console.log(t, t2, t3, t4, t5, t6, t7.join(), only(b), only(id(a1)), check());
+}
+main();

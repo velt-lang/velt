@@ -1,0 +1,3 @@
+const_conditional_non_widening.velt:12:8: error: mismatched types
+const_conditional_non_widening.velt:14:8: error: mismatched types
+const_conditional_non_widening.velt:16:8: error: mismatched types

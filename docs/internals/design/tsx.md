@@ -161,7 +161,7 @@ Accepted by `tsc`, but behaves differently:
 |---|---|---|---|
 | `declare-fn` | `declare function` (a `ReferenceError` in JS) | error | |
 | `jsx-pragma-comment` | `// @jsxImportSource x`: `tsc` reads the pragma only from a block comment and builds with the client's configured provider | error (a fix: `/** @jsxImportSource x */`) | |
-| `int-division` | `/` (and `/=`) whose operands have integer types: Velt truncates | error (a fix: `Math.trunc(a / b)`, or `(a as number) / 2` for integer literal types) | |
+| `int-division` | `/` (and `/=`) whose operands have declared integer types: Velt truncates | error (a fix: `Math.trunc(a / b)`) | |
 | `object-in-template` | `${x}` of a `Promise`: Velt prints it as `console.log` does, JavaScript as `[object Promise]` | error | |
 | `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | error (a fix: `(a, b) => a - b`, not for unsigned elements) | |
 | `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | error | |
@@ -197,15 +197,9 @@ Notes on the rules as built, against the issue's first design:
   `T | undefined` warns as always false, a `T | undefined` where a `T | null` is declared is
   TS2322), and a template prints `undefined` as JavaScript does.
 - `int-division` can only meet integer types that `velt-number-type` reports where they are
-  written (or that come from another shared file), and unions of integer literal types
-  (`(1 | 3)[]`, whose elements divide as integers). Its fix keeps Velt's quotient
-  (`Math.trunc(a / b)`) where both operands have integer types; an operand of integer literal
-  types divided by a number literal becomes `(a as number) / 2` (JavaScript's quotient), since
-  Velt rejects `Math.trunc` there (#462). That fix is offered only where the quotient goes
-  nowhere that declares an integer: not as the return value of a function returning one, the
-  initializer of a variable annotated with one, an argument for an integer parameter, an
-  integer field's value, nor in arithmetic or a comparison with any of those or with a declared
-  integer, where a fraction wouldn't fit. There it has no fix.
+  written (or that come from another shared file). Unions of integer literal types (`(1 | 3)[]`)
+  are JS numbers and divide as numbers do (#2686), so they are no finding. Its fix keeps Velt's
+  quotient (`Math.trunc(a / b)`) where both operands have integer types.
 - `object-in-template` reports only promises: every other value is written as JavaScript's
   `String(x)` writes it (#613), through a class's `toString()` (own or inherited, as
   `Error`'s `"Error: message"`), else `[object Object]`, or `[object Map]` for std's classes.
