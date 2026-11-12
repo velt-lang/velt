@@ -1,9 +1,12 @@
 // velt/lang/string (internal): tests of positions.velt and crumbs.velt (#2198), run by `velt test std/`:
 // every position of mixed strings against a plain scan from the start, in each form (inline,
 // static, heap, a slice), forward, backward and at random, across a freed and reused buffer (the
-// epoch), and with the runtime's own translation filling the same tables.
+// epoch), and with the runtime's own translation filling, extending and racing to build the same
+// tables.
 import { describe, expect, it } from "velt/test";
 import { strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { utf8Substring } from "velt/encoding";
+import { workerCount } from "velt/task";
 import { byteToUnit, unitToByte } from "velt/lang/string/positions";
 
 /** The position of unit `u` by a scan from the start: `byte << 1 | low half`. */
@@ -135,6 +138,68 @@ describe("unitToByte and byteToUnit", () => {
       }
     }
   });
+
+  it("extend a table both sides built as the string grows (copies and chains)", () => {
+    // A string translated after each append: its table, built by one side, is extended in place
+    // or replaced by a copy chaining the old one by the other.
+    let s = built("é日😀a", 20);
+    for (let round: i64 = 0; round < 40; round++) {
+      const last = strLen(s) - 1;
+      if (round % 2 == 0) {
+        expect(unitToByte(s, last)).toBe(plain(s, last));
+        const back = byteToUnit(s, strByteLen(s));
+        expect(back).toBe(strLen(s));
+      } else {
+        expect(s.charCodeAt(last as i64) >= 0).toBe(true);
+      }
+      s += built("😀é日b", 9 + round);
+    }
+    expect(check(s, 2)).toEqual([]);
+    expect(check(s, 3)).toEqual([]);
+  });
+
+  it(
+    "a slice made without a translation marks its buffer when a position in it is remembered",
+    () => {
+      // Byte-based slices (`utf8Substring`) of buffers of one size and two layouts: no translation
+      // of the buffer gives it a table, so only the slice's mark makes its free bump the epoch.
+      let last: usize = 32;
+      const wrong: string[] = [];
+      for (let round = 0; round < 60; round++) {
+        const parent = (round % 2 == 0 ? "😀a" : "aéé").repeat(80);
+        const s = utf8Substring(parent, 5, 305);
+        const u = last + 1;
+        if (unitToByte(s, u) != plain(s, u)) {
+          wrong.push(`round ${round}: unit ${u}`);
+        }
+        last = 3 * (((round * 7 + 20) % 30) as usize) + 2;
+        expect(unitToByte(s, last)).toBe(plain(s, last));
+      }
+      expect(wrong).toEqual([]);
+    },
+  );
+
+  it("build one string's table from both sides at once, on many strings", async () => {
+    // Each round, up to four tasks, each pinned to a worker of its own, meet at a barrier (each
+    // spins until all have arrived), then translate far units of a fresh string at once, half
+    // through the runtime and half through this module: the builds race, and copies lose the swap.
+    const racers = workerCount() < 4 ? (workerCount() as u64) : 4;
+    for (let round = 0; round < 200; round++) {
+      const s = built("é日😀a", 300 + round);
+      const arrived = shared(new Atomic<u64>(0));
+      const units = strLen(s);
+      const tasks: Promise<string>[] = [];
+      for (let k: u64 = 0; k < racers; k++) {
+        const u = units - 1 - (k as usize) * 70;
+        const worker = (k as i64) % workerCount();
+        tasks.push(spawn(racer(s, arrived, racers, (k % 2) as i64, u), { worker }));
+      }
+      for (const t of tasks) {
+        expect(await t).toBe("");
+      }
+      expect(check(s, 3)).toEqual([]);
+    }
+  });
 });
 
 /** The code units of `s`, from a copy of it with a buffer of its own (so no table is shared). */
@@ -164,4 +229,23 @@ async function runtimeSide(s: string, from: i64, codes: i64[]): Promise<string[]
 /** This module's translation of every unit of `s` in `order`: the mismatches. */
 async function veltSide(s: string, order: i64): Promise<string[]> {
   return check(s, order);
+}
+
+/** Waits at the barrier `arrived` until all `racers` are there (at most 20 ms: a worker may be
+ * busy elsewhere), then translates unit `u` of `s` through the runtime (`side` 0, its
+ * `charCodeAt`) or this module (1): the mismatch, or "". */
+async function racer(
+  s: string,
+  arrived: shared<Atomic<u64>>,
+  racers: u64,
+  side: i64,
+  u: usize,
+): Promise<string> {
+  arrived.add(1);
+  const until = performance.now() + 20;
+  while (arrived.load() < racers && performance.now() < until) {}
+  if (side == 0) {
+    return s.charCodeAt(u as i64) >= 0 ? "" : `runtime: unit ${u}`;
+  }
+  return unitToByte(s, u) == plain(s, u) ? "" : `velt: unit ${u}`;
 }
