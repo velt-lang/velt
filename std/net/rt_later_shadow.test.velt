@@ -16,6 +16,30 @@ import * as sh from "velt/net/rt_later_shadow";
 const RH: u64 = 0x7fff_0000_0000_0001;
 
 describe("velt/net rt_later shadows", () => {
+  it("every flag of a stream's flags word is a bit of its own", () => {
+    // The shadows' own flags share the word with the executor's (a flusher's F_POLLED once had
+    // F_FLUSHING's bit, so a launched batch read as no flusher running).
+    const flags: u32[] = [
+      io.F_DUE,
+      io.F_SHUT,
+      io.F_SHUT_DONE,
+      io.F_CLOSING,
+      io.F_ABORTED,
+      io.F_LISTENER,
+      io.F_PIPE,
+      io.F_RUNTIME,
+      io.F_FLUSHING,
+      io.F_POLLED,
+      io.F_NEXT_DONE,
+    ];
+    let seen: u32 = 0;
+    for (const f of flags) {
+      expect(f !== 0 && (f & (f - 1)) === 0).toBe(true);
+      expect(seen & f).toBe(0);
+      seen = seen | f;
+    }
+  });
+
   it("a shadow given up at the end of the program has nothing left to send", () => {
     const s = shadowOf(RH, true);
     expect(s !== 0).toBe(true);

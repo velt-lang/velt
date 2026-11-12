@@ -41,13 +41,6 @@ declare c("c") function velt_rt_tcp_write_range$rt(
   end: u64,
 ): Ptr<u8>;
 
-/**
- * A shadow's own flags: its flight was polled by its flusher (so it waits for the stream's turn
- * already); the write `close` made for the rest is done (counted once the flight before it is).
- */
-const F_POLLED: u32 = 256;
-const F_NEXT_DONE: u32 = 512;
-
 /** The most bytes one write hands over. */
 const MAX_BATCH: usize = 1 << 30;
 
@@ -134,7 +127,7 @@ function launchNext(s: usize, rh: u64): bool {
   const batch = n < MAX_BATCH ? n : MAX_BATCH;
   m.st(s + FLIGHT, launch(rh, m.ld(s + io.S_BUF) + m.ld(s + io.S_OFF), batch));
   m.st(s + FLIGHT_LEN, batch);
-  m.st32(s + io.S_FLAGS, fl & ~F_POLLED);
+  m.st32(s + io.S_FLAGS, fl & ~io.F_POLLED);
   return true;
 }
 
@@ -154,13 +147,13 @@ function settle(s: usize, st: IoStatus): void {
       m.st(s + NEXT, 0);
       m.st(s + FLIGHT, next);
       m.st(s + FLIGHT_LEN, m.ld(s + io.S_LEN));
-      m.st32(s + io.S_FLAGS, fl & ~F_POLLED);
-    } else if ((fl & F_NEXT_DONE) !== 0) {
+      m.st32(s + io.S_FLAGS, fl & ~io.F_POLLED);
+    } else if ((fl & io.F_NEXT_DONE) !== 0) {
       // The rest went out right after: written too.
       m.st(s + io.S_WRITTEN, m.ld(s + io.S_WRITTEN) + m.ld(s + io.S_LEN));
       m.st(s + io.S_OFF, 0);
       m.st(s + io.S_LEN, 0);
-      m.st32(s + io.S_FLAGS, fl & ~F_NEXT_DONE);
+      m.st32(s + io.S_FLAGS, fl & ~io.F_NEXT_DONE);
     }
     wt.wakeAll(s);
     return;
@@ -226,7 +219,7 @@ export function close(s: usize, rh: u64): void {
       if (m.ld(s + FLIGHT) === 0) {
         m.st(s + FLIGHT, f);
         m.st(s + FLIGHT_LEN, rest);
-        m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) & ~F_POLLED);
+        m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) & ~io.F_POLLED);
       } else {
         m.st(s + NEXT, f);
       }
@@ -249,9 +242,9 @@ export function close(s: usize, rh: u64): void {
 function prime(s: usize): void {
   // The executor's probe context (sched_end.velt `open`): its waker does nothing.
   const cx = t.main() + t.E_PROBE_CX;
-  while (m.ld(s + FLIGHT) !== 0 && (m.ld32(s + io.S_FLAGS) & F_POLLED) === 0) {
+  while (m.ld(s + FLIGHT) !== 0 && (m.ld32(s + io.S_FLAGS) & io.F_POLLED) === 0) {
     const f = m.ld(s + FLIGHT);
-    m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | F_POLLED);
+    m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_POLLED);
     // SAFETY: the shadow's live heap future, polled under its lock.
     if (unsafe { futPoll(f, cx) } === 0) {
       break;
@@ -276,7 +269,7 @@ function prime(s: usize): void {
       futDrop(next);
     }
     if (st.code === 0) {
-      m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | F_NEXT_DONE);
+      m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_NEXT_DONE);
     } else {
       fail(s, st);
     }
@@ -312,7 +305,7 @@ function flightPoll(g: usize, cx: usize): u32 {
     }
     return 1;
   }
-  m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | F_POLLED);
+  m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_POLLED);
   // SAFETY: the shadow's live heap future, polled under its lock by this task alone.
   const r = unsafe { futPoll(f, cx) };
   if (r !== 0) {

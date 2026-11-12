@@ -131,6 +131,14 @@ export const F_LISTENER: u32 = 32;
 export const F_PIPE: u32 = 64;
 export const F_RUNTIME: u32 = 128;
 export const F_FLUSHING: u32 = 256;
+/**
+ * A runtime stream's shadow (std/net/rt_later_flush.velt): its flight was polled by its flusher
+ * (so it waits for the stream's turn already); the write `close` made for the rest is done
+ * (counted once the flight before it is). Every flag of `S_FLAGS` is declared here, each its own
+ * bit (std/net/rt_later_shadow.test.velt checks that).
+ */
+export const F_POLLED: u32 = 512;
+export const F_NEXT_DONE: u32 = 1024;
 
 /**
  * What a waiter waits for: readable, writable (a connect), its bytes written (`arg`: the count
