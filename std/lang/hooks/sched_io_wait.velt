@@ -15,6 +15,7 @@ import { Ptr } from "velt/ffi/ptr";
 import { futDrop, futPoll, inline, noInline } from "velt/lang/intrinsics";
 import * as os from "#sched-os";
 import * as r from "#reactor";
+import * as bd from "./sched_budget";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
 import * as tb from "./sched_io_table";
@@ -161,9 +162,16 @@ export function waitPoll(f: usize, cx: usize): u32 {
     dropAlso(f);
     return 1;
   }
-  if (satisfied(s, m.ld32(f + W_KIND), m.ld(f + W_ARG)) || expired(f)) {
+  const kind = m.ld32(f + W_KIND);
+  if (satisfied(s, kind, m.ld(f + W_ARG)) || expired(f)) {
     unlinkLocked(f);
     tb.leave(s);
+    if (kind === io.K_READ && bd.spent()) {
+      // Readable, but the poll's budget is spent (sched_budget.velt): the task runs again
+      // behind what is queued, and this wait completes in its next poll.
+      m.wakeByRef(m.ld(cx + 8));
+      return 0;
+    }
     untime(f);
     dropAlso(f);
     return 1;
