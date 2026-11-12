@@ -86,6 +86,30 @@ async function main() {
     );
 }
 
+/// A program with module state runs its tasks on one worker (one lock, #2748), so its listener
+/// says one worker (std/net/tcp_sched.velt `listenerWorkers`), as the default executor's does.
+#[test]
+fn a_listener_of_a_program_with_module_state_says_one_worker() {
+    if !has_threads() {
+        return;
+    }
+    same_on_both(
+        "module_state_workers",
+        r#"import { listen } from "velt/net";
+
+let counter = 0;
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  counter++;
+  console.log(`workers ${l.workers()} ${counter}`);
+  l.close();
+}
+"#,
+        "workers 1 1\n",
+    );
+}
+
 /// A connection served on one worker moves to another mid-stream (its stream handed to a task
 /// pinned there): it keeps serving, its registration follows the task to that worker's reactor
 /// (#2370), and the client runs on a third worker.
