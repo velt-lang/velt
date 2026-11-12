@@ -57,7 +57,8 @@ pub enum DocFormat {
 /// `velt registry serve` arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegistryArgs {
-    /// Registry directory (`None`: the local registry, `$VELT_REGISTRY` / `~/.velt/registry`).
+    /// Registry directory (`None`: `$VELT_REGISTRY` when it is a directory, else
+    /// `$VELT_HOME/registry`; never the public registry).
     pub dir: Option<PathBuf>,
     /// Address to listen on.
     pub addr: String,
@@ -246,27 +247,28 @@ pub enum Command {
     },
     /// `velt search <text>`.
     Search { query: String, json: bool },
-    /// `velt login <registry-url> [--device | --token-stdin]`: sign in (through the browser, or
-    /// with a token read from stdin) and store the token for that registry.
+    /// `velt login [<registry-url>] [--device | --token-stdin]`: sign in (through the browser, or
+    /// with a token read from stdin) and store the token for that registry (`None`: the current
+    /// package's, as `velt publish` picks it).
     Login {
-        url: String,
+        url: Option<String>,
         how: registry::LoginHow,
     },
-    /// `velt logout <registry-url>`: forget the stored token of that registry.
-    Logout { url: String },
+    /// `velt logout [<registry-url>]`: forget the stored token of that registry.
+    Logout { url: Option<String> },
     /// `velt registry owner add|remove <pkg> <user> [--dir <d>]`: an administrator's change.
     RegistryOwner {
         add: bool,
         package: String,
         user: String,
-        /// Registry directory (`None`: the local registry).
+        /// Registry directory (`None`: as for [`RegistryArgs::dir`]).
         dir: Option<PathBuf>,
     },
     /// `velt registry user add|remove|token <name> [--dir <d>] [--open]`.
     RegistryUser {
         action: registry::UserAction,
         name: String,
-        /// Registry directory (`None`: the local registry).
+        /// Registry directory (`None`: as for [`RegistryArgs::dir`]).
         dir: Option<PathBuf>,
     },
     /// `velt target list|add|remove`: target packs for cross-compiling.

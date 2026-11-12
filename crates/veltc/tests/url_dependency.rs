@@ -14,7 +14,7 @@ fn velt(dir: &Path, home: &Path, args: &[&str]) -> Output {
         .args(args)
         .current_dir(dir)
         .env("VELT_HOME", home)
-        .env_remove("VELT_REGISTRY")
+        .env("VELT_REGISTRY", home.join("registry"))
         .output()
         .expect("run velt")
 }

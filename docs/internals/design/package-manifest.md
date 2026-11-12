@@ -199,7 +199,7 @@ So the language server treats `package.velt` as a **document kind of its own**:
    `true`/`false`); hover shows a field's doc. A test checks that `std/package/` declares the
    same fields.
 5. **Live registry data**, through `vpm` and the package's registry (`registry`,
-   `VELT_REGISTRY`, or the local one), fetched off the request thread and cached per session:
+   `VELT_REGISTRY`, or the public registry https://registry.veltpm.com), fetched off the request thread and cached per session:
    - completion of versions at `sqlite: "|"`: `^<newest>`, then every version that is not
      yanked, newest first (`"` triggers it);
    - hover on a dependency: the latest version, whether the requirement matches it, the locked

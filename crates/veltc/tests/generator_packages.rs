@@ -67,7 +67,7 @@ fn generators_come_from_packages() {
             .current_dir(cwd)
             .env("VELT_HOME", dir.join("home"))
             .env("VELT_BUILD_CACHE", dir.join("cache"))
-            .env_remove("VELT_REGISTRY")
+            .env("VELT_REGISTRY", dir.join("home").join("registry"))
             .output()
             .expect("run velt");
         let err = String::from_utf8_lossy(&out.stderr).into_owned();

@@ -196,9 +196,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   declarations as the npm package `velt` (`package.json` with an `exports` map, an
   `index.d.ts` per public module, `globals.d.ts`) into `-o` (default `target/velt-types`);
   https://veltlang.com/docs/tooling/cli/ "TypeScript declarations".
-- `registry serve` (additive): serves a registry directory (default: the
-  local registry) over HTTP (protocol in manifest.md "Remote registries"). `publish`
-  uploads when the package's `registry` (or `$VELT_REGISTRY`) is a URL.
+- `registry serve` (additive): serves a registry directory (default: `$VELT_REGISTRY` when it
+  is a directory, else `$VELT_HOME/registry`) over HTTP (protocol in manifest.md "Remote
+  registries"). `publish` uploads to the package's registry: by default the public registry
+  https://registry.veltpm.com, and copies into a directory only when `$VELT_REGISTRY` names one
+  and the package has no `registry` (manifest.md "The default registry").
 - `registry user add|remove|token <name> [--dir <d>] [--open]` (additive): the users of a registry
   directory (`<dir>/.auth/users.json`, token hashes only). `add` and `token` print the new token
   on stdout, once. A registry with users accepts writes only with a user's token
@@ -220,8 +222,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   server, or with `@scope` (no `/name`) a scope's (`/api/v1/scopes/<scope>/owners`, registry-core
   servers); `list` prints one per line on stdout; an error for a local registry.
 - `add @scope/name[@<req>]` (additive): the version's `@` is the one after the scope's.
-- `login <registry-url> [--device | --token-stdin]` / `logout <registry-url>` (additive; the two
-  flags together are an error): `login` first refuses a plain `http://` URL that is not loopback
+- `login [<registry-url>] [--device | --token-stdin]` / `logout [<registry-url>]` (additive; the
+  two flags together are an error): without a URL, the registry `publish` would use in the
+  current directory (by default https://registry.veltpm.com; an error when that is a local
+  directory). `login` first refuses a plain `http://` URL that is not loopback
   (rule below), before it reads or opens anything. Then:
   - with `--token-stdin`, or without a flag when stdin is not a terminal: it reads one line from
     stdin (as before; nothing is asked of the registry);
@@ -253,7 +257,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   not loopback (a host part with `@`, `?`, `#` or `\` is never loopback); that is an error.
 - `search <text> [--json]` (additive): `name  version  description` lines on stdout (columns
   aligned; the description cut to the terminal's width with `…`, not cut when stdout is not a
-  terminal) for the packages of the package's registry (or `$VELT_REGISTRY`) that match the text
+  terminal) for the packages of the package's registry (or `$VELT_REGISTRY`; by default
+  https://registry.veltpm.com) that match the text
   by name, keywords or description (ranking in manifest.md "Search"), each with the version `add`
   picks: the newest stable version not yanked (the newest pre-release not yanked if it has no
   stable one). `--json` prints the registry's answer (`{"packages": [...]}`) instead.
@@ -742,7 +747,7 @@ break makes a stamp that never matches). The objects it names
 - `fmt` without paths in a package that has only a `velt.toml` reports the migration error
   (manifest.md) instead of formatting.
 - `install` resolves + fetches deps and writes `velt.lock.json`; `--locked` fails if the lock would change.
-  `update` re-resolves ignoring the lock. `publish` copies the package into the local registry.
+  `update` re-resolves ignoring the lock. `publish` uploads the package to its registry (or copies it into a local directory registry).
 - Native libraries (additive, native_abi.md): `build`, `run`, `check`, `dev`, `test` and the LSP
   install the packages' native libraries for the target (prebuilt and verified, or built with
   cargo for path packages and missing targets); `add`/`install`/`update` print one
@@ -774,7 +779,8 @@ break makes a stamp that never matches). The objects it names
   only when a non-std module mentions one of their names as a whole word, unless that module
   binds the name itself at the top level.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
-  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_CLANG_PROBE_LIMIT_MS` (how long a clang gets to answer `--version` or the small compile, default 30000: for tests of a clang that hangs), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size), `VELT_BUILD_CACHE`, `VELT_BUILD_CACHE_SIZE`, `VELT_BUILD_STAMP` (above), `VELT_EAGER_STD` (set: load up front the standard-library modules otherwise loaded when the check finds them needed; the program built is byte for byte the same), `VELT_CHECK_ALL_STD` (set: check every standard-library definition the program loads, not only those it reaches, and load as `VELT_EAGER_STD` does; docs/internals/design/lazy-std.md).
+  (an `http(s)://` URL or a directory; default the package's `registry`, else
+  https://registry.veltpm.com), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_CLANG_PROBE_LIMIT_MS` (how long a clang gets to answer `--version` or the small compile, default 30000: for tests of a clang that hangs), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size), `VELT_BUILD_CACHE`, `VELT_BUILD_CACHE_SIZE`, `VELT_BUILD_STAMP` (above), `VELT_EAGER_STD` (set: load up front the standard-library modules otherwise loaded when the check finds them needed; the program built is byte for byte the same), `VELT_CHECK_ALL_STD` (set: check every standard-library definition the program loads, not only those it reaches, and load as `VELT_EAGER_STD` does; docs/internals/design/lazy-std.md).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
   named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).
 - Lockfile: `version = 1` + `[[package]]` entries with `name`, `version`, `source`

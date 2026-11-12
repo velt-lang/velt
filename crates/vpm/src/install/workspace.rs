@@ -31,10 +31,7 @@ pub fn install(
             ));
         }
     }
-    let mut loc = loc.clone();
-    if loc.remote.is_none() {
-        loc.remote = ws.file.registry.clone();
-    }
+    let loc = loc.clone().with_registry(ws.file.registry.as_deref());
     let existing = Lockfile::read(&ws.root)?;
     let prefer = if opts.update { None } else { existing.as_ref() };
     let manifests = ws.effective_manifests();

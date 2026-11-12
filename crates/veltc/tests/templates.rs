@@ -29,7 +29,7 @@ impl Sandbox {
         cmd.args(args)
             .current_dir(self.dir.join(cwd))
             .env("VELT_HOME", self.dir.join("home"))
-            .env_remove("VELT_REGISTRY")
+            .env("VELT_REGISTRY", self.dir.join("home").join("registry"))
             .env_remove("CLICOLOR_FORCE")
             .env_remove("NO_COLOR");
         cmd

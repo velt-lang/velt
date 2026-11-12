@@ -145,7 +145,7 @@ impl<'a> Provider<'a> {
             }
             _ => None,
         };
-        report::no_match(req, available.as_deref(), &self.loc.registry)
+        report::no_match(req, available.as_deref(), &self.loc.describe())
     }
 
     /// Whether registry version `name` `version` is yanked.

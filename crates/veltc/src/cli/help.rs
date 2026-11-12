@@ -380,8 +380,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "publish",
         summary: "Publish the package to the registry",
         usage: &["publish [--native-artifacts <dir>] [--native-only]"],
-        about: "Publishes to the package's `registry`, else $VELT_REGISTRY, else the local \
-                registry (~/.velt/registry). A package with `native` in package.velt also publishes a \
+        about: "Publishes to $VELT_REGISTRY when it is a URL, else the package's `registry`, \
+                else $VELT_REGISTRY's directory, else https://registry.veltpm.com. A package with `native` in package.velt also publishes a \
                 prebuilt native library for every target it lists: from <dir>/<triple>/, else \
                 target/velt-native/<triple>/ (the host's is built if missing; every target's, for \
                 a package of C `sources`).",
@@ -491,7 +491,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         usage: &["search <text> [--json]"],
         about: "Lists the packages matching every word of the text in their name, keywords or \
                 description (name matches first), with their newest version that is not yanked \
-                and its description, from the package's registry (or $VELT_REGISTRY).",
+                and its description, from the package's registry (or $VELT_REGISTRY; by default \
+                https://registry.veltpm.com).",
         options: &[("--json", "the registry's answer as JSON on stdout")],
         examples: &[
             ("velt search json", "packages about JSON"),
@@ -501,13 +502,14 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "login",
         summary: "Sign in to a registry server and store your token",
-        usage: &["login <registry-url> [--device | --token-stdin]"],
+        usage: &["login [<registry-url>] [--device | --token-stdin]"],
         about: "Opens the registry's sign-in page in your browser and stores the token it hands \
                 back in $VELT_HOME/credentials.json, readable only by you. A registry without \
                 browser sign-in (`velt registry serve`), or stdin that is not a terminal, reads \
                 the token (from `velt registry user add` on the server) from stdin instead. The \
                 token is sent only to that registry, and never over plain http:// to another \
-                machine. $VELT_REGISTRY_TOKEN overrides it (for CI).",
+                machine. $VELT_REGISTRY_TOKEN overrides it (for CI). Without a URL: the registry \
+                `velt publish` uses here, by default https://registry.veltpm.com.",
         options: &[
             (
                 "--device",
@@ -516,6 +518,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             ("--token-stdin", "read the token from stdin instead of signing in"),
         ],
         examples: &[
+            ("velt login", "sign in to https://registry.veltpm.com"),
             ("velt login https://registry.example.com", "sign in through the browser"),
             ("velt login https://registry.example.com --device", "over SSH"),
             (
@@ -527,10 +530,11 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "logout",
         summary: "Revoke and forget your token for a registry server",
-        usage: &["logout <registry-url>"],
+        usage: &["logout [<registry-url>]"],
         about: "Revokes the registry's stored token on the registry, so a copy of it stops \
                 working too, and removes it from $VELT_HOME/credentials.json. The token is \
-                removed even when the registry can't revoke it, with a warning.",
+                removed even when the registry can't revoke it, with a warning. Without a URL: \
+                the registry `velt publish` uses here, by default https://registry.veltpm.com.",
         options: &[],
         examples: &[("velt logout https://registry.example.com", "revoke and remove its token")],
     },
@@ -635,7 +639,7 @@ pub const COMMANDS: &[CommandHelp] = &[
                 that have none). The server speaks plain HTTP: beyond localhost, put it behind a \
                 TLS reverse proxy.",
         options: &[
-            ("--dir <d>", "registry directory (default: the local registry)"),
+            ("--dir <d>", "registry directory (default: $VELT_REGISTRY's, else $VELT_HOME/registry)"),
             ("--port <n>", "port (default 8091)"),
             ("--host <addr>", "address (default 127.0.0.1)"),
             ("--open", "let `user remove` delete the last user (the registry becomes open)"),

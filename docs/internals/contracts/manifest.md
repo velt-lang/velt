@@ -44,8 +44,8 @@ resolves). The reader below is the definition of a valid manifest; its fields ar
 `vpm::manifest::schema`, which a test checks against `std/package/index.velt`. The language server
 does not analyze a file named `package.velt` as a program: its diagnostics are the reader's, and
 completion and hover come from the schema (`vpm::manifest::ide`). With the package's registry
-(`$VELT_REGISTRY` when it is a URL, else `registry`, else the local one, as `velt install` picks
-it) it also completes versions and package names, explains dependencies and checks requirements
+(`$VELT_REGISTRY` when it is a URL, else `registry`, else `$VELT_REGISTRY`'s directory, else the
+public registry https://registry.veltpm.com, as `velt install` picks it) it also completes versions and package names, explains dependencies and checks requirements
 against the versions that are not yanked plus the one `velt.lock.json` pins
 (`vpm::manifest::ide::registry`). The data is fetched in the background (at most four fetches at
 once, each within 5 s to connect and 15 s in all, kept five minutes); completion waits up to
@@ -391,16 +391,26 @@ package directory inside it, which the record would still vouch for.
   longer accepts, and --locked was passed: run `velt install` (or `velt update`) without
   --locked to record velt <running>". A `velt` that is not a semver version is an error when the
   lock is read; a package with only the
-  former `velt.lock` (TOML) gets an error saying to run `velt install`. The registry for the POC is a
-  local directory (`$VELT_REGISTRY`, default `~/.velt/registry/<name>/<version>/`), cache in
-  `~/.velt/cache`.
+  former `velt.lock` (TOML) gets an error saying to run `velt install`. A local directory
+  registry (`$VELT_REGISTRY` set to a directory) is laid out as `<dir>/<name>/<version>/`; the
+  cache is `~/.velt/cache`.
+
+## The default registry (additive)
+The registry, first match wins (`vpm::Locations`): `$VELT_REGISTRY` set to an `http(s)://` URL;
+the root package's (or workspace's) `registry`; `$VELT_REGISTRY` set to a directory, a local
+directory registry; else the public registry `https://registry.veltpm.com`
+(`vpm::locations::DEFAULT_REGISTRY`). So `velt add`, `install`, `publish`, `yank`, `owner` and
+`search` ask https://registry.veltpm.com unless one of those names another. Errors name the
+registry asked: its URL, or a local registry's directory. `velt registry serve` and
+`velt registry user|owner` work on a directory: `--dir`, else `$VELT_REGISTRY`'s directory, else
+`$VELT_HOME/registry`.
 
 ## Remote registries (additive)
 ```ts ignore
 registry: "https://registry.example.com",
 ```
 - A root package's `registry` URL (or `$VELT_REGISTRY` set to an `http(s)://` URL, which takes
-  precedence) replaces the local registry directory for resolution, `velt add`, `velt install`
+  precedence) replaces the default registry (and a `$VELT_REGISTRY` directory) for resolution, `velt add`, `velt install`
   and `velt publish`. Protocol (`velt registry serve`, crates/vpm/src/remote.rs):
   `GET <url>/api/v1/<name>/index` → `index.json` (`{ "versions": [...] }`, `application/json`; a
   registry directory with an `index.toml` from an older velt is an error); `GET <url>/api/v1/<name>/<version>` → package

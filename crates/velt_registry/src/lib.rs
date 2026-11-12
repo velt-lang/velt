@@ -181,6 +181,7 @@ impl Registry {
             registry: self.root.clone(),
             cache,
             remote: None,
+            remote_is_default: false,
         }
     }
 

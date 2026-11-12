@@ -164,28 +164,40 @@ impl RegistryData {
     }
 }
 
-/// The registry a manifest's dependencies come from: `$VELT_REGISTRY`, else its `registry`
-/// field, else the local registry. `None` when no registry can be located, and when the
-/// manifest names a plain `http://` registry on another machine: opening a checkout must not
-/// make the editor talk to hosts it names (an internal network address, say) unless the
-/// connection is TLS or stays on this machine. `velt install` still uses such a registry.
+/// The registry a manifest's dependencies come from, as `velt install` picks it
+/// ([`vpm::locations`]): `$VELT_REGISTRY` set to a URL, else its `registry` field, else
+/// `$VELT_REGISTRY`'s directory, else the public registry. `None` when no registry can be
+/// located, and when the manifest names a plain `http://` registry on another machine: opening a
+/// checkout must not make the editor talk to hosts it names (an internal network address, say)
+/// unless the connection is TLS or stays on this machine. `velt install` still uses such a
+/// registry.
 pub fn locations_for(manifest_text: &str) -> Option<Locations> {
-    let loc = Locations::from_env().ok()?;
-    registry_for(loc, manifest_text)
+    registry_for(env_locations()?, manifest_text)
 }
 
-fn registry_for(mut loc: Locations, manifest_text: &str) -> Option<Locations> {
-    if loc.remote.is_some() {
+/// The registry the environment names ([`Locations::from_env`]).
+#[cfg(not(test))]
+fn env_locations() -> Option<Locations> {
+    Locations::from_env().ok()
+}
+
+/// Unit tests never ask the public registry: without a `registry` field a manifest's
+/// dependencies come from a local directory registry that has no packages.
+#[cfg(test)]
+fn env_locations() -> Option<Locations> {
+    let home = std::env::temp_dir().join(format!("velt_lsp_home_{}", std::process::id()));
+    Some(Locations::under(&home))
+}
+
+fn registry_for(loc: Locations, manifest_text: &str) -> Option<Locations> {
+    if loc.remote.is_some() && !loc.remote_is_default {
         return Some(loc); // the user's own $VELT_REGISTRY
     }
     let named = vpm::manifest::ide::registry::top_level_string(manifest_text, "registry")
         .filter(|url| vpm::locations::is_url(url));
     match named {
         Some(url) if !vpm::remote::is_tls_or_loopback(&url) => None,
-        named => {
-            loc.remote = named;
-            Some(loc)
-        }
+        named => Some(loc.with_registry(named.as_deref())),
     }
 }
 
@@ -237,7 +249,20 @@ mod tests {
             Some(None),
             "the local registry"
         );
-        // `$VELT_REGISTRY` is the user's choice and always wins.
+        // Without a `registry` field: the public registry (or `$VELT_REGISTRY`'s directory).
+        let default = Locations::from_vars("/h".into(), None);
+        assert_eq!(
+            registry_for(default.clone(), "export const pkg: Package = {};").unwrap(),
+            default
+        );
+        assert_eq!(
+            registry_for(default, &with("https://r.example"))
+                .unwrap()
+                .remote
+                .as_deref(),
+            Some("https://r.example")
+        );
+        // `$VELT_REGISTRY` set to a URL is the user's choice and always wins.
         let mut env = local.clone();
         env.remote = Some("http://10.0.0.5".into());
         assert_eq!(

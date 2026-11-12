@@ -56,7 +56,7 @@ impl Repo {
         cmd.args(args)
             .current_dir(self.dir.join(cwd))
             .env("VELT_HOME", self.dir.join("home"))
-            .env_remove("VELT_REGISTRY")
+            .env("VELT_REGISTRY", self.dir.join("home").join("registry"))
             .env_remove("VELT_LAUNCHER")
             .env_remove("CI");
         for (k, v) in env {

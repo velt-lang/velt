@@ -80,7 +80,7 @@ fn velt(dir: &Path, home: &Path, envs: &[(&str, &str)], args: &[&str]) -> Output
         .current_dir(dir)
         .env("NO_COLOR", "1")
         .env("VELT_HOME", home)
-        .env_remove("VELT_REGISTRY")
+        .env("VELT_REGISTRY", home.join("registry"))
         .env_remove("VELT_REGISTRY_TOKEN");
     for (k, v) in envs {
         c.env(k, v);

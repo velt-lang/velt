@@ -110,7 +110,8 @@ pub fn admin_owner_command(
     Ok(())
 }
 
-/// The registry of the package around the current directory, else `$VELT_REGISTRY`'s.
+/// The registry of the package around the current directory, else `$VELT_REGISTRY`'s, else the
+/// public registry ([`vpm::Locations::from_env`]).
 fn locations() -> Result<vpm::Locations, String> {
     let loc = vpm::Locations::from_env()?;
     let cwd =
@@ -169,6 +170,21 @@ pub fn owner_command(action: &OwnerAction, package: &str) -> Result<(), String> 
         }
     }
     Ok(())
+}
+
+/// The registry `velt login` / `velt logout` (`command`) act on: `url`, else the current
+/// package's registry as `velt publish` picks it, by default [`vpm::locations::DEFAULT_REGISTRY`].
+pub fn login_registry(command: &str, url: Option<&str>) -> Result<String, String> {
+    if let Some(url) = url {
+        return Ok(url.to_string());
+    }
+    let loc = locations()?;
+    loc.remote.clone().ok_or_else(|| {
+        format!(
+            "`{}` is a local directory registry, which has no tokens; name a registry server: `velt {command} <registry-url>`",
+            loc.describe()
+        )
+    })
 }
 
 /// Turns off the terminal's echo of stdin until dropped (nothing when that fails). An interrupt
@@ -358,10 +374,11 @@ mod no_echo {
     pub fn stop() {}
 }
 
-/// `velt logout <url>`: revoke the stored token of that registry on the registry, then forget it.
-/// It is forgotten even when the registry can't be reached, with a warning saying it may still work.
-pub fn logout_command(url: &str) -> Result<(), String> {
-    let key = vpm::credentials::registry_key(url)?;
+/// `velt logout [<url>]`: revoke the stored token of that registry on the registry, then forget
+/// it. It is forgotten even when the registry can't be reached, with a warning saying it may
+/// still work.
+pub fn logout_command(url: Option<&str>) -> Result<(), String> {
+    let key = vpm::credentials::registry_key(&login_registry("logout", url)?)?;
     let path = vpm::credentials::default_path()?;
     let stored = vpm::credentials::Credentials::read(&path)?
         .token(&key)

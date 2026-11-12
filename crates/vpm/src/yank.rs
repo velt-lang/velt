@@ -18,10 +18,7 @@ pub fn yank(loc: &Locations, name: &str, version: &str, yanked: bool) -> Result<
 /// [`yank`] in exactly the local registry of `loc`: what a registry server does.
 pub fn yank_local(loc: &Locations, name: &str, version: &str, yanked: bool) -> Result<(), String> {
     let version = check(name, version)?;
-    let loc = Locations {
-        remote: None,
-        ..loc.clone()
-    };
+    let loc = loc.local();
     let mut index =
         read_index(&loc, name)?.ok_or_else(|| format!("`{name}` is not in the registry"))?;
     let entry = index

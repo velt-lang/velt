@@ -202,8 +202,8 @@ fn workspace_without_package() -> Result<Option<vpm::workspace::Workspace>, Stri
     }
 }
 
-/// `velt publish`: copy the current package into the local registry, or upload it to the
-/// remote one, with a prebuilt native library for every `native` target. `--native-only` adds
+/// `velt publish`: copy the current package into a local directory registry, or upload it to
+/// the remote one (by default the public registry, [`vpm::locations::DEFAULT_REGISTRY`]), with a prebuilt native library for every `native` target. `--native-only` adds
 /// libraries for targets not yet published to the published version. A package with C
 /// libraries has its declarations checked against their headers first (`velt native headers`),
 /// and publishes the record.

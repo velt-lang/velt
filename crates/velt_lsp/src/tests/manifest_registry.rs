@@ -23,14 +23,9 @@ fn publish(loc: &Locations, work: &Path, name: &str, version: &str) {
     vpm::registry::publish(&dir, loc).unwrap();
 }
 
-/// A registry with `sqlite` 0.1.0 and 0.2.0 and `sql-kit` 1.0.0, served on localhost. `None`
-/// when `VELT_REGISTRY` names a remote registry, which takes precedence over the manifest's.
-fn registry(tmp: &Path) -> Option<(Server, String)> {
-    let env = std::env::var("VELT_REGISTRY").unwrap_or_default();
-    if vpm::locations::is_url(&env) {
-        eprintln!("skipped: VELT_REGISTRY is a remote registry");
-        return None;
-    }
+/// A registry with `sqlite` 0.1.0 and 0.2.0 and `sql-kit` 1.0.0, served on localhost (unit
+/// tests don't read `$VELT_REGISTRY`: `crate::registry::locations_for`).
+fn registry(tmp: &Path) -> (Server, String) {
     let loc = Locations::under(&tmp.join("home"));
     publish(&loc, &tmp.join("work"), "sqlite", "0.1.0");
     publish(&loc, &tmp.join("work"), "sqlite", "0.2.0");
@@ -42,7 +37,7 @@ fn registry(tmp: &Path) -> Option<(Server, String)> {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let server = Server::start(listener, handler, 1 << 20).unwrap();
     let url = format!("http://{}", server.addr());
-    Some((server, url))
+    (server, url)
 }
 
 /// Repeat `f` until it gives `Some` (registry data arrives in the background).
@@ -75,9 +70,7 @@ fn manifest(url: &str, deps: &str) -> String {
 #[test]
 fn requirements_are_checked_against_the_registry() {
     let tmp = tempfile::tempdir().unwrap();
-    let Some((_server, url)) = registry(tmp.path()) else {
-        return;
-    };
+    let (_server, url) = registry(tmp.path());
     let mut client = Client::start();
     let doc = uri("live_diags/package.velt");
     let text = manifest(&url, "sqlite: \"^0.1\", nope: \"1\"");
@@ -116,9 +109,7 @@ fn requirements_are_checked_against_the_registry() {
 #[test]
 fn versions_names_and_hover_come_from_the_registry() {
     let tmp = tempfile::tempdir().unwrap();
-    let Some((_server, url)) = registry(tmp.path()) else {
-        return;
-    };
+    let (_server, url) = registry(tmp.path());
     let mut client = Client::start();
     let doc: Url = uri("live_complete/package.velt");
     let text = manifest(&url, "sqlite: \"\", sq");

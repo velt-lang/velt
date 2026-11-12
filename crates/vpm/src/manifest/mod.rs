@@ -71,7 +71,8 @@ pub const WORKSPACE_REQUIREMENT: &str = "workspace";
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Manifest {
     /// Top-level `registry = "https://…"`: the remote registry for this package's registry
-    /// dependencies and `velt publish` (default: the local registry).
+    /// dependencies and `velt publish` (default: `$VELT_REGISTRY`, else
+    /// [`crate::locations::DEFAULT_REGISTRY`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry: Option<String>,
     /// `name`, `version` and `entry` (`[package]` in `velt.toml`).

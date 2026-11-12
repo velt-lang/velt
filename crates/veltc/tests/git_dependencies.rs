@@ -48,7 +48,7 @@ fn velt_with(home: &Path, cwd: &Path, args: &[&str], env: &[(&str, &Path)]) -> O
     cmd.args(args)
         .current_dir(cwd)
         .env("VELT_HOME", home)
-        .env_remove("VELT_REGISTRY")
+        .env("VELT_REGISTRY", home.join("registry"))
         .env_remove("VELT_LAUNCHER");
     for (name, value) in env {
         cmd.env(name, value);

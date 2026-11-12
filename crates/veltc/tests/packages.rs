@@ -73,7 +73,10 @@ fn run_tests(package: &Path, release: bool) -> Option<String> {
     }
     let out = command
         .current_dir(package)
-        .env_remove("VELT_REGISTRY")
+        .env(
+            "VELT_REGISTRY",
+            std::env::temp_dir().join("velt-packages-test-registry"),
+        )
         .env_remove("CLICOLOR_FORCE")
         .env("NO_COLOR", "1")
         .output()

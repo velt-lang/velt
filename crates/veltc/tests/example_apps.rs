@@ -80,7 +80,7 @@ fn run_tests(app: &Path) -> Option<String> {
         .args(["test", "--locked"])
         .current_dir(&dir)
         .env("VELT_HOME", tmp.path().join("home"))
-        .env_remove("VELT_REGISTRY")
+        .env("VELT_REGISTRY", tmp.path().join("home").join("registry"))
         .env_remove("CLICOLOR_FORCE")
         .env("NO_COLOR", "1")
         .output()

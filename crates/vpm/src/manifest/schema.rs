@@ -103,7 +103,8 @@ pub const PACKAGE: &[Field] = &[
         ty: "string",
         required: false,
         doc: "The registry for dependencies and `velt publish`: an `http://` or `https://` URL \
-              (default: the local registry; `VELT_REGISTRY` takes precedence). Only the root \
+              (default: https://registry.veltpm.com, or `VELT_REGISTRY`'s directory; `VELT_REGISTRY` \
+              set to a URL takes precedence). Only the root \
               package's is used.",
     },
     Field {

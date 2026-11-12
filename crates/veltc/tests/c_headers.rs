@@ -489,7 +489,7 @@ fn an_unchanged_build_with_a_registry_package_is_not_compiled_again() {
             .current_dir(&bind)
             .env("NO_COLOR", "1")
             .env("VELT_HOME", &home)
-            .env_remove("VELT_REGISTRY")
+            .env("VELT_REGISTRY", home.join("registry"))
             .output()
             .unwrap();
         assert!(o.status.success(), "{args:?}: {}", output(&o));
