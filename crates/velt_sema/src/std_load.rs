@@ -235,10 +235,12 @@ impl<'m> Ctx<'m> {
         let Some(batch) = loads.serve(path) else {
             return;
         };
-        while self.loads_added <= batch {
-            self.add_batch(loads.batch(self.loads_added));
-            self.loads_added += 1;
-        }
+        add_up_to(
+            self,
+            |cx| &mut cx.loads_added,
+            batch,
+            |cx, i| cx.add_batch(loads.batch(i)),
+        );
     }
 
     fn add_batch(&mut self, b: &'m Batch) {
@@ -292,6 +294,24 @@ impl<'m> Ctx<'m> {
     }
 }
 
+/// Adds the batches from the one `added` counts up to `batch`, in order and each once. A batch is
+/// counted before `add` adds it: adding a batch checks its bodies, which can demand a module of a
+/// later batch, and that demand, re-entering here, must start after it. Counted after, the
+/// nested demand added the batch being added again and the outer count then passed a batch
+/// that was never added, so a later demand of a module in it found nothing (#2856).
+fn add_up_to<C>(
+    cx: &mut C,
+    added: impl Fn(&mut C) -> &mut usize,
+    batch: usize,
+    add: impl Fn(&mut C, usize),
+) {
+    while *added(cx) <= batch {
+        let next = *added(cx);
+        *added(cx) += 1;
+        add(cx, next);
+    }
+}
+
 /// What the rewrites of the added modules left to report once a `Ctx` is checked, as `check_timed`
 /// does for the program's own.
 pub(crate) fn report_added(cx: &mut Ctx) {
@@ -303,5 +323,61 @@ pub(crate) fn report_added(cx: &mut Ctx) {
             crate::overloads::report_misfits(&mut cx.diags, &b.sig_spans);
             crate::overload_adapter::check_identity(cx, &b.adapted);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::add_up_to;
+
+    /// A check adding batches: the ones added, in order, and per batch the batches its bodies
+    /// demand while it is added.
+    struct Adding {
+        added: usize,
+        log: Vec<usize>,
+        demands: Vec<Vec<usize>>,
+    }
+
+    fn demand(cx: &mut Adding, batch: usize) {
+        add_up_to(
+            cx,
+            |cx| &mut cx.added,
+            batch,
+            |cx, i| {
+                cx.log.push(i);
+                for d in cx.demands[i].clone() {
+                    demand(cx, d);
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn a_batch_whose_bodies_demand_a_later_one_is_added_once() {
+        // Batch 0's bodies demand batch 1 (#2856: search's demanded slice); then batch 2.
+        let mut cx = Adding {
+            added: 0,
+            log: vec![],
+            demands: vec![vec![1], vec![], vec![]],
+        };
+        demand(&mut cx, 0);
+        assert_eq!(cx.log, [0, 1]);
+        assert_eq!(cx.added, 2);
+        demand(&mut cx, 2);
+        assert_eq!(cx.log, [0, 1, 2]);
+        demand(&mut cx, 1);
+        assert_eq!(cx.log, [0, 1, 2]);
+    }
+
+    #[test]
+    fn a_demand_of_a_later_batch_adds_the_ones_before_it_in_order() {
+        let mut cx = Adding {
+            added: 0,
+            log: vec![],
+            demands: vec![vec![], vec![3], vec![], vec![]],
+        };
+        demand(&mut cx, 1);
+        assert_eq!(cx.log, [0, 1, 2, 3]);
+        assert_eq!(cx.added, 4);
     }
 }

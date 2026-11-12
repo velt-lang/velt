@@ -505,3 +505,67 @@ fn a_std_without_the_float_module_prints_the_same_through_the_runtime() {
     assert_eq!(found, None, "std's printer and the runtime's differ");
     assert_eq!(in_std.lines().count(), in_runtime.lines().count());
 }
+
+/// A std module demanded while another is added (#2856): an on-demand module whose module-level
+/// `let` (checked as the module is added) calls a hook of another on-demand module by role
+/// demands it in the middle of the first one's batch (`Ctx::demand_std`). Each batch must be
+/// added once, in order: the check succeeds, and its VIR is the same as with std up front.
+/// Counted after adding, the nested demand added the outer batch again until sema's stack
+/// overflowed.
+#[test]
+fn a_module_demanded_while_another_is_added_checks_as_up_front() {
+    let tmp = test_dir::TestDir::new();
+    let std = tmp.path().join("std");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
+        &std,
+    );
+    let text = std.join("lang/hooks/number_text.velt");
+    let src = std::fs::read_to_string(&text).unwrap();
+    let import = "import { trunc } from \"velt/lang/intrinsics\";";
+    assert!(src.contains(import), "number_text.velt's imports changed");
+    let src = src.replace(
+        import,
+        "import { hookCall, trunc } from \"velt/lang/intrinsics\";",
+    );
+    std::fs::write(
+        &text,
+        format!("{src}\nlet probe: string = hookCall(\"float_text\", 1.5);\n"),
+    )
+    .unwrap();
+    let main = tmp.path().join("main.velt");
+    let program = "function main() {\n  const n: i64 = 7;\n  console.log(`n=${n}`);\n  \
+                   const xs = [\"a\"];\n  const i: i64 = 0;\n  console.log(xs[i]);\n}\n";
+    std::fs::write(&main, program).unwrap();
+    let out = velt_with_std(&std, tmp.path())
+        .arg("check")
+        .arg(&main)
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "velt check: {err}");
+    let vir = |eager: bool| {
+        let mut c = velt_with_std(&std, tmp.path());
+        if eager {
+            c.env("VELT_EAGER_STD", "1");
+        }
+        let out = c
+            .arg("build")
+            .arg(&main)
+            .args(["--emit", "vir"])
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "eager {eager}: {err}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let (on_demand, up_front) = (vir(false), vir(true));
+    assert!(
+        on_demand.contains("floatText"),
+        "the probe's hook is not called"
+    );
+    assert!(
+        on_demand == up_front,
+        "std on demand and up front give another VIR"
+    );
+}
