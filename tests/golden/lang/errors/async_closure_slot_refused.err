@@ -1,0 +1,6 @@
+async_closure_slot_refused.velt:55:5: error: this async closure modifies captured `a`, so it must stay on the task that created it
+async_closure_slot_refused.velt:60:5: error: this async closure modifies captured `b`, so it must stay on the task that created it
+async_closure_slot_refused.velt:68:5: error: this async closure modifies captured `c`, so it must stay on the task that created it
+async_closure_slot_refused.velt:75:5: error: this async closure modifies captured `d`, so it must stay on the task that created it
+async_closure_slot_refused.velt:82:5: error: this async closure modifies captured `e`, so it must stay on the task that created it
+async_closure_slot_refused.velt:89:7: error: this async closure modifies captured `f`, so it must stay on the task that created it

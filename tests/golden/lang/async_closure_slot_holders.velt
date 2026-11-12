@@ -1,0 +1,39 @@
+// check: no leaks
+// A call of a field's function value reaches only what may be stored into that field (#2808):
+// `send`, whose parameter reaches `spawn`, is stored in a `Sender`, never in a `Logger`, so the
+// async closure a `Logger` runs, which modifies what it captured, stays on this task. Matched by
+// the field's type alone, `(j: Job) => void`, it was refused as if `send` could be the callee.
+// Node prints the same.
+type Job = () => Promise<void>;
+
+function send(j: Job): void {
+  spawn(j());
+}
+
+interface Sender {
+  put: (j: Job) => void;
+}
+
+interface Logger {
+  put: (j: Job) => void;
+}
+
+async function main() {
+  const s: Sender = { put: send };
+  s.put(async () => {
+    console.log("sent");
+  });
+  let n = 0;
+  const log: Logger = {
+    put: (j: Job): void => {
+      void j();
+    },
+  };
+  log.put(async () => {
+    n++;
+  });
+  log.put(async () => {
+    n++;
+  });
+  console.log(`logged ${n}`);
+}

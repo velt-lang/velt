@@ -30,6 +30,8 @@ pub(super) struct Indirect {
     /// The function whose closures alone the callee may be (a variable of
     /// `crate::defined_accessors`), if known.
     pub only: Option<DefId>,
+    /// The field the callee is read from (`arms.ready(v)`), if it is one (`super::slots`).
+    pub slot: Option<super::slots::Slot>,
 }
 
 /// Where values go that the graph's edges don't show, for [`held_in_locals`].
@@ -103,8 +105,16 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
             }
         }
     }
+    // Per field read as a callee, what may be stored into it (`super::slots`).
+    let mut holders: FxHashMap<super::slots::Slot, Option<FxHashSet<DefId>>> = FxHashMap::default();
     for (ty, k, why, c, reached) in found {
         for call in &g.indirect {
+            if let Some(s) = call.slot {
+                let h = holders.entry(s).or_insert_with(|| g.slots.holders(g, s));
+                if h.as_ref().is_some_and(|h| !h.contains(&c)) {
+                    continue;
+                }
+            }
             // A call through a variable holding only closures of one function
             // (`crate::defined_accessors`) reaches no closure of another.
             if (call.only).is_some_and(|d| outermost(g, d) != outermost(g, c)) {

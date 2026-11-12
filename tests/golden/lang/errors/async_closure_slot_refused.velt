@@ -1,0 +1,93 @@
+// A call of a field's function value takes what may be stored into the field (#2808), and a store
+// the analysis can't follow leaves the field matched by type: each of these stores `send`, whose
+// parameter reaches `spawn`, where the walk doesn't see it, and the async closure passed through
+// the field, which modifies what it captured, is refused as before.
+type Job = () => Promise<void>;
+
+function send(j: Job): void {
+  spawn(j());
+}
+
+function noop(_j: Job): void {}
+
+// Built outside every function body.
+interface BoxM {
+  put: (j: Job) => void;
+}
+const SRC: BoxM = { put: send };
+
+// A field initializer.
+class Holder {
+  put: (j: Job) => void = send;
+}
+
+// Stored through a subclass, called through its base.
+class Base {
+  put: (j: Job) => void;
+  constructor() {
+    this.put = noop;
+  }
+}
+class Sub extends Base {}
+
+// Copied by a spread from another type.
+interface Wide {
+  put: (j: Job) => void;
+  tag: string;
+}
+interface BoxS {
+  put: (j: Job) => void;
+}
+
+// Seen through a cast.
+interface BoxC {
+  put: (j: Job) => void;
+}
+
+// `resolve`, which reaches the field from the executor's parameter: of unknown origin.
+interface BoxR {
+  put: (j: Job) => void;
+}
+
+async function main() {
+  let a = 0;
+  SRC.put(async () => {
+    a++;
+  });
+
+  let b = 0;
+  new Holder().put(async () => {
+    b++;
+  });
+
+  let c = 0;
+  const s = new Sub();
+  s.put = send;
+  const base: Base = s;
+  base.put(async () => {
+    c++;
+  });
+
+  let d = 0;
+  const w: Wide = { put: send, tag: "w" };
+  const copy: BoxS = { ...w };
+  copy.put(async () => {
+    d++;
+  });
+
+  let e = 0;
+  const raw: unknown = { put: send };
+  const cast = raw as BoxC;
+  cast.put(async () => {
+    e++;
+  });
+
+  let f = 0;
+  const j = await new Promise<Job>((resolve) => {
+    const r: BoxR = { put: resolve };
+    r.put(async () => {
+      f++;
+    });
+  });
+  await j();
+}
