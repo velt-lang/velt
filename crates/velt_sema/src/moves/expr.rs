@@ -324,8 +324,9 @@ impl Moves<'_> {
             if escaping && matches!(c.mode, PassMode::Owned | PassMode::Copy) {
                 let w = writes(&c);
                 // Kept by a closure this one makes: the hold outlives `holder` (a callback in a
-                // block's `const` that stores one, #2807).
-                let holder = holder.filter(|_| !kept(&c));
+                // block's `const` that stores one, #2807). Assigned by this closure: it may have
+                // run before `holder` leaves its block, and what it wrote is read after (#2833).
+                let holder = holder.filter(|_| !kept(&c) && !w);
                 if let Some(s) = st {
                     let before = s.captured[i].is_some_and(|(_, _, x)| x);
                     s.captured[i] = Some((span, holder.map(|h| h.0 as usize), w || before));
