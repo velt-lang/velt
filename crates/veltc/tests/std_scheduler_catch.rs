@@ -803,3 +803,74 @@ fn a_promise_started_under_a_catch_panics_alone_as_with_the_default_executor() {
         assert_eq!(err.matches("panic: first ").count(), 30, "stderr: {err}");
     }
 }
+
+/// A guarded promise that waits for another task (as a handler waits for I/O) is not adopted by
+/// `catchPanic`'s wait while it drives itself (catch_sched.velt `settledPoll`, sched_node_catch
+/// `drivesItself`): its own wake runs it, and its finish, with a result or a panic after the
+/// wait, wakes the wait. The peer task answers on another worker at 4 workers.
+#[test]
+fn a_guarded_promise_waiting_for_another_task_is_run_by_its_own_wake() {
+    if !catches_here() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("peer.velt");
+    std::fs::write(
+        &file,
+        r#"import { catchPanic, PanicError } from "velt/task";
+import { Channel, channel } from "velt/sync";
+
+async function handler(reqs: Channel<i64>, reps: Channel<i64>, i: i64): Promise<i64> {
+  await reqs.send(i);
+  const r = (await reps.receive()) ?? 0;
+  if (i % 3 == 0) {
+    panic(`late ${i}`);
+  }
+  return r * 2;
+}
+
+async function adapter(reqs: Channel<i64>, reps: Channel<i64>, i: i64): Promise<i64> {
+  const r = await handler(reqs, reps, i);
+  return r + 1;
+}
+
+async function main() {
+  const reqs = channel<i64>();
+  const reps = channel<i64>();
+  const n: i64 = 300;
+  const peer = spawn(async () => {
+    for (let k: i64 = 0; k < n; k++) {
+      const x = await reqs.receive();
+      await reps.send(x ?? 0);
+    }
+  });
+  let s: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    try {
+      s += await catchPanic(() => adapter(reqs, reps, i));
+    } catch (e) {
+      if (e instanceof PanicError) {
+        s += 1000;
+      }
+    }
+  }
+  await peer;
+  console.log(s);
+}
+"#,
+    )
+    .unwrap();
+    let exe = exe_name(dir.path(), "peer");
+    build_std(&file, &exe);
+    // 100 panics (i a multiple of 3) give 1000 each; the other i give 2i + 1, 60,200 in all.
+    for threads in ["1", "4"] {
+        let (code, out, err) = run(&exe, dir.path(), threads);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, "160200\n"),
+            "{threads} workers; stderr: {err}"
+        );
+        assert_eq!(err.matches("panic: late ").count(), 100, "stderr: {err}");
+    }
+}

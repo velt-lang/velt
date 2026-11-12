@@ -111,7 +111,7 @@ export function runCaught(n: usize): bool {
   const e = t.exec();
   nd.setFlags(n, nd.RUNNING);
   const r = nodePollCaught(e, n, n + nd.N_CX);
-  m.and32(n + nd.N_FLAGS, ~nd.RUNNING);
+  m.and32(n + nd.N_FLAGS, ~(nd.RUNNING | nd.ADOPTED));
   if (r === 2) {
     panicked(n, caughtPanic(e));
     return true;
@@ -126,7 +126,7 @@ export function runCaught(n: usize): bool {
  */
 @noInline
 export function adoptCaught(e: usize, task: usize, n: usize, cx: usize, claim: bool): u32 {
-  m.or32(n + nd.N_FLAGS, nd.RUNNING);
+  m.or32(n + nd.N_FLAGS, nd.RUNNING | nd.ADOPTED);
   m.st(e + t.E_ADOPTING, 1);
   const r = nodePollCaught(e, n, cx);
   m.st(e + t.E_ADOPTING, 0);
@@ -156,6 +156,19 @@ function panicked(n: usize, x: usize): void {
   m.st(n + nd.N_POLL, x);
   m.inc(n + nd.N_REFS);
   nd.setFlags(n, nd.PANICKED);
+}
+
+/**
+ * Does catching promise `f` (a started node) drive itself: not finished, and its last poll was
+ * its own run, not an adoption (`ADOPTED`)? Then that run returned pending with the node's own
+ * waker (`N_CX`, the node: `start` and `run` poll it with nothing else), so the node is polled
+ * again when a leaf wakes it: the wake puts it among its task's woken nodes (it is then
+ * `QUEUED`; a wake before this, during that run, already did), which the task runs before its
+ * root (sched_run.velt `runWoken`, `run` here: `runCaught`), and its finish wakes its awaiter.
+ * An owner gains nothing by polling it before that wake: its state waits for it.
+ */
+export function drivesItself(f: usize): bool {
+  return (m.load32(nd.nodeOf(f) + nd.N_FLAGS) & (nd.FINISHED | nd.ADOPTED)) === 0;
 }
 
 /** Did promise `f` (a started node) finish without a panic? */

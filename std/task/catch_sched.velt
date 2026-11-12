@@ -85,9 +85,17 @@ export function free(h: u64): void {
   }
 }
 
-/** `settled`'s poll: its result (a `bool`) at +16, the promise's node at `f - N_SETTLE`. */
+/**
+ * `settled`'s poll: its result (a `bool`) at +16, the promise's node at `f - N_SETTLE`. A
+ * promise that drives itself (`drivesItself`: the guarded promise after its first run, which
+ * waits) is not adopted, only awaited: an adoption would poll a state that waits for its wake,
+ * and come back pending. Its own run polls it on that wake, and its finish wakes this poll.
+ */
 function settledPoll(f: usize, cx: usize): u32 {
   const p = f - nc.N_SETTLE + node.N_HEAD;
+  if (nc.drivesItself(p)) {
+    return node.awaitNode(node.nodeOf(p), cx);
+  }
   if (node.nodeSettled(p, cx) === 0) {
     return 0;
   }

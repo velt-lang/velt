@@ -69,6 +69,12 @@ export const RUNNING: u32 = 64;
  */
 export const CATCHES: u32 = 128;
 export const PANICKED: u32 = 256;
+/**
+ * Its last poll was an owner's adoption under a catch (sched_node_catch.velt `adoptCaught`), not
+ * its own run: its leaves hold the owner's waker. Read only for a catching node, whose run
+ * (`runCaught`) clears it.
+ */
+export const ADOPTED: u32 = 512;
 
 /** `velt_rt_fut_box`: a lazy node of the `size`-byte initial state at `state`. */
 export function boxed(
