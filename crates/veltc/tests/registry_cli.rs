@@ -334,7 +334,7 @@ fn a_token_without_users_does_not_start_an_open_server() {
     );
 }
 
-/// `velt login` / `velt logout` without a URL in `dir`, with `token` on stdin and
+/// `velt login --token-stdin` / `velt logout` without a URL in `dir`, with `token` on stdin and
 /// `$VELT_REGISTRY` set to `registry` (or unset).
 fn velt_login_here(
     dir: &Path,
@@ -345,8 +345,12 @@ fn velt_login_here(
 ) -> std::process::Output {
     use std::io::Write;
     let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
-    cmd.arg(sub)
-        .current_dir(dir)
+    cmd.arg(sub);
+    if sub == "login" {
+        // Never the browser flow: with no URL that would be registry.veltpm.com.
+        cmd.arg("--token-stdin");
+    }
+    cmd.current_dir(dir)
         .env("VELT_HOME", home)
         .env_remove("VELT_REGISTRY_TOKEN")
         .stdin(Stdio::piped())
