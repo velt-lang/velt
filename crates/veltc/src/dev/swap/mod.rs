@@ -87,6 +87,11 @@ pub struct Carried {
     pub kept_own: Option<super::edits::Snapshot>,
     /// The source files of the build that made `kept`.
     pub kept_files: Option<velt_common::SourceMap>,
+    /// Whether a save that edits function bodies alone is checked from `kept` ([`warm_enabled`]);
+    /// with `-v` a check is kept and measured either way.
+    pub warm: bool,
+    /// How many saves were checked from `kept`.
+    pub warm_reloads: usize,
 }
 
 /// Whether `velt dev` keeps a check to reload body edits from (`VELT_DEV_WARM=off` turns it off).
@@ -141,7 +146,8 @@ fn reload_with(
     let mut warm = false;
     let mut program = None;
     let base = (carried.kept_own.clone()).zip(carried.kept_files.as_ref());
-    if let (Some(kept), Some((base, cold_files))) = (carried.kept.take(), base) {
+    let kept = carried.kept.take_if(|_| carried.warm);
+    if let (Some(kept), Some((base, cold_files))) = (kept, base) {
         sess.kept = Some(kept);
         let input = opts.input.clone();
         let edited = move |s: &Session| {
@@ -152,6 +158,7 @@ fn reload_with(
         match out {
             Ok(Some(p)) => {
                 warm = true;
+                carried.warm_reloads += 1;
                 program = Some(Ok(p));
             }
             Ok(None) => {

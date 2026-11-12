@@ -396,11 +396,18 @@ fn bodies(src: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
-/// One random edit inside a body of `src`: a number literal changed (to one of the same length,
+/// One random edit inside a body of `src` (the last one, or any): a number literal changed (to one of the same length,
 /// or another), or a string literal changed, or nothing when the body it picked has neither.
 fn mutate(src: &str, rng: &mut Rng) -> Option<String> {
-    let bodies = bodies(src);
-    let &(lo, hi) = bodies.get(rng.below(bodies.len()))?;
+    let mut bodies = bodies(src);
+    bodies.sort_unstable();
+    // Half the edits are in the file's last function, which may change length and still reload
+    // warm (an edit elsewhere that does refuses: it moves what follows).
+    let pick = match rng.below(2) {
+        0 => bodies.len().checked_sub(1)?,
+        _ => rng.below(bodies.len()),
+    };
+    let &(lo, hi) = bodies.get(pick)?;
     let text = &src[lo..hi];
     let b = text.as_bytes();
     let word = |i: usize| b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'.';
@@ -473,6 +480,7 @@ fn random_body_edits_reload_warm_to_the_cold_program() {
         "narrow_typeof_printable",
         "callback_union_two_error_slots",
         "shared_fn_call",
+        "generator_default_value",
     ];
     let (mut warm, mut refused) = (0, 0);
     for (k, name) in programs.iter().enumerate() {
@@ -499,4 +507,72 @@ fn random_body_edits_reload_warm_to_the_cold_program() {
     }
     // The comparison means something only if some reloads were warm.
     assert!(warm > 0, "{warm} warm, {refused} refused");
+}
+
+/// A generator with an `any` default used as a value goes through a wrapper made by the reading
+/// body's check (`gen_value.rs`): an edit of that body makes the wrapper again, with the copy of
+/// its argument's coercion (once the kept wrapper was reused without it).
+#[test]
+fn an_edit_of_a_body_reading_a_generator_value_remakes_its_wrapper() {
+    let src = "function* gen(x: any = \"g\"): Generator<string> {
+  yield `${x}`;
+}
+function main(): void {
+  const gv = gen;
+  console.log(gv(undefined).next().value, \"a\");
+}
+";
+    let out = edit(src, "\"a\"", "\"b\"");
+    assert!(matches!(out[0], Reload::Warm), "{out:?}");
+}
+
+/// `VELT_DEV_WARM=off` (`Carried::warm`) keeps every save on the cold front end, also under `-v`,
+/// which keeps a check to measure it.
+#[test]
+fn warm_off_reloads_cold_though_a_check_is_kept() {
+    let src = "function main() { console.log(twice(2)); }
+function twice(n: number): number { return n * 2; }
+";
+    for warm in [true, false] {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        write(dir.path(), &[("main.velt", src)]);
+        let opts = BuildOptions {
+            input: dir.path().join("main.velt"),
+            ..BuildOptions::default()
+        };
+        let mut sess = Session::new();
+        sess.keep_check = true;
+        sess.counted_seed = Some(velt_vir::CountedSeed::default());
+        let first = driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+        let mut session =
+            velt_codegen_cl::DevSession::new(&velt_rt_host::abi_symbols::symbol_table());
+        session.load(&first).expect("load");
+        let own = Snapshot::of_build(&sess, &opts.input);
+        let mut carried = super::Carried {
+            seed: sess.counted_seed.take(),
+            own: Some(own.clone()),
+            interfaces: None,
+            kept: sess.kept.take(),
+            kept_own: Some(own),
+            kept_files: Some(driver::copy_files(&sess.sm)),
+            warm,
+            warm_reloads: 0,
+        };
+        assert!(carried.kept.is_some(), "a dev build keeps its check");
+        write(dir.path(), &[("main.velt", &src.replace("n * 2", "n * 3"))]);
+        let flags = super::Report {
+            verbose: true,
+            details: false,
+        };
+        let reloaded = super::reload_with(&mut session, &opts, flags, &mut carried, |_| Ok(()));
+        assert!(
+            !matches!(
+                reloaded,
+                velt_rt_host::dev::handover::reload::Reloaded::Failed { .. }
+            ),
+            "{reloaded:?}"
+        );
+        assert_eq!(carried.warm_reloads, usize::from(warm), "warm: {warm}");
+        assert!(carried.kept.is_some(), "a check is kept for the next save");
+    }
 }

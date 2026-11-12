@@ -242,6 +242,8 @@ fn a_version_that_failed_after_lowering_is_not_the_baseline() {
         kept: None,
         kept_own: None,
         kept_files: None,
+        warm: true,
+        warm_reloads: 0,
     };
     let failed = host_reload(
         &mut session,

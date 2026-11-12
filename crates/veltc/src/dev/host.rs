@@ -90,6 +90,8 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
                     kept,
                     kept_own,
                     kept_files,
+                    warm: super::swap::warm_enabled(),
+                    warm_reloads: 0,
                 };
                 super::swap::serve_reloads(channel, opts.clone(), session, state, &args.build)
             }

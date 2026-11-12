@@ -487,6 +487,9 @@ pub(crate) fn forget_all(cx: &mut Ctx, defs: &[DefId]) -> Result<(), DefId> {
     for c in &own_closures {
         cx.callback_wrappers.remove(c);
     }
+    // A generator's value wrapper (`gen_value.rs`) made by a forgotten check is made again by the
+    // new one, with what its check adds (the copies of its coercions went with the old one's).
+    (cx.generator_values).retain(|_, (c, _)| !own_closures.contains(c));
     drop_own(&mut cx.rec.reported, &own(&|l| l.reported));
     drop_own(&mut cx.rec.completed, &own(&|l| l.completed));
     cx.rec.completed.retain(|(d, _)| !defs.contains(d));
