@@ -298,6 +298,7 @@ impl FnLower<'_, '_> {
                     .op();
             }
             "velt_rt_uncaught_now" => return hooks::sched_uncaught_now(self).emit(self).op(),
+            "velt_rt_task_id" => return hooks::sched_task_id(self).emit(self).op(),
             "velt_rt_timer_free" => {
                 return hooks::sched_timer_free(self, ty::U64::arg(arg(0)))
                     .emit(self)

@@ -17,7 +17,7 @@ pub fn std_scheduler() -> bool {
 
 /// The externs std declares whose jobs the executor in Velt does (lowering calls its hooks in
 /// their place, velt_vir `lower/sched.rs`): the prelude's microtasks (std/prelude/promise.velt),
-/// `new Promise`'s latch (std/lang/promise/settle.velt), the prelude's timers
+/// `new Promise`'s latch and task ids (std/lang/promise/settle.velt), the prelude's timers
 /// (std/prelude/timers.velt) and the process lifetime. Live code that calls one runs on the
 /// executor, as code that is async does (velt_sema `lazy_std`, #2649 P3(a)).
 pub const SCHED_EXTERNS: &[&str] = &[
@@ -35,6 +35,7 @@ pub const SCHED_EXTERNS: &[&str] = &[
     "velt_rt_timer_clear",
     "velt_rt_timer_free",
     "velt_rt_uncaught_now",
+    "velt_rt_task_id",
 ];
 
 /// The prelude's question of a due `unref()`'d timer (std/prelude/timers.velt, an async extern).

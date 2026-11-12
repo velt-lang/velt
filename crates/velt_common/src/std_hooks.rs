@@ -334,6 +334,9 @@ hooks! {
     sched_timer_clear => lang_hooks_sched, "schedTimerClear", sig((u64) -> void), lowered;
     sched_timer_free => lang_hooks_sched, "schedTimerFree", sig((u64) -> void), lowered;
     sched_uncaught_now => lang_hooks_sched, "schedUncaughtNow", sig(() -> void), lowered;
+    /// `velt_rt_task_id`'s (std/lang/promise/settle.velt's extern): the id of the task being
+    /// polled, 0 outside a task.
+    sched_task_id => lang_hooks_sched, "schedTaskId", sig(() -> u64), lowered;
     /// Module state's `velt_rt_module_state` (`(desc, slot)`), `_block` and `_ready` (workers).
     sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
     sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;

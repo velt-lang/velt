@@ -304,6 +304,8 @@ export const T_HOME: usize = 152;
 export const T_JOIN_STATE: usize = 160;
 /** The result's transfer glue (0: none), run as the root finishes (sched_run.velt `rootDone`). */
 export const T_TRANSFER: usize = 168;
+/** The task's id for `velt_rt_task_id` (0 until first asked for; sched_id.velt). */
+export const T_ID: usize = 176;
 /** The join handle (a heap future: its header, then its result slot at `T_SLOT`). */
 export const T_JOIN: usize = 184;
 export const T_SLOT: usize = 200;

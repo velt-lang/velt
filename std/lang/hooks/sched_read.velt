@@ -1,0 +1,18 @@
+// velt/lang/hooks (internal): the read-callback check of the executor in Velt (sched.velt, #2649
+// P2d). A task or a promise started inside an `RwLock`'s `read` callback would hold what the
+// callback shares without counting it past the callback, so the program stops, with the runtime
+// executor's message (velt_rt read_mode.rs `refuse_tasks_in_read`, which its spawns and starts
+// call).
+
+/** 1 when this thread is inside a `read` callback (velt_rt read_mode.rs). */
+declare c("c") function velt_rt_lk_mode(): u8;
+
+/** Stop the program when this thread is inside a `read` callback (module docs). */
+export function refuseInRead(): void {
+  // SAFETY: reads this thread's read-callback depth; no arguments.
+  if (unsafe { velt_rt_lk_mode() } != 0) {
+    panic(
+      "a promise or task cannot start inside a `read` callback: what it holds would outlive the callback, which shares the `RwLock`'s value without counting it (start it after `read`, with what `read` returns)",
+    );
+  }
+}
