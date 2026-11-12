@@ -1,0 +1,57 @@
+// velt/lang/hooks (internal): Node timers' handles for the executor in Velt's hooks (sched.velt
+// `schedTimer*`, #2649). On a worker a timer goes in the executor's order (sched_order.velt) and
+// its handle has bit 0 set; off every worker (a pinned spawn's code, a C library's callback) it
+// is the runtime's (sched_off.velt), its handle with bit 0 clear. Each call goes where its
+// handle came from.
+
+import * as off from "./sched_off";
+import * as order from "./sched_order";
+import * as sp from "./sched_spread";
+import * as t from "./sched_task";
+import * as workers from "./sched_workers";
+
+/** A Node timer due `ms` milliseconds from now, queued: its handle. */
+export function timerNew(ms: i64): u64 {
+  if (!t.onWorker()) {
+    return off.timerNew(ms);
+  }
+  const e = workers.started();
+  sp.anchor();
+  return order.timerNew(e, ms) | 1;
+}
+
+/** A heap future that completes once timer `h`'s turn has come. */
+export function turn(h: u64, gate: u64): usize {
+  if ((h & 1) === 0) {
+    return off.timerTurn(h, gate);
+  }
+  workers.started();
+  return order.turn((h & ~1) as usize);
+}
+
+/** An interval's timer `h` queued again, `ms` after its last turn. */
+export function again(h: u64, ms: i64): void {
+  if ((h & 1) === 0) {
+    off.timerAgain(h, ms);
+    return;
+  }
+  order.timerAgain(workers.started(), (h & ~1) as usize, ms);
+}
+
+/** Timer `h` leaves the order (`clearTimeout`). */
+export function clear(h: u64): void {
+  if ((h & 1) === 0) {
+    off.timerClear(h);
+    return;
+  }
+  order.timerClear(workers.started(), (h & ~1) as usize);
+}
+
+/** Timer `h` leaves the order and its handle is freed. */
+export function free(h: u64): void {
+  if ((h & 1) === 0) {
+    off.timerFree(h);
+    return;
+  }
+  order.timerFree(workers.started(), (h & ~1) as usize);
+}
