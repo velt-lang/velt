@@ -288,7 +288,7 @@ pub(super) fn report(
             at,
         ),
     };
-    d = d.with_label(why.span, super::super::reaches(cx, &why));
+    d = super::super::with_why(cx, d, &why);
     // `shared` alone holds a 64-bit integer (`add`, `get`, `set`); any other value goes in a
     // `Mutex`, and one that is not copied (a string, an object) in an object there, since a
     // `with` callback can replace the fields of what it gets but not the value itself.

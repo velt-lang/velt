@@ -82,6 +82,8 @@ pub(crate) struct Crossing {
     pub closure: DefId,
     pub at: velt_common::Span,
     pub label: String,
+    /// Where the closure was made a dynamic value, when that is why it crosses (`Why::made_dyn`).
+    pub made_dyn: Option<velt_common::Span>,
 }
 
 /// Decide which async closures are local, mark them (`FnDef::shares_captures`), and report the
@@ -98,12 +100,29 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     let mut resolved = 0;
+    let mut dyn_done = 0;
     // The types a stored closure literal's type has in its function's instantiations, by the
     // function and the type.
     let mut lit_insts: FxHashMap<(DefId, TyId), Vec<TyId>> = FxHashMap::default();
     loop {
         p.run(cx, &g);
         resolve_hits(cx, &g, &mut p, &mut resolved);
+        // A crossing value of a dynamic type takes what was made dynamic with it (#2865).
+        if p.dynamic.len() > dyn_done {
+            let ws = p.dynamic[dyn_done..].to_vec();
+            dyn_done = p.dynamic.len();
+            for w in ws {
+                for &(n, span, ty) in &g.dynamic {
+                    let w = Why {
+                        via: None,
+                        made_dyn: Some((span, ty)),
+                        ..w
+                    };
+                    p.set(n, CROSSES, Some(w));
+                }
+            }
+            p.run(cx, &g);
+        }
         types::crossing_fns(cx, &p.roots[rooted..], &mut seen, &mut fns);
         rooted = p.roots.len();
         let mut changed = false;
@@ -200,6 +219,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                     closure: c,
                     at: w.span,
                     label,
+                    made_dyn: w.made_dyn.map(|(s, _)| s),
                 });
             }
         }
@@ -221,6 +241,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                     closure: c,
                     at: w.span,
                     label,
+                    made_dyn: w.made_dyn.map(|(s, _)| s),
                 });
             }
         }
@@ -295,13 +316,19 @@ fn resolve_hits(cx: &mut Ctx, g: &Graph, p: &mut Propagation, done: &mut usize) 
 }
 
 /// What a crossing value of type `t` (an instantiation of a generic one) carries: `t` itself,
-/// for the heap rule, or any closure when `t` is still generic.
+/// for the heap rule, any closure when `t` is still generic, and what the program made dynamic
+/// when `t` mentions a dynamic type.
 fn push_instance(cx: &Ctx, p: &mut Propagation, t: TyId, w: Why) {
-    // A type parameter, or a dynamic type (`unknown`, `any`, `object`, `Function`), may hold any
-    // closure (#2860: `keepAndSpawn<unknown>(job)`).
-    if types::mentions_param(cx, t) || types::mentions_dynamic(cx, t) {
+    // A type parameter may hold any closure; a dynamic type (`unknown`, `any`, `object`,
+    // `Function`) what the program made dynamic (#2865: `keepAndSpawn<unknown>(job)`).
+    if types::mentions_param(cx, t) {
         // Its type, a type parameter, says nothing to the reader: the label names the boundary.
         p.wild.push(w);
+    } else if types::mentions_dynamic(cx, t) {
+        // A dynamic type holds what the program made dynamic (`Graph::dynamic`), not every type
+        // and closure there is; the rest of the type (`Box<unknown>`) is as any other.
+        p.dynamic.push(w);
+        p.roots.push((t, w));
     } else {
         p.roots.push((t, w));
     }
@@ -450,8 +477,7 @@ fn report_atomics(cx: &mut Ctx, c: DefId, why: Option<Why>, plain: bool) {
             at,
         );
         if let Some(w) = why {
-            let label = reaches(cx, &w);
-            d = d.with_label(w.span, label);
+            d = with_why(cx, d, &w);
         }
         cx.error(d.with_note(format!(
             "{}, and changes to the copy's atomics would not reach `{name}`: share it so every task changes the same atomics: `const {name} = shared(new {tn}(…))`",
@@ -485,10 +511,23 @@ fn report_generators(cx: &mut Ctx, c: DefId, why: Option<Why>) {
             at,
         );
         if let Some(w) = why {
-            let label = reaches(cx, &w);
-            d = d.with_label(w.span, label);
+            d = with_why(cx, d, &w);
         }
         cx.error(d.with_note("such a closure copies what it captured for each call, and a generator's suspended state cannot be copied: create the generator inside the closure, or keep the closure on the task that created it"));
+    }
+}
+
+/// `d` with the label naming where a value leaves its task ([`reaches`]), and, when it crosses
+/// because it was made a dynamic value, one at that conversion.
+pub(in crate::ownership::local_async) fn with_why(
+    cx: &Ctx,
+    d: velt_common::Diagnostic,
+    w: &Why,
+) -> velt_common::Diagnostic {
+    let d = d.with_label(w.span, reaches(cx, w));
+    match w.made_dyn {
+        Some((at, _)) => d.with_label(at, "made a dynamic value here"),
+        None => d,
     }
 }
 
@@ -505,15 +544,25 @@ pub(in crate::ownership::local_async) fn reaches(cx: &Ctx, w: &Why) -> String {
         Boundary::Channel => "is sent on a channel here",
         Boundary::Settle => "settles a promise here, which another task may await",
     };
-    match w.via {
-        Some(t) => {
-            let shown = cx.display(t);
-            let article = match shown.chars().next() {
-                Some(c) if "AEIOUaeiou".contains(c) => "an",
-                _ => "a",
-            };
-            format!("but it is stored in {article} `{shown}`, which {place}")
-        }
+    let holder = w.via.map(|t| {
+        let shown = cx.display(t);
+        let article = match shown.chars().next() {
+            Some(c) if "AEIOUaeiou".contains(c) => "an",
+            _ => "a",
+        };
+        format!("it is stored in {article} `{shown}`")
+    });
+    // Made dynamic (itself, or the holder it is stored in): a value of a dynamic type crosses at
+    // the boundary, and may be this one (#2865).
+    if let Some((_, t)) = w.made_dyn {
+        let what = match holder {
+            Some(h) => format!("{h}, made a dynamic value (`{}`)", cx.display(t)),
+            None => format!("it is made a dynamic value (`{}`)", cx.display(t)),
+        };
+        return format!("but {what}, and a value of a dynamic type {place}");
+    }
+    match holder {
+        Some(h) => format!("but {h}, which {place}"),
         None => format!("but it {place}"),
     }
 }
@@ -538,6 +587,9 @@ struct Propagation {
     /// function, the type and why, to resolve through the function's instantiations
     /// ([`resolve_hits`]).
     hits: Vec<(DefId, TyId, Why)>,
+    /// Why a crossing value of a dynamic type crosses: what the program made dynamic crosses with
+    /// it (`Graph::dynamic`).
+    dynamic: Vec<Why>,
 }
 
 impl Propagation {
@@ -550,6 +602,7 @@ impl Propagation {
             roots: g.roots.clone(),
             wild: vec![],
             hits: g.generic_roots.clone(),
+            dynamic: vec![],
         }
     }
 
@@ -675,8 +728,7 @@ fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
             at,
         );
         if let Some(w) = why {
-            let label = reaches(cx, &w);
-            d = d.with_label(w.span, label);
+            d = with_why(cx, d, &w);
         }
         let runs = match why.map(|w| w.boundary) {
             Some(Boundary::Spawn) => "the spawned task runs it on another thread",

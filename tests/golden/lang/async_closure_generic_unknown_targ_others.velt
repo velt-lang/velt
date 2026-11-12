@@ -1,0 +1,22 @@
+// A value of a dynamic type that crosses holds only what the program made dynamic (#2865): a job
+// that modifies what it captured, kept in an array but never made dynamic, stays on its task, so
+// it is accepted next to a number spawned as `unknown`.
+type Job = () => Promise<void>;
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+async function main() {
+  let n = 0;
+  const local: Job = async () => {
+    n++;
+  };
+  const kept: Job[] = [local];
+  await kept[0]();
+  keepAndSpawn<unknown>(5);
+  await sleep(10);
+  console.log(n);
+}

@@ -43,6 +43,9 @@ pub(super) struct Why {
     pub depth: u8,
     /// `shared(...)` of a value holding the function, not of the function itself.
     pub in_value: bool,
+    /// The value was made a dynamic one at this conversion, to this type (`Graph::dynamic`), and
+    /// crosses because a value of a dynamic type does (#2865): not through a holder's type.
+    pub made_dyn: Option<(Span, TyId)>,
 }
 
 impl Why {

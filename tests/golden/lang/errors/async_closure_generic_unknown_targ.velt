@@ -1,5 +1,7 @@
-// An instantiation with `unknown` may hold any closure (#2860): through a generic closure and
-// directly, the job that modifies what it captured reaches the spawn, and is refused.
+// An instantiation with a dynamic type (`unknown`, `any`, `object`) holds what the program made
+// dynamic (#2865): a job that modifies what it captured, passed through a local, reaches the
+// spawn through the type argument and is refused. (A generic closure forwarding the type
+// argument is #2860's case; here it would make every `Job` cross by type and hide these.)
 type Job = () => Promise<void>;
 function keepAndSpawn<T>(x: T): void {
   const box: T[] = [x];
@@ -8,20 +10,20 @@ function keepAndSpawn<T>(x: T): void {
     console.log(typeof v);
   });
 }
-interface Reader {
-  read<T>(x: T): void;
-}
-interface Engine {
-  run: <T>(x: T) => void;
-}
 async function main() {
-  let g = 0;
-  const engine: Engine = { run: <T>(x: T): void => keepAndSpawn<T>(x) };
-  engine.run<unknown>(async () => {
-    g++;
-  });
-  let k = 0;
-  keepAndSpawn<unknown>(async () => {
-    k++;
-  });
+  let u = 0;
+  const asUnknown: Job = async () => {
+    u++;
+  };
+  keepAndSpawn<unknown>(asUnknown);
+  let a = 0;
+  const asAny: Job = async () => {
+    a++;
+  };
+  keepAndSpawn<any>(asAny);
+  let o = 0;
+  const asObject: Job = async () => {
+    o++;
+  };
+  keepAndSpawn<object>(asObject);
 }

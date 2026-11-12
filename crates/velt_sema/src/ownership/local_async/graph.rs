@@ -42,6 +42,9 @@ pub(super) enum Node {
     DArg(u32, u32),
     /// The function value called by the call through a function value numbered `0`.
     Callee(u32),
+    /// The value made a dynamic one (`any`, `unknown`, `object`, `Function`) by the conversion
+    /// numbered `0` (`Graph::dynamic`): it passes through to where the converted value goes.
+    Dyn(u32),
 }
 
 /// A dispatched call: the methods it may reach, the argument node at each position after the
@@ -113,6 +116,10 @@ pub(super) struct Graph {
     pub std_inflows: FxHashMap<usize, Vec<(DefId, TyId)>>,
     /// Per closure literal node: its capture locals' nodes.
     pub captures: FxHashMap<usize, Vec<usize>>,
+    /// The [`Node::Dyn`] nodes: every value the program makes a dynamic one, with the conversion's
+    /// span and type. A crossing value of a dynamic type (`keepAndSpawn<unknown>(job)`) may hold any
+    /// of them (#2865), and nothing else.
+    pub dynamic: Vec<(usize, Span, TyId)>,
 }
 
 impl Graph {
@@ -211,6 +218,7 @@ impl Walk<'_, '_> {
             via: None,
             depth: 0,
             in_value: false,
+            made_dyn: None,
         })
     }
 
@@ -386,10 +394,15 @@ impl Walk<'_, '_> {
             // what it holds (`super::generic_closures`). A generic function value's own `ToDyn`
             // (its interface) is no conversion.
             E::ToDyn { expr: x, .. } => {
-                if super::types::mentions_dynamic(self.cx, e.ty) {
-                    self.g.dyn_calls.escape(self.cx, x.ty);
+                if !super::types::mentions_dynamic(self.cx, e.ty) {
+                    return self.value(x, to);
                 }
-                self.value(x, to)
+                self.g.dyn_calls.escape(self.cx, x.ty);
+                let k = self.g.dynamic.len() as u32;
+                let n = self.g.node(Node::Dyn(k), x.ty);
+                self.g.dynamic.push((n, e.span, e.ty));
+                self.value(x, To::Node(n, None));
+                self.connect(n, to);
             }
             E::WrapSome(x)
             | E::UnwrapSome(x, _)
