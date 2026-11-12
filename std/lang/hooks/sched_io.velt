@@ -185,20 +185,29 @@ export function wake(b: usize): void {
 }
 
 /**
- * The worker has nothing to run (its park word is up, sched_run.velt): waits for events or a
- * wake, until the first deadline of a wait or `timeoutMs` (the timers', -1: none) at most, and
- * delivers the events.
+ * The worker has nothing to run (its park word, at `parkWord`, is up: sched_run.velt): waits for
+ * events or a wake, until the first deadline of a wait or `timeoutMs` (the timers', -1: none) at
+ * most, and delivers the events. Awake before it delivers anything: the park word down and the
+ * worker's wakes (`wakes`, sched_wake.velt `unpark`'s count) counted, in that order, so worker 0
+ * deciding whether the program can end (sched_end.velt `quiet`) sees this worker awake, its count
+ * moved, or the waits still linked, never a wait unlinked with its woken task unseen.
  */
 @noInline
-export function park(b: usize, timeoutMs: i64): void {
+export function park(b: usize, timeoutMs: i64, parkWord: usize, wakes: usize): void {
   if (m.ld(b + IO_REACTOR) === 0) {
     panic("the executor's reactor did not open: it has nothing to wait in");
   }
+  const first = m.ld(b + IO_TIMERS);
   let ms = wt.expire(b);
   if (timeoutMs >= 0 && (ms < 0 || timeoutMs < ms)) {
     ms = timeoutMs;
   }
-  wait(b, ms);
+  if (m.ld(b + IO_TIMERS) !== first) {
+    // Waits expired (from the front of the list): their tasks are queued here, so the wait only
+    // looks (it would sleep on with them queued until the next event).
+    ms = 0;
+  }
+  wait(b, ms, parkWord, wakes);
   if (m.ld(b + IO_TIMERS) !== 0) {
     wt.expire(b);
   }
@@ -206,14 +215,17 @@ export function park(b: usize, timeoutMs: i64): void {
 
 /** The events ready now and deadlines passed, delivered without waiting (a busy worker's look). */
 export function look(b: usize): void {
-  wait(b, 0);
+  wait(b, 0, 0, 0);
   if (m.ld(b + IO_TIMERS) !== 0) {
     wt.expire(b);
   }
 }
 
-/** Waits up to `timeoutMs` (-1: no limit) and delivers the events. */
-function wait(b: usize, timeoutMs: i64): void {
+/**
+ * Waits up to `timeoutMs` (-1: no limit) and delivers the events; a parked worker awake first
+ * (`parkWord`, `wakes`: `park`; 0 for a look).
+ */
+function wait(b: usize, timeoutMs: i64, parkWord: usize, wakes: usize): void {
   const rb = m.ld(b + IO_REACTOR);
   if (rb === 0) {
     return;
@@ -223,6 +235,10 @@ function wait(b: usize, timeoutMs: i64): void {
     m.spinLock(b + IO_RLOCK);
   }
   const n = r.wait(rb, timeoutMs);
+  if (parkWord !== 0) {
+    m.store32(parkWord, 0);
+    m.incOrdered(wakes);
+  }
   deliver(rb, n);
   if (shared) {
     m.store32(b + IO_RLOCK, 0);

@@ -73,7 +73,7 @@ export function park(e: usize): void {
   if ((mode & t.M_SPREAD) !== 0) {
     asleep = sp.now();
   }
-  io.park(b, timeout);
+  io.park(b, timeout, e + t.E_PARK, e + t.E_UNPARKS);
   m.store32(e + t.E_PARK, 0);
   if (timers) {
     order.tick(e);

@@ -602,3 +602,76 @@ async function main() {
     assert_eq!(std, want, "sockets on the reactor in Velt");
     assert!(contains(&std_bin, b"listenOn"), "no sockets in Velt");
 }
+
+/// A connect waited on by a worker while worker 0 parks too: the program goes on until the
+/// connects are done. A parked worker that took its reactor's events counted its wait out and
+/// queued the woken task while its park word was still up, so worker 0's end-of-program scan
+/// could see neither and end the program with nothing printed (half the runs of 100 connects on
+/// a Mac; now the worker counts itself awake before it delivers). The std build with 4 workers,
+/// 10 runs.
+#[test]
+fn the_program_runs_on_while_another_worker_waits_for_a_connect() {
+    if !cfg!(any(target_os = "macos", target_os = "linux")) {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let src = r#"import { connect, listen, TcpListener } from "velt/net";
+import { channel, Channel } from "velt/sync";
+
+async function clients(port: i64): Promise<i64> {
+  for (let i: i64 = 0; i < 100; i++) {
+    const c = await connect(`127.0.0.1:${port}`);
+    c.close();
+  }
+  return 100;
+}
+
+async function serve(l: TcpListener, go: Channel<i64>): Promise<void> {
+  const n = (await go.receive()) ?? 0;
+  for (let i: i64 = 0; i < n; i++) {
+    (await l.accept()).close();
+  }
+  l.close();
+}
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  const go = channel<i64>(1);
+  const server = spawn(serve(l, go), { worker: 0 });
+  const n = await spawn(clients(l.port as i64), { worker: 1 });
+  await go.send(n);
+  await server;
+  console.log(`connected ${n} times`);
+}
+"#;
+    let file = dir.path().join("connects.velt");
+    std::fs::write(&file, src).unwrap();
+    let exe = dir.path().join("connects");
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(dir.path())
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    for run in 0..10 {
+        let o = command(&exe)
+            .env("VELT_THREADS", "4")
+            .env_remove("VELT_SCHEDULER")
+            .output()
+            .unwrap();
+        assert_eq!(
+            (
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n")
+            ),
+            (Some(0), "connected 100 times\n".to_string()),
+            "run {run}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+}

@@ -40,13 +40,24 @@ const W_EXPIRED: usize = 104;
 const W_SRC: usize = 112;
 const W_SIZE: usize = 120;
 
-/** Wakes every waiter of source `s` (locked); each polls again and waits again when it must. */
+/**
+ * Wakes every waiter of source `s` (locked); each polls again and waits again when it must. The
+ * waits leave the count after their tasks are queued: the end's scan (sched_end.velt `busy`)
+ * reads the count first, so a count without them means their tasks are seen queued (or their
+ * workers' wakes counted), whichever thread delivers (a parked worker also counts itself awake
+ * before it delivers: sched_io.velt `park`; the stall monitor's thread turns a busy worker's
+ * reactor while the others are parked).
+ */
 export function wakeAll(s: usize): void {
   let w = m.ld(s + io.S_WAITERS);
+  if (w === 0) {
+    return;
+  }
   m.st(s + io.S_WAITERS, 0);
+  let n: isize = 0;
   while (w !== 0) {
     const next = m.ld(w + W_NEXT);
-    waiting(-1);
+    n++;
     m.st(w + W_LINKED, 0);
     m.st(w + W_PREV, 0);
     m.st(w + W_NEXT, 0);
@@ -62,6 +73,7 @@ export function wakeAll(s: usize): void {
     }
     w = next;
   }
+  waiting(-n);
 }
 
 /**
@@ -163,9 +175,16 @@ function unlink(f: usize): void {
 
 /** Takes waiter `f` out of its source's list (constant time; the source is locked). */
 function unlinkLocked(f: usize): void {
+  if (detach(f)) {
+    waiting(-1);
+  }
+}
+
+/** `unlinkLocked` without the count: whether `f` was linked (the caller counts it out). */
+function detach(f: usize): bool {
   const s = m.ld(f + W_LINKED);
   if (s === 0) {
-    return;
+    return false;
   }
   const prev = m.ld(f + W_PREV);
   const next = m.ld(f + W_NEXT);
@@ -178,14 +197,17 @@ function unlinkLocked(f: usize): void {
     m.st(next + W_PREV, prev);
   }
   m.st(f + W_LINKED, 0);
-  waiting(-1);
+  return true;
 }
 
-/** One more (`d` 1) or one fewer (-1) wait linked into a source: the I/O block's count. */
+/**
+ * `d` more (or fewer) waits linked into a source: the I/O block's count, which only its thread
+ * writes. A release: the end's scan that reads the count also sees the tasks queued before.
+ */
 @inline
 function waiting(d: isize): void {
   const b = io.io();
-  m.st(b + io.IO_WAITING, ((m.ld(b + io.IO_WAITING) as isize) + d) as usize);
+  m.storeRelease(b + io.IO_WAITING, ((m.ld(b + io.IO_WAITING) as isize) + d) as usize);
 }
 
 export function waitDrop(f: usize): void {
@@ -286,12 +308,17 @@ export function expire(b: usize): i64 {
     // A timed wait was linked when it went on the list: its source is known.
     const s = m.ld(f + W_SRC);
     tb.lock(s);
-    unlinkLocked(f);
+    const linked = detach(f);
     const k = m.ld(f + W_WAKER);
     m.st(f + W_WAKER, 0);
     tb.unlock(s);
     if (k !== 0) {
       m.wakeOwned(k);
+    }
+    // Counted out after the wake, as `wakeAll`'s: a worker about to park expires waits with its
+    // park word up (sched_io.velt `park`, before it waits).
+    if (linked) {
+      waiting(-1);
     }
     f = next;
   }
