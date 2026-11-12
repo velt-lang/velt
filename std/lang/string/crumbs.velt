@@ -3,13 +3,14 @@
 // buffer, in the buffer's header, the same bytes and the same protocol on both sides
 // (rt_abi.md "Breadcrumbs", #2198).
 //
-// - A non-ASCII heap buffer is `[crumbs][lone: u64][count: u64][text]`: `crumbs` (a pointer, at
-//   24 bytes before the text) is null, `REMEMBERED` (1: no table, but a thread remembers a
-//   position in a slice of it, so freeing it bumps the epoch) or a table.
-// - A table is `[len: usize][cap: usize][prev: pointer][entries: u32 × cap]`: entry `k` is the
-//   byte offset of unit `k × STRIDE`, with `LOW_HALF` set when that unit is the second half of the
-//   4-byte sequence there. Entries below `len` never change; an entry is written (relaxed) before
-//   `len` covers it (a `max` with release), and read after `len` (acquire) does.
+// - A non-ASCII heap buffer is `[crumbs][lone: u64][count: u64][text]`: `crumbs` (an address in
+//   8 bytes on every target, 24 bytes before the text) is null, `REMEMBERED` (1: no table, but a
+//   thread remembers a position in a slice of it, so freeing it bumps the epoch) or a table.
+// - A table is `[len: u64][cap: u64][prev: u64 address][entries: u32 × cap]` on every target:
+//   entry `k` is the byte offset of unit `k × STRIDE`, with `LOW_HALF` set when that unit is the
+//   second half of the 4-byte sequence there. Entries below `len` never change; an entry is
+//   written (relaxed) before `len` covers it (a `max` with release), and read after `len`
+//   (acquire) does.
 // - Extending a table that has room writes the entries past `len` (two threads write the same
 //   values: the text is immutable while two can read it). A table without room is replaced by a
 //   copy twice its size, published with a compare-and-swap of the header field; the copy keeps the
@@ -44,10 +45,9 @@ const HEADER: usize = 24;
 /** The `crumbs` field of a buffer whose slices' positions a thread remembers. */
 const REMEMBERED: usize = 1;
 
-/** Bytes of a pointer (and of a `usize`) on this target. */
-function word(): usize {
-  return ~(0 as usize) > (0xffffffff as usize) ? 8 : 4;
-}
+/** Bytes of each header field (an address or a count) on every target: a `usize` is 64-bit on
+ * wasm32 too, and the runtime's fields are 8 bytes there as well. */
+const WORD: usize = 8;
 
 /** The address of the `crumbs` field of the non-ASCII buffer whose text is at `data`. */
 function field(data: usize): usize {
@@ -68,20 +68,20 @@ export function tableLen(t: usize): usize {
 /** The entries table `t` has room for. */
 function tableCap(t: usize): usize {
   // SAFETY: `t` is a live table; `cap` never changes.
-  return unsafe { addressLoad<usize>(t + word()) };
+  return unsafe { addressLoad<usize>(t + WORD) };
 }
 
 /** Entry `k` (below `len`) of table `t`. */
 export function entry(t: usize, k: usize): u32 {
   // SAFETY: `t` is a live table with more than `k` entries in use.
-  return unsafe { ptrAtomicLoad(Ptr.at<u32>(t + 3 * word() + 4 * k), "relaxed") };
+  return unsafe { ptrAtomicLoad(Ptr.at<u32>(t + 3 * WORD + 4 * k), "relaxed") };
 }
 
 /** Writes entry `k` (below `cap`) of table `t`. */
 function setEntry(t: usize, k: usize, e: u32): void {
   // SAFETY: `t` is a live table with room for `k + 1` entries.
   unsafe {
-    ptrAtomicStore(Ptr.at<u32>(t + 3 * word() + 4 * k), e, "relaxed");
+    ptrAtomicStore(Ptr.at<u32>(t + 3 * WORD + 4 * k), e, "relaxed");
   }
   ;
 }
@@ -152,12 +152,12 @@ function fill(t: usize, s: string, want: usize): void {
 
 /** A new table with room for `cap` entries holding the first `n` entries of `old` (0: none). */
 function allocTable(cap: usize, old: usize, n: usize): usize {
-  const t = rawAlloc(3 * word() + 4 * cap);
+  const t = rawAlloc(3 * WORD + 4 * cap);
   // SAFETY: a fresh block with room for the header and `cap >= n` entries.
   unsafe {
     addressStore<usize>(t, n);
-    addressStore<usize>(t + word(), cap);
-    addressStore<usize>(t + 2 * word(), 0);
+    addressStore<usize>(t + WORD, cap);
+    addressStore<usize>(t + 2 * WORD, 0);
   }
   for (let k: usize = 0; k < n; k++) {
     setEntry(t, k, entry(old, k));
@@ -199,7 +199,7 @@ function build(s: string, data: usize, units: usize): usize {
     fill(t, s, want);
     // SAFETY: `t` is ours until published; the swap publishes it.
     unsafe {
-      addressStore<usize>(t + 2 * word(), current);
+      addressStore<usize>(t + 2 * WORD, current);
     }
     ;
     // SAFETY: as in `crumbs`.
@@ -210,7 +210,7 @@ function build(s: string, data: usize, units: usize): usize {
     // Another thread published first: ours goes (its `prev` stays with the published table).
     // SAFETY: `t` was never published, and nothing else holds it.
     unsafe {
-      rawFree(t, 3 * word() + 4 * tableCap(t));
+      rawFree(t, 3 * WORD + 4 * tableCap(t));
     }
     ;
     seen = won;

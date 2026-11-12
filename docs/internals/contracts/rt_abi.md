@@ -694,13 +694,14 @@ the runtime (`velt_rt` `str/crumbs.rs`, `str/recent.rs`) and by std (std/lang/st
 `positions.velt`, `crumbs.velt`), which read, build and extend the same tables. Both follow this,
 byte for byte:
 
-- **Header field.** A non-ASCII heap buffer is `[crumbs][lone: u64][count: u64][text]`: `crumbs`, a
-  pointer-sized word 24 bytes before the text, is 0 (none), 1 (no table, but a thread remembers a
-  position in a slice of the buffer, so freeing it bumps the epoch) or a table's address.
-- **Table.** `[len: usize][cap: usize][prev: pointer][entries: u32 × cap]`, allocated with
-  `velt_rt_alloc(size, 8)` (std's `rawAlloc`) and freed with `velt_rt_free`. Entry `k` is the byte
-  offset of unit `k × 64`, with bit 31 set when that unit is the second half of the 4-byte sequence
-  there; entry 0 is 0.
+- **Header field.** A non-ASCII heap buffer is `[crumbs][lone: u64][count: u64][text]`: `crumbs`,
+  an 8-byte word 24 bytes before the text on every target (wasm32 too: std's `usize` is 64-bit
+  there), is 0 (none), 1 (no table, but a thread remembers a position in a slice of the buffer, so
+  freeing it bumps the epoch) or a table's address.
+- **Table.** `[len: u64][cap: u64][prev: u64][entries: u32 × cap]` on every target (`prev` an
+  address, or 0), allocated with `velt_rt_alloc(size, 8)` (std's `rawAlloc`) and freed with
+  `velt_rt_free`. Entry `k` is the byte offset of unit `k × 64`, with bit 31 set when that unit is
+  the second half of the 4-byte sequence there; entry 0 is 0.
 - **Publishing.** Entries below `len` never change. A writer stores an entry (relaxed) before `len`
   covers it, raising `len` with an atomic `max` (release); a reader loads `len` (acquire) first. A
   table with room is extended in place (two writers store the same values); one without is
