@@ -116,10 +116,24 @@ pub(super) struct Graph {
     pub std_inflows: FxHashMap<usize, Vec<(DefId, TyId)>>,
     /// Per closure literal node: its capture locals' nodes.
     pub captures: FxHashMap<usize, Vec<usize>>,
-    /// The [`Node::Dyn`] nodes: every value the program makes a dynamic one, with the conversion's
-    /// span and type. A crossing value of a dynamic type (`keepAndSpawn<unknown>(job)`) may hold any
-    /// of them (#2865), and nothing else.
-    pub dynamic: Vec<(usize, Span, TyId)>,
+    /// The conversions into a dynamic type ([`Node::Dyn`]): every value the program makes a dynamic
+    /// one. A crossing value of a dynamic type (`keepAndSpawn<unknown>(job)`) may hold any of them
+    /// (#2865), and nothing else.
+    pub dynamic: Vec<DynConv>,
+}
+
+/// A conversion into a dynamic type (`Graph::dynamic`).
+#[derive(Clone, Copy)]
+pub(super) struct DynConv {
+    /// Its [`Node::Dyn`].
+    pub node: usize,
+    /// The conversion, and the dynamic type it makes (none: a `throw`, caught as `unknown`).
+    pub span: Span,
+    pub ty: Option<TyId>,
+    /// The function it is in, and the type of the value converted: what flows in where the graph
+    /// has no source is resolved by that type, in the function's instantiations.
+    pub owner: DefId,
+    pub from: TyId,
 }
 
 impl Graph {
@@ -398,11 +412,12 @@ impl Walk<'_, '_> {
                     return self.value(x, to);
                 }
                 self.g.dyn_calls.escape(self.cx, x.ty);
-                let k = self.g.dynamic.len() as u32;
-                let n = self.g.node(Node::Dyn(k), x.ty);
-                self.g.dynamic.push((n, e.span, e.ty));
-                self.value(x, To::Node(n, None));
-                self.connect(n, to);
+                // Only into a dynamic type itself: an interface whose type arguments mention one
+                // (`AsyncIterator<T, unknown>`) doesn't make the value a dynamic one.
+                if !super::types::is_dynamic(self.cx, e.ty) {
+                    return self.value(x, to);
+                }
+                self.made_dynamic(x, e.span, Some(e.ty), to);
             }
             E::WrapSome(x)
             | E::UnwrapSome(x, _)
@@ -487,7 +502,9 @@ impl Walk<'_, '_> {
                 self.value(rhs, To::Drop);
                 self.unknown(e, to);
             }
-            E::Throw(x) => self.value(x, STORE),
+            // A thrown value may be caught as an `unknown` anywhere up the calls (`catch (e)`, a
+            // rejected promise's `catch`): made a dynamic value (#2865).
+            E::Throw(x) => self.made_dynamic(x, e.span, None, STORE),
             // A `ConstArray`'s elements are literals, which flow nowhere (as an `ArrayLit`'s).
             E::FnRef(d, targs) => {
                 self.g.fn_values.push((*d, e.ty));
@@ -656,6 +673,22 @@ impl Walk<'_, '_> {
         }
     }
 
+    /// `x` made a dynamic value at `span` (of type `ty`; none: thrown), going to `to`: through a
+    /// [`Node::Dyn`], which a crossing value of a dynamic type makes cross (`Graph::dynamic`).
+    fn made_dynamic(&mut self, x: &Expr, span: Span, ty: Option<TyId>, to: To) {
+        let k = self.g.dynamic.len() as u32;
+        let n = self.g.node(Node::Dyn(k), x.ty);
+        self.g.dynamic.push(DynConv {
+            node: n,
+            span,
+            ty,
+            owner: self.d,
+            from: x.ty,
+        });
+        self.value(x, To::Node(n, None));
+        self.connect(n, to);
+    }
+
     fn intrinsic(&mut self, e: &Expr, i: Intrinsic, args: &[Expr], to: To) {
         // A generic function value going into `any` (or copied by a spread) may be called where
         // the walk doesn't see it (`super::generic_closures`).
@@ -663,6 +696,11 @@ impl Walk<'_, '_> {
             for a in args {
                 self.g.dyn_calls.escape(self.cx, a.ty);
             }
+        }
+        // A share of the value as an `any` (kept, as other intrinsics' arguments are).
+        if let (Intrinsic::ToAny, [x]) = (i, args) {
+            self.made_dynamic(x, e.span, Some(e.ty), STORE);
+            return self.unknown(e, to);
         }
         let boundary = match i {
             Intrinsic::Share | Intrinsic::Clone => {

@@ -1,0 +1,18 @@
+// A value made dynamic inside std, where it is of unknown origin (#2865): a job rejected as a
+// promise's reason comes back to `catch` as `unknown`, and is spawned through a generic function
+// instantiated with `unknown`. The job modifies what it captured, so it is refused.
+type Job = () => Promise<void>;
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  await Promise.reject(job).catch((e: unknown) => keepAndSpawn<unknown>(e));
+}

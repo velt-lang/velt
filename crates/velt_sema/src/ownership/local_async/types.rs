@@ -161,6 +161,23 @@ pub(super) fn mentions_dynamic(cx: &Ctx, t: TyId) -> bool {
     found
 }
 
+/// Is `t` itself a dynamic type (`any`, `unknown`, `object`, `Function`, or one of them or
+/// `null`), so that a value converted to it is a dynamic value? `AsyncIterator<T, unknown>`
+/// mentions one but is not.
+pub(super) fn is_dynamic(cx: &Ctx, t: TyId) -> bool {
+    let Some(defs) = cx.any else {
+        return false;
+    };
+    let dynamic = |t: TyId| {
+        matches!(cx.ty.kind(t), TyKind::Dyn(d, _)
+            if *d == defs.any || *d == defs.unknown || *d == defs.object || *d == defs.function)
+    };
+    match cx.ty.kind(t) {
+        TyKind::Option(x, _) => dynamic(*x),
+        _ => dynamic(t),
+    }
+}
+
 /// Does `t` mention a type parameter numbered `from` or above (a method's own, after its class's)?
 pub(super) fn mentions_param_from(cx: &Ctx, t: TyId, from: u32) -> bool {
     let mut found = false;
