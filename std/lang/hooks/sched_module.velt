@@ -50,6 +50,8 @@ const TABLE = new Atomic<u64>(0);
 const COUNT = new Atomic<u64>(0);
 const CAP = new Atomic<u64>(0);
 const ENTRY: usize = 24;
+/** A descriptor no program has (`DESC` while a block is initialized before it has an entry). */
+const NO_DESC: u64 = 0xffff_ffff_ffff_ffff;
 
 /** How this thread holds the lock: not, for its task's poll, outside a task. */
 const NOT_HELD: u32 = 0;
@@ -96,6 +98,10 @@ export function ready(state: usize, n: u64): void {
   if (at !== 0) {
     m.st(at + 16, n as usize);
     DESC.store(m.ld(at) as u64, "relaxed");
+  } else {
+    // A block the runtime is initializing before `remember` has its entry: no descriptor is
+    // paired with it in the fast paths until then.
+    DESC.store(NO_DESC, "relaxed");
   }
   BLOCK.store(state as u64, "relaxed");
   READY.store(n, "release");

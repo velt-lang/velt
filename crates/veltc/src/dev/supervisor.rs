@@ -57,6 +57,28 @@ pub struct Supervisor {
     last_restarted: bool,
     /// The manifest's and lockfile's modification times when the last build started.
     manifest_seen: Vec<Option<SystemTime>>,
+    /// When the running version started (a restart after a panic needs it to have run a while).
+    started: Option<Instant>,
+    /// Why the next rebuild runs without a change: the running version ended with this exit
+    /// code (a panic, [`PANIC_EXIT`]), so the same sources start again.
+    restart_after: Option<i32>,
+}
+
+/// What a version ends with when it panics (uncaught, or a handler's under the executor in Velt,
+/// #2718): `velt dev` starts it again, keeping its listeners (#2649's owner decision), as the
+/// default executor's server answers such a request with a 500 and goes on.
+const PANIC_EXIT: i32 = 101;
+
+/// How long a version must have run before a panic restarts it: one that panics as it starts
+/// would otherwise restart for ever. It waits for a change instead, as before.
+const RESTART_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Why [`Supervisor::wait_for_change`] returned.
+enum Wake {
+    /// The watched files changed (since then).
+    Changed(Instant),
+    /// The running version ended with this exit code, after [`RESTART_AFTER`].
+    Ended(i32),
 }
 
 /// How one rebuild ended.
@@ -102,6 +124,8 @@ impl Supervisor {
             reports,
             manifest_seen: vec![],
             last_restarted: false,
+            started: None,
+            restart_after: None,
         })
     }
 
@@ -113,7 +137,13 @@ impl Supervisor {
             self.rebuild(since, first);
             first = false;
             self.exit_if_interrupted();
-            since = self.wait_for_change();
+            since = match self.wait_for_change() {
+                Wake::Changed(since) => since,
+                Wake::Ended(code) => {
+                    self.restart_after = Some(code);
+                    Instant::now()
+                }
+            };
         }
     }
 
@@ -124,6 +154,12 @@ impl Supervisor {
         let outcome = match self.args.mode {
             DevMode::Exe => self.rebuild_exe(),
             DevMode::Jit | DevMode::Host => self.reload_jit(),
+        };
+        let outcome = match (self.restart_after.take(), outcome) {
+            (Some(code), Outcome::Replaced(files)) => {
+                Outcome::Restarted(format!("the program exited with code {code}"), files)
+            }
+            (_, outcome) => outcome,
         };
         self.manifest_seen = manifest_stamps;
         let manifest = manifest_files(self.args.build.input.as_deref());
@@ -285,6 +321,7 @@ impl Supervisor {
                     // A host that cannot receive `go` has died; its exit is reported later.
                     let _ = velt_rt_host::dev::handover::reply_go(&built.stream);
                     self.running = Some(candidate);
+                    self.started = Some(Instant::now());
                     self.channel = Some(built.stream);
                     return Outcome::Replaced(built.files);
                 }
@@ -330,6 +367,7 @@ impl Supervisor {
         match Running::start(&launch) {
             Ok(running) => {
                 self.running = Some(running);
+                self.started = Some(Instant::now());
                 Outcome::Replaced(files)
             }
             Err(msg) => {
@@ -390,13 +428,14 @@ impl Supervisor {
         }
     }
 
-    /// Wait until the watched files change; meanwhile report when the program exits by itself.
-    fn wait_for_change(&mut self) -> Instant {
+    /// Wait until the watched files change; meanwhile report when the program exits by itself,
+    /// and return at once when it panicked after running a while ([`PANIC_EXIT`]).
+    fn wait_for_change(&mut self) -> Wake {
         loop {
             std::thread::sleep(POLL);
             self.exit_if_interrupted();
             if let Some(since) = self.watcher.poll() {
-                return since;
+                return Wake::Changed(since);
             }
             if let Some(versions) = self.versions.as_mut().filter(|v| v.pending()) {
                 versions.sweep();
@@ -408,6 +447,10 @@ impl Supervisor {
                 if let Some(done) = self.running.take() {
                     let output = done.stop(&self.dev_socket);
                     self.retire(output);
+                }
+                let ran = self.started.take().map(|t| t.elapsed());
+                if code == PANIC_EXIT && ran.is_some_and(|ran| ran >= RESTART_AFTER) {
+                    return Wake::Ended(code);
                 }
                 eprintln!("velt dev: program exited with code {code}; waiting for changes");
             }
