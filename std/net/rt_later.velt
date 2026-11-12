@@ -4,145 +4,32 @@
 //
 // The runtime collects such bytes on its thread's list and sends them after each poll of one of
 // its own tasks, which never runs on the executor's worker: they would never be sent. Here they
-// wait in a shadow of the stream instead: a source of the reactor's table (sched_io.velt) that no
-// descriptor backs (`F_RUNTIME`: never on a reactor or a due list; its `S_FD` is the runtime's
-// handle), with the source's buffer, its counts of bytes queued and sent, its waiters (`drained`,
-// a `write` behind buffered bytes) and its failure (a runtime code in `S_ERR`).
+// wait in a shadow of the stream instead (std/net/rt_later_shadow.velt), which a flusher task
+// hands to the runtime's `write` once the writer's poll ends (std/net/rt_later_flush.velt).
 //
-// - The first `writeLater` into an idle shadow spawns its flusher, a task that runs once the
-//   writer's poll ends (or on another worker meanwhile): it hands what is buffered to the
-//   runtime's `write`, waits for it and counts it sent, and goes on until nothing is buffered.
-//   One write per batch, in order.
 // - While the flusher runs, every write goes behind its bytes: `write` joins the buffer and waits
-//   for its bytes to be sent, `tryWrite` takes nothing, and `shutdown` and `close` happen once the
+//   for its bytes to be sent, `tryWrite` takes nothing, and a `shutdown` happens once the
 //   flusher is done (the runtime does the same with its own deferred bytes).
-// - A shadow is found by the runtime's handle in a list (only streams that used `writeLater` have
-//   one; the other operations check that the list is empty first) and lives until the stream is
-//   closed; one dropped unclosed keeps it until the program ends (sched_io_table.velt
-//   `releaseBuffers`).
+// - `close` closes the handle at once, as the runtime's does: later operations report `EBADF`,
+//   waits for input end, and what is still buffered is sent all the same.
+// - Only a program that defers bytes on a runtime stream compiles any of this: `writeLaterRange`
+//   marks the program (`noteStdUse`), and std/net/tcp_sched.velt calls the other functions only
+//   then (`stdUsed`).
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
-import { errorCodeName } from "velt/native/error";
 import { utf8Encode } from "velt/encoding/utf8";
+import { noteStdUse, promiseAt } from "velt/lang/intrinsics";
 import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as tb from "velt/lang/hooks/sched_io_table";
 import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as wr from "velt/lang/hooks/sched_io_write";
-import { promiseAt } from "velt/lang/intrinsics";
 import { addressOf } from "velt/net/fd_io";
-import { aborted, closed, failed, ok, value } from "velt/net/fd_socket";
+import { closed, failed, value } from "velt/net/fd_socket";
 import * as rt from "velt/net/rt";
-
-/** The shadows' list (0 until the first): its lock (a word), its head (linked by `S_DUE_NEXT`). */
-const SHADOWS = new Atomic<u64>(0);
-const L_LOCK: usize = 0;
-const L_HEAD: usize = 8;
-
-/** The runtime's codes for an aborted stream and a closed handle. */
-const ABORTED: u32 = 8;
-const CLOSED: u32 = 16;
-
-/** The list, made when `make` (else 0 until a shadow was made). */
-function list(make: bool): usize {
-  const a = SHADOWS.load("acquire") as usize;
-  if (a !== 0 || !make) {
-    return a;
-  }
-  const made = m.lastingZeroed(16);
-  const was = SHADOWS.compareExchange(0, made as u64, "acqrel");
-  if (was !== 0) {
-    m.lastingRelease(made);
-    return was as usize;
-  }
-  return made;
-}
-
-/**
- * The shadow of runtime stream `rh`, locked (`tb.leave` gives it back); one is made when `make`.
- * 0 when there is none (or the table is full).
- */
-function shadowOf(rh: u64, make: bool): usize {
-  const a = list(make);
-  if (a === 0 || (!make && m.load(a + L_HEAD) === 0)) {
-    return 0;
-  }
-  m.spinLock(a + L_LOCK);
-  let s = m.ld(a + L_HEAD);
-  while (s !== 0 && (m.ld(s + io.S_FD) as u64) !== rh) {
-    s = m.ld(s + io.S_DUE_NEXT);
-  }
-  if (s !== 0) {
-    tb.lock(s);
-  } else if (make) {
-    // Taken locked when sources are shared.
-    s = tb.take();
-    if (s !== 0) {
-      m.st(s + io.S_FD, rh as usize);
-      m.st32(s + io.S_FLAGS, io.F_RUNTIME);
-      m.st(s + io.S_DUE_NEXT, m.ld(a + L_HEAD));
-      m.st(a + L_HEAD, s);
-    }
-  }
-  m.store32(a + L_LOCK, 0);
-  return s;
-}
-
-/** Takes the shadow of runtime stream `rh` out of the list: it, locked, or 0 when it has none. */
-function unlist(rh: u64): usize {
-  const a = list(false);
-  if (a === 0 || m.load(a + L_HEAD) === 0) {
-    return 0;
-  }
-  m.spinLock(a + L_LOCK);
-  let at = a + L_HEAD;
-  while (m.ld(at) !== 0 && (m.ld(m.ld(at) + io.S_FD) as u64) !== rh) {
-    at = m.ld(at) + io.S_DUE_NEXT;
-  }
-  const s = m.ld(at);
-  if (s !== 0) {
-    m.st(at, m.ld(s + io.S_DUE_NEXT));
-    m.st(s + io.S_DUE_NEXT, 0);
-    tb.lock(s);
-  }
-  m.store32(a + L_LOCK, 0);
-  return s;
-}
-
-/** Is shadow `s`'s flusher running (bytes buffered or being written)? */
-function flushing(s: usize): bool {
-  return (m.ld32(s + io.S_FLAGS) & io.F_FLUSHING) !== 0;
-}
-
-/** Shadow `s`'s state: its failure, or fine (0: closed). */
-function status(s: usize): IoStatus {
-  if (s === 0) {
-    return closed();
-  }
-  const code = m.ld32(s + io.S_ERR);
-  if (code === 0) {
-    return ok();
-  }
-  if (code === ABORTED) {
-    return aborted();
-  }
-  if (code === CLOSED) {
-    return closed();
-  }
-  const c = code as i32;
-  return { code: c, message: `sending the deferred bytes failed (${errorCodeName(c)})` };
-}
-
-/** The state of the shadow of handle `h` now. */
-function statusNow(h: u64): IoStatus {
-  const s = tb.hold(h);
-  const st = status(s);
-  if (s !== 0) {
-    tb.leave(s);
-  }
-  return st;
-}
+import * as fl from "velt/net/rt_later_flush";
+import * as sh from "velt/net/rt_later_shadow";
 
 /** Waits on shadow handle `h` for `kind` with `arg`. */
 async function waitOn(h: u64, kind: u32, arg: u64): Promise<void> {
@@ -152,28 +39,38 @@ async function waitOn(h: u64, kind: u32, arg: u64): Promise<void> {
 
 /** `writeLater` of `data[start..end]` on runtime stream `rh`: the bytes still to send. */
 export function writeLaterRange(rh: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
-  const s = shadowOf(rh, true);
+  noteStdUse("rt-later");
+  let s = sh.shadowOf(rh, false);
   if (s === 0) {
-    return failed({ code: 4, message: "too many streams with deferred bytes" }, 0);
+    if (sh.wasClosed(rh)) {
+      return failed(closed(), 0);
+    }
+    if (start >= end) {
+      // Nothing deferred: no shadow either.
+      return value(0);
+    }
+    s = sh.shadowOf(rh, true);
+    if (s === 0) {
+      return failed({ code: 4, message: "too many streams with deferred bytes" }, 0);
+    }
   }
-  const st = status(s);
+  const st = sh.status(s);
   if (st.code !== 0) {
     tb.leave(s);
     return failed(st, 0);
   }
-  let startFlusher = false;
+  let startIt = false;
   if (start < end) {
     wr.append(s, addressOf(data, start), (end - start) as usize);
-    if (!flushing(s)) {
-      m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_FLUSHING);
-      startFlusher = true;
-    }
+    startIt = !sh.flushing(s);
   }
   const left = (m.ld(s + io.S_QUEUED) - m.ld(s + io.S_WRITTEN)) as u64;
-  const h = tb.handleOf(s);
-  tb.leave(s);
-  if (startFlusher) {
-    spawn(flush(h, rh));
+  if (startIt) {
+    const h = fl.startFlusher(s);
+    tb.leave(s);
+    spawn(fl.flush(h, rh));
+  } else {
+    tb.leave(s);
   }
   return value(left);
 }
@@ -184,138 +81,82 @@ export function writeLaterText(rh: u64, data: string): IoResult<u64> {
   return writeLaterRange(rh, bytes, 0, bytes.length as u64);
 }
 
-/**
- * Shadow handle `h`'s flusher: hands the buffered bytes of runtime stream `rh` to the runtime's
- * `write`, one batch at a time, until none are left; then a shutdown or close asked for meanwhile.
- */
-async function flush(h: u64, rh: u64): Promise<void> {
-  while (true) {
-    const s = tb.hold(h);
-    if (s === 0) {
-      return;
-    }
-    const n = m.ld(s + io.S_LEN);
-    if (n === 0 || m.ld32(s + io.S_ERR) !== 0) {
-      done(s, rh);
-      return;
-    }
-    const batch: u8[] = Buffer.alloc(n);
-    m.copy(addressOf(batch, 0), m.ld(s + io.S_BUF) + m.ld(s + io.S_OFF), n);
-    m.st(s + io.S_OFF, 0);
-    m.st(s + io.S_LEN, 0);
-    tb.leave(s);
-    const st = await rt.velt_rt_tcp_write_range(rh, batch, 0, n as u64);
-    const after = tb.hold(h);
-    if (after === 0) {
-      return;
-    }
-    if (st.code !== 0) {
-      wr.fail(after, st.code);
-    } else {
-      m.st(after + io.S_WRITTEN, m.ld(after + io.S_WRITTEN) + n);
-      wt.wakeAll(after);
-    }
-    tb.leave(after);
-  }
-}
-
-/** Shadow `s`'s flusher found nothing more to send: what was asked for meanwhile happens now. */
-function done(s: usize, rh: u64): void {
-  const fl = m.ld32(s + io.S_FLAGS) & ~io.F_FLUSHING;
-  m.st32(s + io.S_FLAGS, fl);
-  if (m.ld(s + io.S_CAP) > 64 * 1024) {
-    m.release(m.ld(s + io.S_BUF), m.ld(s + io.S_CAP));
-    m.st(s + io.S_BUF, 0);
-    m.st(s + io.S_CAP, 0);
-  }
-  if ((fl & io.F_SHUT) !== 0) {
-    m.st32(s + io.S_FLAGS, fl & ~io.F_SHUT);
-    rt.velt_rt_tcp_shutdown(rh);
-  }
-  if ((fl & io.F_CLOSING) !== 0) {
-    io.free(s);
-    tb.unlock(s);
-    rt.velt_rt_tcp_close(rh);
-    return;
-  }
-  tb.leave(s);
-}
-
 /** `write` of `data[start..end]` on runtime stream `rh`: behind its deferred bytes. */
 export async function writeRange(rh: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
-  const s = shadowOf(rh, false);
-  if (s !== 0 && !flushing(s)) {
-    tb.leave(s);
-  } else if (s !== 0) {
-    const st = status(s);
-    if (st.code !== 0 || start >= end) {
+  const s = sh.shadowOf(rh, false);
+  if (s !== 0) {
+    const st = sh.status(s);
+    if (st.code !== 0 || (sh.flushing(s) && start >= end)) {
       tb.leave(s);
       return st;
+    }
+    if (!sh.flushing(s)) {
+      tb.leave(s);
+      return await rt.velt_rt_tcp_write_range(rh, data, start, end);
     }
     wr.append(s, addressOf(data, start), (end - start) as usize);
     const mark = m.ld(s + io.S_QUEUED) as u64;
     const h = tb.handleOf(s);
     tb.leave(s);
     await waitOn(h, io.K_WRITTEN, mark);
-    return statusNow(h);
+    return sh.outcomeNow(h);
   }
   return await rt.velt_rt_tcp_write_range(rh, data, start, end);
 }
 
 /** `write` of a string on runtime stream `rh`. */
 export async function writeText(rh: u64, data: string): Promise<IoStatus> {
-  if (!busy(rh)) {
+  const s = sh.shadowOf(rh, false);
+  if (s === 0) {
     return await rt.velt_rt_tcp_write(rh, data);
   }
+  tb.leave(s);
   const bytes = utf8Encode(data);
   return await writeRange(rh, bytes, 0, bytes.length as u64);
 }
 
-/** Has runtime stream `rh` deferred bytes buffered or being written? */
+/** Has runtime stream `rh` deferred bytes buffered or being written (or is it closing)? */
 export function busy(rh: u64): bool {
-  const s = shadowOf(rh, false);
+  const s = sh.shadowOf(rh, false);
   if (s === 0) {
     return false;
   }
-  const b = flushing(s);
+  const b = sh.flushing(s);
   tb.leave(s);
   return b;
 }
 
 /** `drained(max)` on runtime stream `rh`: at most `max` of its bytes still to send. */
 export async function drained(rh: u64, max: u64): Promise<IoStatus> {
-  const s = shadowOf(rh, false);
-  if (s !== 0) {
-    const st = status(s);
-    const met = wt.satisfied(s, io.K_DRAINED, max as usize);
-    const h = tb.handleOf(s);
-    tb.leave(s);
-    if (st.code !== 0) {
-      return st;
-    }
-    if (!met) {
-      await waitOn(h, io.K_DRAINED, max);
-      const after = statusNow(h);
-      if (after.code !== 0 && after.code !== (CLOSED as i32)) {
-        return after;
-      }
-    }
+  const s = sh.shadowOf(rh, false);
+  if (s === 0) {
+    return await rt.velt_rt_tcp_drained(rh, max);
   }
-  // The runtime's own count (nothing it deferred: these bytes were all written here); a closed
-  // handle reports itself.
-  return await rt.velt_rt_tcp_drained(rh, max);
+  const st = sh.status(s);
+  const met = wt.satisfied(s, io.K_DRAINED, max as usize);
+  const h = tb.handleOf(s);
+  tb.leave(s);
+  if (st.code !== 0 || met) {
+    return st;
+  }
+  await waitOn(h, io.K_DRAINED, max);
+  return sh.outcomeNow(h);
 }
 
 /** `shutdown` of runtime stream `rh`: once its deferred bytes are sent. */
 export function shutdown(rh: u64): IoStatus {
-  const s = shadowOf(rh, false);
-  if (s !== 0 && flushing(s)) {
-    m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_SHUT);
-    tb.leave(s);
-    return ok();
+  const s = sh.shadowOf(rh, false);
+  if (s === 0) {
+    return rt.velt_rt_tcp_shutdown(rh);
   }
-  if (s !== 0) {
-    tb.leave(s);
+  const st = sh.status(s);
+  if (st.code === 0 && sh.flushing(s)) {
+    m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_SHUT);
+  }
+  const later = st.code === 0 && sh.flushing(s);
+  tb.leave(s);
+  if (st.code !== 0 || later) {
+    return st;
   }
   return rt.velt_rt_tcp_shutdown(rh);
 }
@@ -323,35 +164,32 @@ export function shutdown(rh: u64): IoStatus {
 /** `abort` of runtime stream `rh`: its deferred bytes are dropped, and later ones refused. */
 export function abort(rh: u64): void {
   rt.velt_rt_tcp_abort(rh);
-  const s = shadowOf(rh, false);
+  const s = sh.shadowOf(rh, false);
   if (s !== 0) {
-    wr.fail(s, ABORTED as i32);
-    tb.leave(s);
-  }
-}
-
-/** `close` of runtime stream `rh`: once its deferred bytes are sent. */
-export function close(rh: u64): void {
-  if (!release(rh)) {
-    rt.velt_rt_tcp_close(rh);
+    fl.abort(s);
   }
 }
 
 /**
- * Runtime stream `rh` goes back to the runtime (`close`, `park`): its shadow goes. True when it
- * still had bytes to send: its flusher then closes it once they are sent, instead of the caller.
+ * Runtime stream `rh` goes back to the runtime (`close`, `park`), which the caller does next:
+ * what is still deferred is handed to the runtime's `write` first.
  */
-export function release(rh: u64): bool {
-  const s = unlist(rh);
-  if (s === 0) {
-    return false;
+export function release(rh: u64): void {
+  sh.closedNow(rh);
+  const s = sh.shadowOf(rh, false);
+  if (s !== 0) {
+    fl.close(s, rh);
   }
-  if (flushing(s)) {
-    m.st32(s + io.S_FLAGS, m.ld32(s + io.S_FLAGS) | io.F_CLOSING);
-    tb.leave(s);
-    return true;
-  }
-  io.free(s);
-  tb.unlock(s);
-  return false;
+}
+
+/** `close` of runtime stream `rh`: at once; its deferred bytes are still sent. */
+export function close(rh: u64): void {
+  release(rh);
+  rt.velt_rt_tcp_close(rh);
+}
+
+/** `park` of runtime stream `rh` in the runtime's pool under `key`. */
+export function park(rh: u64, key: string): void {
+  release(rh);
+  rt.velt_rt_tcp_park(rh, key);
 }

@@ -38,8 +38,11 @@ import {
   noInline,
   slotPut,
   slotTake,
+  stdUsed,
 } from "velt/lang/intrinsics";
+import * as dt from "./sched_detach";
 import * as io from "./sched_io";
+import * as tb from "./sched_io_table";
 import * as wt from "./sched_io_wait";
 import * as mk from "./sched_make";
 import * as m from "./sched_mem";
@@ -188,6 +191,16 @@ function unparks(g: usize): usize {
  * worker 0's block, which holds what is process-wide.
  */
 function busy(g: usize, self: usize): bool {
+  if (veltBusy(g, self)) {
+    return true;
+  }
+  // The runtime first, the inbox again after: a leaf counts until its task polled it ready, and
+  // its wake reaches the inbox before that.
+  return !runtimeQuiet(g) || m.load(self + t.E_INBOX) !== 0;
+}
+
+/** `busy` but for what the runtime has outstanding. */
+function veltBusy(g: usize, self: usize): bool {
   // Keep-alive references, and tasks in the monitor's hands between two workers.
   if (m.load(g + t.E_KEEP) !== 0 || m.load(g + t.E_MOVING) !== 0) {
     return true;
@@ -202,9 +215,7 @@ function busy(g: usize, self: usize): bool {
       return true;
     }
   }
-  // The runtime first, the inbox again after: a leaf counts until its task polled it ready, and
-  // its wake reaches the inbox before that.
-  return !runtimeQuiet(g) || m.load(self + t.E_INBOX) !== 0;
+  return false;
 }
 
 /**
@@ -229,6 +240,9 @@ function quiet(e: usize): bool {
  */
 @noInline
 export function mayPark(e: usize): bool {
+  if (stdUsed("rt-later") && m.ld(e + t.E_ROOT) === 0) {
+    detached(e);
+  }
   if (quiet(e)) {
     const root = m.ld(e + t.E_ROOT);
     if (root !== 0 && !t.has(root, t.ROOT_DONE)) {
@@ -258,8 +272,24 @@ export function mayPark(e: usize): bool {
   return true;
 }
 
+/**
+ * After `main`, the flushers of bytes deferred on runtime streams (sched_detach.velt) are the only
+ * live tasks and nothing else of the executor's can happen: their writes are dropped, as the
+ * runtime's background sending never keeps the process alive. What the runtime has outstanding
+ * besides them still counts in the scan that follows.
+ */
+@noInline
+function detached(e: usize): void {
+  const n = dt.count();
+  if (n !== 0 && n === mk.live(e) && !veltBusy(e, e)) {
+    dt.giveUp();
+  }
+}
+
 /** `main` can never finish: the runtime's `exit_unfinished` (module docs). */
 function unfinished(e: usize): never {
+  // Every worker is idle: the send buffers of the streams left open go, as at a normal end.
+  tb.releaseBuffers();
   if (m.ld(e + t.E_TLA_SET) === 0) {
     process.exit(0);
   }

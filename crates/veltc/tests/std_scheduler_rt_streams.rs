@@ -5,8 +5,8 @@
 //! tasks, which never run on the Velt worker. And the end of such a program gives back the send
 //! buffers of the reactor's sockets dropped without `close()` (sched_io_table.velt
 //! `releaseBuffers`), which a leak check counts. Each program is built with and without the
-//! variable, both binaries run with `VELT_THREADS=1` (killed after a minute: lost bytes hang)
-//! and must print the same.
+//! variable, both binaries run with `VELT_THREADS=1` and `4` (the flusher is a task other workers
+//! may take; killed after a minute: lost bytes hang) and must print the same.
 
 use std::path::Path;
 use std::process::{Output, Stdio};
@@ -18,9 +18,8 @@ mod no_window;
 mod runtime_support;
 mod test_dir;
 
-/// `src` built (with `VELT_SCHEDULER=std` when `std`) and run with the block counters on: its
-/// output, and its binary.
-fn build_and_run(dir: &Path, name: &str, src: &str, std: bool) -> (Output, Vec<u8>) {
+/// `src` built (with `VELT_SCHEDULER=std` when `std`): the binary.
+fn build(dir: &Path, name: &str, src: &str, std: bool) -> std::path::PathBuf {
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let file = dir.join(format!("{name}.velt"));
     std::fs::write(&file, src).unwrap();
@@ -46,8 +45,13 @@ fn build_and_run(dir: &Path, name: &str, src: &str, std: bool) -> (Output, Vec<u
         "{name}: {}",
         String::from_utf8_lossy(&o.stderr)
     );
-    let mut child = command(&exe)
-        .env("VELT_THREADS", "1")
+    exe
+}
+
+/// `exe` run with `threads` workers and the block counters on: its output.
+fn run(exe: &Path, name: &str, std: bool, threads: &str) -> Output {
+    let mut child = command(exe)
+        .env("VELT_THREADS", threads)
         .env("VELT_RC_STATS", "1")
         .env_remove("VELT_SCHEDULER")
         .stdout(Stdio::piped())
@@ -59,18 +63,18 @@ fn build_and_run(dir: &Path, name: &str, src: &str, std: bool) -> (Output, Vec<u
     while child.try_wait().unwrap().is_none() {
         if start.elapsed() > Duration::from_secs(60) {
             child.kill().unwrap();
-            panic!("{name} (std: {std}): still running after a minute");
+            panic!("{name} (std: {std}, {threads} workers): still running after a minute");
         }
         std::thread::sleep(Duration::from_millis(10));
     }
     let o = child.wait_with_output().unwrap();
     assert!(
         o.status.success(),
-        "{name} (std: {std}): {}{}",
+        "{name} (std: {std}, {threads} workers): {}{}",
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
-    (o, std::fs::read(&exe).unwrap())
+    o
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
@@ -91,6 +95,11 @@ fn blocks(o: &Output) -> Option<(u64, u64)> {
 /// Builds and runs `src` both ways: each prints `want` and frees every block it allocated; the
 /// std build holds `marker`'s code (std's file of the path under test), the other doesn't.
 fn same_on_both(name: &str, src: &str, want: &str, marker: &[u8]) {
+    same_on_both_counted(name, src, want, marker, true);
+}
+
+/// [`same_on_both`], with the block counts compared only when `counted`.
+fn same_on_both_counted(name: &str, src: &str, want: &str, marker: &[u8], counted: bool) {
     if !cfg!(unix) {
         // Windows has no reactor in Velt yet: its sockets stay the runtime's in both builds.
         return;
@@ -103,17 +112,24 @@ fn same_on_both(name: &str, src: &str, want: &str, marker: &[u8]) {
     )
     .unwrap();
     for std in [false, true] {
-        let (o, bin) = build_and_run(dir.path(), name, src, std);
-        let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
-        assert_eq!(out, want, "{name} (std: {std})");
+        let exe = build(dir.path(), name, src, std);
+        let bin = std::fs::read(&exe).unwrap();
         assert_eq!(
             contains(&bin, marker),
             std,
             "{name} (std: {std}): its code in Velt"
         );
-        // Only a debug runtime counts blocks.
-        if let Some((a, f)) = blocks(&o) {
-            assert_eq!(a, f, "{name} (std: {std}): blocks allocated / freed");
+        for threads in ["1", "4"] {
+            let o = run(&exe, name, std, threads);
+            let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+            assert_eq!(out, want, "{name} (std: {std}, {threads} workers)");
+            // Only a debug runtime counts blocks.
+            if let Some((a, f)) = blocks(&o).filter(|_| counted) {
+                assert_eq!(
+                    a, f,
+                    "{name} (std: {std}, {threads} workers): blocks allocated / freed"
+                );
+            }
         }
     }
 }
@@ -306,5 +322,211 @@ async function main() {
 ",
         "hello x\nkept\n",
         b"listenOn",
+    );
+}
+
+/// `close()` with deferred bytes still to send closes the stream at once, as the runtime's does:
+/// later operations report `EBADF` (none of their bytes reaches the peer), a read waiting on the
+/// closed stream ends, and the deferred bytes are all sent all the same.
+#[test]
+fn close_with_deferred_bytes_closes_at_once_and_still_sends_them() {
+    same_on_both(
+        "close_now",
+        "import { streamPair } from \"velt/net\";
+
+async function main() {
+  const [x, y] = streamPair();
+  const peer = spawn((async () => {
+    let n = 0;
+    while (true) {
+      const got = await y.read();
+      if (got.length == 0) {
+        return n;
+      }
+      n += got.length;
+    }
+  })());
+  const big: u8[] = Buffer.alloc(8 * 1024 * 1024);
+  x.writeBytesLater(big);
+  x.close();
+  try {
+    x.writeLater(\"a\");
+    console.log(\"writeLater ok\");
+  } catch (e) {
+    console.log(\"writeLater\", e.code);
+  }
+  console.log(\"tryWrite\", x.tryWrite([1, 2]));
+  try {
+    await x.write(\"bc\");
+    console.log(\"write ok\");
+  } catch (e) {
+    console.log(\"write\", e.code);
+  }
+  try {
+    await x.drained();
+    console.log(\"drained ok\");
+  } catch (e) {
+    console.log(\"drained\", e.code);
+  }
+  console.log(\"peer got\", await peer);
+  y.close();
+}
+",
+        "writeLater EBADF\ntryWrite 0\nwrite EBADF\ndrained EBADF\npeer got 8388608\n",
+        b"rt_later",
+    );
+    same_on_both(
+        "close_ends_read",
+        "import { streamPair } from \"velt/net\";
+
+async function main() {
+  const [x, y] = streamPair();
+  const reader = spawn((async () => {
+    try {
+      const got = await x.read();
+      return `read ${got.length}`;
+    } catch (e) {
+      return `read ${e.code}`;
+    }
+  })());
+  await yieldNow();
+  const big: u8[] = Buffer.alloc(8 * 1024 * 1024);
+  x.writeBytesLater(big);
+  x.close();
+  console.log(await reader);
+  let n = 0;
+  while (true) {
+    const got = await y.read();
+    if (got.length == 0) {
+      break;
+    }
+    n += got.length;
+  }
+  console.log(\"peer got\", n);
+  y.close();
+}
+",
+        "read EBADF\npeer got 8388608\n",
+        b"rt_later",
+    );
+}
+
+/// `writeLater` on a closed runtime stream reports `EBADF` every time, whether it deferred bytes
+/// before its close or not.
+#[test]
+fn write_later_on_a_closed_runtime_stream_reports_ebadf() {
+    same_on_both(
+        "later_after_close",
+        "import { streamPair } from \"velt/net\";
+
+async function main() {
+  const [x, y] = streamPair();
+  x.close();
+  for (let i = 0; i < 4; i++) {
+    try {
+      x.writeLater(\"late\");
+      console.log(\"no throw\");
+    } catch (e) {
+      console.log(e.code);
+    }
+    await yieldNow();
+  }
+  const [a, b] = streamPair();
+  a.writeLater(\"first\");
+  console.log(await b.readString());
+  a.close();
+  for (let i = 0; i < 2; i++) {
+    try {
+      a.writeLater(\"late\");
+      console.log(\"no throw\");
+    } catch (e) {
+      console.log(e.code);
+    }
+    await yieldNow();
+  }
+  y.close();
+  b.close();
+}
+",
+        "EBADF\nEBADF\nEBADF\nEBADF\nfirst\nEBADF\nEBADF\n",
+        b"rt_later",
+    );
+}
+
+/// Bytes deferred to a peer that never reads do not keep the program alive once `main` returns,
+/// as the runtime's background sending doesn't. (The flusher given up is a task left over, whose
+/// blocks no executor frees at that end: not compared.)
+#[test]
+fn deferred_bytes_do_not_keep_the_program_alive_after_main() {
+    same_on_both_counted(
+        "later_exit",
+        "import { streamPair } from \"velt/net\";
+
+async function main() {
+  const [x, y] = streamPair();
+  const big: u8[] = Buffer.alloc(8 * 1024 * 1024);
+  x.writeBytesLater(big);
+  console.log(\"returning\");
+}
+",
+        "returning\n",
+        b"rt_later",
+        false,
+    );
+}
+
+/// A failed deferred write reports the runtime's status as it is (code and message), to
+/// `drained` and to the next `writeLater`.
+#[test]
+fn a_failed_deferred_write_reports_the_runtimes_status() {
+    same_on_both(
+        "later_error",
+        "import { streamPair } from \"velt/net\";
+
+async function main() {
+  const [x, y] = streamPair();
+  y.close();
+  await yieldNow();
+  x.writeLater(\"hello\");
+  try {
+    await x.drained();
+    console.log(\"drained ok\");
+  } catch (e) {
+    console.log(\"drained\", e.code, e.message);
+  }
+  try {
+    x.writeLater(\"again\");
+    console.log(\"writeLater ok\");
+  } catch (e) {
+    console.log(\"writeLater\", e.code, e.message);
+  }
+  x.close();
+}
+",
+        "drained EPIPE broken pipe\nwriteLater EPIPE broken pipe\n",
+        b"rt_later",
+    );
+}
+
+/// A program that ends with `process.exit` while a runtime stream with a deferred-write buffer
+/// is still open ends as the default build does. Its block counts are not compared: `process.exit`
+/// ends in the runtime with no hook of std's on the way, and other workers may still be using the
+/// buffers (sched_io_table.velt `releaseBuffers`).
+#[test]
+fn process_exit_with_an_open_runtime_stream_ends_the_program() {
+    same_on_both_counted(
+        "later_process_exit",
+        "import { streamPair } from \"velt/net\";
+
+async function main() {
+  const [x, y] = streamPair();
+  x.writeLater(\"kept\");
+  console.log(await y.readString());
+  process.exit(0);
+}
+",
+        "kept\n",
+        b"rt_later",
+        false,
     );
 }

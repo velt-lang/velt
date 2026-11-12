@@ -1,0 +1,257 @@
+// velt/net (internal): the shadows of runtime streams that hold deferred bytes under the executor
+// in Velt (std/net/rt_later.velt, #2817).
+//
+// A shadow is a source of the reactor's table (sched_io.velt) that no descriptor backs
+// (`F_RUNTIME`: never on a reactor or a due list; its `S_FD` is the runtime's handle): the
+// source's buffer, its counts of bytes queued and sent, its waiters (`drained`, a `write` behind
+// buffered bytes), and its runtime writes (std/net/rt_later_flush.velt). Shadows are found by
+// the runtime's handle in a list.
+//
+// - A closed shadow (`F_CLOSING`: its handle given back to the runtime, its last bytes still
+//   being written) stays listed until those writes are done: every operation on the handle
+//   reports `EBADF` meanwhile.
+// - A failure is kept with the runtime's status: its code in `S_ERR` and its message in the
+//   buffer, which sends nothing more. An abort is a flag (`F_ABORTED`).
+// - Handles the program closed are remembered (the last `CLOSED_KEPT`): a `writeLater` on one
+//   reports `EBADF`, as the runtime's does, without making a shadow.
+
+import { IoStatus } from "velt/native/status";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding/utf8";
+import { futDrop } from "velt/lang/intrinsics";
+import * as io from "velt/lang/hooks/sched_io";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as wt from "velt/lang/hooks/sched_io_wait";
+import * as wr from "velt/lang/hooks/sched_io_write";
+import { addressOf } from "velt/net/fd_io";
+import { aborted, closed, ok } from "velt/net/fd_socket";
+
+/** The shadows' list (0 until the first): its lock (a word), its head (linked by `S_DUE_NEXT`). */
+const SHADOWS = new Atomic<u64>(0);
+const L_LOCK: usize = 0;
+const L_HEAD: usize = 8;
+
+/**
+ * A shadow's runtime writes: the one in flight (a heap future, 0: none) and its byte count, and
+ * the one `close` made for the rest while that one was in flight.
+ */
+export const FLIGHT: usize = io.S_CARRY;
+export const FLIGHT_LEN: usize = io.S_IOB;
+export const NEXT: usize = 88;
+
+/** The handles closed last: a ring of `CLOSED_KEPT` after its count of handles written. */
+const CLOSED = new Atomic<u64>(0);
+const CLOSED_KEPT: usize = 256;
+
+/** The list, made when `make` (else 0 until a shadow was made). */
+function list(make: bool): usize {
+  const a = SHADOWS.load("acquire") as usize;
+  if (a !== 0 || !make) {
+    return a;
+  }
+  const made = m.lastingZeroed(16);
+  const was = SHADOWS.compareExchange(0, made as u64, "acqrel");
+  if (was !== 0) {
+    m.lastingRelease(made);
+    return was as usize;
+  }
+  return made;
+}
+
+/**
+ * The shadow of runtime stream `rh`, locked (`tb.leave` gives it back); one is made when `make`.
+ * 0 when there is none (or the table is full).
+ */
+export function shadowOf(rh: u64, make: bool): usize {
+  const a = list(make);
+  if (a === 0 || (!make && m.load(a + L_HEAD) === 0)) {
+    return 0;
+  }
+  m.spinLock(a + L_LOCK);
+  let s = m.ld(a + L_HEAD);
+  while (s !== 0 && (m.ld(s + io.S_FD) as u64) !== rh) {
+    s = m.ld(s + io.S_DUE_NEXT);
+  }
+  if (s !== 0) {
+    tb.lock(s);
+  } else if (make) {
+    // Taken locked when sources are shared.
+    s = tb.take();
+    if (s !== 0) {
+      m.st(s + io.S_FD, rh as usize);
+      m.st32(s + io.S_FLAGS, io.F_RUNTIME);
+      m.st(s + FLIGHT, 0);
+      m.st(s + FLIGHT_LEN, 0);
+      m.st(s + NEXT, 0);
+      m.st(s + io.S_DUE_NEXT, m.ld(a + L_HEAD));
+      m.st(a + L_HEAD, s);
+    }
+  }
+  m.store32(a + L_LOCK, 0);
+  return s;
+}
+
+/** Takes the shadow of runtime stream `rh` out of the list: it, locked, or 0 when it has none. */
+function unlist(rh: u64): usize {
+  const a = list(false);
+  if (a === 0) {
+    return 0;
+  }
+  m.spinLock(a + L_LOCK);
+  let at = a + L_HEAD;
+  while (m.ld(at) !== 0 && (m.ld(m.ld(at) + io.S_FD) as u64) !== rh) {
+    at = m.ld(at) + io.S_DUE_NEXT;
+  }
+  const s = m.ld(at);
+  if (s !== 0) {
+    m.st(at, m.ld(s + io.S_DUE_NEXT));
+    m.st(s + io.S_DUE_NEXT, 0);
+    tb.lock(s);
+  }
+  m.store32(a + L_LOCK, 0);
+  return s;
+}
+
+/** Takes shadow `s` of runtime stream `rh` (locked, done with) out of the list and frees it. */
+export function drop(s: usize, rh: u64): void {
+  tb.leave(s);
+  const u = unlist(rh);
+  if (u !== 0) {
+    io.free(u);
+    tb.unlock(u);
+  }
+}
+
+/** Remembers that the program closed runtime stream `rh`. */
+export function closedNow(rh: u64): void {
+  let a = CLOSED.load("acquire") as usize;
+  if (a === 0) {
+    const made = m.lastingZeroed(8 + 8 * CLOSED_KEPT);
+    const was = CLOSED.compareExchange(0, made as u64, "acqrel");
+    if (was !== 0) {
+      m.lastingRelease(made);
+      a = was as usize;
+    } else {
+      a = made;
+    }
+  }
+  const i = m.inc(a);
+  m.swap(a + 8 + 8 * (i % CLOSED_KEPT), rh as usize);
+}
+
+/** Did the program close runtime stream `rh` lately? */
+export function wasClosed(rh: u64): bool {
+  const a = CLOSED.load("acquire") as usize;
+  if (a === 0) {
+    return false;
+  }
+  for (let i: usize = 0; i < CLOSED_KEPT; i++) {
+    if ((m.load(a + 8 + 8 * i) as u64) === rh) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Is shadow `s`'s flusher running (bytes buffered or being written)? */
+export function flushing(s: usize): bool {
+  return (m.ld32(s + io.S_FLAGS) & io.F_FLUSHING) !== 0;
+}
+
+/** Shadow `s`'s state for a new operation: closed, aborted, its failure, or fine (0: closed). */
+export function status(s: usize): IoStatus {
+  if (s === 0 || (m.ld32(s + io.S_FLAGS) & io.F_CLOSING) !== 0) {
+    return closed();
+  }
+  return outcome(s);
+}
+
+/**
+ * What shadow `s` reports to a wait that began before a close: aborted, its failure, or fine
+ * (0: freed, its bytes sent).
+ */
+export function outcome(s: usize): IoStatus {
+  if (s === 0) {
+    return ok();
+  }
+  if ((m.ld32(s + io.S_FLAGS) & io.F_ABORTED) !== 0) {
+    return aborted();
+  }
+  const code = m.ld32(s + io.S_ERR);
+  if (code === 0) {
+    return ok();
+  }
+  // The failure's message is what the buffer holds.
+  const n = m.ld(s + io.S_LEN);
+  const text: u8[] = Buffer.alloc(n);
+  if (n !== 0) {
+    m.copy(addressOf(text, 0), m.ld(s + io.S_BUF) + m.ld(s + io.S_OFF), n);
+  }
+  return { code: code as i32, message: utf8DecodeLossy(text) };
+}
+
+/** What the shadow of handle `h` reports to a wait now. */
+export function outcomeNow(h: u64): IoStatus {
+  const s = tb.hold(h);
+  const st = outcome(s);
+  if (s !== 0) {
+    tb.leave(s);
+  }
+  return st;
+}
+
+/** Shadow `s` (locked) failed with `st`: kept (the first failure), its bytes dropped. */
+export function fail(s: usize, st: IoStatus): void {
+  if (m.ld32(s + io.S_ERR) === 0) {
+    m.st32(s + io.S_ERR, st.code as u32);
+    const text = utf8Encode(st.message);
+    m.st(s + io.S_OFF, 0);
+    m.st(s + io.S_LEN, 0);
+    const n = text.length as usize;
+    if (n !== 0) {
+      m.copy(wr.room(s, n), addressOf(text, 0), n);
+    }
+    m.st(s + io.S_LEN, n);
+  }
+  wt.wakeAll(s);
+}
+
+/** Drops the write `close` made for the rest of shadow `s`'s bytes, if any (locked). */
+export function dropNext(s: usize): void {
+  const next = m.ld(s + NEXT);
+  if (next !== 0) {
+    m.st(s + NEXT, 0);
+    // SAFETY: the shadow's own heap future, never polled.
+    unsafe {
+      futDrop(next);
+    }
+  }
+}
+
+/**
+ * Drops every shadow's runtime writes (the program ends with only flushers left,
+ * sched_detach.velt; every worker idle: no flusher polls them).
+ */
+export function dropFlights(): void {
+  const l = list(false);
+  if (l === 0) {
+    return;
+  }
+  m.spinLock(l + L_LOCK);
+  let s = m.ld(l + L_HEAD);
+  while (s !== 0) {
+    tb.lock(s);
+    const f = m.ld(s + FLIGHT);
+    if (f !== 0) {
+      m.st(s + FLIGHT, 0);
+      // SAFETY: the shadow's heap future, which its waiting flusher no longer polls.
+      unsafe {
+        futDrop(f);
+      }
+    }
+    dropNext(s);
+    tb.unlock(s);
+    s = m.ld(s + io.S_DUE_NEXT);
+  }
+  m.store32(l + L_LOCK, 0);
+}

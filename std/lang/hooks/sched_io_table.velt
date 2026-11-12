@@ -320,8 +320,11 @@ export function bump(s: usize): void {
 }
 
 /**
- * The end of the program (sched.velt `schedFinish`, no task left): gives back the send buffers
- * of the sources still open. A `TcpStream` is a Copy handle that only `close()` releases, so a
+ * The end of the program (sched.velt `schedFinish`, no task left, and sched_end.velt's end of a
+ * `main` that can never finish; every worker idle then): gives back the send buffers of the
+ * sources still open. Not at `process.exit`: lowering ends the process in the runtime
+ * (`velt_rt_exit`), with no hook of std's on the way, and the other workers may still be using
+ * their sources then; a leak check of a program that exits so counts those buffers. A `TcpStream` is a Copy handle that only `close()` releases, so a
  * stream dropped unclosed stays open until the process ends, as the runtime's do; the runtime's
  * memory is its own, but these buffers are the program's blocks, which a leak check counts. The
  * slots are read without the table's lock (chunks are never freed or moved; `give`, which takes
