@@ -359,10 +359,19 @@ fn warm_reload(
         input: dir.path().join("main.velt"),
         ..BuildOptions::default()
     };
-    let mut sess = Session::new();
-    sess.keep_check = true;
-    sess.counted_seed = Some(velt_vir::CountedSeed::default());
-    driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+    // A check in which a generator ran is not kept: the next build uses its code from the cache.
+    let cold_build = || {
+        let mut sess = Session::new();
+        sess.keep_check = true;
+        sess.counted_seed = Some(velt_vir::CountedSeed::default());
+        driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+        sess
+    };
+    let mut sess = cold_build();
+    if sess.kept.is_none() {
+        sess = cold_build();
+    }
+    assert!(sess.kept.is_some(), "a dev build keeps its check");
     let base = super::super::edits::Snapshot::of_build(&sess, &opts.input);
     let cold_files = driver::copy_files(&sess.sm);
     let mut warm = Session::new();
@@ -442,4 +451,34 @@ fn other_edits_reload_cold() {
     let util = "export function label(n: number) { return n; }\n";
     let why = refused(&[("util.velt", util)]);
     assert!(why.contains("label"), "{why}");
+}
+
+const JSON_MAIN: &str = "class Point {
+  x: number = 1;
+  y: number = 2;
+}
+class Size {
+  w: number = 3;
+}
+function show(p: Point): string { return JSON.stringify(p); }
+function area(s: Size): number { return s.w * 2; }
+function main() {
+  console.log(show(new Point()), area(new Size()));
+}
+";
+
+/// With generated code (`JSON.stringify`): a body edit that demands the same instances reloads
+/// warm to the cold program; one that demands another needs the generator, and the cold front
+/// end.
+#[test]
+fn a_body_edit_beside_generated_code_reloads_warm() {
+    let files = [("main.velt", JSON_MAIN)];
+    let same = JSON_MAIN.replace("s.w * 2", "s.w * 3");
+    let (warm, cold) = warm_reload(&files, &[("main.velt", &same)]);
+    assert_eq!(warm.expect("a warm reload"), cold);
+    let other = JSON_MAIN.replace("return s.w * 2;", "return JSON.stringify(s).length;");
+    match warm_reload(&files, &[("main.velt", &other)]) {
+        (Ok(warm), cold) => assert_eq!(warm, cold),
+        (Err(why), _) => assert!(why.contains("generated"), "{why}"),
+    }
 }

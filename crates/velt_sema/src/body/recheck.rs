@@ -441,6 +441,9 @@ pub(crate) fn forget(cx: &mut Ctx, def: DefId) -> bool {
         return false;
     };
     let (s, e) = (r.start, r.end);
+    // What the generated-code demand walked of the bodies (`generated::demand::Walked`) holds
+    // this body's calls as they were: walked again.
+    cx.gen.binding.walked = Default::default();
     let keep = |f: fn(&Lens) -> usize| -> Vec<(usize, usize)> {
         r.segments.iter().map(|(a, b)| (f(a), f(b))).collect()
     };
