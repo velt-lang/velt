@@ -7,6 +7,7 @@
 import { IoResult } from "velt/native/result";
 import { promiseAt } from "velt/lang/intrinsics";
 import { Ptr } from "velt/ffi/ptr";
+import * as bd from "velt/lang/hooks/sched_budget";
 import * as io from "velt/lang/hooks/sched_io";
 import * as tb from "velt/lang/hooks/sched_io_table";
 import * as wt from "velt/lang/hooks/sched_io_wait";
@@ -30,7 +31,9 @@ export async function readableUntil(h: u64, signal: u64): Promise<IoResult<u8>> 
   if (s === 0) {
     return failed(closed(), 0);
   }
-  const ready = wt.satisfied(s, io.K_READ, 0);
+  // A turn that spent its budget waits (and yields) even with input waiting, as `readable`:
+  // else a read loop finding nothing more this turn would be told input waits, again and again.
+  const ready = wt.satisfied(s, io.K_READ, 0) && !bd.spent();
   tb.leave(s);
   if (!ready) {
     // SAFETY: a live signal handle; the wait owns the heap future, and drops it.

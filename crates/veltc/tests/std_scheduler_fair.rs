@@ -282,3 +282,50 @@ async function main() {
         "the pinned task ran before the queued connections were accepted: true\n"
     );
 }
+
+/// A read loop that waits through `readableWithin(-1, signal)` (std/net/fd_until.velt
+/// `readableUntil`, http-server's wait for the next request on a kept-alive connection).
+const DRAIN_UNTIL: &str = r#"import { listen, connect, TcpStream } from "velt/net";
+
+const BACKLOG: i64 = 65536;
+
+async function drain(s: TcpStream): Promise<i64> {
+  const ac = new AbortController();
+  const buf: u8[] = Buffer.alloc(16);
+  let total: i64 = 0;
+  while (true) {
+    const n = s.tryRead(buf);
+    if (n == null) {
+      break;
+    }
+    total += n as i64;
+    if (n == 0 && !(await s.readableWithin(-1, ac.signal))) {
+      break;
+    }
+  }
+  s.close();
+  return total;
+}
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  const c = await connect(`127.0.0.1:${l.port}`);
+  const s = await l.accept();
+  await c.writeBytes(Buffer.alloc(BACKLOG as usize));
+  c.close();
+  console.log(`drained ${await drain(s)} bytes`);
+  l.close();
+}
+"#;
+
+/// A turn that spent its budget waits even with input waiting, through `readableWithin` with a
+/// signal too: `readableUntil` said "readable" at once, the next `tryRead` found nothing (the
+/// budget), and the loop never ended its turn, so the budget never refilled (the task spun for
+/// good; killed by the watchdog). With the check the wait yields and the next turn reads on.
+#[test]
+fn a_read_loop_waiting_with_a_signal_ends_its_turn_once_the_budget_is_spent() {
+    if !has_threads() {
+        return;
+    }
+    assert_eq!(run_std("drain_until", DRAIN_UNTIL), "drained 65536 bytes\n");
+}
