@@ -6,10 +6,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ctx::Ctx;
 use crate::hir::{Capture, DefId, LocalId};
 
-/// Per closure that doesn't escape (a `new Promise` executor, a callback a call only runs): the
-/// enclosing variables it captures that an escaping closure created in it, directly or through
-/// another such closure, keeps by value (#2807). Creating the outer closure lets them be held by
-/// one that escapes, so a later assignment to one needs a cell, as after an escaping capture.
+/// Per closure: the enclosing variables it captures that an escaping closure created in it,
+/// directly or through a closure created in it that doesn't escape, keeps by value (#2807).
+/// - For a closure that doesn't escape (a `new Promise` executor, a callback a call only runs),
+///   creating it lets them be held by one that escapes, so a later assignment to one needs a cell,
+///   as after an escaping capture.
+/// - For one that escapes into a local (a callback in a block's `const`), what the inner closure
+///   keeps outlives that local, so leaving its block does not end the hold.
 pub(super) fn kept_captures(
     cx: &mut Ctx,
     escaping: &FxHashSet<DefId>,
@@ -22,9 +25,6 @@ pub(super) fn kept_captures(
     let mut memo = FxHashMap::default();
     let mut out = FxHashMap::default();
     for (&d, caps) in captures {
-        if escaping.contains(&d) {
-            continue;
-        }
         let inner = kept_locals(d, &children, escaping, captures, &mut memo, 0);
         let outer: FxHashSet<LocalId> = (caps.iter())
             .filter(|c| inner.contains(&c.inner))

@@ -275,6 +275,8 @@ impl Moves<'_> {
             return;
         };
         let escaping = self.escaping.contains(&d);
+        let kept =
+            |c: &crate::hir::Capture| self.kept.get(&d).is_some_and(|k| k.contains(&c.outer));
         let writes =
             |c: &crate::hir::Capture| self.writers.get(&d).is_some_and(|w| w.contains(&c.outer));
         for c in caps.clone() {
@@ -321,17 +323,21 @@ impl Moves<'_> {
             self.capturing = false;
             if escaping && matches!(c.mode, PassMode::Owned | PassMode::Copy) {
                 let w = writes(&c);
+                // Kept by a closure this one makes: the hold outlives `holder` (a callback in a
+                // block's `const` that stores one, #2807).
+                let holder = holder.filter(|_| !kept(&c));
                 if let Some(s) = st {
                     let before = s.captured[i].is_some_and(|(_, _, x)| x);
                     s.captured[i] = Some((span, holder.map(|h| h.0 as usize), w || before));
                 }
             }
             // A closure that doesn't escape, but makes one that keeps this variable by value (an
-            // executor storing a callback, #2807): the variable is held as by an escaping closure.
-            if !escaping && self.kept.get(&d).is_some_and(|k| k.contains(&c.outer)) {
+            // executor storing a callback, #2807): the variable is held as by an escaping closure,
+            // and by no local.
+            if !escaping && kept(&c) {
                 if let Some(s) = st {
                     let before = s.captured[i].is_some_and(|(_, _, x)| x);
-                    s.captured[i] = Some((span, holder.map(|h| h.0 as usize), before));
+                    s.captured[i] = Some((span, None, before));
                 }
             }
         }
