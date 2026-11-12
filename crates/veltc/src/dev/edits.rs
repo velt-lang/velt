@@ -104,6 +104,7 @@ impl Snapshot {
     }
 
     /// The definitions of the given files (path, source), parsed on their own.
+    #[cfg(test)]
     pub fn of<'a>(files: impl IntoIterator<Item = (&'a Path, &'a str)>) -> Snapshot {
         Snapshot::of_after(files, None)
     }

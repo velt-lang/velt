@@ -2,6 +2,8 @@
 //! an edit of function bodies alone, checked from the running version's kept check.
 
 use std::path::{Path, PathBuf};
+
+use std::collections::HashMap as FxHashMap;
 use std::time::Instant;
 
 use velt_sema::hir;
@@ -21,7 +23,7 @@ pub fn compile_for_jit_warm(
     sess: &mut Session,
     opts: &BuildOptions,
     cold_files: &velt_common::SourceMap,
-    edited: impl FnOnce(&Session) -> Result<Vec<(PathBuf, String)>, String> + Send,
+    edited: impl Fn(&Session) -> Result<Vec<(PathBuf, String)>, String> + Send,
 ) -> Result<Option<vir::Program>, BuildError> {
     let Some(kept) = sess.kept.take() else {
         sess.warm_refused = Some("no kept check".into());
@@ -53,7 +55,7 @@ fn warm_inner(
     opts: &BuildOptions,
     kept: &velt_sema::KeptCheck,
     cold_files: &velt_common::SourceMap,
-    edited: impl FnOnce(&Session) -> Result<Vec<(PathBuf, String)>, String>,
+    edited: impl Fn(&Session) -> Result<Vec<(PathBuf, String)>, String>,
 ) -> Result<Option<vir::Program>, BuildError> {
     {
         let scope = CheckScope {
@@ -61,6 +63,25 @@ fn warm_inner(
             extra_roots: vec![],
             eager_std: false,
         };
+        let sema_opts = velt_sema::CheckOptions {
+            require_main: scope.require_main,
+            eager_std: scope.eager_std,
+        };
+        let t = Instant::now();
+        match reparsed(sess, kept, cold_files, &edited, sema_opts) {
+            Fast::Checked(checked, edited_files) => {
+                sess.record("sema (warm)", t);
+                sess.splice_files = Some(edited_files);
+                sess.keep_lowering = true;
+                return lower_checked(sess, opts, VirFor::Jit, *checked).map(Some);
+            }
+            Fast::Refused(why) => {
+                sess.warm_refused = Some(why);
+                return Ok(None);
+            }
+            // Loaded again below, from a session without the files read here.
+            Fast::Load => sess.sm = velt_common::SourceMap::new(),
+        }
         let loaded = load_stage(sess, opts, &scope)?;
         // The modules the cold check loaded after the program's load (the std modules it
         // demanded, the generated ones) are the kept check's: their files go into this session
@@ -112,10 +133,6 @@ fn warm_inner(
             }
         }
         let edited = named;
-        let sema_opts = velt_sema::CheckOptions {
-            require_main: scope.require_main,
-            eager_std: scope.eager_std,
-        };
         let checked = match kept.reload(&loaded.modules, loaded.root, &edited, sema_opts) {
             Ok((p, diags)) => {
                 // What the cold front end would report: the warnings of the code the edit left
@@ -240,4 +257,102 @@ pub(super) fn optimize_kept(
             errs.join("\n  ")
         ))
     })
+}
+
+/// What [`reparsed`] made of a reload.
+enum Fast {
+    /// The program checked, and the files of its edited functions.
+    Checked(Box<hir::Program>, Vec<velt_common::FileId>),
+    /// Not a reload the kept check takes: why.
+    Refused(String),
+    /// The program is to be loaded again (a file this way cannot parse as the load would).
+    Load,
+}
+
+/// A warm reload without loading the program again: the kept build's files (`cold_files`), the
+/// program's own read again, those whose text changed parsed again (`velt_loader::reparse`)
+/// into the modules the kept check was given (`KeptCheck::reload_reparsed`).
+fn reparsed(
+    sess: &mut Session,
+    kept: &velt_sema::KeptCheck,
+    cold_files: &velt_common::SourceMap,
+    edited: &dyn Fn(&Session) -> Result<Vec<(PathBuf, String)>, String>,
+    sema_opts: velt_sema::CheckOptions,
+) -> Fast {
+    let (paths, files) = (kept.module_paths(), kept.module_files());
+    let Some(root) = paths.iter().position(|p| *p == "main") else {
+        return Fast::Load;
+    };
+    // The module of each file of the program's own (not std's, not generated).
+    let mut module_of: FxHashMap<velt_common::FileId, usize> = FxHashMap::new();
+    for (i, (file, std)) in files.iter().enumerate() {
+        let generated = paths[i].starts_with("<generated>");
+        if !*std && !generated && kept.parsed_module(i).is_some() {
+            module_of.insert(*file, i);
+        }
+    }
+    let mut sm = velt_common::SourceMap::new();
+    let mut changed = vec![];
+    for (id, f) in cold_files.files() {
+        let now = match module_of.get(&id) {
+            Some(_) => match std::fs::read_to_string(&f.path) {
+                Ok(text) => text,
+                Err(_) => return Fast::Load,
+            },
+            None => f.src.clone(),
+        };
+        if now != f.src {
+            changed.push(id);
+        }
+        sm.add(f.path.clone(), now);
+    }
+    sess.sm = sm;
+    sess.std_files = (files.iter())
+        .filter(|(_, std)| *std)
+        .map(|(f, _)| *f)
+        .collect();
+    let located = match edited(sess) {
+        Ok(found) => found,
+        Err(why) => return Fast::Refused(why),
+    };
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let mut named = vec![];
+    let mut edited_files = vec![];
+    for (file, name) in located {
+        let file = canonical(&file);
+        let found = (module_of.iter()).find(|(id, _)| canonical(&sess.sm.get(**id).path) == file);
+        let Some((&id, &m)) = found else {
+            return Fast::Load;
+        };
+        named.push((paths[m].to_string(), name));
+        if !edited_files.contains(&id) {
+            edited_files.push(id);
+        }
+    }
+    let mut replaced = vec![];
+    for id in changed {
+        let Some(&m) = module_of.get(&id) else {
+            return Fast::Load;
+        };
+        let path = sess.sm.get(id).path.clone();
+        let main = paths[m] == "main";
+        // The file's previous text parses this way to the module the load made of it.
+        let before = velt_loader::reparse(&path, id, &cold_files.get(id).src, main);
+        let loaded = kept.parsed_module(m).map(|m| &m.ast);
+        if before.is_none() || format!("{before:?}") != format!("{:?}", loaded) {
+            return Fast::Load;
+        }
+        let Some(ast) = velt_loader::reparse(&path, id, &sess.sm.get(id).src, main) else {
+            return Fast::Load;
+        };
+        replaced.push((m, ast));
+    }
+    match kept.reload_reparsed(replaced, root, &named, sema_opts) {
+        Ok((checked, diags)) => {
+            // The warnings of the code the edit left alone, as the cold front end reports them.
+            sess.diagnostics.extend(diags);
+            Fast::Checked(checked, edited_files)
+        }
+        Err(why) => Fast::Refused(why),
+    }
 }

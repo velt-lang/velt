@@ -262,9 +262,9 @@ impl PendingKept {
                 loads,
             }));
         }
-        // A context that checked the source rewrites' copy borrows nothing of `input` (each
-        // rewrite copies every module): only the copy is kept, which halves what is kept.
-        self.owned.input = self.owned.stage.is_none().then_some(input);
+        // Kept even when the context checked the source rewrites' copy (each rewrite copies every
+        // module): a reload starts from these modules (`KeptCheck::reload_reparsed`).
+        self.owned.input = Some(input);
         self.owned.sources = Some(sources);
         self.owned.loads = loads;
         Ok(KeptCheck {
@@ -385,6 +385,50 @@ impl KeptCheck {
             let from = check_again(&mut cx, &defs, |_, _| Ok(()))?;
             finish(cx, opts, from).map(|(p, _)| p)
         })
+    }
+
+    /// The parsed module `index` the check was given, if it is kept.
+    pub fn parsed_module(&self, index: usize) -> Option<&SourceModule> {
+        self.owned.input.as_deref()?.get(index)
+    }
+
+    /// [`Self::reload`] of the modules the check was given, those of `replaced` with their new
+    /// text parsed (`(index, module)`; a body edit leaves the rest of a module, its imports
+    /// included, as it was): no module is loaded or parsed again.
+    pub fn reload_reparsed(
+        &self,
+        replaced: Vec<(usize, velt_syntax::ast::Module)>,
+        root: usize,
+        edited: &[(String, String)],
+        opts: crate::CheckOptions,
+    ) -> Result<(Box<crate::hir::Program>, velt_common::Diagnostics), String> {
+        let Some(input) = self.owned.input.as_deref() else {
+            return Err("the parsed modules are not kept".into());
+        };
+        let mut modules = Shallow {
+            modules: Vec::with_capacity(input.len()),
+            fresh: vec![],
+        };
+        for m in input {
+            // SAFETY: a bitwise copy that is never dropped (`Shallow`); `input` outlives it and
+            // is not changed meanwhile.
+            modules.modules.push(unsafe { std::ptr::read(m) });
+        }
+        for (i, ast) in replaced {
+            let old = input.get(i).ok_or("no such module")?;
+            let new = SourceModule {
+                path: old.path.clone(),
+                is_std: old.is_std,
+                is_dependency: old.is_dependency,
+                file: old.file,
+                ast,
+                imports: old.imports.clone(),
+                jsx_runtime: old.jsx_runtime.clone(),
+            };
+            std::mem::forget(std::mem::replace(&mut modules.modules[i], new));
+            modules.fresh.push(i);
+        }
+        self.reload(&modules.modules, root, edited, opts)
     }
 
     /// The program after an edit of function bodies alone (dev-warm-front-end.md step 3 "C3"):
@@ -576,5 +620,23 @@ fn finish(
     match r {
         Ok((program, diags)) => Ok((Box::new(program), diags)),
         Err(why) => Err(format!("the cold check: {why}")),
+    }
+}
+
+/// Bitwise copies of modules owned elsewhere, but for those at `fresh`, which are owned here:
+/// only those are dropped.
+struct Shallow {
+    modules: Vec<SourceModule>,
+    fresh: Vec<usize>,
+}
+
+impl Drop for Shallow {
+    fn drop(&mut self) {
+        for &i in &self.fresh {
+            // SAFETY: an owned module, dropped once; the copies are left alone below.
+            unsafe { std::ptr::drop_in_place(&mut self.modules[i]) }
+        }
+        // SAFETY: every element is either dropped above or a copy that must not be.
+        unsafe { self.modules.set_len(0) }
     }
 }

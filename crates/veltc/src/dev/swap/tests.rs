@@ -407,11 +407,15 @@ fn warm_reload(
     let mut cold = Session::new();
     cold.counted_seed = Some(velt_vir::CountedSeed::default());
     let cold = driver::compile_for_jit(&mut cold, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+    // A warm reload loads and parses nothing again (the kept build's modules, the edited files
+    // parsed again).
+    let loaded_again = warm.timings.iter().any(|(stage, _)| *stage == "parse");
     let warm = match out.unwrap_or_else(|e| panic!("{e:?}")) {
         // A kept program keeps the functions nothing reaches any more (the ids are the kept
         // lowering's); the cold build drops them.
         Some(mut p) => match warm.splice_refused.take() {
             None => {
+                assert!(!loaded_again, "a warm reload loaded the program again");
                 velt_opt::remove_unused_functions(&mut p);
                 Ok(p.to_string())
             }
