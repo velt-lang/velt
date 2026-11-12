@@ -32,14 +32,27 @@ function clamp(i: i64, len: usize): usize {
 
 /** `s.indexOf(needle, from)`: the first match at or after `from` (clamped), or -1; an empty
  * needle matches at the clamped `from`. Compiled into the caller is only the one-byte needle in
- * an ASCII string (a literal's length and byte are constants there); the rest is one call. */
+ * an ASCII string (a literal's length and byte are constants there), else one call: a one-byte
+ * needle's never names the general body, so a program whose needles are one byte doesn't compile
+ * the longer needles' search. */
 @inline
 export function indexOf(s: string, needle: string, from: i64): i64 {
   const n = strByteLen(s);
-  if (strByteLen(needle) == 1 && strLen(s) == n) {
-    return findByte(s, strByteAt(needle, 0), clamp(from, n), n);
+  if (strByteLen(needle) == 1) {
+    const b = strByteAt(needle, 0);
+    return strLen(s) == n ? findByte(s, b, clamp(from, n), n) : indexOfByteWide(s, b, from);
   }
   return indexOfBody(s, needle, from);
+}
+
+/** `indexOf` of the one-byte needle `b` (ASCII) in a string that is not ASCII. */
+@noInline
+function indexOfByteWide(s: string, b: u8, from: i64): i64 {
+  const at = clamp(from, strLen(s));
+  // An ASCII byte is never the low half of a pair: from inside one, start after it.
+  const pos = at == 0 ? 0 : unitToByte(s, at);
+  const k = findByte(s, b, ((pos >> 1) + (pos & 1) * 4) as usize, strByteLen(s));
+  return k < 0 ? -1 : byteToUnit(s, k as usize) as i64;
 }
 
 /** `indexOf` past its front. */
@@ -98,11 +111,14 @@ function indexOfWide(s: string, needle: string, from: i64): i64 {
  * `position` of 0 the code that needs it is not compiled into the program at all. */
 @inline
 export function includes(s: string, needle: string, position: i64): bool {
+  if (strByteLen(needle) == 1) {
+    if (position > 0) {
+      return indexOf(s, needle, position) >= 0;
+    }
+    return findByte(s, strByteAt(needle, 0), 0, strByteLen(s)) >= 0;
+  }
   if (position > 0) {
     return indexOfBody(s, needle, position) >= 0;
-  }
-  if (strByteLen(needle) == 1) {
-    return findByte(s, strByteAt(needle, 0), 0, strByteLen(s)) >= 0;
   }
   return includesBody(s, needle);
 }
@@ -138,11 +154,24 @@ function includesBody(s: string, needle: string): bool {
 @inline
 export function lastIndexOf(s: string, needle: string, from: i64): i64 {
   const n = strByteLen(s);
-  if (strByteLen(needle) == 1 && strLen(s) == n && n > 0) {
-    const at = clamp(from, n - 1);
-    return rfindByte(s, strByteAt(needle, 0), at + 1);
+  if (strByteLen(needle) == 1) {
+    const b = strByteAt(needle, 0);
+    if (strLen(s) != n) {
+      return lastIndexOfByteWide(s, b, from);
+    }
+    return n > 0 ? rfindByte(s, b, clamp(from, n - 1) + 1) : -1;
   }
   return lastIndexOfBody(s, needle, from);
+}
+
+/** `lastIndexOf` of the one-byte needle `b` (ASCII) in a string that is not ASCII. */
+@noInline
+function lastIndexOfByteWide(s: string, b: u8, from: i64): i64 {
+  const units = strLen(s);
+  const at = clamp(from, units - 1);
+  // A match at unit `at` or before starts at its code point or before.
+  const k = rfindByte(s, b, ((unitToByte(s, at) >> 1) as usize) + 1);
+  return k < 0 ? -1 : byteToUnit(s, k as usize) as i64;
 }
 
 /** `lastIndexOf` past its front. */
