@@ -1,6 +1,7 @@
 // A string literal union (a `const`'s `c ? "x" : "y"`, its `as const` form, a parameter's
-// `"pq" | "rs"`) is a string to `for...of`, indexing (also `m?.[0]`) and spreading, and to a
-// generic `T extends string` that concatenates it (#2686).
+// `"pq" | "rs"`) is a string to `for...of`, indexing (also `m?.[0]`), spreading, `Array.from`,
+// `new Set` and array destructuring, and to a generic `T extends string` that concatenates it
+// (#2686).
 const c = Math.random() > 2;
 const a1 = c ? "x" : "y";
 const a2 = c ? ("xy" as const) : ("zw" as const);
@@ -26,3 +27,13 @@ function first(m?: "pq" | "rs") {
   return m?.[0];
 }
 console.log(first("rs"), first());
+const s2 = c ? "ab" : "cd";
+console.log(Array.from(s2).length, Array.from(s2, (ch) => ch + ch).join(), new Set(s2).size);
+const [h0, h1] = s2;
+const [p0, ...ps] = a2;
+console.log(h0, h1, p0, ps.join(), new Map([[s2, 1]]).get("cd"));
+function chars(m: "pq" | "rs") {
+  const [x0, x1] = m;
+  return [...new Set(m)].join("") + Array.from(m).length + x0 + x1;
+}
+console.log(chars("pq"));

@@ -63,11 +63,11 @@ impl Consumable {
 
 impl FnCx<'_, '_> {
     /// Does a consumer take a value of type `t` through `consumable` rather than as an array:
-    /// is it an iterable, a string, a `Map` or a class with `entries()` (what `for...of` takes
-    /// besides arrays)?
+    /// is it an iterable, a string (or a string literal union, `"ab" | "cd"`), a `Map` or a
+    /// class with `entries()` (what `for...of` takes besides arrays)?
     pub(super) fn is_consumable(&mut self, t: TyId) -> bool {
         self.cx.ty.array_elem(t).is_none()
-            && (t == self.cx.ty.str_
+            && (self.cx.widened(t) == self.cx.ty.str_
                 || self.is_iterable(t)
                 || self.cx.class_of(t).is_some() && self.method_exists(t, "entries"))
     }
@@ -76,6 +76,8 @@ impl FnCx<'_, '_> {
     /// reported then, unless the iterable itself is ill-formed).
     pub(super) fn consumable(&mut self, src: hir::Expr) -> Option<Consumable> {
         let span = src.span;
+        // A string literal union is the string it is: `Array.from(s)`, `new Set(s)`, `[a] = s`.
+        let src = self.widen_str_literals(src);
         if self.is_iterable(src.ty) {
             let s = self.iter_source(src, span)?;
             let elem = self.iter_source_elem(&s)?;
