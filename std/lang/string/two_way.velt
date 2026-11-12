@@ -11,12 +11,13 @@
 // needle (by a 64-bit set of `byte % 64`) skips the whole needle.
 
 import { noInline, strByteAt } from "velt/lang/intrinsics";
+import { halfStart, NO_START } from "velt/lang/string/code_units";
 
 /** The bits `1 << (b % 64)` of every byte `b` of `needle`'s `m` bytes. */
-function byteSet(needle: string, m: usize): u64 {
+function byteSet(needle: string, off: usize, m: usize): u64 {
   let set: u64 = 0;
   for (let i: usize = 0; i < m; i++) {
-    set = set | ((1 as u64) << ((strByteAt(needle, i as u64) & 63) as u64));
+    set = set | ((1 as u64) << ((strByteAt(needle, (off + i) as u64) & 63) as u64));
   }
   return set;
 }
@@ -30,14 +31,14 @@ function inSet(set: u64, b: u8): bool {
  * The maximal (or, `!maximal`, minimal) suffix of `needle`'s `m` bytes read forwards: its start
  * in the high 32 bits, its period in the low ones.
  */
-function suffixForward(needle: string, m: usize, maximal: bool): u64 {
+function suffixForward(needle: string, off: usize, m: usize, maximal: bool): u64 {
   let pos: usize = 0;
   let period: usize = 1;
   let candidate: usize = 1;
   let offset: usize = 0;
   while (candidate + offset < m) {
-    const current = strByteAt(needle, (pos + offset) as u64);
-    const next = strByteAt(needle, (candidate + offset) as u64);
+    const current = strByteAt(needle, (off + (pos + offset)) as u64);
+    const next = strByteAt(needle, (off + (candidate + offset)) as u64);
     if (maximal ? next > current : next < current) {
       pos = candidate;
       period = 1;
@@ -58,7 +59,7 @@ function suffixForward(needle: string, m: usize, maximal: bool): u64 {
 }
 
 /** As `suffixForward`, read backwards: the suffix's end (exclusive) and its period. */
-function suffixReverse(needle: string, m: usize, maximal: bool): u64 {
+function suffixReverse(needle: string, off: usize, m: usize, maximal: bool): u64 {
   let pos = m;
   let period: usize = 1;
   if (m == 1) {
@@ -67,8 +68,8 @@ function suffixReverse(needle: string, m: usize, maximal: bool): u64 {
   let candidate = m - 1;
   let offset: usize = 0;
   while (offset < candidate) {
-    const current = strByteAt(needle, (pos - offset - 1) as u64);
-    const next = strByteAt(needle, (candidate - offset - 1) as u64);
+    const current = strByteAt(needle, (off + (pos - offset - 1)) as u64);
+    const next = strByteAt(needle, (off + (candidate - offset - 1)) as u64);
     if (maximal ? next > current : next < current) {
       pos = candidate;
       period = 1;
@@ -89,9 +90,9 @@ function suffixReverse(needle: string, m: usize, maximal: bool): u64 {
 }
 
 /** Do bytes `a..a + n` and `b..b + n` of `needle` match? */
-function sameRange(needle: string, a: usize, b: usize, n: usize): bool {
+function sameRange(needle: string, off: usize, a: usize, b: usize, n: usize): bool {
   for (let k: usize = 0; k < n; k++) {
-    if (strByteAt(needle, (a + k) as u64) != strByteAt(needle, (b + k) as u64)) {
+    if (strByteAt(needle, (off + (a + k)) as u64) != strByteAt(needle, (off + (b + k)) as u64)) {
       return false;
     }
   }
@@ -99,20 +100,30 @@ function sameRange(needle: string, a: usize, b: usize, n: usize): bool {
 }
 
 /**
- * The first match of `needle` (`m` bytes, at least 2) in `s` that starts at `from` or later and
- * ends by `stop`, or -1: linear in `stop - from`, no memory allocated.
+ * The first match of `needle`'s `m` bytes from `off` (at least 2) in `s` that starts at `from` or
+ * later and ends by `stop`, and where `half` (0: none) finds its halves (`halfStart`), or -1:
+ * linear in `stop - from`, no memory allocated. A match the halves reject shifts on as a
+ * mismatch would, so every match of the bytes is visited in that time.
  */
 @noInline
-export function findTwoWay(s: string, needle: string, m: usize, from: usize, stop: usize): i64 {
-  const set = byteSet(needle, m);
-  const lo = suffixForward(needle, m, false);
-  const hi = suffixForward(needle, m, true);
+export function findTwoWay(
+  s: string,
+  needle: string,
+  off: usize,
+  m: usize,
+  from: usize,
+  stop: usize,
+  half: u64,
+): i64 {
+  const set = byteSet(needle, off, m);
+  const lo = suffixForward(needle, off, m, false);
+  const hi = suffixForward(needle, off, m, true);
   const pick = lo >> 32 > hi >> 32 ? lo : hi;
   const critical = (pick >> 32) as usize;
   const lower = (pick & 0xffffffff) as usize;
   const large = critical > m - critical ? critical : m - critical;
   // The needle is periodic with period `lower` when its left part is a suffix of its first period.
-  const small = critical * 2 < m && critical <= lower && sameRange(needle, lower, 0, critical);
+  const small = critical * 2 < m && critical <= lower && sameRange(needle, off, lower, 0, critical);
   const period = small ? lower : large;
   let pos = from;
   let memory: usize = 0;
@@ -123,7 +134,7 @@ export function findTwoWay(s: string, needle: string, m: usize, from: usize, sto
       continue;
     }
     let i = small && memory > critical ? memory : critical;
-    while (i < m && strByteAt(needle, i as u64) == strByteAt(s, (pos + i) as u64)) {
+    while (i < m && strByteAt(needle, (off + i) as u64) == strByteAt(s, (pos + i) as u64)) {
       i += 1;
     }
     if (i < m) {
@@ -133,10 +144,13 @@ export function findTwoWay(s: string, needle: string, m: usize, from: usize, sto
     }
     if (small) {
       let j = critical;
-      while (j > memory && strByteAt(needle, j as u64) == strByteAt(s, (pos + j) as u64)) {
+      while (j > memory && strByteAt(needle, (off + j) as u64) == strByteAt(s, (pos + j) as u64)) {
         j -= 1;
       }
-      if (j <= memory && strByteAt(needle, memory as u64) == strByteAt(s, (pos + memory) as u64)) {
+      const whole =
+        j <= memory &&
+        strByteAt(needle, (off + memory) as u64) == strByteAt(s, (pos + memory) as u64);
+      if (whole && (half == 0 || halfStart(s, pos, m, half) != NO_START)) {
         return pos as i64;
       }
       pos += period;
@@ -146,12 +160,12 @@ export function findTwoWay(s: string, needle: string, m: usize, from: usize, sto
       let matched = true;
       while (j > 0) {
         j -= 1;
-        if (strByteAt(needle, j as u64) != strByteAt(s, (pos + j) as u64)) {
+        if (strByteAt(needle, (off + j) as u64) != strByteAt(s, (pos + j) as u64)) {
           matched = false;
           break;
         }
       }
-      if (matched) {
+      if (matched && (half == 0 || halfStart(s, pos, m, half) != NO_START)) {
         return pos as i64;
       }
       pos += period;
@@ -161,14 +175,21 @@ export function findTwoWay(s: string, needle: string, m: usize, from: usize, sto
 }
 
 /**
- * The last match of `needle` (`m` bytes, at least 2) in `s` that starts before `top`, or -1:
- * linear, no memory allocated.
+ * The last match of `needle`'s `m` bytes from `off` (at least 2) in `s` that starts before `top`
+ * and where `half` (0: none) finds its halves, or -1: linear, no memory allocated.
  */
 @noInline
-export function rfindTwoWay(s: string, needle: string, m: usize, top: usize): i64 {
-  const set = byteSet(needle, m);
-  const lo = suffixReverse(needle, m, false);
-  const hi = suffixReverse(needle, m, true);
+export function rfindTwoWay(
+  s: string,
+  needle: string,
+  off: usize,
+  m: usize,
+  top: usize,
+  half: u64,
+): i64 {
+  const set = byteSet(needle, off, m);
+  const lo = suffixReverse(needle, off, m, false);
+  const hi = suffixReverse(needle, off, m, true);
   const pick = lo >> 32 < hi >> 32 ? lo : hi;
   const critical = (pick >> 32) as usize;
   const lower = (pick & 0xffffffff) as usize;
@@ -178,9 +199,9 @@ export function rfindTwoWay(s: string, needle: string, m: usize, top: usize): i6
     (m - critical) * 2 < m &&
     m - critical <= lower &&
     lower <= critical &&
-    sameRange(needle, critical - lower, critical, m - critical);
+    sameRange(needle, off, critical - lower, critical, m - critical);
   const period = small ? lower : large;
-  const first = strByteAt(needle, 0);
+  const first = strByteAt(needle, off as u64);
   // `pos` is the end of the window: a match starting before `top` ends by `top + m - 1`.
   let pos = top + m - 1;
   let memory = m;
@@ -192,7 +213,9 @@ export function rfindTwoWay(s: string, needle: string, m: usize, top: usize): i6
       continue;
     }
     let i = small && memory < critical ? memory : critical;
-    while (i > 0 && strByteAt(needle, (i - 1) as u64) == strByteAt(s, (start + i - 1) as u64)) {
+    while (
+      i > 0 && strByteAt(needle, (off + (i - 1)) as u64) == strByteAt(s, (start + i - 1) as u64)
+    ) {
       i -= 1;
     }
     if (i > 0 || first != strByteAt(s, start as u64)) {
@@ -202,10 +225,10 @@ export function rfindTwoWay(s: string, needle: string, m: usize, top: usize): i6
     }
     let j = critical;
     const end = small ? memory : m;
-    while (j < end && strByteAt(needle, j as u64) == strByteAt(s, (start + j) as u64)) {
+    while (j < end && strByteAt(needle, (off + j) as u64) == strByteAt(s, (start + j) as u64)) {
       j += 1;
     }
-    if (j >= end) {
+    if (j >= end && (half == 0 || halfStart(s, start, m, half) != NO_START)) {
       return start as i64;
     }
     pos -= period;

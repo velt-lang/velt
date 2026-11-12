@@ -98,3 +98,12 @@ len 70: 0/0/-1/0/false 1/1/-1/-1/false 2/2/-1/-1/false 3/3/-1/-1/false 4/4/-1/-1
 <4500 units: the quick …lazy dog, > "dog, the": indexOf 40 1030 -1 | lastIndexOf -1 985 4450 | 40 4450 true false false
 <4501 units: the quick …azy dog, é> "é": indexOf 4500 4500 | lastIndexOf -1 4500 | 4500 4500 true false true
 <4501 units: éthe quick…lazy dog, > "the": indexOf 1 1 4006 | lastIndexOf -1 1 3992 | 1 4487 true false false
+<200001 units: éaaaaaaaaa…aaaaaaaaaa> <2001 units: aaaaaaaaaa…aaaaaaaaa�>: indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+<200001 units: éaaaaaaaaa…aaaaaaaaaa> <2001 units: �aaaaaaaaa…aaaaaaaaaa>: indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+<200001 units: éaaaaaaaaa…aaaaaaaaaa> <2002 units: �aaaaaaaaa…aaaaaaaaa�>: indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+<200003 units: éaaaaaaaaa…aaaaaaaa�x> <2001 units: aaaaaaaaaa…aaaaaaaaa�>: indexOf 198001 198001 | lastIndexOf -1 -1 | 198001 198001 true false false
+<200003 units: éaaaaaaaaa…aaaaaaaa😀> <2001 units: aaaaaaaaaa…aaaaaaaaa�>: indexOf 198001 -1 | lastIndexOf -1 198001 | 198001 198001 true false false
+<200003 units: 😀éaaaaaaa…aaaaaaaaaa> <2001 units: �aaaaaaaaa…aaaaaaaaaa>: indexOf -1 -1 -1 | lastIndexOf -1 -1 -1 | -1 -1 false false false
+<200002 units: �aaaaaaaaa…aaaaaaaaa�> <2002 units: �aaaaaaaaa…aaaaaaaaa�>: indexOf -1 -1 | lastIndexOf -1 -1 | -1 -1 false false false
+<200002 units: 😀abababab…ababababab> <61 units: ababababab…babababab�>: indexOf -1 -1 | lastIndexOf -1 -1 | -1 -1 false false false
+<200004 units: 😀abababab…abababab😀> <61 units: ababababab…babababab�>: indexOf 199942 199942 | lastIndexOf -1 -1 | 199942 199942 true false false

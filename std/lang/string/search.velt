@@ -17,14 +17,8 @@
 
 import { inline, noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
 import { findByte, rfindByte, sameBytes } from "velt/lang/string/byte_scan";
-import {
-  codePoint3,
-  codePoint4,
-  endsWithHigh,
-  isHalfNeedle,
-  unitsFind,
-  unitsRfind,
-} from "velt/lang/string/code_units";
+import { codePoint3, codePoint4, endsWithHigh, isHalfNeedle } from "velt/lang/string/code_units";
+import { halfFind, halfRfind } from "velt/lang/string/half_needle";
 import { findBytes, rfindBytes } from "velt/lang/string/needle_scan";
 import { byteToUnit, unitToByte } from "velt/lang/string/positions";
 
@@ -83,7 +77,7 @@ function indexOfWide(s: string, needle: string, from: i64): i64 {
     return -1;
   }
   if (isHalfNeedle(needle, m)) {
-    return unitsFind(s, needle, at);
+    return halfFind(s, needle, at);
   }
   // Only a half needle can start at the low half of a pair: start after the pair then.
   const pos = unitToByte(s, at);
@@ -126,7 +120,7 @@ function includesBody(s: string, needle: string): bool {
   }
   if (strLen(s) != n) {
     if (isHalfNeedle(needle, m)) {
-      return unitsFind(s, needle, 0) >= 0;
+      return halfFind(s, needle, 0) >= 0;
     }
   } else if (strByteAt(needle, 0) >= 0x80) {
     return false;
@@ -188,7 +182,7 @@ function lastIndexOfWide(s: string, needle: string, from: i64): i64 {
     return lastUnit as i64;
   }
   if (isHalfNeedle(needle, m)) {
-    return unitsRfind(s, needle, lastUnit);
+    return halfRfind(s, needle, lastUnit);
   }
   // A match starting at unit `lastUnit` or before starts at its code point or before (inside a
   // pair, the pair starts at the unit before).

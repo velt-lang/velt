@@ -149,4 +149,19 @@ function main() {
   report(long, "dog, the", [0, 1000, 4499]);
   report(long + "é", "é", [0, 4500]);
   report("é" + long, "the", [0, 1, 4000]);
+
+  // Half needles over long strings: a 2,000-unit middle that matches at every position, its half
+  // missing, then there; as a lone surrogate and as half of a pair. Linear, so instant.
+  const run = "é" + "a".repeat(200000);
+  const mid = "a".repeat(2000);
+  for (const n of [mid + HI, LO + mid, LO + mid + HI]) {
+    report(run, n, [0, 100000, 9007199254740991]);
+  }
+  report(run + HI + "x", mid + HI, [0, 150000]);
+  report(run + "😀", mid + HI, [0, 199000]);
+  report("😀" + run, LO + mid, [0, 1, 2]);
+  report(LO + run.slice(1) + HI, LO + mid + HI, [0, 1]);
+  const pairs = "😀" + "ab".repeat(100000);
+  report(pairs, "ab".repeat(30) + HI, [0, 5]);
+  report(pairs + "😀", "ab".repeat(30) + HI, [0, 5]);
 }

@@ -58,10 +58,12 @@ describe("Two-Way", () => {
           continue;
         }
         for (const from of [0, 1, 7, s.length - n.length]) {
-          expect(findTwoWay(s, n, n.length, from, s.length)).toBe(plainFind(s, n, from, s.length));
+          expect(findTwoWay(s, n, 0, n.length, from, s.length, 0)).toBe(
+            plainFind(s, n, from, s.length),
+          );
         }
         for (const top of [1, 5, s.length - n.length, s.length - n.length + 1]) {
-          expect(rfindTwoWay(s, n, n.length, top)).toBe(plainRfind(s, n, top));
+          expect(rfindTwoWay(s, n, 0, n.length, top, 0)).toBe(plainRfind(s, n, top));
         }
         checked++;
       }
@@ -70,11 +72,11 @@ describe("Two-Way", () => {
   });
 
   it("finds a match that ends at the range's end, and none past it", () => {
-    expect(findTwoWay("aaab", "aab", 3, 0, 4)).toBe(1);
-    expect(findTwoWay("aaab", "aab", 3, 0, 3)).toBe(-1);
-    expect(findTwoWay("abaabab", "abab", 4, 0, 7)).toBe(3);
-    expect(rfindTwoWay("baaa", "baa", 3, 1)).toBe(0);
-    expect(rfindTwoWay("ababaab", "baba", 4, 2)).toBe(1);
-    expect(rfindTwoWay("ababaab", "baba", 4, 1)).toBe(-1);
+    expect(findTwoWay("aaab", "aab", 0, 3, 0, 4, 0)).toBe(1);
+    expect(findTwoWay("aaab", "aab", 0, 3, 0, 3, 0)).toBe(-1);
+    expect(findTwoWay("abaabab", "abab", 0, 4, 0, 7, 0)).toBe(3);
+    expect(rfindTwoWay("baaa", "baa", 0, 3, 1, 0)).toBe(0);
+    expect(rfindTwoWay("ababaab", "baba", 0, 4, 2, 0)).toBe(1);
+    expect(rfindTwoWay("ababaab", "baba", 0, 4, 1, 0)).toBe(-1);
   });
 });
