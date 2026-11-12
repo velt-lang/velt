@@ -35,6 +35,8 @@ export async function readableUntil(h: u64, signal: u64): Promise<IoResult<u8>> 
   if (!ready) {
     // SAFETY: a live signal handle; the wait owns the heap future, and drops it.
     const also = Ptr.addressOf(unsafe { velt_rt_signal_wait$fut(signal) });
+    // SAFETY: `waitAlso` returns the address of a live promise of `void` that this await
+    // takes over; nothing else holds it.
     await unsafe { promiseAt<void>(wt.waitAlso(h, io.K_READ, 0, 0, also)) };
     if (velt_rt_signal_aborted(signal)) {
       return value(0);
