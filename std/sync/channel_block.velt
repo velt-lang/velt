@@ -32,6 +32,7 @@ import {
 import { Ptr } from "velt/ffi/ptr";
 import { Backoff } from "velt/sync/backoff";
 import { wakeOwned } from "#sync-chan-word";
+import { publishOutput } from "#sync-output";
 
 // The block.
 const B_REFS: usize = 0;
@@ -89,6 +90,12 @@ export function st(a: usize, v: usize): void {
   unsafe {
     addressStore<usize>(a, v);
   }
+}
+
+@inline
+function ld32(a: usize): u32 {
+  // SAFETY: as `ld`.
+  return unsafe { addressLoad<u32>(a) };
 }
 
 /** A word other threads read without the lock. */
@@ -196,6 +203,18 @@ export function count(b: usize): usize {
   return load(b + B_LEN);
 }
 
+/** Whether block `b` is closed, under the lock (a plain load: the lock orders it). */
+@inline
+export function closedLocked(b: usize): bool {
+  return ld32(b + B_CLOSED) !== 0;
+}
+
+/** The number of items queued in block `b`, under the lock (a plain load: the lock orders it). */
+@inline
+export function queued(b: usize): usize {
+  return ld(b + B_LEN);
+}
+
 /** Whether block `b` takes one more item. Under the lock. */
 @inline
 export function hasRoom(b: usize): bool {
@@ -212,10 +231,11 @@ export function bounded(b: usize): bool {
 /** Where a new item goes at the back of block `b`'s ring (grown if full). Under the lock. */
 @inline
 export function pushAt(b: usize): usize {
-  const len = ld(b + B_LEN);
-  if (len === ld(b + B_SLOTS)) {
+  if (ld(b + B_LEN) === ld(b + B_SLOTS)) {
     grow(b);
   }
+  // Read again after `grow` (which keeps it): nothing stays live across the call.
+  const len = ld(b + B_LEN);
   const slots = ld(b + B_SLOTS);
   let i = ld(b + B_HEAD) + len;
   if (i >= slots) {
@@ -303,6 +323,8 @@ function takeFirst(line: usize, c: usize): usize {
 
 /** Closes block `b` (once) and wakes every waiter: receives drain it, sends fail. */
 export function closeBlock(b: usize): void {
+  // Waiters may run on other workers at once (and print): this task's lines go first (#249).
+  publishOutput();
   lock(b);
   if (load32(b + B_CLOSED) !== 0) {
     unlock(b);

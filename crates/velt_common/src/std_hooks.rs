@@ -277,6 +277,10 @@ hooks! {
     /// The mark of the top-level `await`s after it (`velt_sema` `top_level_await.rs`); lowering
     /// replaces its calls by the runtime's (`async_fn/suspend.rs`).
     top_level_await_at => lang_hooks_process, "topLevelAwaitAt", sig((&string) -> void), lowered;
+    /// The mark of a write of standard output on this thread, before each `console.log` (velt_vir
+    /// `console.rs`): velt/sync's hand-offs publish the thread's buffered output only when it is
+    /// set (std/sync/output.velt, #2771).
+    stdout_written => lang_hooks_process, "stdoutWritten", sig(() -> void), lowered;
 
     // unwind.velt: the panic path in std (docs/internals/design/unwinding.md), in a program that
     // calls `catchUnwind`; its module is loaded on demand.

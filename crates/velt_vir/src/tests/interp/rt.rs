@@ -226,6 +226,18 @@ impl Interp<'_> {
             "velt_rt_drop_queue" => self.drop_queue(a[0], a[1]),
             "velt_rt_drop_drain" => self.drop_drain()?,
             m if m.starts_with("velt_atomic_") => return Ok(self.atomic(m, a)),
+            m if m.starts_with("velt_tls_") => {
+                let call = crate::tls::TlsCall::of_symbol(m)
+                    .unwrap_or_else(|| panic!("interp: invalid thread-local operation {m}"));
+                match call {
+                    crate::tls::TlsCall::Get { id, init, .. } => {
+                        return Ok(self.tls.get(&id).copied().unwrap_or(init))
+                    }
+                    crate::tls::TlsCall::Set { id, .. } => {
+                        self.tls.insert(id, a[0]);
+                    }
+                }
+            }
             // Bit-level helpers std's number printing declares (velt/lang/number).
             "velt_rt_math_f64_bits" | "velt_rt_math_bits_f64" => return Ok(a[0]),
             "velt_rt_math_clz64" => return Ok(a[0].leading_zeros() as u64),

@@ -37,6 +37,7 @@ import {
   slotTake,
 } from "velt/lang/intrinsics";
 import * as m from "velt/lang/hooks/sched_mem";
+import { publishOutput } from "#sync-output";
 
 const EMPTY: u32 = 0;
 const WAITING: u32 = 1;
@@ -113,6 +114,11 @@ export class HandOff<T> {
   give(item: T): T | null {
     const b = this.block;
     let s = m.load32(b + B_STATE);
+    if (s !== EMPTY && s !== WAITING) {
+      return item;
+    }
+    // The waiter may run on another worker at once (and print): this task's lines go first (#249).
+    publishOutput();
     while (true) {
       if (s !== EMPTY && s !== WAITING) {
         return item;
@@ -134,6 +140,7 @@ export class HandOff<T> {
 
   /** Ends the hand-off: the waiter resumes with null; later gives get their item back. */
   end(): void {
+    publishOutput();
     endBlock(this.block);
   }
 
@@ -148,7 +155,9 @@ export class HandOff<T> {
 
   [Symbol.dispose]() {
     const b = this.block;
-    // A waiter still waiting resumes with null.
+    // A waiter still waiting resumes with null (and may print on another worker at once): this
+    // task's lines go first (#249).
+    publishOutput();
     endBlock(b);
     // Gone, then the `wait()`s counted: a `wait()` leaving at the same time sees one or the other
     // (both sequentially consistent), and the compare-and-swap in `dropLeft` picks one dropper.

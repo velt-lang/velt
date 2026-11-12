@@ -1,0 +1,33 @@
+send 0
+got 0
+trySend 0
+got 0
+receive 0
+room true
+tryReceive 0
+room true
+receive 0
+room after wait
+close 0
+got null true
+give 0
+given 0
+end 0
+given null
+send 1
+got 1
+trySend 1
+got 1
+receive 1
+room true
+tryReceive 1
+room true
+receive 1
+room after wait
+close 1
+got null true
+give 1
+given 1
+end 1
+given null
+done true

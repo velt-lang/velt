@@ -1,5 +1,6 @@
 // velt/process (internal): `Stdout`, standard output as a synchronous byte sink, and `stdout`.
 
+import { stdoutWritten } from "velt/lang/hooks/process";
 import { velt_rt_isatty, velt_rt_stdout_write_bytes } from "velt/process/rt";
 
 /**
@@ -11,6 +12,7 @@ import { velt_rt_isatty, velt_rt_stdout_write_bytes } from "velt/process/rt";
 export struct Stdout {
   /** Writes raw bytes (the array stays the caller's, ready to be refilled). */
   write(bytes: u8[]) {
+    stdoutWritten();
     velt_rt_stdout_write_bytes(bytes);
   }
 

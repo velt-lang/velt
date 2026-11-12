@@ -81,6 +81,9 @@ struct Interp<'p> {
     /// The function `velt_rt_statics`'s table handed over, which releases the references the
     /// program's static atomics hold: called at a normal exit, before leaks are counted.
     statics_drop: Option<u64>,
+    /// The `velt_tls_*` values (`crate::tls`) of the one thread, by id; unset ones start as their
+    /// starting word.
+    tls: FxHashMap<u64, u64>,
 }
 
 /// Run `velt_main` to completion (or until panic/exit).
@@ -131,6 +134,7 @@ impl<'p> Interp<'p> {
             exec: async_rt::Exec::default(),
             drops: drops::Drops::default(),
             statics_drop: None,
+            tls: FxHashMap::default(),
         };
         for s in &p.statics {
             let a = it.raw_alloc(s.bytes.len().max(1) as u64);

@@ -2,9 +2,40 @@
 // (std-layout.md §10b): `process.stdout.write(s)` / `process.stderr.write(s)` (`processWrite`),
 // `process.env.NAME` / `process.env[name]` (`processEnv`), `process.argv` (`processArgv`) and
 // the mark of a top-level `await` (`topLevelAwaitAt`). The rest of Node's `process` is in
-// `velt/process` (https://veltlang.com/docs/std/process/).
+// `velt/process` (https://veltlang.com/docs/std/process/). Also the mark of what this thread wrote
+// to standard output (`stdoutWritten`), which `console.log` and every std writer of stdout set and
+// velt/sync's hand-offs read (std/sync/output.velt, #2771).
+
+import { inline } from "velt/lang/intrinsics";
 
 declare function velt_rt_write_str(stream: u32, s: string);
+
+/**
+ * Whether this thread wrote to standard output since a hand-off last published its output
+ * (`clearStdoutWritten`): the runtime buffers stdout per thread. Set by every write of stdout from
+ * compiled code: `console.log` (`stdoutWritten`, called by lowering), `process.stdout.write` and
+ * `Stdout.write`; the runtime writes stdout for nobody else. True also when the runtime published
+ * the buffer since (at the end of every poll): an extra publish, of nothing, is harmless.
+ */
+const STDOUT_WRITTEN = new ThreadLocal<bool>(false);
+
+/** Marks that this thread wrote to standard output: before each write of it. */
+@inline
+export function stdoutWritten(): void {
+  STDOUT_WRITTEN.set(true);
+}
+
+/** Whether this thread wrote to standard output since a hand-off last published it (kept set). */
+@inline
+export function stdoutWrittenSince(): bool {
+  return STDOUT_WRITTEN.get();
+}
+
+/** Clears the mark: the hand-off that saw it publishes the output (std/sync/output.velt). */
+@inline
+export function clearStdoutWritten(): void {
+  STDOUT_WRITTEN.set(false);
+}
 
 declare function velt_rt_env_get(name: string, out: string): bool;
 
@@ -13,6 +44,9 @@ declare function velt_rt_env_get(name: string, out: string): bool;
  * with `console.log` / `console.error`. Returns `true`, like Node's `write`.
  */
 export function processWrite(stream: u32, s: string): bool {
+  if (stream !== 2) {
+    stdoutWritten();
+  }
   velt_rt_write_str(stream, s);
   return true;
 }

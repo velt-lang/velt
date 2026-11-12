@@ -22,15 +22,20 @@ impl FnLower<'_, '_> {
     }
 
     /// `console.log(a, b)`: evaluate every argument first (JS order), then write
-    /// `<a> <b>\n` to `stream` (1 = stdout, 2 = stderr).
+    /// `<a> <b>\n` to `stream` (1 = stdout, 2 = stderr). A line to stdout first marks the thread
+    /// as having written (std's `stdoutWritten`), so that a hand-off publishes the thread's
+    /// buffer before another task can print (#2771).
     pub(super) fn print(&mut self, stream: i128, args: &[hir::Expr]) -> Operand {
-        let stream = cint(stream, Ty::U32);
         let mut vals = vec![];
         for (a, later) in args.iter().zip(self.later_each(args)) {
             let v = self.expr_held(a, later);
             let t = self.sub(a.ty);
             vals.push((v, t));
         }
+        if stream == 1 {
+            _ = hooks::stdout_written(self).emit(self);
+        }
+        let stream = cint(stream, Ty::U32);
         let direct = |lw: &Self, t: TyId| lw.writes_directly(t) || lw.option_scalar(t).is_some();
         if vals.iter().all(|&(_, t)| direct(self, t)) {
             self.print_direct(stream, vals);

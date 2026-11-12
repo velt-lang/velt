@@ -5,8 +5,21 @@
 mod no_window;
 mod test_dir;
 
-/// The `velt_tls_*` symbols in the VIR of `src`, compiled as `main.velt`, sorted.
+/// The `velt_tls_*` symbols of the user's thread-locals in the VIR of `src`, compiled as
+/// `main.velt`, sorted: std's own (the stdout mark `console.log` sets, for one) are left out by
+/// subtracting what the same calls emit in a program without a `ThreadLocal`.
 fn tls_symbols(src: &str) -> Vec<String> {
+    static STD: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let std_syms = STD.get_or_init(|| {
+        all_tls_symbols("let n: u64 = 0;\nfunction main() {\n  n = n + 1;\n  console.log(n);\n}\n")
+    });
+    let mut syms = all_tls_symbols(src);
+    syms.retain(|s| !std_syms.contains(s));
+    syms
+}
+
+/// Every `velt_tls_*` symbol in the VIR of `src`, compiled as `main.velt`, sorted.
+fn all_tls_symbols(src: &str) -> Vec<String> {
     let dir = test_dir::TestDir::new();
     std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
