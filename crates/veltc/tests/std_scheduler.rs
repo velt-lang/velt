@@ -665,6 +665,56 @@ async function main(): Promise<i32> {
     );
 }
 
+#[test]
+fn combinators_look_at_their_promises_in_node_s_order() {
+    // The combinators' first look on both executors, against Node 24's output: a started promise
+    // still pending when the race is made (`later`, or `w`, woken but not resumed yet) loses to
+    // a settled one after it, and a started promise that settled at its start (`now`) wins
+    // (#2848's check of the std executor's started promises in the runtime's combinators).
+    same_on_both(
+        "first_look",
+        r#"async function later(v: string): Promise<string> {
+  await null;
+  await null;
+  return v;
+}
+
+async function now(v: string): Promise<string> {
+  return v;
+}
+
+async function failNow(e: string): Promise<string> {
+  throw new Error(e);
+}
+
+async function waiting(p: Promise<string>): Promise<string> {
+  return await p;
+}
+
+async function main() {
+  console.log(await Promise.race<string>([later("later"), Promise.resolve("settled")]));
+  console.log(await Promise.race<string>([later("later"), now("now")]));
+  const r = Promise.withResolvers<string>();
+  const w = waiting(r.promise);
+  r.resolve("woken");
+  console.log(await Promise.race<string>([w, Promise.resolve("settled")]));
+  console.log(await Promise.any<string>([later("later"), Promise.resolve("settled")]));
+  console.log(await Promise.any<string>([failNow("now"), later("later")]));
+  const all = await Promise.all<string>([later("later"), now("now"), Promise.resolve("settled")]);
+  console.log(all.join(" "));
+  try {
+    await Promise.all<string>([later("later"), failNow("now"), Promise.reject<string>(new Error("settled"))]);
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  const s = await Promise.allSettled<string>([later("later"), failNow("now")]);
+  console.log(s.map((x) => x.status).join(" "));
+}
+"#,
+        "settled\nnow\nsettled\nsettled\nlater\nlater now settled\nnow\nfulfilled rejected\n",
+    );
+}
+
 /// Promises run from a microtask while they wait on their task's woken stack, and woken again
 /// there: the golden that crashed (a node pushed on the stack twice made a cycle) prints Node's
 /// order on both executors.
