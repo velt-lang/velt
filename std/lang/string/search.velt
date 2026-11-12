@@ -79,8 +79,9 @@ function indexOfWide(s: string, needle: string, from: i64): i64 {
   if (isHalfNeedle(needle, m)) {
     return halfFind(s, needle, at);
   }
-  // Only a half needle can start at the low half of a pair: start after the pair then.
-  const pos = unitToByte(s, at);
+  // Only a half needle can start at the low half of a pair: start after the pair then. Unit 0 is
+  // byte 0, with no translation.
+  const pos = at == 0 ? 0 : unitToByte(s, at);
   const start = ((pos >> 1) + ((pos & 1) * 4)) as usize;
   const n = strByteLen(s);
   if (m > n - start) {
