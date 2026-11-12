@@ -155,3 +155,82 @@ fn a_cell_used_by_two_tasks_aborts() {
     );
     assert!(stderr.contains("shared(...)"), "{stderr}");
 }
+
+/// Set in the child processes of the module-state tests: they take the module lock, which is
+/// process-wide.
+const MODULE_CHILD: &str = "VELT_RT_CELL_MODULE_CHILD";
+
+/// Runs test `name` in a child process with [`MODULE_CHILD`] set; its output.
+fn module_child(name: &str) -> std::process::Output {
+    let exe = std::env::current_exe().expect("test executable");
+    super::command::command(exe)
+        .args(["--exact", &format!("abi_tests::cells::{name}")])
+        .env(MODULE_CHILD, "1")
+        .output()
+        .expect("run the child")
+}
+
+/// #2737: a closure stored in module state is called by every task that uses module state; they
+/// hold the module lock through each poll, as does the task that stored it, so they share its
+/// cells without overlapping.
+#[test]
+fn tasks_holding_the_module_lock_share_a_cell() {
+    if std::env::var_os(MODULE_CHILD).is_none() {
+        let out = module_child("tasks_holding_the_module_lock_share_a_cell");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "the child must not abort: {stderr}");
+        return;
+    }
+    let c = cell();
+    let mut main = Task::new();
+    main.poll(|| {
+        new(c);
+        // Storing the closure in module state.
+        crate::task::local::module_touch();
+        use_(c);
+    });
+    let others = std::thread::spawn(move || {
+        let mut t = Task::new();
+        t.poll(|| {
+            crate::task::local::module_touch();
+            use_(c);
+        });
+        // A later poll of a task that touched module state takes the lock at its start.
+        t.poll(|| use_(c));
+    });
+    others.join().unwrap();
+    main.poll(|| use_(c));
+}
+
+/// A cell shared through module state used by a task that does not hold the module lock aborts.
+#[test]
+fn a_cell_shared_through_module_state_used_without_the_lock_aborts() {
+    if std::env::var_os(MODULE_CHILD).is_some() {
+        let c = cell();
+        let mut main = Task::new();
+        main.poll(|| {
+            new(c);
+            crate::task::local::module_touch();
+        });
+        std::thread::spawn(move || {
+            Task::new().poll(|| {
+                crate::task::local::module_touch();
+                use_(c);
+            })
+        })
+        .join()
+        .unwrap();
+        // A task that never used module state.
+        std::thread::spawn(move || Task::new().poll(|| use_(c)))
+            .join()
+            .unwrap();
+        unreachable!("the use without the module lock must abort");
+    }
+    let out = module_child("a_cell_shared_through_module_state_used_without_the_lock_aborts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the child must abort: {stderr}");
+    assert!(
+        stderr.contains("captured variable `last` is shared through module state"),
+        "{stderr}"
+    );
+}

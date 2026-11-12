@@ -266,9 +266,16 @@ shared is copied there, a unique one moves):
   HTTP handler's environment;
 - a native thread's entry (`NativeCallback`), an explicit boundary of its own.
 
-Module state is not on this list yet: a closure stored in a module-level variable can be called by
-tasks on several workers with no transfer in between, and only the module lock orders those calls
-(#2737).
+Module state is not a boundary, and needs none (#2737): a closure stored in a module-level variable
+is called by tasks on several workers with no transfer in between, and so shares its captured
+variables' cells with the task that stored it, as in Node. Every task that reaches module state
+holds the module lock for the whole of each poll, from its first access on, and the task that
+stored the closure is one of them (task/local/module_state.rs), so those uses never overlap. The
+debug runtime's cell check knows this: a cell used by a second task that holds the module lock
+becomes *guarded*, and a later use without the lock aborts (cell_owner.rs). The captured cells of a
+closure stored in module state count as written shared state: when option (c) of #2726 replaces the
+one lock with a lock per piece of written state (step 3), the piece of the module variable holding
+the closure must cover them.
 
 Timers run their callback as a promise of the task that created them (std/prelude/timers.velt), and
 a promise sent to another task is driven by the task that made it (#160). A new std API that keeps

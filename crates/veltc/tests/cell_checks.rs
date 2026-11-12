@@ -55,3 +55,52 @@ fn a_cell_used_by_one_task_runs() {
     let out = velt(&dir, &["run", "main.velt"]);
     assert_eq!(String::from_utf8_lossy(&out.stdout), "a\n");
 }
+
+/// #2737: a closure stored in module state and called from tasks on several workers shares its
+/// cell with the task that stored it; the module lock orders their uses, so the check lets it be.
+const MODULE_STATE: &str = "const H: (() => void)[] = [];
+
+function register(): () => number {
+  let hits = 0;
+  H.push(() => {
+    hits += 1;
+  });
+  return () => hits;
+}
+
+async function worker(n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    H[0]();
+    await sleep(0);
+  }
+}
+
+async function main() {
+  const read = register();
+  const ts: Promise<void>[] = [];
+  for (let t = 0; t < 8; t++) {
+    ts.push(spawn(worker(80)));
+  }
+  await Promise.all(ts);
+  console.log(`hits ${read()}`);
+}
+";
+
+#[test]
+fn a_closure_in_module_state_called_from_several_tasks_runs() {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(dir.path().join("main.velt"), MODULE_STATE).unwrap();
+    let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["run", "main.velt"])
+        .env("VELT_THREADS", "4")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "hits 640\n",
+        "{stderr}"
+    );
+}
