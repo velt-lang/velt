@@ -37,12 +37,20 @@ export function arm(): void {
   m.st(e + nc.E_GUARDED, 0);
 }
 
-/** The promise that took the arming, as a handle (0: none did); disarms. */
+/**
+ * The promise that took the arming, as a handle (0: none did, or it already finished without a
+ * panic, as a handler that never waits does: then `catchPanic` just takes its result, with no
+ * `settled` future); disarms.
+ */
 export function take(): u64 {
   const e = t.exec();
   m.st(e + nc.E_CATCHING, m.ld(e + nc.E_CATCHING) & ~1);
   const f = m.ld(e + nc.E_GUARDED);
   m.st(e + nc.E_GUARDED, 0);
+  if (f !== 0 && nc.finishedWell(f)) {
+    nc.releasePromise(f);
+    return 0;
+  }
   return f as u64;
 }
 
@@ -85,33 +93,39 @@ function settledDrop(f: usize): void {
 }
 
 /**
- * The executor's catching poll: polls the state at `a + 8` with its poll at `a` and `cx`
- * through `catchUnwind`; 0 pending, 1 ready, 2 panicked with the exception stored at `a + 16`.
- * What the poll left on this worker (the catching depth, an adoption under way) is restored then.
+ * The executor's catching poll on worker `e`: polls the state at `a + 8` with its poll at `a`
+ * and `cx` through `catchUnwind`; 0 pending, 1 ready, 2 panicked with the exception stored at
+ * `a + 16`. What the poll left on this worker (the catching depth, an adoption under way) is
+ * restored then. `a` is the worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and
+ * the polled function (`pollArgs`) captures nothing: no closure is made per poll.
  */
 function caughtPoll(a: usize, cx: usize): u32 {
-  const poll = m.ld(a);
-  const state = m.ld(a + 8);
-  const e = t.exec();
+  const e = a - nc.E_CATCH_ARGS;
   const catching = m.ld(e + nc.E_CATCHING);
   const adopting = m.ld(e + t.E_ADOPTING);
   m.st(e + nc.E_CATCHING, catching + 2);
-  let r: u32 = 0;
-  let x: usize = 0;
+  m.st(a + 16, cx);
   // SAFETY: the exception object is kept by the panicked promise, never freed (its message).
-  unsafe {
-    x = catchPanicRaw(() => {
-      // SAFETY: the caller's arguments: a state, its poll, and the context of its task.
-      r = unsafe { statePoll(poll, state, cx) };
-    });
-  }
+  const x = unsafe { catchPanicRaw(pollArgs) };
   m.st(e + nc.E_CATCHING, catching);
   if (x !== 0) {
     m.st(e + t.E_ADOPTING, adopting);
-    m.st(e + nc.E_CATCH_ARGS + 16, x);
+    m.st(a + 16, x);
     return 2;
   }
-  return r;
+  return m.ld(a + 16) as u32;
+}
+
+/**
+ * `caughtPoll`'s call under the catch: the poll, state and `cx` at this worker's `E_CATCH_ARGS`,
+ * the result written over the `cx`. A catching poll nested in it (an adoption) writes the same
+ * words, but only after this one read them and before it writes its result.
+ */
+function pollArgs(): void {
+  const a = t.exec() + nc.E_CATCH_ARGS;
+  // SAFETY: `caughtPoll`'s arguments: a state, its poll, and the context of its task.
+  const r = unsafe { statePoll(m.ld(a), m.ld(a + 8), m.ld(a + 16)) };
+  m.st(a + 16, r as usize);
 }
 
 /** The panic held by exception `x`, raised again where a panicked promise is awaited. */

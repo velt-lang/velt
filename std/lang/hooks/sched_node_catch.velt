@@ -18,8 +18,9 @@ import * as t from "./sched_task";
  * The worker block's catch words (inside sched_task.velt's `E_CATCH`): twice the catching polls
  * running on this worker, plus 1 while `catchPanic` is armed (its next started promise catches);
  * the promise that took the arming (with a reference); the arguments of a catching poll (its
- * poll, its state, then the exception when it panicked). Worker 0's: the catching poll and the
- * raise in an awaiter (function addresses; 0 until a program arms `catchPanic`).
+ * poll, its state, then its `cx`, which its result replaces, or the exception when it panicked).
+ * Worker 0's: the catching poll and the raise in an awaiter (function addresses; 0 until a
+ * program arms `catchPanic`).
  */
 export const E_CATCHING: usize = 824;
 export const E_GUARDED: usize = 832;
@@ -147,6 +148,11 @@ function panicked(n: usize, x: usize): void {
   m.st(n + nd.N_POLL, x);
   m.inc(n + nd.N_REFS);
   nd.setFlags(n, nd.PANICKED);
+}
+
+/** Did promise `f` (a started node) finish without a panic? */
+export function finishedWell(f: usize): bool {
+  return (m.load32(nd.nodeOf(f) + nd.N_FLAGS) & (nd.FINISHED | nd.PANICKED)) === nd.FINISHED;
 }
 
 /** Did promise `f` (a started node) panic? */

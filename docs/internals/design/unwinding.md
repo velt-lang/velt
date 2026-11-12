@@ -338,10 +338,14 @@ What replaces the runtime's catch (`velt_rt_catch_*`, the catch at a started pro
   const e = unsafe { catchUnwind(() => { r = futPoll(node.fut, cx); }) };
   ```
 
-  The closure lives on the stack (it doesn't escape); its cost is one indirect call more than
-  a plain poll, paid only by catching nodes, as `MAY_CATCH` arranges today. A direct form,
+  As built (std/task/catch_sched.velt `caughtPoll`), the polled function captures nothing: the
+  poll, state and `cx` wait in the worker's argument words (`E_CATCH_ARGS`), which a nested
+  catching poll writes only after the outer one read them, and the result comes back there. Its
+  cost is the indirect calls through `velt_eh_try`, paid only by catching nodes. A direct form,
   `catchPoll(f, cx)` lowered to a `velt_eh_try_poll(fut, cx)` that calls the header's poll
-  through the catch, saves the closure if it measures worth it.
+  through the catch, would save one more call if it measures worth it. A guarded promise that
+  finished without a panic before `catchPanic` waits for it (a handler that never waits) costs
+  no `settled` future: `take` gives it back and `catchPanic` takes its result.
 - **When the poll panicked**, the node becomes *panicked*: finished, its result slot never read,
   transferred or dropped, its state machine never polled or dropped, the node never freed (a
   leaf inside the leaked state may still wake it). The message moves into the node.

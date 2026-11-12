@@ -520,3 +520,82 @@ async function at(i: i64): Promise<i64> {
     );
     assert!(!has(&plain_exe, b"_Unwind_RaiseException"));
 }
+
+/// A guarded promise that finished before `catchPanic` waits (a handler that never waits) takes
+/// the short path: its result straight away, no `settled` future (catch_sched.velt `take`); one
+/// that panicked then, or waits, takes the long one. The catching polls nest (a `catchPanic` in
+/// a promise polled through the catch) and share the worker's argument words, each one reading
+/// its arguments before the nested one writes them and writing its result after.
+#[test]
+fn a_guarded_promise_done_before_the_wait_and_nested_catching_polls_give_their_results() {
+    if !catches_here() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("short.velt");
+    std::fs::write(
+        &file,
+        r#"import { catchPanic, PanicError } from "velt/task";
+
+async function ok(i: i64): Promise<i64> {
+  return i * 2;
+}
+
+async function bad(i: i64): Promise<i64> {
+  if (i >= 0) {
+    panic(`bad ${i}`);
+  }
+  return 0;
+}
+
+async function later(i: i64): Promise<i64> {
+  await yieldNow();
+  return i + 1;
+}
+
+async function nested(i: i64): Promise<i64> {
+  const a = await catchPanic(() => ok(i));
+  let b: i64 = 0;
+  try {
+    b = await catchPanic(() => bad(i));
+  } catch (e) {
+    b = 100;
+  }
+  const c = await catchPanic(() => later(i));
+  await yieldNow();
+  return a + b + c;
+}
+
+async function main() {
+  let s: i64 = 0;
+  for (let i: i64 = 0; i < 200; i++) {
+    s += await catchPanic(() => ok(i));
+    try {
+      await catchPanic(() => bad(i));
+    } catch (e) {
+      if (e instanceof PanicError) {
+        s += 1;
+      }
+    }
+    s += await catchPanic(() => later(i));
+    s += await catchPanic(() => nested(i));
+  }
+  console.log(s);
+}
+"#,
+    )
+    .unwrap();
+    let exe = exe_name(dir.path(), "short");
+    build_std(&file, &exe);
+    // Per i: 2i + 1 + (i + 1) + (2i + 100 + i + 1) = 6i + 103.
+    for threads in ["1", "4"] {
+        let (code, out, err) = run(&exe, dir.path(), threads);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, "140000\n"),
+            "{threads} workers; stderr: {err}"
+        );
+        assert_eq!(err.matches("panic: bad ").count(), 400, "stderr: {err}");
+    }
+}
