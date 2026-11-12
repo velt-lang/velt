@@ -147,7 +147,10 @@ export const E_STAY: usize = 608;
  * the fast path reads one word.
  */
 export const E_QSLOW: usize = 616;
-/** Times another thread woke this worker from its park (sched_end.velt `quiet`). */
+/**
+ * Times this worker was woken from its park: by another thread, or by its reactor's events and
+ * deadlines (sched_io.velt `park`), counted before they are delivered (sched_end.velt `quiet`).
+ */
 export const E_UNPARKS: usize = 624;
 /**
  * Worker 0's, when it is the only worker and the monitor may rescue it (`VELT_THREADS=1

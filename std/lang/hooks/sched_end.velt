@@ -138,7 +138,11 @@ function waits(w: usize): bool {
 /**
  * Is a wait linked into a source? Each worker counts the waits its thread linked less those it
  * unlinked (a wait may leave on another worker than the one it joined on): the sum over the
- * workers, read while every other worker is parked.
+ * workers. Read before the workers' queues: a wait woken leaves the count only after its task is
+ * queued (sched_io_wait.velt `wakeAll`, `expire`), and a worker expiring waits before it parks
+ * still has its park word up, so a count read after the queues could miss a wait whose task was
+ * not queued yet when they were read (the program ended with `main` waiting on that task). The
+ * count's stores are releases, its loads here acquire them (`m.load`).
  */
 function ioWaits(e: usize): bool {
   const n = m.load(e + t.E_STARTED);
@@ -188,14 +192,15 @@ function busy(g: usize, self: usize): bool {
   if (m.load(g + t.E_KEEP) !== 0 || m.load(g + t.E_MOVING) !== 0) {
     return true;
   }
+  // The waits before the queues (`ioWaits`).
+  if (ioWaits(g)) {
+    return true;
+  }
   const n = m.load(g + t.E_STARTED);
   for (let i: usize = 0; i < n; i++) {
     if (workerBusy(t.worker(i), self)) {
       return true;
     }
-  }
-  if (ioWaits(g)) {
-    return true;
   }
   // The runtime first, the inbox again after: a leaf counts until its task polled it ready, and
   // its wake reaches the inbox before that.

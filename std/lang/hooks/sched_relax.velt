@@ -216,7 +216,7 @@ export function retiredLook(e: usize): void {
     if (io.anyDue(b)) {
       w.flushDue(b);
     }
-    io.park(b, -1);
+    io.park(b, -1, e + t.E_PARK, e + t.E_UNPARKS);
     m.store32(e + t.E_PARK, 0);
     if (io.anyDue(b)) {
       w.flushDue(b);

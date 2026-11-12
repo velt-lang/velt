@@ -602,3 +602,228 @@ async function main() {
     assert_eq!(std, want, "sockets on the reactor in Velt");
     assert!(contains(&std_bin, b"listenOn"), "no sockets in Velt");
 }
+
+/// A connect waited on by a worker while worker 0 parks too: the program goes on until the
+/// connects are done. A parked worker that took its reactor's events counted its wait out and
+/// queued the woken task while its park word was still up, so worker 0's end-of-program scan
+/// could see neither and end the program with nothing printed (half the runs of 100 connects on
+/// a Mac; now the worker counts itself awake before it delivers). The std build with 4 workers,
+/// 10 runs.
+#[test]
+fn the_program_runs_on_while_another_worker_waits_for_a_connect() {
+    if !cfg!(any(target_os = "macos", target_os = "linux")) {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let src = r#"import { connect, listen, TcpListener } from "velt/net";
+import { channel, Channel } from "velt/sync";
+
+async function clients(port: i64): Promise<i64> {
+  for (let i: i64 = 0; i < 100; i++) {
+    const c = await connect(`127.0.0.1:${port}`);
+    c.close();
+  }
+  return 100;
+}
+
+async function serve(l: TcpListener, go: Channel<i64>): Promise<void> {
+  const n = (await go.receive()) ?? 0;
+  for (let i: i64 = 0; i < n; i++) {
+    (await l.accept()).close();
+  }
+  l.close();
+}
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  const go = channel<i64>(1);
+  const server = spawn(serve(l, go), { worker: 0 });
+  const n = await spawn(clients(l.port as i64), { worker: 1 });
+  await go.send(n);
+  await server;
+  console.log(`connected ${n} times`);
+}
+"#;
+    let file = dir.path().join("connects.velt");
+    std::fs::write(&file, src).unwrap();
+    let exe = dir.path().join("connects");
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(dir.path())
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    for run in 0..10 {
+        let o = command(&exe)
+            .env("VELT_THREADS", "4")
+            .env_remove("VELT_SCHEDULER")
+            .output()
+            .unwrap();
+        assert_eq!(
+            (
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n")
+            ),
+            (Some(0), "connected 100 times\n".to_string()),
+            "run {run}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+}
+
+/// `src` built with `VELT_SCHEDULER=std` and run `times` times with each of `threads` workers,
+/// the block counters on (their wait at the end included): each run ends with status 0 and
+/// prints `want`. For the ends of programs that race another thread: a task finishing on another
+/// worker, a reactor's late wake. The block counts are not compared: a runtime thread that holds
+/// a waker of a finished task and has not started giving it back when the counts are taken
+/// frees one block after them (405/404 in about 1 of 30 runs on Linux; #2842).
+fn std_runs_ending(name: &str, src: &str, want: &str, threads: &[&str], times: usize) {
+    if !cfg!(unix) {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    // The goldens' test certificate and key (`TEST_CA`, `TEST_CERT`, `TEST_KEY`).
+    std::fs::write(
+        dir.path().join("_tls.velt"),
+        include_str!("../../../tests/golden/std/_tls.velt"),
+    )
+    .unwrap();
+    let file = dir.path().join(format!("{name}.velt"));
+    std::fs::write(&file, src).unwrap();
+    let exe = dir.path().join(name);
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(dir.path())
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success(),
+        "{name}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    for threads in threads {
+        for i in 0..times {
+            let o = command(&exe)
+                .env("VELT_THREADS", threads)
+                .env("VELT_RC_STATS", "1")
+                .env_remove("VELT_SCHEDULER")
+                .output()
+                .unwrap();
+            let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+            assert_eq!(
+                (o.status.code(), out.as_str()),
+                (Some(0), want),
+                "{name} ({threads} workers, run {i}): {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+        }
+    }
+}
+
+/// A runtime write still in flight when its stream is closed goes on, and the program ends with
+/// the peer's view whole: the task that wrote may finish on another worker as `main` ends. Its
+/// block counts are not compared (#2842; [`std_runs_ending`]); the deterministic
+/// `a_task_ending_last_on_another_worker_frees_its_block_first` of std_scheduler_bounds covers
+/// the `finish` order.
+#[test]
+fn a_write_in_flight_across_close_ends_the_program() {
+    std_runs_ending(
+        "close_inflight",
+        "import { streamPair } from \"velt/net\";
+
+async function main() {
+  const [x, y] = streamPair();
+  spawn((async () => {
+    const big: u8[] = Buffer.alloc(8 * 1024 * 1024);
+    try {
+      await x.writeBytes(big);
+    } catch (e) {
+      // Closed before the write began.
+    }
+  })());
+  await yieldNow();
+  x.close();
+  let n = 0;
+  while (true) {
+    const got = await y.read();
+    if (got.length == 0) {
+      break;
+    }
+    n += got.length;
+  }
+  console.log(\"peer got all or nothing:\", n == 0 || n == 8 * 1024 * 1024);
+  y.close();
+}
+",
+        "peer got all or nothing: true\n",
+        &["4"],
+        30,
+    );
+}
+
+/// TLS streams closed at the end of `main` end the program, with a reactor thread of the runtime
+/// that may wake a finished task late (its socket's readiness after the close) while the block
+/// counters wait for wakers giving their reference back (task/waker.rs `giving_back`). Its block
+/// counts are not compared: a waker not yet giving back is not waited for (#2842;
+/// [`std_runs_ending`]).
+#[test]
+fn tls_streams_closed_at_the_end_end_the_program() {
+    std_runs_ending(
+        "tls_end",
+        "import { connectTls, listenTls } from \"velt/net\";
+import { TEST_CA, TEST_CERT, TEST_KEY } from \"./_tls\";
+
+async function main() {
+  const server = await listenTls(\"127.0.0.1:0\", { cert: TEST_CERT, key: TEST_KEY });
+  const serving = spawn((async () => {
+    const conn = await server.accept();
+    let total = 0;
+    while (true) {
+      const chunk = await conn.read();
+      if (chunk.length == 0) {
+        break;
+      }
+      total += chunk.length;
+      await conn.writeBytes(chunk);
+    }
+    await conn.write(`|${total}`);
+    conn.shutdown();
+    conn.close();
+  })());
+  const c = await connectTls(`localhost:${server.port}`, { ca: TEST_CA });
+  await c.write(\"hello\");
+  let got = \"\";
+  while (got.length < 5) {
+    got += await c.readString();
+  }
+  console.log(got);
+  c.shutdown();
+  let rest = \"\";
+  while (true) {
+    const t = await c.readString();
+    if (t == \"\") {
+      break;
+    }
+    rest += t;
+  }
+  console.log(rest);
+  c.close();
+  await serving;
+  server.close();
+}
+",
+        "hello\n|5\n",
+        &["1", "4"],
+        20,
+    );
+}
