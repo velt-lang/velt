@@ -101,16 +101,14 @@ function settledDrop(f: usize): void {}
 /**
  * The executor's catching poll on worker `e`: polls the state at `a + 8` with its poll at `a`
  * and `cx` through `catchUnwindAt`; 0 pending, 1 ready, 2 panicked with the exception stored at
- * `a + 16`. What the poll left on this worker (the catching depth, an adoption under way, the
- * promises in their first run under it: sched_node_catch.velt `abandon`) is restored then. `a` is
- * the worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and the polled function
+ * `a + 16`. What the poll left on this worker (the catching depth, an adoption under way) is
+ * restored then. `a` is the worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and the polled function
  * (`pollArgs`) is called at its address with `a`: no closure, no function value.
  */
 function caughtPoll(a: usize, cx: usize): u32 {
   const e = a - nc.E_CATCH_ARGS;
   const catching = m.ld(e + nc.E_CATCHING);
   const adopting = m.ld(e + t.E_ADOPTING);
-  const first = m.ld(e + nc.E_FIRST);
   m.st(e + nc.E_CATCHING, catching + 2);
   m.st(a + 16, cx);
   // SAFETY: `pollArgs` takes one number; the exception object is kept by the panicked promise,
@@ -119,7 +117,6 @@ function caughtPoll(a: usize, cx: usize): u32 {
   m.st(e + nc.E_CATCHING, catching);
   if (x !== 0) {
     m.st(e + t.E_ADOPTING, adopting);
-    nc.abandon(e, first, x);
     m.st(a + 16, x);
     return 2;
   }

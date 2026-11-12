@@ -20,32 +20,21 @@ import * as t from "./sched_task";
  * the promise that took the arming (with a reference); the arguments of a catching poll (its
  * poll, its state, then its `cx`, which its result replaces, or the exception when it panicked).
  * Worker 0's: the catching poll and the raise in an awaiter (function addresses; 0 until a
- * program arms `catchPanic`). Then the promises in their first run under a catching poll with no
- * catch of their own (`startCaught`), the latest first, linked through `N_FIRST_NEXT`.
+ * program arms `catchPanic`).
  */
 export const E_CATCHING: usize = 824;
 export const E_GUARDED: usize = 832;
 export const E_CATCH_ARGS: usize = 840;
 export const E_CATCH_POLL: usize = 864;
 export const E_CATCH_AGAIN: usize = 872;
-export const E_FIRST: usize = 880;
 
 /**
- * A started node's words after its (lazy) drop glue, which it no longer reads
+ * A started node's words from its (lazy) drop glue on, which it no longer reads
  * (sched_node.velt `N_DROP`): the guarded promise's settled future, a header of two words whose
  * result is the word after (the node's unhandled-rejection link, unused while its owner,
- * `catchPanic`, holds it: std/task/catch_sched.velt `settled`); a node in its first run with no
- * catch of its own links to the next one there (`E_FIRST`).
+ * `catchPanic`, holds it: std/task/catch_sched.velt `settled`).
  */
 export const N_SETTLE: usize = 88;
-export const N_FIRST_NEXT: usize = 96;
-
-/**
- * Passed to `startCaught` with the catching depth for a promise started detached
- * (sched.velt `schedDetach`): nobody awaits it, so its first run catches on its own and a panic
- * there never abandons the code that started it.
- */
-export const C_DETACHED: usize = 1 << 62;
 
 /**
  * Task flags: spawned while a catching poll ran, its root is polled through the catch; a panic
@@ -96,54 +85,18 @@ export function again(x: usize): void {
 }
 
 /**
- * sched_node.velt `start`'s first run of node `n` of task `task` on a worker whose `E_CATCHING`
- * is `catching` (not 0): the node catches. It took `catchPanic`'s arming (the low bit, which it
- * clears; `E_GUARDED` gets it with a reference), or it starts detached (`C_DETACHED`), and then
- * its first run catches on its own; or it starts while a catching poll runs, and then its first
- * run goes under that catch, with no catch of its own: it is linked at `E_FIRST` meanwhile, so
- * that a panic there, which abandons the code that started it as well, finishes it as panicked
- * (`abandon`). Its later polls catch on their own.
+ * Node `n`, starting while this worker's `E_CATCHING` is `catching` (not 0), catches: it took
+ * `catchPanic`'s arming (the low bit, which it clears; `E_GUARDED` gets it with a reference), or
+ * it starts while a catching poll runs.
  */
 @noInline
-export function startCaught(task: usize, n: usize, catching: usize): void {
-  if ((catching & (C_DETACHED | 1)) === 0) {
-    const e = t.exec();
-    m.st(n + N_FIRST_NEXT, m.ld(e + E_FIRST));
-    m.st(e + E_FIRST, n);
-    nd.run(task, n, false);
-    m.st(e + E_FIRST, m.ld(n + N_FIRST_NEXT));
-    nd.setFlags(n, nd.CATCHES);
-    return;
-  }
+export function catchesFrom(n: usize, catching: usize): void {
   nd.setFlags(n, nd.CATCHES);
   if ((catching & 1) !== 0) {
     const e = t.exec();
     m.st(e + E_CATCHING, catching & ~1);
     m.inc(n + nd.N_REFS);
     m.st(e + E_GUARDED, n + nd.N_HEAD);
-  }
-  nd.run(task, n, false);
-}
-
-/**
- * A catching poll on worker `e` caught exception `x`: the nodes linked at `E_FIRST` above
- * `first` (its value when the poll began) were in their first run under it, abandoned with the
- * code that started them. Each is finished as panicked; what its start had raised (its task's
- * await word, its count of promises) comes down, and the task gives back its reference.
- */
-export function abandon(e: usize, first: usize, x: usize): void {
-  let n = m.ld(e + E_FIRST);
-  m.st(e + E_FIRST, first);
-  while (n !== first) {
-    const next = m.ld(n + N_FIRST_NEXT);
-    const task = m.ld(n + nd.N_TASK);
-    m.and32(n + nd.N_FLAGS, ~nd.RUNNING);
-    panicked(n, x);
-    nd.setFlags(n, nd.FINISHED | nd.CATCHES);
-    m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
-    m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
-    nd.release(n);
-    n = next;
   }
 }
 

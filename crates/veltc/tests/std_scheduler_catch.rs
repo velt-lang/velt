@@ -601,13 +601,11 @@ async function main() {
 }
 
 /// A promise started inside a catching poll (http-server's handler, started by its adapter that
-/// `catchPanic` guards) runs its first, synchronous part under that poll's catch, with no catch of
-/// its own (sched_node_catch.velt `startCaught`); a panic there abandons the promise that started
-/// it too, and `abandon` finishes it as panicked: its task's count of promises and await word come
-/// down, so a task that caught many such panics still finishes and its join returns. A guarded
-/// promise still running when `catchPanic` waits for it is waited for through the settled future
-/// inside its node (catch_sched.velt `settled`): a panic after the wait began is a `PanicError`,
-/// a result is delivered whole.
+/// `catchPanic` guards) whose first, synchronous part panics, awaited at once by the code that
+/// started it: the panic reaches `catchPanic` through that await, and a task that caught many such
+/// panics still finishes and its join returns. A guarded promise still running when `catchPanic`
+/// waits for it is waited for through the settled future inside its node (catch_sched.velt
+/// `settled`): a panic after the wait began is a `PanicError`, a result is delivered whole.
 #[test]
 fn a_panic_in_the_first_run_of_a_promise_started_under_a_catch_and_one_after_the_wait_are_caught() {
     if !catches_here() {

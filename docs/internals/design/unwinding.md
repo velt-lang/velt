@@ -352,19 +352,6 @@ What replaces the runtime's catch (`velt_rt_catch_*`, the catch at a started pro
   node's lazy drop word and the free word after it, `N_SETTLE`; its `bool` result goes in the
   word after those, the node's unhandled-rejection link, unused while `catchPanic` holds the
   promise), so nothing is allocated.
-- **A promise started while a catching poll runs** has no catch of its own for its first,
-  synchronous run: that run is nested in the catching poll, whose catch takes a panic there
-  (sched_node_catch.velt `startCaught`). The promise is linked on the worker meanwhile
-  (`E_FIRST`), and a catching poll that caught a panic finishes the promises linked above where
-  it began as panicked (`abandon`): their task's await word and count of promises come down as
-  their start would have done. The panic abandons the code that started the promise as well, so
-  that promise (http-server's adapter, which awaits the handler at once) is the one that
-  panicked, for its own awaiter. This differs from the runtime's executor, where the started
-  promise alone panics and the code that started it goes on until it awaits it: a promise
-  started under a catch and never awaited, whose synchronous part panics, makes the whole
-  guarded promise a `PanicError` here. Later polls of such a promise catch on their own, and a
-  promise started detached (`velt_rt_fut_detach`, a combinator's loser) keeps its own catch for
-  its first run too, since nobody awaits it.
 - **When the poll panicked**, the node becomes *panicked*: finished, its result slot never read,
   transferred or dropped, its state machine never polled or dropped, the node never freed (a
   leaf inside the leaked state may still wake it). The message moves into the node.
