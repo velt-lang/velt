@@ -135,6 +135,42 @@ impl FnCx<'_, '_> {
         self.try_coerce(h, w).unwrap_or_else(|h| h)
     }
 
+    /// The operands of `op` with literal types taking part as their base type (`c.kind + "!"`,
+    /// `q + q` of `q: "a" | "b"`); `===` compares a union of literals as it is. A number literal
+    /// type (`a: 1 | 2`, an `i64` underneath) is a JS number: arithmetic on one computes on
+    /// `number`s, so `a / 4` is `0.25` and `(a + b) / 4` is `0.75`, as in JS.
+    pub(crate) fn literal_operand_bases(
+        &mut self,
+        op: ast::BinaryOp,
+        l: hir::Expr,
+        r: hir::Expr,
+    ) -> (hir::Expr, hir::Expr) {
+        use ast::BinaryOp as B;
+        let eq = matches!(op, B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq);
+        let lits = self.cx.lit_value(l.ty).is_some() || !eq && self.cx.widened(l.ty) != l.ty;
+        if l.ty == r.ty && !lits {
+            return (l, r);
+        }
+        let arith = matches!(op, B::Add | B::Sub | B::Mul | B::Div | B::Rem | B::Pow);
+        let float = arith && (self.number_literal(l.ty) || self.number_literal(r.ty));
+        let (l, r) = (self.widen_value(l), self.widen_value(r));
+        if !float {
+            return (l, r);
+        }
+        let f64 = self.cx.ty.f64;
+        let float = |s: &mut Self, h: hir::Expr| match h.ty == s.cx.ty.i64 {
+            true => s.int_to_float(h, f64),
+            false => h,
+        };
+        (float(self, l), float(self, r))
+    }
+
+    /// Is `t` a number literal type or a union of them, of `i64`s (`1 | 2`)?
+    fn number_literal(&mut self, t: TyId) -> bool {
+        let w = self.cx.widened(t);
+        w != t && w == self.cx.ty.i64
+    }
+
     /// Members of a literal type or a union of literals are its base type's (`l.length`,
     /// `kind.toUpperCase()` on `"lo" | "mid"`), unless the union itself has the member (an
     /// `extend` block on it).
