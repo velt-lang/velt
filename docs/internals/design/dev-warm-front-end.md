@@ -199,11 +199,45 @@ What it needs, as separate pull requests, each falling back to the cold front en
     definitions. Most of it is the clone and the moment the original and the clone are both
     alive during the finishing steps, not the modules; keeping the original and making the
     finishing steps leave it intact would save both.
-  - *C3:* a body checked again in a clone of the kept context, with a check of its own: the
-    body checked again in two clones (or in a clone after the original was finished) and
-    compared, since it interns new types in another order than the cold check. Caches outside
-    `Ctx` keyed by `TyId` or `DefId` (`locked_props::MEMO`, cleared only at the start of
-    `module_state::build`) are cleared for each check in a clone, or moved into `Ctx`.
+  - *C3:* a save that edits function bodies alone is checked from the kept check
+    (`KeptCheck::reload`, `driver::compile_for_jit_warm`), and lowered as usual. The kept check
+    holds the context from after the bodies' check (before the passes that follow it) and the
+    final one; each reload clones the first, so nothing drifts from one reload to the next. In
+    the clone the edited bodies' first checks are undone together (`recheck::forget_all`,
+    against the lists as the records saw them), each body is given its declaration from the
+    new text and checked again in the order of the first checks, the program's live code is
+    walked again (`lazy_std::reach_again`), and the passes after the bodies' check run over the
+    whole program (`reanalyze`). Warm sema is on by default in `velt dev` (`VELT_DEV_WARM=off`
+    turns it off), so every cold build in `velt dev` keeps its check: two context clones per
+    cold build, not only with `-v`. The warm path only helps while the program keeps running:
+    a program that exits is started again as a new process, with a full build.
+
+    A reload refuses, and the save takes the cold front end, when:
+    - the change detection finds anything but body edits, or a function it names is not
+      found, or more than one declaration has its name (methods are named by kind:
+      `T.get v`, `T.set v`, `T.static make`);
+    - what the source rewrites and scans find of the program differs from the kept check's
+      (`kept_reload::Facts`: every rewritten module but the edited ones, whose trees the
+      rewrites must leave as written, and the scans' and rewrites' side outputs, such as which
+      generators are thrown into);
+    - the edit moves any other definition of its file (a body whose length changes, with
+      definitions after it): the kept code of those holds its old positions, which lowering
+      would resolve against the new text. Rebasing them is left to step E;
+    - an edited function's inferred result, or what it throws (its throw sources, by kind and
+      type), changes: other bodies' checks read them;
+    - walking the live code again makes anything new live or demands a std module: the kept
+      check loads no std and checks no std body late;
+    - the reload reports any diagnostic (warnings included, which the cold build then shows),
+      needs another round of the throws sets, the sharing retry, or generated code the kept
+      check did not generate;
+    - the warm path fails with an internal error (a panic): the kept check is dropped and the
+      cold build keeps a new one.
+
+    Not done: checking the body in two clones and comparing them. Instead, a differential
+    test (`dev/swap/warm_tests.rs`) compares warm reloads of random body edits of golden
+    programs with cold builds (program and diagnostics). Caches outside `Ctx` keyed by `TyId`
+    or `DefId` (`locked_props::MEMO`) are reset by `module_state::build`, which `reanalyze`
+    runs.
 - **D. Per-function passes** (`velt_sema`): the passes after `check_bodies` run for a set of
   functions with the rest fixed.
 - **E. Splicing into the lowering** (`velt_vir`, dev only): the running version's lowering

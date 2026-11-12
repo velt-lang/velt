@@ -29,6 +29,9 @@ use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 
 use crate::ctx::Ctx;
+use crate::hir::DefId;
+pub(crate) use crate::kept_reload::Facts;
+use crate::kept_reload::{decl_at, decl_path, find_decl, hash_of, others_stay, signature};
 use crate::std_load::StdLoads;
 use crate::SourceModule;
 
@@ -45,9 +48,9 @@ fn place(modules: &[SourceModule]) -> Place {
 }
 
 thread_local! {
-    /// A reload's question for `check_timed` (`probe`): which module to give back as the source
-    /// rewrites leave it, and the answer (its syntax tree, printed).
-    static PROBE: RefCell<(Option<usize>, Option<String>)> = const { RefCell::new((None, None)) };
+    /// A reload's question for `check_timed` (`probe`), and the answer: what the source rewrites
+    /// and scans find of the edited program.
+    static PROBE: RefCell<(bool, Option<Facts>)> = const { RefCell::new((false, None)) };
     /// The check's context after its bodies were checked (`crate::analyze`), the last round's.
     static STASH: RefCell<Option<Detached>> = const { RefCell::new(None) };
     /// Set on sema's thread for one check: keep the check of exactly these modules.
@@ -56,29 +59,29 @@ thread_local! {
     static OFFER: RefCell<Option<PendingKept>> = const { RefCell::new(None) };
 }
 
-/// Called by `check_timed` once the source rewrites are done, with the rewritten `modules`:
-/// when a reload probes (`probe`), records the module it asked for and stops the check.
-pub(crate) fn probed(modules: &[SourceModule]) -> bool {
+/// Does `check_timed` need what the source rewrites and scans find (`Facts`): for a check that
+/// keeps itself, or a reload's probe?
+pub(crate) fn wants_facts(input: &[SourceModule]) -> bool {
+    wanted(input) || PROBE.with(|p| p.borrow().0)
+}
+
+/// Called by `check_timed` once the source rewrites and scans are done: when a reload probes
+/// (`probe`), records what they found and stops the check.
+pub(crate) fn probed(facts: &Option<Facts>) -> bool {
     PROBE.with(|p| {
         let mut p = p.borrow_mut();
-        let Some(i) = p.0 else {
+        if !p.0 {
             return false;
-        };
-        p.1 = modules.get(i).map(|m| format!("{:?}", m.ast));
+        }
+        p.1 = facts.clone();
         true
     })
 }
 
-/// Does the source rewrite of `modules` leave module `index` as it is? Asked of the very
-/// rewrites a check runs (`check_timed`, stopped after them), so a reload can check one of its
-/// bodies from the parsed module.
-fn rewrites_keep(
-    modules: &[SourceModule],
-    root: usize,
-    index: usize,
-    opts: crate::CheckOptions,
-) -> bool {
-    PROBE.with(|p| *p.borrow_mut() = (Some(index), None));
+/// What the source rewrites and scans find of `modules`, asked of the very rewrites a check
+/// runs (`check_timed`, stopped after them).
+fn probe(modules: &[SourceModule], root: usize, opts: crate::CheckOptions) -> Option<Facts> {
+    PROBE.with(|p| *p.borrow_mut() = (true, None));
     let _ = crate::check_timed(
         modules,
         root,
@@ -88,12 +91,7 @@ fn rewrites_keep(
         None,
         crate::SEMA_STACK_BUDGET,
     );
-    let printed = PROBE.with(|p| std::mem::take(&mut *p.borrow_mut()).1);
-    printed.is_some_and(|after| {
-        modules
-            .get(index)
-            .is_some_and(|m| format!("{:?}", m.ast) == after)
-    })
+    PROBE.with(|p| std::mem::take(&mut *p.borrow_mut()).1)
 }
 
 /// Keep a clone of `cx`, whose bodies are checked and whose later passes are yet to run, for a
@@ -381,17 +379,11 @@ impl KeptCheck {
         let shared = Shared(before);
         crate::generating::on_sema_thread(|_| {
             let mut cx: Ctx<'static> = shared.cx().clone();
-            for name in names {
-                let def = find_fn(&cx, name)?;
-                if !crate::body::recheck::forget(&mut cx, def) {
-                    return Err(format!("`{name}` was not recorded"));
-                }
-                crate::body::ensure_body(&mut cx, def);
-            }
-            match crate::reanalyze(cx, opts) {
-                Ok((program, _)) => Ok(Box::new(program)),
-                Err(why) => Err(format!("the cold check: {why}")),
-            }
+            let defs = (names.iter())
+                .map(|name| find_fn(&cx, name))
+                .collect::<Result<Vec<_>, String>>()?;
+            let from = check_again(&mut cx, &defs, |_, _| Ok(()))?;
+            finish(cx, opts, from)
         })
     }
 
@@ -424,56 +416,71 @@ impl KeptCheck {
         crate::generating::on_sema_thread(|_| {
             let (kept, modules) = shared.get();
             let mut cx: Ctx<'static> = kept.clone();
-            let mut probed = vec![];
             // Every edited function is found in the old modules before any is swapped.
-            let defs = (edited.iter())
-                .map(|(module, name)| {
-                    let def = find_decl(&cx, module, name)?;
-                    let Some(crate::defs::FnSource::Decl(old)) = cx.fn_info(def).source else {
-                        return Err(format!("`{name}` is not a declared function"));
-                    };
-                    let m = cx.fn_info(def).module;
-                    let at = decl_path(&cx.modules[m].ast, old).ok_or("not found in its module")?;
-                    Ok((def, name, at))
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            for (def, name, path) in defs {
+            let mut defs = vec![];
+            for (module, name) in edited {
+                let def = find_decl(&cx, module, name)?;
+                let Some(crate::defs::FnSource::Decl(old)) = cx.fn_info(def).source else {
+                    return Err(format!("`{name}` is not a declared function"));
+                };
                 let m = cx.fn_info(def).module;
+                let at = decl_path(&cx.modules[m].ast, old).ok_or("not found in its module")?;
                 let new = (modules.get(m))
                     .filter(|n| n.path == cx.modules[m].path)
                     .ok_or("the modules moved")?;
-                if !probed.contains(&m) {
-                    if !rewrites_keep(modules, root, m, opts) {
-                        return Err(format!("the source rewrites change `{}`", new.path));
-                    }
-                    probed.push(m);
+                let decl = decl_at(&new.ast, at).ok_or("not found in the edited module")?;
+                defs.push((def, m, at, decl));
+            }
+            let mut edited_modules: Vec<usize> = defs.iter().map(|&(_, m, _, _)| m).collect();
+            edited_modules.sort_unstable();
+            edited_modules.dedup();
+            // What the source rewrites and scans find of the program: the same as the kept
+            // check's, but for the edited modules' own trees, which they leave as written.
+            let (Some(kept_facts), Some(facts)) = (&cx.source_facts, probe(modules, root, opts))
+            else {
+                return Err("the source rewrites and scans were not kept".into());
+            };
+            if facts.rest != kept_facts.rest || facts.modules.len() != kept_facts.modules.len() {
+                return Err("the edit changes what the source rewrites or scans find".into());
+            }
+            for (i, (now, then)) in facts.modules.iter().zip(&kept_facts.modules).enumerate() {
+                let same = match edited_modules.contains(&i) {
+                    true => modules.get(i).is_some_and(|m| *now == hash_of(&m.ast)),
+                    false => now == then,
+                };
+                if !same {
+                    let path = modules.get(i).map_or("", |m| m.path.as_str());
+                    return Err(format!("the source rewrites change `{path}`"));
                 }
-                let decl = decl_at(&new.ast, path).ok_or("not found in the edited module")?;
+            }
+            for &m in &edited_modules {
+                let at: Vec<_> = (defs.iter().filter(|d| d.1 == m)).map(|d| d.2).collect();
+                if !others_stay(&cx.modules[m].ast, &modules[m].ast, &at) {
+                    let path = &modules[m].path;
+                    return Err(format!("the edit moves definitions after it in `{path}`"));
+                }
+            }
+            for &m in &edited_modules {
                 // The module is the edited one from here on: what a body's check reads of its
                 // module (the names its function literals take, `ast::Module::fn_names`) is the
-                // new text's. Its other definitions keep their old declarations, which only
-                // their bodies set apart from the new ones.
-                // SAFETY: as for `decl` below.
-                cx.modules[m] = unsafe { &*(new as *const SourceModule) };
-                // SAFETY: the clone, and every definition it makes from this body, lives only
+                // new text's. Its other definitions keep their old declarations, which are where
+                // the new ones are (`others_stay`) and only their bodies set apart from them.
+                // SAFETY: the clone, and every definition it makes from this module, lives only
                 // until this closure returns; `modules` outlives the call.
-                let decl: &'static velt_syntax::ast::FnDecl = unsafe { &*(decl as *const _) };
-                if !crate::body::recheck::forget(&mut cx, def) {
-                    return Err(format!("`{name}` was not recorded"));
-                }
-                // What callers' checks read of the function: an inferred result (or what it
-                // throws) the edit changes needs the cold check.
-                let before = signature(&cx, def);
-                cx.fn_info_mut(def).source = Some(crate::defs::FnSource::Decl(decl));
-                crate::body::ensure_body(&mut cx, def);
-                if signature(&cx, def) != before {
-                    return Err(format!("the edit changes what `{name}` returns or throws"));
-                }
+                cx.modules[m] = unsafe { &*(&modules[m] as *const SourceModule) };
             }
-            match crate::reanalyze(cx, opts) {
-                Ok((program, _)) => Ok(Box::new(program)),
-                Err(why) => Err(format!("the cold check: {why}")),
-            }
+            let ids: Vec<DefId> = defs.iter().map(|d| d.0).collect();
+            let decls: Vec<(DefId, &'static velt_syntax::ast::FnDecl)> = (defs.iter())
+                // SAFETY: as for the module above.
+                .map(|&(d, _, _, decl)| (d, unsafe { &*(decl as *const _) }))
+                .collect();
+            let from = check_again(&mut cx, &ids, |cx, def| {
+                if let Some(&(_, decl)) = decls.iter().find(|(d, _)| *d == def) {
+                    cx.fn_info_mut(def).source = Some(crate::defs::FnSource::Decl(decl));
+                }
+                Ok(())
+            })?;
+            finish(cx, opts, from)
         })
     }
 
@@ -505,97 +512,63 @@ fn find_fn(cx: &Ctx, name: &str) -> Result<crate::hir::DefId, String> {
         .ok_or_else(|| format!("no function `{name}`"))
 }
 
-/// The function declared as `name` in the module at `module` (its canonical path): a top-level
-/// function (`greet`), a constructor (`User.constructor`) or a method of a class or struct
-/// (`User.greet`), as the dev loop's change detection names them.
-fn find_decl(cx: &Ctx, module: &str, name: &str) -> Result<crate::hir::DefId, String> {
-    use velt_syntax::ast::ItemKind;
-    let m = (0..cx.modules.len())
-        .find(|&m| cx.modules[m].path == module)
-        .ok_or_else(|| format!("no module `{module}`"))?;
-    let (owner, member) = match name.split_once('.') {
-        Some((t, mm)) => (t, Some(mm)),
-        None => (name, None),
-    };
-    let decl = (cx.modules[m].ast.items.iter()).find_map(|item| match (&item.kind, member) {
-        (ItemKind::Function(f), None) if f.sig.name.name == owner => Some(f),
-        (ItemKind::Class(t) | ItemKind::Struct(t), Some(mm)) if t.name.name == owner => match mm {
-            "constructor" => t.constructor.as_ref(),
-            _ => (t.methods.iter())
-                .find(|x| x.decl.sig.name.name == mm)
-                .map(|x| &x.decl),
-        },
-        _ => None,
-    });
-    let decl = decl.ok_or_else(|| format!("no `{name}` in `{module}`"))?;
-    (0..cx.defs.len())
-        .map(|i| crate::hir::DefId(i as u32))
-        .find(|&d| {
-            matches!(cx.info[d.0 as usize], crate::defs::DefInfo::Fn(_))
-                && matches!(cx.fn_info(d).source,
-                    Some(crate::defs::FnSource::Decl(x)) if std::ptr::eq(x, decl))
-        })
-        .ok_or_else(|| format!("`{name}` has no definition"))
-}
-
-/// Where a function declaration is in its module: the item, and for a member of a class, struct
-/// or extension, which one (`Ctor` or method `i`).
-#[derive(Clone, Copy)]
-enum Member {
-    Item,
-    Ctor,
-    Method(usize),
-}
-
-/// The path of `decl` (by address) among `m`'s items.
-fn decl_path(
-    m: &velt_syntax::ast::Module,
-    decl: &velt_syntax::ast::FnDecl,
-) -> Option<(usize, Member)> {
-    use velt_syntax::ast::ItemKind;
-    let same = |d: &velt_syntax::ast::FnDecl| std::ptr::eq(d, decl);
-    for (i, item) in m.items.iter().enumerate() {
-        match &item.kind {
-            ItemKind::Function(f) if same(f) => return Some((i, Member::Item)),
-            ItemKind::Class(t) | ItemKind::Struct(t) => {
-                if t.constructor.as_ref().is_some_and(same) {
-                    return Some((i, Member::Ctor));
-                }
-                if let Some(k) = t.methods.iter().position(|x| same(&x.decl)) {
-                    return Some((i, Member::Method(k)));
-                }
-            }
-            ItemKind::Extend(e) => {
-                if let Some(k) = e.methods.iter().position(|x| same(&x.decl)) {
-                    return Some((i, Member::Method(k)));
-                }
-            }
-            _ => {}
+/// Checks the bodies of `defs` again in `cx`: their first checks undone, all at once
+/// (`recheck::forget_all`), each given its new declaration (`swap`) and checked again in the
+/// order of the first checks, and what they now reach of std walked. `Err` when an edit changes
+/// what other bodies' checks read of its function (`signature`), or makes std code live that the
+/// kept check did not check or load. `Ok`: how many diagnostics the context had before the
+/// bodies were checked again (the edited bodies' own went with their first checks).
+fn check_again(
+    cx: &mut Ctx<'static>,
+    defs: &[DefId],
+    mut swap: impl FnMut(&mut Ctx<'static>, DefId) -> Result<(), String>,
+) -> Result<usize, String> {
+    // The clone checks on this thread: how deep its checks nest is measured from here.
+    cx.stack_base = crate::stack_address();
+    let name = |cx: &Ctx, d: DefId| cx.fn_info(d).name.clone();
+    let mut order: Vec<(usize, DefId)> = vec![];
+    for &d in defs {
+        let at = crate::body::recheck::recorded_at(cx, d);
+        order.push((
+            at.ok_or_else(|| format!("`{}` was not recorded", name(cx, d)))?,
+            d,
+        ));
+    }
+    order.sort_by_key(|&(at, d)| (at, d.0));
+    let before: Vec<_> = defs.iter().map(|&d| (d, signature(cx, d))).collect();
+    if let Err(d) = crate::body::recheck::forget_all(cx, defs) {
+        return Err(format!("`{}` was not recorded", name(cx, d)));
+    }
+    let from = cx.diags.len();
+    for &(_, d) in &order {
+        swap(cx, d)?;
+    }
+    for &(_, d) in &order {
+        crate::body::ensure_body(cx, d);
+    }
+    for (d, sig) in before {
+        if signature(cx, d) != sig {
+            return Err(format!(
+                "the edit changes what `{}` returns or throws",
+                name(cx, d)
+            ));
         }
     }
-    None
-}
-
-/// The function declaration at `path` among `m`'s items (`decl_path`).
-fn decl_at(
-    m: &velt_syntax::ast::Module,
-    (i, member): (usize, Member),
-) -> Option<&velt_syntax::ast::FnDecl> {
-    use velt_syntax::ast::ItemKind;
-    match (&m.items.get(i)?.kind, member) {
-        (ItemKind::Function(f), Member::Item) => Some(f),
-        (ItemKind::Class(t) | ItemKind::Struct(t), Member::Ctor) => t.constructor.as_ref(),
-        (ItemKind::Class(t) | ItemKind::Struct(t), Member::Method(k)) => {
-            Some(&t.methods.get(k)?.decl)
-        }
-        (ItemKind::Extend(e), Member::Method(k)) => Some(&e.methods.get(k)?.decl),
-        _ => None,
+    if crate::body::lazy_std::reach_again(cx, defs) {
+        return Err("the edit reaches std code the kept check did not check or load".into());
     }
+    Ok(from)
 }
 
-/// What other bodies' checks read of a function that its own body can change: its result type,
-/// when inferred. (What it throws, its parameters' modes and the rest come from the passes,
-/// which a reload runs again over the whole program.)
-fn signature(cx: &Ctx, def: crate::hir::DefId) -> crate::hir::TyId {
-    cx.fn_info(def).ret
+/// The passes after the bodies' check, on a context whose edited bodies were checked again;
+/// any diagnostic past the first `from` refuses the reload.
+fn finish(
+    cx: Ctx<'static>,
+    opts: crate::CheckOptions,
+    from: usize,
+) -> Result<Box<crate::hir::Program>, String> {
+    match crate::kept_reload::reanalyze(cx, opts, from) {
+        Ok(program) => Ok(Box::new(program)),
+        Err(why) => Err(format!("the cold check: {why}")),
+    }
 }

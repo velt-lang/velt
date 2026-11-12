@@ -744,8 +744,11 @@ const GATE_KINDS: u32 = (1 << 21) | (1 << 22) | DYNAMIC | (1 << 24) | (1 << 25) 
 /// The bit of a dynamic type (`any`, `unknown`, `object`, `Function`) among [`kind_bit`]'s.
 const DYNAMIC: u32 = 1 << 23;
 
+#[path = "live_again.rs"]
+mod again;
 #[path = "live_constructs.rs"]
 mod constructs;
+pub(crate) use again::reach_again;
 #[path = "live_roots.rs"]
 mod roots;
 pub(super) use constructs::def_name;

@@ -230,6 +230,7 @@ impl<'m> Ctx<'m> {
             return;
         }
         let Some(loads) = self.loads else {
+            self.std_missed = true;
             return;
         };
         let Some(batch) = loads.serve(path) else {

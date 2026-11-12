@@ -26,14 +26,24 @@ pub fn compile_for_jit_warm(
         sess.warm_refused = Some("no kept check".into());
         return Ok(None);
     };
-    // The kept check moves to the pipeline thread and back (it is not `Sync`); a panic there
-    // loses it, and the next version is checked cold.
+    // The kept check moves to the pipeline thread and back (it is not `Sync`). A panic in the
+    // warm path (an internal error) takes the cold front end instead, without the kept check,
+    // which the panic may have left half-changed: the cold build keeps a new one.
     let s = &mut *sess;
     let (out, kept) = on_pipeline_thread(move || {
-        let out = warm_inner(s, opts, &kept, cold_files, edited);
-        Ok((out, kept))
+        let run = std::panic::AssertUnwindSafe(|| warm_inner(s, opts, &kept, cold_files, edited));
+        match std::panic::catch_unwind(run) {
+            Ok(out) => Ok((out, Some(kept))),
+            Err(panic) => {
+                let why = (panic.downcast_ref::<String>().map(String::as_str))
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or("a panic");
+                s.warm_refused = Some(format!("the warm front end failed: {why}"));
+                Ok((Ok(None), None))
+            }
+        }
     })?;
-    sess.kept = Some(kept);
+    sess.kept = kept;
     out
 }
 

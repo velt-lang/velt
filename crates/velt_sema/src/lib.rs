@@ -103,6 +103,7 @@ mod js_api;
 mod json;
 mod kept;
 mod kept_consts;
+mod kept_reload;
 mod key_groups;
 mod known;
 mod layout_merge;
@@ -170,6 +171,7 @@ pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
 pub use generating::{check_generating, check_generating_kept, Checked};
 pub use kept::{KeptCheck, PendingKept, Refused};
+pub use kept_reload::member_name;
 pub use source_module::SourceModule;
 pub use std_load::{LoadFn, Loads, StdBatch, StdLoads};
 pub use timings::check_rounds;
@@ -345,16 +347,42 @@ fn check_timed(
         return ((None, vec![d]), Default::default());
     };
     timings::record("source rewrites", rewrite_start.elapsed());
-    // A reload asks only what the rewrites make of one module (`kept::probe`).
-    if kept::probed(modules) {
-        return ((None, vec![]), Default::default());
-    }
     let source_scans::Found {
         null_proto,
         ctor_reads,
         record_accessors,
         gen_throw,
     } = timings::pass("source scans", || source_scans::program(modules));
+    // What a kept check's reload compares with the edited program's (`kept::probe`), which
+    // stops here.
+    let facts = kept::wants_facts(input).then(|| {
+        let lifted = lifted
+            .as_ref()
+            .map(|l| (&l.local_fns, &l.all_fns, &l.unsafe_fns));
+        let closures = closures.as_ref().map(|c| (&c.diags, &c.kept, &c.groups));
+        let rest: [&dyn std::fmt::Debug; 16] = [
+            &null_proto,
+            &ctor_reads,
+            &record_accessors,
+            &gen_throw,
+            &merge_diags,
+            &global_ns,
+            &ns_private,
+            &alias_blocked,
+            &lifted,
+            &overloaded.as_ref().map(|o| &o.methods),
+            &brands,
+            &global_props,
+            &chunks.promoted,
+            &asserted.rmw,
+            &closures,
+            &root,
+        ];
+        std::sync::Arc::new(kept::Facts::of(modules, &rest))
+    });
+    if kept::probed(&facts.as_deref().cloned()) {
+        return ((None, vec![]), Default::default());
+    }
     // What a round found it needed once it was too late to demand or check it.
     let assumed = std::cell::RefCell::new(body::lazy_std::Assumed::default());
     let new_cx = |round: &'static str,
@@ -375,6 +403,7 @@ fn check_timed(
         cx.stack_budget = stack_budget;
         // A check that keeps itself records its bodies, for the kept check to check them again.
         cx.body_records = kept::wanted(input).then(Default::default);
+        cx.source_facts = facts.clone();
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
         cx.global_namespaces = global_ns.clone();
@@ -581,42 +610,6 @@ fn analyze(
     let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
     alias_expand::check_unused_aliases(cx);
     entry
-}
-
-/// The rest of [`analyze`] for a clone of a kept check whose edited bodies were checked again
-/// (`kept`), and what the round loop of [`check_timed`] would do with it: the program, or why it
-/// needs the cold check (another round, a generator, an error).
-pub(crate) fn reanalyze(
-    mut cx: ctx::Ctx,
-    opts: CheckOptions,
-) -> Result<(hir::Program, Diagnostics), &'static str> {
-    let (root, before) = (cx.root, cx.diags.len());
-    analyze_after_bodies(&mut cx);
-    let root_mod = cx.modules[root];
-    let entry = main_fn::check_main(&mut cx, root, root_mod, opts.require_main);
-    alias_expand::check_unused_aliases(&mut cx);
-    if cx.diags.len() > before || error_count(&cx) > 0 {
-        return Err("it reports something");
-    }
-    if cx.union_views_grown().is_some() || cx.fn_sites.grown().is_some() {
-        return Err("another round");
-    }
-    if cx.held_borrows && retry_sharing(&cx) {
-        return Err("the sharing retry");
-    }
-    let mut assumed = body::lazy_std::Assumed::default();
-    if body::lazy_std::too_late(&mut cx, &mut assumed) {
-        return Err("std it now needs");
-    }
-    union_views::finish(&mut cx);
-    cx.upcast_writes();
-    if cx.checked_again(false).is_some() {
-        return Err("another round");
-    }
-    let Ok(generated) = generated::instances(&mut cx) else {
-        return Err("generated code");
-    };
-    Ok(program::build_checked(cx, entry, generated))
 }
 
 /// Should the program be checked again with held closures and `const me = this` sharing?

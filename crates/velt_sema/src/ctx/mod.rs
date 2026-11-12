@@ -459,6 +459,12 @@ pub(crate) struct Ctx<'m> {
     /// Each body's check, recorded for a kept check to check it again (`recheck::record`); `None`
     /// unless the check keeps itself (crate `kept`).
     pub body_records: Option<FxHashMap<DefId, crate::body::recheck::BodyRecord>>,
+    /// What the source rewrites and scans found, for a kept check's reload to compare the
+    /// edited program's with (`kept_reload::Facts`); `None` unless the check keeps itself.
+    pub source_facts: Option<std::sync::Arc<crate::kept_reload::Facts>>,
+    /// A std module was demanded that the check could not load (it loads none: a kept check's
+    /// clone, `kept`).
+    pub std_missed: bool,
     /// Closures created by body checks, in order (`body::recheck`).
     pub closure_defs: Vec<DefId>,
     /// The modules of the JS API (`body::expr::numbers::is_js_api`): each prelude module
@@ -692,6 +698,8 @@ impl<'m> Ctx<'m> {
             diags: vec![],
             rechecks: vec![],
             body_records: None,
+            source_facts: None,
+            std_missed: false,
             closure_defs: vec![],
             js_api_modules: std::cell::OnceCell::new(),
             native_libraries: std::cell::OnceCell::new(),

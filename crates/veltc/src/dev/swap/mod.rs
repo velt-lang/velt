@@ -239,3 +239,5 @@ fn reload_with(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod warm_tests;

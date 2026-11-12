@@ -424,6 +424,8 @@ fn a_body_edit_reloads_warm_to_the_cold_program() {
         vec![("main.velt", WARM_MAIN.replace("x * 2", "x * 3"))],
         vec![("main.velt", WARM_MAIN.replace("this.n += k", "this.n -= k"))],
         vec![("util.velt", WARM_UTIL.replace("n=", "N="))],
+        // A length-changing edit of the last definition of its file moves nothing.
+        vec![("util.velt", WARM_UTIL.replace("n=", "count="))],
         vec![
             ("main.velt", WARM_MAIN.replace("x * 2", "x + 2")),
             ("util.velt", WARM_UTIL.replace("n=", "#=")),
@@ -453,7 +455,11 @@ fn other_edits_reload_cold() {
     assert!(why.contains("label"), "{why}");
 }
 
-const JSON_MAIN: &str = "class Point {
+// `main` first: the edited `area` is the last definition, whose length may change.
+const JSON_MAIN: &str = "function main() {
+  console.log(show(new Point()), area(new Size()));
+}
+class Point {
   x: number = 1;
   y: number = 2;
 }
@@ -462,9 +468,6 @@ class Size {
 }
 function show(p: Point): string { return JSON.stringify(p); }
 function area(s: Size): number { return s.w * 2; }
-function main() {
-  console.log(show(new Point()), area(new Size()));
-}
 ";
 
 /// With generated code (`JSON.stringify`): a body edit that demands the same instances reloads

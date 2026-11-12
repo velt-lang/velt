@@ -38,7 +38,8 @@ mod record_conversions;
 use record_conversions::holds_string_record;
 
 pub(crate) use live::{
-    assume, demanded as hooks_demanded, finish as finish_live, live_defs, too_late, Assumed,
+    assume, demanded as hooks_demanded, finish as finish_live, live_defs, reach_again, too_late,
+    Assumed,
 };
 
 /// Std modules (path prefixes) whose free functions lowering looks up by name (`velt_vir`

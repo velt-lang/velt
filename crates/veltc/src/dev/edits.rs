@@ -158,7 +158,7 @@ impl Def {
                     bodies.push((format!("{ty}.constructor"), c.body.span));
                 }
                 for m in &t.methods {
-                    bodies.push((format!("{ty}.{}", m.decl.sig.name.name), m.decl.body.span));
+                    bodies.push((velt_sema::member_name(&ty, m), m.decl.body.span));
                 }
                 ty
             }

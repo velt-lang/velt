@@ -249,7 +249,12 @@ fn assert_warm_reload_matches(edited: &str, functions: &[&str]) {
 /// the text's length), else leave them out (positions after a longer or shorter edit move in
 /// the cold check, not in the kept one: lowering shifts them).
 fn assert_warm_reload_matches_spans(edited: &str, functions: &[&str], spans: bool) {
-    let (_, kept) = program_and_kept(BODIES);
+    assert_warm_reload_from(BODIES, edited, functions, spans);
+}
+
+/// [`assert_warm_reload_matches_spans`] from the kept check of `base`.
+fn assert_warm_reload_from(base: &str, edited: &str, functions: &[&str], spans: bool) {
+    let (_, kept) = program_and_kept(base);
     let (cold, _) = program_and_kept(edited);
     let l = load_src(edited);
     let names: Vec<(String, String)> = (functions.iter())
@@ -339,19 +344,40 @@ fn a_reload_of_an_edit_inside_a_closure_gives_the_edited_program() {
     assert_warm_reload_matches(&BODIES.replace("sum += k;", "sum -= k;"), &["total"]);
 }
 
-#[test]
-fn a_reload_of_an_edit_adding_a_closure_gives_the_edited_program() {
-    let edited = BODIES.replace(
-        "return sum + m.size;",
-        "const f = (x: number) => x * 2; return f(sum) + m.size;",
-    );
-    assert_warm_reload_matches_spans(&edited, &["total"], false);
+/// [`BODIES`] with `main` first, so that `total` is the last definition: an edit of its length
+/// moves nothing.
+fn main_first() -> String {
+    let at = BODIES.find("function main()").expect("main");
+    format!("{}{}", &BODIES[at..], &BODIES[..at])
 }
 
 #[test]
-fn a_reload_of_a_longer_edit_gives_the_edited_program_but_its_positions() {
+fn a_reload_of_an_edit_adding_a_closure_gives_the_edited_program() {
+    let base = main_first();
+    let edited = base.replace(
+        "return sum + m.size;",
+        "const f = (x: number) => x * 2; return f(sum) + m.size;",
+    );
+    assert_warm_reload_from(&base, &edited, &["total"], false);
+}
+
+#[test]
+fn a_reload_of_a_longer_edit_of_the_last_definition_gives_the_edited_program() {
+    let base = main_first();
+    let edited = base.replace("let sum = 0;", "let sum = 0 + 0 * 1;");
+    assert_warm_reload_from(&base, &edited, &["total"], true);
+}
+
+#[test]
+fn a_reload_of_a_longer_edit_moving_later_definitions_is_refused() {
+    // The definitions after `parse` would keep their old positions: the cold check.
     let edited = BODIES.replace("bad ${text}", "not a number: ${text}");
-    assert_warm_reload_matches_spans(&edited, &["parse"], false);
+    let (_, kept) = program_and_kept(BODIES);
+    let l = load_src(&edited);
+    let names = [("main".to_string(), "parse".to_string())];
+    let why =
+        (kept.reload(&l.modules, l.root, &names, CheckOptions::default())).expect_err("refused");
+    assert!(why.contains("moves definitions"), "{why}");
 }
 
 #[test]
