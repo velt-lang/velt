@@ -157,7 +157,9 @@ pub extern "C" fn velt_rt_stdin_read_line() -> *mut VeltFut {
         let buffered = INPUT.try_lock().and_then(|mut input| input.take_line());
         match buffered {
             Some(line) => line_read(Ok(line)),
-            None => run_blocking(next_line).await,
+            // Boxed: only a refill pays for the blocking read's future, and the leaf every
+            // buffered line allocates stays small (#2829).
+            None => Box::pin(run_blocking(next_line)).await,
         }
     })
 }

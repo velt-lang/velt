@@ -1,0 +1,37 @@
+// check: no leaks
+// A file read raced against a settled promise never wins (#2820): the read's result is an I/O
+// event, and JS runs the reactions of the promises settled by then first, however fast the read
+// is. A small file and a warm blocking thread can finish it before the poll that started it
+// ends; it still waits for its wake. Many rounds, as one round rarely shows it.
+import { readFile, readFileBytes, remove, writeFile } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+
+async function main() {
+  const f = `${tmpdir()}/velt-race-${uuidv4()}.txt`;
+  await writeFile(f, "x");
+  let text = 0;
+  let bytes = 0;
+  let stored = 0;
+  let any = 0;
+  for (let i = 0; i < 300; i++) {
+    if ((await Promise.race<string>([readFile(f), Promise.resolve("first")])) == "first") {
+      text++;
+    }
+    const none: u8[] = [];
+    if ((await Promise.race<u8[]>([readFileBytes(f), Promise.resolve(none)])).length == 0) {
+      bytes++;
+    }
+    const p = readFile(f);
+    if ((await Promise.race<string>([p, Promise.resolve("first")])) == "first") {
+      stored++;
+    }
+    if ((await Promise.any<string>([readFile(f), Promise.resolve("first")])) == "first") {
+      any++;
+    }
+  }
+  console.log(`race ${text} bytes ${bytes} stored ${stored} any ${any}`);
+  // The reads that lost still finish; the file is read again after them.
+  console.log(await readFile(f));
+  await remove(f);
+}
