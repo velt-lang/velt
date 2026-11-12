@@ -19,7 +19,7 @@ declare c("c") function velt_rt_task_id$rt(): u64;
 const NEXT = new Atomic<u64>(1);
 
 /** Bit 63: an id given by this executor, not the runtime. */
-const STD_ID: u64 = 0x8000_0000_0000_0000;
+export const STD_ID: u64 = 0x8000_0000_0000_0000;
 
 /** The id of the task being polled, given now if it has none; 0 outside a task. */
 export function taskId(): u64 {

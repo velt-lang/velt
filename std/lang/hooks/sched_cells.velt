@@ -17,12 +17,13 @@
 // The table lives outside the program's memory (the C library's, so the leak counters don't see
 // it): open addressing, behind one lock word. An entry: the cell's address (0: empty, 1: removed),
 // its owner (0: none, `GUARDED`), its variable's name (a copy: its byte length, then its bytes;
-// 0: none) and the worker that claimed it, for the message.
+// 0: none) and where it was claimed, for the message ([`worker`]).
 
-import { addressLoad, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import { addressLoad, noInline, strByteLen, strDataAddress } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as mod from "./sched_module";
-import { taskId } from "./sched_id";
+import { STD_ID, taskId } from "./sched_id";
+import * as r from "#reactor";
 import * as t from "./sched_task";
 
 /** The C library's `abort`: the report is the last thing the program does. */
@@ -66,14 +67,41 @@ function table(): usize {
   return was;
 }
 
+/** The table's lock: 0 free, 1 held, 2 held with threads waiting (sched_module.velt's lock). */
 function lock(h: usize): void {
   if (m.cas32(h + H_LOCK, 0, 1) !== 0) {
-    m.spinLock(h + H_LOCK);
+    lockSlow(h + H_LOCK);
+  }
+}
+
+@noInline
+function lockSlow(a: usize): void {
+  while (true) {
+    const s = m.load32(a);
+    if (s === 0) {
+      // Taken as contended: the unlock wakes one waiter, which takes it the same way.
+      if (m.cas32(a, 0, 2) === 0) {
+        return;
+      }
+    } else if (s === 2 || m.cas32(a, 1, 2) === 1) {
+      r.wordWait(a, 2);
+    }
   }
 }
 
 function unlock(h: usize): void {
-  m.store32(h + H_LOCK, 0);
+  const a = h + H_LOCK;
+  let s = m.load32(a);
+  while (true) {
+    const was = m.cas32(a, s, 0);
+    if (was === s) {
+      break;
+    }
+    s = was;
+  }
+  if (s === 2) {
+    r.wordWake(a);
+  }
 }
 
 function slotOf(cell: usize, cap: usize): usize {
@@ -82,9 +110,6 @@ function slotOf(cell: usize, cap: usize): usize {
 
 /** The entry of `cell` (lock held), or 0; with `add`, a new one when it has none. */
 function find(h: usize, cell: usize, add: bool): usize {
-  if (add && (m.ld(h + H_USED) + 1) * 10 >= m.ld(h + H_CAP) * 7) {
-    grow(h);
-  }
   const cap = m.ld(h + H_CAP);
   const es = m.ld(h + H_ENTRIES);
   let i = slotOf(cell, cap);
@@ -98,6 +123,11 @@ function find(h: usize, cell: usize, add: bool): usize {
     if (k === EMPTY) {
       if (!add) {
         return 0;
+      }
+      if (free === 0 && (m.ld(h + H_USED) + 1) * 10 >= cap * 7) {
+        // A new slot would fill the table too far: make room, then look again.
+        grow(h);
+        return find(h, cell, true);
       }
       const at = free !== 0 ? free : e;
       if (at === e) {
@@ -117,11 +147,21 @@ function find(h: usize, cell: usize, add: bool): usize {
   return 0;
 }
 
-/** Twice the capacity, the live entries moved over (lock held). */
+/**
+ * The live entries moved to a new array (lock held): of twice the capacity, or of the same one
+ * when removed entries take most of the room (`H_USED` counts them until then).
+ */
 function grow(h: usize): void {
   const cap = m.ld(h + H_CAP);
   const old = m.ld(h + H_ENTRIES);
-  const n = cap * 2;
+  let live: usize = 0;
+  for (let i: usize = 0; i < cap; i++) {
+    const k = m.ld(old + i * ENTRY + E_CELL);
+    if (k !== EMPTY && k !== REMOVED) {
+      live++;
+    }
+  }
+  const n = live * 2 < cap ? cap : cap * 2;
   const es = m.lastingZeroed(n * ENTRY);
   let used: usize = 0;
   for (let i: usize = 0; i < cap; i++) {
@@ -201,13 +241,27 @@ function nameText(p: usize): string {
   return text;
 }
 
-/** The index of the worker running this thread's code (0 off the workers). */
+/** Where this thread's code runs, for the message: 0 off the workers, else the worker's index + 1. */
 function worker(): usize {
   const w = t.here();
   if (w === 0) {
     return 0;
   }
-  return m.ld(w + t.E_INDEX) % m.ld(m.ld(w + t.E_MAIN) + t.E_COUNT);
+  return (m.ld(w + t.E_INDEX) % m.ld(m.ld(w + t.E_MAIN) + t.E_COUNT)) + 1;
+}
+
+/** [`worker`]'s `at` in words: the runtime names a thread, this executor its worker. */
+function placeText(at: usize): string {
+  return at === 0 ? "a thread outside the workers" : `worker ${at - 1}`;
+}
+
+/** Task `id` in words: one of this executor's (bit 63, numbered from 1) or of the runtime's. */
+function taskText(id: usize): string {
+  const n = id as u64;
+  if ((n & STD_ID) !== 0) {
+    return `task ${n & ~STD_ID}`;
+  }
+  return `runtime task ${n}`;
 }
 
 /** `velt_rt_cell_new`: a new cell at `cell`, holding variable `name`, owned by this task. */
@@ -338,11 +392,14 @@ export function schedCellFree(cell: usize): void {
   unlock(h);
 }
 
-/** Two tasks used one cell: the runtime's message (cell_owner.rs `report`), then stop. */
+/**
+ * Two tasks used one cell: the runtime's message (cell_owner.rs `report`), with tasks and where
+ * they ran as this executor knows them ([`taskText`], [`placeText`]), then stop.
+ */
 function report(name: string, owner: usize, at: usize, me: usize): void {
   const v = name == "?" ? "a captured variable" : `captured variable \`${name}\``;
   console.error(
-    `velt debug-cells: ${v} was used by two tasks: it belongs to task ${owner} (on worker ${at}), and task ${me} (on worker ${worker()}) used it too. A closure that assigns a variable it captured was shared with another task or HTTP request instead of copied, so both would change the variable (and its reference count) at the same time. Keep one value every task shares in \`shared(...)\` instead (a \`shared(new Mutex(...))\` for anything but a 64-bit integer).`,
+    `velt debug-cells: ${v} was used by two tasks: it belongs to ${taskText(owner)} (on ${placeText(at)}), and ${taskText(me)} (on ${placeText(worker())}) used it too. A closure that assigns a variable it captured was shared with another task or HTTP request instead of copied, so both would change the variable (and its reference count) at the same time. Keep one value every task shares in \`shared(...)\` instead (a \`shared(new Mutex(...))\` for anything but a 64-bit integer).`,
   );
   // SAFETY: no precondition; the program ends here.
   unsafe {
@@ -353,7 +410,7 @@ function report(name: string, owner: usize, at: usize, me: usize): void {
 /** A guarded cell used without the module lock (cell_owner.rs `report_unlocked`), then stop. */
 function reportUnlocked(name: string, me: usize): void {
   console.error(
-    `velt debug-cells: captured variable \`${name}\` is shared through module state, and task ${me} (on worker ${worker()}) used it without the module lock, so it may change at the same time as another task's use. A closure that assigns a variable it captured was given to a task that does not use module state instead of copied.`,
+    `velt debug-cells: captured variable \`${name}\` is shared through module state, and ${taskText(me)} (on ${placeText(worker())}) used it without the module lock, so it may change at the same time as another task's use. A closure that assigns a variable it captured was given to a task that does not use module state instead of copied.`,
   );
   // SAFETY: no precondition; the program ends here.
   unsafe {

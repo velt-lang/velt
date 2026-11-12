@@ -495,8 +495,9 @@ fn lower_checked(
         native_inits: &native_inits,
         // A debug compiler links the debug runtime, which checks that no two tasks use one
         // captured variable's cell (#916); release programs and release compilers skip it. So
-        // does a source generator host, which runs no tasks, and whose check under the executor in
-        // Velt (std's table, #2832) would reach system functions (`check_generator_host`).
+        // does a source generator host under either executor: it runs no tasks, so the check would
+        // find nothing, and under the executor in Velt its table (std's, #2832) would reach system
+        // functions (`check_generator_host`).
         cell_checks: !opts.release && cfg!(debug_assertions) && !sess.generator_build,
         // Variables for debuggers in debug builds made for debugging that keep their line
         // information (they refer to its files); release builds with `-g` keep line information
