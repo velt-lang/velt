@@ -475,3 +475,88 @@ fn output_reaches_a_pipe_before_the_worker_sleeps() {
     let line = line.expect("the line printed before the sleep did not reach the pipe");
     assert_eq!(line.trim(), "started");
 }
+
+/// The goldens of Node timers under tasks on several workers (tests/golden/std, run by the golden
+/// suite with the runtime's executor) under the executor in Velt: one order for the process
+/// whichever worker sets or steps it, and a busy task's timers held back without holding back the
+/// others'. Built once each, run five times with `VELT_THREADS=4` and with 2.
+#[test]
+fn timer_goldens_run_in_node_order_on_several_workers() {
+    if !std_builds_here() {
+        return;
+    }
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
+    for name in [
+        "timer_order_tasks",
+        "timer_spawned_busy",
+        "timer_spawned_busy_first",
+    ] {
+        let src = std::fs::read_to_string(golden.join(format!("{name}.velt"))).unwrap();
+        let want = std::fs::read_to_string(golden.join(format!("{name}.out")))
+            .unwrap()
+            .replace("\r\n", "\n");
+        let (out, _) = build_and_run_on(dir.path(), name, &src, true, 0, "4");
+        assert_eq!(out, want, "{name}, 4 workers");
+        let exe = dir.path().join(format!("{name}_std"));
+        for threads in ["4", "2"] {
+            for run in 0..5 {
+                let what = format!("{name}, {threads} workers, run {run}");
+                assert_eq!(run_exe(&exe, threads, 0, &what), want, "{what}");
+            }
+        }
+    }
+}
+
+/// A timer set by a poll that ends at once fires while the worker that ran it spins in the next
+/// task: the end of that poll looks at the order (a worker woken to look while it ran found its
+/// task busy, and parked without a time), and one parked worker waits for the timer's time. The
+/// spin gives up after 3 s; the timer is due after 20 ms. Five runs with `VELT_THREADS=4` and 2.
+#[test]
+fn a_timer_set_just_before_its_worker_spins_fires_meanwhile() {
+    if !std_builds_here() {
+        return;
+    }
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let src = "class State {
+  fired: boolean;
+  constructor() {
+    this.fired = false;
+  }
+}
+
+async function main() {
+  const state = shared(new Mutex<State>(new State()));
+  const s2 = state.clone();
+  const s3 = state.clone();
+  setTimeout(() => {
+    s3.with((v) => {
+      v.fired = true;
+    });
+  }, 20);
+  // Still in this poll when another worker looks at the order: the timer's task is busy then,
+  // and only the end of this poll can hand its turn on.
+  const t0 = Date.now();
+  while (Date.now() - t0 < 50) {}
+  const spin = spawn(async (): Promise<number> => {
+    const s = Date.now();
+    while (!s2.with((v) => v.fired) && Date.now() - s < 3000) {}
+    return Date.now() - s;
+  });
+  const took = await spin;
+  console.log(took < 1000 ? \"fired during the spin\" : `late: ${took} ms`);
+}
+";
+    let want = "fired during the spin\n";
+    let (out, _) = build_and_run_on(dir.path(), "busy_end", src, true, 0, "4");
+    assert_eq!(out, want);
+    let exe = dir.path().join("busy_end_std");
+    for threads in ["4", "2"] {
+        for run in 0..5 {
+            let what = format!("{threads} workers, run {run}");
+            assert_eq!(run_exe(&exe, threads, 0, &what), want, "{what}");
+        }
+    }
+}

@@ -22,8 +22,10 @@
 //
 // A stalled worker's reactor gets a turn first (its sockets' events, `io.turnFor`), as the
 // runtime's monitor does; unlike the runtime's, the monitor does not fire the worker's timers:
-// its timer block is no other thread's, so a task waiting for a stalled worker's sleep or Node
-// timer waits for the worker (such tasks are anchored to it: sched_task.velt `ANCHORED`).
+// its timer block is no other thread's, so a task waiting for a stalled worker's sleep waits for
+// the worker (such tasks are anchored to it: sched_task.velt `ANCHORED`). Node's timers are the
+// process's (sched_order.velt): the workers that park move their order on, and a task waiting
+// for its turn is rescued as any other.
 
 import { Ptr, export as cExport } from "velt/ffi";
 import { exportedAddress, noInline } from "velt/lang/intrinsics";

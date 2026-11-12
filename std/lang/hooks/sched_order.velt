@@ -5,37 +5,114 @@
 // (sched_order_list.velt, sched_order_pass.velt). The prelude's timers (std/prelude/timers.velt)
 // call `velt_rt_timer_new`, `_turn`, `_again`, `_clear` and `_free`, which route here.
 //
-// The worker drives the loop: one timer's turn at a time. When nothing holds the loop (no turn
-// handed out and not taken yet, no poll under way that took the last one), it looks for the
-// timer that comes next (`step`: at its park, at each I/O tick of a busy worker, and at the end
-// of the poll that took the last turn); if its time has come it gets its turn (its turn's waker
-// is woken), else the worker's wait lasts until then at most. A turn's future completes once its
-// turn has come: the callback runs then, as a promise of the task that created the timer, and the
-// next turn waits until that poll of the task has ended, its microtasks too (sched_run.velt
-// `runEnd`), as Node runs the microtasks after each callback. A timer is never run inside the
-// poll that created it: the loop moves only between polls.
+// One order for the process, as the runtime's: its block (sched_order_list.velt `order`) is made
+// with the first Node timer, and every worker changes it under its lock word, which only programs
+// with Node timers take, and none with one worker (sched_lock.velt). Each of the order's moves is
+// a few stores under the lock; no callback runs and no waker is woken while it is held.
 //
-// The order is allocated with the first timer (the timer block, sched_sleep.velt); a task that
-// never sets one never looks. One worker: everything here is the worker's plain memory.
+// The workers drive the loop: one timer's turn at a time. When nothing holds the loop (no turn
+// handed out and not taken yet, no poll under way that took the last one), a worker looks for the
+// timer that comes next (`step`: at its park, at each I/O tick of a busy worker, at the end of the
+// poll that took the last turn, on whichever worker it ran, and at the end of a poll a look found
+// busy); if its time has come it gets its turn (its turn's waker is woken), else one parking
+// worker, the waiter (sched_order_wait.velt), waits until then at most, so that a due time wakes
+// one worker and not every idle one; a time that comes sooner wakes it (`nudge`), and a waiter that
+// wakes to run tasks hands the role on (`handOff`). A worker stuck in a long poll looks no more;
+// the others go on. A timer whose task is in a poll on another worker is passed over
+// (sched_order_pass.velt `busy`), and that poll's end looks (sched_run.velt `timersAfter`): no
+// worker might look before then. A turn's future completes once its turn has come: the callback
+// runs then, as a promise of the task that created the timer, and the next turn waits until that
+// poll of the task has ended, its microtasks too (sched_run.velt `runEnd`), as Node runs the
+// microtasks after each callback. A timer is never run inside the poll that created it: the loop
+// moves only between polls. A task with Node timers may move to another worker (its sleeps anchor
+// it: sched_sleep.velt).
+//
+// Known differences from the runtime's order:
+// - A step fires only the sleeps of the worker that steps: a sleep of another worker due before
+//   the timer granted may resume after its callback (a sleep and a Node timer due together on
+//   different workers; on one worker, as every program with `VELT_THREADS=1`, the order is
+//   Node's).
+// - A poll that begins just as a look reads its task's state may be taken for not busy (the
+//   state is read without the task's lock, as by the runtime's): the turn is granted then, and
+//   the callback runs in the task's next poll, after the one under way. The order of the
+//   callbacks stays Node's; only that timer waits for the poll.
+//
+// A program that never sets a Node timer carries none of this (the executor reaches it only
+// behind `stdUsed("nodeTimers")`: sched_park.velt `timersAny`, sched_run.velt).
 
-import { fnAddress, noInline } from "velt/lang/intrinsics";
+import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
+import * as lk from "./sched_lock";
 import * as l from "./sched_order_list";
 import * as p from "./sched_order_pass";
 import * as m from "./sched_mem";
+import * as ow from "./sched_order_wait";
 import * as sl from "./sched_sleep";
-import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 
 /** A turn's future: its timer after the header. */
 const F_TIMER: usize = 16;
 const F_SIZE: usize = 24;
 
-/** `velt_rt_timer_new`: a timer due `ms` milliseconds from now (negative: 0), queued; its handle. */
+/**
+ * `velt_rt_timer_new`: a timer due `ms` milliseconds from now (negative: 0), queued; its handle.
+ * Its callback runs on the task being polled (`e`'s current one).
+ */
 export function timerNew(e: usize, ms: i64): u64 {
-  const b = sl.block(e);
+  const b = l.orderOpen();
   const h = m.zeroed(l.H_SIZE);
+  const k = l.lock(b);
+  // The clock under the lock: the starts in a list stay in the order of its timers.
   insert(b, h, ms, sl.clock());
+  inserted(b, e, h, k);
   return h as u64;
+}
+
+/**
+ * Timer `h` of order `b` (locked, kind `k`) was inserted on worker `e`: it names the task being
+ * polled, which runs its callback, and the loop may have to look sooner (`lower`); the lock is
+ * given back. With one worker for good (`LK_NONE`) neither matters: no task is in a poll elsewhere
+ * (sched_order_pass.velt `busy` takes a timer naming none for not busy), and the worker looks
+ * at its park before it waits, as it did with an order of its own. A lazy worker 0 names the task
+ * (the monitor may start spares later) but wakes nobody.
+ */
+@inline
+function inserted(b: usize, e: usize, h: usize, k: u32): void {
+  if (k === lk.LK_NONE) {
+    l.unlock(b, k);
+    return;
+  }
+  const cur = m.ld(e + t.E_CURRENT);
+  m.st(h + l.H_TASK, cur);
+  const sooner = (k & lk.LK_ON) !== 0 && lower(b, e, h, cur, k);
+  l.unlock(b, k);
+  if (sooner) {
+    ow.nudge(k, e, false);
+  }
+}
+
+/**
+ * Timer `h` of order `b` (locked, kind `k`) was inserted by task `cur` on worker `e`: when nothing
+ * holds the loop and it comes before `O_WAKE_AT` (or nothing waited for a time), the loop must
+ * look by its time; true when a worker must be woken for that. Not when the timer's task is the
+ * one polled here, with other workers: a look elsewhere passes over it until this poll ends
+ * (sched_order_pass.velt `busy`), so the poll's end looks instead (the task is marked as a look
+ * would mark it: sched_run.velt `timersAfter`), and nothing changes or wakes now.
+ */
+function lower(b: usize, e: usize, h: usize, cur: usize, k: u32): bool {
+  if ((m.ld(b + l.O_GRANTED) | m.ld(b + l.O_HOLDER)) !== 0) {
+    return false;
+  }
+  const at = m.ld(h + l.H_AT);
+  const w = m.ld(b + l.O_WAKE_AT);
+  if (w !== 0 && w <= at) {
+    return false;
+  }
+  if ((k & lk.LK_ON) !== 0 && cur !== 0 && m.ld32(e + t.E_MODE) !== 0) {
+    m.or32(cur + t.T_SKIPPED, t.SK_SKIPPED);
+    return false;
+  }
+  m.st(b + l.O_WAKE_AT, at);
+  return true;
 }
 
 /**
@@ -51,39 +128,83 @@ function insert(b: usize, h: usize, ms: i64, from: u64): void {
   m.st(h + l.H_AT, due > at ? due : at);
 }
 
-/** `velt_rt_timer_again`: timer `h` queued again, due `ms` after its last turn was taken. */
+/**
+ * `velt_rt_timer_again` (on worker `e`, from the timer's task): timer `h` queued again, due `ms`
+ * after its last turn was taken.
+ */
 export function timerAgain(e: usize, h: usize, ms: i64): void {
-  const b = sl.block(e);
-  withdraw(b, h);
+  const b = l.order();
+  // `H_RAN` is this task's (`turnPoll`): read before the lock.
   const from = m.ld(h + l.H_RAN_SET) !== 0 ? m.ld(h + l.H_RAN) as u64 : sl.clock();
+  const k = l.lock(b);
+  withdraw(b, h);
   insert(b, h, ms, from);
+  // It names its task again (the one polled now).
+  inserted(b, e, h, k);
 }
 
-/** `velt_rt_timer_clear`: timer `h` leaves the order (a no-op once its turn was taken); its turn completes now. */
-export function timerClear(e: usize, h: usize): void {
-  withdraw(sl.block(e), h);
-  const w = m.ld(h + l.H_WAKER);
+/**
+ * `velt_rt_timer_clear` (from any task): timer `h` leaves the order (a no-op once its turn was
+ * taken); its turn completes now.
+ */
+export function timerClear(h: usize): void {
+  const w = leave(h);
   if (w !== 0) {
-    m.st(h + l.H_WAKER, 0);
     m.wakeOwned(w);
   }
 }
 
 /** `velt_rt_timer_free`: timer `h` leaves the order, and its handle is freed. */
-export function timerFree(e: usize, h: usize): void {
-  withdraw(sl.block(e), h);
-  const w = m.ld(h + l.H_WAKER);
+export function timerFree(h: usize): void {
+  const w = leave(h);
   if (w !== 0) {
     m.wakerDrop(w);
   }
   m.release(h, l.H_SIZE);
 }
 
-/** Timer `h` is no longer queued, nor its turn handed out. */
+/**
+ * Timer `h` leaves the order: the waker of its turn (taken), or 0. Every way out of the order
+ * passes here (its turn's future dropped, which the task's end drops, a `clear`, a `free`).
+ *
+ * Without the lock when it is out of the order already (not queued, its turn not handed out, no
+ * waker): the common case, a turn's future dropped once it completed and the timer freed after
+ * it. That read is safe: only its owner (the task that inserts it, or the code holding its
+ * `TimerState`'s lock: std/prelude/timers.velt) puts a timer in the order, and every write after
+ * it (a grant, a turn taken, a `clear`) leaves the state other than `IDLE` or the waker set until
+ * the last of its stores (a grant goes from `QUEUED` to `GRANTED` without passing `IDLE`:
+ * sched_order_list.velt `take`). A timer out of the order is read by no look, so the task it
+ * names (`H_TASK`) may end and be freed: a look reads only the tasks of queued timers
+ * (sched_order_pass.velt `busy`), and `inserted` names the task again.
+ */
+@inline
+function leave(h: usize): usize {
+  if ((m.ld(h + l.H_STATE) | m.ld(h + l.H_WAKER)) === 0) {
+    return 0;
+  }
+  return leaveLocked(h);
+}
+
+/** `leave` under the order's lock. */
+@noInline
+function leaveLocked(h: usize): usize {
+  const b = l.order();
+  const k = l.lock(b);
+  withdraw(b, h);
+  const w = m.ld(h + l.H_WAKER);
+  if (w !== 0) {
+    m.st(h + l.H_WAKER, 0);
+  }
+  l.unlock(b, k);
+  return w;
+}
+
+/** Timer `h` is no longer queued, nor its turn handed out (the lock held). */
 function withdraw(b: usize, h: usize): void {
   const s = m.ld(h + l.H_STATE);
   if (s === l.QUEUED) {
     l.take(b, h);
+    m.st(h + l.H_STATE, l.IDLE);
   } else if (s === l.GRANTED) {
     m.st(b + l.O_GRANTED, 0);
     m.st(h + l.H_STATE, l.IDLE);
@@ -101,38 +222,45 @@ export function turn(h: usize): usize {
 
 function turnPoll(f: usize, cx: usize): u32 {
   const h = m.ld(f + F_TIMER);
+  const b = l.order();
+  const k = l.lock(b);
   const s = m.ld(h + l.H_STATE);
   if (s === l.QUEUED) {
-    // Waiting in this worker's timer order: its task stays on this worker.
-    sp.anchor();
     const w = m.ld(cx + 8);
     const old = m.ld(h + l.H_WAKER);
     if (old !== w) {
       m.st(h + l.H_WAKER, m.wakerClone(w));
-      if (old !== 0) {
-        m.wakerDrop(old);
-      }
+    }
+    l.unlock(b, k);
+    if (old !== w && old !== 0) {
+      m.wakerDrop(old);
     }
     return 0;
   }
   if (s === l.GRANTED) {
-    const e = t.exec();
-    const b = m.ld(e + t.E_TIMERS);
     m.st(b + l.O_GRANTED, 0);
     m.st(h + l.H_STATE, l.IDLE);
-    // Node reads the clock just before an interval's callback: its next run counts from here.
+    // The next turn waits until this poll of the task has ended.
+    const cur = m.ld(t.exec() + t.E_CURRENT);
+    if (cur !== 0) {
+      m.st(b + l.O_HOLDER, cur);
+      t.flags(cur, t.HOLDS, 0);
+    }
+    // The grant took the waker.
+    l.unlock(b, k);
+    // Node reads the clock just before an interval's callback: its next run counts from here
+    // (read by this task alone, `timerAgain`: not under the lock).
     m.st(h + l.H_RAN, sl.clock() as usize);
     m.st(h + l.H_RAN_SET, 1);
-    // The next turn waits until this poll of the task has ended.
-    const k = m.ld(e + t.E_CURRENT);
-    if (k !== 0) {
-      m.st(b + l.O_HOLDER, k);
-      t.flags(k, t.HOLDS, 0);
-    }
+    return 1;
   }
+  // Not queued (cleared: `leave` took the waker).
   const w = m.ld(h + l.H_WAKER);
   if (w !== 0) {
     m.st(h + l.H_WAKER, 0);
+  }
+  l.unlock(b, k);
+  if (w !== 0) {
     m.wakerDrop(w);
   }
   return 1;
@@ -140,109 +268,224 @@ function turnPoll(f: usize, cx: usize): u32 {
 
 /** A turn dropped before it completed: its timer leaves the order (its callback can never run). */
 function turnDrop(f: usize): void {
-  const h = m.ld(f + F_TIMER);
-  if (m.ld(h + l.H_STATE) !== l.IDLE) {
-    withdraw(m.ld(t.exec() + t.E_TIMERS), h);
-  }
-  const w = m.ld(h + l.H_WAKER);
+  const w = leave(m.ld(f + F_TIMER));
   if (w !== 0) {
-    m.st(h + l.H_WAKER, 0);
     m.wakerDrop(w);
   }
   m.release(f, F_SIZE);
 }
 
+/** How a step goes: a worker's look (lock tried), or the end of a poll (lock taken). */
+const S_LOOK: u32 = 0;
+/** The poll that took the last turn ended. */
+const S_RELEASED: u32 = 1;
+/** A poll a look found busy ended (sched_run.velt `timersAfter`). */
+const S_BUSY: u32 = 2;
+
 /**
  * Due sleeps go to their tasks' due lists and the loop moves on, in one order (a sleep is a timer
  * too, as Node's `new Promise(r => setTimeout(r, ms))`): the timer that comes next gets its turn
- * if its time has come and no sleep due before it is left to fire; those sleeps go first. Nothing
- * moves while something holds the loop (a turn handed out, or the poll that took the last one
- * under way), except at a park (`all`: every due sleep goes then). `O_WAKE_AT` says when the
- * worker must look again (0: no timer waits for a time); the deadline of the first sleep left
- * pending (0: none).
+ * if its time has come and no sleep of this worker due before it is left to fire; those sleeps
+ * go first. Nothing moves while something holds the loop (a turn handed out, or the poll that took
+ * the last one under way), except at a park (`all`: every due sleep goes then). `O_WAKE_AT` says
+ * when a worker must look again (0: no timer waits for a time); the deadline of the first sleep of
+ * this worker left pending (0: none).
+ *
+ * `how`: a look (`S_LOOK`) tries the lock (a worker that finds it taken leaves the move to its
+ * holder) and runs in the poll `e` runs, if any; the end of task `k`'s poll (`S_RELEASED`: it took
+ * the last turn, and only its end moves the loop on from there; `S_BUSY`) takes the lock and runs
+ * in it (its timers are not busy). The granted turn's waker is woken and the sleeps fire after
+ * the lock is given back.
  */
-function step(b: usize, now: u64, all: bool): u64 {
-  if (m.ld(b + l.O_GRANTED) !== 0 || m.ld(b + l.O_HOLDER) !== 0) {
-    return all && sl.pending(b) ? sl.expire(b, now) : 0;
+function step(e: usize, k: usize, how: u32, all: bool, now: u64): u64 {
+  const wb = m.ld(e + t.E_TIMERS);
+  const b = l.order();
+  // How far this worker's sleeps fire (0: none).
+  let upto = all || b === 0 ? now : 0;
+  let w: usize = 0;
+  let sooner = false;
+  let kind = l.NO_LOCK;
+  if (b !== 0) {
+    kind = how === S_LOOK ? l.tryLock(b) : l.lock(b);
+    if (kind !== l.NO_LOCK) {
+      let free = true;
+      if (how === S_RELEASED) {
+        free = m.ld(b + l.O_HOLDER) === k;
+        if (free) {
+          m.st(b + l.O_HOLDER, 0);
+        }
+      }
+      if (free && (m.ld(b + l.O_GRANTED) | m.ld(b + l.O_HOLDER)) === 0) {
+        // One worker for good (`LK_NONE`): no timer names a task (`inserted`), none is busy, and
+        // no other worker waits for the order's time (the worker's park reads it: `next`).
+        let before: usize = 0;
+        if (kind !== lk.LK_NONE) {
+          m.st(b + p.P_CUR, k !== 0 ? k : m.ld(e + t.E_CURRENT));
+          before = m.ld(b + l.O_WAKE_AT);
+        }
+        upto = now;
+        const h = choose(b, now);
+        if (h !== 0) {
+          let go = true;
+          // In a timers pass, the sleeps due by the timer's time fire before it (the check
+          // phase's immediates come before the sleeps that came due meanwhile, as before the
+          // next pass).
+          if (m.ld(b + p.P_PHASE) === p.PASS) {
+            const at = m.ld(h + l.H_AT);
+            upto = at as u64;
+            if (wb !== 0 && sleepsFirst(wb, at as u64)) {
+              // Its turn comes once they fired (the worker looks again at once).
+              m.st(b + l.O_WAKE_AT, at);
+              go = false;
+            }
+          }
+          if (go) {
+            w = grant(b, h);
+          }
+        }
+        if ((kind & lk.LK_ON) !== 0) {
+          const after = m.ld(b + l.O_WAKE_AT);
+          sooner = after !== 0 && (before === 0 || after < before);
+        }
+      }
+      l.unlock(b, kind);
+    }
   }
-  m.st(b + l.O_WAKE_AT, 0);
+  let d: u64 = 0;
+  if (wb !== 0 && upto !== 0 && sl.pending(wb)) {
+    d = fire(wb, upto);
+  }
+  if (w !== 0) {
+    m.wakeOwned(w);
+  }
+  if (sooner) {
+    ow.nudge(kind, e, all || ow.parksNext(e, k));
+  }
+  return d;
+}
+
+/** The sleeps of worker block `wb` due by `upto` fire (out of line: `step` stays small). */
+@noInline
+function fire(wb: usize, upto: u64): u64 {
+  return sl.expire(wb, upto);
+}
+
+/** Has worker block `wb` a sleep that came due, or one due by `at`? */
+function sleepsFirst(wb: usize, at: u64): bool {
+  return sl.due(wb) || (sl.pending(wb) && sl.nextDeadline(wb) <= at);
+}
+
+/**
+ * `step`'s look at the order `b` (locked, nothing holding the loop): the timer that comes next
+ * if its time has come by `now` (0: none, and `O_WAKE_AT` says when to look again). `O_WAKE_AT` is
+ * stored once on each way out (here, or by `step`): parking workers read it without the lock
+ * (sched_order_wait.velt), and a 0 in between would leave none of them waiting for it.
+ */
+@inline
+function choose(b: usize, now: u64): usize {
   if (m.ld(b + l.O_QUEUED) === 0) {
-    return sl.pending(b) ? sl.expire(b, now) : 0;
+    m.st(b + l.O_WAKE_AT, 0);
+    return 0;
   }
   p.look(b);
+  if (m.ld(b + p.P_FULL) !== 0) {
+    // More busy tasks than a look remembers: nothing is chosen, and a worker looks again soon.
+    m.st(b + l.O_WAKE_AT, (now as usize) + 1000000);
+    return 0;
+  }
   const h = m.ld(b + p.P_NEXT);
   if (h === 0) {
     // Nothing due: the lists the look passed over get their new places, and the loop wakes at
-    // the first list's expiry, as Node's does.
+    // the first list's expiry (of a timer whose task is not busy), as Node's does.
     p.loopWoke(b);
-    const first = m.ld(b + l.O_FIRST);
-    if (first !== 0) {
-      m.st(b + l.O_WAKE_AT, m.ld(first + l.L_EXPIRY) * 1000000);
-    }
-    return sl.pending(b) ? sl.expire(b, now) : 0;
+    m.st(b + l.O_WAKE_AT, p.wakeAt(b) * 1000000);
+    return 0;
   }
+  // The step's clock (the look takes no time worth a second read).
   const at = m.ld(h + l.H_AT);
-  if ((sl.clock() as usize) < at) {
+  if ((now as usize) < at) {
     // Due by the clock in whole milliseconds; its turn also waits for the whole delay.
     m.st(b + l.O_WAKE_AT, at);
-    return sl.pending(b) ? sl.expire(b, now) : 0;
+    return 0;
   }
-  // In a timers pass, the sleeps due by the timer's time fire before it (the check phase's
-  // immediates come before the sleeps that came due meanwhile, as before the next pass).
-  const pass = m.ld(b + p.P_PHASE) === p.PASS;
-  const d = sl.pending(b) ? sl.expire(b, pass ? at as u64 : now) : 0;
-  if (pass && sl.due(b)) {
-    // Its turn comes once they fired (the worker looks again at once).
-    m.st(b + l.O_WAKE_AT, at);
-    return d;
-  }
+  return h;
+}
+
+/** Timer `h`, chosen by the look, gets its turn (the lock held): its turn's waker (taken), or 0. */
+@inline
+function grant(b: usize, h: usize): usize {
+  m.st(b + l.O_WAKE_AT, 0);
   p.commit(b);
+  // From `QUEUED` to `GRANTED`, never `IDLE` between (`leave` reads the state without the lock).
   l.take(b, h);
   m.st(h + l.H_STATE, l.GRANTED);
   m.st(b + l.O_GRANTED, h);
   const w = m.ld(h + l.H_WAKER);
   if (w !== 0) {
     m.st(h + l.H_WAKER, 0);
-    m.wakeOwned(w);
   }
-  return d;
+  return w;
 }
 
 /** The poll of task `k` that took the last turn ended (its microtasks too): the loop moves on. */
 @noInline
 export function released(e: usize, k: usize): void {
   t.flags(k, 0, t.HOLDS);
-  const b = m.ld(e + t.E_TIMERS);
-  if (m.ld(b + l.O_HOLDER) === k) {
-    m.st(b + l.O_HOLDER, 0);
-    step(b, sl.clock(), false);
-  }
+  step(e, k, S_RELEASED, false, sl.clock());
+}
+
+/** The poll of task `k`, which a look found busy, ended (its microtasks too): the loop moves on. */
+@noInline
+export function busyEnded(e: usize, k: usize): void {
+  step(e, k, S_BUSY, false, sl.clock());
+}
+
+/** Has worker `e` timers to look at: sleeps, or Node's timer order? */
+@inline
+export function any(e: usize): bool {
+  return m.ld(e + t.E_TIMERS) !== 0 || l.order() !== 0;
 }
 
 /** A busy worker's look (every I/O tick): due sleeps fire, and the loop moves on. */
 @noInline
 export function tick(e: usize): void {
-  step(m.ld(e + t.E_TIMERS), sl.clock(), false);
+  step(e, 0, S_LOOK, false, sl.clock());
 }
 
 /**
  * The worker is about to wait: due sleeps fire and the loop moves on; the milliseconds the wait
- * may last (rounded up; -1: no limit).
+ * may last for its sleeps (rounded up; -1: no limit). Every worker that waits looks at the order
+ * (one stuck in a long poll does not); with several, one of them waits for its time
+ * (sched_order_wait.velt); the only worker waits for it itself, as with an order of its own.
  */
 @noInline
 export function next(e: usize): i64 {
-  const b = m.ld(e + t.E_TIMERS);
   const now = sl.clock();
-  let d = step(b, now, true);
-  const w = m.ld(b + l.O_WAKE_AT) as u64;
-  if (w !== 0 && (d === 0 || w < d)) {
-    d = w;
+  let d = step(e, 0, S_LOOK, true, now);
+  const b = l.order();
+  if (b !== 0 && (lk.mode() & lk.LK_ON) === 0) {
+    const w = m.ld(b + l.O_WAKE_AT) as u64;
+    if (w !== 0 && (d === 0 || w < d)) {
+      d = w;
+    }
   }
-  if (d === 0) {
-    return -1;
+  return d === 0 ? -1 : sl.millisUntil(d, now);
+}
+
+/**
+ * Worker `e` woke from its park: it waits for the order's time no more, and looks. True when it
+ * was the waiter and the order still waits for a time: if it has tasks to run now (which may be
+ * long polls), sched_order_wait.velt `handOff` passes the role on. Only a worker of several
+ * claims the role (sched_order_wait.velt `wait`, with the locks on, which stay on).
+ */
+@noInline
+export function woke(e: usize): bool {
+  const b = l.order();
+  let was = false;
+  if (b !== 0 && (lk.mode() & lk.LK_ON) !== 0 && m.load(b + l.O_WAITER) === e) {
+    m.cas(b + l.O_WAITER, e, 0);
+    was = true;
   }
-  if (d <= now) {
-    return 0;
-  }
-  return (((d - now) + 999999) / 1000000) as i64;
+  step(e, 0, S_LOOK, false, sl.clock());
+  return was && m.load(b + l.O_WAKE_AT) !== 0;
 }

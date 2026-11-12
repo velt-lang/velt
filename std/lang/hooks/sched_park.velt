@@ -2,7 +2,7 @@
 // reactor when it has nothing to run (sched_loop.velt `idle`): worker 0 decides the program's end
 // there (sched_end.velt), and a spare asked to retire answers as it leaves (sched_relax.velt).
 
-import { inline, noInline } from "velt/lang/intrinsics";
+import { inline, noInline, stdUsed } from "velt/lang/intrinsics";
 import * as end from "./sched_end";
 import * as io from "./sched_io";
 import * as w from "./sched_io_write";
@@ -10,8 +10,10 @@ import * as loop from "./sched_loop";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
 import * as order from "./sched_order";
+import * as ow from "./sched_order_wait";
 import * as q from "./sched_queue";
 import * as rx from "./sched_relax";
+import * as sl from "./sched_sleep";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -48,11 +50,12 @@ export function park(e: usize): void {
     w.flushDue(b);
   }
   let timeout: i64 = -1;
-  const timers = m.ld(e + t.E_TIMERS) !== 0;
+  const timers = timersAny(e);
   if (timers) {
-    timeout = order.next(e);
+    timeout = timersNext(e);
     if (q.any(e)) {
       m.st32(e + t.E_DISPATCH, 0);
+      tookWork(e);
       return;
     }
   }
@@ -61,12 +64,21 @@ export function park(e: usize): void {
   if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || !parkable(e)) {
     m.store32(e + t.E_PARK, 0);
     m.st32(e + t.E_DISPATCH, 0);
+    if (timers) {
+      tookWork(e);
+    }
     if ((mode & t.M_MONITOR) !== 0 || m.ld(e + t.E_LAZY) !== 0) {
       // The monitor may have seen every worker parked meanwhile and gone to sleep.
       mon.kick(m.ld(e + t.E_MAIN));
     }
     retiring(e);
     return;
+  }
+  if (stdUsed("nodeTimers")) {
+    if (timers) {
+      // With the park word up: the one worker that waits for Node's timers waits until then.
+      timeout = ow.wait(e, timeout);
+    }
   }
   let asleep: usize = 0;
   if ((mode & t.M_SPREAD) !== 0) {
@@ -75,7 +87,7 @@ export function park(e: usize): void {
   io.park(b, timeout, e + t.E_PARK, e + t.E_UNPARKS);
   m.store32(e + t.E_PARK, 0);
   if (timers) {
-    order.tick(e);
+    woke(e);
   }
   if (m.ld(e + t.E_UNREF) !== 0 && e !== m.ld(e + t.E_MAIN)) {
     // Worker 0 found something that can still happen: due unref()'d timers ask again.
@@ -101,6 +113,66 @@ export function park(e: usize): void {
     mon.kick(e);
   }
   retiring(e);
+}
+
+/**
+ * Has worker `e` timers to look at: sleeps, or Node's timer order? A program that never sets a
+ * Node timer (`noteStdUse("nodeTimers")` in std/prelude/timers.velt) carries none of the order's
+ * code: these and sched_run.velt are the executor's only ways into it, each behind
+ * `stdUsed("nodeTimers")`, with the sleeps alone on the other path.
+ */
+@inline
+export function timersAny(e: usize): bool {
+  if (stdUsed("nodeTimers")) {
+    return order.any(e);
+  }
+  return m.ld(e + t.E_TIMERS) !== 0;
+}
+
+/** A busy worker's look at its timers (`timersAny`): due sleeps fire, Node's loop moves on. */
+export function timersTick(e: usize): void {
+  if (stdUsed("nodeTimers")) {
+    order.tick(e);
+  } else {
+    sl.expireOwn(e);
+  }
+}
+
+/** `park`'s look at the timers before it waits: how long its sleeps let it wait (ms; -1: any). */
+function timersNext(e: usize): i64 {
+  if (stdUsed("nodeTimers")) {
+    return order.next(e);
+  }
+  const b = m.ld(e + t.E_TIMERS);
+  if (b === 0 || !sl.pending(b)) {
+    return -1;
+  }
+  const now = sl.clock();
+  const d = sl.expire(b, now);
+  return d === 0 ? -1 : sl.millisUntil(d, now);
+}
+
+/** Worker `e` found tasks instead of parking: another worker waits for Node's timers. */
+@inline
+export function tookWork(e: usize): void {
+  if (stdUsed("nodeTimers")) {
+    ow.handOff(e);
+  }
+}
+
+/**
+ * Worker `e` woke from its park: due timers fire. The worker that waited for Node's timers passes
+ * that on when it has tasks to run (`order.woke`): another may wait while it runs them.
+ */
+@inline
+function woke(e: usize): void {
+  if (stdUsed("nodeTimers")) {
+    if (order.woke(e) && (m.load(e + t.E_INBOX) !== 0 || q.any(e))) {
+      ow.handOff(e);
+    }
+  } else {
+    sl.expireOwn(e);
+  }
 }
 
 /**

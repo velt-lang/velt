@@ -1,12 +1,17 @@
 // velt/lang/hooks (internal): the lists of Node's timer order under the executor in Velt
-// (sched_order.velt, #2649), in the timer block (sched_sleep.velt), as the runtime's
-// (velt_rt task/local/order.rs) and Node's (lib/internal/timers.js): one list of timers per delay
-// in whole milliseconds, in the order they were inserted, each with an expiry (its first timer's
-// start plus the delay) and an id (the next number when it was made or moved); the lists in
+// (sched_order.velt, #2649), in the order's block, as the runtime's (velt_rt
+// task/local/order.rs) and Node's (lib/internal/timers.js): one list of timers per delay in whole
+// milliseconds, in the order they were inserted, each with an expiry (its first timer's start
+// plus the delay) and an id (the next number when it was made or moved); the lists in
 // (expiry, id) order in one chain. The immediates (`setImmediate`, delay 0) have a list of their
-// own, inside the block and never in the chain. A list that runs empty is freed. One worker: the
-// block is plain memory the worker alone changes.
+// own, inside the block and never in the chain. A list that runs empty is freed.
+//
+// The block is one for the process (`order`), made with the first Node timer, of the layout of
+// a worker's timer block (sched_sleep.velt; only the order's fields are used). Every worker
+// changes it, under its lock word (`lock`, sched_lock.velt's protocol: no lock with one worker).
 
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
 
@@ -16,7 +21,7 @@ import * as sl from "./sched_sleep";
  * the limit of the check phase under way (and whether one is), the timer whose turn has come and
  * is not taken yet, the task that took the last turn (until its poll ends), when the worker must
  * look again (nanoseconds; 0: no timer waits for a time), the timers queued; then what the last
- * look found (sched_order_pass.velt).
+ * look found (sched_order_pass.velt); the lock word.
  */
 export const O_FIRST: usize = sl.TM_ORDER;
 export const O_LAST: usize = sl.TM_ORDER + 8;
@@ -32,6 +37,7 @@ export const O_HOLDER: usize = sl.TM_ORDER + 136;
 export const O_WAKE_AT: usize = sl.TM_ORDER + 144;
 export const O_QUEUED: usize = sl.TM_ORDER + 152;
 export const O_LOOK: usize = sl.TM_ORDER + 160;
+export const O_LOCK: usize = sl.TM_ORDER + 248;
 
 /** A list's fields: its delay, expiry, id, first and last timer, links in the chain, timers. */
 export const L_MS: usize = 0;
@@ -48,7 +54,8 @@ export const L_SIZE: usize = 64;
  * A timer's fields (its handle is its address): its delay, start (whole milliseconds), number,
  * list (0: not queued), links in it, state, the waker of its turn, when its turn may come at the
  * earliest (nanoseconds: the whole delay after it was inserted), when its last turn was taken
- * (nanoseconds, and whether it was).
+ * (nanoseconds, and whether it was), the task that runs its callback (0: none; its lists are
+ * passed over while it is in a poll on another worker: sched_order_pass.velt `busy`).
  */
 export const H_MS: usize = 0;
 export const H_START: usize = 8;
@@ -61,12 +68,88 @@ export const H_WAKER: usize = 56;
 export const H_AT: usize = 64;
 export const H_RAN: usize = 72;
 export const H_RAN_SET: usize = 80;
-export const H_SIZE: usize = 88;
+export const H_TASK: usize = 88;
+export const H_SIZE: usize = 96;
 
 /** A timer's states: not queued (new, cleared, or its turn taken); queued; its turn has come. */
 export const IDLE: usize = 0;
 export const QUEUED: usize = 1;
 export const GRANTED: usize = 2;
+
+/** How many busy tasks a look remembers (sched_order_pass.velt `busy`). */
+export const BUSY_MAX: usize = 32;
+
+/**
+ * After the room of a look's busy tasks: the worker that waits for `O_WAKE_AT` in its park (0:
+ * none; sched_order_wait.velt), then whether the last look met more busy tasks than it
+ * remembers (sched_order_pass.velt `P_FULL`).
+ */
+export const O_WAITER: usize = sl.TM_SIZE + 8 + 8 * BUSY_MAX;
+const O_END: usize = O_WAITER + 16;
+
+/** The order's block (0 until the first Node timer). */
+const ORDER = new Atomic<u64>(0);
+
+/** The order's block, 0 before the first Node timer. */
+@inline
+export function order(): usize {
+  return ORDER.load("acquire") as usize;
+}
+
+/** The order's block, made on first use. */
+export function orderOpen(): usize {
+  const b = order();
+  if (b !== 0) {
+    return b;
+  }
+  return makeOrder();
+}
+
+@noInline
+function makeOrder(): usize {
+  // The layout of a timer block, the room of a look's busy tasks (sched_order_pass.velt), the
+  // waiter.
+  const b = m.lastingZeroed(O_END);
+  const was = ORDER.compareExchange(0, b as u64, "acqrel");
+  if (was !== 0) {
+    m.lastingRelease(b);
+    return was as usize;
+  }
+  return b;
+}
+
+/** `tryLock` found the lock taken. */
+export const NO_LOCK: u32 = 4;
+
+/** Takes block `b`'s lock (none with one worker): the kind to pass to `unlock`. */
+@inline
+export function lock(b: usize): u32 {
+  const k = lk.kind();
+  if ((k & lk.LK_ON) !== 0) {
+    lk.take(b + O_LOCK);
+  }
+  return k;
+}
+
+/** Takes block `b`'s lock if it is free: as `lock`, or `NO_LOCK` (nothing to give back). */
+@inline
+export function tryLock(b: usize): u32 {
+  const k = lk.kind();
+  if ((k & lk.LK_ON) !== 0 && m.cas32(b + O_LOCK, 0, 1) !== 0) {
+    return NO_LOCK;
+  }
+  return k;
+}
+
+/** Gives block `b`'s lock back (`k`: `lock`'s result). */
+@inline
+export function unlock(b: usize, k: u32): void {
+  if ((k & lk.LK_ON) !== 0) {
+    m.store32(b + O_LOCK, 0);
+  } else {
+    lk.done(k);
+  }
+}
 
 /** Does list `a` come before list `b` ((expiry, id) order)? */
 export function keyLess(a: usize, b: usize): bool {
@@ -165,7 +248,11 @@ export function insertAt(b: usize, h: usize, ms: usize, start: usize): void {
   m.st(b + O_QUEUED, m.ld(b + O_QUEUED) + 1);
 }
 
-/** Takes timer `h` out of its list (a list left empty is freed); false if it was not queued. */
+/**
+ * Takes timer `h` out of its list (a list left empty is freed); false if it was not queued. Its
+ * state is the caller's to store (`IDLE`, or `GRANTED` for a turn handed out: never `IDLE` on
+ * the way, as sched_order.velt `leave` reads it without the lock).
+ */
 export function take(b: usize, h: usize): bool {
   const l = m.ld(h + H_LIST);
   if (l === 0) {
@@ -184,7 +271,6 @@ export function take(b: usize, h: usize): bool {
     m.st(next + H_PREV, prev);
   }
   m.st(h + H_LIST, 0);
-  m.st(h + H_STATE, IDLE);
   m.st(b + O_QUEUED, m.ld(b + O_QUEUED) - 1);
   const live = m.ld(l + L_LIVE) - 1;
   m.st(l + L_LIVE, live);

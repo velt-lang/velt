@@ -1,0 +1,8 @@
+b immediate
+a 100
+b 100
+b 100's immediate
+b 300 clears a 600
+a 500
+a 500's immediate
+b 700

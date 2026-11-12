@@ -7,18 +7,28 @@
 // moves the loop on, when a timer's turn comes. A pass meets lists due by its `now` whose next
 // timer is not due: they get new places (`max(start + ms, now + 1)`, a new id), as Node's
 // `listOnTimeout` gives them. What a look found is kept in the block (`P_*`), read by the caller.
-// One worker: no task is in a poll while the worker looks, so no list is passed over for that.
+//
+// A timer whose task is in a poll on another worker (`busy`: running code that does not pause,
+// or another of its callbacks) cannot run now and holds back no other timer: the look passes it
+// over, as the runtime's skips a busy task's lists (order.rs `busy_elsewhere`), so a spawned
+// task that spins does not stop every timer of the process; it runs once that poll has ended.
+// The lists here are one per delay for the process, as Node's, where the runtime's are one per
+// task and delay: the look passes over the busy task's timers in a list and may take a later one
+// of another task from it, which the runtime's order would have run in its own list's turn.
 
+import { inline, noInline } from "velt/lang/intrinsics";
 import * as l from "./sched_order_list";
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
+import * as t from "./sched_task";
 
 /**
  * What the last look found: the timer that comes next (0: none), its phase (a pass with `now`
  * `P_VAL`, or the check phase running the immediates numbered up to `P_VAL`), the `now` it was
  * chosen in (and whether there is one), the list of the timer chosen, whether lists due by `now`
  * whose next timer is not were passed over, whether the clock was read for it, whether such lists
- * were passed over in the pass under way.
+ * were passed over in the pass under way; the task of the step that looks (its timers are not
+ * busy: `busy`).
  */
 export const P_NEXT: usize = l.O_LOOK;
 export const P_PHASE: usize = l.O_LOOK + 8;
@@ -29,6 +39,7 @@ export const P_LIST: usize = l.O_LOOK + 40;
 export const P_PARTLY: usize = l.O_LOOK + 48;
 export const P_FRESH: usize = l.O_LOOK + 56;
 export const P_IN_PASS: usize = l.O_LOOK + 64;
+export const P_CUR: usize = l.O_LOOK + 72;
 
 /** The phases. */
 export const PASS: usize = 1;
@@ -39,31 +50,136 @@ function clockMs(): usize {
   return (sl.clock() / 1000000) as usize;
 }
 
-/** The first immediate of block `b` numbered up to `limit`, or 0. */
+/**
+ * The tasks a look found busy (`P_BUSY_N` of them, at most `l.BUSY_MAX`), after the block's
+ * layout (sched_order_list.velt `makeOrder` allocates the room).
+ */
+export const P_BUSY_N: usize = sl.TM_SIZE;
+const P_BUSY: usize = sl.TM_SIZE + 8;
+/**
+ * The look met a busy task more than it remembers: it chose nothing (sched_order.velt `choose`
+ * looks again soon), as a task it took for not busy could have had its later timer pass an
+ * earlier one.
+ */
+export const P_FULL: usize = l.O_WAITER + 8;
+
+/**
+ * Is the task of timer `h` of block `b` in a poll on another worker than the one that looks (the
+ * poll of `P_CUR`)? Its state is the task's word (sched_task.velt), read without its lock: a poll
+ * that just began may be seen either way, as by the runtime's. A task found busy stays busy for
+ * the rest of the look, so a poll ending meanwhile never lets its later timer pass its earlier
+ * one; and it is marked (`T_SKIPPED`), so that the end of that poll moves the order on
+ * (sched_run.velt `timersAfter`): its timer may come next then, and no worker may look before.
+ * A poll whose end has begun (`SK_ENDING`, the same word, so the mark and the end are ordered) is
+ * not busy. `H_TASK` of a queued timer is a live task under the lock: every way out of the order
+ * takes the timer out of its list before its task can be freed (sched_order.velt `leave`), and 0
+ * is no task.
+ */
+@inline
+export function busy(b: usize, h: usize): bool {
+  // A timer that names no task (every timer with one worker: sched_order.velt `inserted`) costs
+  // the look one load.
+  const k = m.ld(h + l.H_TASK);
+  return k !== 0 && busyTask(b, k);
+}
+
+/** `busy` for a timer of task `k`. */
+@noInline
+function busyTask(b: usize, k: usize): bool {
+  if (k === m.ld(b + P_CUR)) {
+    return false;
+  }
+  const n = m.ld(b + P_BUSY_N);
+  for (let i: usize = 0; i < n; i++) {
+    if (m.ld(b + P_BUSY + 8 * i) === k) {
+      return true;
+    }
+  }
+  const s = m.load32(k + t.T_STATE);
+  if (s !== t.RUNNING && s !== t.NOTIFIED) {
+    return false;
+  }
+  if ((m.cas32(k + t.T_SKIPPED, 0, t.SK_SKIPPED) & t.SK_ENDING) !== 0) {
+    return false;
+  }
+  if (n < l.BUSY_MAX) {
+    m.st(b + P_BUSY + 8 * n, k);
+    m.st(b + P_BUSY_N, n + 1);
+  } else {
+    // Not remembered, it could be taken for not busy later in this look: nothing is chosen.
+    m.st(b + P_FULL, 1);
+  }
+  return true;
+}
+
+/** The first immediate of block `b` numbered up to `limit` whose task is not busy, or 0. */
 function immediateUpto(b: usize, limit: usize): usize {
-  const h = m.ld(b + l.O_IMM + l.L_FIRST);
-  if (h !== 0 && m.ld(h + l.H_SEQ) <= limit) {
-    return h;
+  let h = m.ld(b + l.O_IMM + l.L_FIRST);
+  while (h !== 0 && m.ld(h + l.H_SEQ) <= limit) {
+    if (!busy(b, h)) {
+      return h;
+    }
+    h = m.ld(h + l.H_NEXT);
   }
   return 0;
 }
 
 /**
- * The first timer due by `now` in the order of the lists (a list due by then whose next timer is
- * not is passed over: `P_PARTLY`), its list in `P_LIST`; 0 when none is.
+ * The first timer due by `now` in the order of the lists, busy ones passed over (a list due by
+ * then whose first timer is not is passed over: `P_PARTLY`), its list in `P_LIST`; 0 when none
+ * is.
  */
 function firstDue(b: usize, now: usize): usize {
   let x = m.ld(b + l.O_FIRST);
   while (x !== 0 && m.ld(x + l.L_EXPIRY) <= now) {
-    const h = m.ld(x + l.L_FIRST);
-    if (m.ld(h + l.H_START) + m.ld(x + l.L_MS) <= now) {
-      m.st(b + P_LIST, x);
-      return h;
+    const ms = m.ld(x + l.L_MS);
+    let h = m.ld(x + l.L_FIRST);
+    while (h !== 0) {
+      if (busy(b, h)) {
+        h = m.ld(h + l.H_NEXT);
+        continue;
+      }
+      if (m.ld(h + l.H_START) + ms <= now) {
+        m.st(b + P_LIST, x);
+        return h;
+      }
+      if (h === m.ld(x + l.L_FIRST)) {
+        m.st(b + P_PARTLY, 1);
+      }
+      break;
     }
-    m.st(b + P_PARTLY, 1);
     x = m.ld(x + l.L_NEXT);
   }
   return 0;
+}
+
+/**
+ * When the loop must look again (whole milliseconds; 0: no timer waits): the earliest list's
+ * expiry, or, for a list whose first timers are busy, its first other timer's due time, so that
+ * a task that runs on without a pause keeps no worker looking.
+ */
+export function wakeAt(b: usize): usize {
+  let best: usize = 0;
+  let x = m.ld(b + l.O_FIRST);
+  while (x !== 0) {
+    const expiry = m.ld(x + l.L_EXPIRY);
+    if (best !== 0 && expiry >= best) {
+      break;
+    }
+    let h = m.ld(x + l.L_FIRST);
+    while (h !== 0 && busy(b, h)) {
+      h = m.ld(h + l.H_NEXT);
+    }
+    if (h !== 0) {
+      const due = m.ld(h + l.H_START) + m.ld(x + l.L_MS);
+      const at = due > expiry ? due : expiry;
+      if (best === 0 || at < best) {
+        best = at;
+      }
+    }
+    x = m.ld(x + l.L_NEXT);
+  }
+  return best;
 }
 
 /** What comes next, without changing anything (into `P_*`). */
@@ -85,7 +201,9 @@ function peek(b: usize): void {
       m.st(b + P_FRESH, 0);
       return;
     }
-    check = false;
+    // The check phase is over once no immediate up to its limit is left (a busy task's keep it).
+    const first = m.ld(b + l.O_IMM + l.L_FIRST);
+    check = first !== 0 && m.ld(first + l.H_SEQ) <= limit;
   }
   let fresh = m.ld(b + l.O_PASS_SET) === 0;
   let now = fresh ? clockMs() : m.ld(b + l.O_PASS);
@@ -134,6 +252,8 @@ function peek(b: usize): void {
  * timer is not, they get their new places first (with the pass's own clock), and it looks again.
  */
 export function look(b: usize): void {
+  m.st(b + P_BUSY_N, 0);
+  m.st(b + P_FULL, 0);
   peek(b);
   if (m.ld(b + P_IN_PASS) !== 0 && m.ld(b + l.O_PASS_SET) !== 0) {
     const now = m.ld(b + l.O_PASS);
@@ -145,15 +265,17 @@ export function look(b: usize): void {
 
 /**
  * The lists due by `now` (and before list `before`, 0: all) whose next timer is not get their
- * new places, in the order the pass meets them: `max(start + ms, now + 1)`, a new id. Each moves
- * past every list due by `now`, so the walk never meets it again.
+ * new places, in the order the pass meets them: `max(start + ms, now + 1)`, a new id; not a list
+ * whose first timer is busy. Each moves past every list due by `now`, so the walk never meets it
+ * again.
  */
 function rekeyPassed(b: usize, now: usize, before: usize): void {
   let x = m.ld(b + l.O_FIRST);
   while (x !== 0 && m.ld(x + l.L_EXPIRY) <= now && (before === 0 || l.keyLess(x, before))) {
     const next = m.ld(x + l.L_NEXT);
-    const due = m.ld(m.ld(x + l.L_FIRST) + l.H_START) + m.ld(x + l.L_MS);
-    if (due > now) {
+    const h = m.ld(x + l.L_FIRST);
+    const due = m.ld(h + l.H_START) + m.ld(x + l.L_MS);
+    if (due > now && !busy(b, h)) {
       l.rekey(b, x, due > now + 1 ? due : now + 1);
     }
     x = next;

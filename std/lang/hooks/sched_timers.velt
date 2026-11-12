@@ -6,7 +6,6 @@
 
 import * as off from "./sched_off";
 import * as order from "./sched_order";
-import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as workers from "./sched_workers";
 
@@ -15,9 +14,8 @@ export function timerNew(ms: i64): u64 {
   if (!t.onWorker()) {
     return off.timerNew(ms);
   }
-  const e = workers.started();
-  sp.anchor();
-  return order.timerNew(e, ms) | 1;
+  // Not anchored: the order is the process's, and its task may run on any worker.
+  return order.timerNew(workers.started(), ms) | 1;
 }
 
 /** A heap future that completes once timer `h`'s turn has come. */
@@ -44,7 +42,8 @@ export function clear(h: u64): void {
     off.timerClear(h);
     return;
   }
-  order.timerClear(workers.started(), (h & ~1) as usize);
+  workers.started();
+  order.timerClear((h & ~1) as usize);
 }
 
 /** Timer `h` leaves the order and its handle is freed. */
@@ -53,5 +52,6 @@ export function free(h: u64): void {
     off.timerFree(h);
     return;
   }
-  order.timerFree(workers.started(), (h & ~1) as usize);
+  workers.started();
+  order.timerFree((h & ~1) as usize);
 }
