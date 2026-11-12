@@ -34,6 +34,11 @@ pub(super) fn check_bodies_from(cx: &mut Ctx, from: u32) {
 /// The definitions of std modules added during the check (`crate::std_load`): checked as
 /// [`check_bodies`] checks the program's, so what stays deferred is the same as if they had been
 /// there from the start. What they reach is `reach`'s, which is running.
+///
+/// A body checked here may demand another std module, which is then added (and its bodies
+/// checked) inside this call (#2856). The passes over `from..` here then also see the nested
+/// module's definitions, which is fine only because each is memoized (`ensure_body`,
+/// `ensure_global`, `param_defaults`): keep them so.
 pub(crate) fn check_added(cx: &mut Ctx, from: crate::collect::Added) {
     crate::body::expr::virtual_defaults::build_fill_bodies(cx, from.defs);
     check_bodies_from(cx, from.defs);
