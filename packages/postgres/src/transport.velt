@@ -17,6 +17,11 @@ export struct PgStream {
   /** The socket. What waits, waits on this. */
   tcp: TcpStream;
   tls: shared<Mutex<TlsStream>> | null;
+  /**
+   * `tcp` is velt/net's own TLS (`connectTls`, the checked modes): it decrypts only while someone
+   * waits on it, so a `tryRead` alone finds nothing new.
+   */
+  direct: bool;
 
   // Each operation tests `tls` in place and leaves the TLS work to a method of its own, so a plain
   // connection's call is the socket's call and nothing more: no copy of the field, small enough to
@@ -135,5 +140,10 @@ export struct PgStream {
 
 /** The stream of a socket that needs nothing more. */
 export function plainStream(tcp: TcpStream): PgStream {
-  return { tcp: tcp, tls: null };
+  return { tcp: tcp, tls: null, direct: false };
+}
+
+/** The stream of a socket with velt/net's direct TLS. */
+export function directStream(tcp: TcpStream): PgStream {
+  return { tcp: tcp, tls: null, direct: true };
 }

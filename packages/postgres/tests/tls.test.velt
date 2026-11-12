@@ -150,14 +150,10 @@ export async function test_a_pool_lends_a_connection_to_one_task_after_another()
 
 // A pool's idle TLS connection whose session the server ended: the pool finds the server's bytes
 // on the socket before it lends the connection, and opens another.
-export async function test_a_pool_drops_an_idle_connection_the_server_ended() {
-  const url = tlsUrl();
-  if (url == null) {
-    return;
-  }
+async function dropsAnEndedConnection(url: string) {
   const admin = await connect(url);
   const pool = createPool({ url: url, max: 1 });
-  for (let round = 0; round < 3; round++) {
+  for (let round = 0; round < 5; round++) {
     const me: Num | null = await pool.selectOne("SELECT pg_backend_pid()::int8 AS n");
     const pid = me?.n ?? 0;
     await admin.execute("SELECT pg_terminate_backend($1::int4)", [pid]);
@@ -180,4 +176,20 @@ export async function test_a_pool_drops_an_idle_connection_the_server_ended() {
   }
   admin.close();
   pool.end();
+}
+
+// TLS after `SSLRequest` (`require`).
+export async function test_a_pool_drops_an_idle_connection_the_server_ended() {
+  const url = tlsUrl();
+  if (url != null) {
+    await dropsAnEndedConnection(url);
+  }
+}
+
+// velt/net's direct TLS (`verify-full`), on VELT_TEST_PG_TLS_URL.
+export async function test_a_verify_full_pool_drops_an_idle_connection_the_server_ended() {
+  const url = process.env.VELT_TEST_PG_TLS_URL ?? "";
+  if (url.length > 0) {
+    await dropsAnEndedConnection(url);
+  }
 }

@@ -2,6 +2,8 @@
 // in the order they were written, and the session's bookkeeping. See connection.velt.
 
 import { PgStream } from "./transport";
+import { TcpStream } from "velt/net";
+import { AbortController, AbortSignal } from "velt/task";
 import { Channel, channel } from "velt/sync";
 import { Builder, FAILED, NOT_PREPARED, SENT } from "./builder";
 import { closed, connectionClosed, Failure } from "./failure";
@@ -81,6 +83,8 @@ export class Line {
   // What `peek` read.
   private peeked: u8[] = Buffer.alloc(PEEK as usize);
   private peekedLen: i64 = 0;
+  // An aborted signal, for a wait on a direct-TLS socket that ends at once.
+  private atOnce: AbortSignal | null = null;
 
   constructor(stream: PgStream, home: Channel<Input>, none: shared<Prepared>) {
     this.stream = stream;
@@ -356,6 +360,23 @@ export class Line {
     } catch (e) {
       return PEEK_ENDED;
     }
+  }
+
+  /** The socket, when its TLS (velt/net's direct TLS) must be waited on before `peek` sees anything. */
+  get directSocket(): TcpStream | null {
+    return this.stream.direct ? this.stream.tcp : null;
+  }
+
+  /** A signal already aborted: a wait given it ends at once, after one look. */
+  stopAtOnce(): AbortSignal {
+    const s = this.atOnce;
+    if (s != null) {
+      return s;
+    }
+    const c = new AbortController();
+    c.abort();
+    this.atOnce = c.signal;
+    return c.signal;
   }
 
   /** What `peek` read goes to the end of `buf`, the `Input`'s. */

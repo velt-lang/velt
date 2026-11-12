@@ -27,7 +27,7 @@ export async function uncheckedTls(
     plain.close();
     throw e;
   }
-  return { tcp: plain, tls: shared(new Mutex<TlsStream>(tls)) };
+  return { tcp: plain, tls: shared(new Mutex<TlsStream>(tls)), direct: false };
 }
 
 // SNI takes a name, not an address.

@@ -194,10 +194,13 @@ back.
 
 A pool looks at an idle connection's socket before it hands it out (a read that doesn't wait), so
 one whose session the server ended while it was idle (its FATAL `"57P01"` has come, or the socket
-closed) is dropped and another taken or opened. On TLS anything unread there (a notification
-too) drops the connection, since reading it through TLS would cost more than most queries. A statement is never sent twice: a session that
-ends after that check, or a reply lost after the server ran the statement, fails the call with
-`"57P01"`, `"ECONNRESET"` or the like, and the server may have run and committed it.
+closed) is dropped and another taken or opened. Under `prefer` and `require`, anything unread
+on a TLS connection's socket (a notification too) drops the connection, since reading it through
+TLS would cost more than most queries. Under `verify-ca` and `verify-full` the check first waits on
+the socket for a moment that ends at once, which lets velt/net's TLS take what has come. A
+statement is never sent twice: a session that ends after that check, or a reply lost after the
+server ran the statement, fails the call with `"57P01"`, `"ECONNRESET"` or the like, and the server
+may have run and committed it.
 
 ## How it works
 

@@ -34,6 +34,7 @@ import {
 import { simple } from "./connection";
 import { openConnection } from "./startup";
 import { Lent } from "./lent";
+import { TcpStream } from "velt/net";
 import { Opening } from "./opening";
 import { WaitingForPool } from "./waiting_for_pool";
 
@@ -50,6 +51,21 @@ async function open(pool: PoolHandle): Promise<Conn> throws PgError {
   return conn;
 }
 
+// velt/net's direct TLS (`verify-ca`, `verify-full`) decrypts only while someone waits on the
+// socket: a wait that ends after one look (its signal is already aborted, so no timer is made) lets
+// it take what has come (a FATAL, the end of the stream) before `stillAlive` reads. Only these
+// connections pay for it.
+async function settled(pool: PoolHandle, conn: Conn, socket: TcpStream) {
+  const lent = new Lent(pool, conn, conn.with((l) => l.generation));
+  const now = conn.with((l) => l.stopAtOnce());
+  try {
+    await socket.readableWithin(-1, now);
+  } catch (e) {
+    // `stillAlive`'s read reports it.
+  }
+  lent.released = true;
+}
+
 /**
  * A connection for this task, waiting for one when all `max` are busy. An idle connection has its
  * socket looked at first, without waiting: a session the server ended while it was idle has sent
@@ -62,6 +78,10 @@ export async function borrow(pool: PoolHandle): Promise<Conn> throws PgError {
     if (t.status == TAKE_IDLE) {
       const conn = t.conn;
       if (conn != null) {
+        const direct = conn.with((l) => l.directSocket);
+        if (direct != null) {
+          await settled(pool, conn, direct);
+        }
         if (stillAlive(conn)) {
           return conn;
         }

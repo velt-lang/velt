@@ -21,7 +21,7 @@ import { PgConfig, SSL_DISABLE, SSL_PREFER, SSL_REQUIRE } from "./config";
 import { errorOf, PgError } from "./errors";
 import { connectionClosed, Failure, failure } from "./failure";
 import { Out, sslRequest } from "./frontend";
-import { PgStream, plainStream } from "./transport";
+import { directStream, PgStream, plainStream } from "./transport";
 import { uncheckedTls } from "./unchecked_tls";
 
 // The ALPN protocol direct TLS needs.
@@ -207,7 +207,7 @@ export async function socket(
   deadline: f64,
 ): Promise<PgStream> throws PgError {
   if (c.sslMode > SSL_REQUIRE) {
-    return plainStream(await checkedTls(c, address, name, deadline));
+    return directStream(await checkedTls(c, address, name, deadline));
   }
   const plain = await plainSocket(address, deadline);
   if (c.sslMode == SSL_DISABLE) {
