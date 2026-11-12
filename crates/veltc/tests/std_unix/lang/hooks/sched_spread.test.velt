@@ -1,7 +1,9 @@
 // velt/lang/hooks (tests): a borrower's take of a busy worker's input (sched_spread.velt `lend`,
 // sched_take.velt `take`) on a worker block and tasks built by hand: the tasks that may not move
 // stay where they were, in their order, and the worker is left alone (`E_NOBORROW`) only when
-// the older half held tasks and all of them stayed.
+// the older half held tasks and all of them stayed. Run from a copy of std by
+// crates/veltc/tests/std_scheduler_workers.rs (macOS and Linux: the scheduler's modules don't link
+// on Windows).
 import { describe, expect, it } from "velt/test";
 import * as m from "./sched_mem";
 import * as q from "./sched_queue";

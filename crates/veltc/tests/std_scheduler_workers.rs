@@ -16,7 +16,22 @@ use sched_workers_support::{
 mod no_window;
 mod runtime_support;
 mod sched_workers_support;
+mod std_unix;
 mod test_dir;
+
+/// The borrowers' take, white-box (std_unix/lang/hooks/sched_spread.test.velt): on a worker
+/// block and tasks built by hand, the tasks that may not move stay where they were, in their
+/// order, and the worker is left alone only when the older half held tasks and all of them
+/// stayed. It imports the scheduler's modules, which only link on macOS and Linux.
+#[cfg(unix)]
+#[test]
+fn sched_spread_white_box_tests_pass() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    std_unix::velt_test_in_std_copy(
+        "lang/hooks/sched_spread.test.velt",
+        include_str!("std_unix/lang/hooks/sched_spread.test.velt"),
+    );
+}
 
 #[test]
 fn pinned_tasks_run_on_their_worker_and_wake_across_workers() {
