@@ -110,6 +110,9 @@ pub(super) enum Work {
     ModuleInit(u32, u32),
     /// `()`: releases the references the static atomics hold, at exit (static_atomic.rs).
     StaticsDrop,
+    /// An access of module state (module_state.rs `Access`), through the executor in Velt's
+    /// hooks or the runtime's entries: built once the rest of the program is.
+    ModuleAccess(super::module_state::Access),
     /// The C function of `Program::c_exports[i]` (`@export("c_name")`, c_export.rs): its
     /// unmangled symbol, its C signature, a call of the Velt function.
     CExport(u32),

@@ -703,7 +703,7 @@ pub use keys::{Key, KEYS};
 mod deleted;
 pub use deleted::DELETED;
 mod scheduler;
-pub use scheduler::{std_scheduler, SCHEDULER_ENV};
+pub use scheduler::{std_scheduler, SCHEDULER_ENV, SCHED_EXTERNS, SCHED_UNREF_DUE};
 mod lookup;
 pub use lookup::{find, is_lowered};
 mod on_demand;

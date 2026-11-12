@@ -60,10 +60,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let abi = lw.cx.ret_abi(ret, throws);
         lw.push_scope(ScopeKind::Block);
         // Whether `main` (or a module initializer) reaches promises or tasks: everything else is
-        // built by now except what the module initializers call.
-        while let Some((fid, work)) = lw.cx.queue.pop_front() {
-            lw.cx.build_now(fid, &work);
-        }
+        // built by now except what the module initializers call. Module state's accesses still
+        // wait (`Cx::drain`): whether the program runs on the executor is known after `main`.
+        lw.cx.drain(false);
         let code = if lw.cx.reaches_tasks() {
             let s = lw.temp(sync_root_ty(abi.ret, abi.out, throws));
             let root = super::cfunc(lw.cx.func(Work::SyncMainRoot));

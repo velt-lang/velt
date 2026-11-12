@@ -1,0 +1,16 @@
+// Module state in a program that runs nothing on the executor: with `VELT_SCHEDULER=std` it
+// goes through the runtime's entries, without the executor (#2649 P3(a)).
+let count = 0;
+const names: string[] = [];
+
+function bump(name: string): number {
+  count += 1;
+  names.push(name);
+  return count;
+}
+
+function main() {
+  bump("a");
+  bump("b");
+  console.log(count, names.join(","));
+}

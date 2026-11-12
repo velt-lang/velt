@@ -398,9 +398,18 @@ const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_module_ready),
 ];
 
-/// Adds [`SCHED_HOOKS`] to `found` the first time, when the executor in Velt is selected.
+/// Adds [`SCHED_HOOKS`] to `found` the first time, when the executor in Velt is selected and
+/// live code runs on it (`live::Live::tasks`: async code, or an extern the executor serves). A
+/// program without such code doesn't load the executor; lowering then keeps the runtime's
+/// module state (velt_vir `module_state.rs`), and never calls a task or timer hook (#2649 P3(a)).
 fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
-    if cx.lazy.sched_hooks || cx.lazy.live.finishing || !velt_common::std_hooks::std_scheduler() {
+    let wanted = cx.lazy.live.tasks && velt_common::std_hooks::std_scheduler();
+    if cx.lazy.sched_hooks || !wanted {
+        return;
+    }
+    if cx.lazy.live.finishing {
+        // Reached by what the passes after the check made: the next round has it.
+        cx.lazy.live.late.tasks = true;
         return;
     }
     cx.lazy.sched_hooks = true;

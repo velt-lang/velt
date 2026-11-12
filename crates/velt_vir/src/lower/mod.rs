@@ -284,22 +284,13 @@ pub(crate) fn lower_program_seeded(
             cx.boxing = counted.clone();
         }
         cx.seed_functions();
-        while let Some((fid, work)) = cx.queue.pop_front() {
-            cx.build_now(fid, &work);
-        }
+        cx.drain(false);
         cx.build_iface_glues();
         cx.seed_c_exports();
-        // `velt_main` last: whether it selects the per-core scheduler depends on everything else.
+        // `velt_main` last: whether it selects the per-core scheduler depends on everything else;
+        // then module state's accesses and the static atomics' release (`Cx::drain`).
         cx.func(Work::Main);
-        while let Some((fid, work)) = cx.queue.pop_front() {
-            // The function releasing the static atomics at exit is built last: it releases the
-            // ones the program's code uses, which every other function has said by then.
-            if matches!(work, Work::StaticsDrop) && !cx.queue.is_empty() {
-                cx.queue.push_back((fid, work));
-                continue;
-            }
-            cx.build_now(fid, &work);
-        }
+        cx.drain(true);
         cx.build_iface_glues();
         cx.build_fn_tables();
         lower_profile::end_pass(pass, pass_start.elapsed());
@@ -481,6 +472,9 @@ struct Cx<'h> {
     static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
     fut_header: Option<crate::vir::AggId>, // a heap future's header (raw_memory.rs `fut_header`)
     sched_tasks: bool, // the executor in Velt's hooks start promises or spawn tasks (sched.rs)
+    sched_used: bool,  // a task or timer hook of the executor in Velt is called (module_state.rs)
+    held: Option<Vec<(FuncId, Work)>>, // module state's accesses, until main is built (drain)
+    statics_table: Option<StaticId>, // the process statics' table, its release to fill in
     /// The class id number of each `struct` type with an interface table (class_test.rs
     /// `VALUE_IDS`), in the order the tables are made.
     value_ids: FxHashMap<TyId, u64>,

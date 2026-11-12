@@ -89,29 +89,26 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// its size, the function releasing the references static atomics hold (null when the
     /// program has none), and the address of each process static of std (velt_common
     /// `std_hooks.rs`, `process_static`; null when the std root lacks it). No call when the table
-    /// would be empty.
+    /// would be empty. The release is filled in once the program is built (`Cx::statics_drop`):
+    /// only a static atomic the code uses needs it, whatever else std defines.
     pub(super) fn register_statics(&mut self) {
         const SIZE: u64 = 24;
-        let drop = if self.cx.reference_statics().is_empty() {
-            None
-        } else {
-            Some(Const::Func(self.cx.func(Work::StaticsDrop)))
-        };
+        let drop = !self.cx.reference_statics().is_empty();
         let epoch = self
             .cx
             .global_def(velt_common::std_hook!(str_epoch))
             .and_then(|d| self.static_atomic_data(d))
             .map(Const::Static);
-        if drop.is_none() && epoch.is_none() {
+        if !drop && epoch.is_none() {
             return;
         }
         let mut bytes = vec![0u8; SIZE as usize];
         bytes[..8].copy_from_slice(&SIZE.to_le_bytes());
-        let relocs = [(8, drop), (16, epoch)]
-            .into_iter()
-            .filter_map(|(at, c)| c.map(|c| (at, c)))
-            .collect();
+        let relocs = epoch.map(|c| (16, c)).into_iter().collect();
         let id = StaticId(self.cx.statics.len() as u32);
+        if drop {
+            self.cx.statics_table = Some(id);
+        }
         self.cx.statics.push(StaticData {
             bytes,
             align: 8,
@@ -152,6 +149,25 @@ impl<'c, 'h> FnLower<'c, 'h> {
 }
 
 impl super::Cx<'_> {
+    /// Once every other function is built: when the code uses a static atomic holding a
+    /// reference, the function releasing them, in the statics table (`register_statics`).
+    /// Whether it queued it.
+    pub(super) fn statics_drop(&mut self) -> bool {
+        let Some(table) = self.statics_table.take() else {
+            return false;
+        };
+        let used = (self.reference_statics().into_iter())
+            .any(|(d, _)| matches!(self.static_atomics.get(&d), Some(Some(_))));
+        if !used {
+            return false;
+        }
+        let f = self.func(Work::StaticsDrop);
+        self.statics[table.0 as usize]
+            .relocs
+            .insert(0, (8, Const::Func(f)));
+        true
+    }
+
     /// The module constant whose qualified name is `name` (a process static, `std_hooks.rs`).
     fn global_def(&self, name: &str) -> Option<hir::DefId> {
         let found =
