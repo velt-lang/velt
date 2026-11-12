@@ -61,11 +61,11 @@ fn g_release_binary_maps_addresses_to_velt_lines() {
         return;
     };
     let exe_name = if cfg!(windows) {
-        "llvm-symbolizer.exe"
+        "llvm-pdbutil.exe"
     } else {
-        "llvm-symbolizer"
+        "llvm-pdbutil"
     };
-    let symbolizer = clang.with_file_name(exe_name);
+    let pdbutil = clang.with_file_name(exe_name);
     let root = root();
     runtime_support::build_native_runtime(&root);
     let out = work_dir::work_dir(&root, "golden-work-debuginfo").join("panic_div");
@@ -77,32 +77,67 @@ fn g_release_binary_maps_addresses_to_velt_lines() {
         .output()
         .expect("run velt");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    let exe = if cfg!(windows) {
-        assert!(
-            out.with_extension("pdb").exists(),
-            "-g must produce a PDB on Windows"
-        );
-        out.with_extension("exe")
-    } else {
-        out
-    };
-    // The address check assumes link.exe's default layout (image base 0x140000000, `.text`
-    // first, the program's object first in it); other platforms stop at a successful build.
-    if !cfg!(windows) || !symbolizer.exists() {
-        eprintln!("note: skipping the llvm-symbolizer line check");
+    let pdb = out.with_extension("pdb");
+    if cfg!(windows) {
+        assert!(pdb.exists(), "-g must produce a PDB on Windows");
+    }
+    // The line check reads the PDB's line tables directly. llvm-symbolizer's native PDB reader
+    // misses some files of a function whose line table spans several (an inlined std hook first,
+    // then the program's own lines), though the PDB is right; other platforms stop at a
+    // successful build.
+    if !cfg!(windows) || !pdbutil.exists() {
+        eprintln!("note: skipping the PDB line check");
         return;
     }
-    let addrs: Vec<String> = (0..64u64)
-        .map(|i| format!("{:#x}", 0x1_4000_1000 + i * 4))
-        .collect();
-    let s = crate::no_window::command(&symbolizer)
-        .arg(format!("--obj={}", exe.display()))
-        .args(&addrs)
+    let s = crate::no_window::command(&pdbutil)
+        .args(["dump", "-l"])
+        .arg(&pdb)
         .output()
-        .expect("run llvm-symbolizer");
+        .expect("run llvm-pdbutil");
+    assert!(s.status.success(), "{}", String::from_utf8_lossy(&s.stderr));
     let text = String::from_utf8_lossy(&s.stdout).replace('\\', "/");
     assert!(
-        text.contains("tests/golden/lang/panic_div.velt:"),
-        "no .velt line info:\n{text}"
+        panic_div_lines(&text).contains(&3),
+        "no line-3 entry for tests/golden/lang/panic_div.velt in the PDB:\n{text}"
     );
+}
+
+/// The line numbers `llvm-pdbutil dump -l` lists under `tests/golden/lang/panic_div.velt`: the
+/// indented rows after each header line naming that file hold `<line> <address>` pairs.
+fn panic_div_lines(dump: &str) -> Vec<u32> {
+    let mut lines = Vec::new();
+    let mut in_file = false;
+    for row in dump.lines() {
+        if !row.starts_with(char::is_whitespace) {
+            in_file = row.contains("tests/golden/lang/panic_div.velt");
+            continue;
+        }
+        if !in_file {
+            continue;
+        }
+        let words: Vec<&str> = row
+            .split(|c: char| c.is_whitespace() || c == '!')
+            .filter(|w| !w.is_empty())
+            .collect();
+        for pair in words.windows(2) {
+            let is_addr = pair[1].len() == 8 && pair[1].chars().all(|c| c.is_ascii_hexdigit());
+            if let (Ok(line), true) = (pair[0].parse::<u32>(), is_addr) {
+                lines.push(line);
+            }
+        }
+    }
+    lines
+}
+
+#[test]
+fn the_pdb_line_dump_is_read_per_file() {
+    let dump = "Mod 0000 | `panic_div.obj`:\n\
+C:/w/tests/golden/lang/panic_div.velt (MD5: 0123)\n  \
+0001:00001000-00001040, line/addr entries = 2\n      \
+2 00001000 !      3 00001010 !\n\
+C:/w/std/lang/hooks/process.velt (MD5: 4567)\n  \
+0001:00001040-00001050, line/addr entries = 1\n      \
+9 00001040 !\n";
+    assert_eq!(panic_div_lines(dump), vec![2, 3]);
+    assert!(panic_div_lines("nothing here\n").is_empty());
 }
