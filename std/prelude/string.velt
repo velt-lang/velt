@@ -12,7 +12,14 @@
 
 // `Number(s)` and `parseFloat(s)` are Velt code (#1658).
 import { toNumber, parseFloatOf } from "velt/lang/number/parse";
-import { strCharCodeAt } from "velt/lang/intrinsics";
+import {
+  inline,
+  strAsciiWords,
+  strByteAt,
+  strCharCodeAt,
+  strWord1,
+  strWord2,
+} from "velt/lang/intrinsics";
 
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
 declare function velt_rt_str_index_of(s: string, needle: string, from: i64): i64;
@@ -34,20 +41,54 @@ declare function velt_rt_str_pad_end(s: string, target: i64, fill: string): stri
 declare function velt_rt_str_from_char_code(code: i64): string;
 declare function velt_rt_parse_int(s: string, radix: i64): f64;
 
+/**
+ * The byte length of `s` when it is ASCII (its units are its bytes), else 0, from its words
+ * read once (rt_abi.md "Strings"): an inline string is ASCII when byte 23's `0x40` bit is clear
+ * (its length in the low five bits), any other when the two halves of `w1` (units, bytes) agree.
+ */
+@inline
+function asciiLen(s: string): u64 {
+  const w2 = strWord2(s);
+  if ((w2 as i64) < 0) {
+    const tag = w2 >> 56;
+    return (tag & 0x40) == 0 ? tag & 0x1f : 0;
+  }
+  const w1 = strWord1(s);
+  const bytes = w1 & 0xffffffff;
+  return w1 >> 32 == bytes ? bytes : 0;
+}
+
+/**
+ * `s.slice(start, end)` (#2198). Compiled into the caller is the one-unit slice of an ASCII string
+ * (`start` in range, `end` the next unit): the inline string of its byte, with no call. Anything
+ * else is one call of the runtime, which clamps the bounds and translates positions, precompiled:
+ * in Velt (std/lang/string/positions.velt) that would be checked in every program, as nearly
+ * every program slices (+13 to +21 % on `velt check` of hello), until std objects make it free
+ * (#1728).
+ */
+@inline
+function sliceOf(s: string, start: i64, end: i64): string {
+  const n = asciiLen(s);
+  if (start >= 0 && (start as u64) < n && end == start + 1) {
+    return strAsciiWords(strByteAt(s, start as u64) as u64, 0, 0, 1);
+  }
+  return velt_rt_str_slice(s, start, end);
+}
+
 // "Omitted" end / from positions, as the runtime expects them.
 const END: i64 = 9223372036854775807;
 
 extend string {
   /** [start, end); negative positions count from the end; clamped; "" if start >= end. */
   slice(start: i64 = 0, end: i64 = END): string {
-    return velt_rt_str_slice(this, start, end);
+    return sliceOf(this, start, end);
   }
 
   /** Like `slice`, but negative positions are 0 and swapped bounds are reordered (JS rules). */
   substring(start: i64, end: i64 = END): string {
     const lo = start < 0 ? 0 : start;
     const hi = end < 0 ? 0 : end;
-    return lo <= hi ? velt_rt_str_slice(this, lo, hi) : velt_rt_str_slice(this, hi, lo);
+    return sliceOf(this, lo <= hi ? lo : hi, lo <= hi ? hi : lo);
   }
 
   /** First match at or after `from`, or -1. */
@@ -188,14 +229,16 @@ extend string {
   /**
    * The code unit at position `i` as a one-unit string (a surrogate pair gives one half), or ""
    * out of range, as JS's `charAt`. `s[i]` is the same. In range, the one-unit slice is that unit
-   * (a lone half inside a pair), and LLVM builds it inline for an ASCII string (#552).
+   * (a lone half inside a pair). Compiled into the caller: in an ASCII string, the inline string of
+   * the byte at `i`, the string's words read once (`asciiLen`); any other string calls the runtime.
    */
   charAt(i: i64 = 0): string {
-    // Past the end, the slice is empty (its bounds are clamped): no length to compute first.
-    if (i < 0 || i == END) {
-      return "";
+    const n = asciiLen(this);
+    if (i >= 0 && (i as u64) < n) {
+      return strAsciiWords(strByteAt(this, i as u64) as u64, 0, 0, 1);
     }
-    return velt_rt_str_slice(this, i, i + 1);
+    // Out of range in an ASCII string, or a string that is not ASCII (or is empty).
+    return n != 0 || i < 0 || i == END ? "" : velt_rt_str_slice(this, i, i + 1);
   }
 
   /**
