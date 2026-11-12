@@ -5,12 +5,14 @@
 // the state's result (its offset 0) is the result slot at +16. The head: the node's waker table
 // (a node is its own waker), its reference count (the owner's handle, the task driving it, a
 // place among its task's woken nodes, each waker clone), its flags, its size in bytes (to free it
-// with), the state's poll, the waker of whoever awaits it, the result's drop glue, the task
-// driving it (a started node holds a reference to it, so a wake from another thread never touches
-// a freed task), its link in that task's woken stack (other threads push on it), the `cx` its
-// polls get (its task's await word, itself), its link in the list of woken nodes the task took to
-// run (its own, so a node woken again while it waits there is pushed without breaking that list),
-// the state's drop (a lazy node's; then a word sched_node_catch.velt uses), and its link in the
+// with), the state's poll (once it finished: where it threw, sched_node_loc.velt, or a panicked
+// node's exception, sched_node_catch.velt), the waker of whoever awaits it, the result's drop
+// glue, the task driving it (a started node holds a reference to it, so a wake from another
+// thread never touches a freed task), its link in that task's woken stack (other threads push on
+// it), the `cx` its polls get (its task's await word, itself), its link in the list of woken
+// nodes the task took to run (its own, so a node woken again while it waits there is pushed
+// without breaking that list), the state's drop (a lazy node's; then a word sched_node_catch.velt
+// uses), and its link in the
 // task's list of rejections nobody handled (its own too: a node woken while it ran from a
 // microtask is still on the woken stack when it finishes there, and that stack must stay whole).
 //
@@ -29,6 +31,7 @@
 import { inline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
 import * as m from "./sched_mem";
+import * as loc from "./sched_node_loc";
 import * as micro from "./sched_micro";
 import * as aw from "./sched_node_await";
 import * as nc from "./sched_node_catch";
@@ -156,6 +159,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
       nc.again(m.ld(n + N_POLL));
     }
     setFlags(n, DELIVERED);
+    loc.claim(fl, n + N_POLL);
     return 1;
   }
   const task = m.ld(n + N_TASK);
@@ -269,9 +273,16 @@ function dropResult(n: usize): void {
 function dropNow(n: usize): void {
   const rdrop = m.ld(n + N_RESULT_DROP);
   if (rdrop !== 0) {
+    // An error in it is reported where it was thrown; this thread's own location stays.
+    const fl = m.load32(n + N_FLAGS);
+    const own = (fl & loc.LOC) !== 0 ? loc.current() : 0;
+    loc.claim(fl, n + N_POLL);
     // SAFETY: the slot holds the finished result, `rdrop` its drop glue.
     unsafe {
       stateDrop(rdrop, n + N_HEAD + 16);
+    }
+    if ((fl & loc.LOC) !== 0) {
+      loc.restore(own);
     }
   }
 }
@@ -357,6 +368,11 @@ export function run(task: usize, n: usize, taken: bool): void {
     if (r !== 1) {
       return;
     }
+  }
+  if ((m.load32(n + N_FLAGS) & REJECTING) !== 0) {
+    // Its owner may claim the result on another worker: it keeps where it threw (the state's
+    // poll is not needed any more), published before FINISHED.
+    loc.keep(n + N_FLAGS, n + N_HEAD + 16, n + N_POLL);
   }
   // Its owner may drop or await it on another worker meanwhile (sched_node_await.velt): the old
   // flags say whether the drop came first, and the awaiter word is claimed as `finishAwaiter` says.

@@ -22,6 +22,8 @@ const GOLDENS: &[&str] = &[
     // A fresh socket and one whose last read found bytes are not readable until a peek finds
     // input (std/net/fd_ready.velt).
     "std/net_close_wakes",
+    // The throw location of a promise claimed on another worker (sched_node_loc.velt).
+    "lang/uncaught_location_other_worker",
     // A promise woken on its task's stack that finished before the task took it gives its
     // reference back when the task ends (sched_run.velt `finish`): a `then` on a shared promise,
     // and a detached promise driving a combinator.
