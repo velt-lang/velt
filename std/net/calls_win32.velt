@@ -194,6 +194,12 @@ export function bcopy$text(src: StrBytes, dst: Ptr<u8>, n: usize): void {
 
 export declare c("c") function freeaddrinfo(ai: Ptr<u8>): void;
 
+/**
+ * Is `getaddrinfo`'s failure an OS error, worded as one ("… (os error N)")? Yes: a Winsock error,
+ * as Rust reports it on Windows (`from_raw_os_error`).
+ */
+export const GAI_OS_ERROR: bool = true;
+
 /** The message of `getaddrinfo`'s failure `e`, a Winsock error (as `strerror`). */
 export function gai_strerror(e: i32): Ptr<u8> {
   return strerror(e);

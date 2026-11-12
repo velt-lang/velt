@@ -11,7 +11,7 @@ import { CString } from "velt/ffi/c_string";
 import { Ptr } from "velt/ffi/ptr";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { addressLoad } from "velt/lang/intrinsics";
-import { freeaddrinfo, gai_strerror, inet_ntop } from "#net-calls";
+import { GAI_OS_ERROR, freeaddrinfo, gai_strerror, inet_ntop } from "#net-calls";
 import * as sys from "#net-sys";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as bp from "velt/lang/hooks/sched_blocking";
@@ -105,7 +105,9 @@ function lookup(host: string, port: string, passive: bool, numeric: bool): IoRes
   if (e !== 0) {
     // SAFETY: gai_strerror returns a NUL-terminated message.
     const why = cText(Ptr.addressOf(unsafe { gai_strerror(e) }));
-    return { code: 99, message: `failed to lookup address information: ${why}`, value: 0 };
+    const message =
+      GAI_OS_ERROR ? `${why} (os error ${e})` : `failed to lookup address information: ${why}`;
+    return { code: 99, message, value: 0 };
   }
   return { code: 0, message: "", value: list };
 }

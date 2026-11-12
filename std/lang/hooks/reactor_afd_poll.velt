@@ -13,8 +13,11 @@
 // A request changes only under its reactor's lock (`R_LOCK`): from the reactor's wait (its
 // completions), from `add`/`del` (a source following its task to another worker's reactor, from
 // that worker's thread) and from `rearm` (the thread running the operation). Its memory is the
-// kernel's while a poll is pending; a request taken out (`del`, its socket replaced by a new one
-// with the same handle) is freed when its last poll completes.
+// kernel's while a poll is pending; a request taken out (`del`: its socket moved to another
+// reactor or about to close, or replaced by a new one with the same handle) is freed when its
+// last poll completes. Requests come from the C library (`lastingZeroed`), outside the block
+// counts: a socket closed just before the process ends leaves its request waiting for a
+// completion nobody takes, as the reactor's block itself is never freed.
 
 import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
@@ -201,7 +204,7 @@ function grow(r: usize): void {
  * event, its poll submitted: 0, or the status of a submission that failed (no request left).
  */
 export function open(r: usize, fd: usize, base: usize, source: usize): i32 {
-  const p = m.zeroed(P_SIZE);
+  const p = m.lastingZeroed(P_SIZE);
   m.st(p + P_SOURCE, source);
   m.st(p + P_FD, fd);
   m.st(p + P_BASE, base);
@@ -221,7 +224,7 @@ export function drop(r: usize, p: usize): void {
   if (st === PENDING) {
     cancel(r, p);
   } else if (st === IDLE) {
-    m.release(p, P_SIZE);
+    m.lastingRelease(p);
   }
 }
 
@@ -309,7 +312,7 @@ function cancel(r: usize, p: usize): void {
 export function completed(r: usize, p: usize, ev: usize): bool {
   m.st32(p + P_STATE, IDLE);
   if (m.ld32(p + P_DEAD) !== 0) {
-    m.release(p, P_SIZE);
+    m.lastingRelease(p);
     return false;
   }
   const status = m.ld32(p + P_IOSB) as i32;
@@ -347,7 +350,7 @@ function forget(r: usize, p: usize): void {
   if (find(r, m.ld(p + P_FD)) === p) {
     remove(r, m.ld(p + P_FD));
   }
-  m.release(p, P_SIZE);
+  m.lastingRelease(p);
 }
 
 /** The readiness bits (sched_io.velt) of poll events `e`. */

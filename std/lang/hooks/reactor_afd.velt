@@ -43,6 +43,13 @@ export const SOCKET_FLAGS: i32 = 0;
 export const SC_NPROCESSORS_ONLN: i32 = 0;
 /** Does an operation that finds a socket not ready call `rearm`? Yes: polls report once. */
 export const REARMS: bool = true;
+/**
+ * Must a socket leave the reactor before it closes (`del`)? Yes: a poll completion already queued
+ * on the port when the socket closes would come later, with the source of a socket that may be
+ * another by then, and submit its poll again on a handle that may be another socket's (mio
+ * deregisters too). Taken out, its request is dead: the completion only frees it.
+ */
+export const DEREGISTERS: bool = true;
 
 const INVALID: usize = 0xffffffffffffffff;
 /** `INFINITE`. */
@@ -390,8 +397,7 @@ export function wordWaitFor(word: usize, expected: u32, us: u32): void {
 }
 
 function waitOn(word: usize, expected: u32, ms: u32): void {
-  // The thread's own buffer (sched_mem.velt `scratch`): the process may end during the wait
-  // (the stall monitor's nap), with nothing of the counted blocks held.
+  // The thread's buffer, outside the counted blocks: the process may end during a monitor nap.
   const c = m.scratch();
   m.st32(c, expected);
   // SAFETY: `word` is an aligned word that lives as long as the process; the value compared

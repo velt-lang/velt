@@ -334,5 +334,11 @@ export function threadCpu(c: u64): u64 {
 /** Does an operation that finds a socket not ready call `rearm`? No: events come by edge. */
 export const REARMS: bool = false;
 
+/**
+ * Must a socket leave the reactor before it closes (`del`)? No: a closed descriptor leaves it by
+ * itself, with no event of it still to come.
+ */
+export const DEREGISTERS: bool = false;
+
 /** Nothing to ask again: the next edge reports the socket ready. */
 export function rearm(r: usize, fd: i32, source: usize, bits: u32): void {}

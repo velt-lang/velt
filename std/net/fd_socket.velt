@@ -200,6 +200,7 @@ async function connectOne(ai: usize): Promise<IoResult<u64>> {
 /** Closes the source of handle `h` at once (nothing sent on it yet; locked: `tb.enter`). */
 export function discard(h: u64, s: usize): void {
   tb.forget(h);
+  tb.closing(s);
   closeFd(m.ld(s + io.S_FD) as i32);
   io.free(s);
 }

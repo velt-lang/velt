@@ -189,6 +189,7 @@ function finish(s: usize, fl: u32): void {
     }
   }
   if ((fl & io.F_CLOSING) !== 0 && (m.ld32(s + io.S_FLAGS) & io.F_DUE) === 0) {
+    tb.closing(s);
     // SAFETY: the source's descriptor, closed once: the source goes with it.
     unsafe {
       close$io(fd);

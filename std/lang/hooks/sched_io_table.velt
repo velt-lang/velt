@@ -306,6 +306,24 @@ function moveTo(s: usize, ob: usize, hb: usize): void {
   m.dec(ob + io.IO_LIVE);
 }
 
+/**
+ * Source `s` (locked) closes its descriptor next: a reactor whose events of a closed socket may
+ * still come (`r.DEREGISTERS`, Windows) takes the socket out first, so no event of it reaches the
+ * source once it serves another socket. Before the close: after it, the handle may be a new
+ * socket's already.
+ */
+@inline
+export function closing(s: usize): void {
+  if (r.DEREGISTERS) {
+    deregister(s);
+  }
+}
+
+@noInline
+function deregister(s: usize): void {
+  r.del(m.ld(m.ld(s + io.S_IOB) + io.IO_REACTOR), m.ld(s + io.S_FD) as i32);
+}
+
 /** Closes handle `h`: later lookups find nothing (the source lives on until it is freed). */
 export function forget(h: u64): void {
   const s = lookup(h);
