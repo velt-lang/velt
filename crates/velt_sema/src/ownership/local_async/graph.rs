@@ -74,6 +74,8 @@ pub(super) struct Graph {
     /// The type arguments of every direct call of each generic function, with the function
     /// making the call (its own generic parameters may appear in them).
     pub insts: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    /// Calls of generic function values, for their closures' instantiations.
+    pub dyn_calls: super::generic_closures::DynCalls,
     /// The function creating each closure literal.
     pub parent: FxHashMap<DefId, DefId>,
     /// Where values go that the edges don't show (`super::call_sites::held_in_locals`).
@@ -172,6 +174,7 @@ pub(super) fn build(cx: &Ctx) -> Graph {
     }
     super::unknown_callees::mark(cx, &mut g);
     super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
+    g.dyn_calls.finish(cx);
     g
 }
 
@@ -373,10 +376,13 @@ impl Walk<'_, '_> {
                     self.value(&a.body, to);
                 }
             }
+            // A generic function value converted to another type may be called where the walk
+            // doesn't see it (`super::generic_closures`).
+            E::Cast(x) | E::Upcast(x) | E::Downcast(x) => {
+                self.g.dyn_calls.escape(self.cx, x.ty);
+                self.value(x, to)
+            }
             E::WrapSome(x)
-            | E::Cast(x)
-            | E::Upcast(x)
-            | E::Downcast(x)
             | E::UnwrapSome(x, _)
             | E::Await(x)
             | E::ToDyn { expr: x, .. }
@@ -600,6 +606,16 @@ impl Walk<'_, '_> {
                     self.g.seeds.push((n, STORED, None));
                     nodes.push(Some(n));
                 }
+                if let (
+                    Callee::Dyn {
+                        slot,
+                        method_type_args,
+                    },
+                    Some(r),
+                ) = (callee, args.first())
+                {
+                    (self.g.dyn_calls).call(self.cx, self.d, r.ty, *slot, method_type_args);
+                }
                 let targets = super::unknown_callees::dispatch_targets(self.cx, callee, args);
                 self.g
                     .dispatched_calls
@@ -611,6 +627,13 @@ impl Walk<'_, '_> {
     }
 
     fn intrinsic(&mut self, e: &Expr, i: Intrinsic, args: &[Expr], to: To) {
+        // A generic function value going into `any` (or copied by a spread) may be called where
+        // the walk doesn't see it (`super::generic_closures`).
+        if matches!(i, Intrinsic::ToAny | Intrinsic::SpreadObject) {
+            for a in args {
+                self.g.dyn_calls.escape(self.cx, a.ty);
+            }
+        }
         let boundary = match i {
             Intrinsic::Share | Intrinsic::Clone => {
                 if let Some((x, rest)) = args.split_first() {

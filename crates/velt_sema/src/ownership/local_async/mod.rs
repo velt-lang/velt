@@ -49,6 +49,7 @@ mod call_sites;
 mod callbacks;
 mod changes;
 mod fed;
+mod generic_closures;
 mod graph;
 mod keyed;
 mod reach;
@@ -362,13 +363,24 @@ fn outermost(g: &Graph, mut c: DefId) -> DefId {
 /// are generic themselves are followed to their own callers; where that gives no answer (or too
 /// many), the generic type itself, whose parameters match anything; a generic library function
 /// the program never calls gives none.
-fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
+/// The function whose instantiations resolve the type parameters a type in function `c` mentions:
+/// the outermost function `c` is in, or the first generic closure on the way whose calls give its
+/// instantiations (`generic_closures`): its own type parameters are what those calls give.
+fn instance_owner(cx: &Ctx, g: &Graph, c: DefId) -> DefId {
     let mut owner = c;
     let mut hops = 0;
     while let (Some(&p), true) = (g.parent.get(&owner), hops < 64) {
+        if g.dyn_calls.sites(cx, g, owner).is_some() {
+            break;
+        }
         owner = p;
         hops += 1;
     }
+    owner
+}
+
+fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
+    let owner = instance_owner(cx, g, c);
     let mut out = vec![];
     let mut work = vec![(owner, ty, 0)];
     while let Some((f, t, depth)) = work.pop() {
@@ -378,7 +390,16 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
             out.push(t);
             continue;
         }
-        let sites = g.insts.get(&f).cloned().unwrap_or_default();
+        let mut sites = g.insts.get(&f).cloned().unwrap_or_default();
+        // A generic closure's, or an implementation's generic method's, calls through its
+        // interface (`generic_closures`), next to any direct ones.
+        if let Some(s) = g.dyn_calls.sites(cx, g, f) {
+            // Called only through its interface, and never: no instantiation.
+            if s.is_empty() && sites.is_empty() {
+                continue;
+            }
+            sites.extend(s);
+        }
         // A generic library function that the program never calls directly
         // makes no such closure (its methods are called with their type arguments too). Nor
         // does a generic function declared in the program that nothing calls directly or holds
@@ -392,6 +413,13 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
         // another, which names no type parameters.
         let free = matches!(&cx.defs[f.0 as usize], Some(Def::Fn(fd)) if fd.self_ty.is_none() && fd.generics > 0)
             && cx.try_fn(f).is_some_and(|i| i.kind == FnKind::Free);
+        // A method no dispatched call can reach (an object type's, not a class's or an
+        // implementation's) is called by name only, with its type arguments (#2860: the adapter
+        // method behind a generic method of an object type, `AsyncEngine.read<T>`).
+        let by_name = matches!(&cx.defs[f.0 as usize], Some(Def::Fn(fd)) if fd.self_ty.is_some() && fd.generics > 0)
+            && cx.try_fn(f).is_some_and(|i| i.kind == FnKind::Method)
+            && g.dispatched.binary_search_by_key(&f.0, |d| d.0).is_err();
+        let free = free || by_name;
         if sites.is_empty() && (library || (free && !g.held.referenced.contains(&f))) {
             continue;
         }
@@ -400,12 +428,7 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
             continue;
         }
         for (caller, targs) in sites {
-            let mut caller_owner = caller;
-            let mut hops = 0;
-            while let (Some(&p), true) = (g.parent.get(&caller_owner), hops < 64) {
-                caller_owner = p;
-                hops += 1;
-            }
+            let caller_owner = instance_owner(cx, g, caller);
             let s = cx.subst(t, &targs);
             work.push((caller_owner, s, depth + 1));
         }
