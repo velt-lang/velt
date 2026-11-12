@@ -345,6 +345,10 @@ fn check_timed(
         return ((None, vec![d]), Default::default());
     };
     timings::record("source rewrites", rewrite_start.elapsed());
+    // A reload asks only what the rewrites make of one module (`kept::probe`).
+    if kept::probed(modules) {
+        return ((None, vec![]), Default::default());
+    }
     let source_scans::Found {
         null_proto,
         ctor_reads,
@@ -369,6 +373,8 @@ fn check_timed(
         cx.union_views.assumed = views.clone();
         cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
+        // A check that keeps itself records its bodies, for the kept check to check them again.
+        cx.body_records = kept::wanted(input).then(Default::default);
         cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
         cx.global_namespaces = global_ns.clone();
@@ -565,10 +571,52 @@ fn analyze(
     root_mod: &SourceModule,
     opts: CheckOptions,
 ) -> Option<hir::DefId> {
-    analyze_bodies(cx);
+    check_definitions(cx);
+    // A check that keeps itself keeps this point too: a reload checks edited bodies again from
+    // here and runs the rest (`reanalyze`).
+    if cx.body_records.is_some() {
+        kept::stash(cx);
+    }
+    analyze_after_bodies(cx);
     let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
     alias_expand::check_unused_aliases(cx);
     entry
+}
+
+/// The rest of [`analyze`] for a clone of a kept check whose edited bodies were checked again
+/// (`kept`), and what the round loop of [`check_timed`] would do with it: the program, or why it
+/// needs the cold check (another round, a generator, an error).
+pub(crate) fn reanalyze(
+    mut cx: ctx::Ctx,
+    opts: CheckOptions,
+) -> Result<(hir::Program, Diagnostics), &'static str> {
+    let (root, before) = (cx.root, cx.diags.len());
+    analyze_after_bodies(&mut cx);
+    let root_mod = cx.modules[root];
+    let entry = main_fn::check_main(&mut cx, root, root_mod, opts.require_main);
+    alias_expand::check_unused_aliases(&mut cx);
+    if cx.diags.len() > before || error_count(&cx) > 0 {
+        return Err("it reports something");
+    }
+    if cx.union_views_grown().is_some() || cx.fn_sites.grown().is_some() {
+        return Err("another round");
+    }
+    if cx.held_borrows && retry_sharing(&cx) {
+        return Err("the sharing retry");
+    }
+    let mut assumed = body::lazy_std::Assumed::default();
+    if body::lazy_std::too_late(&mut cx, &mut assumed) {
+        return Err("std it now needs");
+    }
+    union_views::finish(&mut cx);
+    cx.upcast_writes();
+    if cx.checked_again(false).is_some() {
+        return Err("another round");
+    }
+    let Ok(generated) = generated::instances(&mut cx) else {
+        return Err("generated code");
+    };
+    Ok(program::build_checked(cx, entry, generated))
 }
 
 /// Should the program be checked again with held closures and `const me = this` sharing?
@@ -585,8 +633,15 @@ pub(crate) fn error_count(cx: &ctx::Ctx) -> usize {
     cx.diags.iter().filter(|d| d.is_error()).count()
 }
 
-/// Steps 1–5: every definition and body checked, ownership and throws inferred, moves checked.
+/// Steps 1–5: every definition and body checked ([`check_definitions`]), then ownership and
+/// throws inferred and moves checked ([`analyze_after_bodies`]).
 fn analyze_bodies(cx: &mut ctx::Ctx) {
+    check_definitions(cx);
+    analyze_after_bodies(cx);
+}
+
+/// Every definition collected and every body checked.
+fn check_definitions(cx: &mut ctx::Ctx) {
     timings::pass("script_tdz::check", || script_tdz::check(cx));
     timings::pass("collect::collect", || collect::collect(cx));
     cx.collected_defs = cx.defs.len();
@@ -596,6 +651,10 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
         body::expr::virtual_defaults::build_fill_bodies(cx, 0)
     });
     timings::pass("body::check_bodies", || body::check_bodies(cx));
+}
+
+/// What follows the bodies' check: generated code, ownership and throws inferred, moves checked.
+fn analyze_after_bodies(cx: &mut ctx::Ctx) {
     timings::pass("generated::phase", || generated::phase::run(cx));
     timings::pass("global_this::check_sites", || global_this::check_sites(cx));
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));

@@ -84,6 +84,18 @@ pub struct Carried {
     pub kept: Option<velt_sema::KeptCheck>,
 }
 
+/// What `-v` says a warm reload from `kept` would cost (dev-warm-front-end.md step 3 "C3"): the
+/// passes after the bodies' check and the finishing steps, from the kept context.
+pub fn warm_report(kept: &velt_sema::KeptCheck) -> String {
+    let start = Instant::now();
+    let warm = kept.reload_unchanged(&[], velt_sema::CheckOptions::default());
+    let took = start.elapsed().as_secs_f64() * 1e3;
+    match warm {
+        Ok(_) => format!("a warm reload would take {took:.0} ms"),
+        Err(e) => format!("no warm reload ({e}, {took:.0} ms)"),
+    }
+}
+
 /// What `-v` says of a kept check: its size, and the process's memory with it kept.
 pub fn kept_report(kept: &velt_sema::KeptCheck) -> String {
     let memory = crate::driver::memory::read().map(crate::driver::memory::render);
@@ -150,6 +162,7 @@ fn reload_with(
         carried.kept = sess.kept.take();
         if let (true, Some(kept)) = (verbose, &carried.kept) {
             eprintln!("velt dev: {}", kept_report(kept));
+            eprintln!("velt dev: {}", warm_report(kept));
         }
     }
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();

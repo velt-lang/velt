@@ -378,6 +378,166 @@ pub(crate) fn leave(cx: &mut Ctx, start: Lens) {
     }
 }
 
+/// What a body's check added, recorded for a kept check (crate `kept`, dev-warm-front-end.md
+/// step 3 "C3"), which checks the body again long after the lists grew past it: where its
+/// additions start and end in each list, the segments of the bodies it checked meanwhile (theirs,
+/// not its own), its function's closure count then, and whether its result was inferred.
+#[derive(Clone)]
+pub(crate) struct BodyRecord {
+    start: Lens,
+    end: Lens,
+    segments: Vec<(Lens, Lens)>,
+    closures: Option<(String, Option<u32>)>,
+    inferred: bool,
+}
+
+/// Records `def`'s check, which started at `mark` and is done but for leaving its frame, when the
+/// context records bodies (`Ctx::body_records`).
+pub(crate) fn record(cx: &mut Ctx, def: DefId, mark: &Mark, inferred: bool) {
+    if cx.body_records.is_none() {
+        return;
+    }
+    let segments = (cx.rechecks.last()).map_or_else(Vec::new, |f| f.segments.clone());
+    let end = Lens::now(cx);
+    let record = BodyRecord {
+        start: mark.lens,
+        end,
+        segments,
+        closures: mark.closures.clone(),
+        inferred,
+    };
+    if let Some(records) = cx.body_records.as_mut() {
+        records.insert(def, record);
+    }
+}
+
+/// Drops `v`'s elements in `[start, end)` outside `keep` (index ranges) and returns them; later
+/// elements move down.
+fn drop_between<T>(v: &mut Vec<T>, start: usize, end: usize, keep: &[(usize, usize)]) -> Vec<T> {
+    let end = end.min(v.len());
+    if start >= end {
+        return vec![];
+    }
+    let tail = v.split_off(end);
+    let mid = v.split_off(start);
+    let mut dropped = vec![];
+    for (i, x) in mid.into_iter().enumerate() {
+        match keep.iter().any(|&(s, e)| (s..e).contains(&(start + i))) {
+            true => v.push(x),
+            false => dropped.push(x),
+        }
+    }
+    v.extend(tail);
+    dropped
+}
+
+/// Undoes what `def`'s own check added, by its record, so that `ensure_body` checks it again
+/// as if for the first time: what the bodies it checked meanwhile added stays, its closures are
+/// created again under their names (`reuse_closure`), and it is unchecked. `false` (nothing
+/// changed) when the body was not recorded. Meant for a clone the caller throws away after:
+/// the records of other bodies no longer match the lists.
+pub(crate) fn forget(cx: &mut Ctx, def: DefId) -> bool {
+    let Some(r) = cx.body_records.as_ref().and_then(|m| m.get(&def)).cloned() else {
+        return false;
+    };
+    let (s, e) = (r.start, r.end);
+    let keep = |f: fn(&Lens) -> usize| -> Vec<(usize, usize)> {
+        r.segments.iter().map(|(a, b)| (f(a), f(b))).collect()
+    };
+    drop_between(&mut cx.diags, s.diags, e.diags, &keep(|l| l.diags));
+    drop_between(
+        &mut cx.throw_checks,
+        s.throw_checks,
+        e.throw_checks,
+        &keep(|l| l.throw_checks),
+    );
+    drop_between(
+        &mut cx.fresh_checks,
+        s.fresh_checks,
+        e.fresh_checks,
+        &keep(|l| l.fresh_checks),
+    );
+    let c = &mut cx.object_copies;
+    let k = |i: usize| -> Vec<(usize, usize)> {
+        r.segments
+            .iter()
+            .map(|(a, b)| (a.object_copies[i], b.object_copies[i]))
+            .collect()
+    };
+    let (so, eo) = (s.object_copies, e.object_copies);
+    drop_between(&mut c.copies, so[0], eo[0], &k(0));
+    drop_between(&mut c.writes, so[1], eo[1], &k(1));
+    drop_between(&mut c.seen, so[2], eo[2], &k(2));
+    drop_between(&mut c.in_optional, so[3], eo[3], &k(3));
+    drop_between(&mut c.null_literals, so[4], eo[4], &k(4));
+    drop_between(&mut c.record_writes, so[5], eo[5], &k(5));
+    drop_between(&mut c.view_casts, so[6], eo[6], &k(6));
+    drop_between(&mut c.frozen, so[7], eo[7], &k(7));
+    drop_between(
+        &mut cx.fn_values,
+        s.fn_values,
+        e.fn_values,
+        &keep(|l| l.fn_values),
+    );
+    let own_fns = drop_between(&mut cx.fn_defs, s.fn_defs, e.fn_defs, &keep(|l| l.fn_defs));
+    let own_fns = keep_impl_fns(cx, own_fns);
+    let mut own_closures = drop_between(
+        &mut cx.closure_defs,
+        s.closures,
+        e.closures,
+        &keep(|l| l.closures),
+    );
+    let kept: Vec<DefId> = (own_closures.iter().copied())
+        .filter(|c| cx.object_impls.keeps(*c))
+        .collect();
+    own_closures.retain(|c| !kept.contains(c));
+    cx.closure_defs.extend(kept.iter().copied());
+    for c in &own_closures {
+        cx.callback_wrappers.remove(c);
+    }
+    drop_between(
+        &mut cx.rec.reported,
+        s.reported,
+        e.reported,
+        &keep(|l| l.reported),
+    );
+    drop_between(
+        &mut cx.rec.completed,
+        s.completed,
+        e.completed,
+        &keep(|l| l.completed),
+    );
+    cx.rec.completed.retain(|(d, _)| *d != def);
+    let consts = drop_between(&mut cx.kept_consts, s.kept, e.kept, &keep(|l| l.kept));
+    crate::kept_consts::unkeep(cx, consts);
+    let values = &mut cx.objects.class_values;
+    let values = drop_between(
+        values,
+        s.class_values,
+        e.class_values,
+        &keep(|l| l.class_values),
+    );
+    cx.drop_class_values(values);
+    for d in own_fns.iter().filter(|d| !own_closures.contains(d)) {
+        drop_orphan(cx, *d);
+    }
+    // The closures are created again, in order, under the names they had.
+    renumber(cx, &own_closures, &kept);
+    if let Some((name, count)) = &r.closures {
+        match count {
+            Some(n) => cx.closure_counts.insert(name.clone(), *n),
+            None => cx.closure_counts.remove(name),
+        };
+    }
+    cx.defs[def.0 as usize] = None;
+    let f = cx.fn_info_mut(def);
+    f.state = BodyState::Unchecked;
+    if r.inferred {
+        f.ret_source = RetSource::Body;
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

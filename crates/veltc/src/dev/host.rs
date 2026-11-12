@@ -79,6 +79,7 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
                 let kept = kept.take();
                 if let (true, Some(k)) = (args.build.verbose, &kept) {
                     eprintln!("velt dev: {}", super::swap::kept_report(k));
+                    eprintln!("velt dev: {}", super::swap::warm_report(k));
                 }
                 let interfaces = sess.interfaces.take();
                 let state = super::swap::Carried {

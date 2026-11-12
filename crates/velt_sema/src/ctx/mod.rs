@@ -456,6 +456,9 @@ pub(crate) struct Ctx<'m> {
     /// Per body being checked (innermost last): what the bodies it checked meanwhile added,
     /// and closures to create again (`body::recheck`).
     pub rechecks: Vec<crate::body::recheck::Frame>,
+    /// Each body's check, recorded for a kept check to check it again (`recheck::record`); `None`
+    /// unless the check keeps itself (crate `kept`).
+    pub body_records: Option<FxHashMap<DefId, crate::body::recheck::BodyRecord>>,
     /// Closures created by body checks, in order (`body::recheck`).
     pub closure_defs: Vec<DefId>,
     /// The modules of the JS API (`body::expr::numbers::is_js_api`): each prelude module
@@ -688,6 +691,7 @@ impl<'m> Ctx<'m> {
             deferred_ts_returns: vec![],
             diags: vec![],
             rechecks: vec![],
+            body_records: None,
             closure_defs: vec![],
             js_api_modules: std::cell::OnceCell::new(),
             native_libraries: std::cell::OnceCell::new(),
