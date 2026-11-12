@@ -1,0 +1,47 @@
+// A generic function passed as a generic function parameter (`mk: Mk`) is called through the
+// value's wrapper, which names no type arguments: the closure it makes still crosses with what
+// it is called with, here a `Job` sent on a channel to another task.
+import { channel } from "velt/sync";
+
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+  yield "b";
+}
+
+class Job {
+  constructor(public run: () => Promise<void>) {}
+}
+
+const ch = channel<unknown>(1);
+
+type Mk = <T>(settle: (x: unknown) => void) => (x: T) => void;
+
+function relay<T>(settle: (x: unknown) => void): (x: T) => void {
+  return (x: T) => {
+    settle(x);
+  };
+}
+
+function use(mk: Mk, j: Job): void {
+  const f = mk<Job>((x: unknown) => {
+    void ch.send(x);
+  });
+  f(j);
+}
+
+const chunks = gen();
+const t = spawn(
+  (async () => {
+    for await (const j of ch) {
+      await (j as Job).run();
+      break;
+    }
+  })(),
+);
+use(
+  relay,
+  new Job(async () => {
+    console.log((await chunks.next()).value);
+  }),
+);
+await t;

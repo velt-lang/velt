@@ -1,0 +1,2 @@
+async_closure_sent_through_generic_alias.velt:34:7: error: this async closure modifies captured `n`, so it must stay on the task that created it
+async_closure_sent_through_generic_alias.velt:30:10: but it is stored in a `Job`, which is sent on a channel here

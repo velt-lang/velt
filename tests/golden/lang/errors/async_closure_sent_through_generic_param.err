@@ -1,0 +1,2 @@
+async_closure_sent_through_generic_param.velt:44:24: error: an async closure that may run on another thread cannot capture the generator `chunks`
+async_closure_sent_through_generic_param.velt:27:10: but it is stored in a `Job`, which is sent on a channel here
