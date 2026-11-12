@@ -569,7 +569,11 @@ fn finish(
     opts: crate::CheckOptions,
     from: usize,
 ) -> Result<(Box<crate::hir::Program>, velt_common::Diagnostics), String> {
-    match crate::kept_reload::reanalyze(cx, opts, from) {
+    // `VELT_SEMA_TIMINGS`: the passes of the reload too.
+    crate::timings::start();
+    let r = crate::kept_reload::reanalyze(cx, opts, from);
+    crate::timings::finish();
+    match r {
         Ok((program, diags)) => Ok((Box::new(program), diags)),
         Err(why) => Err(format!("the cold check: {why}")),
     }

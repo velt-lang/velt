@@ -465,6 +465,9 @@ pub(crate) struct Ctx<'m> {
     /// A std module was demanded that the check could not load (it loads none: a kept check's
     /// clone, `kept`).
     pub std_missed: bool,
+    /// A kept check's generated-code demand when it was kept (`crate::kept::stash`), which a
+    /// reload's must equal.
+    pub kept_demand: Option<Vec<(DefId, Vec<crate::hir::TyId>)>>,
     /// Closures created by body checks, in order (`body::recheck`).
     pub closure_defs: Vec<DefId>,
     /// Arrows and calls whose value is of widening literal types (1: `id(a)` of `const a = c ?
@@ -706,6 +709,7 @@ impl<'m> Ctx<'m> {
             body_records: None,
             source_facts: None,
             std_missed: false,
+            kept_demand: None,
             closure_defs: vec![],
             widening_values: Default::default(),
             js_api_modules: std::cell::OnceCell::new(),
