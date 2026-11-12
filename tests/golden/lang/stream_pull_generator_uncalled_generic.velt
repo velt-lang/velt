@@ -1,0 +1,49 @@
+// check: no leaks
+// A stream's async `pull` shares the generator it captured. A generic function that
+// nothing calls or holds as a value makes no closures: its accessors' parameter `T`,
+// which may settle a promise, stands for no type, not for the argument std passes to a
+// stream source's `start` or `pull`.
+function writable<T>(read: () => T, setter: (v: T) => void) {
+  const o = {
+    get value(): T {
+      return read();
+    },
+  };
+  Object.defineProperty(o, "value", {
+    get(): T {
+      return read();
+    },
+    set(v: T) {
+      setter(v);
+    },
+  });
+  return o;
+}
+
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+  yield "b";
+}
+
+function toStream(chunks: AsyncGenerator<string>): ReadableStream<string> {
+  return new ReadableStream<string>({
+    async pull(controller) {
+      const { value, done } = await chunks.next();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel() {
+      void chunks.return(undefined);
+    },
+  });
+}
+
+const { promise, resolve } = Promise.withResolvers<number>();
+resolve(1);
+console.log(await promise);
+const reader = toStream(gen()).getReader();
+while (true) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  console.log(value);
+}

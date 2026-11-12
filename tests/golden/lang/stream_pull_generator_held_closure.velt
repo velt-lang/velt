@@ -1,0 +1,45 @@
+// check: no leaks
+// A stream's async `pull` shares the generator it captured. A closure that only a
+// local holds is called only through that local: that its generic parameter may
+// settle a promise does not make std's argument to a stream source's `start` cross.
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+  yield "b";
+}
+
+function toStream(chunks: AsyncGenerator<string>): ReadableStream<string> {
+  return new ReadableStream<string>({
+    async pull(controller) {
+      const { value, done } = await chunks.next();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel() {
+      void chunks.return(undefined);
+    },
+  });
+}
+
+interface Sender<T> {
+  send(v: T, settle: (x: T) => void): void;
+}
+
+class Relay<T> implements Sender<T> {
+  send(v: T, settle: (x: T) => void): void {
+    const forward = (x: T) => {
+      settle(x);
+    };
+    forward(v);
+  }
+}
+
+const { promise, resolve } = Promise.withResolvers<unknown>();
+const sender: Sender<number> = new Relay<number>();
+sender.send(1, (n) => resolve(n));
+console.log(await promise);
+const reader = toStream(gen()).getReader();
+while (true) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  console.log(value);
+}

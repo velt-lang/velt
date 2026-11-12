@@ -1,0 +1,26 @@
+// A closure that may settle a promise, returned by a closure: its callers are not followed, so
+// what it is called with crosses.
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+}
+
+class Job {
+  constructor(public run: () => Promise<void>) {}
+}
+
+function relays<T>(settle: (x: unknown) => void): () => (x: T) => void {
+  return () => (x: T) => {
+    settle(x);
+  };
+}
+
+const chunks = gen();
+const { promise, resolve } = Promise.withResolvers<unknown>();
+const make = relays<Job>(resolve);
+const f = make();
+f(
+  new Job(async () => {
+    console.log((await chunks.next()).value);
+  }),
+);
+await ((await promise) as Job).run();

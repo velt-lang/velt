@@ -18,7 +18,13 @@
 //!   method, which may keep it), is non-local when a value crossing a boundary has a type
 //!   reaching a function type of the same shape;
 //! - an argument of a call through a function value that may be a closure whose parameter
-//!   crosses (`resolve(x)`), matched by type in each instantiation of the closure's function.
+//!   crosses (`resolve(x)`), matched by type in each instantiation of the closure's function,
+//!   except a closure held only in locals, which is the callee only of the calls its value
+//!   reaches ([`call_sites`]). A generic function declared in the program that nothing calls
+//!   or uses as a value has no instantiation, so its closures cross nothing; a generic closure
+//!   (`<T>(x: T) => …`, and the wrapper made for a generic function used as a generic value,
+//!   `const mk = relay`) is called through dispatch, which names no type arguments, so its
+//!   closures match by the generic type.
 //!
 //! An unknown callee is not a boundary itself (#2726): its call runs on this task. A callback it
 //! keeps and later runs on another thread gets there through a boundary (a spawn, a channel, a
@@ -52,12 +58,14 @@ mod types;
 mod unknown_callees;
 mod values;
 mod views;
+mod why;
 
 use rustc_hash::FxHashMap;
 
 use velt_common::Diagnostic;
 
 use crate::ctx::Ctx;
+use crate::defs::FnKind;
 use crate::hir::{Def, DefId, TyId, TyKind};
 
 use graph::{Boundary, Graph, Node, Why, CROSSES, STORED};
@@ -372,9 +380,19 @@ fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
         }
         let sites = g.insts.get(&f).cloned().unwrap_or_default();
         // A generic library function that the program never calls directly
-        // makes no such closure (its methods are called with their type arguments too).
+        // makes no such closure (its methods are called with their type arguments too). Nor
+        // does a generic function declared in the program that nothing calls directly or holds
+        // as a value (`computed`'s implementation where only its overloads are called, and they
+        // are not). Never a method or a closure: a method may be called through dispatch, and a
+        // generic closure through its generic function type (the wrapper behind `relay#value`
+        // where `const mk = relay; mk<Job>(…)`), which name no type arguments here.
         let library = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_library);
-        if sites.is_empty() && library {
+        // Only where `f` has type parameters of its own: a closure literal placed at several
+        // sites (a struct field's default) may have its type from a generic one and `f` from
+        // another, which names no type parameters.
+        let free = matches!(&cx.defs[f.0 as usize], Some(Def::Fn(fd)) if fd.self_ty.is_none() && fd.generics > 0)
+            && cx.try_fn(f).is_some_and(|i| i.kind == FnKind::Free);
+        if sites.is_empty() && (library || (free && !g.held.referenced.contains(&f))) {
             continue;
         }
         if sites.is_empty() || depth > 4 || out.len() + work.len() > 64 {

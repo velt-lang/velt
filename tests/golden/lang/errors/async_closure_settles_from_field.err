@@ -1,0 +1,2 @@
+async_closure_settles_from_field.velt:28:24: error: an async closure that may run on another thread cannot capture the generator `chunks`
+async_closure_settles_from_field.velt:25:16: but it is stored in a `Job`, which settles a promise here, which another task may await
