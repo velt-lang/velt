@@ -105,9 +105,11 @@ pub fn wait_for_the_end() {
     super::quiet::wait(&QUIET, &NEVER);
 }
 
-/// Whether a task may still run (for the leak counters, which wait for tasks that free blocks).
+/// Whether a task may still run (for the leak counters, which wait for tasks that free blocks),
+/// or a Rust waker is giving back its reference to a task of the executor in Velt, which may be
+/// the last (a reactor thread's late wake of a task that is done).
 pub(crate) fn tasks_may_run() -> bool {
-    alive_tasks() > 0 && !super::quiet::is_quiet(&QUIET)
+    (alive_tasks() > 0 && !super::quiet::is_quiet(&QUIET)) || super::waker::giving_back()
 }
 
 fn keep_alive_count() -> usize {

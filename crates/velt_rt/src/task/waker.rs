@@ -259,10 +259,53 @@ static FORWARD: RawWakerVTable = RawWakerVTable::new(
         let h = (table(p).clone)(p as *const VeltWakerHeader);
         RawWaker::new(h as *const (), &FORWARD)
     },
-    |p| unsafe { (table(p).wake)(p as *const VeltWakerHeader) },
+    |p| unsafe {
+        let _call = GivingBack::new();
+        (table(p).wake)(p as *const VeltWakerHeader)
+    },
     |p| unsafe { (table(p).wake_by_ref)(p as *const VeltWakerHeader) },
-    |p| unsafe { (table(p).drop)(p as *const VeltWakerHeader) },
+    |p| unsafe {
+        let _call = GivingBack::new();
+        (table(p).drop)(p as *const VeltWakerHeader)
+    },
 );
+
+/// Rust wakers over a C header giving their reference back now (a debug runtime counts them).
+#[cfg(debug_assertions)]
+static GIVING_BACK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Counts a C `wake` or `drop` called through [`FORWARD`] while it runs (a debug runtime only):
+/// the reference it gives back may be the last one to a task of an executor in Velt, whose block
+/// is freed then, on whatever thread woke it (a reactor's, after `main` returned).
+struct GivingBack;
+
+impl GivingBack {
+    #[inline(always)]
+    fn new() -> GivingBack {
+        #[cfg(debug_assertions)]
+        GIVING_BACK.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        GivingBack
+    }
+}
+
+impl Drop for GivingBack {
+    #[inline(always)]
+    fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        GIVING_BACK.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Whether a Rust waker over a C header is giving its reference back now (always false in a
+/// release runtime); the leak counters wait for it at exit.
+// velt_rt_wasm compiles this file too and has no wait at exit.
+#[allow(dead_code)]
+pub(crate) fn giving_back() -> bool {
+    #[cfg(debug_assertions)]
+    return GIVING_BACK.load(std::sync::atomic::Ordering::SeqCst) != 0;
+    #[cfg(not(debug_assertions))]
+    false
+}
 
 #[cfg(test)]
 #[path = "waker_tests.rs"]

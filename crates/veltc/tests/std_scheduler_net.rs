@@ -675,3 +675,172 @@ async function main() {
         );
     }
 }
+
+/// `src` built with `VELT_SCHEDULER=std` and run `times` times with each of `threads` workers,
+/// the block counters on: each run prints `want` and frees every block it allocated. For the ends
+/// of programs that race another thread: a task finishing on another worker, a reactor's late
+/// wake.
+fn std_runs_balanced(name: &str, src: &str, want: &str, threads: &[&str], times: usize) {
+    if !cfg!(unix) {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    // The goldens' test certificate and key (`TEST_CA`, `TEST_CERT`, `TEST_KEY`).
+    std::fs::write(
+        dir.path().join("_tls.velt"),
+        include_str!("../../../tests/golden/std/_tls.velt"),
+    )
+    .unwrap();
+    let file = dir.path().join(format!("{name}.velt"));
+    std::fs::write(&file, src).unwrap();
+    let exe = dir.path().join(name);
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(dir.path())
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success(),
+        "{name}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    for threads in threads {
+        let mut unbalanced = Vec::new();
+        for i in 0..times {
+            let o = command(&exe)
+                .env("VELT_THREADS", threads)
+                .env("VELT_RC_STATS", "1")
+                .env_remove("VELT_SCHEDULER")
+                .output()
+                .unwrap();
+            let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+            assert_eq!(
+                (o.status.code(), out.as_str()),
+                (Some(0), want),
+                "{name} ({threads} workers, run {i}): {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            if let Some((a, f)) =
+                blocks(&String::from_utf8_lossy(&o.stderr)).filter(|(a, f)| a != f)
+            {
+                unbalanced.push(format!("run {i}: {a}/{f}"));
+            }
+        }
+        assert!(
+            unbalanced.is_empty(),
+            "{name} ({threads} workers): blocks allocated / freed unbalanced in {} of {times} runs: {}",
+            unbalanced.len(),
+            unbalanced.join(", ")
+        );
+    }
+}
+
+/// The `blocks=allocated/freed` of the `rc stats:` line in `stderr`.
+fn blocks(stderr: &str) -> Option<(u64, u64)> {
+    let stats = stderr.lines().find(|l| l.starts_with("rc stats:"))?;
+    let b = stats
+        .split_whitespace()
+        .find_map(|w| w.strip_prefix("blocks="))?;
+    let (a, f) = b.split_once('/')?;
+    Some((a.parse().ok()?, f.parse().ok()?))
+}
+
+/// A runtime write still in flight when its stream is closed goes on, and the program frees
+/// every block once it ends: the task that wrote, finishing on another worker as `main` ends,
+/// gives its block back before worker 0 can see no task live (sched_run.velt `finish`).
+#[test]
+fn a_write_in_flight_across_close_frees_every_block() {
+    std_runs_balanced(
+        "close_inflight",
+        "import { streamPair } from \"velt/net\";
+
+async function main() {
+  const [x, y] = streamPair();
+  spawn((async () => {
+    const big: u8[] = Buffer.alloc(8 * 1024 * 1024);
+    try {
+      await x.writeBytes(big);
+    } catch (e) {
+      // Closed before the write began.
+    }
+  })());
+  await yieldNow();
+  x.close();
+  let n = 0;
+  while (true) {
+    const got = await y.read();
+    if (got.length == 0) {
+      break;
+    }
+    n += got.length;
+  }
+  console.log(\"peer got all or nothing:\", n == 0 || n == 8 * 1024 * 1024);
+  y.close();
+}
+",
+        "peer got all or nothing: true\n",
+        &["4"],
+        30,
+    );
+}
+
+/// TLS streams closed at the end of `main` free every block: a reactor thread of the runtime
+/// that wakes a finished task late (its socket's readiness after the close) gives back the
+/// waker's reference to it before the counts are taken (task/waker.rs `giving_back`). Linux
+/// showed the leak in more than half the runs.
+#[test]
+fn tls_streams_closed_at_the_end_free_every_block() {
+    std_runs_balanced(
+        "tls_end",
+        "import { connectTls, listenTls } from \"velt/net\";
+import { TEST_CA, TEST_CERT, TEST_KEY } from \"./_tls\";
+
+async function main() {
+  const server = await listenTls(\"127.0.0.1:0\", { cert: TEST_CERT, key: TEST_KEY });
+  const serving = spawn((async () => {
+    const conn = await server.accept();
+    let total = 0;
+    while (true) {
+      const chunk = await conn.read();
+      if (chunk.length == 0) {
+        break;
+      }
+      total += chunk.length;
+      await conn.writeBytes(chunk);
+    }
+    await conn.write(`|${total}`);
+    conn.shutdown();
+    conn.close();
+  })());
+  const c = await connectTls(`localhost:${server.port}`, { ca: TEST_CA });
+  await c.write(\"hello\");
+  let got = \"\";
+  while (got.length < 5) {
+    got += await c.readString();
+  }
+  console.log(got);
+  c.shutdown();
+  let rest = \"\";
+  while (true) {
+    const t = await c.readString();
+    if (t == \"\") {
+      break;
+    }
+    rest += t;
+  }
+  console.log(rest);
+  c.close();
+  await serving;
+  server.close();
+}
+",
+        "hello\n|5\n",
+        &["1", "4"],
+        20,
+    );
+}

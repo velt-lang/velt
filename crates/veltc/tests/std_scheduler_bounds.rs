@@ -164,7 +164,7 @@ fn a_latch_with_many_waiters_frees_its_waker_buffer_by_size() {
 /// window each covers: each ends the program early where it must ("Some(0) ", nothing printed).
 #[test]
 fn a_wake_delivered_while_worker_0_scans_keeps_the_program_alive() {
-    if !cfg!(any(target_os = "macos", target_os = "linux", windows)) {
+    if !has_threads() {
         return;
     }
     let dir = test_dir::TestDir::new();
@@ -487,6 +487,69 @@ async function main() {
   const tr = spawn(trigger(), { worker: 3 });
   console.log(await spawn(sleeper(), { worker: 1 }));
   await tr;
+}
+"#;
+
+/// A task that ends last on another worker gives the executor's reference to its block back
+/// before it counts itself no longer live (sched_run.velt `finish`): once that count says no task
+/// is live, worker 0 may end the program, and a block freed after that counts as leaked
+/// (`VELT_RC_STATS`; #2825's `close_now` golden, 8 blocks allocated and 7 freed). A copy of std
+/// pauses 300 ms after the count on another worker; a second copy gives the reference back after
+/// that pause and must show the leak.
+#[test]
+fn a_task_ending_last_on_another_worker_frees_its_block_first() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let counted = "    wk.release(k);\n    if (mk.liveDown(g, e) === 1 && e !== g) {\n      // The last live task: worker 0 may wait for that in `schedFinish`.\n      wk.unpark(g);\n    }\n";
+    let pause = "    if (e !== g) {\n      pause(300);\n    }\n";
+    for released_first in [true, false] {
+        let std_dir = dir.path().join(format!("std_{released_first}"));
+        copy_dir(&manifest().join("../../std"), &std_dir);
+        let mut run = read_std(&std_dir, "lang/hooks/sched_run.velt");
+        run.push_str(&PAUSE.replace("now()", "(performance.now() * 1000000.0) as u64"));
+        let to = if released_first {
+            format!("{counted}{pause}")
+        } else {
+            format!(
+                "{}{pause}    wk.release(k);\n",
+                counted.replacen("    wk.release(k);\n", "", 1)
+            )
+        };
+        patch(&mut run, counted, &to);
+        std::fs::write(std_dir.join("lang/hooks/sched_run.velt"), run).unwrap();
+        let runs = std_runs_with(
+            &format!("last_task_{released_first}"),
+            LAST_TASK,
+            Some(&std_dir),
+            &[("4", "0")],
+            &[("VELT_RC_STATS", "1"), ("VELT_RESCUE", "0")],
+        );
+        let stats = runs[0]
+            .lines()
+            .find_map(|l| l.strip_prefix("rc stats:"))
+            .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
+            .and_then(|b| b.split_once('/'))
+            .map(|(a, f)| (a.to_string(), f.to_string()));
+        assert!(runs[0].starts_with("Some(0) done\n"), "{}", runs[0]);
+        let (a, f) = stats.unwrap_or_else(|| panic!("no block counts: {}", runs[0]));
+        assert_eq!(
+            a == f,
+            released_first,
+            "blocks {a}/{f}, the reference given back first: {released_first}"
+        );
+    }
+}
+
+/// `main` returns while a task pinned to worker 1 runs: worker 0 waits for it, the last live task.
+const LAST_TASK: &str = r#"async function work(): Promise<void> {
+  await yieldNow();
+  console.log("done");
+}
+
+async function main() {
+  spawn(work(), { worker: 1 });
 }
 "#;
 

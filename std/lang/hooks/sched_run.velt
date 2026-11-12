@@ -332,10 +332,14 @@ function finish(e: usize, k: usize): void {
       // end the process (stdout is buffered per thread), as for the root of `main` (`rootDone`).
       wk.handOffOutput();
     }
+    // The executor's reference first: once the count below says no task is live, worker 0 may
+    // end the program, and a block freed after that counts as leaked (`VELT_RC_STATS`).
+    wk.release(k);
     if (mk.liveDown(g, e) === 1 && e !== g) {
       // The last live task: worker 0 may wait for that in `schedFinish`.
       wk.unpark(g);
     }
+    return;
   }
   wk.release(k);
 }
