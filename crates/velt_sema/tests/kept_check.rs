@@ -252,7 +252,9 @@ fn assert_warm_reload_matches_spans(edited: &str, functions: &[&str], spans: boo
     let (_, kept) = program_and_kept(BODIES);
     let (cold, _) = program_and_kept(edited);
     let l = load_src(edited);
-    let names: Vec<String> = functions.iter().map(|s| s.to_string()).collect();
+    let names: Vec<(String, String)> = (functions.iter())
+        .map(|s| ("main".to_string(), s.to_string()))
+        .collect();
     let warm = kept
         .reload(&l.modules, l.root, &names, CheckOptions::default())
         .unwrap_or_else(|e| panic!("{e}"));
@@ -350,6 +352,43 @@ fn a_reload_of_an_edit_adding_a_closure_gives_the_edited_program() {
 fn a_reload_of_a_longer_edit_gives_the_edited_program_but_its_positions() {
     let edited = BODIES.replace("bad ${text}", "not a number: ${text}");
     assert_warm_reload_matches_spans(&edited, &["parse"], false);
+}
+
+#[test]
+fn a_reload_of_an_edited_method_and_constructor_gives_the_edited_program() {
+    let edited =
+        (BODIES.replace("this.n += by;", "this.n -= by;")).replace("this.n = 0;", "this.n = 5;");
+    assert_warm_reload_matches(&edited, &["Counter.constructor", "Counter.bump"]);
+}
+
+#[test]
+fn a_reload_of_an_edit_changing_an_inferred_result_falls_back_or_matches() {
+    // `total`'s result is inferred: returning a string changes its interface, which callers'
+    // checks read. The reload must not give a program the cold check would not.
+    let edited = BODIES.replace("return sum + m.size;", "return `${sum}`;");
+    let (_, kept) = program_and_kept(BODIES);
+    let l = load_src(&edited);
+    let names = vec![("main".to_string(), "total".to_string())];
+    if let Ok(warm) = kept.reload(&l.modules, l.root, &names, CheckOptions::default()) {
+        let (cold, _) = program_and_kept(&edited);
+        assert_eq!(canonical(cold), canonical(warm));
+    }
+}
+
+#[test]
+fn a_reload_of_an_unknown_function_is_refused() {
+    let (_, kept) = program_and_kept(BODIES);
+    let l = load_src(BODIES);
+    for (m, f) in [
+        ("main", "nothing"),
+        ("nowhere", "parse"),
+        ("main", "Counter.gone"),
+    ] {
+        let names = vec![(m.to_string(), f.to_string())];
+        assert!(kept
+            .reload(&l.modules, l.root, &names, CheckOptions::default())
+            .is_err());
+    }
 }
 
 /// What each definition and type id of `p` stands for: a definition by its name, a type by its

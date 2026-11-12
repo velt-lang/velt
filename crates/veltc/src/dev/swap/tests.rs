@@ -240,6 +240,8 @@ fn a_version_that_failed_after_lowering_is_not_the_baseline() {
         own: None,
         interfaces: None,
         kept: None,
+        kept_own: None,
+        kept_files: None,
     };
     let failed = host_reload(
         &mut session,
@@ -335,4 +337,109 @@ fn a_dev_build_keeps_its_check_when_asked() {
     let mut sess = Session::new();
     driver::compile(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
     assert!(sess.kept.is_none());
+}
+
+/// A version built cold and kept, then a reload of `edited` from its kept check: the program,
+/// or why the cold front end was needed. `files` are the program's (relative path, text), the
+/// root `main.velt` first; `edited` replaces some of them.
+fn warm_reload(
+    files: &[(&str, &str)],
+    edited: &[(&str, &str)],
+) -> (Result<String, String>, String) {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let write = |files: &[(&str, &str)]| {
+        for (path, text) in files {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("a directory");
+            std::fs::write(path, text).expect("written");
+        }
+    };
+    write(files);
+    let opts = BuildOptions {
+        input: dir.path().join("main.velt"),
+        ..BuildOptions::default()
+    };
+    let mut sess = Session::new();
+    sess.keep_check = true;
+    sess.counted_seed = Some(velt_vir::CountedSeed::default());
+    driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+    let base = super::super::edits::Snapshot::of_build(&sess, &opts.input);
+    let cold_files = driver::copy_files(&sess.sm);
+    let mut warm = Session::new();
+    warm.kept = sess.kept.take();
+    warm.counted_seed = sess.counted_seed.take();
+    write(edited);
+    let input = opts.input.clone();
+    let located = move |s: &Session| {
+        super::super::edits::located(&base, &super::super::edits::Snapshot::of_build(s, &input))
+    };
+    let out = driver::compile_for_jit_warm(&mut warm, &opts, &cold_files, located);
+    assert!(
+        warm.kept.is_some(),
+        "the kept check stays for the next reload"
+    );
+    let mut cold = Session::new();
+    cold.counted_seed = Some(velt_vir::CountedSeed::default());
+    let cold = driver::compile_for_jit(&mut cold, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+    let warm = match out.unwrap_or_else(|e| panic!("{e:?}")) {
+        Some(p) => Ok(p.to_string()),
+        None => Err(warm.warm_refused.take().unwrap_or_default()),
+    };
+    (warm, cold.to_string())
+}
+
+const WARM_MAIN: &str = "import { label } from \"./util\";
+class Tally {
+  n: number = 0;
+  add(k: number): number { this.n += k; return this.n; }
+}
+function score(xs: number[]): number {
+  let s = 0;
+  xs.forEach((x) => { s += x * 2; });
+  return s;
+}
+function main() {
+  const t = new Tally();
+  t.add(score([1, 2, 3]));
+  console.log(label(t.n));
+}
+";
+const WARM_UTIL: &str = "export function label(n: number): string { return `n=${n}`; }\n";
+
+/// A save that edits function bodies alone is checked from the kept check: its program is the
+/// cold front end's (dev-warm-front-end.md step 3).
+#[test]
+fn a_body_edit_reloads_warm_to_the_cold_program() {
+    let files = [("main.velt", WARM_MAIN), ("util.velt", WARM_UTIL)];
+    for edited in [
+        vec![("main.velt", WARM_MAIN.replace("x * 2", "x * 3"))],
+        vec![("main.velt", WARM_MAIN.replace("this.n += k", "this.n -= k"))],
+        vec![("util.velt", WARM_UTIL.replace("n=", "N="))],
+        vec![
+            ("main.velt", WARM_MAIN.replace("x * 2", "x + 2")),
+            ("util.velt", WARM_UTIL.replace("n=", "#=")),
+        ],
+    ] {
+        let edited: Vec<(&str, &str)> = edited.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        let (warm, cold) = warm_reload(&files, &edited);
+        assert_eq!(warm.expect("a warm reload"), cold, "{edited:?}");
+    }
+}
+
+/// Anything but a body edit, or a body edit that changes what callers see, needs the cold front
+/// end.
+#[test]
+fn other_edits_reload_cold() {
+    let files = [("main.velt", WARM_MAIN), ("util.velt", WARM_UTIL)];
+    let refused = |edited: &[(&str, &str)]| match warm_reload(&files, edited).0 {
+        Ok(_) => panic!("a warm reload of {edited:?}"),
+        Err(why) => why,
+    };
+    let sig = WARM_MAIN.replace("score(xs: number[])", "score(xs: Array<number>)");
+    assert!(refused(&[("main.velt", &sig)]).contains("`score` changed"));
+    let added = format!("{WARM_MAIN}function extra() {{}}\n");
+    assert!(refused(&[("main.velt", &added)]).contains("outside the functions"));
+    let util = "export function label(n: number) { return n; }\n";
+    let why = refused(&[("util.velt", util)]);
+    assert!(why.contains("label"), "{why}");
 }

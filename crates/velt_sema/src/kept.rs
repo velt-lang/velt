@@ -304,6 +304,16 @@ impl KeptCheck {
         self.cx().modules.iter().map(|m| m.path.as_str()).collect()
     }
 
+    /// The source file of each module, and whether it is std's, in the order of
+    /// [`module_paths`](Self::module_paths).
+    pub fn module_files(&self) -> Vec<(velt_common::FileId, bool)> {
+        self.cx()
+            .modules
+            .iter()
+            .map(|m| (m.file, m.is_std))
+            .collect()
+    }
+
     /// Does the context borrow the source rewrites' copy of the modules (which the kept check
     /// owns), rather than the driver's modules themselves?
     pub fn owns_rewritten_modules(&self) -> bool {
@@ -396,7 +406,7 @@ impl KeptCheck {
         &self,
         modules: &[SourceModule],
         root: usize,
-        edited: &[String],
+        edited: &[(String, String)],
         opts: crate::CheckOptions,
     ) -> Result<Box<crate::hir::Program>, String> {
         struct Shared<'a>(&'a Ctx<'static>, &'a [SourceModule]);
@@ -415,8 +425,19 @@ impl KeptCheck {
             let (kept, modules) = shared.get();
             let mut cx: Ctx<'static> = kept.clone();
             let mut probed = vec![];
-            for name in edited {
-                let def = find_fn(&cx, name)?;
+            // Every edited function is found in the old modules before any is swapped.
+            let defs = (edited.iter())
+                .map(|(module, name)| {
+                    let def = find_decl(&cx, module, name)?;
+                    let Some(crate::defs::FnSource::Decl(old)) = cx.fn_info(def).source else {
+                        return Err(format!("`{name}` is not a declared function"));
+                    };
+                    let m = cx.fn_info(def).module;
+                    let at = decl_path(&cx.modules[m].ast, old).ok_or("not found in its module")?;
+                    Ok((def, name, at))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            for (def, name, path) in defs {
                 let m = cx.fn_info(def).module;
                 let new = (modules.get(m))
                     .filter(|n| n.path == cx.modules[m].path)
@@ -427,10 +448,6 @@ impl KeptCheck {
                     }
                     probed.push(m);
                 }
-                let Some(crate::defs::FnSource::Decl(old)) = cx.fn_info(def).source else {
-                    return Err(format!("`{name}` is not a declared function"));
-                };
-                let path = decl_path(&cx.modules[m].ast, old).ok_or("not found in its module")?;
                 let decl = decl_at(&new.ast, path).ok_or("not found in the edited module")?;
                 // The module is the edited one from here on: what a body's check reads of its
                 // module (the names its function literals take, `ast::Module::fn_names`) is the
@@ -444,8 +461,14 @@ impl KeptCheck {
                 if !crate::body::recheck::forget(&mut cx, def) {
                     return Err(format!("`{name}` was not recorded"));
                 }
+                // What callers' checks read of the function: an inferred result (or what it
+                // throws) the edit changes needs the cold check.
+                let before = signature(&cx, def);
                 cx.fn_info_mut(def).source = Some(crate::defs::FnSource::Decl(decl));
                 crate::body::ensure_body(&mut cx, def);
+                if signature(&cx, def) != before {
+                    return Err(format!("the edit changes what `{name}` returns or throws"));
+                }
             }
             match crate::reanalyze(cx, opts) {
                 Ok((program, _)) => Ok(Box::new(program)),
@@ -480,6 +503,39 @@ fn find_fn(cx: &Ctx, name: &str) -> Result<crate::hir::DefId, String> {
                 && cx.fn_info(d).name == name
         })
         .ok_or_else(|| format!("no function `{name}`"))
+}
+
+/// The function declared as `name` in the module at `module` (its canonical path): a top-level
+/// function (`greet`), a constructor (`User.constructor`) or a method of a class or struct
+/// (`User.greet`), as the dev loop's change detection names them.
+fn find_decl(cx: &Ctx, module: &str, name: &str) -> Result<crate::hir::DefId, String> {
+    use velt_syntax::ast::ItemKind;
+    let m = (0..cx.modules.len())
+        .find(|&m| cx.modules[m].path == module)
+        .ok_or_else(|| format!("no module `{module}`"))?;
+    let (owner, member) = match name.split_once('.') {
+        Some((t, mm)) => (t, Some(mm)),
+        None => (name, None),
+    };
+    let decl = (cx.modules[m].ast.items.iter()).find_map(|item| match (&item.kind, member) {
+        (ItemKind::Function(f), None) if f.sig.name.name == owner => Some(f),
+        (ItemKind::Class(t) | ItemKind::Struct(t), Some(mm)) if t.name.name == owner => match mm {
+            "constructor" => t.constructor.as_ref(),
+            _ => (t.methods.iter())
+                .find(|x| x.decl.sig.name.name == mm)
+                .map(|x| &x.decl),
+        },
+        _ => None,
+    });
+    let decl = decl.ok_or_else(|| format!("no `{name}` in `{module}`"))?;
+    (0..cx.defs.len())
+        .map(|i| crate::hir::DefId(i as u32))
+        .find(|&d| {
+            matches!(cx.info[d.0 as usize], crate::defs::DefInfo::Fn(_))
+                && matches!(cx.fn_info(d).source,
+                    Some(crate::defs::FnSource::Decl(x)) if std::ptr::eq(x, decl))
+        })
+        .ok_or_else(|| format!("`{name}` has no definition"))
 }
 
 /// Where a function declaration is in its module: the item, and for a member of a class, struct
@@ -535,4 +591,11 @@ fn decl_at(
         (ItemKind::Extend(e), Member::Method(k)) => Some(&e.methods.get(k)?.decl),
         _ => None,
     }
+}
+
+/// What other bodies' checks read of a function that its own body can change: its result type,
+/// when inferred. (What it throws, its parameters' modes and the rest come from the passes,
+/// which a reload runs again over the whole program.)
+fn signature(cx: &Ctx, def: crate::hir::DefId) -> crate::hir::TyId {
+    cx.fn_info(def).ret
 }

@@ -79,21 +79,19 @@ pub struct Carried {
     /// The checked program's interfaces (velt_sema `interface`), kept with `-v` to say whether
     /// a body edit kept everything else's.
     pub interfaces: Option<velt_sema::interface::Summary>,
-    /// With `-v`, the last good build's kept check (velt_sema `KeptCheck`,
-    /// dev-warm-front-end.md step 3 "C2"): kept and measured, not used yet.
+    /// The last cold build's kept check (velt_sema `KeptCheck`, dev-warm-front-end.md step 3):
+    /// a save that edits function bodies alone is checked from it (`driver::compile_for_jit_warm`).
     pub kept: Option<velt_sema::KeptCheck>,
+    /// The program's own definitions when `kept` was made: a warm reload re-checks every body
+    /// changed since, not only since the running version.
+    pub kept_own: Option<super::edits::Snapshot>,
+    /// The source files of the build that made `kept`.
+    pub kept_files: Option<velt_common::SourceMap>,
 }
 
-/// What `-v` says a warm reload from `kept` would cost (dev-warm-front-end.md step 3 "C3"): the
-/// passes after the bodies' check and the finishing steps, from the kept context.
-pub fn warm_report(kept: &velt_sema::KeptCheck) -> String {
-    let start = Instant::now();
-    let warm = kept.reload_unchanged(&[], velt_sema::CheckOptions::default());
-    let took = start.elapsed().as_secs_f64() * 1e3;
-    match warm {
-        Ok(_) => format!("a warm reload would take {took:.0} ms"),
-        Err(e) => format!("no warm reload ({e}, {took:.0} ms)"),
-    }
+/// Whether `velt dev` keeps a check to reload body edits from (`VELT_DEV_WARM=off` turns it off).
+pub fn warm_enabled() -> bool {
+    std::env::var("VELT_DEV_WARM").map_or(true, |v| v != "off" && v != "0")
 }
 
 /// What `-v` says of a kept check: its size, and the process's memory with it kept.
@@ -136,9 +134,43 @@ fn reload_with(
     // after lowering never ran, so its seed must not become the next comparison's baseline.
     let running = carried.seed.take().unwrap_or_default();
     sess.counted_seed = Some(running.clone());
-    sess.keep_check = verbose;
+    sess.keep_check = verbose || warm_enabled();
     sess.interfaces = verbose.then(Default::default);
-    let program = driver::compile_for_jit(&mut sess, opts);
+    // A save that edits function bodies alone is checked from the kept check; anything else, or
+    // anything it refuses, goes through the cold front end (which keeps a new check).
+    let mut warm = false;
+    let mut program = None;
+    let base = (carried.kept_own.clone()).zip(carried.kept_files.as_ref());
+    if let (Some(kept), Some((base, cold_files))) = (carried.kept.take(), base) {
+        sess.kept = Some(kept);
+        let input = opts.input.clone();
+        let edited = move |s: &Session| {
+            super::edits::located(&base, &super::edits::Snapshot::of_build(s, &input))
+        };
+        let out = driver::compile_for_jit_warm(&mut sess, opts, cold_files, edited);
+        carried.kept = sess.kept.take();
+        match out {
+            Ok(Some(p)) => {
+                warm = true;
+                program = Some(Ok(p));
+            }
+            Ok(None) => {
+                if verbose {
+                    let why = sess.warm_refused.take().unwrap_or_default();
+                    eprintln!("velt dev: the cold front end: {why}");
+                }
+                // The cold build starts from a fresh session (its timings, files, diagnostics).
+                let details = sess.show_details;
+                sess = Session::new();
+                sess.show_details = details;
+                sess.counted_seed = Some(running.clone());
+                sess.keep_check = true;
+                sess.interfaces = verbose.then(Default::default);
+            }
+            Err(e) => program = Some(Err(e)),
+        }
+    }
+    let program = program.unwrap_or_else(|| driver::compile_for_jit(&mut sess, opts));
     let next = sess.counted_seed.take();
     // Values the running code made that the new code would count, free or call differently
     // (a class that is counted in one version only, #2653): only a restart is safe.
@@ -155,15 +187,19 @@ fn reload_with(
                 }
             }
         }
+        if !warm {
+            // The previous version's kept check is dropped first, so the memory said is this
+            // one's.
+            carried.kept = None;
+            carried.kept = sess.kept.take();
+            carried.kept_own = carried.kept.as_ref().map(|_| own.clone());
+            carried.kept_files = carried.kept.as_ref().map(|_| driver::copy_files(&sess.sm));
+            if let (true, Some(kept)) = (verbose, &carried.kept) {
+                eprintln!("velt dev: {}", kept_report(kept));
+            }
+        }
         carried.own = Some(own);
         carried.interfaces = interfaces;
-        // The previous version's kept check is dropped first, so the memory said is this one's.
-        carried.kept = None;
-        carried.kept = sess.kept.take();
-        if let (true, Some(kept)) = (verbose, &carried.kept) {
-            eprintln!("velt dev: {}", kept_report(kept));
-            eprintln!("velt dev: {}", warm_report(kept));
-        }
     }
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
