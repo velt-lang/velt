@@ -25,6 +25,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_float",
     "std/lang/hooks/any_record",
     "std/lang/hooks/unwind",
+    // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
+    "std/lang/string/search",
 ];
 
 /// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).
