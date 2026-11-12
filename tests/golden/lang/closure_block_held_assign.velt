@@ -1,0 +1,68 @@
+// check: no leaks
+// A closure held in a block's `const` that assigns a variable of the enclosing function: it may
+// have run before the block ends, and what it wrote is read after, so the variable lives in a cell
+// whatever happens to the closure (#2833: Velt printed -1 where Node prints 5). Also a counter and
+// a string assigned in a block, the same outside a block, and nested blocks. The output is Node's.
+
+function main() {
+  let n0 = 0;
+  let g0: (() => number) | null = null;
+  if (n0 == 0) {
+    const setup = (): void => {
+      g0 = (): number => n0;
+    };
+    setup();
+  }
+  n0 = 5;
+  const h0 = g0;
+  console.log(h0 === null ? -1 : h0());
+
+  // A counter a block-held closure increments.
+  let c = 0;
+  if (c == 0) {
+    const inc = (): void => {
+      c++;
+    };
+    inc();
+    inc();
+  }
+  console.log(c);
+
+  // A string assigned in the block, then again after it.
+  let s = "a";
+  if (s == "a") {
+    const set = (v: string): void => {
+      s = v;
+    };
+    set("b");
+  }
+  console.log(s);
+  s = "c";
+  console.log(s);
+
+  // Outside a block, as before.
+  let n = 0;
+  let g: (() => number) | null = null;
+  const setup = (): void => {
+    g = (): number => n;
+  };
+  setup();
+  n = 7;
+  const h = g;
+  console.log(h === null ? -1 : h());
+
+  // Nested blocks.
+  let m = 1;
+  let k: (() => number) | null = null;
+  if (m > 0) {
+    if (m > 0) {
+      const mk = (): void => {
+        k = (): number => m * 10;
+      };
+      mk();
+    }
+  }
+  m = 4;
+  const kk = k;
+  console.log(kk === null ? -1 : kk());
+}
