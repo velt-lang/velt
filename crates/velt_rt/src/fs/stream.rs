@@ -184,7 +184,8 @@ pub unsafe extern "C" fn velt_rt_fs_reader_read_line(r: ReaderHandle) -> *mut Ve
     new_leaf(async move {
         match buffered_line(&obj) {
             Some(line) => line,
-            None => run_blocking(move || read_line(&mut lock(&obj.inner).0)).await,
+            // Boxed, as stdin's `readLine` (#2829): a buffered line's leaf stays small.
+            None => Box::pin(run_blocking(move || read_line(&mut lock(&obj.inner).0))).await,
         }
     })
 }

@@ -116,16 +116,17 @@ where
     // done: its result is an I/O event, which JS handles only after the reactions of the
     // promises settled by then (a `Promise.race` against a settled promise, #2820). Such a result
     // waits for one wake, like any other.
+    // Boxed: it is rare, and a large result does not grow every blocking leaf.
     let mut first = true;
-    let mut early = None;
+    let mut early: Option<Box<_>> = None;
     let done = std::future::poll_fn(|cx| {
         if let Some(r) = early.take() {
-            return Poll::Ready(r);
+            return Poll::Ready(*r);
         }
         let r = Pin::new(&mut h).poll(cx);
         if std::mem::take(&mut first) {
             if let Poll::Ready(r) = r {
-                early = Some(r);
+                early = Some(Box::new(r));
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             }
