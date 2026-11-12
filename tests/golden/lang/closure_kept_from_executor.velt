@@ -1,0 +1,43 @@
+// check: no leaks
+// A closure created inside a `new Promise` executor and kept past it, which reads a variable the
+// enclosing function assigns afterwards: the executor doesn't escape, but the closure it makes
+// does, so the variable lives in a cell the closure shares, and the later assignment is seen, as
+// in Node (#2807; Velt printed 0). Also through a callback inside the executor, a variable
+// assigned before and after, and a callback held in a block's `const` (the closure it keeps
+// outlives the block). The output is Node's.
+
+async function main() {
+  let n = 0;
+  let getN: (() => number) | null = null;
+  await new Promise<void>((resolve) => {
+    getN = (): number => n;
+    resolve();
+  });
+  n = 5;
+  const g = getN;
+  console.log(g === null ? -1 : g());
+
+  let label = "a";
+  let read: (() => string) | null = null;
+  await new Promise<void>((resolve) => {
+    [1].forEach((k: number): void => {
+      read = (): string => `${label}${k}`;
+    });
+    resolve();
+  });
+  label = "b";
+  label += "c";
+  const r = read;
+  console.log(r === null ? "none" : r());
+
+  let m = 0;
+  const gs: (() => number)[] = [];
+  if (gs.length == 0) {
+    const cb = (x: number): void => {
+      gs.push((): number => m + x);
+    };
+    cb(1);
+  }
+  m = 10;
+  console.log(gs[0]());
+}

@@ -35,7 +35,8 @@ mod worklist;
 
 pub(crate) use boundary::check_boundaries;
 pub(crate) use cells::{
-    assignment_in, box_cells, unshareable_nested, unshareable_note, Unshareable, NESTED_ASSIGN,
+    assignment_in, box_cells, enclosing_fns, unshareable_nested, unshareable_note, Unshareable,
+    NESTED_ASSIGN,
 };
 pub(crate) use exclusive::check_exclusive;
 pub(crate) use infer::infer_modes;

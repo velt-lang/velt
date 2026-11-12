@@ -11,6 +11,7 @@
 
 mod elements;
 mod expr;
+mod kept;
 mod loops;
 mod per_fn;
 mod state;
@@ -62,6 +63,9 @@ struct Moves<'a> {
     reused: FxHashSet<(Span, LocalId)>,
     /// Per escaping closure: the enclosing variables it captures by value and assigns.
     writers: &'a FxHashMap<DefId, FxHashSet<LocalId>>,
+    /// Per closure that doesn't escape: the enclosing variables a closure created in it keeps by
+    /// value (`kept_captures`).
+    kept: &'a FxHashMap<DefId, FxHashSet<LocalId>>,
     /// Closures each call of which has a state of its own that shares the captured variables:
     /// generator closures (`function*` expressions) and local async closures
     /// (`FnDef::shares_captures`); true for generators.
@@ -142,6 +146,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         .map(|tys| tys.into_iter().map(|t| cx.is_shared_value(t)).collect())
         .collect();
     let (writers, own_writers) = writers(cx, &escaping);
+    let kept = kept::kept_captures(cx, &escaping, &captures);
     // The variables only a closure created inside an escaping closure assigns: a cell the
     // enclosing function makes for them is checked below (`unshareable`).
     let nested_only: FxHashSet<LocalId> = writers
@@ -197,6 +202,7 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         escaping: &escaping,
         writers: &writers,
         own_writers: &own_writers,
+        kept: &kept,
         generators: &generators,
         nested_only: &nested_only,
         per_iteration: &out.per_iteration,

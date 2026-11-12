@@ -25,6 +25,7 @@ pub(super) struct Tables<'a> {
     pub(super) escaping: &'a FxHashSet<DefId>,
     pub(super) writers: &'a Writers,
     pub(super) own_writers: &'a Writers,
+    pub(super) kept: &'a FxHashMap<DefId, FxHashSet<LocalId>>,
     pub(super) generators: &'a FxHashMap<DefId, bool>,
     pub(super) nested_only: &'a FxHashSet<LocalId>,
     pub(super) per_iteration: &'a FxHashSet<(DefId, LocalId)>,
@@ -72,6 +73,7 @@ pub(super) fn check_fn(t: &Tables, input: &FnInput) -> FnChecked {
         shared: t.shared[i].clone(),
         promise: t.promise[i].clone(),
         writers: t.writers,
+        kept: t.kept,
         generators: t.generators,
         boxed: FxHashSet::default(),
         own_captures: match f.is_async && !f.is_generator && !f.shares_captures {
