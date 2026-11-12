@@ -169,8 +169,16 @@ async function main() {
     n = n + (c.tryRead(buf, 1) ?? 0);
   }
   console.log(n, buf[0], buf[1]);
-  console.log(await c.readableWithin(10000));
-  console.log(c.tryRead(buf) === null);
+  // Readable means a tryRead may find something: the readiness of \"ab\" holds until a read
+  // finds nothing, so the first wake can come before the server's end arrives (0, wait again).
+  let woke = await c.readableWithin(10000);
+  let last = c.tryRead(buf);
+  while (woke && last === 0) {
+    woke = await c.readableWithin(10000);
+    last = c.tryRead(buf);
+  }
+  console.log(woke);
+  console.log(last === null);
   c.close();
   await server;
   l.close();
