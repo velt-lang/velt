@@ -14,6 +14,7 @@
 import { toNumber, parseFloatOf } from "velt/lang/number/parse";
 import { parseIntOf } from "velt/lang/number/parse_int";
 import {
+  hookCall,
   inline,
   strAsciiWords,
   strByteAt,
@@ -21,7 +22,6 @@ import {
   strWord1,
   strWord2,
 } from "velt/lang/intrinsics";
-import { endsWith, includes, indexOf, lastIndexOf, startsWith } from "velt/lang/string/search";
 
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
 declare function velt_rt_str_split(s: string, sep: string): string[];
@@ -89,12 +89,12 @@ extend string {
 
   /** First match at or after `from`, or -1. */
   indexOf(needle: string, from: i64 = 0): i64 {
-    return indexOf(this, needle, from);
+    return hookCall("string_index_of", this, needle, from);
   }
 
   /** Last match starting at or before `from`, or -1. */
   lastIndexOf(needle: string, from: i64 = END): i64 {
-    return lastIndexOf(this, needle, from);
+    return hookCall("string_last_index_of", this, needle, from);
   }
 
   /**
@@ -103,7 +103,7 @@ extend string {
    * @param needle - search string
    */
   includes(needle: string, position: i64 = 0): bool {
-    return includes(this, needle, position);
+    return hookCall("string_includes", this, needle, position);
   }
 
   /**
@@ -112,7 +112,7 @@ extend string {
    */
   startsWith(prefix: string, position: i64 = 0): bool {
     if (position <= 0) {
-      return startsWith(this, prefix);
+      return hookCall("string_starts_with", this, prefix);
     }
     const len = this.length as i64;
     const start = position < len ? position : len;
@@ -126,7 +126,7 @@ extend string {
   endsWith(suffix: string, endPosition: i64 = END): bool {
     const len = this.length as i64;
     if (endPosition >= len) {
-      return endsWith(this, suffix);
+      return hookCall("string_ends_with", this, suffix);
     }
     const end = endPosition > 0 ? endPosition : 0;
     const n = suffix.length as i64;
