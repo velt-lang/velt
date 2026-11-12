@@ -1,9 +1,11 @@
 // velt/sync (tests): `HandOff<T>`: a value given to the task waiting for it, once; a waiter that
 // leaves first gets nothing and the giver its item back; an item given to a waiter dropped before
 // it resumed comes back through `takeBack`, once; `end` resumes the waiter with null. A waiter
-// leaves by dropping its `park()` (here a `Promise.race` loser).
+// leaves by dropping its `park()` (here a `Promise.race` loser). `waitAfterWake` (and its
+// `parkAfterWake`) delivers an item already given at its first poll at the next one, after a
+// wake, so a promise settled by then wins a race against it (#2820).
 import { describe, expect, it } from "velt/test";
-import { HandOff } from "./hand_off";
+import { HandOff, parkAfterWake, waitAfterWake } from "./hand_off";
 
 class Conn {
   id: i64;
@@ -25,6 +27,14 @@ class Res {
     DROPPED.add(1, "seqcst");
   }
 }
+
+async function takeAfterWake(h: shared<HandOff<Conn>>): Promise<i64> {
+  const c = await waitAfterWake<Conn>(h);
+  return c?.id ?? -1;
+}
+
+/** Done at its first poll. */
+async function done(): Promise<void> {}
 
 async function parked(p: Promise<void>): Promise<i64> {
   await p;
@@ -190,5 +200,63 @@ describe("velt/sync HandOff", () => {
       expect(await giver).toBe(0);
       expect(await waiter).toBe(round);
     }
+  });
+
+  it(
+    "an item given before waitAfterWake loses a race to a settled promise, then comes",
+    async () => {
+      for (let round: i64 = 0; round < 20; round++) {
+        const before = DROPPED.load("seqcst");
+        {
+          const h = shared(new HandOff<Res>());
+          expect(h.give(new Res(round))).toBe(null);
+          // The settled promise wins (the wait found the item at its first poll and deferred it).
+          const first: Res | null = new Res(-2);
+          const won = await Promise.race<Res | null>([
+            waitAfterWake<Res>(h),
+            Promise.resolve(first),
+          ]);
+          expect(won?.id ?? -1).toBe(-2);
+          // The loser keeps running and takes the item at the poll its own wake brings (then drops
+          // it with its result): nothing is left behind, and nothing waits for a giver's wake.
+          await yields(3);
+          expect(h.takeBack() == null).toBe(true);
+        }
+        // The winner and the item, each dropped once.
+        expect(DROPPED.load("seqcst") - before).toBe(2);
+      }
+      // Given after the first poll: the poll the giver's wake brings ends the wait.
+      const g = shared(new HandOff<Conn>());
+      const waiter = spawn(takeAfterWake(g));
+      await yieldNow();
+      expect(g.give(new Conn(21))).toBe(null);
+      expect(await waiter).toBe(21);
+    },
+  );
+
+  it("a deferred park dropped between its two polls leaves its item for takeBack", async () => {
+    const h = shared(new HandOff<Conn>());
+    expect(h.give(new Conn(13))).toBe(null);
+    // Its first poll finds the item and defers it; the race then drops the park.
+    await Promise.race<void>([parkAfterWake(h), done()]);
+    expect(h.claim()).toBe(null);
+    expect(h.takeBack()?.id).toBe(13);
+    expect(h.takeBack()).toBe(null);
+    // Dropped before its first poll: it was waiting too, and leaves the item behind.
+    const g = shared(new HandOff<Conn>());
+    {
+      const p = parkAfterWake(g);
+      expect(g.give(new Conn(14))).toBe(null);
+    }
+    expect(g.takeBack()?.id).toBe(14);
+    // Left behind and never taken back: dropped with the hand-off, once.
+    const before = DROPPED.load("seqcst");
+    {
+      const r = shared(new HandOff<Res>());
+      expect(r.give(new Res(15))).toBe(null);
+      await Promise.race<void>([parkAfterWake(r), done()]);
+      expect(r.claim() == null).toBe(true);
+    }
+    expect(DROPPED.load("seqcst") - before).toBe(1);
   });
 });

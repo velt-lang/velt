@@ -88,7 +88,7 @@ export class HandOff<T> {
    */
   park(): Promise<void> {
     // SAFETY: `parkFuture` makes a heap future of this block, given up to the promise.
-    return unsafe { promiseAt<void>(parkFuture(this.block)) };
+    return unsafe { promiseAt<void>(parkFuture(this.block, false)) };
   }
 
   /** The item given (once), or null when none was given (the hand-off ended, or it was taken). */
@@ -102,9 +102,7 @@ export class HandOff<T> {
    * abandoned started: use `park()` where a waiter may leave.
    */
   wait(): Promise<T | null> {
-    m.inc(this.block + B_REFS);
-    addWaits(this.block, 1);
-    return waitOn<T>(this.block);
+    return startWait<T>(this.block, false);
   }
 
   /**
@@ -218,11 +216,33 @@ class WaitCount<T> {
   }
 }
 
+/**
+ * `h.wait()`, but an item already given at its first poll comes at the next one, after a wake: a
+ * blocking pool's result is an I/O event, which JS handles after the reactions of the promises
+ * settled by then (a race against a settled promise, #2820; std/lang/hooks/sched_blocking.velt).
+ */
+export function waitAfterWake<T>(h: shared<HandOff<T>>): Promise<T | null> {
+  return startWait<T>(h.block, true);
+}
+
+/** `h.park()` with `waitAfterWake`'s deferral: a runtime wait, dropped as a race loser. */
+export function parkAfterWake<T>(h: shared<HandOff<T>>): Promise<void> {
+  // SAFETY: `parkFuture` makes a heap future of this block, given up to the promise.
+  return unsafe { promiseAt<void>(parkFuture(h.block, true)) };
+}
+
+/** A `wait()` on block `b` (`defer`: `waitAfterWake`), counted. */
+function startWait<T>(b: usize, defer: bool): Promise<T | null> {
+  m.inc(b + B_REFS);
+  addWaits(b, 1);
+  return waitOn<T>(b, defer);
+}
+
 /** `HandOff.wait` on block `b`, which holds a count for it (given back even when dropped). */
-async function waitOn<T>(b: usize): Promise<T | null> {
+async function waitOn<T>(b: usize, defer: bool): Promise<T | null> {
   using count = new WaitCount<T>(b);
   // SAFETY: `parkFuture` makes a heap future of this block, given up to the promise.
-  await unsafe { promiseAt<void>(parkFuture(b)) };
+  await unsafe { promiseAt<void>(parkFuture(b, defer)) };
   return claimFrom<T>(b);
 }
 
@@ -307,30 +327,36 @@ function wakeWaiter(b: usize): void {
 }
 
 // The park future: a heap future (rt_abi_async.md §1; its header, then the block, then whether
-// it saw the end of the wait) with no result, holding a count of the block. Its poll and drop are
-// C functions (`fnAddress`, a stand-in for `exportedAddress`, #2203 step 5). It lives in the
-// block, so a wait allocates nothing more: a hand-off has one waiter. A second park while that
-// one is alive (two `park()`s held at once) gets one of its own.
+// it saw the end of the wait, or `F_FIRST`: `waitAfterWake`'s before its first poll) with no
+// result, holding a count of the block. Its poll and drop are C functions (`fnAddress`, a
+// stand-in for `exportedAddress`, #2203 step 5). It lives in the block, so a wait allocates
+// nothing more: a hand-off has one waiter. A second park while that one is alive (two `park()`s
+// held at once) gets one of its own.
 
 const F_BLOCK: usize = 16;
 const F_DONE: usize = 24;
 const F_SIZE: usize = 32;
 
-function parkFuture(b: usize): usize {
+const F_WAITING: usize = 0;
+const F_ENDED: usize = 1;
+const F_FIRST: usize = 2;
+
+function parkFuture(b: usize, defer: bool): usize {
+  const done = defer ? F_FIRST : F_WAITING;
   m.inc(b + B_REFS);
   if (m.cas32(b + B_PARKED, 0, 1) === 0) {
     const f = b + B_PARK;
     m.st(f, fnAddress(parkPoll));
     m.st(f + 8, fnAddress(parkDropInBlock));
     m.st(f + F_BLOCK, b);
-    m.st(f + F_DONE, 0);
+    m.st(f + F_DONE, done);
     return f;
   }
   const f = m.alloc(F_SIZE);
   m.st(f, fnAddress(parkPoll));
   m.st(f + 8, fnAddress(parkDrop));
   m.st(f + F_BLOCK, b);
-  m.st(f + F_DONE, 0);
+  m.st(f + F_DONE, done);
   return f;
 }
 
@@ -343,6 +369,8 @@ function parkPoll(f: usize, cx: usize): u32 {
     register(b, w);
     s = m.cas32(b + B_STATE, EMPTY, WAITING);
     if (s === EMPTY) {
+      // Waiting (a first poll): an end found later is not deferred.
+      m.st(f + F_DONE, F_WAITING);
       return 0;
     }
   }
@@ -352,11 +380,20 @@ function parkPoll(f: usize, cx: usize): u32 {
     register(b, w);
     s = m.load32(b + B_STATE);
     if (s === WAITING || s === FILLING) {
+      // Waiting for a giver (a first poll that found one writing the item too): the poll its
+      // wake brings ends the wait, not deferred again.
+      m.st(f + F_DONE, F_WAITING);
       return 0;
     }
   }
   // Given, ended, taken, left or returned: nothing more to wait for.
-  m.st(f + F_DONE, 1);
+  if (m.ld(f + F_DONE) === F_FIRST) {
+    // Already so at the first poll of a deferring park: the next poll ends it, after a wake.
+    m.st(f + F_DONE, F_WAITING);
+    m.wakeByRef(w);
+    return 0;
+  }
+  m.st(f + F_DONE, F_ENDED);
   return 1;
 }
 
@@ -378,7 +415,7 @@ function parkDropInBlock(f: usize): void {
 
 /** Park future `f` of block `b` is dropped: one dropped while waiting leaves. */
 function leave(f: usize, b: usize): void {
-  if (m.ld(f + F_DONE) === 0) {
+  if (m.ld(f + F_DONE) !== F_ENDED) {
     // Dropped while waiting: leave, or leave the item given meanwhile behind.
     let s = settled(b);
     if (s === WAITING && m.cas32(b + B_STATE, WAITING, LEFT) !== WAITING) {
