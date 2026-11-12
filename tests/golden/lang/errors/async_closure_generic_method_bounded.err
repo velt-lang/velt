@@ -1,0 +1,1 @@
+async_closure_generic_method_bounded.velt:29:5: error: this async closure modifies captured `d`, so it must stay on the task that created it

@@ -147,6 +147,20 @@ pub(super) fn mentions_param(cx: &Ctx, t: TyId) -> bool {
     found
 }
 
+/// Does `t` mention a dynamic type (`any`, `unknown`, `object`, `Function`), which may hold any
+/// value, a closure included?
+pub(super) fn mentions_dynamic(cx: &Ctx, t: TyId) -> bool {
+    let Some(defs) = cx.any else {
+        return false;
+    };
+    let mut found = false;
+    cx.ty.visit(t, &mut |k| {
+        found |= matches!(k, TyKind::Dyn(d, _)
+            if *d == defs.any || *d == defs.unknown || *d == defs.object || *d == defs.function);
+    });
+    found
+}
+
 /// Does `t` mention a type parameter numbered `from` or above (a method's own, after its class's)?
 pub(super) fn mentions_param_from(cx: &Ctx, t: TyId, from: u32) -> bool {
     let mut found = false;

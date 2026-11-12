@@ -1,0 +1,27 @@
+// An instantiation with `unknown` may hold any closure (#2860): through a generic closure and
+// directly, the job that modifies what it captured reaches the spawn, and is refused.
+type Job = () => Promise<void>;
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+interface Reader {
+  read<T>(x: T): void;
+}
+interface Engine {
+  run: <T>(x: T) => void;
+}
+async function main() {
+  let g = 0;
+  const engine: Engine = { run: <T>(x: T): void => keepAndSpawn<T>(x) };
+  engine.run<unknown>(async () => {
+    g++;
+  });
+  let k = 0;
+  keepAndSpawn<unknown>(async () => {
+    k++;
+  });
+}

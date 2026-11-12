@@ -8,8 +8,11 @@
 //! Only where the walk sees every call:
 //! - the closure's enclosing function isn't generic (or there is none), so the call's type
 //!   arguments are all of its instantiation;
-//! - no value of the interface type goes into `any` (`ToAny`, a spread) or is converted to another
-//!   type (a cast, an upcast), from where a call the walk doesn't see could reach it;
+//! - no value of the interface type, or of the implementing object type, goes into `any` (`ToAny`,
+//!   a spread) or is converted to another type (a cast, an upcast), from where a call the walk
+//!   doesn't see could reach it;
+//! - its calls are the interface's `Dyn` calls and its bounded calls (`T extends I`), both
+//!   recorded with their type arguments;
 //! - no code outside every function body (module-level and field initializers, which the walk
 //!   doesn't visit) calls a value of the interface type or converts one.
 //!
@@ -34,9 +37,26 @@ pub(super) struct DynCalls {
     calls: FxHashMap<(DefId, u32), Vec<Site>>,
     /// Interfaces some value of which is called where the walk may not see it.
     escaped: FxHashSet<DefId>,
+    /// Object types some value of which goes into `any` or is converted: a dynamic call may
+    /// reach their methods with any type arguments.
+    escaped_types: FxHashSet<DefId>,
+    /// Closures some value of which goes into `any` or is converted (an object literal's
+    /// method held in a field of its closure type).
+    escaped_closures: FxHashSet<DefId>,
 }
 
 impl DynCalls {
+    /// A bounded call (`r.read<Job>(j)` with `R extends Reader`) of method `slot` of interface
+    /// `iface`, in function `caller`, with the method's own type arguments.
+    pub(super) fn bounded(&mut self, iface: DefId, caller: DefId, slot: u32, targs: &[TyId]) {
+        (self.calls.entry((iface, slot)).or_default()).push((caller, targs.to_vec()));
+    }
+
+    /// Does a value of object type `d` go into `any` or get converted (`escape`)?
+    pub(super) fn type_escaped(&self, d: DefId) -> bool {
+        self.escaped_types.contains(&d)
+    }
+
     /// A `Dyn` call of method `slot` in function `caller`, of receiver type `recv`, with `targs`.
     pub(super) fn call(&mut self, cx: &Ctx, caller: DefId, recv: TyId, slot: u32, targs: &[TyId]) {
         if let TyKind::Dyn(i, _) = cx.ty.kind(recv) {
@@ -56,9 +76,15 @@ impl DynCalls {
             }
             cx.ty.visit(t, &mut |k| match k {
                 TyKind::Dyn(i, _) => _ = self.escaped.insert(*i),
+                TyKind::Closure(c) => _ = self.escaped_closures.insert(*c),
                 TyKind::Adt(d, _) => {
-                    if let Some(Def::Adt(a)) = &cx.defs[d.0 as usize] {
-                        work.extend(a.fields.iter().map(|f| f.ty));
+                    self.escaped_types.insert(*d);
+                    // An object type's fields are in its `DefInfo` while it is being built, a
+                    // class's in its `Def` too.
+                    match (&cx.defs[d.0 as usize], &cx.info[d.0 as usize]) {
+                        (Some(Def::Adt(a)), _) => work.extend(a.fields.iter().map(|f| f.ty)),
+                        (_, DefInfo::Adt(a)) => work.extend(a.fields.iter().map(|f| f.ty)),
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -120,6 +146,9 @@ impl DynCalls {
         if fd.generics == 0 || !matches!(kind, Some(FnKind::Closure | FnKind::Method)) {
             return None;
         }
+        if self.escaped_closures.contains(&f) {
+            return None;
+        }
         if kind == Some(FnKind::Closure) {
             // Its own type parameters only: an enclosing function's would need that function's
             // instantiation too.
@@ -137,7 +166,10 @@ impl DynCalls {
         let mut slots = vec![];
         for i in &cx.impls {
             if let Some(k) = i.methods.iter().position(|&m| m == f) {
-                if i.generics != 0 {
+                // A generic implementing type, or one a dynamic call may reach through `any`.
+                let escaped =
+                    matches!(cx.ty.kind(i.ty), TyKind::Adt(d, _) if self.type_escaped(*d));
+                if i.generics != 0 || escaped {
                     return None;
                 }
                 slots.push((i.iface, k as u32));

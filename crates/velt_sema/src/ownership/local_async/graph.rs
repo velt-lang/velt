@@ -382,10 +382,18 @@ impl Walk<'_, '_> {
                 self.g.dyn_calls.escape(self.cx, x.ty);
                 self.value(x, to)
             }
+            // A value made a dynamic one (`any`, `unknown`, `object`): a dynamic call may reach
+            // what it holds (`super::generic_closures`). A generic function value's own `ToDyn`
+            // (its interface) is no conversion.
+            E::ToDyn { expr: x, .. } => {
+                if super::types::mentions_dynamic(self.cx, e.ty) {
+                    self.g.dyn_calls.escape(self.cx, x.ty);
+                }
+                self.value(x, to)
+            }
             E::WrapSome(x)
             | E::UnwrapSome(x, _)
             | E::Await(x)
-            | E::ToDyn { expr: x, .. }
             | E::UnwrapVariant { expr: x, .. } => self.value(x, to),
             E::Logical { lhs, rhs, .. } => {
                 self.value(lhs, to);
@@ -615,6 +623,15 @@ impl Walk<'_, '_> {
                 ) = (callee, args.first())
                 {
                     (self.g.dyn_calls).call(self.cx, self.d, r.ty, *slot, method_type_args);
+                }
+                if let Callee::ParamMethod {
+                    iface,
+                    slot,
+                    method_type_args,
+                    ..
+                } = callee
+                {
+                    (self.g.dyn_calls).bounded(*iface, self.d, *slot, method_type_args);
                 }
                 let targets = super::unknown_callees::dispatch_targets(self.cx, callee, args);
                 self.g

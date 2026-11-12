@@ -51,6 +51,7 @@ mod changes;
 mod fed;
 mod generic_closures;
 mod graph;
+mod instances;
 mod keyed;
 mod reach;
 mod record;
@@ -66,10 +67,10 @@ use rustc_hash::FxHashMap;
 use velt_common::Diagnostic;
 
 use crate::ctx::Ctx;
-use crate::defs::FnKind;
 use crate::hir::{Def, DefId, TyId, TyKind};
 
 use graph::{Boundary, Graph, Node, Why, CROSSES, STORED};
+use instances::instances;
 
 pub(crate) use changes::check_crossing_changes;
 pub(crate) use record::record_changed_captures;
@@ -296,7 +297,9 @@ fn resolve_hits(cx: &mut Ctx, g: &Graph, p: &mut Propagation, done: &mut usize) 
 /// What a crossing value of type `t` (an instantiation of a generic one) carries: `t` itself,
 /// for the heap rule, or any closure when `t` is still generic.
 fn push_instance(cx: &Ctx, p: &mut Propagation, t: TyId, w: Why) {
-    if types::mentions_param(cx, t) {
+    // A type parameter, or a dynamic type (`unknown`, `any`, `object`, `Function`), may hold any
+    // closure (#2860: `keepAndSpawn<unknown>(job)`).
+    if types::mentions_param(cx, t) || types::mentions_dynamic(cx, t) {
         // Its type, a type parameter, says nothing to the reader: the label names the boundary.
         p.wild.push(w);
     } else {
@@ -355,87 +358,6 @@ fn outermost(g: &Graph, mut c: DefId) -> DefId {
         hops += 1;
     }
     c
-}
-
-/// The types closure literal `c` (of type `ty`) has in the instantiations of the generic
-/// function that creates it: `(value: T) => void` in `withResolvers<T>` is `(value: Job) =>
-/// void` where the program calls `withResolvers<Job>()`. Generic parameters of callers that
-/// are generic themselves are followed to their own callers; where that gives no answer (or too
-/// many), the generic type itself, whose parameters match anything; a generic library function
-/// the program never calls gives none.
-/// The function whose instantiations resolve the type parameters a type in function `c` mentions:
-/// the outermost function `c` is in, or the first generic closure on the way whose calls give its
-/// instantiations (`generic_closures`): its own type parameters are what those calls give.
-fn instance_owner(cx: &Ctx, g: &Graph, c: DefId) -> DefId {
-    let mut owner = c;
-    let mut hops = 0;
-    while let (Some(&p), true) = (g.parent.get(&owner), hops < 64) {
-        if g.dyn_calls.sites(cx, g, owner).is_some() {
-            break;
-        }
-        owner = p;
-        hops += 1;
-    }
-    owner
-}
-
-fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
-    let owner = instance_owner(cx, g, c);
-    let mut out = vec![];
-    let mut work = vec![(owner, ty, 0)];
-    while let Some((f, t, depth)) = work.pop() {
-        let mut params = vec![];
-        crate::types::collect_params(&cx.ty, t, &mut params);
-        if params.is_empty() {
-            out.push(t);
-            continue;
-        }
-        let mut sites = g.insts.get(&f).cloned().unwrap_or_default();
-        // A generic closure's, or an implementation's generic method's, calls through its
-        // interface (`generic_closures`), next to any direct ones.
-        if let Some(s) = g.dyn_calls.sites(cx, g, f) {
-            // Called only through its interface, and never: no instantiation.
-            if s.is_empty() && sites.is_empty() {
-                continue;
-            }
-            sites.extend(s);
-        }
-        // A generic library function that the program never calls directly
-        // makes no such closure (its methods are called with their type arguments too). Nor
-        // does a generic function declared in the program that nothing calls directly or holds
-        // as a value (`computed`'s implementation where only its overloads are called, and they
-        // are not). Never a method or a closure: a method may be called through dispatch, and a
-        // generic closure through its generic function type (the wrapper behind `relay#value`
-        // where `const mk = relay; mk<Job>(…)`), which name no type arguments here.
-        let library = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_library);
-        // Only where `f` has type parameters of its own: a closure literal placed at several
-        // sites (a struct field's default) may have its type from a generic one and `f` from
-        // another, which names no type parameters.
-        let free = matches!(&cx.defs[f.0 as usize], Some(Def::Fn(fd)) if fd.self_ty.is_none() && fd.generics > 0)
-            && cx.try_fn(f).is_some_and(|i| i.kind == FnKind::Free);
-        // A method no dispatched call can reach (an object type's, not a class's or an
-        // implementation's) is called by name only, with its type arguments (#2860: the adapter
-        // method behind a generic method of an object type, `AsyncEngine.read<T>`).
-        let by_name = matches!(&cx.defs[f.0 as usize], Some(Def::Fn(fd)) if fd.self_ty.is_some() && fd.generics > 0)
-            && cx.try_fn(f).is_some_and(|i| i.kind == FnKind::Method)
-            && g.dispatched.binary_search_by_key(&f.0, |d| d.0).is_err();
-        let free = free || by_name;
-        if sites.is_empty() && (library || (free && !g.held.referenced.contains(&f))) {
-            continue;
-        }
-        if sites.is_empty() || depth > 4 || out.len() + work.len() > 64 {
-            out.push(t);
-            continue;
-        }
-        for (caller, targs) in sites {
-            let caller_owner = instance_owner(cx, g, caller);
-            let s = cx.subst(t, &targs);
-            work.push((caller_owner, s, depth + 1));
-        }
-    }
-    out.sort_by_key(|t| t.0);
-    out.dedup();
-    out
 }
 
 /// A sync closure handed to a standard-library function that runs it on other threads (a

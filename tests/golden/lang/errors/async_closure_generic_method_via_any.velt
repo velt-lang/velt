@@ -1,0 +1,31 @@
+// An object whose generic method a call through `any` reaches: the call may give any type
+// arguments, whatever the calls by name give, so the type parameter stays generic and the job
+// that modifies what it captured is refused (#2860).
+type Job = () => Promise<void>;
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+interface Reader {
+  read<T>(x: T): void;
+}
+interface Engine {
+  run: <T>(x: T) => void;
+}
+async function main() {
+  let f = 0;
+  const o = {
+    read<T>(x: T): void {
+      keepAndSpawn<T>(x);
+    },
+  };
+  o.read<number>(1);
+  const anyO: any = o;
+  const job2: Job = async () => {
+    f++;
+  };
+  anyO.read(job2);
+}
