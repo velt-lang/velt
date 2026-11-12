@@ -33,9 +33,10 @@ fn ir_of(src: &str, flags: &[&str]) -> String {
 
 const READ: &str = "const p = new Proxy({ a: 1 } as any, {});\nconsole.log(p.a);\n";
 
-/// Lines of release IR for `READ`: 37,557 when the budget was set, 48,497 once the string searches
+/// Lines of release IR for `READ`: 37,557 when the budget was set, 50,148 once the string searches
 /// of std/lang/proxy/keys.velt (`startsWith`, `endsWith`, `includes`) became Velt code (#2198:
-/// their scans, about 9,800 lines, where the runtime's were calls). A real need can raise it; a
+/// their scans, about 12,600 lines, where the runtime's were calls; a search from the start
+/// compiles no position translation). A real need can raise it; a
 /// new dependency of `Proxy` on the array algorithms or on `sort` can't get past it.
 const READ_BUDGET: usize = 52_000;
 

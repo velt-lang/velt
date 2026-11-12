@@ -204,6 +204,14 @@ pub(super) fn note_program_dyn(cx: &mut Ctx, into_any: &[(TyId, TyId)]) {
     }
 }
 
+/// The class of hook `index` of the table, when the program has it.
+pub(super) fn hook_class(cx: &Ctx, index: usize) -> Option<DefId> {
+    match cx.std_def(&velt_common::std_hooks::HOOKS[index].qualified()) {
+        Some(crate::ctx::Item::Def(d)) => Some(d),
+        _ => None,
+    }
+}
+
 /// Demands hook `index`'s module and marks the hook live: whether it wasn't.
 fn mark_hook(cx: &mut Ctx, index: usize) -> bool {
     let h = &velt_common::std_hooks::HOOKS[index];
