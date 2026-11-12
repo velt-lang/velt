@@ -19,6 +19,9 @@ fn manifest() -> &'static Path {
 
 /// The goldens, and what each one checks under the executor in Velt.
 const GOLDENS: &[&str] = &[
+    // A fresh socket and one whose last read found bytes are not readable until a peek finds
+    // input (std/net/fd_ready.velt).
+    "std/net_close_wakes",
     // A promise woken on its task's stack that finished before the task took it gives its
     // reference back when the task ends (sched_run.velt `finish`): a `then` on a shared promise,
     // and a detached promise driving a combinator.

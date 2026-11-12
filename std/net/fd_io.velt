@@ -22,6 +22,7 @@ import * as t from "velt/lang/hooks/sched_task";
 import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as wr from "velt/lang/hooks/sched_io_write";
 import { aborted, closed, failed, ok, osError, value } from "velt/net/fd_socket";
+import { readReady } from "velt/net/fd_ready";
 import * as wk from "velt/lang/hooks/sched_wake";
 
 // Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
@@ -133,8 +134,9 @@ export async function readable(h: u64): Promise<IoStatus> {
   if (s === 0) {
     return closed();
   }
-  // A spent budget waits too: the wait yields (sched_budget.velt).
-  const ready = wt.satisfied(s, io.K_READ, 0) && !bd.spent();
+  // A spent budget waits too: the wait yields (sched_budget.velt). Else a peek decides whether
+  // the readiness is stale (fd_ready.velt).
+  const ready = !bd.spent() && readReady(s);
   tb.leave(s);
   if (!ready) {
     await waitOn(h, io.K_READ, 0, 0);
@@ -151,7 +153,7 @@ export async function readableWithin(h: u64, ms: i64): Promise<IoResult<u8>> {
   if (s === 0) {
     return failed(closed(), 0);
   }
-  const has = wt.satisfied(s, io.K_READ, 0);
+  const has = readReady(s);
   tb.leave(s);
   // A spent budget waits too, unless the call only looks: the wait yields (sched_budget.velt).
   if (!has || (ms !== 0 && bd.spent())) {
