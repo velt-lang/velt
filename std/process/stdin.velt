@@ -13,7 +13,7 @@ import {
   velt_rt_stdin_read_all_sync,
   velt_rt_stdin_read_line,
   velt_rt_stdin_read_line_sync,
-} from "velt/process/rt";
+} from "#process-rt";
 
 /** Standard input, for its `isTTY` (read it with `readLine`, `lines` or `readAll`). */
 export struct Stdin {

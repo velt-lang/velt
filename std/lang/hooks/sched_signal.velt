@@ -1,0 +1,151 @@
+// velt/lang/hooks (internal): signals for the executor in Velt (#2649 step 4), through a
+// self-pipe on its reactor, in place of tokio's `signal` on the runtime's bridge (which only the
+// `velt dev` host uses today, dev/shutdown.rs; nothing in std yet).
+//
+// `watch(sig)` installs a handler for `sig` with `sigaction` (through `declare c`, its layout per
+// OS from `#sched-signal`); the handler is an `@export`ed Velt function, whose address
+// `sigaction` takes (`exportedAddress`). It only writes the signal's number as one byte to the
+// pipe's write end, which is non-blocking: a pipe full of unread signals drops the next one
+// rather than block the thread the signal interrupted. `next()` waits on the read end, a source
+// of the reactor, and resolves with the next signal's number. The handler reaches no module
+// state (an `@export` can't, and a handler must not allocate or lock): the pipe's write end and
+// the 64 bytes it writes from (byte i holds i) are in static atomics.
+//
+// What `declare c` can't express yet (recorded on #2649): `struct sigaction` as a C struct (its
+// layout is written per OS here, in raw memory); `errno` saved and restored around the handler's
+// `write` (the reactor files read it but have no way to set it); and whether the code an
+// `@export` compiles to is async-signal-safe is not checked by the compiler: this handler calls
+// only `write` and atomic loads.
+
+import { Ptr, export as cExport } from "velt/ffi";
+import { addressStore, exportedAddress, promiseAt } from "velt/lang/intrinsics";
+import * as sg from "#sched-signal";
+import * as r from "#reactor";
+import * as io from "./sched_io";
+import * as m from "./sched_mem";
+import * as tb from "./sched_io_table";
+import * as wt from "./sched_io_wait";
+
+/** The self-pipe's write end + 1 (0: none yet). */
+const PIPE_W = new Atomic<u64>(0);
+/** Its read end's reactor handle (0: none yet). */
+const PIPE_R = new Atomic<u64>(0);
+/** 64 bytes, byte i holding i: what the handler writes for signal i. */
+const BYTES = new Atomic<u64>(0);
+/** Making the pipe (a spin lock). */
+const MAKING = new Atomic<u32>(0);
+
+declare c("c") function sigaction(sig: i32, act: Ptr<u8>, old: Ptr<u8>): i32;
+declare c("c") function read$signal(fd: i32, buf: Ptr<u8>, n: usize): isize;
+declare c("c") function write$signal(fd: i32, buf: Ptr<u8>, n: usize): isize;
+declare c("c") function close$signal(fd: i32): i32;
+
+/** Can this OS watch signals here? */
+export function supported(): bool {
+  return sg.SUPPORTED && io.supported();
+}
+
+/** The self-pipe's read end (made once): its handle, 0 when the OS refused a pipe. */
+function readEnd(): u64 {
+  const h = PIPE_R.load("acquire");
+  if (h !== 0) {
+    return h;
+  }
+  while (MAKING.compareExchange(0, 1, "acquire") !== 0) {
+    if (PIPE_R.load("acquire") !== 0) {
+      return PIPE_R.load("acquire");
+    }
+  }
+  if (PIPE_R.load("acquire") === 0) {
+    const bytes = m.lastingZeroed(64);
+    for (let i: usize = 0; i < 64; i++) {
+      // SAFETY: `bytes` holds 64 bytes.
+      unsafe {
+        addressStore<u8>(bytes + i, i as u8);
+      }
+    }
+    BYTES.store(bytes as u64, "release");
+    const fds = m.zeroed(16);
+    if (r.pipeCloexec(fds) === 0) {
+      const readFd = m.ld32(fds) as i32;
+      const writeFd = m.ld32(fds + 4) as i32;
+      r.prepare(readFd);
+      r.prepare(writeFd);
+      const s = io.register(readFd, io.F_PIPE | io.F_LISTENER, 0);
+      if (s !== 0) {
+        PIPE_W.store((writeFd as u64) + 1, "release");
+        PIPE_R.store(tb.handleOf(s), "release");
+      } else {
+        // No source for the read end: neither end is used (a later `readEnd` tries again).
+        // SAFETY: both descriptors came from the pipe above and nothing else holds them.
+        unsafe {
+          close$signal(readFd);
+          close$signal(writeFd);
+        }
+      }
+    }
+    m.release(fds, 16);
+  }
+  MAKING.store(0, "release");
+  return PIPE_R.load("acquire");
+}
+
+/**
+ * Delivers signal `sig` to `next()` from now on (its handler installed with `SA_RESTART`):
+ * whether it is (false where signals can't be watched, or `sig` is out of range).
+ */
+export function watch(sig: i32): bool {
+  if (!supported() || sig <= 0 || sig >= 64 || readEnd() === 0) {
+    return false;
+  }
+  const act = m.zeroed(sg.ACTION_SIZE);
+  // SAFETY: `onSignal` has the C signature of a signal handler, `void f(int)`.
+  m.st(act, unsafe { exportedAddress(onSignal) });
+  m.st32(act + sg.FLAGS_AT, sg.SA_RESTART as u32);
+  // An empty mask: the zeroed `sigset_t` at 8. SAFETY: a `struct sigaction` at `act`.
+  const rc = unsafe { sigaction(sig, m.ptr(act), m.ptr(0)) };
+  m.release(act, sg.ACTION_SIZE);
+  return rc === 0;
+}
+
+/** The handler: the signal's number, one byte, to the self-pipe. */
+@cExport("std_sched_signal")
+function onSignal(sig: i32): void {
+  const w = PIPE_W.load("acquire");
+  const bytes = BYTES.load("acquire") as usize;
+  if (w === 0 || bytes === 0 || sig <= 0 || sig >= 64) {
+    return;
+  }
+  // SAFETY: byte `sig` of the 64 static bytes; the pipe's write end, open for good.
+  unsafe {
+    write$signal((w - 1) as i32, m.ptr(bytes + (sig as usize)), 1);
+  }
+}
+
+/** The next signal a `watch` delivers (-1 where none can be). */
+export async function next(): Promise<i32> {
+  const h = readEnd();
+  if (h === 0) {
+    return -1;
+  }
+  const one = m.zeroed(16);
+  while (true) {
+    const s = tb.enter(h);
+    if (s === 0) {
+      m.release(one, 16);
+      return -1;
+    }
+    // SAFETY: one byte at `one`; the pipe's read end, open for good.
+    const n = unsafe { read$signal(m.ld(s + io.S_FD) as i32, m.ptr(one), 1) };
+    if (n === 1) {
+      tb.leave(s);
+      const sig = m.ld32(one) as i32;
+      m.release(one, 16);
+      return sig;
+    }
+    io.notReady(s, io.READ);
+    tb.leave(s);
+    // SAFETY: `waitFor` makes a heap future, given up to the promise.
+    await unsafe { promiseAt<void>(wt.waitFor(h, io.K_READ, 0, 0)) };
+  }
+}

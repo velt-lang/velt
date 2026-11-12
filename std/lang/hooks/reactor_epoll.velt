@@ -72,6 +72,8 @@ declare c("c") function write$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
 // The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
 // C symbol has one signature in a program.
 declare c("c") function __errno_location(): Ptr<i32>;
+// `fcntl` is variadic: the compiler's system function passes `arg` where each architecture reads it.
+declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
 declare c("c") function accept4(fd: i32, addr: Ptr<u8>, len: Ptr<u8>, flags: i32): i32;
 
 /** The calling thread's `errno`. */
@@ -121,6 +123,49 @@ function ctl(r: usize, op: i32, fd: i32, events: u32, data: usize): i32 {
 export function add(r: usize, fd: i32, source: usize): i32 {
   return ctl(r, EPOLL_CTL_ADD, fd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, source);
 }
+
+/** Does `exitFd` give a descriptor to close? Yes: a pidfd. */
+export const EXIT_FD_OWNED: bool = true;
+
+/** `pidfd_open` on every architecture (the generic syscall table's number). */
+const PIDFD_OPEN: i64 = 434;
+
+/**
+ * A pidfd of child `pid` (readable once it has exited), close-on-exec as every pidfd is; -1
+ * with `errno` set when the kernel has none (before 5.3).
+ */
+export function exitFd(pid: i32): i32 {
+  // SAFETY: pidfd_open takes a process id and flags 0; the result is checked.
+  return unsafe { syscall(PIDFD_OPEN, pid as i64, 0, 0, 0, 0, 0) } as i32;
+}
+
+/** Watches pidfd `exit` (`exitFd`'s) in reactor `r`: readable once the child exited; 0 or errno. */
+export function watchExit(r: usize, exit: i32, source: usize): i32 {
+  return ctl(r, EPOLL_CTL_ADD, exit, EPOLLIN | EPOLLET, source);
+}
+
+/** `watchExit`'s answer for a child that has exited already (never: the pidfd says so). */
+export const EXITED: i32 = -1;
+
+/** `posix_spawnattr_setflags`' extra flags for a child process: none (pipes are `pipe2`'s). */
+export const SPAWN_FLAGS: i16 = 0;
+
+declare c("c") function pipe2(fds: Ptr<u8>, flags: i32): i32;
+
+/** `O_CLOEXEC`. */
+const O_CLOEXEC: i32 = 0x80000;
+
+/**
+ * A pipe at `fds` (read end, write end), both close-on-exec from the start, so a child another
+ * thread spawns meanwhile gets neither; 0, or -1 with `errno` set.
+ */
+export function pipeCloexec(fds: usize): i32 {
+  // SAFETY: room for two descriptors.
+  return unsafe { pipe2(m.ptr(fds), O_CLOEXEC) };
+}
+
+/** Keeps descriptor `fd` the child's: nothing to do here (no `SPAWN_FLAGS`). */
+export function spawnInherit(fa: usize, fd: i32): void {}
 
 /** Takes `fd` out of reactor `r` (from any thread): its events come to another reactor now. */
 export function del(r: usize, fd: i32): void {
@@ -190,9 +235,17 @@ export function accept(fd: i32, addr: usize, len: usize): i32 {
   return unsafe { accept4(fd, m.ptr(addr), m.ptr(len), SOCKET_FLAGS) };
 }
 
-/** Nothing more to set on Linux (`SOCKET_FLAGS`, `SEND_FLAGS`); 0. */
+/** `fcntl`'s command that sets a descriptor's status flags, and the flag of non-blocking I/O. */
+const F_SETFL: i32 = 4;
+const O_NONBLOCK: i32 = 0x800;
+
+/**
+ * Makes `fd` non-blocking: a socket is already (`SOCKET_FLAGS`), a pipe end is not (`pipe2` takes
+ * only `O_CLOEXEC`, which the child's end must not share), and a read on a blocking one holds its
+ * worker until the peer writes; 0 or errno.
+ */
 export function prepare(fd: i32): i32 {
-  return 0;
+  return fcntl(fd, F_SETFL, O_NONBLOCK) < 0 ? errno() : 0;
 }
 
 const FUTEX_WAIT_PRIVATE: i64 = 128;

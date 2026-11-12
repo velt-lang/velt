@@ -789,6 +789,43 @@ fn the_variable_does_nothing_on_wasi() {
     assert!(ir(true, "aarch64-unknown-linux-gnu").contains("schedBlockOn"));
 }
 
+/// A program that imports nothing builds under `VELT_SCHEDULER=std` for each OS's reactor, debug
+/// and release: sema demands std/lang/hooks/sched during the check, and every module it reaches
+/// for the target is served then, so none may subclass another module's class (the Linux
+/// reactor importing velt/ffi/c_string reached velt/encoding's errors and velt/io's `IoError`:
+/// "std module `std/encoding/errors` was demanded during the check" on Linux only).
+#[test]
+fn a_program_without_imports_builds_for_every_reactor() {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(
+        dir.path().join("main.velt"),
+        "function main() {\n  console.log(1);\n}\n",
+    )
+    .unwrap();
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "wasm32-wasip1",
+    ] {
+        for release in [false, true] {
+            let mut c = command(env!("CARGO_BIN_EXE_velt"));
+            c.args(["build", "main.velt", "--emit", "llvm", "--target", target])
+                .current_dir(dir.path())
+                .env("VELT_SCHEDULER", "std");
+            if release {
+                c.arg("--release");
+            }
+            let o = c.output().unwrap();
+            assert!(
+                o.status.success(),
+                "{target} (release: {release}): {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+        }
+    }
+}
+
 /// A promise nobody can settle keeps nothing alive, as in Node and the runtime (quiet.rs): once
 /// the worker would park with no keep-alive reference, no pending I/O and no runtime leaf
 /// outstanding, the program ends with code 0 (stdout flushed), or with Node's 13 when the top

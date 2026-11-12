@@ -1,0 +1,176 @@
+// velt/net (internal): resolving names for velt/net's sockets on the reactor of the executor in
+// Velt (std/net/fd_socket.velt, std/net/udp/udp_sched.velt) and velt/net/dns's `lookup` under it
+// (std/net/dns/rt_sched.velt, #2649 step 4), and socket addresses as text. `getaddrinfo` blocks
+// its thread while it asks DNS: a numeric address is parsed on the worker (`AI_NUMERICHOST`, which
+// never asks anyone), anything else is looked up on the executor's blocking pool (std/lang/hooks/
+// sched_blocking.velt), as the runtime's `lookup_host` does on tokio's. Results and errors are the
+// runtime's (`IoResult`; codes of std/native/error.velt).
+
+import { IoResult } from "velt/native/result";
+import { CString } from "velt/ffi/c_string";
+import { Ptr } from "velt/ffi/ptr";
+import { utf8DecodeLossy } from "velt/encoding/utf8";
+import { addressLoad } from "velt/lang/intrinsics";
+import * as sys from "#net-sys";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as bp from "velt/lang/hooks/sched_blocking";
+
+const SOCK_STREAM: i32 = 1;
+const AI_PASSIVE: i32 = 1;
+const AI_NUMERICHOST: i32 = 4;
+const AI_NEXT: usize = 40;
+
+// Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
+// signature in a program. Addresses become `Ptr`s with `m.ptr` (0 passes `NULL`).
+declare c("c") function getaddrinfo(
+  host: CString,
+  port: CString,
+  hints: Ptr<u8>,
+  res: Ptr<u8>,
+): i32;
+declare c("c") function freeaddrinfo(ai: Ptr<u8>): void;
+declare c("c") function gai_strerror(e: i32): Ptr<u8>;
+declare c("c") function inet_ntop(
+  family: i32,
+  src: Ptr<u8>,
+  dst: Ptr<u8>,
+  size: u32,
+): Ptr<u8> | null;
+
+/** The NUL-terminated text at `p` (a message of the C library, an address inet_ntop wrote). */
+export function cText(p: usize): string {
+  const out: u8[] = [];
+  let i: usize = 0;
+  while (true) {
+    // SAFETY: a byte of the text, up to and including its NUL.
+    const b = unsafe { addressLoad<u8>(p + i) };
+    if (b === 0) {
+      return utf8DecodeLossy(out);
+    }
+    out.push(b);
+    i++;
+  }
+}
+
+/** "host:port" (the host may be "[v6]"): the host, the port. */
+function split(addr: string): string[] {
+  const at = addr.lastIndexOf(":");
+  if (at < 0) {
+    return [addr, ""];
+  }
+  let host = addr.slice(0, at);
+  if (host.startsWith("[") && host.endsWith("]")) {
+    host = host.slice(1, (host.length as i64) - 1);
+  }
+  return [host, addr.slice(at + 1)];
+}
+
+/**
+ * The addresses of "host:port" (`getaddrinfo`'s list, freed by the caller), or a failure: a
+ * numeric host at once, a name looked up on the blocking pool.
+ */
+export async function resolve(addr: string, passive: bool): Promise<IoResult<usize>> {
+  const parts = split(addr);
+  if (parts[1] === "") {
+    return { code: 4, message: "invalid socket address", value: 0 };
+  }
+  const host = parts[0] === "" ? (passive ? "0.0.0.0" : "localhost") : parts[0];
+  const port = parts[1];
+  const numeric = lookup(host, port, passive, true);
+  if (numeric.code === 0 || !bp.supported()) {
+    return numeric;
+  }
+  return await bp.run<IoResult<usize>>(() => lookup(host, port, passive, false));
+}
+
+/**
+ * `getaddrinfo` of `host` and `port` (`numeric`: only a numeric host, which asks nobody): the
+ * list, or a failure. Throws nothing (it runs on the blocking pool's threads too).
+ */
+function lookup(host: string, port: string, passive: bool, numeric: bool): IoResult<usize> {
+  const hints = m.zeroed(64);
+  m.st32(hints, (passive ? (AI_PASSIVE as u32) : 0) | (numeric ? (AI_NUMERICHOST as u32) : 0));
+  m.st32(hints + 8, SOCK_STREAM as u32);
+  // A name holding a NUL is no address (as the runtime's parse says): caught here, so these
+  // functions throw nothing, as the runtime's (std/net/rt.velt) don't.
+  let hostC: CString;
+  let portC: CString;
+  try {
+    hostC = new CString(host);
+    portC = new CString(port);
+  } catch (e) {
+    m.release(hints, 64);
+    return { code: 4, message: "invalid socket address", value: 0 };
+  }
+  const res = m.zeroed(16);
+  // SAFETY: NUL-terminated host and port, hints and a result word in raw memory.
+  const e = unsafe { getaddrinfo(hostC, portC, m.ptr(hints), m.ptr(res)) };
+  const list = m.ld(res);
+  m.release(hints, 64);
+  m.release(res, 16);
+  if (e !== 0) {
+    // SAFETY: gai_strerror returns a NUL-terminated message.
+    const why = cText(Ptr.addressOf(unsafe { gai_strerror(e) }));
+    return { code: 99, message: `failed to lookup address information: ${why}`, value: 0 };
+  }
+  return { code: 0, message: "", value: list };
+}
+
+/**
+ * `lookup(host)`: the host's IP addresses (IPv4 and IPv6, in the resolver's order, duplicates
+ * removed), or `NOT_FOUND` with the runtime's message. Blocks while it asks DNS (the blocking
+ * pool runs it); throws nothing.
+ */
+export function addressesOf(host: string): IoResult<string[]> {
+  const found = lookup(host, "0", false, false);
+  if (found.code !== 0) {
+    // A NUL in the name: the message of Rust's `lookup_host` (its C string conversion), not the
+    // socket-address one `lookup` gives connect and bind.
+    const why = host.includes("\0") ? "file name contained an unexpected NUL byte" : found.message;
+    return { code: 1, message: `getaddrinfo ENOTFOUND ${host}: ${why}`, value: [] };
+  }
+  const out: string[] = [];
+  let ai = found.value;
+  while (ai !== 0) {
+    const ip = ipText(m.ld(ai + sys.AI_ADDR));
+    if (ip !== "" && !out.includes(ip)) {
+      out.push(ip);
+    }
+    ai = m.ld(ai + AI_NEXT);
+  }
+  freeList(found.value);
+  return { code: 0, message: "", value: out };
+}
+
+/** The IP address of the `sockaddr` at `sa` as text ("" for another family). */
+function ipText(sa: usize): string {
+  const family = sys.familyOf(sa);
+  const v6 = family === sys.AF_INET6;
+  if (!v6 && family !== 2) {
+    return "";
+  }
+  const text = m.zeroed(64);
+  // SAFETY: the address bytes of the sockaddr (at 8 for v6, 4 for v4), 64 bytes of text room.
+  unsafe {
+    inet_ntop(v6 ? sys.AF_INET6 : 2, m.ptr(sa + (v6 ? 8 : 4)), m.ptr(text), 64);
+  }
+  const ip = cText(text);
+  m.release(text, 64);
+  return ip;
+}
+
+/** The `sockaddr` at `sa` as Rust writes a socket address: "ip:port", "[v6]:port". */
+export function addrText(sa: usize): string {
+  const ip = ipText(sa);
+  const p = (m.ld32(sa) >> 16) & 0xffff;
+  const port = ((p & 0xff) << 8) | (p >> 8);
+  return sys.familyOf(sa) === sys.AF_INET6 ? `[${ip}]:${port}` : `${ip}:${port}`;
+}
+
+/** Frees address list `list` (`resolve`'s). */
+export function freeList(list: usize): void {
+  // SAFETY: a list getaddrinfo made, freed once.
+  unsafe {
+    freeaddrinfo(m.ptr(list));
+  }
+}

@@ -45,6 +45,11 @@ const EV_CLEAR: u16 = 0x20;
 const EV_ERROR: u16 = 0x4000;
 const EV_EOF: u16 = 0x8000;
 const NOTE_TRIGGER: u32 = 0x01000000;
+const EVFILT_PROC: i16 = -5;
+const EV_ONESHOT: u16 = 0x10;
+const NOTE_EXIT: u32 = 0x80000000;
+/** `ESRCH`: no such process (it exited and was reaped already, or never was). */
+const ESRCH: i32 = 3;
 
 const F_SETFD: i32 = 2;
 const F_SETFL: i32 = 4;
@@ -198,6 +203,68 @@ export function bits(r: usize, i: usize): u32 {
     b = b | ERR;
   }
   return b;
+}
+
+/**
+ * Does `exitFd` give a descriptor to close? Not here: the exit is watched by process id
+ * (`EVFILT_PROC`).
+ */
+export const EXIT_FD_OWNED: bool = false;
+
+/** What `watchExit` watches for child `pid`: the process id itself (no descriptor). */
+export function exitFd(pid: i32): i32 {
+  return pid;
+}
+
+/**
+ * Watches for the exit of the child `exit` names (`exitFd`'s: its process id), one event tagged `source` once it has
+ * exited (a read with the end of input); 0, `ESRCH` when it has exited already, or errno.
+ */
+export function watchExit(r: usize, exit: i32, source: usize): i32 {
+  const c = m.zeroed(EV);
+  m.st(c, exit as usize);
+  m.st32(c + 8, ((EVFILT_PROC as u16) as u32) | (((EV_ADD | EV_ONESHOT) as u32) << 16));
+  m.st32(c + 12, NOTE_EXIT);
+  m.st(c + 24, source);
+  // SAFETY: one change record at `c`.
+  const n = unsafe { kevent(m.ld(r + R_KQ) as i32, m.ptr(c), 1, m.ptr(0), 0, m.ptr(0)) };
+  m.release(c, EV);
+  if (n < 0) {
+    return errno();
+  }
+  return 0;
+}
+
+/** `watchExit`'s answer for a child that has exited already. */
+export const EXITED: i32 = ESRCH;
+
+/**
+ * `posix_spawnattr_setflags`' extra flags for a child process: `POSIX_SPAWN_CLOEXEC_DEFAULT`, so
+ * the child gets only the descriptors its file actions name (macOS has no `pipe2`: a pipe made
+ * by another thread at the same time may not be close-on-exec yet).
+ */
+export const SPAWN_FLAGS: i16 = 0x4000;
+
+declare c("c") function pipe$io(fds: Ptr<u8>): i32;
+declare c("c") function posix_spawn_file_actions_addinherit_np(fa: Ptr<u8>, fd: i32): i32;
+
+/** A pipe at `fds` (read end, write end), both close-on-exec; 0, or -1 with `errno` set. */
+export function pipeCloexec(fds: usize): i32 {
+  // SAFETY: room for two descriptors.
+  if (unsafe { pipe$io(m.ptr(fds)) } !== 0) {
+    return -1;
+  }
+  fcntl(m.ld32(fds) as i32, F_SETFD, FD_CLOEXEC);
+  fcntl(m.ld32(fds + 4) as i32, F_SETFD, FD_CLOEXEC);
+  return 0;
+}
+
+/** Keeps descriptor `fd` the child's (`SPAWN_FLAGS` closes the others) in file actions `fa`. */
+export function spawnInherit(fa: usize, fd: i32): void {
+  // SAFETY: `fa` is an initialized file-actions object.
+  unsafe {
+    posix_spawn_file_actions_addinherit_np(m.ptr(fa), fd);
+  }
 }
 
 /** Wakes the worker waiting in `wait` (from any thread). */

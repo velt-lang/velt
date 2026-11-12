@@ -45,6 +45,13 @@ export const imports: Imports = {
     linux: "./lang/hooks/reactor_epoll.velt",
     default: "./lang/hooks/reactor_none.velt",
   },
+  // The layout of `sigaction` for the executor in Velt's signals (std/lang/hooks/
+  // sched_signal.velt): per OS; elsewhere none.
+  "#sched-signal": {
+    darwin: "./lang/hooks/signal_darwin.velt",
+    linux: "./lang/hooks/signal_linux.velt",
+    default: "./lang/hooks/signal_none.velt",
+  },
   // The threads of the executor in Velt's workers (std/lang/hooks/sched.velt): `pthread_create`
   // on macOS and Linux; elsewhere none yet (one worker).
   "#sched-thread": {
@@ -75,6 +82,22 @@ export const imports: Imports = {
     default: "./sync/channel_entry.velt",
   },
   "#net-tcp": { "std-scheduler": "./net/tcp_sched.velt", default: "./net/rt.velt" },
+  // velt/net's UDP sockets and name lookups: the runtime's, or, compiled with the executor in
+  // Velt, non-blocking UDP sockets on its reactor and `getaddrinfo` on its blocking pool.
+  "#net-udp": { "std-scheduler": "./net/udp/udp_sched.velt", default: "./net/udp/rt.velt" },
+  "#net-dns": { "std-scheduler": "./net/dns/rt_sched.velt", default: "./net/dns/rt.velt" },
+  // velt/fs's and velt/process's runtime functions: the runtime's (std/fs/rt.velt, std/process/
+  // rt.velt), or, compiled with the executor in Velt (`VELT_SCHEDULER=std`), the same names with
+  // whole-file operations and standard input read on its blocking pool (std/lang/hooks/
+  // sched_blocking.velt) instead of the runtime's leaves on tokio's blocking threads.
+  "#fs-rt": { "std-scheduler": "./fs/rt_sched.velt", default: "./fs/rt.velt" },
+  "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
+  // velt/process/child's runtime functions: the runtime's (tokio's processes), or, compiled with
+  // the executor in Velt, `posix_spawn` with the exit and the pipes on its reactor.
+  "#child-rt": {
+    "std-scheduler": "./process/child/child_sched.velt",
+    default: "./process/child/rt.velt",
+  },
   // velt/task's `workerCount()` and `currentWorker()`: the runtime's executor's workers, or
   // under the executor in Velt (`VELT_SCHEDULER=std`) its own.
   "#task-workers": {

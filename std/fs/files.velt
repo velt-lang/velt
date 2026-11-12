@@ -12,7 +12,7 @@ import {
   velt_rt_fs_read_file_sync,
   velt_rt_fs_write_file,
   velt_rt_fs_write_file_sync,
-} from "velt/fs/rt";
+} from "#fs-rt";
 
 /** Reads a UTF-8 text file (`EILSEQ` if it is not valid UTF-8). */
 export async function readFile(path: string): Promise<string> {

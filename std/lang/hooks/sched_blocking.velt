@@ -1,0 +1,251 @@
+// velt/lang/hooks (internal): the blocking pool of the executor in Velt (#2649 step 4), what
+// tokio's `spawn_blocking` is to the runtime (velt_rt task/leaf.rs `blocking_leaf`): threads
+// that run work which blocks its thread (a file system call, reading standard input, a name
+// lookup), so the workers never wait for it.
+//
+// - `run(work)` queues `work` and returns a promise of its result. The job is a closure moved to
+//   the pool's thread (std/lang/intrinsics/slot.velt: moved where the caller held the only
+//   reference, else copied), and its result comes back through a `HandOff` (std/sync/
+//   hand_off.velt), whose `give` wakes the waiting task through its C waker: from the pool's
+//   thread, that is a push to the task's home inbox and an unpark of its worker.
+// - Threads start on demand: a job queued while no thread is idle starts one, up to 512 (tokio's
+//   `max_blocking_threads`). A thread idle for 10 seconds (tokio's `thread_keep_alive`) ends.
+//   Threads start through `@export` + `exportedAddress` + `pthread_create` (`#sched-thread`),
+//   detached; where none can start (the default variant), `supported()` is false and callers
+//   keep the runtime's leaves. When the OS refuses a thread and none is running, the thread
+//   that queued the job runs the queue itself (a blocked worker rather than a job nobody runs).
+// - A job queued or running keeps the process alive (sched_end.velt), as with the runtime, whose
+//   exit waits for tokio's blocking threads, and Node, whose thread-pool requests are referenced:
+//   `submit` takes a keep-alive reference, and the job's end gives it back and wakes worker 0,
+//   which looks again whether anything is left to happen (a job whose waiter left wakes nobody
+//   else).
+// - A job runs to its end: dropping the promise (a `Promise.race` loser) leaves the work running
+//   and drops its result when it is done, as tokio does with a blocking task's handle.
+//
+// The pool's block (calloc'd once, its address in `POOL`, never freed): a spin lock, the word
+// idle threads sleep on (bumped when one is woken), the queue of jobs (a FIFO of nodes: the next
+// node, then the closure), the threads alive, those idle, and the wakes owed to idle threads.
+// The pool's thread function reaches no module state (an `@export` can't): the block is its
+// argument.
+
+import { Ptr, export as cExport } from "velt/ffi";
+import { exportedAddress, inline, slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
+import { HandOff } from "velt/sync/hand_off";
+import * as r from "#reactor";
+import * as th from "#sched-thread";
+import * as end from "./sched_end";
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+import * as wt from "./sched_io_wait";
+import * as wk from "./sched_wake";
+
+/** The pool's block (0 until the first job). */
+const POOL = new Atomic<u64>(0);
+
+/** Threads at most (tokio's `max_blocking_threads`). */
+const MAX_THREADS: usize = 512;
+/** How long an idle thread waits for a job before it ends: 10 s (tokio's `thread_keep_alive`). */
+const KEEP_ALIVE_NS: u64 = 10000000000;
+
+const P_LOCK: usize = 0;
+const P_WORD: usize = 4;
+const P_HEAD: usize = 8;
+const P_TAIL: usize = 16;
+const P_THREADS: usize = 24;
+const P_IDLE: usize = 32;
+const P_NOTIFY: usize = 40;
+const P_DONE: usize = 48;
+const P_SIZE: usize = 64;
+
+/** A job's node: the next node, then the closure. */
+const N_NEXT: usize = 0;
+const N_JOB: usize = 16;
+
+/** Can this OS run the pool? (Without threads, callers use the runtime's blocking leaves.) */
+@inline
+export function supported(): bool {
+  return th.SUPPORTED;
+}
+
+/**
+ * Runs `work` on one of the pool's threads and resolves with what it returns. `work` and what it
+ * captures cross to that thread as a spawned task's arguments do; it must not throw (a panic
+ * there ends the process) and must not touch module state.
+ */
+export async function run<T>(work: () => T): Promise<T> {
+  const h = shared(new HandOff<T>());
+  submit(() => {
+    const left = h.give(work());
+  });
+  const v = await h.wait();
+  return v!;
+}
+
+/** Jobs the pool finished since it started (tests read it to see the pool ran them). */
+export function finished(): usize {
+  const p = POOL.load("acquire") as usize;
+  return p === 0 ? 0 : m.load(p + P_DONE);
+}
+
+/** The pool's block, made on first use. */
+function pool(): usize {
+  const p = POOL.load("acquire") as usize;
+  if (p !== 0) {
+    return p;
+  }
+  const b = m.lastingZeroed(P_SIZE);
+  const was = POOL.compareExchange(0, b as u64, "acqrel", "acquire") as usize;
+  if (was !== 0) {
+    m.lastingRelease(b);
+    return was;
+  }
+  return b;
+}
+
+@inline
+function lock(p: usize): void {
+  if (m.cas32(p + P_LOCK, 0, 1) !== 0) {
+    m.spinLock(p + P_LOCK);
+  }
+}
+
+@inline
+function unlock(p: usize): void {
+  m.store32(p + P_LOCK, 0);
+}
+
+/** Queues job `job`, waking an idle thread or starting one. */
+function submit(job: () => void): void {
+  const p = pool();
+  const n = m.zeroed(N_JOB + slotSize<() => void>());
+  // SAFETY: `n + N_JOB` has room for the closure and holds none; taken once, by a pool thread.
+  unsafe {
+    slotPut<() => void>(n + N_JOB, job);
+  }
+  // Held until the job is done: the process doesn't end while it can still finish.
+  end.keepAcquire(t.main());
+  lock(p);
+  const tail = m.ld(p + P_TAIL);
+  if (tail === 0) {
+    m.st(p + P_HEAD, n);
+  } else {
+    m.st(tail + N_NEXT, n);
+  }
+  m.st(p + P_TAIL, n);
+  if (m.ld(p + P_IDLE) > 0) {
+    // An idle thread takes it: owed a wake, and no longer counted idle.
+    m.st(p + P_IDLE, m.ld(p + P_IDLE) - 1);
+    m.st(p + P_NOTIFY, m.ld(p + P_NOTIFY) + 1);
+    m.store32(p + P_WORD, m.load32(p + P_WORD) + 1);
+    unlock(p);
+    r.wordWake(p + P_WORD);
+    return;
+  }
+  const spawn = m.ld(p + P_THREADS) < MAX_THREADS;
+  if (spawn) {
+    m.st(p + P_THREADS, m.ld(p + P_THREADS) + 1);
+  }
+  unlock(p);
+  // SAFETY: `blockingMain` has the C signature of a thread's start routine.
+  if (spawn && !th.startDetached(unsafe { exportedAddress(blockingMain) }, p)) {
+    // No thread: the job waits for a running one. With none running, nothing would ever take
+    // the queue (each job holding its keep-alive reference: a process that never ends), so this
+    // thread runs what is queued itself, blocking its worker as a build without the pool does.
+    lock(p);
+    m.st(p + P_THREADS, m.ld(p + P_THREADS) - 1);
+    while (m.ld(p + P_THREADS) === 0) {
+      const q = pop(p);
+      if (q === 0) {
+        break;
+      }
+      unlock(p);
+      runJob(q);
+      jobDone(p);
+      lock(p);
+    }
+    unlock(p);
+  }
+}
+
+/** The queue's first node, taken off it (lock held); 0 when it is empty. */
+function pop(p: usize): usize {
+  const n = m.ld(p + P_HEAD);
+  if (n !== 0) {
+    const after = m.ld(n + N_NEXT);
+    m.st(p + P_HEAD, after);
+    if (after === 0) {
+      m.st(p + P_TAIL, 0);
+    }
+  }
+  return n;
+}
+
+/**
+ * The next job's node for a pool thread (lock held on entry and exit), waiting while there is
+ * none; 0 when the thread has waited `KEEP_ALIVE_NS` with nothing to do (it is no longer counted).
+ */
+function next(p: usize): usize {
+  let since: u64 = 0;
+  while (true) {
+    const n = pop(p);
+    if (n !== 0) {
+      return n;
+    }
+    if (since === 0) {
+      since = wt.now();
+    } else if (wt.now() - since >= KEEP_ALIVE_NS) {
+      m.st(p + P_THREADS, m.ld(p + P_THREADS) - 1);
+      return 0;
+    }
+    m.st(p + P_IDLE, m.ld(p + P_IDLE) + 1);
+    const word = m.load32(p + P_WORD);
+    unlock(p);
+    r.wordWaitFor(p + P_WORD, word, (KEEP_ALIVE_NS / 1000) as u32);
+    lock(p);
+    if (m.ld(p + P_NOTIFY) > 0) {
+      // Woken for a job: the waker took this thread off the idle count.
+      m.st(p + P_NOTIFY, m.ld(p + P_NOTIFY) - 1);
+    } else {
+      // A timeout or a spurious wake: no longer idle (counted again if it waits again).
+      m.st(p + P_IDLE, m.ld(p + P_IDLE) - 1);
+    }
+  }
+}
+
+/** Runs the job in node `n` (freed), dropping the closure and what it captured at the end. */
+function runJob(n: usize): void {
+  // SAFETY: `submit` put a closure there; this thread took the node off the queue, so it takes
+  // it once.
+  const job = unsafe { slotTake<() => void>(n + N_JOB) };
+  m.release(n, N_JOB + slotSize<() => void>());
+  job();
+}
+
+/** A pool thread: runs jobs until it has been idle for `KEEP_ALIVE_NS`. */
+@cExport("std_sched_blocking")
+function blockingMain(arg: Ptr<u8> | null): Ptr<u8> | null {
+  const p = m.addr(arg);
+  lock(p);
+  while (true) {
+    const n = next(p);
+    unlock(p);
+    if (n === 0) {
+      return null;
+    }
+    runJob(n);
+    jobDone(p);
+    lock(p);
+  }
+}
+
+/**
+ * After a job (lock not held): counted, and its keep-alive reference given back. The job's
+ * waiter (if it is still there) was woken by its give; worker 0 looks again whether the process
+ * can end now that this reference is gone.
+ */
+function jobDone(p: usize): void {
+  m.inc(p + P_DONE);
+  const g = t.main();
+  end.keepRelease(g);
+  wk.unpark(g);
+}
