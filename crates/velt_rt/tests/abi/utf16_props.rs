@@ -268,8 +268,8 @@ fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
                 )
             }
             3..=5 => {
-                // The position translation of the searches in Velt (std/lang/string/search.velt):
-                // a unit's byte offset (the pair's when it is the low half of one) and back.
+                // The runtime's position translation: a unit's byte offset (the pair's when it is
+                // the low half of one) and back.
                 let u = rng.below(s.len() + 1);
                 let low = u > 0
                     && u < s.len()
@@ -280,12 +280,15 @@ fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
                 let op = format!("{} unit {u}", show(&s));
                 diff(
                     format!("{op} to byte"),
-                    velt_rt_str_unit_to_byte(rs, u as u64),
+                    {
+                        let pos = (*rs).unit_to_byte(u);
+                        (pos.byte as u64) << 1 | pos.low_half as u64
+                    },
                     want,
                 )?;
                 diff(
                     format!("{op} and back"),
-                    velt_rt_str_byte_to_unit(rs, want >> 1),
+                    (*rs).byte_to_unit((want >> 1) as usize) as u64,
                     start as u64,
                 )
             }

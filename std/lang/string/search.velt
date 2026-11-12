@@ -6,8 +6,7 @@
 // Positions count UTF-16 code units (https://veltlang.com/docs/reference/types/ "Strings"). An
 // ASCII string (`strLen(s) == strByteLen(s)`, no call) searches its bytes, whose offsets are its
 // positions. Another string searches its WTF-8 bytes and translates the positions at entry and
-// exit with the runtime's breadcrumbs (`velt_rt_str_unit_to_byte`, `velt_rt_str_byte_to_unit`),
-// which is exact because WTF-8 is self-synchronizing: a match of a needle that starts with a
+// exit (positions.velt, over the breadcrumbs the runtime shares), which is exact because WTF-8 is self-synchronizing: a match of a needle that starts with a
 // lead byte starts on a code point. A needle that starts with a lone low surrogate or ends with
 // a lone high one ("half needle") can also match half of a pair stored as one 4-byte sequence:
 // those searches compare code units instead (rare: lone surrogates come only from slicing
@@ -27,12 +26,8 @@ import {
   unitsRfind,
 } from "velt/lang/string/code_units";
 import { findBytes, rfindBytes } from "velt/lang/string/needle_scan";
+import { byteToUnit, unitToByte } from "velt/lang/string/positions";
 
-/** The byte offset of code unit `unit` of `s` (clamped), times two, plus one when the unit is
- * the low half of a pair stored as one 4-byte sequence (whose offset it is then). */
-declare function velt_rt_str_unit_to_byte(s: string, unit: u64): u64;
-/** The code unit position of byte offset `byte` of `s`, a code point boundary. */
-declare function velt_rt_str_byte_to_unit(s: string, byte: u64): u64;
 
 /** `i` clamped to `0..=len`. */
 function clamp(i: i64, len: usize): usize {
@@ -92,7 +87,7 @@ function indexOfWide(s: string, needle: string, from: i64): i64 {
     return unitsFind(s, needle, at);
   }
   // Only a half needle can start at the low half of a pair: start after the pair then.
-  const pos = velt_rt_str_unit_to_byte(s, at as u64);
+  const pos = unitToByte(s, at);
   const start = ((pos >> 1) + ((pos & 1) * 4)) as usize;
   const n = strByteLen(s);
   if (m > n - start) {
@@ -100,7 +95,7 @@ function indexOfWide(s: string, needle: string, from: i64): i64 {
   }
   const k =
     m == 1 ? findByte(s, strByteAt(needle, 0), start, n) : findBytes(s, needle, m, start, n);
-  return k < 0 ? -1 : velt_rt_str_byte_to_unit(s, k as u64) as i64;
+  return k < 0 ? -1 : byteToUnit(s, k as usize) as i64;
 }
 
 /** `s.includes(needle, position)`: as `indexOf(...) >= 0`. Compiled into the caller is only a
@@ -196,7 +191,7 @@ function lastIndexOfWide(s: string, needle: string, from: i64): i64 {
   }
   // A match starting at unit `lastUnit` or before starts at its code point or before (inside a
   // pair, the pair starts at the unit before).
-  const lastByte = (velt_rt_str_unit_to_byte(s, lastUnit as u64) >> 1) as usize;
+  const lastByte = (unitToByte(s, lastUnit) >> 1) as usize;
   const n = strByteLen(s);
   // A needle can take more bytes than the string with no more units (a lone surrogate is 3
   // bytes for one unit, a pair 4 bytes for two).
@@ -205,7 +200,7 @@ function lastIndexOfWide(s: string, needle: string, from: i64): i64 {
   }
   const last = lastByte + m <= n ? lastByte : n - m;
   const k = m == 1 ? rfindByte(s, strByteAt(needle, 0), last + 1) : rfindBytes(s, needle, m, last);
-  return k < 0 ? -1 : velt_rt_str_byte_to_unit(s, k as u64) as i64;
+  return k < 0 ? -1 : byteToUnit(s, k as usize) as i64;
 }
 
 /** `s.startsWith(prefix)`. A prefix ending with a lone high surrogate also matches the first

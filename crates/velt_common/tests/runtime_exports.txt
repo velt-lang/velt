@@ -358,7 +358,6 @@ velt_rt velt_rt_str_append
 velt_rt velt_rt_str_array_drop
 velt_rt velt_rt_str_byte_length
 velt_rt velt_rt_str_byte_slice
-velt_rt velt_rt_str_byte_to_unit
 velt_rt velt_rt_str_char_code_at
 velt_rt velt_rt_str_clone
 velt_rt velt_rt_str_cmp
@@ -387,7 +386,6 @@ velt_rt velt_rt_str_to_upper
 velt_rt velt_rt_str_trim
 velt_rt velt_rt_str_trim_end
 velt_rt velt_rt_str_trim_start
-velt_rt velt_rt_str_unit_to_byte
 velt_rt velt_rt_strbuf_adopt
 velt_rt velt_rt_strbuf_commit
 velt_rt velt_rt_strbuf_drop

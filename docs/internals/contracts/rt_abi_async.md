@@ -1010,8 +1010,6 @@ U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 |---|---|---|
 | `velt_rt_str_slice` | `(const VeltStr* s, i64 start, i64 end, VeltStr* out)` | JS `slice`: negative = from end, clamped, empty if `start >= end`; omitted `end` = `i64::MAX` |
 | `velt_rt_str_byte_slice` | `(const VeltStr* s, u64 start, u64 end, VeltStr* out)` | bytes `start..end` of the WTF-8 (velt/encoding `utf8Substring`); the caller checks `start <= end <= len` and code point boundaries |
-| `velt_rt_str_unit_to_byte` | `(const VeltStr* s, u64 unit) -> u64` | the byte offset of UTF-16 unit `unit` (clamped to the length), times two, plus 1 when the unit is the low half of a pair (the offset is then the pair's): the searches in Velt (std/lang/string/search.velt) translate positions with it |
-| `velt_rt_str_byte_to_unit` | `(const VeltStr* s, u64 byte) -> u64` | the UTF-16 unit position of byte offset `byte`, a code point boundary (clamped) |
 | `velt_rt_str_eq` | `(const VeltStr* a, const VeltStr* b) -> u8` | `==` fast path: length check + one memcmp |
 | `velt_rt_str_join` | `(const VeltStrArray* parts, const VeltStr* sep, VeltStr* out)` | `parts.join(sep)`: sums the pieces' lengths and unit counts, then writes the result once (inline, or a heap buffer of exactly its size) |
 | `velt_rt_str_split` | `(const VeltStr* s, const VeltStr* sep, VeltStrArray* out)` | JS semantics: `"a,b,".split(",")` = `["a","b",""]`, `"".split(",")` = `[""]`, `"".split("")` = `[]`, `split("")` = code units (a pair gives its two halves). Drop with `velt_rt_str_array_drop` (§4). |
