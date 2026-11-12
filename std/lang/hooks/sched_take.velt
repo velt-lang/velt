@@ -11,38 +11,53 @@ import * as t from "./sched_task";
 /**
  * Takes up to `n` tasks from the front of a queue (`head` the offset of its head: input or
  * second), oldest first, as a chain through `T_NEXT`; those that may not move (pinned, anchored)
- * go back to the same queue's end. The queue is locked.
+ * stay where they were, in their order. The queue is locked.
  */
 function take(e: usize, head: usize, n: usize, into: usize): usize {
   const io = head === t.E_IHEAD;
+  const tail = io ? t.E_ITAIL : t.E_TAIL;
+  const len = io ? t.E_ILEN : t.E_RLEN;
   let chain = into;
+  let taken: usize = 0;
+  // Those that stay, in their order: spliced back in front of the first task not looked at.
+  let keepFirst: usize = 0;
+  let keepLast: usize = 0;
+  let k = m.ld(e + head);
   let i: usize = 0;
-  // Those that stay, newest first (linked through `T_NEXT`, no array: the queue is locked).
-  let back: usize = 0;
-  while (i < n) {
-    const k = io ? q.popIo(e) : q.popRest(e, t.M_SHARED);
-    if (k === 0) {
-      break;
-    }
+  while (i < n && k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
     if (t.movable(k)) {
       m.st(k + t.T_NEXT, chain);
       chain = k;
+      taken++;
     } else {
-      m.st(k + t.T_NEXT, back);
-      back = k;
+      if (keepFirst === 0) {
+        keepFirst = k;
+      } else {
+        m.st(keepLast + t.T_NEXT, k);
+      }
+      keepLast = k;
     }
     i++;
-  }
-  let k = q.reverse(back);
-  while (k !== 0) {
-    const next = m.ld(k + t.T_NEXT);
-    if (io) {
-      q.pushIo(e, k);
-    } else {
-      q.pushRest(e, k, t.M_SHARED);
-    }
     k = next;
   }
+  if (taken === 0) {
+    return chain;
+  }
+  // `k`: the first task not looked at.
+  if (keepFirst !== 0) {
+    m.st(keepLast + t.T_NEXT, k);
+    m.st(e + head, keepFirst);
+    if (k === 0) {
+      m.st(e + tail, keepLast);
+    }
+  } else {
+    m.st(e + head, k);
+    if (k === 0) {
+      m.st(e + tail, 0);
+    }
+  }
+  m.st(e + len, m.ld(e + len) - taken);
   return chain;
 }
 

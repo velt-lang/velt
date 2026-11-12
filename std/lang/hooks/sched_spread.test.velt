@@ -1,0 +1,106 @@
+// velt/lang/hooks (tests): a borrower's take of a busy worker's input (sched_spread.velt `lend`,
+// sched_take.velt `take`) on a worker block and tasks built by hand: the tasks that may not move
+// stay where they were, in their order, and the worker is left alone (`E_NOBORROW`) only when
+// the older half held tasks and all of them stayed.
+import { describe, expect, it } from "velt/test";
+import * as m from "./sched_mem";
+import * as q from "./sched_queue";
+import * as sp from "./sched_spread";
+import * as t from "./sched_task";
+
+/** The bytes of a hand-built task: past its last field the take reads (`T_NEXT`, `T_FLAGS`). */
+const TASK: usize = 64;
+
+/** A worker block with tasks in its input, `pinned[i]` whether the `i`th may not move. */
+function worker(pinned: bool[]): usize {
+  const w = m.zeroed(t.E_SIZE);
+  m.st(w + t.E_POLLS, 100);
+  for (const p of pinned) {
+    const k = m.zeroed(TASK);
+    if (p) {
+      m.st32(k + t.T_FLAGS, t.PINNED);
+    }
+    q.pushIo(w, k);
+  }
+  return w;
+}
+
+/** The positions (in `all`, the input as built) of the tasks of chain `k`, linked by `T_NEXT`. */
+function order(all: usize[], k: usize): string {
+  let out = "";
+  while (k !== 0) {
+    out += `${all.indexOf(k)} `;
+    k = m.ld(k + t.T_NEXT);
+  }
+  return out;
+}
+
+/** The tasks of `w`'s input, in order. */
+function input(w: usize): usize[] {
+  const all: usize[] = [];
+  let k = m.ld(w + t.E_IHEAD);
+  while (k !== 0) {
+    all.push(k);
+    k = m.ld(k + t.T_NEXT);
+  }
+  return all;
+}
+
+/** Gives back `w` and the tasks `all`. */
+function free(w: usize, all: usize[]): void {
+  for (const k of all) {
+    m.release(k, TASK);
+  }
+  m.release(w, t.E_SIZE);
+}
+
+describe("velt/lang/hooks lend", () => {
+  it("leaves a worker borrowable when it looked at no task", () => {
+    const w = worker([false]);
+    const all = input(w);
+    // The slot counts as input waiting (`q.input`), but only the input queue is taken from.
+    const slot = m.zeroed(TASK);
+    m.st(w + t.E_NEXT, slot);
+    expect(q.input(w)).toBe(2);
+    expect(sp.lend(w)).toBe(0);
+    expect(m.ld(w + t.E_NOBORROW)).toBe(0);
+    expect(order(all, m.ld(w + t.E_IHEAD))).toBe("0 ");
+    m.release(slot, TASK);
+    free(w, all);
+  });
+
+  it("marks a worker whose older half was all pinned, and keeps its input's order", () => {
+    const w = worker([true, true, false, false]);
+    const all = input(w);
+    expect(sp.lend(w)).toBe(0);
+    expect(m.ld(w + t.E_NOBORROW)).toBe(132);
+    expect(order(all, m.ld(w + t.E_IHEAD))).toBe("0 1 2 3 ");
+    expect(m.ld(w + t.E_ILEN)).toBe(4);
+    expect(all.indexOf(m.ld(w + t.E_ITAIL))).toBe(3);
+    free(w, all);
+  });
+
+  it("takes the movable tasks of the older half and leaves the pinned ones in place", () => {
+    const w = worker([true, false, true, false, false, true]);
+    const all = input(w);
+    const k = sp.lend(w);
+    // The older half is tasks 0-2: task 1 moves, a chain newest first.
+    expect(order(all, k)).toBe("1 ");
+    expect(m.ld(w + t.E_NOBORROW)).toBe(0);
+    expect(order(all, m.ld(w + t.E_IHEAD))).toBe("0 2 3 4 5 ");
+    expect(m.ld(w + t.E_ILEN)).toBe(5);
+    expect(all.indexOf(m.ld(w + t.E_ITAIL))).toBe(5);
+    free(w, all);
+  });
+
+  it("takes the older of two tasks, and the other is the whole input after it", () => {
+    const w = worker([false, true]);
+    const all = input(w);
+    // Half of 2 is 1: task 0 moves, task 1 is the whole input after it.
+    expect(order(all, sp.lend(w))).toBe("0 ");
+    expect(order(all, m.ld(w + t.E_IHEAD))).toBe("1 ");
+    expect(all.indexOf(m.ld(w + t.E_ITAIL))).toBe(1);
+    expect(m.ld(w + t.E_ILEN)).toBe(1);
+    free(w, all);
+  });
+});

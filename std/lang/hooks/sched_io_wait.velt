@@ -114,7 +114,7 @@ export function waitFor(handle: u64, kind: u32, arg: u64, deadline: u64): usize 
 /**
  * `waitFor` that also ends once heap future `also` completes (it owns `also`, polled after the
  * source with the same context and dropped with the wait): a wait for input that an abort signal
- * ends too (std/net/fd_io.velt `readableUntil`), with no race of two promises around it.
+ * ends too (std/net/fd_until.velt `readableUntil`), with no race of two promises around it.
  */
 export function waitAlso(handle: u64, kind: u32, arg: u64, deadline: u64, also: usize): usize {
   const f = waitFor(handle, kind, arg, deadline);
