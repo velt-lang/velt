@@ -623,3 +623,90 @@ export async function work(): Promise<number> {
         assert!(matches!(d.reload(&[("util.velt", util)]), Reload::Warm));
     }
 }
+
+/// What an edited callee stores is read where callers in other files were lowered: the base of
+/// `rows[0][idx(0)]` is held across the index's call when that call may replace it (#1527). A
+/// callee that already ran user code (`note()`) and now stores lowers the program whole, and the
+/// program is the cold build's (once the kept caller read without the hold).
+#[test]
+fn an_edit_changing_what_a_callee_stores_lowers_whole() {
+    let cases = [
+        (
+            "import { rows, always, idx } from \"./util\";
+function tick(i: number): void {
+  rows[0] = [\"a\", \"b\"];
+  console.log(\"tick\", i, rows[0][idx(0)]);
+}
+function main() { console.log(rows[1][always(0)]); tick(0); }
+",
+            "export const rows: string[][] = [[\"a\", \"b\"], [\"c\", \"d\"]];
+export let count = 0;
+export function always(i: number): number {
+  rows[1] = [\"X\", \"Y\"];
+  return i;
+}
+export function note(): void { count += 1; }
+export function idx(i: number): number { note(); return i + 0; }
+",
+            "note(); return i + 0;",
+            "note(); rows[0] = [\"L0\", \"L1\"]; return i;",
+        ),
+        (
+            "import { cur, pick } from \"./util\";
+function main() { console.log(cur[pick()]); }
+",
+            "export let cur: number[] = [1, 2, 3];
+export let count = 0;
+export function note(): void { count += 1; }
+export function pick(): number { note(); return 0; }
+",
+            "note(); return 0;",
+            "note(); cur = [4, 5, 6]; return 0;",
+        ),
+        (
+            "import { box, peek } from \"./util\";
+function main() { console.log(box.xs[peek()]); }
+",
+            "export class Box { xs: number[] = [1, 2]; }
+export const box = new Box();
+export let count = 0;
+export function note(): void { count += 1; }
+export function peek(): number { note(); return 0; }
+",
+            "note(); return 0;",
+            "note(); box.xs = [4, 5]; return 0;",
+        ),
+    ];
+    let mut reasons = vec![];
+    for (main, util, from, to) in cases {
+        let mut d = Differential::start(&[("main.velt", main), ("util.velt", util)])
+            .expect("the program builds");
+        assert!(util.contains(from), "{from}");
+        // Compared with the cold build (`Differential::reload`): warm, spliced or lowered whole.
+        let out = d.reload(&[("util.velt", &util.replacen(from, to, 1))]);
+        assert!(matches!(out, Reload::Warm), "{out:?}");
+        reasons.push(d.whole.clone().unwrap_or_default());
+        assert!(matches!(d.reload(&[("util.velt", util)]), Reload::Warm));
+    }
+    // The array element's case: what `idx` stores is all that changes for lowering.
+    assert!(reasons[0].contains("stores"), "{reasons:?}");
+}
+
+/// A closure that captures something more gets another environment: the splice lowers the
+/// program whole (once it lowered the closure against the old environment, an internal error).
+#[test]
+fn an_edit_changing_a_closures_captures_lowers_whole() {
+    let src = "function main() { console.log(run()); }
+function run(): number {
+  const a = 1;
+  const b = [2, 3];
+  const f = () => a;
+  return f() + [5].map((x) => x + a)[0];
+}
+";
+    let mut d = Differential::start(&[("main.velt", src)]).expect("the program builds");
+    let out = d.reload(&[("main.velt", &src.replace("() => a;", "() => a + b[1];"))]);
+    assert!(matches!(out, Reload::Warm), "{out:?}");
+    let whole = d.whole.clone().unwrap_or_default();
+    assert!(whole.contains("captures"), "{whole:?}");
+}

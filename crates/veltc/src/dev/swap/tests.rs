@@ -423,8 +423,8 @@ fn warm_reload(
         },
         None => Err(warm.warm_refused.take().unwrap_or_default()),
     };
-    let cold = without_static_ids(&cold.to_string());
-    let warm = warm.map(|w| without_static_ids(&w));
+    let cold = super::warm_harness::by_content(&cold.to_string());
+    let warm = warm.map(|w| super::warm_harness::by_content(&w));
     if let (Ok(w), Some(dir)) = (&warm, std::env::var_os("VELT_SPLICE_DUMP")) {
         if *w != cold {
             let dir = PathBuf::from(dir);
@@ -531,36 +531,6 @@ fn a_body_edit_beside_generated_code_reloads_warm() {
         (Ok(warm), cold) => assert_eq!(warm, cold),
         (Err(why), _) => assert!(why.contains("generated"), "{why}"),
     }
-}
-
-/// `vir` with each `static#N` named by its data, and the statics' own lines left out: a splice
-/// adds the data of new literals after the kept lowering's, where a cold lowering numbers them in
-/// the order it meets them, and leaves the data of literals edited away unused.
-pub(super) fn without_static_ids(vir: &str) -> String {
-    let mut data = std::collections::HashMap::new();
-    for line in vir.lines() {
-        if let Some(rest) = line.strip_prefix("static#") {
-            if let Some((n, def)) = rest.split_once(' ') {
-                data.insert(format!("static#{n}"), format!("static[{def}]"));
-            }
-        }
-    }
-    let mut out = String::new();
-    for line in vir.lines().filter(|l| !l.starts_with("static#")) {
-        let mut line = line.to_string();
-        let mut at = 0;
-        while let Some(i) = line[at..].find("static#") {
-            let start = at + i;
-            let end = (line[start + 7..].find(|c: char| !c.is_ascii_digit()))
-                .map_or(line.len(), |e| start + 7 + e);
-            let named = data.get(&line[start..end]).cloned().unwrap_or_default();
-            line.replace_range(start..end, &named);
-            at = start + named.len();
-        }
-        out.push_str(&line);
-        out.push('\n');
-    }
-    out
 }
 
 /// An edit whose calls pass another constant to a function the debug optimizer narrowed by its

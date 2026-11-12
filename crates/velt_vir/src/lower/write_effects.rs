@@ -160,13 +160,14 @@ impl Writes {
 
 /// What each function may store, with what the functions it calls store (a fixpoint over the
 /// call graph, so recursion is covered), and what the hook methods store together.
+#[derive(PartialEq, Eq)]
 pub(super) struct FnWrites {
     fns: FxHashMap<hir::DefId, Writes>,
     hooks: Writes,
 }
 
 /// [`FnWrites`] of the program.
-fn fn_writes(hir: &hir::Program) -> FnWrites {
+pub(super) fn fn_writes(hir: &hir::Program) -> FnWrites {
     let mut writes: FxHashMap<hir::DefId, Writes> = FxHashMap::default();
     let mut calls: FxHashMap<hir::DefId, Vec<hir::DefId>> = FxHashMap::default();
     let captures = |d: hir::DefId| -> Vec<hir::LocalId> {

@@ -26,7 +26,7 @@ use super::Cx;
 const MAX_STORES: usize = 64;
 
 /// The fields the program writes outside constructors (module docs).
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 pub(super) struct FieldWrites {
     classes: FxHashSet<(DefId, String)>,
     /// Fields of object types and, through a write on such a view, of any class.
@@ -42,7 +42,7 @@ pub(super) struct FieldWrites {
 }
 
 /// What a direct callee writes, with what it calls directly (module docs).
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 pub(super) struct Stores {
     names: FxHashSet<String>,
     tuples: bool,
@@ -51,6 +51,13 @@ pub(super) struct Stores {
 /// A direct callee with the type arguments of a call (`Cx::callee_id`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CalleeId(u32);
+
+impl CalleeId {
+    /// The id numbered `n` (`Cx::callee_stores` keys).
+    pub(super) fn of(n: u32) -> CalleeId {
+        CalleeId(n)
+    }
+}
 
 /// What one body does.
 #[derive(Default)]
@@ -178,7 +185,7 @@ impl<'h> Cx<'h> {
             .map(|f| (root, f.name.as_str()))
     }
 
-    fn scan_field_writes(&mut self) -> FieldWrites {
+    pub(super) fn scan_field_writes(&mut self) -> FieldWrites {
         let mut out = FieldWrites::default();
         let hir = self.hir;
         for (i, def) in hir.defs.iter().enumerate() {
@@ -211,7 +218,7 @@ impl<'h> Cx<'h> {
 
     /// Memoized; a function reached again while it is being decided (recursion) counts as one
     /// that runs code the scan can't see, as in quiet.rs.
-    fn stores_of(&mut self, callee: CalleeId) -> Option<Rc<Stores>> {
+    pub(super) fn stores_of(&mut self, callee: CalleeId) -> Option<Rc<Stores>> {
         if let Some(s) = self.callee_stores.get(&callee.0) {
             return s.clone();
         }

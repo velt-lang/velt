@@ -38,7 +38,7 @@ pub(super) struct Layouts {
     /// The layout every function wrapper's environment starts with (closure/fn_wrappers.rs).
     pub(super) fn_wrapper_env: Option<AggId>,
     boxes: FxHashMap<TyId, AggId>,
-    envs: FxHashMap<(DefId, Vec<TyId>), AggId>,
+    pub(super) envs: FxHashMap<(DefId, Vec<TyId>), AggId>,
     in_progress: FxHashSet<TyId>,
     array: Option<AggId>,
     text: Option<AggId>,

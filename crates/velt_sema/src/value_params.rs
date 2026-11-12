@@ -23,7 +23,7 @@ use crate::hir::{
 
 /// For each function, the params (bit `i`: `params[i]`, the first 64) that may reach a function
 /// value.
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 pub struct ValueParams {
     bits: FxHashMap<DefId, u64>,
     params: FxHashMap<DefId, usize>,

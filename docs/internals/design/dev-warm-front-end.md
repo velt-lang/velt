@@ -260,8 +260,14 @@ What it needs, as separate pull requests, each falling back to the cold front en
   table differs; an interface other than a closure's of an edited file changes; lowering learns
   a new fact (`boxing::Facts` only grow: equal facts mean no other function lowers otherwise);
   the counted types change; a task becomes pinned; lowering reports something; or an answer
-  lowering memoized about an edited function and read while lowering callers in other files
-  changes (whether it runs user code, the layout of an async function's state). The delta
+  lowering keeps between functions changes. Each such answer has a rule (`lower/kept_answers.rs`):
+  answers about an edited function (whether it runs user code, an async function's state, a
+  closure's environment, by-pointer params) and whole-program answers computed from every body
+  (what each function and direct callee stores, the fields, slots and globals code assigns, the
+  params that may reach a function value) are taken out, answered anew from the new program,
+  and compared; what is built from them for an edited function alone is taken out; the rest
+  depends only on declarations or on std. An internal error on the warm path builds the save
+  cold. The delta
   optimizer refuses when a helper inlined into callers, or a numrep parameter fact, would
   change. Every refusal keeps a new lowering for the next save.
 

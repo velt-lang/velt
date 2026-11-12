@@ -77,7 +77,8 @@ fn warm_inner(
                 sess.record("sema (warm)", t);
                 sess.splice_files = Some(edited_files);
                 sess.keep_lowering = true;
-                return lower_checked(sess, opts, VirFor::Jit, *checked).map(Some);
+                let lowered = lower_checked(sess, opts, VirFor::Jit, *checked);
+                return warm_lowered(sess, lowered);
             }
             Fast::Refused(why) => {
                 sess.warm_refused = Some(why);
@@ -152,8 +153,31 @@ fn warm_inner(
         sess.record("sema (warm)", t);
         sess.splice_files = Some(edited_files);
         sess.keep_lowering = true;
-        lower_checked(sess, opts, VirFor::Jit, checked).map(Some)
+        let lowered = lower_checked(sess, opts, VirFor::Jit, checked);
+        warm_lowered(sess, lowered)
     }
+}
+
+/// The warm path's lowering, or the cold front end when it failed: an internal error there (a
+/// VIR verification failure, say) is the warm path's, and the save is built cold instead, which
+/// reports the program's own errors if it has any. What the warm path kept goes with it.
+fn warm_lowered(
+    sess: &mut Session,
+    lowered: Result<vir::Program, BuildError>,
+) -> Result<Option<vir::Program>, BuildError> {
+    let why = match lowered {
+        Ok(program) => return Ok(Some(program)),
+        Err(BuildError::Ice(message)) => message,
+        Err(BuildError::Failed(message)) => message,
+        Err(BuildError::Diagnostics) => sess.render_diagnostics(),
+    };
+    // The first line: an internal error's message is followed by the whole program.
+    let first = why.lines().next().unwrap_or_default();
+    sess.warm_refused = Some(format!("lowering failed on the warm path: {first}"));
+    sess.kept_lowering = None;
+    sess.dev_program = None;
+    sess.debug_kept = None;
+    Ok(None)
 }
 
 /// A copy of a build's source files, under the same ids (`compile_for_jit_warm`'s `cold_files`).
@@ -358,5 +382,24 @@ fn reparsed(
             Fast::Checked(checked, edited_files)
         }
         Err(why) => Fast::Refused(why),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An internal error on the warm path (a VIR verification failure) is the warm path's: the
+    /// save is built cold, and the reason given is its first line, not the program it dumps.
+    #[test]
+    fn an_internal_error_on_the_warm_path_builds_cold() {
+        let mut sess = Session::new();
+        let failed = Err(BuildError::Ice(
+            "VIR verification failed: fn#2 _V3run bb1\nfn#0 …\nfn#1 …".into(),
+        ));
+        assert!(matches!(warm_lowered(&mut sess, failed), Ok(None)));
+        let why = sess.warm_refused.take().unwrap_or_default();
+        assert!(why.contains("VIR verification failed"), "{why}");
+        assert!(!why.contains('\n'), "{why}");
     }
 }
