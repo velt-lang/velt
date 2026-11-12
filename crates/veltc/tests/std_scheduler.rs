@@ -63,15 +63,26 @@ fn build_and_run(dir: &Path, name: &str, src: &str, std: bool, code: i32) -> (St
     (out, std::fs::read(&exe).unwrap())
 }
 
+/// What marks std function `function` in a built program: its name, or on Windows, where a PE
+/// file names no functions and a debug build's PDB only the exported ones, the panic locations
+/// its file's code carries (`std/lang/hooks/sched.velt:line:col`).
+fn marker(function: &str) -> String {
+    if cfg!(windows) {
+        "std/lang/hooks/sched.velt:".to_string()
+    } else {
+        function.to_string()
+    }
+}
+
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
-/// Whether a `VELT_SCHEDULER=std` program builds here: the executor in Velt waits in an epoll or
-/// kqueue reactor, and Windows has no reactor in Velt yet (#2649 step 4), so its build would not
-/// link. The tests compare the two executors only where both exist.
+/// Whether a `VELT_SCHEDULER=std` program builds here: the executor in Velt waits in an epoll,
+/// kqueue or (Windows) AFD reactor; other OSes have none. The tests compare the two executors
+/// only where both exist.
 fn std_builds_here() -> bool {
-    cfg!(unix)
+    cfg!(any(unix, windows))
 }
 
 /// Builds and runs `src` both ways: each prints `want`, and only the std build has the executor.
@@ -236,11 +247,11 @@ fn checked_on_both(
     }
     assert_eq!(std, want, "{name}: the executor in Velt");
     assert!(
-        contains(&std_bin, b"schedBlockOn"),
+        contains(&std_bin, marker("schedBlockOn").as_bytes()),
         "{name}: no executor in Velt"
     );
     assert!(
-        !contains(&rt_bin, b"schedBlockOn"),
+        !contains(&rt_bin, marker("schedBlockOn").as_bytes()),
         "{name}: the executor in Velt without the variable"
     );
 }
@@ -856,6 +867,7 @@ fn a_program_without_imports_builds_for_every_reactor() {
         "x86_64-unknown-linux-gnu",
         "aarch64-unknown-linux-gnu",
         "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
         "wasm32-wasip1",
     ] {
         for release in [false, true] {

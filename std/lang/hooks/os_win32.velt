@@ -1,0 +1,45 @@
+// velt/lang/hooks (internal): the two OS calls the executor in Velt's core makes whatever its
+// reactor (`#sched-os`, sched_mem.velt and sched_io_wait.velt) on Windows: `SwitchToThread` and
+// the performance counter (kernel32; the UCRT has neither `sched_yield` nor `clock_gettime`).
+
+import { Ptr } from "velt/ffi/ptr";
+import * as m from "./sched_mem";
+
+declare c("c") function SwitchToThread(): i32;
+declare c("c") function QueryPerformanceCounter(count: Ptr<u8>): i32;
+declare c("c") function QueryPerformanceFrequency(freq: Ptr<u8>): i32;
+
+/** Gives the core to another thread that is ready to run, if any. */
+export function yieldCore(): void {
+  // SAFETY: no precondition.
+  unsafe {
+    SwitchToThread();
+  }
+}
+
+/** The performance counter's frequency (fixed at boot), once read; 0 until then. */
+const FREQUENCY = new Atomic<u64>(0);
+
+/** The performance counter in nanoseconds (`clock`, the reactor's `MONOTONIC`, is unused here). */
+export function monotonicNs(clock: i32): u64 {
+  const w = m.alloc(16);
+  let f = FREQUENCY.load("relaxed");
+  // SAFETY: two 64-bit words at `w`; both calls succeed on every Windows since XP.
+  unsafe {
+    QueryPerformanceCounter(m.ptr(w));
+    if (f === 0) {
+      QueryPerformanceFrequency(m.ptr(w + 8));
+    }
+  }
+  const c = m.ld(w) as u64;
+  if (f === 0) {
+    f = m.ld(w + 8) as u64;
+    FREQUENCY.store(f, "relaxed");
+  }
+  m.release(w, 16);
+  if (f === 0) {
+    return 0;
+  }
+  // Whole seconds and the rest apart: `c * 10^9` overflows after half an hour at 10 MHz.
+  return (c / f) * 1000000000 + ((c % f) * 1000000000) / f;
+}

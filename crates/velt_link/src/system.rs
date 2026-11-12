@@ -43,7 +43,17 @@ const WINDOWS: Platform = Platform {
         "synchronization.lib",
         "msvcrt.lib",
     ],
-    shared_native_libs: &["kernel32.lib", "msvcrt.lib"],
+    // Besides the C library and kernel32, what std's own `declare c` functions call on Windows
+    // under `VELT_SCHEDULER=std` (std/lang/hooks/reactor_afd.velt: Winsock, ntdll's AFD calls,
+    // `WaitOnAddress`): std declares them from `c`, so the program links their import libraries
+    // itself. An import library adds nothing a program doesn't call.
+    shared_native_libs: &[
+        "kernel32.lib",
+        "ws2_32.lib",
+        "ntdll.lib",
+        "synchronization.lib",
+        "msvcrt.lib",
+    ],
     base_args: &[
         "/NOLOGO",
         "/SUBSYSTEM:CONSOLE",
@@ -437,7 +447,11 @@ mod tests {
         assert!(
             win.contains(&"msvcrt.lib".to_string()) && win.contains(&"kernel32.lib".to_string())
         );
-        assert!(!win.contains(&"ws2_32.lib".to_string()), "{win:?}");
+        assert!(!win.contains(&"advapi32.lib".to_string()), "{win:?}");
+        // std's own C functions under `VELT_SCHEDULER=std` (Winsock, AFD, WaitOnAddress).
+        for lib in ["ws2_32.lib", "ntdll.lib", "synchronization.lib"] {
+            assert!(win.contains(&lib.to_string()), "{win:?}");
+        }
         let win = args("x86_64-pc-windows-msvc", "C:/t/velt_rt.lib");
         assert!(win.contains(&"ws2_32.lib".to_string()), "{win:?}");
     }

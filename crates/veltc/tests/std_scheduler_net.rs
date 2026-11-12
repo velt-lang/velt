@@ -73,33 +73,41 @@ fn build_and_run(dir: &Path, name: &str, src: &str, std: bool) -> (String, Vec<u
     (out, std::fs::read(&exe).unwrap())
 }
 
+/// What marks std function `function` in a built program: its name, or on Windows, where a PE
+/// file names no functions and a debug build's PDB only the exported ones, the panic locations
+/// its file's code carries (`std/net/fd_socket.velt:line:col`).
+fn marker(function: &str) -> String {
+    if cfg!(windows) {
+        "std/net/fd_socket.velt:".to_string()
+    } else {
+        function.to_string()
+    }
+}
+
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
 /// Builds and runs `src` both ways: each prints `want`; only the std build has sockets in Velt.
 fn same_on_both(name: &str, src: &str, want: &str) {
-    if !cfg!(unix) {
-        // Windows has no reactor in Velt yet: its sockets stay the runtime's in both builds.
-        return;
-    }
     let dir = test_dir::TestDir::new();
-    same_on_both_in(dir.path(), name, src, want);
+    same_on_both_in(dir.path(), name, src, want, want);
 }
 
-/// [`same_on_both`] in folder `dir` (which may hold packages the program uses).
-fn same_on_both_in(dir: &Path, name: &str, src: &str, want: &str) {
+/// [`same_on_both`] in folder `dir` (which may hold packages the program uses), where the
+/// runtime's executor prints `rt_want`.
+fn same_on_both_in(dir: &Path, name: &str, src: &str, want: &str, rt_want: &str) {
     runtime_support::build_native_runtime(manifest());
     let (rt, rt_bin) = build_and_run(dir, name, src, false);
     let (std, std_bin) = build_and_run(dir, name, src, true);
-    assert_eq!(rt, want, "{name}: the runtime's sockets");
+    assert_eq!(rt, rt_want, "{name}: the runtime's sockets");
     assert_eq!(std, want, "{name}: sockets on the reactor in Velt");
     assert!(
-        contains(&std_bin, b"listenOn"),
+        contains(&std_bin, marker("listenOn").as_bytes()),
         "{name}: no sockets in Velt"
     );
     assert!(
-        !contains(&rt_bin, b"listenOn"),
+        !contains(&rt_bin, marker("listenOn").as_bytes()),
         "{name}: sockets in Velt without the variable"
     );
 }
@@ -149,9 +157,7 @@ async function main() {
 /// the reactor, and the socket's event wakes the reader.
 #[test]
 fn a_reader_waits_for_readiness_and_a_deadline_ends_a_wait() {
-    same_on_both(
-        "tcp_ready",
-        "import { connect, listen } from \"velt/net\";
+    let src = "import { connect, listen } from \"velt/net\";
 import { utf8Encode } from \"velt/encoding\";
 
 async function main() {
@@ -181,9 +187,26 @@ async function main() {
   await server;
   l.close();
 }
-",
-        "0\nfalse\n2 97 98\ntrue\ntrue\n",
-    );
+";
+    let want = "0\nfalse\n2 97 98\ntrue\ntrue\n";
+    if !cfg!(windows) {
+        same_on_both("tcp_ready", src, want);
+        return;
+    }
+    // On Windows the read after the server's close sometimes reports an error (a reset) instead
+    // of the end, on both executors (CI runs saw either from the runtime's): the last line is
+    // either; the waits before it are compared.
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    for std in [false, true] {
+        let (out, _) = build_and_run(dir.path(), "tcp_ready", src, std);
+        let (waits, last) = out.trim_end().rsplit_once('\n').unwrap_or_default();
+        assert_eq!(waits, "0\nfalse\n2 97 98\ntrue", "tcp_ready, std: {std}");
+        assert!(
+            last == "true" || last == "false",
+            "tcp_ready, std: {std}: {out}"
+        );
+    }
 }
 
 /// More than the socket takes at once: what it can't take stays queued and goes out on its
@@ -323,8 +346,7 @@ fn check(file: &Path, std: bool, out: Option<&Path>) -> (bool, String) {
 #[test]
 fn velt_net_users_compile_the_same_on_both_executors() {
     if !cfg!(unix) {
-        // Windows has no reactor in Velt yet, so its two builds are the same program; and some
-        // of these goldens use POSIX system functions Windows doesn't have.
+        // Some of these goldens use POSIX system functions Windows doesn't have.
         return;
     }
     runtime_support::build_native_runtime(manifest());
@@ -415,6 +437,7 @@ async function main() {
 #[test]
 fn a_program_declaring_the_reactors_c_functions_compiles_on_both_executors() {
     if !cfg!(unix) {
+        // The declarations below are POSIX's.
         return;
     }
     let accept = if cfg!(target_os = "linux") {
@@ -500,6 +523,7 @@ async function main() {
 }
 ",
         "-1 -1 -1 -1 -1\ntrue\necho\n",
+        "-1 -1 -1 -1 -1\ntrue\necho\n",
     );
 }
 
@@ -511,7 +535,17 @@ async function main() {
 /// a `tryRead` finding nothing comes first, so each wait is pending when it starts.
 #[test]
 fn a_read_wait_with_no_limit_waits_for_the_bytes() {
-    same_on_both(
+    let want = "0\nsignal only: true\none\n0\nno limit: true\ntwo\naborted: false\n";
+    // On Windows the runtime's executor (tokio's) reports the socket readable for the last wait,
+    // where nothing has come; the reactor in Velt does not.
+    let rt_want = if cfg!(windows) {
+        "0\nsignal only: true\none\n0\nno limit: true\ntwo\naborted: true\n"
+    } else {
+        want
+    };
+    let dir = test_dir::TestDir::new();
+    same_on_both_in(
+        dir.path(),
         "readable_no_limit",
         "import { connect, listen } from \"velt/net\";
 import { AbortController } from \"velt/task\";
@@ -550,7 +584,8 @@ async function main() {
   l.close();
 }
 ",
-        "0\nsignal only: true\none\n0\nno limit: true\ntwo\naborted: false\n",
+        want,
+        rt_want,
     );
 }
 
@@ -560,9 +595,6 @@ async function main() {
 /// a close crossed the next request and failed it).
 #[test]
 fn an_http_server_keeps_a_connection_alive_between_requests() {
-    if !cfg!(unix) {
-        return;
-    }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
     let pkg = manifest().join("../../packages/http-server");
@@ -600,7 +632,89 @@ async function main() {
     let (std, std_bin) = build_and_run(dir.path(), "keep_alive", src, true);
     assert_eq!(rt, want, "the runtime's sockets");
     assert_eq!(std, want, "sockets on the reactor in Velt");
-    assert!(contains(&std_bin, b"listenOn"), "no sockets in Velt");
+    assert!(
+        contains(&std_bin, marker("listenOn").as_bytes()),
+        "no sockets in Velt"
+    );
+}
+
+/// Windows' reactor (std/lang/hooks/reactor_afd.velt) and its Winsock calls (std/net/
+/// calls_win32.velt), the threads and the parking: every C function a `VELT_SCHEDULER=std`
+/// program using sockets, name lookups and files calls on Windows is one the link's import
+/// libraries export (kernel32, ntdll, ws2_32, the synchronization library, the UCRT), debug and
+/// release. Checked from any OS through the LLVM IR, since a Windows link needs Windows; the
+/// POSIX functions the executor called (`clock_gettime`, `sched_yield`, `close`) exist in none.
+#[test]
+fn a_windows_program_calls_only_functions_its_import_libraries_export() {
+    let kit = manifest().join("../velt_link/kit/windows");
+    let mut exported = std::collections::HashSet::new();
+    for lib in ["kernel32", "ntdll", "ws2_32", "synchronization", "ucrt"] {
+        let def = std::fs::read_to_string(kit.join(format!("{lib}.def"))).unwrap();
+        for line in def
+            .lines()
+            .skip_while(|l| !l.starts_with("EXPORTS"))
+            .skip(1)
+        {
+            if let Some(name) = line.split_whitespace().next() {
+                exported.insert(name.to_string());
+            }
+        }
+    }
+    let dir = test_dir::TestDir::new();
+    std::fs::write(
+        dir.path().join("main.velt"),
+        "import { connect, listen } from \"velt/net\";
+import { lookup } from \"velt/net/dns\";
+import { readFile, writeFile } from \"velt/fs\";
+
+async function main() {
+  const l = await listen(\"127.0.0.1:0\");
+  const server = spawn((async () => {
+    const s = await l.accept();
+    s.writeBytesLater(await s.read());
+    console.log(s.peerAddr());
+    s.close();
+  })());
+  const c = await connect(`127.0.0.1:${l.port}`);
+  await c.write(\"hi\");
+  console.log(await c.readString(), await c.readableWithin(10));
+  c.shutdown();
+  c.close();
+  await server;
+  l.close();
+  console.log((await lookup(\"localhost\")).length);
+  await writeFile(\"x.txt\", \"y\");
+  console.log(await readFile(\"x.txt\"));
+}
+",
+    )
+    .unwrap();
+    for release in [false, true] {
+        let mut c = command(env!("CARGO_BIN_EXE_velt"));
+        c.args(["build", "main.velt", "--emit", "llvm"])
+            .args(["--target", "x86_64-pc-windows-msvc"])
+            .current_dir(dir.path())
+            .env("VELT_SCHEDULER", "std");
+        if release {
+            c.arg("--release");
+        }
+        let o = c.output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let ir = String::from_utf8_lossy(&o.stdout);
+        assert!(
+            ir.contains("NtDeviceIoControlFile"),
+            "no Windows reactor (release: {release})"
+        );
+        let missing: Vec<&str> = ir
+            .lines()
+            .filter(|l| l.starts_with("declare "))
+            .filter_map(|l| l.split('@').nth(1)?.split('(').next())
+            .map(|n| n.trim_matches('"'))
+            .filter(|n| !n.starts_with("velt_") && !n.starts_with("llvm."))
+            .filter(|n| !exported.contains(*n))
+            .collect();
+        assert!(missing.is_empty(), "release: {release}: {missing:?}");
+    }
 }
 
 /// A connect waited on by a worker while worker 0 parks too: the program goes on until the
@@ -611,7 +725,7 @@ async function main() {
 /// 10 runs.
 #[test]
 fn the_program_runs_on_while_another_worker_waits_for_a_connect() {
-    if !cfg!(any(target_os = "macos", target_os = "linux")) {
+    if !cfg!(any(target_os = "macos", target_os = "linux", windows)) {
         return;
     }
     runtime_support::build_native_runtime(manifest());
@@ -647,7 +761,11 @@ async function main() {
 "#;
     let file = dir.path().join("connects.velt");
     std::fs::write(&file, src).unwrap();
-    let exe = dir.path().join("connects");
+    let exe = dir.path().join(if cfg!(windows) {
+        "connects.exe"
+    } else {
+        "connects"
+    });
     let o = command(env!("CARGO_BIN_EXE_velt"))
         .arg("build")
         .arg(&file)
@@ -826,4 +944,36 @@ async function main() {
         &["1", "4"],
         20,
     );
+}
+
+/// A name that does not resolve: on Windows `getaddrinfo`'s failure is a Winsock error, which
+/// Rust words as an OS error ("No such host is known. (os error 11001)"), elsewhere an `EAI_*`
+/// code ("failed to lookup address information: …"). Both executors word it the same, for a
+/// lookup and a connect.
+#[test]
+fn a_failed_name_lookup_reads_as_with_the_runtime() {
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let src = "import { connect } from \"velt/net\";
+import { lookup } from \"velt/net/dns\";
+
+async function main() {
+  try {
+    await lookup(\"doesnotexist.invalid\");
+    console.log(\"found\");
+  } catch (e) {
+    console.log(`lookup: ${e} ${e.code}`);
+  }
+  try {
+    await connect(\"doesnotexist.invalid:80\");
+    console.log(\"connected\");
+  } catch (e) {
+    console.log(`connect: ${e} ${e.code}`);
+  }
+}
+";
+    let (rt, _) = build_and_run(dir.path(), "lookup_fails", src, false);
+    let (std, _) = build_and_run(dir.path(), "lookup_fails", src, true);
+    assert!(rt.contains("ENOTFOUND doesnotexist.invalid"), "{rt}");
+    assert_eq!(std, rt, "the runtime's message: {rt}");
 }

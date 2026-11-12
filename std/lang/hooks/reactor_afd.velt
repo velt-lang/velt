@@ -1,0 +1,456 @@
+// velt/lang/hooks (internal): the executor's reactor on Windows (sched_io.velt, #2649 step 2):
+// readiness from `\Device\Afd` polls over an I/O completion port, as mio does it (owner decision
+// (c) on #2649: one readiness model, non-blocking sockets, on every OS). Each socket has a poll
+// request per reactor (reactor_afd_poll.velt) whose completion carries its source; the worker's
+// idle wait is a `GetQueuedCompletionStatusEx`, and a wake from another thread posts a completion
+// of its own (no overlapped structure: data 0).
+//
+// Edge-triggered as the other reactors are: a poll reports an event once, and an operation that
+// finds the socket not ready (`notReady`, sched_io.velt) asks for it again (`rearm`, `REARMS`).
+//
+// Also the few OS calls a non-blocking socket needs whose details differ per OS: the last
+// error (`WSAGetLastError`), non-blocking mode (`ioctlsocket(FIONBIO)`) and no inheritance by
+// child processes, Winsock started (`WSAStartup`, once per reactor: it counts). Threads park
+// with `WaitOnAddress` (the `synchronization` library). Child processes stay the runtime's on
+// Windows (`#child-rt`): their exit and pipes are no sockets.
+//
+// Functions are ws2_32's, ntdll's, kernel32's and the synchronization library's, all declared
+// from `c` (std names no other library), which the link resolves with those import libraries.
+// Handles (`HANDLE`, `SOCKET`) are `usize`s as the compiler's system functions have them, other
+// pointers `Ptr`s: one C symbol has one signature in a program.
+
+import { Ptr } from "velt/ffi/ptr";
+import * as m from "./sched_mem";
+import * as p from "./reactor_afd_poll";
+
+/** Does this OS have the reactor? (The default variant has not: sockets stay the runtime's.) */
+export const SUPPORTED: bool = true;
+
+/** `WSAEWOULDBLOCK`: an operation, and a non-blocking `connect`, that would wait. */
+export const EAGAIN: i32 = 10035;
+export const EINPROGRESS: i32 = 10035;
+/** `WSAEINTR`. */
+export const EINTR: i32 = 10004;
+/** `WSAEMFILE`: no more sockets (an accepted handle too large for a descriptor). */
+const WSAEMFILE: i32 = 10024;
+/** No clock id on Windows (std/lang/hooks/os_win32.velt reads the performance counter). */
+export const MONOTONIC: i32 = 0;
+/** `send`'s flags: none (no SIGPIPE on Windows). */
+export const SEND_FLAGS: i32 = 0;
+/** `socket`'s extra type flags: none (`prepare` makes it non-blocking). */
+export const SOCKET_FLAGS: i32 = 0;
+/** `sysconf`'s name of the online cores: none here (std/lang/hooks/thread_win32.velt counts). */
+export const SC_NPROCESSORS_ONLN: i32 = 0;
+/** Does an operation that finds a socket not ready call `rearm`? Yes: polls report once. */
+export const REARMS: bool = true;
+/**
+ * Must a socket leave the reactor before it closes (`del`)? Yes: a poll completion already queued
+ * on the port when the socket closes would come later, with the source of a socket that may be
+ * another by then, and submit its poll again on a handle that may be another socket's (mio
+ * deregisters too). Taken out, its request is dead: the completion only frees it.
+ */
+export const DEREGISTERS: bool = true;
+
+const INVALID: usize = 0xffffffffffffffff;
+/** `INFINITE`. */
+const FOREVER: u32 = 0xffffffff;
+const FIONBIO: u32 = 0x8004667e;
+const HANDLE_FLAG_INHERIT: u32 = 1;
+/** `SIO_BASE_HANDLE`, then the ones a layered provider may leave working (mio's order). */
+const SIO_BASE_HANDLE: u32 = 0x48000022;
+const SIO_BSP_HANDLE_SELECT: u32 = 0x4800001c;
+const SIO_BSP_HANDLE_POLL: u32 = 0x4800001d;
+const SIO_BSP_HANDLE: u32 = 0x4800001b;
+/** `SYNCHRONIZE`, `FILE_SHARE_READ | FILE_SHARE_WRITE`, `FILE_OPEN`. */
+const SYNCHRONIZE: u32 = 0x00100000;
+const SHARE_READ_WRITE: u32 = 3;
+const FILE_OPEN: u32 = 1;
+const FILE_SKIP_SET_EVENT_ON_HANDLE: u8 = 2;
+/** `"\Device\Afd\Velt"`: the AFD device, under a name of ours (any name opens it). */
+const AFD_NAME: readonly u16[] = [
+  0x5c,
+  0x44,
+  0x65,
+  0x76,
+  0x69,
+  0x63,
+  0x65,
+  0x5c,
+  0x41,
+  0x66,
+  0x64,
+  0x5c,
+  0x56,
+  0x65,
+  0x6c,
+  0x74,
+];
+
+declare c("c") function WSAStartup(version: u16, data: Ptr<u8>): i32;
+declare c("c") function WSAGetLastError(): i32;
+declare c("c") function WSASetLastError(e: i32): void;
+declare c("c") function WSAIoctl(
+  s: usize,
+  code: u32,
+  input: Ptr<u8>,
+  inputLen: u32,
+  output: Ptr<u8>,
+  outputLen: u32,
+  returned: Ptr<u8>,
+  overlapped: Ptr<u8>,
+  routine: Ptr<u8>,
+): i32;
+declare c("c") function ioctlsocket(s: usize, cmd: u32, arg: Ptr<u8>): i32;
+declare c("c") function accept$afd(s: usize, addr: Ptr<u8>, len: Ptr<u8>): usize;
+declare c("c") function closesocket$afd(s: usize): i32;
+declare c("c") function SetHandleInformation(file: usize, mask: u32, flags: u32): i32;
+declare c("c") function CreateIoCompletionPort(
+  file: usize,
+  port: usize,
+  key: usize,
+  threads: u32,
+): usize;
+declare c("c") function GetQueuedCompletionStatusEx(
+  port: usize,
+  entries: Ptr<u8>,
+  count: u32,
+  removed: Ptr<u8>,
+  ms: u32,
+  alertable: i32,
+): i32;
+declare c("c") function PostQueuedCompletionStatus(
+  port: usize,
+  bytes: u32,
+  key: usize,
+  overlapped: Ptr<u8>,
+): i32;
+declare c("c") function SetFileCompletionNotificationModes(file: usize, flags: u8): i32;
+declare c("c") function NtCreateFile(
+  file: Ptr<u8>,
+  access: u32,
+  attributes: Ptr<u8>,
+  iosb: Ptr<u8>,
+  size: Ptr<u8>,
+  fileAttributes: u32,
+  share: u32,
+  disposition: u32,
+  options: u32,
+  ea: Ptr<u8>,
+  eaLen: u32,
+): i32;
+declare c("c") function WaitOnAddress(word: Ptr<u8>, compare: Ptr<u8>, size: usize, ms: u32): i32;
+declare c("c") function WakeByAddressSingle(word: Ptr<u8>): void;
+
+/** The calling thread's last Winsock error. */
+export function errno(): i32 {
+  // SAFETY: no precondition.
+  return unsafe { WSAGetLastError() };
+}
+
+/**
+ * A new reactor: its block, or 0 when Winsock, the completion port or the AFD device would not
+ * open.
+ */
+export function open(): usize {
+  const wsa = m.zeroed(512);
+  // SAFETY: room for a `WSADATA` (408 bytes on 64-bit Windows).
+  const started = unsafe { WSAStartup(0x0202, m.ptr(wsa)) };
+  m.release(wsa, 512);
+  if (started !== 0) {
+    return 0;
+  }
+  // SAFETY: a new port (no file); its result is checked.
+  const port = unsafe { CreateIoCompletionPort(INVALID, 0, 0, 0) };
+  if (port === 0) {
+    return 0;
+  }
+  const afd = openAfd();
+  if (afd === 0) {
+    return 0;
+  }
+  let joined: usize = 0;
+  let modes: i32 = 0;
+  // SAFETY: two handles this function opened; results checked.
+  unsafe {
+    joined = CreateIoCompletionPort(afd, port, 0, 0);
+    modes = SetFileCompletionNotificationModes(afd, FILE_SKIP_SET_EVENT_ON_HANDLE);
+  }
+  if (joined === 0 || modes === 0) {
+    return 0;
+  }
+  const r = m.lastingZeroed(p.R_SIZE);
+  m.st(r + p.R_PORT, port);
+  m.st(r + p.R_AFD, afd);
+  return r;
+}
+
+/** A handle to the AFD device (`NtCreateFile`), or 0. */
+function openAfd(): usize {
+  // OBJECT_ATTRIBUTES (48), UNICODE_STRING (16), the name, an IO_STATUS_BLOCK, the handle.
+  const b = m.zeroed(160);
+  const name = b + 64;
+  for (let i: usize = 0; i < 8; i++) {
+    m.st32(name + 4 * i, (AFD_NAME[2 * i] as u32) | ((AFD_NAME[2 * i + 1] as u32) << 16));
+  }
+  const us = b + 48;
+  m.st32(us, 32 | (32 << 16));
+  m.st(us + 8, name);
+  m.st32(b, 48);
+  m.st(b + 16, us);
+  let s: i32 = 0;
+  // SAFETY: the attributes name the device by a counted UTF-16 string; the handle and the status
+  // block are written at `b + 120` and `b + 104`.
+  unsafe {
+    s = NtCreateFile(
+      m.ptr(b + 120),
+      SYNCHRONIZE,
+      m.ptr(b),
+      m.ptr(b + 104),
+      m.ptr(0),
+      0,
+      SHARE_READ_WRITE,
+      FILE_OPEN,
+      0,
+      m.ptr(0),
+      0,
+    );
+  }
+  const h = s === 0 ? m.ld(b + 120) : 0;
+  m.release(b, 160);
+  return h;
+}
+
+/** Socket `fd`'s base socket (under any layered provider), or 0. */
+function baseOf(fd: usize): usize {
+  const w = m.zeroed(16);
+  let base: usize = 0;
+  for (const code of [
+    SIO_BASE_HANDLE,
+    SIO_BSP_HANDLE_SELECT,
+    SIO_BSP_HANDLE_POLL,
+    SIO_BSP_HANDLE,
+  ]) {
+    let rc: i32 = 0;
+    // SAFETY: a socket handle out at `w`, the count of bytes at `w + 8`.
+    unsafe {
+      rc = WSAIoctl(fd, code, m.ptr(0), 0, m.ptr(w), 8, m.ptr(w + 8), m.ptr(0), m.ptr(0));
+    }
+    if (rc === 0 && m.ld(w) !== 0 && m.ld(w) !== INVALID) {
+      // A provider that only answers the others: a base socket that is another one.
+      if (code === SIO_BASE_HANDLE || m.ld(w) !== fd) {
+        base = m.ld(w);
+        break;
+      }
+    }
+  }
+  m.release(w, 16);
+  return base;
+}
+
+/** Registers socket `fd` for both directions with `source` its events' tag; 0 or an error. */
+export function add(r: usize, fd: i32, source: usize): i32 {
+  const s = fd as usize;
+  const base = baseOf(s);
+  if (base === 0) {
+    return errno();
+  }
+  p.lock(r);
+  const e = p.open(r, s, base, source);
+  p.unlock(r);
+  return e;
+}
+
+/** Takes socket `fd` out of reactor `r` (from any thread): its events come to another reactor now. */
+export function del(r: usize, fd: i32): void {
+  p.lock(r);
+  const q = p.remove(r, fd as usize);
+  if (q !== 0) {
+    p.drop(r, q);
+  }
+  p.unlock(r);
+}
+
+/**
+ * Socket `fd` of `source` was found not ready for readiness bits `bits` (sched_io.velt
+ * `notReady`, its source locked): its poll asks for them again.
+ */
+export function rearm(r: usize, fd: i32, source: usize, bits: u32): void {
+  p.lock(r);
+  const q = p.find(r, fd as usize);
+  if (q !== 0) {
+    p.want(r, q, bits);
+  }
+  p.unlock(r);
+}
+
+/**
+ * Waits for events, at most `timeoutMs` milliseconds (-1: until one comes, 0: only those ready):
+ * how many the block holds now (`source`, `bits`). A wake is an event of source 0.
+ */
+export function wait(r: usize, timeoutMs: i64): usize {
+  const ms = timeoutMs < 0 ? FOREVER : timeoutMs >= 0xfffffffe ? 0xfffffffe : timeoutMs as u32;
+  let ok: i32 = 0;
+  // SAFETY: room for MAX_EVENTS entries; the count of those taken at `R_WORD`.
+  unsafe {
+    ok = GetQueuedCompletionStatusEx(
+      m.ld(r + p.R_PORT),
+      m.ptr(r + p.R_ENTRIES),
+      p.MAX_EVENTS as u32,
+      m.ptr(r + p.R_WORD),
+      ms,
+      0,
+    );
+  }
+  if (ok === 0) {
+    return 0;
+  }
+  const taken = m.ld32(r + p.R_WORD) as usize;
+  let n: usize = 0;
+  p.lock(r);
+  for (let i: usize = 0; i < taken; i++) {
+    // An `OVERLAPPED_ENTRY`: key, overlapped, internal, bytes.
+    const q = m.ld(r + p.R_ENTRIES + i * 32 + 8);
+    const ev = r + p.R_EVENTS + n * 16;
+    if (q === 0) {
+      m.store32(r + p.R_WOKEN, 0);
+      m.st(ev, 0);
+      m.st(ev + 8, 0);
+      n++;
+    } else if (p.completed(r, q, ev)) {
+      n++;
+    }
+  }
+  p.unlock(r);
+  return n;
+}
+
+/** The source of event `i` of the last wait (0: the wake). */
+export function source(r: usize, i: usize): usize {
+  return m.ld(r + p.R_EVENTS + i * 16);
+}
+
+/** The readiness bits of event `i` of the last wait. */
+export function bits(r: usize, i: usize): u32 {
+  return m.ld(r + p.R_EVENTS + i * 16 + 8) as u32;
+}
+
+/** Wakes the worker waiting in `wait` (from any thread); one wake is posted at a time. */
+export function wake(r: usize): void {
+  if (m.cas32(r + p.R_WOKEN, 0, 1) !== 0) {
+    return;
+  }
+  // SAFETY: a completion with no overlapped structure, which `wait` reads as the wake.
+  unsafe {
+    PostQueuedCompletionStatus(m.ld(r + p.R_PORT), 0, 0, m.ptr(0));
+  }
+}
+
+/** Accepts a connection of listener `fd`, non-blocking and not inherited: its socket, or -1. */
+export function accept(fd: i32, addr: usize, len: usize): i32 {
+  // SAFETY: `addr` holds the `int` length at `len` (both may be NULL).
+  const s = unsafe { accept$afd(fd as usize, m.ptr(addr), m.ptr(len)) };
+  if (s > 0x7fffffff) {
+    if (s !== INVALID) {
+      // SAFETY: the socket accept returned, too large for an `i32` descriptor, not used after.
+      unsafe {
+        closesocket$afd(s);
+        WSASetLastError(WSAEMFILE);
+      }
+    }
+    return -1;
+  }
+  if (prepare(s as i32) !== 0) {
+    // SAFETY: the socket accept returned, not used after.
+    unsafe {
+      closesocket$afd(s);
+    }
+    return -1;
+  }
+  return s as i32;
+}
+
+/** Makes a new socket non-blocking and kept from child processes; 0 or the error. */
+export function prepare(fd: i32): i32 {
+  const one = m.zeroed(16);
+  m.st32(one, 1);
+  // SAFETY: a `u_long` 1 at `one`.
+  const rc = unsafe { ioctlsocket(fd as usize, FIONBIO, m.ptr(one)) };
+  m.release(one, 16);
+  if (rc !== 0) {
+    return errno();
+  }
+  // SAFETY: a socket is a handle; failing leaves it inheritable, which is not an error.
+  unsafe {
+    SetHandleInformation(fd as usize, HANDLE_FLAG_INHERIT, 0);
+  }
+  return 0;
+}
+
+/** Sleeps while the `u32` at `word` is `expected`; it may return early, so the caller looks again. */
+export function wordWait(word: usize, expected: u32): void {
+  waitOn(word, expected, FOREVER);
+}
+
+/** `wordWait` for at most `us` microseconds (rounded up to milliseconds). */
+export function wordWaitFor(word: usize, expected: u32, us: u32): void {
+  waitOn(word, expected, us / 1000 + (us % 1000 !== 0 ? 1 : 0));
+}
+
+function waitOn(word: usize, expected: u32, ms: u32): void {
+  // The thread's buffer, outside the counted blocks: the process may end during a monitor nap.
+  const c = m.scratch();
+  m.st32(c, expected);
+  // SAFETY: `word` is an aligned word that lives as long as the process; the value compared
+  // with is at `c`.
+  unsafe {
+    WaitOnAddress(m.ptr(word), m.ptr(c), 4, ms);
+  }
+}
+
+/**
+ * No thread CPU-time clock here yet: 0, so the stall monitor treats a worker the OS took off its
+ * core as it treats a poll that runs long (`QueryThreadCycleTime` on a thread handle would do).
+ */
+export function threadClock(): u64 {
+  return 0;
+}
+
+/** No thread clock here yet: 0 (unknown). */
+export function threadCpu(c: u64): u64 {
+  return 0;
+}
+
+/** Wakes one thread sleeping on the `u32` at `word`, if any. */
+export function wordWake(word: usize): void {
+  // SAFETY: as `wordWait`.
+  unsafe {
+    WakeByAddressSingle(m.ptr(word));
+  }
+}
+
+/** Does `exitFd` give a descriptor to close? No: child processes stay the runtime's here. */
+export const EXIT_FD_OWNED: bool = false;
+
+/** No exit to watch here: -1. */
+export function exitFd(pid: i32): i32 {
+  return -1;
+}
+
+/** No exit to watch here: `ENOSYS`. */
+export function watchExit(r: usize, exit: i32, source: usize): i32 {
+  return 38;
+}
+
+/** `watchExit`'s answer for a child that has exited already (never here). */
+export const EXITED: i32 = -1;
+
+/** `posix_spawnattr_setflags`' extra flags for a child process: none here. */
+export const SPAWN_FLAGS: i16 = 0;
+
+/** No pipes here: -1. */
+export function pipeCloexec(fds: usize): i32 {
+  return -1;
+}
+
+/** Nothing to keep here. */
+export function spawnInherit(fa: usize, fd: i32): void {}

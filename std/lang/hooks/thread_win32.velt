@@ -1,0 +1,80 @@
+// velt/lang/hooks (internal): the threads of the executor in Velt's workers (sched.velt, #2649
+// step 3) on Windows: `CreateThread` on a C function Velt exports (`@export`, its address from
+// `exportedAddress`; a `void* f(void*)` is what `LPTHREAD_START_ROUTINE` calls on x64 and arm64,
+// whose `DWORD` result is the low half of the pointer returned), with the stack every thread that
+// runs tasks has, and the number of active cores, the default worker count (kernel32).
+//
+// The handle is closed at once: no thread is ever joined, and one that returns ends then.
+
+import { Ptr } from "velt/ffi/ptr";
+import * as m from "./sched_mem";
+
+/** Can this OS start worker threads? (The default variant cannot: one worker.) */
+export const SUPPORTED: bool = true;
+
+/** A worker thread's stack: 8 MiB, as the runtime's task threads and the main thread have. */
+const STACK: usize = 8388608;
+/** `CreateThread`'s flag: the stack size is what to reserve, not what to commit. */
+const STACK_SIZE_PARAM_IS_A_RESERVATION: u32 = 0x10000;
+/** `GetActiveProcessorCount`'s every processor group. */
+const ALL_PROCESSOR_GROUPS: u16 = 0xffff;
+
+// Handles are `usize`s, as the compiler's system functions have them (`CloseHandle`); pointers
+// `Ptr`s: one C symbol has one signature in a program.
+declare c("c") function CreateThread(
+  attributes: Ptr<u8>,
+  stack: usize,
+  start: Ptr<u8>,
+  arg: Ptr<u8>,
+  flags: u32,
+  id: Ptr<u8>,
+): usize;
+declare c("c") function CloseHandle(file: usize): i32;
+declare c("c") function GetActiveProcessorCount(group: u16): u32;
+
+/** The active cores (at least 1). */
+export function cores(): usize {
+  // SAFETY: no precondition.
+  const n = unsafe { GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) };
+  return n < 1 ? 1 : n as usize;
+}
+
+/**
+ * Starts a thread running C function `start` (an `@export`ed one: `void* f(void*)`) with `arg`;
+ * whether it started. The thread is never joined: it runs until the process ends.
+ */
+export function start(start: usize, arg: usize): bool {
+  return startThread(start, arg);
+}
+
+/**
+ * As `start`, for a thread that ends on its own (a blocking pool's: its function returns): the
+ * OS frees what it holds when it ends.
+ */
+export function startDetached(start: usize, arg: usize): bool {
+  return startThread(start, arg);
+}
+
+function startThread(start: usize, arg: usize): bool {
+  let h: usize = 0;
+  // SAFETY: no security attributes and no id wanted (NULL); `start` is a C function of the
+  // signature `CreateThread` calls; `arg` is passed through to it.
+  unsafe {
+    h = CreateThread(
+      m.ptr(0),
+      STACK,
+      m.ptr(start),
+      m.ptr(arg),
+      STACK_SIZE_PARAM_IS_A_RESERVATION,
+      m.ptr(0),
+    );
+  }
+  if (h === 0) {
+    return false;
+  }
+  // SAFETY: the handle `CreateThread` returned, closed once; the thread runs on without it.
+  unsafe {
+    CloseHandle(h);
+  }
+  return true;
+}

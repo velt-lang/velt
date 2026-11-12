@@ -22,8 +22,15 @@ fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// The pool runs where `#sched-thread` has threads (macOS and Linux for now).
+/// The pool runs where `#sched-thread` has threads (macOS, Linux and Windows).
 fn has_threads() -> bool {
+    cfg!(any(target_os = "macos", target_os = "linux", windows))
+}
+
+/// Child processes and signals in Velt are POSIX's (`posix_spawn`, `sigaction`): on Windows child
+/// processes stay the runtime's under `VELT_SCHEDULER=std` too (`#child-rt`, #2649), and a
+/// signal's exit code (128 + 15) is a POSIX one.
+fn posix() -> bool {
     cfg!(any(target_os = "macos", target_os = "linux"))
 }
 
@@ -82,6 +89,12 @@ const POOL: &str = "sched__blockingN3run";
 /// Asserts that std build `exe` has the functions of each seam in `marks` (and so went through
 /// them), and the runtime build `rt` none of them.
 fn assert_std_path(name: &str, exe: &Path, rt: Option<&Path>, marks: &[&str]) {
+    if cfg!(windows) {
+        // A PE executable names no Velt function, and UDP and child processes stay the runtime's
+        // there (`#net-udp`, `#child-rt`): the other suites look for the executor's panic
+        // locations instead.
+        return;
+    }
     let bin = std::fs::read(exe).unwrap();
     let rt_bin = rt.map(|r| std::fs::read(r).unwrap()).unwrap_or_default();
     for mark in marks {
@@ -416,19 +429,27 @@ fn a_job_runs_when_the_pool_can_start_no_thread() {
     // at their process limit), the job that asked for one used to wait in the queue for good,
     // holding its keep-alive reference: the program never ended. Now the thread that queued it
     // runs the queue. White-box, in a copy of std whose `startDetached` always fails (an
-    // `RLIMIT_NPROC` limit would stop the runtime's own threads first). The job is then done
-    // before the poll that queued it ends, every time: its result still waits for a wake, so a
-    // settled promise wins a race against it (#2820), as in Node; it used to lose every time.
+    // `RLIMIT_NPROC` limit would stop the runtime's own threads first; thread_win32.velt's on
+    // Windows). The job is then done before the poll that queued it ends, every time: its result
+    // still waits for a wake, so a settled promise wins a race against it (#2820), as in Node; it
+    // used to lose every time.
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
     let std_copy = dir.path().join("std");
     copy_tree(&manifest().join("../../std"), &std_copy);
-    let thread = std_copy.join("lang/hooks/thread_posix.velt");
-    let text = std::fs::read_to_string(&thread).unwrap();
+    let thread = std_copy.join(if cfg!(windows) {
+        "lang/hooks/thread_win32.velt"
+    } else {
+        "lang/hooks/thread_posix.velt"
+    });
+    let text = std::fs::read_to_string(&thread)
+        .unwrap()
+        .replace("\r\n", "\n");
     let from = "export function startDetached(start: usize, arg: usize): bool {\n";
     assert!(
         text.contains(from),
-        "thread_posix.velt has no startDetached"
+        "{} has no startDetached",
+        thread.display()
     );
     std::fs::write(
         &thread,
@@ -494,7 +515,7 @@ async function main() {
 
 #[test]
 fn child_processes_from_every_worker_run_and_report_their_exit() {
-    if !has_threads() {
+    if !posix() {
         return;
     }
     // The program runs itself as its children (no shell tools needed). 24 `exec`s at once from
@@ -587,7 +608,7 @@ async function main(): Promise<i32> {
 
 #[test]
 fn a_read_of_a_childs_silent_pipe_leaves_its_worker_free() {
-    if !has_threads() {
+    if !posix() {
         return;
     }
     // The parent starts reading the child's stdout before it writes the line the child waits
@@ -626,7 +647,7 @@ async function main(): Promise<i32> {
 
 #[test]
 fn a_nul_in_a_childs_working_directory_fails_its_start() {
-    if !has_threads() {
+    if !posix() {
         return;
     }
     // The cwd is a C string too: with a NUL in it the start fails, as the runtime's does, where
@@ -660,7 +681,7 @@ async function main(): Promise<i32> {
 
 #[test]
 fn socket_and_name_errors_read_as_the_runtimes() {
-    if !has_threads() {
+    if !posix() {
         return;
     }
     // An IPv4 socket sending to an IPv6 address (EAFNOSUPPORT: the runtime's UNKNOWN, as Rust
@@ -706,7 +727,7 @@ fn copy_tree(from: &Path, to: &Path) {
 
 #[test]
 fn a_raised_signal_comes_through_the_self_pipe() {
-    if !has_threads() {
+    if !posix() {
         return;
     }
     // Signals have no std API yet (only the `velt dev` host watches them), so this is a

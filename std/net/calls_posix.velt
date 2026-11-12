@@ -1,0 +1,60 @@
+// velt/net (internal): the C library's socket functions velt/net's sockets on the reactor of the
+// executor in Velt call (std/net/fd_socket.velt, fd_io.velt, fd_addr.velt and std/lang/hooks/
+// sched_io_write.velt; `#net-calls`), as macOS and Linux declare them. Windows' Winsock differs
+// in its types (a `SOCKET` is a handle, results are `int`s), names (`closesocket`) and errors:
+// std/net/calls_win32.velt gives the same names there.
+//
+// Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
+// symbols: one C symbol has one signature in a program.
+
+import { StrBytes } from "velt/ffi/str_bytes";
+import { Ptr } from "velt/ffi/ptr";
+
+export declare c("c") function socket(family: i32, kind: i32, protocol: i32): i32;
+export declare c("c") function connect$net(fd: i32, addr: Ptr<u8>, len: u32): i32;
+export declare c("c") function bind(fd: i32, addr: Ptr<u8>, len: u32): i32;
+export declare c("c") function listen(fd: i32, backlog: i32): i32;
+export declare c("c") function getsockopt(
+  fd: i32,
+  level: i32,
+  name: i32,
+  value: Ptr<u8>,
+  len: Ptr<u8>,
+): i32;
+export declare c("c") function setsockopt(
+  fd: i32,
+  level: i32,
+  name: i32,
+  value: Ptr<u8>,
+  len: u32,
+): i32;
+export declare c("c") function getsockname(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32;
+export declare c("c") function getpeername(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32;
+/** The message of `errno` `e` (a NUL-terminated text the caller doesn't free). */
+export declare c("c") function strerror(e: i32): Ptr<u8>;
+export declare c("c") function close$net(fd: i32): i32;
+export declare c("c") function close$io(fd: i32): i32;
+export declare c("c") function recv$net(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
+export declare c("c") function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
+export declare c("c") function shutdown$net(fd: i32, how: i32): i32;
+export declare c("c") function shutdown$io(fd: i32, how: i32): i32;
+/** A pipe's read (a child process's: std/process/child/child_sched.velt). */
+export declare c("c") function read$net(fd: i32, buf: Ptr<u8>, n: usize): isize;
+/** Copies a string's bytes to an address. */
+export declare c("c") function bcopy$text(src: StrBytes, dst: Ptr<u8>, n: usize): void;
+export declare c("c") function freeaddrinfo(ai: Ptr<u8>): void;
+
+/**
+ * Is `getaddrinfo`'s failure an OS error, worded as one? No: an `EAI_*` code, which Rust words
+ * "failed to lookup address information: …".
+ */
+export const GAI_OS_ERROR: bool = false;
+
+/** The message of `getaddrinfo`'s failure `e` (a NUL-terminated text the caller doesn't free). */
+export declare c("c") function gai_strerror(e: i32): Ptr<u8>;
+export declare c("c") function inet_ntop(
+  family: i32,
+  src: Ptr<u8>,
+  dst: Ptr<u8>,
+  size: u32,
+): Ptr<u8> | null;

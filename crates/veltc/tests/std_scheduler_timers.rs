@@ -78,11 +78,22 @@ fn run_exe(exe: &Path, threads: &str, code: i32, what: &str) -> String {
     out
 }
 
-/// Whether a `VELT_SCHEDULER=std` program builds here: the executor in Velt waits in an epoll or
-/// kqueue reactor, and Windows has no reactor in Velt yet (#2723), so its build would not link.
-/// The tests compare the two executors only where both exist.
+/// Whether a `VELT_SCHEDULER=std` program builds here: the executor in Velt waits in an epoll,
+/// kqueue or (Windows) AFD reactor; other OSes have none. The tests compare the two executors
+/// only where both exist.
 fn std_builds_here() -> bool {
-    cfg!(unix)
+    cfg!(any(unix, windows))
+}
+
+/// What marks std function `function` in a built program: its name, or on Windows, where a PE
+/// file names no functions and a debug build's PDB only the exported ones, the panic locations
+/// its file's code carries (`std/lang/hooks/sched.velt:line:col`).
+fn marker(function: &str) -> String {
+    if cfg!(windows) {
+        "std/lang/hooks/sched.velt:".to_string()
+    } else {
+        function.to_string()
+    }
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
@@ -106,9 +117,12 @@ fn same_on_both(name: &str, src: &str, want: &str, code: i32) {
     } else {
         "schedTimerTurn"
     };
-    assert!(contains(&std_bin, hook.as_bytes()), "{name}: no {hook}");
     assert!(
-        !contains(&rt_bin, hook.as_bytes()),
+        contains(&std_bin, marker(hook).as_bytes()),
+        "{name}: no {hook}"
+    );
+    assert!(
+        !contains(&rt_bin, marker(hook).as_bytes()),
         "{name}: {hook} without the variable"
     );
 }
@@ -396,7 +410,7 @@ async function main() {{
         std, "sleep 2\ntimeout 10\ntimeout 8\nspawned sleep 2\n",
         "the executor in Velt"
     );
-    assert!(contains(&std_bin, b"schedSleep"));
+    assert!(contains(&std_bin, marker("schedSleep").as_bytes()));
 }
 
 /// A task pinned to a worker of the runtime runs its timers there: the callback that resolves its

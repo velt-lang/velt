@@ -11,6 +11,19 @@ import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { Ptr } from "velt/ffi/ptr";
 import { promiseAt } from "velt/lang/intrinsics";
+import {
+  bind,
+  close$net,
+  connect$net,
+  freeaddrinfo,
+  getpeername,
+  getsockname,
+  getsockopt,
+  listen,
+  setsockopt,
+  socket,
+  strerror,
+} from "#net-calls";
 import * as r from "#reactor";
 import * as sys from "#net-sys";
 import * as io from "velt/lang/hooks/sched_io";
@@ -31,25 +44,7 @@ const AI_PROTOCOL: usize = 12;
 /** A `sockaddr_storage` and its length word. */
 const SA_SIZE: usize = 128;
 
-// Pointers are `Ptr`s, as in a program's own declarations of these symbols: one C symbol has one
-// signature in a program. Addresses become `Ptr`s with `m.ptr` (0 passes `NULL`).
-declare c("c") function freeaddrinfo(ai: Ptr<u8>): void;
-declare c("c") function socket(family: i32, kind: i32, protocol: i32): i32;
-declare c("c") function connect$net(fd: i32, addr: Ptr<u8>, len: u32): i32;
-declare c("c") function bind(fd: i32, addr: Ptr<u8>, len: u32): i32;
-declare c("c") function listen(fd: i32, backlog: i32): i32;
-declare c("c") function getsockopt(
-  fd: i32,
-  level: i32,
-  name: i32,
-  value: Ptr<u8>,
-  len: Ptr<u8>,
-): i32;
-declare c("c") function setsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: u32): i32;
-declare c("c") function getsockname(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32;
-declare c("c") function getpeername(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32;
-declare c("c") function strerror(e: i32): Ptr<u8>;
-declare c("c") function close$net(fd: i32): i32;
+// Addresses become `Ptr`s with `m.ptr` (0 passes `NULL`).
 
 /** A successful status. */
 export function ok(): IoStatus {
@@ -205,6 +200,7 @@ async function connectOne(ai: usize): Promise<IoResult<u64>> {
 /** Closes the source of handle `h` at once (nothing sent on it yet; locked: `tb.enter`). */
 export function discard(h: u64, s: usize): void {
   tb.forget(h);
+  tb.closing(s);
   closeFd(m.ld(s + io.S_FD) as i32);
   io.free(s);
 }

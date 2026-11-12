@@ -1,0 +1,29 @@
+// velt/lang/hooks (internal): the two OS calls the executor in Velt's core makes whatever its
+// reactor (`#sched-os`, sched_mem.velt and sched_io_wait.velt): giving the core away in a spin
+// lock and the monotonic clock. macOS and Linux: `sched_yield`, `clock_gettime`.
+
+import { Ptr } from "velt/ffi/ptr";
+import * as m from "./sched_mem";
+
+declare c("c") function sched_yield$sched(): i32;
+declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<u8>): i32;
+
+/** Gives the core to another thread that is ready to run, if any. */
+export function yieldCore(): void {
+  // SAFETY: no precondition.
+  unsafe {
+    sched_yield$sched();
+  }
+}
+
+/** Clock `clock` (the reactor's `MONOTONIC`) in nanoseconds. */
+export function monotonicNs(clock: i32): u64 {
+  const ts = m.alloc(16);
+  // SAFETY: a timespec in `ts`.
+  unsafe {
+    clock_gettime$io(clock, m.ptr(ts));
+  }
+  const ns = (m.ld(ts) as u64) * 1000000000 + (m.ld(ts + 8) as u64);
+  m.release(ts, 16);
+  return ns;
+}

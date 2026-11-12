@@ -403,10 +403,21 @@ export function free(s: usize): void {
   tb.give(s);
 }
 
-/** Clears readiness `bit` of `s`: an operation found the socket not ready (EAGAIN). */
+/**
+ * Clears readiness `bit` of `s`: an operation found the socket not ready (EAGAIN). A reactor
+ * whose events come once per ask (Windows' AFD polls, `r.REARMS`) asks for them again.
+ */
 @inline
 export function notReady(s: usize, bit: u32): void {
   m.st32(s + S_READY, m.ld32(s + S_READY) & ~bit);
+  if (r.REARMS) {
+    rearm(s, bit);
+  }
+}
+
+@noInline
+function rearm(s: usize, bit: u32): void {
+  r.rearm(m.ld(m.ld(s + S_IOB) + IO_REACTOR), m.ld(s + S_FD) as i32, s, bit);
 }
 
 /** Wakes every waiter of `s`; each polls again and waits again when it must. */

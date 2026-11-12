@@ -17,6 +17,7 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { inline, noInline } from "velt/lang/intrinsics";
+import { close$io, send$io, shutdown$io } from "#net-calls";
 import * as r from "#reactor";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
@@ -25,10 +26,6 @@ import * as wt from "./sched_io_wait";
 
 /** The most of a sent buffer's capacity kept for the next poll's bytes. */
 const KEEP: usize = 64 * 1024;
-
-declare c("c") function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
-declare c("c") function shutdown$io(fd: i32, how: i32): i32;
-declare c("c") function close$io(fd: i32): i32;
 
 /** Appends the `n` bytes at `p` to source `s`'s buffer. */
 export function append(s: usize, p: usize, n: usize): void {
@@ -192,6 +189,7 @@ function finish(s: usize, fl: u32): void {
     }
   }
   if ((fl & io.F_CLOSING) !== 0 && (m.ld32(s + io.S_FLAGS) & io.F_DUE) === 0) {
+    tb.closing(s);
     // SAFETY: the source's descriptor, closed once: the source goes with it.
     unsafe {
       close$io(fd);

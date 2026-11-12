@@ -202,7 +202,16 @@ mod platform {
 
     pub(super) fn loaded(name: &str) -> Option<*const u8> {
         let symbol = CString::new(name).ok()?;
-        let modules: [&[u8]; 3] = [b"\0", b"ucrtbase.dll\0", b"kernel32.dll\0"];
+        // std's own C functions under `VELT_SCHEDULER=std` (std/lang/hooks/reactor_afd.velt) are
+        // Winsock's, ntdll's and the synchronization library's, which the runtime loads too.
+        let modules: [&[u8]; 6] = [
+            b"\0",
+            b"ucrtbase.dll\0",
+            b"kernel32.dll\0",
+            b"ws2_32.dll\0",
+            b"ntdll.dll\0",
+            b"api-ms-win-core-synch-l1-2-0.dll\0",
+        ];
         modules.iter().find_map(|m| {
             // SAFETY: the names are NUL-terminated; a module that isn't loaded gives NULL, and
             // an address found is not called here.

@@ -1,0 +1,211 @@
+// velt/net (internal): Winsock's socket functions under the names and signatures velt/net's
+// sockets on the reactor of the executor in Velt call (`#net-calls`; std/net/calls_posix.velt
+// has the C library's). A `SOCKET` is a handle (`usize`) that this module passes as the `i32`
+// descriptor the callers keep: Windows gives sockets small handle values, far below 2^31. Sizes
+// and results are `int`s here; a close is `closesocket`; messages come from `FormatMessageA`, as
+// the runtime's (Rust's) do, without the line break at their end.
+//
+// Functions are ws2_32's and kernel32's, declared from `c` (std names no other library), which
+// the link resolves with those import libraries. Pointers are `Ptr`s, as in a program's own
+// declarations of these symbols: one C symbol has one signature in a program.
+
+import { StrBytes } from "velt/ffi/str_bytes";
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+import * as m from "velt/lang/hooks/sched_mem";
+
+const INVALID: usize = 0xffffffffffffffff;
+/** `WSAEMFILE`: no more sockets. */
+const WSAEMFILE: i32 = 10024;
+/** The most one `recv` or `send` passes (its length is an `int`). */
+const MOST: usize = 0x7fffffff;
+/** `FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS`. */
+const FROM_SYSTEM: u32 = 0x1200;
+/** Room for a message and its NUL. */
+const TEXT: usize = 512;
+
+/** This thread's buffer for `strerror`'s messages (0 until its first). */
+const TEXT_HERE = new ThreadLocal<u64>(0);
+
+declare c("c") function socket$win(af: i32, kind: i32, protocol: i32): usize;
+declare c("c") function WSASetLastError$win(e: i32): void;
+declare c("c") function connect$win(s: usize, addr: Ptr<u8>, len: i32): i32;
+declare c("c") function bind$win(s: usize, addr: Ptr<u8>, len: i32): i32;
+declare c("c") function listen$win(s: usize, backlog: i32): i32;
+declare c("c") function getsockopt$win(
+  s: usize,
+  level: i32,
+  name: i32,
+  value: Ptr<u8>,
+  len: Ptr<u8>,
+): i32;
+declare c("c") function setsockopt$win(
+  s: usize,
+  level: i32,
+  name: i32,
+  value: Ptr<u8>,
+  len: i32,
+): i32;
+declare c("c") function getsockname$win(s: usize, addr: Ptr<u8>, len: Ptr<u8>): i32;
+declare c("c") function getpeername$win(s: usize, addr: Ptr<u8>, len: Ptr<u8>): i32;
+declare c("c") function closesocket$win(s: usize): i32;
+declare c("c") function recv$win(s: usize, buf: Ptr<u8>, len: i32, flags: i32): i32;
+declare c("c") function send$win(s: usize, buf: Ptr<u8>, len: i32, flags: i32): i32;
+declare c("c") function shutdown$win(s: usize, how: i32): i32;
+declare c("c") function inet_ntop$win(
+  family: i32,
+  src: Ptr<u8>,
+  dst: Ptr<u8>,
+  size: usize,
+): Ptr<u8> | null;
+declare c("c") function memmove$text(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
+declare c("c") function FormatMessageA(
+  flags: u32,
+  source: Ptr<u8>,
+  id: u32,
+  language: u32,
+  buf: Ptr<u8>,
+  size: u32,
+  args: Ptr<u8>,
+): u32;
+
+export function socket(family: i32, kind: i32, protocol: i32): i32 {
+  // SAFETY: no precondition.
+  const s = unsafe { socket$win(family, kind, protocol) };
+  if (s === INVALID) {
+    return -1;
+  }
+  if (s > 0x7fffffff) {
+    // A handle the callers' `i32` descriptor can't hold (Winsock doesn't promise small values):
+    // refused as a full table would be, rather than truncated.
+    // SAFETY: the socket just made, not used after.
+    unsafe {
+      closesocket$win(s);
+      WSASetLastError$win(WSAEMFILE);
+    }
+    return -1;
+  }
+  return s as i32;
+}
+
+export function connect$net(fd: i32, addr: Ptr<u8>, len: u32): i32 {
+  // SAFETY: the caller's address and length.
+  return unsafe { connect$win(fd as usize, addr, len as i32) };
+}
+
+export function bind(fd: i32, addr: Ptr<u8>, len: u32): i32 {
+  // SAFETY: the caller's address and length.
+  return unsafe { bind$win(fd as usize, addr, len as i32) };
+}
+
+export function listen(fd: i32, backlog: i32): i32 {
+  // SAFETY: no precondition.
+  return unsafe { listen$win(fd as usize, backlog) };
+}
+
+export function getsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: Ptr<u8>): i32 {
+  // SAFETY: the caller's option room and its `int` length.
+  return unsafe { getsockopt$win(fd as usize, level, name, value, len) };
+}
+
+export function setsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: u32): i32 {
+  // SAFETY: the caller's option and its length.
+  return unsafe { setsockopt$win(fd as usize, level, name, value, len as i32) };
+}
+
+export function getsockname(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32 {
+  // SAFETY: the caller's address room and its `int` length.
+  return unsafe { getsockname$win(fd as usize, addr, len) };
+}
+
+export function getpeername(fd: i32, addr: Ptr<u8>, len: Ptr<u8>): i32 {
+  // SAFETY: the caller's address room and its `int` length.
+  return unsafe { getpeername$win(fd as usize, addr, len) };
+}
+
+/** The message of Winsock error `e` (this thread's buffer, until its next message). */
+export function strerror(e: i32): Ptr<u8> {
+  let buf = TEXT_HERE.get() as usize;
+  if (buf === 0) {
+    buf = m.lastingZeroed(TEXT);
+    TEXT_HERE.set(buf as u64);
+  }
+  let got: u32 = 0;
+  // SAFETY: TEXT bytes at `buf`; no inserts are read.
+  unsafe {
+    got = FormatMessageA(FROM_SYSTEM, m.ptr(0), e as u32, 0, m.ptr(buf), TEXT as u32, m.ptr(0));
+  }
+  let n = got as usize;
+  // The line break (and any space) at its end goes, as Rust trims it.
+  // SAFETY: bytes of the message FormatMessageA wrote, and the one after its last kept byte.
+  unsafe {
+    while (n > 0 && addressLoad<u8>(buf + n - 1) <= 0x20) {
+      n--;
+    }
+    addressStore<u8>(buf + n, 0);
+  }
+  return m.ptr(buf);
+}
+
+export function close$net(fd: i32): i32 {
+  // SAFETY: a socket of the caller's, not used after.
+  return unsafe { closesocket$win(fd as usize) };
+}
+
+export function close$io(fd: i32): i32 {
+  // SAFETY: as `close$net`.
+  return unsafe { closesocket$win(fd as usize) };
+}
+
+export function recv$net(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize {
+  const len = n > MOST ? MOST : n;
+  // SAFETY: `buf` holds `n` bytes.
+  return unsafe { recv$win(fd as usize, buf, len as i32, flags) } as isize;
+}
+
+export function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize {
+  const len = n > MOST ? MOST : n;
+  // SAFETY: `buf` holds `n` bytes.
+  return unsafe { send$win(fd as usize, buf, len as i32, flags) } as isize;
+}
+
+export function shutdown$net(fd: i32, how: i32): i32 {
+  // SAFETY: no precondition.
+  return unsafe { shutdown$win(fd as usize, how) };
+}
+
+export function shutdown$io(fd: i32, how: i32): i32 {
+  // SAFETY: no precondition.
+  return unsafe { shutdown$win(fd as usize, how) };
+}
+
+/** No pipe is read here (child processes stay the runtime's on Windows): -1. */
+export function read$net(fd: i32, buf: Ptr<u8>, n: usize): isize {
+  return -1;
+}
+
+/** Copies a string's bytes to an address. */
+export function bcopy$text(src: StrBytes, dst: Ptr<u8>, n: usize): void {
+  // SAFETY: the caller's destination holds `n` bytes, the string as many.
+  unsafe {
+    memmove$text(dst, src, n);
+  }
+}
+
+export declare c("c") function freeaddrinfo(ai: Ptr<u8>): void;
+
+/**
+ * Is `getaddrinfo`'s failure an OS error, worded as one ("… (os error N)")? Yes: a Winsock error,
+ * as Rust reports it on Windows (`from_raw_os_error`).
+ */
+export const GAI_OS_ERROR: bool = true;
+
+/** The message of `getaddrinfo`'s failure `e`, a Winsock error (as `strerror`). */
+export function gai_strerror(e: i32): Ptr<u8> {
+  return strerror(e);
+}
+
+export function inet_ntop(family: i32, src: Ptr<u8>, dst: Ptr<u8>, size: u32): Ptr<u8> | null {
+  // SAFETY: the caller's address bytes and `size` bytes of text room.
+  return unsafe { inet_ntop$win(family, src, dst, size as usize) };
+}
