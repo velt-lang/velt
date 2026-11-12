@@ -1,0 +1,73 @@
+// velt/net/http (internal): `fetch`'s plain-TCP connections under the executor in Velt
+// (`VELT_SCHEDULER=std`, #2649): the `std-scheduler` variant of `#fetch-dial` (std/imports.velt;
+// the other is dial_rt.velt). An `http:` connection is a non-blocking socket on the executor's
+// reactor (std/net/fd_socket.velt), as `connect`'s, so every operation on it is Velt on the
+// worker, and its keep-alive pool is Velt too (std/net/fd_pool.velt, behind `TcpStream.park`).
+//
+// `https:` stays the runtime's (`connectTls`, conn.velt's `dial`): verifying a server's chain
+// against the built-in roots (mostly RSA) is #2392 step 3, and `startTls` does not verify. A
+// build whose OS has no reactor (std/lang/hooks/reactor_none.velt) uses the runtime's too.
+
+import { IoError } from "velt/io/error";
+import { unwrapIo } from "velt/native/result";
+import { TcpStream } from "velt/net";
+import { AbortError, AbortSignal } from "velt/task";
+import * as io from "velt/lang/hooks/sched_io";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as wt from "velt/lang/hooks/sched_io_wait";
+import * as fio from "velt/net/fd_io";
+import * as fs from "velt/net/fd_socket";
+
+/** How long connecting may take (milliseconds) before `ETIMEDOUT`, as conn.velt's `CONNECT_MS`. */
+const CONNECT_MS: u64 = 10000;
+
+/** Whether the executor's reactor runs (not on an OS without one). */
+export function reactorUp(): bool {
+  return io.supported();
+}
+
+/**
+ * A new plain-TCP connection to `addr` on the reactor, within `CONNECT_MS` and before an abort.
+ * Losing to either ends the connect itself (its socket is closed): a connect in Velt that lost a
+ * race would otherwise run on, keeping a socket nobody closes and the process alive.
+ */
+export async function dialPlain(
+  addr: string,
+  signal: AbortSignal | null,
+): Promise<TcpStream, IoError | AbortError> {
+  if (signal != null) {
+    signal.throwIfAborted();
+  }
+  const deadline = wt.now() + CONNECT_MS * 1000000;
+  const cell = m.zeroed(16);
+  const connecting = fs.connectUntil(addr, deadline, cell);
+  if (signal != null) {
+    await Promise.race([connecting.then((_) => {}), signal.whenAborted()]);
+    if (signal.aborted) {
+      // Given up: the socket connecting now is closed, which ends the connect's wait.
+      m.st32(cell + 8, 1);
+      const h = m.ld(cell) as u64;
+      if (h !== 0) {
+        fio.close(h);
+      }
+      const late = await connecting;
+      m.release(cell, 16);
+      if (late.code === 0) {
+        fio.close(late.value);
+      }
+      signal.throwIfAborted();
+    }
+  }
+  const r = await connecting;
+  m.release(cell, 16);
+  if (r.code === fs.TIMED_OUT) {
+    throw new IoError("ETIMEDOUT", `fetch failed: connect timeout to ${addr}`);
+  }
+  try {
+    return TcpStream.ofHandle(unwrapIo(r));
+  } catch (e) {
+    throw e.message.startsWith("fetch failed")
+      ? e
+      : new IoError(e.code, `fetch failed: ${e.message}`);
+  }
+}

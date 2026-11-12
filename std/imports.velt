@@ -123,6 +123,12 @@ export const imports: Imports = {
     "std-scheduler": "./process/child/child_sched.velt",
     default: "./process/child/rt.velt",
   },
+  // `fetch`'s plain-TCP connections: the runtime's, or compiled with the executor in Velt
+  // (`VELT_SCHEDULER=std`) sockets on its reactor, pooled in Velt (`https:` stays the runtime's).
+  "#fetch-dial": {
+    "std-scheduler": "./net/http/fetch/client/dial_sched.velt",
+    default: "./net/http/fetch/client/dial_rt.velt",
+  },
   // velt/task's `workerCount()` and `currentWorker()`: the runtime's executor's workers, or
   // under the executor in Velt (`VELT_SCHEDULER=std`) its own.
   // velt/task's `catchPanic` catch: the runtime's (velt_rt_catch_*), or under the executor in

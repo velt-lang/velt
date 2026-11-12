@@ -1,0 +1,21 @@
+// velt/net/http (internal): `fetch`'s connections on the runtime's executor: the `default`
+// variant of `#fetch-dial` (std/imports.velt; the other is dial_sched.velt). conn.velt's `dial`
+// calls `dialPlain` only where std/net/tcp_sched.velt's pool is compiled, never in this build:
+// every connection is the runtime's, and so is the keep-alive pool (crates/velt_rt/src/net/park.rs).
+
+import { IoError } from "velt/io/error";
+import { TcpStream } from "velt/net";
+import { AbortError, AbortSignal } from "velt/task";
+
+/** Whether the executor's reactor runs: no reactor in this build. */
+export function reactorUp(): bool {
+  return false;
+}
+
+/** Not reached in this build. */
+export async function dialPlain(
+  addr: string,
+  signal: AbortSignal | null,
+): Promise<TcpStream, IoError | AbortError> {
+  panic("ICE: fetch dials on the reactor only with the executor in Velt");
+}

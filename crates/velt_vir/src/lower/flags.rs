@@ -11,10 +11,11 @@ use velt_sema::hir::{self, LocalId, PassMode, UseMode};
 
 pub(super) struct FlagScan<'h, 'p> {
     hir: &'h hir::Program,
-    /// Which branch lowering takes of an `if` on a condition fixed per instantiation
-    /// (`HoldsDynamic`, expr.rs `const_cond`): `true` for the `then`. Without it both count as
+    /// Which branch lowering takes of an `if` on a condition fixed per instantiation (expr.rs
+    /// `const_cond`: `HoldsDynamic`, `stdUsed`, a CPU check): `Some(true)` for the `then`, `None`
+    /// for a condition decided when the program runs. Without it both branches count as
     /// conditional regions.
-    pick: Option<&'p mut dyn FnMut(&hir::Expr) -> bool>,
+    pick: Option<&'p mut dyn FnMut(&hir::Expr) -> Option<bool>>,
     depth: u32,
     decl: Vec<u32>,
     moved: Vec<bool>,
@@ -45,7 +46,7 @@ impl<'h, 'p> FlagScan<'h, 'p> {
     pub(super) fn run_picking(
         hir: &'h hir::Program,
         body: &hir::Body,
-        pick: Option<&'p mut dyn FnMut(&hir::Expr) -> bool>,
+        pick: Option<&'p mut dyn FnMut(&hir::Expr) -> Option<bool>>,
     ) -> Scan {
         let n = body.locals.len();
         let mut s = FlagScan {
@@ -71,6 +72,13 @@ impl<'h, 'p> FlagScan<'h, 'p> {
             ref_bindings: s.ref_bindings,
             zero_parts,
         }
+    }
+
+    /// The branch lowering takes of an `if` on `cond`, when `cond` is fixed per instantiation:
+    /// lowering then lowers neither `cond` nor the other branch (stmt.rs `if_stmt`, expr.rs
+    /// `if_expr`).
+    fn fixed(&mut self, cond: &hir::Expr) -> Option<bool> {
+        self.pick.as_mut().and_then(|pick| pick(cond))
     }
 
     fn nested(&mut self, f: impl FnOnce(&mut Self)) {
@@ -134,15 +142,25 @@ impl<'h, 'p> FlagScan<'h, 'p> {
                 self.pat(pat);
             }
             S::Expr(e) | S::Return(Some(e)) => self.expr(e),
-            S::If { cond, then, els } => {
-                self.expr(cond);
-                self.nested(|s| {
-                    s.block(then);
+            S::If { cond, then, els } => match self.fixed(cond) {
+                // Only the branch taken is lowered, as straight-line code: a move in it is not
+                // conditional (a dead `stdUsed` branch must not flag what it would move).
+                Some(true) => self.block(then),
+                Some(false) => {
                     if let Some(b) = els {
-                        s.block(b);
+                        self.block(b);
                     }
-                });
-            }
+                }
+                None => {
+                    self.expr(cond);
+                    self.nested(|s| {
+                        s.block(then);
+                        if let Some(b) = els {
+                            s.block(b);
+                        }
+                    });
+                }
+            },
             S::While {
                 cond, body, step, ..
             } => self.nested(|s| {
@@ -269,21 +287,18 @@ impl<'h, 'p> FlagScan<'h, 'p> {
                 }
                 self.exprs(args);
             }
-            // A condition fixed per instantiation (`HoldsDynamic`): lowering takes one branch,
-            // as straight-line code (expr.rs), so a move in it is not conditional.
-            K::If { cond, then, els }
-                if self.pick.is_some() && super::template::is_holds_dynamic(cond) =>
-            {
-                let taken = self.pick.as_mut().is_some_and(|pick| pick(cond));
-                self.expr(if taken { then } else { els });
-            }
-            K::If { cond, then, els } => {
-                self.expr(cond);
-                self.nested(|s| {
-                    s.expr(then);
-                    s.expr(els);
-                });
-            }
+            // A condition fixed per instantiation: lowering takes one branch, as straight-line
+            // code (expr.rs), so a move in it is not conditional.
+            K::If { cond, then, els } => match self.fixed(cond) {
+                Some(taken) => self.expr(if taken { then } else { els }),
+                None => {
+                    self.expr(cond);
+                    self.nested(|s| {
+                        s.expr(then);
+                        s.expr(els);
+                    });
+                }
+            },
             K::Block(b) => self.block(b),
             K::AdtLit { fields: es, .. }
             | K::Variant { args: es, .. }
