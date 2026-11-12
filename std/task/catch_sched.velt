@@ -11,7 +11,8 @@
 //   (the message) kept; whoever awaits it (joins it) gets the panic raised again (`again`, at
 //   `E_CATCH_AGAIN`), so a panic travels through `await`s as through calls until a catching poll
 //   takes it, or ends the process (exit 101) where none runs.
-// - `settled` waits for the guarded promise without claiming its result.
+// - `settled` waits for the guarded promise without claiming its result, through a header in its
+//   node (nothing allocated).
 //
 // Where generated code doesn't catch (`canCatchPanics()` false: Windows until its structured
 // exceptions are built, the `velt dev` JIT; WebAssembly never runs this executor), `caughtPoll`
@@ -23,7 +24,7 @@ import * as m from "velt/lang/hooks/sched_mem";
 import * as node from "velt/lang/hooks/sched_node";
 import * as nc from "velt/lang/hooks/sched_node_catch";
 import * as t from "velt/lang/hooks/sched_task";
-import { catchPanicRaw } from "./unwind";
+import { catchPanicAt } from "./unwind";
 
 /** The next promise started on this worker catches panics. */
 export function arm(): void {
@@ -39,30 +40,36 @@ export function arm(): void {
 
 /**
  * The promise that took the arming, as a handle (0: none did, or it already finished without a
- * panic, as a handler that never waits does: then `catchPanic` just takes its result, with no
- * `settled` future); disarms.
+ * panic, as a handler that never waits does: then `catchPanic` just takes its result); disarms.
+ * The handle's node gets its settled future (`settled`).
  */
 export function take(): u64 {
   const e = t.exec();
   m.st(e + nc.E_CATCHING, m.ld(e + nc.E_CATCHING) & ~1);
   const f = m.ld(e + nc.E_GUARDED);
   m.st(e + nc.E_GUARDED, 0);
-  if (f !== 0 && nc.finishedWell(f)) {
+  if (f === 0) {
+    return 0;
+  }
+  if (nc.finishedWell(f)) {
     nc.releasePromise(f);
     return 0;
   }
+  const s = node.nodeOf(f) + nc.N_SETTLE;
+  m.st(s, fnAddress(settledPoll));
+  m.st(s + 8, fnAddress(settledDrop));
   return f as u64;
 }
 
-/** Waits until promise `h` finished, without claiming its result: true when it panicked. */
+/**
+ * Waits until promise `h` finished, without claiming its result: true when it panicked. The
+ * future is a header inside `h`'s node (sched_node_catch.velt `N_SETTLE`, written by `take`), so
+ * nothing is allocated; `h`'s handle keeps the node alive while it is awaited.
+ */
 export function settled(h: u64): Promise<bool> {
-  const f = m.alloc(32);
-  m.st(f, fnAddress(settledPoll));
-  m.st(f + 8, fnAddress(settledDrop));
-  m.st(f + 16, 0);
-  m.st(f + 24, h as usize);
-  // SAFETY: `f` is a heap future of this layout, given up to the promise.
-  return unsafe { promiseAt<bool>(f) };
+  // SAFETY: a heap future's header (poll, drop) with its result in the word after, inside the
+  // node, which outlives the promise: `catchPanic` frees `h` only after it is dropped.
+  return unsafe { promiseAt<bool>(node.nodeOf(h as usize) + nc.N_SETTLE) };
 }
 
 /** The panic message of promise `h` (it panicked). */
@@ -78,9 +85,9 @@ export function free(h: u64): void {
   }
 }
 
-/** `settled`'s poll: its result (a `bool`) at +16, the promise at +24. */
+/** `settled`'s poll: its result (a `bool`) at +16, the promise's node at `f - N_SETTLE`. */
 function settledPoll(f: usize, cx: usize): u32 {
-  const p = m.ld(f + 24);
+  const p = f - nc.N_SETTLE + node.N_HEAD;
   if (node.nodeSettled(p, cx) === 0) {
     return 0;
   }
@@ -88,28 +95,31 @@ function settledPoll(f: usize, cx: usize): u32 {
   return 1;
 }
 
-function settledDrop(f: usize): void {
-  m.release(f, 32);
-}
+/** `settled`'s drop: the node is the handle's, freed by `free`. */
+function settledDrop(f: usize): void {}
 
 /**
  * The executor's catching poll on worker `e`: polls the state at `a + 8` with its poll at `a`
- * and `cx` through `catchUnwind`; 0 pending, 1 ready, 2 panicked with the exception stored at
- * `a + 16`. What the poll left on this worker (the catching depth, an adoption under way) is
- * restored then. `a` is the worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and
- * the polled function (`pollArgs`) captures nothing: no closure is made per poll.
+ * and `cx` through `catchUnwindAt`; 0 pending, 1 ready, 2 panicked with the exception stored at
+ * `a + 16`. What the poll left on this worker (the catching depth, an adoption under way, the
+ * promises in their first run under it: sched_node_catch.velt `abandon`) is restored then. `a` is
+ * the worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and the polled function
+ * (`pollArgs`) is called at its address with `a`: no closure, no function value.
  */
 function caughtPoll(a: usize, cx: usize): u32 {
   const e = a - nc.E_CATCH_ARGS;
   const catching = m.ld(e + nc.E_CATCHING);
   const adopting = m.ld(e + t.E_ADOPTING);
+  const first = m.ld(e + nc.E_FIRST);
   m.st(e + nc.E_CATCHING, catching + 2);
   m.st(a + 16, cx);
-  // SAFETY: the exception object is kept by the panicked promise, never freed (its message).
-  const x = unsafe { catchPanicRaw(pollArgs) };
+  // SAFETY: `pollArgs` takes one number; the exception object is kept by the panicked promise,
+  // never freed (its message).
+  const x = unsafe { catchPanicAt(fnAddress(pollArgs), a) };
   m.st(e + nc.E_CATCHING, catching);
   if (x !== 0) {
     m.st(e + t.E_ADOPTING, adopting);
+    nc.abandon(e, first, x);
     m.st(a + 16, x);
     return 2;
   }
@@ -117,12 +127,11 @@ function caughtPoll(a: usize, cx: usize): u32 {
 }
 
 /**
- * `caughtPoll`'s call under the catch: the poll, state and `cx` at this worker's `E_CATCH_ARGS`,
- * the result written over the `cx`. A catching poll nested in it (an adoption) writes the same
- * words, but only after this one read them and before it writes its result.
+ * `caughtPoll`'s call under the catch: the poll, state and `cx` at `a` (this worker's
+ * `E_CATCH_ARGS`), the result written over the `cx`. A catching poll nested in it (an adoption)
+ * writes the same words, but only after this one read them and before it writes its result.
  */
-function pollArgs(): void {
-  const a = t.exec() + nc.E_CATCH_ARGS;
+function pollArgs(a: usize): void {
   // SAFETY: `caughtPoll`'s arguments: a state, its poll, and the context of its task.
   const r = unsafe { statePoll(m.ld(a), m.ld(a + 8), m.ld(a + 16)) };
   m.st(a + 16, r as usize);

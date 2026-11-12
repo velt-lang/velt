@@ -26,7 +26,8 @@ export class PanicError extends Error {
  * starts another promise before the one it returns guards that other one instead. A panic in a
  * task the body `spawn`s ends the process, as before; under the executor in Velt
  * (`VELT_SCHEDULER=std`) such a task catches too, and its panic is raised again where it is
- * joined. Where generated code doesn't catch panics (Windows and the `velt dev` JIT under that
+ * joined; there a promise started in the guarded code whose synchronous part panics abandons
+ * the code that started it as well, as if it awaited it at once. Where generated code doesn't catch panics (Windows and the `velt dev` JIT under that
  * executor), a panic here ends the process as an uncaught one does.
  */
 export async function catchPanic<T, E>(

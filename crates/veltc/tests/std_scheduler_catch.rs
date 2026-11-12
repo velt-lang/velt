@@ -599,3 +599,111 @@ async function main() {
         assert_eq!(err.matches("panic: bad ").count(), 400, "stderr: {err}");
     }
 }
+
+/// A promise started inside a catching poll (http-server's handler, started by its adapter that
+/// `catchPanic` guards) runs its first, synchronous part under that poll's catch, with no catch of
+/// its own (sched_node_catch.velt `startCaught`); a panic there abandons the promise that started
+/// it too, and `abandon` finishes it as panicked: its task's count of promises and await word come
+/// down, so a task that caught many such panics still finishes and its join returns. A guarded
+/// promise still running when `catchPanic` waits for it is waited for through the settled future
+/// inside its node (catch_sched.velt `settled`): a panic after the wait began is a `PanicError`,
+/// a result is delivered whole.
+#[test]
+fn a_panic_in_the_first_run_of_a_promise_started_under_a_catch_and_one_after_the_wait_are_caught() {
+    if !catches_here() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("first.velt");
+    std::fs::write(
+        &file,
+        r#"import { catchPanic, PanicError } from "velt/task";
+
+function sub(i: i64): Promise<i64> {
+  return subAsync(i);
+}
+
+async function subAsync(i: i64): Promise<i64> {
+  if (i % 5 == 0) {
+    panic(`sub ${i}`);
+  }
+  return i;
+}
+
+async function handler(i: i64): Promise<i64> {
+  if (i % 3 == 0) {
+    panic(`handler ${i}`);
+  }
+  // Started in the handler's own first run: two promises in their first run when it panics.
+  return await sub(i);
+}
+
+async function adapter(i: i64): Promise<i64> {
+  const r = await handler(i);
+  // The adapter waits a turn, as http-server's does: `catchPanic` waits for it.
+  await yieldNow();
+  return r + 1;
+}
+
+async function laterBad(i: i64): Promise<i64> {
+  await yieldNow();
+  if (i % 2 == 0) {
+    panic(`later ${i}`);
+  }
+  return i;
+}
+
+async function laterStr(i: i64): Promise<string> {
+  await yieldNow();
+  return `v${i}`;
+}
+
+async function work(n: i64): Promise<i64> {
+  let s: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    try {
+      s += await catchPanic(() => adapter(i));
+    } catch (e) {
+      if (e instanceof PanicError) {
+        s += e.message.startsWith("handler") ? 1000 : 2000;
+      }
+    }
+    try {
+      s += await catchPanic(() => laterBad(i));
+    } catch (e) {
+      if (e instanceof PanicError) {
+        s += 1;
+      }
+    }
+    const v = await catchPanic(() => laterStr(i));
+    s += v.length as i64;
+  }
+  await yieldNow();
+  return s;
+}
+
+async function main() {
+  console.log(await spawn(work(300)));
+  console.log(await work(30));
+}
+"#,
+    )
+    .unwrap();
+    let exe = exe_name(dir.path(), "first");
+    build_std(&file, &exe);
+    for threads in ["1", "4"] {
+        let (code, out, err) = run(&exe, dir.path(), threads);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, "227900\n18576\n"),
+            "{threads} workers; stderr: {err}"
+        );
+        assert_eq!(
+            err.matches("panic: handler ").count() + err.matches("panic: sub ").count(),
+            154,
+            "stderr: {err}"
+        );
+        assert_eq!(err.matches("panic: later ").count(), 165, "stderr: {err}");
+    }
+}

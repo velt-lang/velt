@@ -410,6 +410,11 @@ pub enum Intrinsic {
     /// out of it (docs/internals/design/unwinding.md). Lowered to a call of `velt_eh_try`, which
     /// the backend defines (`velt_vir::eh`). Additive.
     CatchUnwind,
+    /// std only: `catchUnwindAt(code: usize, arg: usize) -> usize`: `catchUnwind` of the C
+    /// function at address `code` (an `fnAddress` taking one pointer-sized argument) called with
+    /// `arg`: no function value, so no closure environment and no thunk (the executor in Velt's
+    /// catching poll, std/task/catch_sched.velt). Lowered to `velt_eh_try(code, arg)`. Additive.
+    CatchUnwindAt,
     /// std only: `statePoll(poll: usize, state: usize, cx: usize) -> u32`: the call of the
     /// compiled poll function at address `poll` with `(state, cx)` (rt_abi_async.md §1), for
     /// std's executor (#2649). Additive.

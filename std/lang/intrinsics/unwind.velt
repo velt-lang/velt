@@ -15,3 +15,12 @@ import { intrinsic } from "./decorators";
  */
 @intrinsic
 export declare unsafe function catchUnwind(f: () => void): usize;
+
+/**
+ * `catchUnwind` of the function at address `code` (an `fnAddress` of a function taking one
+ * pointer-sized number) called with `arg`: no function value, so no closure environment and no
+ * thunk around the call (the executor in Velt's catching poll). Unsafe as `catchUnwind`, and
+ * `code` must be such an address.
+ */
+@intrinsic
+export declare unsafe function catchUnwindAt(code: usize, arg: usize): usize;

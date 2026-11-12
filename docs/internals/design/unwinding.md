@@ -338,14 +338,33 @@ What replaces the runtime's catch (`velt_rt_catch_*`, the catch at a started pro
   const e = unsafe { catchUnwind(() => { r = futPoll(node.fut, cx); }) };
   ```
 
-  As built (std/task/catch_sched.velt `caughtPoll`), the polled function captures nothing: the
-  poll, state and `cx` wait in the worker's argument words (`E_CATCH_ARGS`), which a nested
-  catching poll writes only after the outer one read them, and the result comes back there. Its
-  cost is the indirect calls through `velt_eh_try`, paid only by catching nodes. A direct form,
-  `catchPoll(f, cx)` lowered to a `velt_eh_try_poll(fut, cx)` that calls the header's poll
-  through the catch, would save one more call if it measures worth it. A guarded promise that
-  finished without a panic before `catchPanic` waits for it (a handler that never waits) costs
-  no `settled` future: `take` gives it back and `catchPanic` takes its result.
+  As built (std/task/catch_sched.velt `caughtPoll`), there is no function value: the poll,
+  state and `cx` wait in the worker's argument words (`E_CATCH_ARGS`), which a nested catching
+  poll writes only after the outer one read them, and the result comes back there;
+  `catchUnwindAt(fnAddress(pollArgs), args)` (an intrinsic beside `catchUnwind`) has
+  `velt_eh_try` call `pollArgs` with their address, so no closure, environment or thunk sits in
+  between. Its cost is the indirect calls through `velt_eh_try`, paid only by catching nodes. A
+  direct form, `catchPoll(f, cx)` lowered to a `velt_eh_try_poll(fut, cx)` that calls the
+  header's poll through the catch, would save one more call if it measures worth it. A guarded
+  promise that finished without a panic before `catchPanic` waits for it (a handler that never
+  waits) is not waited for: `take` gives it back and `catchPanic` takes its result. One still
+  running is waited for through a settled future that is a header inside its node (the started
+  node's lazy drop word and the free word after it, `N_SETTLE`; its `bool` result goes in the
+  word after those, the node's unhandled-rejection link, unused while `catchPanic` holds the
+  promise), so nothing is allocated.
+- **A promise started while a catching poll runs** has no catch of its own for its first,
+  synchronous run: that run is nested in the catching poll, whose catch takes a panic there
+  (sched_node_catch.velt `startCaught`). The promise is linked on the worker meanwhile
+  (`E_FIRST`), and a catching poll that caught a panic finishes the promises linked above where
+  it began as panicked (`abandon`): their task's await word and count of promises come down as
+  their start would have done. The panic abandons the code that started the promise as well, so
+  that promise (http-server's adapter, which awaits the handler at once) is the one that
+  panicked, for its own awaiter. This differs from the runtime's executor, where the started
+  promise alone panics and the code that started it goes on until it awaits it: a promise
+  started under a catch and never awaited, whose synchronous part panics, makes the whole
+  guarded promise a `PanicError` here. Later polls of such a promise catch on their own, and a
+  promise started detached (`velt_rt_fut_detach`, a combinator's loser) keeps its own catch for
+  its first run too, since nobody awaits it.
 - **When the poll panicked**, the node becomes *panicked*: finished, its result slot never read,
   transferred or dropped, its state machine never polled or dropped, the node never freed (a
   leaf inside the leaked state may still wake it). The message moves into the node.
@@ -382,8 +401,8 @@ variant of `#task-catch`, whose default variant std/task/catch_rt.velt calls `ve
   freed (one reference more), its result drop cleared and its rejection flag dropped; `nodePoll`
   on it raises the panic again through `raiseAgain` (std/lang/hooks/unwind.velt), which prints
   nothing (the message was printed at the panic) and, with no catch running on the thread, ends
-  the process with 101. `catchPanic` waits for the guarded node with `nodeSettled`, which
-  doesn't claim the result or raise.
+  the process with 101. `catchPanic` waits for the guarded node with `nodeSettled` (through the
+  settled header in its node), which doesn't claim the result or raise.
 - **Tasks spawned while a catching poll runs catch too** (decision recorded on #2667, owner
   away): their root is polled through the catch (task flag `CATCHES`); a panic makes the task
   done with no result (`PANICKED`, join word `J_PANICKED`; nothing transferred, copied or
@@ -428,7 +447,8 @@ report becomes std's. `velt_rt_panic` keeps only "print, exit 101" and can move 
 The prototype's, all additive:
 
 - `hir::Intrinsic::CatchUnwind` (velt_sema `hir/intrinsic.rs`) and its declaration in
-  `std/lang/intrinsics/unwind.velt`.
+  `std/lang/intrinsics/unwind.velt`; `hir::Intrinsic::CatchUnwindAt` (#2667: the function at an
+  address called with one argument, `velt_eh_try(code, arg)`, for the executor's catching poll).
 - velt_common: hook `panic_raise` (`std/lang/hooks/unwind::panicRaise`, `(&string) -> never`,
   `constructs(CatchUnwind)`), construct `Construct::CatchUnwind` (its own bit in sema's
   `demanded_for`, so it demands only the panic hook), std module `lang_hooks_unwind`, loaded on

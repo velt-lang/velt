@@ -5,12 +5,12 @@
 // the state's result (its offset 0) is the result slot at +16. The head: the node's waker table
 // (a node is its own waker), its reference count (the owner's handle, the task driving it, a
 // place among its task's woken nodes, each waker clone), its flags, its size in bytes (to free it
-// with), the state's poll and drop,
-// the result's drop glue, the task driving it (a started node holds a reference to it, so a wake
-// from another thread never touches a freed task), its link in that task's woken stack (other
-// threads push on it), the waker of whoever awaits it, the `cx` its polls get (its task's await
-// word, itself), its link in the list of woken nodes the task took to run (its own, so a node
-// woken again while it waits there is pushed without breaking that list), and its link in the
+// with), the state's poll, the waker of whoever awaits it, the result's drop glue, the task
+// driving it (a started node holds a reference to it, so a wake from another thread never touches
+// a freed task), its link in that task's woken stack (other threads push on it), the `cx` its
+// polls get (its task's await word, itself), its link in the list of woken nodes the task took to
+// run (its own, so a node woken again while it waits there is pushed without breaking that list),
+// the state's drop (a lazy node's; then a word sched_node_catch.velt uses), and its link in the
 // task's list of rejections nobody handled (its own too: a node woken while it ran from a
 // microtask is still on the woken stack when it finishes there, and that stack must stay whole).
 //
@@ -35,13 +35,17 @@ export const N_REFS: usize = 8;
 export const N_FLAGS: usize = 16;
 const N_BYTES: usize = 20;
 export const N_POLL: usize = 24;
-const N_DROP: usize = 32;
+const N_AWAITER: usize = 32;
 export const N_RESULT_DROP: usize = 40;
 export const N_TASK: usize = 48;
 export const N_NEXT: usize = 56;
-const N_AWAITER: usize = 64;
-export const N_CX: usize = 80;
-const N_TAKEN_NEXT: usize = 96;
+export const N_CX: usize = 64;
+const N_TAKEN_NEXT: usize = 80;
+/**
+ * The lazy state's drop glue: read only before the start, so a started node lends it and the
+ * word after it to sched_node_catch.velt (`N_SETTLE`, `N_FIRST_NEXT`).
+ */
+export const N_DROP: usize = 88;
 const N_UNHANDLED_NEXT: usize = 104;
 
 /**
@@ -185,6 +189,7 @@ export function awaitNode(n: usize, cx: usize): u32 {
 }
 
 /** Adopted node `n` of task `task` finished (flags `fl`): the task no longer drives it. */
+@inline
 export function adoptedDone(task: usize, n: usize, fl: u32): void {
   setFlags(n, fl);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
@@ -267,6 +272,8 @@ export function setFlags(n: usize, f: u32): void {
  * `velt_rt_fut_start`: promise `f` (a lazy node; anything else stays as it is) starts now on
  * task `task` (0 outside a task: it stays lazy), its result dropped with `rdrop` if nobody
  * claims it. Its first run is synchronous: the task's await word is raised meanwhile.
+ * `catching`: this worker's `E_CATCHING` (sched_node_catch.velt `startCaught`), 0 when no catch is
+ * armed or running.
  */
 export function start(
   task: usize,
@@ -284,9 +291,6 @@ export function start(
   if ((fl & (STARTED | FINISHED)) !== 0) {
     return;
   }
-  if (catching !== 0) {
-    nc.catchesFrom(n, catching);
-  }
   m.or32(n + N_FLAGS, STARTED | (rejecting ? REJECTING : 0));
   m.st(n + N_RESULT_DROP, rdrop);
   // The node's reference to its task, given back when the node is freed.
@@ -298,7 +302,11 @@ export function start(
   t.bump(task + t.T_LOCALS, 1);
   t.flags(task, t.LOCALS, 0);
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
-  run(task, n, false);
+  if (catching === 0) {
+    run(task, n, false);
+  } else {
+    nc.startCaught(task, n, catching);
+  }
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
 }
 

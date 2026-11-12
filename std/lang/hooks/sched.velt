@@ -290,7 +290,8 @@ export function schedDetach(f: usize, qdrop: usize): void {
     return;
   }
   const c = m.ld(e + nc.E_CATCHING) & ~1;
-  node.start(m.ld(e + t.E_CURRENT), f, qdrop, false, fnAddress(node.nodePoll), c);
+  const catching = c === 0 ? 0 : c | nc.C_DETACHED;
+  node.start(m.ld(e + t.E_CURRENT), f, qdrop, false, fnAddress(node.nodePoll), catching);
   node.nodeDrop(f);
 }
 

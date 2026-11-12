@@ -2,7 +2,8 @@
 // (docs/internals/design/unwinding.md), for the executor's catch at a started promise and for
 // `catchPanic`.
 
-import { catchUnwind } from "velt/lang/intrinsics/unwind";
+import { stateDrop } from "velt/lang/intrinsics";
+import { catchUnwind, catchUnwindAt } from "velt/lang/intrinsics/unwind";
 import {
   caughtPanic,
   catchesPanics,
@@ -53,6 +54,29 @@ export unsafe function catchPanicRaw(f: () => void): usize {
   }
   // SAFETY: the exception object goes to the caller, who owns it.
   const e = unsafe { catchUnwind(f) };
+  leaveCatch();
+  if (e != 0) {
+    caughtPanic();
+    caught();
+  }
+  return e;
+}
+
+/**
+ * `catchPanicRaw` of the function at address `code` (an `fnAddress` taking one pointer-sized
+ * number) called with `arg`, with no function value to call through. Unsafe: as
+ * `catchPanicRaw`, and `code` must be such an address.
+ */
+export unsafe function catchPanicAt(code: usize, arg: usize): usize {
+  if (!enterCatch()) {
+    // SAFETY: the caller's statement: `code` takes one pointer-sized number, returns nothing.
+    unsafe {
+      stateDrop(code, arg);
+    }
+    return 0;
+  }
+  // SAFETY: the exception object goes to the caller, who owns it.
+  const e = unsafe { catchUnwindAt(code, arg) };
   leaveCatch();
   if (e != 0) {
     caughtPanic();
