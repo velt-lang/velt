@@ -23,10 +23,9 @@ import * as wk from "./sched_wake";
  */
 function parkable(e: usize): bool {
   const g = m.ld(e + t.E_MAIN);
-  if (m.ld(g + t.E_COUNT) > 1) {
-    // Idle: what its tasks printed reaches the OS, as the runtime's workers do.
-    wk.handOffOutput();
-  }
+  // Idle: what its tasks printed reaches the OS before the worker sleeps, as the runtime's
+  // workers do. A reader of a pipe waits for it, maybe for as long as the sleep (#2873).
+  wk.handOffOutput();
   if (e === g) {
     return end.mayPark(e);
   }
