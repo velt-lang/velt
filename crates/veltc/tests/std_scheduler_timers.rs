@@ -390,7 +390,8 @@ async function main() {{
 /// promise, and one nothing awaits, both run (std: the runtime boxes and starts the callbacks'
 /// promises off the worker, sched_off.velt), and the worker's timer prints between them and the
 /// pinned task's sleep (std: the worker writes its stdout out before it waits). Two threads, 20
-/// runs.
+/// runs. The gaps (5 ms against 400 ms, 400 ms against 2 s) leave room for a loaded CI runner,
+/// where a pinned 5 ms timer came after a 60 ms one (#2883).
 #[test]
 fn a_pinned_spawn_runs_its_timers() {
     if !std_builds_here() {
@@ -402,19 +403,19 @@ fn a_pinned_spawn_runs_its_timers() {
   await new Promise<void>((resolve) => setTimeout(() => resolve(), 5));
   console.log(\"pinned timeout fired\");
   setTimeout(() => console.log(\"pinned fire-and-forget\"), 5);
-  await sleep(600);
-  console.log(\"pinned slept 600\");
+  await sleep(2000);
+  console.log(\"pinned slept 2000\");
   return 2;
 }
 
 async function main() {
-  setTimeout(() => console.log(\"worker timeout 60\"), 60);
+  setTimeout(() => console.log(\"worker timeout 400\"), 400);
   const n = await spawn(pinned(), { worker: 1 });
   console.log(n);
 }
 ";
     let want =
-        "pinned timeout fired\npinned fire-and-forget\nworker timeout 60\npinned slept 600\n2\n";
+        "pinned timeout fired\npinned fire-and-forget\nworker timeout 400\npinned slept 2000\n2\n";
     let (out, _) = build_and_run_on(dir.path(), "pinned_timer", src, 0, "2");
     assert_eq!(out, want);
     let suffix = if cfg!(windows) { ".exe" } else { "" };
