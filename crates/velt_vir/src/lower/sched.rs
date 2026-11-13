@@ -21,30 +21,10 @@ use super::rt::Rt;
 use super::FnLower;
 use crate::vir::{Const, Operand, Place, Rvalue, Ty};
 
-/// The externs std declares whose jobs the executor in Velt does: the prelude's microtasks
-/// (std/prelude/promise.velt), `new Promise`'s latch (std/lang/promise/settle.velt) and the
-/// prelude's timers (std/prelude/timers.velt).
-pub(super) const EXTERNS: &[&str] = &[
-    "velt_rt_microtask",
-    "velt_rt_latch_new",
-    "velt_rt_latch_free",
-    "velt_rt_latch_open",
-    "velt_rt_latch_wait",
-    "velt_rt_keep_alive_acquire",
-    "velt_rt_keep_alive_release",
-    UNREF_DUE,
-    "velt_rt_timer_new",
-    "velt_rt_timer_turn",
-    "velt_rt_timer_again",
-    "velt_rt_timer_clear",
-    "velt_rt_timer_free",
-    "velt_rt_uncaught_now",
-];
-
-/// The prelude's question of a due `unref()`'d timer (std/prelude/timers.velt, an async extern).
-/// The executor itself asks the runtime the same through a `declare c` of that symbol, which
-/// stays the runtime's (call.rs routes only runtime declarations).
-pub(super) const UNREF_DUE: &str = "velt_rt_timer_unref_due";
+/// The externs std declares whose jobs the executor in Velt does (velt_common).
+pub(super) use velt_common::std_hooks::SCHED_EXTERNS as EXTERNS;
+/// The prelude's question of a due `unref()`'d timer.
+pub(super) use velt_common::std_hooks::SCHED_UNREF_DUE as UNREF_DUE;
 
 impl FnLower<'_, '_> {
     /// Does this program run on the executor in Velt? Only on a native target: a JS host drives

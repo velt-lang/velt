@@ -1,0 +1,12 @@
+// A synchronous `main` that awaits nothing, over std APIs that start promises and timers: it runs
+// on the executor (with `VELT_SCHEDULER=std`, #2649 P3(a)), and prints as Node does.
+function later(label: string): void {
+  Promise.resolve(label).then((v) => console.log("then", v));
+}
+
+function main() {
+  later("a");
+  setTimeout(() => console.log("timer"), 1);
+  queueMicrotask(() => console.log("microtask"));
+  console.log("main");
+}

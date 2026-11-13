@@ -89,6 +89,9 @@ pub(crate) struct Live {
     int_text: FxHashMap<TyId, bool>,
     /// Live code prints a float: `console.log`'s float writer is needed (`number_text.rs`).
     pub(super) prints_float: bool,
+    /// Live code runs on the executor ([`Walk::tasks`]): the executor in Velt's hooks are needed
+    /// (#2649 P3(a)).
+    pub(super) tasks: bool,
 }
 
 impl Live {
@@ -141,6 +144,9 @@ struct Walk {
     async_host: bool,
     /// A call of `catchUnwind` ([`Construct::CatchUnwind`]).
     catch_unwind: bool,
+    /// Code that runs on the executor: an async function or closure, or one of the externs the
+    /// executor in Velt serves ([`super::sched_hooks`]).
+    tasks: bool,
     /// The last type added to `types` (a body repeats the same type many times in a row).
     last_type: Option<TyId>,
 }
@@ -181,6 +187,7 @@ pub(crate) fn assume(cx: &mut Ctx, assumed: &Assumed) {
     cx.lazy.live.present = assumed.constructs;
     cx.lazy.live.assumed = assumed.defs.clone();
     cx.lazy.record_conversion = assumed.record_conversion;
+    cx.lazy.live.tasks = assumed.tasks;
 }
 
 /// The live definitions for lowering to check against (`hir::Program::live`), when it does, with
@@ -350,6 +357,7 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
         }
     }
     cx.lazy.live.kinds |= w.kinds;
+    cx.lazy.live.tasks |= w.tasks;
     cx.lazy.live.ifaces.extend(w.ifaces);
     for d in w.refs {
         mark(cx, d);
@@ -482,6 +490,7 @@ fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
             if f.is_generator {
                 w.generators[f.is_async as usize] = true;
             }
+            w.tasks |= f.is_async;
             crate::visit::exprs_mut(&mut f.body.block, &mut |e| walk_expr(ty, e, w));
             true
         }
@@ -494,6 +503,12 @@ fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
             if let Some(e) = &mut g.init {
                 crate::visit::exprs_in(e, &mut |e| walk_expr(ty, e, w));
             }
+            true
+        }
+        (Some(hir::Def::ExternFn(x)), _) => {
+            // The runtime's declaration, not the executor's own `declare c` of the symbol.
+            let sched = velt_common::std_hooks::SCHED_EXTERNS.contains(&x.symbol.as_str());
+            w.tasks |= sched && x.c.is_none();
             true
         }
         _ => true,

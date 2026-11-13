@@ -221,7 +221,8 @@ pub fn load_more(
 }
 
 /// Without [`LoadOptions::demand_std`]: every module a demand could ask for, after everything
-/// else, in table order. A test's own std root may not have them.
+/// else, in table order, and the executor in Velt when it is selected (sema demands it for a
+/// program that runs something on it, #2649 P3(a)). A test's own std root may not have them.
 pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
     let Some(std) = loader.opts.std_root.clone() else {
         return;
@@ -229,7 +230,10 @@ pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
     let Some(importer) = loader.modules.iter().position(|m| m.is_std) else {
         return;
     };
-    for path in velt_common::std_hooks::ON_DEMAND_MODULES {
+    let sched = velt_common::std_module!(lang_hooks_sched);
+    let sched = velt_common::std_hooks::std_scheduler().then_some(sched);
+    let paths = velt_common::std_hooks::ON_DEMAND_MODULES.iter().copied();
+    for path in paths.chain(sched) {
         let Some(spec) = specifier(path) else {
             continue;
         };

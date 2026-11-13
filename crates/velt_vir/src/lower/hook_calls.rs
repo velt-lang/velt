@@ -282,8 +282,15 @@ impl<R> Call<R> {
         targs: Vec<TyId>,
         args: [Passed; N],
     ) -> Self {
-        let def = (lw.cx.prelude_def(name))
-            .unwrap_or_else(|| ice(format_args!("std without the hook `{name}`")));
+        let task = super::module_state::executor_task_hook(name);
+        let def = (lw.cx.prelude_def(name)).unwrap_or_else(|| match task {
+            Some(item) => ice(format_args!(
+                "lowering calls the executor's `{item}` in a program sema found running nothing \
+                 on it (no live async code or executor extern, velt_sema `lazy_std` `sched_hooks`)"
+            )),
+            None => ice(format_args!("std without the hook `{name}`")),
+        });
+        lw.cx.sched_used |= task.is_some();
         Self::with(lw, def, targs, args)
     }
 

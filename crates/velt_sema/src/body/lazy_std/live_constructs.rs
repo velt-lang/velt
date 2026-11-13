@@ -42,6 +42,8 @@ pub(crate) struct Assumed {
     pub(in super::super) defs: Vec<(DefId, String)>,
     /// A conversion to a record that those passes made ([`super::super::RECORD_HOOKS`]).
     pub(in super::super) record_conversion: bool,
+    /// Code running on the executor that those passes reached ([`super::live::Live::tasks`]).
+    pub(in super::super) tasks: bool,
 }
 
 /// What lowering reports with the inferred `throws` of a live function, when thrown and not caught
@@ -65,9 +67,11 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
     // One assumed already and late again stays a stub, which lowering refuses: no further round.
     let mut added = !new_defs.is_empty()
         || assumed.constructs | late.constructs != assumed.constructs
-        || late.record_conversion && !assumed.record_conversion;
+        || late.record_conversion && !assumed.record_conversion
+        || late.tasks && !assumed.tasks;
     assumed.constructs |= late.constructs;
     assumed.record_conversion |= late.record_conversion;
+    assumed.tasks |= late.tasks;
     assumed.defs.extend(new_defs);
     let live: Vec<_> = cx.lazy.live.live.iter().copied().collect();
     let mut thrown: Vec<TyId> = (live.iter())

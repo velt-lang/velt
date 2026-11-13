@@ -23,6 +23,10 @@ use super::c_call::{self, PTR_ADDRESS, PTR_ADDRESS_OR_ZERO, PTR_OF, PTR_OR_NULL}
 use super::{unit, Cx, FnLower, LInfo, LState, Work};
 use crate::vir::{Const, Function, Linkage, Operand, Rvalue, Terminator, Ty};
 
+/// The prefix of the executor in Velt's exports (std/lang/hooks/sched*.velt), which the runtime
+/// calls into when a program runs on it.
+const SCHED_EXPORTS: &str = "std_sched_";
+
 impl Cx<'_> {
     /// Queues the C function of every `@export` of the program (on WebAssembly, reports each).
     pub(super) fn seed_c_exports(&mut self) {
@@ -49,8 +53,21 @@ impl Cx<'_> {
             }
             return;
         }
+        // The executor in Velt's own exports wait until the program is known to run on it
+        // (`Cx::drain`): one that doesn't leaves them out, as when std is loaded on demand.
         for i in 0..self.hir.c_exports.len() {
-            self.func(Work::CExport(i as u32));
+            if !self.hir.c_exports[i].name.starts_with(SCHED_EXPORTS) {
+                self.func(Work::CExport(i as u32));
+            }
+        }
+    }
+
+    /// Queues the executor in Velt's own exports (`seed_c_exports`).
+    pub(super) fn seed_sched_exports(&mut self) {
+        for i in 0..self.hir.c_exports.len() {
+            if self.hir.c_exports[i].name.starts_with(SCHED_EXPORTS) {
+                self.func(Work::CExport(i as u32));
+            }
         }
     }
 

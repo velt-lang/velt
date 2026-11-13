@@ -1,0 +1,16 @@
+// Async code reached only through a function value: the program runs on the executor (with
+// `VELT_SCHEDULER=std`, #2649 P3(a)), and prints as Node does.
+async function hidden(n: number): Promise<string> {
+  await null;
+  return `via a value ${n}`;
+}
+
+function pick(): (n: number) => Promise<string> {
+  return hidden;
+}
+
+function main() {
+  const fs = [pick()];
+  fs[0](1).then((s) => console.log(s));
+  console.log("main");
+}
