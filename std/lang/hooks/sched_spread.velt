@@ -37,6 +37,13 @@ const HEAVY: usize = 20000;
 export const HELP: usize = 16;
 /** Input waiting on a worker from which a worker that ran out of work borrows half. */
 const BORROW_MIN: usize = 2;
+/**
+ * The polls a worker runs before workers try to borrow from it again when the older half of its
+ * input, which a borrower takes, was all pinned or anchored: a server's connections, pinned to
+ * the workers in turn, are never borrowed, and each try held the busy worker's queue lock while
+ * it waited for it.
+ */
+const NOBORROW_POLLS: usize = 32;
 
 /** The clock of the spread: nanoseconds since the process started. */
 @inline
@@ -188,6 +195,22 @@ export function steal(e: usize): bool {
 }
 
 /**
+ * Takes the older half of worker `w`'s input for a borrower (`w`'s queue locked; the slot stays),
+ * a chain newest first, or 0. When that half held tasks and all of them were pinned or anchored,
+ * borrowers leave `w` alone for its next `NOBORROW_POLLS` polls (`E_NOBORROW`).
+ */
+export function lend(w: usize): usize {
+  if (m.ld(w + t.E_ILEN) / 2 === 0) {
+    return 0;
+  }
+  const k = tq.takeHalfInput(w);
+  if (k === 0) {
+    m.st(w + t.E_NOBORROW, m.ld(w + t.E_POLLS) + NOBORROW_POLLS);
+  }
+  return k;
+}
+
+/**
  * Worker `e`, out of work, runs half of the input waiting on another awake worker (at least
  * `BORROW_MIN` waiting), so a request waits for any core, not for its own worker's next time
  * slice. The tasks keep their home: borrowing moves nothing for good. Sleeping workers lend
@@ -202,13 +225,11 @@ export function borrow(e: usize): bool {
     if (m.load32(w + t.E_PARK) === 1 || m.load(w + t.E_QUEUED) < BORROW_MIN) {
       continue;
     }
-    if (!q.tryLock(w)) {
+    // Plain reads of its own counts: a hint (a late one costs one look more or less).
+    if (m.ld(w + t.E_POLLS) < m.ld(w + t.E_NOBORROW) || !q.tryLock(w)) {
       continue;
     }
-    let k: usize = 0;
-    if (q.input(w) >= BORROW_MIN) {
-      k = tq.takeHalfInput(w);
-    }
+    let k = lend(w);
     m.store32(w + t.E_QLOCK, 0);
     if (k === 0) {
       continue;

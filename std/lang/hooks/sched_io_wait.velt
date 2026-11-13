@@ -11,7 +11,8 @@
 // anchors its task to its worker (sched_task.velt `anchor`): its place in the timer list is
 // that worker's.
 
-import { inline, noInline } from "velt/lang/intrinsics";
+import { Ptr } from "velt/ffi/ptr";
+import { futDrop, futPoll, inline, noInline } from "velt/lang/intrinsics";
 import * as os from "#sched-os";
 import * as r from "#reactor";
 import * as io from "./sched_io";
@@ -38,7 +39,12 @@ const W_TIMED: usize = 96;
 const W_EXPIRED: usize = 104;
 /** The source it was linked into last (0: never), whose lock guards its links and waker. */
 const W_SRC: usize = 112;
-const W_SIZE: usize = 120;
+/**
+ * A heap future that ends the wait too once it completes (an abort signal's wait, `waitAlso`), 0:
+ * none; the waiter owns it.
+ */
+const W_ALSO: usize = 120;
+const W_SIZE: usize = 128;
 
 /**
  * Wakes every waiter of source `s` (locked); each polls again and waits again when it must. The
@@ -101,7 +107,32 @@ export function waitFor(handle: u64, kind: u32, arg: u64, deadline: u64): usize 
   m.st(f + W_TIMED, 0);
   m.st(f + W_EXPIRED, 0);
   m.st(f + W_SRC, 0);
+  m.st(f + W_ALSO, 0);
   return f;
+}
+
+/**
+ * `waitFor` that also ends once heap future `also` completes (it owns `also`, polled after the
+ * source with the same context and dropped with the wait): a wait for input that an abort signal
+ * ends too (std/net/fd_until.velt `readableUntil`), with no race of two promises around it.
+ */
+export function waitAlso(handle: u64, kind: u32, arg: u64, deadline: u64, also: usize): usize {
+  const f = waitFor(handle, kind, arg, deadline);
+  m.st(f + W_ALSO, also);
+  return f;
+}
+
+/** Drops waiter `f`'s other future (`waitAlso`), if it has one. */
+@inline
+function dropAlso(f: usize): void {
+  const a = m.ld(f + W_ALSO);
+  if (a !== 0) {
+    m.st(f + W_ALSO, 0);
+    // SAFETY: the waiter's own heap future, not used after.
+    unsafe {
+      futDrop(a);
+    }
+  }
 }
 
 /** Does `s` satisfy a wait for `kind` with `arg`? An error or abort ends every wait. */
@@ -127,12 +158,14 @@ export function waitPoll(f: usize, cx: usize): u32 {
   if (s === 0) {
     unlink(f);
     untime(f);
+    dropAlso(f);
     return 1;
   }
   if (satisfied(s, m.ld32(f + W_KIND), m.ld(f + W_ARG)) || expired(f)) {
     unlinkLocked(f);
     tb.leave(s);
     untime(f);
+    dropAlso(f);
     return 1;
   }
   const w = m.ld(cx + 8);
@@ -156,6 +189,14 @@ export function waitPoll(f: usize, cx: usize): u32 {
     waiting(1);
   }
   tb.leave(s);
+  const also = m.ld(f + W_ALSO);
+  // SAFETY: the waiter's own heap future, not completed (dropped when it completes).
+  if (also !== 0 && unsafe { futPoll(also, cx) } === 1) {
+    unlink(f);
+    untime(f);
+    dropAlso(f);
+    return 1;
+  }
   if (m.ld(f + W_DEADLINE) !== 0 && m.ld(f + W_TIMED) === 0) {
     time(f);
   }
@@ -218,6 +259,7 @@ export function waitDrop(f: usize): void {
   if (k !== 0) {
     m.wakerDrop(k);
   }
+  dropAlso(f);
   m.release(f, W_SIZE);
 }
 
