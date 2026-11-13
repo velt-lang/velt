@@ -58,7 +58,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [lint, test, golden]
+        # 2026-11-13 (owner, #2649 switch): pull requests run lint only; the merge queue runs the
+        # whole gate on three OSes. Put test and golden back when the move is done.
+        part: [lint]
     runs-on: ubuntu-latest
     # A change to velt_common or sema selects the whole suite: its test part alone runs about
     # 70 minutes on a hosted runner, and the changed tests then repeat under load (#2652 hit 90).
@@ -172,9 +174,11 @@ jobs:
   # package is a dependency, at a canonical path). Any other change starts no Windows runner.
   pr-windows:
     needs: pr-plan
+    # Off while pull requests run lint only (the `pr` job); the merge queue covers Windows.
     if: >-
+      false && (
       needs.pr-plan.outputs.repeat == 'true' || needs.pr-plan.outputs.windows_packages != ''
-      || needs.pr-plan.outputs.windows_apps != ''
+      || needs.pr-plan.outputs.windows_apps != '')
     name: windows (changed tests under load, packages)
     runs-on: windows-latest
     timeout-minutes: 90
