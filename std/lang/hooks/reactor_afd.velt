@@ -11,17 +11,23 @@
 // Also the few OS calls a non-blocking socket needs whose details differ per OS: the last
 // error (`WSAGetLastError`), non-blocking mode (`ioctlsocket(FIONBIO)`) and no inheritance by
 // child processes, Winsock started (`WSAStartup`, once per reactor: it counts). Threads park
-// with `WaitOnAddress` (the `synchronization` library). Child processes stay the runtime's on
-// Windows (`#child-rt`): their exit and pipes are no sockets.
+// with `WaitOnAddress` (the `synchronization` library; os_win32.velt's, re-exported). Child
+// processes stay the runtime's on Windows (`#child-rt`): their exit and pipes are no sockets.
 //
 // Functions are ws2_32's, ntdll's, kernel32's and the synchronization library's, all declared
 // from `c` (std names no other library), which the link resolves with those import libraries.
 // Handles (`HANDLE`, `SOCKET`) are `usize`s as the compiler's system functions have them, other
 // pointers `Ptr`s: one C symbol has one signature in a program.
+//
+// A timed wait shorter than the system timer's tick (about 15.6 ms) raises the process's timer
+// resolution first (`os.fineTimers`, os_win32.velt, #2896): Windows ends a timeout at a tick.
 
 import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
+import * as os from "./os_win32";
 import * as p from "./reactor_afd_poll";
+
+export { wordWait, wordWaitFor, wordWake } from "./os_win32";
 
 /** Does this OS have the reactor? (The default variant has not: sockets stay the runtime's.) */
 export const SUPPORTED: bool = true;
@@ -138,8 +144,6 @@ declare c("c") function NtCreateFile(
   ea: Ptr<u8>,
   eaLen: u32,
 ): i32;
-declare c("c") function WaitOnAddress(word: Ptr<u8>, compare: Ptr<u8>, size: usize, ms: u32): i32;
-declare c("c") function WakeByAddressSingle(word: Ptr<u8>): void;
 
 /** The calling thread's last Winsock error. */
 export function errno(): i32 {
@@ -289,6 +293,7 @@ export function rearm(r: usize, fd: i32, source: usize, bits: u32): void {
  */
 export function wait(r: usize, timeoutMs: i64): usize {
   const ms = timeoutMs < 0 ? FOREVER : timeoutMs >= 0xfffffffe ? 0xfffffffe : timeoutMs as u32;
+  os.fineTimers(ms);
   let ok: i32 = 0;
   // SAFETY: room for MAX_EVENTS entries; the count of those taken at `R_WORD`.
   unsafe {
@@ -386,27 +391,6 @@ export function prepare(fd: i32): i32 {
   return 0;
 }
 
-/** Sleeps while the `u32` at `word` is `expected`; it may return early, so the caller looks again. */
-export function wordWait(word: usize, expected: u32): void {
-  waitOn(word, expected, FOREVER);
-}
-
-/** `wordWait` for at most `us` microseconds (rounded up to milliseconds). */
-export function wordWaitFor(word: usize, expected: u32, us: u32): void {
-  waitOn(word, expected, us / 1000 + (us % 1000 !== 0 ? 1 : 0));
-}
-
-function waitOn(word: usize, expected: u32, ms: u32): void {
-  // The thread's buffer, outside the counted blocks: the process may end during a monitor nap.
-  const c = m.scratch();
-  m.st32(c, expected);
-  // SAFETY: `word` is an aligned word that lives as long as the process; the value compared
-  // with is at `c`.
-  unsafe {
-    WaitOnAddress(m.ptr(word), m.ptr(c), 4, ms);
-  }
-}
-
 /**
  * No thread CPU-time clock here yet: 0, so the stall monitor treats a worker the OS took off its
  * core as it treats a poll that runs long (`QueryThreadCycleTime` on a thread handle would do).
@@ -418,14 +402,6 @@ export function threadClock(): u64 {
 /** No thread clock here yet: 0 (unknown). */
 export function threadCpu(c: u64): u64 {
   return 0;
-}
-
-/** Wakes one thread sleeping on the `u32` at `word`, if any. */
-export function wordWake(word: usize): void {
-  // SAFETY: as `wordWait`.
-  unsafe {
-    WakeByAddressSingle(m.ptr(word));
-  }
 }
 
 /** Does `exitFd` give a descriptor to close? No: child processes stay the runtime's here. */

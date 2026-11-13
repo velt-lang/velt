@@ -1,0 +1,85 @@
+// How late short timed waits end under the executor in Velt (#2896): Windows ends a wait's
+// timeout at a tick of the system timer (about 15.6 ms by default), so a 1 ms timer fired about
+// 15 ms late before the executor raised the timer resolution (std/lang/hooks/os_win32.velt
+// `fineTimers`). Three measures, with `performance.now()`:
+//
+// - `sleep(1)`, 1000 times one after another: the median and p99 lateness (elapsed - 1 ms);
+// - `setTimeout(f, 1)`, 1000 times, each awaited before the next: the same;
+// - the stall rescue at one worker: a task spawned while the only worker's poll spins, how long
+//   until it starts on a spare thread (the monitor's 1 ms ticks; `VELT_THREADS=1 VELT_RESCUE=1`),
+//   20 rounds: the median and the worst.
+//
+// Run base against head on Windows (PowerShell), each compiler building the same file:
+//
+//   $env:VELT_SCHEDULER = "std"; $env:VELT_THREADS = "1"; $env:VELT_RESCUE = "1"
+//   <base>\target\debug\velt.exe build bench\timers\windows_precision.velt -o base.exe
+//   <head>\target\debug\velt.exe build bench\timers\windows_precision.velt -o head.exe
+//   .\base.exe; .\head.exe
+//
+// (with a shared target directory set `VELT_STD` to each worktree's `std`). Expected on Windows:
+// base about 14-15 ms median lateness and a rescue of about 16-32 ms, head about 1 ms or less and
+// a rescue of a few ms. The base run takes about 30 s (2000 waits of a tick each). Elsewhere the
+// numbers are a sanity check only: macOS and Linux never rounded to a tick.
+
+/** When the marker task started, in microseconds of `performance.now()`; 0 until it has. */
+const STARTED = new Atomic<u64>(0);
+
+const N = 1000;
+const ROUNDS = 20;
+
+/** The `q` quantile (0..1) of `xs`, sorted in place. */
+function quantile(xs: number[], q: number): number {
+  xs.sort((a, b) => a - b);
+  const i = Math.min(xs.length - 1, Math.floor(q * xs.length));
+  return xs[i];
+}
+
+function report(name: string, late: number[]): void {
+  const median = quantile(late, 0.5);
+  const p99 = quantile(late, 0.99);
+  console.log(`${name}: median ${median.toFixed(3)} ms late, p99 ${p99.toFixed(3)} ms`);
+}
+
+async function marker(): Promise<void> {
+  STARTED.store((performance.now() * 1000) as u64, "release");
+}
+
+/** One round of the stall rescue: ms from the spawn to the marker's start (-1: not in 1 s). */
+async function rescueRound(): Promise<number> {
+  STARTED.store(0, "release");
+  const t0 = performance.now();
+  const h = spawn(marker());
+  // This poll spins (no await) until the marker has run on another thread.
+  while (STARTED.load("acquire") === 0 && performance.now() - t0 < 1000) {}
+  const at = STARTED.load("acquire");
+  await h;
+  return at === 0 ? -1 : (at as number) / 1000 - t0;
+}
+
+async function main() {
+  const sleeps: number[] = [];
+  for (let i = 0; i < N; i++) {
+    const t0 = performance.now();
+    await sleep(1);
+    sleeps.push(performance.now() - t0 - 1);
+  }
+  report("sleep(1)", sleeps);
+
+  const timeouts: number[] = [];
+  for (let i = 0; i < N; i++) {
+    const t0 = performance.now();
+    await new Promise<void>((r) => setTimeout(() => r(), 1));
+    timeouts.push(performance.now() - t0 - 1);
+  }
+  report("setTimeout(f, 1)", timeouts);
+
+  const rescues: number[] = [];
+  for (let i = 0; i < ROUNDS; i++) {
+    rescues.push(await rescueRound());
+    await sleep(5);
+  }
+  const worst = quantile(rescues, 1);
+  console.log(
+    `stall rescue: median ${quantile(rescues, 0.5).toFixed(3)} ms, worst ${worst.toFixed(3)} ms`,
+  );
+}
