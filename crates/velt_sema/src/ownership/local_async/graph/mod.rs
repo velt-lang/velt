@@ -31,7 +31,7 @@ mod dynamic;
 
 use super::call_sites::{Held, Indirect};
 pub(super) use super::why::{Boundary, Why};
-use dynamic::untraced_input;
+pub(super) use dynamic::untraced_input;
 pub(super) use dynamic::DynConv;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

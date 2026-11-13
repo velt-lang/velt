@@ -75,7 +75,7 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
         for (k, local) in declared.into_iter().enumerate() {
             if let Some(&i) = g.ids.get(&Node::Local(d, local)) {
                 if p.flags[i] & CROSSES != 0 {
-                    found.push((ty, k, p.why[i], d, None));
+                    found.push((ty, k, p.why[i], d, None, false));
                 }
             }
         }
@@ -98,7 +98,7 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
             if p.flags[i] & CROSSES != 0 {
                 let reached = held_in_locals(g, fwd.get_or_insert_with(|| forward(cx, g)), n);
                 for ty in instances(cx, g, c, g.tys[n]) {
-                    found.push((ty, k, p.why[i], c, reached.clone()));
+                    found.push((ty, k, p.why[i], c, reached.clone(), false));
                 }
             }
         }
@@ -127,17 +127,31 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
             continue;
         };
         let params: Vec<_> = declared.iter().map(|p| p.ty).collect();
-        let (ret, never) = (f.ret, cx.ty.never);
+        // Its value's type: an async closure returns a promise of its body's result.
+        let (ret, is_async, never) = (f.ret, f.is_async, cx.ty.never);
+        let ret = match is_async {
+            true => cx.ty.promise(ret),
+            false => ret,
+        };
         let ty = cx.ty.intern(crate::hir::TyKind::FnPtr {
             params,
             ret,
             throws: never,
             rest: false,
         });
-        found.push((ty, k, p.why[i], c, None));
+        found.push((ty, k, p.why[i], c, None, true));
     }
-    for (ty, k, why, c, reached) in found {
-        for call in &g.indirect {
+    // Per call: may its callee hold a value the graph doesn't trace (a field, a module binding,
+    // the heap)? A closure with no literal node can only be reached through one.
+    let mut untraced_callee: Vec<Option<bool>> = vec![None; g.indirect.len()];
+    for (ty, k, why, c, reached, unseen) in found {
+        for (ci, call) in g.indirect.iter().enumerate() {
+            if unseen
+                && !*untraced_callee[ci]
+                    .get_or_insert_with(|| super::graph::untraced_input(g, call.callee))
+            {
+                continue;
+            }
             // A call through a variable holding only closures of one function
             // (`crate::defined_accessors`) reaches no closure of another.
             if (call.only).is_some_and(|d| outermost(g, d) != outermost(g, c)) {

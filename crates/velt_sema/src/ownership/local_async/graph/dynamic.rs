@@ -29,7 +29,7 @@ pub(in crate::ownership::local_async) struct DynConv {
 /// sources reach a value of unknown origin, or a node nothing flows into but a closure literal (a
 /// parameter only calls through function values feed, `(v) => v as unknown` that std calls)?
 /// Bounded; a walk too long to finish counts as untraced.
-pub(super) fn untraced_input(g: &Graph, n: usize) -> bool {
+pub(in crate::ownership::local_async) fn untraced_input(g: &Graph, n: usize) -> bool {
     let mut seen = rustc_hash::FxHashSet::default();
     let mut work = vec![n];
     while let Some(m) = work.pop() {

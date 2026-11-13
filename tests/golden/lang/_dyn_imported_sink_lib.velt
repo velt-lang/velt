@@ -1,0 +1,6 @@
+import { channel } from "velt/sync";
+export type Job = () => Promise<void>;
+export const ch = channel<Job>(4);
+export const post = (j: Job): void => {
+  void ch.send(j);
+};

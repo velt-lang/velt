@@ -1,0 +1,30 @@
+// #2862 review round 6 (s01). A static task sink sends its argument on a channel; an unrelated
+// local closure of the same type runs a job that modifies `n` on this task. Sound: only the `safe`
+// job is ever sent.
+import { channel } from "velt/sync";
+type Job = () => Promise<void>;
+const ch = channel<Job>(4);
+class Hooks {
+  static sink: (j: Job) => void = (j: Job) => {
+    void ch.send(j);
+  };
+}
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  const runHere = (j: Job): void => {
+    void j();
+  };
+  runHere(job);
+  Hooks.sink(async () => {
+    console.log("safe");
+  });
+  for await (const j of ch) {
+    await j();
+    break;
+  }
+  await sleep(10);
+  console.log(`n ${n}`);
+}
