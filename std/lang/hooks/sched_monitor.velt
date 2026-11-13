@@ -2,13 +2,14 @@
 // 3), a thread of its own (an `@export`ed function started like a worker), ported from the
 // runtime's (velt_rt task/runtime/velt/monitor.rs).
 //
-// A worker that makes no progress holds back everything queued on it: a task that runs on
-// without returning from its poll, or a worker the OS took off its core. The monitor ticks every
-// `TICK` while some worker is awake (every `LAZY_NAP` ticks while only a lazy worker 0 runs); a worker that started no poll for `STALL_TICKS` ticks while
-// work waits has its inbox and half of its queue moved to another worker, a sleeping one if
-// there is one, which becomes their home; when every other worker is stalled too (or there is no
-// other), a spare worker starts and takes them (up to `SPARES`, which stay workers from then on
-// and are not counted by `workerCount()`). Pinned tasks and tasks anchored to their worker stay.
+// A worker that makes no progress holds back everything queued on it: a task that runs on without
+// returning from its poll, or a worker the OS took off its core. The monitor ticks every `TICK`
+// while some worker is awake (every `LAZY_NAP` ticks while only a lazy worker 0 runs); a worker
+// that started no poll for `STALL_TICKS` ticks while work waits has its inbox and half of its queue
+// moved to another worker, a sleeping one if there is one, which becomes their home; when every
+// other worker is stalled too (or there is no other), a spare worker starts and takes them (up to
+// `SPARES`, which stay workers from then on and are not counted by `workerCount()`). Pinned tasks
+// and tasks anchored to their worker stay.
 // `VELT_RESCUE=0` turns the rescue off (for counting instructions: then nothing depends on how
 // the OS schedules the threads). With one worker (`VELT_THREADS=1`) the rescue is off unless
 // `VELT_RESCUE=1`: then there is no monitor thread at all, and a poll that runs on holds back the
