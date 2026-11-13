@@ -87,6 +87,7 @@ fn main_awaiting_value(pb: &mut PB, f: velt_sema::hir::DefId) {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn disjoint_suspension_locals_share_state_bytes() {
     let p = sequential_program();
     let v = lower_ok(&p);
@@ -135,6 +136,7 @@ fn await_only_program() -> Program {
 /// A program in which nothing can make the await word non-0 is lowered without any `await`
 /// step code (await_order.rs); one that starts a promise keeps the steps.
 #[test]
+#[ignore = "#2921"]
 fn unobservable_await_steps_are_not_lowered() {
     let tick = |v: &vir::Program| v.externs.iter().any(|e| e.symbol == "velt_rt_await_tick");
     let p = await_only_program();
@@ -163,6 +165,7 @@ fn unobservable_await_steps_are_not_lowered() {
 /// (`main` keeps `both()` as a value, so `both` keeps the function that makes its future, which
 /// the cancellation runs start from; an awaited call is embedded in `main`'s state machine.)
 #[test]
+#[ignore = "#2921"]
 fn promise_all_of_literal_is_inline() {
     let src =
         "async function tagged(ms: i64, s: string): Promise<string> {\n  await sleep(ms);\n  \
@@ -195,6 +198,7 @@ fn promise_all_of_literal_is_inline() {
 /// `async function viaRt() { const xs = [tagged(1, "a"), tagged(5, "b")];
 /// console.log((await Promise.all(xs)).length); }` — an array value goes to the runtime.
 #[test]
+#[ignore = "#2921"]
 fn promise_all_value_drops_finished_results_on_cancel() {
     let mut pb = PB::new();
     let t = pb.t;

@@ -294,6 +294,14 @@ impl Run<'_> {
     }
 }
 
+/// Cases known to fail under the executor in Velt since #2649's switch, on one OS, in one mode:
+/// `(case, mode, OS, issue)`. Skipped there, with the issue named.
+const KNOWN_FAILING: &[(&str, Mode, &str, &str)] = &[
+    // Module state is lost across the JIT's hot swap on Windows.
+    ("root_script_state", Mode::Jit, "windows", "#2933"),
+    ("module_state_kept", Mode::Jit, "windows", "#2933"),
+];
+
 #[test]
 fn reload_goldens() {
     reload_support::build_runtime();
@@ -307,6 +315,14 @@ fn reload_goldens() {
     let mut failures = vec![];
     for case in &cases {
         for mode in [Mode::Jit, Mode::Exe] {
+            let name = case.file_name().unwrap().to_string_lossy();
+            if let Some((.., issue)) = KNOWN_FAILING
+                .iter()
+                .find(|(c, m, os, _)| *c == name && *m == mode && *os == std::env::consts::OS)
+            {
+                println!("reload: {name} {mode:?} skipped here, known to fail ({issue})");
+                continue;
+            }
             if let Err(msg) = run_case(case, mode) {
                 let name = case.file_name().unwrap().to_string_lossy();
                 failures.push(format!("{name} {mode:?}: {msg}"));

@@ -230,12 +230,17 @@ pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
     let Some(importer) = loader.modules.iter().position(|m| m.is_std) else {
         return;
     };
-    // With it, its blocking pool, which std calls by role (`hookCall`, #2882).
-    let sched = [
-        velt_common::std_module!(lang_hooks_sched),
-        velt_common::std_module!(lang_hooks_sched_blocking),
-    ];
-    let sched = (sched.iter().copied()).filter(|_| velt_common::std_hooks::std_scheduler());
+    // The executor in Velt, on a native target (the `std-scheduler` condition); with it, its
+    // blocking pool, which std calls by role (`hookCall`, #2882).
+    let native = super::conditional::load_conditions(loader.opts)
+        .iter()
+        .any(|c| c == vpm::imports::STD_SCHEDULER);
+    // A debug compiler's cell check under it too (velt_sema `lazy_std` `sched_hooks`); none
+    // when the caller serves them on demand still (`LoadOptions::demand_executor`).
+    let cells = velt_common::std_module!(lang_hooks_sched_cells);
+    let sched = (EXECUTOR_MODULES.iter().copied())
+        .filter(|_| native && !loader.opts.demand_executor)
+        .filter(|m| *m != cells || cfg!(debug_assertions));
     let paths = velt_common::std_hooks::ON_DEMAND_MODULES.iter().copied();
     for path in paths.chain(sched) {
         let Some(spec) = specifier(path) else {
@@ -247,6 +252,20 @@ pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
         loader.import(importer, &spec, Span::DUMMY, false, queue);
     }
     loader.resolve_all(queue);
+}
+
+/// The executor in Velt's modules sema demands as a program needs them: its hooks, its blocking
+/// pool (called by role, #2882) and a debug compiler's cell check.
+const EXECUTOR_MODULES: &[&str] = &[
+    velt_common::std_module!(lang_hooks_sched),
+    velt_common::std_module!(lang_hooks_sched_blocking),
+    velt_common::std_module!(lang_hooks_sched_cells),
+];
+
+/// Is `path` (a canonical std module path) one of the executor in Velt's modules, which a caller
+/// with std up front may still serve on demand (`LoadOptions::demand_executor`)?
+pub fn executor_module(path: &str) -> bool {
+    EXECUTOR_MODULES.contains(&path)
 }
 
 /// Does std root `std` hold module `path` as a file?

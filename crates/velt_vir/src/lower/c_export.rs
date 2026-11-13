@@ -27,6 +27,13 @@ use crate::vir::{Const, Function, Linkage, Operand, Rvalue, Terminator, Ty};
 /// calls into when a program runs on it.
 const SCHED_EXPORTS: &str = "std_sched_";
 
+/// The exports of the modules std calls by role (`hookCall`, #2882), which a program loads only
+/// when live code calls them, as std loaded on demand does (the blocking pool's thread function).
+/// Not seeded with the executor's: what starts their threads takes their address
+/// (`exportedAddress`), which builds them. So a program loaded with std up front, where these
+/// modules are loaded whatever it calls, builds the same functions as on demand.
+const BY_ROLE_EXPORTS: &[&str] = &["std_sched_blocking"];
+
 impl Cx<'_> {
     /// Queues the C function of every `@export` of the program (on WebAssembly, reports each).
     pub(super) fn seed_c_exports(&mut self) {
@@ -65,7 +72,8 @@ impl Cx<'_> {
     /// Queues the executor in Velt's own exports (`seed_c_exports`).
     pub(super) fn seed_sched_exports(&mut self) {
         for i in 0..self.hir.c_exports.len() {
-            if self.hir.c_exports[i].name.starts_with(SCHED_EXPORTS) {
+            let name = self.hir.c_exports[i].name.as_str();
+            if name.starts_with(SCHED_EXPORTS) && !BY_ROLE_EXPORTS.contains(&name) {
                 self.func(Work::CExport(i as u32));
             }
         }

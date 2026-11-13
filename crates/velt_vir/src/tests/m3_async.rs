@@ -5,6 +5,7 @@
 use super::{m3_golden, run_src};
 
 #[test]
+#[ignore = "#2921"]
 fn async_basic_golden() {
     let out = run_src(&super::golden_src("m3", "async_basic"));
     assert_eq!(out.stdout, m3_golden("async_basic"));

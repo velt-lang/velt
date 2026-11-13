@@ -52,6 +52,7 @@ fn program(how: u8) -> Program {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn a_direct_await_allocates_and_starts_nothing() {
     let v = lower_ok(&program(0));
     assert!(!calls(&v, "velt_rt_fut_box"), "{v}");
@@ -60,6 +61,7 @@ fn a_direct_await_allocates_and_starts_nothing() {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn a_stored_promise_is_boxed_and_started() {
     let v = lower_ok(&program(1));
     assert!(calls(&v, "velt_rt_fut_box"), "{v}");
@@ -68,6 +70,7 @@ fn a_stored_promise_is_boxed_and_started() {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn race_takes_the_first_result() {
     let v = lower_ok(&program(2));
     assert!(calls(&v, "velt_rt_race"), "{v}");

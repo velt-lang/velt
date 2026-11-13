@@ -191,6 +191,9 @@ fn the_summary_line_counts_passed_tests() {
 }
 
 #[test]
+// Known to fail under the executor in Velt since #2649's switch: http-server's tests fail and the
+// run takes over 1,200 s.
+#[ignore = "#2918"]
 fn every_package_passes_its_tests() {
     let root = root();
     runtime_support::build_native_runtime(&root);

@@ -342,6 +342,13 @@ throws `PanicError(message)` or awaits the promise. Arming and taking happen in 
 
 ## 2. Tasks
 
+Since #2649's switch, a program for a native target runs on the executor in Velt
+(std/lang/hooks/sched*.velt): lowering calls its hooks where this section's symbols were called,
+and the compiler no longer reads `VELT_SCHEDULER` (it is accepted and ignored). The symbols below
+stay the ABI of WebAssembly programs (`velt_rt_wasm`) and of programs compiled before the switch
+until they go (#2649 D2b); the runtime's backends described after the table keep hosting its Rust
+glue (TLS, child processes and UDP on Windows, file streams, the native-package ABI) until #2649 D1.
+
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_block_on` | `(PollFn poll, void* state)` | `async main`, and a synchronous `main` of a program that starts promises or tasks (§1.1; its root calls `main`): `velt_main` builds the state on its stack, calls this, then reads the result at `state+0`. Runs the root as a task on the runtime's workers; returns when READY. Tasks still running afterwards are abandoned when the process exits. Must not be called from inside a task. |
@@ -395,7 +402,7 @@ of its queue to another worker that can take them (one asleep, one not stalled i
 spare that starts, up to four), each 1 ms tick while the stall lasts; with none, they stay.
 `VELT_RESCUE=0` turns the rescue off (spares included), for counting instructions with
 `VELT_THREADS=1` (`bench/nightly.sh`); other moves to sleeping workers remain. The executor in
-Velt (`VELT_SCHEDULER=std`, std/lang/hooks/sched_monitor.velt) has the same rescue with more than
+Velt (std/lang/hooks/sched_monitor.velt) has the same rescue with more than
 one worker, but with one it is off unless `VELT_RESCUE=1`: no monitor thread, and a poll that
 runs on holds back the rest, as in Node. It also starts
 spawned tasks that wait behind a sibling that computes (`velt/monitor.rs`): a worker that starts the

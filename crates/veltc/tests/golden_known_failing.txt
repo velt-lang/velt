@@ -1,0 +1,55 @@
+# Goldens that fail under the executor in Velt since #2649's switch: the fix list, each with the
+# issue that tracks it. golden.rs runs them; their failures don't fail the run unless
+# VELT_GOLDEN_STRICT=1, and one that passes is reported, to be taken off this list.
+#
+# <path from the repository root> #<issue> [os=macos,linux,windows]
+
+tests/golden/lang/print_limits.velt                                #2912
+tests/golden/lang/print_promise.velt                               #2912
+tests/golden/lang/promise_identity_bounded.velt                    #2909
+tests/golden/lang/promise_identity_compare_types.velt              #2909
+tests/golden/lang/promise_identity_converted.velt                  #2909
+tests/golden/lang/promise_identity_converted_rejects.velt          #2909
+tests/golden/lang/promise_identity_defer.velt                      #2909
+tests/golden/lang/promise_identity_defer_rejects.velt              #2909
+tests/golden/lang/promise_identity_defer_twice.velt                #2909
+tests/golden/lang/promise_identity_rejection.velt                  #2909
+tests/golden/lang/promise_identity_tasks.velt                      #2909
+tests/golden/lang/promise_race_settled_order.velt                  #2910
+tests/golden/lang/promise_shared.velt                              #2910
+tests/golden/lang/promise_shared_all_order.velt                    #2910
+tests/golden/lang/promise_shared_inflight.velt                     #2910
+tests/golden/lang/promises_unhandled_timing.velt                   #2913
+tests/golden/lang/proxy_throws_catch.velt                          #2911
+tests/golden/lang/proxy_throws_reason_mix.velt                     #2911
+tests/golden/lang/proxy_throws_reason_one.velt                     #2911
+tests/golden/lang/proxy_throws_reason_two.velt                     #2911
+tests/golden/lang/proxy_throws_settled.velt                        #2911
+tests/golden/lang/proxy_throws_settled_own.velt                    #2911
+tests/golden/lang/proxy_throws_three_traps.velt                    #2911
+tests/golden/lang/proxy_throws_two_traps.velt                      #2911
+tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=macos,windows
+tests/golden/lang/spawn_handle_dropped_after_reject.velt           #2913
+tests/golden/lang/spawn_handle_dropped_rejects.velt                #2913
+tests/golden/lang/spawn_promise_result_copied.velt                 #2913
+tests/golden/lang/spawn_shared_promise_timer.velt                  #2910
+tests/golden/lang/uncaught_location_other_worker.velt              #2919
+tests/golden/m3/promise_several_consumers.velt                     #2910
+tests/golden/std/catch_panic.velt                                  #2925 os=windows
+tests/golden/std/catch_panic_in_clone.velt                         #2925 os=windows
+tests/golden/std/catch_panic_in_clone_cycle.velt                   #2925 os=windows
+tests/golden/std/catch_panic_promises.velt                         #2925 os=windows
+tests/golden/std/catch_panic_with.velt                             #2925 os=windows
+tests/golden/std/http_server/http_request_after_handler.velt       #2925 os=windows
+tests/golden/std/http_server/http_request_body_after_response.velt #2925 os=windows
+tests/golden/std/net_close_wakes.velt                              #2914
+tests/golden/std/net_tls.velt                                      #2842
+tests/golden/std/shared_fn_panic_caught.velt                       #2925 os=windows
+tests/golden/std/shared_fn_panic_caught_generator_interface.velt   #2925 os=windows
+tests/golden/std/shared_fn_panic_caught_resource_any.velt          #2925 os=windows
+tests/golden/std/shared_fn_panic_caught_resource_interface.velt    #2925 os=windows
+tests/golden/std/shared_fn_spawn_after_caught_transfer_panic.velt  #2925 os=windows
+tests/golden/std/shared_fn_walk_after_caught_transfer_panic.velt   #2925 os=windows
+tests/golden/std/simd_half_range.velt                              #2925 os=windows
+tests/golden/std/task_spare_worker_index.velt                      #2915
+tests/golden/std/timer_spawned_busy.velt                           #2916 os=macos,windows

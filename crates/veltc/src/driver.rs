@@ -379,6 +379,11 @@ fn load_modules(
     Ok(loaded)
 }
 
+/// Does the build's target run on the executor in Velt (any but a wasm target)?
+pub(crate) fn native_executor(opts: &BuildOptions) -> bool {
+    !(opts.target.as_deref()).is_some_and(velt_codegen_llvm::is_wasm)
+}
+
 /// Type-check the loaded program (and the native declarations against their libraries).
 fn sema_stage(
     sess: &mut Session,
@@ -390,10 +395,13 @@ fn sema_stage(
     let sema_opts = velt_sema::CheckOptions {
         require_main: scope.require_main,
         eager_std: scope.eager_std,
+        native_executor: native_executor(opts),
     };
     let packages = opts.packages.as_ref();
     sess.no_generators |= opts.no_generators;
-    let demands = !scope.eager_std && loader::demand_std_on();
+    // With `VELT_EAGER_STD` the executor's modules are still served on demand
+    // (`StdLoad::serve`); `velt check --std` loads everything up front.
+    let demands = !scope.eager_std;
     let generator_build = sess.generator_build;
     let mut more = demands.then(|| {
         StdLoad::new(

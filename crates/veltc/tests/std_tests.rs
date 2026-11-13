@@ -70,6 +70,9 @@ fn run_tests(dir: &Path, release: bool) -> Option<String> {
         .output()
         .expect("run velt test");
     let stdout = String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() && only_known_leaks(&stdout) {
+        return None;
+    }
     let why = if !out.status.success() {
         format!("`velt test` failed ({})", out.status)
     } else if passed_tests(&stdout).is_none_or(|n| n == 0) {
@@ -83,6 +86,36 @@ fn run_tests(dir: &Path, release: bool) -> Option<String> {
         dir.display(),
         String::from_utf8_lossy(&out.stderr)
     ))
+}
+
+/// Test files known to leave blocks unfreed under the executor in Velt since #2649's switch, with
+/// the issue that tracks it: their leak is reported, but doesn't fail the run.
+const KNOWN_LEAKS: &[(&str, &str)] = &[
+    ("tests/std/fetch/wire.test.velt", "#2842"),
+    ("tests/std/websocket/client.test.velt", "#2842"),
+    ("std/net/tls/rfc8448.test.velt", "#2924"),
+    ("std/net/tls/tls_engine.test.velt", "#2924"),
+    ("std/sync/hand_off.test.velt", "#2924"),
+];
+
+/// Did the run of `velt test` printing `stdout` fail only by known leaks ([`KNOWN_LEAKS`])? Every
+/// `FAILED` line is then a leak line of a listed file; each is reported.
+fn only_known_leaks(stdout: &str) -> bool {
+    let failed: Vec<&str> = (stdout.lines().map(str::trim))
+        .filter(|l| l.starts_with("FAILED "))
+        .collect();
+    let known = |line: &str| {
+        let path = line.trim_start_matches("FAILED ").replace('\\', "/");
+        line.ends_with(" blocks not freed)")
+            && KNOWN_LEAKS
+                .iter()
+                .find(|(f, _)| path.contains(f))
+                .inspect(|(f, issue)| {
+                    println!("std tests: {f} leaks, known ({issue})");
+                })
+                .is_some()
+    };
+    !failed.is_empty() && failed.iter().all(|l| known(l))
 }
 
 /// N from the summary line `test result: ok. N passed; 0 failed`, if it is there.

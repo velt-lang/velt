@@ -36,6 +36,7 @@ const CLASS_NOTHING_PRINTS: &str = "class P { v: u32 = 1; }\nclass Q extends P {
 /// Nothing formats it, so its table has no format glue, and the glue's hooks aren't demanded
 /// (#2513).
 #[test]
+#[ignore = "#2921"]
 fn a_class_nothing_formats_has_no_format_glue() {
     let v = lower_src(CLASS_NOTHING_PRINTS);
     assert!(

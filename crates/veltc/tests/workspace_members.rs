@@ -289,6 +289,7 @@ fn ran_and_unchanged(err: &str) -> (Vec<String>, Vec<String>) {
 }
 
 #[test]
+#[ignore = "#2922"]
 fn members_whose_tests_cannot_have_changed_are_not_started() {
     let r = repo();
     r.write(

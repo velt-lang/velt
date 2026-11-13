@@ -28,6 +28,10 @@ pub(super) fn load_options<'a>(
         extra_roots: &scope.extra_roots,
         std_ast_cache: crate::build_cache::std_ast_cache(),
         demand_std: !scope.eager_std && loader::demand_std_on(),
+        // `VELT_EAGER_STD`: all of std up front but the executor's modules, which are served on
+        // demand still (`StdLoad::serve`). `velt check --std` and `VELT_CHECK_ALL_STD`, which check
+        // with laziness off (no live set demands the executor), load them up front too.
+        demand_executor: !scope.eager_std && std::env::var_os("VELT_CHECK_ALL_STD").is_none(),
     }
 }
 
@@ -72,6 +76,19 @@ impl<'a> StdLoad<'a> {
     }
 
     pub(crate) fn serve(&mut self, sess: &mut Session, demanded: &[String]) -> velt_sema::StdBatch {
+        // With std up front (`VELT_EAGER_STD`), only the executor's modules are left to demand;
+        // anything else demanded is not served, as without a loader.
+        let executor_only: Vec<String>;
+        let demanded = match loader::demand_std_on() {
+            true => demanded,
+            false => {
+                executor_only = (demanded.iter())
+                    .filter(|p| loader::executor_module(p))
+                    .cloned()
+                    .collect();
+                &executor_only[..]
+            }
+        };
         let load = load_options(self.generator_build, self.opts, self.scope);
         let (sm, diags) = (&mut sess.sm, &mut sess.diagnostics);
         let batch = loader::load_more(sm, self.state, self.base, demanded, &load, diags);
