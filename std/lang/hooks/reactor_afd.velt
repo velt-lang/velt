@@ -11,7 +11,7 @@
 // Also the few OS calls a non-blocking socket needs whose details differ per OS: the last
 // error (`WSAGetLastError`), non-blocking mode (`ioctlsocket(FIONBIO)`) and no inheritance by
 // child processes, Winsock started (`WSAStartup`, once per reactor: it counts). Threads park
-// with `WaitOnAddress` (the `synchronization` library; os_win32.velt's, re-exported). Child
+// with `WaitOnAddress` (the `synchronization` library; wait_win32.velt's, re-exported). Child
 // processes stay the runtime's on Windows (`#child-rt`): their exit and pipes are no sockets.
 //
 // Functions are ws2_32's, ntdll's, kernel32's and the synchronization library's, all declared
@@ -20,14 +20,14 @@
 // pointers `Ptr`s: one C symbol has one signature in a program.
 //
 // A timed wait shorter than the system timer's tick (about 15.6 ms) raises the process's timer
-// resolution first (`os.fineTimers`, os_win32.velt, #2896): Windows ends a timeout at a tick.
+// resolution first (`os.fineTimers`, wait_win32.velt, #2896): Windows ends a timeout at a tick.
 
 import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
-import * as os from "./os_win32";
+import * as os from "./wait_win32";
 import * as p from "./reactor_afd_poll";
 
-export { wordWait, wordWaitFor, wordWake } from "./os_win32";
+export { wordWait, wordWaitFor, wordWake } from "./wait_win32";
 
 /** Does this OS have the reactor? (The default variant has not: sockets stay the runtime's.) */
 export const SUPPORTED: bool = true;

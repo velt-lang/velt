@@ -1,25 +1,6 @@
 // velt/lang/hooks (internal): the two OS calls the executor in Velt's core makes whatever its
 // reactor (`#sched-os`, sched_mem.velt and sched_io_wait.velt) on Windows: `SwitchToThread` and
 // the performance counter (kernel32; the UCRT has neither `sched_yield` nor `clock_gettime`).
-//
-// Also the word waits of parked threads (`WaitOnAddress`, the synchronization library), which
-// reactor_afd.velt re-exports as `#reactor`'s, and the timer resolution for the timed waits of
-// both (#2896): Windows ends a wait's timeout (`WaitOnAddress`, `GetQueuedCompletionStatusEx`) at
-// a tick of the system timer, about 15.6 ms by default, so a 1 ms timer, `sleep(1)` or a 1 ms
-// monitor nap each took about 15.6 ms. `fineTimers` raises the resolution to 1 ms, once, the
-// first time the executor waits with a timeout shorter than a tick, and keeps it until the
-// process ends, as Go's runtime and the browsers do (`timeBeginPeriod(1)`; Node 22 doesn't, and
-// its `setTimeout(f, 1)` is about 15 ms late on Windows). The call
-// is ntdll's `NtSetTimerResolution`, which `timeBeginPeriod` makes itself, so no winmm library is
-// linked (ntdll is, for the AFD polls). Since Windows 10 2004 the resolution is the process's
-// own: other processes keep their ticks. With one worker, a program that never waits briefly (a
-// server whose timers are seconds away) keeps the default tick and its power use; with more, the
-// monitor's 1 ms ticks raise it. Not chosen: a
-// high-resolution waitable timer (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`), since `WaitOnAddress`
-// waits on no handle and the completion port would need the timer's wait posted to it
-// (`NtAssociateWaitCompletionPacket`) per wait; raising and lowering around each short wait,
-// since it is a system call or two per wait and the resolution is one per process, so one
-// thread's lowering would cut short another's wait.
 
 import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
@@ -27,18 +8,6 @@ import * as m from "./sched_mem";
 declare c("c") function SwitchToThread(): i32;
 declare c("c") function QueryPerformanceCounter(count: Ptr<u8>): i32;
 declare c("c") function QueryPerformanceFrequency(freq: Ptr<u8>): i32;
-declare c("c") function WaitOnAddress(word: Ptr<u8>, compare: Ptr<u8>, size: usize, ms: u32): i32;
-declare c("c") function WakeByAddressSingle(word: Ptr<u8>): void;
-declare c("c") function NtSetTimerResolution(desired: u32, set: u8, current: Ptr<u8>): i32;
-
-/** `INFINITE`. */
-const FOREVER: u32 = 0xffffffff;
-/** A timed wait shorter than this many milliseconds (the default tick) raises the resolution. */
-const TICK_MS: u32 = 16;
-/** The resolution asked for, in 100 ns: 1 ms, as `timeBeginPeriod(1)`. */
-const FINE_100NS: u32 = 10000;
-/** Has the resolution been raised (or is it being)? */
-const FINE = new Atomic<u32>(0);
 
 /** Gives the core to another thread that is ready to run, if any. */
 export function yieldCore(): void {
@@ -73,56 +42,4 @@ export function monotonicNs(clock: i32): u64 {
   }
   // Whole seconds and the rest apart: `c * 10^9` overflows after half an hour at 10 MHz.
   return (c / f) * 1000000000 + ((c % f) * 1000000000) / f;
-}
-
-/**
- * A timed wait of `ms` milliseconds is about to start: a short one (0 waits not at all) raises the
- * process's timer resolution to 1 ms, the first time only.
- */
-export function fineTimers(ms: u32): void {
-  if (ms === 0 || ms >= TICK_MS || FINE.load("relaxed") !== 0) {
-    return;
-  }
-  if (FINE.compareExchange(0, 1, "relaxed", "relaxed") !== 0) {
-    return;
-  }
-  // The thread's buffer, outside the counted blocks, as `waitOn`'s: the process may end during
-  // the monitor's nap that called this.
-  const w = m.scratch();
-  // SAFETY: the resolution in force is written at `w`; a failure leaves the default tick.
-  unsafe {
-    NtSetTimerResolution(FINE_100NS, 1, m.ptr(w));
-  }
-}
-
-/**
- * Sleeps while the `u32` at `word` is `expected`; it may return early, so the caller looks again.
- */
-export function wordWait(word: usize, expected: u32): void {
-  waitOn(word, expected, FOREVER);
-}
-
-/** `wordWait` for at most `us` microseconds (rounded up to milliseconds). */
-export function wordWaitFor(word: usize, expected: u32, us: u32): void {
-  waitOn(word, expected, us / 1000 + (us % 1000 !== 0 ? 1 : 0));
-}
-
-function waitOn(word: usize, expected: u32, ms: u32): void {
-  fineTimers(ms);
-  // The thread's buffer, outside the counted blocks: the process may end during a monitor nap.
-  const c = m.scratch();
-  m.st32(c, expected);
-  // SAFETY: `word` is an aligned word that lives as long as the process; the value compared
-  // with is at `c`.
-  unsafe {
-    WaitOnAddress(m.ptr(word), m.ptr(c), 4, ms);
-  }
-}
-
-/** Wakes one thread sleeping on the `u32` at `word`, if any. */
-export function wordWake(word: usize): void {
-  // SAFETY: as `wordWait`.
-  unsafe {
-    WakeByAddressSingle(m.ptr(word));
-  }
 }
