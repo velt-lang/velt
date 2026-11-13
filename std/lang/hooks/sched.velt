@@ -100,6 +100,11 @@ export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
     }
   }
   m.st(e + t.E_ROOT, 0);
+  if ((m.load32(k + t.T_FLAGS) & t.COUNTED) === 0) {
+    // Finished (sched_run.velt `mainFinish`): a wake that pushed after its take of the woken
+    // stack and read the state before `DONE` left its reference there; this reference keeps `k`.
+    node.giveBackWoken(k);
+  }
   wk.release(k);
 }
 

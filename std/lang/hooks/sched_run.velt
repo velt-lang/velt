@@ -424,9 +424,13 @@ function finish(e: usize, k: usize): void {
 @noInline
 function mainFinish(e: usize, k: usize): void {
   const g = m.ld(e + t.E_MAIN);
+  // The promises left on its woken stack with a reference, as `finish` gives them back.
+  node.giveBackWoken(k);
   micro.free(k);
   // Never the last reference: worker 0's is held until it sees `DONE`.
   wk.release(k);
+  // Worker 0 may give its reference back once it sees this, and `k` may be gone then: a wake
+  // that pushed after the take above is given back by worker 0 (sched.velt `schedBlockOn`).
   m.store32(k + t.T_STATE, t.DONE);
   if (e !== g) {
     // Worker 0 may sleep, woken at the root's end (`mainDone`) before this.
