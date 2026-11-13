@@ -17,13 +17,26 @@
 // The flags change only through atomic or/and: a wake on another thread sets QUEUED while the
 // worker sets and clears the others.
 //
+// A promise handed to another task (a `spawn` argument) is awaited or dropped by its owner on
+// one worker while its task finishes it on another (#2881, #2891). The two meet only in the
+// flags and the awaiter word, as in the runtime's `finish` (velt_rt task/local/node/mod.rs):
+// - The finish sets FINISHED with an atomic or, and the owner's drop sets DETACHED the same way:
+//   whichever comes second sees the other's bit in the old word and drops the result (once).
+// - The owner stores its waker with an atomic swap and then reads FINISHED again; the finish
+//   sets FINISHED, then takes the waker with an atomic swap. Either the finish finds the waker
+//   (and wakes it), or the owner finds FINISHED (and takes its waker back, or finds it gone,
+//   taken by the finish, which wakes it). With a plain load and store, the owner could read the
+//   flags before FINISHED was set and store its waker after the finish found the word empty: the
+//   owner was never woken (a waiter of a `Promise.all` of spawns, and so `main`, waited for
+//   ever: #2891).
+//
 // A lazy node (boxed, not started) is polled by whoever awaits it with their `cx`. Started (from
 // a poll of a task: outside one it stays lazy), it runs at once until it suspends, with the
 // task's await word raised so its `await`s take their microtask step, and from then on its task
 // drives it: a wake puts it among the task's woken nodes, which the task runs before its root
 // (sched.velt `run`). Its owner only sees it finish. A task that starts nothing pays nothing.
 
-import { inline, stateDrop, statePoll } from "velt/lang/intrinsics";
+import { inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as nc from "./sched_node_catch";
@@ -184,14 +197,32 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
   return awaitNode(n, cx);
 }
 
-/** The owner waits for node `n`: its waker is woken when `n` finishes. */
+/**
+ * The owner waits for node `n`: its waker is woken when `n` finishes. The finish may run on
+ * another worker meanwhile (module docs): a finish that came first is seen in the flags after the
+ * waker is stored, and the waker is woken then (the owner polls again and finds it finished).
+ */
 export function awaitNode(n: usize, cx: usize): u32 {
-  const old = m.ld(n + N_AWAITER);
-  m.st(n + N_AWAITER, m.wakerClone(m.ld(cx + 8)));
+  const old = m.swap(n + N_AWAITER, m.wakerClone(m.ld(cx + 8)));
   if (old !== 0) {
     m.wakerDrop(old);
   }
+  if ((m.load32(n + N_FLAGS) & FINISHED) !== 0) {
+    finishedMeanwhile(n);
+  }
   return 0;
+}
+
+/**
+ * Node `n` finished while its owner stored its waker (`awaitNode`): the waker taken back and
+ * woken, unless the finish took it (and woke it) already.
+ */
+@noInline
+function finishedMeanwhile(n: usize): void {
+  const w = m.swap(n + N_AWAITER, 0);
+  if (w !== 0) {
+    m.wakeOwned(w);
+  }
 }
 
 /** Adopted node `n` of task `task` finished (flags `fl`): the task no longer drives it. */
@@ -199,9 +230,8 @@ export function awaitNode(n: usize, cx: usize): u32 {
 export function adoptedDone(task: usize, n: usize, fl: u32): void {
   setFlags(n, fl);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
-  const w = m.ld(n + N_AWAITER);
+  const w = m.swap(n + N_AWAITER, 0);
   if (w !== 0) {
-    m.st(n + N_AWAITER, 0);
     m.wakerDrop(w);
   }
   // The task's reference.
@@ -219,16 +249,16 @@ export function nodeDrop(f: usize): void {
         stateDrop(m.ld(n + N_DROP), f + 16);
       }
     }
-  } else if ((fl & FINISHED) !== 0) {
-    if ((fl & DELIVERED) === 0) {
+  } else {
+    // The finish may run on another worker meanwhile (module docs): the one that comes second
+    // drops the result. DELIVERED is the owner's own (this thread's).
+    const prev = m.or32(n + N_FLAGS, DETACHED);
+    if ((prev & (FINISHED | DELIVERED)) === FINISHED) {
       dropResult(n);
     }
-  } else {
-    setFlags(n, DETACHED);
   }
-  const w = m.ld(n + N_AWAITER);
+  const w = m.swap(n + N_AWAITER, 0);
   if (w !== 0) {
-    m.st(n + N_AWAITER, 0);
     m.wakerDrop(w);
   }
   release(n);
@@ -343,14 +373,15 @@ export function run(task: usize, n: usize, taken: bool): void {
       return;
     }
   }
-  setFlags(n, FINISHED);
+  // Its owner may drop or await it on another worker meanwhile (module docs): the old flags say
+  // whether the drop came first, and the awaiter word is claimed with a swap.
+  const prev = m.or32(n + N_FLAGS, FINISHED);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
-  if ((m.load32(n + N_FLAGS) & DETACHED) !== 0) {
+  if ((prev & DETACHED) !== 0) {
     dropResult(n);
   } else {
-    const w = m.ld(n + N_AWAITER);
+    const w = m.swap(n + N_AWAITER, 0);
     if (w !== 0) {
-      m.st(n + N_AWAITER, 0);
       if (wk.taskOf(w) === task) {
         // Its awaiter is the task's root or another promise it drives: its reaction is queued
         // now, as Node queues a promise's reactions when it settles, and that entry is its step.
