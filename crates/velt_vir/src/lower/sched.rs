@@ -44,6 +44,12 @@ impl FnLower<'_, '_> {
                 .is_some()
     }
 
+    /// Did sema check the executor's `sched_peek` (the program runs something on the executor)?
+    fn sched_peek_live(&self) -> bool {
+        let name = velt_common::std_hook!(sched_peek);
+        (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
+    }
+
     /// `op` (a pointer or an integer) as a `usize` argument.
     fn as_usize(&mut self, op: Operand) -> Operand {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))
@@ -174,6 +180,12 @@ impl FnLower<'_, '_> {
         if matches!(r, Rt::CellUse | Rt::CellGive | Rt::CellCopy | Rt::CellFree)
             && !self.std_cells()
         {
+            return Err((args, dest));
+        }
+        // A program that runs nothing on the executor has no node of it to peek at, and its hooks
+        // are neither loaded nor checked (#2880): `console.log` of a promise there keeps the
+        // runtime's peek, in either std mode.
+        if r == Rt::FutPeek && !self.sched_peek_live() {
             return Err((args, dest));
         }
         let ret = r.sig().2;

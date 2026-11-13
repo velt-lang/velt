@@ -134,3 +134,54 @@ fn goldens_that_failed_only_under_the_executor_in_velt_pass_under_it() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// A program that runs nothing on the executor and prints a value whose type may be a promise:
+/// `console.log` peeks at it as at a promise.
+const NO_TASKS_PEEK: &str = r#"function run(n: number, f: (n: number) => number | Promise<number>): number | Promise<number> {
+  return f(n);
+}
+
+function main() {
+  console.log(run(3, (n): number | Promise<number> => n * 2));
+}
+"#;
+
+/// `console.log` of a maybe-promise in a program sema found running nothing on the executor
+/// keeps the runtime's peek (`velt_rt_fut_peek`): the executor's `sched_peek` isn't loaded there
+/// (#2880; its call was an internal compiler error once every program used the executor), with
+/// std on demand and with std up front (`VELT_EAGER_STD=1`, its hooks loaded but unchecked).
+#[test]
+fn a_maybe_promise_printed_by_a_program_without_tasks_builds_and_prints() {
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("no_tasks_peek.velt");
+    std::fs::write(&file, NO_TASKS_PEEK).unwrap();
+    // The loader takes `VELT_EAGER_STD` set to anything for std up front.
+    for eager in [false, true] {
+        let exe = exe_name(dir.path(), &format!("no_tasks_peek_{eager}"));
+        let mut build = command(env!("CARGO_BIN_EXE_velt"));
+        build
+            .arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(&exe)
+            .current_dir(dir.path())
+            .env("VELT_SCHEDULER", "std")
+            .env_remove("VELT_EAGER_STD");
+        if eager {
+            build.env("VELT_EAGER_STD", "1");
+        }
+        let o = build.output().unwrap();
+        assert!(
+            o.status.success(),
+            "std up front: {eager}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let (code, out, err) = run(&exe, dir.path(), "1");
+        assert_eq!(
+            (code, out.as_str()),
+            (0, "6\n"),
+            "std up front: {eager}: {err}"
+        );
+    }
+}
