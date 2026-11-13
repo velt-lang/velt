@@ -456,3 +456,54 @@ async function main() {
         }
     }
 }
+
+/// What a program printed reaches a pipe before its worker sleeps (#2873): a program that prints
+/// a line and then sleeps for ten minutes shows the line at once, as the runtime's executor does
+/// when its workers go idle, not when the process ends. Run at one worker: with more, a parking
+/// worker already flushed, and the bug was the one-worker gap. Read with a watchdog, not a timing:
+/// the line comes within a minute or the test fails.
+#[test]
+fn output_reaches_a_pipe_before_the_worker_sleeps() {
+    use std::io::{BufRead, BufReader};
+    if !std_builds_here() {
+        return;
+    }
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("forever.velt");
+    let src = "async function main() {\n  console.log(\"started\");\n  await sleep(600000);\n}\n";
+    std::fs::write(&file, src).unwrap();
+    let exe = dir.path().join(if cfg!(windows) {
+        "forever.exe"
+    } else {
+        "forever"
+    });
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(dir.path())
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let mut child = command(&exe)
+        .env("VELT_THREADS", "1")
+        .env_remove("VELT_SCHEDULER")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let _ = BufReader::new(out).read_line(&mut line);
+        let _ = tx.send(line);
+    });
+    let line = rx.recv_timeout(Duration::from_secs(60));
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let line = line.expect("the line printed before the sleep did not reach the pipe");
+    assert_eq!(line.trim(), "started");
+}
