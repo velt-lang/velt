@@ -328,9 +328,9 @@ async function main() {
 "#;
 
 /// A poll that runs on at the only worker is rescued soon: a task queued behind it runs on a spare
-/// within 20 ms of the poll's start (at worst about 9 ms of naps and ticks). The best of 5 runs is
-/// compared, so a loaded machine that keeps the monitor or the spare off a core does not fail it;
-/// every run must be rescued at all.
+/// within 20 ms of the poll's start (at worst about 9 ms of naps and ticks; 100 ms on Windows). The
+/// best of 5 runs is compared, so a loaded machine that keeps the monitor or the spare off a core
+/// does not fail it; every run must be rescued at all.
 #[test]
 fn a_spinning_poll_on_the_only_worker_is_rescued_within_20_ms() {
     if !has_threads() {
@@ -352,7 +352,14 @@ fn a_spinning_poll_on_the_only_worker_is_rescued_within_20_ms() {
             .unwrap_or_else(|| panic!("{what}: {}{}", r.out, r.err));
         best = best.min(ms);
     }
-    assert!(best <= 20, "the rescue took {best} ms at best");
+    // Windows ends a timed wait at a tick of the system timer, 15.6 ms by default; std asks for
+    // 1 ms (#2896, std/lang/hooks/wait_win32.velt `fineTimers`), which a desktop honours (6 ms
+    // at best), but a CI runner's virtual machine did not (35 ms).
+    let limit = if cfg!(windows) { 100 } else { 20 };
+    assert!(
+        best <= limit,
+        "the rescue took {best} ms at best (at most {limit})"
+    );
 }
 
 /// The program of [`a_spinning_poll_on_the_only_worker_is_rescued_within_20_ms`].
