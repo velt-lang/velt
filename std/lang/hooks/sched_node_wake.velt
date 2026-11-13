@@ -5,6 +5,7 @@
 import { export as cExport } from "velt/ffi";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
+import * as wn from "./sched_node_woken";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
@@ -46,6 +47,11 @@ function wake(n: usize): void {
   m.inc(n + nd.N_REFS);
   const task = m.ld(n + nd.N_TASK);
   m.pushStack(task + t.T_WOKEN, n, nd.N_NEXT);
+  if (m.load32(task + t.T_STATE) === t.DONE) {
+    // Pushed too late: the task ended meanwhile (sched_node_woken.velt `giveBackWoken`).
+    wn.giveBackWoken(task);
+    return;
+  }
   const e = t.here();
   if (!(e !== 0 && m.ld(e + t.E_CURRENT) === task)) {
     wk.wake(task);

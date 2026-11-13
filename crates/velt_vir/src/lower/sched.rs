@@ -5,7 +5,7 @@
 //! (`velt_rt_spawn_fut`), the pin of the next spawn to a worker (`velt_rt_spawn_target`),
 //! `await yieldNow()`
 //! (`velt_rt_yield_now`), boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`,
-//! `_start_rejecting`), the microtask step of `await` (`velt_rt_await_tick`, `_ready`), the
+//! `_start_rejecting`) and what `console.log` peeks at (`velt_rt_fut_peek`), the microtask step of `await` (`velt_rt_await_tick`, `_ready`), the
 //! prelude's microtasks (`velt_rt_microtask`), the process lifetime (keep-alive references,
 //! a due `unref()`'d timer's question, the top-level `await` waiting now: `velt_rt_tla_at`),
 //! `sleep` (`velt_rt_sleep`) and the prelude's Node timer order (`velt_rt_timer_new`, `_turn`,
@@ -155,6 +155,7 @@ impl FnLower<'_, '_> {
                 | Rt::FutStartRejecting
                 | Rt::FutDetach
                 | Rt::FutsHandled
+                | Rt::FutPeek
                 | Rt::AwaitTick
                 | Rt::AwaitReady
                 | Rt::TlaAt
@@ -222,6 +223,10 @@ impl FnLower<'_, '_> {
                     );
                     c.emit(self);
                     None
+                }
+                (Rt::FutPeek, [f]) => {
+                    let f = self.as_usize(f.clone());
+                    Some(hooks::sched_peek(self, ty::USize::arg(f)).emit(self).op())
                 }
                 (Rt::SpawnTarget, [w]) => {
                     hooks::sched_pinned(self, ty::I64::arg(w.clone())).emit(self);

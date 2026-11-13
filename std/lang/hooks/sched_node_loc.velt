@@ -1,0 +1,62 @@
+// velt/lang/hooks (internal): where a started promise of the executor in Velt threw its error
+// (sched_node.velt; the runtime's task/local/node/loc.rs). Compiled code records the location of
+// a `throw` per thread (`velt_rt_set_throw_loc`), and a started node finishes on the worker of the
+// task that drives it, while its owner may claim the result on another worker or in another task
+// (`spawn(use(p))`): a node that finishes with an error keeps the location its thread recorded,
+// and whoever claims or reports the result makes it that thread's location again.
+//
+// Only a finished node keeps one, so it goes in the word of the state's poll, which nothing
+// reads once the state has finished; a flag says it is there. A node that throws nothing pays a
+// flag test when it finishes.
+
+import { Ptr } from "velt/ffi";
+import { inline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+
+// The runtime's slot of the last `throw` on this thread (panic.rs); a pointer is `Ptr`, as in
+// compiled code's declarations of these symbols.
+declare c("c") function velt_rt_throw_loc$loc(): Ptr<u8> | null;
+declare c("c") function velt_rt_set_throw_loc$loc(loc: Ptr<u8>): void;
+
+/** A node's flag (sched_node.velt): the word at `at` holds where its error was thrown. */
+export const LOC: u32 = 1024;
+
+/**
+ * A node that can reject, whose flags word is at `flags`, finished on this thread with the result
+ * at `slot`, an error when its tag (the first byte) is not 0: it keeps this thread's location in
+ * the word at `at`.
+ */
+export function keep(flags: usize, slot: usize, at: usize): void {
+  if ((m.ld32(slot) & 0xff) === 0) {
+    return;
+  }
+  // SAFETY: the runtime's thread-local slot, read on this thread.
+  const loc = m.addr(unsafe { velt_rt_throw_loc$loc() });
+  if (loc === 0) {
+    return;
+  }
+  m.st(at, loc);
+  m.or32(flags, LOC);
+}
+
+/** The location the node with flags `fl` keeps at `at` becomes this thread's (if it has one). */
+@inline
+export function claim(fl: u32, at: usize): void {
+  if ((fl & LOC) !== 0) {
+    restore(m.ld(at));
+  }
+}
+
+/** This thread's location now (0: none), to put back with `restore` after a report. */
+export function current(): usize {
+  // SAFETY: the runtime's thread-local slot, read on this thread.
+  return m.addr(unsafe { velt_rt_throw_loc$loc() });
+}
+
+/** Makes `loc` (0: none) this thread's location. */
+export function restore(loc: usize): void {
+  // SAFETY: `loc` is a location compiled code recorded (a static string) or 0, for NULL.
+  unsafe {
+    velt_rt_set_throw_loc$loc(m.ptr(loc));
+  }
+}

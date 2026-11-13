@@ -551,6 +551,93 @@ fn a_task_ending_last_on_another_worker_frees_its_block_first() {
     }
 }
 
+/// A started promise woken from another worker after its task ended (sched_node_wake.velt `wake`):
+/// the waker wins the node's `QUEUED` flag, then pushes it on the task's woken stack. A microtask
+/// that runs the node does not look at the flag, so the node can finish meanwhile and the task
+/// end (sched_run.velt `finish` finds the stack empty); the push then comes too late, and the
+/// waker gives the reference back itself. The std copies pause 300 ms between the flag and the
+/// push of a wake from off the node's worker, and the channel's send wakes its receiver a second
+/// time 100 ms after the first (a late wake any waker's holder may send) so that wake is still
+/// paused when [`LATE_WAKE`]'s `resolve` runs the node and `main` ends. Without the waker's check
+/// the node and its task stay allocated (block counts off by two); with it they balance.
+#[test]
+fn a_node_woken_from_another_worker_after_its_task_ended_is_freed() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let pushed = "  m.inc(n + nd.N_REFS);\n  const task = m.ld(n + nd.N_TASK);\n  m.pushStack(task + t.T_WOKEN, n, nd.N_NEXT);\n";
+    let pause =
+        "  if (t.here() !== m.ld(m.ld(n + nd.N_TASK) + t.T_HOME)) {\n    pause(300);\n  }\n";
+    let checked = "    wn.giveBackWoken(task);\n    return;\n";
+    let woken = "  if (w !== 0) {\n    wakeOwned(w);\n  }\n}\n";
+    let late = "  if (w !== 0) {\n    const late = wakerClone(w);\n    wakeOwned(w);\n    pause(100);\n    wakeOwned(late);\n  }\n}\n";
+    for checks in [true, false] {
+        let std_dir = dir.path().join(format!("std_{checks}"));
+        copy_dir(&manifest().join("../../std"), &std_dir);
+        let clock = "(performance.now() * 1000000.0) as u64";
+        let mut node = read_std(&std_dir, "lang/hooks/sched_node_wake.velt");
+        node.push_str(&PAUSE.replace("now()", clock));
+        patch(&mut node, pushed, &format!("{pause}{pushed}"));
+        if !checks {
+            patch(&mut node, checked, "");
+        }
+        std::fs::write(std_dir.join("lang/hooks/sched_node_wake.velt"), node).unwrap();
+        let mut chan = read_std(&std_dir, "sync/channel.velt");
+        chan.push_str(&PAUSE.replace("now()", clock));
+        patch(&mut chan, woken, late);
+        patch(
+            &mut chan,
+            "import { wakeOwned } from \"#sync-chan-word\";",
+            "import { wakeOwned, wakerClone } from \"#sync-chan-word\";",
+        );
+        std::fs::write(std_dir.join("sync/channel.velt"), chan).unwrap();
+        let runs = std_runs_with(
+            &format!("late_wake_{checks}"),
+            LATE_WAKE,
+            Some(&std_dir),
+            &[("4", "0")],
+            &[("VELT_RC_STATS", "1"), ("VELT_RESCUE", "0")],
+        );
+        let stats = runs[0]
+            .lines()
+            .find_map(|l| l.strip_prefix("rc stats:"))
+            .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
+            .and_then(|b| b.split_once('/'))
+            .map(|(a, f)| (a.to_string(), f.to_string()));
+        assert!(runs[0].starts_with("Some(0) got 3\n"), "{}", runs[0]);
+        let (a, f) = stats.unwrap_or_else(|| panic!("no block counts: {}", runs[0]));
+        assert_eq!(a == f, checks, "blocks {a}/{f}, the waker checks: {checks}");
+    }
+}
+
+/// A started promise of `main`'s task (`receiver`) receives from a task pinned to worker 1, then
+/// waits for a promise `main` resolves (its step a microtask of the task, which runs the node at
+/// once), and `main` ends 50 ms later.
+const LATE_WAKE: &str = r#"import { channel, Channel } from "velt/sync";
+
+async function receiver(ch: Channel<i64>, gate: Promise<i64>): Promise<i64> {
+  const got = await ch.receive();
+  return (got ?? 0) + (await gate);
+}
+
+async function sender(ch: Channel<i64>): Promise<void> {
+  await sleep(20);
+  ch.trySend(1);
+}
+
+async function main() {
+  const ch = channel<i64>(1);
+  const { promise, resolve } = Promise.withResolvers<i64>();
+  const r = receiver(ch, promise);
+  spawn(sender(ch), { worker: 1 });
+  await sleep(550);
+  resolve(2);
+  await sleep(50);
+  console.log(`got ${await r}`);
+}
+"#;
+
 /// `main` returns while a task pinned to worker 1 runs: worker 0 waits for it, the last live task.
 const LAST_TASK: &str = r#"async function work(): Promise<void> {
   await yieldNow();
