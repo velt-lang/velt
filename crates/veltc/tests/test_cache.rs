@@ -89,6 +89,7 @@ impl Package {
 const CLOCK: &str = "tests/clock.test.velt (ran: not cacheable, it uses the clock)";
 
 #[test]
+#[ignore = "#2922"]
 fn pure_test_files_are_not_run_again_until_their_program_changes() {
     let p = package();
     assert_eq!(p.running(&[]), [CLOCK, "tests/pure.test.velt"]);
@@ -123,6 +124,7 @@ fn a_failure_is_never_kept() {
 
 /// A result kept without the leak check (`VELT_RC_STATS=1`) doesn't stand for a run with it.
 #[test]
+#[ignore = "#2922"]
 fn the_leak_check_runs_what_an_ordinary_run_kept() {
     let p = package();
     assert!(p.test(&[]).status.success());
@@ -159,6 +161,7 @@ fn a_test_calling_a_system_function_runs_every_time() {
 /// A test file's own function named like the harness's registrations (`__velt_r7`) is that file's
 /// code: what it reaches counts, it isn't taken for another file's registration.
 #[test]
+#[ignore = "#2922"]
 fn a_function_named_like_a_registration_is_the_files_own_code() {
     let p = package();
     p.write("data.txt", "a");

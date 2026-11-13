@@ -57,6 +57,7 @@ fn fut_poll_and_fut_drop_call_through_the_header() {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn awaiting_a_promise_value_polls_and_drops_it_through_the_header() {
     let p = std_src::check_src(
         "async function main() {

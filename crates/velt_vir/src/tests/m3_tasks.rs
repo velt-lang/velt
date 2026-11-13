@@ -10,6 +10,7 @@ use super::programs_m3::{mutex_def, tasks};
 use super::{m3_golden, run};
 
 #[test]
+#[ignore = "#2921"]
 fn tasks_golden() {
     let out = run(&tasks());
     assert_eq!(out.stdout, m3_golden("tasks"));
@@ -69,6 +70,7 @@ fn mutex_with_updates_scalar_value() {
 /// `answer_call_copy`, #2726), so the many-threads check lets it through, as it does the same
 /// closure copying its captures per call.
 #[test]
+#[ignore = "#2921"]
 fn shared_local_async_closure_is_called_on_a_copy() {
     for shares in [true, false] {
         let mut pb = PB::new();

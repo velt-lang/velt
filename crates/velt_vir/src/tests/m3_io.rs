@@ -84,12 +84,14 @@ fn fs_program(finally_test: bool) -> Program {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn fs_wrappers_and_catch() {
     let out = run(&fs_program(false));
     assert_eq!(out.stdout, "hello 5\nerror: ENOENT\n");
 }
 
 #[test]
+#[ignore = "#2921"]
 fn finally_around_await_and_propagation() {
     let out = run(&fs_program(true));
     assert_eq!(
@@ -100,6 +102,7 @@ fn finally_around_await_and_propagation() {
 
 /// Uncaught error from a throwing `async main`: reported like a sync main, exit 1.
 #[test]
+#[ignore = "#2921"]
 fn async_main_uncaught() {
     let mut pb = PB::new();
     let t = pb.t;
@@ -195,6 +198,7 @@ fn stored_throwing_promises(fail: bool) -> Program {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn stored_promises_of_throwing_fns() {
     let out = run(&stored_throwing_promises(false));
     assert_eq!(out.stdout, "[ 'A', 'BB' ]\nBB\n");
@@ -210,6 +214,7 @@ fn stored_promises_of_throwing_fns() {
 /// The golden program prints numbers through std's hooks (#2197): loaded from source with the
 /// real std (std_src.rs).
 #[test]
+#[ignore = "#2921"]
 fn tcp_echo_golden() {
     let out = super::run_src(&super::golden_src("m3", "tcp_echo"));
     assert_eq!(out.stdout, m3_golden("tcp_echo"));

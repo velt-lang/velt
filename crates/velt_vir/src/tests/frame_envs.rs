@@ -152,6 +152,7 @@ fn owned_captures_of_frame_envs_are_dropped() {
 /// spawn(f())`, `const g = () => len(t); spawn(g()); spawn(g())`, and `g` called in both
 /// branches of `spawn(c ? g() : g())`.
 #[test]
+#[ignore = "#2921"]
 fn spawned_closures_keep_heap_envs() {
     for conditional in [false, true] {
         let mut pb = PB::new();

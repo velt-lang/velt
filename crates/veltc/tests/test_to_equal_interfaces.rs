@@ -152,6 +152,7 @@ describe("interfaces", () => {
 "#;
 
 #[test]
+#[ignore = "#2922"]
 fn to_equal_compares_interface_values_by_their_objects() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();

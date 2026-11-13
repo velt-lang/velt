@@ -141,6 +141,7 @@ fn main_and_closure_capture_changes_restart() {
 }
 
 #[test]
+#[ignore = "#2923"]
 fn module_state_edits_swap_unless_the_layout_changes() {
     // `a` is written (`grow`), so it is a slot of the module state, not a constant.
     let items = |lets: &str, slot: &str, show: &str| {

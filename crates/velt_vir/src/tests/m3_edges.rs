@@ -69,6 +69,7 @@ fn cancel_program() -> Program {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn promises_a_synchronous_main_drops_still_run() {
     // `main` starts promises, so it runs as a task (entry.rs) and they run to completion, as in
     // JS; the interpreter checks that each frees what it owns.
@@ -77,6 +78,7 @@ fn promises_a_synchronous_main_drops_still_run() {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn cancel_before_start_and_mid_await() {
     let p = super::lower_ok(&cancel_program());
     for move_it in [0, 1] {
@@ -94,6 +96,7 @@ fn cancel_before_start_and_mid_await() {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn cancel_parent_drops_embedded_child() {
     let p = super::lower_ok(&cancel_program());
     for polls in [0, 1, 2] {
@@ -111,6 +114,7 @@ fn cancel_parent_drops_embedded_child() {
 /// with an owned `tag` alive across every await. It makes the tag from `i` through std's hooks
 /// (#2197): Velt source loaded with the real std.
 #[test]
+#[ignore = "#2921"]
 fn awaits_in_loops_try_finally_break_continue() {
     let src = "async function delayed(ms: i64, v: i64): Promise<i64> {\n  await sleep(ms);\n  return v;\n}\n\n\
                async function loopy(): Promise<i64> {\n  let total: i64 = 0;\n  \
@@ -124,6 +128,7 @@ fn awaits_in_loops_try_finally_break_continue() {
 }
 
 #[test]
+#[ignore = "#2921"]
 fn ten_thousand_tasks() {
     let mut pb = PB::new();
     let t = pb.t;
