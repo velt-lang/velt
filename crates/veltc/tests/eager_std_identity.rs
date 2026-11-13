@@ -506,12 +506,13 @@ fn a_std_without_the_float_module_prints_the_same_through_the_runtime() {
     assert_eq!(in_std.lines().count(), in_runtime.lines().count());
 }
 
-/// A std module demanded while another is added (#2856): an on-demand module whose module-level
-/// `let` (checked as the module is added) calls a hook of another on-demand module by role
-/// demands it in the middle of the first one's batch (`Ctx::demand_std`). Each batch must be
-/// added once, in order: the check succeeds, and its VIR is the same as with std up front.
-/// Counted after adding, the nested demand added the outer batch again until sema's stack
-/// overflowed.
+/// An on-demand module whose module-level `let` (checked as the module is added) calls a hook of
+/// another on-demand module by role. The call is checked against the hook's stub, and the live
+/// walk loads the hook's module and makes the initializer call the hook itself (#2882, velt_sema
+/// `lazy_std/hook_stubs.rs`): the check succeeds, the program calls the hook, and its VIR is the
+/// same as with std up front. Before #2882 the call demanded the module in the middle of the
+/// first one's batch (#2856), which added the outer batch again until sema's stack overflowed;
+/// `std_load.rs`'s unit tests keep that counting covered.
 #[test]
 fn a_module_demanded_while_another_is_added_checks_as_up_front() {
     let tmp = test_dir::TestDir::new();

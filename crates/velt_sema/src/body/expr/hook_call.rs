@@ -34,20 +34,30 @@ impl FnCx<'_, '_> {
                 args,
             );
         };
-        let Some(h) = HOOKS.iter().find(|h| h.name == role.as_str()) else {
+        let Some(index) = HOOKS.iter().position(|h| h.name == role.as_str()) else {
             let msg = format!("`{role}` is no hook of velt_common's `std_hooks.rs`");
             return self.hook_call_error(&msg, first.span, args);
         };
+        let h = &HOOKS[index];
         if !matches!(h.sig, Sig::Fn(_)) {
             let msg = format!("the hook `{role}` is not a function");
             return self.hook_call_error(&msg, first.span, args);
+        }
+        let name = h.item.to_string();
+        // Not loaded: the live walk loads it once live code calls it (`lazy_std/hook_stubs.rs`).
+        let loaded = crate::collect::exports::std_module(self.cx, &h.module()).is_some();
+        if !loaded {
+            if let Some(stub) =
+                crate::body::lazy_std::hook_stub(self.cx, index, self.module, first.span)
+            {
+                return self.fn_call(stub, &name, type_args, rest, exp, span);
+            }
         }
         self.cx.demand_std(&h.module());
         let Some(Item::Def(d)) = self.cx.std_def(&h.qualified()) else {
             let msg = format!("the hook `{role}` ({}) is not loaded", h.qualified());
             return self.hook_call_error(&msg, first.span, args);
         };
-        let name = h.item.to_string();
         self.fn_call(d, &name, type_args, rest, exp, span)
     }
 

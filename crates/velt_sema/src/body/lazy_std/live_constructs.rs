@@ -44,6 +44,9 @@ pub(crate) struct Assumed {
     pub(in super::super) record_conversion: bool,
     /// Code running on the executor that those passes reached ([`super::live::Live::tasks`]).
     pub(in super::super) tasks: bool,
+    /// Hooks (`HOOKS` indexes) that a `hookCall` reached by those passes calls: their modules are
+    /// demanded when the call is checked ([`super::hook_stubs`]).
+    pub(in super::super) hooks: Vec<usize>,
 }
 
 /// What lowering reports with the inferred `throws` of a live function, when thrown and not caught
@@ -73,6 +76,12 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
     assumed.record_conversion |= late.record_conversion;
     assumed.tasks |= late.tasks;
     assumed.defs.extend(new_defs);
+    for h in late.hooks {
+        if !assumed.hooks.contains(&h) {
+            assumed.hooks.push(h);
+            added = true;
+        }
+    }
     let live: Vec<_> = cx.lazy.live.live.iter().copied().collect();
     let mut thrown: Vec<TyId> = (live.iter())
         .filter_map(|d| match &cx.info[d.0 as usize] {

@@ -147,6 +147,8 @@ struct Walk {
     /// Code that runs on the executor: an async function or closure, or one of the externs the
     /// executor in Velt serves ([`super::sched_hooks`]).
     tasks: bool,
+    /// Calls of `hookCall`'s stubs not bound yet, `(caller, stub)` (`hook_stubs.rs`).
+    stub_calls: Vec<(DefId, DefId)>,
     /// The last type added to `types` (a body repeats the same type many times in a row).
     last_type: Option<TyId>,
 }
@@ -188,6 +190,7 @@ pub(crate) fn assume(cx: &mut Ctx, assumed: &Assumed) {
     cx.lazy.live.assumed = assumed.defs.clone();
     cx.lazy.record_conversion = assumed.record_conversion;
     cx.lazy.live.tasks = assumed.tasks;
+    cx.lazy.stubs.demand_at_check(&assumed.hooks);
 }
 
 /// The live definitions for lowering to check against (`hir::Program::live`), when it does, with
@@ -359,8 +362,12 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
     cx.lazy.live.kinds |= w.kinds;
     cx.lazy.live.tasks |= w.tasks;
     cx.lazy.live.ifaces.extend(w.ifaces);
+    let bound = match w.stub_calls.is_empty() {
+        true => FxHashMap::default(),
+        false => super::hook_stubs::bind(cx, &w.stub_calls),
+    };
     for d in w.refs {
-        mark(cx, d);
+        mark(cx, bound.get(&d).copied().unwrap_or(d));
     }
     let mut types = w.types;
     types.extend(w.formats.iter().chain(&w.texts));
@@ -469,14 +476,25 @@ pub(super) fn mark(cx: &mut Ctx, d: DefId) -> bool {
 fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
     let i = d.0 as usize;
     let ty = &cx.ty;
-    if let DefInfo::Fn(f) = &cx.info[i] {
+    let stubs = &cx.lazy.stubs;
+    if let DefInfo::Fn(f) = &mut cx.info[i] {
         w.async_host |= f.host.is_some() && f.is_async;
+        if stubs.any() {
+            stubs.rebind_throws(&mut f.throw_srcs);
+        }
     }
-    match (&mut cx.defs[i], &mut cx.info[i]) {
+    let mut stub_calls = std::mem::take(&mut w.stub_calls);
+    let mut visit = |e: &mut hir::Expr, w: &mut Walk| {
+        if stubs.any() {
+            stubs.note(d, e, &mut stub_calls);
+        }
+        walk_expr(ty, e, w);
+    };
+    let walked = match (&mut cx.defs[i], &mut cx.info[i]) {
         (Some(hir::Def::Fn(f)), info) => {
             if let DefInfo::Fn(fi) = info {
                 for e in fi.params.iter_mut().filter_map(|p| p.default.as_mut()) {
-                    crate::visit::exprs_in(e, &mut |e| walk_expr(ty, e, w));
+                    crate::visit::exprs_in(e, &mut |e| visit(e, w));
                 }
                 // Thrown and not caught, it is reported as `console.log` prints it: lowering
                 // builds that from the signature, whatever the body throws. (`hir::FnDef::throws`
@@ -491,7 +509,7 @@ fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
                 w.generators[f.is_async as usize] = true;
             }
             w.tasks |= f.is_async;
-            crate::visit::exprs_mut(&mut f.body.block, &mut |e| walk_expr(ty, e, w));
+            crate::visit::exprs_mut(&mut f.body.block, &mut |e| visit(e, w));
             true
         }
         (None, DefInfo::Fn(_)) => false,
@@ -501,7 +519,7 @@ fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
             }
             note_ty(ty, g.ty, w);
             if let Some(e) = &mut g.init {
-                crate::visit::exprs_in(e, &mut |e| walk_expr(ty, e, w));
+                crate::visit::exprs_in(e, &mut |e| visit(e, w));
             }
             true
         }
@@ -512,7 +530,9 @@ fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
             true
         }
         _ => true,
-    }
+    };
+    w.stub_calls = stub_calls;
+    walked
 }
 
 /// Record type `t` of live code: a scalar by its kind only (it opens implementations and has

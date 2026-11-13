@@ -18,8 +18,9 @@ use velt_sema::hir::{Def, DefId, FloatTy, IntTy, Nothing, PassMode, Program, TyI
 /// velt/lang/hooks/number_float, which the driver's loader adds for what a module uses, and this
 /// test's loader does not). velt/lang/hooks/number_text comes with the prelude; imported here,
 /// its float hooks, which are checked on demand, are checked too. velt/lang/hooks/sched (the
-/// executor in Velt) is loaded only by a build with `VELT_SCHEDULER=std`, and its debug cell
-/// check (velt/lang/hooks/sched_cells) only by a debug compiler's.
+/// executor in Velt) and velt/lang/hooks/sched_blocking (its pool) are loaded only by a build with
+/// `VELT_SCHEDULER=std`, and its debug cell check (velt/lang/hooks/sched_cells) only by a debug
+/// compiler's.
 const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/record/reflect\";\n\
     import \"velt/lang/hooks/any_record\";\nimport \"velt/lang/hooks/number_text\";\n\
     import \"velt/lang/hooks/number_float\";\nimport \"velt/host\";\n\
@@ -28,6 +29,7 @@ const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/recor
     import \"velt/ffi/ptr\";\nimport \"velt/ffi/str_bytes\";\nimport \"velt/ffi/c_string\";\n\
     import \"velt/ffi/export\";\n\
     import \"velt/lang/hooks/locale_compare\";\nimport \"velt/lang/hooks/sched\";\n\
+    import \"velt/lang/hooks/sched_blocking\";\n\
     import \"velt/lang/hooks/sched_cells\";\n\
     function main() {\n  const p = new Proxy({}, {});\n  const s = new Set<number>();\n  \
     const b = new Uint8Array(1);\n  const r = new RegExp(\"a\");\n  \
@@ -290,6 +292,9 @@ fn differs(p: &Program, qualified: &str, sig: &Sig) -> Option<String> {
             )
         }
     };
+    if f.is_async != s.is_async {
+        return Some(format!("async: {}", f.is_async));
+    }
     if f.generics != s.generics {
         return Some(format!("{} type parameters", f.generics));
     }

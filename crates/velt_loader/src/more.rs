@@ -230,8 +230,12 @@ pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
     let Some(importer) = loader.modules.iter().position(|m| m.is_std) else {
         return;
     };
-    let sched = velt_common::std_module!(lang_hooks_sched);
-    let sched = velt_common::std_hooks::std_scheduler().then_some(sched);
+    // With it, its blocking pool, which std calls by role (`hookCall`, #2882).
+    let sched = [
+        velt_common::std_module!(lang_hooks_sched),
+        velt_common::std_module!(lang_hooks_sched_blocking),
+    ];
+    let sched = (sched.iter().copied()).filter(|_| velt_common::std_hooks::std_scheduler());
     let paths = velt_common::std_hooks::ON_DEMAND_MODULES.iter().copied();
     for path in paths.chain(sched) {
         let Some(spec) = specifier(path) else {

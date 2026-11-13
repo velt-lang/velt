@@ -31,11 +31,14 @@ use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo};
 use crate::hir::{self, DefId, ExprKind as E, TyKind};
 
+mod hook_stubs;
 mod live;
 mod number_text;
 mod record_conversions;
 
 use record_conversions::holds_string_record;
+
+pub(crate) use hook_stubs::stub as hook_stub;
 
 pub(crate) use live::{
     assume, demanded as hooks_demanded, finish as finish_live, live_defs, reach_again, too_late,
@@ -182,6 +185,8 @@ pub(crate) struct Lazy {
     float_write: bool,
     /// The live definitions, and the hooks their constructs demand ([`live`]).
     live: live::Live,
+    /// The stubs of the hooks `hookCall` names before their modules are loaded ([`hook_stubs`]).
+    stubs: hook_stubs::Stubs,
 }
 
 impl Lazy {
@@ -205,6 +210,7 @@ impl Lazy {
             float_text: false,
             float_write: false,
             live: live::Live::new(),
+            stubs: hook_stubs::Stubs::default(),
         }
     }
 
