@@ -112,6 +112,41 @@ fn a_waiter_awaiting_a_promise_finished_on_another_worker_is_woken() {
     );
 }
 
+/// Runs of [`DROPS`]: with `main`'s std before the fix, 15 of 30 runs (a loaded arm64 Mac) left
+/// blocks unfreed; 12 runs leave a broken std about a 0.02% chance to pass them all.
+const DROP_RUNS: usize = 12;
+
+/// As [`a_waiter_awaiting_a_promise_finished_on_another_worker_is_woken`], but the waiters never
+/// await their second promise: each drops it as it returns, while the poll's task finishes it on
+/// the other worker (#2881's result drop). A started promise per waiter (`tick`) runs between the
+/// finish of its two promises and spins until the waiter, woken by the first, is about to return,
+/// so the drop and the finish meet. Before the fix the drop read the flags without FINISHED and
+/// the finish read them without DETACHED: neither dropped the result (a block unfreed).
+#[test]
+fn a_promise_dropped_while_another_worker_finishes_it_drops_its_result_once() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "drops", DROPS);
+    let mut bad = Vec::new();
+    for i in 0..DROP_RUNS {
+        let (code, out, err) = run(&exe, "2");
+        if code != 0 || out != "waited 718800, marked 4\n" || !all_freed(&err) {
+            bad.push(format!(
+                "run {i}: exit {code}, stdout {out:?}, stderr {err}"
+            ));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} of {DROP_RUNS} runs went wrong:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
 /// The program of [`a_waiter_awaiting_a_promise_finished_on_another_worker_is_woken`] (#2888's
 /// `a_million_resolves_in_one_poll_are_rescued_mid_loop`).
 const RESOLVES: &str = r#"const MARKED = new Atomic<i64>(0);
@@ -171,6 +206,82 @@ async function main() {
   for (let r = 0; r < 10; r++) {
     sum += await round(r);
     // The spares go idle and retire; worker 0 becomes lazy again.
+    await sleep(40);
+  }
+  console.log(`waited ${sum}, marked ${MARKED.load()}`);
+}
+"#;
+
+/// The program of [`a_promise_dropped_while_another_worker_finishes_it_drops_its_result_once`].
+const DROPS: &str = r#"const MARKED = new Atomic<i64>(0);
+const READY = new Atomic<i64>(-1);
+
+class Val {
+  v: i64;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+
+async function marker(): Promise<void> {
+  MARKED.add(1);
+}
+
+// Drops `b` as it returns, while the round's task finishes it.
+async function waiter(j: i64, a: Promise<Val>, b: Promise<Val>): Promise<i64> {
+  const x = await a;
+  READY.store(j);
+  for (let s: i64 = 0; s < j % 16; s++) {}
+  return x.v;
+}
+
+// Runs between the finish of waiter j's two promises: waits (a while at most) for the waiter.
+async function tick(j: i64, c: Promise<i64>): Promise<void> {
+  await c;
+  for (let s = 0; s < 1000000 && READY.load() < j; s++) {}
+}
+
+async function round(r: i64): Promise<i64> {
+  READY.store(-1);
+  const waiters: Promise<i64>[] = [];
+  const ticks: Promise<void>[] = [];
+  const firsts: ((v: Val) => void)[] = [];
+  const seconds: ((v: Val) => void)[] = [];
+  const thirds: ((v: i64) => void)[] = [];
+  for (let j: i64 = 0; j < 600; j++) {
+    const a = Promise.withResolvers<Val>();
+    const b = Promise.withResolvers<Val>();
+    const c = Promise.withResolvers<i64>();
+    firsts.push(a.resolve);
+    seconds.push(b.resolve);
+    thirds.push(c.resolve);
+    ticks.push(tick(j, c.promise));
+    waiters.push(spawn(waiter(j, a.promise, b.promise)));
+  }
+  await yieldNow();
+  const m = spawn(marker());
+  for (let j = 0; j < 600; j++) {
+    const f = firsts[j];
+    f(new Val(j));
+    const c = thirds[j];
+    c(j);
+    const s = seconds[j];
+    s(new Val(j));
+  }
+  while (MARKED.load() <= r) {}
+  await m;
+  await Promise.all(ticks);
+  let sum: i64 = 0;
+  for (const v of await Promise.all(waiters)) {
+    sum += v;
+  }
+  return sum;
+}
+
+async function main() {
+  let sum: i64 = 0;
+  for (let r = 0; r < 4; r++) {
+    sum += await round(r);
     await sleep(40);
   }
   console.log(`waited ${sum}, marked ${MARKED.load()}`);
