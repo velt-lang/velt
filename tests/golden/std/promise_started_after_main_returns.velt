@@ -4,7 +4,8 @@
 // root returned, and what they start sleeps before it prints (#2887). One reaction is queued by
 // a microtask, one follows a `then` of a `then`, and the last line resolves the first promise.
 
-// timing: timers due after main's root returned are the subject; they print in due order
+// timing: timers due after main's root returned are the subject; they print in due order, their
+// times hundreds of milliseconds apart so that a loaded machine keeps that order
 async function late(name: string, ms: i64): Promise<void> {
   await sleep(ms);
   console.log(`${name} after ${ms} ms`);
@@ -15,16 +16,16 @@ async function late(name: string, ms: i64): Promise<void> {
 async function main() {
   const p = Promise.withResolvers<i64>();
   p.promise.then(async (v: i64) => {
-    await late(`then ${v}`, 120);
+    await late(`then ${v}`, 1200);
   });
   const q = p.promise.then((v: i64) => v + 1);
   q.then(async (v: i64) => {
-    await late(`chained ${v}`, 60);
+    await late(`chained ${v}`, 600);
   });
   queueMicrotask(() => {
     const r = Promise.withResolvers<i64>();
     r.promise.then(async (v: i64) => {
-      await late(`queued ${v}`, 20);
+      await late(`queued ${v}`, 200);
     });
     r.resolve(3);
   });
