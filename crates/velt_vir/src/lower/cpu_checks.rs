@@ -24,7 +24,7 @@ pub(super) struct CpuChecks {
     /// The answer per function without parameters that lowering asked about. `None` is not a
     /// known check; it is also the answer while a function is being looked at, so that calls in
     /// a cycle are no check.
-    known: FxHashMap<DefId, Option<bool>>,
+    pub(super) known: FxHashMap<DefId, Option<bool>>,
 }
 
 /// The architecture of a target, as `Ext::on_arch` names it. An empty target, `native` and `host`

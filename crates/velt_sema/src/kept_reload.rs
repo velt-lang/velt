@@ -229,7 +229,13 @@ pub(crate) fn reanalyze(
     before: usize,
 ) -> Result<(crate::hir::Program, velt_common::Diagnostics), String> {
     let root = cx.root;
-    crate::analyze_after_bodies(&mut cx);
+    // The kept context checked the generated code for the instances the code demanded then.
+    if let Some(kept) = cx.kept_demand.take() {
+        if kept != crate::demanded(&mut cx) {
+            return Err("other generated code".into());
+        }
+    }
+    crate::analyze_after_phase(&mut cx);
     let root_mod = cx.modules[root];
     let entry = crate::main_fn::check_main(&mut cx, root, root_mod, opts.require_main);
     crate::alias_expand::check_unused_aliases(&mut cx);

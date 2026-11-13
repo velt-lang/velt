@@ -243,9 +243,40 @@ What it needs, as separate pull requests, each falling back to the cold front en
     runs.
 - **D. Per-function passes** (`velt_sema`): the passes after `check_bodies` run for a set of
   functions with the rest fixed.
-- **E. Splicing into the lowering** (`velt_vir`, dev only): the running version's lowering
-  context lowers the changed functions (and instances they newly reach) into the kept VIR;
-  locations after an edit shift.
+- **E. Splicing into the lowering** (`velt_vir` `lower/kept.rs`, `velt_opt`,
+  `velt_codegen_cl`, dev only; done). A dev build keeps its final lowering pass
+  (`KeptLowering`), its optimized program and what the debug optimizer learned
+  (`velt_opt::DebugKept`). A warm reload's program is spliced into the kept lowering: every
+  instance of a function defined in a file edited since the kept check, or since the running
+  version (an edit undone is the kept check's text again but not the running version's), is
+  lowered again, with what those newly reach, and only the rebuilt functions come back
+  (`Delta`). The delta is applied to the running version's optimized program; only the
+  changed functions are verified (`verify_changed`, with the program-wide checks), optimized
+  (`optimize_debug_delta`) and compared by the JIT (`DevSession::reload_changed`,
+  `Facts::update`). A reload parses only the edited files (`velt_loader::reparse`) into the
+  kept check's modules (`KeptCheck::reload_reparsed`) and loads nothing again.
+
+  The splice is refused, and the program lowered whole (still from warm sema), when the type
+  table differs; an interface other than a closure's of an edited file changes; lowering learns
+  a new fact (`boxing::Facts` only grow: equal facts mean no other function lowers otherwise);
+  the counted types change; a task becomes pinned; lowering reports something; or an answer
+  lowering keeps between functions changes. Each such answer has a rule (`lower/kept_answers.rs`):
+  answers about an edited function (whether it runs user code or is a known CPU check, an async function's state, a
+  closure's environment, by-pointer params) and whole-program answers computed from every body
+  (what each function and direct callee stores, the fields, slots and globals code assigns, the
+  params that may reach a function value) are taken out, answered anew from the new program,
+  and compared; what is built from them for an edited function alone is taken out; the rest
+  depends only on declarations or on std. An internal error on the warm path builds the save
+  cold. The delta
+  optimizer refuses when a helper inlined into callers, or a numrep parameter fact, would
+  change. Every refusal keeps a new lowering for the next save.
+
+  Positions are not shifted: the kept check's code for the definitions after an edit holds the
+  old spans, which the lowering would resolve against the new text, so C3's refusal of an edit
+  that moves other definitions stays (point 4 above is not done). The warm-against-cold test
+  (`dev/swap/warm_tests.rs`) runs the whole path, version after version as the dev loop
+  carries it, and compares each program with a cold build (aggregates, externs, statics and
+  functions named by content).
 - **F. Verification:** `VELT_DEV_VERIFY=1` also runs the cold front end and compares the
   swapped functions' VIR fingerprints and the diagnostics; the reload tests run in this mode in
   CI.

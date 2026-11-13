@@ -1,12 +1,15 @@
-//! The warm front end against the cold one (dev-warm-front-end.md step 3): a reload from the kept
-//! check either refuses or gives exactly the program, and the diagnostics, of a cold build of the
+//! The warm path against the cold one (dev-warm-front-end.md step 3): a reload from the kept
+//! check and the kept lowering (the splice, then the changed functions alone optimized, "E")
+//! either refuses or gives exactly the program, and the diagnostics, of a cold build of the
 //! edited sources. Hand-written edits for each way a reload once went wrong, and random body edits
 //! of programs from the golden tests.
 
 use std::path::Path;
 
-use crate::dev::edits::{located, Snapshot};
+use crate::dev::edits::{located, located_since, Snapshot};
 use crate::driver::{self, BuildOptions, Session};
+
+use super::warm_harness::{by_content, mutate, Rng};
 
 /// A cold build kept, and the reloads of edits from it, each compared with a cold build.
 struct Differential {
@@ -15,6 +18,17 @@ struct Differential {
     kept: Option<velt_sema::KeptCheck>,
     base: Snapshot,
     cold_files: velt_common::SourceMap,
+    /// The kept lowering, the last version's optimized program and what its optimizer kept, as
+    /// the dev loop carries them from one version to the next (`Carried`).
+    lowering: Option<velt_vir::KeptLowering>,
+    last: Option<(velt_vir::vir::Program, velt_opt::DebugKept)>,
+    /// How many warm reloads were spliced into the kept lowering (the rest lowered whole).
+    spliced: usize,
+    /// Why the last warm reload lowered the program whole, if it did.
+    whole: Option<String>,
+    /// The running version's sources (`Carried::own`): a body edited back to the kept check's
+    /// text is still lowered again (`edits::located_since`).
+    last_own: Option<Snapshot>,
 }
 
 /// What one reload did.
@@ -34,6 +48,20 @@ fn write(dir: &Path, files: &[(&str, &str)]) {
     }
 }
 
+/// The files of `dir` (not its subdirectories), by name, the root `main.velt` first.
+fn sources(dir: &Path) -> Vec<(String, String)> {
+    let mut files: Vec<(String, String)> = (std::fs::read_dir(dir).expect("a directory"))
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file())
+        .filter_map(|p| {
+            let name = p.file_name()?.to_string_lossy().to_string();
+            Some((name, std::fs::read_to_string(&p).ok()?))
+        })
+        .collect();
+    files.sort_by_key(|(name, _)| (name != "main.velt", name.clone()));
+    files
+}
+
 impl Differential {
     /// A cold build of `files` (relative path, text; the root `main.velt` first), kept; `None`
     /// when it fails.
@@ -49,25 +77,31 @@ impl Differential {
         let cold_build = || {
             let mut sess = Session::new();
             sess.keep_check = true;
+            sess.keep_lowering = true;
             sess.counted_seed = Some(velt_vir::CountedSeed::default());
-            let ok = driver::compile_for_jit(&mut sess, &opts).is_ok();
-            (sess, ok)
+            let built = driver::compile_for_jit(&mut sess, &opts).ok();
+            (sess, built)
         };
-        let (mut sess, ok) = cold_build();
-        if !ok {
-            return None;
-        }
+        let (mut sess, built) = cold_build();
+        let mut built = built?;
         if sess.kept.is_none() {
-            sess = cold_build().0;
+            let again = cold_build();
+            (sess, built) = (again.0, again.1?);
         }
         let kept = sess.kept.take();
         assert!(kept.is_some(), "a dev build keeps its check");
+        let last = sess.debug_kept.take().map(|k| (built, k));
         Some(Differential {
             base: Snapshot::of_build(&sess, &opts.input),
             cold_files: driver::copy_files(&sess.sm),
             dir,
             opts,
             kept,
+            lowering: sess.kept_lowering.take(),
+            last,
+            spliced: 0,
+            whole: None,
+            last_own: None,
         })
     }
 
@@ -78,9 +112,17 @@ impl Differential {
         write(self.dir.path(), files);
         let mut warm = Session::new();
         warm.kept = self.kept.take();
+        warm.kept_lowering = self.lowering.take();
+        if let Some((program, kept)) = self.last.take() {
+            warm.dev_program = Some(program);
+            warm.debug_kept = Some(kept);
+        }
         warm.counted_seed = Some(velt_vir::CountedSeed::default());
         let (base, input) = (self.base.clone(), self.opts.input.clone());
-        let edited = move |s: &Session| located(&base, &Snapshot::of_build(s, &input));
+        let last_own = self.last_own.clone();
+        let edited = move |s: &Session| {
+            located_since(&base, last_own.as_ref(), &Snapshot::of_build(s, &input))
+        };
         let out = driver::compile_for_jit_warm(&mut warm, &self.opts, &self.cold_files, edited);
         let out = out.unwrap_or_else(|e| panic!("{e:?}"));
         let why = warm.warm_refused.take().unwrap_or_default();
@@ -94,8 +136,24 @@ impl Differential {
             "the kept check stays for the next reload"
         );
         let Some(program) = out else {
+            // The dev loop builds this version cold and keeps a new check and lowering; a version
+            // that fails to build keeps the running one's.
+            let now = sources(self.dir.path());
+            let now: Vec<(&str, &str)> = (now.iter())
+                .map(|(p, t)| (p.as_str(), t.as_str()))
+                .collect();
+            if let Some(next) = Differential::start(&now) {
+                *self = next;
+            }
             return Reload::Refused(why);
         };
+        let whole = warm.splice_refused.take();
+        self.spliced += usize::from(whole.is_none());
+        self.whole = whole;
+        // What the next version starts from, as `swap::reload_with` carries it.
+        self.lowering = warm.kept_lowering.take();
+        self.last = warm.debug_kept.take().map(|k| (program.clone(), k));
+        self.last_own = Some(Snapshot::of_build(&warm, &self.opts.input));
         let mut cold = Session::new();
         cold.counted_seed = Some(velt_vir::CountedSeed::default());
         let built = driver::compile_for_jit(&mut cold, &self.opts);
@@ -106,8 +164,19 @@ impl Differential {
             warm_diags, diags,
             "{files:?}: the warm diagnostics, then the cold ones"
         );
-        let (warm, cold) = (program.to_string(), built.to_string());
+        // A kept program keeps the functions nothing reaches any more (the ids are the kept
+        // lowering's), and numbers new static data after the kept data: compared without them.
+        let comparable = |mut p: velt_vir::vir::Program| {
+            velt_opt::remove_unused_functions(&mut p);
+            by_content(&p.to_string())
+        };
+        let (warm, cold) = (comparable(program), comparable(built));
         if warm != cold {
+            if let Some(dir) = std::env::var_os("VELT_SPLICE_DUMP") {
+                let dir = std::path::PathBuf::from(dir);
+                std::fs::write(dir.join("warm.vir"), &warm).expect("written");
+                std::fs::write(dir.join("cold.vir"), &cold).expect("written");
+            }
             let first = (warm.lines().zip(cold.lines())).find(|(w, c)| w != c);
             panic!("{files:?}: the warm program is not the cold one: {first:?}");
         }
@@ -361,113 +430,6 @@ function risky(n: number): number { if (n > 0) throw new MyErr(\"boom\"); return
     refused(&edit(src, from, &to), "throws");
 }
 
-/// A small deterministic generator (xorshift), for the random edits.
-struct Rng(u64);
-
-impl Rng {
-    fn below(&mut self, n: usize) -> usize {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        (self.0 % n.max(1) as u64) as usize
-    }
-}
-
-/// The byte ranges of the bodies of `src`'s functions and methods (the script's statements and
-/// nested functions aside).
-fn bodies(src: &str) -> Vec<(usize, usize)> {
-    use velt_syntax::ast::ItemKind;
-    let (module, _) = velt_syntax::parse_file(velt_common::FileId(0), src);
-    let mut out = vec![];
-    for item in &module.items {
-        match &item.kind {
-            ItemKind::Function(f) if !velt_syntax::is_script_main(&f.sig.name) => {
-                out.push(f.body.span)
-            }
-            ItemKind::Class(t) | ItemKind::Struct(t) => {
-                out.extend(t.constructor.as_ref().map(|c| c.body.span));
-                out.extend(t.methods.iter().map(|m| m.decl.body.span));
-            }
-            _ => {}
-        }
-    }
-    (out.into_iter())
-        .map(|s| (s.lo as usize, s.hi as usize))
-        .filter(|&(lo, hi)| lo < hi && hi <= src.len())
-        .collect()
-}
-
-/// One random edit inside a body of `src` (the last one, or any): a number literal changed (to one of the same length,
-/// or another), or a string literal changed, or nothing when the body it picked has neither.
-fn mutate(src: &str, rng: &mut Rng) -> Option<String> {
-    let mut bodies = bodies(src);
-    bodies.sort_unstable();
-    // Half the edits are in the file's last function, which may change length and still reload
-    // warm (an edit elsewhere that does refuses: it moves what follows).
-    let pick = match rng.below(2) {
-        0 => bodies.len().checked_sub(1)?,
-        _ => rng.below(bodies.len()),
-    };
-    let &(lo, hi) = bodies.get(pick)?;
-    let text = &src[lo..hi];
-    let b = text.as_bytes();
-    let word = |i: usize| b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'.';
-    let mut numbers = vec![];
-    let mut strings = vec![];
-    let mut i = 0;
-    while i < b.len() {
-        if b[i].is_ascii_digit() && (i == 0 || !word(i - 1)) {
-            let start = i;
-            while i < b.len() && b[i].is_ascii_digit() {
-                i += 1;
-            }
-            if i == b.len() || !word(i) {
-                numbers.push((start, i));
-            }
-            continue;
-        }
-        if b[i] == b'"' {
-            let start = i;
-            i += 1;
-            while i < b.len() && b[i] != b'"' && b[i] != b'\\' && b[i] != b'\n' {
-                i += 1;
-            }
-            if i < b.len() && b[i] == b'"' && i - start > 1 {
-                strings.push((start + 1, i));
-            }
-        }
-        i += 1;
-    }
-    let (s, e, new) = match rng.below(3) {
-        0 | 1 if !numbers.is_empty() => {
-            let (s, e) = numbers[rng.below(numbers.len())];
-            let n: u64 = text[s..e].parse().ok()?;
-            let new = match rng.below(3) {
-                0 => (n % 9 + 1 + n / 10 * 10).to_string(),
-                1 => (n + 1).to_string(),
-                _ => (n * 10 + 7).to_string(),
-            };
-            (s, e, new)
-        }
-        _ if !strings.is_empty() => {
-            let (s, e) = strings[rng.below(strings.len())];
-            let new = match rng.below(2) {
-                0 => format!("{}Z", &text[s..e - 1]),
-                _ => format!("{}!", &text[s..e]),
-            };
-            (s, e, new)
-        }
-        _ => return None,
-    };
-    Some(format!(
-        "{}{}{}{}",
-        &src[..lo],
-        &text[..s],
-        new,
-        &src[lo + e..]
-    ))
-}
-
 /// Random body edits of programs from the golden tests, each reloaded from the first version's
 /// kept check and compared with a cold build of it (`Differential::reload`), then undone.
 #[test]
@@ -483,7 +445,7 @@ fn random_body_edits_reload_warm_to_the_cold_program() {
         "shared_fn_call",
         "generator_default_value",
     ];
-    let (mut warm, mut refused) = (0, 0);
+    let (mut warm, mut refused, mut spliced) = (0, 0, 0);
     for (k, name) in programs.iter().enumerate() {
         let src = golden(name);
         let Some(mut d) = Differential::start(&[("main.velt", &src)]) else {
@@ -501,13 +463,13 @@ fn random_body_edits_reload_warm_to_the_cold_program() {
                 Reload::Refused(_) => refused += 1,
             }
         }
-        assert!(
-            matches!(d.reload(&[("main.velt", &src)]), Reload::Warm),
-            "{name}: undone"
-        );
+        // Undone: warm, or refused where a refused edit on the way left a new kept check.
+        d.reload(&[("main.velt", &src)]);
+        spliced += d.spliced;
     }
-    // The comparison means something only if some reloads were warm.
+    // The comparison means something only if some reloads were warm, and spliced.
     assert!(warm > 0, "{warm} warm, {refused} refused");
+    assert!(spliced > 0, "{warm} warm, none spliced");
 }
 
 /// A generator with an `any` default used as a value goes through a wrapper made by the reading
@@ -558,6 +520,8 @@ function twice(n: number): number { return n * 2; }
             kept_files: Some(driver::copy_files(&sess.sm)),
             warm,
             warm_reloads: 0,
+            kept_lowering: None,
+            dev_program: None,
         };
         assert!(carried.kept.is_some(), "a dev build keeps its check");
         write(dir.path(), &[("main.velt", &src.replace("n * 2", "n * 3"))]);
@@ -605,4 +569,217 @@ function g(): number { return 2; }
     assert!(matches!(out, Ok(Some(_))), "{:?}", warm.warm_refused);
     let said = warm.render_diagnostics();
     assert!(said.contains("is always false"), "{said}");
+}
+
+/// What lowering memoized of an edited function and read where it lowered callers in other
+/// files: whether it runs user code (`quiet.rs`), and its state's layout when it is async. An
+/// edit that changes either lowers the program whole: the callers kept would read the old.
+#[test]
+fn an_edit_changing_what_callers_were_lowered_with_lowers_whole() {
+    let main = "import { first, work } from \"./util\";
+function main() {
+  const xs = [1, 2];
+  console.log(first(xs));
+  work().then((n) => console.log(n));
+}
+";
+    // Each edited function is the last of its file: the edit's length moves nothing.
+    let quiet = "export async function work(): Promise<number> {
+  const a = 1;
+  await Promise.resolve(0);
+  return a;
+}
+export function first(xs: number[]): number { return xs[0]; }
+";
+    let state = "export function first(xs: number[]): number { return xs[0]; }
+export async function work(): Promise<number> {
+  const a = 1;
+  await Promise.resolve(0);
+  return a;
+}
+";
+    let cases = [
+        (
+            quiet,
+            "return xs[0];",
+            "console.log(\"read\"); return xs[0];",
+            "runs user code",
+        ),
+        (
+            state,
+            "  const a = 1;\n  await Promise.resolve(0);\n  return a;",
+            "  const a = 1;\n  const b = [a];\n  await Promise.resolve(0);\n  return a + b[0];",
+            "state of async",
+        ),
+    ];
+    for (util, from, to, why) in cases {
+        let mut d = Differential::start(&[("main.velt", main), ("util.velt", util)])
+            .expect("the program builds");
+        assert!(util.contains(from), "{from}");
+        let out = d.reload(&[("util.velt", &util.replacen(from, to, 1))]);
+        assert!(matches!(out, Reload::Warm), "{out:?}");
+        let whole = d.whole.clone().unwrap_or_default();
+        assert!(whole.contains(why), "lowered whole for `{why}`? {whole:?}");
+        assert!(matches!(d.reload(&[("util.velt", util)]), Reload::Warm));
+    }
+}
+
+/// What an edited callee stores is read where callers in other files were lowered: the base of
+/// `rows[0][idx(0)]` is held across the index's call when that call may replace it (#1527). A
+/// callee that already ran user code (`note()`) and now stores lowers the program whole, and the
+/// program is the cold build's (once the kept caller read without the hold).
+#[test]
+fn an_edit_changing_what_a_callee_stores_lowers_whole() {
+    let cases = [
+        (
+            "import { rows, always, idx } from \"./util\";
+function tick(i: number): void {
+  rows[0] = [\"a\", \"b\"];
+  console.log(\"tick\", i, rows[0][idx(0)]);
+}
+function main() { console.log(rows[1][always(0)]); tick(0); }
+",
+            "export const rows: string[][] = [[\"a\", \"b\"], [\"c\", \"d\"]];
+export let count = 0;
+export function always(i: number): number {
+  rows[1] = [\"X\", \"Y\"];
+  return i;
+}
+export function note(): void { count += 1; }
+export function idx(i: number): number { note(); return i + 0; }
+",
+            "note(); return i + 0;",
+            "note(); rows[0] = [\"L0\", \"L1\"]; return i;",
+        ),
+        (
+            "import { cur, pick } from \"./util\";
+function main() { console.log(cur[pick()]); }
+",
+            "export let cur: number[] = [1, 2, 3];
+export let count = 0;
+export function note(): void { count += 1; }
+export function pick(): number { note(); return 0; }
+",
+            "note(); return 0;",
+            "note(); cur = [4, 5, 6]; return 0;",
+        ),
+        (
+            "import { box, peek } from \"./util\";
+function main() { console.log(box.xs[peek()]); }
+",
+            "export class Box { xs: number[] = [1, 2]; }
+export const box = new Box();
+export let count = 0;
+export function note(): void { count += 1; }
+export function peek(): number { note(); return 0; }
+",
+            "note(); return 0;",
+            "note(); box.xs = [4, 5]; return 0;",
+        ),
+    ];
+    let mut reasons = vec![];
+    for (main, util, from, to) in cases {
+        let mut d = Differential::start(&[("main.velt", main), ("util.velt", util)])
+            .expect("the program builds");
+        assert!(util.contains(from), "{from}");
+        // Compared with the cold build (`Differential::reload`): warm, spliced or lowered whole.
+        let out = d.reload(&[("util.velt", &util.replacen(from, to, 1))]);
+        assert!(matches!(out, Reload::Warm), "{out:?}");
+        reasons.push(d.whole.clone().unwrap_or_default());
+        assert!(matches!(d.reload(&[("util.velt", util)]), Reload::Warm));
+    }
+    // The array element's case: what `idx` stores is all that changes for lowering.
+    assert!(reasons[0].contains("stores"), "{reasons:?}");
+}
+
+/// A closure that captures something more gets another environment: the splice lowers the
+/// program whole (once it lowered the closure against the old environment, an internal error).
+#[test]
+fn an_edit_changing_a_closures_captures_lowers_whole() {
+    let src = "function main() { console.log(run()); }
+function run(): number {
+  const a = 1;
+  const b = [2, 3];
+  const f = () => a;
+  return f() + [5].map((x) => x + a)[0];
+}
+";
+    let mut d = Differential::start(&[("main.velt", src)]).expect("the program builds");
+    let out = d.reload(&[("main.velt", &src.replace("() => a;", "() => a + b[1];"))]);
+    assert!(matches!(out, Reload::Warm), "{out:?}");
+    let whole = d.whole.clone().unwrap_or_default();
+    assert!(whole.contains("captures"), "{whole:?}");
+}
+
+/// A function that only returns a CPU check is a check the build answers (cpu_checks.rs), and its
+/// callers keep only the branch it takes: an edit of that function changes their code, in the
+/// edited file and in others, and lowers the program whole (once the callers kept the old
+/// branch and the swap changed nothing).
+#[test]
+fn an_edit_of_a_cpu_check_lowers_whole() {
+    let main = "import { fast } from \"./util\";
+function main() { if (fast()) console.log(\"fast\"); else console.log(\"slow\"); }
+";
+    let util = "import { u32x4 } from \"velt/simd\";
+export function fast(): bool { return u32x4.hasShaArm(); }
+";
+    let one = "import { u32x4 } from \"velt/simd\";
+function main() { if (fast()) console.log(\"fast\"); else console.log(\"slow\"); }
+function fast(): bool { return u32x4.hasShaArm(); }
+";
+    let (from, to) = ("return u32x4.hasShaArm();", "return !u32x4.hasShaArm();");
+    let cases = [
+        vec![("main.velt", main), ("util.velt", util)],
+        vec![("main.velt", one)],
+    ];
+    for files in cases {
+        let mut d = Differential::start(&files).expect("the program builds");
+        let (name, text) = *files.last().expect("a file");
+        let out = d.reload(&[(name, &text.replace(from, to))]);
+        assert!(matches!(out, Reload::Warm), "{out:?}");
+        let whole = d.whole.clone().unwrap_or_default();
+        assert!(whole.contains("CPU check"), "{whole:?}");
+        assert!(matches!(d.reload(&[(name, text)]), Reload::Warm));
+    }
+}
+
+/// `velt_main`, which a splice never builds again, runs a synchronous `main` as a root task that
+/// drains the scheduler when the program starts promises or tasks (entry.rs): an edit that first
+/// starts one lowers the program whole (once the started promises never ran).
+#[test]
+fn an_edit_starting_the_first_task_lowers_whole() {
+    let one = "async function work(): Promise<number> { console.log(\"w\"); return 1; }
+async function unused(): Promise<number> { return await work(); }
+function main() { for (let i = 0; i < 3; i++) { g(i); } console.log(\"end\"); }
+function g(i: number): void { console.log(\"g\", i); }
+";
+    let main = "import { g } from \"./util\";
+function main() { for (let i = 0; i < 3; i++) { g(i); } console.log(\"end\"); }
+";
+    let util = "export async function work(): Promise<number> { console.log(\"w\"); return 1; }
+export async function unused(): Promise<number> { return await work(); }
+export function g(i: number): void { console.log(\"g\", i); }
+";
+    let (from, to) = (
+        "{ console.log(\"g\", i); }",
+        "{ const p = work(); console.log(\"g\", i); }",
+    );
+    let cases = [
+        vec![("main.velt", one)],
+        vec![("main.velt", main), ("util.velt", util)],
+    ];
+    for files in cases {
+        let mut d = Differential::start(&files).expect("the program builds");
+        let (name, text) = *files.last().expect("a file");
+        assert!(text.contains(from));
+        let out = d.reload(&[(name, &text.replace(from, to))]);
+        match out {
+            // Refused by warm sema or lowering, or lowered whole for the tasks: the cold build.
+            Reload::Refused(_) => {}
+            Reload::Warm => {
+                let whole = d.whole.clone().unwrap_or_default();
+                assert!(whole.contains("tasks"), "{whole:?}");
+            }
+        }
+    }
 }

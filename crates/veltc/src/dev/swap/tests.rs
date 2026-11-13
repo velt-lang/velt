@@ -244,6 +244,8 @@ fn a_version_that_failed_after_lowering_is_not_the_baseline() {
         kept_files: None,
         warm: true,
         warm_reloads: 0,
+        kept_lowering: None,
+        dev_program: None,
     };
     let failed = host_reload(
         &mut session,
@@ -365,8 +367,10 @@ fn warm_reload(
     let cold_build = || {
         let mut sess = Session::new();
         sess.keep_check = true;
+        sess.keep_lowering = true;
         sess.counted_seed = Some(velt_vir::CountedSeed::default());
-        driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+        let program = driver::compile_for_jit(&mut sess, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+        sess.dev_program = Some(program);
         sess
     };
     let mut sess = cold_build();
@@ -374,10 +378,21 @@ fn warm_reload(
         sess = cold_build();
     }
     assert!(sess.kept.is_some(), "a dev build keeps its check");
+    assert!(
+        sess.kept_lowering.is_some(),
+        "a dev build keeps its lowering"
+    );
     let base = super::super::edits::Snapshot::of_build(&sess, &opts.input);
     let cold_files = driver::copy_files(&sess.sm);
     let mut warm = Session::new();
     warm.kept = sess.kept.take();
+    warm.kept_lowering = sess.kept_lowering.take();
+    warm.dev_program = sess.dev_program.take();
+    warm.debug_kept = sess.debug_kept.take();
+    assert!(
+        warm.debug_kept.is_some(),
+        "a dev build keeps its optimizer's facts"
+    );
     warm.counted_seed = sess.counted_seed.take();
     write(edited);
     let input = opts.input.clone();
@@ -392,11 +407,32 @@ fn warm_reload(
     let mut cold = Session::new();
     cold.counted_seed = Some(velt_vir::CountedSeed::default());
     let cold = driver::compile_for_jit(&mut cold, &opts).unwrap_or_else(|e| panic!("{e:?}"));
+    // A warm reload loads and parses nothing again (the kept build's modules, the edited files
+    // parsed again).
+    let loaded_again = warm.timings.iter().any(|(stage, _)| *stage == "parse");
     let warm = match out.unwrap_or_else(|e| panic!("{e:?}")) {
-        Some(p) => Ok(p.to_string()),
+        // A kept program keeps the functions nothing reaches any more (the ids are the kept
+        // lowering's); the cold build drops them.
+        Some(mut p) => match warm.splice_refused.take() {
+            None => {
+                assert!(!loaded_again, "a warm reload loaded the program again");
+                velt_opt::remove_unused_functions(&mut p);
+                Ok(p.to_string())
+            }
+            Some(why) => Err(format!("lowered whole: {why}")),
+        },
         None => Err(warm.warm_refused.take().unwrap_or_default()),
     };
-    (warm, cold.to_string())
+    let cold = super::warm_harness::by_content(&cold.to_string());
+    let warm = warm.map(|w| super::warm_harness::by_content(&w));
+    if let (Ok(w), Some(dir)) = (&warm, std::env::var_os("VELT_SPLICE_DUMP")) {
+        if *w != cold {
+            let dir = PathBuf::from(dir);
+            std::fs::write(dir.join("warm.vir"), w).expect("written");
+            std::fs::write(dir.join("cold.vir"), &cold).expect("written");
+        }
+    }
+    (warm, cold)
 }
 
 const WARM_MAIN: &str = "import { label } from \"./util\";
@@ -428,6 +464,15 @@ fn a_body_edit_reloads_warm_to_the_cold_program() {
         vec![("util.velt", WARM_UTIL.replace("n=", "N="))],
         // A length-changing edit of the last definition of its file moves nothing.
         vec![("util.velt", WARM_UTIL.replace("n=", "count="))],
+        // A loop whose counter the debug optimizer narrows to an integer (`numrep`), in `main`,
+        // the last definition, so that the edit's length moves nothing.
+        vec![(
+            "main.velt",
+            WARM_MAIN.replace(
+                "  console.log(label(t.n));",
+                "  let s = 0;\n  for (let i = 0; i < 10; i++) { s += i; }\n  console.log(label(t.n + s));",
+            ),
+        )],
         vec![
             ("main.velt", WARM_MAIN.replace("x * 2", "x + 2")),
             ("util.velt", WARM_UTIL.replace("n=", "#=")),
@@ -485,5 +530,28 @@ fn a_body_edit_beside_generated_code_reloads_warm() {
     match warm_reload(&files, &[("main.velt", &other)]) {
         (Ok(warm), cold) => assert_eq!(warm, cold),
         (Err(why), _) => assert!(why.contains("generated"), "{why}"),
+    }
+}
+
+/// An edit whose calls pass another constant to a function the debug optimizer narrowed by its
+/// callers' constants (`numrep` parameter facts) lowers the program whole: the function, not
+/// edited, would be optimized otherwise.
+#[test]
+fn an_edit_changing_a_parameter_fact_is_optimized_whole() {
+    // `other`, edited, is the last definition: the edit's length moves nothing.
+    const MAIN: &str = "function main() {
+  console.log(steps(5), other());
+}
+function steps(n: number): number {
+  let s = 0;
+  for (let i = 0; i < n; i++) { s += i; }
+  return s;
+}
+function other(): number { return 1; }
+";
+    let edited = MAIN.replace("return 1;", "return steps(7000000000);");
+    match warm_reload(&[("main.velt", MAIN)], &[("main.velt", &edited)]) {
+        (Err(why), _) => assert!(why.contains("parameter"), "{why}"),
+        (Ok(_), _) => panic!("the optimizer took a changed parameter fact"),
     }
 }

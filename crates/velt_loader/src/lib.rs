@@ -75,7 +75,7 @@ mod wanted;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use velt_common::{std_modules, Diagnostic, Diagnostics, SourceMap, Span};
+use velt_common::{std_modules, Diagnostic, Diagnostics, FileId, SourceMap, Span};
 use velt_sema::SourceModule;
 use velt_syntax::ast;
 
@@ -144,6 +144,27 @@ pub struct Loaded {
 /// Read and parse the root file, the extra roots ([`LoadOptions::extra_roots`]) and everything
 /// they import. Failing to read the root is returned as `Err(message)`; syntax and import
 /// problems go into `diags` (the caller decides whether to stop).
+/// A program's own file `path` (not std's) parsed again as [`load_program`] parses it, under its
+/// file id: `velt dev`'s reload of an edit of function bodies alone, which leaves the rest of
+/// the load as it was. `None` when the load would have read more from the parse than the module
+/// (ambient declarations) or when it has syntax errors:
+/// the caller loads the program again. The program's `defines` are not applied: the caller
+/// checks that the file's previous text parses this way to its loaded module.
+pub fn reparse(path: &Path, file: FileId, src: &str, main: bool) -> Option<ast::Module> {
+    let opts = velt_syntax::ParseOptions {
+        plain_ts: vpm::sources::is_plain_ts(path),
+        tsx: path.extension().is_some_and(|e| e == "tsx"),
+        defines: None,
+    };
+    let parsed = velt_syntax::parse_with(file, src, &opts);
+    if parsed.diags.iter().any(Diagnostic::is_error) || !parsed.ambient.is_empty() {
+        return None;
+    }
+    let mut ast = parsed.module;
+    import_meta::fill(&mut ast, path, main);
+    Some(ast)
+}
+
 pub fn load_program(
     sm: &mut SourceMap,
     root: &Path,

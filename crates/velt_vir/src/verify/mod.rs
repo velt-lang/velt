@@ -115,6 +115,36 @@ fn verify_program_on(p: &Program, jobs: usize) -> Result<(), Vec<String>> {
     }
 }
 
+/// [`verify_program`] of a program whose functions other than `changed` passed it before:
+/// the program-wide checks, and those of the functions `changed`.
+pub(crate) fn verify_changed(p: &Program, changed: &[usize]) -> Result<(), Vec<String>> {
+    let mut errs = vec![];
+    check_aggs(p, &mut errs);
+    for (i, e) in p.externs.iter().enumerate() {
+        if e.params.iter().any(|t| !t.is_scalar()) || matches!(e.ret, Ty::Agg(_)) {
+            errs.push(format!(
+                "extern#{i} {}: signature is not scalar-only",
+                e.symbol
+            ));
+        }
+        check_simd_extern(i, e, &mut errs);
+        check_atomic_extern(i, e, &mut errs);
+        check_math_extern(i, e, &mut errs);
+    }
+    check_symbols(p, &mut errs);
+    check_statics(p, &mut errs);
+    debug::check_debug(p, &mut errs);
+    for &i in changed {
+        if let Some(f) = p.funcs.get(i) {
+            check_function(p, i, f, &mut errs);
+        }
+    }
+    match errs.is_empty() {
+        true => Ok(()),
+        false => Err(errs),
+    }
+}
+
 /// Below this many functions a program is checked on the calling thread: starting threads
 /// costs more than it saves.
 const PARALLEL_MIN_FUNCTIONS: usize = 256;

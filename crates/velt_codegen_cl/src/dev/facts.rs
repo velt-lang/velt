@@ -14,12 +14,15 @@ use super::roles;
 use velt_vir::fingerprint::{is_state_layout, Canon, Fingerprint, Mode};
 
 /// Facts about one function of a version.
+#[derive(Clone)]
 pub(crate) struct FunctionFacts {
     /// Parameter and return types (scalars only, VIR invariant 2).
     pub signature: (Vec<Ty>, Ty),
     pub fingerprint: Fingerprint,
     /// Keys of the pinned functions it calls or takes the address of.
     pub pinned_refs: Vec<String>,
+    /// Keys of the functions whose address it takes.
+    pub address_refs: Vec<String>,
 }
 
 /// Facts about a whole version.
@@ -66,16 +69,7 @@ impl Facts {
             main: FxHashSet::default(),
             module_state: None,
         };
-        for (i, layout) in program.aggs.iter().enumerate() {
-            if !is_state_layout(&layout.name) {
-                let text = canon.agg(velt_vir::vir::AggId(i as u32)).to_string();
-                facts
-                    .layouts
-                    .entry(layout.name.clone())
-                    .or_default()
-                    .insert(text, layout.fields.len());
-            }
-        }
+        facts.layouts = layouts(program, &canon);
         for data in &program.statics {
             for (_, target) in &data.relocs {
                 if let Const::Func(f) = target {
@@ -84,32 +78,105 @@ impl Facts {
             }
         }
         for func in &program.funcs {
-            let refs = references(func);
-            for &(f, address) in &refs {
-                if address {
-                    facts.address_taken.insert(symbol(program, f));
-                }
-            }
-            let mut pinned_refs: Vec<String> = refs
-                .iter()
-                .map(|&(f, _)| symbol(program, f))
-                .filter(|s| roles::is_pinned(s))
-                .collect();
-            pinned_refs.sort();
-            pinned_refs.dedup();
-            if func.symbol == "velt_main" {
-                facts.main = main_keys(program, &refs);
-            }
-            let fn_facts = FunctionFacts {
-                signature: (func.params.clone(), func.ret),
-                fingerprint: canon.function(func),
-                pinned_refs,
-            };
+            let (fn_facts, main) = function_facts(program, &canon, func);
+            facts.main.extend(main);
             facts.funcs.insert(func.symbol.clone(), fn_facts);
         }
+        facts
+            .address_taken
+            .extend(facts.funcs.values().flat_map(|f| f.address_refs.clone()));
         facts.module_state = module_state(program, &canon);
         facts
     }
+
+    /// The facts of `program`, a version whose functions other than `changed` are those of the
+    /// version whose facts are `prev` (`velt dev`'s spliced versions): theirs are taken from
+    /// `prev` (when their keys are still theirs), the program-wide ones gathered again.
+    pub(crate) fn update(prev: &Facts, program: &Program, changed: &[usize]) -> Facts {
+        let canon = Canon::new(program, Mode::HotReload);
+        let mut facts = Facts {
+            funcs: FxHashMap::default(),
+            layouts: layouts(program, &canon),
+            address_taken: FxHashSet::default(),
+            main: prev.main.clone(),
+            module_state: None,
+        };
+        for data in &program.statics {
+            for (_, target) in &data.relocs {
+                if let Const::Func(f) = target {
+                    facts.address_taken.insert(symbol(program, f.0));
+                }
+            }
+        }
+        let mut redo = vec![false; program.funcs.len()];
+        changed.iter().for_each(|&i| redo[i] = true);
+        for (i, func) in program.funcs.iter().enumerate() {
+            let kept = (prev.funcs.get(&func.symbol)).filter(|_| !redo[i]);
+            let fn_facts = match kept {
+                Some(f) => f.clone(),
+                None => {
+                    let (f, main) = function_facts(program, &canon, func);
+                    if func.symbol == "velt_main" {
+                        facts.main = main;
+                    }
+                    f
+                }
+            };
+            facts.funcs.insert(func.symbol.clone(), fn_facts);
+        }
+        facts
+            .address_taken
+            .extend(facts.funcs.values().flat_map(|f| f.address_refs.clone()));
+        facts.module_state = module_state(program, &canon);
+        facts
+    }
+}
+
+/// The facts of `func`, and for `velt_main` the keys of `main`.
+fn function_facts(
+    program: &Program,
+    canon: &Canon,
+    func: &Function,
+) -> (FunctionFacts, FxHashSet<String>) {
+    let refs = references(func);
+    let mut address_refs: Vec<String> = (refs.iter())
+        .filter(|(_, address)| *address)
+        .map(|&(f, _)| symbol(program, f))
+        .collect();
+    address_refs.sort();
+    address_refs.dedup();
+    let mut pinned_refs: Vec<String> = refs
+        .iter()
+        .map(|&(f, _)| symbol(program, f))
+        .filter(|s| roles::is_pinned(s))
+        .collect();
+    pinned_refs.sort();
+    pinned_refs.dedup();
+    let main = match func.symbol == "velt_main" {
+        true => main_keys(program, &refs),
+        false => FxHashSet::default(),
+    };
+    let fn_facts = FunctionFacts {
+        signature: (func.params.clone(), func.ret),
+        fingerprint: canon.function(func),
+        pinned_refs,
+        address_refs,
+    };
+    (fn_facts, main)
+}
+
+/// Per layout name its structural spellings ([`Facts::layouts`]).
+fn layouts(program: &Program, canon: &Canon) -> FxHashMap<String, FxHashMap<String, usize>> {
+    let mut out: FxHashMap<String, FxHashMap<String, usize>> = FxHashMap::default();
+    for (i, layout) in program.aggs.iter().enumerate() {
+        if !is_state_layout(&layout.name) {
+            let text = canon.agg(AggId(i as u32)).to_string();
+            out.entry(layout.name.clone())
+                .or_default()
+                .insert(text, layout.fields.len());
+        }
+    }
+    out
 }
 
 /// The module state of `program`: its descriptor is the static every function reaching the

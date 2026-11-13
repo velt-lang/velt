@@ -92,6 +92,12 @@ pub struct Carried {
     pub warm: bool,
     /// How many saves were checked from `kept`.
     pub warm_reloads: usize,
+    /// The last version's lowering (velt_vir `KeptLowering`): a warm reload lowers the edited
+    /// files' functions into it.
+    pub kept_lowering: Option<velt_vir::KeptLowering>,
+    /// The running version's optimized program, and what the debug pipeline kept of it: a
+    /// splice changes only some of its functions (`driver::Session::dev_program`).
+    pub dev_program: Option<(velt_vir::vir::Program, velt_opt::DebugKept)>,
 }
 
 /// Whether `velt dev` keeps a check to reload body edits from (`VELT_DEV_WARM=off` turns it off).
@@ -140,21 +146,43 @@ fn reload_with(
     let running = carried.seed.take().unwrap_or_default();
     sess.counted_seed = Some(running.clone());
     sess.keep_check = verbose || warm_enabled();
+    sess.keep_lowering = warm_enabled();
     sess.interfaces = verbose.then(Default::default);
     // A save that edits function bodies alone is checked from the kept check; anything else, or
     // anything it refuses, goes through the cold front end (which keeps a new check).
     let mut warm = false;
     let mut program = None;
+    let mut snapshot = None;
+    // Only the version taken in last is what a splice changes; a cold build keeps none.
+    let last_program = carried.dev_program.take();
     let base = (carried.kept_own.clone()).zip(carried.kept_files.as_ref());
     let kept = carried.kept.take_if(|_| carried.warm);
     if let (Some(kept), Some((base, cold_files))) = (kept, base) {
         sess.kept = Some(kept);
+        sess.kept_lowering = carried.kept_lowering.take();
+        if let Some((program, kept)) = last_program {
+            sess.dev_program = Some(program);
+            sess.debug_kept = Some(kept);
+        }
         let input = opts.input.clone();
+        // The snapshot is taken once: the reload's change detection and the next one's base.
+        let taken = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let (cell, prev) = (taken.clone(), carried.own.clone());
         let edited = move |s: &Session| {
-            super::edits::located(&base, &super::edits::Snapshot::of_build(s, &input))
+            let now = super::edits::Snapshot::of_build_after(s, &input, prev.as_ref());
+            let found = super::edits::located_since(&base, prev.as_ref(), &now);
+            if let Ok(mut cell) = cell.lock() {
+                *cell = Some(now);
+            }
+            found
         };
         let out = driver::compile_for_jit_warm(&mut sess, opts, cold_files, edited);
+        snapshot = taken.lock().ok().and_then(|mut c| c.take());
         carried.kept = sess.kept.take();
+        carried.kept_lowering = sess.kept_lowering.take();
+        if let (true, Some(why)) = (verbose, sess.splice_refused.take()) {
+            eprintln!("velt dev: lowered whole: {why}");
+        }
         match out {
             Ok(Some(p)) => {
                 warm = true;
@@ -172,6 +200,7 @@ fn reload_with(
                 sess.show_details = details;
                 sess.counted_seed = Some(running.clone());
                 sess.keep_check = true;
+                sess.keep_lowering = true;
                 sess.interfaces = verbose.then(Default::default);
             }
             Err(e) => program = Some(Err(e)),
@@ -183,7 +212,12 @@ fn reload_with(
     // (a class that is counted in one version only, #2653): only a restart is safe.
     let changed = (next.as_ref()).and_then(|next| running.representation_change(next));
     if program.is_ok() {
-        let own = super::edits::Snapshot::of_build(&sess, &opts.input);
+        let own = match snapshot.take().filter(|_| warm) {
+            Some(own) => own,
+            None => {
+                super::edits::Snapshot::of_build_after(&sess, &opts.input, carried.own.as_ref())
+            }
+        };
         let interfaces = sess.interfaces.take();
         if let (true, Some(before)) = (verbose, &carried.own) {
             let edit = super::edits::classify(before, &own);
@@ -201,6 +235,7 @@ fn reload_with(
             carried.kept = sess.kept.take();
             carried.kept_own = carried.kept.as_ref().map(|_| own.clone());
             carried.kept_files = carried.kept.as_ref().map(|_| driver::copy_files(&sess.sm));
+            carried.kept_lowering = sess.kept_lowering.take();
             if let (true, Some(kept)) = (verbose, &carried.kept) {
                 eprintln!("velt dev: {}", kept_report(kept));
             }
@@ -230,7 +265,14 @@ fn reload_with(
     }
     let start = Instant::now();
     let mut steps = vec![];
-    let outcome = session.reload_timed(&program, &mut steps);
+    let outcome = match sess.dev_changed.take() {
+        Some(changed) => session.reload_changed(&program, &changed, &mut steps),
+        None => session.reload_timed(&program, &mut steps),
+    };
+    // The version taken in is what the next splice changes.
+    if let (Ok(Reload::Swapped { .. }), true) = (&outcome, carried.kept_lowering.is_some()) {
+        carried.dev_program = sess.debug_kept.take().map(|kept| (program, kept));
+    }
     sess.timings.push(("jit", start.elapsed()));
     sess.record_details("jit", &steps);
     report(&sess, verbose);
@@ -246,5 +288,7 @@ fn reload_with(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod warm_harness;
 #[cfg(test)]
 mod warm_tests;

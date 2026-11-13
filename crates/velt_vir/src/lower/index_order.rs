@@ -31,7 +31,7 @@ enum Link {
 /// definition and the field's index: a field nothing assigns keeps its array while any call
 /// runs. `any_key`: some code writes a field by a key known only at run time (generic
 /// `x[k] = v`), so every field counts as assigned.
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 pub(super) struct AssignedFields {
     fields: FxHashSet<(hir::DefId, u32)>,
     any_key: bool,
@@ -384,7 +384,7 @@ impl FnLower<'_, '_> {
 /// The fields the program assigns (one walk over every body, once). A constructor's
 /// assignments to its own object's fields (`this.xs = xs`) don't count: the object is new, so no
 /// read of it is under way.
-fn assigned_fields(hir: &hir::Program) -> AssignedFields {
+pub(super) fn assigned_fields(hir: &hir::Program) -> AssignedFields {
     let mut out = AssignedFields::default();
     let ctors: FxHashSet<hir::DefId> = (hir.defs.iter())
         .filter_map(|d| match d {

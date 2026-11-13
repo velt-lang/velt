@@ -88,6 +88,15 @@ pub(crate) fn run(cx: &mut Ctx) {
             Some(k) => k,
             None => {
                 let found = crate::timings::pass("generated::demand", || demand::compute(cx));
+                // Only a check that keeps itself compares it (`kept`): no copy otherwise.
+                if cx.body_records.is_some() {
+                    cx.gen.binding.last_found = Some(
+                        found
+                            .iter()
+                            .map(|(g, targs, _)| (*g, targs.clone()))
+                            .collect(),
+                    );
+                }
                 let keyed =
                     crate::timings::pass("generated::keys", || keys(cx, &mut builder, &found));
                 for (key, _, tys) in &keyed {

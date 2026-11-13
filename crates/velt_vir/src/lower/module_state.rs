@@ -87,7 +87,7 @@ impl Cx<'_> {
 
     /// Does the program run on the executor in Velt (a task or timer hook called)? Then module
     /// state goes through its hooks.
-    fn module_sched(&self) -> bool {
+    pub(super) fn module_sched(&self) -> bool {
         self.sched_used || self.sched_tasks
     }
 
@@ -406,7 +406,7 @@ fn ready_count(n: usize, len: usize) -> i128 {
 
 /// The globals some function body or global initializer assigns as a whole (one walk over the
 /// program, only for a program with module state).
-fn reassigned_slots(hir: &hir::Program) -> FxHashSet<hir::DefId> {
+pub(super) fn reassigned_slots(hir: &hir::Program) -> FxHashSet<hir::DefId> {
     let mut out = FxHashSet::default();
     if hir.module_state.is_none() {
         return out;

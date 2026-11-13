@@ -601,12 +601,18 @@ fn analyze(
     opts: CheckOptions,
 ) -> Option<hir::DefId> {
     check_definitions(cx);
-    // A check that keeps itself keeps this point too: a reload checks edited bodies again from
-    // here and runs the rest (`reanalyze`).
+    // A check that keeps itself keeps this point too, once the generated code is checked: a
+    // reload checks edited bodies again from here and runs the rest (`reanalyze`), the
+    // generated code's check only when the edit demands other instances of it.
     if cx.body_records.is_some() {
+        generated_phase(cx);
+        // What the phase demanded last; nothing when it had no generated code to check.
+        cx.kept_demand = cx.gen.binding.last_found.clone();
         kept::stash(cx);
+        analyze_after_phase(cx);
+    } else {
+        analyze_after_bodies(cx);
     }
-    analyze_after_bodies(cx);
     let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
     alias_expand::check_unused_aliases(cx);
     entry
@@ -648,7 +654,23 @@ fn check_definitions(cx: &mut ctx::Ctx) {
 
 /// What follows the bodies' check: generated code, ownership and throws inferred, moves checked.
 fn analyze_after_bodies(cx: &mut ctx::Ctx) {
+    generated_phase(cx);
+    analyze_after_phase(cx);
+}
+
+/// The generated code collected, checked and bound ([`generated::phase`]).
+fn generated_phase(cx: &mut ctx::Ctx) {
     timings::pass("generated::phase", || generated::phase::run(cx));
+}
+
+/// The instances of generated functions the checked code reaches, without where.
+fn demanded(cx: &mut ctx::Ctx) -> Vec<(hir::DefId, Vec<hir::TyId>)> {
+    let found = generated::demand::compute(cx);
+    found.into_iter().map(|(g, targs, _)| (g, targs)).collect()
+}
+
+/// [`analyze_after_bodies`] after the generated phase.
+fn analyze_after_phase(cx: &mut ctx::Ctx) {
     timings::pass("global_this::check_sites", || global_this::check_sites(cx));
     timings::pass("module_scripts::declare", || module_scripts::declare(cx));
     timings::pass("make_dynamic_impls", || {

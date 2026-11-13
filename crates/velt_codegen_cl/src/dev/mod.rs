@@ -187,7 +187,30 @@ impl DevSession {
         program: &vir::Program,
         timings: &mut Vec<(&'static str, Duration)>,
     ) -> Result<Reload, String> {
-        verify(program)?;
+        self.reload_with(program, None, timings)
+    }
+
+    /// [`Self::reload_timed`] of a version whose functions other than `changed` are the running
+    /// version's (`velt dev`'s spliced versions, verified by the caller): only those are compared
+    /// and gathered again.
+    pub fn reload_changed(
+        &mut self,
+        program: &vir::Program,
+        changed: &[usize],
+        timings: &mut Vec<(&'static str, Duration)>,
+    ) -> Result<Reload, String> {
+        self.reload_with(program, Some(changed), timings)
+    }
+
+    fn reload_with(
+        &mut self,
+        program: &vir::Program,
+        changed: Option<&[usize]>,
+        timings: &mut Vec<(&'static str, Duration)>,
+    ) -> Result<Reload, String> {
+        if changed.is_none() {
+            verify(program)?;
+        }
         let Some(running) = &self.running else {
             return Err("ICE: reload before load".into());
         };
@@ -195,7 +218,12 @@ impl DevSession {
             let reason = format!("reclaiming the memory of {MAX_SWAPS} hot swaps");
             return Ok(Reload::Restart(reason));
         }
-        let facts = Facts::of(program);
+        let start = std::time::Instant::now();
+        let facts = match changed {
+            Some(changed) => Facts::update(running, program, changed),
+            None => Facts::of(program),
+        };
+        timings.push(("facts", start.elapsed()));
         let share = classify::shares_module_state(running, &facts);
         match classify::classify(running, &facts) {
             Decision::Restart(reason) => Ok(Reload::Restart(reason)),

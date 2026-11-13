@@ -236,7 +236,7 @@ fn reaches(hir: &hir::Program, t: TyId, target: DefId, seen: &mut FxHashSet<TyId
 }
 
 /// What a lowering pass observed (see the module docs).
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Facts {
     /// Types of shared values.
     shares: FxHashSet<TyId>,

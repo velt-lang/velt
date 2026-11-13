@@ -94,6 +94,7 @@ impl<'h> Cx<'h> {
             unique_params: vec![],
             declared_unique: vec![],
             building: FxHashSet::default(),
+            built_log: None,
             asyncs: FxHashMap::default(),
             by_ref_params: FxHashSet::default(),
             lay: Layouts::default(),
@@ -190,6 +191,32 @@ impl<'h> Cx<'h> {
             statics: self.statics,
             files: self.locs.map(|m| m.files).unwrap_or_default(),
             debug_types: self.debug.map(|d| d.types).unwrap_or_default(),
+        }
+    }
+
+    /// [`Self::finish`], keeping the context (kept.rs): the program is a copy.
+    pub(super) fn finish_copy(&mut self) -> vir::Program {
+        self.fill_registry();
+        self.prune_glue_slots();
+        let mut funcs: Vec<Function> = (self.funcs.iter())
+            .map(|f| f.clone().unwrap_or_else(|| ice("function never lowered")))
+            .collect();
+        super::keys::disambiguate(&mut funcs);
+        vir::Program {
+            aggs: self.aggs.clone(),
+            funcs,
+            externs: self.externs.clone(),
+            statics: self.statics.clone(),
+            files: self
+                .locs
+                .as_ref()
+                .map(|m| m.files.clone())
+                .unwrap_or_default(),
+            debug_types: self
+                .debug
+                .as_ref()
+                .map(|d| d.types.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -367,6 +394,9 @@ impl<'h> Cx<'h> {
         self.bind_unique_params(fid);
         super::lower_profile::leave(prof, &func);
         self.funcs[fid.0 as usize] = Some(func);
+        if let Some(log) = self.built_log.as_mut() {
+            log.push(fid);
+        }
         self.building.remove(&fid);
         self.glue_slots.leave();
         self.claim_deferred(fid, deferred_mark);
@@ -594,7 +624,7 @@ pub(super) fn work_target(work: &mut Work) -> Option<(&mut DefId, &mut Vec<TyId>
     }
 }
 
-fn work_def(work: &Work) -> Option<DefId> {
+pub(super) fn work_def(work: &Work) -> Option<DefId> {
     match work {
         Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => work_def(w),
         Work::Fn(d, _)
