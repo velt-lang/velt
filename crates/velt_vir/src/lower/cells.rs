@@ -77,6 +77,9 @@ impl FnLower<'_, '_> {
         }
         let name = self.str_lit(name.unwrap_or("?"));
         let at = self.operand_addr(name, Ty::Agg(crate::vir::STR_AGG));
+        if self.sched_cell_new(ptr.clone(), at.clone()) {
+            return;
+        }
         self.call_rt(Rt::CellNew, vec![ptr, at], None);
     }
 

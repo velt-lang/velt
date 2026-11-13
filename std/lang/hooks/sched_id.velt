@@ -1,0 +1,42 @@
+// velt/lang/hooks (internal): task ids of the executor in Velt (sched.velt, #2649 P2c, #2832).
+// `velt_rt_task_id`'s job: the id of the task being polled, 0 outside a task. An id is given on
+// first use from a process-wide counter, so it is never 0 for a task and never reused (the
+// runtime executor's rule, velt_rt task/local/mod.rs). `new Promise` compares ids to decide
+// whether a settled value stays on its task or is copied for another (std/lang/promise/
+// settle.velt), and the debug cell check keys a captured variable's owner by it (#2832).
+//
+// Off the workers, code the runtime runs as its own tasks (a C library's callback, a runtime
+// leaf's thread: sched_off.velt) has the runtime's ids. Std's ids have bit 63 set, so the two
+// never compare equal (the runtime's count from 1 and never get there).
+
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+
+/** The runtime's `velt_rt_task_id`, for code running off the workers. */
+declare c("c") function velt_rt_task_id$rt(): u64;
+
+/** The next id (`add` returns the one before, so the first is 1). */
+const NEXT = new Atomic<u64>(1);
+
+/** Bit 63: an id given by this executor, not the runtime. */
+export const STD_ID: u64 = 0x8000_0000_0000_0000;
+
+/** The id of the task being polled, given now if it has none; 0 outside a task. */
+export function taskId(): u64 {
+  const e = t.exec();
+  if (e === 0 || !t.onWorker()) {
+    // SAFETY: no precondition; the runtime's id of the task this thread polls, 0 outside one.
+    return unsafe { velt_rt_task_id$rt() };
+  }
+  const k = m.ld(e + t.E_CURRENT);
+  if (k === 0) {
+    return 0;
+  }
+  let id = m.ld(k + t.T_ID) as u64;
+  if (id === 0) {
+    // Only the thread polling the task stores it.
+    id = NEXT.add(1, "relaxed") | STD_ID;
+    m.st(k + t.T_ID, id as usize);
+  }
+  return id;
+}

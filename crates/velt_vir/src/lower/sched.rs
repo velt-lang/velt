@@ -34,6 +34,16 @@ impl FnLower<'_, '_> {
         velt_common::std_hooks::std_scheduler() && !self.cx.target.trim().starts_with("wasm")
     }
 
+    /// Do debug cell checks go to the executor in Velt's table (sched_cells.velt)? Only where it
+    /// runs the program and sema loaded the table: a program without tasks doesn't load the
+    /// executor (velt_sema `lazy_std` `sched_hooks`, #2649 P3(a)).
+    fn std_cells(&self) -> bool {
+        self.std_sched()
+            && (self.cx)
+                .prelude_def(velt_common::std_hook!(sched_cell_new))
+                .is_some()
+    }
+
     /// `op` (a pointer or an integer) as a `usize` argument.
     fn as_usize(&mut self, op: Operand) -> Operand {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))
@@ -150,7 +160,18 @@ impl FnLower<'_, '_> {
                 | Rt::TlaAt
                 | Rt::SpawnTarget
                 | Rt::Sleep
+                | Rt::CellUse
+                | Rt::CellGive
+                | Rt::CellCopy
+                | Rt::CellFree
         ) || !self.std_sched()
+        {
+            return Err((args, dest));
+        }
+        // The cell check goes to std's table only where the executor is loaded: a program that
+        // runs nothing on it keeps the runtime's (#2649 P3(a)), its cells unchecked by task.
+        if matches!(r, Rt::CellUse | Rt::CellGive | Rt::CellCopy | Rt::CellFree)
+            && !self.std_cells()
         {
             return Err((args, dest));
         }
@@ -211,6 +232,23 @@ impl FnLower<'_, '_> {
                         .emit(self)
                         .op(),
                 ),
+                // The debug cell check (sched_cells.velt): the runtime's keys a cell's owner by
+                // its own task id, which is 0 for this executor's tasks.
+                (Rt::CellUse | Rt::CellGive | Rt::CellFree, [cell]) => {
+                    let c = ty::USize::arg(self.as_usize(cell.clone()));
+                    match r {
+                        Rt::CellUse => hooks::sched_cell_use(self, c).emit(self),
+                        Rt::CellGive => hooks::sched_cell_give(self, c).emit(self),
+                        _ => hooks::sched_cell_free(self, c).emit(self),
+                    };
+                    None
+                }
+                (Rt::CellCopy, [cell, from]) => {
+                    let (cell, from) = (self.as_usize(cell.clone()), self.as_usize(from.clone()));
+                    hooks::sched_cell_copy(self, ty::USize::arg(cell), ty::USize::arg(from))
+                        .emit(self);
+                    None
+                }
                 (Rt::TlaAt, [site]) => {
                     hooks::sched_tla_at(self, ty::Str::arg(site.clone())).emit(self);
                     None
@@ -236,6 +274,17 @@ impl FnLower<'_, '_> {
             self.assign(d, Rvalue::Cast(v, ret));
         }
         Ok(())
+    }
+
+    /// `velt_rt_cell_new`'s job under the executor in Velt (sched_cells.velt): the new cell `ptr`
+    /// of the variable whose name is at `name` (a string's address). False (nothing emitted) for the runtime's executor.
+    pub(super) fn sched_cell_new(&mut self, ptr: Operand, name: Operand) -> bool {
+        if !self.std_cells() {
+            return false;
+        }
+        let ptr = self.as_usize(ptr);
+        hooks::sched_cell_new(self, ty::USize::arg(ptr), ty::Str::arg(name)).emit(self);
+        true
     }
 
     /// A call of extern `symbol` (one of [`EXTERNS`]) with `args`, of result type `ret`, as the
@@ -298,6 +347,7 @@ impl FnLower<'_, '_> {
                     .op();
             }
             "velt_rt_uncaught_now" => return hooks::sched_uncaught_now(self).emit(self).op(),
+            "velt_rt_task_id" => return hooks::sched_task_id(self).emit(self).op(),
             "velt_rt_timer_free" => {
                 return hooks::sched_timer_free(self, ty::U64::arg(arg(0)))
                     .emit(self)

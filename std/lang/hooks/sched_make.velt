@@ -6,6 +6,9 @@ import * as jn from "./sched_join";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as t from "./sched_task";
+import { refuseInRead } from "./sched_read";
+
+export { refuseInRead };
 
 /**
  * A new task of `poll` and `drop` with a result of `rsize` bytes (dropped with `rdrop`) and room
@@ -23,6 +26,8 @@ export function task(
   refs: u64,
 ): usize {
   const bytes = stateAt(rsize) + (size as usize);
+  // A task started inside an `RwLock`'s `read` callback stops the program (sched_read.velt).
+  refuseInRead();
   const k = m.alloc(bytes);
   m.st(k, m.ld(e + t.E_MAIN) + t.E_VT);
   m.st(k + t.T_REFS, refs as usize);
@@ -35,6 +40,7 @@ export function task(
   m.st(k + t.T_RESULT_DROP, rdrop);
   m.st(k + t.T_RESULT_SIZE, rsize as usize);
   m.st(k + t.T_JOINER, 0);
+  m.st(k + t.T_ID, 0);
   m.st(k + t.T_CX, k + t.T_WORD);
   m.st(k + t.T_CX + 8, k);
   m.st(k + t.T_WORD, 0);

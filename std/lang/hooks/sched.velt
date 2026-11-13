@@ -36,6 +36,7 @@ import * as mod from "./sched_module";
 import * as node from "./sched_node";
 import * as nc from "./sched_node_catch";
 import * as off from "./sched_off";
+import { taskId } from "./sched_id";
 import * as run from "./sched_run";
 import * as sl from "./sched_sleep";
 import * as sp from "./sched_spread";
@@ -254,8 +255,14 @@ export function schedBox(poll: usize, drop: usize, state: usize, size: u64, alig
   return node.boxed(poll, drop, state, size, fnAddress(node.nodePoll), fnAddress(node.nodeDrop));
 }
 
+/** `velt_rt_task_id`: the id of the task being polled, 0 outside a task (sched_id.velt). */
+export function schedTaskId(): u64 {
+  return taskId();
+}
+
 /** `velt_rt_fut_start` (`rejecting`: `_start_rejecting`): promise `f` starts now. */
 export function schedStart(f: usize, rdrop: usize, rejecting: bool): void {
+  mk.refuseInRead();
   const e = t.exec();
   if (e === 0) {
     return;
