@@ -261,7 +261,7 @@ What it needs, as separate pull requests, each falling back to the cold front en
   a new fact (`boxing::Facts` only grow: equal facts mean no other function lowers otherwise);
   the counted types change; a task becomes pinned; lowering reports something; or an answer
   lowering keeps between functions changes. Each such answer has a rule (`lower/kept_answers.rs`):
-  answers about an edited function (whether it runs user code, an async function's state, a
+  answers about an edited function (whether it runs user code or is a known CPU check, an async function's state, a
   closure's environment, by-pointer params) and whole-program answers computed from every body
   (what each function and direct callee stores, the fields, slots and globals code assigns, the
   params that may reach a function value) are taken out, answered anew from the new program,

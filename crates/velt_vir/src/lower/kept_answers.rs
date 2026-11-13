@@ -1,21 +1,66 @@
 //! What a splice (`kept.rs`) does with the answers lowering keeps between functions: the answers
 //! about one function, or about the whole program, that it computed once and read while it
 //! lowered other functions. Callers in files the edit leaves alone keep code built with the old
-//! answers, so each answer has a rule:
+//! answers, so every memo of `Cx` and `Layouts` has a rule, one of three.
 //!
-//! - **taken out and compared**: answers about an edited function (whether it runs user code,
-//!   `quiet.rs`; an async function's state, `async_fn/`; a closure's environment, `layout.rs`;
-//!   whether a closure's scalar params are passed by pointer, `async_fn/sync.rs`) and answers
-//!   about the whole program, computed from every body (what each function stores,
-//!   `write_effects.rs`; the fields, slots and globals some code assigns, `index_order.rs`,
-//!   `module_state.rs`, `replaceable.rs`; what direct callees store; the params that may reach a
-//!   function value, `velt_sema::value_params`). Lowering the edited files again answers anew;
-//!   a different answer lowers the program whole.
-//! - **taken out**: what is built from such an answer for an edited function alone (the
-//!   promise-value wrapper of an async function, a generator's table), which only the edited
-//!   files' functions name.
-//! - **depends only on declarations, or on std**, which a body edit leaves alone: the rest
-//!   (type layouts, vtables, interface pass modes, the caller-tracking std functions).
+//! **Taken out, answered anew from the new program, and compared** (a different answer lowers
+//! the program whole); the answers a function's body decides:
+//! - `quiet`: whether a function runs user code (quiet.rs), from its body and its callees'.
+//! - `cpu_checks.known`: whether a call is a CPU check this build answers (cpu_checks.rs), from
+//!   the body of a function that only returns checks; transitive, so the whole map is compared.
+//! - `asyncs`: an async function's state (async_fn/), from its body.
+//! - `lay.envs`: a closure's environment (layout.rs), from its captures.
+//! - `by_ref_params`: the closures whose scalar params are passed by pointer (async_fn/sync.rs).
+//! - `fn_writes`, `callee_stores`, `assigned_fields`, `reassigned_slots`, `field_writes`: what
+//!   functions store and what code assigns (write_effects.rs, replaceable.rs, index_order.rs,
+//!   module_state.rs), from every body.
+//! - `value_params`: the params that may reach a function value (`velt_sema::value_params`), from
+//!   every body.
+//! - `no_await_steps` (passes.rs): whether nothing can observe an `await` step, from the runtime
+//!   functions the program calls; a splice that calls an observer where the kept program had
+//!   none is refused. (An edit that removes the last observer keeps the steps a cold build
+//!   leaves out: nothing can observe them, so the program does the same, with more code.)
+//! - `uses_placement`, `facts`, `boxing` (kept.rs `relower`): whether a task is pinned, what
+//!   lowering learned of the program, the counted types.
+//!
+//! **Taken out**, made again for the edited function alone, which only the edited files'
+//! functions name: `lay.value_wraps` (an async function's promise wrapper, from its state),
+//! `lay.gen_tables` (a generator's table, of its functions).
+//!
+//! **Depends only on declarations, the types, std or the options**, which a body edit leaves
+//! alone (warm sema refuses an edit of a declaration, and compares the interfaces and
+//! implementations):
+//! - `tracked`, `tracked_size`: caller-tracking is decided for std functions only.
+//! - `tables`, `static_atomics`, `module_desc`: from the module globals and the slots sema gave
+//!   them (a changed slot is a changed declaration).
+//! - `dyn_modes_memo`: an interface slot's pass modes, which the interface check compares.
+//! - `iface_impls`, `lay.adapters`: from `hir::Program::impls`, which the interface check
+//!   compares.
+//! - `ext_memo`, `exists_memo`, `own_clones`, `honoured_clones`, `dispose_types`, `value_ids`,
+//!   `anon`, `shapes`: from types, `extend` blocks and class methods.
+//! - `generated_canon`: `hir::Program::generated`, which warm sema keeps equal.
+//! - `glue_slots`: a dev build keeps every table entry (`GlueSlots::keep_all`).
+//! - `lay` but the three above: layouts per type and class hierarchy (`value`, `views`,
+//!   `objs`, `boxes`, `headers`, `extended`, `class_ids`, `fn_wrapper_env`, `array`, `text`,
+//!   `closure`, `dyn_value`, `all_wrap`, `settle_wraps`, `race_boxes`, `widen_boxes`,
+//!   `adopt_boxes`, `vtables`, `slot_tables`, `generic_slots`, `drop_memo`, `foreign`).
+//! - `prelude_proxy`, `view_fn`, `std_fns`, `prelude_error`, `prelude_type_error`,
+//!   `tla_marks`, `ffi_hooks`, `sched_tasks`: std's definitions.
+//! - `native_inits`, `c_symbols`, `c_globals`, `system_aggs`, `reg_slot_agg`, `fut_header`:
+//!   `declare` items and C layouts.
+//! - `types`, `aggs`, `externs`, `extern_map`, `statics`, `static_map`, `str_objects`,
+//!   `symbol_records`, `numbered`, `callees`, `callee_ids`: tables keyed by content, which only
+//!   grow.
+//! - `cell_checks`, `target`, `jit`, `facts_only`: the options and the pass.
+//!
+//! **Lowering's own state** of the functions it builds, rebuilt with them or emptied once a
+//! pass ends: `funcs`, `work_map`, `queue`, `iface_glues`, `fn_tables`, `building`,
+//! `built_log`, `unique_params`, `declared_unique`, `deferred`, `deferred_new`, `versioned`,
+//! `cur_*`, `user_site`, `fn_sites`, `closure_parents` (each closure's entry is written again
+//! when it is lowered again), `locs`, `debug`, `map_fields`, `unwinding`. And what feeds
+//! diagnostics (any one refuses the splice): `unavailable`, `unreduced`, `c_clashes`,
+//! `c_clashes_reported`, `std_calls`, `nothing_clashes`, `atomic_copies`, `share_sites`,
+//! `shared_locks`, `share_from`.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_sema::hir::{DefId, TyId};
@@ -29,6 +74,9 @@ pub(super) struct Asked {
     states: Vec<((DefId, Vec<TyId>), Shape)>,
     envs: Vec<((DefId, Vec<TyId>), Shape)>,
     by_ref: FxHashSet<(DefId, Vec<TyId>)>,
+    cpu_checks: FxHashMap<DefId, Option<bool>>,
+    /// The runtime functions that observe `await` steps the program called (`no_await_steps`).
+    observers: usize,
     whole: Whole,
     /// The files edited (`edited`).
     files: Vec<velt_common::FileId>,
@@ -114,6 +162,8 @@ impl Cx<'_> {
             .cloned()
             .collect();
         self.by_ref_params.retain(|(d, _)| !edited(*d));
+        let cpu_checks = std::mem::take(&mut self.cpu_checks.known);
+        let observers = self.observers();
         self.lay.value_wraps.retain(|(d, _), _| !edited(*d));
         self.lay.gen_tables.retain(|(d, _), _| !edited(*d));
         let whole = Whole {
@@ -129,6 +179,8 @@ impl Cx<'_> {
             states,
             envs,
             by_ref,
+            cpu_checks,
+            observers,
             whole,
             files: files.to_vec(),
         }
@@ -166,7 +218,26 @@ impl Cx<'_> {
         if now != asked.by_ref {
             return Err("the edit changes which closures take their params by pointer".into());
         }
+        for (d, was) in asked.cpu_checks {
+            if self.cpu_check(d) != was {
+                let name = name(self, d);
+                return Err(format!(
+                    "the edit changes whether `{name}` is a known CPU check"
+                ));
+            }
+        }
+        if self.no_await_steps && self.observers() > asked.observers {
+            return Err("the edit makes `await` steps observable".into());
+        }
         self.same_whole(asked.whole)
+    }
+
+    /// How many of the runtime functions that observe `await` steps the program calls
+    /// (async_fn/await_order.rs: a runtime function is declared once something calls it).
+    fn observers(&self) -> usize {
+        (async_fn::await_order::OBSERVERS.iter())
+            .filter(|s| self.extern_map.contains_key(**s))
+            .count()
     }
 
     /// The whole-program answers, computed again from the new program, are the old ones.

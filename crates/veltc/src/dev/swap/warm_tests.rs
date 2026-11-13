@@ -710,3 +710,35 @@ function run(): number {
     let whole = d.whole.clone().unwrap_or_default();
     assert!(whole.contains("captures"), "{whole:?}");
 }
+
+/// A function that only returns a CPU check is a check the build answers (cpu_checks.rs), and its
+/// callers keep only the branch it takes: an edit of that function changes their code, in the
+/// edited file and in others, and lowers the program whole (once the callers kept the old
+/// branch and the swap changed nothing).
+#[test]
+fn an_edit_of_a_cpu_check_lowers_whole() {
+    let main = "import { fast } from \"./util\";
+function main() { if (fast()) console.log(\"fast\"); else console.log(\"slow\"); }
+";
+    let util = "import { u32x4 } from \"velt/simd\";
+export function fast(): bool { return u32x4.hasShaArm(); }
+";
+    let one = "import { u32x4 } from \"velt/simd\";
+function main() { if (fast()) console.log(\"fast\"); else console.log(\"slow\"); }
+function fast(): bool { return u32x4.hasShaArm(); }
+";
+    let (from, to) = ("return u32x4.hasShaArm();", "return !u32x4.hasShaArm();");
+    let cases = [
+        vec![("main.velt", main), ("util.velt", util)],
+        vec![("main.velt", one)],
+    ];
+    for files in cases {
+        let mut d = Differential::start(&files).expect("the program builds");
+        let (name, text) = *files.last().expect("a file");
+        let out = d.reload(&[(name, &text.replace(from, to))]);
+        assert!(matches!(out, Reload::Warm), "{out:?}");
+        let whole = d.whole.clone().unwrap_or_default();
+        assert!(whole.contains("CPU check"), "{whole:?}");
+        assert!(matches!(d.reload(&[(name, text)]), Reload::Warm));
+    }
+}
