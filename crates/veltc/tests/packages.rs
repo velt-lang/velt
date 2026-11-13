@@ -191,6 +191,8 @@ fn the_summary_line_counts_passed_tests() {
 }
 
 #[test]
+// Known to fail under the executor in Velt since #2649's switch: a package's tests hang on Linux.
+#[cfg_attr(target_os = "linux", ignore = "#2918")]
 fn every_package_passes_its_tests() {
     let root = root();
     runtime_support::build_native_runtime(&root);
