@@ -1,14 +1,15 @@
 // Node timers set by two spawned tasks on different workers take their turns in one order for the
 // process, as in Node's single event loop: an immediate before any timer, one list per delay in
-// the order the timers were inserted whichever task inserted them (`a 100` before `b 100`), the
+// the order the timers were inserted whichever task inserted them (`a 1000` before `b 1000`), the
 // lists by expiry, an immediate set by a callback after its timers pass, and a timer of one task
 // cleared by the other never runs.
 //
 // The tasks run on different workers: `main` stays busy until `a` has set its timers, and `a`
 // stays busy until `b` has set its own, so each starts on a worker of its own (with one worker,
 // the waits give up). `a`'s timers are inserted first, and are due once `a` is no longer busy;
-// the delays of different lists are 200 ms apart, more than a loaded machine takes between the
-// two tasks' timers.
+// the first timer is due 1 s after it is set and the lists are 1 s apart, more than a loaded
+// machine takes between the two tasks' timers (at 100 ms apart, a loaded Windows runner saw `a`'s
+// first timer come due before `b` had set its immediate).
 import { setImmediate, setTimeout, Timer } from "velt/time";
 
 class State {
@@ -32,15 +33,15 @@ async function main() {
   const state = shared(new Mutex<State>(new State()));
   const sa = state.clone();
   const a = spawn(async (): Promise<i32> => {
-    setTimeout(() => console.log("a 100"), 100);
+    setTimeout(() => console.log("a 1000"), 1000);
     setTimeout(
       () => {
-        console.log("a 500");
-        setImmediate(() => console.log("a 500's immediate"));
+        console.log("a 3000");
+        setImmediate(() => console.log("a 3000's immediate"));
       },
-      500,
+      3000,
     );
-    const t = setTimeout(() => console.log("a 600 (cleared: never runs)"), 600);
+    const t = setTimeout(() => console.log("a 4000 (cleared: never runs)"), 4000);
     sa.with((v) => {
       v.toClear = t;
       v.aSet = true;
@@ -53,15 +54,15 @@ async function main() {
   const b = spawn(async (): Promise<i32> => {
     setTimeout(
       () => {
-        console.log("b 100");
-        setImmediate(() => console.log("b 100's immediate"));
+        console.log("b 1000");
+        setImmediate(() => console.log("b 1000's immediate"));
       },
-      100,
+      1000,
     );
     setImmediate(() => console.log("b immediate"));
     setTimeout(
       () => {
-        console.log("b 300 clears a 600");
+        console.log("b 2000 clears a 4000");
         sb.with((v) => {
           const t = v.toClear;
           if (t != null) {
@@ -69,9 +70,9 @@ async function main() {
           }
         });
       },
-      300,
+      2000,
     );
-    setTimeout(() => console.log("b 700"), 700);
+    setTimeout(() => console.log("b 5000"), 5000);
     sb.with((v) => {
       v.bSet = true;
     });
