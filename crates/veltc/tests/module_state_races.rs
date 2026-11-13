@@ -1,6 +1,6 @@
 //! One module state per process (#76): the golden `lang/module_let_parallel` (tasks on every
-//! core updating one module counter, one module `Map` and objects in it) runs many times under
-//! both schedulers, and every run must count every update. A lost update or a race on the
+//! core updating one module counter, one module `Map` and objects in it) runs many times on the
+//! executor in Velt with one worker and with four, and every run must count every update. A lost update or a race on the
 //! objects' reference counts shows as other totals, a crash or a leak. The same program run by
 //! `node` (when installed, with `spawn` and the task functions as plain promises) prints the
 //! same totals. `lang/module_let_mutex` (tasks blocking on a `Mutex` while others replace the
@@ -43,7 +43,7 @@ fn stdout(o: &std::process::Output) -> String {
 }
 
 #[test]
-fn every_update_counts_under_both_schedulers() {
+fn every_update_counts() {
     runs_the_same_every_time(GOLDEN, 8);
 }
 
@@ -52,8 +52,8 @@ fn a_mutex_wait_keeps_the_module_lock() {
     runs_the_same_every_time(MUTEX_GOLDEN, 4);
 }
 
-/// Build golden `golden` and run it `runs` times under each scheduler: every run prints its
-/// `.out`.
+/// Build golden `golden` with `VELT_SCHEDULER=std` and run it `runs` times with one worker and
+/// with four: every run prints its `.out`.
 fn runs_the_same_every_time(golden: &str, runs: u32) {
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
@@ -67,17 +67,19 @@ fn runs_the_same_every_time(golden: &str, runs: u32) {
         .arg("-o")
         .arg(&exe)
         .current_dir(dir.path())
+        .env("VELT_SCHEDULER", "std")
         .output()
         .unwrap();
     stdout(&build);
     let want = expected_of(golden);
-    for scheduler in ["per-core", "stealing"] {
+    for threads in ["1", "4"] {
         for run in 0..runs {
             let out = command(&exe)
-                .env("VELT_SCHEDULER", scheduler)
+                .env("VELT_THREADS", threads)
+                .env_remove("VELT_SCHEDULER")
                 .output()
                 .unwrap();
-            assert_eq!(stdout(&out), want, "{golden}: {scheduler}, run {run}");
+            assert_eq!(stdout(&out), want, "{golden}: {threads} workers, run {run}");
         }
     }
 }

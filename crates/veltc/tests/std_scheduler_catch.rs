@@ -358,7 +358,7 @@ async function main() {
 
 /// Programs whose panicked promise or task is reached through the runtime's shared-promise hub
 /// (velt_rt task/shared.rs: a promise read where it stays, `kept[0]`, or awaited at two places),
-/// and what the default executor prints for each: its exit code and stdout.
+/// and what each must give: its exit code and stdout.
 const SHARED: &[(&str, &str, i32, &str)] = &[
     (
         // A task that panicked under a catch, joined from an array outside any: the hub kept the
@@ -707,10 +707,10 @@ async function main() {
 }
 
 /// A promise started while a catching poll runs keeps a catch of its own for its first,
-/// synchronous run, as with the default executor: when that run panics, the promise alone is
+/// synchronous run: when that run panics, the promise alone is
 /// panicked, and the code that started it goes on. A starter that never awaits it returns
 /// normally (its result reaches `catchPanic`), and one that awaits it later runs up to that await
-/// first, then gets the panic there. Built with both executors, the outputs are compared.
+/// first, then gets the panic there.
 const STARTED_UNDER_A_CATCH: &str = r#"import { catchPanic, PanicError } from "velt/task";
 
 async function bad(i: i64): Promise<i64> {
@@ -764,7 +764,7 @@ async function main() {
 "#;
 
 #[test]
-fn a_promise_started_under_a_catch_panics_alone_as_with_the_default_executor() {
+fn a_promise_started_under_a_catch_panics_alone() {
     if !catches_here() {
         return;
     }
@@ -774,26 +774,9 @@ fn a_promise_started_under_a_catch_panics_alone_as_with_the_default_executor() {
     std::fs::write(&file, STARTED_UNDER_A_CATCH).unwrap();
     let std_exe = exe_name(dir.path(), "started_std");
     build_std(&file, &std_exe);
-    let default_exe = exe_name(dir.path(), "started_default");
-    let o = command(env!("CARGO_BIN_EXE_velt"))
-        .arg("build")
-        .arg(&file)
-        .arg("-o")
-        .arg(&default_exe)
-        .current_dir(dir.path())
-        .env_remove("VELT_SCHEDULER")
-        .output()
-        .unwrap();
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     // Each noAwait returns i + 100; each odd awaitLater returns i; each even one panics.
     let want = "2290 10000 20\n1070 5000 10\n";
     for threads in ["1", "4"] {
-        let (code, out, err) = run(&default_exe, dir.path(), threads);
-        assert_eq!(
-            (code, out.as_str()),
-            (0, want),
-            "default executor, {threads} workers; stderr: {err}"
-        );
         let (code, out, err) = run(&std_exe, dir.path(), threads);
         assert_eq!(
             (code, out.as_str()),
