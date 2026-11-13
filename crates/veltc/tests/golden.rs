@@ -14,6 +14,10 @@
 //!
 //! - Goldens under a directory containing `.pending` (milestone in progress) are run, but their
 //!   failures only fail the test with `VELT_GOLDEN_STRICT=1`.
+//! - Goldens listed in `golden_known_failing.txt` (next to this file: the path, the issue that
+//!   tracks the failure, and optionally the OSes it fails on) are run too, but their failures only
+//!   fail the test with `VELT_GOLDEN_STRICT=1`: the executor in Velt's fix list since #2649's
+//!   switch. One that passes is reported, to be taken off the list.
 //!
 //! - A golden whose first lines contain `// requires-env: NAME ...` is skipped unless those
 //!   environment variables are set (for tests needing a database or other external service).
@@ -143,15 +147,24 @@ fn golden() {
             (None, None) => runnable.push((f.clone(), rel)),
         }
     }
+    let known = known_failing();
     let results = run_parallel(velt, &runnable, &work);
     let mut failures = vec![];
     let mut pending_failures = 0;
-    for ((f, _), errs) in runnable.iter().zip(results) {
+    let mut known_failures = 0;
+    for ((f, rel), errs) in runnable.iter().zip(results) {
+        let issue = known.get(rel.replace('\\', "/").as_str());
         if errs.is_empty() {
+            if let Some(issue) = issue {
+                println!("golden: {rel} passes: take it off golden_known_failing.txt ({issue})");
+            }
             continue;
         }
         if !strict && is_pending(f, &root) {
             pending_failures += 1;
+        } else if let (false, Some(issue)) = (strict, issue) {
+            println!("golden: {rel} fails, known ({issue})");
+            known_failures += 1;
         } else {
             failures.extend(errs);
         }
@@ -160,10 +173,11 @@ fn golden() {
         println!("golden: skipped {s}");
     }
     println!(
-        "golden: {} files, {} failures, {} failures in pending milestones (VELT_GOLDEN_STRICT=1 to fail on them)",
+        "golden: {} files, {} failures, {} failures in pending milestones and {} known (VELT_GOLDEN_STRICT=1 to fail on them)",
         files.len(),
         failures.len(),
-        pending_failures
+        pending_failures,
+        known_failures
     );
     if !failures.is_empty() {
         panic!(
@@ -216,6 +230,68 @@ fn shard(files: Vec<PathBuf>) -> Vec<PathBuf> {
         .filter(|(k, _)| k % n == i - 1)
         .map(|(_, f)| f)
         .collect()
+}
+
+/// The goldens known to fail on this OS (`golden_known_failing.txt`): path from the repository
+/// root, then the issue tracking it.
+fn known_failing() -> std::collections::HashMap<String, String> {
+    parse_known_failing(
+        include_str!("golden_known_failing.txt"),
+        std::env::consts::OS,
+    )
+}
+
+/// The entries of known-failing list `text` that apply on `os`. Each line not blank and not a
+/// `#`-comment is `<path> #<issue> [os=<os>,...]`; anything else is a mistake in the list.
+fn parse_known_failing(text: &str, os: &str) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut words = line.split_whitespace();
+        let (Some(path), Some(issue)) = (words.next(), words.next()) else {
+            panic!("golden_known_failing.txt: `{line}` needs a path and an issue");
+        };
+        assert!(
+            issue.len() > 1
+                && issue[1..].bytes().all(|b| b.is_ascii_digit())
+                && issue.starts_with('#'),
+            "golden_known_failing.txt: `{line}`: the issue is `#<number>`"
+        );
+        let applies = match words.next() {
+            None => true,
+            Some(w) => match w.strip_prefix("os=") {
+                Some(list) => list.split(',').any(|o| o == os),
+                None => panic!("golden_known_failing.txt: `{line}`: after the issue only `os=...`"),
+            },
+        };
+        assert!(
+            words.next().is_none(),
+            "golden_known_failing.txt: `{line}`: too many words"
+        );
+        if applies {
+            out.insert(path.to_string(), issue.to_string());
+        }
+    }
+    out
+}
+
+#[test]
+fn the_known_failing_list_reads_its_entries_by_os() {
+    let text = "# comment\n\ntests/golden/a.velt #12\ntests/golden/b.velt #34 os=windows,linux\n";
+    let mac = parse_known_failing(text, "macos");
+    assert_eq!(
+        mac.get("tests/golden/a.velt").map(String::as_str),
+        Some("#12")
+    );
+    assert!(!mac.contains_key("tests/golden/b.velt"));
+    let linux = parse_known_failing(text, "linux");
+    assert_eq!(
+        linux.get("tests/golden/b.velt").map(String::as_str),
+        Some("#34")
+    );
+    known_failing();
 }
 
 /// A golden is pending when a directory between it and `tests/golden` contains a `.pending` file:
