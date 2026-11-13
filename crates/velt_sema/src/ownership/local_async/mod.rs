@@ -563,8 +563,8 @@ struct Propagation {
     /// The untraced inputs of conversions that cross (`DynConv::untraced`), as `hits`, queued
     /// until the program's flow is done.
     untraced: Vec<(DefId, TyId, Why)>,
-    /// How many nodes cross, and how many did when `call_sites::crossing_params` last looked:
-    /// it has nothing new to match while that stays the same.
+    /// How many times a node started to cross or got a shallower reason, and how many when
+    /// `call_sites::crossing_params` last looked: it has nothing new to match while that stays.
     crossing: usize,
     params_seen: Option<usize>,
 }
@@ -611,6 +611,9 @@ impl Propagation {
                 if old.library && new.library && new.depth < old.depth {
                     self.why[n] = Some(new);
                     self.work.push((n, f));
+                    // A shallower reason may step out of the library where the deeper one
+                    // didn't (`Why::step`): `call_sites::crossing_params` has something new.
+                    self.crossing += 1;
                 }
             }
             return;
