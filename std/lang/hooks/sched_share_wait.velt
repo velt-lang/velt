@@ -28,7 +28,7 @@ export function firstWaiter(h: usize, f: usize): bool {
   return m.ld(h + sh.H_WLEN) === 0 || m.ld(entry(h, 0)) === f;
 }
 
-/** Holder `f` waits with `cx`'s waker: its entry, added at the end or its waker brought up to date. */
+/** Holder `f` waits with `cx`'s waker: its entry is added at the end, or its waker updated. */
 export function wait(h: usize, f: usize, cx: usize): void {
   const w = m.ld(cx + 8);
   const i = waiterIndex(h, f);
