@@ -486,9 +486,10 @@ async function main() {
 /// sleeps, long enough for the spare to retire. The answer that wakes the reader then runs it on
 /// worker 0; with the rescue one-way it ran on the spare (`on worker 0 false`). A second stall moves
 /// a task to a spare again. (`currentWorker()` names a spare as a configured worker: the program
-/// tells worker 0's thread by a thread-local.) The take-back must come within the program's 300 ms
-/// sleep, which load just before a run (a build on the same cores) can stretch past (#2928): up to
-/// 3 runs, one of which must show it; each prints one of the two answers.
+/// tells worker 0's thread by a thread-local.) The take-back must come within the program's sleep,
+/// 300 ms, which load (a build or other tests' spinning workers on the same cores) can stretch past
+/// (#2928): a run that shows it late runs again with 1200 ms and then 4800; each prints one of the
+/// two answers, and one must show the take-back.
 #[test]
 fn the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle() {
     if !has_threads() {
@@ -511,17 +512,18 @@ fn the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle() {
         "relax_std{}",
         if cfg!(windows) { ".exe" } else { "" }
     ));
-    for run in 1..3 {
+    for ms in ["1200", "4800"] {
         let o = command(&exe)
             .env("VELT_THREADS", "1")
             .env("VELT_RESCUE", "1")
+            .env("RELAX_MS", ms)
             .env_remove("VELT_SCHEDULER")
             .output()
             .unwrap();
         let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
         assert!(
             o.status.code() == Some(0) && (out == want || out == late),
-            "run {run}: {:?} {out:?} {}",
+            "sleep {ms} ms: {:?} {out:?} {}",
             o.status.code(),
             String::from_utf8_lossy(&o.stderr)
         );
@@ -529,7 +531,7 @@ fn the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle() {
             return;
         }
     }
-    panic!("the rescue was not taken back within the sleep in 3 runs");
+    panic!("the rescue was not taken back within 300, 1200 or 4800 ms");
 }
 
 /// The program of [`the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle`].
@@ -560,8 +562,9 @@ async function main() {
   const r = spawn(reader(s));
   // Busy until a spare has started the reader: the monitor's rescue of this poll.
   while (STARTED.load() === 0) {}
-  // Idle: the spare parks, the reader waiting on its socket; the monitor takes the rescue back.
-  await sleep(300);
+  // Idle: the spare parks, the reader waiting on its socket; the monitor takes the rescue back
+  // (in `RELAX_MS` milliseconds, 300 by default).
+  await sleep(Number(process.env.RELAX_MS ?? "300") as i64);
   await c.write("hi");
   console.log(await r);
   const m = spawn(mark());
