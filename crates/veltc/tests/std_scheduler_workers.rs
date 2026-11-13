@@ -486,7 +486,9 @@ async function main() {
 /// sleeps, long enough for the spare to retire. The answer that wakes the reader then runs it on
 /// worker 0; with the rescue one-way it ran on the spare (`on worker 0 false`). A second stall moves
 /// a task to a spare again. (`currentWorker()` names a spare as a configured worker: the program
-/// tells worker 0's thread by a thread-local.)
+/// tells worker 0's thread by a thread-local.) The take-back must come within the program's 300 ms
+/// sleep, which load just before a run (a build on the same cores) can stretch past (#2928): up to
+/// 3 runs, one of which must show it; each prints one of the two answers.
 #[test]
 fn the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle() {
     if !has_threads() {
@@ -494,15 +496,40 @@ fn the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle() {
     }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
+    let want = "moved true, read hi on worker 0 true\nmoved again true\n";
+    // Not taken back within the sleep: the reader woke on the spare.
+    let late = "moved true, read hi on worker 0 false\nmoved again true\n";
     let (code, out) = build_and_run_with(dir.path(), "relax", RELAX, "1", &[("VELT_RESCUE", "1")]);
-    assert_eq!(
-        (code, out.as_str()),
-        (
-            0,
-            "moved true, read hi on worker 0 true\nmoved again true\n"
-        ),
-        "the executor in Velt, 1 worker"
+    assert!(
+        code == 0 && (out == want || out == late),
+        "the executor in Velt, 1 worker, run 0: {code} {out:?}"
     );
+    if out == want {
+        return;
+    }
+    let exe = dir.path().join(format!(
+        "relax_std{}",
+        if cfg!(windows) { ".exe" } else { "" }
+    ));
+    for run in 1..3 {
+        let o = command(&exe)
+            .env("VELT_THREADS", "1")
+            .env("VELT_RESCUE", "1")
+            .env_remove("VELT_SCHEDULER")
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+        assert!(
+            o.status.code() == Some(0) && (out == want || out == late),
+            "run {run}: {:?} {out:?} {}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        if out == want {
+            return;
+        }
+    }
+    panic!("the rescue was not taken back within the sleep in 3 runs");
 }
 
 /// The program of [`the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle`].
