@@ -41,11 +41,16 @@ runs:
     # 2026-11-03, with 5 macOS runners and an account-wide job limit, live entries waited up to
     # 110 minutes for runners. queue-plan checks the branch only when the run starts; each job
     # checks again when it gets its runner, which under load is many minutes later, and cancels
-    # the whole run (its queued jobs too) when GitHub says the branch is gone. Only a 404 for the
-    # queue branch, twice 10 s apart, while the same token reads `main` (200: a token that can't
-    # read the repository gets 404 for everything) counts: any other answer checks as usual, so a
-    # live entry is never cancelled. The job needs `actions: write` to cancel; without it the run
-    # goes on as before.
+    # the whole run (its queued jobs too) when GitHub says the entry is gone. Two things must both
+    # hold, or the job checks as usual:
+    # - the queue branch answers 404 at every look over two minutes, while the same token reads
+    #   `main` (200: a token that can't read the repository gets 404 for everything);
+    # - the merge queue itself (GraphQL) answers, and none of its entries is this run's commit.
+    # The second test is the authority. On 2026-11-13, a 404 alone cancelled live entries' runs
+    # mid-run (#2861, #2885, #2876), with their branches present minutes later. Each such cancel
+    # leaves the entry UNMERGEABLE until it is re-queued, and the queue then rebuilds what follows
+    # it (#2889). An error or an unexpected answer from GraphQL never cancels. The job needs
+    # `actions: write` to cancel; without it the run goes on as before.
     - name: is this merge queue entry still live
       if: github.event_name == 'merge_group'
       shell: bash
@@ -60,7 +65,21 @@ runs:
         gone() {
           [ "$(status "${GITHUB_REF#refs/}")" = 404 ] && [ "$(status heads/main)" = 200 ]
         }
-        if gone && sleep 10 && gone; then
+        # "no": the queue answered and has no entry for this commit. Anything else (an entry for
+        # it, an error, no answer) is not "no".
+        queued() {
+          local owner=${GITHUB_REPOSITORY%/*} name=${GITHUB_REPOSITORY#*/}
+          gh api graphql -f owner="$owner" -f name="$name" -f query='
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) {
+                mergeQueue(branch: "main") { entries(first: 100) { nodes { headCommit { oid } } } }
+              }
+            }' --jq "if (.data.repository.mergeQueue.entries.nodes | type) == \"array\"
+                     then (if any(.data.repository.mergeQueue.entries.nodes[]; .headCommit.oid == \"$GITHUB_SHA\")
+                           then \"yes\" else \"no\" end)
+                     else \"unknown\" end" 2>/dev/null || echo unknown
+        }
+        if gone && sleep 30 && gone && sleep 30 && gone && sleep 60 && gone && [ "$(queued)" = no ]; then
           echo "::notice title=queue entry gone::$GITHUB_REF is no longer in the merge queue: cancelling this run to free its runners."
           # The cancellation stops this job within seconds; don't start a build meanwhile.
           if gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"; then
