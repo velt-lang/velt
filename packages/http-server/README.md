@@ -184,6 +184,8 @@ key that does not parse) throws `IoError`.
   a `Mutex` it held stays locked, and an object it was changing keeps the change half made. A
   response already streaming when the panic happens can't become a 500: its connection (or
   HTTP/2 stream) is closed. A panic in a task the handler `spawn`s still ends the process.
+  On Windows and under `velt dev`'s JIT, where generated code can't catch a panic yet, a panic
+  in a handler ends the process with 101, as an uncaught one does (#2649, #2008).
 
 ## The request
 

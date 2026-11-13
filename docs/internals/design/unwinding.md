@@ -370,7 +370,7 @@ What replaces the runtime's catch (`velt_rt_catch_*`, the catch at a started pro
   caller runs aborts at its boundary on a Velt exception (decision (b) of #2649: its frame gets a
   catch-all landing pad that calls `abort`, or `nounwind`).
 
-**Built** (behind `VELT_SCHEDULER=std`, #2667; std/task/catch_sched.velt, the `std-scheduler`
+**Built** (the executor in Velt, every native program's since #2649's switch, #2667; std/task/catch_sched.velt, the `std-scheduler`
 variant of `#task-catch`, whose default variant std/task/catch_rt.velt calls `velt_rt_catch_*`):
 
 - `catchPanic` keeps the arm/take shape and its documented limits, so both executors behave the
@@ -422,8 +422,7 @@ variant of `#task-catch`, whose default variant std/task/catch_rt.velt calls `ve
   structured exceptions are built, the `velt dev` JIT until its tables are registered),
   `catchPanicRaw` calls the poll plainly and a panic under `catchPanic` ends the process with
   101, as an uncaught one does (decision recorded on #2667: no runtime catch as a fallback,
-  owner decision 3 of #2649). WebAssembly ignores `VELT_SCHEDULER` and keeps the runtime's
-  executor and catch.
+  owner decision 3 of #2649). WebAssembly keeps the runtime's executor and catch.
 - **Leaks:** the cleanup pads (#2680) drop what the abandoned frames held, as under the runtime's
   catch; the panicked node's own state (and a panicked task's root) stays leaked by design, since
   a leaf in it may still wake it.

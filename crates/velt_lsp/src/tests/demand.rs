@@ -105,7 +105,7 @@ fn command_line(std: &Path, root: &Path, overlay: &HashMap<PathBuf, String>) -> 
     let kept = StdLoads::default();
     let opts = CheckOptions {
         require_main: false,
-        eager_std: false,
+        ..CheckOptions::default()
     };
     let (_, found) = velt_sema::check_generating(
         &modules,

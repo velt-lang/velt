@@ -160,6 +160,9 @@ pub(crate) struct Lazy {
     /// Check every body (the editor's analysis), and still work the live set out, for one demand
     /// set with `velt check` (`std_load`): nothing is [`deferred`].
     pub check_all: bool,
+    /// The program runs on the executor in Velt (a native target, `CheckOptions::native_executor`):
+    /// live code that runs something on it demands [`SCHED_HOOKS`].
+    pub native_executor: bool,
     /// Per module: how it is checked (empty while off).
     modules: Vec<Mode>,
     /// Per class: the classes that extend it directly.
@@ -200,6 +203,7 @@ impl Lazy {
         Lazy {
             on: std::env::var_os("VELT_CHECK_ALL_STD").is_none(),
             check_all: false,
+            native_executor: true,
             modules: vec![],
             subclasses: FxHashMap::default(),
             user_record: false,
@@ -366,10 +370,8 @@ pub(crate) fn reach(cx: &mut Ctx) {
     }
 }
 
-/// The executor in Velt's hooks (velt_common `std_hooks.rs`, `sched_*`), which lowering calls in
-/// place of the runtime's executor when the compiler was started with `VELT_SCHEDULER=std`:
-/// their module is loaded and they are live then, whatever the program does, and never
-/// otherwise.
+/// The executor in Velt's hooks (velt_common `std_hooks.rs`, `sched_*`), which lowering calls on a
+/// native target ([`sched_hooks`]).
 const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_block_on),
     velt_common::std_hook!(sched_spawn),
@@ -415,12 +417,12 @@ const SCHED_CELL_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_cell_free),
 ];
 
-/// Adds [`SCHED_HOOKS`] to `found` the first time, when the executor in Velt is selected and
-/// live code runs on it (`live::Live::tasks`: async code, or an extern the executor serves). A
+/// Adds [`SCHED_HOOKS`] to `found` the first time, on a native target (`Lazy::native_executor`)
+/// when live code runs on it (`live::Live::tasks`: async code, or an extern the executor serves). A
 /// program without such code doesn't load the executor; lowering then keeps the runtime's
 /// module state (velt_vir `module_state.rs`), and never calls a task or timer hook (#2649 P3(a)).
 fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
-    let wanted = cx.lazy.live.tasks && velt_common::std_hooks::std_scheduler();
+    let wanted = cx.lazy.live.tasks && cx.lazy.native_executor;
     if cx.lazy.sched_hooks || !wanted {
         return;
     }

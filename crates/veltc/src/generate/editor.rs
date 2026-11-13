@@ -57,7 +57,7 @@ impl Program {
         // As `velt check <file>` checks it: a library module needs no `main`.
         let opts = CheckOptions {
             require_main: false,
-            eager_std: false,
+            ..CheckOptions::default()
         };
         let packages = self.packages.as_deref();
         let _ = super::check(&mut sess, &self.modules, self.root, opts, packages, None);

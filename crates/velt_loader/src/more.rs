@@ -230,12 +230,16 @@ pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
     let Some(importer) = loader.modules.iter().position(|m| m.is_std) else {
         return;
     };
-    // With it, its blocking pool, which std calls by role (`hookCall`, #2882).
+    // The executor in Velt, on a native target (the `std-scheduler` condition); with it, its
+    // blocking pool, which std calls by role (`hookCall`, #2882).
+    let native = super::conditional::load_conditions(loader.opts)
+        .iter()
+        .any(|c| c == vpm::imports::STD_SCHEDULER);
     let sched = [
         velt_common::std_module!(lang_hooks_sched),
         velt_common::std_module!(lang_hooks_sched_blocking),
     ];
-    let sched = (sched.iter().copied()).filter(|_| velt_common::std_hooks::std_scheduler());
+    let sched = (sched.iter().copied()).filter(|_| native);
     let paths = velt_common::std_hooks::ON_DEMAND_MODULES.iter().copied();
     for path in paths.chain(sched) {
         let Some(spec) = specifier(path) else {

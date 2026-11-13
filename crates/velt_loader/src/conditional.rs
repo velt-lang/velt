@@ -233,7 +233,8 @@ fn select(
             let build: Vec<&str> = conditions
                 .iter()
                 .map(String::as_str)
-                .filter(|c| *c != DEFAULT)
+                // std's own condition: no other map names it.
+                .filter(|c| *c != DEFAULT && *c != imports::STD_SCHEDULER)
                 .collect();
             let written: Vec<&str> = variants.iter().map(|v| v.condition.as_str()).collect();
             Err((

@@ -70,6 +70,7 @@ fn warm_inner(
         let sema_opts = velt_sema::CheckOptions {
             require_main: scope.require_main,
             eager_std: scope.eager_std,
+            native_executor: super::native_executor(opts),
         };
         let t = Instant::now();
         match reparsed(sess, kept, cold_files, &edited, sema_opts) {

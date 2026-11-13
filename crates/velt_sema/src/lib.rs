@@ -213,6 +213,10 @@ pub struct CheckOptions {
     /// Check every definition of std, also those the program never reaches (`velt check
     /// --std`); otherwise std's bodies are checked as the program reaches them (lazy std).
     pub eager_std: bool,
+    /// The program runs on the executor in Velt (std/lang/hooks/sched.velt): a native target.
+    /// Live code that runs something on it demands the executor's hooks. A wasm target keeps
+    /// `velt_rt_wasm`'s executor (#2649 step 6), so nothing demands them there.
+    pub native_executor: bool,
 }
 
 impl Default for CheckOptions {
@@ -220,6 +224,7 @@ impl Default for CheckOptions {
         Self {
             require_main: true,
             eager_std: false,
+            native_executor: true,
         }
     }
 }
@@ -395,6 +400,7 @@ fn check_timed(
         if opts.eager_std {
             cx.lazy.on = false;
         }
+        cx.lazy.native_executor = opts.native_executor;
         body::lazy_std::assume(&mut cx, &assumed.borrow());
         cx.loads = loads;
         generating::install(&mut cx, gen, generator.as_ref());
