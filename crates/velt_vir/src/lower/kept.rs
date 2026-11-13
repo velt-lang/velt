@@ -242,6 +242,9 @@ impl Cx<'_> {
             self.building.remove(id);
         }
         let placement = self.uses_placement;
+        // `velt_main`, never built again, runs a synchronous `main` as a root task when the
+        // program reaches tasks (entry.rs): an edit that first starts one needs it built again.
+        let tasks = self.reaches_tasks();
         let counted = self.boxing.clone();
         let facts = self.facts.clone();
         // What lowering memoized of an edited function's body, which callers in other files read
@@ -260,6 +263,9 @@ impl Cx<'_> {
         self.build_iface_glues();
         if self.uses_placement != placement {
             return Err("the edit pins a task".into());
+        }
+        if self.reaches_tasks() != tasks {
+            return Err("the edit starts tasks where the program started none".into());
         }
         self.same_answers(asked)?;
         self.build_fn_tables();

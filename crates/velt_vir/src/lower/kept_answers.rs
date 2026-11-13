@@ -20,8 +20,17 @@
 //!   functions the program calls; a splice that calls an observer where the kept program had
 //!   none is refused. (An edit that removes the last observer keeps the steps a cold build
 //!   leaves out: nothing can observe them, so the program does the same, with more code.)
-//! - `uses_placement`, `facts`, `boxing` (kept.rs `relower`): whether a task is pinned, what
-//!   lowering learned of the program, the counted types.
+//! - `uses_placement`, `sched_tasks` with the declared start and spawn runtime functions
+//!   (`reaches_tasks`), `facts`, `boxing` (kept.rs `relower`): whether a task is pinned or
+//!   started, what lowering learned of the program, the counted types.
+//!
+//! `velt_main` (entry.rs) is the one function a splice never builds again, so its inputs are
+//! named here: `uses_placement` and `reaches_tasks` (compared), `no_await_steps` (refused when
+//! it would change), `native_inits` and the module state's slots (declarations), and `main`'s
+//! own signature (warm sema compares interfaces). The other code built once per program is
+//! built again by every splice: the module initializers (`Work::ModuleInit`), the function
+//! tables and the function releasing the static atomics. (Removing the last start keeps a root
+//! task whose scheduler has nothing to run: the same output.)
 //!
 //! **Taken out**, made again for the edited function alone, which only the edited files'
 //! functions name: `lay.value_wraps` (an async function's promise wrapper, from its state),
@@ -45,7 +54,7 @@
 //!   `closure`, `dyn_value`, `all_wrap`, `settle_wraps`, `race_boxes`, `widen_boxes`,
 //!   `adopt_boxes`, `vtables`, `slot_tables`, `generic_slots`, `drop_memo`, `foreign`).
 //! - `prelude_proxy`, `view_fn`, `std_fns`, `prelude_error`, `prelude_type_error`,
-//!   `tla_marks`, `ffi_hooks`, `sched_tasks`: std's definitions.
+//!   `tla_marks`, `ffi_hooks`: std's definitions.
 //! - `native_inits`, `c_symbols`, `c_globals`, `system_aggs`, `reg_slot_agg`, `fut_header`:
 //!   `declare` items and C layouts.
 //! - `types`, `aggs`, `externs`, `extern_map`, `statics`, `static_map`, `str_objects`,

@@ -742,3 +742,44 @@ function fast(): bool { return u32x4.hasShaArm(); }
         assert!(matches!(d.reload(&[(name, text)]), Reload::Warm));
     }
 }
+
+/// `velt_main`, which a splice never builds again, runs a synchronous `main` as a root task that
+/// drains the scheduler when the program starts promises or tasks (entry.rs): an edit that first
+/// starts one lowers the program whole (once the started promises never ran).
+#[test]
+fn an_edit_starting_the_first_task_lowers_whole() {
+    let one = "async function work(): Promise<number> { console.log(\"w\"); return 1; }
+async function unused(): Promise<number> { return await work(); }
+function main() { for (let i = 0; i < 3; i++) { g(i); } console.log(\"end\"); }
+function g(i: number): void { console.log(\"g\", i); }
+";
+    let main = "import { g } from \"./util\";
+function main() { for (let i = 0; i < 3; i++) { g(i); } console.log(\"end\"); }
+";
+    let util = "export async function work(): Promise<number> { console.log(\"w\"); return 1; }
+export async function unused(): Promise<number> { return await work(); }
+export function g(i: number): void { console.log(\"g\", i); }
+";
+    let (from, to) = (
+        "{ console.log(\"g\", i); }",
+        "{ const p = work(); console.log(\"g\", i); }",
+    );
+    let cases = [
+        vec![("main.velt", one)],
+        vec![("main.velt", main), ("util.velt", util)],
+    ];
+    for files in cases {
+        let mut d = Differential::start(&files).expect("the program builds");
+        let (name, text) = *files.last().expect("a file");
+        assert!(text.contains(from));
+        let out = d.reload(&[(name, &text.replace(from, to))]);
+        match out {
+            // Refused by warm sema or lowering, or lowered whole for the tasks: the cold build.
+            Reload::Refused(_) => {}
+            Reload::Warm => {
+                let whole = d.whole.clone().unwrap_or_default();
+                assert!(whole.contains("tasks"), "{whole:?}");
+            }
+        }
+    }
+}
