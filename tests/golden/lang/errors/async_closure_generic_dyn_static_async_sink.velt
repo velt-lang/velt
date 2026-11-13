@@ -1,0 +1,20 @@
+// #2862 review round 6 (s11): a closure made in a static field has no literal node; its async form
+// must still match the calls of its promise-returning type. A static async sink `(x: Job) =>
+// Promise<void>` that sends its job.
+import { channel } from "velt/sync";
+type Job = () => Promise<void>;
+const ch = channel<Job>(1);
+class S {
+  static f: (x: Job) => Promise<void> = async (x: Job) => {
+    await ch.send(x);
+  };
+}
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  await S.f(job);
+  await sleep(10);
+  console.log(`n ${n}`);
+}

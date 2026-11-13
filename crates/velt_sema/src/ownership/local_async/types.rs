@@ -32,6 +32,7 @@ pub(super) fn fn_like(cx: &Ctx, t: TyId) -> bool {
 pub(super) fn crossing_fns(
     cx: &mut Ctx,
     roots: &[(TyId, Why)],
+    below: &FxHashMap<crate::hir::DefId, Vec<crate::hir::DefId>>,
     seen: &mut FxHashMap<TyId, Why>,
     out: &mut FxHashMap<TyId, Why>,
 ) {
@@ -55,7 +56,10 @@ pub(super) fn crossing_fns(
             match cx.ty.kind(t).clone() {
                 TyKind::FnPtr { .. } | TyKind::Closure(_) => {}
                 TyKind::Param(_) => {}
-                TyKind::Adt(d, args) => work.extend(adt_parts(cx, d, &args)),
+                TyKind::Adt(d, args) => {
+                    let subs = below.get(&d).map(Vec::as_slice).unwrap_or(&[]);
+                    work.extend(adt_parts_below(cx, d, &args, subs));
+                }
                 TyKind::Dyn(iface, _) => {
                     let impls: Vec<TyId> = cx
                         .impls
@@ -71,15 +75,17 @@ pub(super) fn crossing_fns(
     }
 }
 
-/// What a value of class, struct or union `d<args>` holds: its fields (with those of every
-/// subclass, whose own parameters are not followed) or its variants' payloads.
+/// What a value of class, struct or union `d<args>` holds ([`adt_parts_below`], with every
+/// class that extends `d`).
 pub(super) fn adt_parts(cx: &mut Ctx, d: crate::hir::DefId, args: &[TyId]) -> Vec<TyId> {
     let below = subclasses(cx, d);
     adt_parts_below(cx, d, args, &below)
 }
 
-/// [`adt_parts`], given the classes that extend `d` (from a map built once, where a walk over
-/// every definition per class would cost too much).
+/// What a value of class, struct or union `d<args>` holds: its fields (with those of every
+/// subclass in `below`, whose own parameters are not followed) or its variants' payloads. The
+/// classes come from a map built once ([`subclass_map`]), where a walk over every definition per
+/// class would cost too much.
 pub(super) fn adt_parts_below(
     cx: &mut Ctx,
     d: crate::hir::DefId,
@@ -106,6 +112,29 @@ pub(super) fn adt_parts_below(
     for &s in below {
         if let DefInfo::Adt(a) = &cx.info[s.0 as usize] {
             out.extend(a.fields.iter().map(|f| f.ty));
+        }
+    }
+    out
+}
+
+/// Every class that extends another, directly or not, by that other class ([`subclasses`] for
+/// every class at once): one walk over the definitions instead of one per class.
+pub(super) fn subclass_map(cx: &Ctx) -> FxHashMap<crate::hir::DefId, Vec<crate::hir::DefId>> {
+    let base_of = |i: usize| match &cx.info[i] {
+        DefInfo::Adt(a) => a.base.and_then(|b| match cx.ty.kind(b) {
+            TyKind::Adt(bd, _) => Some(*bd),
+            _ => None,
+        }),
+        _ => None,
+    };
+    let mut out: FxHashMap<crate::hir::DefId, Vec<crate::hir::DefId>> = FxHashMap::default();
+    for i in 0..cx.info.len() {
+        let mut b = base_of(i);
+        let mut hops = 0;
+        while let (Some(bd), true) = (b, hops <= 64) {
+            out.entry(bd).or_default().push(crate::hir::DefId(i as u32));
+            hops += 1;
+            b = base_of(bd.0 as usize);
         }
     }
     out
@@ -145,6 +174,62 @@ pub(super) fn mentions_param(cx: &Ctx, t: TyId) -> bool {
     cx.ty
         .visit(t, &mut |k| found |= matches!(k, TyKind::Param(_)));
     found
+}
+
+/// Does `t` mention a dynamic type (`any`, `unknown`, `object`, `Function`), which may hold any
+/// value, a closure included?
+pub(super) fn mentions_dynamic(cx: &Ctx, t: TyId) -> bool {
+    let Some(defs) = cx.any else {
+        return false;
+    };
+    let mut found = false;
+    cx.ty.visit(t, &mut |k| {
+        found |= matches!(k, TyKind::Dyn(d, _)
+            if *d == defs.any || *d == defs.unknown || *d == defs.object || *d == defs.function);
+    });
+    found
+}
+
+/// Is `t` itself a dynamic type (`any`, `unknown`, `object`, `Function`, or one of them or
+/// `null`), so that a value converted to it is a dynamic value? `AsyncIterator<T, unknown>`
+/// mentions one but is not.
+pub(super) fn is_dynamic(cx: &Ctx, t: TyId) -> bool {
+    let Some(defs) = cx.any else {
+        return false;
+    };
+    let dynamic = |t: TyId| {
+        matches!(cx.ty.kind(t), TyKind::Dyn(d, _)
+            if *d == defs.any || *d == defs.unknown || *d == defs.object || *d == defs.function)
+    };
+    match cx.ty.kind(t) {
+        TyKind::Option(x, _) => dynamic(*x),
+        _ => dynamic(t),
+    }
+}
+
+/// Does converting a function of type `from` to `to` make what it returns dynamic: is `to` a
+/// function type whose result (a returned `Promise<T>`'s `T` included) mentions a dynamic type
+/// that `from`'s doesn't? `() => Job` as `() => unknown`: each call's result is a dynamic value
+/// the graph can't trace back to what the function returns.
+pub(super) fn returns_newly_dynamic(cx: &Ctx, from: TyId, to: TyId) -> bool {
+    let ret = |t: TyId| match cx.ty.kind(t) {
+        TyKind::FnPtr { ret, .. } => Some(*ret),
+        TyKind::Option(x, _) => match cx.ty.kind(*x) {
+            TyKind::FnPtr { ret, .. } => Some(*ret),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(to_ret) = ret(to) else {
+        return false;
+    };
+    mentions_dynamic(cx, to_ret) && !ret(from).is_some_and(|r| mentions_dynamic(cx, r))
+}
+
+/// Is a value of type `t` of unknown origin a dynamic value that may hold what was made dynamic
+/// (and not a generic one, resolved through its instantiations)?
+pub(super) fn dynamic_root(cx: &Ctx, t: TyId) -> bool {
+    mentions_dynamic(cx, t) && !mentions_param(cx, t)
 }
 
 /// Does `t` mention a type parameter numbered `from` or above (a method's own, after its class's)?

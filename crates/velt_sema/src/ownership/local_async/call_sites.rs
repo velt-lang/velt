@@ -59,6 +59,11 @@ pub(super) struct Held {
 /// own matches (`Object.defineProperty`'s setter `(v: T) => void`, a `resolve`, is not a
 /// stream's `start(controller)` in std).
 pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
+    // A parameter crosses only when a node newly does: nothing new since the last pass.
+    if p.params_seen == Some(p.crossing) {
+        return false;
+    }
+    p.params_seen = Some(p.crossing);
     let mut changed = crossing_method_args(cx, g, p);
     let mut found = vec![];
     let mut fwd: Option<Forward> = None;
@@ -75,7 +80,7 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
         for (k, local) in declared.into_iter().enumerate() {
             if let Some(&i) = g.ids.get(&Node::Local(d, local)) {
                 if p.flags[i] & CROSSES != 0 {
-                    found.push((ty, k, p.why[i], d, None));
+                    found.push((ty, k, p.why[i], d, None, false));
                 }
             }
         }
@@ -98,13 +103,62 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
             if p.flags[i] & CROSSES != 0 {
                 let reached = held_in_locals(g, fwd.get_or_insert_with(|| forward(cx, g)), n);
                 for ty in instances(cx, g, c, g.tys[n]) {
-                    found.push((ty, k, p.why[i], c, reached.clone()));
+                    found.push((ty, k, p.why[i], c, reached.clone(), false));
                 }
             }
         }
     }
-    for (ty, k, why, c, reached) in found {
-        for call in &g.indirect {
+    // A closure made where no body the graph walks makes it (a static field's or an imported
+    // module's initializer) has no literal node, and its calls aren't known: a parameter of it
+    // that crosses makes the matching argument of every call of its type cross.
+    for (i, node) in g.nodes.iter().enumerate() {
+        let Node::Local(c, local) = *node else {
+            continue;
+        };
+        if p.flags[i] & CROSSES == 0 || g.ids.contains_key(&Node::Lit(c)) {
+            continue;
+        }
+        if cx
+            .try_fn(c)
+            .is_none_or(|fi| fi.kind != crate::defs::FnKind::Closure)
+        {
+            continue;
+        }
+        let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+            continue;
+        };
+        let declared = &f.params[f.captures.len().min(f.params.len())..];
+        let Some(k) = declared.iter().position(|p| p.local == local) else {
+            continue;
+        };
+        let params: Vec<_> = declared.iter().map(|p| p.ty).collect();
+        // Its value's type: an async closure returns a promise of its body's result.
+        let (ret, is_async, never) = (f.ret, f.is_async, cx.ty.never);
+        let ret = match is_async {
+            true => cx.ty.promise(ret),
+            false => ret,
+        };
+        let ty = cx.ty.intern(crate::hir::TyKind::FnPtr {
+            params,
+            ret,
+            throws: never,
+            rest: false,
+        });
+        found.push((ty, k, p.why[i], c, None, true));
+    }
+    // A closure with no literal node can only be reached through a callee that may hold a value
+    // the graph doesn't trace (a field, a module binding, the heap).
+    for (ty, k, why, c, reached, unseen) in found {
+        // Calls are grouped by the type called through (`Graph::indirect_by_ty`): one type test
+        // per group, not per call.
+        let calls = (g.indirect_by_ty.iter())
+            .filter(|(cty, _)| types::may_be(cx, ty, *cty))
+            .flat_map(|(_, calls)| calls.iter().map(|&ci| &g.indirect[ci]));
+        let calls: Vec<_> = calls.collect();
+        for call in calls {
+            if unseen && !super::graph::untraced_input(g, call.callee) {
+                continue;
+            }
             // A call through a variable holding only closures of one function
             // (`crate::defined_accessors`) reaches no closure of another.
             if (call.only).is_some_and(|d| outermost(g, d) != outermost(g, c)) {
@@ -114,7 +168,7 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
                 continue;
             }
             if let Some(&a) = call.args.get(k) {
-                if p.flags[a] & CROSSES == 0 && types::may_be(cx, ty, call.ty) {
+                if p.flags[a] & CROSSES == 0 {
                     let arg_why = match why {
                         Some(w) => match w.step(false, Some((call.span, call.library))) {
                             Some(w) => Some(w),

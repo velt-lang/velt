@@ -1,0 +1,1 @@
+async_closure_generic_dyn_static_relay.velt:31:24: error: an async closure that may run on another thread cannot capture the generator `chunks`

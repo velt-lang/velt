@@ -1,0 +1,25 @@
+// #2862 review round 6 (s05). An imported module's `post` (made in its initializer) sends its job
+// on a channel; an unrelated local runner of the same type runs a job that modifies `n` here.
+// Sound.
+import { post, ch, Job } from "./_dyn_imported_sink_lib";
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  const runHere = (j: Job): void => {
+    void j();
+  };
+  runHere(job);
+  post(async () => {
+    console.log("posted");
+  });
+  spawn(async () => {
+    for await (const j of ch) {
+      await j();
+      break;
+    }
+  });
+  await sleep(10);
+  console.log(`n ${n}`);
+}

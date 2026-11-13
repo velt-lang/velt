@@ -1,0 +1,29 @@
+// An instantiation with a dynamic type (`unknown`, `any`, `object`) holds what the program made
+// dynamic (#2865): a job that modifies what it captured, passed through a local, reaches the
+// spawn through the type argument and is refused. (A generic closure forwarding the type
+// argument is #2860's case; here it would make every `Job` cross by type and hide these.)
+type Job = () => Promise<void>;
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+async function main() {
+  let u = 0;
+  const asUnknown: Job = async () => {
+    u++;
+  };
+  keepAndSpawn<unknown>(asUnknown);
+  let a = 0;
+  const asAny: Job = async () => {
+    a++;
+  };
+  keepAndSpawn<any>(asAny);
+  let o = 0;
+  const asObject: Job = async () => {
+    o++;
+  };
+  keepAndSpawn<object>(asObject);
+}

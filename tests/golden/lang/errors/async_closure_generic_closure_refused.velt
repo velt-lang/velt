@@ -1,0 +1,53 @@
+// A generic closure's type parameters are what its calls through its generic function type give
+// (#2860), so where a call gives a closure that modifies what it captured, the spawn reaches it
+// and it's refused, through a generic arrow function and through an object type's generic method.
+// Where a value of the generic function type goes into `any`, a call the analysis doesn't see may
+// give anything, and the type parameter stays generic: refused too.
+type Job = () => Promise<void>;
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+interface Engine {
+  run: <T>(x: T) => void;
+}
+
+interface Reader {
+  read<T>(x: T): void;
+}
+
+interface Leaky {
+  run: <T>(x: T) => void;
+}
+
+async function main() {
+  let a = 0;
+  const engine: Engine = { run: <T>(x: T): void => keepAndSpawn<T>(x) };
+  engine.run<Job>(async () => {
+    a++;
+  });
+
+  let b = 0;
+  const reader: Reader = {
+    read<T>(x: T): void {
+      keepAndSpawn<T>(x);
+    },
+  };
+  reader.read<Job>(async () => {
+    b++;
+  });
+
+  let c = 0;
+  const leaky: Leaky = { run: <T>(x: T): void => keepAndSpawn<T>(x) };
+  leaky.run<number>(1);
+  const anyLeaky: any = leaky;
+  const job: Job = async () => {
+    c++;
+  };
+  anyLeaky.run(job);
+}

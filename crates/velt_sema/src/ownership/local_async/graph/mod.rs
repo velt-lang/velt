@@ -22,12 +22,17 @@ use velt_common::Span;
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo};
 use crate::hir::{
-    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, PatKind, Stmt,
-    StmtKind as S, TyId,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Stmt, StmtKind as S,
+    TyId,
 };
+
+mod bind;
+mod dynamic;
 
 use super::call_sites::{Held, Indirect};
 pub(super) use super::why::{Boundary, Why};
+pub(super) use dynamic::untraced_input;
+pub(super) use dynamic::DynConv;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Node {
@@ -42,6 +47,9 @@ pub(super) enum Node {
     DArg(u32, u32),
     /// The function value called by the call through a function value numbered `0`.
     Callee(u32),
+    /// The value made a dynamic one (`any`, `unknown`, `object`, `Function`) by the conversion
+    /// numbered `0` (`Graph::dynamic`): it passes through to where the converted value goes.
+    Dyn(u32),
 }
 
 /// A dispatched call: the methods it may reach, the argument node at each position after the
@@ -74,6 +82,8 @@ pub(super) struct Graph {
     /// The type arguments of every direct call of each generic function, with the function
     /// making the call (its own generic parameters may appear in them).
     pub insts: FxHashMap<DefId, Vec<(DefId, Vec<TyId>)>>,
+    /// Calls of generic function values, for their closures' instantiations.
+    pub dyn_calls: super::generic_closures::DynCalls,
     /// The function creating each closure literal.
     pub parent: FxHashMap<DefId, DefId>,
     /// Where values go that the edges don't show (`super::call_sites::held_in_locals`).
@@ -111,6 +121,23 @@ pub(super) struct Graph {
     pub std_inflows: FxHashMap<usize, Vec<(DefId, TyId)>>,
     /// Per closure literal node: its capture locals' nodes.
     pub captures: FxHashMap<usize, Vec<usize>>,
+    /// The conversions into a dynamic type ([`Node::Dyn`]): every value the program makes a dynamic
+    /// one. A crossing value of a dynamic type (`keepAndSpawn<unknown>(job)`) may hold any of them
+    /// (#2865), and nothing else.
+    pub dynamic: Vec<DynConv>,
+    /// A [`Node::Dyn`] whose input is a call through a function value, with that call's
+    /// [`Node::Callee`]: the dynamic result comes from the function, which crosses with it
+    /// (`() => Job` called through a `() => unknown`).
+    pub dyn_callee: FxHashMap<usize, usize>,
+    /// Nodes that a call through a function value's result flows into, with that call's
+    /// [`Node::Callee`] (`const v = await f()`), for [`Graph::dyn_callee`].
+    pub call_results: FxHashMap<usize, usize>,
+    /// Per node: does something flow into it that the graph can't trace
+    /// ([`dynamic::untraced_nodes`])?
+    pub untraced: Vec<bool>,
+    /// The calls through function values (`Graph::indirect`), by the type called through, in the
+    /// order the types first appear.
+    pub indirect_by_ty: Vec<(TyId, Vec<usize>)>,
 }
 
 impl Graph {
@@ -168,10 +195,17 @@ pub(super) fn build(cx: &Ctx) -> Graph {
             std,
         };
         let ret = w.ret_node(d);
+        // What an async function returns is kept in its promise, in the heap, where a value of
+        // unknown origin may be read back (`await g()` through a `() => Promise<unknown>`).
+        if f.is_async {
+            w.g.seeds.push((ret, STORED, None));
+        }
         w.block(&f.body.block, To::Node(ret, None));
     }
     super::unknown_callees::mark(cx, &mut g);
     super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
+    dynamic::finish(cx, &mut g);
+    g.dyn_calls.finish(cx);
     g
 }
 
@@ -208,6 +242,7 @@ impl Walk<'_, '_> {
             via: None,
             depth: 0,
             in_value: false,
+            made_dyn: None,
         })
     }
 
@@ -328,28 +363,6 @@ impl Walk<'_, '_> {
     }
 
     /// Pattern bindings hold parts of a value: an origin the graph does not follow.
-    fn bind(&mut self, p: &Pat) {
-        match &p.kind {
-            PatKind::Binding(l, _) => {
-                let n = self.local(*l);
-                self.g.unknown[n] = true;
-            }
-            PatKind::Variant { args, .. } | PatKind::Tuple(args) | PatKind::Or(args) => {
-                args.iter().for_each(|a| self.bind(a))
-            }
-            PatKind::Adt { fields } => fields.iter().for_each(|(_, a)| self.bind(a)),
-            PatKind::Array { elems, rest } => {
-                elems.iter().for_each(|a| self.bind(a));
-                if let Some(l) = rest {
-                    let n = self.local(*l);
-                    self.g.unknown[n] = true;
-                }
-            }
-            PatKind::Some(a) => self.bind(a),
-            PatKind::Wildcard | PatKind::Lit(_) | PatKind::None | PatKind::InstanceOf(_) => {}
-        }
-    }
-
     fn value(&mut self, e: &Expr, to: To) {
         match &e.kind {
             E::Local(l, _) => {
@@ -365,21 +378,45 @@ impl Walk<'_, '_> {
             E::Block(b) => self.block(b, to),
             E::Match { scrutinee, arms } => {
                 self.value(scrutinee, To::Drop);
+                let from = match &scrutinee.kind {
+                    E::Local(l, _) => Some(self.local(*l)),
+                    _ => None,
+                };
                 for a in arms {
-                    self.bind(&a.pat);
+                    self.bind_from(&a.pat, from);
                     if let Some(g) = &a.guard {
                         self.value(g, To::Drop);
                     }
                     self.value(&a.body, to);
                 }
             }
+            // A generic function value converted to another type may be called where the walk
+            // doesn't see it (`super::generic_closures`).
+            E::Cast(x) | E::Upcast(x) | E::Downcast(x) => {
+                self.g.dyn_calls.escape(self.cx, x.ty);
+                self.value(x, to)
+            }
+            // A value made a dynamic one (`any`, `unknown`, `object`): a dynamic call may reach
+            // what it holds (`super::generic_closures`). A generic function value's own `ToDyn`
+            // (its interface) is no conversion.
+            E::ToDyn { expr: x, .. } => {
+                if !super::types::mentions_dynamic(self.cx, e.ty) {
+                    return self.value(x, to);
+                }
+                self.g.dyn_calls.escape(self.cx, x.ty);
+                // Only into a dynamic type itself: an interface whose type arguments mention one
+                // (`AsyncIterator<T, unknown>`) doesn't make the value a dynamic one. Nor does a
+                // function's conversion, unless it makes what the function returns dynamic
+                // (`() => Job` as `() => unknown`): then the function value is what is made dynamic.
+                let returns = super::types::returns_newly_dynamic(self.cx, x.ty, e.ty);
+                if !returns && !super::types::is_dynamic(self.cx, e.ty) {
+                    return self.value(x, to);
+                }
+                self.made_dynamic(x, e.span, Some(e.ty), to);
+            }
             E::WrapSome(x)
-            | E::Cast(x)
-            | E::Upcast(x)
-            | E::Downcast(x)
             | E::UnwrapSome(x, _)
             | E::Await(x)
-            | E::ToDyn { expr: x, .. }
             | E::UnwrapVariant { expr: x, .. } => self.value(x, to),
             E::Logical { lhs, rhs, .. } => {
                 self.value(lhs, to);
@@ -460,7 +497,9 @@ impl Walk<'_, '_> {
                 self.value(rhs, To::Drop);
                 self.unknown(e, to);
             }
-            E::Throw(x) => self.value(x, STORE),
+            // A thrown value may be caught as an `unknown` anywhere up the calls (`catch (e)`, a
+            // rejected promise's `catch`): made a dynamic value (#2865).
+            E::Throw(x) => self.made_dynamic(x, e.span, None, STORE),
             // A `ConstArray`'s elements are literals, which flow nowhere (as an `ArrayLit`'s).
             E::FnRef(d, targs) => {
                 self.g.fn_values.push((*d, e.ty));
@@ -582,6 +621,9 @@ impl Walk<'_, '_> {
                     library: self.library,
                     only: cell.then_some(self.d),
                 });
+                if let To::Node(m, _) = to {
+                    self.g.call_results.insert(m, callee);
+                }
                 self.unknown(e, to);
             }
             Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
@@ -600,6 +642,25 @@ impl Walk<'_, '_> {
                     self.g.seeds.push((n, STORED, None));
                     nodes.push(Some(n));
                 }
+                if let (
+                    Callee::Dyn {
+                        slot,
+                        method_type_args,
+                    },
+                    Some(r),
+                ) = (callee, args.first())
+                {
+                    (self.g.dyn_calls).call(self.cx, self.d, r.ty, *slot, method_type_args);
+                }
+                if let Callee::ParamMethod {
+                    iface,
+                    slot,
+                    method_type_args,
+                    ..
+                } = callee
+                {
+                    (self.g.dyn_calls).bounded(*iface, self.d, *slot, method_type_args);
+                }
                 let targets = super::unknown_callees::dispatch_targets(self.cx, callee, args);
                 self.g
                     .dispatched_calls
@@ -611,6 +672,29 @@ impl Walk<'_, '_> {
     }
 
     fn intrinsic(&mut self, e: &Expr, i: Intrinsic, args: &[Expr], to: To) {
+        // A generic function value going into `any` (or copied by a spread) may be called where
+        // the walk doesn't see it (`super::generic_closures`).
+        if matches!(i, Intrinsic::ToAny | Intrinsic::SpreadObject) {
+            for a in args {
+                self.g.dyn_calls.escape(self.cx, a.ty);
+            }
+        }
+        // What only inspects a borrowed `any` (`typeof x`, `x === y`, `Array.isArray(x)`) keeps
+        // nothing: a value converted to `any` for it is read here, not made a dynamic value.
+        if dynamic::inspects_only(i) {
+            for a in args {
+                match &a.kind {
+                    E::ToDyn { expr: x, .. } => self.value(x, To::Drop),
+                    _ => self.value(a, To::Drop),
+                }
+            }
+            return self.unknown(e, to);
+        }
+        // A share of the value as an `any` (kept, as other intrinsics' arguments are).
+        if let (Intrinsic::ToAny, [x]) = (i, args) {
+            self.made_dynamic(x, e.span, Some(e.ty), STORE);
+            return self.unknown(e, to);
+        }
         let boundary = match i {
             Intrinsic::Share | Intrinsic::Clone => {
                 if let Some((x, rest)) = args.split_first() {

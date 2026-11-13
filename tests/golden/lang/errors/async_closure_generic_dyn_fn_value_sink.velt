@@ -1,0 +1,29 @@
+// #2862 review round 7 (t02). `relay` is called directly with a local runner (so its parameter `f`
+// looks traced) and also through a function value with the static sink and `job`. Unsound.
+import { channel } from "velt/sync";
+type Job = () => Promise<void>;
+type Sink = (j: Job) => void;
+const ch = channel<Job>(4);
+class Hooks {
+  static sink: Sink = (j: Job) => {
+    void ch.send(j);
+  };
+}
+function relay(f: Sink, j: Job): void {
+  f(j);
+}
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  relay((j: Job): void => {
+    void j();
+  }, async () => {
+    console.log("safe");
+  });
+  const r: (f: Sink, j: Job) => void = relay;
+  r(Hooks.sink, job);
+  await sleep(10);
+  console.log(`n ${n}`);
+}

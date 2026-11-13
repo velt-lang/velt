@@ -210,6 +210,9 @@ fn report(
         ),
     };
     let mut d = Diagnostic::error(msg, at).with_label(x.at, x.label.clone());
+    if let Some(made) = x.made_dyn {
+        d = d.with_label(made, "made a dynamic value here");
+    }
     if let Some(s) = site {
         d = d.with_label(s.span, format!("stored here: {}", s.text));
     }

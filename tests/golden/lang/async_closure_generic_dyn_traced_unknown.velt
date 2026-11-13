@@ -1,0 +1,27 @@
+import { channel } from "velt/sync";
+
+// A crossing value of a dynamic type whose values the flow graph traces holds only those (#2865):
+// a logging task receives `unknown` messages, and only strings are sent; the job kept in a
+// `Map<string, unknown>` of handlers is called on this task only, so it is accepted.
+type Job = () => Promise<void>;
+async function main() {
+  let n = 0;
+  const log = channel<unknown>(8);
+  const logger = spawn(
+    (async () => {
+      for await (const m of log) {
+        console.log(m);
+      }
+    })(),
+  );
+  const handlers = new Map<string, unknown>();
+  const job: Job = async () => {
+    n++;
+  };
+  handlers.set("job", job);
+  await (handlers.get("job") as Job)();
+  const msg: unknown = `ran ${n}`;
+  await log.send(msg);
+  log.close();
+  await logger;
+}

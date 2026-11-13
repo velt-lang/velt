@@ -1,0 +1,31 @@
+// A bounded call of an implementation's generic method (`r.read<Job>(j)` with `R extends Reader`)
+// gives the method its type arguments, as a call through the interface does (#2860): the job
+// that modifies what it captured reaches the spawn, and is refused.
+type Job = () => Promise<void>;
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+interface Reader {
+  read<T>(x: T): void;
+}
+interface Engine {
+  run: <T>(x: T) => void;
+}
+class RC implements Reader {
+  read<T>(x: T): void {
+    keepAndSpawn<T>(x);
+  }
+}
+function useR<R extends Reader>(r: R, j: Job): void {
+  r.read<Job>(j);
+}
+async function main() {
+  let d = 0;
+  useR(new RC(), async () => {
+    d++;
+  });
+}

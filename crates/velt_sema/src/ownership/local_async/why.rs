@@ -43,26 +43,39 @@ pub(super) struct Why {
     pub depth: u8,
     /// `shared(...)` of a value holding the function, not of the function itself.
     pub in_value: bool,
+    /// The value was made a dynamic one at this conversion, to this type (`Graph::dynamic`; none:
+    /// thrown, and caught as one), and crosses because a value of a dynamic type does (#2865).
+    pub made_dyn: Option<(Span, Option<TyId>)>,
 }
 
 impl Why {
     /// The order in which reasons are preferred: one in user code, the earliest, and between
-    /// two at one place the holder whose name sorts first, so that the choice never depends on
-    /// how types happen to be numbered.
-    pub(super) fn rank(&self, cx: &crate::ctx::Ctx) -> (bool, u32, u32, u8, String) {
+    /// two at one place one that doesn't go through a dynamic value (the more direct), then the
+    /// holder whose name sorts first, so that the choice never depends on how types happen to be
+    /// numbered.
+    pub(super) fn rank(&self, cx: &crate::ctx::Ctx) -> (bool, u32, u32, u8, bool, String) {
         let via = self.via.map(|t| cx.display(t)).unwrap_or_default();
         (
             self.library,
             self.span.file.0,
             self.span.lo,
             self.depth,
+            self.made_dyn.is_some(),
             via,
         )
     }
 
     /// `self.rank(cx) < other.rank(cx)`, naming the holders only when the rest is equal.
     pub(super) fn before(&self, other: &Why, cx: &crate::ctx::Ctx) -> bool {
-        let key = |w: &Why| (w.library, w.span.file.0, w.span.lo, w.depth);
+        let key = |w: &Why| {
+            (
+                w.library,
+                w.span.file.0,
+                w.span.lo,
+                w.depth,
+                w.made_dyn.is_some(),
+            )
+        };
         match key(self).cmp(&key(other)) {
             std::cmp::Ordering::Equal if self.via != other.via => self.rank(cx) < other.rank(cx),
             o => o.is_lt(),
@@ -113,4 +126,16 @@ impl Why {
             false => self,
         }
     }
+}
+
+/// May the crossing types of `w` (the function types a value crossing there holds) stand for
+/// closure literal `c` stored in the heap? A library's closures, yes. The program's closures only
+/// when `w` is in the program: a boundary inside a library (`w.library`) reaches what the program
+/// hands to the library through the graph, as a value passed at the program's call into it
+/// ([`Why::step`]), and the types of what the library makes there itself only hold the
+/// library's own closures. Matching those by shape alone would make every program closure stored
+/// in a `(() => void) | null` cross once a library spawns anything holding such a field (fetch's
+/// HTTP/2 session and its `onClose`).
+pub(super) fn heap_reaches(cx: &crate::ctx::Ctx, w: &Why, c: crate::hir::DefId) -> bool {
+    !w.library || cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
 }

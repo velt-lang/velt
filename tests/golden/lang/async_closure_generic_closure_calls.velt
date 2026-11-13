@@ -1,0 +1,52 @@
+// check: no leaks
+// A generic closure's calls through its generic function type give its instantiations (#2860):
+// `keepAndSpawn<T>` called from one with `T` a number spawns a number, not a closure, so the
+// counter's closure, which modifies what it captured, stays on this task. Also through a generic
+// method of an object type (an engine built at module level, as sigx's `defaultAsyncEngine`),
+// which forwards to its generic closure. Node prints the same.
+
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+
+interface Engine {
+  run: <T>(x: T) => void;
+}
+
+interface Reader {
+  read<T>(x: T): void;
+}
+
+const defaultReader: Reader = {
+  read<T>(x: T): void {
+    keepAndSpawn<T>(x);
+  },
+};
+
+class Counter {
+  bump: () => Promise<void> = async () => {};
+}
+
+function makeCounter(): Counter {
+  let runs = 0;
+  const c = new Counter();
+  c.bump = async (): Promise<void> => {
+    runs++;
+    console.log(`run ${runs}`);
+  };
+  return c;
+}
+
+async function main() {
+  const engine: Engine = { run: <T>(x: T): void => keepAndSpawn<T>(x) };
+  const c = makeCounter();
+  await c.bump();
+  engine.run<number>(1);
+  await sleep(10);
+  defaultReader.read<string>("s");
+  await sleep(10);
+}

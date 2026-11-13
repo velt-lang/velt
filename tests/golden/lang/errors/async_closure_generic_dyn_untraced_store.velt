@@ -1,0 +1,29 @@
+// A value made dynamic where the flow graph has no source for it (#2865): a generic closure,
+// called only through its generic function type, pushes its `T` into a module-level `unknown[]`,
+// which another function spawns. `T` is a `Job` in its instantiation, so the job that modifies
+// what it captured crosses, and is refused.
+type Job = () => Promise<void>;
+const KEPT: unknown[] = [];
+interface Engine {
+  run: <T>(x: T) => void;
+}
+function drain(): void {
+  for (const k of KEPT) {
+    spawn(async () => {
+      console.log(typeof k);
+    });
+  }
+}
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  const engine: Engine = {
+    run: <T>(x: T): void => {
+      KEPT.push(x);
+    },
+  };
+  engine.run<Job>(job);
+  drain();
+}

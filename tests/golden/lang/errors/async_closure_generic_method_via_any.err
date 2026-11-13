@@ -1,0 +1,1 @@
+async_closure_generic_method_via_any.velt:28:5: error: this async closure modifies captured `f`, so it must stay on the task that created it

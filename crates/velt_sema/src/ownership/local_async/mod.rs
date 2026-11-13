@@ -49,8 +49,11 @@ mod call_sites;
 mod callbacks;
 mod changes;
 mod fed;
+mod generic_closures;
 mod graph;
+mod instances;
 mod keyed;
+mod labels;
 mod reach;
 mod record;
 mod targets;
@@ -65,10 +68,12 @@ use rustc_hash::FxHashMap;
 use velt_common::Diagnostic;
 
 use crate::ctx::Ctx;
-use crate::defs::FnKind;
 use crate::hir::{Def, DefId, TyId, TyKind};
 
 use graph::{Boundary, Graph, Node, Why, CROSSES, STORED};
+use instances::instances;
+pub(in crate::ownership::local_async) use labels::{reaches, with_why};
+use why::heap_reaches;
 
 pub(crate) use changes::check_crossing_changes;
 pub(crate) use record::record_changed_captures;
@@ -80,6 +85,8 @@ pub(crate) struct Crossing {
     pub closure: DefId,
     pub at: velt_common::Span,
     pub label: String,
+    /// Where the closure was made a dynamic value, when that is why it crosses (`Why::made_dyn`).
+    pub made_dyn: Option<velt_common::Span>,
 }
 
 /// Decide which async closures are local, mark them (`FnDef::shares_captures`), and report the
@@ -88,7 +95,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     cx.crossing_callbacks.clear();
     cx.in_shared.clear();
     let g = graph::build(cx);
-    let mut p = Propagation::new(&g);
+    let mut p = Propagation::new(cx, &g);
     for &(n, f, why) in &g.seeds {
         p.set(n, f, why);
     }
@@ -96,13 +103,16 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
     let mut resolved = 0;
+    let mut dyn_done = 0;
+    // The classes below each class, for the heap rule's walk of crossing types.
+    let below = types::subclass_map(cx);
     // The types a stored closure literal's type has in its function's instantiations, by the
     // function and the type.
     let mut lit_insts: FxHashMap<(DefId, TyId), Vec<TyId>> = FxHashMap::default();
     loop {
         p.run(cx, &g);
         resolve_hits(cx, &g, &mut p, &mut resolved);
-        types::crossing_fns(cx, &p.roots[rooted..], &mut seen, &mut fns);
+        types::crossing_fns(cx, &p.roots[rooted..], &below, &mut seen, &mut fns);
         rooted = p.roots.len();
         let mut changed = false;
         for (n, node) in g.nodes.iter().enumerate() {
@@ -157,6 +167,49 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             }
         }
         changed |= call_sites::crossing_params(cx, &g, &mut p);
+        if changed {
+            continue;
+        }
+        // Once nothing else changes: the untraced inputs of the conversions that cross
+        // (`Propagation::untraced`), resolved by their types. After the program's flow, so that a
+        // value it reaches by a direct path keeps that reason.
+        if !p.untraced.is_empty() {
+            let queued = std::mem::take(&mut p.untraced);
+            p.hits.extend(queued);
+            continue;
+        }
+        // Once nothing else changes: a crossing value of a dynamic type takes what was made
+        // dynamic with it (#2865). Last, so that a value that crosses by a more direct path keeps
+        // that reason (a node keeps the first one it gets).
+        loop {
+            if p.dynamic.len() == dyn_done {
+                break;
+            }
+            changed = true;
+            // The first reason of the batch, or one that ranks before it: a node keeps the first
+            // reason it gets, so one is enough.
+            let mut best = p.dynamic[dyn_done];
+            for w in &p.dynamic[dyn_done + 1..] {
+                if w.before(&best, cx) {
+                    best = *w;
+                }
+            }
+            dyn_done = p.dynamic.len();
+            for d in &g.dynamic {
+                let n = d.node;
+                if p.flags[n] & CROSSES != 0 {
+                    continue;
+                }
+                let w = Why {
+                    via: None,
+                    made_dyn: Some((d.span, d.ty)),
+                    ..best
+                };
+                p.set(n, CROSSES, Some(w));
+            }
+            p.run(cx, &g);
+            resolve_hits(cx, &g, &mut p, &mut resolved);
+        }
         if !changed {
             break;
         }
@@ -198,6 +251,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                     closure: c,
                     at: w.span,
                     label,
+                    made_dyn: w.made_dyn.map(|(s, _)| s),
                 });
             }
         }
@@ -219,6 +273,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                     closure: c,
                     at: w.span,
                     label,
+                    made_dyn: w.made_dyn.map(|(s, _)| s),
                 });
             }
         }
@@ -239,18 +294,6 @@ fn lit_matches(cx: &Ctx, wrapped: Option<TyId>, sync: bool, l: TyId, t: TyId) ->
         None if sync => !types::mentions_param(cx, t) && types::may_be(cx, l, t),
         None => types::may_be(cx, l, t),
     }
-}
-
-/// May the crossing types of `w` (the function types a value crossing there holds) stand for
-/// closure literal `c` stored in the heap? A library's closures, yes. The program's closures only
-/// when `w` is in the program: a boundary inside a library (`w.library`) reaches what the program
-/// hands to the library through the graph, as a value passed at the program's call into it
-/// ([`Why::step`]), and the types of what the library makes there itself only hold the
-/// library's own closures. Matching those by shape alone would make every program closure stored
-/// in a `(() => void) | null` cross once a library spawns anything holding such a field (fetch's
-/// HTTP/2 session and its `onClose`).
-fn heap_reaches(cx: &Ctx, w: &Why, c: DefId) -> bool {
-    !w.library || cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
 }
 
 /// The crossing values of a generic type found since `done` (`Graph::wild`, `Graph::generic_roots`):
@@ -293,11 +336,22 @@ fn resolve_hits(cx: &mut Ctx, g: &Graph, p: &mut Propagation, done: &mut usize) 
 }
 
 /// What a crossing value of type `t` (an instantiation of a generic one) carries: `t` itself,
-/// for the heap rule, or any closure when `t` is still generic.
+/// for the heap rule, any closure when `t` is still generic, and what the program made dynamic
+/// when `t` mentions a dynamic type.
 fn push_instance(cx: &Ctx, p: &mut Propagation, t: TyId, w: Why) {
+    // A type parameter may hold any closure; a dynamic type (`unknown`, `any`, `object`,
+    // `Function`) what the program made dynamic (#2865: `keepAndSpawn<unknown>(job)`).
     if types::mentions_param(cx, t) {
         // Its type, a type parameter, says nothing to the reader: the label names the boundary.
         p.wild.push(w);
+    } else if types::mentions_dynamic(cx, t) {
+        // A dynamic type holds what the program made dynamic (`Graph::dynamic`), not every type
+        // and closure there is; the rest of the type (`Box<unknown>`) is as any other. A bare
+        // `unknown` or `any` has no rest: as a heap root it would reach every type there is.
+        p.dynamic.push(w);
+        if !types::is_dynamic(cx, t) {
+            p.roots.push((t, w));
+        }
     } else {
         p.roots.push((t, w));
     }
@@ -354,65 +408,6 @@ fn outermost(g: &Graph, mut c: DefId) -> DefId {
         hops += 1;
     }
     c
-}
-
-/// The types closure literal `c` (of type `ty`) has in the instantiations of the generic
-/// function that creates it: `(value: T) => void` in `withResolvers<T>` is `(value: Job) =>
-/// void` where the program calls `withResolvers<Job>()`. Generic parameters of callers that
-/// are generic themselves are followed to their own callers; where that gives no answer (or too
-/// many), the generic type itself, whose parameters match anything; a generic library function
-/// the program never calls gives none.
-fn instances(cx: &mut Ctx, g: &Graph, c: DefId, ty: TyId) -> Vec<TyId> {
-    let mut owner = c;
-    let mut hops = 0;
-    while let (Some(&p), true) = (g.parent.get(&owner), hops < 64) {
-        owner = p;
-        hops += 1;
-    }
-    let mut out = vec![];
-    let mut work = vec![(owner, ty, 0)];
-    while let Some((f, t, depth)) = work.pop() {
-        let mut params = vec![];
-        crate::types::collect_params(&cx.ty, t, &mut params);
-        if params.is_empty() {
-            out.push(t);
-            continue;
-        }
-        let sites = g.insts.get(&f).cloned().unwrap_or_default();
-        // A generic library function that the program never calls directly
-        // makes no such closure (its methods are called with their type arguments too). Nor
-        // does a generic function declared in the program that nothing calls directly or holds
-        // as a value (`computed`'s implementation where only its overloads are called, and they
-        // are not). Never a method or a closure: a method may be called through dispatch, and a
-        // generic closure through its generic function type (the wrapper behind `relay#value`
-        // where `const mk = relay; mk<Job>(…)`), which name no type arguments here.
-        let library = cx.try_fn(f).is_some_and(|i| cx.scopes[i.module].is_library);
-        // Only where `f` has type parameters of its own: a closure literal placed at several
-        // sites (a struct field's default) may have its type from a generic one and `f` from
-        // another, which names no type parameters.
-        let free = matches!(&cx.defs[f.0 as usize], Some(Def::Fn(fd)) if fd.self_ty.is_none() && fd.generics > 0)
-            && cx.try_fn(f).is_some_and(|i| i.kind == FnKind::Free);
-        if sites.is_empty() && (library || (free && !g.held.referenced.contains(&f))) {
-            continue;
-        }
-        if sites.is_empty() || depth > 4 || out.len() + work.len() > 64 {
-            out.push(t);
-            continue;
-        }
-        for (caller, targs) in sites {
-            let mut caller_owner = caller;
-            let mut hops = 0;
-            while let (Some(&p), true) = (g.parent.get(&caller_owner), hops < 64) {
-                caller_owner = p;
-                hops += 1;
-            }
-            let s = cx.subst(t, &targs);
-            work.push((caller_owner, s, depth + 1));
-        }
-    }
-    out.sort_by_key(|t| t.0);
-    out.dedup();
-    out
 }
 
 /// A sync closure handed to a standard-library function that runs it on other threads (a
@@ -505,8 +500,7 @@ fn report_atomics(cx: &mut Ctx, c: DefId, why: Option<Why>, plain: bool) {
             at,
         );
         if let Some(w) = why {
-            let label = reaches(cx, &w);
-            d = d.with_label(w.span, label);
+            d = with_why(cx, d, &w);
         }
         cx.error(d.with_note(format!(
             "{}, and changes to the copy's atomics would not reach `{name}`: share it so every task changes the same atomics: `const {name} = shared(new {tn}(…))`",
@@ -540,36 +534,9 @@ fn report_generators(cx: &mut Ctx, c: DefId, why: Option<Why>) {
             at,
         );
         if let Some(w) = why {
-            let label = reaches(cx, &w);
-            d = d.with_label(w.span, label);
+            d = with_why(cx, d, &w);
         }
         cx.error(d.with_note("such a closure copies what it captured for each call, and a generator's suspended state cannot be copied: create the generator inside the closure, or keep the closure on the task that created it"));
-    }
-}
-
-/// The label naming where a non-local closure leaves its task.
-pub(in crate::ownership::local_async) fn reaches(cx: &Ctx, w: &Why) -> String {
-    let place = match w.boundary {
-        // The `spawn` is in a library: the program's call hands the value to it.
-        Boundary::Spawn if w.in_library => {
-            "is passed here to a function that runs it on other threads"
-        }
-        Boundary::Spawn => "reaches `spawn` here",
-        Boundary::Shared => "reaches `shared(...)` here",
-        Boundary::Mutex => "is put in a `Mutex` here, which other threads may lock",
-        Boundary::Channel => "is sent on a channel here",
-        Boundary::Settle => "settles a promise here, which another task may await",
-    };
-    match w.via {
-        Some(t) => {
-            let shown = cx.display(t);
-            let article = match shown.chars().next() {
-                Some(c) if "AEIOUaeiou".contains(c) => "an",
-                _ => "a",
-            };
-            format!("but it is stored in {article} `{shown}`, which {place}")
-        }
-        None => format!("but it {place}"),
     }
 }
 
@@ -593,10 +560,26 @@ struct Propagation {
     /// function, the type and why, to resolve through the function's instantiations
     /// ([`resolve_hits`]).
     hits: Vec<(DefId, TyId, Why)>,
+    /// Why a crossing value of a dynamic type crosses: what the program made dynamic crosses with
+    /// it (`Graph::dynamic`).
+    dynamic: Vec<Why>,
+    /// The untraced inputs of conversions that cross (`DynConv::untraced`), as `hits`, queued
+    /// until the program's flow is done.
+    untraced: Vec<(DefId, TyId, Why)>,
+    /// How many times a node started to cross or got a shallower reason, and how many when
+    /// `call_sites::crossing_params` last looked: it has nothing new to match while that stays.
+    crossing: usize,
+    params_seen: Option<usize>,
 }
 
 impl Propagation {
-    fn new(g: &Graph) -> Self {
+    fn new(cx: &Ctx, g: &Graph) -> Self {
+        // A value of unknown origin that crosses where it is read (`Graph::roots`) and is of a
+        // dynamic type holds what was made dynamic.
+        let dynamic = (g.roots.iter())
+            .filter(|(t, _)| types::dynamic_root(cx, *t))
+            .map(|&(_, w)| w)
+            .collect();
         Propagation {
             flags: vec![0; g.nodes.len()],
             why: vec![None; g.nodes.len()],
@@ -605,6 +588,10 @@ impl Propagation {
             roots: g.roots.clone(),
             wild: vec![],
             hits: g.generic_roots.clone(),
+            dynamic,
+            untraced: vec![],
+            crossing: 0,
+            params_seen: None,
         }
     }
 
@@ -627,6 +614,9 @@ impl Propagation {
                 if old.library && new.library && new.depth < old.depth {
                     self.why[n] = Some(new);
                     self.work.push((n, f));
+                    // A shallower reason may step out of the library where the deeper one
+                    // didn't (`Why::step`): `call_sites::crossing_params` has something new.
+                    self.crossing += 1;
                 }
             }
             return;
@@ -634,6 +624,7 @@ impl Propagation {
         self.flags[n] |= f;
         if f == CROSSES {
             self.why[n] = why;
+            self.crossing += 1;
         }
         self.work.push((n, f));
     }
@@ -700,11 +691,44 @@ impl Propagation {
         if rooted && !matches!(g.nodes[n], Node::Lit(_)) {
             self.roots.push((ty, w));
         }
+        if let (CROSSES, Node::Dyn(k)) = (f, g.nodes[n]) {
+            let d = g.dynamic[k as usize];
+            // What the graph can't trace into the conversion (`DynConv::untraced`) is resolved by
+            // its type, as a generic value is: `KEPT.push(x)` with `x: T` in a generic closure
+            // instantiated with `Job` carries a `Job`. Whatever the conversion crosses for, once
+            // the program's flow is done (`Propagation::untraced`).
+            if d.untraced {
+                let w = match w.made_dyn {
+                    Some(_) => w,
+                    None => Why {
+                        via: None,
+                        made_dyn: Some((d.span, d.ty)),
+                        ..w
+                    },
+                };
+                self.untraced.push((d.owner, d.from, w));
+            }
+            // A dynamic value made from what a function value returned: the function crosses
+            // with it.
+            if let Some(&c) = g.dyn_callee.get(&n) {
+                self.set(c, CROSSES, Some(w));
+            }
+        }
+        // A crossing value of a dynamic type that the graph can't trace (`for (const k of KEPT)`
+        // over an `unknown[]`) holds what was made dynamic (#2865); one it traces crosses where
+        // its values come from instead.
+        let untraced = g.unknown[n] || g.std_fed.binary_search(&n).is_ok();
+        if f == CROSSES && untraced && types::dynamic_root(cx, ty) {
+            self.dynamic.push(w);
+        }
         // What flowed in from places the graph does not follow, with the types it had there:
         // a generic parameter's node gets its callers' concrete types.
         for &(t, site) in &g.inflows[n] {
             if let (true, Some(w)) = (f == CROSSES && t != ty, w.step(false, site)) {
                 self.roots.push((t, w));
+                if types::dynamic_root(cx, t) {
+                    self.dynamic.push(w);
+                }
             }
         }
     }
@@ -730,8 +754,7 @@ fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
             at,
         );
         if let Some(w) = why {
-            let label = reaches(cx, &w);
-            d = d.with_label(w.span, label);
+            d = with_why(cx, d, &w);
         }
         let runs = match why.map(|w| w.boundary) {
             Some(Boundary::Spawn) => "the spawned task runs it on another thread",
