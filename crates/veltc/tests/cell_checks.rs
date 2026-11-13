@@ -229,10 +229,8 @@ fn std_white_box(name: &str, src: &str, threads: &str) -> (Option<i32>, String) 
 const ABORTED: &str = "(exit code 134)";
 
 /// #2832: std's check (sched_cells.velt) stops a program whose second task uses a cell another
-/// task owns, with the runtime's message, after what it printed. White-box, from a copy of std,
-/// under the default executor: a std test file importing the executor's hook modules doesn't
-/// build under `VELT_SCHEDULER=std` yet (#2875), and there `taskId()` gives the runtime's ids, so
-/// the hooks run as under std, keyed by the runtime's tasks.
+/// task owns, with the runtime's message, after what it printed. White-box, from a copy of std:
+/// the executor in Velt's tasks are named by their ids (`task 1 (on worker 0)`).
 #[test]
 fn std_check_stops_a_second_task_using_a_cell() {
     if !cfg!(debug_assertions) || !cfg!(unix) {
@@ -266,9 +264,9 @@ describe("the cell check", () => {
         );
         assert!(!out.contains("not reached"), "T{threads}: {out}");
         for part in [
-            "velt debug-cells: captured variable `läst` was used by two tasks: it belongs to \
-             runtime task ",
-            "(on a thread outside the workers), and runtime task ",
+            "velt debug-cells: captured variable `läst` was used by two tasks: it belongs to task ",
+            "(on worker ",
+            "), and task ",
             "used it too. A closure that assigns a variable it captured was shared with another \
              task or HTTP request instead of copied",
         ] {
@@ -310,9 +308,8 @@ describe("the cell check", () => {
         assert!(out.contains("guarded\n"), "T{threads}: {out}");
         assert!(!out.contains("not reached"), "T{threads}: {out}");
         for part in [
-            "velt debug-cells: captured variable `hits` is shared through module state, and \
-             runtime task ",
-            "(on a thread outside the workers) used it without the module lock",
+            "velt debug-cells: captured variable `hits` is shared through module state, and task ",
+            ") used it without the module lock",
         ] {
             assert!(out.contains(part), "T{threads}: {part:?} not in {out}");
         }
