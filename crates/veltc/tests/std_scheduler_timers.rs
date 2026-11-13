@@ -476,10 +476,12 @@ fn output_reaches_a_pipe_before_the_worker_sleeps() {
     assert_eq!(line.trim(), "started");
 }
 
-/// The goldens of Node timers under tasks on several workers (tests/golden/std, run by the golden
-/// suite with the runtime's executor) under the executor in Velt: one order for the process
-/// whichever worker sets or steps it, and a busy task's timers held back without holding back the
-/// others'. Built once each, run five times with `VELT_THREADS=4` and with 2.
+/// The programs of Node timers under tasks on several workers under the executor in Velt: one
+/// order for the process whichever worker sets or steps it, and a busy task's timers held back
+/// without holding back the others'. Two are goldens (tests/golden/std, run by the golden suite
+/// with the runtime's executor too); `timer_order_tasks` is not (std_timer_programs/), since the
+/// runtime's executor keeps no order for the process. Built once each, run five times with
+/// `VELT_THREADS=4` and with 2.
 #[test]
 fn timer_goldens_run_in_node_order_on_several_workers() {
     if !std_builds_here() {
@@ -487,14 +489,16 @@ fn timer_goldens_run_in_node_order_on_several_workers() {
     }
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
-    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
-    for name in [
-        "timer_order_tasks",
-        "timer_spawned_busy",
-        "timer_spawned_busy_first",
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let golden = manifest.join("../../tests/golden/std");
+    let programs = manifest.join("tests/std_timer_programs");
+    for (dir_of, name) in [
+        (&programs, "timer_order_tasks"),
+        (&golden, "timer_spawned_busy"),
+        (&golden, "timer_spawned_busy_first"),
     ] {
-        let src = std::fs::read_to_string(golden.join(format!("{name}.velt"))).unwrap();
-        let want = std::fs::read_to_string(golden.join(format!("{name}.out")))
+        let src = std::fs::read_to_string(dir_of.join(format!("{name}.velt"))).unwrap();
+        let want = std::fs::read_to_string(dir_of.join(format!("{name}.out")))
             .unwrap()
             .replace("\r\n", "\n");
         let (out, _) = build_and_run_on(dir.path(), name, &src, 0, "4");
