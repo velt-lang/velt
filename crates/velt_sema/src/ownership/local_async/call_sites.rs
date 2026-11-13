@@ -103,6 +103,39 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
             }
         }
     }
+    // A closure made where no body the graph walks makes it (a static field's or an imported
+    // module's initializer) has no literal node, and its calls aren't known: a parameter of it
+    // that crosses makes the matching argument of every call of its type cross.
+    for (i, node) in g.nodes.iter().enumerate() {
+        let Node::Local(c, local) = *node else {
+            continue;
+        };
+        if p.flags[i] & CROSSES == 0 || g.ids.contains_key(&Node::Lit(c)) {
+            continue;
+        }
+        if cx
+            .try_fn(c)
+            .is_none_or(|fi| fi.kind != crate::defs::FnKind::Closure)
+        {
+            continue;
+        }
+        let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+            continue;
+        };
+        let declared = &f.params[f.captures.len().min(f.params.len())..];
+        let Some(k) = declared.iter().position(|p| p.local == local) else {
+            continue;
+        };
+        let params: Vec<_> = declared.iter().map(|p| p.ty).collect();
+        let (ret, never) = (f.ret, cx.ty.never);
+        let ty = cx.ty.intern(crate::hir::TyKind::FnPtr {
+            params,
+            ret,
+            throws: never,
+            rest: false,
+        });
+        found.push((ty, k, p.why[i], c, None));
+    }
     for (ty, k, why, c, reached) in found {
         for call in &g.indirect {
             // A call through a variable holding only closures of one function

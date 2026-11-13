@@ -22,10 +22,11 @@ use velt_common::Span;
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo};
 use crate::hir::{
-    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, PatKind, Stmt,
-    StmtKind as S, TyId,
+    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Stmt, StmtKind as S,
+    TyId,
 };
 
+mod bind;
 mod dynamic;
 
 use super::call_sites::{Held, Indirect};
@@ -360,28 +361,6 @@ impl Walk<'_, '_> {
     }
 
     /// Pattern bindings hold parts of a value: an origin the graph does not follow.
-    fn bind(&mut self, p: &Pat) {
-        match &p.kind {
-            PatKind::Binding(l, _) => {
-                let n = self.local(*l);
-                self.g.unknown[n] = true;
-            }
-            PatKind::Variant { args, .. } | PatKind::Tuple(args) | PatKind::Or(args) => {
-                args.iter().for_each(|a| self.bind(a))
-            }
-            PatKind::Adt { fields } => fields.iter().for_each(|(_, a)| self.bind(a)),
-            PatKind::Array { elems, rest } => {
-                elems.iter().for_each(|a| self.bind(a));
-                if let Some(l) = rest {
-                    let n = self.local(*l);
-                    self.g.unknown[n] = true;
-                }
-            }
-            PatKind::Some(a) => self.bind(a),
-            PatKind::Wildcard | PatKind::Lit(_) | PatKind::None | PatKind::InstanceOf(_) => {}
-        }
-    }
-
     fn value(&mut self, e: &Expr, to: To) {
         match &e.kind {
             E::Local(l, _) => {
@@ -397,8 +376,12 @@ impl Walk<'_, '_> {
             E::Block(b) => self.block(b, to),
             E::Match { scrutinee, arms } => {
                 self.value(scrutinee, To::Drop);
+                let from = match &scrutinee.kind {
+                    E::Local(l, _) => Some(self.local(*l)),
+                    _ => None,
+                };
                 for a in arms {
-                    self.bind(&a.pat);
+                    self.bind_from(&a.pat, from);
                     if let Some(g) = &a.guard {
                         self.value(g, To::Drop);
                     }

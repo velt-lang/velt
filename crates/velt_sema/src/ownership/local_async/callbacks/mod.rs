@@ -82,6 +82,7 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
         bodies.homes = homes(cx, g);
     }
     let mut why: Vec<Option<Why>> = vec![None; g.nodes.len()];
+    let below = types::subclass_map(cx);
     let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
     let mut rooted = 0;
@@ -112,7 +113,7 @@ pub(super) fn check_crossing_callbacks(cx: &mut Ctx, g: &Graph, flags: &[u8]) ->
                 }
             }
         }
-        types::crossing_fns(cx, &roots[rooted..], &mut seen, &mut fns);
+        types::crossing_fns(cx, &roots[rooted..], &below, &mut seen, &mut fns);
         rooted = roots.len();
         for (n, node) in g.nodes.iter().enumerate() {
             if !matches!(node, Node::Lit(_)) || flags[n] & STORED == 0 {

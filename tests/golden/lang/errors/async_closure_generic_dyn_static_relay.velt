@@ -1,0 +1,37 @@
+// A generic relay in a class's static field (#2865): `settle(x)` makes its `x: T` an `unknown`,
+// which the settle closure sends on a channel. `T` is `Job` in the relay's instantiation, so the
+// job that captures a generator crosses, and is refused.
+import { channel } from "velt/sync";
+
+async function* gen(): AsyncGenerator<string> {
+  yield "a";
+}
+
+class Job {
+  constructor(public run: () => Promise<void>) {}
+}
+
+const ch = channel<unknown>(1);
+
+function relay<T>(settle: (x: unknown) => void): (x: T) => void {
+  return (x: T) => {
+    settle(x);
+  };
+}
+
+class S {
+  static f: (x: Job) => void = relay<Job>((x: unknown) => {
+    void ch.send(x);
+  });
+}
+
+const chunks = gen();
+S.f(
+  new Job(async () => {
+    console.log((await chunks.next()).value);
+  }),
+);
+for await (const j of ch) {
+  await (j as Job).run();
+  break;
+}

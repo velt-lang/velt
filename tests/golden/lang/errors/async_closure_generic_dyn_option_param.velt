@@ -1,0 +1,23 @@
+// A `Job | null` parameter returned as `unknown` by a named function (#2865): the conversion's
+// input is a parameter, which the program's flow feeds; it crosses with the dynamic value that
+// `keepAndSpawn<unknown>` spawns, so the job that modifies what it captured is refused.
+type Job = () => Promise<void>;
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+function wrap(j: Job | null): unknown {
+  return j;
+}
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  keepAndSpawn<unknown>(wrap(job));
+  await sleep(10);
+  console.log(`n ${n}`);
+}
