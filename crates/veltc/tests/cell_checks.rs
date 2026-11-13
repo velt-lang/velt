@@ -25,7 +25,17 @@ fn velt_on(
     args: &[&str],
     scheduler: Option<&str>,
 ) -> std::process::Output {
-    std::fs::write(dir.path().join("main.velt"), CELL).unwrap();
+    velt_src(dir, args, scheduler, CELL)
+}
+
+/// [`velt_on`] for program `src`.
+fn velt_src(
+    dir: &test_dir::TestDir,
+    args: &[&str],
+    scheduler: Option<&str>,
+    src: &str,
+) -> std::process::Output {
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     cmd.args(args).current_dir(dir.path());
     match scheduler {
@@ -60,22 +70,49 @@ fn debug_builds_report_cells_and_release_builds_do_not() {
     assert!(!release.contains("velt_rt_cell_"), "{release}");
 }
 
+/// [`CELL`] in a program that runs on the executor (it awaits).
+const CELL_ASYNC: &str = "async function main() {
+  let last = \"\";
+  const f = (v: string) => { last = v; };
+  const fs = [f];
+  fs[0](\"a\");
+  await sleep(0);
+  console.log(last);
+}
+";
+
 /// #2832: under the executor in Velt the check is std's (std/lang/hooks/sched_cells.velt), keyed
-/// by its task ids: debug builds call its hooks instead of the runtime's, release builds neither.
+/// by its task ids: debug builds of a program that runs on it call its hooks instead of the
+/// runtime's, release builds neither. A program that runs nothing on it doesn't load the executor
+/// (#2649 P3(a)) and keeps the runtime's check.
 #[test]
 fn debug_builds_under_std_report_cells_to_std() {
     let dir = test_dir::TestDir::new();
-    let debug = velt_on(&dir, &["build", "main.velt", "--emit", "vir"], Some("std"));
+    let plain = velt_on(&dir, &["build", "main.velt", "--emit", "vir"], Some("std"));
+    let plain = String::from_utf8_lossy(&plain.stdout);
+    assert!(!plain.contains("schedCell"), "{plain}");
+    assert_eq!(
+        plain.contains("velt_rt_cell_new("),
+        cfg!(debug_assertions),
+        "{plain}"
+    );
+    let debug = velt_src(
+        &dir,
+        &["build", "main.velt", "--emit", "vir"],
+        Some("std"),
+        CELL_ASYNC,
+    );
     let debug = String::from_utf8_lossy(&debug.stdout);
     let checked = cfg!(debug_assertions);
     for hook in ["schedCellNew", "schedCellUse", "schedCellFree"] {
         assert_eq!(debug.contains(hook), checked, "{hook}:\n{debug}");
     }
     assert!(!debug.contains("velt_rt_cell_"), "{debug}");
-    let release = velt_on(
+    let release = velt_src(
         &dir,
         &["build", "--release", "main.velt", "--emit", "vir"],
         Some("std"),
+        CELL_ASYNC,
     );
     let release = String::from_utf8_lossy(&release.stdout);
     assert!(!release.contains("schedCell"), "{release}");

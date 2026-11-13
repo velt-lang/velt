@@ -34,6 +34,16 @@ impl FnLower<'_, '_> {
         velt_common::std_hooks::std_scheduler() && !self.cx.target.trim().starts_with("wasm")
     }
 
+    /// Do debug cell checks go to the executor in Velt's table (sched_cells.velt)? Only where it
+    /// runs the program and sema loaded the table: a program without tasks doesn't load the
+    /// executor (velt_sema `lazy_std` `sched_hooks`, #2649 P3(a)).
+    fn std_cells(&self) -> bool {
+        self.std_sched()
+            && (self.cx)
+                .prelude_def(velt_common::std_hook!(sched_cell_new))
+                .is_some()
+    }
+
     /// `op` (a pointer or an integer) as a `usize` argument.
     fn as_usize(&mut self, op: Operand) -> Operand {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))
@@ -158,6 +168,13 @@ impl FnLower<'_, '_> {
         {
             return Err((args, dest));
         }
+        // The cell check goes to std's table only where the executor is loaded: a program that
+        // runs nothing on it keeps the runtime's (#2649 P3(a)), its cells unchecked by task.
+        if matches!(r, Rt::CellUse | Rt::CellGive | Rt::CellCopy | Rt::CellFree)
+            && !self.std_cells()
+        {
+            return Err((args, dest));
+        }
         let ret = r.sig().2;
         if matches!(r, Rt::FutStart | Rt::FutStartRejecting | Rt::FutDetach) {
             self.cx.sched_tasks = true;
@@ -262,7 +279,7 @@ impl FnLower<'_, '_> {
     /// `velt_rt_cell_new`'s job under the executor in Velt (sched_cells.velt): the new cell `ptr`
     /// of the variable whose name is at `name` (a string's address). False (nothing emitted) for the runtime's executor.
     pub(super) fn sched_cell_new(&mut self, ptr: Operand, name: Operand) -> bool {
-        if !self.std_sched() {
+        if !self.std_cells() {
             return false;
         }
         let ptr = self.as_usize(ptr);
