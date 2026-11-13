@@ -60,8 +60,8 @@ pub struct Supervisor {
     /// When the running version started (how long it ran picks the delay of a restart after a
     /// panic).
     started: Option<Instant>,
-    /// Versions in a row that ended with [`PANIC_EXIT`] before [`RESTART_AFTER`]: each waits
-    /// twice as long before it starts again ([`restart_delay`]).
+    /// Versions in a row that ended with [`PANIC_EXIT`] before [`STABLE_RUN`]: each waits twice
+    /// as long before it starts again ([`after_panic`]).
     quick_panics: u32,
     /// Why the next rebuild runs without a change: the running version ended with this exit
     /// code (a panic, [`PANIC_EXIT`]), so the same sources start again.
@@ -75,15 +75,27 @@ pub struct Supervisor {
 /// must not leave the server down.
 const PANIC_EXIT: i32 = 101;
 
-/// A version that ran at least this long before it panicked starts again at once; one that
-/// panicked sooner (as it starts, perhaps every time) after [`restart_delay`].
-const RESTART_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
+/// A version that ran at least this long before it panicked starts again at once, and the count
+/// of quick panics starts over; one that panicked sooner (as it starts, or a second or so after,
+/// perhaps every time) waits [`restart_delay`] first, longer each time.
+const STABLE_RUN: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The longest a restart after quick panics waits.
 const MAX_RESTART_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// How long to wait before restarting after `quick` quick panics in a row (the last included):
 /// 1 s, 2 s, 4 s … up to [`MAX_RESTART_DELAY`]; none after a version that ran a while (0).
+/// After a version that ran `ran` (unknown: as short as can be) ended with [`PANIC_EXIT`],
+/// following `quick` quick panics in a row: the count from now on, and how long to wait before
+/// starting it again.
+fn after_panic(ran: Option<std::time::Duration>, quick: u32) -> (u32, std::time::Duration) {
+    if ran.is_some_and(|ran| ran >= STABLE_RUN) {
+        return (0, std::time::Duration::ZERO);
+    }
+    let quick = quick.saturating_add(1);
+    (quick, restart_delay(quick))
+}
+
 fn restart_delay(quick: u32) -> std::time::Duration {
     if quick == 0 {
         return std::time::Duration::ZERO;
@@ -479,12 +491,11 @@ impl Supervisor {
                     eprintln!("velt dev: program exited with code {code}; waiting for changes");
                     continue;
                 }
-                if ran.is_some_and(|ran| ran >= RESTART_AFTER) {
-                    self.quick_panics = 0;
+                let (quick, delay) = after_panic(ran, self.quick_panics);
+                self.quick_panics = quick;
+                if delay.is_zero() {
                     return Wake::Ended(code);
                 }
-                self.quick_panics = self.quick_panics.saturating_add(1);
-                let delay = restart_delay(self.quick_panics);
                 eprintln!(
                     "velt dev: program exited with code {code} {} ms after it started; restarting in {} s (or on a change)",
                     ran.unwrap_or_default().as_millis(),

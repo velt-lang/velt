@@ -44,6 +44,27 @@ fn files_in(dir: &Path, out: &mut Vec<PathBuf>) {
 /// A lockfile written just before `velt dev` started (`velt add`, `velt run`) was not saved
 /// during the first build: no second build follows it (#733: that build reported
 /// `hot-swapped 0 functions` after a later edit and left the old code running).
+/// A version that panics 1.2 s after each start (past a second, short of a stable run) backs off
+/// like one that panics as it starts, instead of restarting in a loop; one that ran 10 s or more
+/// restarts at once and the count starts over (#2877 review).
+#[test]
+fn a_version_panicking_soon_after_each_start_backs_off() {
+    let soon = Some(Duration::from_millis(1200));
+    let mut quick = 0;
+    let mut delays = vec![];
+    for _ in 0..7 {
+        let (q, delay) = super::after_panic(soon, quick);
+        quick = q;
+        delays.push(delay.as_secs());
+    }
+    assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30]);
+    assert_eq!(super::after_panic(None, 0), (1, Duration::from_secs(1)));
+    let stable = Some(Duration::from_secs(10));
+    assert_eq!(super::after_panic(stable, quick), (0, Duration::ZERO));
+    // The retried request that panics right after that restart costs a second.
+    assert_eq!(super::after_panic(soon, 0), (1, Duration::from_secs(1)));
+}
+
 #[test]
 fn quick_panics_restart_after_a_doubling_delay() {
     let secs = |quick| super::restart_delay(quick).as_secs();
