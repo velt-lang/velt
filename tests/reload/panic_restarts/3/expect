@@ -1,0 +1,2 @@
+action: restart
+get /count: n 1

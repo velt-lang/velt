@@ -1,0 +1,31 @@
+// A version that ends with exit code 101 (what a panic ends with, a handler's too under the
+// executor in Velt) after it has run a while is started again with no change to the sources, on
+// the same port (#2649): `/exit` answers, then ends the program. Its state starts over: `/count`
+// counts from 1 again (the harness's probe asks `/`, which counts nothing). A version that ends
+// with 101 right after it started is started again too (step 3); one that ran under 10 s waits a
+// second or more first.
+import { serve } from "http-server";
+
+let hits: number = 0;
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    // At once: right after a restart, as a retried request that panics again would.
+    if (new URL(req.url).pathname == "/exit-now") {
+      setTimeout(() => process.exit(101), 100);
+      return new Response("bye now");
+    }
+    if (new URL(req.url).pathname == "/exit") {
+      // After the answer is sent.
+      setTimeout(() => process.exit(101), 1500);
+      return new Response("bye");
+    }
+    if (new URL(req.url).pathname == "/count") {
+      hits++;
+      return new Response(`n ${hits}`);
+    }
+    return new Response("up");
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

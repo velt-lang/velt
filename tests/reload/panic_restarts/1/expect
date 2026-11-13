@@ -1,0 +1,4 @@
+action: start
+get /count: n 1
+get /count: n 2
+get /exit: bye

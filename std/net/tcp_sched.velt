@@ -7,7 +7,8 @@
 // (std/lang/hooks/sched_io.velt): their handles have the top bit set (sched_io_table.velt), and
 // every operation on such a handle runs here (std/net/fd_socket.velt, std/net/fd_io.velt), on the
 // worker, with no Rust in between. Everything else is handed to the runtime: TLS streams and
-// listeners (`connectTls`, `listenTls`: TLS in Velt over a plain stream is `startTls`), `fetch`'s
+// listeners (`connectTls`, `listenTls`: TLS in Velt over a plain stream is `startTls`), listeners
+// under `velt dev` (the supervisor hands them over, `devHandover`), `fetch`'s
 // pooled connections (`park`/`unpark`), and every socket on an OS without a reactor
 // (std/lang/hooks/reactor_none.velt). A stream of ours `park`ed for `fetch`'s keep-alive pool is
 // closed instead: the pool is the runtime's. What a runtime stream defers (`writeLater`) waits in
@@ -19,6 +20,7 @@ import { IoStatus } from "velt/native/status";
 import { stdUsed } from "velt/lang/intrinsics";
 import { moduleStateUsed } from "velt/lang/intrinsics/task";
 import { schedWorkerCount } from "velt/lang/hooks/sched";
+import { processEnv } from "velt/lang/hooks/process";
 import * as io from "velt/lang/hooks/sched_io";
 import * as tb from "velt/lang/hooks/sched_io_table";
 import * as fio from "velt/net/fd_io";
@@ -30,8 +32,18 @@ import * as lat from "velt/net/rt_later";
 declare function velt_rt_signal_aborted(s: u64): bool;
 declare async function velt_rt_signal_wait(s: u64): Promise<void>;
 
+/**
+ * Whether listeners come from `velt dev`'s supervisor (`VELT_DEV_SOCKET`, velt_rt's `dev::bind`),
+ * which keeps the socket across a restart: the runtime asks it for each one, and the listener and
+ * its streams are then the runtime's.
+ */
+function devHandover(): bool {
+  const socket = processEnv("VELT_DEV_SOCKET");
+  return socket !== undefined && socket.length > 0;
+}
+
 export async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>> {
-  if (!io.supported()) {
+  if (!io.supported() || devHandover()) {
     return await rt.velt_rt_tcp_listen(addr);
   }
   return await fs.listenOn(addr);

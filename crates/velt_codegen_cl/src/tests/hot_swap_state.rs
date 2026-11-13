@@ -34,8 +34,27 @@ struct Edit {
 /// `init` (the block's initializer) and `drop`, the descriptor pointing at them, `other` and
 /// `read`, which reach the block, `run`, which calls both, and `velt_main`, which calls `run`.
 fn program(e: Edit) -> Program {
+    program_in(e, false)
+}
+
+/// `program`, its users reaching the block as under the executor in Velt (`VELT_SCHEDULER=std`)
+/// when `std_sched`: through the std hook `schedModuleState(desc as usize, slot)` (lowered to a
+/// function of the program), which here passes them on to `velt_rt_module_state`.
+fn program_in(e: Edit, std_sched: bool) -> Program {
     let (mut pb, _) = ProgramBuilder::new();
     let state = pb.ext("velt_rt_module_state", &[Ptr, U64], Ptr, false);
+    let hook = std_sched.then(|| {
+        let symbol = velt_vir::mangle::mangle(velt_common::std_hook!(sched_module_state));
+        let mut fb = FuncBuilder::internal(&symbol, &[U64, U64], U64);
+        let (p, r, out) = (fb.local(Ptr), fb.local(Ptr), fb.local(U64));
+        let b = fb.block();
+        fb.assign(b, p, Rvalue::Cast(copy_local(fb.param(0)), Ptr));
+        let args = vec![copy_local(p), copy_local(fb.param(1))];
+        let next = fb.call(b, Callee::Extern(state), args, Some(Place::local(r)));
+        fb.assign(next, out, Rvalue::Cast(copy_local(r), U64));
+        fb.term(next, Terminator::Return(copy_local(out)));
+        pb.add(fb.finish())
+    });
     let mut fb = FuncBuilder::internal("module_init", &[Ptr], Unit);
     let b = fb.block();
     let slot = place(fb.param(0), vec![Proj::Deref(I64)]);
@@ -55,8 +74,19 @@ fn program(e: Edit) -> Program {
         let mut fb = FuncBuilder::internal(name, &[], I64);
         let p = fb.local(Ptr);
         let b = fb.block();
-        let args = vec![Operand::Const(Const::Static(desc), Ptr), int(0, U64)];
-        let next = fb.call(b, Callee::Extern(state), args, Some(Place::local(p)));
+        let next = match hook {
+            Some(hook) => {
+                let (d, r) = (fb.local(U64), fb.local(U64));
+                let addr = Operand::Const(Const::Static(desc), Ptr);
+                fb.assign(b, d, Rvalue::Cast(addr, U64));
+                let args = vec![copy_local(d), int(0, U64)];
+                fb.call(b, Callee::Func(hook), args, Some(Place::local(r)))
+            }
+            None => {
+                let args = vec![Operand::Const(Const::Static(desc), Ptr), int(0, U64)];
+                fb.call(b, Callee::Extern(state), args, Some(Place::local(p)))
+            }
+        };
         fb.term(next, Terminator::Return(int(value.into(), I64)));
         fb.finish()
     };
@@ -116,6 +146,36 @@ fn a_swap_that_keeps_the_module_state_keeps_its_block() {
         Ok(Reload::Swapped { functions: 1 })
     );
     assert_eq!(run(main), (3, vec![first, first]), "and after another swap");
+}
+
+/// Under the executor in Velt, module state goes through std hooks, which take the descriptor cast
+/// to an integer: a swap still sees the running version's block and keeps it (the reload suite's
+/// `module_state_kept` lost its state there, P2i of #2649).
+#[test]
+fn a_swap_keeps_the_block_reached_through_the_std_schedulers_hooks() {
+    let mut session = session();
+    let main = session.load(&program_in(V1, true)).expect("load").main();
+    let (rc, descs) = run(main);
+    assert_eq!(rc, 1);
+    let first = descs[0];
+    assert_eq!(descs, [first, first]);
+    let edit = Edit { read: 2, ..V1 };
+    let outcome = session.reload(&program_in(edit, true));
+    assert_eq!(outcome, Ok(Reload::Swapped { functions: 1 }));
+    assert_eq!(
+        run(main),
+        (2, vec![first, first]),
+        "the swapped `read` reaches the running block"
+    );
+    // An initializer changed: every user moves to a block of the new version's own.
+    let edit = Edit { read: 2, init: 6 };
+    assert_eq!(
+        session.reload(&program_in(edit, true)),
+        Ok(Reload::Swapped { functions: 3 })
+    );
+    let (_, descs) = run(main);
+    assert_ne!(descs[0], first);
+    assert_eq!(descs, [descs[0], descs[0]]);
 }
 
 #[test]

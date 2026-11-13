@@ -57,6 +57,59 @@ pub struct Supervisor {
     last_restarted: bool,
     /// The manifest's and lockfile's modification times when the last build started.
     manifest_seen: Vec<Option<SystemTime>>,
+    /// When the running version started (how long it ran picks the delay of a restart after a
+    /// panic).
+    started: Option<Instant>,
+    /// Versions in a row that ended with [`PANIC_EXIT`] before [`STABLE_RUN`]: each waits twice
+    /// as long before it starts again ([`after_panic`]).
+    quick_panics: u32,
+    /// Why the next rebuild runs without a change: the running version ended with this exit
+    /// code (a panic, [`PANIC_EXIT`]), so the same sources start again.
+    restart_after: Option<i32>,
+}
+
+/// What a version ends with when it panics (uncaught, or a handler's under the executor in Velt,
+/// #2718): `velt dev` starts it again, keeping its listeners (#2649's owner decision), as the
+/// default executor's server answers such a request with a 500 and goes on. Always: a request
+/// that panics right after a restart (a browser retrying the one that ended the last version)
+/// must not leave the server down.
+const PANIC_EXIT: i32 = 101;
+
+/// A version that ran at least this long before it panicked starts again at once, and the count
+/// of quick panics starts over; one that panicked sooner (as it starts, or a second or so after,
+/// perhaps every time) waits [`restart_delay`] first, longer each time.
+const STABLE_RUN: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The longest a restart after quick panics waits.
+const MAX_RESTART_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long to wait before restarting after `quick` quick panics in a row (the last included):
+/// 1 s, 2 s, 4 s … up to [`MAX_RESTART_DELAY`]; none after a version that ran a while (0).
+/// After a version that ran `ran` (unknown: as short as can be) ended with [`PANIC_EXIT`],
+/// following `quick` quick panics in a row: the count from now on, and how long to wait before
+/// starting it again.
+fn after_panic(ran: Option<std::time::Duration>, quick: u32) -> (u32, std::time::Duration) {
+    if ran.is_some_and(|ran| ran >= STABLE_RUN) {
+        return (0, std::time::Duration::ZERO);
+    }
+    let quick = quick.saturating_add(1);
+    (quick, restart_delay(quick))
+}
+
+fn restart_delay(quick: u32) -> std::time::Duration {
+    if quick == 0 {
+        return std::time::Duration::ZERO;
+    }
+    let doubled = 1u64.checked_shl(quick - 1).unwrap_or(u64::MAX);
+    std::time::Duration::from_secs(doubled).min(MAX_RESTART_DELAY)
+}
+
+/// Why [`Supervisor::wait_for_change`] returned.
+enum Wake {
+    /// The watched files changed (since then).
+    Changed(Instant),
+    /// The running version ended with this exit code ([`PANIC_EXIT`]), and its restart is due.
+    Ended(i32),
 }
 
 /// How one rebuild ended.
@@ -102,6 +155,9 @@ impl Supervisor {
             reports,
             manifest_seen: vec![],
             last_restarted: false,
+            started: None,
+            quick_panics: 0,
+            restart_after: None,
         })
     }
 
@@ -113,7 +169,13 @@ impl Supervisor {
             self.rebuild(since, first);
             first = false;
             self.exit_if_interrupted();
-            since = self.wait_for_change();
+            since = match self.wait_for_change() {
+                Wake::Changed(since) => since,
+                Wake::Ended(code) => {
+                    self.restart_after = Some(code);
+                    Instant::now()
+                }
+            };
         }
     }
 
@@ -124,6 +186,12 @@ impl Supervisor {
         let outcome = match self.args.mode {
             DevMode::Exe => self.rebuild_exe(),
             DevMode::Jit | DevMode::Host => self.reload_jit(),
+        };
+        let outcome = match (self.restart_after.take(), outcome) {
+            (Some(code), Outcome::Replaced(files)) => {
+                Outcome::Restarted(format!("the program exited with code {code}"), files)
+            }
+            (_, outcome) => outcome,
         };
         self.manifest_seen = manifest_stamps;
         let manifest = manifest_files(self.args.build.input.as_deref());
@@ -285,6 +353,7 @@ impl Supervisor {
                     // A host that cannot receive `go` has died; its exit is reported later.
                     let _ = velt_rt_host::dev::handover::reply_go(&built.stream);
                     self.running = Some(candidate);
+                    self.started = Some(Instant::now());
                     self.channel = Some(built.stream);
                     return Outcome::Replaced(built.files);
                 }
@@ -330,6 +399,7 @@ impl Supervisor {
         match Running::start(&launch) {
             Ok(running) => {
                 self.running = Some(running);
+                self.started = Some(Instant::now());
                 Outcome::Replaced(files)
             }
             Err(msg) => {
@@ -390,13 +460,20 @@ impl Supervisor {
         }
     }
 
-    /// Wait until the watched files change; meanwhile report when the program exits by itself.
-    fn wait_for_change(&mut self) -> Instant {
+    /// Wait until the watched files change; meanwhile report when the program exits by itself,
+    /// and return when one that panicked ([`PANIC_EXIT`]) is due to start again. A change first
+    /// rebuilds at once (and the next panic counts from no quick ones).
+    fn wait_for_change(&mut self) -> Wake {
+        let mut restart: Option<(Instant, i32)> = None;
         loop {
             std::thread::sleep(POLL);
             self.exit_if_interrupted();
             if let Some(since) = self.watcher.poll() {
-                return since;
+                self.quick_panics = 0;
+                return Wake::Changed(since);
+            }
+            if let Some((_, code)) = restart.filter(|(at, _)| Instant::now() >= *at) {
+                return Wake::Ended(code);
             }
             if let Some(versions) = self.versions.as_mut().filter(|v| v.pending()) {
                 versions.sweep();
@@ -409,7 +486,22 @@ impl Supervisor {
                     let output = done.stop(&self.dev_socket);
                     self.retire(output);
                 }
-                eprintln!("velt dev: program exited with code {code}; waiting for changes");
+                let ran = self.started.take().map(|t| t.elapsed());
+                if code != PANIC_EXIT {
+                    eprintln!("velt dev: program exited with code {code}; waiting for changes");
+                    continue;
+                }
+                let (quick, delay) = after_panic(ran, self.quick_panics);
+                self.quick_panics = quick;
+                if delay.is_zero() {
+                    return Wake::Ended(code);
+                }
+                eprintln!(
+                    "velt dev: program exited with code {code} {} ms after it started; restarting in {} s (or on a change)",
+                    ran.unwrap_or_default().as_millis(),
+                    delay.as_secs()
+                );
+                restart = Some((Instant::now() + delay, code));
             }
         }
     }
@@ -564,182 +656,5 @@ fn manifest_files(input: Option<&Path>) -> Vec<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::watch::SETTLE;
-    use super::*;
-    use std::time::{Duration, Instant};
-
-    /// The watcher reports no change for a while. It polls before each deadline check, so a
-    /// descheduled thread still polls once after a change would have settled.
-    fn stays_quiet(watcher: &mut Watcher) {
-        let deadline = Instant::now() + SETTLE * 3;
-        loop {
-            assert!(watcher.poll().is_none(), "nothing changed");
-            if Instant::now() > deadline {
-                break;
-            }
-            std::thread::sleep(POLL);
-        }
-    }
-
-    /// The watcher reports a change within a few seconds.
-    fn reports_a_change(watcher: &mut Watcher) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if watcher.poll().is_some() {
-                return true;
-            }
-            if Instant::now() > deadline {
-                return false;
-            }
-            std::thread::sleep(POLL);
-        }
-    }
-
-    /// Every file under `dir`.
-    fn files_in(dir: &Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                files_in(&path, out);
-            } else {
-                out.push(path);
-            }
-        }
-    }
-
-    /// A lockfile written just before `velt dev` started (`velt add`, `velt run`) was not saved
-    /// during the first build: no second build follows it (#733: that build reported
-    /// `hot-swapped 0 functions` after a later edit and left the old code running).
-    #[test]
-    fn a_recent_lockfile_needs_no_second_build() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        std::fs::write(
-            root.join(vpm::manifest::MANIFEST_FILE),
-            "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };\n",
-        )
-        .unwrap();
-        let main = root.join("main.velt");
-        std::fs::write(&main, "function main() {}\n").unwrap();
-        std::fs::write(root.join(vpm::lockfile::LOCK_FILE), "{}\n").unwrap();
-        let input = Some(main.as_path());
-        let mut watcher = first_watcher(Watcher::new(false), input, None);
-        let snapshot = watcher.snapshot();
-        // What the first build read.
-        let read = std::iter::once(main.clone()).chain(manifest_files(input));
-        watcher.set(read, &snapshot);
-        stays_quiet(&mut watcher);
-    }
-
-    /// `velt add util` and right away `velt dev`: the package fetched into the cache moments
-    /// before the first build was not saved during it, so no second build follows. An edit to a
-    /// cached file after the first build still counts.
-    #[test]
-    fn a_package_fetched_just_before_needs_no_second_build() {
-        let dir = tempfile::tempdir().unwrap();
-        let loc = vpm::Locations::under(&dir.path().join("home"));
-        let util = vpm::scaffold::new_package(dir.path(), "util", true).unwrap();
-        vpm::registry::publish_local(&util, &loc).unwrap();
-        let app = vpm::scaffold::new_package(dir.path(), "app", false).unwrap();
-        let spec = vpm::edit::DependencySpec {
-            version: Some("0.1.0".into()),
-            path: None,
-            ..Default::default()
-        };
-        // `velt add util`: the manifest, the lockfile and the package in the cache.
-        vpm::edit::add_dependency(&app, "util", &spec).unwrap();
-        vpm::install(&app, &loc, vpm::InstallOptions::default()).unwrap();
-        let cached = loc.cache.join("util-0.1.0");
-        let mut fetched = vec![];
-        files_in(&cached, &mut fetched);
-        assert!(!fetched.is_empty(), "nothing in {}", cached.display());
-
-        // `velt dev`: the first build reads the program, the package and the manifest.
-        let main = app.join("src").join("main.velt");
-        let input = Some(main.as_path());
-        let first_build = |watcher: &mut Watcher| {
-            let snapshot = watcher.snapshot();
-            let read = std::iter::once(main.clone())
-                .chain(fetched.iter().cloned())
-                .chain(manifest_files(input));
-            watcher.set(read, &snapshot);
-        };
-        let mut watcher = first_watcher(Watcher::new(false), input, Some(&loc.cache));
-        first_build(&mut watcher);
-        stays_quiet(&mut watcher);
-
-        // An edit there afterwards (another length, so any clock sees it) is a change.
-        let lib = fetched
-            .iter()
-            .find(|f| vpm::sources::is_source_file(f))
-            .unwrap();
-        std::fs::write(
-            lib,
-            "export function changed() {}\n// edited in the cache\n",
-        )
-        .unwrap();
-        assert!(
-            reports_a_change(&mut watcher),
-            "edited after the first build"
-        );
-
-        // Without the cache known as written once, a second build follows (the files are
-        // recent and the snapshot doesn't cover them): what this test guards against.
-        let mut watcher = first_watcher(Watcher::new(false), input, None);
-        first_build(&mut watcher);
-        assert!(
-            reports_a_change(&mut watcher),
-            "recent files count as saved"
-        );
-    }
-
-    /// A program with a path dependency and no lockfile yet: the install writes the lockfile.
-    /// Done before the watcher is seeded (`settle_lockfile`), the first build sees it as it
-    /// was, and no second build follows; written by the first build itself, it looks saved
-    /// during it, and the program is built (and restarted) again right after starting.
-    #[test]
-    fn a_lockfile_the_install_writes_needs_no_second_build() {
-        let dir = tempfile::tempdir().unwrap();
-        let loc = vpm::Locations::under(&dir.path().join("home"));
-        vpm::scaffold::new_package(dir.path(), "util", true).unwrap();
-        let app = vpm::scaffold::new_package(dir.path(), "app", false).unwrap();
-        let spec = vpm::edit::DependencySpec {
-            version: None,
-            path: Some("../util".into()),
-            ..Default::default()
-        };
-        vpm::edit::add_dependency(&app, "util", &spec).unwrap();
-        let lock = app.join(vpm::lockfile::LOCK_FILE);
-        let _ = std::fs::remove_file(&lock);
-        let main = app.join("src").join("main.velt");
-        let input = Some(main.as_path());
-        let install = || {
-            vpm::install(&app, &loc, vpm::InstallOptions::default()).unwrap();
-        };
-        let first_build = |watcher: &mut Watcher, installs: bool| {
-            let snapshot = watcher.snapshot();
-            if installs {
-                install();
-            }
-            let read = std::iter::once(main.clone()).chain(manifest_files(input));
-            watcher.set(read, &snapshot);
-        };
-
-        // The fix: installed first, then watched.
-        install();
-        assert!(lock.is_file());
-        let mut watcher = first_watcher(Watcher::new(false), input, None);
-        first_build(&mut watcher, true);
-        stays_quiet(&mut watcher);
-
-        // Without it: the first build writes the lockfile, which counts as a change.
-        std::fs::remove_file(&lock).unwrap();
-        let mut watcher = first_watcher(Watcher::new(false), input, None);
-        first_build(&mut watcher, true);
-        assert!(
-            reports_a_change(&mut watcher),
-            "the lockfile the build wrote"
-        );
-    }
-}
+#[path = "supervisor_tests.rs"]
+mod tests;
