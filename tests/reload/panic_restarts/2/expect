@@ -1,2 +1,3 @@
 action: restart
 get /count: n 1
+get /exit-now: bye now
