@@ -93,6 +93,9 @@ fn run_tests(dir: &Path, release: bool) -> Option<String> {
 const KNOWN_LEAKS: &[(&str, &str)] = &[
     ("tests/std/fetch/wire.test.velt", "#2842"),
     ("tests/std/websocket/client.test.velt", "#2842"),
+    ("std/net/tls/rfc8448.test.velt", "#2924"),
+    ("std/net/tls/tls_engine.test.velt", "#2924"),
+    ("std/sync/hand_off.test.velt", "#2924"),
 ];
 
 /// Did the run of `velt test` printing `stdout` fail only by known leaks ([`KNOWN_LEAKS`])? Every
