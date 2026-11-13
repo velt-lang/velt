@@ -313,7 +313,11 @@ function pollRootAgain(e: usize, k: usize): void {
   t.flags(k, t.POLLED, 0);
 }
 
-/** Task `k`'s root is done: its result to the join handle, its awaiter woken. */
+/**
+ * Task `k`'s root is done: its result to the join handle, its awaiter woken. At a lazy worker 0
+ * (sched_lock.velt) without the slot's lock, the operation counted (`kind`, `done`) and in line;
+ * the joiner is woken behind the tasks queued already, as `jn.joinDone`'s.
+ */
 function rootDone(e: usize, k: usize): void {
   const tr = m.ld(k + t.T_TRANSFER);
   if (tr !== 0) {
@@ -351,14 +355,12 @@ function rootDone(e: usize, k: usize): void {
   }
   const kind = lk.kind();
   if (kind === lk.LK_LAZY) {
-    // A lazy worker 0 (sched_lock.velt): no lock, the operation counted (`kind`, `done`), in line.
     const s = m.ld32(k + t.T_JOIN_STATE);
     const joiner = m.ld(k + t.T_JOINER);
     m.st(k + t.T_JOINER, 0);
     m.st32(k + t.T_JOIN_STATE, (s | t.J_DONE) & ~t.J_LOCK);
     lk.done(kind);
     if (joiner !== 0) {
-      // As `jn.joinDone`'s: behind the tasks queued already.
       m.st32(e + t.E_DISPATCH, t.D_OUTPUT);
       m.wakeOwned(joiner);
       m.st32(e + t.E_DISPATCH, 0);
