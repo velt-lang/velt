@@ -429,8 +429,8 @@ fn a_pinned_spawn_runs_its_timers() {
   await new Promise<void>((resolve) => setTimeout(() => resolve(), 5));
   console.log(\"pinned timeout fired\");
   setTimeout(() => console.log(\"pinned fire-and-forget\"), 5);
-  await sleep(120);
-  console.log(\"pinned slept 120\");
+  await sleep(600);
+  console.log(\"pinned slept 600\");
   return 2;
 }
 
@@ -441,7 +441,7 @@ async function main() {
 }
 ";
     let want =
-        "pinned timeout fired\npinned fire-and-forget\nworker timeout 60\npinned slept 120\n2\n";
+        "pinned timeout fired\npinned fire-and-forget\nworker timeout 60\npinned slept 600\n2\n";
     for std in [false, true] {
         let (out, _) = build_and_run_on(dir.path(), "pinned_timer", src, std, 0, "2");
         assert_eq!(out, want, "std: {std}");
