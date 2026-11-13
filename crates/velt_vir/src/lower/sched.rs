@@ -212,6 +212,8 @@ impl FnLower<'_, '_> {
                 | Rt::FutDetach
                 | Rt::FutTransfer
                 | Rt::FutId
+                | Rt::FutAlias
+                | Rt::FutViews
                 | Rt::FutsHandled
                 | Rt::FutPeek
                 | Rt::AwaitTick
@@ -240,8 +242,9 @@ impl FnLower<'_, '_> {
         if r == Rt::FutPeek && !self.sched_hook_live(velt_common::std_hook!(sched_peek)) {
             return Err((args, dest));
         }
-        // Likewise a promise's identity: without the executor no holder of its hub exists.
-        if r == Rt::FutId && !self.sched_share_live() {
+        // Likewise a promise's identity and its aliases: without the executor no holder of its
+        // hub exists.
+        if matches!(r, Rt::FutId | Rt::FutAlias | Rt::FutViews) && !self.sched_share_live() {
             return Err((args, dest));
         }
         let ret = r.sig().2;
@@ -283,6 +286,21 @@ impl FnLower<'_, '_> {
                 (Rt::FutTransfer, [f, glue]) => {
                     let (f, glue) = (self.as_usize(f.clone()), self.as_usize(glue.clone()));
                     hooks::sched_transfer(self, ty::USize::arg(f), ty::USize::arg(glue)).emit(self);
+                    None
+                }
+                (Rt::FutAlias, [w, inner, quiet]) => {
+                    let (w, inner) = (self.as_usize(w.clone()), self.as_usize(inner.clone()));
+                    let quiet = self.as_usize(quiet.clone());
+                    let (w, inner, quiet) = (
+                        ty::USize::arg(w),
+                        ty::USize::arg(inner),
+                        ty::USize::arg(quiet),
+                    );
+                    hooks::sched_fut_alias(self, w, inner, quiet).emit(self);
+                    None
+                }
+                (Rt::FutViews, [on]) => {
+                    hooks::sched_fut_views(self, ty::U8::arg(on.clone())).emit(self);
                     None
                 }
                 (Rt::FutId, [f]) => {

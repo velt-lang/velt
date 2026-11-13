@@ -308,6 +308,9 @@ hooks! {
     sched_share => lang_hooks_sched_share, "schedShare", sig((usize, u64, usize, usize) -> usize), lowered;
     /// `velt_rt_fut_id`'s: `(f)`, the promise's identity (#1682, #2854).
     sched_fut_id => lang_hooks_sched_share, "schedFutId", sig((usize) -> u64), lowered;
+    /// `velt_rt_fut_alias`'s: `(w, inner, quiet)`; `velt_rt_fut_views`' `(on)` (#2854).
+    sched_fut_alias => lang_hooks_sched_share_alias, "schedFutAlias", sig((usize, usize, usize) -> void), lowered;
+    sched_fut_views => lang_hooks_sched_share_alias, "schedFutViews", sig((u8) -> void), lowered;
     /// `velt_rt_futs_handled`'s: `(futs, n, quiet_drop)`.
     sched_handled => lang_hooks_sched, "schedHandled", sig((usize, u64, usize) -> void), lowered;
     /// `velt_rt_fut_peek`'s (`console.log` of a promise): `(f)`, 1 when it settled with its result

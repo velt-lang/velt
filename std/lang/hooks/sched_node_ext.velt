@@ -1,0 +1,58 @@
+// velt/lang/hooks (internal): the side block of a promise of the executor in Velt (sched_node.velt,
+// #2854): what only a few promises need, kept out of every node's head. A promise handed to another
+// task keeps its transfer glue here (sched_node_transfer.velt), a converted promise its alias of
+// the promise it stands for (sched_share_alias.velt). The node's head points at it from its word
+// at +112, allocated on first use and freed with the node.
+//
+// It is made on the task that owns the node (its first hand-over, its conversion) and only read
+// after: the pointer is stored before the EXT flag is set (one atomic or), and a reader tests the
+// flag first, so a reader on another worker sees the block or no block, never a torn pointer.
+// The block: the transfer glue, and an alias's holder, quiet result drop and hub.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as al from "./sched_share_alias";
+
+/** The node head's word with the side block. */
+const N_EXT: usize = 112;
+/** A node's flag: it has a side block (its pointer in `N_EXT`). */
+const EXT: u32 = 4096;
+
+export const X_TRANSFER: usize = 0;
+export const X_ALIAS: usize = 8;
+export const X_QUIET: usize = 16;
+export const X_HUB: usize = 24;
+const X_BYTES: usize = 32;
+
+/** Node `n`'s side block, or 0 when it has none. */
+@inline
+export function get(n: usize): usize {
+  return (m.load32(n + nd.N_FLAGS) & EXT) !== 0 ? m.ld(n + N_EXT) : 0;
+}
+
+/** Node `n`'s side block, made now if it has none (on the task that owns `n`). */
+export function make(n: usize): usize {
+  const x = get(n);
+  if (x !== 0) {
+    return x;
+  }
+  const b = m.zeroed(X_BYTES);
+  m.st(n + N_EXT, b);
+  m.or32(n + nd.N_FLAGS, EXT);
+  return b;
+}
+
+/** Node `n` is freed: so is its side block, and an alias's keep of its hub. */
+@inline
+export function free(n: usize): void {
+  if ((m.load32(n + nd.N_FLAGS) & EXT) !== 0) {
+    freeSlow(m.ld(n + N_EXT));
+  }
+}
+
+@noInline
+function freeSlow(b: usize): void {
+  al.freed(b);
+  m.release(b, X_BYTES);
+}

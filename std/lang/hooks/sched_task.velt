@@ -263,7 +263,9 @@ export const E_NOBORROW: usize = 880;
  * task's reference back first (sched_exit.velt).
  */
 export const E_DROPPING: usize = 888;
-export const E_SIZE: usize = 896;
+/** Handles of shared promises made now are views (sched_share_alias.velt `schedFutViews`). */
+export const E_VIEWS: usize = 896;
+export const E_SIZE: usize = 904;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */

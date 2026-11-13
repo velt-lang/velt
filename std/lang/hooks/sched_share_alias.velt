@@ -1,0 +1,139 @@
+// velt/lang/hooks (internal): converted promises of the executor in Velt (`velt_rt_fut_alias`'s
+// and `velt_rt_fut_views`' jobs, #1682, #2854; the runtime's task/identity.rs for its executor).
+//
+// A converted promise (a `Promise<T>` used as a `Promise<unknown>` or with a wider error type) is
+// a new node wrapping a holder of the promise it converts (sched_share.velt). It is the same
+// promise in JS, so its owner marks it: the node keeps a holder of that promise of its own (in its
+// side block, sched_node_ext.velt), which its identity follows (`schedFutId`), until its owner
+// drops it. The wrapper awaits that promise through a view, a holder whose taking the result
+// handles nothing; a claim of the converted promise (its owner takes the result, or hands it to a
+// combinator) is a claim of the promise it stands for (the hub's CLAIMED), and a rejection of a
+// converted promise nobody claimed is dropped quietly when someone handled that promise
+// (`resultDrop`). The record of that outlives the owner's drop, as the report comes after it: the
+// alias keeps the hub's block (`sh.watch`) until its node is freed.
+
+import { fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as x from "./sched_node_ext";
+import * as off from "./sched_off";
+import * as sh from "./sched_share";
+import * as t from "./sched_task";
+
+/** A node's flag: it is a converted promise standing for another (its side block's alias). */
+const ALIASED: u32 = 8192;
+
+/**
+ * `velt_rt_fut_alias` (the hook lowering calls under `VELT_SCHEDULER=std`): converted promise `w`
+ * wraps `inner` and stands for the promise `inner` holds, when anyone else can hold that one;
+ * `quiet` drops `w`'s result without reporting a rejection (0: nothing to drop).
+ */
+export function schedFutAlias(w: usize, inner: usize, quiet: usize): void {
+  if (w === 0 || inner === 0) {
+    return;
+  }
+  if (m.ld(w) !== fnAddress(nd.nodePoll)) {
+    off.alias(w, inner, quiet);
+    return;
+  }
+  // The holder `inner` is, or the one a converted `inner` keeps.
+  let of: usize = 0;
+  if (m.ld(inner) === fnAddress(sh.holderPoll)) {
+    // Handed over from another task: its proxy here is its own promise.
+    of = sh.forwardOf(inner) === 0 ? inner : 0;
+  } else if (m.ld(inner) === fnAddress(nd.nodePoll)) {
+    of = holder(nd.nodeOf(inner));
+  }
+  if (of === 0) {
+    return;
+  }
+  const n = nd.nodeOf(w);
+  const b = x.make(n);
+  const h = m.ld(of - 8);
+  const old = m.ld(b + x.X_ALIAS);
+  m.st(b + x.X_ALIAS, sh.newHandle(h));
+  m.st(b + x.X_QUIET, quiet);
+  if (old !== 0) {
+    // SAFETY: a stale holder this node kept, its own.
+    unsafe {
+      futDrop(old);
+    }
+    sh.unwatch(m.ld(b + x.X_HUB));
+  }
+  sh.watch(h);
+  m.st(b + x.X_HUB, h);
+  nd.setFlags(n, ALIASED);
+}
+
+/** `velt_rt_fut_views`: the holders made from now on are views (`on` 1), or holders again (0). */
+export function schedFutViews(on: u8): void {
+  const e = t.exec();
+  if (e !== 0) {
+    m.st(e + t.E_VIEWS, on as usize);
+  }
+}
+
+/** The holder converted promise node `n` keeps of the promise it stands for, or 0. */
+export function holder(n: usize): usize {
+  if ((m.load32(n + nd.N_FLAGS) & ALIASED) === 0) {
+    return 0;
+  }
+  return m.ld(x.get(n) + x.X_ALIAS);
+}
+
+/** The owner of node `n` took its result or handed it to a handler: if it is converted, a claim of the promise it stands for. */
+@inline
+export function claimed(n: usize): void {
+  if ((m.load32(n + nd.N_FLAGS) & ALIASED) !== 0) {
+    claimedSlow(n);
+  }
+}
+
+@noInline
+function claimedSlow(n: usize): void {
+  m.or32(m.ld(x.get(n) + x.X_HUB) + sh.H_FLAGS, sh.CLAIMED);
+}
+
+/**
+ * The drop glue for node `n`'s result nobody claimed (`rdrop`, which reports a rejection), or its
+ * quiet one when it is converted and someone handled the promise it stands for.
+ */
+@inline
+export function resultDrop(n: usize, rdrop: usize): usize {
+  if ((m.load32(n + nd.N_FLAGS) & ALIASED) === 0) {
+    return rdrop;
+  }
+  const b = x.get(n);
+  return (m.load32(m.ld(b + x.X_HUB) + sh.H_FLAGS) & sh.CLAIMED) !== 0
+    ? m.ld(b + x.X_QUIET)
+    : rdrop;
+}
+
+/** The owner of node `n` drops it: a converted one gives up its holder (on the promise's task). */
+@inline
+export function forget(n: usize): void {
+  if ((m.load32(n + nd.N_FLAGS) & ALIASED) !== 0) {
+    forgetSlow(n);
+  }
+}
+
+@noInline
+function forgetSlow(n: usize): void {
+  const b = x.get(n);
+  const hd = m.ld(b + x.X_ALIAS);
+  if (hd !== 0) {
+    m.st(b + x.X_ALIAS, 0);
+    // SAFETY: the holder this node kept, its own.
+    unsafe {
+      futDrop(hd);
+    }
+  }
+}
+
+/** Side block `b` is freed with its node (any thread): an alias gives back its keep of the hub. */
+export function freed(b: usize): void {
+  const h = m.ld(b + x.X_HUB);
+  if (h !== 0) {
+    sh.unwatch(h);
+  }
+}

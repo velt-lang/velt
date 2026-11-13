@@ -8,16 +8,16 @@
 // The node is marked HANDED_OVER, which promise identity and the unhandled-rejection watch read:
 // what happens to the promise from then on is the other task's.
 
-import { fnAddress, stateDrop } from "velt/lang/intrinsics";
+import { fnAddress, inline, noInline, stateDrop } from "velt/lang/intrinsics";
 import * as jn from "./sched_join";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as off from "./sched_off";
+import * as x from "./sched_node_ext";
+import * as al from "./sched_share_alias";
 import * as sh from "./sched_share";
 import * as shh from "./sched_share_hand";
 
-/** The node head's word with the transfer glue (sched_node.velt's layout). */
-export const N_TRANSFER: usize = 112;
 /** A node's flag: its owner handed it to another task, which claims its result. */
 export const HANDED_OVER: u32 = 2048;
 
@@ -53,7 +53,7 @@ export function transfer(f: usize, glue: usize, hdrPoll: usize): bool {
   if ((m.or32(n + nd.N_FLAGS, HANDED_OVER) & HANDED_OVER) === 0) {
     // The first hand-over: its glue is the node's from now on (the word is read only with the
     // flag set, so a node never handed over pays no store for it).
-    m.st(n + N_TRANSFER, glue);
+    m.st(x.make(n) + x.X_TRANSFER, glue);
     if (glue !== 0 && (m.load32(n + nd.N_FLAGS) & (nd.FINISHED | nd.DELIVERED)) === nd.FINISHED) {
       finished(n);
     }
@@ -62,9 +62,14 @@ export function transfer(f: usize, glue: usize, hdrPoll: usize): bool {
 }
 
 /** Node `n`'s state finished: `finished`, then its flags `fl` (FINISHED, maybe DELIVERED) show. */
+@inline
 export function finish(n: usize, fl: u32): void {
   finished(n);
   nd.setFlags(n, fl);
+  if ((fl & nd.DELIVERED) !== 0) {
+    // The owner took the result: a converted promise's claim (sched_share_alias.velt).
+    al.claimed(n);
+  }
 }
 
 /**
@@ -78,11 +83,17 @@ export function finish(n: usize, fl: u32): void {
  * polls a lazy one, so it is never written while the node finishes on another thread. Later
  * hand-overs keep it, as the runtime keeps a node's first transfer, and so it runs once.
  */
+@inline
 export function finished(n: usize): void {
-  if ((m.load32(n + nd.N_FLAGS) & (HANDED_OVER | nd.PANICKED | nd.DETACHED)) !== HANDED_OVER) {
-    return;
+  if ((m.load32(n + nd.N_FLAGS) & (HANDED_OVER | nd.PANICKED | nd.DETACHED)) === HANDED_OVER) {
+    transferResult(n);
   }
-  const g = m.ld(n + N_TRANSFER);
+}
+
+/** Runs handed-over node `n`'s transfer glue on its result. */
+@noInline
+function transferResult(n: usize): void {
+  const g = m.ld(x.get(n) + x.X_TRANSFER);
   if (g !== 0) {
     // SAFETY: the slot holds the finished result; `g` is its transfer glue, which has a drop
     // glue's signature (`(slot) -> void`).

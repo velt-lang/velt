@@ -29,7 +29,7 @@
 // so for every holder `f - 8` holds its hub (for the original, the node's `N_HUB` word); a handle
 // handed to another task has a hub word of 0 and its proxy in its forward word.
 
-import { fnAddress, futDrop, futPoll, stateDrop, statePoll } from "velt/lang/intrinsics";
+import { fnAddress, futDrop, futPoll, inline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as nc from "./sched_node_catch";
@@ -39,6 +39,7 @@ import * as off from "./sched_off";
 import * as t from "./sched_task";
 import * as tr from "./sched_node_transfer";
 import * as wt from "./sched_share_wait";
+import * as al from "./sched_share_alias";
 import * as wk from "./sched_wake";
 
 /**
@@ -58,12 +59,18 @@ export const H_WAITERS: usize = 56;
 export const H_WLEN: usize = 64;
 export const H_WCAP: usize = 72;
 export const H_ORIG_FWD: usize = 80;
-const H_BYTES: usize = 88;
+/**
+ * What keeps the hub's block: 1 for the promise (until its last role's cleanup) and 1 for each
+ * converted promise standing for it (until its node is freed, sched_share_alias.velt), which
+ * still reads `CLAIMED` after the promise went away.
+ */
+const H_WATCH: usize = 88;
+const H_BYTES: usize = 96;
 
 /** It settled: its result is in `H_RESULT`, or its node panicked (no result). */
 const DONE: u32 = 1;
 /** A holder took the settled result (promise identity, task/identity.rs, reads it). */
-const CLAIMED: u32 = 2;
+export const CLAIMED: u32 = 2;
 /** The original was handed to another task: its proxy is in `H_ORIG_FWD`. */
 export const ORIG_OUT: u32 = 4;
 /** Every role went away (on the promise's task). */
@@ -104,6 +111,7 @@ export function schedShare(f: usize, size: u64, share: usize, rdrop: usize): usi
   m.st(h + H_SHARE, share);
   m.st(h + H_RDROP, rdrop);
   m.st(h + H_ROLES, 1);
+  m.st(h + H_WATCH, 1);
   m.st(n + N_HUB, h);
   m.st(f, fnAddress(holderPoll));
   m.st(f + 8, fnAddress(holderDrop));
@@ -117,13 +125,26 @@ export function schedShare(f: usize, size: u64, share: usize, rdrop: usize): usi
  */
 export function schedFutId(f: usize): u64 {
   let g = f;
-  while (g !== 0 && m.ld(g) === fnAddress(holderPoll)) {
-    const fwd = forwardOf(g);
-    if (fwd === 0) {
-      g = m.ld(m.ld(g - 8) + H_NODE) + nd.N_HEAD;
+  while (g !== 0) {
+    let n: usize = 0;
+    if (m.ld(g) === fnAddress(holderPoll)) {
+      const fwd = forwardOf(g);
+      if (fwd !== 0) {
+        g = fwd;
+        continue;
+      }
+      n = m.ld(m.ld(g - 8) + H_NODE);
+      g = n + nd.N_HEAD;
+    } else if (m.ld(g) === fnAddress(nd.nodePoll)) {
+      n = nd.nodeOf(g);
+    }
+    // A converted promise (its original shared or not) stands for the promise it converts
+    // (sched_share_alias.velt).
+    const a = n !== 0 ? al.holder(n) : 0;
+    if (a === 0) {
       break;
     }
-    g = fwd;
+    g = a;
   }
   return off.futId(g);
 }
@@ -155,12 +176,26 @@ export function peek(f: usize): bool {
   return true;
 }
 
+/** A converted promise standing for the promise of hub `h` keeps its block (`H_WATCH`). */
+export function watch(h: usize): void {
+  m.inc(h + H_WATCH);
+}
+
+/** Gives back one keep of hub `h`'s block (`H_WATCH`): the last frees it. */
+export function unwatch(h: usize): void {
+  if (m.dec(h + H_WATCH) === 1) {
+    m.release(h, H_BYTES);
+  }
+}
+
 /** A new holder of the promise of hub `h`: a handle of its own. */
 export function newHandle(h: usize): usize {
   m.inc(h + H_ROLES);
   const size = m.ld(h + H_SIZE);
   const base = m.alloc(FRONT + 16 + size);
-  m.st(base, 0);
+  // A view while converted promises are made (sched_share_alias.velt): its take claims nothing.
+  const e = t.exec();
+  m.st(base, e !== 0 ? m.ld(e + t.E_VIEWS) : 0);
   m.st(base + 8, 0);
   m.st(base + 16, size);
   m.st(base + 24, h);
@@ -273,7 +308,9 @@ function pollHolder(h: usize, f: usize, cx: usize): u32 {
     }
     wt.removeWaiter(h, i);
   }
-  m.or32(h + H_FLAGS, CLAIMED);
+  if (isOrig(h, f) || m.ld(f - FRONT) === 0) {
+    m.or32(h + H_FLAGS, CLAIMED);
+  }
   const fl = m.load32(n + nd.N_FLAGS);
   if ((fl & nd.PANICKED) !== 0) {
     // It panicked (`catchPanic`): every holder's await raises it again.
@@ -310,6 +347,8 @@ export function settle(h: usize, task: usize, me: usize): void {
     m.copy(r, n + nd.N_HEAD + 16, size);
     m.st(h + H_RESULT, r);
     nd.setFlags(n, nd.DELIVERED);
+    // The hub took the node's result: a converted node's claim (the runtime's `deliver_unadopted`).
+    al.claimed(n);
   }
   m.or32(h + H_FLAGS, DONE);
   const len = m.ld(h + H_WLEN);
@@ -332,6 +371,7 @@ export function settle(h: usize, task: usize, me: usize): void {
  * Node `n` of task `task` finished (sched_node.velt `run`): if it is shared, its hub settles (the
  * waiting holders are queued) and true; false for a node nobody shared, whose awaiter is woken.
  */
+@inline
 export function settled(n: usize, task: usize): bool {
   if (m.ld(n + nd.N_HEAD) !== fnAddress(holderPoll)) {
     return false;
@@ -387,6 +427,6 @@ function free(h: usize): void {
   if (cap !== 0) {
     m.release(m.ld(h + H_WAITERS), 24 * cap);
   }
-  m.release(h, H_BYTES);
+  unwatch(h);
   nd.nodeDrop(f);
 }

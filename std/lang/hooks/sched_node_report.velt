@@ -8,6 +8,7 @@ import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as loc from "./sched_node_loc";
 import * as t from "./sched_task";
+import * as al from "./sched_share_alias";
 
 /**
  * Drops node `n`'s result, which nobody claims. A promise that can reject is reported (by its
@@ -36,7 +37,8 @@ export function dropResult(n: usize): void {
 
 /** Runs the drop glue of node `n`'s result. */
 function dropNow(n: usize): void {
-  const rdrop = m.ld(n + nd.N_RESULT_DROP);
+  // A converted promise someone handled through the promise it stands for drops it quietly.
+  const rdrop = al.resultDrop(n, m.ld(n + nd.N_RESULT_DROP));
   if (rdrop !== 0) {
     // An error in it is reported where it was thrown; this thread's own location stays.
     const fl = m.load32(n + nd.N_FLAGS);

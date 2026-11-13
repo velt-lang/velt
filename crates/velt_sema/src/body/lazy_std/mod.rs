@@ -383,6 +383,8 @@ const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_transfer),
     velt_common::std_hook!(sched_share),
     velt_common::std_hook!(sched_fut_id),
+    velt_common::std_hook!(sched_fut_alias),
+    velt_common::std_hook!(sched_fut_views),
     velt_common::std_hook!(sched_handled),
     velt_common::std_hook!(sched_peek),
     velt_common::std_hook!(sched_await_tick),

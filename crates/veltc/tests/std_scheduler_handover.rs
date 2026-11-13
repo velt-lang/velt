@@ -188,6 +188,82 @@ fn a_race_over_shared_and_unshared_promises_picks_node_s_winner() {
     );
 }
 
+/// A converted promise (a `Promise<T>` used as a `Promise<unknown>`) is the promise it converts
+/// (#1682): `===`, `Set` and `includes` see one promise, also converted twice and when the
+/// converted promise is itself shared (#2854 step 3, sched_share_alias.velt).
+#[test]
+fn a_converted_promise_is_the_promise_it_converts() {
+    prints_counted(
+        "promise_identity_converted",
+        include_str!("../../../tests/golden/lang/promise_identity_converted.velt"),
+        include_str!("../../../tests/golden/lang/promise_identity_converted.out"),
+        2,
+    );
+}
+
+/// A rejection handled through one converted promise (a shared one's `.finally().catch()`) is
+/// not reported through another of the same promise, dropped at once: the claim reaches the
+/// promise both stand for, and the other's result is dropped quietly.
+#[test]
+fn a_rejection_handled_through_one_converted_promise_is_quiet_through_another() {
+    prints_counted(
+        "promise_identity_defer_twice",
+        include_str!("../../../tests/golden/lang/promise_identity_defer_twice.velt"),
+        include_str!("../../../tests/golden/lang/promise_identity_defer_twice.out"),
+        2,
+    );
+}
+
+/// Converted promises await the promise they stand for through views, whose taking the result
+/// handles nothing: many of them over rejecting promises, each handled once.
+#[test]
+fn converted_promises_await_through_views() {
+    prints_counted(
+        "promise_identity_bounded",
+        include_str!("../../../tests/golden/lang/promise_identity_bounded.velt"),
+        include_str!("../../../tests/golden/lang/promise_identity_bounded.out"),
+        1,
+    );
+}
+
+/// A converted promise kept as a value starts and awaits the promise it converts through a
+/// view: that take handles nothing, so a rejection nobody else handles is still reported (exit
+/// 1, as in Node), at one worker and at four. (When it is reported, before or after the
+/// program's next line, is #2854 step 4's.)
+#[test]
+fn a_view_s_take_handles_nothing() {
+    if !cfg!(unix) {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("view_take.velt");
+    std::fs::write(&file, VIEW_TAKE).unwrap();
+    let exe = dir.path().join(exe_name("view_take"));
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    for threads in ["1", "4"] {
+        let o = command(&exe)
+            .env("VELT_THREADS", threads)
+            .env_remove("VELT_SCHEDULER")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(o.status.code(), Some(1), "{threads} worker(s): {stderr}");
+        assert!(
+            stderr.contains("Uncaught Error: boom"),
+            "{threads} worker(s): {stderr}"
+        );
+    }
+}
+
 /// The program of [`a_spawned_race_delivers_a_copy_to_its_task`].
 const SPAWNED_RACE: &str = r#"class Obj {
   n: i64 = 0;
@@ -397,3 +473,18 @@ fn a_program_without_tasks_shares_its_promises_without_the_executor() {
     let src = "struct S {\n  p: Promise<number> | undefined;\n}\n\nclass Box {\n  pending: Promise<number>[] = [];\n}\n\nfunction main() {\n  const a: S = { p: undefined };\n  const b = a;\n  const box = new Box();\n  const xs = box.pending.slice();\n  console.log(b.p === undefined, xs.length);\n}\n";
     prints_counted("share_without_tasks", src, "true 0\n", 1);
 }
+
+/// The program of [`a_view_s_take_handles_nothing`].
+const VIEW_TAKE: &str = r#"async function fail(): Promise<string, Error> {
+  await Promise.resolve();
+  throw new Error("boom");
+}
+async function main() {
+  const p = fail();
+  const p2 = p;
+  // Kept, so it starts and awaits `p` through a view; nobody awaits `q` or `p`.
+  const q: Promise<unknown, Error> = p2;
+  await new Promise<void>((r) => setTimeout(() => r(), 5));
+  console.log("end", q !== null, p !== null);
+}
+"#;
