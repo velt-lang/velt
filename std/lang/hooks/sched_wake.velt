@@ -147,7 +147,23 @@ export function scheduleNew(w: usize, t: usize): void {
   if (w === h) {
     const mode = m.load32Relaxed(h + tk.E_MODE);
     if (mode === 0 && m.ld(h + tk.E_LAZY) !== 0 && m.ld(h + tk.E_CURRENT) !== 0) {
-      pend(h, t, tk.D_SPAWN);
+      // The poll's first `PEND_STACKED` spawns on `E_PREST` (`pendStacked`), the rest on the plain
+      // list (sched_task.velt `E_PLIST`), in line.
+      m.st(h + tk.E_PANY, m.ld(h + tk.E_PANY) | tk.PANY_MORE);
+      const n = m.ld(h + tk.E_PCOUNT);
+      m.st(h + tk.E_PCOUNT, n + 1);
+      if (n >= tk.PEND_STACKED) {
+        m.st(t + tk.T_NEXT, 0);
+        const tail = m.ld(h + tk.E_PLIST_TAIL);
+        if (tail === 0) {
+          m.st(h + tk.E_PLIST, t);
+        } else {
+          m.st(tail + tk.T_NEXT, t);
+        }
+        m.st(h + tk.E_PLIST_TAIL, t);
+      } else {
+        pendStacked(h, t, n);
+      }
       tk.bump(h + tk.E_RLEN, 1);
       return;
     }
@@ -168,8 +184,8 @@ export function scheduleNew(w: usize, t: usize): void {
 }
 
 /**
- * Queues task `t` on lazy worker 0 `w` during a poll (on `E_PIO` or `E_PREST`): `d` as
- * `schedule`'s, `D_SPAWN` for a spawned task.
+ * Queues task `t`, woken, on lazy worker 0 `w` during a poll (on `E_PIO` or `E_PREST`): `d` as
+ * `schedule`'s. (Its spawns are queued by `scheduleNew`.)
  */
 @noInline
 function pend(w: usize, t: usize, d: u32): void {
@@ -179,29 +195,22 @@ function pend(w: usize, t: usize, d: u32): void {
     return;
   }
   // Woken past the first: not part of a fan-out (sched_monitor_lazy.velt `fanOutOnly`).
-  const more = d === tk.D_SPAWN ? tk.PANY_MORE : tk.PANY_MORE | tk.PANY_WOKE;
-  m.st(w + tk.E_PANY, m.ld(w + tk.E_PANY) | more);
-  if (d === tk.D_SPAWN) {
-    const n = m.ld(w + tk.E_PCOUNT);
-    m.st(w + tk.E_PCOUNT, n + 1);
-    if (n >= tk.PEND_STACKED) {
-      m.st(t + tk.T_NEXT, 0);
-      const tail = m.ld(w + tk.E_PLIST_TAIL);
-      if (tail === 0) {
-        m.st(w + tk.E_PLIST, t);
-      } else {
-        m.st(tail + tk.T_NEXT, t);
-      }
-      m.st(w + tk.E_PLIST_TAIL, t);
-      return;
-    }
-    if (n === 0) {
-      // The first task this poll spawns may start on a spare (the monitor's rescue): what this
-      // thread printed first (the runtime publishes at each spawn; here at each poll's first).
-      publish(w);
-    }
-  }
+  m.st(w + tk.E_PANY, m.ld(w + tk.E_PANY) | tk.PANY_MORE | tk.PANY_WOKE);
   pendOn(w, t, d === tk.D_INPUT ? tk.E_PIO : tk.E_PREST);
+}
+
+/**
+ * Pushes task `t`, spawned by lazy worker 0 `w`'s poll, its `n`th spawn (under `PEND_STACKED`),
+ * on `E_PREST`, which the monitor may take.
+ */
+@noInline
+function pendStacked(w: usize, t: usize, n: usize): void {
+  if (n === 0) {
+    // The first task this poll spawns may start on a spare (the monitor's rescue): what this
+    // thread printed first (the runtime publishes at each spawn; here at each poll's first).
+    publish(w);
+  }
+  pendOn(w, t, tk.E_PREST);
 }
 
 /** Pushes task `k` on the stack of lazy worker 0 `w` at offset `at` (`E_PIO` or `E_PREST`). */

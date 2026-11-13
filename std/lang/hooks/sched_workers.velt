@@ -167,7 +167,7 @@ function startWorkers(e: usize): void {
   if (mode === 0) {
     m.st32(e + t.E_SOLO, 1);
   }
-  mk.joinTable(e, mode === 0);
+  mk.joinTable(e, mode === 0 ? mk.JT_SOLO : lazy ? mk.JT_LAZY : mk.JT_SHARED);
   if (lazy) {
     m.st(e + t.E_LAZY, t.LAZY_WATCH);
     m.st(e + t.E_SPLIT, 1);
@@ -177,7 +177,7 @@ function startWorkers(e: usize): void {
   for (let i: usize = 1; i < n + spares; i++) {
     const w = m.lastingZeroed(t.E_SIZE);
     setUp(e, w, i);
-    mk.joinTable(w, false);
+    mk.joinTable(w, mk.JT_SHARED);
     m.st(w + t.E_IO, io.open(w + t.E_TICK));
     m.st32(w + t.E_MODE, mode | t.M_SPREAD);
     m.st(w + t.E_HELP, sp.HELP);

@@ -14,6 +14,7 @@ import {
   stdUsed,
 } from "velt/lang/intrinsics";
 import * as jn from "./sched_join";
+import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as mk from "./sched_make";
 import * as micro from "./sched_micro";
@@ -344,7 +345,26 @@ function rootDone(e: usize, k: usize): void {
     }
     return;
   }
-  jn.joinDone(e, k);
+  const kind = lk.kind();
+  if (kind === lk.LK_LAZY) {
+    // A lazy worker 0 (sched_lock.velt): no lock, the operation counted (`kind`, `done`), in line.
+    const s = m.ld32(k + t.T_JOIN_STATE);
+    const joiner = m.ld(k + t.T_JOINER);
+    m.st(k + t.T_JOINER, 0);
+    m.st32(k + t.T_JOIN_STATE, (s | t.J_DONE) & ~t.J_LOCK);
+    lk.done(kind);
+    if (joiner !== 0) {
+      // As `jn.joinDone`'s: behind the tasks queued already.
+      m.st32(e + t.E_DISPATCH, t.D_OUTPUT);
+      m.wakeOwned(joiner);
+      m.st32(e + t.E_DISPATCH, 0);
+    }
+    if ((s & t.J_HANDLE) === 0) {
+      jn.dropResult(k);
+    }
+    return;
+  }
+  jn.joinDone(e, k, kind);
 }
 
 /** `rootDone` of the root of `main` (task `k`, its result in place). */

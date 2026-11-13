@@ -37,9 +37,10 @@
 //!   heap blocks in its debug run (`blocks=A/F` of the same report, A <= N): for programs that
 //!   must not allocate per step (e.g. a callback per call).
 //! - A golden whose first lines contain `// check: also with NAME=VALUE` runs once more in each
-//!   mode with that environment variable set, and must print the same: for programs whose paths
-//!   an environment switch selects (`VELT_SIMD_DISABLE=sha`: `velt/simd`'s emulation and std's
-//!   portable code on a CPU that has the instructions, #1330).
+//!   mode with that environment variable set (several `NAME=VALUE`, separated by spaces, are set
+//!   together), and must print the same: for programs whose paths an environment switch selects
+//!   (`VELT_SIMD_DISABLE=sha`: `velt/simd`'s emulation and std's portable code on a CPU that has
+//!   the instructions, #1330; `VELT_THREADS=1 VELT_RESCUE=1`: one worker with the stall rescue).
 //!
 //! Filter with `VELT_GOLDEN=<substring>` (several separated by `,`: a file matching any of them
 //! runs). `VELT_GOLDEN_SHARD=<i>/<n>` checks only the i-th of n interleaved shards (1-based), so
@@ -353,7 +354,7 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                 }
             };
             cmd.current_dir(&dir);
-            if let Some((name, value)) = &env {
+            for (name, value) in env.iter().flatten() {
                 cmd.env(name, value);
             }
             // The debug run checks every allocation (use after free, double free, overflow)
@@ -403,8 +404,9 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
 {stdout}--- stderr ---
 {}",
                     mode.unwrap_or("debug"),
-                    env.as_ref()
-                        .map_or(String::new(), |(n, v)| format!(", {n}={v}")),
+                    (env.iter().flatten())
+                        .map(|(n, v)| format!(", {n}={v}"))
+                        .collect::<String>(),
                     String::from_utf8_lossy(&o.stderr)
                 ));
             }
@@ -425,17 +427,22 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
 }
 
 /// An environment variable a golden sets for a run: name and value.
-type EnvVar = (String, String);
+/// The variables of a variant run, set together.
+type EnvVar = Vec<(String, String)>;
 
-/// The variable of a `// check: also with NAME=VALUE` line among the golden's first lines.
+/// The variables of a `// check: also with NAME=VALUE [NAME=VALUE ...]` line among the golden's
+/// first lines.
 fn also_with_env(file: &Path) -> Option<EnvVar> {
     let src = std::fs::read_to_string(file).ok()?;
     let rest = src
         .lines()
         .take(10)
         .find_map(|l| l.trim().strip_prefix("// check: also with "))?;
-    let (name, value) = rest.trim().split_once('=')?;
-    Some((name.to_string(), value.to_string()))
+    let vars: EnvVar = (rest.split_whitespace())
+        .filter_map(|kv| kv.split_once('='))
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect();
+    (!vars.is_empty()).then_some(vars)
 }
 
 /// The blocks a golden may leave unfreed when it asks for a leak check: 0 for `// check: no

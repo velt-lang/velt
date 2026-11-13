@@ -1,5 +1,7 @@
 // check: no leaks
-// check: also with VELT_THREADS=1
+// check: also with VELT_THREADS=1 VELT_RESCUE=1
+// At one worker the stall rescue is opt-in, by design (Node's model: a poll that runs on holds
+// back the rest), so the one-worker run asks for it (#2649 P2g).
 // Workers started while every worker is busy (#2371) don't change `workerCount()`, and
 // `currentWorker()` on them stays in `0..workerCount() - 1`, so an array sized by the count read
 // at start-up has a slot for every task. Here one task per worker runs on without a pause until a

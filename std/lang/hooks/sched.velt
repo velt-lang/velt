@@ -40,6 +40,7 @@ import { taskId } from "./sched_id";
 import * as run from "./sched_run";
 import * as sl from "./sched_sleep";
 import * as sp from "./sched_spread";
+import * as st from "./sched_stats";
 import * as t from "./sched_task";
 import * as tm from "./sched_timers";
 import * as workers from "./sched_workers";
@@ -109,7 +110,11 @@ export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
  */
 export function schedFinish(code: i32): void {
   const e = t.exec();
-  if (e === 0 || code !== 0) {
+  if (e === 0) {
+    return;
+  }
+  if (code !== 0) {
+    st.report();
     return;
   }
   mod.handOver();
@@ -132,6 +137,7 @@ export function schedFinish(code: i32): void {
   }
   // Streams dropped unclosed stay open to the end, as the runtime's: their buffers go now.
   tb.releaseBuffers();
+  st.report();
 }
 
 /**
