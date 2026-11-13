@@ -11,7 +11,6 @@ import * as io from "./sched_io";
 import * as w from "./sched_io_write";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
-import * as order from "./sched_order";
 import * as pk from "./sched_park";
 import * as q from "./sched_queue";
 import * as rx from "./sched_relax";
@@ -300,8 +299,7 @@ function interval(e: usize, mode: u32): usize {
 @inline
 function looksFor(e: usize): bool {
   return (
-    m.load(m.ld(e + t.E_IO) + io.IO_LIVE) !== 0 ||
-    (m.ld(e + t.E_TIMERS) | m.ld(e + t.E_UNREF)) !== 0
+    m.load(m.ld(e + t.E_IO) + io.IO_LIVE) !== 0 || m.ld(e + t.E_UNREF) !== 0 || pk.timersAny(e)
   );
 }
 
@@ -349,6 +347,7 @@ function after(e: usize, mode: u32, watched: bool): void {
 function idle(e: usize, mode: u32): void {
   if ((mode & t.M_SPREAD) !== 0) {
     if (sp.steal(e) || sp.borrow(e)) {
+      pk.tookWork(e);
       return;
     }
     sp.saw(e, 0, 0);
@@ -360,7 +359,7 @@ function idle(e: usize, mode: u32): void {
 /**
  * The I/O at the end of a poll whose tick reached 0: what is due is sent; due `unref()`'d timers
  * waiting for a park ask again (sched_end.velt: a worker that never parks); due sleeps fire and
- * Node's timer loop moves on (sched_order.velt `tick`); with sockets
+ * Node's timer loop moves on (sched_park.velt `timersTick`); with sockets
  * registered, the reactor's ready events and passed deadlines are delivered without waiting, and
  * what they made due is sent. The tasks it wakes are input; a fair pass starts if one is due.
  */
@@ -379,8 +378,8 @@ function ioTick(e: usize, b: usize): void {
   if (m.ld(e + t.E_UNREF) !== 0) {
     end.wakeUnref(e);
   }
-  if (m.ld(e + t.E_TIMERS) !== 0) {
-    order.tick(e);
+  if (pk.timersAny(e)) {
+    pk.timersTick(e);
   }
   if (m.load(b + io.IO_LIVE) !== 0) {
     io.look(b);

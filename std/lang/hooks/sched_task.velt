@@ -15,9 +15,9 @@
 //   about its leaves (a waker table, its header, a `cx`), and the location of the top-level
 //   `await` that suspended last (a string in a slot, and whether it holds one), whether a
 //   pinned spawn handed a task to the runtime's executor (whose tasks the executor cannot see),
-//   the timer block (`sleep` and Node's timer order: sched_sleep.velt, sched_order.velt; 0
-//   until the first timer), whether the next rejection nobody handles is an error a callback
-//   threw (reported at once: sched_node.velt), and whether a microtask's job is running.
+//   the timer block (`sleep`: sched_sleep.velt; 0 until the first sleep; Node's timer order is
+//   the process's: sched_order.velt), whether the next rejection nobody handles is an error a
+//   callback threw (reported at once: sched_node.velt), and whether a microtask's job is running.
 // - A task: the table's address first (a task is its own waker), its reference count (the
 //   executor's until it is done, the join handle's, one per waker clone), its state (IDLE,
 //   SCHEDULED, RUNNING, NOTIFIED, DONE) and flags, the root's poll and drop and its state's
@@ -302,6 +302,15 @@ export const T_BYTES: usize = 136;
 export const T_TIMERS: usize = 144;
 export const T_HOME: usize = 152;
 export const T_JOIN_STATE: usize = 160;
+/**
+ * A look at Node's timer order found the task busy (`SK_SKIPPED`: one of its timers was passed
+ * over while it was in a poll on another worker), and its poll is ending (`SK_ENDING`): a 32-bit
+ * word after the join slot's (zeroed with it at the spawn), changed only by atomic operations,
+ * and only in programs with Node timers (sched_order_pass.velt `busy`, sched_run.velt `run`).
+ */
+export const T_SKIPPED: usize = 164;
+export const SK_SKIPPED: u32 = 1;
+export const SK_ENDING: u32 = 2;
 /** The result's transfer glue (0: none), run as the root finishes (sched_run.velt `rootDone`). */
 export const T_TRANSFER: usize = 168;
 /** The task's id for `velt_rt_task_id` (0 until first asked for; sched_id.velt). */
@@ -340,7 +349,7 @@ export const STARTED: u32 = 8192;
 /** It reached module state: each of its polls holds the module lock (sched_module.velt). */
 export const TOUCHED: u32 = 2048;
 /**
- * Anchored to its home worker: it made a sleep, a Node timer or a wait with a deadline, which
+ * Anchored to its home worker: it made a sleep or a wait with a deadline, which
  * live in that worker's timer block or I/O block and touch the task from there; it runs only on
  * its home and never moves. (16384 and 32768: sched_node_catch.velt's.)
  */

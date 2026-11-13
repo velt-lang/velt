@@ -1,0 +1,132 @@
+// velt/lang/hooks (internal): the moves of a step of Node's timer order under the executor in
+// Velt (sched_order.velt `step`, `stepAlone`): whether the loop is free, the choice after a look,
+// the turn granted, and the sleeps of the stepping worker that fire around it.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as l from "./sched_order_list";
+import * as p from "./sched_order_pass";
+import * as m from "./sched_mem";
+import * as sl from "./sched_sleep";
+
+/** How a step goes: a worker's look (lock tried), or the end of a poll (lock taken). */
+export const S_LOOK: u32 = 0;
+/** The poll that took the last turn ended. */
+export const S_RELEASED: u32 = 1;
+/** A poll a look found busy ended (sched_run.velt `timersAfter`). */
+export const S_BUSY: u32 = 2;
+
+/**
+ * Does nothing hold the loop of order `b` (locked) for a step (`how`, task `k`'s)? The end of the
+ * poll that took the last turn lets it go first.
+ */
+@inline
+export function free(b: usize, k: usize, how: u32): bool {
+  if (how === S_RELEASED) {
+    if (m.ld(b + l.O_HOLDER) !== k) {
+      return false;
+    }
+    m.st(b + l.O_HOLDER, 0);
+  }
+  return (m.ld(b + l.O_GRANTED) | m.ld(b + l.O_HOLDER)) === 0;
+}
+
+/**
+ * How far a step that chose timer `h` fires this worker's sleeps: in a timers pass, those due by
+ * the timer's time fire before it (the check phase's immediates come before the sleeps that came
+ * due meanwhile, as before the next pass).
+ */
+@inline
+export function uptoFor(b: usize, h: usize, now: u64): u64 {
+  return m.ld(b + p.P_PHASE) === p.PASS ? m.ld(h + l.H_AT) as u64 : now;
+}
+
+/**
+ * Timer `h`, chosen (the lock held), gets its turn: its turn's waker (taken), or 0. In a timers
+ * pass, not while a sleep of worker block `wb` due by its time is left to fire: its turn comes
+ * once they fired (the worker looks again at once).
+ */
+@inline
+export function move(b: usize, wb: usize, h: usize): usize {
+  if (m.ld(b + p.P_PHASE) === p.PASS) {
+    const at = m.ld(h + l.H_AT);
+    if (wb !== 0 && sleepsFirst(wb, at as u64)) {
+      m.st(b + l.O_WAKE_AT, at);
+      return 0;
+    }
+  }
+  return grant(b, h);
+}
+
+/** Worker block `wb`'s sleeps (0: none) due by `upto` fire: the next one's deadline (0: none). */
+@inline
+export function sleeps(wb: usize, upto: u64): u64 {
+  return wb !== 0 && sl.pending(wb) ? fire(wb, upto) : 0;
+}
+
+/** The sleeps of worker block `wb` due by `upto` fire (out of line: `step` stays small). */
+@noInline
+export function fire(wb: usize, upto: u64): u64 {
+  return sl.expire(wb, upto);
+}
+
+/** Has worker block `wb` a sleep that came due, or one due by `at`? */
+export function sleepsFirst(wb: usize, at: u64): bool {
+  return sl.due(wb) || (sl.pending(wb) && sl.nextDeadline(wb) <= at);
+}
+
+/**
+ * `step`'s choice after its look at the order `b` (locked, nothing holding the loop): the timer
+ * that comes next if its time has come by `now` (0: none, and `O_WAKE_AT` says when to look
+ * again). `O_WAKE_AT` is stored once on each way out (here, or by `step`): parking workers read it
+ * without the lock (sched_order_wait.velt), and a 0 in between would leave none of them waiting
+ * for it. `alone`: with one worker for good, no task is busy (`stepAlone`).
+ */
+@inline
+export function choose(b: usize, now: u64, alone: bool): usize {
+  if (m.ld(b + l.O_QUEUED) === 0) {
+    m.st(b + l.O_WAKE_AT, 0);
+    return 0;
+  }
+  if (alone) {
+    p.lookAlone(b);
+  } else {
+    p.look(b);
+  }
+  if (!alone && m.ld(b + p.P_FULL) !== 0) {
+    // More busy tasks than a look remembers: nothing is chosen, and a worker looks again soon.
+    m.st(b + l.O_WAKE_AT, (now as usize) + 1000000);
+    return 0;
+  }
+  const h = m.ld(b + p.P_NEXT);
+  if (h === 0) {
+    // Nothing due: the lists the look passed over get their new places, and the loop wakes at
+    // the first list's expiry (of a timer whose task is not busy), as Node's does.
+    p.loopWoke(b);
+    m.st(b + l.O_WAKE_AT, (alone ? p.firstExpiry(b) : p.wakeAt(b)) * 1000000);
+    return 0;
+  }
+  // The step's clock (the look takes no time worth a second read).
+  const at = m.ld(h + l.H_AT);
+  if ((now as usize) < at) {
+    // Due by the clock in whole milliseconds; its turn also waits for the whole delay.
+    m.st(b + l.O_WAKE_AT, at);
+    return 0;
+  }
+  return h;
+}
+
+/** Timer `h`, chosen by the look, gets its turn (the lock held): its turn's waker (taken), or 0. */
+@inline
+export function grant(b: usize, h: usize): usize {
+  m.st(b + l.O_WAKE_AT, 0);
+  p.commit(b);
+  // From `QUEUED` to `GRANTED`, never `IDLE` between (`leave` reads the state without the lock).
+  l.take(b, h);
+  m.st(h + l.H_STATE, l.GRANTED);
+  m.st(b + l.O_GRANTED, h);
+  const w = m.ld(h + l.H_WAKER);
+  if (w !== 0) {
+    m.st(h + l.H_WAKER, 0);
+  }
+  return w;
+}

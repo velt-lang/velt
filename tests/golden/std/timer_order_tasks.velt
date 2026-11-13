@@ -1,0 +1,63 @@
+// Node timers set by two spawned tasks on different workers take their turns in one order for the
+// process, as in Node's single event loop: one list per delay, in the order the timers were
+// inserted whichever task inserted them (`a 1000` before `b 1000`), an immediate set by a callback
+// after that callback, and a timer of one task cleared by the other never runs.
+//
+// The tasks run on different workers: `main` stays busy until `a` has set its timers, so `a` is
+// taken by another worker; `b` is spawned after that and runs on `main`'s. Only orders that don't
+// depend on how long the machine takes between the two tasks are checked: `a` inserts first by
+// construction, and the cleared timer is due 60 s after it is set, long after `b` clears it (a
+// missed clear prints its line, a failure that doesn't race). Different delays across tasks would
+// depend on that time, so each task's own timers share one delay.
+import { setImmediate, setTimeout, Timer } from "velt/time";
+
+class State {
+  aSet: boolean;
+  toClear: Timer | null;
+  constructor() {
+    this.aSet = false;
+    this.toClear = null;
+  }
+}
+
+/** Busy until `ready` says so (at most 10 s). */
+function spinUntil(ready: () => boolean) {
+  const s = Date.now();
+  while (!ready() && Date.now() - s < 10000) {}
+}
+
+async function main() {
+  const state = shared(new Mutex<State>(new State()));
+  const sa = state.clone();
+  const a = spawn(async (): Promise<i32> => {
+    setTimeout(() => console.log("a 1000"), 1000);
+    const t = setTimeout(() => console.log("a 60000 (cleared: never runs)"), 60000);
+    sa.with((v) => {
+      v.toClear = t;
+      v.aSet = true;
+    });
+    return 0;
+  });
+  spinUntil(() => state.with((v) => v.aSet));
+  const sb = state.clone();
+  const b = spawn(async (): Promise<i32> => {
+    setTimeout(
+      () => {
+        console.log("b 1000");
+        setImmediate(() => console.log("b 1000's immediate"));
+      },
+      1000,
+    );
+    sb.with((v) => {
+      const t = v.toClear;
+      if (t != null) {
+        t.clear();
+      }
+    });
+    return 0;
+  });
+  await a;
+  await b;
+}
+
+// timing: the order of timers is the subject; only orders that hold however slow the machine is

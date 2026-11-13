@@ -29,7 +29,6 @@ import * as w from "./sched_io_write";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as mon from "./sched_monitor";
-import * as l from "./sched_order_list";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as tq from "./sched_take";
@@ -226,9 +225,9 @@ export function retiredLook(e: usize): void {
 }
 
 /**
- * Does spare `e` keep its tasks: a timer of its block (a sleep, a Node timer) still to come, or a
- * sleep that fired and waits on its task's due list or for its leaf to see it (that task's poll
- * reads them from this worker's block)?
+ * Does spare `e` keep its tasks: a sleep of its block still to come (Node's timers are the
+ * process's: sched_order.velt), or a sleep that fired and waits on its task's due list or for its
+ * leaf to see it (that task's poll reads them from this worker's block)?
  */
 function keeps(e: usize): bool {
   const b = m.ld(e + t.E_TIMERS);
@@ -238,18 +237,7 @@ function keeps(e: usize): bool {
   if (b === 0) {
     return false;
   }
-  return (
-    sl.pending(b) ||
-    (
-      m.ld(b + sl.TM_DUE) |
-      m.ld(b + sl.TM_UNSEEN) |
-      m.ld(b + l.O_FIRST) |
-      m.ld(b + l.O_QUEUED) |
-      m.ld(b + l.O_GRANTED) |
-      m.ld(b + l.O_HOLDER)
-    ) !==
-      0
-  );
+  return sl.pending(b) || (m.ld(b + sl.TM_DUE) | m.ld(b + sl.TM_UNSEEN)) !== 0;
 }
 
 /**

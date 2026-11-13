@@ -1,0 +1,117 @@
+// velt/lang/hooks (internal): the worker that waits for the time of Node's timer order under the
+// executor in Velt (sched_order.velt, #2649). One parking worker at a time, the waiter
+// (`O_WAITER`), bounds its wait by `O_WAKE_AT`; the others wait for their own reasons alone, so a
+// due time wakes one worker, not every idle one. A worker claims the role in its park (`wait`)
+// and gives it up when it wakes (sched_order.velt `woke`); a time that comes sooner wakes the
+// waiter, or one sleeping worker when there is none (`nudge`); a worker that runs tasks instead
+// of parking passes the role on (`handOff`).
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as lk from "./sched_lock";
+import * as l from "./sched_order_list";
+import * as m from "./sched_mem";
+import * as q from "./sched_queue";
+import * as sl from "./sched_sleep";
+import * as sp from "./sched_spread";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/**
+ * `O_WAKE_AT` came sooner (the lock given back; `k`: its kind) on worker `e` (`parking`: in its
+ * park before it waits, or about to park: `parksNext`): with several workers, the waiter wakes to
+ * wait again until then, as this one may run a long poll before it looks; with none, one that
+ * sleeps wakes (it steps, and becomes the waiter at its park). A worker that parks reads
+ * `O_WAKE_AT` after it raised its park word and claimed the role, and this reads the waiter after
+ * `O_WAKE_AT` changed (both sequentially consistent: the unlock's store, `wait`'s CAS): either it
+ * sees the new time, or it is seen and woken. A parking `e` that is the waiter or will claim the
+ * role waits until then itself. A worker woken here that finds the loop held (a turn granted
+ * meanwhile) parks without a time: the poll that took the turn looks at its end.
+ */
+export function nudge(k: u32, e: usize, parking: bool): void {
+  if ((k & lk.LK_ON) === 0) {
+    return;
+  }
+  const waiter = m.load(l.order() + l.O_WAITER);
+  if (waiter === e || (waiter === 0 && parking)) {
+    return;
+  }
+  const w = waiter !== 0 ? waiter : sp.sleepingHelper(e);
+  if (w !== 0) {
+    wk.unpark(w);
+  }
+}
+
+/**
+ * Will worker `e` go to its park next, after the poll of task `k` (0: none) ends? Nothing queued
+ * for it, and `k` not woken during the poll (it would run again here). Then a step's new time
+ * wakes no other worker: its park claims the waiter's role (one wake per due time where every
+ * callback cost two or three). A worker that finds tasks instead passes the role on: at a steal
+ * (sched_loop.velt `idle`) or in its park (`handOff`). A task pushed to its inbox before it
+ * looks again runs first, without that: if it runs a long poll while every other worker sleeps,
+ * the time waits for one of them to wake or for that poll's end.
+ */
+export function parksNext(e: usize, k: usize): bool {
+  if (k !== 0 && (m.load32(k + t.T_STATE) !== t.RUNNING || m.load(k + t.T_WOKEN) !== 0)) {
+    return false;
+  }
+  return m.load(e + t.E_INBOX) === 0 && !q.any(e);
+}
+
+/**
+ * Worker `e`, its park word up, waits `timeout` milliseconds (-1: no limit): no longer than until
+ * `O_WAKE_AT` when it is the one worker that waits for the order's time (`O_WAITER`, claimed
+ * here if no worker has it), so that a due time wakes one worker, not every idle one. The others
+ * wait for their own reasons alone; a time that comes sooner wakes the waiter (`nudge`).
+ */
+@inline
+export function wait(e: usize, timeout: i64): i64 {
+  // The only worker bounded its wait by the order's time already (sched_order.velt `next`).
+  if ((lk.mode() & lk.LK_ON) === 0) {
+    return timeout;
+  }
+  return waitFor(e, timeout);
+}
+
+/** `wait` with several workers. */
+@noInline
+function waitFor(e: usize, timeout: i64): i64 {
+  const b = l.order();
+  if (b === 0 || m.load(b + l.O_WAKE_AT) === 0) {
+    return timeout;
+  }
+  const was = m.cas(b + l.O_WAITER, 0, e);
+  if (was !== 0 && was !== e) {
+    return timeout;
+  }
+  // Read again after the claim (`nudge` reads the waiter after it changed the time).
+  const at = m.load(b + l.O_WAKE_AT) as u64;
+  if (at === 0) {
+    return timeout;
+  }
+  const ms = sl.millisUntil(at, sl.clock());
+  return timeout < 0 || ms < timeout ? ms : timeout;
+}
+
+/**
+ * Worker `e` runs tasks instead of parking (the waiter woken for them: `woke`; a worker that
+ * stole tasks or found some at its park): when no worker waits for the order's time, one sleeping
+ * worker wakes to wait for it.
+ */
+@inline
+export function handOff(e: usize): void {
+  if ((lk.mode() & lk.LK_ON) !== 0) {
+    handOffOn(e);
+  }
+}
+
+/** `handOff` with several workers. */
+@noInline
+function handOffOn(e: usize): void {
+  const b = l.order();
+  if (b !== 0 && m.load(b + l.O_WAKE_AT) !== 0 && m.load(b + l.O_WAITER) === 0) {
+    const w = sp.sleepingHelper(e);
+    if (w !== 0) {
+      wk.unpark(w);
+    }
+  }
+}

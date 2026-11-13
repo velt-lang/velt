@@ -4,7 +4,15 @@
 // sleep and no queued microtask polls its root and nothing else; the end of its root and of the
 // task, and its join handle. The worker loop around it is sched_loop.velt.
 
-import { futDrop, futPoll, inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
+import {
+  futDrop,
+  futPoll,
+  inline,
+  noInline,
+  stateDrop,
+  statePoll,
+  stdUsed,
+} from "velt/lang/intrinsics";
 import * as jn from "./sched_join";
 import * as m from "./sched_mem";
 import * as mk from "./sched_make";
@@ -25,6 +33,10 @@ import * as wk from "./sched_wake";
  */
 @inline
 export function run(e: usize, k: usize, mode: u32): void {
+  if (stdUsed("nodeTimers") && mode !== 0) {
+    // A new poll: no look found it busy yet (before the state's store, which publishes it).
+    m.store32(k + t.T_SKIPPED, 0);
+  }
   m.store32(k + t.T_STATE, t.RUNNING);
   // After the pop that took it (a release): the monitor reads a lazy worker 0's queue while the
   // poll runs (sched_monitor.velt `lazyDuties`). The only thread at the executor (mode 0, not
@@ -48,6 +60,9 @@ export function run(e: usize, k: usize, mode: u32): void {
   }
   if (m.ld(k + t.T_MICRO) !== 0 || m.ld(k + t.T_UNHANDLED) !== 0) {
     drain(e, k);
+  }
+  if (stdUsed("nodeTimers") && mode !== 0) {
+    timersAfter(e, k);
   }
   m.st(e + t.E_CURRENT, 0);
   // A lazy worker 0's look after the poll (sched_loop.velt `alone`) reads `E_MODE` after this, and
@@ -174,8 +189,10 @@ function runEnd(e: usize, k: usize, mode: u32): void {
   if (t.has(k, t.TOUCHED)) {
     mod.leave();
   }
-  if (t.has(k, t.HOLDS)) {
-    order.released(e, k);
+  if (stdUsed("nodeTimers")) {
+    if (t.has(k, t.HOLDS)) {
+      order.released(e, k);
+    }
   }
   if (t.has(k, t.ROOT_DONE) && m.ld(k + t.T_LOCALS) === 0) {
     finish(e, k);
@@ -187,6 +204,21 @@ function runEnd(e: usize, k: usize, mode: u32): void {
     // Woken during its poll.
     m.store32(k + t.T_STATE, t.SCHEDULED);
     requeue(e, k, mode);
+  }
+}
+
+/**
+ * The poll of task `k` ends (its microtasks too), with other threads at the executor: from now on
+ * a look at Node's timer order takes it as not busy (`SK_ENDING`). When a look passed over one of
+ * its timers meanwhile (`SK_SKIPPED`), the order moves on now, unless its turn's end does that
+ * (`HOLDS`, in `runEnd`): no other worker would look before its next park or I/O tick. One
+ * read-modify-write on the word a look marks with another (sched_order_pass.velt `busy`): either
+ * the look's mark comes first and is seen here, or the look sees the poll ending.
+ */
+@inline
+function timersAfter(e: usize, k: usize): void {
+  if ((m.or32(k + t.T_SKIPPED, t.SK_ENDING) & t.SK_SKIPPED) !== 0 && !t.has(k, t.HOLDS)) {
+    order.busyEnded(e, k);
   }
 }
 

@@ -249,8 +249,8 @@ export function borrow(e: usize): bool {
 }
 
 /**
- * The task being polled on this thread makes per-worker timer state (a sleep, a Node timer, a
- * wait with a deadline): it is anchored to this worker from now on, its home if it ran here off
+ * The task being polled on this thread makes per-worker timer state (a sleep, a wait with a
+ * deadline): it is anchored to this worker from now on, its home if it ran here off
  * its home (no wake can queue it while it runs, so its home may change now).
  */
 export function anchor(): void {

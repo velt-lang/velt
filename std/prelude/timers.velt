@@ -17,6 +17,8 @@
 // Timers are ordinary compiled Velt promises: no code pointer is cached anywhere, so `velt dev`
 // hot reload needs no special handling.
 
+import { noteStdUse } from "velt/lang/intrinsics";
+
 declare function velt_rt_keep_alive_acquire();
 declare function velt_rt_keep_alive_release();
 declare async function velt_rt_timer_unref_due(): Promise<bool>;
@@ -209,6 +211,8 @@ export function clearImmediate(t: Timer) {
 // A timeout due `ms` from now: its place in the order of timers is taken now (velt_rt_timer_new).
 // It runs as a promise of the current task, which goes on running it after `main` returns.
 function schedule<E>(task: () => Promise<void, E>, ms: i64): Timer {
+  // The executor in Velt carries Node's timer order only for a program that gets here.
+  noteStdUse("nodeTimers");
   const timer = velt_rt_timer_new(ms);
   const state = newState(timer);
   const run = fireOnce(timer, task, state.clone());
@@ -227,6 +231,7 @@ export function clearTimeout(t: Timer) {
  */
 export function setInterval<E>(task: () => Promise<void, E>, ms: i64): Timer {
   const every = ms < 1 ? 1 : ms;
+  noteStdUse("nodeTimers");
   const timer = velt_rt_timer_new(every);
   const state = newState(timer);
   const run = fireEvery(timer, every, task, state.clone());
