@@ -141,15 +141,11 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
         });
         found.push((ty, k, p.why[i], c, None, true));
     }
-    // Per call: may its callee hold a value the graph doesn't trace (a field, a module binding,
-    // the heap)? A closure with no literal node can only be reached through one.
-    let mut untraced_callee: Vec<Option<bool>> = vec![None; g.indirect.len()];
+    // A closure with no literal node can only be reached through a callee that may hold a value
+    // the graph doesn't trace (a field, a module binding, the heap).
     for (ty, k, why, c, reached, unseen) in found {
-        for (ci, call) in g.indirect.iter().enumerate() {
-            if unseen
-                && !*untraced_callee[ci]
-                    .get_or_insert_with(|| super::graph::untraced_input(g, call.callee))
-            {
+        for call in &g.indirect {
+            if unseen && !super::graph::untraced_input(g, call.callee) {
                 continue;
             }
             // A call through a variable holding only closures of one function

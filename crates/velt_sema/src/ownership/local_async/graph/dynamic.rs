@@ -4,6 +4,8 @@
 
 use velt_common::Span;
 
+use crate::ctx::Ctx;
+
 use crate::hir::{Callee, DefId, Expr, ExprKind as E, TyId};
 
 use super::{Graph, Node, To, Walk};
@@ -25,26 +27,56 @@ pub(in crate::ownership::local_async) struct DynConv {
     pub untraced: bool,
 }
 
-/// Does something flow into node `n` that the graph can't trace: does a walk back over its
-/// sources reach a value of unknown origin, or a node nothing flows into but a closure literal (a
-/// parameter only calls through function values feed, `(v) => v as unknown` that std calls)?
-/// Bounded; a walk too long to finish counts as untraced.
+/// Does something flow into node `n` that the graph can't trace ([`untraced_nodes`])?
 pub(in crate::ownership::local_async) fn untraced_input(g: &Graph, n: usize) -> bool {
-    let mut seen = rustc_hash::FxHashSet::default();
-    let mut work = vec![n];
-    while let Some(m) = work.pop() {
-        if !seen.insert(m) {
-            continue;
+    g.untraced[n]
+}
+
+/// Per node: does something flow into it that the graph can't trace? Once for the whole graph:
+/// a value of unknown origin, a node nothing feeds but a closure literal (a parameter only calls
+/// through function values feed, `(v) => v as unknown` that std calls), a parameter of a named
+/// function used as a value (calls through it feed it, with no edge), and whatever these flow
+/// into: along the edges, and from a closure's capture back to the variable it assigns through it.
+pub(super) fn untraced_nodes(cx: &Ctx, g: &Graph) -> Vec<bool> {
+    let n = g.nodes.len();
+    let mut out = vec![false; n];
+    let mut work = vec![];
+    for (i, node) in g.nodes.iter().enumerate() {
+        let seed = g.unknown[i]
+            || (g.srcs[i].is_empty() && !matches!(node, Node::Lit(_)))
+            || matches!(*node, Node::Local(d, l) if g.held.referenced.contains(&d) && is_param(cx, d, l));
+        if seed {
+            out[i] = true;
+            work.push(i);
         }
-        if seen.len() > 64 || g.unknown[m] {
-            return true;
-        }
-        if g.srcs[m].is_empty() && !matches!(g.nodes[m], Node::Lit(_)) {
-            return true;
-        }
-        work.extend(g.srcs[m].iter().map(|&(s, _)| s));
     }
-    false
+    let mut next: Vec<Vec<usize>> = vec![vec![]; n];
+    for (m, srcs) in g.srcs.iter().enumerate() {
+        for &(s, _) in srcs {
+            next[s].push(m);
+        }
+    }
+    for caps in g.captures.values() {
+        for &i in caps {
+            for &(o, _) in &g.srcs[i] {
+                next[i].push(o);
+            }
+        }
+    }
+    while let Some(m) = work.pop() {
+        for &t in &next[m] {
+            if !out[t] {
+                out[t] = true;
+                work.push(t);
+            }
+        }
+    }
+    out
+}
+
+/// Is local `l` a declared parameter of function `d`?
+fn is_param(cx: &Ctx, d: DefId, l: crate::hir::LocalId) -> bool {
+    matches!(&cx.defs[d.0 as usize], Some(crate::hir::Def::Fn(f)) if f.params.iter().any(|p| p.local == l))
 }
 
 impl Walk<'_, '_> {

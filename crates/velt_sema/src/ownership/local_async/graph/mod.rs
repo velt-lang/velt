@@ -132,6 +132,9 @@ pub(super) struct Graph {
     /// Nodes that a call through a function value's result flows into, with that call's
     /// [`Node::Callee`] (`const v = await f()`), for [`Graph::dyn_callee`].
     pub call_results: FxHashMap<usize, usize>,
+    /// Per node: does something flow into it that the graph can't trace
+    /// ([`dynamic::untraced_nodes`])?
+    pub untraced: Vec<bool>,
 }
 
 impl Graph {
@@ -197,12 +200,13 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         w.block(&f.body.block, To::Node(ret, None));
     }
     super::unknown_callees::mark(cx, &mut g);
+    super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
+    g.untraced = dynamic::untraced_nodes(cx, &g);
     for i in 0..g.dynamic.len() {
         let d = g.dynamic[i];
         g.dynamic[i].untraced =
             super::types::mentions_param(cx, d.from) || untraced_input(&g, d.node);
     }
-    super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
     g.dyn_calls.finish(cx);
     g
 }
