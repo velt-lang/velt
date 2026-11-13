@@ -345,14 +345,33 @@ hooks! {
     sched_cell_give => lang_hooks_sched_cells, "schedCellGive", sig((usize) -> void), lowered;
     sched_cell_copy => lang_hooks_sched_cells, "schedCellCopy", sig((usize, usize) -> void), lowered;
     sched_cell_free => lang_hooks_sched_cells, "schedCellFree", sig((usize) -> void), lowered;
-    // The executor in Velt's blocking pool (std/lang/hooks/sched_blocking.velt), which the
-    // `std-scheduler` variant of `#fs-rt` calls by role (`hookCall`): a program loads the pool,
-    // and the executor with it, only when live code runs a blocking job (#2882,
-    // velt_sema `lazy_std/hook_stubs.rs`).
+    // The executor in Velt's blocking pool (std/lang/hooks/sched_blocking.velt) and reactor
+    // (sched_io.velt), which the `std-scheduler` variants of `#fs-rt`, `#process-rt`, `#net-dns`
+    // and velt/net's address lookup call by role (`hookCall`): a program loads them, and the
+    // executor with them, only when live code runs a blocking job (#2882, velt_sema
+    // `lazy_std/hook_stubs.rs`).
     /// Can this OS run the pool?
     sched_blocking_supported => lang_hooks_sched_blocking, "supported", sig(() -> bool);
     /// Runs a job on the pool and resolves with its result.
     sched_blocking_run => lang_hooks_sched_blocking, "run", sig(async <A>(move Fn(() -> A)) -> A);
+    /// Has this program's worker a reactor (an OS the executor's I/O supports)?
+    sched_io_supported => lang_hooks_sched_io, "supported", sig(() -> bool);
+    /// The `std-scheduler` variant of `#net-dns`'s resolver (std/net/dns/lookup_sched.velt).
+    sched_dns_lookup => net_dns_lookup_sched, "velt_rt_dns_lookup", sig(async (move string) -> IoResult([string]));
+    // The child processes on the executor's reactor (std/process/child/child_reactor.velt), which
+    // the `std-scheduler` variant of `#child-rt` calls by role, each the twin of the runtime's
+    // function of its name (std/process/child/rt.velt).
+    sched_child_spawn => process_child_reactor, "velt_rt_child_spawn", sig((&CommandSpec) -> IoResult(u64));
+    sched_child_pid => process_child_reactor, "velt_rt_child_pid", sig((u64) -> u32);
+    sched_child_exit_code => process_child_reactor, "velt_rt_child_exit_code", sig((u64) -> i64);
+    sched_child_wait => process_child_reactor, "velt_rt_child_wait", sig(async (u64) -> IoResult(i32));
+    sched_child_kill => process_child_reactor, "velt_rt_child_kill", sig((u64, i32) -> IoStatus);
+    sched_child_close => process_child_reactor, "velt_rt_child_close", sig((u64) -> void);
+    sched_child_read => process_child_reactor, "velt_rt_child_read", sig(async (u64, u32, u64) -> IoResult([u8]));
+    sched_child_read_string => process_child_reactor, "velt_rt_child_read_string", sig(async (u64, u32, u64) -> IoResult(string));
+    sched_child_write => process_child_reactor, "velt_rt_child_write", sig(async (u64, move string) -> IoStatus);
+    sched_child_close_stdin => process_child_reactor, "velt_rt_child_close_stdin", sig(async (u64) -> IoStatus);
+    sched_child_output => process_child_reactor, "velt_rt_child_output", sig(async (move CommandSpec, move string) -> IoResult(RawOutput));
     /// Module state's `velt_rt_module_state` (`(desc, slot)`), `_block` and `_ready` (workers).
     sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
     sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;

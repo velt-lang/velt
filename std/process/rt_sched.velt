@@ -8,7 +8,7 @@
 // the runtime has no call that only looks at its buffer.
 
 import { IoResult } from "velt/native/result";
-import * as bp from "velt/lang/hooks/sched_blocking";
+import { hookCall } from "velt/lang/intrinsics";
 import * as rt from "./rt";
 import { LineRead } from "./rt";
 
@@ -29,22 +29,28 @@ export {
 } from "./rt";
 
 export async function velt_rt_stdin_read_line(): Promise<LineRead> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_stdin_read_line();
   }
-  return await bp.run<LineRead>(() => rt.velt_rt_stdin_read_line_sync());
+  return await hookCall<LineRead>("sched_blocking_run", () => rt.velt_rt_stdin_read_line_sync());
 }
 
 export async function velt_rt_stdin_read_all(): Promise<IoResult<string>> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_stdin_read_all();
   }
-  return await bp.run<IoResult<string>>(() => rt.velt_rt_stdin_read_all_sync());
+  return await hookCall<IoResult<string>>(
+    "sched_blocking_run",
+    () => rt.velt_rt_stdin_read_all_sync(),
+  );
 }
 
 export async function velt_rt_stdin_read_all_bytes(): Promise<IoResult<u8[]>> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_stdin_read_all_bytes();
   }
-  return await bp.run<IoResult<u8[]>>(() => rt.velt_rt_stdin_read_all_bytes_sync());
+  return await hookCall<IoResult<u8[]>>(
+    "sched_blocking_run",
+    () => rt.velt_rt_stdin_read_all_bytes_sync(),
+  );
 }

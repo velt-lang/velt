@@ -110,6 +110,7 @@ table! {
     lang_hooks_sched => "lang/hooks/sched",
     lang_hooks_sched_blocking => "lang/hooks/sched_blocking",
     lang_hooks_sched_cells => "lang/hooks/sched_cells",
+    lang_hooks_sched_io => "lang/hooks/sched_io",
     lang_hooks_string => "lang/hooks/string",
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_hooks_tuple_elements => "lang/hooks/tuple_elements",
@@ -167,10 +168,12 @@ table! {
     /// `velt/math`'s `BigInt`, whose operators take BigInt operands only (sema
     /// `body/expr/operator_bigint.rs` names the fix for a mixed one).
     math_bigint => "math/bigint",
+    net_dns_lookup_sched => "net/dns/lookup_sched",
     net_http_fetch_response => "net/http/fetch/response",
     /// `velt/ops/operators`, the interfaces of the operator methods `velt/ops` exports (sema
     /// `collect/operators.rs`).
     ops_operators => "ops/operators",
+    process_child_reactor => "process/child/child_reactor",
     process_stdout => "process/stdout",
     simd => "simd",
     simd_aes => "simd/aes",

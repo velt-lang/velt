@@ -234,14 +234,15 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// `velt/fs`'s synchronous calls load none of the executor's modules (#2882): its `std-scheduler`
-/// variant calls the blocking pool by role (`hookCall`), and the call names the pool only once
-/// live code reaches it (velt_sema `lazy_std/hook_stubs.rs`), not when a body is checked. So the
-/// program builds and runs with every `lang/hooks/sched*` module gone from std. Importing the
-/// pool's module instead made `velt check` of such a program load 47 more modules (+56 % on
-/// notes-cli).
+/// A program that runs nothing on the executor loads none of its modules (#2882): the
+/// `std-scheduler` variants of `#fs-rt`, `#process-rt`, `#net-dns` and `#child-rt` call the
+/// executor's code by role (`hookCall`), and a call names it only once live code reaches it
+/// (velt_sema `lazy_std/hook_stubs.rs`), not when a body is checked. So synchronous `velt/fs`,
+/// `velt/process` and `execSync` programs, and one that only imports `velt/net/dns`, build and run
+/// with every `lang/hooks/sched*` module gone from std. Importing the executor's modules instead
+/// made `velt check` of such a program cost +56 % (notes-cli) to +305 % (`execSync`).
 #[test]
-fn synchronous_fs_calls_load_no_executor_module() {
+fn programs_running_nothing_on_the_executor_load_none_of_it() {
     if !cfg!(unix) {
         return;
     }
@@ -258,26 +259,40 @@ fn synchronous_fs_calls_load_no_executor_module() {
         }
     }
     assert!(removed > 30, "{removed} executor modules");
-    let file = dir.path().join("sync_fs.velt");
     let data = dir.path().join("data.txt");
     std::fs::write(&data, "four").unwrap();
-    let src = format!(
+    let fs = format!(
         "import {{ existsSync, readFileSync, writeFileSync }} from \"velt/fs\";\n\
          function main() {{\n  const p = {:?};\n  writeFileSync(p + \".out\", readFileSync(p) + \"!\");\n  \
          console.log(existsSync(p), readFileSync(p + \".out\"));\n}}\n",
         data.to_str().unwrap()
     );
-    std::fs::write(&file, src).unwrap();
-    let exe = dir.path().join(if cfg!(windows) {
-        "sync_fs.exe"
-    } else {
-        "sync_fs"
-    });
-    let o = build_with_std(&std, &file, &exe);
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    let o = command(&exe).env_remove("VELT_SCHEDULER").output().unwrap();
-    let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
-    assert_eq!((o.status.code(), out.as_str()), (Some(0), "true four!\n"));
+    let process = "import { args, cwd } from \"velt/process\";\nfunction main() {\n  \
+                   console.log(args().length >= 0, cwd().length > 0);\n}\n";
+    let dns = "import { lookup } from \"velt/net/dns\";\nfunction main() {\n  \
+               console.log(\"no lookup\");\n}\n";
+    let exec = "import { execSync } from \"velt/process/child\";\nfunction main() {\n  \
+                console.log(execSync(\"echo\", [\"child\"]).stdout.trim());\n}\n";
+    let programs = [
+        ("sync_fs", fs.as_str(), "true four!\n"),
+        ("sync_process", process, "true true\n"),
+        ("dns_import", dns, "no lookup\n"),
+        ("exec_sync", exec, "child\n"),
+    ];
+    for (name, src, want) in programs {
+        let file = dir.path().join(format!("{name}.velt"));
+        std::fs::write(&file, src).unwrap();
+        let exe = dir.path().join(name);
+        let o = build_with_std(&std, &file, &exe);
+        assert!(
+            o.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let o = command(&exe).env_remove("VELT_SCHEDULER").output().unwrap();
+        let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+        assert_eq!((o.status.code(), out.as_str()), (Some(0), want), "{name}");
+    }
 }
 
 /// A hook called by role is typed from velt_common's table until live code reaches it; then its
@@ -314,21 +329,35 @@ fn a_hook_called_by_role_that_drifted_from_the_table_is_an_ice() {
 }
 
 /// Without std's modules on demand (`VELT_EAGER_STD`, `VELT_CHECK_ALL_STD`, the editor's
-/// analysis), the loader loads the executor's blocking pool up front with the executor, as
-/// `velt/fs` calls it by role (#2882): its programs build under `VELT_SCHEDULER=std` with every
-/// std module loaded, and give the VIR they give on demand (cli.md: "byte for byte the same").
+/// analysis), the loader loads what std calls by role up front with the executor (#2882): the
+/// blocking pool, the reactor, the child processes and the resolver. Programs using `velt/fs`,
+/// `velt/net/dns` and `velt/process/child` build under `VELT_SCHEDULER=std` with every std module
+/// loaded, and give the VIR they give on demand (cli.md: "byte for byte the same").
 #[test]
-fn fs_programs_build_the_same_with_std_up_front() {
+fn programs_calling_by_role_build_the_same_with_std_up_front() {
     let sync = "import { existsSync } from \"velt/fs\";\nfunction main() {\n  \
                 console.log(existsSync(\"nothing here\"));\n}\n";
     let async_fs = "import { readFile } from \"velt/fs\";\nasync function main() {\n  \
                      try {\n    await readFile(\"nothing here\");\n  } catch (e) {\n    \
                      console.log(\"missing\");\n  }\n}\n";
-    for src in [sync, async_fs] {
+    let dns = "import { lookup } from \"velt/net/dns\";\nasync function main() {\n  \
+               console.log((await lookup(\"localhost\")).length > 0);\n}\n";
+    let child = "import { exec } from \"velt/process/child\";\nasync function main() {\n  \
+                 console.log((await exec(\"echo\", [\"child\"])).stdout.trim());\n}\n";
+    for src in [sync, async_fs, dns, child] {
         let files = [("main.velt", src)];
-        let on_demand = vir_of(&files);
-        let eager = vir_with(&files, &[("VELT_EAGER_STD", "1")]);
-        assert!(on_demand == eager, "std up front gives another VIR:\n{src}");
-        vir_with(&files, &[("VELT_CHECK_ALL_STD", "1")]);
+        // Built whole each time: std's prebuilt objects, from a cache, are lowered apart.
+        let fresh = [("VELT_BUILD_CACHE", "off"), ("VELT_BUILD_STAMP", "off")];
+        let with = |var: &'static str| {
+            let mut env = fresh.to_vec();
+            env.push((var, "1"));
+            vir_with(&files, &env)
+        };
+        let on_demand = vir_with(&files, &fresh);
+        assert!(
+            on_demand == with("VELT_EAGER_STD"),
+            "std up front gives another VIR:\n{src}"
+        );
+        with("VELT_CHECK_ALL_STD");
     }
 }
