@@ -243,3 +243,64 @@ fn an_uncaught_exit_in_a_poll_a_microtask_resumed_balances_the_block_counts() {
         }
     }
 }
+
+/// A program that runs nothing on the executor (no async code, no timer) and ends on an error
+/// leaving a module state initializer.
+const NO_TASKS_EXIT: &str = r#"class Boom extends Error {}
+
+function make(): number {
+  throw new Boom("in a module initializer");
+}
+
+const x: number = make();
+
+function main() {
+  console.log(x);
+}
+"#;
+
+/// The uncaught exit of a program sema found running nothing on the executor calls the runtime's
+/// `velt_rt_exit`, not the executor's `sched_exit`, whose module isn't loaded then (#2880: its
+/// call was an internal compiler error), with std on demand and with std up front
+/// (`VELT_EAGER_STD=1`, where the module is loaded but its hooks left unchecked).
+#[test]
+fn an_uncaught_exit_of_a_program_without_tasks_builds_and_ends_with_1() {
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join("no_tasks_exit.velt");
+    std::fs::write(&file, NO_TASKS_EXIT).unwrap();
+    // The loader takes `VELT_EAGER_STD` set to anything for std up front.
+    for eager in [false, true] {
+        let exe = exe_name(dir.path(), &format!("no_tasks_exit_{eager}"));
+        let mut build = command(env!("CARGO_BIN_EXE_velt"));
+        build
+            .arg("build")
+            .arg(&file)
+            .arg("-o")
+            .arg(&exe)
+            .current_dir(dir.path())
+            .env("VELT_SCHEDULER", "std")
+            .env_remove("VELT_EAGER_STD");
+        if eager {
+            build.env("VELT_EAGER_STD", "1");
+        }
+        let o = build.output().unwrap();
+        assert!(
+            o.status.success(),
+            "std up front: {eager}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let (code, out, err) = run(&exe, dir.path(), "1");
+        assert_eq!(
+            (code, out.as_str()),
+            (1, ""),
+            "std up front: {eager}: {err}"
+        );
+        assert!(
+            err.contains("Uncaught Boom [Error]: in a module initializer"),
+            "{err}"
+        );
+        let (a, f) = blocks(&err).expect("an rc stats line");
+        assert_eq!(a, f, "blocks not balanced: {err}");
+    }
+}

@@ -54,9 +54,11 @@ impl FnLower<'_, '_> {
 
     /// The exit with 1 after an uncaught error's report: under the executor in Velt its hook
     /// (`sched_exit`: the executor gives back the blocks it holds for the leak counters first),
-    /// else `velt_rt_exit`.
+    /// else `velt_rt_exit`. A program sema found running nothing on the executor has no executor
+    /// blocks to give back, and its hooks are neither loaded nor checked (velt_sema `lazy_std`
+    /// `sched_hooks`, #2880): it calls `velt_rt_exit` too, in either std mode.
     pub(super) fn exit_uncaught(&mut self) {
-        if !self.std_sched() {
+        if !self.std_sched() || !self.sched_exit_live() {
             return self.call_rt(Rt::Exit, vec![cint(1, Ty::I32)], None);
         }
         if self.dead() {
@@ -64,6 +66,12 @@ impl FnLower<'_, '_> {
         }
         hooks::sched_exit(self, ty::I32::arg(cint(1, Ty::I32))).emit(self);
         self.terminate(crate::vir::Terminator::Unreachable);
+    }
+
+    /// Did sema check the executor's `sched_exit` (the program runs something on the executor)?
+    fn sched_exit_live(&self) -> bool {
+        let name = velt_common::std_hook!(sched_exit);
+        (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
     }
 
     /// `op` (a pointer or an integer) as a `usize` argument.
