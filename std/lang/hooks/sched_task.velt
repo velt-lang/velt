@@ -443,3 +443,23 @@ export function movable(k: usize): bool {
 export function fresh(k: usize): bool {
   return (m.ld32(k + T_FLAGS) & (STARTED | ROOT)) === 0;
 }
+
+/**
+ * Is worker 0 done with the root task of `main` (`k`; `shared`: another worker may run it)? Its
+ * root is done, and the task either counts as live (its started promises run on, and
+ * `schedFinish` waits for the count) or finished: its state `DONE`, which sched_run.velt
+ * `mainFinish` stores last, so the task's end on another worker is over before worker 0 gives
+ * its reference back and may end the program. Read by worker 0's loop (sched.velt
+ * `schedBlockOn`) and again by its park after the park word went up (sched_park.velt).
+ */
+@inline
+export function rootLeft(k: usize, shared: bool): bool {
+  const fl = shared ? m.load32(k + T_FLAGS) : m.ld32(k + T_FLAGS);
+  if ((fl & ROOT_DONE) === 0) {
+    return false;
+  }
+  if ((fl & COUNTED) !== 0) {
+    return true;
+  }
+  return (shared ? m.load32(k + T_STATE) : m.ld32(k + T_STATE)) === DONE;
+}

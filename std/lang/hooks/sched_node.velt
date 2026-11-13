@@ -17,6 +17,9 @@
 // The flags change only through atomic or/and: a wake on another thread sets QUEUED while the
 // worker sets and clears the others.
 //
+// A promise handed to another task is awaited or dropped by its owner on one worker while its
+// task finishes it on another: sched_node_await.velt.
+//
 // A lazy node (boxed, not started) is polled by whoever awaits it with their `cx`. Started (from
 // a poll of a task: outside one it stays lazy), it runs at once until it suspends, with the
 // task's await word raised so its `await`s take their microtask step, and from then on its task
@@ -26,6 +29,7 @@
 import { inline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
+import * as aw from "./sched_node_await";
 import * as nc from "./sched_node_catch";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -35,7 +39,6 @@ export const N_REFS: usize = 8;
 export const N_FLAGS: usize = 16;
 const N_BYTES: usize = 20;
 export const N_POLL: usize = 24;
-const N_AWAITER: usize = 32;
 export const N_RESULT_DROP: usize = 40;
 export const N_TASK: usize = 48;
 export const N_NEXT: usize = 56;
@@ -97,7 +100,7 @@ export function boxed(
   m.st(n + N_RESULT_DROP, 0);
   m.st(n + N_TASK, 0);
   m.st(n + N_NEXT, 0);
-  m.st(n + N_AWAITER, 0);
+  m.st(n + aw.N_AWAITER, 0);
   m.st(n + N_CX, 0);
   m.st(n + N_CX + 8, n);
   m.st(n + N_TAKEN_NEXT, 0);
@@ -181,27 +184,19 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
       return 1;
     }
   }
-  return awaitNode(n, cx);
+  return aw.awaitNode(n, cx);
 }
 
-/** The owner waits for node `n`: its waker is woken when `n` finishes. */
-export function awaitNode(n: usize, cx: usize): u32 {
-  const old = m.ld(n + N_AWAITER);
-  m.st(n + N_AWAITER, m.wakerClone(m.ld(cx + 8)));
-  if (old !== 0) {
-    m.wakerDrop(old);
-  }
-  return 0;
-}
-
-/** Adopted node `n` of task `task` finished (flags `fl`): the task no longer drives it. */
+/**
+ * Adopted node `n` of task `task` finished (flags `fl`): the task no longer drives it. Its owner,
+ * which adopted it, runs on the task (`pollNode`), so nothing else touches its awaiter word.
+ */
 @inline
 export function adoptedDone(task: usize, n: usize, fl: u32): void {
   setFlags(n, fl);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
-  const w = m.ld(n + N_AWAITER);
+  const w = aw.takePlain(n);
   if (w !== 0) {
-    m.st(n + N_AWAITER, 0);
     m.wakerDrop(w);
   }
   // The task's reference.
@@ -219,16 +214,26 @@ export function nodeDrop(f: usize): void {
         stateDrop(m.ld(n + N_DROP), f + 16);
       }
     }
-  } else if ((fl & FINISHED) !== 0) {
-    if ((fl & DELIVERED) === 0) {
+  } else if (!aw.ownSide(n)) {
+    // The finish may run on another worker meanwhile (sched_node_await.velt): the one that comes
+    // second drops the result. DELIVERED is the owner's own (this thread's).
+    const prev = m.or32(n + N_FLAGS, DETACHED);
+    if ((prev & (FINISHED | DELIVERED)) === FINISHED) {
       dropResult(n);
     }
-  } else {
+    const w = m.swap(n + aw.N_AWAITER, 0);
+    if (w !== 0) {
+      m.wakerDrop(w);
+    }
+    release(n);
+    return;
+  } else if ((fl & FINISHED) === 0) {
     setFlags(n, DETACHED);
+  } else if ((fl & DELIVERED) === 0) {
+    dropResult(n);
   }
-  const w = m.ld(n + N_AWAITER);
+  const w = aw.takePlain(n);
   if (w !== 0) {
-    m.st(n + N_AWAITER, 0);
     m.wakerDrop(w);
   }
   release(n);
@@ -343,14 +348,15 @@ export function run(task: usize, n: usize, taken: bool): void {
       return;
     }
   }
-  setFlags(n, FINISHED);
+  // Its owner may drop or await it on another worker meanwhile (sched_node_await.velt): the old
+  // flags say whether the drop came first, and the awaiter word is claimed as `finishAwaiter` says.
+  const prev = m.or32(n + N_FLAGS, FINISHED);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
-  if ((m.load32(n + N_FLAGS) & DETACHED) !== 0) {
+  if ((prev & DETACHED) !== 0) {
     dropResult(n);
   } else {
-    const w = m.ld(n + N_AWAITER);
+    const w = aw.finishAwaiter(n, task);
     if (w !== 0) {
-      m.st(n + N_AWAITER, 0);
       if (wk.taskOf(w) === task) {
         // Its awaiter is the task's root or another promise it drives: its reaction is queued
         // now, as Node queues a promise's reactions when it settles, and that entry is its step.

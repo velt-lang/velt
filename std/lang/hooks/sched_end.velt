@@ -245,8 +245,19 @@ export function mayPark(e: usize): bool {
   }
   if (quiet(e)) {
     const root = m.ld(e + t.E_ROOT);
-    if (root !== 0 && !t.has(root, t.ROOT_DONE)) {
-      unfinished(e);
+    if (root !== 0) {
+      if (!t.has(root, t.ROOT_DONE)) {
+        unfinished(e);
+      }
+      // The root is done, its task not (promises it started after the root's end wait for
+      // ever): counted as live, so worker 0 stops waiting for its end (sched_task.velt
+      // `rootLeft`). COUNTED means the live count was raised for it (sched_run.velt `finish`
+      // lowers it then), so the count goes up with it, and `noneLive` below gives it up with
+      // the other live tasks. The scan found every worker idle, so no worker polls the task
+      // and changes its flags meanwhile; the atomic or says whether its end counted it already.
+      if ((m.or32(root + t.T_FLAGS, t.COUNTED) & t.COUNTED) === 0) {
+        mk.liveUp(e, e);
+      }
     }
     // `schedFinish` runs while tasks are live: none of them can run again.
     mk.noneLive(e);

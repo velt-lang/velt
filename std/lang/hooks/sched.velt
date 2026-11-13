@@ -78,17 +78,17 @@ export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
   m.st(e + t.E_ROOT, k);
   if (m.ld32(e + t.E_MODE) === 0 && m.ld(e + t.E_LAZY) === 0) {
     // The only thread at the executor: the root runs here.
-    while ((m.ld32(k + t.T_FLAGS) & t.ROOT_DONE) === 0) {
+    while (!t.rootLeft(k, false)) {
       loop.turnSolo(e);
     }
   } else {
     // The root may run on another worker (the monitor moves it from a stalled worker 0), which
     // wakes this one once it is done.
-    while ((m.load32(k + t.T_FLAGS) & t.ROOT_DONE) === 0) {
+    while (!t.rootLeft(k, true)) {
       if (m.ld(e + t.E_LAZY) !== 0 && loop.alone(e)) {
         // Alone until the monitor finds this worker stalled (sched_loop.velt `adopt`), and again
         // once it takes that back (sched_relax.velt).
-        while ((m.ld32(k + t.T_FLAGS) & t.ROOT_DONE) === 0) {
+        while (!t.rootLeft(k, true)) {
           if (!loop.turnLazy(e)) {
             break;
           }

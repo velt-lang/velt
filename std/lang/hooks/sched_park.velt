@@ -21,7 +21,11 @@ import * as wk from "./sched_wake";
 /**
  * May worker `e` (its park word up, nothing queued) sleep? Worker 0 decides the program's end
  * there (sched_end.velt `mayPark`); another worker wakes worker 0 if it sleeps, so that it looks
- * again with this one idle.
+ * again with this one idle. Worker 0 does not sleep once the root task of `main` is left
+ * (sched_task.velt `rootLeft`): the worker that ended it (sched_run.velt `mainDone`,
+ * `mainFinish`) stores that, then wakes worker 0 only if its park word is up; read after the
+ * word went up (both sequentially consistent, as the inbox and queue before), either that worker
+ * sees the word and wakes worker 0, or worker 0 sees the root left here.
  */
 function parkable(e: usize): bool {
   const g = m.ld(e + t.E_MAIN);
@@ -29,6 +33,10 @@ function parkable(e: usize): bool {
   // workers do. A reader of a pipe waits for it, maybe for as long as the sleep (#2873).
   wk.handOffOutput();
   if (e === g) {
+    const root = m.ld(e + t.E_ROOT);
+    if (root !== 0 && t.rootLeft(root, true)) {
+      return false;
+    }
     return end.mayPark(e);
   }
   wk.unpark(g);

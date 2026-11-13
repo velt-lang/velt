@@ -1,0 +1,33 @@
+// check: no leaks
+// Promises that `main`'s last lines start through reactions keep the program running until they
+// settle, as in Node: the reactions run among the microtasks of `main`'s last step, after its
+// root returned, and what they start sleeps before it prints (#2887). One reaction is queued by
+// a microtask, one follows a `then` of a `then`, and the last line resolves the first promise.
+
+// timing: timers due after main's root returned are the subject; they print in due order
+async function late(name: string, ms: i64): Promise<void> {
+  await sleep(ms);
+  console.log(`${name} after ${ms} ms`);
+  await sleep(10);
+  console.log(`${name} again`);
+}
+
+async function main() {
+  const p = Promise.withResolvers<i64>();
+  p.promise.then(async (v: i64) => {
+    await late(`then ${v}`, 120);
+  });
+  const q = p.promise.then((v: i64) => v + 1);
+  q.then(async (v: i64) => {
+    await late(`chained ${v}`, 60);
+  });
+  queueMicrotask(() => {
+    const r = Promise.withResolvers<i64>();
+    r.promise.then(async (v: i64) => {
+      await late(`queued ${v}`, 20);
+    });
+    r.resolve(3);
+  });
+  console.log("main returns");
+  p.resolve(1);
+}

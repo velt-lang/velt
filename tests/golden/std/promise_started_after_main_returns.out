@@ -1,0 +1,7 @@
+main returns
+queued 3 after 20 ms
+queued 3 again
+chained 2 after 60 ms
+chained 2 again
+then 1 after 120 ms
+then 1 again
