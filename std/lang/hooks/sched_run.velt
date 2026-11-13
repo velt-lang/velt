@@ -13,6 +13,7 @@ import {
   statePoll,
   stdUsed,
 } from "velt/lang/intrinsics";
+import * as bd from "./sched_budget";
 import * as jn from "./sched_join";
 import * as m from "./sched_mem";
 import * as mk from "./sched_make";
@@ -128,6 +129,8 @@ function runWoken(e: usize, k: usize, fl: u32): void {
     fireDue(e, k);
   }
   if (!t.has(k, t.POLLED)) {
+    // After its promises, the root's turn has a budget of its own (sched_budget.velt).
+    bd.refill();
     pollRoot(e, k);
   }
 }

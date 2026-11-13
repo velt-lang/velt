@@ -1,0 +1,83 @@
+// velt/lang/hooks (internal): the I/O budget of a task poll in the executor in Velt (sched.velt,
+// #2815), as tokio's cooperative budget and the runtime's (velt_rt task/runtime/velt/coop.rs).
+//
+// A read that finds bytes waiting completes without a wait, so a connection whose peer always has
+// sent more (a client faster than the server, or the server's thread taken off its core between
+// two reads) would loop in one poll for as long as that lasts: a parser reads, a response is
+// written, the next read finds the next request, and the task's other promises (every connection
+// of a server that drives them from one task, the accept loop) and the worker's other tasks wait
+// for it. So a task poll may complete `BUDGET` socket operations (reads, accepts); past that, a
+// read finds nothing yet and a wait for readability yields: it wakes its own task and stays
+// pending, so the poll ends and the task runs again behind what is queued, the reactor looked at in
+// between.
+//
+// The budget is per thread, refilled when the poll changes: a poll is told apart by its task and
+// the worker's I/O tick (sched_loop.velt `ioCountdown`: it moves at every poll), so the executor's
+// loop pays nothing. Two polls taken for one (the same task 61 polls later at the same tick) only
+// yield once early. A task that drives started promises refills it for each woken promise it runs
+// and for its root after them (`refill`): each gets a budget of its own, and one that spent its
+// budget runs again after the others (a server's connections take turns, its accept loop among
+// them). A started promise's first run spends its starter's budget, so an accept loop that starts
+// one per connection yields too.
+
+import { inline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+
+/** Socket operations one task poll completes without a wait (tokio's and the runtime's figure). */
+export const BUDGET: u64 = 128;
+
+/** This thread's budget: the poll's key (bits 16..63) and the operations it spent (bits 0..15). */
+const SPENT = new ThreadLocal<u64>(0);
+
+/** The key of the task poll running on this thread; 0 outside one (no budget applies). */
+@inline
+function pollKey(): u64 {
+  const e = t.here();
+  if (e === 0) {
+    return 0;
+  }
+  const k = m.ld(e + t.E_CURRENT) as u64;
+  if (k === 0) {
+    return 0;
+  }
+  return (((k >> 4) ^ ((m.ld(e + t.E_TICK) as u64) << 40)) & 0xffffffffffff) | 1;
+}
+
+/** Spends one operation of the running poll's budget: false when it is spent (yield instead). */
+export function spend(): bool {
+  const key = pollKey();
+  if (key === 0) {
+    return true;
+  }
+  const v = SPENT.get();
+  if (v >> 16 !== key) {
+    SPENT.set((key << 16) | 1);
+    return true;
+  }
+  if ((v & 0xffff) >= BUDGET) {
+    return false;
+  }
+  SPENT.set(v + 1);
+  return true;
+}
+
+/**
+ * A fresh budget for the next turn of the running poll: a woken promise its task runs, or its root
+ * after them (sched_node.velt `run`, sched_run.velt `runWoken`), so that one connection of a server
+ * whose task drives them all spends only its own.
+ */
+@inline
+export function refill(): void {
+  SPENT.set(0);
+}
+
+/** Is the running poll's budget spent (a wait for readability yields rather than completes)? */
+export function spent(): bool {
+  const key = pollKey();
+  if (key === 0) {
+    return false;
+  }
+  const v = SPENT.get();
+  return v >> 16 === key && (v & 0xffff) >= BUDGET;
+}

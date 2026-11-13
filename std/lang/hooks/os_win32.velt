@@ -1,6 +1,7 @@
-// velt/lang/hooks (internal): the two OS calls the executor in Velt's core makes whatever its
-// reactor (`#sched-os`, sched_mem.velt and sched_io_wait.velt) on Windows: `SwitchToThread` and
-// the performance counter (kernel32; the UCRT has neither `sched_yield` nor `clock_gettime`).
+// velt/lang/hooks (internal): the OS calls the executor in Velt's core makes whatever its reactor
+// (`#sched-os`, sched_mem.velt, sched_io_wait.velt and sched_debug.velt) on Windows:
+// `SwitchToThread` and the performance counter (kernel32; the UCRT has neither `sched_yield` nor
+// `clock_gettime`), and the UCRT's `_write` for stderr.
 
 import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
@@ -8,6 +9,7 @@ import * as m from "./sched_mem";
 declare c("c") function SwitchToThread(): i32;
 declare c("c") function QueryPerformanceCounter(count: Ptr<u8>): i32;
 declare c("c") function QueryPerformanceFrequency(freq: Ptr<u8>): i32;
+declare c("c") function _write(fd: i32, buf: Ptr<u8>, n: u32): i32;
 
 /** Gives the core to another thread that is ready to run, if any. */
 export function yieldCore(): void {
@@ -42,4 +44,12 @@ export function monotonicNs(clock: i32): u64 {
   }
   // Whole seconds and the rest apart: `c * 10^9` overflows after half an hour at 10 MHz.
   return (c / f) * 1000000000 + ((c % f) * 1000000000) / f;
+}
+
+/** Writes the `n` bytes at `buf` to stderr, unbuffered (a debug view's line). */
+export function writeStderr(buf: usize, n: usize): void {
+  // SAFETY: `n` bytes at `buf`; a debug line is far below 4 GiB.
+  unsafe {
+    _write(2, m.ptr(buf), n as u32);
+  }
 }

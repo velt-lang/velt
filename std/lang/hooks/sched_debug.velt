@@ -1,0 +1,98 @@
+// velt/lang/hooks (internal): a view of the executor in Velt's workers for finding stalls
+// (sched.velt, #2649, #2815). With `VELT_SCHED_DEBUG=<ms>` set, a thread of its own writes one
+// line to stderr every `<ms>` milliseconds: the monitor's state, a few counters of rare events
+// (the monitor's rescues and spare starts, its turns of a stalled worker's reactor, spin locks
+// that gave the core away), and per worker its park word, current task, inbox, queues, locks,
+// unparks, polls and progress, and its reactor's sources, waits and due writes. Unset, nothing
+// starts and nothing is counted but those rare events.
+
+import { Ptr, export as cExport } from "velt/ffi";
+import { exportedAddress } from "velt/lang/intrinsics";
+import * as os from "#sched-os";
+import * as r from "#reactor";
+import * as th from "#sched-thread";
+import { processEnv } from "./process";
+import * as io from "./sched_io";
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+
+/** The monitor's rescues of a stalled worker that moved tasks, spares started, reactor turns. */
+export const RESCUES = new Atomic<usize>(0);
+export const SPARES = new Atomic<usize>(0);
+export const TURNS = new Atomic<usize>(0);
+
+/** The milliseconds between two lines (`VELT_SCHED_DEBUG`); 0: off. */
+function period(): usize {
+  const v = processEnv("VELT_SCHED_DEBUG");
+  if (v === undefined) {
+    return 0;
+  }
+  let n: usize = 0;
+  for (const c of v.trim()) {
+    if (c < "0" || c > "9") {
+      return 0;
+    }
+    n = n * 10 + ((c.charCodeAt(0) - 48) as usize);
+    if (n > 3600000) {
+      return 0;
+    }
+  }
+  return n;
+}
+
+/** Starts the view's thread for worker 0's block `g` when `VELT_SCHED_DEBUG` asks for it. */
+export function start(g: usize): void {
+  const ms = period();
+  if (ms === 0 || !th.SUPPORTED) {
+    return;
+  }
+  const a = m.lastingZeroed(16);
+  m.st(a, g);
+  m.st(a + 8, ms);
+  // SAFETY: `debugMain` is `@export`ed as `void* f(void*)`, what `pthread_create` calls.
+  const f = unsafe { exportedAddress(debugMain) };
+  th.start(f, a);
+}
+
+@cExport("std_sched_debug")
+function debugMain(arg: Ptr<u8> | null): Ptr<u8> | null {
+  const a = m.addr(arg);
+  const g = m.ld(a);
+  const ms = m.ld(a + 8);
+  const word = m.lastingZeroed(8);
+  const t0 = sl();
+  while (true) {
+    r.wordWaitFor(word, 0, (ms * 1000) as u32);
+    line(g, (sl() - t0) / 1000000);
+  }
+  return null;
+}
+
+/** The monotonic clock in nanoseconds. */
+function sl(): usize {
+  return os.monotonicNs(r.MONOTONIC) as usize;
+}
+
+/** One line: the monitor's state and counters, then each started worker's. */
+function line(g: usize, at: usize): void {
+  const n = m.load(g + t.E_STARTED);
+  let s = `sched ${at}ms ticks=${m.load(g + t.E_TICKS)} started=${n} monAsleep=${m.load32(g + t.E_MON_ASLEEP)} moving=${m.load(g + t.E_MOVING)} rescues=${RESCUES.load()} spares=${SPARES.load()} turns=${TURNS.load()} yields=${m.SPIN_YIELDS.load()}`;
+  for (let i: usize = 0; i < n; i++) {
+    const w = t.worker(i);
+    const b = m.ld(w + t.E_IO);
+    const cur = m.load(w + t.E_CURRENT);
+    const state = cur === 0 ? 9 : m.load32(cur + t.T_STATE);
+    s = `${s} | w${i} park=${m.load32(w + t.E_PARK)} cur=${cur === 0 ? 0 : 1}/${state} inbox=${m.load(w + t.E_INBOX) === 0 ? 0 : 1} offer=${m.load(w + t.E_OFFER) === 0 ? 0 : 1} io=${m.load(w + t.E_IHEAD) === 0 ? 0 : 1} rest=${m.load(w + t.E_HEAD) === 0 ? 0 : 1} next=${m.load(w + t.E_NEXT) === 0 ? 0 : 1} queued=${m.load(w + t.E_QUEUED)} qlock=${m.load32(w + t.E_QLOCK)} rlock=${m.load32(b + io.IO_RLOCK)} unparks=${m.load(w + t.E_UNPARKS)} polls=${m.load(w + t.E_POLLS)} progress=${m.load(w + t.E_PROGRESS)} retired=${m.load32(w + t.E_RETIRED)} live=${m.load(b + io.IO_LIVE)} waits=${m.load(b + io.IO_WAITING)} due=${(m.load(b + io.IO_DUE) | m.load(b + io.IO_RDUE)) === 0 ? 0 : 1}`;
+  }
+  s = `${s}\n`;
+  const len = s.length as usize;
+  const buf = m.alloc(len + 4);
+  let k: usize = 0;
+  for (const c of s) {
+    // Little-endian: the low byte is the character (the line is ASCII), the rest overwritten.
+    m.st32(buf + k, c.charCodeAt(0) as u32);
+    k++;
+  }
+  os.writeStderr(buf, k);
+  m.release(buf, len + 4);
+}

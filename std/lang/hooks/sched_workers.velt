@@ -8,6 +8,7 @@ import { exportedAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
 import { processEnv } from "./process";
+import * as dbg from "./sched_debug";
 import * as end from "./sched_end";
 import * as io from "./sched_io";
 import * as lk from "./sched_lock";
@@ -196,6 +197,7 @@ function startWorkers(e: usize): void {
   if (monitor) {
     mon.start(e);
   }
+  dbg.start(e);
 }
 
 /** Starts the thread of worker block `w`: whether it started. */

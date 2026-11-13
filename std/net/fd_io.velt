@@ -14,6 +14,7 @@ import { Ptr } from "velt/ffi/ptr";
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding/utf8";
 import { bcopy$text, read$net, recv$net, shutdown$net } from "#net-calls";
 import * as r from "#reactor";
+import * as bd from "velt/lang/hooks/sched_budget";
 import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as tb from "velt/lang/hooks/sched_io_table";
@@ -92,6 +93,11 @@ export function tryReadInto(h: u64, data: u8[], start: u64, end: u64): IoResult<
     tb.leave(s);
     return value(0);
   }
+  if (!bd.spend()) {
+    // The poll's budget is spent (sched_budget.velt): nothing yet, readiness kept for its next.
+    tb.leave(s);
+    return value(-1);
+  }
   const p = addressOf(data, start);
   // A child process's pipe (std/process/child/child_sched.velt) is no socket: `read`.
   const pipe = (m.ld32(s + io.S_FLAGS) & io.F_PIPE) !== 0;
@@ -127,7 +133,8 @@ export async function readable(h: u64): Promise<IoStatus> {
   if (s === 0) {
     return closed();
   }
-  const ready = wt.satisfied(s, io.K_READ, 0);
+  // A spent budget waits too: the wait yields (sched_budget.velt).
+  const ready = wt.satisfied(s, io.K_READ, 0) && !bd.spent();
   tb.leave(s);
   if (!ready) {
     await waitOn(h, io.K_READ, 0, 0);
@@ -144,9 +151,10 @@ export async function readableWithin(h: u64, ms: i64): Promise<IoResult<u8>> {
   if (s === 0) {
     return failed(closed(), 0);
   }
-  const ready = wt.satisfied(s, io.K_READ, 0);
+  const has = wt.satisfied(s, io.K_READ, 0);
   tb.leave(s);
-  if (!ready) {
+  // A spent budget waits too, unless the call only looks: the wait yields (sched_budget.velt).
+  if (!has || (ms !== 0 && bd.spent())) {
     if (ms === 0) {
       return value(0);
     }

@@ -31,6 +31,7 @@ import { Ptr, export as cExport } from "velt/ffi";
 import { exportedAddress, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
+import * as dbg from "./sched_debug";
 import * as io from "./sched_io";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
@@ -316,6 +317,7 @@ export const STALL_CPU: usize = 750000;
  */
 function rescueOf(g: usize, w: usize, now: usize): void {
   // Its sockets' events first: the tasks they wake join its inbox, and move with it below.
+  dbg.TURNS.add(1, "relaxed");
   io.turnFor(m.ld(w + t.E_IO));
   let waiting = m.load(w + t.E_INBOX) !== 0;
   if (!waiting && q.tryLock(w)) {
@@ -333,6 +335,7 @@ function rescueOf(g: usize, w: usize, now: usize): void {
     return;
   }
   // In no queue until they reach one again: counted, so the end of the program waits for them.
+  dbg.RESCUES.add(1, "relaxed");
   m.inc(g + t.E_MOVING);
   let k = q.reverse(m.takeStack(w + t.E_INBOX));
   if (q.tryLock(w)) {
@@ -395,6 +398,7 @@ export function startSpare(g: usize, now: usize): usize {
     return 0;
   }
   // A second thread runs tasks: latches and join slots are locked from now on (sched_lock).
+  dbg.SPARES.add(1, "relaxed");
   lk.locksOn();
   const w = t.worker(i);
   m.st(w + t.E_PROGRESS, now);

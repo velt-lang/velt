@@ -26,6 +26,7 @@ import {
 } from "#net-calls";
 import * as r from "#reactor";
 import * as sys from "#net-sys";
+import * as bd from "velt/lang/hooks/sched_budget";
 import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as tb from "velt/lang/hooks/sched_io_table";
@@ -244,12 +245,21 @@ export async function listenOn(addr: string): Promise<IoResult<u64>> {
   return adopt(fd, io.F_LISTENER, io.READ);
 }
 
-/** The next connection of listener `l`: its stream's handle. */
+/**
+ * The next connection of listener `l`: its stream's handle. Once the poll's budget is spent
+ * (std/lang/hooks/sched_budget.velt) its wait yields, and the accept comes in the task's next turn.
+ */
 export async function accept(l: u64): Promise<IoResult<u64>> {
   while (true) {
     const s = tb.enter(l);
     if (s === 0) {
       return failed(closed(), 0);
+    }
+    if (!bd.spend()) {
+      tb.leave(s);
+      // SAFETY: `waitFor` makes a heap future, given up to the promise.
+      await unsafe { promiseAt<void>(wt.waitFor(l, io.K_READ, 0, 0)) };
+      continue;
     }
     const fd = r.accept(m.ld(s + io.S_FD) as i32, 0, 0);
     if (fd >= 0) {

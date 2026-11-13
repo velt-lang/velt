@@ -27,6 +27,7 @@
 // (sched.velt `run`). Its owner only sees it finish. A task that starts nothing pays nothing.
 
 import { inline, stateDrop, statePoll } from "velt/lang/intrinsics";
+import * as bd from "./sched_budget";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as aw from "./sched_node_await";
@@ -335,8 +336,17 @@ export function run(task: usize, n: usize, taken: bool): void {
     m.and32(n + N_FLAGS, ~QUEUED);
   }
   const fl = m.load32(n + N_FLAGS);
-  if ((fl & (FINISHED | RUNNING | CATCHES)) !== 0) {
-    if ((fl & (FINISHED | RUNNING)) !== 0 || !nc.runCaught(n)) {
+  if ((fl & (FINISHED | RUNNING)) !== 0) {
+    return;
+  }
+  // A woken node's turn is its own: its socket operations spend a budget of its own
+  // (sched_budget.velt). A started promise's first run (`start`) spends its starter's, as the
+  // runtime's coop has it, or an accept loop starting one per connection would never yield.
+  if (taken) {
+    bd.refill();
+  }
+  if ((fl & CATCHES) !== 0) {
+    if (!nc.runCaught(n)) {
       return;
     }
   } else {
