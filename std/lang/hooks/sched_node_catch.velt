@@ -11,6 +11,7 @@
 
 import { noInline, statePoll } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
+import * as aw from "./sched_node_await";
 import * as nd from "./sched_node";
 import * as t from "./sched_task";
 
@@ -132,7 +133,7 @@ export function adoptCaught(e: usize, task: usize, n: usize, cx: usize, claim: b
   m.st(e + t.E_ADOPTING, 0);
   m.and32(n + nd.N_FLAGS, ~nd.RUNNING);
   if (r === 0) {
-    return nd.awaitNode(n, cx);
+    return aw.awaitNode(n, cx);
   }
   if (r === 1) {
     nd.adoptedDone(task, n, claim ? nd.FINISHED | nd.DELIVERED : nd.FINISHED);

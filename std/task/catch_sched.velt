@@ -22,6 +22,7 @@ import { fnAddress, promiseAt, statePoll } from "velt/lang/intrinsics";
 import { panicText, raiseAgain } from "velt/lang/hooks/unwind";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as node from "velt/lang/hooks/sched_node";
+import * as aw from "velt/lang/hooks/sched_node_await";
 import * as nc from "velt/lang/hooks/sched_node_catch";
 import * as t from "velt/lang/hooks/sched_task";
 import { catchPanicAt } from "./unwind";
@@ -94,7 +95,7 @@ export function free(h: u64): void {
 function settledPoll(f: usize, cx: usize): u32 {
   const p = f - nc.N_SETTLE + node.N_HEAD;
   if (nc.drivesItself(p)) {
-    return node.awaitNode(node.nodeOf(p), cx);
+    return aw.awaitNode(node.nodeOf(p), cx);
   }
   if (node.nodeSettled(p, cx) === 0) {
     return 0;
