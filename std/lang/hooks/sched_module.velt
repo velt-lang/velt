@@ -244,6 +244,11 @@ function take(e: usize): void {
   }
 }
 
+/** Does this thread hold the module lock (for a task's poll, or outside a task)? */
+export function held(): bool {
+  return HELD.get() !== NOT_HELD;
+}
+
 /** A touched task's poll starts: the lock, unless this thread holds it. */
 export function enter(): void {
   if (HELD.get() === NOT_HELD) {

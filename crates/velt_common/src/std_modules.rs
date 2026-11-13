@@ -108,6 +108,7 @@ table! {
     lang_hooks_proxy => "lang/hooks/proxy",
     lang_hooks_record => "lang/hooks/record",
     lang_hooks_sched => "lang/hooks/sched",
+    lang_hooks_sched_cells => "lang/hooks/sched_cells",
     lang_hooks_string => "lang/hooks/string",
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_hooks_tuple_elements => "lang/hooks/tuple_elements",
