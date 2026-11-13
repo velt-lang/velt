@@ -8,11 +8,13 @@
 // a tick of the system timer, about 15.6 ms by default, so a 1 ms timer, `sleep(1)` or a 1 ms
 // monitor nap each took about 15.6 ms. `fineTimers` raises the resolution to 1 ms, once, the
 // first time the executor waits with a timeout shorter than a tick, and keeps it until the
-// process ends, as Node's and Go's runtimes and the browsers do (`timeBeginPeriod(1)`). The call
+// process ends, as Go's runtime and the browsers do (`timeBeginPeriod(1)`; Node 22 doesn't, and
+// its `setTimeout(f, 1)` is about 15 ms late on Windows). The call
 // is ntdll's `NtSetTimerResolution`, which `timeBeginPeriod` makes itself, so no winmm library is
 // linked (ntdll is, for the AFD polls). Since Windows 10 2004 the resolution is the process's
-// own: other processes keep their ticks. A program that never waits briefly (a server whose
-// timers are seconds away) keeps the default tick and its power use. Not chosen: a
+// own: other processes keep their ticks. With one worker, a program that never waits briefly (a
+// server whose timers are seconds away) keeps the default tick and its power use; with more, the
+// monitor's 1 ms ticks raise it. Not chosen: a
 // high-resolution waitable timer (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`), since `WaitOnAddress`
 // waits on no handle and the completion port would need the timer's wait posted to it
 // (`NtAssociateWaitCompletionPacket`) per wait; raising and lowering around each short wait,
@@ -84,15 +86,18 @@ export function fineTimers(ms: u32): void {
   if (FINE.compareExchange(0, 1, "relaxed", "relaxed") !== 0) {
     return;
   }
-  const w = m.alloc(16);
+  // The thread's buffer, outside the counted blocks, as `waitOn`'s: the process may end during
+  // the monitor's nap that called this.
+  const w = m.scratch();
   // SAFETY: the resolution in force is written at `w`; a failure leaves the default tick.
   unsafe {
     NtSetTimerResolution(FINE_100NS, 1, m.ptr(w));
   }
-  m.release(w, 16);
 }
 
-/** Sleeps while the `u32` at `word` is `expected`; it may return early, so the caller looks again. */
+/**
+ * Sleeps while the `u32` at `word` is `expected`; it may return early, so the caller looks again.
+ */
 export function wordWait(word: usize, expected: u32): void {
   waitOn(word, expected, FOREVER);
 }

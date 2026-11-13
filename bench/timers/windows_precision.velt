@@ -11,6 +11,7 @@
 //
 // Run base against head on Windows (PowerShell), each compiler building the same file:
 //
+//   cargo build -p veltc --bin velt -p velt_rt   (in each worktree: the runtime too)
 //   $env:VELT_SCHEDULER = "std"; $env:VELT_THREADS = "1"; $env:VELT_RESCUE = "1"
 //   <base>\target\debug\velt.exe build bench\timers\windows_precision.velt -o base.exe
 //   <head>\target\debug\velt.exe build bench\timers\windows_precision.velt -o head.exe
