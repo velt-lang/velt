@@ -1,24 +1,21 @@
 // Node timers set by two spawned tasks on different workers take their turns in one order for the
-// process, as in Node's single event loop: an immediate before any timer, one list per delay in
-// the order the timers were inserted whichever task inserted them (`a 1000` before `b 1000`), the
-// lists by expiry, an immediate set by a callback after its timers pass, and a timer of one task
-// cleared by the other never runs.
+// process, as in Node's single event loop: one list per delay, in the order the timers were
+// inserted whichever task inserted them (`a 1000` before `b 1000`), an immediate set by a callback
+// after that callback, and a timer of one task cleared by the other never runs.
 //
-// The tasks run on different workers: `main` stays busy until `a` has set its timers, and `a`
-// stays busy until `b` has set its own, so each starts on a worker of its own (with one worker,
-// the waits give up). `a`'s timers are inserted first, and are due once `a` is no longer busy;
-// the first timer is due 1 s after it is set and the lists are 1 s apart, more than a loaded
-// machine takes between the two tasks' timers (at 100 ms apart, a loaded Windows runner saw `a`'s
-// first timer come due before `b` had set its immediate).
+// The tasks run on different workers: `main` stays busy until `a` has set its timers, so `a` is
+// taken by another worker; `b` is spawned after that and runs on `main`'s. Only orders that don't
+// depend on how long the machine takes between the two tasks are checked: `a` inserts first by
+// construction, and the cleared timer is due 60 s after it is set, long after `b` clears it (a
+// missed clear prints its line, a failure that doesn't race). Different delays across tasks would
+// depend on that time, so each task's own timers share one delay.
 import { setImmediate, setTimeout, Timer } from "velt/time";
 
 class State {
   aSet: boolean;
-  bSet: boolean;
   toClear: Timer | null;
   constructor() {
     this.aSet = false;
-    this.bSet = false;
     this.toClear = null;
   }
 }
@@ -34,19 +31,11 @@ async function main() {
   const sa = state.clone();
   const a = spawn(async (): Promise<i32> => {
     setTimeout(() => console.log("a 1000"), 1000);
-    setTimeout(
-      () => {
-        console.log("a 3000");
-        setImmediate(() => console.log("a 3000's immediate"));
-      },
-      3000,
-    );
-    const t = setTimeout(() => console.log("a 4000 (cleared: never runs)"), 4000);
+    const t = setTimeout(() => console.log("a 60000 (cleared: never runs)"), 60000);
     sa.with((v) => {
       v.toClear = t;
       v.aSet = true;
     });
-    spinUntil(() => sa.with((v) => v.bSet));
     return 0;
   });
   spinUntil(() => state.with((v) => v.aSet));
@@ -59,22 +48,11 @@ async function main() {
       },
       1000,
     );
-    setImmediate(() => console.log("b immediate"));
-    setTimeout(
-      () => {
-        console.log("b 2000 clears a 4000");
-        sb.with((v) => {
-          const t = v.toClear;
-          if (t != null) {
-            t.clear();
-          }
-        });
-      },
-      2000,
-    );
-    setTimeout(() => console.log("b 5000"), 5000);
     sb.with((v) => {
-      v.bSet = true;
+      const t = v.toClear;
+      if (t != null) {
+        t.clear();
+      }
     });
     return 0;
   });
@@ -82,4 +60,4 @@ async function main() {
   await b;
 }
 
-// timing: the order of timers is the subject; the delays of different lists are far apart
+// timing: the order of timers is the subject; only orders that hold however slow the machine is
