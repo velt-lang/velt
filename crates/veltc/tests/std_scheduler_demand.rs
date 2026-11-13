@@ -170,7 +170,7 @@ fn state_read_by_code_only_an_initializer_reaches_takes_one_path() {
                function read(): number {\n  const c = count;\n  arm();\n  return c;\n}\n\
                export const total = read();\n";
     let main = "import \"./dep\";\nfunction main() {\n  console.log(\"main\");\n}\n";
-    let std = vir_of(&[("main.velt", main), ("dep.velt", dep)], true);
+    let std = vir_of(&[("main.velt", main), ("dep.velt", dep)]);
     assert!(
         std.contains("schedModuleState"),
         "the executor's lock is not used:\n{std}"
