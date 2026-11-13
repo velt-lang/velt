@@ -1,0 +1,37 @@
+// A function converted to one that returns a dynamic type makes what it returns dynamic (#2865):
+// each call of `g` gives an `unknown` the flow graph can't trace back to the job, so the function
+// value is what is made dynamic, and the job it returns crosses with it. Directly, through a
+// callback parameter, and an async function's promised job.
+type Job = () => Promise<void>;
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+function call(cb: () => unknown): void {
+  keepAndSpawn<unknown>(cb());
+}
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  const f: () => Job = () => job;
+  const g: () => unknown = f;
+  keepAndSpawn<unknown>(g());
+  let m = 0;
+  const other: Job = async () => {
+    m++;
+  };
+  const h: () => Job = () => other;
+  call(h);
+  let k = 0;
+  const later: Job = async () => {
+    k++;
+  };
+  const af = async (): Promise<Job> => later;
+  const ag: () => Promise<unknown> = af;
+  keepAndSpawn<unknown>(await ag());
+}

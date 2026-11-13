@@ -26,8 +26,12 @@ use crate::hir::{
     StmtKind as S, TyId,
 };
 
+mod dynamic;
+
 use super::call_sites::{Held, Indirect};
 pub(super) use super::why::{Boundary, Why};
+use dynamic::untraced_input;
+pub(super) use dynamic::DynConv;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Node {
@@ -120,20 +124,13 @@ pub(super) struct Graph {
     /// one. A crossing value of a dynamic type (`keepAndSpawn<unknown>(job)`) may hold any of them
     /// (#2865), and nothing else.
     pub dynamic: Vec<DynConv>,
-}
-
-/// A conversion into a dynamic type (`Graph::dynamic`).
-#[derive(Clone, Copy)]
-pub(super) struct DynConv {
-    /// Its [`Node::Dyn`].
-    pub node: usize,
-    /// The conversion, and the dynamic type it makes (none: a `throw`, caught as `unknown`).
-    pub span: Span,
-    pub ty: Option<TyId>,
-    /// The function it is in, and the type of the value converted: what flows in where the graph
-    /// has no source is resolved by that type, in the function's instantiations.
-    pub owner: DefId,
-    pub from: TyId,
+    /// A [`Node::Dyn`] whose input is a call through a function value, with that call's
+    /// [`Node::Callee`]: the dynamic result comes from the function, which crosses with it
+    /// (`() => Job` called through a `() => unknown`).
+    pub dyn_callee: FxHashMap<usize, usize>,
+    /// Nodes that a call through a function value's result flows into, with that call's
+    /// [`Node::Callee`] (`const v = await f()`), for [`Graph::dyn_callee`].
+    pub call_results: FxHashMap<usize, usize>,
 }
 
 impl Graph {
@@ -191,9 +188,19 @@ pub(super) fn build(cx: &Ctx) -> Graph {
             std,
         };
         let ret = w.ret_node(d);
+        // What an async function returns is kept in its promise, in the heap, where a value of
+        // unknown origin may be read back (`await g()` through a `() => Promise<unknown>`).
+        if f.is_async {
+            w.g.seeds.push((ret, STORED, None));
+        }
         w.block(&f.body.block, To::Node(ret, None));
     }
     super::unknown_callees::mark(cx, &mut g);
+    for i in 0..g.dynamic.len() {
+        let d = g.dynamic[i];
+        g.dynamic[i].untraced =
+            super::types::mentions_param(cx, d.from) || untraced_input(&g, d.node);
+    }
     super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
     g.dyn_calls.finish(cx);
     g
@@ -413,8 +420,11 @@ impl Walk<'_, '_> {
                 }
                 self.g.dyn_calls.escape(self.cx, x.ty);
                 // Only into a dynamic type itself: an interface whose type arguments mention one
-                // (`AsyncIterator<T, unknown>`) doesn't make the value a dynamic one.
-                if !super::types::is_dynamic(self.cx, e.ty) {
+                // (`AsyncIterator<T, unknown>`) doesn't make the value a dynamic one. Nor does a
+                // function's conversion, unless it makes what the function returns dynamic
+                // (`() => Job` as `() => unknown`): then the function value is what is made dynamic.
+                let returns = super::types::returns_newly_dynamic(self.cx, x.ty, e.ty);
+                if !returns && !super::types::is_dynamic(self.cx, e.ty) {
                     return self.value(x, to);
                 }
                 self.made_dynamic(x, e.span, Some(e.ty), to);
@@ -626,6 +636,9 @@ impl Walk<'_, '_> {
                     library: self.library,
                     only: cell.then_some(self.d),
                 });
+                if let To::Node(m, _) = to {
+                    self.g.call_results.insert(m, callee);
+                }
                 self.unknown(e, to);
             }
             Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
@@ -671,22 +684,6 @@ impl Walk<'_, '_> {
             }
             Callee::Intrinsic(i) => self.intrinsic(e, *i, args, to),
         }
-    }
-
-    /// `x` made a dynamic value at `span` (of type `ty`; none: thrown), going to `to`: through a
-    /// [`Node::Dyn`], which a crossing value of a dynamic type makes cross (`Graph::dynamic`).
-    fn made_dynamic(&mut self, x: &Expr, span: Span, ty: Option<TyId>, to: To) {
-        let k = self.g.dynamic.len() as u32;
-        let n = self.g.node(Node::Dyn(k), x.ty);
-        self.g.dynamic.push(DynConv {
-            node: n,
-            span,
-            ty,
-            owner: self.d,
-            from: x.ty,
-        });
-        self.value(x, To::Node(n, None));
-        self.connect(n, to);
     }
 
     fn intrinsic(&mut self, e: &Expr, i: Intrinsic, args: &[Expr], to: To) {

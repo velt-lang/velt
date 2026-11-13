@@ -178,6 +178,25 @@ pub(super) fn is_dynamic(cx: &Ctx, t: TyId) -> bool {
     }
 }
 
+/// Does converting a function of type `from` to `to` make what it returns dynamic: is `to` a
+/// function type whose result (a returned `Promise<T>`'s `T` included) mentions a dynamic type
+/// that `from`'s doesn't? `() => Job` as `() => unknown`: each call's result is a dynamic value
+/// the graph can't trace back to what the function returns.
+pub(super) fn returns_newly_dynamic(cx: &Ctx, from: TyId, to: TyId) -> bool {
+    let ret = |t: TyId| match cx.ty.kind(t) {
+        TyKind::FnPtr { ret, .. } => Some(*ret),
+        TyKind::Option(x, _) => match cx.ty.kind(*x) {
+            TyKind::FnPtr { ret, .. } => Some(*ret),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(to_ret) = ret(to) else {
+        return false;
+    };
+    mentions_dynamic(cx, to_ret) && !ret(from).is_some_and(|r| mentions_dynamic(cx, r))
+}
+
 /// Does `t` mention a type parameter numbered `from` or above (a method's own, after its class's)?
 pub(super) fn mentions_param_from(cx: &Ctx, t: TyId, from: u32) -> bool {
     let mut found = false;

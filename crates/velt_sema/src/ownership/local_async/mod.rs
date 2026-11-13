@@ -94,7 +94,7 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     cx.crossing_callbacks.clear();
     cx.in_shared.clear();
     let g = graph::build(cx);
-    let mut p = Propagation::new(&g);
+    let mut p = Propagation::new(cx, &g);
     for &(n, f, why) in &g.seeds {
         p.set(n, f, why);
     }
@@ -103,7 +103,6 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     let mut rooted = 0;
     let mut resolved = 0;
     let mut dyn_done = 0;
-    let mut dyn_rooted = 0;
     // The types a stored closure literal's type has in its function's instantiations, by the
     // function and the type.
     let mut lit_insts: FxHashMap<(DefId, TyId), Vec<TyId>> = FxHashMap::default();
@@ -172,39 +171,30 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         // dynamic with it (#2865). Last, so that a value that crosses by a more direct path keeps
         // that reason (a node keeps the first one it gets).
         loop {
-            // A crossing value of a dynamic type of unknown origin (`for (const k of KEPT)` over an
-            // `unknown[]`) holds what was made dynamic too, as a generic one instantiated with it.
-            for &(t, w) in &p.roots[dyn_rooted..] {
-                if types::mentions_dynamic(cx, t) && !types::mentions_param(cx, t) {
-                    p.dynamic.push(w);
-                }
-            }
-            dyn_rooted = p.roots.len();
             if p.dynamic.len() == dyn_done {
                 break;
             }
             changed = true;
-            let ws = p.dynamic[dyn_done..].to_vec();
-            dyn_done = p.dynamic.len();
-            for w in ws {
-                for d in &g.dynamic {
-                    let w = Why {
-                        via: None,
-                        made_dyn: Some((d.span, d.ty)),
-                        ..w
-                    };
-                    // What the graph can't trace into the conversion (a value of unknown origin,
-                    // a parameter only dispatched calls feed, a generic value) is resolved by its
-                    // type, as a generic value is: `KEPT.push(x)` with `x: T` in a generic closure
-                    // instantiated with `Job` carries a `Job`.
-                    let n = d.node;
-                    let untraced =
-                        g.unknown[n] || g.srcs[n].is_empty() || types::mentions_param(cx, d.from);
-                    if p.flags[n] & CROSSES == 0 && untraced {
-                        p.hits.push((d.owner, d.from, w));
-                    }
-                    p.set(n, CROSSES, Some(w));
+            // The first reason of the batch, or one that ranks before it: a node keeps the first
+            // reason it gets, so one is enough.
+            let mut best = p.dynamic[dyn_done];
+            for w in &p.dynamic[dyn_done + 1..] {
+                if w.before(&best, cx) {
+                    best = *w;
                 }
+            }
+            dyn_done = p.dynamic.len();
+            for d in &g.dynamic {
+                let n = d.node;
+                if p.flags[n] & CROSSES != 0 {
+                    continue;
+                }
+                let w = Why {
+                    via: None,
+                    made_dyn: Some((d.span, d.ty)),
+                    ..best
+                };
+                p.set(n, CROSSES, Some(w));
             }
             p.run(cx, &g);
             resolve_hits(cx, &g, &mut p, &mut resolved);
@@ -574,7 +564,13 @@ struct Propagation {
 }
 
 impl Propagation {
-    fn new(g: &Graph) -> Self {
+    fn new(cx: &Ctx, g: &Graph) -> Self {
+        // A value of unknown origin that crosses where it is read (`Graph::roots`) and is of a
+        // dynamic type holds what was made dynamic.
+        let dynamic = (g.roots.iter())
+            .filter(|(t, _)| dynamic_root(cx, *t))
+            .map(|&(_, w)| w)
+            .collect();
         Propagation {
             flags: vec![0; g.nodes.len()],
             why: vec![None; g.nodes.len()],
@@ -583,7 +579,7 @@ impl Propagation {
             roots: g.roots.clone(),
             wild: vec![],
             hits: g.generic_roots.clone(),
-            dynamic: vec![],
+            dynamic,
         }
     }
 
@@ -679,14 +675,46 @@ impl Propagation {
         if rooted && !matches!(g.nodes[n], Node::Lit(_)) {
             self.roots.push((ty, w));
         }
+        if let (CROSSES, Node::Dyn(k)) = (f, g.nodes[n]) {
+            let d = g.dynamic[k as usize];
+            // What the graph can't trace into the conversion (`DynConv::untraced`) is resolved by
+            // its type, as a generic value is: `KEPT.push(x)` with `x: T` in a generic closure
+            // instantiated with `Job` carries a `Job`. When it crosses because a dynamic value
+            // does (the dynamic step, or flow from a conversion it marked): a conversion that
+            // crosses by the program's traced flow already has its inputs followed.
+            if d.untraced && w.made_dyn.is_some() {
+                self.hits.push((d.owner, d.from, w));
+            }
+            // A dynamic value made from what a function value returned: the function crosses
+            // with it.
+            if let Some(&c) = g.dyn_callee.get(&n) {
+                self.set(c, CROSSES, Some(w));
+            }
+        }
+        // A crossing value of a dynamic type that the graph can't trace (`for (const k of KEPT)`
+        // over an `unknown[]`) holds what was made dynamic (#2865); one it traces crosses where
+        // its values come from instead.
+        let untraced = g.unknown[n] || g.std_fed.binary_search(&n).is_ok();
+        if f == CROSSES && untraced && dynamic_root(cx, ty) {
+            self.dynamic.push(w);
+        }
         // What flowed in from places the graph does not follow, with the types it had there:
         // a generic parameter's node gets its callers' concrete types.
         for &(t, site) in &g.inflows[n] {
             if let (true, Some(w)) = (f == CROSSES && t != ty, w.step(false, site)) {
                 self.roots.push((t, w));
+                if dynamic_root(cx, t) {
+                    self.dynamic.push(w);
+                }
             }
         }
     }
+}
+
+/// Is a value of type `t` of unknown origin a dynamic value that may hold what was made dynamic
+/// (and not a generic one, resolved through its instantiations)?
+fn dynamic_root(cx: &Ctx, t: TyId) -> bool {
+    types::mentions_dynamic(cx, t) && !types::mentions_param(cx, t)
 }
 
 /// "this `what` modifies captured `x`" for each capture closure `c` modifies, naming the
