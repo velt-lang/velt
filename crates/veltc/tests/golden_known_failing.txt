@@ -5,7 +5,7 @@
 # <path from the repository root> #<issue> [os=macos,linux,windows]
 
 tests/golden/lang/script_closure_promise.velt                      #2966
-tests/golden/lang/promises_unhandled_timing.velt                   #2913
+tests/golden/lang/promises_unhandled_timing.velt                   #3004
 tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=macos,windows
 tests/golden/lang/promise_combinators_kept_array.velt               #2910
 tests/golden/lang/spawn_shared_promise_timer.velt                  #2910
