@@ -97,15 +97,13 @@ export function joinDropLazy(f: usize): void {
 /** Is `f` a spawned task's join handle (its header a task's `T_JOIN`)? */
 export function isJoin(f: usize): bool {
   const poll = m.ld(f);
-  // SAFETY: `@export`ed functions (only their addresses are read).
-  if (
-    unsafe { poll === exportedAddress(joinPoll) ||
-      poll === exportedAddress(joinPollSolo) ||
-      poll === exportedAddress(joinPollLazy) }
-  ) {
-    return true;
-  }
-  return poll === fnAddress(joinPanicked);
+  // SAFETY: an `@export`ed function (only its address is read).
+  const polls = unsafe { exportedAddress(joinPoll) };
+  // SAFETY: as above.
+  const solo = unsafe { exportedAddress(joinPollSolo) };
+  // SAFETY: as above.
+  const lazy = unsafe { exportedAddress(joinPollLazy) };
+  return poll === polls || poll === solo || poll === lazy || poll === fnAddress(joinPanicked);
 }
 
 /** `joinPoll` while other threads may reach the slot (or a lazy worker 0 counts its operation). */
