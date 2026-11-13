@@ -117,7 +117,12 @@ impl Origin {
             Origin::Std(root) => (root, Some("std")),
             Origin::Package { name, src } => (src, Some(name.as_str())),
         };
-        let rel = vpm::relpath::relative(file, base);
+        // Both absolute: a file reached through a path relative to the working directory (a
+        // test runner's import of a test file inside std) would otherwise share no prefix with an
+        // absolute root and come out as `std/../../…/std/…`, a second name for a std module, whose
+        // hooks the check then cannot find by their canonical names (#2875).
+        let rel =
+            vpm::relpath::relative(&vpm::relpath::absolute(file), &vpm::relpath::absolute(base));
         let rel = module_path(&rel);
         match (prefix, self) {
             (Some(name), Origin::Package { .. }) if rel == "lib" => name.to_string(),
@@ -334,6 +339,30 @@ mod tests {
         assert_eq!(
             pkg.canonical(Path::new("/c/json/src/parse.velt")),
             "json/parse"
+        );
+    }
+
+    /// A std file reached through a path relative to the working directory (a test runner's
+    /// import of a test file inside std) has the same canonical path as through the absolute
+    /// root: not `std/../../…/std/…` (#2875).
+    #[test]
+    fn a_relative_file_in_an_absolute_root_has_its_canonical_path() {
+        let cwd = std::env::current_dir().unwrap();
+        let root = cwd.join("some/std");
+        let std = Origin::Std(root.clone());
+        assert_eq!(
+            std.canonical(Path::new("some/std/lang/hooks/sched.velt")),
+            "std/lang/hooks/sched"
+        );
+        assert_eq!(
+            std.canonical(&root.join("lang/hooks/sched.velt")),
+            "std/lang/hooks/sched"
+        );
+        // And a relative root with an absolute file.
+        let std = Origin::Std(PathBuf::from("some/std"));
+        assert_eq!(
+            std.canonical(&cwd.join("some/std/lang/hooks/sched.velt")),
+            "std/lang/hooks/sched"
         );
     }
 
