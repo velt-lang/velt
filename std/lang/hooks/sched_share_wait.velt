@@ -1,0 +1,71 @@
+// velt/lang/hooks (internal): the waiters of a shared promise's hub in the executor in Velt
+// (sched_share.velt): `(holder, waker, ticket)` entries, 24 bytes each, in the order the holders
+// started waiting, in a buffer the hub grows (its `H_WAITERS`, `H_WLEN` and `H_WCAP` words).
+// Each entry holds a reference to its waker; its ticket is the microtask entry it was queued as
+// when the promise settled (0: none).
+
+import * as m from "./sched_mem";
+import * as sh from "./sched_share";
+
+/** Entry `i` of hub `h`. */
+export function entry(h: usize, i: usize): usize {
+  return m.ld(h + sh.H_WAITERS) + 24 * i;
+}
+
+/** The index of holder `f`'s entry, or the count when it has none. */
+export function waiterIndex(h: usize, f: usize): usize {
+  const len = m.ld(h + sh.H_WLEN);
+  for (let i: usize = 0; i < len; i++) {
+    if (m.ld(entry(h, i)) === f) {
+      return i;
+    }
+  }
+  return len;
+}
+
+/** Is holder `f` the first waiter (or is nobody waiting)? */
+export function firstWaiter(h: usize, f: usize): bool {
+  return m.ld(h + sh.H_WLEN) === 0 || m.ld(entry(h, 0)) === f;
+}
+
+/** Holder `f` waits with `cx`'s waker: its entry, added at the end or its waker brought up to date. */
+export function wait(h: usize, f: usize, cx: usize): void {
+  const w = m.ld(cx + 8);
+  const i = waiterIndex(h, f);
+  let len = m.ld(h + sh.H_WLEN);
+  if (i < len) {
+    const at = entry(h, i);
+    const old = m.ld(at + 8);
+    if (old !== w) {
+      m.st(at + 8, m.wakerClone(w));
+      m.wakerDrop(old);
+    }
+    return;
+  }
+  const cap = m.ld(h + sh.H_WCAP);
+  if (len === cap) {
+    const grown = cap === 0 ? 4 : cap * 2;
+    const buf = m.alloc(24 * grown);
+    if (cap !== 0) {
+      m.copy(buf, m.ld(h + sh.H_WAITERS), 24 * len);
+      m.release(m.ld(h + sh.H_WAITERS), 24 * cap);
+    }
+    m.st(h + sh.H_WAITERS, buf);
+    m.st(h + sh.H_WCAP, grown);
+  }
+  const at = entry(h, len);
+  m.st(at, f);
+  m.st(at + 8, m.wakerClone(w));
+  m.st(at + 16, 0);
+  m.st(h + sh.H_WLEN, len + 1);
+}
+
+/** Removes entry `i`, giving back its waker. */
+export function removeWaiter(h: usize, i: usize): void {
+  const len = m.ld(h + sh.H_WLEN);
+  m.wakerDrop(m.ld(entry(h, i) + 8));
+  for (let j = i; j + 1 < len; j++) {
+    m.copy(entry(h, j), entry(h, j + 1), 24);
+  }
+  m.st(h + sh.H_WLEN, len - 1);
+}
