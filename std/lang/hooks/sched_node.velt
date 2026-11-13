@@ -29,8 +29,14 @@
 //   flags before FINISHED was set and store its waker after the finish found the word empty: the
 //   owner was never woken (a waiter of a `Promise.all` of spawns, and so `main`, waited for
 //   ever: #2891).
-// - With one worker and no rescue (sched_lock.velt `LK_NONE`, which never changes) the owner and
-//   the finish run on the same thread: the awaiter word is read and written plainly then.
+// - The finish runs in a poll of the node's task, which one worker polls at a time. An owner on
+//   that task (the common case: a task awaits a promise it made) runs on the same thread, as do
+//   both with one worker and no rescue (sched_lock.velt `LK_NONE`, which never changes): then
+//   the owner reads and writes the awaiter word and the flags as before, with no swap and no
+//   second read (`ownSide`). The finish sees whose waker it takes: its task's own (the task
+//   itself) is cleared with a plain store, as no other thread can store one while that owner
+//   waits; an empty word needs no swap either, as an owner storing its waker after the finish
+//   read it reads FINISHED again and wakes itself.
 //
 // A lazy node (boxed, not started) is polled by whoever awaits it with their `cx`. Started (from
 // a poll of a task: outside one it stays lazy), it runs at once until it suspends, with the
@@ -206,8 +212,10 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
  * waker is stored, and the waker is woken then (the owner polls again and finds it finished).
  */
 export function awaitNode(n: usize, cx: usize): u32 {
-  const w = m.wakerClone(m.ld(cx + 8));
-  if (lk.mode() === lk.LK_NONE) {
+  const cw = m.ld(cx + 8);
+  const w = m.wakerClone(cw);
+  if (lk.mode() === lk.LK_NONE || wk.taskOf(cw) === m.ld(n + N_TASK)) {
+    // The owner runs on the node's task (module docs).
     const old = m.ld(n + N_AWAITER);
     m.st(n + N_AWAITER, w);
     if (old !== 0) {
@@ -225,17 +233,49 @@ export function awaitNode(n: usize, cx: usize): u32 {
   return 0;
 }
 
-/** Takes node `n`'s awaiter (0 if none): with a swap when another worker may take it too. */
+/**
+ * Takes node `n`'s awaiter (0 if none) for its finish on task `task`, FINISHED set already: with
+ * a swap only when the owner may run on another worker (module docs).
+ */
 @inline
-function takeAwaiter(n: usize): usize {
+function finishAwaiter(n: usize, task: usize): usize {
   if (lk.mode() === lk.LK_NONE) {
-    const w = m.ld(n + N_AWAITER);
-    if (w !== 0) {
-      m.st(n + N_AWAITER, 0);
-    }
+    return takePlain(n);
+  }
+  const w = m.load(n + N_AWAITER);
+  if (w === 0) {
+    // An owner storing its waker now reads FINISHED after it (`awaitNode`).
+    return 0;
+  }
+  if (w === task) {
+    // The task's root waits: it runs on this thread.
+    m.st(n + N_AWAITER, 0);
     return w;
   }
   return m.swap(n + N_AWAITER, 0);
+}
+
+/** Takes node `n`'s awaiter (0 if none), which no other thread touches meanwhile. */
+@inline
+function takePlain(n: usize): usize {
+  const w = m.ld(n + N_AWAITER);
+  if (w !== 0) {
+    m.st(n + N_AWAITER, 0);
+  }
+  return w;
+}
+
+/**
+ * Does the owner of started node `n` run on its task's thread, so that the finish never runs
+ * meanwhile (module docs)?
+ */
+@inline
+function ownSide(n: usize): bool {
+  if (lk.mode() === lk.LK_NONE) {
+    return true;
+  }
+  const e = t.exec();
+  return e !== 0 && m.ld(e + t.E_CURRENT) === m.ld(n + N_TASK);
 }
 
 /**
@@ -258,9 +298,8 @@ function finishedMeanwhile(n: usize): void {
 export function adoptedDone(task: usize, n: usize, fl: u32): void {
   setFlags(n, fl);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
-  const w = m.ld(n + N_AWAITER);
+  const w = takePlain(n);
   if (w !== 0) {
-    m.st(n + N_AWAITER, 0);
     m.wakerDrop(w);
   }
   // The task's reference.
@@ -278,22 +317,25 @@ export function nodeDrop(f: usize): void {
         stateDrop(m.ld(n + N_DROP), f + 16);
       }
     }
-  } else if (lk.mode() === lk.LK_NONE) {
-    // The finish runs on this thread (module docs).
-    if ((fl & (FINISHED | DELIVERED)) === FINISHED) {
-      dropResult(n);
-    } else if ((fl & FINISHED) === 0) {
-      setFlags(n, DETACHED);
-    }
-  } else {
+  } else if (!ownSide(n)) {
     // The finish may run on another worker meanwhile (module docs): the one that comes second
     // drops the result. DELIVERED is the owner's own (this thread's).
     const prev = m.or32(n + N_FLAGS, DETACHED);
     if ((prev & (FINISHED | DELIVERED)) === FINISHED) {
       dropResult(n);
     }
+    const w = m.swap(n + N_AWAITER, 0);
+    if (w !== 0) {
+      m.wakerDrop(w);
+    }
+    release(n);
+    return;
+  } else if ((fl & FINISHED) === 0) {
+    setFlags(n, DETACHED);
+  } else if ((fl & DELIVERED) === 0) {
+    dropResult(n);
   }
-  const w = takeAwaiter(n);
+  const w = takePlain(n);
   if (w !== 0) {
     m.wakerDrop(w);
   }
@@ -416,7 +458,7 @@ export function run(task: usize, n: usize, taken: bool): void {
   if ((prev & DETACHED) !== 0) {
     dropResult(n);
   } else {
-    const w = takeAwaiter(n);
+    const w = finishAwaiter(n, task);
     if (w !== 0) {
       if (wk.taskOf(w) === task) {
         // Its awaiter is the task's root or another promise it drives: its reaction is queued
