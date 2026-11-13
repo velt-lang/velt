@@ -1,12 +1,14 @@
-// velt/lang/hooks (internal): the two OS calls the executor in Velt's core makes whatever its
-// reactor (`#sched-os`, sched_mem.velt and sched_io_wait.velt): giving the core away in a spin
-// lock and the monotonic clock. macOS and Linux: `sched_yield`, `clock_gettime`.
+// velt/lang/hooks (internal): the OS calls the executor in Velt's core makes whatever its reactor
+// (`#sched-os`, sched_mem.velt, sched_io_wait.velt and sched_debug.velt): giving the core away in
+// a spin lock, the monotonic clock and a write to stderr. macOS and Linux: `sched_yield`,
+// `clock_gettime`, `write`.
 
 import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
 
 declare c("c") function sched_yield$sched(): i32;
 declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<u8>): i32;
+declare c("c") function write$os(fd: i32, buf: Ptr<u8>, n: usize): isize;
 
 /** Gives the core to another thread that is ready to run, if any. */
 export function yieldCore(): void {
@@ -26,4 +28,12 @@ export function monotonicNs(clock: i32): u64 {
   const ns = (m.ld(ts) as u64) * 1000000000 + (m.ld(ts + 8) as u64);
   m.release(ts, 16);
   return ns;
+}
+
+/** Writes the `n` bytes at `buf` to stderr, unbuffered (a debug view's line). */
+export function writeStderr(buf: usize, n: usize): void {
+  // SAFETY: `n` bytes at `buf`.
+  unsafe {
+    write$os(2, m.ptr(buf), n);
+  }
 }

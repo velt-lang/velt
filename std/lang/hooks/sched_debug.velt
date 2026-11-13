@@ -8,15 +8,13 @@
 
 import { Ptr, export as cExport } from "velt/ffi";
 import { exportedAddress } from "velt/lang/intrinsics";
+import * as os from "#sched-os";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
 import { processEnv } from "./process";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
 import * as t from "./sched_task";
-
-declare c("c") function write$dbg(fd: i32, buf: Ptr<u8>, n: usize): isize;
-declare c("c") function clock_gettime$dbg(clock: i32, ts: Ptr<u8>): i32;
 
 /** The monitor's rescues of a stalled worker that moved tasks, spares started, reactor turns. */
 export const RESCUES = new Atomic<usize>(0);
@@ -72,14 +70,7 @@ function debugMain(arg: Ptr<u8> | null): Ptr<u8> | null {
 
 /** The monotonic clock in nanoseconds. */
 function sl(): usize {
-  const ts = m.alloc(16);
-  // SAFETY: a timespec in `ts`.
-  unsafe {
-    clock_gettime$dbg(r.MONOTONIC, m.ptr(ts));
-  }
-  const ns = m.ld(ts) * 1000000000 + m.ld(ts + 8);
-  m.release(ts, 16);
-  return ns;
+  return os.monotonicNs(r.MONOTONIC) as usize;
 }
 
 /** One line: the monitor's state and counters, then each started worker's. */
@@ -102,9 +93,6 @@ function line(g: usize, at: usize): void {
     m.st32(buf + k, c.charCodeAt(0) as u32);
     k++;
   }
-  // SAFETY: `k` bytes of the line at `buf`.
-  unsafe {
-    write$dbg(2, m.ptr(buf), k);
-  }
+  os.writeStderr(buf, k);
   m.release(buf, len + 4);
 }
