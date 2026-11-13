@@ -21,7 +21,8 @@
 //! | `object("{ a?: i64 }")` | an object-literal type, by the name sema gives it (its text) |
 //!
 //! A signature is `sig(<A, B>(P, …) -> R throws E)`: the type parameters and `throws` are
-//! optional. A parameter is written with its passing mode as sema infers it: `T` for a `Copy`
+//! optional. An `async function` is `sig(async (P, …) -> R throws E)`, with `R` what its promise
+//! resolves to and `E` what it rejects with. A parameter is written with its passing mode as sema infers it: `T` for a `Copy`
 //! value, `&T` borrowed, `&mut T` borrowed mutably, `move T` owned (the callee drops it). Sema
 //! infers modes and `throws` from a hook's body, so `velt_sema`'s test compares them on a program
 //! checked with every std body (`velt check --std`): lazy std leaves the body of a hook no code
@@ -67,6 +68,9 @@ pub struct FnSig {
     pub ret: T,
     /// What it throws (`None`: nothing).
     pub throws: Option<T>,
+    /// `async function`, written `sig(async (…) -> R)`: `ret` is what its promise resolves to
+    /// (`hir::FnDef::ret`), and a call gives a promise of it, rejecting with `throws`.
+    pub is_async: bool,
 }
 
 /// One parameter: its passing mode and its type.
@@ -219,6 +223,9 @@ impl fmt::Display for Sig {
             Sig::Decorator => return f.write_str("decorator"),
             Sig::ProcessStatic => return f.write_str("process_static"),
         };
+        if s.is_async {
+            f.write_str("async ")?;
+        }
         if s.generics > 0 {
             let names: Vec<String> = (0..s.generics).map(|i| T::Param(i).to_string()).collect();
             write!(f, "<{}>", names.join(", "))?;
@@ -238,7 +245,8 @@ impl fmt::Display for Sig {
     }
 }
 
-/// A [`Sig`] from the table's tokens: `class`, or `sig(<A>(&T, …) -> R throws E)`.
+/// A [`Sig`] from the table's tokens: `class`, or `sig(<A>(&T, …) -> R throws E)`, with `async`
+/// first for an async function.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! hook_sig {
@@ -257,7 +265,17 @@ macro_rules! hook_sig {
             params: $crate::hook_params!([] $($p)*),
             ret: $crate::hook_ty!($r $(($($ra)*))?),
             throws: $crate::hook_throws!($($e $(($($ea)*))?)?),
+            is_async: false,
         })
+    };
+    (sig(async $($rest:tt)*)) => {
+        match $crate::hook_sig!(sig($($rest)*)) {
+            $crate::hook_sig::Sig::Fn(s) => $crate::hook_sig::Sig::Fn($crate::hook_sig::FnSig {
+                is_async: true,
+                ..s
+            }),
+            other => other,
+        }
     };
     (sig(( $($p:tt)* ) -> $r:tt $(($($ra:tt)*))? $(throws $e:tt $(($($ea:tt)*))?)?)) => {
         $crate::hook_sig!(sig(<>($($p)*) -> $r $(($($ra)*))? $(throws $e $(($($ea)*))?)?))

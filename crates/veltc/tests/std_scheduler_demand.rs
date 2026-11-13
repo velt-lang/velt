@@ -116,6 +116,11 @@ fn module_state_with_tasks_takes_the_executors_lock() {
 
 /// The VIR of `files` (name, source; the first is the root), built with `VELT_SCHEDULER=std`.
 fn vir_of(files: &[(&str, &str)]) -> String {
+    vir_with(files, &[])
+}
+
+/// [`vir_of`] with the variables `env` set.
+fn vir_with(files: &[(&str, &str)], env: &[(&str, &str)]) -> String {
     let dir = test_dir::TestDir::new();
     for (name, src) in files {
         std::fs::write(dir.path().join(name), src).unwrap();
@@ -124,9 +129,16 @@ fn vir_of(files: &[(&str, &str)]) -> String {
         .args(["build", files[0].0, "--emit", "vir"])
         .current_dir(dir.path())
         .env("VELT_SCHEDULER", "std")
+        .env_remove("VELT_EAGER_STD")
+        .env_remove("VELT_CHECK_ALL_STD")
+        .envs(env.iter().copied())
         .output()
         .unwrap();
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        o.status.success(),
+        "{env:?}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
@@ -182,4 +194,141 @@ fn state_read_by_code_only_an_initializer_reaches_takes_one_path() {
         "an access calls the runtime's entry:\n{}",
         runtime.join("\nfn#")
     );
+}
+
+/// A copy of std in `dir`, for a test to change.
+fn std_copy(dir: &Path) -> std::path::PathBuf {
+    let std = dir.join("std");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
+        &std,
+    );
+    std
+}
+
+/// `file` built into `exe` over the std root `std`, with `VELT_SCHEDULER=std`.
+fn build_with_std(std: &Path, file: &Path, exe: &Path) -> std::process::Output {
+    command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(file)
+        .arg("-o")
+        .arg(exe)
+        .current_dir(file.parent().unwrap())
+        .env("VELT_SCHEDULER", "std")
+        .env("VELT_STD", std)
+        .env("VELT_BUILD_CACHE", "off")
+        .env("VELT_BUILD_STAMP", "off")
+        .output()
+        .unwrap()
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let (src, dst) = (e.path(), to.join(e.file_name()));
+        match e.file_type().unwrap().is_dir() {
+            true => copy_tree(&src, &dst),
+            false => _ = std::fs::copy(&src, &dst).unwrap(),
+        }
+    }
+}
+
+/// `velt/fs`'s synchronous calls load none of the executor's modules (#2882): its `std-scheduler`
+/// variant calls the blocking pool by role (`hookCall`), and the call names the pool only once
+/// live code reaches it (velt_sema `lazy_std/hook_stubs.rs`), not when a body is checked. So the
+/// program builds and runs with every `lang/hooks/sched*` module gone from std. Importing the
+/// pool's module instead made `velt check` of such a program load 47 more modules (+56 % on
+/// notes-cli).
+#[test]
+fn synchronous_fs_calls_load_no_executor_module() {
+    if !cfg!(unix) {
+        return;
+    }
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let std = std_copy(dir.path());
+    let hooks = std.join("lang/hooks");
+    let mut removed = 0;
+    for e in std::fs::read_dir(&hooks).unwrap() {
+        let name = e.unwrap().file_name().into_string().unwrap();
+        if name.starts_with("sched") && name.ends_with(".velt") {
+            std::fs::remove_file(hooks.join(&name)).unwrap();
+            removed += 1;
+        }
+    }
+    assert!(removed > 30, "{removed} executor modules");
+    let file = dir.path().join("sync_fs.velt");
+    let data = dir.path().join("data.txt");
+    std::fs::write(&data, "four").unwrap();
+    let src = format!(
+        "import {{ existsSync, readFileSync, writeFileSync }} from \"velt/fs\";\n\
+         function main() {{\n  const p = {:?};\n  writeFileSync(p + \".out\", readFileSync(p) + \"!\");\n  \
+         console.log(existsSync(p), readFileSync(p + \".out\"));\n}}\n",
+        data.to_str().unwrap()
+    );
+    std::fs::write(&file, src).unwrap();
+    let exe = dir.path().join(if cfg!(windows) {
+        "sync_fs.exe"
+    } else {
+        "sync_fs"
+    });
+    let o = build_with_std(&std, &file, &exe);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let o = command(&exe).env_remove("VELT_SCHEDULER").output().unwrap();
+    let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+    assert_eq!((o.status.code(), out.as_str()), (Some(0), "true four!\n"));
+}
+
+/// A hook called by role is typed from velt_common's table until live code reaches it; then its
+/// own definition must have the table's signature (#2882). A pool whose `run` drifted from the
+/// table (one more parameter) is an ICE naming the hook, not a call checked against the wrong
+/// signature.
+#[test]
+fn a_hook_called_by_role_that_drifted_from_the_table_is_an_ice() {
+    if !cfg!(unix) {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let std = std_copy(dir.path());
+    let pool = std.join("lang/hooks/sched_blocking.velt");
+    let text = std::fs::read_to_string(&pool).unwrap();
+    let decl = "export async function run<T>(work: () => T): Promise<T> {";
+    assert!(
+        text.contains(decl),
+        "the pool's `run` changed: update this test"
+    );
+    let drifted = "export async function run<T>(work: () => T, spare?: number): Promise<T> {";
+    std::fs::write(&pool, text.replace(decl, drifted)).unwrap();
+    let file = dir.path().join("async_fs.velt");
+    let src = "import { readFile } from \"velt/fs\";\n\
+               async function main() {\n  console.log((await readFile(\"missing\")).length);\n}\n";
+    std::fs::write(&file, src).unwrap();
+    let o = build_with_std(&std, &file, &dir.path().join("async_fs"));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success(), "built with a drifted hook");
+    assert!(
+        err.contains("ICE: the hook `sched_blocking_run`") && err.contains("2 parameters"),
+        "{err}"
+    );
+}
+
+/// Without std's modules on demand (`VELT_EAGER_STD`, `VELT_CHECK_ALL_STD`, the editor's
+/// analysis), the loader loads the executor's blocking pool up front with the executor, as
+/// `velt/fs` calls it by role (#2882): its programs build under `VELT_SCHEDULER=std` with every
+/// std module loaded, and give the VIR they give on demand (cli.md: "byte for byte the same").
+#[test]
+fn fs_programs_build_the_same_with_std_up_front() {
+    let sync = "import { existsSync } from \"velt/fs\";\nfunction main() {\n  \
+                console.log(existsSync(\"nothing here\"));\n}\n";
+    let async_fs = "import { readFile } from \"velt/fs\";\nasync function main() {\n  \
+                     try {\n    await readFile(\"nothing here\");\n  } catch (e) {\n    \
+                     console.log(\"missing\");\n  }\n}\n";
+    for src in [sync, async_fs] {
+        let files = [("main.velt", src)];
+        let on_demand = vir_of(&files);
+        let eager = vir_with(&files, &[("VELT_EAGER_STD", "1")]);
+        assert!(on_demand == eager, "std up front gives another VIR:\n{src}");
+        vir_with(&files, &[("VELT_CHECK_ALL_STD", "1")]);
+    }
 }

@@ -13,7 +13,7 @@ import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
-import * as bp from "velt/lang/hooks/sched_blocking";
+import { hookCall } from "velt/lang/intrinsics";
 import * as rt from "./rt";
 
 // The runtime's `VeltDirents`, as std/fs/rt.velt declares it (its structs stay that file's own):
@@ -66,115 +66,154 @@ export {
 } from "./rt";
 
 export async function velt_rt_fs_read_file(path: string): Promise<IoResult<string>> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_read_file(path);
   }
-  return await bp.run<IoResult<string>>(() => rt.velt_rt_fs_read_file_sync(path));
+  return await hookCall<IoResult<string>>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_read_file_sync(path),
+  );
 }
 
 export async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_read_file_bytes(path);
   }
-  return await bp.run<IoResult<u8[]>>(() => rt.velt_rt_fs_read_file_bytes_sync(path));
+  return await hookCall<IoResult<u8[]>>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_read_file_bytes_sync(path),
+  );
 }
 
 export async function velt_rt_fs_write_file(path: string, data: string): Promise<IoStatus> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_write_file(path, data);
   }
-  return await bp.run<IoStatus>(() => rt.velt_rt_fs_write_file_sync(path, data));
+  return await hookCall<IoStatus>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_write_file_sync(path, data),
+  );
 }
 
 export async function velt_rt_fs_append_file(path: string, data: string): Promise<IoStatus> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_append_file(path, data);
   }
-  return await bp.run<IoStatus>(() => rt.velt_rt_fs_append_file_sync(path, data));
+  return await hookCall<IoStatus>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_append_file_sync(path, data),
+  );
 }
 
 export async function velt_rt_fs_read_dir(path: string): Promise<IoResult<string[]>> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_read_dir(path);
   }
-  return await bp.run<IoResult<string[]>>(() => rt.velt_rt_fs_read_dir_sync(path));
+  return await hookCall<IoResult<string[]>>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_read_dir_sync(path),
+  );
 }
 
 export async function velt_rt_fs_read_dir_typed(path: string): Promise<IoResult<DirentList>> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     const r = await rt.velt_rt_fs_read_dir_typed(path);
     const list: DirentList = { names: r.value.names, kinds: r.value.kinds };
     return { code: r.code, message: r.message, value: list };
   }
-  return await bp.run<IoResult<DirentList>>(() => velt_rt_fs_read_dir_typed_sync(path));
+  return await hookCall<IoResult<DirentList>>(
+    "sched_blocking_run",
+    () => velt_rt_fs_read_dir_typed_sync(path),
+  );
 }
 
 export async function velt_rt_fs_stat(path: string): Promise<IoResult<Stats>> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_stat(path);
   }
-  return await bp.run<IoResult<Stats>>(() => rt.velt_rt_fs_stat_sync(path));
+  return await hookCall<IoResult<Stats>>("sched_blocking_run", () => rt.velt_rt_fs_stat_sync(path));
 }
 
 export async function velt_rt_fs_lstat(path: string): Promise<IoResult<Stats>> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_lstat(path);
   }
-  return await bp.run<IoResult<Stats>>(() => rt.velt_rt_fs_lstat_sync(path));
+  return await hookCall<IoResult<Stats>>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_lstat_sync(path),
+  );
 }
 
 export async function velt_rt_fs_readlink(path: string): Promise<IoResult<string>> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_readlink(path);
   }
-  return await bp.run<IoResult<string>>(() => rt.velt_rt_fs_readlink_sync(path));
+  return await hookCall<IoResult<string>>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_readlink_sync(path),
+  );
 }
 
 export async function velt_rt_fs_realpath(path: string): Promise<IoResult<string>> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_realpath(path);
   }
-  return await bp.run<IoResult<string>>(() => rt.velt_rt_fs_realpath_sync(path));
+  return await hookCall<IoResult<string>>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_realpath_sync(path),
+  );
 }
 
 export async function velt_rt_fs_symlink(target: string, path: string): Promise<IoStatus> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_symlink(target, path);
   }
-  return await bp.run<IoStatus>(() => rt.velt_rt_fs_symlink_sync(target, path));
+  return await hookCall<IoStatus>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_symlink_sync(target, path),
+  );
 }
 
 export async function velt_rt_fs_mkdir(path: string, recursive: bool): Promise<IoStatus> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_mkdir(path, recursive);
   }
-  return await bp.run<IoStatus>(() => rt.velt_rt_fs_mkdir_sync(path, recursive));
+  return await hookCall<IoStatus>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_mkdir_sync(path, recursive),
+  );
 }
 
 export async function velt_rt_fs_remove(path: string, recursive: bool): Promise<IoStatus> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_remove(path, recursive);
   }
-  return await bp.run<IoStatus>(() => rt.velt_rt_fs_remove_sync(path, recursive));
+  return await hookCall<IoStatus>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_remove_sync(path, recursive),
+  );
 }
 
 export async function velt_rt_fs_rename(from: string, to: string): Promise<IoStatus> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_rename(from, to);
   }
-  return await bp.run<IoStatus>(() => rt.velt_rt_fs_rename_sync(from, to));
+  return await hookCall<IoStatus>("sched_blocking_run", () => rt.velt_rt_fs_rename_sync(from, to));
 }
 
 export async function velt_rt_fs_copy_file(from: string, to: string): Promise<IoStatus> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_copy_file(from, to);
   }
-  return await bp.run<IoStatus>(() => rt.velt_rt_fs_copy_file_sync(from, to));
+  return await hookCall<IoStatus>(
+    "sched_blocking_run",
+    () => rt.velt_rt_fs_copy_file_sync(from, to),
+  );
 }
 
 export async function velt_rt_fs_exists(path: string): Promise<bool> {
-  if (!bp.supported()) {
+  if (!hookCall("sched_blocking_supported")) {
     return await rt.velt_rt_fs_exists(path);
   }
-  return await bp.run<bool>(() => rt.velt_rt_fs_exists_sync(path));
+  return await hookCall<bool>("sched_blocking_run", () => rt.velt_rt_fs_exists_sync(path));
 }

@@ -34,6 +34,7 @@ pub(crate) fn reach_again(cx: &mut Ctx, defs: &[DefId]) -> bool {
             ),
             (cx.info.len(), cx.loads_added, cx.lazy.record_hooks),
             (late.defs.len(), late.constructs, late.record_conversion),
+            (late.tasks, late.hooks.len()),
         )
     };
     let before = state(cx);
