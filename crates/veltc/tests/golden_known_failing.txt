@@ -4,7 +4,7 @@
 #
 # <path from the repository root> #<issue> [os=macos,linux,windows]
 
-tests/golden/lang/promises_unhandled_timing.velt                   #2913
+tests/golden/lang/promises_unhandled_timing.velt                   #2962
 tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=macos,windows
 tests/golden/std/catch_panic.velt                                  #2925 os=windows
 tests/golden/std/catch_panic_in_clone.velt                         #2925 os=windows

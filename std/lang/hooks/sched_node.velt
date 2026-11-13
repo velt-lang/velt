@@ -309,6 +309,7 @@ export function peek(f: usize): bool {
 export function handled(f: usize, qdrop: usize, hdrPoll: usize): void {
   if (f !== 0 && m.ld(f) === hdrPoll && (m.load32(nodeOf(f) + N_FLAGS) & PANICKED) === 0) {
     m.st(nodeOf(f) + N_RESULT_DROP, qdrop);
+    setFlags(nodeOf(f), rp.HANDLED);
     al.claimed(nodeOf(f));
   }
 }
@@ -360,7 +361,10 @@ export function run(task: usize, n: usize, taken: bool): void {
     rp.dropResult(n);
   } else if (!sh.settled(n, task)) {
     const w = aw.finishAwaiter(n, task);
-    if (w !== 0) {
+    if (w === 0) {
+      // Its owner holds it without waiting: a rejection is watched (sched_node_report.velt).
+      rp.watch(n, task);
+    } else {
       if (wk.taskOf(w) === task) {
         // Its awaiter is the task's root or another promise it drives: its reaction is queued
         // now, as Node queues a promise's reactions when it settles, and that entry is its step.

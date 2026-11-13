@@ -264,6 +264,33 @@ fn a_view_s_take_handles_nothing() {
     }
 }
 
+/// A rejected promise its owner holds is watched until the microtasks drain (#2854 step 4):
+/// awaited, handed to a combinator, given a `catch`, or handed to a task that handles it before
+/// then, it is not reported. Node prints the same (with the task's `await` for `spawn`).
+#[test]
+fn a_held_rejection_handled_before_the_microtasks_drain_is_not_reported() {
+    prints_counted(
+        "held_rejections_handled",
+        HELD_REJECTIONS,
+        "caught a\nsettled rejected\ncatch c\ntask caught d\nend\n",
+        2,
+    );
+}
+
+/// Promises handed to tasks that drop them without awaiting, while their own task finishes
+/// them on another worker: every result is dropped once, counted at four workers. (The drop and
+/// the finish each look at the flags before their own or: exactly one sees the other. This
+/// program did not catch the old order in 10 runs, so it guards the drop paths, not the race.)
+#[test]
+fn promises_dropped_on_another_worker_as_they_finish_free_their_results() {
+    prints_counted(
+        "dropped_as_finished",
+        DROPPED_AS_FINISHED,
+        "dropped 10000\n",
+        3,
+    );
+}
+
 /// The program of [`a_spawned_race_delivers_a_copy_to_its_task`].
 const SPAWNED_RACE: &str = r#"class Obj {
   n: i64 = 0;
@@ -486,5 +513,71 @@ async function main() {
   const q: Promise<unknown, Error> = p2;
   await new Promise<void>((r) => setTimeout(() => r(), 5));
   console.log("end", q !== null, p !== null);
+}
+"#;
+
+/// The program of [`a_held_rejection_handled_before_the_microtasks_drain_is_not_reported`].
+const HELD_REJECTIONS: &str = r#"async function fail(tag: string): Promise<string, Error> {
+  throw new Error(tag);
+}
+async function take(p: Promise<string, Error>): Promise<string> {
+  try {
+    return await p;
+  } catch (e) {
+    return `task caught ${(e as Error).message}`;
+  }
+}
+async function main() {
+  // Awaited before the microtasks drain: handled.
+  const a = fail("a");
+  try {
+    await a;
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  // Handed to a combinator before the checkpoint: handled.
+  const b = fail("b");
+  const s = await Promise.allSettled([b]);
+  console.log("settled", s[0].status);
+  // Its rejection handled by `catch` before the checkpoint.
+  const c = fail("c");
+  c.catch(() => console.log("catch c"));
+  // Handed to another task, which handles it.
+  const d = fail("d");
+  console.log(await spawn(take(d)));
+  await sleep(5);
+  console.log("end");
+}
+"#;
+
+/// The program of [`promises_dropped_on_another_worker_as_they_finish_free_their_results`].
+const DROPPED_AS_FINISHED: &str = r#"class Box {
+  n: i64 = 0;
+}
+// Finishes after a few microtask ticks on main's worker.
+async function make(i: i64): Promise<Box> {
+  for (let k = 0; k < (i % 4); k++) {
+    await Promise.resolve();
+  }
+  const b = new Box();
+  b.n = i;
+  return b;
+}
+// Drops the promise it was handed without awaiting it, on whichever worker runs it.
+async function drop(p: Promise<Box>): Promise<i64> {
+  return 1;
+}
+async function main() {
+  let dropped: i64 = 0;
+  for (let round = 0; round < 200; round++) {
+    const hs: Promise<i64>[] = [];
+    for (let i = 0; i < 50; i++) {
+      hs.push(spawn(drop(make(i))));
+    }
+    for (const h of hs) {
+      dropped += await h;
+    }
+  }
+  console.log("dropped", dropped);
 }
 "#;

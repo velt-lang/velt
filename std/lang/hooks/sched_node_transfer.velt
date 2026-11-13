@@ -61,15 +61,19 @@ export function transfer(f: usize, glue: usize, hdrPoll: usize): bool {
   return true;
 }
 
-/** Node `n`'s state finished: `finished`, then its flags `fl` (FINISHED, maybe DELIVERED) show. */
+/**
+ * Node `n`'s state finished: `finished`, then its flags `fl` (FINISHED, maybe DELIVERED) show; the
+ * flags before.
+ */
 @inline
-export function finish(n: usize, fl: u32): void {
+export function finish(n: usize, fl: u32): u32 {
   finished(n);
-  nd.setFlags(n, fl);
+  const was = m.or32(n + nd.N_FLAGS, fl);
   if ((fl & nd.DELIVERED) !== 0) {
     // The owner took the result: a converted promise's claim (sched_share_alias.velt).
     al.claimed(n);
   }
+  return was;
 }
 
 /**

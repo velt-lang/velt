@@ -100,13 +100,16 @@ function claimedSlow(n: usize): void {
  */
 @inline
 export function resultDrop(n: usize, rdrop: usize): usize {
+  return handledElsewhere(n) ? m.ld(x.get(n) + x.X_QUIET) : rdrop;
+}
+
+/** Did someone handle the promise converted node `n` stands for (its rejection is quiet)? */
+@inline
+export function handledElsewhere(n: usize): bool {
   if ((m.load32(n + nd.N_FLAGS) & ALIASED) === 0) {
-    return rdrop;
+    return false;
   }
-  const b = x.get(n);
-  return (m.load32(m.ld(b + x.X_HUB) + sh.H_FLAGS) & sh.CLAIMED) !== 0
-    ? m.ld(b + x.X_QUIET)
-    : rdrop;
+  return (m.load32(m.ld(x.get(n) + x.X_HUB) + sh.H_FLAGS) & sh.CLAIMED) !== 0;
 }
 
 /** The owner of node `n` drops it: a converted one gives up its holder (on the promise's task). */

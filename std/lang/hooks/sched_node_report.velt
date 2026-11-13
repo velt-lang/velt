@@ -6,9 +6,11 @@
 import { stateDrop } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
+import * as aw from "./sched_node_await";
 import * as loc from "./sched_node_loc";
 import * as t from "./sched_task";
 import * as al from "./sched_share_alias";
+import * as tr from "./sched_node_transfer";
 
 /**
  * Drops node `n`'s result, which nobody claims. A promise that can reject is reported (by its
@@ -26,6 +28,12 @@ export function dropResult(n: usize): void {
     dropNow(n);
     return;
   }
+  if ((m.load32(n + nd.N_FLAGS) & WATCHED) !== 0) {
+    // Watched since it finished: already on the list, which drops it as its owner's gone (and
+    // reports it unless someone handled it).
+    m.or32(n + nd.N_FLAGS, nd.DETACHED);
+    return;
+  }
   if (rejecting && task !== 0 && m.ld(e + t.E_CURRENT) === task) {
     m.inc(n + nd.N_REFS);
     m.st(n + nd.N_UNHANDLED_NEXT, m.ld(task + t.T_UNHANDLED));
@@ -33,6 +41,44 @@ export function dropResult(n: usize): void {
     return;
   }
   dropNow(n);
+}
+
+/** A node's flag: a combinator took it (`velt_rt_futs_handled`): its rejection is handled. */
+export const HANDLED: u32 = 16384;
+/** A node's flag: on its task's list since it finished with an error nobody awaited (`watch`). */
+const WATCHED: u32 = 32768;
+
+/**
+ * Node `n` of task `task` finished and nobody awaits it, its owner still holding it: a rejection
+ * is watched, as Node reports a rejection without a handler once the microtask queue is drained,
+ * unless the owner awaits it, gives it up, or hands it to a combinator or another task by then
+ * (`report`; the runtime's local/unhandled.rs `watch`).
+ */
+export function watch(n: usize, task: usize): void {
+  const fl = m.load32(n + nd.N_FLAGS);
+  if ((fl & (nd.REJECTING | tr.HANDED_OVER | nd.PANICKED | HANDLED)) !== nd.REJECTING) {
+    return;
+  }
+  if ((m.ld32(n + nd.N_HEAD + 16) & 0xff) === 0) {
+    // Fulfilled: the tag byte of its `Result` is 0.
+    return;
+  }
+  m.or32(n + nd.N_FLAGS, WATCHED);
+  m.inc(n + nd.N_REFS);
+  m.st(n + nd.N_UNHANDLED_NEXT, m.ld(task + t.T_UNHANDLED));
+  m.st(task + t.T_UNHANDLED, n);
+}
+
+/** Is watched node `n`'s rejection still nobody's at the checkpoint (or was it dropped since)? */
+function unclaimed(n: usize): bool {
+  const fl = m.load32(n + nd.N_FLAGS);
+  if ((fl & nd.DETACHED) !== 0) {
+    // Its owner dropped it without claiming it: reported as any such drop.
+    return (fl & nd.DELIVERED) === 0;
+  }
+  return (fl & (nd.DELIVERED | HANDLED | tr.HANDED_OVER)) === 0 &&
+    m.ld(n + aw.N_AWAITER) === 0 &&
+    !al.handledElsewhere(n);
 }
 
 /** Runs the drop glue of node `n`'s result. */
@@ -68,7 +114,12 @@ export function report(task: usize): void {
   while (rev !== 0) {
     const next = m.ld(rev + nd.N_UNHANDLED_NEXT);
     m.st(rev + nd.N_UNHANDLED_NEXT, 0);
-    dropNow(rev);
+    const watched = (m.and32(rev + nd.N_FLAGS, ~WATCHED) & WATCHED) !== 0;
+    if (!watched || unclaimed(rev)) {
+      // A held rejection reported now is the owner's no more: its later drop leaves it.
+      m.or32(rev + nd.N_FLAGS, nd.DELIVERED);
+      dropNow(rev);
+    }
     nd.release(rev);
     rev = next;
   }
