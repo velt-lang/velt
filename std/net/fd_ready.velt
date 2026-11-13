@@ -1,14 +1,11 @@
 // velt/net (internal): whether a socket of the executor in Velt's reactor has input now, for
 // `readable` and `readableWithin` (std/net/fd_io.velt).
 
-import { Ptr } from "velt/ffi/ptr";
+import { recv$net } from "#net-calls";
 import * as r from "#reactor";
 import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as wt from "velt/lang/hooks/sched_io_wait";
-
-// A pointer is `Ptr`, as in every other declaration of this symbol (std/net/fd_io.velt).
-declare c("c") function recv$ready(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize;
 
 /** `MSG_PEEK`: the same on Linux, macOS and Windows. */
 const MSG_PEEK: i32 = 2;
@@ -32,7 +29,7 @@ export function readReady(s: usize): bool {
     let n: isize = 0;
     // SAFETY: this thread's scratch buffer holds 64 bytes; the descriptor is open.
     unsafe {
-      n = recv$ready(fd, m.ptr(m.scratch()), 1, MSG_PEEK);
+      n = recv$net(fd, m.ptr(m.scratch()), 1, MSG_PEEK);
     }
     const e = n < 0 ? r.errno() : 0;
     if (e === r.EINTR) {
