@@ -268,6 +268,8 @@ describe("the cell check", () => {
         let (code, out) = std_white_box("cells_unlocked", src, threads);
         assert_eq!(code, Some(1), "T{threads}: {out}");
         assert!(out.contains(ABORTED), "T{threads}: {out}");
+        // The guarded rule's message, not the two-task one.
+        assert!(!out.contains("was used by two tasks"), "T{threads}: {out}");
         assert!(out.contains("guarded\n"), "T{threads}: {out}");
         assert!(!out.contains("not reached"), "T{threads}: {out}");
         for part in [
