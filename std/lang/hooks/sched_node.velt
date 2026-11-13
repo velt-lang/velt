@@ -14,7 +14,8 @@
 // without breaking that list), the state's drop (a lazy node's; then a word sched_node_catch.velt
 // uses), its link in the task's list of rejections nobody handled (its own too: a node woken
 // while it ran from a microtask is still on the woken stack when it finishes there, and that
-// stack must stay whole), the transfer glue (+112, sched_node_transfer.velt) and a free word.
+// stack must stay whole), the transfer glue (+112, sched_node_transfer.velt) and the hub of a
+// shared node (+120, sched_share.velt).
 //
 // The flags change only through atomic or/and: a wake on another thread sets QUEUED while the
 // worker sets and clears the others.
@@ -36,6 +37,7 @@ import * as micro from "./sched_micro";
 import * as aw from "./sched_node_await";
 import * as nc from "./sched_node_catch";
 import * as rp from "./sched_node_report";
+import * as sh from "./sched_share";
 import * as t from "./sched_task";
 import * as tr from "./sched_node_transfer";
 import * as wk from "./sched_wake";
@@ -149,8 +151,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
     // SAFETY: a lazy node's state, polled by its owner with its own cx.
     const r = unsafe { statePoll(m.ld(n + N_POLL), f + 16, cx) };
     if (r === 1) {
-      tr.finished(n);
-      setFlags(n, FINISHED);
+      tr.finish(n, FINISHED);
     }
     return r;
   }
@@ -201,8 +202,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
  */
 @inline
 export function adoptedDone(task: usize, n: usize, fl: u32): void {
-  tr.finished(n);
-  setFlags(n, fl);
+  tr.finish(n, fl);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
   const w = aw.takePlain(n);
   if (w !== 0) {
@@ -352,7 +352,7 @@ export function run(task: usize, n: usize, taken: bool): void {
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
   if ((prev & DETACHED) !== 0) {
     rp.dropResult(n);
-  } else {
+  } else if (!sh.settled(n, task, prev)) {
     const w = aw.finishAwaiter(n, task);
     if (w !== 0) {
       if (wk.taskOf(w) === task) {

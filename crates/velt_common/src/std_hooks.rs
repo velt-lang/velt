@@ -304,6 +304,10 @@ hooks! {
     sched_detach => lang_hooks_sched, "schedDetach", sig((usize, usize) -> void), lowered;
     /// `velt_rt_fut_transfer`'s: `(f, transfer_glue)` (#2854).
     sched_transfer => lang_hooks_sched_node_transfer, "schedTransfer", sig((usize, usize) -> void), lowered;
+    /// `velt_rt_fut_share`'s: `(f, result_size, share_poll, result_drop)`, another holder (#2854).
+    sched_share => lang_hooks_sched_share, "schedShare", sig((usize, u64, usize, usize) -> usize), lowered;
+    /// `velt_rt_fut_id`'s: `(f)`, the promise's identity (#1682, #2854).
+    sched_fut_id => lang_hooks_sched_share, "schedFutId", sig((usize) -> u64), lowered;
     /// `velt_rt_futs_handled`'s: `(futs, n, quiet_drop)`.
     sched_handled => lang_hooks_sched, "schedHandled", sig((usize, u64, usize) -> void), lowered;
     /// `velt_rt_fut_peek`'s (`console.log` of a promise): `(f)`, 1 when it settled with its result

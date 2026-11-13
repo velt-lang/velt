@@ -68,6 +68,13 @@ impl FnLower<'_, '_> {
         self.terminate(crate::vir::Terminator::Unreachable);
     }
 
+    /// Does `velt_rt_fut_share` go to the executor's hub (sched_share.velt, #2854)? Only where the
+    /// executor is loaded: a program that runs nothing on it has none of its nodes, and every
+    /// promise it shares is the runtime's, for the runtime's hub.
+    pub(super) fn sched_share_live(&self) -> bool {
+        self.std_sched() && self.sched_hook_live(velt_common::std_hook!(sched_share))
+    }
+
     /// `op` (a pointer or an integer) as a `usize` argument.
     fn as_usize(&mut self, op: Operand) -> Operand {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))
@@ -164,6 +171,31 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// `velt_rt_fut_share`'s job (another holder of promise `f`, into `out`): the executor in
+    /// Velt's hub (sched_share.velt, #2854), with the result's size, `share` (a `SharePoll` glue
+    /// or null) and `drop` (its drop glue or null).
+    pub(super) fn sched_share(
+        &mut self,
+        f: Operand,
+        size: u64,
+        share: Operand,
+        drop: Operand,
+        out: crate::vir::Local,
+    ) -> Operand {
+        let (f, share, drop) = (self.as_usize(f), self.as_usize(share), self.as_usize(drop));
+        let size = cint(size as i128, Ty::U64);
+        let c = hooks::sched_share(
+            self,
+            ty::USize::arg(f),
+            ty::U64::arg(size),
+            ty::USize::arg(share),
+            ty::USize::arg(drop),
+        );
+        let v = c.emit(self).op();
+        self.assign(Place::local(out), Rvalue::Cast(v, Ty::Ptr));
+        Operand::Copy(Place::local(out))
+    }
+
     /// Runtime call `r` with `args` (result into `dest`) as the executor in Velt's hook, when it
     /// has one; else `args` and `dest` back.
     pub(super) fn sched_rt(
@@ -179,6 +211,7 @@ impl FnLower<'_, '_> {
                 | Rt::FutStartRejecting
                 | Rt::FutDetach
                 | Rt::FutTransfer
+                | Rt::FutId
                 | Rt::FutsHandled
                 | Rt::FutPeek
                 | Rt::AwaitTick
@@ -205,6 +238,10 @@ impl FnLower<'_, '_> {
         // are neither loaded nor checked (#2880): `console.log` of a promise there keeps the
         // runtime's peek, in either std mode.
         if r == Rt::FutPeek && !self.sched_hook_live(velt_common::std_hook!(sched_peek)) {
+            return Err((args, dest));
+        }
+        // Likewise a promise's identity: without the executor no holder of its hub exists.
+        if r == Rt::FutId && !self.sched_share_live() {
             return Err((args, dest));
         }
         let ret = r.sig().2;
@@ -247,6 +284,10 @@ impl FnLower<'_, '_> {
                     let (f, glue) = (self.as_usize(f.clone()), self.as_usize(glue.clone()));
                     hooks::sched_transfer(self, ty::USize::arg(f), ty::USize::arg(glue)).emit(self);
                     None
+                }
+                (Rt::FutId, [f]) => {
+                    let f = self.as_usize(f.clone());
+                    Some(hooks::sched_fut_id(self, ty::USize::arg(f)).emit(self).op())
                 }
                 (Rt::FutsHandled, [futs, n, qdrop]) => {
                     let (futs, qdrop) = (self.as_usize(futs.clone()), self.as_usize(qdrop.clone()));

@@ -1,0 +1,18 @@
+// velt/lang/hooks (internal): a shared promise whose node another task drives (sched_share.velt):
+// a node handed over to this task and shared here, or the proxy a holder handed over forwards to.
+// Its finish runs on its own task, which must not touch the hub, so the hub awaits the node as an
+// owner does (sched_node_await.velt), with the waker of its first waiting holder: the finish wakes
+// that holder here, and the hub settles on this task as it polls (sched_share.velt `pollHolder`),
+// queuing the other holders after it in the order they started waiting.
+
+import * as m from "./sched_mem";
+import * as aw from "./sched_node_await";
+import * as sh from "./sched_share";
+import * as wt from "./sched_share_wait";
+
+/** Hub `h`'s first waiting holder (if any) is woken by its node's finish from now on. */
+export function watch(h: usize): void {
+  if (m.ld(h + sh.H_WLEN) !== 0) {
+    aw.awaitWith(m.ld(h + sh.H_NODE), m.ld(wt.entry(h, 0) + 8));
+  }
+}

@@ -1,0 +1,115 @@
+// velt/lang/hooks (internal): a holder of a shared promise of the executor in Velt handed to
+// another task (sched_share.velt; the runtime's task/shared.rs `hand_over` for its executor).
+//
+// A shared promise stays on the task it is shared on: its node and settled result are that task's.
+// The owner hands a holder over (`spawn(use(p))`, a channel, a captured closure): its role goes to
+// a proxy, a node of this task holding a role of its own, which awaits the promise here and
+// finishes with a share of the result; the proxy is handed over in turn, so its transfer glue
+// (sched_node_transfer.velt) moves or copies that share for the other task as it finishes here
+// (#160). The holder forwards to the proxy from then on: the other task awaits a copy made here
+// and never uses the result object this task's holders see.
+
+import { fnAddress, futDrop, futPoll } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as nc from "./sched_node_catch";
+import * as nd from "./sched_node";
+import * as sh from "./sched_share";
+import * as sd from "./sched_share_drop";
+import * as t from "./sched_task";
+import * as tr from "./sched_node_transfer";
+
+/**
+ * `velt_rt_fut_transfer` for holder `f` (its header's poll is `holderPoll`), with transfer glue
+ * `glue` (0: nothing to transfer).
+ */
+export function handOver(f: usize, glue: usize): void {
+  const fwd = sh.forwardOf(f);
+  if (fwd !== 0) {
+    if (m.ld(fwd) !== fnAddress(sh.holderPoll)) {
+      // Handed on again: the proxy's result is this holder's own copy already.
+      return;
+    }
+    // Shared again on this task (sched_share.velt `schedShare`): a proxy of this task takes the
+    // role of `f`'s proxy here over in turn.
+    const next = newProxy(m.ld(fwd - 8), glue);
+    setForward(f, next);
+    // SAFETY: the old proxy, a holder this holder owned.
+    unsafe {
+      futDrop(fwd);
+    }
+    return;
+  }
+  const h = m.ld(f - 8);
+  const proxy = newProxy(h, glue);
+  if (sh.isOrig(h, f)) {
+    // The original stays allocated for the holder there; the hub holds its forward.
+    m.st(h + sh.H_ORIG_FWD, proxy);
+    m.or32(h + sh.H_FLAGS, sh.ORIG_OUT);
+  } else {
+    m.st(f - sh.FRONT + 8, proxy);
+    m.st(f - 8, 0);
+  }
+  // `f`'s own role ends here; the proxy's keeps the promise alive.
+  sd.release(h, f);
+}
+
+/** Holder `f` (handed over already) forwards to `proxy` from now on. */
+function setForward(f: usize, proxy: usize): void {
+  const h = m.ld(f - 8);
+  if (h === 0) {
+    m.st(f - sh.FRONT + 8, proxy);
+  } else {
+    m.st(h + sh.H_ORIG_FWD, proxy);
+  }
+}
+
+/**
+ * A started node of this task holding a role of its own in the promise of hub `h`: it awaits the
+ * promise here and finishes with a share of the result, transferred with `glue` (0: a plain
+ * result, copied as it is) for the task it goes to.
+ */
+function newProxy(h: usize, glue: usize): usize {
+  const role = sh.newHandle(h);
+  const size = m.ld(h + sh.H_SIZE);
+  // The proxy's state: the role while it waits, the result (at offset 0) once it settled.
+  const ss = ((size > 8 ? size : 8) + 15) & ~15;
+  const st = m.zeroed(ss);
+  m.st(st, role);
+  const poll = fnAddress(nd.nodePoll);
+  const p = nd.boxed(
+    fnAddress(proxyPoll),
+    fnAddress(proxyDrop),
+    st,
+    ss as u64,
+    poll,
+    fnAddress(nd.nodeDrop),
+  );
+  m.release(st, ss);
+  const e = t.exec();
+  nd.start(m.ld(e + t.E_CURRENT), p, m.ld(h + sh.H_RDROP), false, poll, m.ld(e + nc.E_CATCHING));
+  tr.transfer(p, glue, poll);
+  return p;
+}
+
+/** A proxy's state poll: awaits its role, then moves the result into its state. */
+export function proxyPoll(state: usize, cx: usize): u32 {
+  const role = m.ld(state);
+  // SAFETY: the role, a handle the proxy owns.
+  if (unsafe { futPoll(role, cx) } !== 1) {
+    return 0;
+  }
+  m.copy(state, role + 16, m.ld(role - sh.FRONT + 16));
+  // SAFETY: as above; its result moved out.
+  unsafe {
+    futDrop(role);
+  }
+  return 1;
+}
+
+/** A proxy's state drop (it has not settled): its role goes away. */
+export function proxyDrop(state: usize): void {
+  // SAFETY: the role, a handle the proxy owns.
+  unsafe {
+    futDrop(m.ld(state));
+  }
+}

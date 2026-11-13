@@ -12,8 +12,6 @@ tests/golden/lang/promise_identity_defer.velt                      #2909
 tests/golden/lang/promise_identity_defer_rejects.velt              #2909
 tests/golden/lang/promise_identity_defer_twice.velt                #2909
 tests/golden/lang/promise_identity_rejection.velt                  #2909
-tests/golden/lang/promise_identity_tasks.velt                      #2909
-tests/golden/lang/promise_shared_inflight.velt                     #2910
 tests/golden/lang/promises_sync_main.velt                          #2962
 tests/golden/lang/promises_unhandled_timing.velt                   #2913
 tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=macos,windows
