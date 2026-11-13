@@ -174,3 +174,30 @@ fn module_state_takes_one_path_decided_after_the_initializers() {
     assert!(!default.contains("_Gmodule_state") && !default.contains("_Gmodule_block"));
     assert!(default.contains("velt_rt_module_state"));
 }
+
+/// The module-state path is decided once `velt_main` is built, not while `build_main` builds what
+/// it queued (#2880's review). Here `main` touches no module state, so the module initializers
+/// are first lowered in `build_main` (`init_module_state`), and only they reach `read`, which
+/// reads module state and then calls `arm`, which arms the program's only timer. Built as
+/// `build_main`'s queue empties, `read`'s access came before `arm` and took the runtime's entry,
+/// and the timer's code the executor's.
+#[test]
+fn state_read_by_code_only_an_initializer_reaches_takes_one_path() {
+    let dep = "export let count = 1;\nfunction arm() {\n  \
+               setTimeout(() => console.log(\"timer\"), 1);\n}\n\
+               function read(): number {\n  const c = count;\n  arm();\n  return c;\n}\n\
+               export const total = read();\n";
+    let main = "import \"./dep\";\nfunction main() {\n  console.log(\"main\");\n}\n";
+    let std = vir_of(&[("main.velt", main), ("dep.velt", dep)], true);
+    assert!(
+        std.contains("schedModuleState"),
+        "the executor's lock is not used:\n{std}"
+    );
+    let helpers = std.split("\nfn#").filter(|f| f.contains("_Gmodule_"));
+    let runtime: Vec<&str> = helpers.filter(|f| f.contains("velt_rt_module_")).collect();
+    assert!(
+        runtime.is_empty(),
+        "an access calls the runtime's entry:\n{}",
+        runtime.join("\nfn#")
+    );
+}
