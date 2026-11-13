@@ -10,7 +10,7 @@
 //! is `{ result: slot @0, inner: VeltFut* }`: its poll polls `inner` and, once it is ready, moves
 //! the race's result slot (+16) into its own and frees `inner`.
 
-use velt_sema::hir::{Intrinsic, TyId};
+use velt_sema::hir::{self, Intrinsic, TyId};
 
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
@@ -40,14 +40,51 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Intrinsic::PromiseRace | Intrinsic::PromiseAny => true,
             _ => return None,
         };
-        // Nothing to report when it cannot reject.
-        self.cx.promise_error(t)?;
+        // Nothing to report when it cannot reject. On the executor in Velt a kept race is
+        // boxed all the same: handed to another task, its result is transferred by the box, a
+        // node its own task drives, as the race's children (that executor's nodes) are not the
+        // runtime's to mark (sched.velt `schedTransfer`, #2854).
+        if self.cx.promise_error(t).is_none() && !(race && self.std_sched()) {
+            return None;
+        }
         Some(if race { self.box_race(v, t) } else { v })
+    }
+
+    /// On the executor in Velt, `spawn(Promise.race(ps))`: the race future `fut` (promise type
+    /// `t`) is boxed and started here, so this task drives it and the transfer of its result
+    /// (`velt_rt_fut_transfer`, set next) runs here as it finishes, before the spawned task sees
+    /// it (#160, #2854). The runtime's executor hands the transfer to the race's children instead,
+    /// which it can do with its own nodes only. Anything else is `fut` as it is.
+    pub(super) fn spawned_race(&mut self, p: &hir::Expr, fut: Operand, t: TyId) -> Operand {
+        let race = matches!(
+            &p.kind,
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(Intrinsic::PromiseRace | Intrinsic::PromiseAny),
+                ..
+            }
+        );
+        if !race || !self.std_sched() || self.dead() {
+            return fut;
+        }
+        let v = Operand::Copy(Place::local(self.box_race_future(fut, t)));
+        let drop = self.unclaimed_drop_fn(t);
+        let start = match self.cx.promise_error(t) {
+            Some(_) => Rt::FutStartRejecting,
+            None => Rt::FutStart,
+        };
+        self.call_rt(start, vec![v.clone(), drop], None);
+        v
     }
 
     /// Box the race future `v` (an owned temporary of promise type `t`) in the wrapper.
     fn box_race(&mut self, v: Operand, t: TyId) -> Operand {
         let inner = self.take_owned(v);
+        let d = self.box_race_future(inner, t);
+        self.owned_result(Some(d), t)
+    }
+
+    /// The race future `inner` (taken: this owns it) boxed in the wrapper, in a new temporary.
+    fn box_race_future(&mut self, inner: Operand, t: TyId) -> crate::vir::Local {
         let slot = self.cx.promise_slot(t);
         let wa = self.cx.race_box_agg(slot);
         let w = self.temp(Ty::Agg(wa));
@@ -65,7 +102,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         ];
         let d = self.temp(Ty::Ptr);
         self.call_rt(Rt::FutBox, args, Some(Place::local(d)));
-        self.owned_result(Some(d), t)
+        d
     }
 
     /// `(state, cx) -> u32` of the race wrapper (see module docs).

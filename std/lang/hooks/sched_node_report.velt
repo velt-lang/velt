@@ -1,0 +1,73 @@
+// velt/lang/hooks (internal): the result of a started promise of the executor in Velt that nobody
+// claims (sched_node.velt): dropped by its task, and a rejection reported as Node reports one
+// nobody handled, once the task's microtasks are drained (`report`), or at once for an error a
+// callback threw.
+
+import { stateDrop } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as loc from "./sched_node_loc";
+import * as t from "./sched_task";
+
+/**
+ * Drops node `n`'s result, which nobody claims. A promise that can reject is reported (by its
+ * drop glue, when it holds an error) only once its task's microtasks are drained, as Node
+ * reports a rejection nobody handled: until then a combinator may still take it (`handled`).
+ */
+export function dropResult(n: usize): void {
+  const task = m.ld(n + nd.N_TASK);
+  const e = t.exec();
+  const rejecting = (m.load32(n + nd.N_FLAGS) & nd.REJECTING) !== 0;
+  if (rejecting && m.ld(e + t.E_UNCAUGHT) !== 0) {
+    // An error a callback threw (sched.velt `schedUncaughtNow`): reported now, as Node's
+    // uncaught exception ends the process before the microtasks run.
+    m.st(e + t.E_UNCAUGHT, 0);
+    dropNow(n);
+    return;
+  }
+  if (rejecting && task !== 0 && m.ld(e + t.E_CURRENT) === task) {
+    m.inc(n + nd.N_REFS);
+    m.st(n + nd.N_UNHANDLED_NEXT, m.ld(task + t.T_UNHANDLED));
+    m.st(task + t.T_UNHANDLED, n);
+    return;
+  }
+  dropNow(n);
+}
+
+/** Runs the drop glue of node `n`'s result. */
+function dropNow(n: usize): void {
+  const rdrop = m.ld(n + nd.N_RESULT_DROP);
+  if (rdrop !== 0) {
+    // An error in it is reported where it was thrown; this thread's own location stays.
+    const fl = m.load32(n + nd.N_FLAGS);
+    const own = (fl & loc.LOC) !== 0 ? loc.current() : 0;
+    loc.claim(fl, n + nd.N_POLL);
+    // SAFETY: the slot holds the finished result, `rdrop` its drop glue.
+    unsafe {
+      stateDrop(rdrop, n + nd.N_HEAD + 16);
+    }
+    if ((fl & loc.LOC) !== 0) {
+      loc.restore(own);
+    }
+  }
+}
+
+/** Reports (drops) the rejected results task `task` kept, in the order they were kept. */
+export function report(task: usize): void {
+  let n = m.ld(task + t.T_UNHANDLED);
+  m.st(task + t.T_UNHANDLED, 0);
+  let rev: usize = 0;
+  while (n !== 0) {
+    const next = m.ld(n + nd.N_UNHANDLED_NEXT);
+    m.st(n + nd.N_UNHANDLED_NEXT, rev);
+    rev = n;
+    n = next;
+  }
+  while (rev !== 0) {
+    const next = m.ld(rev + nd.N_UNHANDLED_NEXT);
+    m.st(rev + nd.N_UNHANDLED_NEXT, 0);
+    dropNow(rev);
+    nd.release(rev);
+    rev = next;
+  }
+}

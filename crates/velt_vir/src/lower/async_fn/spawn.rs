@@ -132,7 +132,10 @@ impl FnLower<'_, '_> {
                 self.pop_scope();
                 fut
             }
-            _ => self.take_promise(p),
+            _ => {
+                let fut = self.take_promise(p);
+                self.spawned_race(spawned(p), fut, pty)
+            }
         };
         if !self.dead() {
             self.transfer_result(fut.clone(), pty);

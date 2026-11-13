@@ -5,7 +5,9 @@
 //! (`velt_rt_spawn_fut`), the pin of the next spawn to a worker (`velt_rt_spawn_target`),
 //! `await yieldNow()`
 //! (`velt_rt_yield_now`), boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`,
-//! `_start_rejecting`) and what `console.log` peeks at (`velt_rt_fut_peek`), the microtask step of `await` (`velt_rt_await_tick`, `_ready`), the
+//! `_start_rejecting`), what `console.log` peeks at (`velt_rt_fut_peek`), the hand-over of a
+//! promise to another task (`velt_rt_fut_transfer`), the microtask step of `await`
+//! (`velt_rt_await_tick`, `_ready`), the
 //! prelude's microtasks (`velt_rt_microtask`), the process lifetime (keep-alive references,
 //! a due `unref()`'d timer's question, the top-level `await` waiting now: `velt_rt_tla_at`),
 //! `sleep` (`velt_rt_sleep`) and the prelude's Node timer order (`velt_rt_timer_new`, `_turn`,
@@ -160,6 +162,7 @@ impl FnLower<'_, '_> {
                 | Rt::FutStart
                 | Rt::FutStartRejecting
                 | Rt::FutDetach
+                | Rt::FutTransfer
                 | Rt::FutsHandled
                 | Rt::FutPeek
                 | Rt::AwaitTick
@@ -222,6 +225,11 @@ impl FnLower<'_, '_> {
                 (Rt::FutDetach, [f, qdrop]) => {
                     let (f, qdrop) = (self.as_usize(f.clone()), self.as_usize(qdrop.clone()));
                     hooks::sched_detach(self, ty::USize::arg(f), ty::USize::arg(qdrop)).emit(self);
+                    None
+                }
+                (Rt::FutTransfer, [f, glue]) => {
+                    let (f, glue) = (self.as_usize(f.clone()), self.as_usize(glue.clone()));
+                    hooks::sched_transfer(self, ty::USize::arg(f), ty::USize::arg(glue)).emit(self);
                     None
                 }
                 (Rt::FutsHandled, [futs, n, qdrop]) => {
