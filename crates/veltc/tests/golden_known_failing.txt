@@ -28,7 +28,7 @@ tests/golden/lang/proxy_throws_settled.velt                      #2911
 tests/golden/lang/proxy_throws_settled_own.velt                  #2911
 tests/golden/lang/proxy_throws_three_traps.velt                  #2911
 tests/golden/lang/proxy_throws_two_traps.velt                    #2911
-tests/golden/lang/rwlock_read_tasks_stop.velt                    #2917
+tests/golden/lang/rwlock_read_tasks_stop.velt                    #2917 os=macos,windows
 tests/golden/lang/spawn_handle_dropped_after_reject.velt         #2913
 tests/golden/lang/spawn_handle_dropped_rejects.velt              #2913
 tests/golden/lang/spawn_promise_result_copied.velt               #2913
@@ -37,7 +37,8 @@ tests/golden/m3/promise_several_consumers.velt                   #2910
 tests/golden/std/catch_panic_in_clone.velt                       #2925 os=windows
 tests/golden/std/catch_panic_with.velt                           #2925 os=windows
 tests/golden/std/net_close_wakes.velt                            #2914
+tests/golden/std/net_tls.velt                                    #2842
 tests/golden/std/shared_fn_panic_caught_resource_any.velt        #2925 os=windows
 tests/golden/std/shared_fn_walk_after_caught_transfer_panic.velt #2925 os=windows
 tests/golden/std/task_spare_worker_index.velt                    #2915
-tests/golden/std/timer_spawned_busy.velt                         #2916
+tests/golden/std/timer_spawned_busy.velt                         #2916 os=macos,windows

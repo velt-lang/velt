@@ -291,7 +291,17 @@ fn the_known_failing_list_reads_its_entries_by_os() {
         linux.get("tests/golden/b.velt").map(String::as_str),
         Some("#34")
     );
-    known_failing();
+    // Every entry of the real list names a golden that is there, on any OS.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let all = include_str!("golden_known_failing.txt");
+    for os in ["macos", "linux", "windows"] {
+        for path in parse_known_failing(all, os).keys() {
+            assert!(
+                root.join(path).is_file(),
+                "golden_known_failing.txt: no golden {path}"
+            );
+        }
+    }
 }
 
 /// A golden is pending when a directory between it and `tests/golden` contains a `.pending` file:
