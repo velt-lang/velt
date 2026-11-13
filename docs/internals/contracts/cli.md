@@ -213,7 +213,9 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - `registry serve` exits 1 without serving when `$VELT_REGISTRY_TOKEN` is set and the registry is
   open (the variable used to protect a server).
 - Commands that install (`add`, `install`, `update`, `build`, `run`, `check`, `test`, `dev`) print
-  `warning: `<name>` <version> is yanked (pinned by velt.lock.json)` for each yanked locked version.
+  `warning: `<name>` <version> is yanked (pinned by velt.lock.json)` for each yanked locked version
+  whose index they read (a locked version already in the cache reads none: manifest.md "The
+  default registry", #2840).
 - `yank <pkg>@<version> [--undo]` (additive): sets or clears the version's `yanked` flag in the
   package's registry (local, or remote: owners only). Resolution skips yanked versions unless
   `velt.lock.json` pins them; `add` without a version picks the newest stable version not yanked

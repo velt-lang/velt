@@ -406,7 +406,20 @@ command run in the workspace's root (`vpm::Locations::for_dir`). Errors name the
 its URL, or a local registry's directory. `velt.lock.json` records no registry: a locked registry
 version that the requirement still accepts but the registry asked doesn't have is an error
 ("`<name>` <version> in velt.lock.json is not in the registry `<registry>`; was it locked from
-another registry? …"), never a silent pick of another version; `velt update` re-resolves. When
+another registry? …"), never a silent pick of another version; `velt update` re-resolves. A
+registry requirement that the locked version still meets, with that version in the cache under
+its locked checksum, asks no registry (#2840): its dependencies are its cached `package.velt`'s and
+its native libraries the lock's, so a locked project whose packages are all cached installs,
+builds and runs offline or with the registry down (no yank warning then). When that leaves no
+solution, resolution runs again with every version the index has. Anything else reads the index;
+a registry that can't be reached fails with "cannot reach the registry <url> to read the index of
+`<name>`: …", then why `<name>` needs it (not locked yet; not cached, or no longer accepted) and to
+run `velt install` once it can be reached. Every registry package fetched is checked against its
+index entry: the dependencies the index lists (and resolution followed) must be its
+`package.velt`'s, by name and requirement (as `semver::VersionReq`), else "the registry `<url>`
+lists other dependencies for `<name>` <version> than its package.velt declares: …" and nothing is
+installed. A locked version whose checksum changed is that checksum error under `--locked` too,
+before "needs to be updated". When
 nothing names a registry and `$VELT_HOME/registry` (the default before) holds packages, `add`,
 `install`, `update` and `publish` warn that it is no longer used and how to keep it
 (`VELT_REGISTRY=<dir>`), and `velt doctor` shows that as a warning. `velt registry serve` and

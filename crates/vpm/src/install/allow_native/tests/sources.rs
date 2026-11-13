@@ -56,6 +56,7 @@ fn each_entry_allows_only_its_own_source() {
         checksum: String::new(),
         native: BTreeMap::new(),
         native_abi: None,
+        listed: BTreeMap::new(),
     };
     let path = Source::Path {
         dir: PathBuf::from("/x"),

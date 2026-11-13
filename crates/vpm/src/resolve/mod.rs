@@ -31,14 +31,20 @@ use candidates::{Candidate, Provider};
 /// Where a resolved package comes from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
-    /// The registry; `checksum` and the native libraries from its index.
+    /// The registry; `checksum` and the native libraries from its index, or from
+    /// `velt.lock.json` for a locked version already in the cache (no index is asked then).
     Registry {
         /// `sha256:<hex>` of the published contents.
         checksum: String,
         /// Target triple → checksum of the prebuilt native library (packages with native code).
         native: BTreeMap<String, String>,
-        /// The runtime table version those libraries need.
+        /// The runtime table version those libraries need (unknown without the index: each
+        /// prebuilt library's own metadata is checked too).
         native_abi: Option<u32>,
+        /// Dependency name → requirement, as the index lists them (the resolution followed
+        /// these): checked against the package's own `package.velt` once it is fetched, since
+        /// the checksum covers the package and not the index (`crate::install`).
+        listed: BTreeMap<String, String>,
     },
     /// A local directory (absolute, normalized).
     Path {
@@ -158,20 +164,28 @@ pub fn resolve(
     loc: &Locations,
     prefer: Option<&Lockfile>,
 ) -> Result<Resolution, String> {
-    resolve_with(root_dir, manifest, loc, prefer, TreeCheck::Files)
+    resolve_with(root_dir, manifest, loc, prefer, (TreeCheck::Files, None))
 }
 
-/// [`resolve`], looking at fetched trees as `check` says (`crate::tree_stamp`).
+/// [`resolve`], looking at fetched trees as `check` says (`crate::tree_stamp`), for the build
+/// `target` (a locked package with prebuilt native libraries but none for it asks the index,
+/// which may have one added since: `candidates`).
 pub fn resolve_with(
     root_dir: &Path,
     manifest: &Manifest,
     loc: &Locations,
     prefer: Option<&Lockfile>,
-    check: TreeCheck,
+    (check, target): (TreeCheck, Option<&str>),
 ) -> Result<Resolution, String> {
     let root_label = format!("{} {}", manifest.package.name, manifest.package.version);
     let root_reqs = dependency_requirements(manifest, root_dir, &[root_label], true)?;
-    let resolution = solve_root(root_dir, root_reqs, (loc, check), prefer, &BTreeMap::new())?;
+    let resolution = solve_root(
+        root_dir,
+        root_reqs,
+        (loc, check, target),
+        prefer,
+        &BTreeMap::new(),
+    )?;
     refuse_root_name(root_dir, &manifest.package.name, &resolution)?;
     Ok(resolution)
 }
@@ -221,16 +235,17 @@ pub fn resolve_members(
     loc: &Locations,
     prefer: Option<&Lockfile>,
 ) -> Result<Resolution, String> {
-    resolve_members_with(root_dir, members, loc, prefer, TreeCheck::Files)
+    resolve_members_with(root_dir, members, loc, prefer, (TreeCheck::Files, None))
 }
 
-/// [`resolve_members`], looking at fetched trees as `check` says (`crate::tree_stamp`).
+/// [`resolve_members`], looking at fetched trees as `check` says, for the build `target`
+/// ([`resolve_with`]).
 pub fn resolve_members_with(
     root_dir: &Path,
     members: &BTreeMap<PathBuf, Manifest>,
     loc: &Locations,
     prefer: Option<&Lockfile>,
-    check: TreeCheck,
+    (check, target): (TreeCheck, Option<&str>),
 ) -> Result<Resolution, String> {
     let root_reqs = members
         .iter()
@@ -245,24 +260,35 @@ pub fn resolve_members_with(
             root: true,
         })
         .collect();
-    solve_root(root_dir, root_reqs, (loc, check), prefer, members)
+    solve_root(root_dir, root_reqs, (loc, check, target), prefer, members)
 }
 
 fn solve_root(
     root_dir: &Path,
     root_reqs: Vec<Requirement>,
-    (loc, check): (&Locations, TreeCheck),
+    (loc, check, target): (&Locations, TreeCheck, Option<&str>),
     prefer: Option<&Lockfile>,
     manifests: &BTreeMap<PathBuf, Manifest>,
 ) -> Result<Resolution, String> {
     let root_dependencies = root_reqs.iter().map(|r| r.name.clone()).collect();
     let mut provider = Provider::new(loc, root_dir, prefer, manifests);
     provider.check = check;
+    provider.target = target.map(str::to_string);
     let state = State {
         selected: BTreeMap::new(),
         pending: root_reqs.into(),
     };
-    let solved = solve(state, &mut provider)?;
+    let solved = match solve(state.clone(), &mut provider) {
+        Ok(solved) => solved,
+        // A locked version from the cache is the only candidate offered for its name; when that
+        // leaves no solution (package.velt gained a requirement it doesn't meet), solve again
+        // with every version the registry has, as without the cache.
+        Err(e) if provider.used_cache() && !candidates::is_unreachable(&e) => {
+            provider.ask_registry();
+            solve(state, &mut provider)?
+        }
+        Err(e) => return Err(e),
+    };
     let mut overrides = BTreeMap::new();
     for (name, sel) in &solved.selected {
         let replaced: Vec<Override> = sel
@@ -286,7 +312,7 @@ fn solve_root(
     let mut yanked = vec![];
     for pkg in packages.values() {
         if matches!(pkg.source, Source::Registry { .. })
-            && provider.is_yanked(&pkg.name, &pkg.version)?
+            && provider.is_yanked(&pkg.name, &pkg.version)
         {
             yanked.push((pkg.name.clone(), pkg.version.clone()));
         }

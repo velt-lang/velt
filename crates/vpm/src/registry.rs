@@ -121,6 +121,20 @@ pub fn parse_index(text: &str, what: &str) -> Result<Index, String> {
     Ok(index)
 }
 
+/// The dependencies a published version's index entry lists for `manifest`: each by its
+/// `version` requirement. An error names a dependency without one (a `path`, `git`, `url` or
+/// `"workspace"` entry), which publishing refuses.
+pub fn index_dependencies(manifest: &Manifest) -> Result<BTreeMap<String, String>, String> {
+    manifest
+        .dependencies
+        .iter()
+        .map(|(dep, spec)| match (spec.is_workspace(), spec.version()) {
+            (false, Some(req)) => Ok((dep.clone(), req.to_string())),
+            _ => Err(format!("dependency `{dep}` has no `version` requirement")),
+        })
+        .collect()
+}
+
 pub(crate) fn write_index(loc: &Locations, name: &str, index: &Index) -> Result<(), String> {
     crate::json_file::write(&loc.registry.join(name).join(INDEX_FILE), index)
 }

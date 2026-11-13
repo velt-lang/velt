@@ -11,17 +11,19 @@ use crate::locations::Locations;
 use crate::lockfile::{LockedPackage, Lockfile, LOCK_FILE, REGISTRY_SOURCE, WORKSPACE_SOURCE};
 use crate::manifest::Manifest;
 use crate::native::build::{build, cargo_available, BuildRequest};
-use crate::native::{missing_target_message, NativeLib, NativeOrigin, NATIVE_ABI};
+use crate::native::{missing_target_message, NativeLib, NativeOrigin};
 use crate::relpath;
 use crate::resolve::{Resolution, ResolvedPackage, Source};
 use crate::workspace::{Workspace, WorkspaceFile};
 
 mod allow_native;
 mod c_sources;
+mod verify;
 mod warnings;
 pub mod workspace;
 
 use c_sources::Natives;
+use verify::{check_abi, check_listed, check_locked_checksums, keep_locked_native};
 
 /// How to treat the existing lockfile, and what to install for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -159,7 +161,10 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         &manifest,
         loc,
         prefer,
-        crate::tree_stamp::for_install(&opts),
+        (
+            crate::tree_stamp::for_install(&opts),
+            opts.target.as_deref(),
+        ),
     )?;
     let mut lockfile = to_lockfile(&resolution, &root, &[]);
     lockfile.allow_native = manifest.allow_native.clone();
@@ -285,6 +290,10 @@ fn settle_lock(
     if opts.locked {
         check_locked_toolchain(lockfile.velt.as_deref(), pin, TOOLCHAIN_VERSION)?;
     }
+    // Before `--locked`'s refusal: a locked version whose content changed is what to report.
+    if let Some(old) = existing {
+        check_locked_checksums(old, &lockfile)?;
+    }
     let lock_changed = existing != Some(&lockfile);
     if lock_changed && opts.locked {
         let what = if existing.is_some() {
@@ -296,13 +305,11 @@ fn settle_lock(
             "{LOCK_FILE} {what}, but --locked was passed (run `velt install` without --locked)"
         ));
     }
-    if let Some(old) = existing {
-        check_locked_checksums(old, &lockfile)?;
-    }
     Ok((lockfile, lock_changed))
 }
 
-/// Each package's directory: the verified cache entry of a registry package, a path package's own.
+/// Each package's directory: the verified cache entry of a registry package (whose own
+/// dependencies must be the ones its index listed: [`check_listed`]), a path package's own.
 fn fetch<'r>(
     loc: &Locations,
     packages: impl Iterator<Item = &'r ResolvedPackage>,
@@ -310,8 +317,12 @@ fn fetch<'r>(
     let mut dirs = BTreeMap::new();
     for pkg in packages {
         let dir = match &pkg.source {
-            Source::Registry { checksum, .. } => {
-                cache::fetch(loc, &pkg.name, &pkg.version, checksum)?
+            Source::Registry {
+                checksum, listed, ..
+            } => {
+                let dir = cache::fetch(loc, &pkg.name, &pkg.version, checksum)?;
+                check_listed(loc, pkg, listed, &dir)?;
+                dir
             }
             // Checked out (or extracted), and verified against the lock, by the resolution.
             Source::Path { dir } | Source::Git { dir, .. } | Source::Url { dir, .. } => dir.clone(),
@@ -490,14 +501,15 @@ fn registry_native(
         return Ok(Some(lib));
     }
     check_not_wasm(name, target)?;
-    if let Some(abi) = native_abi.filter(|&a| a > NATIVE_ABI) {
-        return Err(format!(
-            "`{name} {version}` needs Velt native ABI {abi}; this velt provides {NATIVE_ABI}. Update velt."
-        ));
+    if let Some(abi) = native_abi {
+        check_abi(name, version, abi)?;
     }
     if let Some(checksum) = published.get(target) {
         let bundle = cache::fetch_native(loc, name, version, target, checksum)?;
-        return NativeLib::open(&bundle, NativeOrigin::Prebuilt).map(Some);
+        let lib = NativeLib::open(&bundle, NativeOrigin::Prebuilt)?;
+        // The index's `native_abi` is unknown for a locked version taken from the cache.
+        check_abi(name, version, lib.meta.abi)?;
+        return Ok(Some(lib));
     }
     let missing = missing_target_message(name, &version.to_string(), target, published);
     if manifest.native.is_none() || !cargo_available() {
@@ -529,61 +541,6 @@ fn registry_native(
         )
     })?;
     NativeLib::open(&out, NativeOrigin::BuiltFromSource).map(Some)
-}
-
-/// Under `--locked`, a version that is still locked keeps exactly its locked native libraries
-/// (targets the author added since are ignored).
-fn keep_locked_native(old: &Lockfile, new: &mut Lockfile) {
-    for pkg in &mut new.packages {
-        if let Some(locked) = old.get(&pkg.name) {
-            if locked.version == pkg.version
-                && locked.source == pkg.source
-                && locked.checksum == pkg.checksum
-            {
-                pkg.native = locked.native.clone();
-            }
-        }
-    }
-}
-
-/// A registry package whose version is unchanged must still have the locked content hash, and
-/// each of its locked native libraries the locked hash.
-fn check_locked_checksums(old: &Lockfile, new: &Lockfile) -> Result<(), String> {
-    for pkg in &new.packages {
-        let Some(locked) = old.get(&pkg.name) else {
-            continue;
-        };
-        if locked.version != pkg.version || locked.source != pkg.source {
-            continue;
-        }
-        if locked.checksum != pkg.checksum {
-            let now = match pkg.source == REGISTRY_SOURCE {
-                true => "the registry has {} (the published package changed, or velt.lock.json was written against another registry: check $VELT_REGISTRY and `registry`)",
-                false => "the fetched tree hashes to {} (it changed in the cache: delete it there to fetch it again)",
-            };
-            let now = now.replace("{}", pkg.checksum.as_deref().unwrap_or("none"));
-            return Err(format!(
-                "checksum mismatch for `{}` {}: {LOCK_FILE} has {}, {now}",
-                pkg.name,
-                pkg.version,
-                locked.checksum.as_deref().unwrap_or("none"),
-            ));
-        }
-        for (target, sum) in &locked.native {
-            match pkg.native.get(target) {
-                Some(now) if now == sum => {}
-                now => {
-                    return Err(format!(
-                        "checksum mismatch for the {target} native library of `{}` {}: {LOCK_FILE} has {sum}, the registry has {} (the published library changed)",
-                        pkg.name,
-                        pkg.version,
-                        now.map_or("none", |s| s.as_str()),
-                    ))
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 /// The native library of a git or url package at `dir` (`from`: how its source reads; `work`:

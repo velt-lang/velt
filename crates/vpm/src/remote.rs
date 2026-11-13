@@ -80,6 +80,11 @@ pub(crate) fn fetch_within(
     velt_http::fetch_within(method, url, headers, body, limits)
 }
 
+/// How the error for a registry that couldn't be reached at all begins (no answer: the network
+/// is down, the name doesn't resolve, the connection or TLS fails); a registry that answers with
+/// an error status is not this.
+pub(crate) const UNREACHABLE: &str = "cannot reach the registry";
+
 fn api(url: &str, name: &str, rest: &str) -> String {
     format!("{}/api/v1/{name}/{rest}", url.trim_end_matches('/'))
 }
@@ -95,7 +100,10 @@ pub fn read_index_within(
     name: &str,
     limits: velt_http::Limits,
 ) -> Result<Option<Index>, String> {
-    let resp = fetch_within("GET", &api(url, name, "index"), &[], b"", limits)?;
+    let target = api(url, name, "index");
+    check_default_allowed(&target)?;
+    let resp = velt_http::fetch_within("GET", &target, &[], b"", limits)
+        .map_err(|e| format!("{UNREACHABLE} {url} to read the index of `{name}`: {e}"))?;
     match resp.status {
         // A server from before the index was JSON answers with `index.toml`, typed as TOML.
         200 if is_toml(resp.header("content-type")) => Err(format!(

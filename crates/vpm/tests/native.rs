@@ -234,7 +234,9 @@ fn native_packages_end_to_end() {
         library_of("windows v1")
     );
 
-    // A library needing a newer runtime table is refused before download.
+    // A library needing a newer runtime table is refused before download (once the index is
+    // asked: the locked version in the cache asks none).
+    std::fs::remove_dir_all(loc.cache.join("db-1.0.0")).unwrap();
     let index_path = loc.registry.join("db/index.json");
     let text = std::fs::read_to_string(&index_path).unwrap();
     std::fs::write(
