@@ -245,6 +245,10 @@ impl Cx<'_> {
         // `velt_main`, never built again, runs a synchronous `main` as a root task when the
         // program reaches tasks (entry.rs): an edit that first starts one needs it built again.
         let tasks = self.reaches_tasks();
+        // Module state's accesses go through the executor's hooks when the program runs on it,
+        // and the release of the static atomics is registered when the code uses one holding a
+        // reference (module_state.rs, static_atomic.rs): both decided once per program.
+        let (sched, statics) = (self.module_sched(), self.statics_used());
         let counted = self.boxing.clone();
         let facts = self.facts.clone();
         // What lowering memoized of an edited function's body, which callers in other files read
@@ -254,18 +258,24 @@ impl Cx<'_> {
         for (id, work) in &redo {
             self.build_now(*id, work);
         }
-        self.drain();
+        self.drain_splice();
         self.build_iface_glues();
         for (id, work) in &after {
             self.build_now(*id, work);
         }
-        self.drain();
+        self.drain_splice();
         self.build_iface_glues();
         if self.uses_placement != placement {
             return Err("the edit pins a task".into());
         }
         if self.reaches_tasks() != tasks {
             return Err("the edit starts tasks where the program started none".into());
+        }
+        if self.module_sched() != sched {
+            return Err("the edit makes the program run on the executor".into());
+        }
+        if self.statics_used() != statics {
+            return Err("the edit uses a static atomic holding a reference".into());
         }
         self.same_answers(asked)?;
         self.build_fn_tables();
@@ -353,8 +363,10 @@ impl Cx<'_> {
         out
     }
 
-    /// Build what is queued, the function releasing the static atomics last.
-    fn drain(&mut self) {
+    /// Build what is queued, the function releasing the static atomics last. (Module state's
+    /// accesses are built at once: whether the program runs on the executor is known, and kept,
+    /// `module_sched`.)
+    fn drain_splice(&mut self) {
         while let Some((fid, work)) = self.queue.pop_front() {
             if matches!(work, Work::StaticsDrop) && !self.queue.is_empty() {
                 self.queue.push_back((fid, work));

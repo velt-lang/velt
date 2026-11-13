@@ -156,9 +156,7 @@ impl super::Cx<'_> {
         let Some(table) = self.statics_table.take() else {
             return false;
         };
-        let used = (self.reference_statics().into_iter())
-            .any(|(d, _)| matches!(self.static_atomics.get(&d), Some(Some(_))));
-        if !used {
+        if !self.statics_used() {
             return false;
         }
         let f = self.func(Work::StaticsDrop);
@@ -166,6 +164,12 @@ impl super::Cx<'_> {
             .relocs
             .insert(0, (8, Const::Func(f)));
         true
+    }
+
+    /// Does the code use a static atomic holding a reference (`statics_drop`)?
+    pub(super) fn statics_used(&mut self) -> bool {
+        (self.reference_statics().into_iter())
+            .any(|(d, _)| matches!(self.static_atomics.get(&d), Some(Some(_))))
     }
 
     /// The module constant whose qualified name is `name` (a process static, `std_hooks.rs`).

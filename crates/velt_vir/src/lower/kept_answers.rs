@@ -21,13 +21,17 @@
 //!   none is refused. (An edit that removes the last observer keeps the steps a cold build
 //!   leaves out: nothing can observe them, so the program does the same, with more code.)
 //! - `uses_placement`, `sched_tasks` with the declared start and spawn runtime functions
-//!   (`reaches_tasks`), `facts`, `boxing` (kept.rs `relower`): whether a task is pinned or
-//!   started, what lowering learned of the program, the counted types.
+//!   (`reaches_tasks`), `sched_used` (`module_sched`: module state through the executor's
+//!   hooks), the static atomics the code uses (`statics_used`: the release `_Gstatics_drop`
+//!   registered in `velt_main`), `facts`, `boxing` (kept.rs `relower`): whether a task is pinned
+//!   or started, whether the program runs on the executor, what lowering learned of the program,
+//!   the counted types.
 //!
 //! `velt_main` (entry.rs) is the one function a splice never builds again, so its inputs are
 //! named here: `uses_placement` and `reaches_tasks` (compared), `no_await_steps` (refused when
 //! it would change), `native_inits` and the module state's slots (declarations), and `main`'s
-//! own signature (warm sema compares interfaces). The other code built once per program is
+//! own signature (warm sema compares interfaces), and the statics table it registers
+//! (`statics_used`). The other code built once per program is
 //! built again by every splice: the module initializers (`Work::ModuleInit`), the function
 //! tables and the function releasing the static atomics. (Removing the last start keeps a root
 //! task whose scheduler has nothing to run: the same output.)
@@ -63,7 +67,8 @@
 //! - `cell_checks`, `target`, `jit`, `facts_only`: the options and the pass.
 //!
 //! **Lowering's own state** of the functions it builds, rebuilt with them or emptied once a
-//! pass ends: `funcs`, `work_map`, `queue`, `iface_glues`, `fn_tables`, `building`,
+//! pass ends: `funcs`, `work_map`, `queue`, `held` (module state's accesses until `velt_main`
+//! is built; empty in a kept lowering), `statics_table` (taken once the release is filled in), `iface_glues`, `fn_tables`, `building`,
 //! `built_log`, `unique_params`, `declared_unique`, `deferred`, `deferred_new`, `versioned`,
 //! `cur_*`, `user_site`, `fn_sites`, `closure_parents` (each closure's entry is written again
 //! when it is lowered again), `locs`, `debug`, `map_fields`, `unwinding`. And what feeds
