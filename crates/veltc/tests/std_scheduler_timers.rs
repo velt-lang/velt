@@ -497,7 +497,7 @@ fn timer_goldens_run_in_node_order_on_several_workers() {
         let want = std::fs::read_to_string(golden.join(format!("{name}.out")))
             .unwrap()
             .replace("\r\n", "\n");
-        let (out, _) = build_and_run_on(dir.path(), name, &src, true, 0, "4");
+        let (out, _) = build_and_run_on(dir.path(), name, &src, 0, "4");
         assert_eq!(out, want, "{name}, 4 workers");
         let exe = dir.path().join(format!("{name}_std"));
         for threads in ["4", "2"] {
@@ -550,7 +550,7 @@ async function main() {
 }
 ";
     let want = "fired during the spin\n";
-    let (out, _) = build_and_run_on(dir.path(), "busy_end", src, true, 0, "4");
+    let (out, _) = build_and_run_on(dir.path(), "busy_end", src, 0, "4");
     assert_eq!(out, want);
     let exe = dir.path().join("busy_end_std");
     for threads in ["4", "2"] {
