@@ -135,6 +135,9 @@ pub(super) struct Graph {
     /// Per node: does something flow into it that the graph can't trace
     /// ([`dynamic::untraced_nodes`])?
     pub untraced: Vec<bool>,
+    /// The calls through function values (`Graph::indirect`), by the type called through, in the
+    /// order the types first appear.
+    pub indirect_by_ty: Vec<(TyId, Vec<usize>)>,
 }
 
 impl Graph {
@@ -202,6 +205,14 @@ pub(super) fn build(cx: &Ctx) -> Graph {
     super::unknown_callees::mark(cx, &mut g);
     super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
     g.untraced = dynamic::untraced_nodes(cx, &g);
+    let mut by_ty: FxHashMap<TyId, usize> = FxHashMap::default();
+    for (ci, call) in g.indirect.iter().enumerate() {
+        let k = *by_ty.entry(call.ty).or_insert_with(|| {
+            g.indirect_by_ty.push((call.ty, vec![]));
+            g.indirect_by_ty.len() - 1
+        });
+        g.indirect_by_ty[k].1.push(ci);
+    }
     for i in 0..g.dynamic.len() {
         let d = g.dynamic[i];
         g.dynamic[i].untraced =

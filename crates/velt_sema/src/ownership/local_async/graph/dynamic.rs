@@ -50,21 +50,42 @@ pub(super) fn untraced_nodes(cx: &Ctx, g: &Graph) -> Vec<bool> {
             work.push(i);
         }
     }
-    let mut next: Vec<Vec<usize>> = vec![vec![]; n];
-    for (m, srcs) in g.srcs.iter().enumerate() {
+    // The forward edges, flat (each node's targets at `next[start[m]..start[m + 1]]`): along
+    // `srcs`, and from a capture local back to the variable it holds.
+    let back = |i: usize| g.srcs[i].iter().map(|&(o, _)| o);
+    let mut start = vec![0usize; n + 1];
+    for srcs in &g.srcs {
         for &(s, _) in srcs {
-            next[s].push(m);
+            start[s + 1] += 1;
         }
     }
     for caps in g.captures.values() {
         for &i in caps {
-            for &(o, _) in &g.srcs[i] {
-                next[i].push(o);
+            start[i + 1] += g.srcs[i].len();
+        }
+    }
+    for i in 0..n {
+        start[i + 1] += start[i];
+    }
+    let mut fill = start.clone();
+    let mut next = vec![0u32; start[n]];
+    for (m, srcs) in g.srcs.iter().enumerate() {
+        for &(s, _) in srcs {
+            next[fill[s]] = m as u32;
+            fill[s] += 1;
+        }
+    }
+    for caps in g.captures.values() {
+        for &i in caps {
+            for o in back(i) {
+                next[fill[i]] = o as u32;
+                fill[i] += 1;
             }
         }
     }
     while let Some(m) = work.pop() {
-        for &t in &next[m] {
+        for &t in &next[start[m]..start[m + 1]] {
+            let t = t as usize;
             if !out[t] {
                 out[t] = true;
                 work.push(t);

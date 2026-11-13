@@ -127,3 +127,15 @@ impl Why {
         }
     }
 }
+
+/// May the crossing types of `w` (the function types a value crossing there holds) stand for
+/// closure literal `c` stored in the heap? A library's closures, yes. The program's closures only
+/// when `w` is in the program: a boundary inside a library (`w.library`) reaches what the program
+/// hands to the library through the graph, as a value passed at the program's call into it
+/// ([`Why::step`]), and the types of what the library makes there itself only hold the
+/// library's own closures. Matching those by shape alone would make every program closure stored
+/// in a `(() => void) | null` cross once a library spawns anything holding such a field (fetch's
+/// HTTP/2 session and its `onClose`).
+pub(super) fn heap_reaches(cx: &crate::ctx::Ctx, w: &Why, c: crate::hir::DefId) -> bool {
+    !w.library || cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
+}

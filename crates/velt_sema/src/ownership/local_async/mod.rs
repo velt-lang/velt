@@ -73,6 +73,7 @@ use crate::hir::{Def, DefId, TyId, TyKind};
 use graph::{Boundary, Graph, Node, Why, CROSSES, STORED};
 use instances::instances;
 pub(in crate::ownership::local_async) use labels::{reaches, with_why};
+use why::heap_reaches;
 
 pub(crate) use changes::check_crossing_changes;
 pub(crate) use record::record_changed_captures;
@@ -293,18 +294,6 @@ fn lit_matches(cx: &Ctx, wrapped: Option<TyId>, sync: bool, l: TyId, t: TyId) ->
         None if sync => !types::mentions_param(cx, t) && types::may_be(cx, l, t),
         None => types::may_be(cx, l, t),
     }
-}
-
-/// May the crossing types of `w` (the function types a value crossing there holds) stand for
-/// closure literal `c` stored in the heap? A library's closures, yes. The program's closures only
-/// when `w` is in the program: a boundary inside a library (`w.library`) reaches what the program
-/// hands to the library through the graph, as a value passed at the program's call into it
-/// ([`Why::step`]), and the types of what the library makes there itself only hold the
-/// library's own closures. Matching those by shape alone would make every program closure stored
-/// in a `(() => void) | null` cross once a library spawns anything holding such a field (fetch's
-/// HTTP/2 session and its `onClose`).
-fn heap_reaches(cx: &Ctx, w: &Why, c: DefId) -> bool {
-    !w.library || cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
 }
 
 /// The crossing values of a generic type found since `done` (`Graph::wild`, `Graph::generic_roots`):
@@ -574,6 +563,10 @@ struct Propagation {
     /// The untraced inputs of conversions that cross (`DynConv::untraced`), as `hits`, queued
     /// until the program's flow is done.
     untraced: Vec<(DefId, TyId, Why)>,
+    /// How many nodes cross, and how many did when `call_sites::crossing_params` last looked:
+    /// it has nothing new to match while that stays the same.
+    crossing: usize,
+    params_seen: Option<usize>,
 }
 
 impl Propagation {
@@ -594,6 +587,8 @@ impl Propagation {
             hits: g.generic_roots.clone(),
             dynamic,
             untraced: vec![],
+            crossing: 0,
+            params_seen: None,
         }
     }
 
@@ -623,6 +618,7 @@ impl Propagation {
         self.flags[n] |= f;
         if f == CROSSES {
             self.why[n] = why;
+            self.crossing += 1;
         }
         self.work.push((n, f));
     }

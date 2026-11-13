@@ -59,6 +59,11 @@ pub(super) struct Held {
 /// own matches (`Object.defineProperty`'s setter `(v: T) => void`, a `resolve`, is not a
 /// stream's `start(controller)` in std).
 pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
+    // A parameter crosses only when a node newly does: nothing new since the last pass.
+    if p.params_seen == Some(p.crossing) {
+        return false;
+    }
+    p.params_seen = Some(p.crossing);
     let mut changed = crossing_method_args(cx, g, p);
     let mut found = vec![];
     let mut fwd: Option<Forward> = None;
@@ -144,7 +149,13 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
     // A closure with no literal node can only be reached through a callee that may hold a value
     // the graph doesn't trace (a field, a module binding, the heap).
     for (ty, k, why, c, reached, unseen) in found {
-        for call in &g.indirect {
+        // Calls are grouped by the type called through (`Graph::indirect_by_ty`): one type test
+        // per group, not per call.
+        let calls = (g.indirect_by_ty.iter())
+            .filter(|(cty, _)| types::may_be(cx, ty, *cty))
+            .flat_map(|(_, calls)| calls.iter().map(|&ci| &g.indirect[ci]));
+        let calls: Vec<_> = calls.collect();
+        for call in calls {
             if unseen && !super::graph::untraced_input(g, call.callee) {
                 continue;
             }
@@ -157,7 +168,7 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
                 continue;
             }
             if let Some(&a) = call.args.get(k) {
-                if p.flags[a] & CROSSES == 0 && types::may_be(cx, ty, call.ty) {
+                if p.flags[a] & CROSSES == 0 {
                     let arg_why = match why {
                         Some(w) => match w.step(false, Some((call.span, call.library))) {
                             Some(w) => Some(w),
