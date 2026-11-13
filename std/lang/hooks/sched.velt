@@ -35,6 +35,7 @@ import * as micro from "./sched_micro";
 import * as mod from "./sched_module";
 import * as node from "./sched_node";
 import * as nc from "./sched_node_catch";
+import * as wn from "./sched_node_woken";
 import * as off from "./sched_off";
 import { taskId } from "./sched_id";
 import * as pk from "./sched_peek";
@@ -103,7 +104,7 @@ export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
   if ((m.load32(k + t.T_FLAGS) & t.COUNTED) === 0) {
     // Finished (sched_run.velt `mainFinish`): a wake that pushed after its take of the woken
     // stack and read the state before `DONE` left its reference there; this reference keeps `k`.
-    node.giveBackWoken(k);
+    wn.giveBackWoken(k);
   }
   wk.release(k);
 }
