@@ -81,7 +81,7 @@ use velt_syntax::ast;
 
 use locate::Origin;
 pub use locate::{module_path, PackageImports, PackageResolver};
-pub use more::{demand_std_on, load_more, LoadState};
+pub use more::{demand_std_on, executor_module, load_more, LoadState};
 use paths::{file_key, is_std_path, shown_in_package, shown_path};
 pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};
@@ -129,6 +129,9 @@ pub struct LoadOptions<'a> {
     /// ON_DEMAND_MODULES`) to [`load_more`]. Without it (a caller that gives the check no load
     /// callback, and `VELT_EAGER_STD=1`) they are loaded up front, after everything else.
     pub demand_std: bool,
+    /// Without [`Self::demand_std`]: leave the executor's modules ([`executor_module`]) to
+    /// [`load_more`] still (`VELT_EAGER_STD`): a program loads some only when it calls them (#2649).
+    pub demand_executor: bool,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).

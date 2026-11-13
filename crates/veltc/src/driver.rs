@@ -399,7 +399,9 @@ fn sema_stage(
     };
     let packages = opts.packages.as_ref();
     sess.no_generators |= opts.no_generators;
-    let demands = !scope.eager_std && loader::demand_std_on();
+    // With `VELT_EAGER_STD` the executor's modules are still served on demand
+    // (`StdLoad::serve`); `velt check --std` loads everything up front.
+    let demands = !scope.eager_std;
     let generator_build = sess.generator_build;
     let mut more = demands.then(|| {
         StdLoad::new(
