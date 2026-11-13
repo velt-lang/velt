@@ -28,6 +28,13 @@ declare c("c") function velt_rt_fut_start_rejecting$rt(f: usize, rdrop: usize): 
 declare c("c") function velt_rt_fut_detach$rt(f: usize, qdrop: usize): void;
 declare c("c") function velt_rt_futs_handled$rt(futs: usize, n: u64, qdrop: usize): void;
 declare c("c") function velt_rt_fut_transfer$rt(f: usize, glue: usize): void;
+declare c("c") function velt_rt_fut_id$rt(f: usize): u64;
+declare c("c") function velt_rt_fut_share$rt(
+  f: usize,
+  size: u64,
+  share: usize,
+  rdrop: usize,
+): usize;
 
 /** The runtime's `sleep` of `ms` milliseconds: a heap future. */
 export function sleep(ms: i64): usize {
@@ -112,4 +119,20 @@ export function transfer(f: usize, glue: usize): void {
   unsafe {
     velt_rt_fut_transfer$rt(f, glue);
   }
+}
+
+/**
+ * `velt_rt_fut_share`, the runtime's: another holder of `f`, a runtime future. `share` is a
+ * `SharePoll` glue (sched_share.velt): `(src, dst) -> u32` is the runtime's `(src, dst)` share
+ * glue but for its result, which the runtime does not read.
+ */
+export function share(f: usize, size: u64, share: usize, rdrop: usize): usize {
+  // SAFETY: the caller holds `f`, a heap future of the runtime's; the glue matches its result.
+  return unsafe { velt_rt_fut_share$rt(f, size, share, rdrop) };
+}
+
+/** `velt_rt_fut_id`, the runtime's: the identity of `f` (its holders, its converted promises). */
+export function futId(f: usize): u64 {
+  // SAFETY: `f` is null or a live heap future.
+  return unsafe { velt_rt_fut_id$rt(f) };
 }
