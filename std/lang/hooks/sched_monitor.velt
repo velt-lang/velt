@@ -4,7 +4,7 @@
 //
 // A worker that makes no progress holds back everything queued on it: a task that runs on
 // without returning from its poll, or a worker the OS took off its core. The monitor ticks every
-// `TICK` while some worker is awake; a worker that started no poll for `STALL_TICKS` ticks while
+// `TICK` while some worker is awake (every `LAZY_NAP` ticks while only a lazy worker 0 runs); a worker that started no poll for `STALL_TICKS` ticks while
 // work waits has its inbox and half of its queue moved to another worker, a sleeping one if
 // there is one, which becomes their home; when every other worker is stalled too (or there is no
 // other), a spare worker starts and takes them (up to `SPARES`, which stay workers from then on
@@ -39,6 +39,7 @@ import * as lazy from "./sched_monitor_lazy";
 import * as rx from "./sched_relax";
 import * as q from "./sched_queue";
 import * as sp from "./sched_spread";
+import * as st from "./sched_stats";
 import * as tq from "./sched_take";
 import * as t from "./sched_task";
 import * as workers from "./sched_workers";
@@ -48,6 +49,14 @@ import * as wk from "./sched_wake";
 const TICK: usize = 1000000;
 /** How often it checks a watched first poll (nanoseconds). */
 const FAST_TICK: usize = 50000;
+/**
+ * The ticks a nap lasts while only a lazy worker 0 runs, unwatched (`napsLong`): the monitor
+ * compares worker 0's snapshot that often (sched_monitor_lazy.velt `lazyDuties`), and the tick
+ * count (`E_TICKS`) advances by as many, so ticks keep their length in time. A stall is seen
+ * within two such naps, then watched tick by tick until the rescue: about 9 ms at worst from the
+ * poll's start to the rescue (3 with a tick per nap).
+ */
+const LAZY_NAP: usize = 4;
 /** Ticks without a new task poll after which a worker counts as stalled. */
 export const STALL_TICKS: usize = 2;
 /** Hurried wakes in a row that moved nothing, after which watches stop hurrying. */
@@ -73,6 +82,10 @@ function monitorMain(arg: Ptr<u8> | null): Ptr<u8> | null {
   let nextTick = sp.now() + TICK;
   let lastPass = sp.now();
   let idleHurries: usize = 0;
+  // The ticks until `nextTick` (`LAZY_NAP` while only a lazy worker 0 runs, unwatched).
+  let step: usize = 1;
+  // Worker 0's lazy poll is watched closely (sched_monitor_lazy.velt `lazyDuties`).
+  let close = false;
   while (true) {
     if (allParked(g)) {
       if (m.ld(g + t.E_RESCUE) !== 0 && m.ld(g + t.E_STAY) === 0 && rx.idleDuties(g)) {
@@ -82,6 +95,7 @@ function monitorMain(arg: Ptr<u8> | null): Ptr<u8> | null {
       }
       sleepWhileParked(g);
       nextTick = sp.now() + TICK;
+      step = 1;
       continue;
     }
     // Slow mode published before the last look at the watches: a watch stored after it sees
@@ -112,17 +126,28 @@ function monitorMain(arg: Ptr<u8> | null): Ptr<u8> | null {
     if (nw < nextTick) {
       continue;
     }
-    nextTick = nw + TICK;
-    const ticks = m.load(g + t.E_TICKS) + 1;
+    const ticks = m.load(g + t.E_TICKS) + step;
     m.swap(g + t.E_TICKS, ticks);
+    close = false;
     if (m.ld(g + t.E_RESCUE) !== 0 && m.ld(g + t.E_STAY) === 0 && !rx.relaxDuties(g, ticks)) {
       if (m.load(g + t.E_LAZY) !== 0) {
-        lazy.lazyDuties(g, ticks);
+        close = lazy.lazyDuties(g, ticks);
       }
       stallDuties(g, ticks);
     }
+    step = !close && napsLong(g) ? LAZY_NAP : 1;
+    nextTick = nw + TICK * step;
   }
   return null;
+}
+
+/**
+ * Does the monitor nap `LAZY_NAP` ticks: only worker 0 has started, lazy and not yet rescued
+ * (`E_LAZY` `LAZY_WATCH`), so `lazyDuties` is its only duty (no worker to watch, relax or rescue
+ * besides). Worker 0 stores nothing for it: the snapshot `lazyDuties` compares is the one it keeps.
+ */
+function napsLong(g: usize): bool {
+  return m.load(g + t.E_STARTED) === 1 && m.load(g + t.E_LAZY) === t.LAZY_WATCH;
 }
 
 /** Is every started worker parked? */
@@ -334,6 +359,7 @@ function rescueOf(g: usize, w: usize, now: usize): void {
   if (helper === 0) {
     return;
   }
+  st.rescued();
   // In no queue until they reach one again: counted, so the end of the program waits for them.
   dbg.RESCUES.add(1, "relaxed");
   m.inc(g + t.E_MOVING);
@@ -409,6 +435,7 @@ export function startSpare(g: usize, now: usize): usize {
     m.store32(w + t.E_PARK, 1);
     return 0;
   }
+  st.spareStarted();
   return w;
 }
 

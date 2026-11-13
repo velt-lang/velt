@@ -245,7 +245,8 @@ export const E_CALM: usize = 792;
 export const E_SOLO: usize = 800;
 /**
  * The join handle's poll and drop (a heap future's header) of the tasks made on this worker:
- * without the slot's lock on a solo worker (sched_join.velt `joinPollSolo`), else `joinPoll`.
+ * without the slot's lock on a solo worker (sched_join.velt `joinPollSolo`), counted in line on a
+ * lazy worker 0 (`joinPollLazy`), else `joinPoll` (sched_make.velt `joinTable`).
  */
 export const E_JOIN_VT: usize = 808;
 /** Catching panics: 56 bytes of words, laid out in sched_node_catch.velt. */
@@ -278,8 +279,6 @@ export const M_LAZY: u32 = 8;
 /** `E_DISPATCH`: wakes are input (a reactor turn, timers), or output (room to write). */
 export const D_INPUT: u32 = 1;
 export const D_OUTPUT: u32 = 2;
-/** Not a dispatch: a spawned task, for `pend`. */
-export const D_SPAWN: u32 = 3;
 
 /** A task's fields. */
 export const T_REFS: usize = 8;

@@ -21,6 +21,7 @@
 
 import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
+import * as st from "./sched_stats";
 
 /** The modes (see the module docs). */
 export const LK_NONE: u32 = 0;
@@ -101,6 +102,7 @@ export function locksOn(): void {
     return;
   }
   MODE.store(LK_ON, "seqcst");
+  st.locksTurnedOn();
   let spins: u32 = 0;
   while (LAZY_OPS.load("seqcst") !== 0) {
     spins++;

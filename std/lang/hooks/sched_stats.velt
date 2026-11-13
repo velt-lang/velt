@@ -1,0 +1,48 @@
+// velt/lang/hooks (internal): what the stall monitor of the executor in Velt did
+// (sched_monitor.velt, #2649), counted for a measurement to show: `VELT_RESCUE_STATS=1` (any value
+// but `0`) prints at the program's normal end (sched.velt `schedFinish`), to standard error,
+//
+//     rescue stats: rescues=R spares=S locks-on=L
+//
+// R the rescues that handed tasks to another worker (a stalled worker's, a lazy worker 0's), S
+// the spare threads started, L the times the monitor turned the locks of a lazy worker 0 on
+// (sched_lock.velt `locksOn`). A run whose line says `rescues=0 spares=0 locks-on=0` ran as if
+// there were no monitor. Only the monitor thread counts (nothing on a worker's path); the
+// variable is read once, at the end.
+
+import { processEnv } from "./process";
+
+// The runtime's write to a stream: process.velt's `processWrite` may throw (for standard
+// output, which this never writes to), and `schedFinish`, which reports, throws nothing.
+declare function velt_rt_write_str(stream: u32, s: string);
+
+const RESCUES = new Atomic<u64>(0);
+const SPARES = new Atomic<u64>(0);
+const LOCKS_ON = new Atomic<u64>(0);
+
+/** The monitor handed a stalled worker's tasks to another worker. */
+export function rescued(): void {
+  RESCUES.add(1);
+}
+
+/** The monitor started a spare worker's thread. */
+export function spareStarted(): void {
+  SPARES.add(1);
+}
+
+/** The monitor turned a lazy worker 0's locks on. */
+export function locksTurnedOn(): void {
+  LOCKS_ON.add(1);
+}
+
+/** Prints the counts to standard error when `VELT_RESCUE_STATS` asks for them (module docs). */
+export function report(): void {
+  const v = processEnv("VELT_RESCUE_STATS");
+  if (v === undefined || v.trim() === "0" || v.trim() === "") {
+    return;
+  }
+  velt_rt_write_str(
+    2,
+    `rescue stats: rescues=${RESCUES.load()} spares=${SPARES.load()} locks-on=${LOCKS_ON.load()}\n`,
+  );
+}

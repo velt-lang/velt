@@ -62,13 +62,25 @@ function stateAt(rsize: u64): usize {
   return t.T_SLOT + ((rsize as usize + 15) & ~15);
 }
 
-/** Sets worker block `w`'s join handle table (`E_JOIN_VT`): `solo` (sched_task.velt `E_SOLO`). */
-export function joinTable(w: usize, solo: bool): void {
+/** `joinTable`'s tables: one thread at the executor, a lazy worker 0, any other worker. */
+export const JT_SOLO: u32 = 0;
+export const JT_LAZY: u32 = 1;
+export const JT_SHARED: u32 = 2;
+
+/**
+ * Sets worker block `w`'s join handle table (`E_JOIN_VT`), `table`: `JT_SOLO` (sched_task.velt
+ * `E_SOLO`), `JT_LAZY` (worker 0 of `VELT_THREADS=1` with the rescue: sched_lock.velt `LK_LAZY`,
+ * kept after the monitor turns the locks on, when its handles lock as the others), `JT_SHARED`.
+ */
+export function joinTable(w: usize, table: u32): void {
   // SAFETY: `@export`ed functions of a heap future's poll and drop signatures.
   unsafe {
-    if (solo) {
+    if (table === JT_SOLO) {
       m.st(w + t.E_JOIN_VT, exportedAddress(jn.joinPollSolo));
       m.st(w + t.E_JOIN_VT + 8, exportedAddress(jn.joinDropSolo));
+    } else if (table === JT_LAZY) {
+      m.st(w + t.E_JOIN_VT, exportedAddress(jn.joinPollLazy));
+      m.st(w + t.E_JOIN_VT + 8, exportedAddress(jn.joinDropLazy));
     } else {
       m.st(w + t.E_JOIN_VT, exportedAddress(jn.joinPoll));
       m.st(w + t.E_JOIN_VT + 8, exportedAddress(jn.joinDrop));
