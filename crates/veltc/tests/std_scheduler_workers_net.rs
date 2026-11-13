@@ -186,7 +186,7 @@ fn a_server_moved_off_a_stalled_worker_keeps_serving() {
     if !has_threads() {
         return;
     }
-    prints(
+    prints_traced(
         "rescue",
         r#"import { listen, connect, TcpListener } from "velt/net";
 
@@ -348,5 +348,68 @@ async function main() {
     assert_eq!(
         (code, out.as_str()),
         (0, "a!\nb! on the connection's worker: true\n")
+    );
+}
+
+/// [`prints`] for a program that once hung in CI on Windows only (#2905), never locally: run
+/// with the executor's debug view (`VELT_SCHED_DEBUG`, a line of the workers' and the monitor's
+/// state to stderr every 500 ms) and killed after a minute, so a hang fails with that trace (its
+/// last lines) instead of a nextest timeout with no output. Only stdout is compared.
+fn prints_traced(name: &str, src: &str, want: &str) {
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join(format!("{name}.velt"));
+    std::fs::write(&file, src).unwrap();
+    let exe = dir
+        .path()
+        .join(format!("{name}{}", if cfg!(windows) { ".exe" } else { "" }));
+    let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(dir.path())
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success(),
+        "{name}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let mut child = no_window::command(&exe)
+        .env("VELT_THREADS", "4")
+        .env("VELT_SCHED_DEBUG", "500")
+        .env_remove("VELT_SCHEDULER")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // A watchdog, not a synchronization: the program ends in well under a second when it works.
+    let start = std::time::Instant::now();
+    let mut hung = false;
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() > std::time::Duration::from_secs(60) {
+            child.kill().unwrap();
+            hung = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let o = child.wait_with_output().unwrap();
+    let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+    let err = String::from_utf8_lossy(&o.stderr).replace("\r\n", "\n");
+    let tail: Vec<&str> = err.lines().rev().take(40).collect();
+    let tail: Vec<&str> = tail.into_iter().rev().collect();
+    assert!(
+        !hung,
+        "{name}: still running after a minute (#2905); stdout so far:\n{out}\nlast of the trace:\n{}",
+        tail.join("\n")
+    );
+    assert_eq!(
+        (o.status.code(), out.as_str()),
+        (Some(0), want),
+        "{name}: 4 workers; trace:\n{}",
+        tail.join("\n")
     );
 }
