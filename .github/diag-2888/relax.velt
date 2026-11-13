@@ -1,0 +1,37 @@
+import { listen, connect, TcpStream } from "velt/net";
+
+// 1 on worker 0's thread (`main` sets it): a spare is a thread of its own.
+const ON_MAIN = new ThreadLocal<i64>(0);
+const STARTED = new Atomic<i64>(0);
+const AGAIN = new Atomic<i64>(0);
+
+async function reader(s: TcpStream): Promise<string> {
+  const first = ON_MAIN.get();
+  STARTED.store(1);
+  const got = await s.readString();
+  return `moved ${first === 0}, read ${got} on worker 0 ${ON_MAIN.get() === 1}`;
+}
+
+async function mark(): Promise<i64> {
+  AGAIN.store(1);
+  return ON_MAIN.get();
+}
+
+async function main() {
+  ON_MAIN.set(1);
+  const l = await listen("127.0.0.1:0");
+  const c = await connect(`127.0.0.1:${l.port}`);
+  const s = await l.accept();
+  const r = spawn(reader(s));
+  // Busy until a spare has started the reader: the monitor's rescue of this poll.
+  while (STARTED.load() === 0) {}
+  // Idle: the spare parks, the reader waiting on its socket; the monitor takes the rescue back.
+  await sleep(300);
+  await c.write("hi");
+  console.log(await r);
+  const m = spawn(mark());
+  while (AGAIN.load() === 0) {}
+  console.log(`moved again ${(await m) === 0}`);
+  c.close();
+  l.close();
+}

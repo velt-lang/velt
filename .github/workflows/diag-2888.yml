@@ -1,0 +1,26 @@
+# Temporary diagnostic for #2888 on a GitHub Windows runner; the draft PR is closed unmerged.
+name: diag-2888
+on: pull_request
+jobs:
+  relax:
+    strategy:
+      fail-fast: false
+      matrix:
+        tree: [pr, main]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.tree == 'pr' && github.event.pull_request.head.sha || 'main' }}
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: diag-src
+          sparse-checkout: .github/diag-2888
+      - name: build
+        shell: bash
+        run: cargo build -p veltc --bin velt -p velt_rt && cargo build -p velt_rt
+      - name: run
+        shell: bash
+        run: bash diag-src/.github/diag-2888/run.sh ${{ matrix.tree }} diag-src/.github/diag-2888
