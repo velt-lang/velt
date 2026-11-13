@@ -324,11 +324,14 @@ function mainDone(e: usize, k: usize): void {
     // before worker 0 can see it done and end the process (stdout is buffered per thread).
     wk.handOffOutput();
   }
-  t.flags(k, t.ROOT_DONE, 0);
+  // Worker 0 reads the flags from its loop (sched.velt `rootLeft`): counted live before it can
+  // see the root done, and both flags at once (an atomic or, ordered after the count).
   if (m.ld(k + t.T_LOCALS) !== 0) {
     // Its started promises keep running after `main`.
-    t.flags(k, t.COUNTED, 0);
     mk.liveUp(g, e);
+    m.or32(k + t.T_FLAGS, t.ROOT_DONE | t.COUNTED);
+  } else {
+    m.or32(k + t.T_FLAGS, t.ROOT_DONE);
   }
   if (e !== g) {
     // The root ran on another worker (the monitor moved it): worker 0 waits for it.
@@ -338,16 +341,14 @@ function mainDone(e: usize, k: usize): void {
 
 /** Task `k` is done: its root and the promises it drives. */
 function finish(e: usize, k: usize): void {
+  if ((m.ld32(k + t.T_FLAGS) & (t.ROOT | t.COUNTED)) === t.ROOT) {
+    mainFinish(e, k);
+    return;
+  }
   m.store32(k + t.T_STATE, t.DONE);
   micro.free(k);
   // Not the root of `main`, or that root counted as live.
-  if ((m.ld32(k + t.T_FLAGS) & (t.ROOT | t.COUNTED)) !== t.ROOT) {
-    if (m.ld32(e + t.E_SOLO) !== 0) {
-      // The only thread at the executor: worker 0's own count.
-      m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
-      wk.release(k);
-      return;
-    }
+  if (m.ld32(e + t.E_SOLO) === 0) {
     const g = m.ld(e + t.E_MAIN);
     if (e !== g) {
       // What it printed reaches the OS before worker 0 can see it was the last live task and
@@ -363,7 +364,30 @@ function finish(e: usize, k: usize): void {
     }
     return;
   }
+  // The only thread at the executor: worker 0's own count.
+  m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
   wk.release(k);
+}
+
+/**
+ * `finish` of the root task of `main` (task `k`), not counted live: worker 0 waits for the state
+ * `DONE` (sched.velt `rootLeft`), holding a reference of its own, and may end the program as
+ * soon as it sees it. So that state comes last, after everything else the task gives back: a
+ * last poll on another worker (the monitor moved it) that set it first left its microtask queue
+ * and the executor's reference to free while worker 0 ended the program, 2 blocks the count
+ * reported unfreed now and then (#2887).
+ */
+@noInline
+function mainFinish(e: usize, k: usize): void {
+  const g = m.ld(e + t.E_MAIN);
+  micro.free(k);
+  // Never the last reference: worker 0's is held until it sees `DONE`.
+  wk.release(k);
+  m.store32(k + t.T_STATE, t.DONE);
+  if (e !== g) {
+    // Worker 0 may sleep, woken at the root's end (`mainDone`) before this.
+    wk.unpark(g);
+  }
 }
 
 /**

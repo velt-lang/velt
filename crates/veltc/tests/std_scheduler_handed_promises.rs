@@ -74,8 +74,10 @@ fn all_freed(err: &str) -> bool {
         .is_some_and(|(a, f)| a == f)
 }
 
-/// Runs of [`RESOLVES`]: on `main` before the fix, about 9 runs in 10 lost the wake at 2 workers.
-const RUNS: usize = 10;
+/// Runs of [`RESOLVES`]: on `main` before the fix, from 1 run in 3 (a loaded arm64 Mac) to 9 in
+/// 10 (x86 Linux) lost the wake at 2 workers; 20 runs leave a broken std about a 0.1% chance to
+/// pass them all on the slower of those.
+const RUNS: usize = 20;
 
 /// A round's poll opens 100k latches, among them the first and second promise of 1000 waiter
 /// tasks, and spins until a task spawned behind it ran: at 2 workers the stall rescue hands that
