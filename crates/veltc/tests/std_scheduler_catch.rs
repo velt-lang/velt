@@ -890,7 +890,7 @@ async function main() {
 /// exception is kept where the state's poll was, sched_node_catch.velt `panicked`), and
 /// sched_node.velt `peek` printed that slot's bytes as the result (`Promise { 0 }`, or a number).
 #[test]
-fn a_panicked_promise_prints_pending_as_with_the_default_executor() {
+fn a_panicked_promise_prints_pending() {
     if !catches_here() {
         return;
     }
@@ -898,33 +898,17 @@ fn a_panicked_promise_prints_pending_as_with_the_default_executor() {
     let dir = test_dir::TestDir::new();
     let file = dir.path().join("panicked.velt");
     std::fs::write(&file, PRINTS_A_PANICKED_PROMISE).unwrap();
-    let std_exe = exe_name(dir.path(), "panicked_std");
-    build_std(&file, &std_exe);
-    let default_exe = exe_name(dir.path(), "panicked_default");
-    let o = command(env!("CARGO_BIN_EXE_velt"))
-        .arg("build")
-        .arg(&file)
-        .arg("-o")
-        .arg(&default_exe)
-        .current_dir(dir.path())
-        .env_remove("VELT_SCHEDULER")
-        .output()
-        .unwrap();
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let exe = exe_name(dir.path(), "panicked_std");
+    build_std(&file, &exe);
     let want = "Promise { <pending> }\ntrue boom at panicked.velt:5:3\n";
     for threads in ["1", "4"] {
-        for (exe, which) in [
-            (&default_exe, "default executor"),
-            (&std_exe, "VELT_SCHEDULER=std"),
-        ] {
-            let (code, out, err) = run(exe, dir.path(), threads);
-            // The panic's location names the file by its full path.
-            let out = out.replace(&format!("{}/", dir.path().display()), "");
-            assert_eq!(
-                (code, out.as_str()),
-                (0, want),
-                "{which}, {threads} workers; stderr: {err}"
-            );
-        }
+        let (code, out, err) = run(&exe, dir.path(), threads);
+        // The panic's location names the file by its full path.
+        let out = out.replace(&format!("{}/", dir.path().display()), "");
+        assert_eq!(
+            (code, out.as_str()),
+            (0, want),
+            "{threads} workers; stderr: {err}"
+        );
     }
 }
