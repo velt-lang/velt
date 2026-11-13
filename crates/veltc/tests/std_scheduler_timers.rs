@@ -2,8 +2,8 @@
 //! `sleep` resumes in timer order (deadline, then creation) whoever polls it, and `setTimeout` /
 //! `setInterval` / `setImmediate` callbacks run in Node's order (one list per delay, the lists by
 //! expiry and id, the check phase for immediates, each callback's microtasks before the next).
-//! Each program is built with and without `VELT_SCHEDULER=std`, both binaries run with
-//! `VELT_THREADS=1` and must print the same; only the one built with it holds the executor.
+//! Each program is built with `VELT_SCHEDULER=std`, runs with `VELT_THREADS=1` and must print
+//! what Node prints, with the executor's timers in its binary.
 //! Delays are longer than the busy waits before them, so a loaded machine cannot change the order.
 
 use std::path::Path;
@@ -16,10 +16,10 @@ mod no_window;
 mod runtime_support;
 mod test_dir;
 
-/// `src` built (with `VELT_SCHEDULER=std` when `std`) and run with `VELT_THREADS=1`, which must
-/// exit with `code`: its stdout, and its binary.
-fn build_and_run(dir: &Path, name: &str, src: &str, std: bool, code: i32) -> (String, Vec<u8>) {
-    build_and_run_on(dir, name, src, std, code, "1")
+/// `src` built with `VELT_SCHEDULER=std` and run with `VELT_THREADS=1`, which must exit with
+/// `code`: its stdout, and its binary.
+fn build_and_run(dir: &Path, name: &str, src: &str, code: i32) -> (String, Vec<u8>) {
+    build_and_run_on(dir, name, src, code, "1")
 }
 
 /// [`build_and_run`] with `VELT_THREADS=threads`.
@@ -27,29 +27,25 @@ fn build_and_run_on(
     dir: &Path,
     name: &str,
     src: &str,
-    std: bool,
     code: i32,
     threads: &str,
 ) -> (String, Vec<u8>) {
     let file = dir.join(format!("{name}.velt"));
     std::fs::write(&file, src).unwrap();
     let suffix = if cfg!(windows) { ".exe" } else { "" };
-    let exe = dir.join(format!("{name}{}{suffix}", if std { "_std" } else { "" }));
-    let mut build = command(env!("CARGO_BIN_EXE_velt"));
-    build
+    let exe = dir.join(format!("{name}_std{suffix}"));
+    let o = command(env!("CARGO_BIN_EXE_velt"))
         .arg("build")
         .arg(&file)
         .arg("-o")
         .arg(&exe)
         .current_dir(dir)
-        .env_remove("VELT_SCHEDULER");
-    if std {
-        build.env("VELT_SCHEDULER", "std");
-    }
-    let o = build.output().unwrap();
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
     let stderr = String::from_utf8_lossy(&o.stderr);
     assert!(o.status.success(), "{name}: {stderr}");
-    let out = run_exe(&exe, threads, code, &format!("{name} (std: {std})"));
+    let out = run_exe(&exe, threads, code, name);
     (out, std::fs::read(&exe).unwrap())
 }
 
@@ -79,8 +75,7 @@ fn run_exe(exe: &Path, threads: &str, code: i32, what: &str) -> String {
 }
 
 /// Whether a `VELT_SCHEDULER=std` program builds here: the executor in Velt waits in an epoll,
-/// kqueue or (Windows) AFD reactor; other OSes have none. The tests compare the two executors
-/// only where both exist.
+/// kqueue or (Windows) AFD reactor; other OSes have none.
 fn std_builds_here() -> bool {
     cfg!(any(unix, windows))
 }
@@ -100,18 +95,15 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
-/// Builds and runs `src` both ways, each exiting with `code`: each prints `want`, and only the
-/// std build has the executor's timers.
-fn same_on_both(name: &str, src: &str, want: &str, code: i32) {
+/// Builds and runs `src`, exiting with `code`: it prints `want`, and has the executor's timers.
+fn prints(name: &str, src: &str, want: &str, code: i32) {
     if !std_builds_here() {
         return;
     }
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
-    let (rt, rt_bin) = build_and_run(dir.path(), name, src, false, code);
-    let (std, std_bin) = build_and_run(dir.path(), name, src, true, code);
-    assert_eq!(rt, want, "{name}: the runtime's executor");
-    assert_eq!(std, want, "{name}: the executor in Velt");
+    let (std, std_bin) = build_and_run(dir.path(), name, src, code);
+    assert_eq!(std, want, "{name}");
     let hook = if src.contains("sleep(") {
         "schedSleep"
     } else {
@@ -120,10 +112,6 @@ fn same_on_both(name: &str, src: &str, want: &str, code: i32) {
     assert!(
         contains(&std_bin, marker(hook).as_bytes()),
         "{name}: no {hook}"
-    );
-    assert!(
-        !contains(&rt_bin, marker(hook).as_bytes()),
-        "{name}: {hook} without the variable"
     );
 }
 
@@ -137,7 +125,7 @@ const BUSY: &str = "function busy(ms: number) {
 /// `B`), and the lists run by expiry, not by when they were made (`t 10` before `t 30`).
 #[test]
 fn timer_lists_run_by_expiry_then_list_id() {
-    same_on_both(
+    prints(
         "timer_lists",
         &format!(
             "{BUSY}
@@ -163,7 +151,7 @@ function main() {{
 /// during the pass too), and before a timeout created next to them.
 #[test]
 fn immediates_run_after_the_timers_pass() {
-    same_on_both(
+    prints(
         "timer_check_phase",
         &format!(
             "{BUSY}
@@ -190,7 +178,7 @@ function main() {{
 /// callback's microtasks run before the next callback.
 #[test]
 fn a_callback_clears_timers_due_with_it() {
-    same_on_both(
+    prints(
         "timer_clear_inside",
         "function main() {
   for (const n of [\"a\", \"b\"]) {
@@ -224,7 +212,7 @@ fn a_callback_clears_timers_due_with_it() {
 /// interleave at their `await`s.
 #[test]
 fn interval_runs_overlap() {
-    same_on_both(
+    prints(
         "timer_interval_overlap",
         "async function main() {
   const runs = shared(0);
@@ -260,7 +248,7 @@ fn interval_runs_overlap() {
 /// program ends without the one still pending then.
 #[test]
 fn an_unrefd_timer_lets_the_process_end() {
-    same_on_both(
+    prints(
         "timer_unref",
         "function main(): void {
   setTimeout(() => console.log(\"never\"), 100000).unref();
@@ -278,7 +266,7 @@ fn an_unrefd_timer_lets_the_process_end() {
 /// and the timers after it.
 #[test]
 fn an_error_in_a_callback_ends_the_process_at_once() {
-    same_on_both(
+    prints(
         "timer_uncaught",
         "setTimeout(
   () => {
@@ -301,7 +289,7 @@ setTimeout(() => console.log(\"t2\"), 3);
 /// microtasks a resumed sleeper queued run before the next sleep fires.
 #[test]
 fn sleeps_resume_in_timer_order_whoever_polls_them() {
-    same_on_both(
+    prints(
         "sleep_order",
         &format!(
             "{BUSY}
@@ -362,9 +350,7 @@ b\na\n[ 'a', 'b' ]\nfirst\nsecond\nfirst after yieldNow\n[ 'first', 'second' ]\n
 /// differs from Node: the spawned task's body runs once `main` lets go, so with one worker its
 /// sleep is created after `busy` and comes due after the timeout of 8 (Node runs the body before
 /// `busy`; #1332's case). The executor in Velt keeps timer order there (one worker has no stall
-/// rescue unless `VELT_RESCUE=1`); the runtime's executor runs the spawned task on another
-/// thread meanwhile, and its sleeps and timers interleave by when it looks: only its first line
-/// is compared there.
+/// rescue unless `VELT_RESCUE=1`).
 #[test]
 fn sleeps_and_timers_due_together_run_in_one_order() {
     if !std_builds_here() {
@@ -392,20 +378,7 @@ async function main() {{
 }}
 "
     );
-    let (rt, _) = build_and_run(dir.path(), "sleep_timer", &src, false, 0);
-    let (std, std_bin) = build_and_run(dir.path(), "sleep_timer", &src, true, 0);
-    let mut lines: Vec<&str> = rt.lines().collect();
-    assert_eq!(
-        lines.first(),
-        Some(&"sleep 2"),
-        "the runtime's executor: {rt}"
-    );
-    lines.sort_unstable();
-    assert_eq!(
-        lines,
-        ["sleep 2", "spawned sleep 2", "timeout 10", "timeout 8"],
-        "the runtime's executor: {rt}"
-    );
+    let (std, std_bin) = build_and_run(dir.path(), "sleep_timer", &src, 0);
     assert_eq!(
         std, "sleep 2\ntimeout 10\ntimeout 8\nspawned sleep 2\n",
         "the executor in Velt"
@@ -417,7 +390,7 @@ async function main() {{
 /// promise, and one nothing awaits, both run (std: the runtime boxes and starts the callbacks'
 /// promises off the worker, sched_off.velt), and the worker's timer prints between them and the
 /// pinned task's sleep (std: the worker writes its stdout out before it waits). Two threads, 20
-/// runs of each build.
+/// runs.
 #[test]
 fn a_pinned_spawn_runs_its_timers() {
     if !std_builds_here() {
@@ -442,18 +415,13 @@ async function main() {
 ";
     let want =
         "pinned timeout fired\npinned fire-and-forget\nworker timeout 60\npinned slept 600\n2\n";
-    for std in [false, true] {
-        let (out, _) = build_and_run_on(dir.path(), "pinned_timer", src, std, 0, "2");
-        assert_eq!(out, want, "std: {std}");
-        let suffix = if cfg!(windows) { ".exe" } else { "" };
-        let exe = dir.path().join(format!(
-            "pinned_timer{}{suffix}",
-            if std { "_std" } else { "" }
-        ));
-        for run in 0..19 {
-            let out = run_exe(&exe, "2", 0, &format!("std: {std}, run {run}"));
-            assert_eq!(out, want, "std: {std}, run {run}");
-        }
+    let (out, _) = build_and_run_on(dir.path(), "pinned_timer", src, 0, "2");
+    assert_eq!(out, want);
+    let suffix = if cfg!(windows) { ".exe" } else { "" };
+    let exe = dir.path().join(format!("pinned_timer_std{suffix}"));
+    for run in 0..19 {
+        let out = run_exe(&exe, "2", 0, &format!("run {run}"));
+        assert_eq!(out, want, "run {run}");
     }
 }
 

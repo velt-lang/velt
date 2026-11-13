@@ -1,21 +1,21 @@
 //! The executor in Velt's workers with sockets (std/lang/hooks/sched.velt, #2649 step 3): a
 //! socket served from another worker, a listener's connections spread over the workers, and a
-//! connection or server that moves between them. Each program is built with and without
-//! `VELT_SCHEDULER=std`, both binaries run with `VELT_THREADS=4` and must print the same.
+//! connection or server that moves between them. Each program is built with
+//! `VELT_SCHEDULER=std`, runs with `VELT_THREADS=4` and must print what Node prints.
 
 mod no_window;
 mod runtime_support;
 mod sched_workers_support;
 mod test_dir;
 
-use sched_workers_support::{build_and_run_with, has_threads, manifest, same_on_both};
+use sched_workers_support::{build_and_run_with, has_threads, manifest, prints};
 
 #[test]
 fn a_socket_serves_from_another_worker() {
     if !has_threads() {
         return;
     }
-    same_on_both(
+    prints(
         "socket",
         r#"import { listen, connect } from "velt/net";
 import { channel, Channel } from "velt/sync";
@@ -56,7 +56,7 @@ fn a_listener_spreads_its_connections_over_every_worker() {
     if !has_threads() {
         return;
     }
-    same_on_both(
+    prints(
         "spread",
         r#"import { listen, connect, TcpStream } from "velt/net";
 import { currentWorker } from "velt/task";
@@ -93,7 +93,7 @@ fn a_listener_of_a_program_with_module_state_says_one_worker() {
     if !has_threads() {
         return;
     }
-    same_on_both(
+    prints(
         "module_state_workers",
         r#"import { listen } from "velt/net";
 
@@ -118,7 +118,7 @@ fn a_connection_moves_to_another_worker_and_keeps_serving() {
     if !has_threads() {
         return;
     }
-    same_on_both(
+    prints(
         "moving",
         r#"import { listen, connect, TcpStream } from "velt/net";
 import { channel, Channel } from "velt/sync";
@@ -186,7 +186,7 @@ fn a_server_moved_off_a_stalled_worker_keeps_serving() {
     if !has_threads() {
         return;
     }
-    same_on_both(
+    prints(
         "rescue",
         r#"import { listen, connect, TcpListener } from "velt/net";
 
@@ -245,7 +245,7 @@ fn a_listener_opened_on_worker_0_accepts_on_another() {
     if !has_threads() {
         return;
     }
-    same_on_both(
+    prints(
         "listener",
         r#"import { listen, connect, TcpListener } from "velt/net";
 
@@ -342,7 +342,6 @@ async function main() {
   await server;
 }
 "#,
-        true,
         "4",
         &[("VELT_RESCUE", "0")],
     );

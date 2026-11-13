@@ -4,8 +4,8 @@
 //! reactor; child processes start with `posix_spawn`, with their exit and pipes on the reactor
 //! (std/process/child/child_sched.velt). A blocking job keeps the process alive until it is
 //! done, even when its waiter is gone (as the runtime's exit waits for tokio's blocking threads),
-//! and so does a running child. Each program is built with and without the variable, both
-//! binaries run with `VELT_THREADS=4` and must print the same.
+//! and so does a running child. Each program is built with the variable, runs with
+//! `VELT_THREADS=4` and must print what Node prints.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -34,26 +34,23 @@ fn posix() -> bool {
     cfg!(any(target_os = "macos", target_os = "linux"))
 }
 
-/// `src` built as `name` (with `VELT_SCHEDULER=std` when `std`): the executable.
-fn build(dir: &Path, name: &str, src: &str, std: bool) -> std::path::PathBuf {
+/// `src` built as `name` with `VELT_SCHEDULER=std`: the executable.
+fn build(dir: &Path, name: &str, src: &str) -> std::path::PathBuf {
     let file = dir.join(format!("{name}.velt"));
     std::fs::write(&file, src).unwrap();
     let exe = dir.join(format!(
-        "{name}{}{}",
-        if std { "_std" } else { "" },
+        "{name}_std{}",
         if cfg!(windows) { ".exe" } else { "" }
     ));
-    let mut b = command(env!("CARGO_BIN_EXE_velt"));
-    b.arg("build")
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
         .arg(&file)
         .arg("-o")
         .arg(&exe)
         .current_dir(dir)
-        .env_remove("VELT_SCHEDULER");
-    if std {
-        b.env("VELT_SCHEDULER", "std");
-    }
-    let o = b.output().unwrap();
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
     assert!(
         o.status.success(),
         "{name}: {}",
@@ -87,8 +84,8 @@ const CHILD: &str = "P5childP12child__sched";
 const POOL: &str = "sched__blockingN3run";
 
 /// Asserts that std build `exe` has the functions of each seam in `marks` (and so went through
-/// them), and the runtime build `rt` none of them.
-fn assert_std_path(name: &str, exe: &Path, rt: Option<&Path>, marks: &[&str]) {
+/// them).
+fn assert_std_path(name: &str, exe: &Path, marks: &[&str]) {
     if cfg!(windows) {
         // A PE executable names no Velt function, and UDP and child processes stay the runtime's
         // there (`#net-udp`, `#child-rt`): the other suites look for the executor's panic
@@ -96,41 +93,31 @@ fn assert_std_path(name: &str, exe: &Path, rt: Option<&Path>, marks: &[&str]) {
         return;
     }
     let bin = std::fs::read(exe).unwrap();
-    let rt_bin = rt.map(|r| std::fs::read(r).unwrap()).unwrap_or_default();
     for mark in marks {
         let has = |b: &[u8]| b.windows(mark.len()).any(|w| w == mark.as_bytes());
         assert!(
             has(&bin),
             "{name}: the std build has no `{mark}`: the std path didn't run"
         );
-        assert!(!has(&rt_bin), "{name}: the runtime build has `{mark}`");
     }
 }
 
-/// Builds and runs `src` both ways: each prints `want` and exits with 0, and the std build went
-/// through the seams in `marks`.
-fn same_on_both(name: &str, src: &str, want: &str, marks: &[&str]) {
-    let got = equal_on_both(name, src, marks);
+/// Builds and runs `src` through the seams in `marks`: it prints `want` and exits with 0.
+fn prints(name: &str, src: &str, want: &str, marks: &[&str]) {
+    let got = output_of(name, src, marks);
     assert_eq!(got.as_str(), want, "{name}");
 }
 
-/// Builds and runs `src` both ways (the std build through the seams in `marks`): both exit with
-/// 0 and print the same, which is returned.
-fn equal_on_both(name: &str, src: &str, marks: &[&str]) -> String {
+/// Builds and runs `src` through the seams in `marks`: it exits with 0, and its output is
+/// returned.
+fn output_of(name: &str, src: &str, marks: &[&str]) -> String {
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let rt = build(dir.path(), name, src, false);
-    let std = build(dir.path(), name, src, true);
-    assert_std_path(name, &std, Some(&rt), marks);
-    let (rt_code, rt_out) = run(dir.path(), &rt);
-    let (std_code, std_out) = run(dir.path(), &std);
-    assert_eq!(
-        (rt_code, rt_out.as_str()),
-        (0, std_out.as_str()),
-        "{name}: runtime vs std"
-    );
-    assert_eq!(std_code, 0, "{name}, std");
-    std_out
+    let exe = build(dir.path(), name, src);
+    assert_std_path(name, &exe, marks);
+    let (code, out) = run(dir.path(), &exe);
+    assert_eq!(code, 0, "{name}: {out}");
+    out
 }
 
 /// Runs `exe` with 4 workers and stdin a pipe the test holds: waits for the first output line,
@@ -193,7 +180,7 @@ fn file_operations_from_every_worker_finish_on_the_pool() {
     }
     // 64 tasks, pinned across the workers, each write, append, stat and read their own file at
     // once; the jobs overlap on the pool's threads and every result comes back to its task.
-    same_on_both(
+    prints(
         "fs_many",
         r#"import { appendFile, exists, mkdir, readDir, readDirEntries, readFile, readFileBytes,
   remove, rename, stat, writeFile } from "velt/fs";
@@ -273,18 +260,10 @@ fn a_pending_stdin_read_keeps_the_process_alive_until_its_line_comes() {
     // pool's thread with nothing else alive: the program must not end before it comes.
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    for std in [false, true] {
-        let exe = build(dir.path(), "stdin_wait", &stdin_program(false), std);
-        if std {
-            assert_std_path("stdin_wait", &exe, None, &[STDIN, POOL]);
-        }
-        let got = run_with_input(dir.path(), &exe, Some("hello\n"), false);
-        assert_eq!(
-            got,
-            (Some(0), "waiting\ngot hello\n".to_string()),
-            "std: {std}"
-        );
-    }
+    let exe = build(dir.path(), "stdin_wait", &stdin_program(false));
+    assert_std_path("stdin_wait", &exe, &[STDIN, POOL]);
+    let got = run_with_input(dir.path(), &exe, Some("hello\n"), false);
+    assert_eq!(got, (Some(0), "waiting\ngot hello\n".to_string()), "std");
 }
 
 #[test]
@@ -297,18 +276,10 @@ fn a_stdin_read_nobody_waits_for_still_ends_with_its_line() {
     // end wakes worker 0 to look again.
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    for std in [false, true] {
-        let exe = build(dir.path(), "stdin_race", &stdin_program(true), std);
-        if std {
-            assert_std_path("stdin_race", &exe, None, &[STDIN, POOL]);
-        }
-        let got = run_with_input(dir.path(), &exe, Some("late\n"), false);
-        assert_eq!(
-            got,
-            (Some(0), "waiting\ngot gave up\n".to_string()),
-            "std: {std}"
-        );
-    }
+    let exe = build(dir.path(), "stdin_race", &stdin_program(true));
+    assert_std_path("stdin_race", &exe, &[STDIN, POOL]);
+    let got = run_with_input(dir.path(), &exe, Some("late\n"), false);
+    assert_eq!(got, (Some(0), "waiting\ngot gave up\n".to_string()), "std");
 }
 
 #[test]
@@ -328,18 +299,14 @@ async function main() {
   console.log(`${a}|${b}|${rest.length}|${await readLine()}`);
 }
 "#;
-    for std in [false, true] {
-        let exe = build(dir.path(), "stdin_lines", src, std);
-        if std {
-            assert_std_path("stdin_lines", &exe, None, &[STDIN, POOL]);
-        }
-        let got = run_with_input(dir.path(), &exe, Some("one\ntwo\nthree\nfour\n"), true);
-        assert_eq!(
-            got,
-            (Some(0), "ready\none|two|11|null\n".to_string()),
-            "std: {std}"
-        );
-    }
+    let exe = build(dir.path(), "stdin_lines", src);
+    assert_std_path("stdin_lines", &exe, &[STDIN, POOL]);
+    let got = run_with_input(dir.path(), &exe, Some("one\ntwo\nthree\nfour\n"), true);
+    assert_eq!(
+        got,
+        (Some(0), "ready\none|two|11|null\n".to_string()),
+        "std"
+    );
 }
 
 #[test]
@@ -350,7 +317,7 @@ fn udp_datagrams_cross_workers_and_names_resolve_on_the_pool() {
     // Under std the sockets are non-blocking ones on the reactor and `lookup` runs `getaddrinfo`
     // on the blocking pool. An echo task pinned to the last worker answers 200 datagrams sent
     // from worker 0 (each receive waits for readiness first), and a name resolves on the pool.
-    same_on_both(
+    prints(
         "udp_workers",
         r#"import { bindUdp, UdpSocket } from "velt/net/udp";
 import { lookup } from "velt/net/dns";
@@ -396,7 +363,7 @@ fn a_receive_with_a_limit_keeps_that_many_bytes() {
     }
     // recvFrom(max) under std reads into a buffer of `max` bytes: the datagram's first `max`
     // bytes come back, a limit above 64 KiB or none keeps it whole, as with the runtime.
-    same_on_both(
+    prints(
         "udp_max",
         r#"import { bindUdp } from "velt/net/udp";
 
@@ -522,7 +489,7 @@ fn child_processes_from_every_worker_run_and_report_their_exit() {
     // tasks pinned across the workers (stdin fed, stdout and stderr drained, exit reaped), a
     // spawned child talked to through its pipes, one killed by a signal (128 + 15), a child
     // whose `PATH` names the program's directory, and a program that doesn't exist.
-    same_on_both(
+    prints(
         "children",
         r#"import { exec, spawn as start } from "velt/process/child";
 import { argv, args, readAll, readLine } from "velt/process";
@@ -638,9 +605,8 @@ async function main(): Promise<i32> {
   return 0;
 }
 "#,
-        true,
     );
-    assert_std_path("silent_pipe", &exe, None, &[CHILD]);
+    assert_std_path("silent_pipe", &exe, &[CHILD]);
     let got = run_with_input(dir.path(), &exe, None, false);
     assert_eq!(got, (Some(0), "started\ngot go\nexit 0\n".to_string()));
 }
@@ -652,7 +618,7 @@ fn a_nul_in_a_childs_working_directory_fails_its_start() {
     }
     // The cwd is a C string too: with a NUL in it the start fails, as the runtime's does, where
     // the std path used to run the child in this program's directory.
-    let out = equal_on_both(
+    let out = output_of(
         "cwd_nul",
         r#"import { exec } from "velt/process/child";
 import { argv, args } from "velt/process";
@@ -686,7 +652,7 @@ fn socket_and_name_errors_read_as_the_runtimes() {
     }
     // An IPv4 socket sending to an IPv6 address (EAFNOSUPPORT: the runtime's UNKNOWN, as Rust
     // maps no kind to it) and a name with a NUL (the message of Rust's C string conversion).
-    let out = equal_on_both(
+    let out = output_of(
         "net_errors",
         r#"import { bindUdp } from "velt/net/udp";
 import { lookup } from "velt/net/dns";

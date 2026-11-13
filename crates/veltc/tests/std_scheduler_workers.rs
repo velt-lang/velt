@@ -2,16 +2,14 @@
 //! with `VELT_SCHEDULER=std` starts `VELT_THREADS` workers (threads started through `@export`
 //! and `pthread_create`), a pinned spawn runs on the worker it names, wakes cross workers through
 //! the home worker's inbox and reactor, module state keeps one lock across them, and the program
-//! ends once every worker is idle. Each program is built with and without the variable, both
-//! binaries run with `VELT_THREADS=4` and must print the same. The tests with sockets are in
+//! ends once every worker is idle. Each program is built with the variable, runs with
+//! `VELT_THREADS=4` and must print what Node prints. The tests with sockets are in
 //! std_scheduler_workers_net.rs.
 
 use std::path::Path;
 
 use no_window::command;
-use sched_workers_support::{
-    build_and_run, build_and_run_with, has_threads, manifest, same_on_both,
-};
+use sched_workers_support::{build_and_run, build_and_run_with, has_threads, manifest, prints};
 
 mod no_window;
 mod runtime_support;
@@ -38,7 +36,7 @@ fn pinned_tasks_run_on_their_worker_and_wake_across_workers() {
     if !has_threads() {
         return;
     }
-    same_on_both(
+    prints(
         "pinned",
         r#"import { workerCount, currentWorker } from "velt/task";
 import { channel, Channel, HandOff } from "velt/sync";
@@ -113,7 +111,7 @@ fn module_state_is_one_lock_across_workers() {
     }
     // Each task reads, yields and writes the counter in separate polls only through `await`; a
     // read and its write in one poll happen under the module lock, so no increment is lost.
-    same_on_both(
+    prints(
         "module_lock",
         r#"import { workerCount } from "velt/task";
 
@@ -152,7 +150,7 @@ fn the_program_ends_once_every_worker_is_idle() {
     // A detached pinned task that sleeps keeps the process alive after `main`; one waiting on a
     // promise nobody settles does not. The late task starts its sleep only once `main` printed
     // (a channel gates it), so the order is by signals, not by time.
-    same_on_both(
+    prints(
         "lifetime",
         r#"import { channel, Channel } from "velt/sync";
 
@@ -188,7 +186,7 @@ fn a_pinned_tasks_result_is_transferred_to_its_joiner() {
     if !has_threads() {
         return;
     }
-    same_on_both(
+    prints(
         "transfer",
         r#"// A pinned task's result that a promise it started keeps using: the joiner gets its own copy.
 class Obj {
@@ -251,7 +249,7 @@ fn an_unrefd_timer_on_another_worker_ticks_while_main_sleeps() {
     if !has_threads() {
         return;
     }
-    same_on_both(
+    prints(
         "unref",
         r#"import { channel, Channel } from "velt/sync";
 
@@ -296,7 +294,7 @@ fn mains_last_line_printed_on_another_worker_is_written() {
     }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let (code, out) = build_and_run(dir.path(), "last", LAST_LINE, true, "4");
+    let (code, out) = build_and_run(dir.path(), "last", LAST_LINE, "4");
     assert_eq!((code, out.as_str()), (0, "sum 200000\n"), "last line");
     let lost = contended_runs(dir.path(), "last", "4", "sum 200000\n");
     assert!(lost.is_empty(), "{}", lost.join("\n"));
@@ -315,7 +313,7 @@ fn the_last_line_of_a_task_ending_last_on_another_worker_is_written() {
     }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let (code, out) = build_and_run(dir.path(), "late", LATE_LINE, true, "4");
+    let (code, out) = build_and_run(dir.path(), "late", LATE_LINE, "4");
     assert_eq!((code, out.as_str()), (0, "late 20000\n"), "late line");
     let lost = contended_runs(dir.path(), "late", "4", "late 20000\n");
     assert!(lost.is_empty(), "{}", lost.join("\n"));
@@ -421,7 +419,7 @@ fn the_end_waits_for_tasks_woken_during_the_scan() {
     }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let (code, out) = build_and_run(dir.path(), "ring", RING, true, "8");
+    let (code, out) = build_and_run(dir.path(), "ring", RING, "8");
     assert_eq!(
         (code, out.as_str()),
         (0, "relayed 303\n"),
@@ -496,14 +494,7 @@ fn the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle() {
     }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let (code, out) = build_and_run_with(
-        dir.path(),
-        "relax",
-        RELAX,
-        true,
-        "1",
-        &[("VELT_RESCUE", "1")],
-    );
+    let (code, out) = build_and_run_with(dir.path(), "relax", RELAX, "1", &[("VELT_RESCUE", "1")]);
     assert_eq!(
         (code, out.as_str()),
         (
@@ -577,7 +568,6 @@ fn tasks_put_back_while_worker_0_leaves_its_lazy_mode_still_run() {
         dir.path(),
         "put_back",
         PUT_BACK,
-        true,
         "1",
         &[("VELT_RESCUE", "1")],
     );

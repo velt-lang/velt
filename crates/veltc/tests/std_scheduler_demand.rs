@@ -3,7 +3,7 @@
 //! a function value, or inside std behind a synchronous API), or an extern the executor serves
 //! (timers, microtasks, `new Promise`'s latch). A program without such code is built as without
 //! the variable: no executor, and its module state through the runtime's entries. Each program
-//! is built both ways and must print the same.
+//! must print what Node prints.
 
 use std::path::Path;
 
@@ -13,27 +13,23 @@ mod no_window;
 mod runtime_support;
 mod test_dir;
 
-/// `src` built (with `VELT_SCHEDULER=std` when `std`) and run: its stdout, and its binary.
-fn build_and_run(dir: &Path, name: &str, src: &str, std: bool) -> (String, Vec<u8>) {
+/// `src` built with `VELT_SCHEDULER=std` and run: its stdout, and its binary.
+fn build_and_run(dir: &Path, name: &str, src: &str) -> (String, Vec<u8>) {
     let file = dir.join(format!("{name}.velt"));
     std::fs::write(&file, src).unwrap();
     let exe = dir.join(format!(
-        "{name}{}{}",
-        if std { "_std" } else { "" },
+        "{name}_std{}",
         if cfg!(windows) { ".exe" } else { "" }
     ));
-    let mut build = command(env!("CARGO_BIN_EXE_velt"));
-    build
+    let o = command(env!("CARGO_BIN_EXE_velt"))
         .arg("build")
         .arg(&file)
         .arg("-o")
         .arg(&exe)
         .current_dir(dir)
-        .env_remove("VELT_SCHEDULER");
-    if std {
-        build.env("VELT_SCHEDULER", "std");
-    }
-    let o = build.output().unwrap();
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
     assert!(
         o.status.success(),
         "{name}: {}",
@@ -47,7 +43,7 @@ fn build_and_run(dir: &Path, name: &str, src: &str, std: bool) -> (String, Vec<u
     assert_eq!(
         o.status.code(),
         Some(0),
-        "{name} (std: {std}): {}{}",
+        "{name}: {}{}",
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
@@ -59,8 +55,7 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
-/// Builds `src` both ways: each prints `want`, and the std build has the executor in Velt
-/// exactly when `executor` (and its module lock when `module_lock`).
+/// Builds `src`: it prints `want`, and has the executor in Velt exactly when `executor` (and its module lock when `module_lock`).
 fn check(name: &str, src: &str, want: &str, executor: bool, module_lock: bool) {
     // The executor in Velt waits in an epoll or kqueue reactor; Windows has none yet.
     if !cfg!(unix) {
@@ -68,14 +63,8 @@ fn check(name: &str, src: &str, want: &str, executor: bool, module_lock: bool) {
     }
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
-    let (rt, rt_bin) = build_and_run(dir.path(), name, src, false);
-    let (std, std_bin) = build_and_run(dir.path(), name, src, true);
-    assert_eq!(rt, want, "{name}: without the variable");
-    assert_eq!(std, want, "{name}: with VELT_SCHEDULER=std");
-    assert!(
-        !contains(&rt_bin, b"schedBlockOn"),
-        "{name}: executor without the variable"
-    );
+    let (std, std_bin) = build_and_run(dir.path(), name, src);
+    assert_eq!(std, want, "{name}");
     assert_eq!(
         contains(&std_bin, b"schedBlockOn"),
         executor,
@@ -125,22 +114,18 @@ fn module_state_with_tasks_takes_the_executors_lock() {
     check("state_tasks", src, "2\n", true, true);
 }
 
-/// The VIR of `files` (name, source; the first is the root), built with `VELT_SCHEDULER=std`
-/// when `std`.
-fn vir_of(files: &[(&str, &str)], std: bool) -> String {
+/// The VIR of `files` (name, source; the first is the root), built with `VELT_SCHEDULER=std`.
+fn vir_of(files: &[(&str, &str)]) -> String {
     let dir = test_dir::TestDir::new();
     for (name, src) in files {
         std::fs::write(dir.path().join(name), src).unwrap();
     }
-    let mut build = command(env!("CARGO_BIN_EXE_velt"));
-    build
+    let o = command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", files[0].0, "--emit", "vir"])
         .current_dir(dir.path())
-        .env_remove("VELT_SCHEDULER");
-    if std {
-        build.env("VELT_SCHEDULER", "std");
-    }
-    let o = build.output().unwrap();
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
@@ -154,7 +139,7 @@ fn module_state_takes_one_path_decided_after_the_initializers() {
     let dep = "export let count = 0;\nfunction arm(): number {\n  setTimeout(() => {\n    count += 1;\n  }, 1);\n  return 2;\n}\nexport const armed = arm();\n";
     let main = "import { count, armed } from \"./dep\";\nlet local = 1;\nfunction main() {\n  local += armed;\n  console.log(\"main\", local, count);\n}\n";
     let files = [("main.velt", main), ("dep.velt", dep)];
-    let std = vir_of(&files, true);
+    let std = vir_of(&files);
     for hook in ["schedModuleState", "schedModuleBlock", "schedModuleReady"] {
         assert!(
             std.contains(hook),
@@ -170,9 +155,6 @@ fn module_state_takes_one_path_decided_after_the_initializers() {
         0,
         "an access function calls the runtime's entry"
     );
-    let default = vir_of(&files, false);
-    assert!(!default.contains("_Gmodule_state") && !default.contains("_Gmodule_block"));
-    assert!(default.contains("velt_rt_module_state"));
 }
 
 /// The module-state path is decided once `velt_main` is built, not while `build_main` builds what

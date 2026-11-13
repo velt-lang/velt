@@ -1,12 +1,10 @@
 //! The executor in Velt (std/lang/hooks/sched.velt, #2649 step 3.1): a program compiled with
 //! `VELT_SCHEDULER=std` runs its root, its spawned tasks and `yieldNow` there, and the runtime's
 //! leaves (a sleep on the runtime's tokio thread, channels) wake its tasks through their C
-//! waker. Each program is built with and without the variable, both binaries run with
-//! `VELT_THREADS=1` and must print the same; the one built with it holds the executor's code,
-//! the other doesn't. Where spawned tasks print, the runtime's executor is held only to what it
-//! guarantees across tasks ([`same_per_task_on_both`]). A few programs run with more workers, or
-//! against a copy of std with a module added, and check one thing of the std build (the worker
-//! count's bound, a latch's buffer of wakers).
+//! waker. Each program is built, run with `VELT_THREADS=1`, and must print what Node prints, with
+//! the executor's code in its binary. A few programs run with more workers, or against a copy of
+//! std with a module added, and check one thing (the worker count's bound, a latch's buffer of
+//! wakers).
 
 use std::path::Path;
 
@@ -20,28 +18,24 @@ fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// `src` built (with `VELT_SCHEDULER=std` when `std`) and run, which must exit with `code`: its
-/// stdout, and its binary.
-fn build_and_run(dir: &Path, name: &str, src: &str, std: bool, code: i32) -> (String, Vec<u8>) {
+/// `src` built with `VELT_SCHEDULER=std` and run, which must exit with `code`: its stdout, and
+/// its binary.
+fn build_and_run(dir: &Path, name: &str, src: &str, code: i32) -> (String, Vec<u8>) {
     let file = dir.join(format!("{name}.velt"));
     std::fs::write(&file, src).unwrap();
     let exe = dir.join(format!(
-        "{name}{}{}",
-        if std { "_std" } else { "" },
+        "{name}_std{}",
         if cfg!(windows) { ".exe" } else { "" }
     ));
-    let mut build = command(env!("CARGO_BIN_EXE_velt"));
-    build
+    let o = command(env!("CARGO_BIN_EXE_velt"))
         .arg("build")
         .arg(&file)
         .arg("-o")
         .arg(&exe)
         .current_dir(dir)
-        .env_remove("VELT_SCHEDULER");
-    if std {
-        build.env("VELT_SCHEDULER", "std");
-    }
-    let o = build.output().unwrap();
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
     assert!(
         o.status.success(),
         "{name}: {}",
@@ -55,7 +49,7 @@ fn build_and_run(dir: &Path, name: &str, src: &str, std: bool, code: i32) -> (St
     assert_eq!(
         o.status.code(),
         Some(code),
-        "{name} (std: {std}): {}{}",
+        "{name}: {}{}",
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
@@ -79,48 +73,47 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 }
 
 /// Whether a `VELT_SCHEDULER=std` program builds here: the executor in Velt waits in an epoll,
-/// kqueue or (Windows) AFD reactor; other OSes have none. The tests compare the two executors
-/// only where both exist.
+/// kqueue or (Windows) AFD reactor; other OSes have none.
 fn std_builds_here() -> bool {
     cfg!(any(unix, windows))
 }
 
-/// Builds and runs `src` both ways: each prints `want`, and only the std build has the executor.
-fn same_on_both(name: &str, src: &str, want: &str) {
-    same_on_both_exiting(name, src, want, 0);
+/// Builds and runs `src`: it prints `want`, and has the executor in Velt.
+fn prints(name: &str, src: &str, want: &str) {
+    prints_exiting(name, src, want, 0);
 }
 
-/// [`same_on_both`] for a program that exits with `code`.
-fn same_on_both_exiting(name: &str, src: &str, want: &str, code: i32) {
+/// [`prints`] for a program that exits with `code`.
+fn prints_exiting(name: &str, src: &str, want: &str, code: i32) {
     if !std_builds_here() {
         return;
     }
     let dir = test_dir::TestDir::new();
-    same_on_both_in(dir.path(), name, src, want, code);
+    prints_in(dir.path(), name, src, want, code);
 }
 
-/// [`same_on_both`], then the std build run again with the debug runtime's block counters
+/// [`prints`], then the std build run again with the debug runtime's block counters
 /// (`VELT_RT_DEBUG_ALLOC=1 VELT_RC_STATS=1`): every block allocated through the runtime must be
 /// freed by the end. The programs return objects from their tasks, which the counters see
 /// wherever the executor takes its task blocks from: a join handle never dropped keeps its
 /// task's result (an unclaimed one in the task's slot, a claimed one as the share the handle's
 /// copies hold).
-fn same_on_both_freeing_all(name: &str, src: &str, want: &str) {
-    same_on_both_freeing_all_runs(name, src, want, 1);
+fn prints_freeing_all(name: &str, src: &str, want: &str) {
+    prints_freeing_all_runs(name, src, want, 1);
 }
 
 /// The counted runs of the programs whose tasks end while other threads of the executor run.
 const STRESS_RUNS: usize = 20;
 
-/// [`same_on_both_freeing_all`], the counted run repeated (when `runs` is over 1) `runs` times
+/// [`prints_freeing_all`], the counted run repeated (when `runs` is over 1) `runs` times
 /// with one worker (the stall rescue on, `VELT_RESCUE=1`: its monitor thread naps while the
 /// program ends) and `runs` times with four workers: a block that a thread other than `main`'s holds at the end shows now and then.
-fn same_on_both_freeing_all_runs(name: &str, src: &str, want: &str, runs: usize) {
+fn prints_freeing_all_runs(name: &str, src: &str, want: &str, runs: usize) {
     if !std_builds_here() {
         return;
     }
     let dir = test_dir::TestDir::new();
-    same_on_both_in(dir.path(), name, src, want, 0);
+    prints_in(dir.path(), name, src, want, 0);
     let exe = dir.path().join(format!(
         "{name}_std{}",
         if cfg!(windows) { ".exe" } else { "" }
@@ -165,134 +158,27 @@ fn same_on_both_freeing_all_runs(name: &str, src: &str, want: &str, runs: usize)
     }
 }
 
-fn same_on_both_in(dir: &Path, name: &str, src: &str, want: &str, code: i32) {
-    checked_on_both(dir, name, src, want, code, None);
+fn prints_in(dir: &Path, name: &str, src: &str, want: &str, code: i32) {
+    checked(dir, name, src, want, code);
 }
 
-/// [`same_on_both`] for a program whose spawned tasks print. The executor in Velt has one worker
-/// that runs its tasks first in, first out: it prints `want` exactly, the interleaving at each
-/// `await`. The runtime's executor gives no order across tasks: even with `VELT_THREADS=1` its
-/// monitor moves the tasks of a stalled worker to another thread (a loaded machine; #2801, where
-/// the second task ran to its `yieldNow` before the first started). There it must print every
-/// line of `want`, each as often, and the lines of each of `chains` (one task's lines, then what
-/// waits for that task) in their order, run with one worker and with four.
-fn same_per_task_on_both(name: &str, src: &str, want: &str, chains: &[&[&str]]) {
-    if !std_builds_here() {
-        return;
-    }
-    let dir = test_dir::TestDir::new();
-    checked_on_both(dir.path(), name, src, want, 0, Some(chains));
-}
-
-/// Whether `out` has the lines of `want`, each as often, with the lines of each of `chains` in
-/// their order (each chain's lines occur once in `want`): `Err` says what differs.
-fn per_task_order(out: &str, want: &str, chains: &[&[&str]]) -> Result<(), String> {
-    let mut got: Vec<&str> = out.lines().collect();
-    let mut all: Vec<&str> = want.lines().collect();
-    got.sort_unstable();
-    all.sort_unstable();
-    if got != all || out.ends_with('\n') != want.ends_with('\n') {
-        return Err(format!("not the lines of {want:?}"));
-    }
-    let lines: Vec<&str> = out.lines().collect();
-    for chain in chains {
-        let mut at = Vec::new();
-        for line in *chain {
-            let mut found = lines.iter().enumerate().filter(|(_, l)| *l == line);
-            match (found.next(), found.next()) {
-                (Some((i, _)), None) => at.push(i),
-                _ => panic!("chain line {line:?} must occur once in {want:?}"),
-            }
-        }
-        if at.windows(2).any(|w| w[0] > w[1]) {
-            return Err(format!("{chain:?} out of order"));
-        }
-    }
-    Ok(())
-}
-
-fn checked_on_both(
-    dir: &Path,
-    name: &str,
-    src: &str,
-    want: &str,
-    code: i32,
-    chains: Option<&[&[&str]]>,
-) {
+fn checked(dir: &Path, name: &str, src: &str, want: &str, code: i32) {
     if !std_builds_here() {
         return;
     }
     runtime_support::build_native_runtime(manifest());
-    let (rt, rt_bin) = build_and_run(dir, name, src, false, code);
-    let (std, std_bin) = build_and_run(dir, name, src, true, code);
-    match chains {
-        None => assert_eq!(rt, want, "{name}: the runtime's executor"),
-        Some(chains) => {
-            if let Err(e) = per_task_order(&rt, want, chains) {
-                panic!("{name}: the runtime's executor: {e}:\n{rt}");
-            }
-            // And with four workers, where the tasks do run on several threads.
-            let exe = dir.join(format!("{name}{}", if cfg!(windows) { ".exe" } else { "" }));
-            let o = command(&exe)
-                .env("VELT_THREADS", "4")
-                .env_remove("VELT_SCHEDULER")
-                .output()
-                .unwrap();
-            let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
-            assert_eq!(o.status.code(), Some(code), "{name} (4 workers): {out}");
-            if let Err(e) = per_task_order(&out, want, chains) {
-                panic!("{name}: the runtime's executor on 4 workers: {e}:\n{out}");
-            }
-        }
-    }
-    assert_eq!(std, want, "{name}: the executor in Velt");
+    let (out, bin) = build_and_run(dir, name, src, code);
+    assert_eq!(out, want, "{name}");
     assert!(
-        contains(&std_bin, marker("schedBlockOn").as_bytes()),
+        contains(&bin, marker("schedBlockOn").as_bytes()),
         "{name}: no executor in Velt"
     );
-    assert!(
-        !contains(&rt_bin, marker("schedBlockOn").as_bytes()),
-        "{name}: the executor in Velt without the variable"
-    );
 }
 
-/// The per-task check of the runtime's executor takes any interleaving of the tasks, and catches
-/// a line lost or a task's lines out of order.
-#[test]
-fn the_per_task_check_catches_lost_lines_and_a_task_out_of_order() {
-    let want = "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\nwork 2 resumes\n6\n";
-    let chains = SPAWN_YIELD_CHAINS;
-    assert_eq!(per_task_order(want, want, chains), Ok(()));
-    // #2801's run: the second task ran to its `yieldNow` before the first started.
-    let ci = "spawned\nwork 2 starts\nwork 2 resumes\nwork 1 starts\nwork 1 resumes\n6\n";
-    assert_eq!(per_task_order(ci, want, chains), Ok(()));
-    for bad in [
-        // A task's lines swapped.
-        "spawned\nwork 1 resumes\nwork 2 starts\nwork 1 starts\nwork 2 resumes\n6\n",
-        // `main` printed before a task it awaits finished.
-        "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\n6\nwork 2 resumes\n",
-        // A line lost, one printed twice, a wrong result, no last newline.
-        "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\n6\n",
-        "spawned\nwork 1 starts\nwork 1 starts\nwork 1 resumes\nwork 2 resumes\n6\n",
-        "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\nwork 2 resumes\n2\n",
-        "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\nwork 2 resumes\n6",
-    ] {
-        assert!(per_task_order(bad, want, chains).is_err(), "{bad:?}");
-    }
-}
-
-/// `spawn_yield`'s tasks: each task's lines, then `main`'s sum, which awaits both.
-const SPAWN_YIELD_CHAINS: &[&[&str]] = &[
-    &["work 1 starts", "work 1 resumes", "6"],
-    &["work 2 starts", "work 2 resumes", "6"],
-    &["spawned", "6"],
-];
-
-/// Spawned tasks run to their `yieldNow` in turn, resume in turn, and are joined: Node's order
-/// on the executor in Velt, every task's lines in order on the runtime's.
+/// Spawned tasks run to their `yieldNow` in turn, resume in turn, and are joined: Node's order.
 #[test]
 fn spawned_tasks_yield_and_join() {
-    same_per_task_on_both(
+    prints(
         "spawn_yield",
         "async function work(i: i64): Promise<i64> {
   console.log(`work ${i} starts`);
@@ -309,7 +195,6 @@ async function main() {
 }
 ",
         "spawned\nwork 1 starts\nwork 2 starts\nwork 1 resumes\nwork 2 resumes\n6\n",
-        SPAWN_YIELD_CHAINS,
     );
 }
 
@@ -339,7 +224,7 @@ async function main() {{
 }}
 "
     );
-    same_on_both_in(
+    prints_in(
         dir.path(),
         "leaf_wake",
         &src,
@@ -350,7 +235,7 @@ async function main() {{
 
 #[test]
 fn channels_hand_values_between_tasks() {
-    same_on_both(
+    prints(
         "channel_rounds",
         "import { channel, Channel } from \"velt/sync\";
 
@@ -387,7 +272,7 @@ fn results_nobody_claims_are_dropped_and_tasks_outlive_main() {
     // A detached task's string result and a dropped handle's are dropped (the debug runtime
     // reports a leak otherwise); a task still waiting when `main` returns runs to its end. It
     // starts its sleep only once `main` is done (a channel, not a race of its sleep with `main`).
-    same_on_both(
+    prints(
         "unclaimed",
         "import { channel, Channel } from \"velt/sync\";
 
@@ -422,7 +307,7 @@ fn a_dropped_spawn_handle_frees_its_task() {
     // The join handle of `spawn(f())` is the task's last reference once it is done: dropped at
     // once (a statement) or at the end of its block (a stored handle never awaited), the task's
     // block and the object it returned are freed.
-    same_on_both_freeing_all_runs(
+    prints_freeing_all_runs(
         "spawn_dropped",
         "class Tag {
   n: i64;
@@ -455,7 +340,7 @@ async function main() {
 fn an_awaited_spawn_handle_frees_its_task() {
     // Awaiting a join handle, stored or not, consumes it, fulfilled or rejected (caught): the
     // task's block and the object it returned are freed.
-    same_on_both_freeing_all(
+    prints_freeing_all(
         "spawn_awaited",
         "class Failed extends Error {}
 
@@ -495,7 +380,7 @@ async function main() {
 fn raced_spawn_handles_free_their_tasks() {
     // `Promise.race` takes the handles: the winner's and the loser's tasks are both freed (the
     // loser, held by a channel until the race is decided, runs to its end after `main`).
-    same_on_both_freeing_all(
+    prints_freeing_all(
         "spawn_raced",
         "import { channel, Channel } from \"velt/sync\";
 
@@ -531,7 +416,7 @@ fn a_combinator_s_spawned_losers_reject_quietly() {
     // The handles a rejected `Promise.all` leaves behind (inline: given up to the task) and the
     // losers of a `Promise.race` over a stored array are handled: their tasks reject later,
     // after the handles were dropped, without an uncaught report, and are freed.
-    same_on_both_freeing_all_runs(
+    prints_freeing_all_runs(
         "spawn_losers",
         "import { Channel, channel } from \"velt/sync\";
 
@@ -575,7 +460,7 @@ fn a_spawn_handle_dropped_after_its_task_rejected_reports_it() {
     // The handle dropped after the task rejected reports the rejection as uncaught and exits
     // with 1 (#148); a handle never dropped would leave it unreported until the guard sleep,
     // which must never end, ends.
-    same_on_both_exiting(
+    prints_exiting(
         "spawn_dropped_after_reject",
         "class Failed extends Error {}
 
@@ -603,7 +488,7 @@ async function main() {
 fn started_promises_run_at_once_and_microtasks_keep_node_order() {
     // A stored promise runs until its first `await` when it is created; `await` steps, `then`
     // and `queueMicrotask` take turns in one queue; a `resolve` called later queues its waiter.
-    same_on_both(
+    prints(
         "started_micro",
         "async function f(n: i64): Promise<i64> {
   console.log(`f${n} start`);
@@ -645,7 +530,7 @@ async function main() {
 fn a_combinators_losers_are_handled_and_an_exit_code_ends_at_once() {
     // A rejected promise handed to `Promise.all` is handled by it (no uncaught report after the
     // rejection is caught); `main` returning 3 does not wait for the sleeping loser.
-    same_on_both_exiting(
+    prints_exiting(
         "handled_exit",
         "class Failed extends Error {}
 
@@ -678,11 +563,11 @@ async function main(): Promise<i32> {
 
 #[test]
 fn combinators_look_at_their_promises_in_node_s_order() {
-    // The combinators' first look on both executors, against Node 24's output: a started promise
+    // The combinators' first look, against Node 24's output: a started promise
     // still pending when the race is made (`later`, or `w`, woken but not resumed yet) loses to
     // a settled one after it, and a started promise that settled at its start (`now`) wins
     // (#2848's check of the std executor's started promises in the runtime's combinators).
-    same_on_both(
+    prints(
         "first_look",
         r#"async function later(v: string): Promise<string> {
   await null;
@@ -728,10 +613,10 @@ async function main() {
 
 /// Promises run from a microtask while they wait on their task's woken stack, and woken again
 /// there: the golden that crashed (a node pushed on the stack twice made a cycle) prints Node's
-/// order on both executors.
+/// order.
 #[test]
 fn promises_woken_while_queued_keep_their_task_s_woken_stack_whole() {
-    same_on_both(
+    prints(
         "race_settled_order",
         include_str!("../../../tests/golden/lang/promise_race_settled_order.velt"),
         include_str!("../../../tests/golden/lang/promise_race_settled_order.out"),
@@ -752,7 +637,7 @@ fn a_rejection_finishing_while_woken_keeps_the_woken_stack_whole() {
     let dir = test_dir::TestDir::new();
     let src = include_str!("../../../tests/golden/lang/promise_combinators_kept_array.velt");
     let want = include_str!("../../../tests/golden/lang/promise_combinators_kept_array.out");
-    let (out, _) = build_and_run(dir.path(), "kept_array", src, true, 0);
+    let (out, _) = build_and_run(dir.path(), "kept_array", src, 0);
     assert_eq!(out, want);
     let exe = dir.path().join(format!(
         "kept_array_std{}",
@@ -795,7 +680,7 @@ fn a_rejection_finishing_while_woken_keeps_the_woken_stack_whole() {
 /// home's proxy, which nothing drove: the spawned task waited forever).
 #[test]
 fn a_spawned_task_awaits_a_shared_promise_while_microtasks_are_queued() {
-    same_per_task_on_both(
+    prints(
         "shared_spawned",
         "async function work(): Promise<number> {
            await yieldNow();
@@ -817,10 +702,6 @@ fn a_spawned_task_awaits_a_shared_promise_while_microtasks_are_queued() {
            console.log(`main: got ${v}, spawned returned ${await a}`);
          }",
         "main: then\nmain: microtask\nspawned: microtask\nspawned: got 7\nmain: got 7, spawned returned 7\n",
-        &[
-            &["main: then", "main: microtask", "main: got 7, spawned returned 7"],
-            &["spawned: microtask", "spawned: got 7", "main: got 7, spawned returned 7"],
-        ],
     );
 }
 
@@ -894,7 +775,7 @@ fn a_program_without_imports_builds_for_every_reactor() {
 /// level waits at an `await` (sched_end.velt).
 #[test]
 fn a_never_settled_promise_exits_like_the_runtime() {
-    same_on_both(
+    prints(
         "never_settled",
         "async function stuck(): Promise<void> {
   await new Promise<void>((r) => {});
@@ -911,7 +792,7 @@ async function main() {
 ",
         "waiting\n",
     );
-    same_on_both_exiting(
+    prints_exiting(
         "never_settled_top",
         "console.log(\"before\");
 await sleep(10);
@@ -937,7 +818,7 @@ fn a_long_poll_on_the_only_worker_starts_no_spare() {
     }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let (out, _) = build_and_run(dir.path(), "no_spare", NO_SPARE, true, 0);
+    let (out, _) = build_and_run(dir.path(), "no_spare", NO_SPARE, 0);
     assert_eq!(out, "sum 299995, off worker 0 0\n", "the default");
     if !cfg!(any(target_os = "macos", target_os = "linux")) {
         return;

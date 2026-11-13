@@ -4,9 +4,9 @@
 //! (std/net/rt_later.velt): the runtime sends its own deferred bytes only after polls of its own
 //! tasks, which never run on the Velt worker. And the end of such a program gives back the send
 //! buffers of the reactor's sockets dropped without `close()` (sched_io_table.velt
-//! `releaseBuffers`), which a leak check counts. Each program is built with and without the
-//! variable, both binaries run with `VELT_THREADS=1` and `4` (the flusher is a task other workers
-//! may take; killed after a minute: lost bytes hang) and must print the same.
+//! `releaseBuffers`), which a leak check counts. Each program is built with the variable and
+//! runs with `VELT_THREADS=1` and `4` (the flusher is a task other workers may take; killed after
+//! a minute: lost bytes hang); it must print what Node prints.
 
 use std::path::Path;
 use std::process::{Output, Stdio};
@@ -19,28 +19,24 @@ mod runtime_support;
 mod std_unix;
 mod test_dir;
 
-/// `src` built (with `VELT_SCHEDULER=std` when `std`): the binary.
-fn build(dir: &Path, name: &str, src: &str, std: bool) -> std::path::PathBuf {
+/// `src` built with `VELT_SCHEDULER=std`: the binary.
+fn build(dir: &Path, name: &str, src: &str) -> std::path::PathBuf {
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let file = dir.join(format!("{name}.velt"));
     std::fs::write(&file, src).unwrap();
     let exe = dir.join(format!(
-        "{name}{}{}",
-        if std { "_std" } else { "" },
+        "{name}_std{}",
         if cfg!(windows) { ".exe" } else { "" }
     ));
-    let mut build = command(env!("CARGO_BIN_EXE_velt"));
-    build
+    let o = command(env!("CARGO_BIN_EXE_velt"))
         .arg("build")
         .arg(&file)
         .arg("-o")
         .arg(&exe)
         .current_dir(dir)
-        .env_remove("VELT_SCHEDULER");
-    if std {
-        build.env("VELT_SCHEDULER", "std");
-    }
-    let o = build.output().unwrap();
+        .env("VELT_SCHEDULER", "std")
+        .output()
+        .unwrap();
     assert!(
         o.status.success(),
         "{name}: {}",
@@ -50,7 +46,7 @@ fn build(dir: &Path, name: &str, src: &str, std: bool) -> std::path::PathBuf {
 }
 
 /// `exe` run with `threads` workers and the block counters on: its output.
-fn run(exe: &Path, name: &str, std: bool, threads: &str) -> Output {
+fn run(exe: &Path, name: &str, threads: &str) -> Output {
     let mut child = command(exe)
         .env("VELT_THREADS", threads)
         .env("VELT_RC_STATS", "1")
@@ -64,14 +60,14 @@ fn run(exe: &Path, name: &str, std: bool, threads: &str) -> Output {
     while child.try_wait().unwrap().is_none() {
         if start.elapsed() > Duration::from_secs(60) {
             child.kill().unwrap();
-            panic!("{name} (std: {std}, {threads} workers): still running after a minute");
+            panic!("{name} ({threads} workers): still running after a minute");
         }
         std::thread::sleep(Duration::from_millis(10));
     }
     let o = child.wait_with_output().unwrap();
     assert!(
         o.status.success(),
-        "{name} (std: {std}, {threads} workers): {}{}",
+        "{name} ({threads} workers): {}{}",
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
@@ -93,7 +89,7 @@ fn blocks(o: &Output) -> Option<(u64, u64)> {
     Some((a.parse().ok()?, f.parse().ok()?))
 }
 
-/// Which runs of [`same_on_both_counted`] must free every block they allocated.
+/// Which runs of [`prints_counted`] must free every block they allocated.
 #[derive(Clone, Copy, PartialEq)]
 enum Counted {
     /// The runs with 1 worker. With more, a task can end on another worker as the program ends
@@ -103,17 +99,16 @@ enum Counted {
     Never,
 }
 
-/// Builds and runs `src` both ways: each prints `want`, and frees every block it allocated when
-/// run with 1 worker ([`Counted::OneWorker`]); the std build holds `marker`'s code (std's file of
-/// the path under test), the other doesn't.
-fn same_on_both(name: &str, src: &str, want: &str, marker: &[u8]) {
-    same_on_both_counted(name, src, want, marker, Counted::OneWorker);
+/// Builds and runs `src`: it prints `want`, and frees every block it allocated when run with 1
+/// worker ([`Counted::OneWorker`]); it holds `marker`'s code (std's file of the path under test).
+fn prints(name: &str, src: &str, want: &str, marker: &[u8]) {
+    prints_counted(name, src, want, marker, Counted::OneWorker);
 }
 
-/// [`same_on_both`], with the block counts compared only in the runs `counted` names.
-fn same_on_both_counted(name: &str, src: &str, want: &str, marker: &[u8], counted: Counted) {
+/// [`prints`], with the block counts compared only in the runs `counted` names.
+fn prints_counted(name: &str, src: &str, want: &str, marker: &[u8], counted: Counted) {
     if !cfg!(unix) {
-        // Windows has no reactor in Velt yet: its sockets stay the runtime's in both builds.
+        // Windows has no reactor in Velt yet: its sockets stay the runtime's.
         return;
     }
     let dir = test_dir::TestDir::new();
@@ -123,29 +118,20 @@ fn same_on_both_counted(name: &str, src: &str, want: &str, marker: &[u8], counte
         include_str!("../../../tests/golden/std/_tls.velt"),
     )
     .unwrap();
-    for std in [false, true] {
-        let exe = build(dir.path(), name, src, std);
-        let bin = std::fs::read(&exe).unwrap();
-        assert_eq!(
-            contains(&bin, marker),
-            std,
-            "{name} (std: {std}): its code in Velt"
-        );
-        for threads in ["1", "4"] {
-            let o = run(&exe, name, std, threads);
-            let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
-            assert_eq!(out, want, "{name} (std: {std}, {threads} workers)");
-            let compared = match counted {
-                Counted::OneWorker => threads == "1",
-                Counted::Never => false,
-            };
-            // Only a debug runtime counts blocks.
-            if let Some((a, f)) = blocks(&o).filter(|_| compared) {
-                assert_eq!(
-                    a, f,
-                    "{name} (std: {std}, {threads} workers): blocks allocated / freed"
-                );
-            }
+    let exe = build(dir.path(), name, src);
+    let bin = std::fs::read(&exe).unwrap();
+    assert!(contains(&bin, marker), "{name}: its code in Velt");
+    for threads in ["1", "4"] {
+        let o = run(&exe, name, threads);
+        let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+        assert_eq!(out, want, "{name} ({threads} workers)");
+        let compared = match counted {
+            Counted::OneWorker => threads == "1",
+            Counted::Never => false,
+        };
+        // Only a debug runtime counts blocks.
+        if let Some((a, f)) = blocks(&o).filter(|_| compared) {
+            assert_eq!(a, f, "{name} ({threads} workers): blocks allocated / freed");
         }
     }
 }
@@ -169,7 +155,7 @@ fn rt_later_shadow_white_box_tests_pass() {
 /// through with `drained` as backpressure.
 #[test]
 fn deferred_writes_on_a_runtime_stream_reach_the_peer() {
-    same_on_both(
+    prints(
         "pair_later",
         "import { streamPair, TcpStream } from \"velt/net\";
 
@@ -264,7 +250,7 @@ async function main() {
 /// when the counts are taken gives its reference back after them, one block (#2842).
 #[test]
 fn deferred_writes_on_runtime_tls_streams_reach_the_peer() {
-    same_on_both_counted(
+    prints_counted(
         "tls_later",
         "import { connectTls, listenTls } from \"velt/net\";
 import { TEST_CA, TEST_CERT, TEST_KEY } from \"./_tls\";
@@ -328,7 +314,7 @@ async function main() {
 /// accepted socket here, and an unclosed `streamPair` end).
 #[test]
 fn an_unclosed_stream_s_send_buffer_is_freed_at_the_end() {
-    same_on_both(
+    prints(
         "unclosed",
         "import { connect, listen, streamPair } from \"velt/net\";
 
@@ -362,7 +348,7 @@ async function main() {
 /// closed stream ends, and the deferred bytes are all sent all the same.
 #[test]
 fn close_with_deferred_bytes_closes_at_once_and_still_sends_them() {
-    same_on_both(
+    prints(
         "close_now",
         "import { streamPair } from \"velt/net\";
 
@@ -410,7 +396,7 @@ async function main() {
     // Block counts not compared: a runtime thread still holding a waker of the finished reader
     // (its read waited on the closed stream) gives the reference back after the counts, at any
     // number of workers, one block (#2842).
-    same_on_both_counted(
+    prints_counted(
         "close_ends_read",
         "import { streamPair } from \"velt/net\";
 
@@ -451,7 +437,7 @@ async function main() {
 /// before its close or not.
 #[test]
 fn write_later_on_a_closed_runtime_stream_reports_ebadf() {
-    same_on_both(
+    prints(
         "later_after_close",
         "import { streamPair } from \"velt/net\";
 
@@ -494,7 +480,7 @@ async function main() {
 /// blocks no executor frees at that end: not compared.)
 #[test]
 fn deferred_bytes_do_not_keep_the_program_alive_after_main() {
-    same_on_both_counted(
+    prints_counted(
         "later_exit",
         "import { streamPair } from \"velt/net\";
 
@@ -515,7 +501,7 @@ async function main() {
 /// `drained` and to the next `writeLater`.
 #[test]
 fn a_failed_deferred_write_reports_the_runtimes_status() {
-    same_on_both(
+    prints(
         "later_error",
         "import { streamPair } from \"velt/net\";
 
@@ -550,7 +536,7 @@ async function main() {
 /// buffers (sched_io_table.velt `releaseBuffers`).
 #[test]
 fn process_exit_with_an_open_runtime_stream_ends_the_program() {
-    same_on_both_counted(
+    prints_counted(
         "later_process_exit",
         "import { streamPair } from \"velt/net\";
 

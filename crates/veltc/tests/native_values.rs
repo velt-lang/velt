@@ -5,7 +5,7 @@
 //! types (`Row` itself is a struct, a value, never boxed) and every value crosses through the
 //! compiler's foreign-layout conversion; the
 //! async results are awaited directly, kept and awaited later, and combined with `Promise.all`.
-//! It runs on both schedulers with the debug runtime's allocator checks and leak count.
+//! It runs on the executor in Velt with the debug runtime's allocator checks and leak count.
 //!
 //! Needs cargo (the first run builds the SDK, a few seconds later); `VELT_SKIP_NATIVE_E2E=1`
 //! skips it.
@@ -60,11 +60,11 @@ async function main() {
 
 const EXPECTED: &str = "2 b \n1 a x+y\n3 7\n0 p \n1 q t0\n2 p t0+t1\n0 k \n1 k t0\n0 m \n1 m t0\n0 n \ntrue no names\n1 2 a 1 a\n5 0\n";
 
-fn run(app: &Path, scheduler: &str) -> Output {
+fn run(app: &Path) -> Output {
     no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["run", "src/main.velt"])
         .current_dir(app)
-        .env("VELT_SCHEDULER", scheduler)
+        .env("VELT_SCHEDULER", "std")
         .env("VELT_RT_DEBUG_ALLOC", "1")
         .env("VELT_RC_STATS", "1")
         .env("VELT_DEBUG_COUNTED", "1")
@@ -73,7 +73,7 @@ fn run(app: &Path, scheduler: &str) -> Output {
 }
 
 #[test]
-fn arrays_and_structs_cross_with_counted_types_on_both_schedulers() {
+fn arrays_and_structs_cross_with_counted_types() {
     if std::env::var_os("VELT_SKIP_NATIVE_E2E").is_some_and(|v| v == "1") {
         eprintln!("skipped: VELT_SKIP_NATIVE_E2E=1");
         return;
@@ -90,30 +90,28 @@ fn arrays_and_structs_cross_with_counted_types_on_both_schedulers() {
     )
     .unwrap();
     std::fs::write(app.join("src/main.velt"), PROGRAM).unwrap();
-    for scheduler in ["stealing", "velt"] {
-        let out = run(&app, scheduler);
-        let (stdout, stderr) = (
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr),
-        );
-        assert!(
-            out.status.success(),
-            "{scheduler}: velt run failed:\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
-        );
-        assert_eq!(stdout, EXPECTED, "{scheduler}; stderr:\n{stderr}");
-        assert!(
-            stderr.contains("counted types: string[], vals::Row[]"),
-            "the program no longer counts `Row[]` and `string[]`:\n{stderr}"
-        );
-        let stats = stderr
-            .lines()
-            .find(|l| l.starts_with("rc stats:"))
-            .unwrap_or_else(|| panic!("no rc stats in:\n{stderr}"));
-        let blocks = stats
-            .split_whitespace()
-            .find_map(|w| w.strip_prefix("blocks="))
-            .unwrap();
-        let (alloc, free) = blocks.split_once('/').unwrap();
-        assert_eq!(alloc, free, "{scheduler}: leaked blocks ({stats})");
-    }
+    let out = run(&app);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        out.status.success(),
+        "velt run failed:\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+    );
+    assert_eq!(stdout, EXPECTED, "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("counted types: string[], vals::Row[]"),
+        "the program no longer counts `Row[]` and `string[]`:\n{stderr}"
+    );
+    let stats = stderr
+        .lines()
+        .find(|l| l.starts_with("rc stats:"))
+        .unwrap_or_else(|| panic!("no rc stats in:\n{stderr}"));
+    let blocks = stats
+        .split_whitespace()
+        .find_map(|w| w.strip_prefix("blocks="))
+        .unwrap();
+    let (alloc, free) = blocks.split_once('/').unwrap();
+    assert_eq!(alloc, free, "leaked blocks ({stats})");
 }
