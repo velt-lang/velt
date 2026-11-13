@@ -9,6 +9,11 @@
 // construction, and the cleared timer is due 60 s after it is set, long after `b` clears it (a
 // missed clear prints its line, a failure that doesn't race). Different delays across tasks would
 // depend on that time, so each task's own timers share one delay.
+//
+// Not a golden (tests/golden runs with the runtime's executor too): the runtime's executor keeps
+// no order for the process, so there the two 1000 ms timers, due at about the same time on two
+// workers, race (`b 1000` first, on Windows at once, where both come due at one tick of the
+// system timer). std_scheduler_timers.rs runs it under the executor in Velt, which keeps one.
 import { setImmediate, setTimeout, Timer } from "velt/time";
 
 class State {
