@@ -346,9 +346,12 @@ fn push_instance(cx: &Ctx, p: &mut Propagation, t: TyId, w: Why) {
         p.wild.push(w);
     } else if types::mentions_dynamic(cx, t) {
         // A dynamic type holds what the program made dynamic (`Graph::dynamic`), not every type
-        // and closure there is; the rest of the type (`Box<unknown>`) is as any other.
+        // and closure there is; the rest of the type (`Box<unknown>`) is as any other. A bare
+        // `unknown` or `any` has no rest: as a heap root it would reach every type there is.
         p.dynamic.push(w);
-        p.roots.push((t, w));
+        if !types::is_dynamic(cx, t) {
+            p.roots.push((t, w));
+        }
     } else {
         p.roots.push((t, w));
     }

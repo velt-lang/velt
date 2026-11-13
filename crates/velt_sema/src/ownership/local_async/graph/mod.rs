@@ -204,20 +204,7 @@ pub(super) fn build(cx: &Ctx) -> Graph {
     }
     super::unknown_callees::mark(cx, &mut g);
     super::call_sites::named_outside_bodies(cx, &mut g.held.referenced);
-    g.untraced = dynamic::untraced_nodes(cx, &g);
-    let mut by_ty: FxHashMap<TyId, usize> = FxHashMap::default();
-    for (ci, call) in g.indirect.iter().enumerate() {
-        let k = *by_ty.entry(call.ty).or_insert_with(|| {
-            g.indirect_by_ty.push((call.ty, vec![]));
-            g.indirect_by_ty.len() - 1
-        });
-        g.indirect_by_ty[k].1.push(ci);
-    }
-    for i in 0..g.dynamic.len() {
-        let d = g.dynamic[i];
-        g.dynamic[i].untraced =
-            super::types::mentions_param(cx, d.from) || untraced_input(&g, d.node);
-    }
+    dynamic::finish(cx, &mut g);
     g.dyn_calls.finish(cx);
     g
 }
@@ -691,6 +678,17 @@ impl Walk<'_, '_> {
             for a in args {
                 self.g.dyn_calls.escape(self.cx, a.ty);
             }
+        }
+        // What only inspects a borrowed `any` (`typeof x`, `x === y`, `Array.isArray(x)`) keeps
+        // nothing: a value converted to `any` for it is read here, not made a dynamic value.
+        if dynamic::inspects_only(i) {
+            for a in args {
+                match &a.kind {
+                    E::ToDyn { expr: x, .. } => self.value(x, To::Drop),
+                    _ => self.value(a, To::Drop),
+                }
+            }
+            return self.unknown(e, to);
         }
         // A share of the value as an `any` (kept, as other intrinsics' arguments are).
         if let (Intrinsic::ToAny, [x]) = (i, args) {

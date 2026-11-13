@@ -2,6 +2,7 @@
 //! `unknown`, `object` or `Function`, or thrown, which a crossing value of a dynamic type may
 //! hold (#2865).
 
+use rustc_hash::FxHashMap;
 use velt_common::Span;
 
 use crate::ctx::Ctx;
@@ -25,6 +26,9 @@ pub(in crate::ownership::local_async) struct DynConv {
     /// Something flows in that the graph can't trace (a value of unknown origin, a parameter only
     /// dispatched calls feed, a generic value): set once the graph is built.
     pub untraced: bool,
+    /// The value converted is made right there (`throw new Error(…)`, a literal): what it holds
+    /// comes through its construction, which the graph follows, so it is never untraced.
+    pub fresh: bool,
 }
 
 /// Does something flow into node `n` that the graph can't trace ([`untraced_nodes`])?
@@ -132,6 +136,10 @@ impl Walk<'_, '_> {
             owner: self.d,
             from: x.ty,
             untraced: false,
+            fresh: matches!(
+                inner.kind,
+                E::New { .. } | E::AdtLit { .. } | E::ArrayLit(_) | E::Tuple(_) | E::Lit(_)
+            ),
         });
         self.value(x, To::Node(n, None));
         let callee = (call.and_then(|c| self.g.ids.get(&Node::Callee(c))))
@@ -142,4 +150,57 @@ impl Walk<'_, '_> {
         }
         self.connect(n, to);
     }
+}
+
+/// The graph's dynamic-value tables, once its walk is done: what is untraced (per node, and per
+/// conversion), and the calls through function values by the type called through.
+pub(super) fn finish(cx: &Ctx, g: &mut Graph) {
+    g.untraced = untraced_nodes(cx, g);
+    let mut by_ty: FxHashMap<TyId, usize> = FxHashMap::default();
+    for (ci, call) in g.indirect.iter().enumerate() {
+        let k = *by_ty.entry(call.ty).or_insert_with(|| {
+            g.indirect_by_ty.push((call.ty, vec![]));
+            g.indirect_by_ty.len() - 1
+        });
+        g.indirect_by_ty[k].1.push(ci);
+    }
+    for i in 0..g.dynamic.len() {
+        let d = g.dynamic[i];
+        // A thrown value is followed by the graph only: a rethrown error of unknown origin
+        // (`catch (e) { throw e; }`) resolved by its type would reach every type its `unknown`
+        // fields may hold.
+        let thrown = d.ty.is_none();
+        // Std's own conversions are followed by the graph only, like a thrown value: std reads
+        // back what it made `unknown` itself (a stream's chunk checked with `instanceof`), and a
+        // program's value reaches them through calls the graph follows (`Promise.reject(job)`).
+        let in_std = cx
+            .try_fn(d.owner)
+            .is_some_and(|f| cx.scopes[f.module].is_std);
+        g.dynamic[i].untraced = !d.fresh
+            && !thrown
+            && !in_std
+            && (super::super::types::mentions_param(cx, d.from) || untraced_input(g, d.node));
+    }
+}
+
+/// Does intrinsic `i` only inspect a borrowed `any` (`typeof x`, `x === y`, `Array.isArray(x)`),
+/// keeping nothing of it?
+pub(super) fn inspects_only(i: crate::hir::Intrinsic) -> bool {
+    use crate::hir::Intrinsic;
+    matches!(
+        i,
+        Intrinsic::AnyTypeof
+            | Intrinsic::AnyTruthy
+            | Intrinsic::AnyUnboundMethod
+            | Intrinsic::AnyStrictEq
+            | Intrinsic::AnyLooseEq
+            | Intrinsic::AnyHas
+            | Intrinsic::AnyReflectInfo
+            | Intrinsic::AnyReflectCount
+            | Intrinsic::AnyReflectName
+            | Intrinsic::AnyIsArray
+            | Intrinsic::AnyKeys
+            | Intrinsic::AnyTag
+            | Intrinsic::AnyToNumber
+    )
 }
