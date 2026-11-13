@@ -324,8 +324,8 @@ function mainDone(e: usize, k: usize): void {
     // before worker 0 can see it done and end the process (stdout is buffered per thread).
     wk.handOffOutput();
   }
-  // Worker 0 reads the flags from its loop (sched.velt `rootLeft`): counted live before it can
-  // see the root done, and both flags at once (an atomic or, ordered after the count).
+  // Worker 0 reads the flags from its loop (sched_task.velt `rootLeft`): counted live before it
+  // can see the root done, and both flags at once (an atomic or, ordered after the count).
   if (m.ld(k + t.T_LOCALS) !== 0) {
     // Its started promises keep running after `main`.
     mk.liveUp(g, e);
@@ -371,7 +371,7 @@ function finish(e: usize, k: usize): void {
 
 /**
  * `finish` of the root task of `main` (task `k`), not counted live: worker 0 waits for the state
- * `DONE` (sched.velt `rootLeft`), holding a reference of its own, and may end the program as
+ * `DONE` (sched_task.velt `rootLeft`), holding a reference of its own, and may end the program as
  * soon as it sees it. So that state comes last, after everything else the task gives back: a
  * last poll on another worker (the monitor moved it) that set it first left its microtask queue
  * and the executor's reference to free while worker 0 ended the program, 2 blocks the count
