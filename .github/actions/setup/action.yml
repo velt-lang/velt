@@ -45,7 +45,10 @@ runs:
     # hold, or the job checks as usual:
     # - the queue branch answers 404 at every look over two minutes, while the same token reads
     #   `main` (200: a token that can't read the repository gets 404 for everything);
-    # - the merge queue itself (GraphQL) answers, and none of its entries is this run's commit.
+    # - the merge queue itself (GraphQL) answers with at least one entry, and none of them is this
+    #   run's commit. An empty list counts as unknown, because a token that can't see the queue's
+    #   entries may read it as empty (#2890 still cancelled a live entry's run, 2026-11-13 05:57).
+    # Each two-minute 404 leaves a "queue guard" notice with the queue's answer, for #2889.
     # The second test is the authority. On 2026-11-13, a 404 alone cancelled live entries' runs
     # mid-run (#2861, #2885, #2876), with their branches present minutes later. Each such cancel
     # leaves the entry UNMERGEABLE until it is re-queued, and the queue then rebuilds what follows
@@ -74,12 +77,17 @@ runs:
               repository(owner: $owner, name: $name) {
                 mergeQueue(branch: "main") { entries(first: 100) { nodes { headCommit { oid } } } }
               }
-            }' --jq "if (.data.repository.mergeQueue.entries.nodes | type) == \"array\"
-                     then (if any(.data.repository.mergeQueue.entries.nodes[]; .headCommit.oid == \"$GITHUB_SHA\")
-                           then \"yes\" else \"no\" end)
-                     else \"unknown\" end" 2>/dev/null || echo unknown
+            }' --jq "if (.data.repository.mergeQueue.entries.nodes | type) != \"array\" then \"unknown\"
+                     elif (.data.repository.mergeQueue.entries.nodes | length) == 0 then \"empty\"
+                     elif any(.data.repository.mergeQueue.entries.nodes[]; .headCommit.oid == \"$GITHUB_SHA\") then \"yes\"
+                     else \"no\" end" 2>/dev/null || echo unknown
         }
-        if gone && sleep 30 && gone && sleep 30 && gone && sleep 60 && gone && [ "$(queued)" = no ]; then
+        q=
+        if gone && sleep 30 && gone && sleep 30 && gone && sleep 60 && gone; then
+          q=$(queued)
+          echo "::notice title=queue guard::$GITHUB_REF answered 404 for two minutes; the merge queue answered '$q' for $GITHUB_SHA."
+        fi
+        if [ "$q" = no ]; then
           echo "::notice title=queue entry gone::$GITHUB_REF is no longer in the merge queue: cancelling this run to free its runners."
           # The cancellation stops this job within seconds; don't start a build meanwhile.
           if gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"; then
