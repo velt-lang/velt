@@ -1,0 +1,19 @@
+// A closure assigns the job to a variable it captured, and the variable is spawned (#2893): what a
+// closure assigns to a captured variable is the outer variable's value too, so the job is refused.
+type Job = () => Promise<void>;
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  let u: Job = async () => {};
+  const set = (): void => {
+    u = job;
+  };
+  set();
+  spawn(async () => {
+    console.log(typeof u);
+  });
+  await sleep(10);
+  console.log(`n ${n}`);
+}

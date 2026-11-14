@@ -1,0 +1,15 @@
+// A closure that a closure called through a function value returns, kept in a local and spawned
+// (#2893): what the called closure returns crosses with it, so the job that changes what it
+// captured is refused.
+type Job = () => Promise<void>;
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  const f = (): Job => job;
+  const j = f();
+  spawn(j());
+  await sleep(10);
+  console.log(`n ${n}`);
+}

@@ -1,0 +1,1 @@
+async_closure_fn_value_result_two_calls.velt:8:5: error: this async closure modifies captured `n`, so it must stay on the task that created it
