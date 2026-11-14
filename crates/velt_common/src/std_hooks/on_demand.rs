@@ -36,6 +36,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_float",
     "std/lang/hooks/any_record",
     "std/lang/hooks/unwind",
+    "std/lang/hooks/inspect",
+    "std/lang/hooks/inspect_cycles",
 ];
 
 /// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).
