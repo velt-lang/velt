@@ -1,0 +1,31 @@
+// A value converted to an object type whose fields are its own, in its order, where a field
+// becomes optional (`alpn: string[]` into `alpn?: string[]`), shows as the original does when it
+// is spread, printed, serialized or its keys are listed (#2956).
+type Options = {
+  cert: string;
+  key: string;
+  alpn?: string[];
+};
+
+function open(o: Options): string {
+  return `${o.cert} ${o.key} ${(o.alpn ?? []).join(",")}`;
+}
+
+function serve(tls: Options): string {
+  const alpn = tls.alpn ?? ["h2", "http/1.1"];
+  return open({ ...tls, alpn: alpn });
+}
+
+function show(o: Options): void {
+  console.log(o);
+  console.log(JSON.stringify(o));
+  console.log(Object.keys(o).join(","));
+  const more = { ...o, port: 443 };
+  console.log(JSON.stringify(more));
+}
+
+const tls = { cert: "C", key: "K", alpn: ["http/1.1"] };
+console.log(serve(tls));
+console.log(serve({ cert: "C2", key: "K2" }));
+show(tls);
+show({ cert: "C3", key: "K3" });

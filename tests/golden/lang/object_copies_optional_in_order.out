@@ -1,0 +1,10 @@
+C K http/1.1
+C2 K2 h2,http/1.1
+{ cert: 'C', key: 'K', alpn: [ 'http/1.1' ] }
+{"cert":"C","key":"K","alpn":["http/1.1"]}
+cert,key,alpn
+{"cert":"C","key":"K","alpn":["http/1.1"],"port":443}
+{ cert: 'C3', key: 'K3' }
+{"cert":"C3","key":"K3"}
+cert,key
+{"cert":"C3","key":"K3","port":443}

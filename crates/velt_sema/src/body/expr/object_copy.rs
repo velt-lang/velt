@@ -194,7 +194,8 @@ impl FnCx<'_, '_> {
     }
 
     /// Does the copy have the source's fields (`copied`, in the expected type's order), in the
-    /// source's order, each of the same type (no nested copy)?
+    /// source's order, each of the same type (no nested copy) or made optional (`alpn: string[]`
+    /// into `alpn?: string[]`: the value is present and shows as itself, #2956)?
     fn in_order(&mut self, from: TyId, copied: &[String], slots: &[Slot]) -> bool {
         let TyKind::Adt(d, _) = self.cx.ty.kind(from) else {
             return false;
@@ -208,6 +209,7 @@ impl FnCx<'_, '_> {
                 // A value boxed as an `any` shows as itself (`boxes_shared`).
                 Slot::Field { from, to, .. } => {
                     from == to
+                        || matches!(self.cx.ty.kind(*to), TyKind::Option(t, _) if t == from)
                         || (self.cx.dynamic(*to).is_some() && boxes_shared(self.cx, *from, 0))
                 }
                 _ => true,
