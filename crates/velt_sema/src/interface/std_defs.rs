@@ -5,7 +5,8 @@
 //!
 //! A definition is hashed from its checked HIR's debug form, with what differs between two checks
 //! of the same code made canonical: a `DefId` becomes the definition's name, a `TyId` the hash of
-//! its type by structure ([`Hashing::ty`]), and a source position (`Span`) is left out (a file's
+//! its type by structure ([`Hashing::ty`]), an implementation's index the implementation it names,
+//! and a source position (`Span`) is left out (a file's
 //! number depends on load order; positions inside std don't change between programs). Two hashes
 //! are kept: the interface ([`Hashing::function`]: what callers see) and the whole definition, so
 //! a report can tell a changed summary from a changed body.
@@ -88,6 +89,19 @@ fn canonical(h: &mut Hashing<'_>, debug: &str) -> String {
             let hash = *tys.entry(n).or_insert_with(|| h.ty(TyId(n)));
             out.push_str(&format!("#{hash:x}"));
             rest = after;
+        } else if let Some((n, after)) = index_in(tail, IMPL_INDEX) {
+            // An index into the program's implementations, which differ between programs: the
+            // implementation it names (interface, its arguments and the implementing type).
+            out.push_str(IMPL_INDEX);
+            match h.p.impls.get(n as usize) {
+                Some(imp) => {
+                    let args: Vec<u64> = imp.iface_args.iter().map(|t| h.ty(*t)).collect();
+                    let iface = h.name(imp.iface);
+                    out.push_str(&format!("{iface}{args:x?}@{:x}", h.ty(imp.ty)));
+                }
+                None => out.push_str(&n.to_string()),
+            }
+            rest = after;
         } else {
             // A marker's prefix without its number: keep one byte and go on.
             out.push_str(&tail[..1]);
@@ -98,9 +112,12 @@ fn canonical(h: &mut Hashing<'_>, debug: &str) -> String {
     out
 }
 
-/// The position of the next `Span {`, `DefId(` or `TyId(` in `s`.
+/// How an implementation's index (`ExprKind::ToDyn`) shows in the debug form.
+const IMPL_INDEX: &str = "impl_index: ";
+
+/// The position of the next `Span {`, `DefId(`, `TyId(` or implementation index in `s`.
 fn next_marker(s: &str) -> Option<usize> {
-    ["Span {", "DefId(", "TyId("]
+    ["Span {", "DefId(", "TyId(", IMPL_INDEX]
         .iter()
         .filter_map(|m| s.find(m))
         .min()
@@ -115,9 +132,16 @@ fn number_in<'s>(s: &'s str, prefix: &str) -> Option<(u32, &'s str)> {
     Some((n, close))
 }
 
+/// `s` starting with `prefix` and a number: the number and what follows.
+fn index_in<'s>(s: &'s str, prefix: &str) -> Option<(u32, &'s str)> {
+    let after = s.strip_prefix(prefix)?;
+    let digits = after.bytes().take_while(u8::is_ascii_digit).count();
+    Some((after[..digits].parse().ok()?, &after[digits..]))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{next_marker, number_in};
+    use super::{index_in, next_marker, number_in};
 
     #[test]
     fn markers_and_numbers() {
@@ -125,5 +149,6 @@ mod tests {
         assert_eq!(next_marker("nothing"), None);
         assert_eq!(number_in("DefId(42) rest", "DefId("), Some((42, " rest")));
         assert_eq!(number_in("DefId(x)", "DefId("), None);
+        assert_eq!(index_in("impl_index: 7 }", "impl_index: "), Some((7, " }")));
     }
 }
