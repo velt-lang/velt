@@ -593,10 +593,7 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             w.formats.extend(args.iter().map(|a| a.ty));
         }
         E::Call {
-            // Not `InspectNested`: std/lang/hooks/inspect.velt writes with it the elements of a
-            // value some `console.log`, `inspect` or report formats, whose type is counted there;
-            // its own operand is a type parameter, which would open what an `any` may hold.
-            callee: Callee::Intrinsic(I::Inspect | I::ErrorText),
+            callee: Callee::Intrinsic(I::Inspect | I::InspectNested | I::ErrorText),
             args,
         } => w.formats.extend(args.iter().map(|a| a.ty)),
         E::Call {
