@@ -13,6 +13,8 @@ import * as jn from "./sched_join";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as off from "./sched_off";
+import * as sh from "./sched_share";
+import * as shh from "./sched_share_hand";
 
 /** The node head's word with the transfer glue (sched_node.velt's layout). */
 export const N_TRANSFER: usize = 112;
@@ -23,11 +25,15 @@ export const HANDED_OVER: u32 = 2048;
  * `velt_rt_fut_transfer` (the hook lowering calls under `VELT_SCHEDULER=std`): the owner hands
  * promise `f` to another task. A node of this executor keeps `glue` (null: nothing to transfer)
  * for its task to run on the result as it finishes (`transfer`); a spawned task's join handle has
- * nothing to transfer (the task's inputs were); the runtime's futures (a holder of a shared
- * promise, a leaf) are the runtime's to hand over.
+ * nothing to transfer (the task's inputs were); a holder of a shared promise forwards to a proxy
+ * (sched_share_hand.velt); the runtime's futures (a holder of its hub, a leaf) are the runtime's
+ * to hand over.
  */
 export function schedTransfer(f: usize, glue: usize): void {
-  if (!transfer(f, glue, fnAddress(nd.nodePoll)) && !jn.isJoin(f)) {
+  if (m.ld(f) === fnAddress(sh.holderPoll)) {
+    // A holder of a shared promise (sched_share_hand.velt).
+    shh.handOver(f, glue);
+  } else if (!transfer(f, glue, fnAddress(nd.nodePoll)) && !jn.isJoin(f)) {
     off.transfer(f, glue);
   }
 }
@@ -53,6 +59,12 @@ export function transfer(f: usize, glue: usize, hdrPoll: usize): bool {
     }
   }
   return true;
+}
+
+/** Node `n`'s state finished: `finished`, then its flags `fl` (FINISHED, maybe DELIVERED) show. */
+export function finish(n: usize, fl: u32): void {
+  finished(n);
+  nd.setFlags(n, fl);
 }
 
 /**

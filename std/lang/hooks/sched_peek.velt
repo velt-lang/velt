@@ -7,18 +7,23 @@ import { fnAddress } from "velt/lang/intrinsics";
 import * as jn from "./sched_join";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
+import * as sh from "./sched_share";
 
 // A pointer is `Ptr`, as in compiled code's declaration of this symbol.
 declare c("c") function velt_rt_fut_peek$rt(f: Ptr<u8>): u8;
 
 /**
  * 1 when promise `f` settled with its result in its slot. A node of this executor's tells by its
- * flags; a spawned task's handle prints as pending; anything else is the runtime's to tell (a
- * leaf, a holder of a shared promise, a promise boxed off the worker).
+ * flags, a holder of a shared one by its hub (sched_share.velt); a spawned task's handle prints
+ * as pending; anything else is the runtime's to tell (a leaf, a holder of the runtime's hub, a
+ * promise boxed off the worker).
  */
 export function peek(f: usize): u32 {
   if (m.ld(f) === fnAddress(node.nodePoll)) {
     return node.peek(f) ? 1 : 0;
+  }
+  if (m.ld(f) === fnAddress(sh.holderPoll)) {
+    return sh.peek(f) ? 1 : 0;
   }
   if (jn.isJoin(f)) {
     return 0;
