@@ -41,14 +41,16 @@ per instance: a leaf is appended in place, and anything else calls the type's fo
 
 ### What std holds
 
-`std/lang/hooks/inspect.velt` has four hooks (velt_common `std_hooks.rs`) and one private helper:
+`std/lang/hooks/inspect.velt` has two hooks (velt_common `std_hooks.rs`):
 
 | Hook | Writes |
 |---|---|
 | `openObject(buf, cut, id, depth)` | the depth limit and the cycle check of an object |
 | `inspectArray<E>(buf, a, depth)` | `[ a, b ]`, the first 100 elements, `... n more items`, `[Array]` |
-| `inspectMap<K, V>(buf, m, depth)` | `Map(1) { 'a' => 1 }`, the first 100 live entries |
-| `inspectSet<T>(buf, m, id, depth)` | `Set(1) { 'a' }`, the first 100 live members |
+
+`Map` and `Set` stay in lowering's glue for now: a hook taking a `Map` makes the `Map` class live
+in every program that prints a number (the hooks are demanded by `Format`), and with it what an
+`any` may hold. They move once a hook can be demanded where its class is live.
 
 `std/lang/hooks/inspect_cycles.velt` keeps what a cycle needs, which lowering's glue and the hooks
 above call: the objects being printed and the `<ref *N>` numbers given so far (`inspectEnter`,
@@ -84,13 +86,13 @@ its own formatter. That covers a program built without std, and a value the live
 live code is not yet a superset of what lowering builds (#2360), and a demand narrower than the
 integer hooks' one bit could miss. A miss prints the same bytes.
 
-Still in lowering: a subclass of `Map` or `Set`, `Record`, tuples, options and unions (which are
+Still in lowering: `Map`, `Set` and their subclasses, `Record`, tuples, options and unions (which are
 dispatch, not shape), promises, functions, `JsonValue`, the inspect hook's result and `any`
 dispatch through the format slot.
 
 ## Order of work
 
-1. **Done here.** The intrinsic and the four hooks, checked on demand.
+1. **Done here.** The intrinsic, the array and object hooks, checked on demand, and the cycles.
 2. **Loaded on demand.** The module has only functions, so it passes the (a1) rule of
    `velt_loader::std_index`. Once #2345 lands, adding it to `ON_DEMAND_MODULES` removes the load
    cost from a program that demands none of the hooks.

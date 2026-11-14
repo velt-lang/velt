@@ -4,7 +4,9 @@
 // Lowering's format glue (`velt_vir` `glue/format*.rs`) and inspect.velt report each class
 // instance, recursive object, `Map` and `Set` they start and finish (`inspectEnter`,
 // `inspectLeave`). The state is this thread's: a top-level value is printed on one thread, with
-// no await in between. It lives in two blocks of words, given back when the value is done.
+// no await in between. The innermost four objects being printed are kept in thread-locals (Node's
+// depth limit enters at most three per value), any more and the `<ref *N>` numbers in blocks of
+// words, which are allocated only for them and given back when the value is done.
 
 import { addressLoad, addressStore, rawAlloc, rawFree, strLen } from "velt/lang/intrinsics";
 import { pushU64 } from "velt/lang/number/integer";
@@ -12,10 +14,25 @@ import { pushU64 } from "velt/lang/number/integer";
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 
+/** How many objects are being printed. */
+const DEPTH = new ThreadLocal<u64>(0);
+
 /**
- * The objects being printed, innermost last: 0, or a block of words `[capacity, length, (identity,
- * start)…]` (`length` counts words), `start` where the object's text starts in the builder, in
- * UTF-16 units.
+ * The first four objects being printed, outermost first: identity (its address), and where its
+ * text starts in the builder, in UTF-16 units.
+ */
+const ID0 = new ThreadLocal<u64>(0);
+const ID1 = new ThreadLocal<u64>(0);
+const ID2 = new ThreadLocal<u64>(0);
+const ID3 = new ThreadLocal<u64>(0);
+const AT0 = new ThreadLocal<u64>(0);
+const AT1 = new ThreadLocal<u64>(0);
+const AT2 = new ThreadLocal<u64>(0);
+const AT3 = new ThreadLocal<u64>(0);
+
+/**
+ * The objects being printed after the first four: 0, or a block of words `[capacity, length,
+ * (identity, start)…]` (`length` counts words).
  */
 const BEING = new ThreadLocal<u64>(0);
 
@@ -78,15 +95,69 @@ function grown(p: usize, extra: usize): usize {
   return q;
 }
 
+/** The identity of the object being printed at position `i` (< `DEPTH`), outermost first. */
+function idAt(i: u64): u64 {
+  if (i == 0) {
+    return ID0.get();
+  }
+  if (i == 1) {
+    return ID1.get();
+  }
+  if (i == 2) {
+    return ID2.get();
+  }
+  if (i == 3) {
+    return ID3.get();
+  }
+  return load((BEING.get() as usize) + 16 + ((i - 4) as usize) * 16) as u64;
+}
+
+/** Where the text of the object at position `i` (< `DEPTH`) starts. */
+function startAt(i: u64): u64 {
+  if (i == 0) {
+    return AT0.get();
+  }
+  if (i == 1) {
+    return AT1.get();
+  }
+  if (i == 2) {
+    return AT2.get();
+  }
+  if (i == 3) {
+    return AT3.get();
+  }
+  return load((BEING.get() as usize) + 24 + ((i - 4) as usize) * 16) as u64;
+}
+
+/** Records the object at position `i` (= `DEPTH`): identity `id`, its text from `start`. */
+function setAt(i: u64, id: u64, start: u64): void {
+  if (i == 0) {
+    ID0.set(id);
+    AT0.set(start);
+  } else if (i == 1) {
+    ID1.set(id);
+    AT1.set(start);
+  } else if (i == 2) {
+    ID2.set(id);
+    AT2.set(start);
+  } else if (i == 3) {
+    ID3.set(id);
+    AT3.set(start);
+  } else {
+    const b = grown(BEING.get() as usize, 2);
+    BEING.set(b as u64);
+    const len = load(b + 8);
+    store(b + 16 + len * 8, id as usize);
+    store(b + 24 + len * 8, start as usize);
+    store(b + 8, len + 2);
+  }
+}
+
 /** Is the object with identity `id` being printed? */
 function isBeing(id: u64): bool {
-  const b = BEING.get() as usize;
-  if (b == 0) {
-    return false;
-  }
-  const len = load(b + 8);
-  for (let i: usize = 0; i < len; i += 2) {
-    if (load(b + 16 + i * 8) as u64 == id) {
+  const n = DEPTH.get();
+  for (let i: u64 = 0; i < n; i++) {
+    if (idAt(i) == id) {
       return true;
     }
   }
@@ -130,8 +201,7 @@ function pushCircular(buf: string, id: u64): void {
  * custom inspect): its numbering goes on.
  */
 export function inspectBegin(): bool {
-  const b = BEING.get() as usize;
-  if (b != 0 && load(b + 8) != 0) {
+  if (DEPTH.get() != 0) {
     return false;
   }
   const p = NUMBERED.get() as usize;
@@ -143,11 +213,11 @@ export function inspectBegin(): bool {
 
 /** Ends a top-level value: gives back the blocks, unless an object is still being printed. */
 export function inspectEnd(): void {
+  if (DEPTH.get() != 0) {
+    return;
+  }
   const b = BEING.get() as usize;
   if (b != 0) {
-    if (load(b + 8) != 0) {
-      return;
-    }
     release(b);
     BEING.set(0);
   }
@@ -168,13 +238,9 @@ export function inspectEnter(buf: string, id: u64): bool {
     pushCircular(buf, id);
     return false;
   }
-  const start = strLen(buf);
-  const b = grown(BEING.get() as usize, 2);
-  BEING.set(b as u64);
-  const len = load(b + 8);
-  store(b + 16 + len * 8, id as usize);
-  store(b + 24 + len * 8, start);
-  store(b + 8, len + 2);
+  const n = DEPTH.get();
+  setAt(n, id, strLen(buf) as u64);
+  DEPTH.set(n + 1);
   return true;
 }
 
@@ -196,14 +262,18 @@ export function inspectCircular(buf: string, id: u64): bool {
  * its text takes Node's `<ref *N> ` prefix.
  */
 export function inspectLeave(buf: string): void {
-  const b = BEING.get() as usize;
-  const len = load(b + 8) - 2;
-  store(b + 8, len);
-  const n = numberOf(load(b + 16 + len * 8) as u64);
+  const i = DEPTH.get() - 1;
+  const id = idAt(i);
+  const start = startAt(i) as i64;
+  DEPTH.set(i);
+  if (i >= 4) {
+    const b = BEING.get() as usize;
+    store(b + 8, load(b + 8) - 2);
+  }
+  const n = numberOf(id);
   if (n == 0) {
     return;
   }
-  const start = load(b + 24 + len * 8) as i64;
   let text = "";
   velt_rt_strbuf_finish(buf, text);
   const head = text.slice(0, start);

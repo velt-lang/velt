@@ -299,12 +299,6 @@ hooks! {
     /// An array: `[ 1, 2 ]`, its first 100 elements, `[Array]` past the depth limit.
     inspect_array => lang_hooks_inspect, "inspectArray", sig(<A>(&mut string, &[A], u32) -> void),
         lowered, fallback, constructs(Format, Dynamic);
-    /// A `Map`: `Map(1) { 'a' => 1 }`.
-    inspect_map => lang_hooks_inspect, "inspectMap", sig(<A, B>(&mut string, &Map(A, B), u32) -> void),
-        lowered, fallback, constructs(Format, Dynamic);
-    /// A `Set`, of the map holding its members and the identity of the `Set`: `Set(1) { 'a' }`.
-    inspect_set => lang_hooks_inspect, "inspectSet", sig(<A>(&mut string, &Map(A, bool), u64, u32) -> void),
-        lowered, fallback, constructs(Format, Dynamic);
 
     // process.velt: the builtin `process` namespace (`velt_sema` `process.rs`).
     /// `process.stdout.write(s)` / `process.stderr.write(s)`.

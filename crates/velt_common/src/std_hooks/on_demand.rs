@@ -21,8 +21,6 @@ pub const ON_DEMAND_WRITE: &[&str] = &["number_write", "whole_number_write"];
 pub const INSPECT_SHAPES: &[&str] = &[
     "open_object",
     "inspect_array",
-    "inspect_map",
-    "inspect_set",
     "inspect_begin",
     "inspect_end",
 ];
