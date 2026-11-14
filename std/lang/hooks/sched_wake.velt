@@ -256,12 +256,15 @@ export function publish(w: usize): void {
 /**
  * What the poll that just ran on shared worker `w` printed (its microtasks too), published before
  * the poll's end can be seen by another thread: before Node's timer order takes the task for not
- * busy, its state lets another worker poll it, or its end wakes a joiner (sched_run.velt `run`).
- * A task woken on another worker runs there next (`schedule`), so a line printed before an
- * `await` would otherwise reach the shared buffer after what the task prints next there,
- * whenever this thread was held up between the two (#2971). A lazy worker 0 publishes nothing
- * per poll: its output reaches the others when it adopts the shared mode (sched_loop.velt
- * `adopt`), so a task the rescue moved meanwhile may print there first (#2977).
+ * busy, its state lets another worker poll it, or its end wakes a joiner (sched_run.velt `run`). A
+ * task woken on another worker runs there next (`schedule`), so a line printed before an `await`
+ * would otherwise reach the shared buffer after what the task prints next there, whenever this
+ * thread was held up between the two (#2971). Every such poll, also one whose task runs again here
+ * (`E_AGAIN`, the slot): other threads see its effects through module state, shared objects and the
+ * process's end, not only when the task moves. Through the stdout mark (`publishPrinted`): a poll
+ * that printed nothing costs a thread-local load. A lazy worker 0 publishes nothing per poll: its
+ * output reaches the others when it adopts the shared mode (sched_loop.velt `adopt`), so a task the
+ * rescue moved meanwhile may print there first (#2977).
  */
 @inline
 export function publishPolled(w: usize): void {
@@ -269,13 +272,13 @@ export function publishPolled(w: usize): void {
 }
 
 /**
- * `publish` at the points where work this thread made may run on another worker next: after a
- * poll whose task may resume elsewhere (sched_loop.velt `after`), a spawn, a wake sent to
- * another worker's inbox, a task's end on another worker than worker 0. Only a thread that wrote
- * to stdout since its last publish has anything to publish: every write of stdout from compiled
- * code sets this thread's mark first (process.velt `stdoutWritten`), so a thread that wrote
- * nothing pays one thread-local load and a branch, not the runtime's call (#2786). A mark left
- * set by a publish that did not clear it (the runtime's) costs one publish of nothing.
+ * `publish` at the points where work this thread made may be seen by another worker next: a poll's
+ * end (`publishPolled`), a spawn, a wake sent to another worker's inbox, a task's end on another
+ * worker than worker 0. Only a thread that wrote to stdout since its last publish has anything to
+ * publish: every write of stdout from compiled code sets this thread's mark first (process.velt
+ * `stdoutWritten`), so a thread that wrote nothing pays one thread-local load and a branch, not the
+ * runtime's call (#2786). A mark left set by a publish that did not clear it (the runtime's) costs
+ * one publish of nothing.
  */
 @inline
 export function publishPrinted(w: usize): void {

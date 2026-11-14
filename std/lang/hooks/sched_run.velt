@@ -247,7 +247,7 @@ function timersAfter(e: usize, k: usize): void {
   }
 }
 
-/** Queues task `k` again after its poll (`mode` as `run`'s), or leaves it in `E_AGAIN` (`again`). */
+/** Queues task `k` again after its poll (`mode` as `run`'s), or leaves it in `E_AGAIN`. */
 function requeue(e: usize, k: usize, mode: u32): void {
   if (again(e, mode)) {
     m.st(e + t.E_AGAIN, k);
