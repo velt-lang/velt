@@ -1,6 +1,8 @@
 // velt/net (internal): `ByteWriter`, which builds TLS messages (RFC 8446 §3): big-endian
 // integers and vectors whose 1-, 2- or 3-byte length prefix is filled in at the end.
 
+import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
+
 /** Builds a message: integers, bytes, and vectors whose length prefix is filled in at the end. */
 export class ByteWriter {
   bytes: u8[];
@@ -18,10 +20,14 @@ export class ByteWriter {
     this.bytes.push((x & 0xff) as u8);
   }
 
+  /** Appends `b`, copied at once (a certificate chain is a few KB). */
   put(b: u8[]) {
-    for (let i: usize = 0; i < b.length; i++) {
-      this.bytes.push(b[i]);
-    }
+    const at = this.bytes.length;
+    const n = b.length;
+    // At least doubled, as `push` grows: `arrayReserve` reserves exactly what it is asked for.
+    arrayReserve(this.bytes, n > at ? n : at);
+    arraySetLen(this.bytes, at + n);
+    arrayMove(this.bytes, at, b, 0, n);
   }
 
   /** Starts a vector with a `size`-byte length prefix: where the prefix is, for `end`. */
