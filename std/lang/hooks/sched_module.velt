@@ -15,13 +15,16 @@
 // the runtime's entries, which would wait for that lock for ever; a slot read before its
 // initializer ran is reported here as the runtime does.
 //
-// Gaps: a program giving a declared function properties through `any` takes the runtime's lock
-// around a `Mutex` (`velt_rt_module_with`), which waits for ever off worker 0; the block of code
-// swapped in with a state of its own is made on worker 0, so that code reaching it first from
-// another worker is reported as not initialized.
+// The block of code swapped in with a state of its own is made by the runtime when worker 0
+// reaches it first; another worker reaching it first makes it here (`make`), as the runtime does,
+// without telling the runtime (which then never drops it at exit).
+//
+// Gap: a program giving a declared function properties through `any` takes the runtime's lock
+// around a `Mutex` (`velt_rt_module_with`), which waits for ever off worker 0.
 
 import { Ptr } from "velt/ffi";
 import { addressLoad, atomicAddress, noInline } from "velt/lang/intrinsics";
+import { addressCall } from "velt/lang/intrinsics/future";
 import * as r from "#reactor";
 import * as m from "./sched_mem";
 import * as t from "./sched_task";
@@ -191,7 +194,10 @@ function addEntry(desc: usize, p: usize, done: usize): usize {
   return at;
 }
 
-/** Not cached yet, or slot `slot` not initialized: worker 0 asks the runtime; others report. */
+/**
+ * Not cached yet, or slot `slot` not initialized: worker 0 asks the runtime; another worker makes
+ * a block nobody made yet (`make`) and reports a slot not initialized.
+ */
 @noInline
 function slow(e: usize, desc: usize, slot: u64): usize {
   const at = entryOf(desc);
@@ -201,7 +207,47 @@ function slow(e: usize, desc: usize, slot: u64): usize {
   if (e === m.ld(e + t.E_MAIN) || DESC.load("acquire") === 0) {
     return remember(desc, m.addr(unsafeState(desc, slot)));
   }
+  if (at === 0) {
+    return make(desc, slot);
+  }
   notReady(desc, slot);
+}
+
+/** The module descriptor's fields (velt_rt `ModuleDesc`): size, alignment, `init`, `rest`. */
+const DESC_SIZE: usize = 0;
+const DESC_ALIGN: usize = 8;
+const DESC_INIT: usize = 16;
+const DESC_REST: usize = 40;
+
+/**
+ * The block of `desc`, which no thread made yet, made off worker 0 (code `velt dev` swapped in
+ * with a state of its own, reached first from another worker), as the runtime makes it: zeroed,
+ * its entry added before the initializers run (they read the slots written before them, and each
+ * calls `ready`), then `init` and, since this block is never the first, `rest` (the root file's
+ * slots, whose `main` doesn't run again). Then slot `slot` is read as any other.
+ */
+function make(desc: usize, slot: u64): usize {
+  const size = m.ld(desc + DESC_SIZE);
+  if (m.ld(desc + DESC_ALIGN) > 16) {
+    // Not from `lastingZeroed` (16): no module state is aligned to more so far.
+    notReady(desc, slot);
+  }
+  const p = m.lastingZeroed(size === 0 ? 1 : size);
+  use(addEntry(desc, p, 0));
+  // SAFETY: the descriptor's `init` and `rest` take the block they initialize; `p` is a zeroed
+  // block of its size and alignment.
+  unsafe {
+    addressCall(m.ld(desc + DESC_INIT), p);
+    const rest = m.ld(desc + DESC_REST);
+    if (rest !== 0) {
+      addressCall(rest, p);
+    }
+  }
+  const at = entryOf(desc);
+  if (at === 0 || slot >= (m.ld(at + 16) as u64)) {
+    notReady(desc, slot);
+  }
+  return use(at);
 }
 
 /** A slot read before its initializer ran: the runtime's uncaught `ReferenceError`. */
