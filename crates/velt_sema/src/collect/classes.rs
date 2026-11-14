@@ -33,6 +33,10 @@ pub(super) fn check_classes(cx: &mut Ctx, from: u32) {
     }
     let (overridden, overrides) = overridden_methods(cx, &adts);
     for d in order {
+        // A base class of a finished unit (`crate::units`): its vtable and constructor are final.
+        if cx.is_frozen(d) {
+            continue;
+        }
         layout_vtable(cx, d, &overridden, &overrides);
         inherit_ctor(cx, d);
         check_field_inits(cx, d);
@@ -88,6 +92,14 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
                     cx.generic_overrides.push((d, key));
                 }
                 Some(origin) => {
+                    // An override of a finished unit's method without a slot (`crate::units`):
+                    // the slot would change that unit. D1 gives such methods their slot in their
+                    // own unit; until then it is counted where the program crosses.
+                    if cx.is_frozen(origin)
+                        && !cx.adt(origin).is_some_and(|a| a.vslots.contains_key(&key))
+                    {
+                        crate::ctx::def_table::crossing();
+                    }
                     // A getter-only override shadows the base's setter too (JS replaces the
                     // whole property), so that setter becomes virtual.
                     if let Some(set_key) = shadowed_setter(cx, d, m) {
@@ -428,7 +440,13 @@ fn hidden_getter(cx: &mut Ctx, d: DefId, (b, bargs): (DefId, &[TyId]), m: &ast::
 
 /// Vtable methods have a fixed ABI (no ownership inference).
 fn mark_dispatched(cx: &mut Ctx, entries: &[DefId]) {
-    for &def in entries {
+    // An inherited entry of a finished unit (`crate::units`) was marked with its unit.
+    let own: Vec<DefId> = entries
+        .iter()
+        .copied()
+        .filter(|d| !cx.is_frozen(*d))
+        .collect();
+    for def in own {
         cx.fn_info_mut(def).fixed_modes = true;
     }
 }

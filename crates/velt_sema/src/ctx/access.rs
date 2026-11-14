@@ -56,6 +56,7 @@ impl<'m> Ctx<'m> {
         }
     }
 
+    #[track_caller]
     pub fn fn_info_mut(&mut self, d: DefId) -> &mut FnInfo<'m> {
         match &mut self.info[d.0 as usize] {
             DefInfo::Fn(f) => f,
@@ -77,6 +78,7 @@ impl<'m> Ctx<'m> {
         }
     }
 
+    #[track_caller]
     pub fn adt_mut(&mut self, d: DefId) -> &mut AdtInfo<'m> {
         match &mut self.info[d.0 as usize] {
             DefInfo::Adt(a) => a,

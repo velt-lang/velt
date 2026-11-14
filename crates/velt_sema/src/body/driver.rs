@@ -18,12 +18,18 @@ const LITERAL_PASSES: usize = 3;
 pub(crate) fn check_bodies(cx: &mut Ctx) {
     super::lazy_std::plan(cx);
     super::added_bodies::check_bodies_from(cx, 0);
+    finish_bodies(cx, 0);
+}
+
+/// What follows checking the bodies: deferred std reached, deferred returns, the checks of what
+/// the bodies recorded. Also after the app's bodies in a check by units (`crate::units`).
+pub(crate) fn finish_bodies(cx: &mut Ctx, from: u32) {
     // What the checked code refers to of the standard library's deferred definitions.
     super::lazy_std::reach(cx);
     super::returns::check_deferred(cx);
     static_copy_uses(cx);
     super::expr::iface_from_object::check_unwraps(cx);
-    super::inline_markers::check(cx);
+    super::inline_markers::check(cx, from);
 }
 
 /// The errors of copies of static methods (`Ctx::copy_diags`) that the program uses, each once.

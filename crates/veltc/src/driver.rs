@@ -149,6 +149,8 @@ pub struct CheckScope {
     /// Check every definition of std the loaded modules hold, reached or not (`velt check
     /// --std`).
     pub eager_std: bool,
+    /// Check by units (`velt_sema::CheckOptions::units`; `VELT_UNITS` for `velt check`).
+    pub units: bool,
 }
 
 /// What a successful build produced.
@@ -396,6 +398,7 @@ fn sema_stage(
     let sema_opts = velt_sema::CheckOptions {
         require_main: scope.require_main,
         eager_std: scope.eager_std,
+        units: scope.units,
         native_executor: native_executor(opts),
     };
     let packages = opts.packages.as_ref();
@@ -486,6 +489,7 @@ fn compile_to_vir_linking(
         require_main: true,
         extra_roots: vec![],
         eager_std: false,
+        units: false,
     };
     let checked = check_program(sess, opts, &scope)?;
     lower_checked(sess, opts, dest, checked)

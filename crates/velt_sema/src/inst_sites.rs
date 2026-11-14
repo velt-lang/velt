@@ -354,7 +354,7 @@ pub(crate) fn constructed(cx: &mut Ctx, def: DefId, targs: Vec<TyId>) -> Vec<(De
 /// it gives an initializer), in terms of its type parameters, with the type's def.
 pub(crate) fn for_each_init(
     tys: &Types,
-    infos: &mut [DefInfo],
+    infos: &mut crate::ctx::DefTable<DefInfo>,
     globals: bool,
     f: &mut dyn FnMut(&Types, DefId, &mut Expr),
 ) {

@@ -66,10 +66,12 @@ fn warm_inner(
             require_main: true,
             extra_roots: vec![],
             eager_std: false,
+            units: false,
         };
         let sema_opts = velt_sema::CheckOptions {
             require_main: scope.require_main,
             eager_std: scope.eager_std,
+            units: scope.units,
             native_executor: super::native_executor(opts),
         };
         let t = Instant::now();

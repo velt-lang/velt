@@ -238,9 +238,12 @@ fn resolve(
     opts.no_generators = args.no_generators;
     opts.target = args.target.clone();
     let scope = without_other_variants(scope, &opts);
-    let scope = match std::env::var_os("VELT_STD_SUMMARY_EAGER") {
-        Some(_) => with_all_std(scope, &opts)?,
-        None => scope,
+    // The oracle's whole-std mode, and a check by units (velt_sema `units`), which checks std
+    // whole as its own unit.
+    let all_std = ["VELT_STD_SUMMARY_EAGER", "VELT_UNITS"];
+    let scope = match all_std.iter().any(|v| std::env::var_os(v).is_some()) {
+        true => with_all_std(scope, &opts)?,
+        false => scope,
     };
     Ok((opts, scope, same_path))
 }
@@ -270,6 +273,7 @@ fn std_scope(
         require_main: false,
         extra_roots,
         eager_std: true,
+        units: false,
     };
     Ok((opts, scope, vec![]))
 }
@@ -365,6 +369,7 @@ fn with_all_std(
     }
     scope.extra_roots.extend(files);
     scope.eager_std = true;
+    scope.units = std::env::var_os("VELT_UNITS").is_some();
     Ok(scope)
 }
 
@@ -413,6 +418,7 @@ fn package_scope() -> Result<(PathBuf, CheckScope, Vec<Vec<PathBuf>>), String> {
         require_main,
         extra_roots,
         eager_std: false,
+        units: false,
     };
     Ok((input, scope, same_path))
 }

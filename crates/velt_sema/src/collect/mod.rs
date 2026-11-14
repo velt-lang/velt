@@ -92,6 +92,21 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     items
 }
 
+/// [`collect`] for std's modules alone, the first unit of a check by units (`crate::units`): the
+/// app's are collected after std is frozen, as added modules ([`collect_added`]).
+pub(crate) fn collect_std(cx: &mut Ctx) {
+    let mut items = ItemDefs::new();
+    declare::declare_std(cx, &mut items);
+    crate::any::add_impl(cx);
+    let from = Added {
+        unit: Some(true),
+        ..Added::default()
+    };
+    collect_items(cx, &items, from);
+    cx.bodies_ok = true;
+    sigs::fill_deferred(cx);
+}
+
 /// Where what a collection adds starts: a whole program's starts at 0, that of std modules added
 /// during the check (`crate::std_load`) after what is there, and the passes look only from here.
 #[derive(Clone, Copy, Default)]
@@ -101,6 +116,9 @@ pub(crate) struct Added {
     pub aliases: usize,
     pub overrides: usize,
     pub modules: usize,
+    /// In a check by units (`crate::units`): only std's modules (`Some(true)`) or only the
+    /// app's (`Some(false)`) from `modules` on, as the two are interleaved in module order.
+    pub unit: Option<bool>,
 }
 
 /// Phases 2 to 5 of the module docs, for what starts at `from`.
@@ -114,7 +132,7 @@ fn collect_items(cx: &mut Ctx, items: &ItemDefs, from: Added) {
     c_struct::check_all(cx, items);
     cx.shapes_done = true;
     cx.check_deferred_ts_returns();
-    sigs::resolve_sigs(cx, items, from.modules);
+    sigs::resolve_sigs(cx, items, from);
     iface_extends::flatten_from(cx, from.defs);
     cx.fill_synth_ifaces();
     field_only::fill(cx, from.defs);
@@ -134,7 +152,18 @@ fn collect_items(cx: &mut Ctx, items: &ItemDefs, from: Added) {
 /// (velt_loader `std_index`), so nothing collected before changes. Returns where the additions
 /// start.
 pub(crate) fn collect_added(cx: &mut Ctx, ms: &[usize]) -> Added {
+    collect_added_in(cx, ms, None)
+}
+
+/// The app's modules `ms` in a check by units (`crate::units`), collected once std is frozen, as
+/// [`collect_added`] collects added std modules.
+pub(crate) fn collect_app(cx: &mut Ctx, ms: &[usize]) -> Added {
+    collect_added_in(cx, ms, Some(false))
+}
+
+fn collect_added_in(cx: &mut Ctx, ms: &[usize], unit: Option<bool>) -> Added {
     let from = Added {
+        unit,
         defs: cx.info.len() as u32,
         extensions: cx.extensions.len(),
         aliases: cx.aliases.len(),

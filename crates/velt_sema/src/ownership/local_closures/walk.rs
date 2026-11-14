@@ -4,13 +4,13 @@
 use crate::hir::{Block, Callee, Expr, ExprKind as E, Stmt, StmtKind as S};
 
 /// What a traversal does at each statement and expression (pre-order).
-pub(in crate::ownership) trait Visit {
+pub(crate) trait Visit {
     fn stmt(&mut self, _s: &Stmt) {}
     fn expr(&mut self, _e: &Expr) {}
 }
 
 /// Every statement and expression of `b`, nested blocks included.
-pub(in crate::ownership) fn block(b: &Block, v: &mut dyn Visit) {
+pub(crate) fn block(b: &Block, v: &mut dyn Visit) {
     for s in &b.stmts {
         stmt(s, v);
     }

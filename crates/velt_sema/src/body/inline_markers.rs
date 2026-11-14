@@ -14,9 +14,11 @@ use crate::decorators::Inline;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E};
 use crate::visit;
 
-/// Reports `@inline` on a recursive function.
-pub(crate) fn check(cx: &mut Ctx) {
+/// Reports `@inline` on a recursive function, of the functions from `from` on (in a check by
+/// units, `crate::units`, the app's: std's were checked with std).
+pub(crate) fn check(cx: &mut Ctx, from: u32) {
     let marked: Vec<(DefId, Span)> = (cx.fn_defs.iter())
+        .filter(|d| d.0 >= from)
         .filter_map(|&d| match cx.fn_info(d).inline_marker {
             Some((Inline::Always, span)) => Some((d, span)),
             _ => None,
@@ -61,8 +63,8 @@ fn reaches(cx: &mut Ctx, callees: &mut FxHashMap<DefId, Vec<DefId>>, from: DefId
 /// The functions `d`'s body calls directly.
 fn direct_callees(cx: &mut Ctx, d: DefId) -> Vec<DefId> {
     let mut out = vec![];
-    if let Some(Some(Def::Fn(f))) = cx.defs.get_mut(d.0 as usize) {
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+    if let Some(Some(Def::Fn(f))) = cx.defs.get(d.0 as usize) {
+        visit::exprs(&f.body.block, &mut |e: &Expr| {
             if let E::Call {
                 callee: Callee::Def(to, _),
                 ..
