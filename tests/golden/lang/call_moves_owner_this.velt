@@ -1,0 +1,10 @@
+// A call that moves an object and lends a part of it: the receiver (#2531). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; name: string = heap("n"); }
+let hold: A2 | null = null;
+class M { n: string = heap("t"); take(v: string) { mh = this; mh = null; junk(); return v + "!"; } }
+let mh: M | null = null;
+function t() { const a = new M(); console.log(a.take(a.n)); }
+t();

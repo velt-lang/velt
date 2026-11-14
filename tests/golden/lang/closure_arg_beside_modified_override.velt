@@ -1,0 +1,11 @@
+// An override that writes its param, through a `let`, and a part beside its owner (#2537). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; }
+const KK = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzz"); q.xs = []; junk(); };
+class B { go(q: A2) {} }
+class S extends B { override go(q: A2) { q.c = new I2(); q.c.s = heap("zz"); junk(); } }
+function run(b: B, q: A2, v: string) { let r = q; b.go(r); junk(); return v + "!"; }
+function t() { const a = new A2(); console.log(run(new S(), a, a.c.s)); }
+t();

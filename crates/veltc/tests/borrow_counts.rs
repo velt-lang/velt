@@ -117,3 +117,18 @@ fn quiet_methods_get_borrowed_receivers() {
     // `this.db` is lent to `offset` without a share and its release.
     assert!(!at.contains("_Gdrop_") && !at.contains("-8_i64"), "{at}");
 }
+
+#[test]
+fn a_fresh_value_beside_a_map_keeps_the_map_layout() {
+    // `this.routes.set(k, new R(1))` moves nothing that holds `this.routes`: no share, so Map's
+    // slot array stays in place, as when the value is a local first.
+    let layout = |vir: &str| -> Vec<String> {
+        let lines = vir.lines().filter(|l| l.contains(" Map object "));
+        lines
+            .map(|l| l.split_once(' ').map_or(l, |x| x.1).to_string())
+            .collect()
+    };
+    let fresh = layout(&vir("fresh_beside"));
+    assert!(!fresh.is_empty());
+    assert_eq!(fresh, layout(&vir("fresh_beside_local")));
+}

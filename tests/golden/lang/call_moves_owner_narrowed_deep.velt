@@ -1,0 +1,13 @@
+// A call that moves an object and lends a part of it: a narrowed owner and a part two levels or an element down (#2531). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; name: string = heap("n"); }
+let hold: A2 | null = null;
+function take(q: A2, v: string) { hold = q; hold = null; junk(); return v + "!"; }
+function take2(q: A2, v: string) { hold = q; hold = null; junk(); return v + "?"; }
+function mk(): A2 | null { return new A2(); }
+function t() { const o = mk(); if (o) { console.log(take(o, o.c.s)); } }
+function u() { const o = mk(); if (o) { console.log(take2(o, o.xs[0].s)); } }
+t();
+u();

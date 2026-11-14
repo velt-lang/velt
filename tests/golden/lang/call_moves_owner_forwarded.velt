@@ -1,0 +1,11 @@
+// A call that moves an object and lends a part of it: the owner handed on by a function that lends a part of another param (#2531). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); xs: I2[] = [new I2(), new I2()]; name: string = heap("n"); }
+class B1 { a: A2 = new A2(); }
+let bh: B1 | null = null;
+function take(q: B1, v: string) { bh = q; bh = null; junk(); return v + "!"; }
+function f(q: B1, x: A2) { return take(q, x.name); }
+function t() { const b = new B1(); console.log(f(b, b.a)); }
+t();
