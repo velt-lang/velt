@@ -473,7 +473,6 @@ fn setter_def(
         self_ty: Some(self_ty),
         captures: vec![],
         shares_captures: false,
-        changes_held: false,
         body: hir::Body {
             locals: vec![local("this", self_ty, span), local("v", ty, span)],
             block: hir::Block {
@@ -520,7 +519,6 @@ pub(crate) fn getter_def(
         self_ty: Some(self_ty),
         captures: vec![],
         shares_captures: false,
-        changes_held: false,
         body: hir::Body {
             locals: vec![local("this", self_ty, span)],
             block: hir::Block {

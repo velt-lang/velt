@@ -152,6 +152,7 @@ impl PB {
             union_shapes: Default::default(),
             counted_objects: Vec::new(),
             assigned_objects: Default::default(),
+            changes_held: Default::default(),
             null_proto_records: false,
             fn_shapes: Default::default(),
             record_fills: false,
@@ -273,7 +274,6 @@ impl FB {
             self_ty: self.self_ty,
             captures: self.captures,
             shares_captures: false,
-            changes_held: false,
             body: Body {
                 locals: self.locals,
                 block: block(stmts),

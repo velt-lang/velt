@@ -117,8 +117,8 @@ enum Barred {
     /// An `Atomic` held by value: the call would change its own copy.
     Atomic(TyId),
     /// A class whose `clone()` may change its object, which would run on one object from several
-    /// threads at once. `RegExp`'s only reads strings, whose counts are atomic (`FnDef::changes_held`
-    /// says it stays so).
+    /// threads at once. `RegExp`'s only reads strings, whose counts are atomic
+    /// (`Program::changes_held` says it stays so).
     Clone(TyId),
 }
 
@@ -144,10 +144,9 @@ fn barred(cx: &mut Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> Option<Barred> {
                 return Some(Barred::Atomic(t));
             }
             if cx.runs_own_clone(t) {
-                let changes = cx.own_clone(d).is_some_and(|m| {
-                    !cx.std_class(d, &["RegExp"])
-                        || matches!(&cx.defs[m.0 as usize], Some(Def::Fn(f)) if f.changes_held)
-                });
+                let changes = cx
+                    .own_clone(d)
+                    .is_some_and(|m| !cx.std_class(d, &["RegExp"]) || cx.changes_held.contains(&m));
                 if changes {
                     return Some(Barred::Clone(t));
                 }
