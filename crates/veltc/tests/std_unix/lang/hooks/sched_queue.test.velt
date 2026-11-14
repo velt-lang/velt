@@ -1,0 +1,155 @@
+// velt/lang/hooks (tests): a worker's slot for the next task and the fair pass's clock
+// (sched_queue.velt `pushNext`, `pop`, `popNextOwn`; sched_tick.velt `tickTurned`) on a worker
+// block and tasks built by hand: the slot gives the queues their turn after `NEXT_RUNS` tasks in
+// a row, on the locked path and the lock-free one, and an I/O tick with both queues holding tasks
+// reads the clock, starts the fair wait, skips reads while the wait runs and starts the pass once
+// it is due. Run from a copy of std by crates/veltc/tests/std_scheduler_workers.rs (macOS and
+// Linux: the scheduler's modules don't link on Windows).
+import { describe, expect, it } from "velt/test";
+import * as m from "./sched_mem";
+import * as q from "./sched_queue";
+import * as sp from "./sched_spread";
+import * as t from "./sched_task";
+import * as tick from "./sched_tick";
+
+/** The bytes of a hand-built task: past its last field the queues read (`T_NEXT`, `T_FLAGS`). */
+const TASK: usize = 64;
+/** sched_queue.velt's tasks in a row from the slot. */
+const NEXT_RUNS: i32 = 3;
+
+/** A task that ran before (not fresh: the lock-free path takes it). */
+function task(): usize {
+  const k = m.zeroed(TASK);
+  m.st32(k + t.T_FLAGS, t.STARTED);
+  return k;
+}
+
+/** Gives back worker `w` and the tasks `all`. */
+function free(w: usize, all: usize[]): void {
+  for (const k of all) {
+    m.release(k, TASK);
+  }
+  m.release(w, t.E_SIZE);
+}
+
+describe("velt/lang/hooks slot", () => {
+  it("gives the second queue its turn after NEXT_RUNS tasks from the slot", () => {
+    const w = m.zeroed(t.E_SIZE);
+    const spawned = task();
+    const s = task();
+    q.pushRest(w, spawned, 0);
+    for (let i = 0; i < NEXT_RUNS; i++) {
+      q.pushNext(w, s, 0);
+      expect(q.pop(w, 0)).toBe(s);
+    }
+    // Two tasks waking each other through the slot: the spawned one runs now, the slot's task
+    // waits in the input queue.
+    q.pushNext(w, s, 0);
+    expect(q.pop(w, 0)).toBe(spawned);
+    expect(q.pop(w, 0)).toBe(s);
+    expect(q.pop(w, 0)).toBe(0);
+    free(w, [spawned, s]);
+  });
+
+  it("takes the slot back at the limit when both queues are empty", () => {
+    const w = m.zeroed(t.E_SIZE);
+    const s = task();
+    for (let i = 0; i <= NEXT_RUNS; i++) {
+      q.pushNext(w, s, 0);
+      expect(q.pop(w, 0)).toBe(s);
+    }
+    expect(m.ld(w + t.E_NEXT_RUNS)).toBe(0);
+    free(w, [s]);
+  });
+
+  it("leaves the slot to the locked path at the limit when a queue holds a task", () => {
+    const w = m.zeroed(t.E_SIZE);
+    const spawned = task();
+    const s = task();
+    q.pushRest(w, spawned, 0);
+    for (let i = 0; i < NEXT_RUNS; i++) {
+      q.pushNext(w, s, 0);
+      expect(q.popNextOwn(w)).toBe(s);
+    }
+    q.pushNext(w, s, 0);
+    expect(q.popNextOwn(w)).toBe(0);
+    expect(m.ld(w + t.E_NEXT)).toBe(s);
+    expect(q.pop(w, 0)).toBe(spawned);
+    expect(q.pop(w, 0)).toBe(s);
+    free(w, [spawned, s]);
+  });
+
+  it("takes the slot without the lock at the limit when both queues are empty", () => {
+    const w = m.zeroed(t.E_SIZE);
+    const s = task();
+    for (let i = 0; i <= NEXT_RUNS; i++) {
+      q.pushNext(w, s, 0);
+      expect(q.popNextOwn(w)).toBe(s);
+    }
+    expect(m.ld(w + t.E_NEXT_RUNS)).toBe(0);
+    expect(m.ld(w + t.E_QSLOW)).toBe(0);
+    free(w, [s]);
+  });
+
+  it("leaves a fresh task in the slot for the locked path", () => {
+    const w = m.zeroed(t.E_SIZE);
+    const fresh = m.zeroed(TASK);
+    q.pushNext(w, fresh, 0);
+    expect(q.popNextOwn(w)).toBe(0);
+    expect(m.ld(w + t.E_NEXT)).toBe(fresh);
+    expect(q.pop(w, 0)).toBe(fresh);
+    free(w, [fresh]);
+  });
+});
+
+/** Waits until the clock has moved past `at` (its resolution may be coarse). */
+function past(at: usize): void {
+  while (sp.now() <= at) {}
+}
+
+describe("velt/lang/hooks fair pass clock", () => {
+  it("starts the wait at an I/O tick, then skips reads while it runs", () => {
+    const w = m.zeroed(t.E_SIZE);
+    const input = task();
+    const spawned = task();
+    q.pushIo(w, input);
+    q.pushRest(w, spawned, 0);
+    tick.tickTurned(w);
+    const at = m.ld(w + t.E_FAIR_AT);
+    expect(at !== 0).toBe(true);
+    expect(m.ld(w + t.E_FAIR_DUE) > at).toBe(true);
+    past(at);
+    // A turn took less than the 10 ms wait: the next reads are skipped (at most 15 turns).
+    tick.tickTurned(w);
+    const skip = m.ld(w + t.E_FAIR_SKIP);
+    expect(skip > 0 && skip <= 15).toBe(true);
+    const read = m.ld(w + t.E_FAIR_AT);
+    tick.tickTurned(w);
+    expect(m.ld(w + t.E_FAIR_SKIP)).toBe(skip - 1);
+    expect(m.ld(w + t.E_FAIR_AT)).toBe(read);
+    // The second queue ran out: the wait ends.
+    expect(q.popRest(w, 0)).toBe(spawned);
+    tick.tickTurned(w);
+    expect(m.ld(w + t.E_FAIR_DUE)).toBe(0);
+    expect(m.ld(w + t.E_FAIR_SKIP)).toBe(0);
+    free(w, [input, spawned]);
+  });
+
+  it("starts the fair pass at an I/O tick once the wait is over", () => {
+    const w = m.zeroed(t.E_SIZE);
+    const input = task();
+    const a = task();
+    const b = task();
+    q.pushIo(w, input);
+    q.pushRest(w, a, 0);
+    q.pushRest(w, b, 0);
+    // A wait that started long ago, no reads to skip.
+    m.st(w + t.E_FAIR_DUE, 1);
+    tick.tickTurned(w);
+    expect(m.ld(w + t.E_FAIR_LEFT)).toBe(2);
+    expect(q.pop(w, 0)).toBe(a);
+    expect(q.pop(w, 0)).toBe(b);
+    expect(q.pop(w, 0)).toBe(input);
+    free(w, [input, a, b]);
+  });
+});

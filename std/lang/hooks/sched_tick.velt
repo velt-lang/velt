@@ -106,7 +106,7 @@ const FAIR_SKIP_MAX: usize = 15;
  * have come (`fairLook`), and only while both queues hold tasks.
  */
 @inline
-function tickTurned(e: usize): void {
+export function tickTurned(e: usize): void {
   if (m.loadRelaxed(e + t.E_HEAD) === 0) {
     m.st(e + t.E_FAIR_DUE, 0);
     m.st(e + t.E_FAIR_SKIP, 0);

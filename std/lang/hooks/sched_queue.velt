@@ -116,29 +116,34 @@ export function pushNext(e: usize, k: usize, mode: u32): void {
 /**
  * The slot's task, taken by worker `e`'s own thread without the queue lock when `pop` would take
  * it (0: take the lock and `pop`): no fair pass under way, not fresh (the monitor's watch), and
- * either fewer than `NEXT_RUNS` in a row or no input it would go behind (`popSlow` moves it to the
- * input queue and takes it back then: the same counts are left here). Other threads only take
- * tasks away, so what is read here can only have emptied.
+ * either fewer than `NEXT_RUNS` in a row or both queues empty (at the limit `popSlow` gives the
+ * queues their turn first; with both empty it takes the slot's task back: the same counts are
+ * left here). Other threads only take tasks away, so what is read here can only have emptied.
+ * The task is looked at only once the swap made it this thread's: a rescue may have taken it
+ * from the slot and run it meanwhile.
  */
 @inline
 export function popNextOwn(e: usize): usize {
-  const k = m.loadRelaxed(e + t.E_NEXT);
-  if (k === 0 || m.ld(e + t.E_FAIR_LEFT) !== 0 || t.fresh(k)) {
+  if (m.loadRelaxed(e + t.E_NEXT) === 0 || m.ld(e + t.E_FAIR_LEFT) !== 0) {
     return 0;
   }
   const runs = m.ld(e + t.E_NEXT_RUNS);
+  if (runs >= NEXT_RUNS && (m.loadRelaxed(e + t.E_IHEAD) | m.loadRelaxed(e + t.E_HEAD)) !== 0) {
+    return 0;
+  }
+  const k = m.swap(e + t.E_NEXT, 0);
+  if (k === 0) {
+    return 0;
+  }
+  if (t.fresh(k)) {
+    // Its first poll is the monitor's to watch (`pop` under the lock): back in the slot, which
+    // only this thread fills.
+    m.swap(e + t.E_NEXT, k);
+    return 0;
+  }
   if (runs < NEXT_RUNS) {
-    if (m.swap(e + t.E_NEXT, 0) === 0) {
-      return 0;
-    }
     m.st(e + t.E_NEXT_RUNS, runs + 1);
     return k;
-  }
-  if (m.loadRelaxed(e + t.E_IHEAD) !== 0 || m.ld(e + t.E_SINCE_REST) >= TRICKLE) {
-    return 0;
-  }
-  if (m.swap(e + t.E_NEXT, 0) === 0) {
-    return 0;
   }
   m.st(e + t.E_NEXT_RUNS, 0);
   m.st(e + t.E_QSLOW, 0);
@@ -234,10 +239,21 @@ function popSlow(e: usize, mode: u32): usize {
       m.st(e + t.E_NEXT_RUNS, runs + 1);
       return next;
     }
-    pushIo(e, next);
   }
   m.st(e + t.E_NEXT_RUNS, 0);
-  const k = popPlain(e, mode);
+  // The queues' turn (after `NEXT_RUNS` from the slot), then the slot's task behind the input: two
+  // tasks waking each other through the slot give a task of the second queue its turn too. (When
+  // the slot's task went through the input queue and was taken back at once, a task spawned on
+  // the worker never ran while they did: input came first, and the count since the second queue
+  // started over each time.)
+  let k = popPlain(e, mode);
+  if (next !== 0) {
+    if (k === 0) {
+      k = next;
+    } else {
+      pushIo(e, next);
+    }
+  }
   if (m.ld(e + t.E_IHEAD) === 0 && m.ld(e + t.E_FAIR_LEFT) === 0) {
     // Back to the fast path: nothing in the slot, no input, no fair pass.
     m.st(e + t.E_QSLOW, 0);
@@ -296,6 +312,9 @@ export function input(e: usize): usize {
  * Are worker `e`'s queues empty, read by its own thread without the lock? Only that thread
  * queues tasks there (other threads use its inbox), and other threads only take them away, so
  * empty stays empty until it queues one (a task put back by another thread's take was queued).
+ * The three words are read one by one: a rescue that moves the slot's task to the input queue
+ * between the reads (sched_take.velt `takeHalf`) and leaves a pinned task there can make it read
+ * empty. That task is not lost: the next I/O tick's step takes it (`IO_INTERVAL` polls at most).
  */
 @inline
 export function ownEmpty(e: usize): bool {
