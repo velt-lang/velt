@@ -58,6 +58,9 @@ export function start(): usize {
   m.st(e + t.E_MAIN, e);
   m.st(e + t.E_CPU, r.threadClock() as usize);
   end.open(e);
+  if (processEnv("VELT_RC_STATS") === "1") {
+    wk.countWakes();
+  }
   t.install(e);
   // The runtime's leaves that need its timers and I/O find them from this thread.
   velt_rt_set_scheduler(2);
