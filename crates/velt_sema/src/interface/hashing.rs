@@ -139,7 +139,6 @@ impl<'p> Hashing<'p> {
             self_ty,
             captures,
             shares_captures,
-            changes_held,
             body,
             throws,
             span, // Moves with an edit before it; read only to find the function's shape.
@@ -155,6 +154,7 @@ impl<'p> Hashing<'p> {
         }
         let sig = (self.ty(*ret), self.opt_ty(*throws), self.opt_ty(*self_ty));
         sig.hash(&mut s);
+        let changes_held = p.changes_held.contains(&d);
         (is_async, is_generator, shares_captures, changes_held).hash(&mut s);
         // `outer` and `inner` are locals of the enclosing function's body and of this one.
         for hir::Capture { mode, share, .. } in captures {

@@ -174,6 +174,13 @@ pub struct Program {
     /// field by field. A fact of the whole program, kept out of the definitions so a definition's
     /// checked form doesn't depend on what else the program does (#2943).
     pub assigned_objects: HashSet<DefId>,
+    /// The closures that change what they captured, and the classes' `clone()`s that may change
+    /// their object (all but the standard library's that don't). Made when the program puts a
+    /// function in `shared(...)` (`crate::ownership::local_async::record`): each call of one runs
+    /// on a copy of what it captured, so a change would be lost, and the many-threads check panics
+    /// on it (velt_vir glue/many.rs). A fact of the whole program (it follows the program's
+    /// fields), kept out of the definitions (#2943).
+    pub changes_held: HashSet<DefId>,
     /// The program calls `Object.create(null)`: a record may have no prototype (its map is
     /// marked, std/prelude/map.velt `[RECORD_MARK_NULL_PROTO]`), which printing and cloning look at.
     pub null_proto_records: bool,
@@ -367,12 +374,6 @@ pub struct FnDef {
     /// reference, or the cell of a `LocalDef::boxed` capture) instead of copying them. False for
     /// everything else, including async closures that may run on another thread.
     pub shares_captures: bool,
-    /// A closure that changes what it captured, or a class's `clone()` that may change its object
-    /// (all but the standard library's that don't). Set when the program puts a function in
-    /// `shared(...)` (`crate::ownership::local_async::record`): each call of one runs on a copy of
-    /// what it captured, so a change would be lost, and the many-threads check panics on it
-    /// (velt_vir glue/many.rs).
-    pub changes_held: bool,
     pub body: Body,
     /// Thrown error type (a union when several types can be thrown; see hir_encodings.md
     /// "Errors"). May mention type params; `Some(Never)` after substitution means non-throwing.

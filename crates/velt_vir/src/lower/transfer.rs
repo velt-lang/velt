@@ -165,7 +165,7 @@ impl Cx<'_> {
     pub(super) fn clone_may_change(&mut self, t: TyId) -> bool {
         let exempt = self.is_regexp(t);
         self.own_clone(t)
-            .is_some_and(|m| !exempt || self.fn_def(m).changes_held)
+            .is_some_and(|m| !exempt || self.hir.changes_held.contains(&m))
     }
 
     /// Can a deep copy of a `t` call a class's own `clone()` (`own_clone`), or hold a promise?

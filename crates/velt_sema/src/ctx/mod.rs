@@ -193,6 +193,7 @@ pub(crate) struct Ctx<'m> {
     /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
     pub assigned_objects: FxHashSet<DefId>, // `hir::Program::assigned_objects` (finalize.rs)
+    pub changes_held: FxHashSet<DefId>,     // `hir::Program::changes_held` (local_async/record.rs)
     pub replaced_unions: FxHashSet<DefId>,  // union defs readonly erasure replaced (union_layouts)
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
     pub lock_free_callbacks: FxHashSet<DefId>, // locked_props.rs
@@ -591,6 +592,7 @@ impl<'m> Ctx<'m> {
             canon_errors: FxHashMap::default(),
             counted_objects: Vec::new(),
             assigned_objects: FxHashSet::default(),
+            changes_held: FxHashSet::default(),
             replaced_unions: FxHashSet::default(),
             module_slots: Vec::new(),
             lock_free_callbacks: FxHashSet::default(),

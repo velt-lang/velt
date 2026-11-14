@@ -1,4 +1,4 @@
-//! Which closures change what they captured, for the run time (`FnDef::changes_held`). A function
+//! Which closures change what they captured, for the run time (`Program::changes_held`). A function
 //! in `shared(...)` runs each call on a copy of what it captured, so a change would be lost. Where
 //! [`super`] follows the function to `shared(...)` that is refused; where it can't (out of a `Map`,
 //! a field, a function's result), the many-threads check panics on this flag (velt_vir
@@ -28,7 +28,8 @@ pub(super) fn writer(cx: &Ctx, d: DefId) -> bool {
         && matches!(method, "fill" | "copyWithin" | "reverse" | "sort" | "set")
 }
 
-/// Set `changes_held` on every closure and class `clone()` (module docs).
+/// Put every closure and class `clone()` that changes what it holds in `Ctx::changes_held` (module
+/// docs).
 pub(crate) fn record_changed_captures(cx: &mut Ctx) {
     if !shares_a_function(cx) {
         return;
@@ -49,7 +50,7 @@ pub(crate) fn record_changed_captures(cx: &mut Ctx) {
     };
     for c in closures {
         let assigned = cx.try_fn(c).is_some_and(|i| i.assigns_capture);
-        let Some(Def::Fn(mut f)) = cx.defs[c.0 as usize].take() else {
+        let Some(Def::Fn(f)) = cx.defs[c.0 as usize].take() else {
             continue;
         };
         let roots: Roots = (f.captures.iter())
@@ -64,7 +65,9 @@ pub(crate) fn record_changed_captures(cx: &mut Ctx) {
             let mut m = memo();
             changes(cx, &f, &roots, &FxHashMap::default(), 0, &mut m, &mut found);
         }
-        f.changes_held = assigned || !found.is_empty();
+        if assigned || !found.is_empty() {
+            cx.changes_held.insert(c);
+        }
         cx.defs[c.0 as usize] = Some(Def::Fn(f));
     }
     let clones: Vec<(DefId, TyId)> = (0..cx.defs.len())
@@ -81,8 +84,8 @@ pub(crate) fn record_changed_captures(cx: &mut Ctx) {
             let mut mm = memo();
             callee_changes(cx, m, 0, (true, this), 1, &mut mm).is_some()
         };
-        if let Some(Def::Fn(f)) = &mut cx.defs[m.0 as usize] {
-            f.changes_held = changes;
+        if changes {
+            cx.changes_held.insert(m);
         }
     }
 }

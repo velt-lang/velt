@@ -537,7 +537,6 @@ pub(crate) fn stub_unreached(cx: &mut Ctx) -> FxHashSet<DefId> {
                         .map(|t| t.ty),
                     captures: vec![],
                     shares_captures: false,
-                    changes_held: false,
                     body: hir::Body {
                         locals,
                         block: hir::Block {

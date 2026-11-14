@@ -173,7 +173,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         // A function in `shared(...)` (the strict walk, many.rs) runs each call on a copy, so a
         // change it makes would be lost.
-        let changes = lw.cx.fn_def(def).changes_held || (sync && !cells.is_empty());
+        let changes = lw.cx.hir.changes_held.contains(&def) || (sync && !cells.is_empty());
         let (caps2, cells2) = (caps.clone(), cells.clone());
         lw.check_if_tagged(env, move |lw, e| {
             if changes {
