@@ -30,6 +30,7 @@ tests/golden/lang/proxy_throws_three_traps.velt                    #2911
 tests/golden/lang/proxy_throws_two_traps.velt                      #2911
 tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=macos,windows
 tests/golden/lang/spawn_handle_dropped_after_reject.velt           #2913
+tests/golden/lang/promise_combinators_kept_array.velt               #2910
 tests/golden/lang/spawn_handle_dropped_rejects.velt                #2913
 tests/golden/lang/spawn_promise_result_copied.velt                 #2913
 tests/golden/lang/spawn_shared_promise_timer.velt                  #2910
