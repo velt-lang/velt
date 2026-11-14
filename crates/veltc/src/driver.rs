@@ -23,6 +23,7 @@ pub(crate) mod outside;
 mod pipeline;
 mod recover;
 mod std_load;
+mod std_summary;
 use std_load::load_options;
 pub(crate) use std_load::StdLoad;
 mod warm;
@@ -451,6 +452,7 @@ fn sema_stage(
         crate::native::note_checked(&mut sess.native, opts.packages.as_ref(), &sess.c_checked);
         crate::native::c_stamp_inputs(&sess.c_checked, &mut sess.generator_inputs);
         sess.c_libs = crate::native::c_links(hir, &sess.sm, opts.packages.as_ref(), &opts.target());
+        std_summary::write(hir, &opts.input.display().to_string());
     }
     let _ = t;
     sess.stop_if_errors()?;

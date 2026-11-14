@@ -4,6 +4,10 @@ Status: draft for review (#2189, extends [std-object.md](std-object.md), #1728).
 the maintainer decision on #1612: `velt_build_cache` owns every compiled artifact on a machine;
 this note adds kinds and keys, never a second root.
 
+Its order of work is replaced by [build-architecture.md](build-architecture.md) (#2943), which
+makes a package's checked form and code independent of the program first; the keys, the facts
+trace and the soundness guards below remain the design for phases 4-6 there.
+
 ## Problem
 
 Every build checks, lowers, optimizes and compiles std, and every package it imports, again.
