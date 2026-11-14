@@ -269,15 +269,13 @@ hooks! {
 
     // inspect_cycles.velt: objects that hold themselves in what `console.log` prints (`<ref *1>`,
     // `[Circular *1]`), numbered once per top-level value, as Node does.
-    /// The start of a top-level value: the numbering starts over. Skipped where unchecked (a
-    /// program that prints no object).
+    /// The start of a top-level value: the numbering starts over. Skipped where unchecked.
     inspect_begin => lang_hooks_inspect_cycles, "inspectBegin", sig(() -> void), lowered, fallback,
         constructs(Format, Dynamic);
     /// The end of a top-level value: the numbering's block is given back.
     inspect_end => lang_hooks_inspect_cycles, "inspectEnd", sig(() -> void), lowered, fallback,
         constructs(Format, Dynamic);
-    /// Before a user's custom inspect runs during a print: the state, left empty for what the
-    /// code prints, as a handle for `inspect_restore`.
+    /// Before a user's custom inspect: the state, saved for `inspect_restore` and left empty.
     inspect_save => lang_hooks_inspect_cycles, "inspectSave", sig(() -> u64), lowered,
         constructs(Format, Dynamic);
     /// After a user's custom inspect: the state `inspect_save` saved, back.
