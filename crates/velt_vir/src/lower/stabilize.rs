@@ -18,7 +18,7 @@ use super::boxing::ShareKind;
 use super::call::Stabilize;
 use super::cint;
 use super::operand::proj;
-use super::sequence::root_local;
+use super::sequence::{may_move_local, root_local};
 use super::FnLower;
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
@@ -498,7 +498,7 @@ impl FnLower<'_, '_> {
                 ..ArgReach::default()
             };
         }
-        let moved = self.beside(args, modes, i, PassMode::Owned);
+        let moved = self.moved_beside(args, modes, i);
         let sibling = match others != 0 {
             true => self.sibling_container(args, i),
             false => {
@@ -511,6 +511,20 @@ impl FnLower<'_, '_> {
             sibling,
             moved,
         }
+    }
+
+    /// Is an argument other than `args[i]` passed `Owned` one that may hand the callee what
+    /// `args[i]` is a part of, so that the callee may drop it? For a part read from a local, only
+    /// an argument that may move that local: `take(o, o.name)`, or `o` handed on inside another
+    /// argument. Any other argument is a value of its own, and dropping it leaves what the local
+    /// holds (a share, or a by-reference `const`, which is shared when its owner goes to a call):
+    /// `this.entries.set(key, value)` lends `this.entries` beside a moved `value` of type `any`.
+    fn moved_beside(&mut self, args: &[hir::Expr], modes: &[PassMode], i: usize) -> bool {
+        let Some(l) = root_local(&args[i]) else {
+            return self.beside(args, modes, i, PassMode::Owned);
+        };
+        let moves = |j: usize| j != i && modes[j] == PassMode::Owned && may_move_local(&args[j], l);
+        (0..args.len()).any(moves) && self.holder_beside(args, i, moves)
     }
 
     /// Is an argument other than `args[i]` passed as `mode`, and may it hold what `args[i]` is a
