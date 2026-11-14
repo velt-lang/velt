@@ -21,8 +21,13 @@ pub fn fetch(
     version: &Version,
     checksum: &str,
 ) -> Result<PathBuf, String> {
+    // The name becomes a path here and in the registry: `../elsewhere` would lead out of both
+    // (and an existing directory there would be replaced).
+    if !crate::manifest::is_valid_dependency_name(name) {
+        return Err(format!("`{name}` is not a valid package name"));
+    }
     let dir = loc.cached_package(name, version);
-    if dir.is_dir() && contents::checksum(&dir).is_ok_and(|sum| sum == checksum) {
+    if holds(&dir, checksum) {
         return Ok(dir);
     }
     let named = |e: String| format!("`{name}` {version}: {e}");
@@ -49,6 +54,11 @@ pub fn fetch(
         ));
     }
     Ok(dir)
+}
+
+/// Whether the cache directory `dir` of a package holds contents hashing to `checksum`.
+pub fn holds(dir: &std::path::Path, checksum: &str) -> bool {
+    dir.is_dir() && contents::checksum(dir).is_ok_and(|sum| sum == checksum)
 }
 
 /// Ensure the `target` native bundle of `name` `version` is in the cache with contents hashing to

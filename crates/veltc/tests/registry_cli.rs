@@ -226,6 +226,9 @@ fn share_a_package_through_the_registry_server() {
     );
     let yanked = velt(&lib, &home_a, &["yank", "greet@0.1.0"]);
     assert!(yanked.status.success(), "{}", text(&yanked));
+    // A locked version in the cache asks no index (#2840); fetched again, the index says it's
+    // yanked.
+    std::fs::remove_dir_all(home_b.join("cache/greet-0.1.0")).expect("remove");
     let installed = velt(&app, &home_b, &["install", "--locked"]);
     assert!(installed.status.success(), "{}", text(&installed));
     assert!(
@@ -519,7 +522,19 @@ fn a_lock_from_another_registry_is_not_silently_re_resolved() {
     assert!(added.status.success(), "{}", text(&added));
     let lock = std::fs::read_to_string(app.join("velt.lock.json")).expect("lock");
 
-    // Same version, other content: the checksum error says the registry may have changed.
+    // The locked content is in the cache: it is used as locked, and no registry is asked
+    // (#2840).
+    let cached = velt_on(&app, &home, Some(&reg_b), &["install", "--locked"]);
+    assert!(cached.status.success(), "{}", text(&cached));
+    std::fs::remove_dir_all(home.join("cache/greet-0.1.0")).expect("remove");
+    // Same version, other content: the checksum error says the registry may have changed, with
+    // --locked too.
+    let locked = velt_on(&app, &home, Some(&reg_b), &["install", "--locked"]);
+    assert!(
+        text(&locked).contains("checksum mismatch for `greet` 0.1.0"),
+        "{}",
+        text(&locked)
+    );
     let other = velt_on(&app, &home, Some(&reg_b), &["install"]);
     assert!(!other.status.success());
     assert!(

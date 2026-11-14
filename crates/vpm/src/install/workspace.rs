@@ -40,7 +40,10 @@ pub fn install(
         &manifests,
         &loc,
         prefer,
-        crate::tree_stamp::for_install(&opts),
+        (
+            crate::tree_stamp::for_install(&opts),
+            opts.target.as_deref(),
+        ),
     )?;
     let member_dirs: Vec<PathBuf> = ws.members.iter().map(|m| m.dir.clone()).collect();
     let lockfile = to_lockfile(&resolution, &ws.root, &member_dirs);

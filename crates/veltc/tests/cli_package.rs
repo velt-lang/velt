@@ -381,6 +381,53 @@ fn new_then_build_and_run() {
     assert_eq!(String::from_utf8_lossy(&o.stdout), "Hello, world!\n");
 }
 
+/// A locked project whose registry packages are all in the cache installs, builds and runs with
+/// its registry unreachable (#2840); with a package missing from the cache, the error says it
+/// needs the registry and what to do.
+#[test]
+fn a_locked_and_cached_project_builds_with_the_registry_down() {
+    let s = sandbox();
+    s.ok("", &["new", "greet", "--lib"]);
+    s.write(
+        "greet/src/lib.velt",
+        "export function greeting(): string {\n  return \"hi from greet\";\n}\n",
+    );
+    s.ok("greet", &["publish"]);
+    s.ok("", &["new", "app"]);
+    s.ok("app", &["add", "greet"]);
+    s.write(
+        "app/src/main.velt",
+        "import { greeting } from \"greet\";\n\nfunction main() {\n  console.log(greeting());\n}\n",
+    );
+    let lock = s.read("app/velt.lock.json");
+    // Nothing listens on port 1: as with the network down.
+    let down = [("VELT_REGISTRY", "http://127.0.0.1:1")];
+    for args in [&["install", "--locked"][..], &["build"], &["run"]] {
+        let o = s.velt_with("app", args, &down);
+        assert!(
+            o.status.success(),
+            "`velt {}` with the registry down:\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        if args == ["run"] {
+            assert_eq!(String::from_utf8_lossy(&o.stdout), "hi from greet\n");
+        }
+    }
+    assert_eq!(s.read("app/velt.lock.json"), lock);
+
+    std::fs::remove_dir_all(s.dir.join("home/cache/greet-0.1.0")).unwrap();
+    let o = s.velt_with("app", &["build"], &down);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success(), "{stderr}");
+    assert!(
+        stderr
+            .contains("cannot reach the registry http://127.0.0.1:1 to read the index of `greet`")
+            && stderr.contains("run `velt install` once the registry can be reached"),
+        "{stderr}"
+    );
+}
+
 /// Needs the full compiler pipeline and the prelude's `assert`.
 #[test]
 fn test_runner_reports_passes_and_failures() {

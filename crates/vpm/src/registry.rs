@@ -121,6 +121,20 @@ pub fn parse_index(text: &str, what: &str) -> Result<Index, String> {
     Ok(index)
 }
 
+/// The dependencies a published version's index entry lists for `manifest`: each by its
+/// `version` requirement. An error names a dependency without one (a `path`, `git`, `url` or
+/// `"workspace"` entry), which publishing refuses.
+pub fn index_dependencies(manifest: &Manifest) -> Result<BTreeMap<String, String>, String> {
+    manifest
+        .dependencies
+        .iter()
+        .map(|(dep, spec)| match (spec.is_workspace(), spec.version()) {
+            (false, Some(req)) => Ok((dep.clone(), req.to_string())),
+            _ => Err(format!("dependency `{dep}` has no `version` requirement")),
+        })
+        .collect()
+}
+
 pub(crate) fn write_index(loc: &Locations, name: &str, index: &Index) -> Result<(), String> {
     crate::json_file::write(&loc.registry.join(name).join(INDEX_FILE), index)
 }
@@ -398,7 +412,8 @@ fn check_name_is_free(registry: &Path, name: &str) -> Result<(), String> {
 fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<IndexEntry, String> {
     let name = &manifest.package.name;
     let version = manifest.version();
-    let mut dependencies = BTreeMap::new();
+    // Each dependency without a `version` requirement gets its own message here; the entry's
+    // list is the one an install checks the package against (`index_dependencies`).
     for (dep, spec) in &manifest.dependencies {
         if spec.is_workspace() {
             // Publishing members, with `"workspace"` replaced by versions, is planned
@@ -407,7 +422,7 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
                 "cannot publish `{name}`: dependency `{dep}` is `\"workspace\"`; publishing members of a workspace is not supported yet"
             ));
         }
-        let req = spec.version().ok_or_else(|| {
+        spec.version().ok_or_else(|| {
             let source = match (spec.git(), spec.url_spec()) {
                 (Some(_), _) => "a `git` repository",
                 (_, Some(_)) => "a `url`",
@@ -415,8 +430,9 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
             };
             format!("cannot publish `{name}`: dependency `{dep}` has only {source}; add a `version` requirement (a registry package is built from the registry alone)")
         })?;
-        dependencies.insert(dep.clone(), req.to_string());
     }
+    let dependencies =
+        index_dependencies(manifest).map_err(|e| format!("cannot publish `{name}`: {e}"))?;
 
     if loc.remote.is_none() {
         check_name_is_free(&loc.registry, name)?;

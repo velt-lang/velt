@@ -1,15 +1,20 @@
 //! Candidate versions for a requirement: registry index entries (cached per name) or the single
 //! package at a path, each with its own dependency requirements.
+//!
+//! A registry requirement that `velt.lock.json`'s version still meets, with that version in the
+//! cache under its locked checksum, gets that version alone, read from the cache: no index is
+//! asked, so a locked project whose packages are all cached installs and builds offline, or with
+//! the registry down (as cargo does). Everything else asks the registry's index.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use semver::Version;
+use semver::{Version, VersionReq};
 
 use super::{dependency_requirements, parse_req, report, Requirement, Source, Want};
 use crate::git::{GitRef, GitSpec};
 use crate::locations::Locations;
-use crate::lockfile::{Lockfile, REGISTRY_SOURCE};
+use crate::lockfile::{Lockfile, LOCK_FILE, REGISTRY_SOURCE};
 use crate::manifest::Manifest;
 use crate::registry::{self, Index};
 
@@ -37,6 +42,12 @@ pub(super) struct Provider<'a> {
     pub warnings: BTreeSet<String>,
     /// How much of a fetched tree is looked at against its stamp (`crate::tree_stamp`).
     pub check: crate::tree_stamp::TreeCheck,
+    /// The build's target triple, if any (`crate::install::InstallOptions::target`).
+    pub target: Option<String>,
+    /// Whether a locked version in the cache is offered without asking the index (module docs).
+    use_cache: bool,
+    /// Whether one was.
+    from_cache: bool,
 }
 
 impl<'a> Provider<'a> {
@@ -54,13 +65,33 @@ impl<'a> Provider<'a> {
             indexes: HashMap::new(),
             warnings: BTreeSet::new(),
             check: crate::tree_stamp::TreeCheck::Files,
+            target: None,
+            use_cache: true,
+            from_cache: false,
         }
+    }
+
+    /// Whether a candidate came from the cache instead of the index (module docs).
+    pub fn used_cache(&self) -> bool {
+        self.from_cache
+    }
+
+    /// From now on, ask the index for every registry requirement (each locked version still goes
+    /// first).
+    pub fn ask_registry(&mut self) {
+        self.use_cache = false;
     }
 
     /// Candidates in preference order (may be empty: see [`Provider::no_match`]).
     pub fn candidates(&mut self, req: &Requirement) -> Result<Vec<Candidate>, String> {
         match &req.want {
             Want::Registry(version_req) => {
+                if self.use_cache {
+                    if let Some(cand) = self.locked_in_cache(&req.name, version_req) {
+                        self.from_cache = true;
+                        return Ok(vec![cand]);
+                    }
+                }
                 let locked = self.locked_version(&req.name);
                 let in_registry = self.index(&req.name)?.is_some_and(|index| {
                     locked
@@ -76,6 +107,7 @@ impl<'a> Provider<'a> {
                         return Err(report::locked_elsewhere(&req.name, v, &self.loc.describe()));
                     }
                 }
+                let registry = self.loc.describe();
                 let Some(index) = self.index(&req.name)? else {
                     return Ok(vec![]);
                 };
@@ -94,7 +126,15 @@ impl<'a> Provider<'a> {
                 }
                 entries
                     .into_iter()
-                    .map(|e| registry_candidate(&req.name, e))
+                    .map(|e| {
+                        let source = Source::Registry {
+                            checksum: e.checksum.clone(),
+                            native: e.native.clone(),
+                            native_abi: e.native_abi,
+                            listed: e.dependencies.clone(),
+                        };
+                        registry_candidate(&req.name, e.semver(), source, &registry)
+                    })
                     .collect()
             }
             Want::Git {
@@ -162,14 +202,55 @@ impl<'a> Provider<'a> {
         report::no_match(req, available.as_deref(), &self.loc.describe())
     }
 
-    /// Whether registry version `name` `version` is yanked.
-    pub fn is_yanked(&mut self, name: &str, version: &Version) -> Result<bool, String> {
-        Ok(self.index(name)?.is_some_and(|index| {
-            index
-                .versions
-                .iter()
-                .any(|e| e.yanked && e.semver() == *version)
-        }))
+    /// Whether registry version `name` `version` is yanked, as far as an index asked during this
+    /// resolution says: a locked version taken from the cache asked none, and isn't reported.
+    pub fn is_yanked(&self, name: &str, version: &Version) -> bool {
+        self.indexes
+            .get(name)
+            .and_then(Option::as_ref)
+            .is_some_and(|index| {
+                index
+                    .versions
+                    .iter()
+                    .any(|e| e.yanked && e.semver() == *version)
+            })
+    }
+
+    /// The candidate for registry package `name` from the cache: the version `velt.lock.json`
+    /// pins, when `version_req` accepts it and the cache holds it with the locked checksum. Its
+    /// dependencies are its own `package.velt`'s, which that checksum covers; its native
+    /// libraries the lock's. `None` sends the requirement to the index.
+    fn locked_in_cache(&self, name: &str, version_req: &VersionReq) -> Option<Candidate> {
+        let locked = self.prefer?.get(name)?;
+        if locked.source != REGISTRY_SOURCE {
+            return None;
+        }
+        let version = Version::parse(&locked.version).ok()?;
+        let checksum = locked.checksum.as_ref()?;
+        if !version_req.matches(&version) {
+            return None;
+        }
+        // Prebuilt libraries, but none locked for this build's target: the index may have one
+        // added since, which an install records.
+        let target = self.target.as_deref();
+        if !locked.native.is_empty() && target.is_some_and(|t| !locked.native.contains_key(t)) {
+            return None;
+        }
+        let dir = self.loc.cached_package(name, &version);
+        if !crate::cache::holds(&dir, checksum) {
+            return None;
+        }
+        let manifest = Manifest::from_dir(&dir).ok()?;
+        if manifest.package.name != name || manifest.version() != version {
+            return None;
+        }
+        let source = Source::Registry {
+            checksum: checksum.clone(),
+            native: locked.native.clone(),
+            native_abi: None,
+            listed: registry::index_dependencies(&manifest).ok()?,
+        };
+        registry_candidate(name, version, source, &self.loc.describe()).ok()
     }
 
     fn locked_version(&self, name: &str) -> Option<Version> {
@@ -181,10 +262,56 @@ impl<'a> Provider<'a> {
 
     fn index(&mut self, name: &str) -> Result<Option<&Index>, String> {
         if !self.indexes.contains_key(name) {
-            let index = registry::read_index(self.loc, name)?;
+            let index =
+                registry::read_index(self.loc, name).map_err(|e| match is_unreachable(&e) {
+                    true => format!("{e}\n{}", self.why_registry(name)),
+                    false => e,
+                })?;
             self.indexes.insert(name.to_string(), index);
         }
         Ok(self.indexes[name].as_ref())
+    }
+
+    /// Why resolving `name` needed the registry, and what to do when it can't be reached.
+    fn why_registry(&self, name: &str) -> String {
+        let locked = self
+            .prefer
+            .and_then(|lock| lock.get(name))
+            .filter(|p| p.source == REGISTRY_SOURCE);
+        let why = match (self.prefer, locked) {
+            (None, _) => format!("there is no {LOCK_FILE} to use (or `velt update` ignores it)"),
+            (Some(_), None) => format!("{LOCK_FILE} doesn't pin it yet"),
+            (Some(_), Some(p)) if self.use_cache => {
+                let cached = Version::parse(&p.version)
+                    .ok()
+                    .map(|v| self.loc.cached_package(name, &v))
+                    .filter(|dir| dir.exists());
+                match cached {
+                    Some(dir) => format!(
+                        "{LOCK_FILE} pins {}, which package.velt no longer accepts or whose copy in the cache (`{}`) doesn't match its locked checksum",
+                        p.version,
+                        dir.display()
+                    ),
+                    None => format!(
+                        "{LOCK_FILE} pins {}, which package.velt no longer accepts or which isn't in the cache (`{}`)",
+                        p.version,
+                        self.loc.cache.display()
+                    ),
+                }
+            }
+            // Asked only when resolving with the locked versions in the cache failed (the error
+            // shown with this one: `solve_root`).
+            (Some(_), Some(p)) => format!(
+                "{LOCK_FILE} pins {}, but package.velt couldn't be resolved with only the locked versions in the cache (the error above)",
+                p.version
+            ),
+        };
+        format!(
+            "`{name}` needs the registry: {why}. A package whose {LOCK_FILE} covers package.velt, \
+             with every locked package in the cache, installs and builds without the registry; \
+             run `velt install` once the registry can be reached (check the network connection, \
+             $VELT_REGISTRY and `registry` in package.velt)"
+        )
     }
 
     fn path_candidate(&self, req: &Requirement, dir: &Path) -> Result<Candidate, String> {
@@ -355,20 +482,38 @@ fn inside(dir: &Path, checkout: &Path) -> bool {
     }
 }
 
-fn registry_candidate(name: &str, entry: &registry::IndexEntry) -> Result<Candidate, String> {
+/// Whether `e` is a registry that could not be reached at all ([`crate::remote::UNREACHABLE`]).
+pub(super) fn is_unreachable(e: &str) -> bool {
+    e.starts_with(crate::remote::UNREACHABLE)
+}
+
+/// Registry package `name` `version` from `source` (a [`Source::Registry`]) of `registry`,
+/// depending on what its `listed` names. A listed name that isn't a valid dependency name is
+/// refused here, before anything is fetched: it becomes a path in the cache and the registry
+/// (`../elsewhere` would lead out of them).
+fn registry_candidate(
+    name: &str,
+    version: Version,
+    source: Source,
+    registry: &str,
+) -> Result<Candidate, String> {
+    let Source::Registry { listed, .. } = &source else {
+        unreachable!("ICE: a registry candidate from another source");
+    };
     let mut dependencies = vec![];
-    for (dep, req) in &entry.dependencies {
-        let req = parse_req(req)
-            .map_err(|e| format!("registry index of `{name}` {}: {e}", entry.version))?;
+    for (dep, req) in listed {
+        if !crate::manifest::is_valid_dependency_name(dep) {
+            return Err(format!(
+                "the registry `{registry}` lists a dependency `{dep}` for `{name}` {version}, which is not a valid package name; nothing was installed, report this to the registry's operators"
+            ));
+        }
+        let req =
+            parse_req(req).map_err(|e| format!("registry index of `{name}` {version}: {e}"))?;
         dependencies.push((dep.clone(), Want::Registry(req)));
     }
     Ok(Candidate {
-        version: entry.semver(),
-        source: Source::Registry {
-            checksum: entry.checksum.clone(),
-            native: entry.native.clone(),
-            native_abi: entry.native_abi,
-        },
+        version,
+        source,
         dependencies,
         root_controlled: false,
     })
