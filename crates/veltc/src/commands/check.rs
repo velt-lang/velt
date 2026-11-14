@@ -238,6 +238,10 @@ fn resolve(
     opts.no_generators = args.no_generators;
     opts.target = args.target.clone();
     let scope = without_other_variants(scope, &opts);
+    let scope = match std::env::var_os("VELT_STD_SUMMARY_EAGER") {
+        Some(_) => with_all_std(scope, &opts)?,
+        None => scope,
+    };
     Ok((opts, scope, same_path))
 }
 
@@ -250,18 +254,8 @@ fn std_scope(
     let std = velt_loader::std_root().ok_or_else(|| {
         BuildError::Failed("cannot find the standard library; set VELT_STD".into())
     })?;
-    let mut extra_roots: Vec<PathBuf> = discover::source_files(&std)
-        .map_err(BuildError::Failed)?
-        .into_iter()
-        .filter(|f| {
-            let name = f.file_name().map(|n| n.to_string_lossy().into_owned());
-            name.is_some_and(|n| n.ends_with(".velt") && !n.ends_with(".test.velt"))
-        })
-        .collect();
-    // std's conditional imports are data the loader reads, as a manifest is, not a module.
+    let mut extra_roots = std_files(&std)?;
     let imports = std.join(vpm::imports::STD_IMPORTS_FILE);
-    extra_roots.retain(|f| *f != imports);
-    extra_roots.sort();
     let input = std.join("__velt_check_std.velt");
     let mut opts = options_for(&input, locked)?;
     opts.root_source = Some(String::new());
@@ -333,6 +327,45 @@ fn without_other_variants(mut scope: CheckScope, opts: &driver::BuildOptions) ->
     let unused = unselected_variants(root, imports, &opts.target());
     scope.extra_roots.retain(|f| !unused.contains(&file_key(f)));
     scope
+}
+
+/// Every file of the standard library at `std` (its tests and its import map aside), sorted.
+fn std_files(std: &Path) -> Result<Vec<PathBuf>, BuildError> {
+    let mut files: Vec<PathBuf> = discover::source_files(std)
+        .map_err(BuildError::Failed)?
+        .into_iter()
+        .filter(|f| {
+            let name = f.file_name().map(|n| n.to_string_lossy().into_owned());
+            name.is_some_and(|n| n.ends_with(".velt") && !n.ends_with(".test.velt"))
+        })
+        .collect();
+    // std's conditional imports are data the loader reads, as a manifest is, not a module.
+    let imports = std.join(vpm::imports::STD_IMPORTS_FILE);
+    files.retain(|f| *f != imports);
+    files.sort();
+    Ok(files)
+}
+
+/// `VELT_STD_SUMMARY_EAGER` (the std identity oracle's whole-std mode, #2943): the program with
+/// every std file, each std definition checked whether or not the program reaches it, as a cache
+/// of checked std holds std. A source generator's host is built apart and doesn't see it.
+fn with_all_std(
+    mut scope: CheckScope,
+    opts: &driver::BuildOptions,
+) -> Result<CheckScope, BuildError> {
+    let std = velt_loader::std_root().ok_or_else(|| {
+        BuildError::Failed("cannot find the standard library; set VELT_STD".into())
+    })?;
+    let imports = std.join(vpm::imports::STD_IMPORTS_FILE);
+    let mut files = std_files(&std)?;
+    if let Ok(src) = std::fs::read_to_string(&imports) {
+        let map = vpm::manifest::read::read_std_imports(velt_common::FileId(0), &src);
+        let unused = unselected_variants(&std, &map.unwrap_or_default(), &opts.target());
+        files.retain(|f| !unused.contains(&file_key(f)));
+    }
+    scope.extra_roots.extend(files);
+    scope.eager_std = true;
+    Ok(scope)
 }
 
 /// The files of `imports` (variants relative to `base`) that a build for `target` uses for no
