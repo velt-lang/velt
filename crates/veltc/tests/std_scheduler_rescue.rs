@@ -243,7 +243,6 @@ async function main() {
 /// Ten rounds, each 100k openings, then a pause in which the spares retire and worker 0 becomes
 /// lazy again (std/lang/hooks/sched_relax.velt): up to ten hand-overs a run (one at least).
 #[test]
-#[ignore = "#2891: a lost wakeup already on main leaves main unwoken at VELT_THREADS=2"]
 fn a_million_resolves_in_one_poll_are_rescued_mid_loop() {
     if !has_threads() {
         return;

@@ -61,7 +61,11 @@ export function awaitNode(n: usize, cx: usize): u32 {
 
 /**
  * Takes node `n`'s awaiter (0 if none) for its finish on task `task`, nd.FINISHED set already: with
- * a swap only when the owner may run on another worker (module docs).
+ * a swap only when the owner may run on another worker (module docs). The task's own root waker
+ * is cleared with a plain store, which rests on an invariant: only a direct await by the task's
+ * root stores that waker, and such an await ends only with the promise (its drop clears the
+ * word), so no other task's await can swap into the word meanwhile. Combinators poll with wakers
+ * of their own, which map to no task and take the swap.
  */
 @inline
 export function finishAwaiter(n: usize, task: usize): usize {
