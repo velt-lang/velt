@@ -13,8 +13,9 @@
 //! against std as a whole (`throws` and passing modes included).
 //!
 //! The module is demanded when the call is checked, as with laziness off, for the program's own
-//! code (checked whole, and nearly all live), for a signature the stub can't express (a union or
-//! a named type), when no loader serves std modules on demand, and for a hook that a round before
+//! code (checked whole, and nearly all live), for a signature the stub can't express (a union, an
+//! object-literal type, or a named type no loaded std module, or more than one, knows by that
+//! name), when no loader serves std modules on demand, and for a hook that a round before
 //! reached only after the passes that follow the check (`Assumed::hooks`): too late to load a
 //! module then, so the check runs again with it.
 
@@ -229,8 +230,40 @@ fn ty_of(cx: &mut Ctx, t: &T) -> Option<TyId> {
                 rest: *rest,
             })
         }
+        T::Named(n, args) if !n.starts_with('{') => {
+            let args = args
+                .iter()
+                .map(|t| ty_of(cx, t))
+                .collect::<Option<Vec<_>>>()?;
+            let d = named(cx, n)?;
+            match (cx.adt(d).is_some(), cx.iface(d).is_some()) {
+                (true, _) => cx.ty.intern(TyKind::Adt(d, args)),
+                (_, true) => cx.ty.intern(TyKind::Dyn(d, args)),
+                _ => return None,
+            }
+        }
         T::Union(_) | T::Named(..) => return None,
     })
+}
+
+/// The std class, struct or interface named `name` (the table's last name segment): the one
+/// definition the loaded std modules know by that name, own or imported. `None` when none does
+/// (its module isn't loaded) or several do.
+fn named(cx: &Ctx, name: &str) -> Option<DefId> {
+    let mut found = None;
+    for (m, scope) in cx.scopes.iter().enumerate() {
+        if !cx.modules.get(m).is_some_and(|sm| sm.is_std) {
+            continue;
+        }
+        if let Some(Item::Def(d)) = scope.items.get(name) {
+            match found {
+                None => found = Some(*d),
+                Some(f) if f == *d => {}
+                Some(_) => return None,
+            }
+        }
+    }
+    found
 }
 
 /// Binds the stubs that live code calls (`(caller, stub)`): loads each hook's module, checks its

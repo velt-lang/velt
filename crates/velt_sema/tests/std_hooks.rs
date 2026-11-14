@@ -18,9 +18,10 @@ use velt_sema::hir::{Def, DefId, FloatTy, IntTy, Nothing, PassMode, Program, TyI
 /// velt/lang/hooks/number_float, which the driver's loader adds for what a module uses, and this
 /// test's loader does not). velt/lang/hooks/number_text comes with the prelude; imported here,
 /// its float hooks, which are checked on demand, are checked too. velt/lang/hooks/sched (the
-/// executor in Velt) and velt/lang/hooks/sched_blocking (its pool) are loaded only by a build with
-/// `VELT_SCHEDULER=std`, and its debug cell check (velt/lang/hooks/sched_cells) only by a debug
-/// compiler's.
+/// executor in Velt) and what std calls of it by role (velt/lang/hooks/sched_blocking, its pool;
+/// velt/process/child/child_reactor, its child processes; velt/net/dns/lookup_sched, its
+/// resolver) are loaded only for a native build, and its debug cell check
+/// (velt/lang/hooks/sched_cells) only by a debug compiler's.
 const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/record/reflect\";\n\
     import \"velt/lang/hooks/any_record\";\nimport \"velt/lang/hooks/number_text\";\n\
     import \"velt/lang/hooks/number_float\";\nimport \"velt/host\";\n\
@@ -31,6 +32,7 @@ const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/recor
     import \"velt/lang/hooks/locale_compare\";\nimport \"velt/lang/hooks/sched\";\n\
     import \"velt/lang/hooks/sched_blocking\";\n\
     import \"velt/lang/hooks/sched_cells\";\n\
+    import \"velt/process/child/child_reactor\";\nimport \"velt/net/dns/lookup_sched\";\n\
     function main() {\n  const p = new Proxy({}, {});\n  const s = new Set<number>();\n  \
     const b = new Uint8Array(1);\n  const r = new RegExp(\"a\");\n  \
     const j = JSON.parse<i64>(\"1\");\n  const v: JsonValue = JsonValue.of(1);\n}\n";

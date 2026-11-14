@@ -10,11 +10,10 @@ import { IoResult } from "velt/native/result";
 import { CString } from "velt/ffi/c_string";
 import { Ptr } from "velt/ffi/ptr";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
-import { addressLoad } from "velt/lang/intrinsics";
+import { addressLoad, hookCall } from "velt/lang/intrinsics";
 import { GAI_OS_ERROR, freeaddrinfo, gai_strerror, inet_ntop } from "#net-calls";
 import * as sys from "#net-sys";
 import * as m from "velt/lang/hooks/sched_mem";
-import * as bp from "velt/lang/hooks/sched_blocking";
 
 const SOCK_STREAM: i32 = 1;
 const AI_PASSIVE: i32 = 1;
@@ -71,10 +70,13 @@ export async function resolve(addr: string, passive: bool): Promise<IoResult<usi
   const host = parts[0] === "" ? (passive ? "0.0.0.0" : "localhost") : parts[0];
   const port = parts[1];
   const numeric = lookup(host, port, passive, true);
-  if (numeric.code === 0 || !bp.supported()) {
+  if (numeric.code === 0 || !hookCall("sched_blocking_supported")) {
     return numeric;
   }
-  return await bp.run<IoResult<usize>>(() => lookup(host, port, passive, false));
+  return await hookCall<IoResult<usize>>(
+    "sched_blocking_run",
+    () => lookup(host, port, passive, false),
+  );
 }
 
 /**

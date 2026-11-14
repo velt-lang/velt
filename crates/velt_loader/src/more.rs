@@ -230,8 +230,8 @@ pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
     let Some(importer) = loader.modules.iter().position(|m| m.is_std) else {
         return;
     };
-    // The executor in Velt, on a native target (the `std-scheduler` condition); with it, its
-    // blocking pool, which std calls by role (`hookCall`, #2882).
+    // The executor in Velt, on a native target (the `std-scheduler` condition); with it, what std
+    // calls by role (`hookCall`, #2882).
     let native = super::conditional::load_conditions(loader.opts)
         .iter()
         .any(|c| c == vpm::imports::STD_SCHEDULER);
@@ -254,12 +254,16 @@ pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
     loader.resolve_all(queue);
 }
 
-/// The executor in Velt's modules sema demands as a program needs them: its hooks, its blocking
-/// pool (called by role, #2882) and a debug compiler's cell check.
+/// The executor in Velt's modules sema demands as a program needs them: its hooks, a debug
+/// compiler's cell check, and what std calls by role (#2882): its blocking pool, its reactor, its
+/// child processes and its resolver.
 const EXECUTOR_MODULES: &[&str] = &[
     velt_common::std_module!(lang_hooks_sched),
     velt_common::std_module!(lang_hooks_sched_blocking),
     velt_common::std_module!(lang_hooks_sched_cells),
+    velt_common::std_module!(lang_hooks_sched_io),
+    velt_common::std_module!(process_child_reactor),
+    velt_common::std_module!(net_dns_lookup_sched),
 ];
 
 /// Is `path` (a canonical std module path) one of the executor in Velt's modules, which a caller

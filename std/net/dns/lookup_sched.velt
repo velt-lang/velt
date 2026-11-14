@@ -1,0 +1,20 @@
+// velt/net/dns (internal): the resolver function on the executor in Velt (`VELT_SCHEDULER=std`,
+// #2649 step 4), with the name and signature of the runtime's (std/net/dns/rt.velt). The
+// `std-scheduler` variant of `#net-dns` (rt_sched.velt) calls it by role (`hookCall`), so a
+// program loads it, the address lookup and the executor only when live code resolves a name
+// (#2882).
+// `getaddrinfo` runs on the executor's blocking pool (std/net/fd_addr.velt `addressesOf`)
+// instead of tokio's `lookup_host` on the runtime's; on an OS without the reactor or the pool,
+// the runtime's leaf.
+
+import { IoResult } from "velt/native/result";
+import { hookCall } from "velt/lang/intrinsics";
+import * as fa from "velt/net/fd_addr";
+import * as rt from "./rt";
+
+export async function velt_rt_dns_lookup(host: string): Promise<IoResult<string[]>> {
+  if (!hookCall("sched_io_supported") || !hookCall("sched_blocking_supported")) {
+    return await rt.velt_rt_dns_lookup(host);
+  }
+  return await hookCall<IoResult<string[]>>("sched_blocking_run", () => fa.addressesOf(host));
+}
