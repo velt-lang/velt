@@ -280,12 +280,10 @@ fn differs(p: &Program, qualified: &str, sig: &Sig) -> Option<String> {
         (Def::Global(g), Sig::ProcessStatic) => {
             let atomic_u64 = matches!(p.types.kind(g.ty), TyKind::Adt(_, args)
                 if args.len() == 1 && matches!(p.types.kind(args[0]), TyKind::Int(velt_sema::hir::IntTy::U64)));
-            return match (atomic_u64, g.slot) {
-                (true, None) => None,
+            return match (atomic_u64, g.is_slot) {
+                (true, false) => None,
                 (false, _) => Some("not an `Atomic<u64>`".to_string()),
-                (true, Some(_)) => {
-                    Some("kept in the module state, not a static atomic".to_string())
-                }
+                (true, true) => Some("kept in the module state, not a static atomic".to_string()),
             };
         }
         _ => {

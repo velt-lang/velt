@@ -42,7 +42,7 @@ impl FnLower<'_, '_> {
             return *known;
         }
         let found = match self.cx.hir.def(d) {
-            hir::Def::Global(g) if g.slot.is_none() => match &g.init.kind {
+            hir::Def::Global(g) if !g.is_slot => match &g.init.kind {
                 // A computed starting value in std, whose constants are not kept in the module
                 // state, stays evaluated at each use (sema `static_atomic_init`).
                 K::AdtLit { def, fields, .. }
@@ -190,7 +190,7 @@ impl super::Cx<'_> {
             let hir::Def::Global(g) = def else {
                 continue;
             };
-            let static_atomic = g.slot.is_none()
+            let static_atomic = !g.is_slot
                 && matches!(&g.init.kind, K::AdtLit { def, fields, .. }
                     if is_atomic(self, *def) && fields.len() == 1 && literal(&fields[0]));
             if !static_atomic {

@@ -918,7 +918,7 @@ function value of a method, which sema rejects too.
 **Static atomics.** A module `const` (not a class's static field) whose initializer is
 `new Atomic<T>(literal)` (a number literal, negated or not, `true`/`false`, or `null` for an
 `Atomic<shared<T> | null>`), in the program
-or in std, has no slot: it is a `GlobalDef` with `slot: None` and that `AdtLit` as `init`.
+or in std, has no slot: it is a `GlobalDef` with `is_slot: false` and that `AdtLit` as `init`.
 Lowering gives it one writable 8-byte-or-smaller `StaticData` (`mutable: Some(id)`, `id` the
 `tls::stable_id` of its qualified name and value type) starting as the literal, made once, and its `Global` is
 the place of that word wherever it is used: no `velt_rt_module_state`, so no module lock. The
@@ -930,9 +930,11 @@ references such words hold are released at exit by a function `velt_main` hands 
 A module-level `let`, and a module `const` sema keeps instead of evaluating at each use (an
 initializer that is not a constant, a function from a call, a type holding an `Atomic` other
 than a static atomic; #76, #802), is a `GlobalDef` with
-`slot: Some(i)`. `Program::module_state` lists the slots' globals in initialization order
+`is_slot: true`. `Program::module_state` lists the slots' globals in initialization order
 (Node's module evaluation order) and gives the state tuple `ty` (element `i` = slot `i`'s
-type); it is `None` when no global has a slot, and then nothing below is emitted.
+type); it is `None` when no global has a slot, and then nothing below is emitted. A global's
+slot number is its position in that list, a fact of the whole program that the definition
+doesn't hold, so a std global is the same definition in every program (#2943).
 
 - `ExprKind::Global(d)` of a slot is a place, like a field: read (a copy for Copy types),
   borrowed (`m.set(k, v)`), assigned (`Assign { place: Global(d) }` drops the old value) and
