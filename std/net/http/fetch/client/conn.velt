@@ -239,8 +239,8 @@ export async function dial(
   alpn: string = "http/1.1",
 ): Promise<TcpStream, IoError | AbortError> {
   const addr = `${t.hostname}:${t.port}`;
-  // Under the executor in Velt, whose pool keeps sockets of its reactor (std/net/tcp_sched.velt
-  // notes it): a socket on the reactor (dial_sched.velt). A constant: a default build lowers
+  // `http:` where the executor in Velt's pool keeps sockets of its reactor (std/net/tcp_sched.velt
+  // notes it): a socket on the reactor (dial_sched.velt). A constant: a build without it lowers
   // only the runtime's connect below.
   if (stdUsed("fetch-pool-reactor") && !t.https && reactorUp()) {
     return await dialPlain(addr, signal);

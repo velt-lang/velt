@@ -1,6 +1,6 @@
-// velt/net/http (internal): `fetch`'s plain-TCP connections under the executor in Velt
-// (`VELT_SCHEDULER=std`, #2649): the `std-scheduler` variant of `#fetch-dial` (std/imports.velt;
-// the other is dial_rt.velt). An `http:` connection is a non-blocking socket on the executor's
+// velt/net/http (internal): `fetch`'s plain-TCP connections under the executor in Velt (#2649),
+// every native program's: the `std-scheduler` variant of `#fetch-dial` (std/imports.velt; the
+// other is dial_rt.velt). An `http:` connection is a non-blocking socket on the executor's
 // reactor (std/net/fd_socket.velt), as `connect`'s, so every operation on it is Velt on the
 // worker, and its keep-alive pool is Velt too (std/net/fd_pool.velt, behind `TcpStream.park`).
 //

@@ -1,7 +1,7 @@
 // velt/net (internal): the keep-alive pool of `fetch`'s connections on the reactor of the executor
-// in Velt (`VELT_SCHEDULER=std`, std/net/tcp_sched.velt's `park` and `unpark` for the sockets of
-// ours; std/net/http/fetch/client/dial_sched.velt makes them). The same rules as the runtime's
-// pool, which keeps the runtime's streams (crates/velt_rt/src/net/park.rs, whose comment explains
+// in Velt (std/net/tcp_sched.velt's `park` and `unpark` for the sockets of ours;
+// std/net/http/fetch/client/dial_sched.velt makes them). The same rules as the runtime's pool,
+// which keeps the runtime's streams (crates/velt_rt/src/net/park.rs, whose comment explains
 // them): a stream parked under a key (an origin) goes to the next task that asks for that key,
 // most recently parked first; with `settled` (a request that may not be sent twice) only one idle
 // for at least `SETTLED_NS`; one idle longer than `MAX_IDLE_NS` is closed when its key is next
@@ -27,7 +27,7 @@ declare c("c") function recv$net(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): i
 const MAX_PER_KEY: i64 = 512;
 /** A stream idle this long (nanoseconds) is closed rather than reused: 60 s. */
 const MAX_IDLE_NS: u64 = 60000000000;
-/** A stream idle this long (nanoseconds) has usually received a close sent after its response: 5 ms. */
+/** A stream idle this long (ns) has usually received a close sent after its response: 5 ms. */
 const SETTLED_NS: u64 = 5000000;
 /** `recv`'s flag that leaves the bytes it finds in the socket (the same on macOS and Linux). */
 const MSG_PEEK: i32 = 2;

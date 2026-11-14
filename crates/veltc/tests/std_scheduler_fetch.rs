@@ -1,9 +1,8 @@
-//! `fetch`'s plain-TCP connections and their keep-alive pool under the executor in Velt
-//! (`VELT_SCHEDULER=std`, #2649): sockets on its reactor (std/net/http/fetch/client/dial_sched.velt)
-//! pooled in Velt (std/net/fd_pool.velt), where the default build keeps the runtime's
-//! (crates/velt_rt/src/net/park.rs). Each program is built with and without the variable, runs
+//! `fetch`'s plain-TCP connections and their keep-alive pool under the executor in Velt (#2649):
+//! sockets on its reactor (std/net/http/fetch/client/dial_sched.velt) pooled in Velt
+//! (std/net/fd_pool.velt); `https:` stays on the runtime's `connectTls` and pool. Each program runs
 //! with one worker and with four (killed after a minute: a lost wake hangs) and must print the same
-//! each time; only the binary built with the variable has the pool in Velt.
+//! each time, and its binary must dial in Velt.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -19,27 +18,19 @@ fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// `src` built in `dir` (with `VELT_SCHEDULER=std` when `std`): the binary's path.
-fn build(dir: &Path, name: &str, src: &str, std: bool) -> std::path::PathBuf {
+/// `src` built in `dir`: the binary's path.
+fn build(dir: &Path, name: &str, src: &str) -> std::path::PathBuf {
     let file = dir.join(format!("{name}.velt"));
     std::fs::write(&file, src).unwrap();
-    let exe = dir.join(format!(
-        "{name}{}{}",
-        if std { "_std" } else { "" },
-        if cfg!(windows) { ".exe" } else { "" }
-    ));
-    let mut build = command(env!("CARGO_BIN_EXE_velt"));
-    build
+    let exe = dir.join(format!("{name}{}", if cfg!(windows) { ".exe" } else { "" }));
+    let o = command(env!("CARGO_BIN_EXE_velt"))
         .arg("build")
         .arg(&file)
         .arg("-o")
         .arg(&exe)
         .current_dir(dir)
-        .env_remove("VELT_SCHEDULER");
-    if std {
-        build.env("VELT_SCHEDULER", "std");
-    }
-    let o = build.output().unwrap();
+        .output()
+        .unwrap();
     assert!(
         o.status.success(),
         "{name}: {}",
@@ -52,7 +43,6 @@ fn build(dir: &Path, name: &str, src: &str, std: bool) -> std::path::PathBuf {
 fn run(exe: &Path, threads: u32) -> String {
     let mut child = command(exe)
         .env("VELT_THREADS", threads.to_string())
-        .env_remove("VELT_SCHEDULER")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -84,37 +74,18 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
-/// Builds `src` both ways and runs each binary at one and four workers: each run prints `want`;
-/// only the std binary has the pool in Velt.
+/// Builds `src` and runs it at one and four workers: each run prints `want`, and the binary dials
+/// in Velt (`connectUntil`, std/net/fd_socket.velt).
 fn same_everywhere(name: &str, src: &str, want: &str) {
-    if !cfg!(unix) {
-        // Windows has no reactor in Velt here: its sockets stay the runtime's in both builds.
-        return;
-    }
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let rt = build(dir.path(), name, src, false);
-    let std = build(dir.path(), name, src, true);
+    let exe = build(dir.path(), name, src);
     for threads in [1, 4] {
-        assert_eq!(
-            run(&rt, threads),
-            want,
-            "{name}: the runtime's pool, {threads} workers"
-        );
-        assert_eq!(
-            run(&std, threads),
-            want,
-            "{name}: the pool in Velt, {threads} workers"
-        );
+        assert_eq!(run(&exe, threads), want, "{name}: {threads} workers");
     }
-    let (rt_bin, std_bin) = (std::fs::read(&rt).unwrap(), std::fs::read(&std).unwrap());
     assert!(
-        contains(&std_bin, b"connectUntil"),
+        contains(&std::fs::read(&exe).unwrap(), b"connectUntil"),
         "{name}: fetch dials the runtime"
-    );
-    assert!(
-        !contains(&rt_bin, b"connectUntil"),
-        "{name}: fetch dials in Velt by default"
     );
 }
 
@@ -124,6 +95,7 @@ fn same_everywhere(name: &str, src: &str, want: &str) {
 const SERVER: &str = "import { listen, TcpListener, TcpStream } from \"velt/net\";
 
 const ACCEPTED = new Atomic<i64>(0);
+const CLOSED = new Atomic<i64>(0);
 
 async function answer(s: TcpStream, closing: bool) {
   let pending = \"\";
@@ -148,6 +120,7 @@ async function answer(s: TcpStream, closing: bool) {
       await s.write(`HTTP/1.1 200 OK\\r\\nContent-Length: ${body.length}\\r\\n\\r\\n${body}`);
       if (closing || last) {
         s.close();
+        CLOSED.add(1);
         return;
       }
       end = pending.indexOf(\"\\r\\n\\r\\n\");
@@ -225,8 +198,11 @@ async function main() {{
   for (let i = 0; i < 3; i++) {{
     // A POST is never sent again on another connection: one on a closed connection fails.
     console.log(await (await fetch(`${{base}}/${{i}}`, {{ method: \"POST\" }})).text());
-    // Time for the server's close to arrive before the pool looks at the connection.
-    await sleep(20);
+    // The server has closed the connection before the pool looks at it (on loopback its FIN
+    // is in this side's queue once its close returns).
+    while (CLOSED.load() < i + 1) {{
+      await yieldNow();
+    }}
   }}
   l.close();
   const gone = await listen(\"127.0.0.1:0\");
