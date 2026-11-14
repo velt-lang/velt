@@ -1,7 +1,8 @@
 //! Catching a Velt panic that unwinds (docs/internals/design/unwinding.md), built with each
 //! backend: `catchUnwind` returns the panic's message and the process goes on, a panic outside
-//! any catch still ends the process, and another language's exception passes the catch (macOS
-//! and Linux: on Windows `catchUnwind` is a plain call until its structured exceptions are built). The
+//! any catch still ends the process, and another language's exception passes the catch (on
+//! Windows x64 under structured exceptions; there calls get no cleanup pads, so the tests of what
+//! unwound frames drop run on macOS and Linux only). The
 //! probe module re-exports std's internal `catchVeltPanic`, so std is copied with it added (as
 //! gated_dropped.rs does).
 
@@ -32,7 +33,8 @@ fn std_dir(dir: &test_dir::TestDir) -> PathBuf {
             &std,
         );
         std::fs::create_dir_all(std.join("zz_unwind")).unwrap();
-        std::fs::write(std.join("zz_unwind/index.velt"), PROBE).unwrap();
+        let probe = format!("{PROBE}{RAISE_FOREIGN}");
+        std::fs::write(std.join("zz_unwind/index.velt"), probe).unwrap();
     }
     std
 }
@@ -93,6 +95,11 @@ export function caughtAt(a: usize): string {
   return `${m} ${atArg}`;
 }
 
+"#;
+
+/// The probe's `raiseForeign`: another language's exception, raised with the platform's unwinder.
+#[cfg(not(windows))]
+const RAISE_FOREIGN: &str = r#"
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 declare c("c") function memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
@@ -116,7 +123,22 @@ export function raiseForeign(): void {
 }
 "#;
 
-#[cfg(not(windows))]
+/// On Windows: a structured exception of another code (`0xE0000001`), which the filter of
+/// `velt_eh_try` passes.
+#[cfg(windows)]
+const RAISE_FOREIGN: &str = r#"
+declare c("c") function RaiseException(code: u32, flags: u32, count: u32, args: usize): void;
+declare function velt_rt_flush(): void;
+
+export function raiseForeign(): void {
+  velt_rt_flush();
+  // SAFETY: no parameters; the code is no one's that this program catches.
+  unsafe {
+    RaiseException(0xe0000001, 1, 0, 0);
+  }
+}
+"#;
+
 const MAIN: &str = r#"
 import { catchVeltPanic, caughtAt } from "velt/zz_unwind";
 
@@ -149,7 +171,6 @@ function main() {
 }
 "#;
 
-#[cfg(not(windows))]
 const OUT: &str = "null 1
 boom
 index out of bounds: the len is 3 but the index is 6 0
@@ -159,7 +180,6 @@ at 7 7
 ";
 
 /// Another language's exception raised inside a catch.
-#[cfg(not(windows))]
 const FOREIGN: &str = r#"
 import { catchVeltPanic, raiseForeign } from "velt/zz_unwind";
 
@@ -175,7 +195,6 @@ function main() {
 }
 "#;
 
-#[cfg(not(windows))]
 #[test]
 fn a_velt_panic_is_caught_with_every_backend() {
     let dir = test_dir::TestDir::new();
@@ -206,7 +225,6 @@ fn a_velt_panic_is_caught_with_every_backend() {
 /// `main` (an `extern "C"` function's abort-on-unwind pad, which Rust's personality claims for
 /// any class) ends the process there. Either way the catch didn't take it: a catch that claims
 /// every class hands back the payload as the message, `FOREIGN-CAUGHT`.
-#[cfg(not(windows))]
 #[test]
 fn another_languages_exception_passes_the_catch() {
     let dir = test_dir::TestDir::new();

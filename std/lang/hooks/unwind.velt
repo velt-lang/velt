@@ -4,8 +4,8 @@
 //
 // How the exception is raised and taken depends on the target (`#unwind-raise`, std/imports.velt):
 // with the Itanium unwinder (macOS, Linux) unwind_itanium.velt raises it with
-// `_Unwind_RaiseException`; elsewhere (Windows until its structured exceptions are built,
-// WebAssembly) unwind_none.velt raises nothing and names no unwinder function, and `catchUnwind`
+// `_Unwind_RaiseException`; on Windows unwind_seh.velt raises it with `RaiseException`; on
+// WebAssembly unwind_none.velt raises nothing and names no unwinder function, and `catchUnwind`
 // is a plain call there.
 
 import { abortProcess, raise } from "#unwind-raise";
@@ -17,7 +17,7 @@ declare function velt_rt_exit(code: i32): never;
 declare function velt_rt_flush(): void;
 declare function velt_rt_write_str(stream: u32, s: string);
 /** 1 where `catchUnwind` catches (its `velt_eh_try` has a landing pad), 0 where it is a plain
- * call (the JIT, Windows, WebAssembly): defined by the backend (`velt_vir::eh::CATCHES`). */
+ * call (the JIT, Windows on arm64, WebAssembly): defined by the backend (`velt_vir::eh::CATCHES`). */
 declare function velt_eh_catches(): u8;
 
 /**

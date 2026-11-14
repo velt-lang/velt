@@ -62,16 +62,15 @@ panicRaise(msg):
 
 **Per target.** The raise is chosen by a conditional import of std (`#unwind-raise`,
 std/imports.velt): `std/lang/hooks/unwind_itanium.velt` on native targets other than Windows
-(the Itanium unwinder), `unwind_none.velt` on Windows (`win32`) and WebAssembly, which raises
-nothing and names no unwinder function, so those programs link (Windows CI failed with
-`_Unwind_RaiseException` unresolved before). The backends name no `_Unwind_*` function there
-either: `velt_eh_try` is a plain call without a personality (`Catching::None`).
+(the Itanium unwinder), `unwind_seh.velt` on Windows (`win32`: `RaiseException`, below), and
+`unwind_none.velt` on WebAssembly, which raises nothing and names no unwinder function. The
+backends name no `_Unwind_*` function on Windows or WebAssembly.
 
 **What the count means.** `CATCHING > 0` means a `velt_eh_try` frame *with a landing pad* is live
 on this thread's stack. `enterCatch` asks the backend first: `velt_eh_catches()` (a constant
 function the backend defines next to `velt_eh_try`, `velt_vir::eh::CATCHES`) is 1 in objects for
-the Itanium targets and 0 in the JIT (`velt dev`, generator hosts: no LSDA registered yet),
-on Windows and on WebAssembly. Where it is 0, `catchVeltPanic` calls `f` plainly and doesn't
+the Itanium targets and Windows x64 (`Catching::Seh`), and 0 in the JIT (`velt dev`, generator
+hosts: no LSDA registered yet), on Windows on arm64 and on WebAssembly. Where it is 0, `catchVeltPanic` calls `f` plainly and doesn't
 count, so a panic takes `velt_rt_panic` (exit 101, or the runtime's `catchPanic`) instead of
 raising an exception nothing would claim. So the innermost live `velt_eh_try` claims every raise,
 except in the hole below.
@@ -306,22 +305,30 @@ LSDA in JIT memory. That is needed before `velt dev` runs an HTTP server under t
 (`0xE06D7363`, `_CxxThrowException`), and a Rust `catch_unwind` there matches only its own type
 descriptor, so foreign exceptions pass Rust frames (unlike on Itanium).
 
-- Raise: `RaiseException(0xE0564C54 /* 'VLT' */, EXCEPTION_NONCONTINUABLE, 1, &object)` from std
-  (`declare c("kernel32")`).
-- Catch, LLVM: `velt_eh_try` with personality `__C_specific_handler` and a filter function
-  (`catchswitch` / `catchpad within %cs [ptr @velt_eh_filter]`, what clang emits for
-  `__try/__except`): the filter returns `EXCEPTION_EXECUTE_HANDLER` for `0xE0564C54` and
-  `EXCEPTION_CONTINUE_SEARCH` otherwise.
-- Catch, Cranelift: `try_call` has no Windows convention (`exception_payload_types` is empty for
-  `WindowsFastcall`). The backend writes `velt_eh_try` as fixed machine code for x86_64 and arm64
-  with its `.xdata` naming `__C_specific_handler` and a one-entry scope table (the call's range,
-  the filter, the jump target). It already writes x64 `.xdata` itself (`unwind/winx64.rs`). The
-  same bytes could serve LLVM builds.
-- To verify on Windows before the switch: that `__CxxFrameHandler3` runs Rust's cleanup funclets
-  for a non-C++ exception passing a `C-unwind` frame.
+Built for x64 (`velt_vir::eh::Catching::Seh`, #2925); Windows on arm64 stays `Catching::None`.
 
-The prototype defines `velt_eh_try` without a catch on Windows (`Catching::None`). That is the
-part left before all three OSes can switch together (decision 2 of #2649).
+- Raise (`std/lang/hooks/unwind_seh.velt`): the object as on Itanium (the 32-byte header, then
+  the message), with its own address at offset 8, raised with
+  `RaiseException(0xE0564C54 /* 'VLT' */, EXCEPTION_NONCONTINUABLE, 1, object + 8)`
+  (`velt_vir::eh::SEH_CODE`), so its one parameter is the object. `panicText` and `takePanic` are
+  the Itanium ones.
+- Catch, LLVM (`velt_codegen_llvm/src/eh.rs`): what clang emits for `__try/__except(filter)`:
+  `velt_eh_try` with personality `__C_specific_handler`, the call an `invoke` to a `catchswitch`
+  with one `catchpad within %cs [ptr @velt_eh_filter]`. The filter returns
+  `EXCEPTION_EXECUTE_HANDLER` for `0xE0564C54` (after storing the parameter in a slot of
+  `velt_eh_try`'s frame, `llvm.localescape` / `llvm.localrecover`) and
+  `EXCEPTION_CONTINUE_SEARCH` otherwise; the handler returns the slot. Both functions are
+  internal to each module that calls `velt_eh_try` (the filter reaches the frame through labels
+  local to the object).
+- Catch, Cranelift (`velt_codegen_cl/src/eh_seh.rs`): `try_call` has no Windows convention, so
+  `velt_eh_try` is fixed machine code (57 bytes, the filter included) whose `.xdata` names
+  `__C_specific_handler` and a one-entry scope table (the call and the instruction after it, the
+  filter, the target), filled by `ADDR32NB` relocations (`unwind/windows.rs`).
+- Calls get no cleanup pads (lowering adds edges only for `Catching::Itanium`): the frames a
+  panic unwinds leak what they own, as everywhere before #2667. Under the executor in Velt no Rust frame is
+  between the raise and the catch; a Rust `C-unwind` frame there would pass the exception in the
+  search phase (`__CxxFrameHandler3` claims C++ exceptions only). With LLVM a function C calls
+  (`@export`) aborts as on the other targets: its `cleanuppad` runs in the second phase.
 
 **WebAssembly.** No unwinding (`velt_rt_wasm` aborts on a panic). `velt_eh_try` is a plain call.
 The exception-handling proposal (`exnref`, `try_table`) could later carry the same design.
@@ -418,8 +425,8 @@ variant of `#task-catch`, whose default variant std/task/catch_rt.velt calls `ve
   `Promise.race`, which also polls through the runtime) inside another `catchPanic`, ends the
   process with 101 instead of being caught. Moving shared promises and the combinators into std
   closes it.
-- **Where generated code doesn't catch** (`velt_eh_catches() == 0`: Windows until its
-  structured exceptions are built, the `velt dev` JIT until its tables are registered),
+- **Where generated code doesn't catch** (`velt_eh_catches() == 0`: Windows on arm64,
+  the `velt dev` JIT until its tables are registered),
   `catchPanicRaw` calls the poll plainly and a panic under `catchPanic` ends the process with
   101, as an uncaught one does (decision recorded on #2667: no runtime catch as a fallback,
   owner decision 3 of #2649). WebAssembly keeps the runtime's executor and catch.
@@ -462,7 +469,7 @@ Later, with the executor's switch:
   code.
 - The started-promise node header gains the catching / panicked flags (the executor's own
   layout, std).
-- Windows: the SEH raise and catch above; the JIT: LSDA registration.
+- Windows x64: the SEH raise and catch above (done, #2925); the JIT: LSDA registration.
 
 ## Prototype
 
@@ -700,8 +707,9 @@ liveness follows unwind edges, so a bypassed link never moves a local into the s
 
 ### Windows and WebAssembly
 
-No unwinding (Windows until its structured exceptions are built): lowering adds no edges for
-those targets, and a backend that gets one anyway (the JIT) emits a plain call.
+No cleanup pads (Windows x64 catches in `velt_eh_try` only; arm64 and WebAssembly don't unwind):
+lowering adds no edges for those targets, and a backend that gets one anyway (the JIT) emits a
+plain call.
 
 ### Contract changes
 

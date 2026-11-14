@@ -2,6 +2,7 @@
 // run by `velt test std/`, debug (Cranelift) and release (LLVM). That another language's
 // exception passes through is veltc's `unwinding` test: the test runner polls tests in a task
 // whose Rust frames would claim it (and abort) before the end of the stack.
+import { platform } from "velt/os";
 import { describe, expect, it } from "velt/test";
 import { fnAddress } from "velt/lang/intrinsics";
 import { panicText } from "velt/lang/hooks/unwind";
@@ -95,7 +96,7 @@ describe("catchVeltPanic", () => {
   });
 
   it("catches panic(msg) with its message", () => {
-    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    // Where generated code doesn't catch (Windows on arm64, WebAssembly) a panic ends the process.
     if (!canCatchPanics()) {
       return;
     }
@@ -106,7 +107,7 @@ describe("catchVeltPanic", () => {
   });
 
   it("catches an index out of bounds deep in calls, and the process goes on", () => {
-    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    // Where generated code doesn't catch (Windows on arm64, WebAssembly) a panic ends the process.
     if (!canCatchPanics()) {
       return;
     }
@@ -121,7 +122,7 @@ describe("catchVeltPanic", () => {
   });
 
   it("drops what the unwound frames own", () => {
-    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    // Where generated code doesn't catch (Windows on arm64, WebAssembly) a panic ends the process.
     if (!canCatchPanics()) {
       return;
     }
@@ -130,11 +131,12 @@ describe("catchVeltPanic", () => {
       owning(20, [1, 2, 3]);
     });
     expect(msg === null).toBe(false);
-    expect(disposed).toBe(21);
+    // Windows catches without cleanup pads: the unwound frames leak what they own.
+    expect(disposed).toBe(platform() === "win32" ? 0 : 21);
   });
 
   it("nests: the inner catch takes the panic", () => {
-    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    // Where generated code doesn't catch (Windows on arm64, WebAssembly) a panic ends the process.
     if (!canCatchPanics()) {
       return;
     }
@@ -149,7 +151,7 @@ describe("catchVeltPanic", () => {
   });
 
   it("closes a transfer the panic left open", async () => {
-    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    // Where generated code doesn't catch (Windows on arm64, WebAssembly) a panic ends the process.
     if (!canCatchPanics()) {
       return;
     }
@@ -176,7 +178,7 @@ describe("catchPanicAt", () => {
   });
 
   it("catches a panic there and gives the exception", () => {
-    // Where generated code doesn't catch (Windows for now, WebAssembly) a panic ends the process.
+    // Where generated code doesn't catch (Windows on arm64, WebAssembly) a panic ends the process.
     if (!canCatchPanics()) {
       return;
     }

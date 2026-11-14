@@ -1,0 +1,83 @@
+// velt/lang/hooks (internal): Velt's exception under Windows' structured exceptions
+// (`#unwind-raise` on Windows; docs/internals/design/unwinding.md "Windows"). The object is laid
+// out as with the Itanium unwinder (a 32-byte header, then the message, NUL-terminated), so it is
+// read and freed the same way: the class `VELTPANC` at 0 and the object's own address at 8, the
+// one parameter of the `RaiseException` that raises it (code `0xE0564C54`,
+// `velt_vir::eh::SEH_CODE`). `velt_eh_try`'s filter takes only that code and hands the parameter
+// back, so whoever catches it frees it (`takePanic`). On Windows on arm64 `velt_eh_catches()` is 0
+// and nothing is raised.
+
+import { Ptr, StrBytes, byteLength, readCString } from "velt/ffi";
+import { ptrAddress, ptrOf } from "velt/ffi/ptr";
+import { addressStore } from "velt/lang/intrinsics/address";
+
+declare c("c") function malloc(n: usize): Ptr<u8> | null;
+declare c("c") function free(p: Ptr<u8>): void;
+declare c("c") function memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
+declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
+declare c("c") function RaiseException(code: u32, flags: u32, count: u32, args: Ptr<u8>): void;
+declare c("c") function abort(): void;
+declare function velt_rt_exit(code: i32): never;
+
+/** Ends the process at once (a panic during a cleanup): C's `abort`. */
+export function abortProcess(): never {
+  // SAFETY: `abort` takes nothing; it never returns.
+  unsafe {
+    abort();
+  }
+  velt_rt_exit(134);
+}
+
+/** The header in front of the message, as with the Itanium unwinder (`velt_vir::eh::HEADER_SIZE`). */
+const HEADER: usize = 32;
+
+/** Velt's exception code (`velt_vir::eh::SEH_CODE`). */
+const CODE: u32 = 0xe0564c54;
+
+/** `EXCEPTION_NONCONTINUABLE`: the raise never returns to its caller once claimed. */
+const NONCONTINUABLE: u32 = 1;
+
+/** Raise Velt's exception with message `msg`; returns only if no frame claimed it. */
+export function raise(msg: string): void {
+  const n = byteLength(msg);
+  // SAFETY: the allocation holds the header, the message and its NUL; every pointer below
+  // stays inside it, and the raise owns it until the catch hands it back.
+  unsafe {
+    const e = malloc(HEADER + n + 1);
+    if (e === null) {
+      return;
+    }
+    memset(e, 0, HEADER);
+    memcpy(e, "VELTPANC", 8);
+    const at = ptrAddress(e);
+    addressStore<usize>(at + 8, at);
+    const text = ptrOf<u8>(at + HEADER);
+    memcpy(text, msg, n);
+    memset(ptrOf<u8>(at + HEADER + n), 0, 1);
+    RaiseException(CODE, NONCONTINUABLE, 1, ptrOf<u8>(at + 8));
+    free(e);
+  }
+}
+
+/**
+ * The message of the exception object at `e` (from `catchUnwind`), which stays the caller's.
+ * Unsafe: `e` must be a Velt exception that `catchUnwind` returned, not freed.
+ */
+export unsafe function panicText(e: usize): string {
+  // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
+  return unsafe { readCString(ptrOf<u8>(e + HEADER)) };
+}
+
+/**
+ * The message of the exception object at `e` (from `catchUnwind`), which it frees. Unsafe: `e`
+ * must be a Velt exception that `catchUnwind` returned, taken once.
+ */
+export unsafe function takePanic(e: usize): string {
+  // SAFETY: the caller's statement: `raise` wrote the NUL-terminated message after the header.
+  const msg = unsafe { readCString(ptrOf<u8>(e + HEADER)) };
+  // SAFETY: `raise` allocated it with malloc, and the caller takes it once.
+  unsafe {
+    free(ptrOf<u8>(e));
+  }
+  return msg;
+}
