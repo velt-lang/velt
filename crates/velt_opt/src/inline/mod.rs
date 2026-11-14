@@ -562,6 +562,10 @@ fn inline_into(
 /// half is the key's text). A callee given a compile-time key folds its tests of it once inlined,
 /// so a nested call that passes one keeps the loop limit: a JSON tape's `find` (881 statements)
 /// looking up a literal name, a proxy's `get` trap reading a literal property.
+///
+/// It does not follow the flow: a local assigned a static anywhere in `func` (in any inlined copy
+/// too) counts for every call that passes it, even one that sees another value on its way
+/// (`let k = cond ? "a" : dyn`). That errs only toward the old limit (`LOOP_COST`).
 fn passes_static(func: &Function, args: &[Operand]) -> bool {
     use velt_vir::vir::Local;
     let is_static = |o: &Operand| matches!(o, Operand::Const(Const::Static(_), _));

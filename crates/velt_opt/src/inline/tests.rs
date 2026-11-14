@@ -369,9 +369,36 @@ fn a_large_callee_an_inlined_body_brings_into_a_loop_stays_a_call() {
 fn a_nested_call_passing_a_static_keeps_the_loop_limit() {
     // As above, but `outer` passes `leaf` a static (a literal key): its copy in the loop is
     // inlined, since the callee folds what it tests of the key.
+    nested_call_passing_a_static(Key::Direct);
+}
+
+#[test]
+fn a_nested_call_passing_a_local_holding_a_static_keeps_the_loop_limit() {
+    // The static is stored in a local first, which the call passes.
+    nested_call_passing_a_static(Key::Local);
+}
+
+#[test]
+fn a_nested_call_passing_the_address_of_a_local_holding_a_static_keeps_the_loop_limit() {
+    // An `any` key's shape: the static is the second half of a pair in a local, and the call
+    // passes the pair's address.
+    nested_call_passing_a_static(Key::Address);
+}
+
+/// How `outer` passes the static to `leaf` in [`nested_call_passing_a_static`].
+#[derive(Clone, Copy)]
+enum Key {
+    Direct,
+    Local,
+    Address,
+}
+
+/// `leaf(x, key)`, past `NESTED_LOOP_COST` and under `LOOP_COST`, called twice by `outer` with a
+/// static passed as `how` says; the loop's copy of `outer` must have both calls inlined.
+fn nested_call_passing_a_static(how: Key) {
     let mut pb = ProgramBuilder::new();
     let key = pb.stat(b"key", 1);
-    // `leaf(x, key)`: adds to `x` past the nested limit (under the loop limit).
+    let pair = pb.agg("pair", 16, 8, &[(Ty::I64, 0), (Ty::Ptr, 8)]);
     let mut fb = FuncBuilder::new("leaf", &[Ty::I64, Ty::Ptr], Ty::I64, Linkage::Internal);
     let x = fb.param(0);
     let b = fb.block();
@@ -382,13 +409,29 @@ fn a_nested_call_passing_a_static_keeps_the_loop_limit() {
     let leaf = pb.add(fb.finish());
     let mut fb = FuncBuilder::new("outer", &[Ty::I64], Ty::I64, Linkage::Internal);
     let acc = fb.param(0);
-    // Two calls, so `leaf` is not called once (that rule would take it into `outer` first).
     let mut at = fb.block();
+    let stat = Operand::Const(Const::Static(key), Ty::Ptr);
+    let arg = match how {
+        Key::Direct => stat,
+        Key::Local => {
+            let k = fb.local(Ty::Ptr);
+            fb.assign(at, k, Rvalue::Use(stat));
+            copy_local(k)
+        }
+        Key::Address => {
+            let pr = fb.local(Ty::Agg(pair));
+            fb.push(at, Stmt::Assign(field(pr, 1), Rvalue::Use(stat)));
+            let a = fb.local(Ty::Ptr);
+            fb.assign(at, a, Rvalue::AddrOf(velt_vir::vir::Place::local(pr)));
+            copy_local(a)
+        }
+    };
+    // Two calls, so `leaf` is not called once (that rule would take it into `outer` first).
     for _ in 0..2 {
         at = fb.call(
             at,
             Callee::Func(leaf),
-            vec![copy_local(acc), Operand::Const(Const::Static(key), Ty::Ptr)],
+            vec![copy_local(acc), arg.clone()],
             Some(acc),
         );
     }
