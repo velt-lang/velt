@@ -534,6 +534,10 @@ struct Propagation {
     result_targets: FxHashMap<usize, Vec<usize>>,
     call_of: FxHashMap<usize, usize>,
     fn_values_all: Option<Vec<(DefId, TyId)>>,
+    /// The value type of each closure with no literal node (`call_sites::crossing_params`).
+    unseen_types: FxHashMap<DefId, TyId>,
+    /// Each closure literal's `Ret`, types and reached callees (`call_sites::lit_targets`).
+    lit_targets: Option<call_sites::LitTargets>,
 }
 
 impl Propagation {
@@ -560,6 +564,8 @@ impl Propagation {
             result_targets: FxHashMap::default(),
             call_of: FxHashMap::default(),
             fn_values_all: None,
+            unseen_types: FxHashMap::default(),
+            lit_targets: None,
         }
     }
 
@@ -678,7 +684,7 @@ impl Propagation {
             }
             // A dynamic value made from what a function value returned: the function crosses
             // with it.
-            if let Some(&c) = g.dyn_callee.get(&n) {
+            for &c in g.dyn_callee.get(&n).into_iter().flatten() {
                 self.set(c, CROSSES, Some(w));
             }
         }

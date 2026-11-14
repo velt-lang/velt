@@ -317,16 +317,19 @@ fn slot_methods(cx: &Ctx, class: DefId, slot: u32) -> Vec<DefId> {
         }
         false
     };
+    let mut seen = FxHashSet::default();
     let mut out = vec![];
-    for i in 0..cx.defs.len() {
-        if extends(i) {
-            if let Some(&m) = cx
-                .adt(DefId(i as u32))
-                .and_then(|a| a.vtable.get(slot as usize))
-            {
-                if !out.contains(&m) {
-                    out.push(m);
-                }
+    // Only the classes (`cx.info`'s `Adt` entries): nothing else extends `class`.
+    for (i, info) in cx.info.iter().enumerate() {
+        if !matches!(info, crate::defs::DefInfo::Adt(_)) || !extends(i) {
+            continue;
+        }
+        if let Some(&m) = cx
+            .adt(DefId(i as u32))
+            .and_then(|a| a.vtable.get(slot as usize))
+        {
+            if seen.insert(m) {
+                out.push(m);
             }
         }
     }

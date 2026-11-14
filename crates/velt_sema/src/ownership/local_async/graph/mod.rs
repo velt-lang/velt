@@ -133,10 +133,10 @@ pub(super) struct Graph {
     /// A [`Node::Dyn`] whose input is a call through a function value, with that call's
     /// [`Node::Callee`]: the dynamic result comes from the function, which crosses with it
     /// (`() => Job` called through a `() => unknown`).
-    pub dyn_callee: FxHashMap<usize, usize>,
+    pub dyn_callee: FxHashMap<usize, Vec<usize>>,
     /// Nodes that a call through a function value's result flows into, with that call's
     /// [`Node::Callee`] (`const v = await f()`), for [`Graph::dyn_callee`].
-    pub call_results: FxHashMap<usize, usize>,
+    pub call_results: FxHashMap<usize, Vec<usize>>,
     /// Per node: does something flow into it that the graph can't trace
     /// ([`dynamic::untraced_nodes`])?
     pub untraced: Vec<bool>,
@@ -626,7 +626,10 @@ impl Walk<'_, '_> {
                     only: cell.then_some(self.d),
                 });
                 if let To::Node(m, _) = to {
-                    self.g.call_results.insert(m, callee);
+                    let callees = self.g.call_results.entry(m).or_default();
+                    if !callees.contains(&callee) {
+                        callees.push(callee);
+                    }
                 }
                 self.unknown(e, to);
             }

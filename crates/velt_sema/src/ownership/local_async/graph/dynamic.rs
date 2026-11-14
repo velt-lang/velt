@@ -142,11 +142,15 @@ impl Walk<'_, '_> {
             ),
         });
         self.value(x, To::Node(n, None));
-        let callee = (call.and_then(|c| self.g.ids.get(&Node::Callee(c))))
-            .or_else(|| local.and_then(|l| self.g.call_results.get(&l)))
-            .copied();
-        if let Some(callee) = callee {
-            self.g.dyn_callee.insert(n, callee);
+        let mut callees: Vec<usize> = (call.and_then(|c| self.g.ids.get(&Node::Callee(c))))
+            .copied()
+            .into_iter()
+            .collect();
+        if let Some(cs) = local.and_then(|l| self.g.call_results.get(&l)) {
+            callees.extend(cs.iter().copied());
+        }
+        if !callees.is_empty() {
+            self.g.dyn_callee.insert(n, callees);
         }
         self.connect(n, to);
     }

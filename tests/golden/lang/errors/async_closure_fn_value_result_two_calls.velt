@@ -1,0 +1,21 @@
+// A local that results of two calls through function values flow into (#2893): either may be what
+// it holds, so both called closures' results are followed. The first returns the job, which
+// changes what it captured, and is refused; following only the last call would miss it.
+type Job = () => Promise<void>;
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  const noop: Job = async () => {};
+  const f = (): Job => job;
+  const g = (): Job => noop;
+  let j: Job = noop;
+  if (Math.random() > 2) {
+    j = f();
+  } else {
+    j = g();
+  }
+  await spawn(j());
+  console.log(n);
+}

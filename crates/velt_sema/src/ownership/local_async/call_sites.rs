@@ -133,19 +133,15 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
         let Some(k) = declared.iter().position(|p| p.local == local) else {
             continue;
         };
-        let params: Vec<_> = declared.iter().map(|p| p.ty).collect();
-        // Its value's type: an async closure returns a promise of its body's result.
-        let (ret, is_async, never) = (f.ret, f.is_async, cx.ty.never);
-        let ret = match is_async {
-            true => cx.ty.promise(ret),
-            false => ret,
+        let ty = match p.unseen_types.get(&c) {
+            Some(&t) => t,
+            None => {
+                let params: Vec<_> = declared.iter().map(|p| p.ty).collect();
+                let t = fn_value_type(cx, c, params);
+                p.unseen_types.insert(c, t);
+                t
+            }
         };
-        let ty = cx.ty.intern(crate::hir::TyKind::FnPtr {
-            params,
-            ret,
-            throws: never,
-            rest: false,
-        });
         found.push((ty, k, p.why[i], c, None, true));
     }
     // A closure with no literal node can only be reached through a callee that may hold a value
@@ -364,7 +360,7 @@ fn crossing_results(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
     // (`f()()`), made dynamic or matched. An argument of another call through a function value
     // is always taken as stored there (`Arg`), whatever that callee does with it.
     let mut todo: Vec<(usize, usize, u8)> = vec![];
-    for (&m, &c) in &g.call_results {
+    for (&m, cs) in &g.call_results {
         if !matches!(
             g.nodes[m],
             Node::Local(..) | Node::Callee(_) | Node::Dyn(_) | Node::Scrut(_)
@@ -373,7 +369,7 @@ fn crossing_results(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
         }
         for f in [CROSSES, STORED] {
             if p.flags[m] & f != 0 && p.results_done.insert((m, f)) {
-                todo.push((m, c, f));
+                todo.extend(cs.iter().map(|&c| (m, c, f)));
             }
         }
     }
@@ -418,29 +414,41 @@ fn crossing_results(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> bool {
 fn result_targets(cx: &mut Ctx, g: &Graph, p: &mut Propagation, ci: usize) -> Vec<usize> {
     let call = &g.indirect[ci];
     let callee = call.callee;
-    let mut fwd: Option<Forward> = None;
+    if p.lit_targets.is_none() {
+        p.lit_targets = Some(lit_targets(cx, g));
+    }
+    let mut out = vec![];
+    for (r, insts, reached) in p.lit_targets.as_ref().into_iter().flatten() {
+        if reached.as_ref().is_some_and(|set| !set.contains(&callee)) {
+            continue;
+        }
+        if insts.iter().any(|&t| types::may_be(cx, t, call.ty)) {
+            out.push(*r);
+        }
+    }
+    for (d, ty) in fn_values_all(cx, g, p) {
+        if let (true, Some(&r)) = (types::may_be(cx, ty, call.ty), g.ids.get(&Node::Ret(d))) {
+            out.push(r);
+        }
+    }
+    out
+}
+
+/// Each closure literal with a `Ret` node: that node, the types the literal has in its function's
+/// instantiations, and the callees its value reaches when it stays in locals (`held_in_locals`;
+/// `None`: any). Once per inference (`Propagation::lit_targets`): the graph doesn't change.
+pub(super) type LitTargets = Vec<(usize, Vec<TyId>, Option<FxHashSet<usize>>)>;
+
+fn lit_targets(cx: &mut Ctx, g: &Graph) -> LitTargets {
+    let fwd = forward(cx, g);
     let mut out = vec![];
     for (n, node) in g.nodes.iter().enumerate() {
         let Node::Lit(c) = *node else { continue };
         let Some(&r) = g.ids.get(&Node::Ret(c)) else {
             continue;
         };
-        if !instances(cx, g, c, g.tys[n])
-            .into_iter()
-            .any(|t| types::may_be(cx, t, call.ty))
-        {
-            continue;
-        }
-        let reached = held_in_locals(g, fwd.get_or_insert_with(|| forward(cx, g)), n);
-        if reached.as_ref().is_some_and(|r| !r.contains(&callee)) {
-            continue;
-        }
-        out.push(r);
-    }
-    for (d, ty) in fn_values_all(cx, g, p) {
-        if let (true, Some(&r)) = (types::may_be(cx, ty, call.ty), g.ids.get(&Node::Ret(d))) {
-            out.push(r);
-        }
+        let insts = instances(cx, g, c, g.tys[n]);
+        out.push((r, insts, held_in_locals(g, &fwd, n)));
     }
     out
 }
@@ -466,19 +474,31 @@ fn fn_values_all(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> Vec<(DefId, Ty
             continue;
         }
         let params: Vec<TyId> = f.params.iter().map(|p| p.ty).collect();
-        let (ret, is_async, never) = (f.ret, f.is_async, cx.ty.never);
-        let ret = match is_async {
-            true => cx.ty.promise(ret),
-            false => ret,
-        };
-        let ty = cx.ty.intern(crate::hir::TyKind::FnPtr {
-            params,
-            ret,
-            throws: never,
-            rest: false,
-        });
+        let ty = fn_value_type(cx, d, params);
         out.push((d, ty));
     }
     p.fn_values_all = Some(out.clone());
     out
+}
+
+/// The type of function `d`'s value, with declared parameters `params`: what it returns (a
+/// promise of it for an async function, rejecting with what the body throws) and what it throws
+/// (`throws::throws_now`), as a call through a function value of that type sees it.
+fn fn_value_type(cx: &mut Ctx, d: DefId, params: Vec<TyId>) -> TyId {
+    let (ret, is_async) = match &cx.defs[d.0 as usize] {
+        Some(Def::Fn(f)) => (f.ret, f.is_async),
+        _ => (cx.ty.unit, false),
+    };
+    let never = cx.ty.never;
+    let thrown = crate::throws::throws_now(cx, d, &[]).unwrap_or(never);
+    let (ret, throws) = match is_async {
+        true => (cx.ty.promise_rejecting(ret, thrown), never),
+        false => (ret, thrown),
+    };
+    cx.ty.intern(crate::hir::TyKind::FnPtr {
+        params,
+        ret,
+        throws,
+        rest: false,
+    })
 }
