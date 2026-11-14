@@ -254,8 +254,14 @@ export function pipeCloexec(fds: usize): i32 {
   if (unsafe { pipe$io(m.ptr(fds)) } !== 0) {
     return -1;
   }
-  fcntl(m.ld32(fds) as i32, F_SETFD, FD_CLOEXEC);
-  fcntl(m.ld32(fds + 4) as i32, F_SETFD, FD_CLOEXEC);
+  // SAFETY: F_SETFD takes an `int`, passed as C's `...` argument.
+  unsafe {
+    fcntl$io(m.ld32(fds) as i32, F_SETFD, FD_CLOEXEC);
+  }
+  // SAFETY: as above.
+  unsafe {
+    fcntl$io(m.ld32(fds + 4) as i32, F_SETFD, FD_CLOEXEC);
+  }
   return 0;
 }
 
