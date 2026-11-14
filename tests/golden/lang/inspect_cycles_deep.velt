@@ -1,0 +1,67 @@
+// Cycles in object graphs deeper than Node's depth limit, with shared references: a reference back
+// to any of the three objects being printed (`[Circular *N]`, also past the limit where the
+// object it refers to is still open), the `<ref *N>` prefix of each at its own start, numbers
+// kept per top-level value, and objects shared between siblings printed again in full.
+class N {
+  name: string;
+  next: N | null = null;
+  up: N | null = null;
+  side: N | null = null;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function chain(names: string[]): N[] {
+  const ns: N[] = [];
+  for (const n of names) {
+    ns.push(new N(n));
+  }
+  for (let i = 0; i + 1 < ns.length; i++) {
+    ns[i].next = ns[i + 1];
+  }
+  return ns;
+}
+
+function main() {
+  // Six deep; each refers up to the one two above it, the third to the first.
+  const a = chain(["a0", "a1", "a2", "a3", "a4", "a5"]);
+  for (let i = 2; i < a.length; i++) {
+    a[i].up = a[i - 2];
+  }
+  console.log(a[0]);
+  // Each refers to itself and to the root.
+  const b = chain(["b0", "b1", "b2", "b3", "b4"]);
+  for (const n of b) {
+    n.side = n;
+    n.up = b[0];
+  }
+  console.log(b[0]);
+  // The innermost open object referred to from past the limit.
+  const c = chain(["c0", "c1", "c2", "c3", "c4", "c5", "c6"]);
+  c[3].up = c[2];
+  c[3].side = c[1];
+  c[4].up = c[0];
+  console.log(c[0]);
+  // Shared between siblings: printed in full each time, numbered once per value.
+  const s = new N("s");
+  s.side = s;
+  const d = chain(["d0", "d1", "d2", "d3", "d4"]);
+  for (const n of d) {
+    n.up = s;
+  }
+  d[1].side = d[0];
+  d[2].side = d[1];
+  console.log([d[0], s, d[1]]);
+  console.log({ x: a[2], y: b[3], z: c[1], w: d[2] });
+  console.log([a[0], a[0], b[1], b[1]]);
+  const m = new Map<string, N>();
+  m.set("a", a[0]);
+  m.set("c", c[2]);
+  m.set("s", s);
+  console.log(m);
+  console.log([[[[a[3]]]], new Set<N>([b[0], b[2]])]);
+  console.log(`${b[2].name}`, b[2], c[5], d[4]);
+}
+
+main();

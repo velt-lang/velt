@@ -1,0 +1,84 @@
+// A custom inspect that prints while its object is being printed: what it prints is numbered on
+// its own (`<ref *1>` again), as Node starts a fresh context per `console.log`, and the outer
+// value's numbering, its objects being printed and where their text starts come back after it.
+// Five prints are in progress at once in the first value (four nested), each with cycles.
+const custom = Symbol.for("nodejs.util.inspect.custom");
+
+class C {
+  level: number;
+  constructor(level: number) {
+    this.level = level;
+  }
+  [custom](): string {
+    if (this.level > 0) {
+      console.log("inner", this.level, makeA(this.level - 1));
+    }
+    return "C" + this.level;
+  }
+}
+class B {
+  me: B | null = null;
+  c: C;
+  constructor(level: number) {
+    this.c = new C(level);
+  }
+}
+class A {
+  me: A | null = null;
+  b: B;
+  constructor(level: number) {
+    this.b = new B(level);
+  }
+}
+function makeA(level: number): A {
+  const a = new A(level);
+  a.me = a;
+  a.b.me = a.b;
+  return a;
+}
+
+// Shared with the outer value: printed inside the custom inspect, it is numbered from 1 there.
+class S {
+  name: string;
+  self: S | null = null;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+const shared = new S("shared");
+shared.self = shared;
+
+class Logs {
+  [custom](): string {
+    console.log("logs", shared, [shared, shared]);
+    return "Logs!";
+  }
+}
+// `me` is numbered before the custom inspect runs, `back` refers to the object after it.
+class Outer {
+  me: Outer | null = null;
+  s: S = shared;
+  logs: Logs = new Logs();
+  back: Outer | null = null;
+}
+
+// A custom inspect that prints and returns an object, printed at its depth.
+class Shape {
+  [custom](): S {
+    console.log("shape prints", shared);
+    return shared;
+  }
+}
+
+function main() {
+  console.log(makeA(4));
+  const o = new Outer();
+  o.me = o;
+  o.back = o;
+  console.log(o);
+  console.log([o, shared]);
+  console.log({ first: shared, shape: new Shape(), last: shared });
+  console.log(shared);
+}
+
+main();

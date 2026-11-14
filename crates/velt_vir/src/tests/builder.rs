@@ -152,6 +152,12 @@ impl PB {
             let body = result.map(|b| vec![ret(Some(boolean(b, t)))]);
             self.add_fn(f.build(body.unwrap_or_default()));
         }
+        // Around a custom inspect: nothing to save.
+        let save = FB::new(velt_common::std_hook!(inspect_save), u64);
+        self.add_fn(save.build(vec![ret(Some(int(0, u64)))]));
+        let mut restore = FB::new(velt_common::std_hook!(inspect_restore), t.unit);
+        restore.param("s", u64, PassMode::Copy);
+        self.add_fn(restore.build(vec![]));
     }
 
     pub fn finish(mut self) -> Program {
@@ -167,6 +173,8 @@ impl PB {
             velt_common::std_hooks::hook_index::inspect_circular,
             velt_common::std_hooks::hook_index::inspect_leave,
             velt_common::std_hooks::hook_index::inspect_more,
+            velt_common::std_hooks::hook_index::inspect_save,
+            velt_common::std_hooks::hook_index::inspect_restore,
         ] {
             hooks_demanded.insert(i);
         }

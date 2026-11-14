@@ -478,7 +478,11 @@ impl FnLower<'_, '_> {
     /// inspect: a string result raw, any other value after the class name, at the object's depth
     /// (`Headers { a: '1' }`).
     fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
+        // The method is user code: what it prints is numbered on its own (std's `inspectSave`).
+        let saved = hooks::inspect_save(self, Construct::Format).emit(self).op();
         let (res, rty) = self.call_hook(m, obj, ty, None);
+        let saved = ty::U64::arg(saved);
+        _ = hooks::inspect_restore(self, Construct::Format, saved).emit(self);
         let name = self.cx.type_name(ty);
         if matches!(self.cx.kind(rty), TyKind::Str) {
             self.push_inspect_text(buf, &res);
@@ -538,21 +542,13 @@ impl FnLower<'_, '_> {
     }
 
     /// The start of a top-level value: std's `inspectBegin` (std/lang/hooks/inspect_cycles.velt)
-    /// starts the `<ref *N>` numbering over and, unless an object is being printed, the runtime's
-    /// pieces of custom inspects too. Where std's is unchecked (no object can be printed), the
-    /// runtime's alone. The call of `inspectEnd` that gives back std's state after the value.
+    /// starts the `<ref *N>` numbering over, and the runtime forgets the pieces of custom inspects
+    /// of the value before. Where std's is unchecked (no object can be printed), the runtime's
+    /// alone. The call of `inspectEnd` that gives back std's state after the value.
     fn inspect_begin(&mut self) -> Option<hooks::Call<ty::Void>> {
-        let Some(begin) = hooks::inspect_begin(self) else {
-            self.call_rt(Rt::StrbufInspectBegin, vec![], None);
-            return None;
-        };
-        let top = begin.emit(self).op();
-        let (rt_bb, done) = (self.new_block(), self.new_block());
-        self.branch(top, rt_bb, done);
-        self.switch_to(rt_bb);
         self.call_rt(Rt::StrbufInspectBegin, vec![], None);
-        self.goto(done);
-        self.switch_to(done);
+        let begin = hooks::inspect_begin(self)?;
+        _ = begin.emit(self);
         hooks::inspect_end(self)
     }
 
