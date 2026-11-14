@@ -1,0 +1,35 @@
+// A new object is fresh only when its constructor keeps `this` to itself (#2893): here the
+// constructor calls one of its own methods that stores `this` in the factory's list, which the
+// handler's captured factory reaches, so the counter each request changes may be shared between
+// requests on other threads. Refused.
+import { serve } from "http-server";
+
+class Counter {
+  n = 0;
+  constructor(all: Counter[]) {
+    this.keep(all);
+  }
+  keep(all: Counter[]): void {
+    all.push(this);
+  }
+  bump(): void {
+    this.n++;
+  }
+}
+interface Factory {
+  make(): Counter;
+}
+class Shared implements Factory {
+  all: Counter[] = [];
+  make(): Counter {
+    return new Counter(this.all);
+  }
+}
+async function main() {
+  const f: Factory = new Shared();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    f.make().bump();
+    return new Response("ok");
+  });
+  server.close();
+}

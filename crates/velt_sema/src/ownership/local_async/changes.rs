@@ -44,6 +44,7 @@ use crate::hir::{
 };
 use crate::ownership::local_closures::walk::{self, Visit};
 
+use super::labels::share_fix;
 use super::reach::{constructor, plain, reached_locals, reaches};
 use super::record::writer;
 use super::targets::Read;
@@ -519,10 +520,20 @@ fn call_changes(
             let lits = memo.lits.clone();
             // A receiver computed from the value has no mode to go by: followed too.
             let computed = direct && !mutable;
-            let targets = (!direct || computed)
+            let all = (!direct || computed)
                 .then(|| super::targets::method_targets(cx, &lits, callee, args))
-                .flatten()
-                .filter(|t| !t.iter().any(|&(g, _)| in_library(cx, g)));
+                .flatten();
+            // A new value changed only by the library's methods is the request's, as with a
+            // direct call into the library: only what it holds may be captured (an encoder that
+            // `encoding.encoder()` made, written by its `write`, #2893).
+            if !direct
+                && all
+                    .as_ref()
+                    .is_some_and(|t| !t.is_empty() && t.iter().all(|&(g, _)| in_library(cx, g)))
+            {
+                return None;
+            }
+            let targets = all.filter(|t| !t.iter().any(|&(g, _)| in_library(cx, g)));
             // Methods not all known here may change what a new value holds whatever the mode
             // (`c.app.n++` borrows `c` only to read `app`); the captured value itself, when the
             // mode says so.
@@ -686,25 +697,6 @@ fn reassigns(f: &FnDef, l: LocalId) -> bool {
 
 pub(super) fn in_library(cx: &Ctx, d: DefId) -> bool {
     cx.try_fn(d).is_some_and(|i| cx.scopes[i.module].is_library)
-}
-
-/// The fix for a change to `name` of type `ty` that every call would make to its own copy.
-fn share_fix(cx: &Ctx, name: &str, ty: TyId) -> String {
-    let rest = "or keep what changes in a `shared(...)` or an `Atomic`";
-    if name == "this" {
-        return format!(
-            "share the object the method runs on (create it as `shared(new Mutex(…))` and change it with `.with(…)`), pass what the handler needs as values, {rest}"
-        );
-    }
-    match cx.ty.kind(ty) {
-        TyKind::Adt(..) => format!(
-            "share the object, `const {name} = shared(new Mutex(new {}(…)))` changed with `{name}.with(…)`, {rest}",
-            cx.display(ty)
-        ),
-        _ => format!(
-            "share the value, `const {name} = shared(new Mutex(…))` changed with `{name}.with(…)`, {rest}"
-        ),
-    }
 }
 
 /// What happens in a body, in the order it is written.

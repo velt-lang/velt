@@ -1,0 +1,20 @@
+// A closure returned by a closure is called again at once (`f()()`), and what that returns is
+// spawned (#2893): followed through both calls, so the job is refused.
+type Job = () => Promise<void>;
+function keepAndSpawn<T>(x: T): void {
+  const box: T[] = [x];
+  const v = box[0];
+  spawn(async () => {
+    console.log(typeof v);
+  });
+}
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  const f = (): (() => Job) => () => job;
+  keepAndSpawn<Job>(f()());
+  await sleep(10);
+  console.log(`n ${n}`);
+}

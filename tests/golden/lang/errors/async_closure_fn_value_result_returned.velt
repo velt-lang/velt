@@ -1,0 +1,16 @@
+// A closure that a closure called through a function value returns, returned straight on
+// (`return f()`, #2893) and spawned by the caller: what the called closure returns crosses with
+// the result, so the job that changes what it captured is refused.
+type Job = () => Promise<void>;
+function relay(f: () => Job): Job {
+  return f();
+}
+async function main() {
+  let n = 0;
+  const job: Job = async () => {
+    n++;
+  };
+  const f = (): Job => job;
+  await spawn(relay(f)());
+  console.log(`n ${n}`);
+}
