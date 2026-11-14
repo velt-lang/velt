@@ -96,7 +96,7 @@ impl<'h> Cx<'h> {
                 let hir::Def::Adt(a) = self.hir.def(d) else {
                     return true;
                 };
-                if w.keyed && a.assigned {
+                if w.keyed && self.hir.assigned_objects.contains(&d) {
                     return true;
                 }
                 let Some((root, name)) = self.field_root(d, index) else {

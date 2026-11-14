@@ -164,7 +164,8 @@ fn canonical(mut p: Box<velt_sema::hir::Program>) -> String {
         lock_free_callbacks,
         unchecked,
         generated,
-        decorators
+        decorators,
+        assigned_objects
     );
     for (name, set) in [
         (

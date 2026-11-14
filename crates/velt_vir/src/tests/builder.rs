@@ -151,6 +151,7 @@ impl PB {
             anon_shapes: Default::default(),
             union_shapes: Default::default(),
             counted_objects: Vec::new(),
+            assigned_objects: Default::default(),
             null_proto_records: false,
             fn_shapes: Default::default(),
             record_fills: false,

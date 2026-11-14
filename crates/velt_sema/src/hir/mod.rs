@@ -168,6 +168,12 @@ pub struct Program {
     pub union_shapes: HashMap<Vec<TyId>, DefId>,
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
+    /// The object types (`Def::Adt`) some field of which is assigned somewhere in the program
+    /// (`x.f = …`, `x.f += …`): two references to one value must see the same fields, so sharing
+    /// one needs one counted object (hir_encodings.md "Sharing"); a share of another may copy it
+    /// field by field. A fact of the whole program, kept out of the definitions so a definition's
+    /// checked form doesn't depend on what else the program does (#2943).
+    pub assigned_objects: HashSet<DefId>,
     /// The program calls `Object.create(null)`: a record may have no prototype (its map is
     /// marked, std/prelude/map.velt `[RECORD_MARK_NULL_PROTO]`), which printing and cloning look at.
     pub null_proto_records: bool,
@@ -434,10 +440,6 @@ pub struct AdtDef {
     /// `JSON.stringify` of a base class value holding one writes the static class). Other
     /// `private` fields are written, as in Node, and `#` fields never are.
     pub opaque: bool,
-    /// Some field is assigned somewhere in the program (`x.f = …`, `x.f += …`): two references
-    /// to one value must see the same fields, so sharing it needs one counted object
-    /// (hir_encodings.md "Sharing"); otherwise a share may copy it field by field.
-    pub assigned: bool,
     /// Classes: base class type (its fields are a prefix of `fields`).
     pub base: Option<TyId>,
     /// Classes: initializers this class and its base classes give fields they inherit, base

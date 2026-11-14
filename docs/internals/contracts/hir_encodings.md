@@ -715,8 +715,10 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   escaping closures capturing it (set on both the enclosing local and the closures' capture
   locals, transitively). It is never moved from (sema turns such moves into shares or copies);
   its captures (any by-value mode) hold the cell; borrowed captures point into it as usual.
-- `AdtDef::assigned`: a field of the object type is assigned somewhere; such a type is shared as
-  one counted object, others may be shared by copying their fields.
+- `Program::assigned_objects`: the object types a field of which is assigned somewhere; such a
+  type is shared as one counted object, others may be shared by copying their fields. A fact of
+  the whole program, so it is a table of the program, not a flag on the definition: a
+  definition's checked form doesn't depend on what other code does (#2943).
 - `FieldDef::private` (additive): the field is declared `private` (in the type or the base class
   that declares it; interface fields never are). `console.log` / `inspect` leave out private
   fields of zero size (std's `runtime` markers); other `private` fields show, as in Node; `#x`
@@ -1132,8 +1134,8 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   `Intrinsic::KeyRead(x, k)` (type `T[K]`, the `TyOp::Inline` form the signature writes) and
   `Intrinsic::KeyWrite(x, k, v)` (type `void`; `v: T[K]`, owned), `x` and `k` borrowed places
   (`x` mutably for a write; any expressions, bound to temporaries in order when they are no
-  places). An object type written through `KeyWrite` at some instantiation is
-  `AdtDef::assigned`. Sema records the requirement that `K` is one key, or keys naming
+  places). An object type written through `KeyWrite` at some instantiation is in
+  `Program::assigned_objects`. Sema records the requirement that `K` is one key, or keys naming
   required fields (an `Inline` form that is never a value's type, reduced like
   `TyOp::Convert`'s); any other instantiation is an error. Lowering reads (shared) or assigns the
   field the key's string literal type names, as `x.name` does, switching on the key's tag for a

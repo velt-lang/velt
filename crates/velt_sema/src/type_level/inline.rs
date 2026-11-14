@@ -27,7 +27,7 @@ pub(crate) struct Form {
     /// key, never a value's type.
     read: bool,
     /// The requirement of a write `x[k] = v` (`Intrinsic::KeyWrite`): as `read`, and the
-    /// object type `T` is at each instantiation has a field assigned (`AdtDef::assigned`).
+    /// object type `T` is at each instantiation has a field assigned (`Program::assigned_objects`).
     write: bool,
 }
 

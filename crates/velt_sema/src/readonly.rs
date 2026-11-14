@@ -92,6 +92,7 @@ pub(crate) fn erase(
         defs,
         impls,
         counted_objects,
+        assigned_objects,
         type_level,
         ..
     } = cx;
@@ -118,26 +119,14 @@ pub(crate) fn erase(
         r
     };
     // A twin must know a field is assigned if its readonly view's is (it never is today).
-    let assigned: Vec<(DefId, bool)> = twins
-        .iter()
-        .map(|(ro, plain)| {
-            let a = matches!(&defs[ro.0 as usize], Some(Def::Adt(a)) if a.assigned);
-            (plain.0, a)
-        })
-        .collect();
+    let twin_of = twins.iter().map(|(ro, plain)| (*ro, plain.0));
     // An object type merged into another (`crate::union_layouts`) shares its values.
-    let assigned = assigned
-        .into_iter()
-        .chain(plan.objects.iter().map(|&(d, rep)| {
-            let a = matches!(&defs[d.0 as usize], Some(Def::Adt(a)) if a.assigned);
-            (rep, a)
-        }));
-    let assigned: Vec<(DefId, bool)> = assigned.collect();
-    for (plain, a) in assigned {
-        if let Some(Def::Adt(d)) = &mut defs[plain.0 as usize] {
-            d.assigned |= a;
-        }
-    }
+    let merged_into = plan.objects.iter().map(|&(d, rep)| (d, rep));
+    let also: Vec<DefId> = (twin_of.chain(merged_into))
+        .filter(|(from, _)| assigned_objects.contains(from))
+        .map(|(_, to)| to)
+        .collect();
+    assigned_objects.extend(also);
     for def in defs.iter_mut().flatten() {
         match def {
             Def::Fn(f) => {

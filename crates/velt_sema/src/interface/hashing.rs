@@ -301,7 +301,6 @@ impl<'p> Hashing<'p> {
             c_struct,
             private_fields,
             opaque,
-            assigned,
             base,
             inherited_inits,
             ctor,
@@ -313,7 +312,7 @@ impl<'p> Hashing<'p> {
             span: _,
         } = a;
         let flags = (is_copy, declared_struct, c_struct);
-        let more = (private_fields, opaque, assigned);
+        let more = (private_fields, opaque);
         let hooks = [ctor, dispose, to_string, to_json, inspect].map(|h| self.opt_name(*h));
         // Where each inherited initializer runs; the initializer is a declaration.
         let inits: Vec<_> = (inherited_inits.iter())

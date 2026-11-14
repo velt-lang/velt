@@ -192,7 +192,8 @@ pub(crate) struct Ctx<'m> {
     /// Object types `crate::replaced_holders` accepted assignments for because they are shared:
     /// lowering counts them from its first pass (`hir::Program::counted_objects`).
     pub counted_objects: Vec<TyId>,
-    pub replaced_unions: FxHashSet<DefId>, // union defs readonly erasure replaced (union_layouts)
+    pub assigned_objects: FxHashSet<DefId>, // `hir::Program::assigned_objects` (finalize.rs)
+    pub replaced_unions: FxHashSet<DefId>,  // union defs readonly erasure replaced (union_layouts)
     pub module_slots: Vec<DefId>, // module state, in initialization order (module_state.rs)
     pub lock_free_callbacks: FxHashSet<DefId>, // locked_props.rs
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
@@ -589,6 +590,7 @@ impl<'m> Ctx<'m> {
             canon_memo: FxHashMap::default(),
             canon_errors: FxHashMap::default(),
             counted_objects: Vec::new(),
+            assigned_objects: FxHashSet::default(),
             replaced_unions: FxHashSet::default(),
             module_slots: Vec::new(),
             lock_free_callbacks: FxHashSet::default(),
