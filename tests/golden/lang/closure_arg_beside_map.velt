@@ -1,4 +1,4 @@
-// `map`, and a part beside its owner (#2527). Output checked against Node.
+// `map`, and a part beside its owner (#2537). Output checked against Node.
 function heap(a: string) { return a + "-".repeat(40); }
 function junk() { return heap("xxxxxxxxxxxxxxxxxxxxxxxxx").length; }
 class I2 { s: string = heap("a"); }
