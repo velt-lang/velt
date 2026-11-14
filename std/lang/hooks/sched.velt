@@ -57,11 +57,13 @@ function exec(): usize {
 }
 
 /**
- * `velt_main`'s root: runs it, and every task it wakes, until it is done. `stay` is 1 when tasks
- * must stay on their worker (sched_spread.velt `stay`): the program may give a declared function
- * properties through `any`, which the runtime keeps under its module lock, held by worker 0.
+ * `velt_main`'s root: runs it, and every task it wakes, until it is done. `drop` is its state's
+ * drop glue (0: none), which only an uncaught exit's give-back runs (sched_exit.velt `root`).
+ * `stay` is 1 when tasks must stay on their worker (sched_spread.velt `stay`): the program may give
+ * a declared function properties through `any`, which the runtime keeps under its module lock,
+ * held by worker 0.
  */
-export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
+export function schedBlockOn(poll: usize, drop: usize, state: usize, stay: u64): void {
   const e = exec();
   if (stay !== 0) {
     sp.stay(e);
@@ -71,6 +73,7 @@ export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
   m.st(k + t.T_JOIN_STATE, 0);
   m.st(k + t.T_TRANSFER, 0);
   m.st(k + t.T_ROOT, state);
+  m.st(k + t.T_DROP, drop);
   m.st32(k + t.T_FLAGS, t.ROOT);
   wk.push(e, k);
   // The synchronous code before is done: tasks may take the module lock.

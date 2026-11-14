@@ -16,6 +16,9 @@
 // - the task whose dropped result reported (`E_DROPPING`, sched_join.velt `dropWith`): the
 //   reference the drop held (the join handle's, or the executor's while that task's root
 //   finished on this thread), as every other holder counts one of its own;
+// - the started promise's node whose dropped result reported (sched_node_report.velt
+//   `REPORTING`): the reference its dropping code held (the unhandled list's, the handle's or the
+//   task's), with its result marked taken, since the glue that reported dropped it;
 // - on worker 0 (whose frame in `schedBlockOn` holds a reference to the root and never resumes),
 //   the root of `main` homed there, when it is being polled on this thread (the error was
 //   reported in its poll) or idle (taken out of the idle state, so a wake no longer queues it):
@@ -24,8 +27,12 @@
 //   left alone, and so is anything holding a waker of it (an I/O wait, a promise of the
 //   runtime's): those keep their references, and the block stays counted.
 
+import { stateDrop } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
+import * as nd from "./sched_node";
+import * as rp from "./sched_node_report";
+import * as wn from "./sched_node_woken";
 import { processEnv } from "./process";
 import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
@@ -79,17 +86,47 @@ function giveBack(self: usize): void {
   if (self === g) {
     root(g);
   }
+  // Last: its reference to its task may be the one that frees the task.
+  const n = rp.REPORTING.get() as usize;
+  if (n !== 0) {
+    rp.REPORTING.set(0);
+    // The glue that reported dropped its result (the error, before the exit): no later drop of
+    // the node may run it again, and the reference the dropping code held goes.
+    m.or32(n + nd.N_FLAGS, nd.DELIVERED);
+    nd.release(n);
+  }
 }
 
 /** Worker 0 (`g`, this thread) gives back the root of `main` when it is this thread's to give. */
 function root(g: usize): void {
   const k = m.ld(g + t.E_ROOT);
-  if (k === 0 || t.has(k, t.ROOT_DONE) || m.ld(k + t.T_HOME) !== g) {
+  if (k === 0 || m.ld(k + t.T_HOME) !== g) {
+    return;
+  }
+  if (t.has(k, t.ROOT_DONE)) {
+    // `main` returned, and the exit came from the reports after this poll's microtasks, before
+    // `finish` (sched_main_end.velt `mainFinish`) gave the task's references back.
+    if (m.ld(g + t.E_CURRENT) === k && m.load32(k + t.T_STATE) !== t.DONE) {
+      wn.giveBackWoken(k);
+      ended(k);
+      wk.release(k);
+      wk.release(k);
+    }
     return;
   }
   if (m.ld(g + t.E_CURRENT) !== k && m.cas32(k + t.T_STATE, t.IDLE, t.DONE) !== t.IDLE) {
     // Queued, or polled on another worker: its references are not this thread's.
     return;
+  }
+  const drop = m.ld(k + t.T_DROP);
+  if (drop !== 0 && rp.CHECKPOINT.get() === (k as u64)) {
+    // The exit came from the reports after its poll: `main`'s frame is suspended, not on the
+    // stack, and is dropped with what it holds (a promise, whose node the report marked taken,
+    // a sleep, which leaves the timers).
+    // SAFETY: the root's drop glue on its state, which has not finished and never runs again.
+    unsafe {
+      stateDrop(drop, m.ld(k + t.T_ROOT));
+    }
   }
   const tb = m.ld(g + t.E_TIMERS);
   if (tb !== 0) {

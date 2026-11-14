@@ -290,7 +290,7 @@ hooks! {
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
     /// `velt_rt_block_on`'s job: `(poll, state)`.
-    sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
+    sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, usize, u64) -> void), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
     sched_spawn => lang_hooks_sched, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
     /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code (0: the

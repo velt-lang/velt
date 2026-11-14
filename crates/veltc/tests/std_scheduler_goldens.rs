@@ -304,3 +304,69 @@ fn an_uncaught_exit_of_a_program_without_tasks_builds_and_ends_with_1() {
         assert_eq!(a, f, "blocks not balanced: {err}");
     }
 }
+
+/// #2962: a promise `main` held rejects, and is reported when it drops at the end of `main`,
+/// after the poll's microtasks (sched_node_report.velt `report`): the exit gives back the node
+/// being reported (the unhandled list's reference) and the root `main` left before `finish` ran.
+const HELD_EXIT: &str = r#"async function fail(): Promise<void> {
+  throw new Error("boom");
+}
+async function main() {
+  const p = fail();
+  await Promise.resolve();
+  await Promise.resolve();
+  console.log("main ends, dropping p");
+}
+"#;
+
+/// #2962: a promise dropped in a block rejects, and is reported after the poll while `main` waits
+/// in a sleep: the exit drops `main`'s suspended frame (its sleep leaves the timers) and gives back
+/// the node being reported.
+const SUSPENDED_EXIT: &str = r#"async function fail(): Promise<void> {
+  throw new Error("boom");
+}
+async function main() {
+  {
+    const p = fail();
+    console.log("dropping p");
+  }
+  await sleep(10);
+  console.log("never printed");
+}
+"#;
+
+/// Builds `src` as `name` and runs it at one worker and at four: exit 1 after `out`, the error
+/// reported, and the debug runtime's block counts balanced at both.
+fn exits_balanced(name: &str, src: &str, out: &str) {
+    if !cfg!(unix) {
+        // No executor in Velt on Windows on main yet (#2723).
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let file = dir.path().join(format!("{name}.velt"));
+    std::fs::write(&file, src).unwrap();
+    let exe = exe_name(dir.path(), name);
+    build_std(&file, &exe);
+    for threads in ["1", "4"] {
+        let (code, got, err) = run(&exe, dir.path(), threads);
+        assert_eq!(code, 1, "{name}, VELT_THREADS={threads}: {err}");
+        assert_eq!(got, out, "{name}, VELT_THREADS={threads}");
+        assert!(err.contains("Uncaught Error: boom"), "{name}: {err}");
+        let (a, f) = blocks(&err).expect("an rc stats line");
+        assert_eq!(
+            a, f,
+            "{name}, VELT_THREADS={threads}: blocks not balanced: {err}"
+        );
+    }
+}
+
+#[test]
+fn an_uncaught_exit_reporting_a_held_promise_balances_the_block_counts() {
+    exits_balanced("held_exit", HELD_EXIT, "main ends, dropping p\n");
+}
+
+#[test]
+fn an_uncaught_exit_while_main_sleeps_balances_the_block_counts() {
+    exits_balanced("suspended_exit", SUSPENDED_EXIT, "dropping p\n");
+}
