@@ -57,8 +57,9 @@ pub(super) struct ViewLoops {
     pub(super) zeros: FxHashSet<Local>,
     /// The header each of the tests above read.
     pub(super) hdrs: FxHashMap<Local, Place>,
-    /// The quiet functions called directly (quiet.rs), each an instance of its definition.
-    pub(super) quiet: FxHashMap<vir::FuncId, velt_sema::hir::DefId>,
+    /// The quiet functions called directly (quiet.rs), each an instance of its definition,
+    /// and whether the instance takes its caller's location as a last argument (track_caller.rs).
+    pub(super) quiet: FxHashMap<vir::FuncId, (velt_sema::hir::DefId, bool)>,
     /// The loops lowered: their header (the block entered from before the loop) and the
     /// range of blocks made while lowering them.
     loops: Vec<(BlockId, u32, u32)>,
@@ -95,10 +96,16 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `f`, an instance of `def`, is a quiet function called directly.
-    pub(super) fn note_quiet_call(&mut self, f: vir::FuncId, def: velt_sema::hir::DefId) {
+    /// `f`, an instance of `def`, is a quiet function called directly (`by_arg`: its last
+    /// argument is the caller's location).
+    pub(super) fn note_quiet_call(
+        &mut self,
+        f: vir::FuncId,
+        def: velt_sema::hir::DefId,
+        by_arg: bool,
+    ) {
         if !self.cx.boxing.array_views.is_empty() {
-            self.view_loops.quiet.insert(f, def);
+            self.view_loops.quiet.insert(f, (def, by_arg));
         }
     }
 

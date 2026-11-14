@@ -340,8 +340,9 @@ impl FnLower<'_, '_> {
                         edges.push((*pad, k.clone()));
                     }
                     if let Some(p) = dest {
-                        let t = quiet
-                            .map(|d| Term::Call(d, args.iter().map(|a| k.operand(a)).collect()));
+                        let t = quiet.map(|(d, args)| {
+                            Term::Call(d, args.iter().map(|a| k.operand(a)).collect())
+                        });
                         k.write(p, ls);
                         k.define(p, t, ls);
                     }
@@ -376,18 +377,29 @@ impl FnLower<'_, '_> {
 
     /// Is this a call of a quiet function (quiet.rs) or of [`FLOAT_INDEX`] given only numbers,
     /// which then cannot write memory (it has nothing to write through, and module state is not
-    /// quiet)? Its definition when it is: the same numbers give the same result.
-    fn quiet_call(&self, callee: &vir::Callee, args: &[Operand]) -> Option<DefId> {
+    /// quiet)? Its definition and those numbers when it is: the same numbers give the same
+    /// result. The caller's location that an instance may take last (track_caller.rs, every
+    /// caller-tracking call in a debug build) is only read for the error, so it is left out:
+    /// two sites converting the same index give the same value.
+    fn quiet_call<'a>(
+        &self,
+        callee: &vir::Callee,
+        args: &'a [Operand],
+    ) -> Option<(DefId, &'a [Operand])> {
         let number = |t: Ty| t.is_int() || t.is_float() || t == Ty::Bool;
         let vir::Callee::Func(f) = callee else {
             return None;
         };
-        let def = *self.view_loops.quiet.get(f)?;
+        let (def, by_arg) = *self.view_loops.quiet.get(f)?;
+        let args = match by_arg {
+            true => args.split_last()?.1,
+            false => args,
+        };
         let numbers = args.iter().all(|a| match a {
             Operand::Const(_, t) => number(*t),
             Operand::Copy(p) => p.proj.is_empty() && number(self.locals[p.local.0 as usize].ty),
         });
-        numbers.then_some(def)
+        numbers.then_some((def, args))
     }
 
     /// The function's locals for [`Known`]: those whose own address is taken, and those
