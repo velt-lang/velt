@@ -111,6 +111,7 @@ table! {
     lang_hooks_sched_blocking => "lang/hooks/sched_blocking",
     lang_hooks_sched_cells => "lang/hooks/sched_cells",
     lang_hooks_sched_io => "lang/hooks/sched_io",
+    lang_hooks_sched_node_transfer => "lang/hooks/sched_node_transfer",
     lang_hooks_string => "lang/hooks/string",
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_hooks_tuple_elements => "lang/hooks/tuple_elements",

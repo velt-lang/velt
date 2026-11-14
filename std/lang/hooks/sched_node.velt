@@ -1,7 +1,7 @@
 // velt/lang/hooks (internal): boxed and started promises in the executor in Velt (sched.velt,
 // #2649; rt_abi_async.md §1.1): `velt_rt_fut_box`'s and `velt_rt_fut_start`'s jobs.
 //
-// A node is `[head (112)][VeltFut header (16)][state]`; the promise is the header's address, so
+// A node is `[head (128)][VeltFut header (16)][state]`; the promise is the header's address, so
 // the state's result (its offset 0) is the result slot at +16. The head: the node's waker table
 // (a node is its own waker), its reference count (the owner's handle, the task driving it, a
 // place among its task's woken nodes, each waker clone), its flags, its size in bytes (to free it
@@ -12,9 +12,9 @@
 // it), the `cx` its polls get (its task's await word, itself), its link in the list of woken
 // nodes the task took to run (its own, so a node woken again while it waits there is pushed
 // without breaking that list), the state's drop (a lazy node's; then a word sched_node_catch.velt
-// uses), and its link in the
-// task's list of rejections nobody handled (its own too: a node woken while it ran from a
-// microtask is still on the woken stack when it finishes there, and that stack must stay whole).
+// uses), its link in the task's list of rejections nobody handled (its own too: a node woken
+// while it ran from a microtask is still on the woken stack when it finishes there, and that
+// stack must stay whole), the transfer glue (+112, sched_node_transfer.velt) and a free word.
 //
 // The flags change only through atomic or/and: a wake on another thread sets QUEUED while the
 // worker sets and clears the others.
@@ -35,10 +35,12 @@ import * as loc from "./sched_node_loc";
 import * as micro from "./sched_micro";
 import * as aw from "./sched_node_await";
 import * as nc from "./sched_node_catch";
+import * as rp from "./sched_node_report";
 import * as t from "./sched_task";
+import * as tr from "./sched_node_transfer";
 import * as wk from "./sched_wake";
 
-export const N_HEAD: usize = 112;
+export const N_HEAD: usize = 128;
 export const N_REFS: usize = 8;
 export const N_FLAGS: usize = 16;
 const N_BYTES: usize = 20;
@@ -53,7 +55,7 @@ export const N_TAKEN_NEXT: usize = 80;
  * word after it to sched_node_catch.velt (`N_SETTLE`).
  */
 export const N_DROP: usize = 88;
-const N_UNHANDLED_NEXT: usize = 104;
+export const N_UNHANDLED_NEXT: usize = 104;
 
 /**
  * A node's flags: started; its state finished; its owner dropped the handle (the task drops the
@@ -61,7 +63,7 @@ const N_UNHANDLED_NEXT: usize = 104;
  */
 export const STARTED: u32 = 1;
 export const FINISHED: u32 = 2;
-const DETACHED: u32 = 4;
+export const DETACHED: u32 = 4;
 export const QUEUED: u32 = 8;
 export const REJECTING: u32 = 16;
 export const DELIVERED: u32 = 32;
@@ -147,6 +149,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
     // SAFETY: a lazy node's state, polled by its owner with its own cx.
     const r = unsafe { statePoll(m.ld(n + N_POLL), f + 16, cx) };
     if (r === 1) {
+      tr.finished(n);
       setFlags(n, FINISHED);
     }
     return r;
@@ -198,6 +201,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
  */
 @inline
 export function adoptedDone(task: usize, n: usize, fl: u32): void {
+  tr.finished(n);
   setFlags(n, fl);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
   const w = aw.takePlain(n);
@@ -224,7 +228,7 @@ export function nodeDrop(f: usize): void {
     // second drops the result. DELIVERED is the owner's own (this thread's).
     const prev = m.or32(n + N_FLAGS, DETACHED);
     if ((prev & (FINISHED | DELIVERED)) === FINISHED) {
-      dropResult(n);
+      rp.dropResult(n);
     }
     const w = m.swap(n + aw.N_AWAITER, 0);
     if (w !== 0) {
@@ -235,56 +239,13 @@ export function nodeDrop(f: usize): void {
   } else if ((fl & FINISHED) === 0) {
     setFlags(n, DETACHED);
   } else if ((fl & DELIVERED) === 0) {
-    dropResult(n);
+    rp.dropResult(n);
   }
   const w = aw.takePlain(n);
   if (w !== 0) {
     m.wakerDrop(w);
   }
   release(n);
-}
-
-/**
- * Drops node `n`'s result, which nobody claims. A promise that can reject is reported (by its
- * drop glue, when it holds an error) only once its task's microtasks are drained, as Node
- * reports a rejection nobody handled: until then a combinator may still take it (`handled`).
- */
-function dropResult(n: usize): void {
-  const task = m.ld(n + N_TASK);
-  const e = t.exec();
-  const rejecting = (m.load32(n + N_FLAGS) & REJECTING) !== 0;
-  if (rejecting && m.ld(e + t.E_UNCAUGHT) !== 0) {
-    // An error a callback threw (sched.velt `schedUncaughtNow`): reported now, as Node's
-    // uncaught exception ends the process before the microtasks run.
-    m.st(e + t.E_UNCAUGHT, 0);
-    dropNow(n);
-    return;
-  }
-  if (rejecting && task !== 0 && m.ld(e + t.E_CURRENT) === task) {
-    m.inc(n + N_REFS);
-    m.st(n + N_UNHANDLED_NEXT, m.ld(task + t.T_UNHANDLED));
-    m.st(task + t.T_UNHANDLED, n);
-    return;
-  }
-  dropNow(n);
-}
-
-/** Runs the drop glue of node `n`'s result. */
-function dropNow(n: usize): void {
-  const rdrop = m.ld(n + N_RESULT_DROP);
-  if (rdrop !== 0) {
-    // An error in it is reported where it was thrown; this thread's own location stays.
-    const fl = m.load32(n + N_FLAGS);
-    const own = (fl & loc.LOC) !== 0 ? loc.current() : 0;
-    loc.claim(fl, n + N_POLL);
-    // SAFETY: the slot holds the finished result, `rdrop` its drop glue.
-    unsafe {
-      stateDrop(rdrop, n + N_HEAD + 16);
-    }
-    if ((fl & loc.LOC) !== 0) {
-      loc.restore(own);
-    }
-  }
 }
 
 export function setFlags(n: usize, f: u32): void {
@@ -383,12 +344,14 @@ export function run(task: usize, n: usize, taken: bool): void {
     // poll is not needed any more), published before FINISHED.
     loc.keep(n + N_FLAGS, n + N_HEAD + 16, n + N_POLL);
   }
+  // A handed-over node's transfer runs before FINISHED shows (sched_node_transfer.velt).
+  tr.finished(n);
   // Its owner may drop or await it on another worker meanwhile (sched_node_await.velt): the old
   // flags say whether the drop came first, and the awaiter word is claimed as `finishAwaiter` says.
   const prev = m.or32(n + N_FLAGS, FINISHED);
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
   if ((prev & DETACHED) !== 0) {
-    dropResult(n);
+    rp.dropResult(n);
   } else {
     const w = aw.finishAwaiter(n, task);
     if (w !== 0) {
@@ -422,25 +385,5 @@ export function release(n: usize): void {
     if (task !== 0) {
       wk.release(task);
     }
-  }
-}
-
-/** Reports (drops) the rejected results task `task` kept, in the order they were kept. */
-export function report(task: usize): void {
-  let n = m.ld(task + t.T_UNHANDLED);
-  m.st(task + t.T_UNHANDLED, 0);
-  let rev: usize = 0;
-  while (n !== 0) {
-    const next = m.ld(n + N_UNHANDLED_NEXT);
-    m.st(n + N_UNHANDLED_NEXT, rev);
-    rev = n;
-    n = next;
-  }
-  while (rev !== 0) {
-    const next = m.ld(rev + N_UNHANDLED_NEXT);
-    m.st(rev + N_UNHANDLED_NEXT, 0);
-    dropNow(rev);
-    release(rev);
-    rev = next;
   }
 }

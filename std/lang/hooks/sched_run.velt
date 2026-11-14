@@ -21,6 +21,7 @@ import * as micro from "./sched_micro";
 import * as mod from "./sched_module";
 import * as node from "./sched_node";
 import * as wn from "./sched_node_woken";
+import * as rp from "./sched_node_report";
 import * as nc from "./sched_node_catch";
 import * as order from "./sched_order";
 import * as q from "./sched_queue";
@@ -277,7 +278,7 @@ function pollRunning(e: usize, k: usize): void {
 function drain(e: usize, k: usize): void {
   if (m.ld(k + t.T_MICRO) === 0) {
     if (m.ld(k + t.T_UNHANDLED) !== 0) {
-      node.report(k);
+      rp.report(k);
     }
     return;
   }
@@ -286,7 +287,7 @@ function drain(e: usize, k: usize): void {
     if (w === 0) {
       // Rejections nobody handled, reported now that the queue is empty.
       if (m.ld(k + t.T_UNHANDLED) !== 0) {
-        node.report(k);
+        rp.report(k);
       }
       return;
     }

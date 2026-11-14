@@ -380,6 +380,7 @@ const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_box),
     velt_common::std_hook!(sched_start),
     velt_common::std_hook!(sched_detach),
+    velt_common::std_hook!(sched_transfer),
     velt_common::std_hook!(sched_handled),
     velt_common::std_hook!(sched_peek),
     velt_common::std_hook!(sched_await_tick),

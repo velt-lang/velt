@@ -27,6 +27,7 @@ declare c("c") function velt_rt_fut_start$rt(f: usize, rdrop: usize): void;
 declare c("c") function velt_rt_fut_start_rejecting$rt(f: usize, rdrop: usize): void;
 declare c("c") function velt_rt_fut_detach$rt(f: usize, qdrop: usize): void;
 declare c("c") function velt_rt_futs_handled$rt(futs: usize, n: u64, qdrop: usize): void;
+declare c("c") function velt_rt_fut_transfer$rt(f: usize, glue: usize): void;
 
 /** The runtime's `sleep` of `ms` milliseconds: a heap future. */
 export function sleep(ms: i64): usize {
@@ -101,5 +102,14 @@ export function handled(futs: usize, n: u64, qdrop: usize): void {
   // SAFETY: `futs` holds `n` heap futures.
   unsafe {
     velt_rt_futs_handled$rt(futs, n, qdrop);
+  }
+}
+
+/** `velt_rt_fut_transfer`, the runtime's: a holder of a shared promise or a runtime future. */
+export function transfer(f: usize, glue: usize): void {
+  // SAFETY: the caller owns `f`, a heap future of the runtime's; `glue` is null or its result's
+  // transfer glue.
+  unsafe {
+    velt_rt_fut_transfer$rt(f, glue);
   }
 }

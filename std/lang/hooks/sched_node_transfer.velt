@@ -1,0 +1,81 @@
+// velt/lang/hooks (internal): a promise of the executor in Velt handed to another task
+// (`velt_rt_fut_transfer`'s job, #160, #2854; sched_node.velt has the node's layout).
+//
+// The owner hands the promise over (`spawn(use(p))`, a channel, a captured closure): the other
+// task claims its result. Its transfer glue, kept in the node's head, runs on the result on the
+// task that produces it, as the state finishes, so the other task never sees an object this one
+// still references: a count of 1 stays, a shared object is replaced by a copy (transfer.rs).
+// The node is marked HANDED_OVER, which promise identity and the unhandled-rejection watch read:
+// what happens to the promise from then on is the other task's.
+
+import { fnAddress, stateDrop } from "velt/lang/intrinsics";
+import * as jn from "./sched_join";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as off from "./sched_off";
+
+/** The node head's word with the transfer glue (sched_node.velt's layout). */
+export const N_TRANSFER: usize = 112;
+/** A node's flag: its owner handed it to another task, which claims its result. */
+export const HANDED_OVER: u32 = 2048;
+
+/**
+ * `velt_rt_fut_transfer` (the hook lowering calls under `VELT_SCHEDULER=std`): the owner hands
+ * promise `f` to another task. A node of this executor keeps `glue` (null: nothing to transfer)
+ * for its task to run on the result as it finishes (`transfer`); a spawned task's join handle has
+ * nothing to transfer (the task's inputs were); the runtime's futures (a holder of a shared
+ * promise, a leaf) are the runtime's to hand over.
+ */
+export function schedTransfer(f: usize, glue: usize): void {
+  if (!transfer(f, glue, fnAddress(nd.nodePoll)) && !jn.isJoin(f)) {
+    off.transfer(f, glue);
+  }
+}
+
+/**
+ * `velt_rt_fut_transfer` for promise `f`, if it is a node (its header's poll is `hdrPoll`; false
+ * otherwise). `glue` (null when the result holds nothing counted) is kept for the task driving
+ * the node to run as it finishes (`finished`); a node that already finished, and whose result
+ * nobody took, is transferred now, here on its owner's task. A node that crossed before keeps
+ * the glue it crossed with: its task applies that one, possibly on another thread.
+ */
+export function transfer(f: usize, glue: usize, hdrPoll: usize): bool {
+  if (m.ld(f) !== hdrPoll) {
+    return false;
+  }
+  const n = nd.nodeOf(f);
+  if ((m.or32(n + nd.N_FLAGS, HANDED_OVER) & HANDED_OVER) === 0) {
+    // The first hand-over: its glue is the node's from now on (the word is read only with the
+    // flag set, so a node never handed over pays no store for it).
+    m.st(n + N_TRANSFER, glue);
+    if (glue !== 0 && (m.load32(n + nd.N_FLAGS) & (nd.FINISHED | nd.DELIVERED)) === nd.FINISHED) {
+      finished(n);
+    }
+  }
+  return true;
+}
+
+/**
+ * Node `n`'s state finished: if its owner handed it to another task, its transfer glue runs on
+ * the result, before FINISHED shows (the other task, maybe on another worker, takes the result
+ * then). A panicked node has no result (sched_node_catch.velt), a detached one's is dropped (a
+ * DETACHED set after this drops the copy).
+ *
+ * The glue word is written once, on the owner's first hand-over (`transfer`), and only read
+ * after: that first hand-over happens on the task that drives the node, or before another task
+ * polls a lazy one, so it is never written while the node finishes on another thread. Later
+ * hand-overs keep it, as the runtime keeps a node's first transfer, and so it runs once.
+ */
+export function finished(n: usize): void {
+  if ((m.load32(n + nd.N_FLAGS) & (HANDED_OVER | nd.PANICKED | nd.DETACHED)) !== HANDED_OVER) {
+    return;
+  }
+  const g = m.ld(n + N_TRANSFER);
+  if (g !== 0) {
+    // SAFETY: the slot holds the finished result; `g` is its transfer glue, which has a drop
+    // glue's signature (`(slot) -> void`).
+    unsafe {
+      stateDrop(g, n + nd.N_HEAD + 16);
+    }
+  }
+}
