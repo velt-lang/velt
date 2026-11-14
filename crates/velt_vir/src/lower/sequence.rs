@@ -394,7 +394,8 @@ impl FnLower<'_, '_> {
         if !owned && self.cx.holds_atomic(cty, &mut seen) {
             return op;
         }
-        if owned || !self.cx.needs_drop(cty) || !self.cx.shares_as_counted(cty) {
+        let rep = self.cx.ph_rep(cty);
+        if owned || !self.cx.needs_drop(cty) || !self.cx.shares_as_counted(rep) {
             // Owned already, owning nothing, or holding an uncounted object: a later operand
             // reaches such an object only through a counted container or a shared cell, and
             // either makes its type counted, so the bitwise copy (the same object) stays valid.

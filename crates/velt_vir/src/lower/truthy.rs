@@ -193,7 +193,8 @@ impl FnLower<'_, '_> {
 
     /// Is `t` a pointer that may be a view of a nothing (any_view.rs)?
     pub(super) fn holds_view(&mut self, t: TyId) -> bool {
-        !matches!(self.cx.kind(t), TyKind::Option(..))
+        let rep = self.cx.ph_rep(t);
+        !matches!(self.cx.kind(rep), TyKind::Option(..))
             && self.cx.proxiable(t)
             && self.cx.ty(t) == Ty::Ptr
             && self.cx.view_fn().is_some()

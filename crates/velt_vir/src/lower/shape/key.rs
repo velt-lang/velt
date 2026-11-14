@@ -84,8 +84,16 @@ impl Cx<'_> {
         if self.shapes.no_placeholders() || !self.mentions_ph(t) {
             return t;
         }
-        self.shapes.asked.borrow_mut().insert(t);
+        let cur = self.shapes.current.last().copied();
+        self.shapes.asked.borrow_mut().insert((cur, t));
         self.rep_of(t).unwrap_or(t)
+    }
+
+    /// The kind of `t`'s representative ([`ph_rep`](Self::ph_rep)): the kind a shape question
+    /// may depend on, which the key holds the answers for.
+    #[inline]
+    pub(in crate::lower) fn rep_kind(&self, t: TyId) -> &TyKind {
+        self.types.kind(self.ph_rep(t))
     }
 
     /// [`ph_rep`](Self::ph_rep) without interning: `None` when a part of the result was never
@@ -147,6 +155,7 @@ impl Cx<'_> {
         if matches!(self.ty(t), Ty::Unit | Ty::V128) {
             return None;
         }
+
         let share = self.share_kind(t) as u8;
         let half = self.half(t).map(|f| format!("{f:?}"));
         let answers = (self.footprint(t).into_iter())
@@ -175,6 +184,22 @@ impl Cx<'_> {
     /// The answers to the shape questions about `t`: the yes/no queries lowering's inline code
     /// depends on, and which counted-types sets hold it.
     pub(super) fn answers(&mut self, t: TyId) -> Answers {
+        // The sets are this pass's input, fixed for the pass (a new `Shapes` per pass).
+        let concrete = !self.mentions_ph(t);
+        if concrete {
+            if let Some(a) = self.shapes.answers.get(&t) {
+                return a.clone();
+            }
+        }
+        let a = self.answers_now(t);
+        if concrete {
+            self.shapes.answers.insert(t, a.clone());
+        }
+        a
+    }
+
+    /// [`answers`](Self::answers) without the memo.
+    fn answers_now(&mut self, t: TyId) -> Answers {
         let mut bits = self.bits(t);
         let sets = self
             .boxing
@@ -226,6 +251,18 @@ impl Cx<'_> {
             self.holds_mutex(t, 0, true),
             self.holds_mutex(t, 0, false),
             self.array_view(t),
+            // Map and Set keys (step 4): compared and hashed by content, not identity.
+            self.value_struct(t),
+            self.c_struct(t),
+            self.holds_atomic(t, &mut FxHashSet::default()),
+            matches!(self.kind(t), TyKind::Option(..)),
+            // The compile-time type tests std's `Map` code folds (`const_cond`).
+            self.object_only(t),
+            // `holds_dynamic_or_class` is this or `is_class`, both rows.
+            self.key_holds_dynamic(t, &mut FxHashSet::default()),
+            self.holds_union_view(t),
+            !self.in_place_parts(self.ph_rep(t)).is_empty(),
+            self.key_shares_as_counted(t, &mut FxHashSet::default()),
         ];
         answers
             .iter()
@@ -281,40 +318,130 @@ impl Cx<'_> {
         self.intern(k)
     }
 
-    /// At the end of the pass: every member of every shape gives the representative's answers
-    /// for each type built from a placeholder that shared code asked about (module docs).
+    /// At the end of the pass: for every dictionary of every shared instance, each type built
+    /// from a placeholder that shared code asked about gives, with the dictionary's concrete
+    /// types, the answers it gives with the representatives (module docs). Per dictionary, not
+    /// per member: a type joins a shape through the instances it is used with, and a type built
+    /// from it that no instance of it reaches (`Map<B, bool>` when only `Set<A>` exists) is
+    /// never one shared code runs on.
     pub(in crate::lower) fn shapes_close(&mut self) {
         CHECKING.with(|c| c.set(true));
-        let mut derived: Vec<TyId> = self.shapes.asked.borrow().iter().copied().collect();
-        // Every placeholder itself too, asked about or not.
-        derived.extend(self.shapes.ph.iter().map(|p| p.ty));
-        derived.sort_by_key(|t| t.0);
-        derived.dedup();
-        for i in 0..self.shapes.ph.len() {
-            let (p, rep) = (self.shapes.ph[i].ty, self.shapes.ph[i].rep);
-            let members = self.shapes.ph[i].members.clone();
+        let asked: Vec<(Option<crate::vir::FuncId>, TyId)> =
+            self.shapes.asked.borrow().iter().copied().collect();
+        let reps: Vec<(TyId, TyId)> = self.shapes.ph.iter().map(|q| (q.ty, q.rep)).collect();
+        let uses: Vec<(crate::vir::FuncId, Vec<TyId>, Vec<TyId>)> = (self.shapes.insts.iter())
+            .flat_map(|(&f, inst)| {
+                inst.dicts
+                    .iter()
+                    .map(move |(_, c, _)| (f, inst.targs.clone(), c.clone()))
+            })
+            .collect();
+        for (f, phs, concrete) in uses {
+            // What this instance's body asked about (or code outside any), and its
+            // placeholders themselves, asked about or not.
+            let mut derived: Vec<TyId> = (asked.iter())
+                .filter(|(at, _)| at.is_none_or(|a| a == f))
+                .map(|&(_, t)| t)
+                .chain(phs.iter().copied())
+                .collect();
+            derived.sort_by_key(|t| t.0);
+            derived.dedup();
             for &d in &derived {
-                let rest: Vec<(TyId, TyId)> =
-                    self.shapes.ph.iter().map(|q| (q.ty, q.rep)).collect();
-                let want_ty = self.replace_tys(d, &rest);
+                if !phs.iter().any(|&p| self.ty_mentions(d, p)) {
+                    continue;
+                }
+                let want_ty = self.replace_tys(d, &reps);
                 let want = self.answers(want_ty);
-                for &m in &members {
-                    let mut map = rest.clone();
-                    map[i] = (p, m);
-                    let got = self.replace_tys(d, &map);
-                    let have = self.answers(got);
-                    if have != want {
-                        let (a, b) = (self.type_key(rep), self.type_key(m));
-                        let (x, y) = (self.type_key(want_ty), self.type_key(got));
-                        ice(format_args!(
-                            "shape of `{a}` and `{b}` differs for a type built from them \
-                             (`{x}`: {want:?}, `{y}`: {have:?}): the shape key is missing a \
-                             question"
-                        ));
+                let mut map = reps.clone();
+                for (&p, &c) in phs.iter().zip(&concrete) {
+                    if let Some(e) = map.iter_mut().find(|e| e.0 == p) {
+                        e.1 = c;
                     }
+                }
+                let got = self.replace_tys(d, &map);
+                let have = self.answers(got);
+                if have != want {
+                    let (x, y) = (self.type_key(want_ty), self.type_key(got));
+                    ice(format_args!(
+                        "shapes differ for a type built from them (`{x}`: {want:?}, `{y}`: \
+                         {have:?}): the shape key is missing a question"
+                    ));
                 }
             }
         }
         CHECKING.with(|c| c.set(false));
+    }
+
+    /// Does `t` mention type `p` (a placeholder)?
+    fn ty_mentions(&self, t: TyId, p: TyId) -> bool {
+        let mut stack = vec![t];
+        let mut seen = FxHashSet::default();
+        while let Some(x) = stack.pop() {
+            if x == p {
+                return true;
+            }
+            if seen.insert(x) {
+                stack.extend(super::parts(self.types.kind(x)));
+            }
+        }
+        false
+    }
+
+    /// Whether the `Map` family (step 4) shares at type argument `t`. Not at:
+    /// - an option: its code tests and makes the nothing (`HoldsNull`, `NullAs`);
+    /// - a type with parts a share would copy: they are counted per type where a call may
+    ///   change them (stabilize.rs `in_place_parts`), which shared code can't say;
+    /// - a `struct` value, whose calling convention depends on its fields (abi.rs `reg_ret`);
+    /// - a type a view or proxy can stand for, whose code builds tables of its own functions.
+    ///
+    /// Checked per call, not in the key: the array-view helpers (step 2) share all of these.
+    pub(super) fn map_shareable(&mut self, t: TyId) -> bool {
+        !matches!(self.kind(t), TyKind::Option(..))
+            // A view or proxy target: its code builds tables of the type's own functions.
+            && !self.proxiable(t)
+            && !self.array_view(t)
+            && self.in_place_parts(t).is_empty()
+            && !self.value_struct(t)
+            && !self.c_struct(t)
+    }
+
+    /// `holds_dynamic` for the key: the same answer, with recursive types cut where they come
+    /// back (the key asks about every type argument, recursive ones too).
+    fn key_holds_dynamic(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        match self.kind(t) {
+            TyKind::Dyn(d, _) if self.hir.function == Some(d) => false,
+            TyKind::Array(e) | TyKind::Option(e, _) => self.key_holds_dynamic(e, seen),
+            TyKind::Tuple(es) => es.iter().any(|&e| self.key_holds_dynamic(e, seen)),
+            TyKind::Adt(d, _) if self.is_union(t) => {
+                let n = self.enum_def(d).variants.len() as u32;
+                (0..n).any(|v| {
+                    let member = self.variant_tys(t, v);
+                    member.iter().any(|&m| self.key_holds_dynamic(m, seen))
+                })
+            }
+            _ => self.is_dynamic(t),
+        }
+    }
+
+    /// `shares_as_counted` for the key, with recursive types cut where they come back.
+    fn key_shares_as_counted(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+        use super::super::boxing::ShareKind;
+        if !seen.insert(t) {
+            return true;
+        }
+        match self.share_kind(t) {
+            ShareKind::Object => self.counted(t),
+            ShareKind::Value => {
+                let parts = self.part_types(t);
+                parts
+                    .into_iter()
+                    .all(|p| self.key_shares_as_counted(p, seen))
+            }
+            ShareKind::Promise => false,
+            _ => true,
+        }
     }
 }

@@ -548,7 +548,7 @@ impl FnLower<'_, '_> {
     /// The value of a condition known per instantiation without running it: built from
     /// `holdsNull` and from CPU checks this build answers (cpu_checks.rs) with `!`, `&&` and
     /// `||` (std/prelude/map.velt). Other constant conditions are left to velt_opt, so their
-    /// code keeps its shape.
+    /// code keeps its shape. A placeholder (shape/) answers for its representative.
     pub(super) fn const_cond(&mut self, e: &hir::Expr) -> Option<bool> {
         if let Some(fact) = self.cx.std_fact_of(e) {
             return Some(fact);
@@ -558,7 +558,7 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsNull),
                 args,
             } => {
-                let t = self.sub(args.first()?.ty);
+                let t = self.sub_rep(args.first()?.ty);
                 Some(matches!(
                     self.cx.kind(t),
                     velt_sema::hir::TyKind::Option(..)
@@ -568,21 +568,21 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::MayHoldPrimitive),
                 args,
             } => {
-                let t = self.sub(args.first()?.ty);
+                let t = self.sub_rep(args.first()?.ty);
                 Some(!self.cx.object_only(t))
             }
             hir::ExprKind::Call {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsDynamic),
                 args,
             } => {
-                let t = self.sub(args.first()?.ty);
+                let t = self.sub_rep(args.first()?.ty);
                 Some(self.cx.holds_dynamic(t))
             }
             hir::ExprKind::Call {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::HoldsDynamicOrClass),
                 args,
             } => {
-                let t = self.sub(args.first()?.ty);
+                let t = self.sub_rep(args.first()?.ty);
                 Some(self.cx.holds_dynamic_or_class(t))
             }
             hir::ExprKind::Unary {

@@ -97,7 +97,11 @@ impl FnLower<'_, '_> {
             // so they are counted instead (`Cx::note_identity_borrow`): in the next pass the
             // element is a counted object, shared above, and the callee changes the element
             // itself, as in JavaScript.
-            let parts = self.cx.in_place_parts(ty);
+            // A placeholder (shape/) stands only for types without such parts (`shape_key`).
+            let parts = match self.cx.mentions_ph(ty) {
+                true => vec![],
+                false => self.cx.in_place_parts(ty),
+            };
             if !parts.is_empty() {
                 for t in parts {
                     self.cx.note_identity_borrow(t);
