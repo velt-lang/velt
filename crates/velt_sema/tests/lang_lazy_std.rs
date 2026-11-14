@@ -663,18 +663,18 @@ fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
             );
         }
     }
-    for src in [
-        "function main() {\n  console.log({ a: 1 });\n}\n",
-        "function main() {\n  console.log([1]);\n}\n",
-        "class P {\n  x: number = 1;\n}\nfunction main() {\n  console.log(new P());\n}\n",
-        "function main() {\n  console.log(new Map<string, number>());\n}\n",
+    // `inspectArray` (its `E[]` makes the `Array` class live) only once an array type is live.
+    let checked = |p: &Program, f: &str| !unchecked(p).contains(&f.to_string());
+    let class = "class P {\n  x: number = 1;\n}\nfunction main() {\n  console.log(new P());\n}\n";
+    for (src, array) in [
+        ("function main() {\n  console.log({ a: 1 });\n}\n", false),
+        ("function main() {\n  console.log([1]);\n}\n", true),
+        (class, false),
     ] {
         let p = ok_src(src);
-        for f in shapes {
-            assert!(
-                !unchecked(&p).contains(&f.to_string()),
-                "{f} is unchecked: {src}"
-            );
-        }
+        assert!(checked(&p, shapes[0]), "{} is unchecked: {src}", shapes[0]);
+        assert_eq!(checked(&p, shapes[1]), array, "{}: {src}", shapes[1]);
     }
+    let p = ok_src("function main() {\n  console.log(new Map<string, number>());\n}\n");
+    assert!(checked(&p, shapes[0]), "{} is unchecked: Map", shapes[0]);
 }
