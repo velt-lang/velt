@@ -5,13 +5,13 @@
 import { catchPanic, PanicError } from "velt/task";
 
 async function afterSleep(): Promise<string> {
-  await sleep(0);
+  await sleep(0); // timing: the panic comes after a timer, the shape under test
   panic("after sleep(0)");
   return "never";
 }
 
 async function afterSleepAndYield(): Promise<string> {
-  await sleep(5);
+  await sleep(5); // timing: the panic comes after a timer, the shape under test
   await yieldNow();
   panic("after sleep(5) and yieldNow()");
   return "never";
@@ -19,7 +19,7 @@ async function afterSleepAndYield(): Promise<string> {
 
 async function afterTimeout(): Promise<string> {
   await new Promise<void>((resolve) => {
-    setTimeout(() => resolve(), 1);
+    setTimeout(() => resolve(), 1); // timing: a timer callback settles the promise
   });
   panic("after setTimeout");
   return "never";
@@ -30,6 +30,7 @@ async function inSpawned(): Promise<string> {
 }
 
 async function later(): Promise<string> {
+  // timing: settles well after the panicking racer (20 ms against 0), which wins the race
   await sleep(20);
   return "later";
 }
