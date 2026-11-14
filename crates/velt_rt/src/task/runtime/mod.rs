@@ -11,9 +11,10 @@
 //! shutdown). Like Node, the program's entry ([`crate::entry::run_main`]) keeps the process alive
 //! after `main` returns while something can still happen: a keep-alive reference (a listening
 //! HTTP server, a ref'd timer) is held, or a task runs or waits for a timer or I/O (quiet.rs,
-//! which also ends an `async main` that can never finish). Worker count = `VELT_THREADS` if set
-//! to a positive integer, else the number of available cores. Workers flush buffered stdout whenever they go
-//! idle, so a server logging to a pipe shows its output promptly.
+//! which also ends an `async main` that can never finish). The host has one worker thread
+//! ([`worker_count`], `VELT_THREADS` or the cores, is the executor's count that the old ABI
+//! reports); it flushes buffered stdout whenever it goes idle, so output written from the glue
+//! shows promptly.
 
 mod handle;
 mod host;
