@@ -186,7 +186,7 @@ typedef struct { const void* runtime; const void* data; const VeltForeignWaker* 
     uint32_t (*sleep_poll)(void* s, const VeltWakerArg* w);
     void (*sleep_reset)(void* s, uint64_t deadline_ns);
     void (*sleep_drop)(void* s);
-    int64_t (*worker_index)(void);                    // -1 off the workers / on tokio's stealing
+    int64_t (*worker_index)(void);                    // -1: the host keeps no per-worker state
 ```
 
 - `fut_poll` makes a `VeltFut` from a library future: the runtime calls `poll(state, cx, out)`

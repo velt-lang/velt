@@ -493,9 +493,9 @@ pub unsafe extern "C" fn sleep_drop(s: *mut c_void) {
     drop(Box::from_raw(s as *mut Sleep));
 }
 
-/// `i64 worker_index(void)`: the worker this thread is (-1 on other threads and with tokio's
-/// work-stealing scheduler): for keeping a library's per-worker state, like a pool that hands
-/// a task a connection driven on its own worker.
+/// `i64 worker_index(void)`: the worker this thread is, for keeping a library's per-worker state:
+/// always -1 since the runtime's host has no workers of its own to place work on (#2649 D1), so a
+/// library keeps one state for the process.
 pub extern "C" fn worker_index() -> i64 {
-    crate::task::runtime::current_worker().map_or(-1, |i| i as i64)
+    -1
 }

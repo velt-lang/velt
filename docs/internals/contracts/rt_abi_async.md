@@ -365,63 +365,20 @@ glue (TLS, child processes and UDP on Windows, file streams, the native-package 
 | `velt_rt_current_worker` | `() -> u64` | `currentWorker()`: the per-core worker running this task; with the stealing scheduler an index for this worker thread. Always below `velt_rt_worker_count()`: a spare worker of the Velt executor reports its index modulo the configured count. Additive. |
 | `velt_rt_set_scheduler` | `(u32 kind)` | `velt_main` calls it with `1` first, before anything starts the runtime, when the program pins a task (it references `velt_rt_spawn_target`). A no-op: the default scheduler keeps pinned tasks on their workers itself (kept for programs compiled to call it). Additive. |
 
-Runtime: created lazily, workers = `VELT_THREADS` (positive integer) or the number of cores.
-The per-core scheduler (#211; `VELT_SCHEDULER=per-core`) makes every worker a one-worker multi-thread runtime with
-its own I/O and timer drivers; a task stays on the worker it started on, and an unpinned spawn
-starts on the spawning worker unless that worker runs 2 more tasks than the least loaded one
-(`task/runtime/`). A connection's socket and its tasks stay on one worker: `accept()`
-registers the connection with the caller's worker, and `serve`'s accept loop spawns each
-connection where placement puts it (`runtime::spawn_with`), moving its socket to that worker's
-driver only when it is another worker. A listening socket has one registration (per-worker
-duplicates woke every worker for each connection, and on Windows could block a worker in
-`accept`). `stealing` (`VELT_SCHEDULER=stealing`) is one multi-thread runtime. Per-core trade-offs today: a task never moves after its first poll, so a
-CPU-bound task delays every task on its worker; placement counts live tasks, not CPU; a socket
-stays on the worker whose driver registered it; spawn bursts and cross-worker request/reply are
-much slower than stealing (no batch steal-before-start yet, #997).
-
-Every backend sits behind `task/runtime/` (`spawn`, `spawn_with`, `spawn_blocking`, `enter`,
-`block_on`, and its own `JoinHandle`/`AbortHandle`); nothing else in the runtime names a backend's
-types. The default (`VELT_SCHEDULER` unset or `velt`; `stealing` and `per-core` select tokio's;
-`velt_rt_set_scheduler` selects nothing any more) is the runtime's own executor
-(`task/runtime/velt/`): worker threads with their
-own queue and `mio` poll; a task woken by I/O, a timer or another thread queues on its home
-worker, one woken by a running task runs next on the waker's worker (a one-task slot, at most 3
-in a row; it keeps its home), and a spawn stays on the spawning worker (from outside the
-workers: worker 0) unless the monitor starts it elsewhere (the 50 µs rule below). Each worker's run queue (`velt/queue.rs`) runs input (data to read, timers,
-other threads) before output and the work tasks made (room to write, spawns, budget yields),
-each in order; every 61st task comes from the second
-queue, and once it has waited 10 ms a fair pass runs all of it. A worker whose input has a
-delay of 200 µs or more over a 10 ms window (the mean input queue noted in the window times the
-mean wall time of a poll; the whole queue once polls average 20 µs), or that was awake for 95 %
-of the window with input waiting, offers half of its
-queue to a sleeping worker, which becomes the tasks' home (`velt/spread.rs`). A worker that runs
-out of work, before it sleeps, runs half of the input waiting on another awake worker without
-taking it over (the tasks keep their home). The monitor does the duties of a worker that has
-started no poll for 2 ms while awake: a turn of its reactor and timers, and its inbox and half
-of its queue to another worker that can take them (one asleep, one not stalled itself, or a
-spare that starts, up to four), each 1 ms tick while the stall lasts; with none, they stay.
-`VELT_RESCUE=0` turns the rescue off (spares included), for counting instructions with
-`VELT_THREADS=1` (`bench/nightly.sh`); other moves to sleeping workers remain. The executor in
-Velt (std/lang/hooks/sched_monitor.velt) has the same rescue with more than
-one worker, but with one it is off unless `VELT_RESCUE=1`: no monitor thread, and a poll that
-runs on holds back the rest, as in Node. `VELT_RESCUE_STATS=1` makes its program print the
-rescues, spares started and lock hand-overs to stderr at its end
-(std/lang/hooks/sched_stats.velt). It also starts
-spawned tasks that wait behind a sibling that computes (`velt/monitor.rs`): a worker that starts the
-first poll of a spawned task with tasks never polled behind it, while another started worker sleeps,
-publishes it, and once that one poll has lasted 50 µs the tasks never polled (not pinned)
-that were queued behind it go to sleeping workers, one each, which become their home. Shorter
-polls move nothing. A connection's socket
-moves its registration to its task's home worker when the task reads there (Unix). A Postgres
-pool hands a task an idle connection whose protocol task last ran on the task's worker first. A worker
-with 256 or more queued tasks polls its reactor every 4 tasks.
-TCP sockets (`net/sys.rs`), the HTTP server, Postgres over TCP and timers are native; tokio
-types elsewhere (files, processes, Postgres over a Unix socket, Redis, the HTTP client, UDP, DNS,
-`spawn_blocking`) run on a one-thread tokio runtime whose context every worker stays inside.
-Allocation per task: on the Velt executor, 3 (the boxed future with its state, the task and the
-join state shared with the handle). On tokio's schedulers, states ≤ 1 KiB (align ≤ 16) live
-inline in tokio's task cell (size classes 64/256/448/576/1024), so a detached spawn is 1
-allocation and a joinable one 2 (task + join handle).
+Runtime (#2649 D1): the host of the runtime's Rust glue (`task/runtime/host.rs`), one tokio
+multi-thread runtime with one worker thread (`velt-host`, an 8 MiB stack) and tokio's blocking
+pool, started on first use. TLS, `fetch` over https, child processes and UDP on Windows, file
+streams, signals, the `velt dev` host and the native-package ABI run there, and so do the symbols
+above for programs compiled before the switch (deleted in #2649 D2b). Everything in the runtime
+goes through `task/runtime/` (`spawn`, `spawn_with`, `spawn_blocking`, `enter`, `block_on`, its
+`JoinHandle` / `AbortHandle`); nothing else names tokio's. `VELT_SCHEDULER` selects nothing.
+Programs run on the executor in Velt (std/lang/hooks/sched*.velt), with `VELT_THREADS` workers
+(a positive integer) or one per core. With more than one worker it rescues a stalled one
+(std/lang/hooks/sched_monitor.velt); with one, only when `VELT_RESCUE=1`: no monitor thread, and a
+poll that runs on holds back the rest, as in Node. `VELT_RESCUE=0` turns the rescue off, for
+counting instructions with `VELT_THREADS=1` (`bench/nightly.sh`). `VELT_RESCUE_STATS=1`
+makes the program print the rescues, spares started and lock hand-overs to stderr at its end
+(std/lang/hooks/sched_stats.velt).
 Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).
 
 ### 2.1 Latches (`new Promise`)
