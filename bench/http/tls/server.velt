@@ -5,13 +5,14 @@
 // Usage: server <port> (bench/http/tls/run.sh picks the port).
 
 import { serve } from "http-server";
+import { TlsListenOptions } from "velt/net";
 import { args } from "velt/process";
 import { TEST_CERT, TEST_KEY } from "../../../tests/golden/std/_tls";
 
 async function main() {
   const argv = args();
   const port = argv.length > 0 ? parseInt(argv[0], 10) : 8443;
-  const tls = { cert: TEST_CERT, key: TEST_KEY, alpn: ["http/1.1"] };
+  const tls: TlsListenOptions = { cert: TEST_CERT, key: TEST_KEY, alpn: ["http/1.1"] };
   const server = await serve({ port: port, tls: tls }, async (req: Request): Promise<Response> => {
     return new Response("Hello, World!");
   });
