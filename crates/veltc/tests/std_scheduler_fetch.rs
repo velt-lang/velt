@@ -74,8 +74,13 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
 
+/// What marks fetch's dial in Velt in a built program: the panic locations of
+/// std/net/http/fetch/client/dial_sched.velt's code, on every OS (a Windows PE file names no
+/// functions, so a function's name would not do there).
+const DIAL_IN_VELT: &[u8] = b"std/net/http/fetch/client/dial_sched.velt:";
+
 /// Builds `src` and runs it at one and four workers: each run prints `want`, and the binary dials
-/// in Velt (`connectUntil`, std/net/fd_socket.velt).
+/// in Velt (`DIAL_IN_VELT`).
 fn same_everywhere(name: &str, src: &str, want: &str) {
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
@@ -84,7 +89,7 @@ fn same_everywhere(name: &str, src: &str, want: &str) {
         assert_eq!(run(&exe, threads), want, "{name}: {threads} workers");
     }
     assert!(
-        contains(&std::fs::read(&exe).unwrap(), b"connectUntil"),
+        contains(&std::fs::read(&exe).unwrap(), DIAL_IN_VELT),
         "{name}: fetch dials the runtime"
     );
 }
