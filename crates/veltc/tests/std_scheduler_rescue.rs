@@ -133,9 +133,9 @@ fn check(r: &Run, what: &str, want: &str, unfreed: u64) {
 /// a marker task has run, which only a spare can do: every configured worker is held (worker 0 by
 /// `main`, the others by a task each, as tests/golden/std/task_spare_worker_index.velt does). The
 /// monitor's rescue of `main`'s poll lands among those operations: at one worker it turns the
-/// locks on there (`locks-on=1`), and the spare runs woken even tasks, which open the odd ones'
-/// latches while worker 0 opens more, and odd ones, which join slots worker 0 may still finish.
-/// The sum checks that every task ran once with what its promise carried.
+/// locks on there (`locks-on`, at least once), and the spare runs woken even tasks, which open the
+/// odd ones' latches while worker 0 opens more, and odd ones, which join slots worker 0 may still
+/// finish. The sum checks that every task ran once with what its promise carried.
 #[test]
 fn a_spawn_storm_crosses_the_hand_over_of_a_lazy_worker() {
     if !has_threads() {
@@ -154,10 +154,11 @@ fn a_spawn_storm_crosses_the_hand_over_of_a_lazy_worker() {
             // std before this change too: allowed until #2887 is found.
             check(&r, &what, want, 2);
             if threads == "1" {
-                assert_eq!(
-                    rescue_count(&r.err, "locks-on"),
-                    Some(1),
-                    "{what}: the locks turned on once, stderr: {}",
+                // At least once: after the spares retire, worker 0 is lazy again, and on a loaded
+                // machine a later poll of `main` may be rescued too, turning them on again (#2967).
+                assert!(
+                    rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 1),
+                    "{what}: the locks turned on, stderr: {}",
                     r.err
                 );
             }
