@@ -60,3 +60,35 @@ fn a_std_definition_hashes_the_same_in_another_program() {
     // The same program checked twice gives the same summary.
     assert_eq!(hello, std_defs(&ok_src(HELLO)));
 }
+
+/// A user class that overrides `Error`'s `name`: `name` is `@open` in std, so it has a vtable
+/// slot in every program, and the std error classes are checked the same whether or not a
+/// program overrides it (#2943 D1).
+const OVERRIDES_NAME: &str = "class MyError extends Error {
+  get name(): string { return \"MyError\"; }
+}
+function main() {
+  const e: Error = new MyError(\"x\");
+  console.log(e.name, new TypeError(\"t\").name, new RangeError(\"r\").message);
+}";
+
+const KEEPS_NAME: &str = "class MyError extends Error {}
+function main() {
+  const e: Error = new MyError(\"x\");
+  console.log(e.name, new TypeError(\"t\").name, new RangeError(\"r\").message);
+}";
+
+#[test]
+fn overriding_an_open_member_does_not_change_the_std_classes() {
+    let over = std_defs(&ok_src(OVERRIDES_NAME));
+    let keep = std_defs(&ok_src(KEEPS_NAME));
+    let errors: Vec<_> = over
+        .iter()
+        .filter(|d| d.name.starts_with("std/prelude/errors::"))
+        .collect();
+    assert!(errors.len() > 5, "{} std error definitions", errors.len());
+    for d in errors {
+        let other = keep.iter().find(|k| k.name == d.name);
+        assert_eq!(Some(d), other, "{}", d.name);
+    }
+}

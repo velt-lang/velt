@@ -91,6 +91,10 @@ instance paths), as rustc's `DefPathHash` does.
   - The open ones (`Error`, `toString`/`toJSON`, the iteration and comparison interfaces) get
     conservative contracts: modes that admit a mutating override, and an error set that admits
     `Error`. That stays TS-compatible, with no new compile errors.
+  - std marks an open member with `@open` (`velt/lang/intrinsics`): it has a vtable slot in every
+    program, overridden or not, so the std class and the std code calling it are checked the same
+    way in every program. A std method without it gets a slot only where a program overrides it,
+    which makes that class program-specific (the oracle names it). `Error`'s `name` is the first.
 - **D2 Program-wide inference flags** apply to the package being checked. Imported packages are
   checked under one fixed, conservative setting.
 - **D3 Interface augmentation** (`declare global`, `declare module`) stays allowed. The augmented
