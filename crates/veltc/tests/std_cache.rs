@@ -187,6 +187,9 @@ fn the_stamp_records_the_std_objects() {
         .unwrap();
     f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
         .unwrap();
+    // Closed before the build: on Windows the program's object is a link to the member, which
+    // the linker cannot open while a handle with write access is (LNK1104).
+    drop(f);
     assert!(!stamped(), "a rewritten std object is a change");
     assert_eq!(run(dir, "a"), OUTPUT);
 }
