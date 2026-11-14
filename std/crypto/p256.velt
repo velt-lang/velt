@@ -1,8 +1,10 @@
 // velt/crypto (internal): ECDH on NIST P-256 (SEC 1 §3.3.1, as TLS 1.3's secp256r1 group, RFC
 // 8446 §4.2.8.2): y^2 = x^3 - 3x + b over `FeP256`, in Jacobian coordinates (x = X/Z^2,
 // y = Y/Z^3; Z = 0 is the identity) with the a = -3 doubling dbl-2001-b (3M + 5S) and the
-// addition add-2007-bl (11M + 5S) of the Explicit-Formulas Database. Constant time: the scalar
-// goes through fixed 4-bit windows (256 doublings and 64 additions whatever its value), each
+// addition add-2007-bl (11M + 5S) of the Explicit-Formulas Database. The base point's multiples
+// (public keys, ECDSA's kG) add precomputed points instead (`baseMultiply`, p256_base_table.velt).
+// Constant time: the scalar goes through fixed 4-bit windows (256 doublings and 64 additions
+// whatever its value), each
 // window's multiple is picked from the table by a masked scan of all 16 entries, an addition
 // with the identity is a masked select, and the inversion is a fixed chain. The addition has
 // one exceptional case, P = Q, which the windows never reach: with 0 < k < n, the accumulator
@@ -11,7 +13,9 @@
 
 import { CryptoError } from "velt/crypto/errors";
 import { FeP256 } from "velt/crypto/field_p256";
+import { P256_BASE } from "velt/crypto/p256_base_table";
 import { randomBytes } from "velt/crypto/random";
+import { noInline } from "velt/lang/intrinsics";
 
 // The constants, in the Montgomery domain, little-endian limbs (ECDSA uses G and 1 too).
 const B_M: u64[] = [0xd89cdf6229c4bddf, 0xacf005cd78843090, 0xe5a220abf7212ed6, 0xdc30061d04874834];
@@ -111,13 +115,10 @@ export function p256PublicKey(scalar: u8[]): u8[] {
   if (!p256ScalarOk(scalar)) {
     throw new CryptoError("P-256 needs a 32-byte private key between 1 and n - 1");
   }
-  const f = new FeP256(REGS);
-  f.load(TABLE + 3, GX_M);
-  f.load(TABLE + 4, GY_M);
-  f.load(TABLE + 5, ONE_M);
+  const f = new FeP256(TABLE);
   const out = Buffer.alloc(65);
   out[0] = 4;
-  multiply(f, scalar, out, true);
+  baseMultiply(f, scalar, out);
   return out;
 }
 
@@ -165,7 +166,9 @@ export function decodePoint(f: FeP256, b: u8[], p: usize): bool {
 }
 
 // `scalar` times the point in `TABLE + 3..TABLE + 5`, written affine to `out` (x at 1 and y at
-// 33 when `both`, else x at 0).
+// 33 when `both`, else x at 0). Out of line, as `baseMultiply`: crates/veltc/tests/p256_masks.rs
+// reads each one's optimized code.
+@noInline
 function multiply(f: FeP256, scalar: u8[], out: u8[], both: bool) {
   // TABLE: the identity (1 : 1 : 0), P, then 2P..15P.
   f.load(TABLE, ONE_M);
@@ -192,8 +195,108 @@ function multiply(f: FeP256, scalar: u8[], out: u8[], both: bool) {
       add(f, ACC, ACC, SEL);
     }
   }
-  // Affine: x = X / Z^2, y = Y / Z^3. A valid scalar times a point of prime order is never
-  // the identity, so Z is not zero.
+  toAffine(f, out, both);
+}
+
+/**
+ * `scalar` times G, written affine to `out` (x at 1, y at 33): one multiple of G from `P256_BASE`
+ * per 4-bit digit of the scalar, added to the accumulator (64 mixed additions, no doubling, #2955).
+ * Constant time as `multiply`: each window's entries are all read, and a zero digit and the empty
+ * accumulator are masked selects. The addition's exceptional cases never come: before window i the
+ * accumulator is v G with 0 <= v < 16^i, and it gets d 16^i G with 0 < d < 16, where v = d 16^i
+ * (v is smaller) and v + d 16^i = n (the scalar would be n) are both impossible.
+ */
+@noInline
+function baseMultiply(f: FeP256, scalar: u8[], out: u8[]) {
+  // The identity: Z = 0.
+  f.zero(ACC);
+  f.zero(ACC + 1);
+  f.zero(ACC + 2);
+  for (let i: usize = 0; i < 64; i++) {
+    const byte = scalar[31 - (i >> 1)] as u64;
+    selectBase(f, i, (i & 1) == 0 ? byte & 15 : byte >> 4);
+    addBase(f);
+  }
+  toAffine(f, out, true);
+}
+
+// SEL, SEL + 1 = the affine entry `digit` of window `w` of `P256_BASE`, reading all 15; both zero
+// for the digit 0 (no entry has x = 0: the generator checks).
+function selectBase(f: FeP256, w: usize, digit: u64) {
+  const d = 4 * SEL;
+  for (let k: usize = 0; k < 8; k++) {
+    f.r[d + k] = 0;
+  }
+  let at = 120 * w;
+  for (let j: u64 = 1; j < 16; j++) {
+    const x = j ^ digit;
+    // All ones when x == 0 (x is below 16, so x - 1 wraps only for 0).
+    const mask = 0 - ((x - 1) >> 63);
+    for (let k: usize = 0; k < 8; k++) {
+      f.r[d + k] |= P256_BASE[at + k] & mask;
+    }
+    at += 8;
+  }
+}
+
+/**
+ * ACC += the affine point at SEL (madd-2007-bl, 7M + 4S): unchanged when the entry is the zero
+ * of a zero digit (x = 0), the entry with Z = 1 when ACC is the identity. Out of line: inlined in
+ * `baseMultiply`'s loop, its field operations took the inliner's growth budget from `multiply`'s
+ * in a program with both (ECDH +19% for kG 10% faster).
+ */
+@noInline
+function addBase(f: FeP256) {
+  const z1z1 = T;
+  const u2 = T + 1;
+  const s2 = T + 2;
+  const h = T + 3;
+  const hh = T + 4;
+  const i = T + 5;
+  const j = T + 6;
+  const r = T + 7;
+  f.square(z1z1, ACC + 2);
+  f.mul(u2, SEL, z1z1);
+  f.mul(s2, SEL + 1, ACC + 2);
+  f.mul(s2, s2, z1z1);
+  f.sub(h, u2, ACC); // H = U2 - X1
+  f.square(hh, h);
+  f.add(i, hh, hh);
+  f.add(i, i, i); // I = 4 HH
+  f.mul(j, h, i); // J = H I
+  f.sub(r, s2, ACC + 1);
+  f.add(r, r, r); // r = 2 (S2 - Y1)
+  f.mul(i, ACC, i); // V = X1 I
+  // Z3 = (Z1 + H)^2 - Z1Z1 - HH, in u2.
+  f.add(u2, ACC + 2, h);
+  f.square(u2, u2);
+  f.sub(u2, u2, z1z1);
+  f.sub(u2, u2, hh);
+  // X3 = r^2 - J - 2V, in s2.
+  f.square(s2, r);
+  f.sub(s2, s2, j);
+  f.add(hh, i, i);
+  f.sub(s2, s2, hh);
+  // Y3 = r (V - X3) - 2 Y1 J, in h.
+  f.sub(i, i, s2);
+  f.mul(i, r, i);
+  f.mul(j, ACC + 1, j);
+  f.add(j, j, j);
+  f.sub(h, i, j);
+  const accZero = f.isZero(ACC + 2);
+  const digitZero = f.isZero(SEL);
+  f.load(z1z1, ONE_M);
+  f.blend(s2, SEL, s2, accZero);
+  f.blend(h, SEL + 1, h, accZero);
+  f.blend(u2, z1z1, u2, accZero);
+  f.blend(ACC, ACC, s2, digitZero);
+  f.blend(ACC + 1, ACC + 1, h, digitZero);
+  f.blend(ACC + 2, ACC + 2, u2, digitZero);
+}
+
+// ACC written affine to `out`: x = X / Z^2, y = Y / Z^3 (x at 1 and y at 33 when `both`, else x
+// at 0). A valid scalar times a point of prime order is never the identity, so Z is not zero.
+function toAffine(f: FeP256, out: u8[], both: bool) {
   f.invert(T, ACC + 2, T + 1);
   f.square(T + 1, T);
   f.mul(ACC, ACC, T + 1);

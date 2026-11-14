@@ -86,6 +86,10 @@ fn p256_masks_stay_masks() {
             named("N8multiply"),
             "{target}: `multiply` is not a function of its own, so its code was not checked"
         );
+        assert!(
+            named("N12baseMultiply"),
+            "{target}: `baseMultiply` is not a function of its own, so its code was not checked"
+        );
         let found: Vec<String> = p256.iter().flat_map(|f| selects_of_memory(f)).collect();
         assert!(
             found.is_empty(),
