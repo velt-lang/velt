@@ -62,7 +62,10 @@ fn run(exe: &Path, threads: u32) -> String {
     while child.try_wait().unwrap().is_none() {
         if start.elapsed() > Duration::from_secs(60) {
             child.kill().unwrap();
-            panic!("{} (threads: {threads}): still running after a minute", exe.display());
+            panic!(
+                "{} (threads: {threads}): still running after a minute",
+                exe.display()
+            );
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -93,12 +96,26 @@ fn same_everywhere(name: &str, src: &str, want: &str) {
     let rt = build(dir.path(), name, src, false);
     let std = build(dir.path(), name, src, true);
     for threads in [1, 4] {
-        assert_eq!(run(&rt, threads), want, "{name}: the runtime's pool, {threads} workers");
-        assert_eq!(run(&std, threads), want, "{name}: the pool in Velt, {threads} workers");
+        assert_eq!(
+            run(&rt, threads),
+            want,
+            "{name}: the runtime's pool, {threads} workers"
+        );
+        assert_eq!(
+            run(&std, threads),
+            want,
+            "{name}: the pool in Velt, {threads} workers"
+        );
     }
     let (rt_bin, std_bin) = (std::fs::read(&rt).unwrap(), std::fs::read(&std).unwrap());
-    assert!(contains(&std_bin, b"connectUntil"), "{name}: fetch dials the runtime");
-    assert!(!contains(&rt_bin, b"connectUntil"), "{name}: fetch dials in Velt by default");
+    assert!(
+        contains(&std_bin, b"connectUntil"),
+        "{name}: fetch dials the runtime"
+    );
+    assert!(
+        !contains(&rt_bin, b"connectUntil"),
+        "{name}: fetch dials in Velt by default"
+    );
 }
 
 /// A raw HTTP/1.1 server counting its connections: `serve` answers every request on a connection

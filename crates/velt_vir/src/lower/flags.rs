@@ -9,13 +9,16 @@
 
 use velt_sema::hir::{self, LocalId, PassMode, UseMode};
 
+/// Decides an `if`'s condition when it is fixed per instantiation (see `FlagScan::pick`).
+pub(super) type Pick<'a> = dyn FnMut(&hir::Expr) -> Option<bool> + 'a;
+
 pub(super) struct FlagScan<'h, 'p> {
     hir: &'h hir::Program,
     /// Which branch lowering takes of an `if` on a condition fixed per instantiation (expr.rs
     /// `const_cond`: `HoldsDynamic`, `stdUsed`, a CPU check): `Some(true)` for the `then`, `None`
     /// for a condition decided when the program runs. Without it both branches count as
     /// conditional regions.
-    pick: Option<&'p mut dyn FnMut(&hir::Expr) -> Option<bool>>,
+    pick: Option<&'p mut Pick<'p>>,
     depth: u32,
     decl: Vec<u32>,
     moved: Vec<bool>,
@@ -46,7 +49,7 @@ impl<'h, 'p> FlagScan<'h, 'p> {
     pub(super) fn run_picking(
         hir: &'h hir::Program,
         body: &hir::Body,
-        pick: Option<&'p mut dyn FnMut(&hir::Expr) -> Option<bool>>,
+        pick: Option<&'p mut Pick<'p>>,
     ) -> Scan {
         let n = body.locals.len();
         let mut s = FlagScan {
