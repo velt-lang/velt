@@ -1,0 +1,7 @@
+// `declare system function` was removed: std binds the C library with `declare c("c")`, and a
+// program reaches the file functions through velt/fs and velt/os.
+declare system function close(fd: i32): i32;
+
+function main() {
+  console.log(close(-1));
+}

@@ -138,4 +138,12 @@ export const imports: Imports = {
     "std-scheduler": "./task/worker_index_sched.velt",
     default: "./task/worker_index.velt",
   },
+  // The C library's file-descriptor functions behind Node's fd API (`openSync`, `readSync`, ...):
+  // `declare c("c")` on macOS and Linux, with their per-target `fcntl` commands and `struct
+  // stat`; elsewhere each fails with ENOSYS.
+  "#fd-system": {
+    darwin: "./fs/fd/darwin.velt",
+    linux: "./fs/fd/linux.velt",
+    default: "./fs/fd/unsupported.velt",
+  },
 };

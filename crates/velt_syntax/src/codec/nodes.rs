@@ -63,7 +63,7 @@ structs! {
     GenericParam { name, bounds, default }
     Param { name, pattern, ty, default, decorators, optional, rest, span }
     FnSig {
-        name, generics, params, ret, throws, is_async, is_unsafe, is_system, is_decorator,
+        name, generics, params, ret, throws, is_async, is_unsafe, is_decorator,
         decorators, generator, host, c,
         is_generator, this_param, span,
     }

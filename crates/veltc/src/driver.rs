@@ -80,6 +80,10 @@ pub struct BuildOptions {
     /// ([`loader::LoadOptions::check_variants`]): `velt check` and `velt test`, not the builds
     /// that only run.
     pub check_variants: bool,
+    /// Check std's own `declare c("c")` functions against the C library's headers too
+    /// (`velt native headers --std`; `native::headers::STD_HEADERS`): with zig, so not in
+    /// builds, where std's declarations are taken as checked.
+    pub std_c_headers: bool,
 }
 
 /// The host package of a `--host` build (`vpm::host`): what its `package.velt`'s `host` says, and
@@ -443,6 +447,7 @@ fn sema_stage(
         sess.c_checked = crate::native::check_declares(
             hir,
             &sess.sm,
+            std_root.as_deref().filter(|_| opts.std_c_headers),
             std_root.as_deref(),
             opts.packages.as_ref(),
             &std_files,

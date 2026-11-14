@@ -9,15 +9,19 @@ use velt_sema::hir;
 use crate::vir::{self, Ty};
 use crate::LowerOptions;
 
-/// `src` (the root module) loaded with the real std and checked, with its source map, so that
-/// lowering can tell std's declarations from the program's.
-pub(super) fn check(src: &str) -> (hir::Program, SourceMap) {
+/// `src` (the root module) loaded with the real std for `target` and checked, with its source
+/// map, so that lowering can tell std's declarations from the program's. std's `#name` imports
+/// pick `target`'s variants, as a build for it does: a test lowering for another target than the
+/// machine it runs on would otherwise lower this machine's std (on Linux, `#fd-system`'s
+/// linux.velt, which never reaches darwin.velt's `fcntl`).
+pub(super) fn check_for(src: &str, target: &str) -> (hir::Program, SourceMap) {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut sm = SourceMap::new();
     let mut diags = vec![];
     let opts = velt_loader::LoadOptions {
         std_root: Some(manifest.join("../../std")),
         root_source: Some(src.to_string()),
+        target: Some(target.to_string()),
         ..Default::default()
     };
     let root = manifest.join("src/tests/main.velt");
@@ -29,7 +33,7 @@ pub(super) fn check(src: &str) -> (hir::Program, SourceMap) {
 }
 
 fn lower_for(src: &str, target: &str) -> Result<vir::Program, String> {
-    let (p, sm) = check(src);
+    let (p, sm) = check_for(src, target);
     lower_checked_for(&p, &sm, target)
 }
 

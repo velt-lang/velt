@@ -164,7 +164,7 @@ fn code_that_can_differ_on_macos_checks_it() {
         "crates/velt_toolchain/src/release.rs",
         "crates/velt_codegen_cl/src/isa.rs",
         "crates/velt_codegen_llvm/src/target.rs",
-        "crates/velt_vir/src/system/posix.rs",
+        "crates/velt_vir/src/c_abi.rs",
         "crates/velt_vir/src/simd/ext.rs",
         "crates/velt_text/src/json_escape.rs",
         "crates/vpm/src/native/build.rs",
@@ -180,7 +180,7 @@ fn code_that_can_differ_on_macos_checks_it() {
         "std/simd/bytes.velt",
         "std/prelude/timers.velt",
         "tests/std/net/x.test.velt",
-        "tests/golden/lang/system_functions.velt",
+        "std/fs/fd/darwin.velt",
         "packages/http-server/src/files/resolve.velt",
         "packages/http-server/tests/files.test.velt",
     ] {
@@ -264,10 +264,6 @@ fn the_macos_paths_exist() {
         if path.starts_with("packages/http-server/") {
             continue;
         }
-        let path = match path.strip_suffix("system_function") {
-            Some(dir) => format!("{dir}system_functions.velt"),
-            None => path.to_string(),
-        };
-        assert!(root.join(&path).exists(), "no {path}");
+        assert!(root.join(path).exists(), "no {path}");
     }
 }

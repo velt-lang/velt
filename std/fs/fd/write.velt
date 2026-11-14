@@ -1,6 +1,7 @@
 // velt/fs (internal): writing to a file descriptor (`writeSync`).
 
-import { EINTR, lastOsError, pwrite, write } from "velt/fs/fd/system";
+import { EINTR } from "velt/fs/fd/system";
+import { lastError, writeFrom as writeBytes } from "#fd-system";
 import { bufferOffset, descriptor, writeLength, writePosition } from "velt/fs/fd/args";
 import { osError } from "velt/fs/errors";
 import { utf8Encode } from "velt/encoding/utf8";
@@ -50,12 +51,11 @@ function writeFrom(
   const end = base + ((off + len) as usize);
   const at = writePosition(position);
   while (true) {
-    const n =
-      at < 0 ? write(f, bytes.subarray(start, end)) : pwrite(f, bytes.subarray(start, end), at);
+    const n = writeBytes(f, bytes, start, end, at);
     if (n >= 0) {
       return n as number;
     }
-    const e = lastOsError();
+    const e = lastError();
     if (e != EINTR) {
       throw osError(e, "write");
     }

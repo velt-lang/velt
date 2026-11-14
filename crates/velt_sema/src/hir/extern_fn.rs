@@ -1,5 +1,5 @@
-//! `declare function` definitions: runtime and native-library functions, system functions and
-//! host functions (part of the HIR contract).
+//! `declare function` definitions: runtime and native-library functions, C functions and host
+//! functions (part of the HIR contract).
 
 use velt_common::Span;
 
@@ -16,17 +16,13 @@ pub struct ExternFnDef {
     /// M3: `declare async function f(...): Promise<T>` — the symbol returns an rt leaf future
     /// (`VeltFut*`, result slot at offset 16; see rt_abi_async.md); `ret` is `Promise<T>`.
     pub is_async: bool,
-    /// `declare system function` (https://veltlang.com/docs/reference/system-functions/): per parameter, whether
-    /// its type was written `readonly` (`readonly u8[]`, a buffer the C function only reads;
-    /// `params` has `u8[]` either way). `None` for runtime and native-package functions.
-    pub system: Option<Vec<bool>>,
     /// `declare host("<module>") function` (https://veltlang.com/docs/reference/host-functions/): a function the
     /// JS host provides, the WebAssembly import `module`.`symbol`, and what crosses for each
-    /// parameter and the result. Never with `system`. With `is_async`, `ret` is
+    /// parameter and the result. With `is_async`, `ret` is
     /// `Promise<T, IoError>` and `HostImport::ret` what `T` crosses as. Additive.
     pub host: Option<HostImport>,
     /// `declare c("<library>") function` (docs/internals/design/c-ffi.md): a function of a native
-    /// library, called through the C ABI, and what crosses. Never with `system` or `host`.
+    /// library, called through the C ABI, and what crosses. Never with `host`.
     /// Additive.
     pub c: Option<CImport>,
     /// `declare decorator function` (hir_encodings.md "Decorators"): data, with no symbol behind
@@ -109,7 +105,7 @@ pub enum HostTy {
     /// `string`: UTF-8 bytes the glue decodes (a parameter) or encodes (the result).
     Str,
     /// `u8[]` (`readonly: false`, bytes the host may write) or `readonly u8[]`; a parameter
-    /// also takes a view of bytes at the call (https://veltlang.com/docs/reference/system-functions/ "Views").
+    /// also takes a view of bytes at the call (body/expr/system_args.rs).
     Bytes {
         readonly: bool,
     },

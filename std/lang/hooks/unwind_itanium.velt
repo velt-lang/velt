@@ -12,7 +12,9 @@ declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function free(p: Ptr<u8>): void;
 declare c("c") function memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
 declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
-declare c("c") function _Unwind_RaiseException(e: Ptr<u8>): i32;
+// `struct _Unwind_Exception *` in <unwind.h>: a `void *` for the header check (std's C
+// declarations are checked against each target's headers, `velt native headers --std`).
+declare c("c") function _Unwind_RaiseException(e: Ptr<void>): i32;
 declare c("c") function abort(): void;
 declare function velt_rt_exit(code: i32): never;
 
@@ -43,7 +45,7 @@ export function raise(msg: string): void {
     const text = ptrOf<u8>(ptrAddress(e) + HEADER);
     memcpy(text, msg, n);
     memset(ptrOf<u8>(ptrAddress(e) + HEADER + n), 0, 1);
-    _Unwind_RaiseException(e);
+    _Unwind_RaiseException(ptrOf<void>(ptrAddress(e)));
     free(e);
   }
 }

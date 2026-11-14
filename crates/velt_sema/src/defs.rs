@@ -234,9 +234,6 @@ pub(crate) struct FnInfo<'m> {
     pub owner: Option<DefId>,
     /// `declare async function` (M3 rt futures); other async functions are rejected in M2.
     pub is_async: bool,
-    /// `declare system function` (`hir::ExternFnDef::system`): per parameter, whether its type
-    /// was written `readonly` (a buffer the C function only reads). `None` for anything else.
-    pub system: Option<Vec<bool>>,
     /// `declare host("m") function` (`hir::ExternFnDef::host`): the import and what crosses.
     pub host: Option<crate::hir::HostImport>,
     /// `declare c("lib") function` (`hir::ExternFnDef::c`). `None` for anything else.
@@ -300,9 +297,9 @@ pub(crate) struct FnInfo<'m> {
 }
 
 impl FnInfo<'_> {
-    /// For a system or host function, per parameter whether the callee leaves it as it is: its
-    /// other byte buffers (`u8[]`) and a system function's structs are written, so their
-    /// arguments are mutable borrows, and a buffer parameter takes views of bytes too
+    /// For a host or C function, per parameter whether the callee leaves it as it is: its other
+    /// buffers (`u8[]`) and out-parameters are written, so their arguments are mutable borrows,
+    /// and a buffer parameter takes views of bytes too
     /// (`body::expr::system_args`). `None` for every other function.
     pub fn buffer_params(&self) -> Option<Vec<bool>> {
         if let Some(h) = &self.host {
@@ -322,12 +319,12 @@ impl FnInfo<'_> {
             };
             return Some(c.params.iter().map(unwritten).collect());
         }
-        self.system.clone()
+        None
     }
 
-    /// Is this a system, host or C function ([`Self::buffer_params`])?
+    /// Is this a host or C function ([`Self::buffer_params`])?
     pub fn has_buffer_params(&self) -> bool {
-        self.system.is_some() || self.host.is_some() || self.c.is_some()
+        self.host.is_some() || self.c.is_some()
     }
 
     /// Is this a function declared with a `this` parameter (`function f(this: T)`), whose

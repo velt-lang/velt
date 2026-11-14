@@ -167,6 +167,7 @@ pub const STR_TEXT_AGG_NAME: &str = "string text";
 pub const OBJECT_AGG_SUFFIX: &str = " object";
 
 pub mod atomic;
+pub mod c_abi;
 pub mod eh;
 pub mod fingerprint;
 mod lower;
@@ -206,7 +207,6 @@ pub mod mangle;
 pub mod math;
 pub mod parallel;
 pub mod simd;
-pub mod system;
 pub mod tls;
 mod verify;
 
@@ -238,8 +238,8 @@ pub struct LowerOptions<'a> {
     /// Describe source variables for debuggers (`Program::debug_types`, `LocalDecl::debug`;
     /// vir/debug.rs). Needs `source_map`. Off, the program is the same without them.
     pub debug_info: bool,
-    /// The target triple: system functions (`declare system function`, [`system`]) are bound
-    /// per target. `None`: the host's.
+    /// The target triple: C calls follow its conventions (where `errno` is, [`c_abi`]).
+    /// `None`: the host's.
     pub target: Option<&'a str>,
     /// Share generic instances by shape (docs/internals/design/shape-sharing.md): debug builds.
     /// `VELT_SHAPES=off` / `all` overrides it.

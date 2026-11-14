@@ -1,0 +1,183 @@
+// velt/fs (internal): the C library's file-descriptor functions on macOS and Linux, declared with
+// `declare c("c")` (checked against each target's headers: `velt native headers --std`), and the
+// safe functions darwin.velt and linux.velt export over them. Each call of Node's API is one call
+// of the C library. What makes each call sound is checked here, before the `unsafe` block that
+// makes it: a path has exactly one 0 byte, its last, and `fcntl` gets only the commands whose
+// argument is an `int` (guards.velt); a buffer's range is clamped to the array, and the length C
+// gets is that range's.
+
+import { CVarArgs } from "velt/ffi/c_var_args";
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad } from "velt/lang/intrinsics";
+import { keepOsError, lastOsError } from "velt/os/rt";
+import { Stat } from "velt/fs/fd/system";
+import { checkCommand, checkPath } from "velt/fs/fd/guards";
+
+declare c("c", { errno: true }) function open(
+  path: readonly u8[],
+  oflag: i32,
+  ...args: CVarArgs,
+): i32;
+declare c("c", { errno: true }) function close(fd: i32): i32;
+declare c("c") function read(fd: i32, buf: u8[], nbyte: usize): isize;
+declare c("c") function write(fd: i32, buf: readonly u8[], nbyte: usize): isize;
+declare c("c") function pread(fd: i32, buf: u8[], nbyte: usize, offset: i64): isize;
+declare c("c") function pwrite(fd: i32, buf: readonly u8[], nbyte: usize, offset: i64): isize;
+declare c("c", { errno: true }) function fsync(fd: i32): i32;
+declare c("c", { errno: true }) function fcntl(fd: i32, cmd: i32, ...args: CVarArgs): i32;
+declare c("c", { errno: true }) function ftruncate(fd: i32, length: i64): i32;
+declare c("c", { errno: true }) function fstat(fd: i32, st: Ptr<void>): i32;
+declare c("c", { errno: true }) function unlink(path: readonly u8[]): i32;
+declare c("c") function malloc(size: usize): Ptr<void> | null;
+declare c("c") function free(p: Ptr<void> | null): void;
+
+/** Room for `struct stat` on every target: 144 bytes on macOS and x86-64 Linux, 128 on arm64. */
+const STAT_SIZE: usize = 144;
+
+/** The `errno` of the last failed call of this module's functions on this thread. */
+export function lastError(): i32 {
+  return lastOsError();
+}
+
+/** `open(path, oflag, mode)`: a descriptor, or -1. */
+export function openPath(path: readonly u8[], oflag: i32, mode: u32): i32 {
+  checkPath("open", path);
+  // SAFETY: `path` ends with its only 0 byte (checked above), so C reads it and nothing past it;
+  // `open` keeps no pointer after it returns, and its third argument is `mode_t`, which a `u32`
+  // passes after C's promotions.
+  return unsafe { open(path, oflag, mode) };
+}
+
+/** `close(fd)`: 0, or -1. */
+export function closeFd(fd: i32): i32 {
+  // SAFETY: an integer argument only; closing a descriptor Velt code doesn't own is the
+  // caller's error, not unsound for this program's memory.
+  return unsafe { close(fd) };
+}
+
+/** `unlink(path)`: 0, or -1. */
+export function unlinkPath(path: readonly u8[]): i32 {
+  checkPath("unlink", path);
+  // SAFETY: `path` ends with its only 0 byte (checked above); C keeps no pointer to it.
+  return unsafe { unlink(path) };
+}
+
+/**
+ * `read` (`at < 0`) or `pread` at `at` into the bytes `start..end` of `bytes`, that range clamped
+ * to the array (as `subarray` clamps it; the callers have checked it against Node's rules
+ * already): the number read, or -1 with the error for `lastError()`. Its C functions and
+ * `writeFrom`'s are declared without `{ errno: true }`: `errno` is read only when a call fails
+ * (`keepOsError`, out of line), not after every one, which keeps both small enough to inline into
+ * `readSync` and `writeSync` and those into their callers, whose constant arguments then fold
+ * into Node's checks.
+ */
+export function readInto(fd: i32, bytes: u8[], start: usize, end: usize, at: i64): isize {
+  const len = bytes.length as usize;
+  const e = end < len ? end : len;
+  const b = start < e ? start : e;
+  let r: isize;
+  if (at < 0) {
+    // SAFETY: `b..e` is inside `bytes` (clamped above) and C gets its length, so it writes only
+    // those bytes; it keeps no pointer after it returns, and nothing else uses `bytes` during
+    // the call.
+    r = unsafe { read(fd, bytes.subarray(b, e), e - b) };
+  } else {
+    // SAFETY: as for `read` above.
+    r = unsafe { pread(fd, bytes.subarray(b, e), e - b, at) };
+  }
+  if (r < 0) {
+    keepOsError();
+  }
+  return r;
+}
+
+/**
+ * `write` (`at < 0`) or `pwrite` at `at` of the bytes `start..end` of `bytes`, clamped as in
+ * `readInto`: the number written, or -1 with the error for `lastError()`.
+ */
+export function writeFrom(fd: i32, bytes: readonly u8[], start: usize, end: usize, at: i64): isize {
+  const len = bytes.length as usize;
+  const e = end < len ? end : len;
+  const b = start < e ? start : e;
+  let r: isize;
+  if (at < 0) {
+    // SAFETY: `b..e` is inside `bytes` (clamped above) and C gets its length, so it reads only
+    // those bytes, and keeps no pointer after it returns.
+    r = unsafe { write(fd, bytes.subarray(b, e), e - b) };
+  } else {
+    // SAFETY: as for `write` above.
+    r = unsafe { pwrite(fd, bytes.subarray(b, e), e - b, at) };
+  }
+  if (r < 0) {
+    keepOsError();
+  }
+  return r;
+}
+
+/** `fsync(fd)`: 0, or -1. */
+export function fsyncFd(fd: i32): i32 {
+  // SAFETY: an integer argument only.
+  return unsafe { fsync(fd) };
+}
+
+/** `ftruncate(fd, length)`: 0, or -1. */
+export function truncateFd(fd: i32, length: i64): i32 {
+  // SAFETY: integer arguments only.
+  return unsafe { ftruncate(fd, length) };
+}
+
+/**
+ * `fcntl(fd, cmd, arg)` for a command of `intCommands`, those whose argument is an `int` (or
+ * none): 0 or more, or -1. Stops the program for any other command, which would read its
+ * argument as a pointer (`F_GETLK`'s `struct flock *`).
+ */
+export function fcntlInt(fd: i32, cmd: i32, arg: i32, intCommands: i32[]): i32 {
+  checkCommand("fcntl", cmd, intCommands);
+  // SAFETY: `cmd` is one of the commands whose argument is an `int` (checked above), so C reads
+  // `arg` as one and touches no memory through it.
+  return unsafe { fcntl(fd, cmd, arg) };
+}
+
+/**
+ * `fstat(fd)` with the fields at these byte offsets of `struct stat` (`mode16`: `st_mode` is a
+ * 16-bit `mode_t`, macOS's): the fields, or `null` with the error for `lastError()`.
+ */
+export function fstatAt(
+  fd: i32,
+  mode: usize,
+  mode16: bool,
+  size: usize,
+  mtime: usize,
+): Stat | null {
+  if (mode + 4 > STAT_SIZE || size + 8 > STAT_SIZE || mtime + 16 > STAT_SIZE) {
+    panic("fstat: a field's offset is past the end of struct stat");
+  }
+  // SAFETY: malloc's result is checked before use and freed once below.
+  const st = unsafe { malloc(STAT_SIZE) };
+  if (st === null) {
+    panic("fstat: out of memory");
+  }
+  // SAFETY: `st` points at STAT_SIZE bytes, as many as this target's `struct stat` or more, which
+  // fstat fills; it keeps no pointer after it returns.
+  const rc = unsafe { fstat(fd, st) };
+  let out: Stat | null = null;
+  if (rc == 0) {
+    const at = Ptr.addressOf(st);
+    // SAFETY: fstat wrote `struct stat` at `at`, and every offset is inside it (checked above);
+    // malloc's memory is aligned for every field.
+    unsafe {
+      out = {
+        st_mode: mode16 ? addressLoad<u16>(at + mode) as u32 : addressLoad<u32>(at + mode),
+        st_size: addressLoad<i64>(at + size),
+        st_mtime: addressLoad<i64>(at + mtime),
+        st_mtime_nsec: addressLoad<i64>(at + mtime + 8),
+      };
+    }
+  }
+  // SAFETY: `st` came from malloc and is freed once; `out` holds copies of its fields.
+  unsafe {
+    free(st);
+  }
+  ;
+  return out;
+}

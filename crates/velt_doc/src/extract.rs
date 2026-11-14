@@ -396,13 +396,10 @@ impl Source<'_> {
                 ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
             },
             // std's intrinsics (std/lang/intrinsics, `@intrinsic declare function`) are documented
-            // like functions: the declaration is their signature. A decorated `declare system` or
-            // `declare c("lib")` function is not one, and is left out like an undecorated one.
+            // like functions: the declaration is their signature. A decorated `declare c("lib")`
+            // function is not one, and is left out like an undecorated one.
             ItemKind::ExternFn(s)
-                if !s.decorators.is_empty()
-                    && s.host.is_none()
-                    && !s.is_system
-                    && s.c.is_none() =>
+                if !s.decorators.is_empty() && s.host.is_none() && s.c.is_none() =>
             {
                 DocItem {
                     signature: format!(

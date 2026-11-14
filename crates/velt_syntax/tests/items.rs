@@ -71,36 +71,31 @@ fn declare_function() {
     };
     assert_eq!(sig.name.name, "velt_print");
     assert_eq!(sig.params.len(), 2);
-    assert!(!sig.is_system);
     assert!(m.items[1].exported);
 }
 
-/// `declare system function`: `system` is a word only between `declare` and `function` (a
-/// function or a variable may still be named `system`); `readonly u8[]` parses as itself.
+/// `declare system function` is gone (std binds the C library with `declare c("c")`): an error
+/// naming the new form, which parses as a `declare function`; `system` is still a name.
 #[test]
-fn declare_system_function() {
+fn declare_system_function_is_an_error() {
+    for src in [
+        "declare system function close(fd: i32): i32;",
+        "declare async system function close(fd: i32): i32;",
+    ] {
+        let e = errors(src);
+        assert_eq!(e.len(), 1, "{src}: {e:?}");
+        assert!(
+            e[0].contains("`declare system function` was removed"),
+            "{e:?}"
+        );
+        assert!(e[0].contains("declare c(\"c\")"), "{e:?}");
+    }
     let m = parse_ok(
-        "declare system function pwrite(fd: i32, buf: readonly u8[], offset: i64): isize;
-         export declare system function fcntl$lock(fd: i32, cmd: i32, lock: Lock): i32;
-         function system(): i32 { return 1; }
+        "function system(): i32 { return 1; }
          declare function system2(): i32;",
     );
-    let ItemKind::ExternFn(sig) = &m.items[0].kind else {
-        panic!()
-    };
-    assert!(sig.is_system && !sig.is_async);
-    assert_eq!(sig.name.name, "pwrite");
-    let TypeExprKind::Named { path, .. } = &sig.params[1].ty.kind else {
-        panic!("{:?}", sig.params[1].ty.kind)
-    };
-    assert_eq!(path[0].name, "ReadonlyArray");
-    let ItemKind::ExternFn(sig) = &m.items[1].kind else {
-        panic!()
-    };
-    assert!(sig.is_system && m.items[1].exported);
-    assert_eq!(sig.name.name, "fcntl$lock");
-    assert!(matches!(&m.items[2].kind, ItemKind::Function(f) if f.sig.name.name == "system"));
-    assert!(matches!(&m.items[3].kind, ItemKind::ExternFn(s) if !s.is_system));
+    assert!(matches!(&m.items[0].kind, ItemKind::Function(f) if f.sig.name.name == "system"));
+    assert!(matches!(&m.items[1].kind, ItemKind::ExternFn(s) if s.name.name == "system2"));
 }
 
 /// `@intrinsic declare function`: an intrinsic is a declaration with a decorator, which sema
@@ -116,7 +111,7 @@ fn declare_intrinsic_function() {
     let ItemKind::ExternFn(sig) = &m.items[0].kind else {
         panic!()
     };
-    assert!(!sig.is_system && !sig.is_async && !sig.is_unsafe && m.items[0].exported);
+    assert!(!sig.is_async && !sig.is_unsafe && m.items[0].exported);
     assert_eq!(sig.decorators.len(), 1);
     assert_eq!(sig.name.name, "arraySwap");
     assert_eq!(sig.generics.len(), 1);
@@ -201,7 +196,7 @@ fn declare_host_function() {
         &src[h.span.lo as usize..h.span.hi as usize],
         "\"cloudflare\""
     );
-    assert!(m.items[0].exported && !sig.is_system && !sig.is_async);
+    assert!(m.items[0].exported && !sig.is_async);
     assert_eq!(sig.name.name, "r2Get");
     assert_eq!(sig.params.len(), 2);
     let ItemKind::ExternFn(sig) = &m.items[1].kind else {

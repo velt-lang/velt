@@ -51,7 +51,6 @@ impl<'h> Cx<'h> {
             c_clashes_reported: Default::default(),
             ffi_hooks: Default::default(),
             std_calls: FxHashMap::default(),
-            system_aggs: FxHashMap::default(),
             reg_slot_agg: None,
             no_await_steps: false,
             facts_only: false,
@@ -466,8 +465,9 @@ impl<'h> Cx<'h> {
     }
 
     /// [`Self::extern_sym`] of a C function, `variadic` (`params` its fixed parameters) or not.
-    /// c_call.rs checked its declaration against the symbol's extern so far; a system call
-    /// (system.rs) of a symbol the program declared otherwise is an error at that declaration.
+    /// c_call.rs checked its declaration against the symbol's extern so far; the compiler's
+    /// own variadic extern of a symbol the program declared otherwise is an error at that
+    /// declaration.
     pub(super) fn extern_sym_c(
         &mut self,
         symbol: &str,

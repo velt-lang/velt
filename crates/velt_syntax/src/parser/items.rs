@@ -201,16 +201,14 @@ impl<'a> Parser<'a> {
         Ok(kind)
     }
 
-    /// `declare [async] function name(...): R;`, `declare system function name(...): R;`
-    /// (`declare async system function` too, which the system function check rejects)
-    /// (`system` is a word only there: a function of the platform's C library),
+    /// `declare [async] function name(...): R;`,
     /// `declare unsafe function name(...): R;` (`unsafe` likewise: calling it needs unsafe code,
     /// which sema allows only on an `@intrinsic` declaration) or `declare decorator function
     /// name(...): Target;` (`decorator` likewise; `async` parses, so sema can say why it is not
     /// one). The old `declare [unsafe] intrinsic function` is an error naming its new form,
-    /// `@intrinsic declare function` (#2203), and parses as that would.
+    /// `@intrinsic declare function` (#2203), and parses as that would. The removed `declare
+    /// [async] system function` is an error naming `declare c("c")`, parsed as `declare function`.
     fn parse_declare(&mut self, lo: u32) -> PResult<FnSig> {
-        // `declare async system function` parses, so the check can say why it is not one.
         self.bump(); // declare
         let async_system = self.at_kw(Kw::Async)
             && self.nth_word(1, "system")
@@ -218,6 +216,11 @@ impl<'a> Parser<'a> {
         let mut is_async = async_system && self.eat_kw(Kw::Async);
         let is_system = self.at_word("system") && self.nth(1) == Tok::Kw(Kw::Function);
         if is_system {
+            let at = self.cur_span();
+            self.error(
+                "`declare system function` was removed: declare a C library function with `declare c(\"c\")` in a package with native code (`native: { c: {} }`) and call it in an `unsafe` block; velt/fs and velt/os wrap the file functions and `lastOsError`".to_string(),
+                at,
+            );
             self.bump(); // system
         }
         let old_intrinsic = |p: &mut Self, k: usize| {
@@ -258,7 +261,6 @@ impl<'a> Parser<'a> {
                 }
                 false => self.parse_fn_sig(lo, is_async)?,
             };
-        sig.is_system = is_system;
         sig.is_unsafe = is_unsafe;
         sig.is_decorator = is_decorator;
         if sig.is_generator {
@@ -462,7 +464,6 @@ impl<'a> Parser<'a> {
             throws,
             is_async,
             is_unsafe: false,
-            is_system: false,
             is_decorator: false,
             decorators: vec![],
             generator: None,

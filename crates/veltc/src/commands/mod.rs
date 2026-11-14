@@ -132,7 +132,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             native_only,
         } => package::publish(native_artifacts.as_deref(), native_only),
         Command::NativeBuild { target } => package::native_build(target),
-        Command::NativeHeaders => native_headers::native_headers(),
+        Command::NativeHeaders { std } => native_headers::native_headers(std),
         Command::Manifest { json } => package::manifest(json),
         Command::Yank {
             name,

@@ -34,7 +34,7 @@ fn arch_of(target: &str) -> Option<&'static str> {
     let host;
     let triple = match target.trim() {
         "" | "native" | "host" => {
-            host = crate::system::host_triple();
+            host = crate::c_abi::host_triple();
             host.as_str()
         }
         triple => triple,

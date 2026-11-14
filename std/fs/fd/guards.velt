@@ -1,0 +1,47 @@
+// velt/fs (internal): what makes a call of the C library's file-descriptor functions sound
+// (posix.velt calls them before each `unsafe` call). Each stops the program: a failed one is a
+// bug in velt/fs, never a user's input, which velt/fs/fd/args checks with Node's errors first.
+// The check is a comparison at each call; the panic and its message are out of line, so the
+// guard keeps the calls of Node's API small enough to inline (their constant arguments fold).
+
+import { noInline } from "velt/lang/intrinsics";
+
+/**
+ * Stops the program unless `path` ends with its only 0 byte: C reads up to the first 0, which then
+ * is the end of the array, and the path is the one the caller built (`"a\0../b"` would reach C
+ * as `"a"`).
+ */
+export function checkPath(what: string, path: readonly u8[]) {
+  // A plain loop, not `indexOf` (whose vector search every program opening a file would compile):
+  // a path is short, and this runs once per `open` or `unlink`.
+  const n = path.length as usize;
+  if (n == 0 || path[n - 1] != 0) {
+    badPath(what);
+  }
+  for (let i: usize = 0; i + 1 < n; i++) {
+    if (path[i] == 0) {
+      badPath(what);
+    }
+  }
+}
+
+@noInline
+function badPath(what: string) {
+  panic(`${what}: the path must end with its only 0 byte`);
+}
+
+/**
+ * Stops the program unless `cmd` is one of `commands`: the commands whose argument C reads as an
+ * `int` (another command of `fcntl` reads its argument as a pointer, `F_GETLK`'s
+ * `struct flock *`).
+ */
+export function checkCommand(what: string, cmd: i32, commands: readonly i32[]) {
+  if (!commands.includes(cmd)) {
+    badCommand(what, cmd);
+  }
+}
+
+@noInline
+function badCommand(what: string, cmd: i32) {
+  panic(`${what}: command ${cmd} does not take an int argument`);
+}

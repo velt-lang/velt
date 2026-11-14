@@ -8,6 +8,7 @@
 // `struct epoll_event` is packed on x86-64 (12 bytes, data at 4) and natural elsewhere (16, data
 // at 8): the block records which at `open`.
 
+import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
 import { velt_rt_os_arch } from "velt/os/rt";
 import * as m from "./sched_mem";
@@ -62,18 +63,19 @@ const R_SIZE: usize = 64 + 64 * 16;
 
 declare c("c") function epoll_create1(flags: i32): i32;
 // Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
-// symbols (`declare system function read(fd: i32, buf: u8[]): isize` passes a pointer and a
+// symbols (velt/fs's `read(fd: i32, buf: u8[], nbyte: usize): isize` passes a pointer and a
 // `size_t`): one C symbol has one signature in a program. Addresses become `Ptr`s with `m.ptr`.
 declare c("c") function epoll_ctl(ep: i32, op: i32, fd: i32, event: Ptr<u8>): i32;
 declare c("c") function epoll_wait(ep: i32, events: Ptr<u8>, max: i32, timeout: i32): i32;
 declare c("c") function eventfd(initval: u32, flags: i32): i32;
 declare c("c") function read$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
 declare c("c") function write$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
-// The signature the compiler calls it with for `lastOsError()` (velt_vir system/posix.rs): one
-// C symbol has one signature in a program.
+// The signature the compiler calls it with for `{ errno: true }` (velt_vir c_abi.rs): one C
+// symbol has one signature in a program.
 declare c("c") function __errno_location(): Ptr<i32>;
-// `fcntl` is variadic: the compiler's system function passes `arg` where each architecture reads it.
-declare system function fcntl(fd: i32, cmd: i32, arg: i32): i32;
+// `fcntl` is variadic: its `int` argument goes as C's `...` (`CVarArgs`), where each architecture
+// reads it.
+declare c("c") function fcntl$io(fd: i32, cmd: i32, ...args: CVarArgs): i32;
 declare c("c") function accept4(fd: i32, addr: Ptr<u8>, len: Ptr<u8>, flags: i32): i32;
 
 /** The calling thread's `errno`. */
@@ -245,7 +247,8 @@ const O_NONBLOCK: i32 = 0x800;
  * worker until the peer writes; 0 or errno.
  */
 export function prepare(fd: i32): i32 {
-  return fcntl(fd, F_SETFL, O_NONBLOCK) < 0 ? errno() : 0;
+  // SAFETY: F_SETFL takes an `int`, passed as C's `...` argument.
+  return unsafe { fcntl$io(fd, F_SETFL, O_NONBLOCK) } < 0 ? errno() : 0;
 }
 
 const FUTEX_WAIT_PRIVATE: i64 = 128;

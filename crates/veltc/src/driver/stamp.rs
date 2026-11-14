@@ -93,6 +93,7 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
         debug_vars,
         no_generators: _, // A build with it is never stamped.
         check_variants,
+        std_c_headers: _, // `velt native headers --std` checks only: never stamped.
     } = opts;
     h.part(format!("{:?}", vpm::relpath::absolute(input)).as_bytes());
     h.part(format!("{root_source:?} {test_harness}").as_bytes());

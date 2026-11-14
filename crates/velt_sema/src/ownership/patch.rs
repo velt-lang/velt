@@ -295,9 +295,8 @@ pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
         if let Some(m) = extern_written_param(&f.name).and_then(|i| modes.get_mut(i)) {
             *m = PassMode::BorrowMut;
         }
-        // A system function writes every buffer not written `readonly` and every struct it is
-        // given (https://veltlang.com/docs/reference/system-functions/), a host function every `u8[]`: the
-        // caller's value changes.
+        // A C or host function writes every buffer not written `readonly` (and a C function its
+        // out-parameters): the caller's value changes.
         if let Some(readonly) = f.buffer_params() {
             for (m, ro) in modes.iter_mut().zip(readonly) {
                 if *m == PassMode::Borrow && !ro {

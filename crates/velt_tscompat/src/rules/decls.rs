@@ -117,10 +117,9 @@ pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
             cx.keyword(item.span, "declare"),
             format!(
                 "`declare {}function {}` binds native code, which JavaScript doesn't have",
-                match (sig.is_system, &sig.c) {
-                    (true, _) => "system ".to_string(),
-                    (false, Some(c)) => format!("c(\"{}\") ", c.library),
-                    (false, None) => String::new(),
+                match &sig.c {
+                    Some(c) => format!("c(\"{}\") ", c.library),
+                    None => String::new(),
                 },
                 sig.name.name
             ),

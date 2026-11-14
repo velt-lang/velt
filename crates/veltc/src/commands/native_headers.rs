@@ -3,7 +3,9 @@
 //! headers on every target that has C headers, and record what passed in `c-headers.json`
 //! ([`vpm::c_headers`]), which builds that fetch the package compare their declarations with.
 //! The values of its `declare c const`s on each target are recorded there too. `velt publish`
-//! runs it first for a package with C libraries.
+//! runs it first for a package with C libraries. `--std` checks the standard library's own
+//! `declare c("c")` functions on every target instead (`native::headers::std_check::std_headers`), and
+//! records nothing: CI's `c-headers` job runs it (crates/veltc/tests/c_headers.rs).
 
 use std::path::Path;
 
@@ -26,8 +28,11 @@ const TARGETS: &[&str] = &[
     "x86_64-pc-windows-msvc",
 ];
 
-/// `velt native headers`.
-pub fn native_headers() -> Result<(), String> {
+/// `velt native headers [--std]`.
+pub fn native_headers(std: bool) -> Result<(), String> {
+    if std {
+        return check_std();
+    }
     let root = Project::current_root()?;
     let record = record(&root)?;
     if record.checked.is_empty() && record.constants.is_empty() {
@@ -59,6 +64,32 @@ pub fn native_headers() -> Result<(), String> {
         &format!(
             "{what} against its headers on {targets} targets; recorded in {}",
             vpm::c_headers::FILE
+        ),
+    );
+    Ok(())
+}
+
+/// `velt native headers --std`: std's C declarations, as each target's build loads them (its
+/// `#name` variants), against that target's C library headers.
+fn check_std() -> Result<(), String> {
+    for target in TARGETS {
+        let mut sess = Session::new();
+        let result = super::check::check_std_headers_for(&mut sess, target);
+        if !matches!(result, Ok(())) {
+            super::build::report(&sess, false);
+            return Err(match result {
+                Err(BuildError::Failed(msg)) => msg,
+                _ => {
+                    format!("the standard library's C declarations don't match {target}'s headers")
+                }
+            });
+        }
+    }
+    style::status(
+        "Checked",
+        &format!(
+            "the standard library's C declarations against the C library's headers on {} targets",
+            TARGETS.len()
         ),
     );
     Ok(())
