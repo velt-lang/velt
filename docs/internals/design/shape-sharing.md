@@ -813,7 +813,10 @@ allows it. What differs from step 2:
 Debug builds also pass every caller location as a parameter (track_caller.rs `tracks_by_arg`),
 so a caller-tracking `Map` method is one instance, not one per call site.
 
-Measured on the 10k application of Bun's compile benchmark (debug, build cache off): VIR
-statements 166,386 to 143,198, instructions -5.0%. On `bench/compile/scale` 10k, whose features
-all use one record type, nothing is shared and it costs +1.5% (the dictionaries of
-one-member shapes); sharing only shapes with two members or more is the next step.
+A pair shares only when its shape had two members or more in the previous pass (`multi_pairs`,
+`multi_hint`): a one-member shape gains nothing and costs its dictionary's indirect calls.
+
+Measured on the 10k application of the compile benchmark (debug, build cache off, with the
+caller locations passed as parameters): VIR statements 171,391 to 145,871 and instructions
+-8.5% against `VELT_SHAPES=off`. On `bench/compile/scale` 10k, whose features all use one record
+type, nothing shares and nothing costs.
