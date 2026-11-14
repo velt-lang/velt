@@ -31,6 +31,21 @@ fn sched_spread_white_box_tests_pass() {
     );
 }
 
+/// The slot for the next task and the fair pass's clock, white-box
+/// (std_unix/lang/hooks/sched_queue.test.velt): after `NEXT_RUNS` tasks in a row from the slot
+/// the queues get their turn, on the locked path and the lock-free one, and an I/O tick with both
+/// queues holding tasks reads the clock, starts the fair wait, skips reads while it runs and
+/// starts the pass once it is due (#2786).
+#[cfg(unix)]
+#[test]
+fn sched_queue_white_box_tests_pass() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    std_unix::velt_test_in_std_copy(
+        "lang/hooks/sched_queue.test.velt",
+        include_str!("std_unix/lang/hooks/sched_queue.test.velt"),
+    );
+}
+
 #[test]
 fn pinned_tasks_run_on_their_worker_and_wake_across_workers() {
     if !has_threads() {
@@ -334,10 +349,253 @@ async function main() {
 }
 "#;
 
+/// A line printed before an `await` comes before what the task prints after it, also when the
+/// task resumes on another worker. Sixteen waiters each send a resolver to one of four owners,
+/// print `a`, await, and print `b`; an owner on another worker resolves, and a task woken there
+/// runs there next. Before the fix, a poll's output was published only after its end showed
+/// (the task's state, Node's timer order): a worker held up in between let the task's next poll
+/// on another worker print first (#2971). Without the fix, the plain runs on a loaded Mac (load
+/// 20-50) failed one after another. Runs as
+/// [`mains_last_line_printed_on_another_worker_is_written`] does.
+#[test]
+fn a_line_printed_before_an_await_comes_first_when_the_task_resumes_elsewhere() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(dir.path(), "resume", RESUME_ORDER, "4");
+    assert_eq!((code, in_task_order(&out)), (0, Ok(())), "resume order");
+    let lost = contended_runs_checked(dir.path(), "resume", "4", in_task_order);
+    assert!(lost.is_empty(), "{}", lost.join("\n"));
+}
+
+/// Lines ordered by the module-state lock come out in that order: two tasks on two workers each
+/// print the shared turn and step it, then yield. Every poll publishes what it printed before its
+/// task lets go of the lock, also a poll whose task runs again on its worker (`E_AGAIN`): when the
+/// local loop skipped that publish, about half of the 40,000 lines came out of order, and before
+/// #2971's fix the publish came after the lock was let go (about 3,000).
+#[test]
+fn lines_ordered_by_the_module_lock_across_workers_print_in_that_order() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(dir.path(), "turns", TURNS, "4");
+    assert_eq!(code, 0, "{out}");
+    let mut last = -1i64;
+    let mut lines = 0;
+    for line in out.lines() {
+        let turn: i64 = line
+            .split(' ')
+            .nth(1)
+            .and_then(|t| t.parse().ok())
+            .unwrap_or_else(|| panic!("line {line:?}"));
+        assert!(turn > last, "turn {turn} printed after turn {last}");
+        last = turn;
+        lines += 1;
+    }
+    assert_eq!(lines, 40000);
+}
+
+/// The program of [`lines_ordered_by_the_module_lock_across_workers_print_in_that_order`]: `main`,
+/// awaited at the top level, keeps worker 0 busy while it spawns, so the two tasks start on two
+/// other workers.
+const TURNS: &str = r#"let turn = 0;
+
+async function w(name: string): Promise<void> {
+  for (let i = 0; i < 20000; i++) {
+    console.log(name + " " + turn);
+    turn++;
+    await yieldNow();
+  }
+}
+
+function busy(ms: number): void {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {}
+}
+
+async function main(): Promise<void> {
+  const a = spawn(w("a"));
+  busy(20);
+  const b = spawn(w("b"));
+  busy(20);
+  await a;
+  await b;
+}
+
+await main();
+"#;
+
+/// `process.exit` on worker 0 while a task prints on another: every line the task counted before
+/// `main` read the count is printed before `exit after N`. The task counts a line in the poll after
+/// the one that printed it, so its publish came first. When the local loop skipped the
+/// publish of a task that ran again on its worker, its lines stayed in that thread's buffer and
+/// the exit (which writes out its own thread's and the shared buffer) lost up to a few thousand.
+#[test]
+fn process_exit_on_another_worker_keeps_the_lines_a_task_printed() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(dir.path(), "exit_count", EXIT_COUNT, "4");
+    assert_eq!(code, 0, "{}", out.lines().last().unwrap_or(""));
+    check_exit_count(&out);
+    // The loss depended on where the exit caught the printing task: one run in three lost lines
+    // under the test runner on macOS. Four more runs of the same build.
+    let exe = dir.path().join(format!(
+        "exit_count_std{}",
+        if cfg!(windows) { ".exe" } else { "" }
+    ));
+    for _ in 0..4 {
+        let o = command(&exe)
+            .env("VELT_THREADS", "4")
+            .env_remove("VELT_SCHEDULER")
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(0));
+        check_exit_count(&String::from_utf8_lossy(&o.stdout));
+    }
+}
+
+/// Every line [`EXIT_COUNT`] counted before `exit after N` is in `out`.
+fn check_exit_count(out: &str) {
+    let mut printed = -1i64;
+    let mut counted = None;
+    for line in out.lines() {
+        if let Some(n) = line.strip_prefix("line ") {
+            printed = printed.max(n.trim_end().parse().unwrap());
+        } else if let Some(n) = line.strip_prefix("exit after ") {
+            counted = Some(n.trim_end().parse::<i64>().unwrap());
+        }
+    }
+    let counted = counted.expect("no `exit after` line");
+    assert!(
+        printed >= counted,
+        "last line printed {printed}, but {counted} were counted as printed"
+    );
+}
+
+/// The program of [`process_exit_on_another_worker_keeps_the_lines_a_task_printed`].
+const EXIT_COUNT: &str = r#"class Count {
+  n: Atomic<i64> = new Atomic<i64>(-1);
+}
+
+async function w(c: shared<Count>): Promise<void> {
+  for (let i = 0; i < 100000000; i++) {
+    console.log("line " + i);
+    await yieldNow();
+    // In the next poll: the one that printed the line has ended (and published it).
+    c.n.store(i);
+  }
+}
+
+async function main() {
+  const c = shared(new Count());
+  spawn(w(c));
+  const t0 = Date.now();
+  while (Date.now() - t0 < 10) {}
+  await new Promise<void>((r) => setTimeout(r, 30));
+  console.log("exit after " + c.n.load());
+  process.exit(0);
+}
+"#;
+
+/// Whether every waiter's lines of [`RESUME_ORDER`] (`<id> a|b <round>`) come in its program's
+/// order, all of them there.
+fn in_task_order(out: &str) -> Result<(), String> {
+    let mut next = std::collections::HashMap::new();
+    for line in out.lines() {
+        let mut w = line.split(' ');
+        let (Some(id), Some(kind), Some(round)) = (w.next(), w.next(), w.next()) else {
+            return Err(format!("line {line:?}"));
+        };
+        let step = round.parse::<u64>().map_err(|_| format!("line {line:?}"))? * 2
+            + u64::from(kind == "b");
+        let want = next.entry(id.to_string()).or_insert(0u64);
+        if step != *want {
+            return Err(format!("{line:?} where step {want} of task {id} was due"));
+        }
+        *want += 1;
+    }
+    let short: Vec<_> = next.iter().filter(|(_, n)| **n != 2 * 5000).collect();
+    if next.len() != 16 || !short.is_empty() {
+        return Err(format!("{} tasks, short: {short:?}", next.len()));
+    }
+    Ok(())
+}
+
+/// The program of [`a_line_printed_before_an_await_comes_first_when_the_task_resumes_elsewhere`].
+const RESUME_ORDER: &str = r#"import { channel, Channel } from "velt/sync";
+
+async function waiter(id: i64, out: Channel<() => void>): Promise<void> {
+  for (let i: i64 = 0; i < 5000; i++) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    out.trySend(() => resolve());
+    console.log(`${id} a ${i}`);
+    await promise;
+    console.log(`${id} b ${i}`);
+  }
+}
+
+async function owner(inbox: Channel<() => void>): Promise<void> {
+  while (true) {
+    const f = await inbox.receive();
+    if (f == null) {
+      return;
+    }
+    f();
+  }
+}
+
+async function main() {
+  const inboxes: Channel<() => void>[] = [];
+  const owners: Promise<void>[] = [];
+  for (let i = 0; i < 4; i++) {
+    const ch = channel<() => void>();
+    inboxes.push(ch);
+    owners.push(spawn(owner(ch)));
+  }
+  const waiters: Promise<void>[] = [];
+  for (let id: i64 = 0; id < 16; id++) {
+    waiters.push(spawn(waiter(id, inboxes[(id % 4) as i32])));
+  }
+  for (const w of waiters) {
+    await w;
+  }
+  for (const ch of inboxes) {
+    ch.close();
+  }
+  for (const o of owners) {
+    await o;
+  }
+}
+"#;
+
 /// Runs the std build of `name` (built in `dir`) with `threads` workers: on Linux 40 times with the
 /// program and two spinning threads on cores 0 and 1 (`sched_setaffinity`), elsewhere 10 plain
 /// runs (macOS cannot pin threads). The runs that did not print `want` with exit code 0.
 fn contended_runs(dir: &Path, name: &str, threads: &str, want: &str) -> Vec<String> {
+    contended_runs_checked(dir, name, threads, |out| {
+        if out == want {
+            Ok(())
+        } else {
+            Err(format!("{out:?}"))
+        }
+    })
+}
+
+/// [`contended_runs`] with `check` judging each run's stdout (exit code 0 required too): the runs
+/// it rejected, with its reason.
+fn contended_runs_checked(
+    dir: &Path,
+    name: &str,
+    threads: &str,
+    check: impl Fn(&str) -> Result<(), String>,
+) -> Vec<String> {
     let exe = dir.join(format!(
         "{name}_std{}",
         if cfg!(windows) { ".exe" } else { "" }
@@ -373,8 +631,10 @@ fn contended_runs(dir: &Path, name: &str, threads: &str, want: &str) -> Vec<Stri
         }
         let o = cmd.output().unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
-        if (o.status.code(), out.as_ref()) != (Some(0), want) {
-            lost.push(format!("run {run}: {:?} {out:?}", o.status.code()));
+        match (o.status.code(), check(&out)) {
+            (Some(0), Ok(())) => {}
+            (code, Err(why)) => lost.push(format!("run {run}: {code:?} {why}")),
+            (code, Ok(())) => lost.push(format!("run {run}: exit {code:?}")),
         }
     }
     stop.store(true, std::sync::atomic::Ordering::Relaxed);

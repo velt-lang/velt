@@ -1,0 +1,170 @@
+// velt/lang/hooks (internal): a worker's look at the reactor every few polls in the executor in
+// Velt (sched.velt, #2649): the polls until the next look (`interval`), the look itself (`ioTick`:
+// what is due is sent, due timers fire, ready sockets are delivered) and the fair pass's clock
+// after it (`turned`, sched_queue.velt `tick`). The worker loop that counts down to it is
+// sched_loop.velt.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as end from "./sched_end";
+import * as io from "./sched_io";
+import * as w from "./sched_io_write";
+import * as m from "./sched_mem";
+import * as pk from "./sched_park";
+import * as q from "./sched_queue";
+import * as sp from "./sched_spread";
+import * as t from "./sched_task";
+
+/** Task polls between two looks at the reactor of a busy worker (the runtime's). */
+const IO_INTERVAL: usize = 61;
+/** Polls between two looks while at least `BACKLOG` tasks are queued (one input's fan-out). */
+const FANOUT_IO_INTERVAL: usize = 4;
+const BACKLOG: usize = 256;
+
+/** The I/O tick reached 0: the polls until the next (`interval`), then the I/O. */
+@noInline
+export function ioDue(e: usize, mode: u32): void {
+  if (mode === 0) {
+    // With the I/O tick, a lazy worker 0's progress (sched_monitor.velt `lazyDuties`).
+    m.st(e + t.E_LOOKS, m.ld(e + t.E_LOOKS) + 1);
+  }
+  m.st(e + t.E_TICK, interval(e, mode));
+  ioTick(e, m.ld(e + t.E_IO));
+}
+
+/**
+ * The polls until the next look at the reactor: fewer while `BACKLOG` tasks are queued. With
+ * one worker the second queue keeps no count; its spawned tasks not yet run (`E_RLEN`, counted
+ * by sched_task.velt `scheduleNew`) estimate it: each poll of the interval starting now is taken
+ * off in advance, as one of them (a spawn burst's tasks run in the order they came).
+ */
+@inline
+function interval(e: usize, mode: u32): usize {
+  if (mode !== 0) {
+    return q.len(e) >= BACKLOG ? FANOUT_IO_INTERVAL : IO_INTERVAL;
+  }
+  const spawned = m.ld(e + t.E_RLEN);
+  if (spawned === 0) {
+    return m.ld(e + t.E_ILEN) >= BACKLOG ? FANOUT_IO_INTERVAL : IO_INTERVAL;
+  }
+  const n = q.input(e) + spawned >= BACKLOG && looksFor(e) ? FANOUT_IO_INTERVAL : IO_INTERVAL;
+  m.st(e + t.E_RLEN, spawned > n ? spawned - n : 0);
+  return n;
+}
+
+/**
+ * Has worker `e`'s look at the reactor anything to find early: sockets registered, sleeps or
+ * `unref()`'d timers? (A fan-out of spawns with none looks every `IO_INTERVAL` polls: a look finds
+ * nothing then, and the next interval is decided again.)
+ */
+@inline
+function looksFor(e: usize): bool {
+  return (
+    m.load(m.ld(e + t.E_IO) + io.IO_LIVE) !== 0 || m.ld(e + t.E_UNREF) !== 0 || pk.timersAny(e)
+  );
+}
+
+/**
+ * The I/O at the end of a poll whose tick reached 0: what is due is sent; due `unref()`'d timers
+ * waiting for a park ask again (sched_end.velt: a worker that never parks); due sleeps fire and
+ * Node's timer loop moves on (sched_park.velt `timersTick`); with sockets
+ * registered, the reactor's ready events and passed deadlines are delivered without waiting, and
+ * what they made due is sent. The tasks it wakes are input; a fair pass starts if one is due.
+ */
+@noInline
+function ioTick(e: usize, b: usize): void {
+  if (m.load(e + t.E_INBOX) !== 0) {
+    const mode = m.ld32(e + t.E_MODE);
+    q.lock(e, mode);
+    q.takeInbox(e);
+    q.unlock(e, mode);
+  }
+  m.st32(e + t.E_DISPATCH, t.D_INPUT);
+  if (io.anyDue(b)) {
+    w.flushDue(b);
+  }
+  if (m.ld(e + t.E_UNREF) !== 0) {
+    end.wakeUnref(e);
+  }
+  if (pk.timersAny(e)) {
+    pk.timersTick(e);
+  }
+  if (m.load(b + io.IO_LIVE) !== 0) {
+    io.look(b);
+    if (io.anyDue(b)) {
+      w.flushDue(b);
+    }
+  }
+  m.st32(e + t.E_DISPATCH, 0);
+  tickTurned(e);
+}
+
+/** Reactor turns a fair pass's wait goes at most without a look at the clock. */
+const FAIR_SKIP_MAX: usize = 15;
+
+/**
+ * `turned` after an I/O tick's turn: the fair pass's wait reads the clock only when its end may
+ * have come (`fairLook`), and only while both queues hold tasks.
+ */
+@inline
+export function tickTurned(e: usize): void {
+  if (m.loadRelaxed(e + t.E_HEAD) === 0) {
+    m.st(e + t.E_FAIR_DUE, 0);
+    m.st(e + t.E_FAIR_SKIP, 0);
+    m.st(e + t.E_FAIR_AT, 0);
+    return;
+  }
+  m.st(e + t.E_FAIR_TURNS, m.ld(e + t.E_FAIR_TURNS) + 1);
+  const skip = m.ld(e + t.E_FAIR_SKIP);
+  if (skip !== 0) {
+    m.st(e + t.E_FAIR_SKIP, skip - 1);
+    return;
+  }
+  if (m.loadRelaxed(e + t.E_IHEAD) === 0) {
+    return;
+  }
+  fairLook(e);
+}
+
+/**
+ * The clock for the fair pass's wait (sched_queue.velt `tick`). While the wait runs, the turns
+ * until the next read are half the time left over the time a turn took since the last read (at
+ * most `FAIR_SKIP_MAX`): the pass starts at most a few turns late, and a turn of long polls
+ * reads the clock each time.
+ */
+@noInline
+function fairLook(e: usize): void {
+  const now = sp.now();
+  const at = m.ld(e + t.E_FAIR_AT);
+  const turns = m.ld(e + t.E_FAIR_TURNS);
+  m.st(e + t.E_NOW, now);
+  m.st(e + t.E_FAIR_AT, now);
+  m.st(e + t.E_FAIR_TURNS, 0);
+  const mode = m.ld32(e + t.E_MODE);
+  q.lock(e, mode);
+  q.tick(e, mode);
+  q.unlock(e, mode);
+  const due = m.ld(e + t.E_FAIR_DUE);
+  if (at !== 0 && turns !== 0 && due > now && now > at) {
+    const per = (now - at) / turns;
+    const skip = per === 0 ? FAIR_SKIP_MAX : (due - now) / 2 / per;
+    m.st(e + t.E_FAIR_SKIP, skip < FAIR_SKIP_MAX ? skip : FAIR_SKIP_MAX);
+  }
+}
+
+/**
+ * After a park's reactor turn: a fair pass if one is due, timed only while both queues hold
+ * tasks (the clock is read then, or for the spread's window: `E_NOW`).
+ */
+export function turned(e: usize): void {
+  const mode = m.ld32(e + t.E_MODE);
+  if ((mode & t.M_SPREAD) === 0 && (m.ld(e + t.E_HEAD) === 0 || m.ld(e + t.E_IHEAD) === 0)) {
+    if (m.ld(e + t.E_HEAD) === 0) {
+      m.st(e + t.E_FAIR_DUE, 0);
+    }
+    return;
+  }
+  m.st(e + t.E_NOW, sp.now());
+  q.lock(e, mode);
+  q.tick(e, mode);
+  q.unlock(e, mode);
+}

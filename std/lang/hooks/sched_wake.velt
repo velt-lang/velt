@@ -5,6 +5,7 @@
 
 import { export as cExport } from "velt/ffi";
 import { inline, noInline } from "velt/lang/intrinsics";
+import { clearStdoutWritten, stdoutWrittenSince } from "./process";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
 import * as q from "./sched_queue";
@@ -104,10 +105,12 @@ export function schedule(t: usize): void {
       pend(w, t, d);
       return;
     }
-    q.lock(w, mode);
     if (d === 0 && mode !== 0) {
-      q.pushNext(w, t);
-    } else if (d === tk.D_INPUT) {
+      q.pushNext(w, t, mode);
+      return;
+    }
+    q.lock(w, mode);
+    if (d === tk.D_INPUT) {
       q.pushIo(w, t);
     } else {
       q.pushRest(w, t, mode);
@@ -122,10 +125,7 @@ export function schedule(t: usize): void {
     tk.movable(t) &&
     m.ld(tk.main() + tk.E_STAY) === 0
   ) {
-    const mode = m.load32Relaxed(w + tk.E_MODE);
-    q.lock(w, mode);
-    q.pushNext(w, t);
-    q.unlock(w, mode);
+    q.pushNext(w, t, m.load32Relaxed(w + tk.E_MODE));
     return;
   }
   toInbox(h, t);
@@ -138,7 +138,7 @@ export function schedule(t: usize): void {
 @inline
 export function scheduleNew(w: usize, t: usize): void {
   if (w !== 0 && m.ld32(w + tk.E_SOLO) !== 0) {
-    // The only thread at the executor: no lock, its spawns counted (sched_loop.velt `interval`).
+    // The only thread at the executor: no lock, its spawns counted (sched_tick.velt `interval`).
     q.pushRest(w, t, 0);
     tk.bump(w + tk.E_RLEN, 1);
     return;
@@ -169,13 +169,13 @@ export function scheduleNew(w: usize, t: usize): void {
     }
     if (mode !== 0) {
       // A fresh task may start on another worker at once: what this thread printed first.
-      publish(h);
+      publishPrinted(h);
     }
     q.lock(h, mode);
     q.pushRest(h, t, mode);
     q.unlock(h, mode);
     if (mode === 0) {
-      // One worker's count of tasks spawned not yet run (sched_loop.velt `interval`).
+      // One worker's count of tasks spawned not yet run (sched_tick.velt `interval`).
       tk.bump(h + tk.E_RLEN, 1);
     }
     return;
@@ -208,7 +208,7 @@ function pendStacked(w: usize, t: usize, n: usize): void {
   if (n === 0) {
     // The first task this poll spawns may start on a spare (the monitor's rescue): what this
     // thread printed first (the runtime publishes at each spawn; here at each poll's first).
-    publish(w);
+    publishPrinted(w);
   }
   pendOn(w, t, tk.E_PREST);
 }
@@ -234,7 +234,7 @@ export function push(e: usize, t: usize): void {
 export function toInbox(h: usize, t: usize): void {
   const w = tk.here();
   if (w !== 0) {
-    publish(w);
+    publishPrinted(w);
   }
   m.pushStack(h + tk.E_INBOX, t, tk.T_NEXT);
   unpark(h);
@@ -251,6 +251,47 @@ export function publish(w: usize): void {
   unsafe {
     velt_rt_latch_open$rt(m.ld(w + tk.E_LATCH) as u64);
   }
+}
+
+/**
+ * What the poll that just ran on shared worker `w` printed (its microtasks too), published before
+ * the poll's end can be seen by another thread: before Node's timer order takes the task for not
+ * busy, its state lets another worker poll it, or its end wakes a joiner (sched_run.velt `run`). A
+ * task woken on another worker runs there next (`schedule`), so a line printed before an `await`
+ * would otherwise reach the shared buffer after what the task prints next there, whenever this
+ * thread was held up between the two (#2971). Every such poll, also one whose task runs again here
+ * (`E_AGAIN`, the slot): other threads see its effects through module state, shared objects and the
+ * process's end, not only when the task moves. Through the stdout mark (`publishPrinted`): a poll
+ * that printed nothing costs a thread-local load. A lazy worker 0 publishes nothing per poll: its
+ * output reaches the others when it adopts the shared mode (sched_loop.velt `adopt`), so a task the
+ * rescue moved meanwhile may print there first (#2977).
+ */
+@inline
+export function publishPolled(w: usize): void {
+  publishPrinted(w);
+}
+
+/**
+ * `publish` at the points where work this thread made may be seen by another worker next: a poll's
+ * end (`publishPolled`), a spawn, a wake sent to another worker's inbox, a task's end on another
+ * worker than worker 0. Only a thread that wrote to stdout since its last publish has anything to
+ * publish: every write of stdout from compiled code sets this thread's mark first (process.velt
+ * `stdoutWritten`), so a thread that wrote nothing pays one thread-local load and a branch, not the
+ * runtime's call (#2786). A mark left set by a publish that did not clear it (the runtime's) costs
+ * one publish of nothing.
+ */
+@inline
+export function publishPrinted(w: usize): void {
+  if (stdoutWrittenSince()) {
+    publishMarked(w);
+  }
+}
+
+/** `publishPrinted` once the mark is seen set: cleared before the publish, which takes it all. */
+@noInline
+function publishMarked(w: usize): void {
+  clearStdoutWritten();
+  publish(w);
 }
 
 /** Writes out what this thread printed (stdout is buffered per thread by the runtime). */

@@ -300,6 +300,11 @@ export function relax(g: usize): bool {
   if (next !== 0) {
     m.st(next + t.T_HOME, g);
   }
+  // The task its last poll left to run next (sched_run.velt `again`), run first when lazy.
+  const again = m.ld(g + t.E_AGAIN);
+  if (again !== 0) {
+    m.st(again + t.T_HOME, g);
+  }
   homeAll(g, m.ld(g + t.E_IHEAD));
   homeAll(g, m.ld(g + t.E_HEAD));
   m.swap(g + t.E_WATCH, 0);

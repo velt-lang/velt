@@ -66,6 +66,10 @@ export function run(e: usize, k: usize, mode: u32): void {
   if (m.ld(k + t.T_MICRO) !== 0 || m.ld(k + t.T_UNHANDLED) !== 0) {
     drain(e, k);
   }
+  if (mode !== 0 && mode !== t.M_LAZY) {
+    // Before anything below shows another thread that the poll ended (#2971).
+    wk.publishPolled(e);
+  }
   if (stdUsed("nodeTimers") && mode !== 0) {
     timersAfter(e, k);
   }
@@ -81,7 +85,7 @@ export function run(e: usize, k: usize, mode: u32): void {
   } else if (m.cas32(k + t.T_STATE, t.RUNNING, t.IDLE) !== t.RUNNING) {
     // Woken during its poll.
     m.store32(k + t.T_STATE, t.SCHEDULED);
-    if (mode === t.M_LAZY) {
+    if (again(e, mode)) {
       m.st(e + t.E_AGAIN, k);
     } else {
       q.lock(e, mode);
@@ -89,6 +93,18 @@ export function run(e: usize, k: usize, mode: u32): void {
       q.unlock(e, mode);
     }
   }
+}
+
+/**
+ * Does the task worker `e` polled, woken during its poll, wait in `E_AGAIN` rather than queue
+ * (`mode` as `run`'s)? On a lazy worker 0, until the look after the poll; on a shared worker
+ * with its queues empty, it runs next from there with no lock, a push or a pop (sched_loop.velt
+ * `turnShared` queues it once anything else is queued first). What it printed was published at
+ * its poll's end all the same (`run`).
+ */
+@inline
+function again(e: usize, mode: u32): bool {
+  return mode === t.M_LAZY || (mode !== 0 && q.ownEmpty(e));
 }
 
 /**
@@ -231,9 +247,9 @@ function timersAfter(e: usize, k: usize): void {
   }
 }
 
-/** Queues task `k` again after its poll (`mode` as `run`'s: a lazy worker 0's after its look). */
+/** Queues task `k` again after its poll (`mode` as `run`'s), or leaves it in `E_AGAIN`. */
 function requeue(e: usize, k: usize, mode: u32): void {
-  if (mode === t.M_LAZY) {
+  if (again(e, mode)) {
     m.st(e + t.E_AGAIN, k);
   } else {
     wk.push(e, k);
@@ -386,9 +402,9 @@ function finish(e: usize, k: usize): void {
   if (m.ld32(e + t.E_SOLO) === 0) {
     const g = m.ld(e + t.E_MAIN);
     if (e !== g) {
-      // What it printed reaches the OS before worker 0 can see it was the last live task and
-      // end the process (stdout is buffered per thread), as for the root of `main` (`rootDone`).
-      wk.handOffOutput();
+      // What it printed is published before worker 0 can see it was the last live task and end
+      // the process, as for the root of `main` (`mainDone`).
+      wk.publishPrinted(e);
     }
     // The executor's reference first: once the count below says no task is live, worker 0 may
     // end the program, and a block freed after that counts as leaked (`VELT_RC_STATS`).

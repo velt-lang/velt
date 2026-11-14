@@ -76,9 +76,10 @@ export function takeHalfInput(e: usize): usize {
  */
 export function takeHalf(e: usize, up: bool): usize {
   if (up) {
-    const next = m.ld(e + t.E_NEXT);
+    // Swapped: the worker queues and takes its slot's task without the lock (sched_queue.velt),
+    // so the look before it is an atomic read too, from this thread (the monitor's).
+    const next = m.loadRelaxed(e + t.E_NEXT) !== 0 ? m.swap(e + t.E_NEXT, 0) : 0;
     if (next !== 0) {
-      m.st(e + t.E_NEXT, 0);
       m.st(next + t.T_NEXT, m.ld(e + t.E_IHEAD));
       m.st(e + t.E_IHEAD, next);
       if (m.ld(e + t.E_ITAIL) === 0) {
@@ -204,9 +205,8 @@ export function takeLazy(e: usize, head: usize, tail: usize, chain: usize): usiz
  */
 export function takeAll(e: usize): usize {
   let chain: usize = 0;
-  const next = m.ld(e + t.E_NEXT);
+  const next = m.swap(e + t.E_NEXT, 0);
   if (next !== 0) {
-    m.st(e + t.E_NEXT, 0);
     m.st(next + t.T_NEXT, chain);
     chain = next;
   }

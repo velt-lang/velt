@@ -180,8 +180,10 @@ export const E_LOOKS: usize = 680;
 export const E_PIO: usize = 688;
 export const E_PREST: usize = 696;
 /**
- * A lazy worker 0's task its last poll left to queue again, queued after the look (`turnLazy`),
- * or, with nothing queued, run next from here.
+ * The task the worker's last poll left to queue again, run next from here while nothing else is
+ * queued: a lazy worker 0's, queued after the look (`turnLazy`); a shared worker's when its queues
+ * were empty (sched_loop.velt `turnShared`), taken by no other thread until it queues (its poll's
+ * output is published all the same: sched_run.velt `run`).
  */
 export const E_AGAIN: usize = 704;
 /**
@@ -263,7 +265,16 @@ export const E_NOBORROW: usize = 880;
  * task's reference back first (sched_exit.velt).
  */
 export const E_DROPPING: usize = 888;
-export const E_SIZE: usize = 896;
+/**
+ * The fair pass's clock between two reads (sched_tick.velt `fairLook`): reactor turns left before
+ * the next read, turns since the last, and the time of the last.
+ */
+export const E_FAIR_SKIP: usize = 904;
+export const E_FAIR_TURNS: usize = 912;
+export const E_FAIR_AT: usize = 920;
+/** The spread's looks left before its next look at the clock (sched_spread.velt `windowEnd`). */
+export const E_W_SKIP: usize = 928;
+export const E_SIZE: usize = 936;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */
@@ -280,6 +291,7 @@ export const M_SPREAD: u32 = 4;
 /**
  * Not a mode of `E_MODE`: what a lazy worker 0's step passes for its poll (sched_loop.velt
  * `turnLazy`): the task the poll leaves to queue again waits in `E_AGAIN` until the look after.
+ * (A shared worker's poll leaves it there too while its queues are empty: sched_run.velt `again`.)
  */
 export const M_LAZY: u32 = 8;
 /** `E_DISPATCH`: wakes are input (a reactor turn, timers), or output (room to write). */

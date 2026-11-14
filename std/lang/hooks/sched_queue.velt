@@ -7,7 +7,7 @@
 // - A task woken by the task running runs next, from a one-task slot (`pushNext`), as with
 //   tokio's LIFO slot: a chain of request and reply between tasks does not wait behind the whole
 //   queue at each step. At most `NEXT_RUNS` in a row, so two tasks waking each other cannot hold
-//   the worker. Only with other threads at the queues (`pushNext`).
+//   the worker. Only with other threads at the queues (`pushNext`, `popNextOwn`).
 // - The second queue waits only while input never runs out, and not for long: every `TRICKLE`th
 //   task comes from it, and once it has waited `FAIR` a fair pass runs every task it holds. Its
 //   clock is the worker's reactor turns (`E_NOW`, `tick`): the wait counts from the first turn
@@ -15,9 +15,10 @@
 //
 // With more than one thread at the queues (`t.M_SHARED`: other workers borrow input and the
 // monitor rescues a stalled worker's tasks), each queue has a lock (`E_QLOCK`) that its worker
-// takes for each operation and others only try; with one worker and no monitor (`E_MODE` 0),
+// takes for each operation and others only try, except for the slot, which the worker fills and
+// empties with a swap (`pushNext`, `popNextOwn`); with one worker and no monitor (`E_MODE` 0),
 // none is taken, and the second queue is not counted either (`E_RLEN`: what the spread and the
-// monitor read): there it counts tasks spawned not yet run, an estimate (sched_loop.velt
+// monitor read): there it counts tasks spawned not yet run, an estimate (sched_tick.velt
 // `interval`), and a fair pass counts the queue when it starts.
 
 import { inline, noInline } from "velt/lang/intrinsics";
@@ -95,15 +96,59 @@ export function pushIo(e: usize, k: usize): void {
  * the wakes (sched_task.velt `schedule`). With the slot, 64 callers making requests of 4 owner
  * tasks (bench/async/pingpong_pinned.velt) took a step of each owner per request instead of one
  * per batch (1.71G instructions against 1.34G).
+ *
+ * From worker `e`'s own thread (`mode`: its `E_MODE`), without the queue lock: the slot is
+ * swapped (another thread takes its task only with a swap too: sched_take.velt `takeHalf`); the
+ * lock is taken only to move a task that was there to the input queue. `E_QSLOW` is set by this
+ * thread alone or under the lock, and only this thread clears it.
  */
 @inline
-export function pushNext(e: usize, k: usize): void {
-  const before = m.ld(e + t.E_NEXT);
-  m.st(e + t.E_NEXT, k);
+export function pushNext(e: usize, k: usize, mode: u32): void {
+  const before = m.swap(e + t.E_NEXT, k);
   m.st(e + t.E_QSLOW, 1);
   if (before !== 0) {
+    lock(e, mode);
     pushIo(e, before);
+    unlock(e, mode);
   }
+}
+
+/**
+ * The slot's task, taken by worker `e`'s own thread without the queue lock when `pop` would take
+ * it (0: take the lock and `pop`): no fair pass under way, not fresh (the monitor's watch), and
+ * either fewer than `NEXT_RUNS` in a row or both queues empty (at the limit `popSlow` gives the
+ * queues their turn first; with both empty it takes the slot's task back: the same counts are
+ * left here). Other threads only take tasks away, so what is read here can only have emptied.
+ * The task is looked at only once the swap made it this thread's: a rescue may have taken it
+ * from the slot and run it meanwhile.
+ */
+@inline
+export function popNextOwn(e: usize): usize {
+  if (m.loadRelaxed(e + t.E_NEXT) === 0 || m.ld(e + t.E_FAIR_LEFT) !== 0) {
+    return 0;
+  }
+  const runs = m.ld(e + t.E_NEXT_RUNS);
+  if (runs >= NEXT_RUNS && (m.loadRelaxed(e + t.E_IHEAD) | m.loadRelaxed(e + t.E_HEAD)) !== 0) {
+    return 0;
+  }
+  const k = m.swap(e + t.E_NEXT, 0);
+  if (k === 0) {
+    return 0;
+  }
+  if (t.fresh(k)) {
+    // Its first poll is the monitor's to watch (`pop` under the lock): back in the slot, which
+    // only this thread fills.
+    m.swap(e + t.E_NEXT, k);
+    return 0;
+  }
+  if (runs < NEXT_RUNS) {
+    m.st(e + t.E_NEXT_RUNS, runs + 1);
+    return k;
+  }
+  m.st(e + t.E_NEXT_RUNS, 0);
+  m.st(e + t.E_QSLOW, 0);
+  m.st(e + t.E_SINCE_REST, 0);
+  return k;
 }
 
 /** Takes the first task of the second queue (0: none; `mode` as `pushRest`'s). */
@@ -183,6 +228,9 @@ function popSlow(e: usize, mode: u32): usize {
     }
     m.st(e + t.E_FAIR_LEFT, 0);
   }
+  // Plain: the worker's own thread under its queue lock. Other threads take the slot only under
+  // that lock (sched_take.velt `takeHalf`, `takeAll`), and its lock-free writers (`pushNext`,
+  // `popNextOwn`) are this thread.
   const next = m.ld(e + t.E_NEXT);
   if (next !== 0) {
     m.st(e + t.E_NEXT, 0);
@@ -191,10 +239,21 @@ function popSlow(e: usize, mode: u32): usize {
       m.st(e + t.E_NEXT_RUNS, runs + 1);
       return next;
     }
-    pushIo(e, next);
   }
   m.st(e + t.E_NEXT_RUNS, 0);
-  const k = popPlain(e, mode);
+  // The queues' turn (after `NEXT_RUNS` from the slot), then the slot's task behind the input: two
+  // tasks waking each other through the slot give a task of the second queue its turn too. (When
+  // the slot's task went through the input queue and was taken back at once, a task spawned on
+  // the worker never ran while they did: input came first, and the count since the second queue
+  // started over each time.)
+  let k = popPlain(e, mode);
+  if (next !== 0) {
+    if (k === 0) {
+      k = next;
+    } else {
+      pushIo(e, next);
+    }
+  }
   if (m.ld(e + t.E_IHEAD) === 0 && m.ld(e + t.E_FAIR_LEFT) === 0) {
     // Back to the fast path: nothing in the slot, no input, no fair pass.
     m.st(e + t.E_QSLOW, 0);
@@ -247,6 +306,21 @@ export function len(e: usize): usize {
 @inline
 export function input(e: usize): usize {
   return m.ld(e + t.E_ILEN) + (m.ld(e + t.E_NEXT) !== 0 ? 1 : 0);
+}
+
+/**
+ * Are worker `e`'s queues empty, read by its own thread without the lock? Only that thread
+ * queues tasks there (other threads use its inbox), and other threads only take them away, so
+ * empty stays empty until it queues one (a task put back by another thread's take was queued).
+ * The three words are read one by one: a rescue that moves the slot's task to the input queue
+ * between the reads (sched_take.velt `takeHalf`) and leaves a pinned task there can make it read
+ * empty. That task is not lost: the next I/O tick's step takes it (`IO_INTERVAL` polls at most).
+ */
+@inline
+export function ownEmpty(e: usize): bool {
+  return (
+    (m.loadRelaxed(e + t.E_HEAD) | m.loadRelaxed(e + t.E_IHEAD) | m.loadRelaxed(e + t.E_NEXT)) === 0
+  );
 }
 
 /** Has worker `e` a task queued (read from any thread: a hint)? */
