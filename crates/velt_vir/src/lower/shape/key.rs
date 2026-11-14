@@ -184,8 +184,10 @@ impl Cx<'_> {
     /// The answers to the shape questions about `t`: the yes/no queries lowering's inline code
     /// depends on, and which counted-types sets hold it.
     pub(super) fn answers(&mut self, t: TyId) -> Answers {
-        // The sets are this pass's input, fixed for the pass (a new `Shapes` per pass).
-        let concrete = !self.mentions_ph(t);
+        // The sets are this pass's input, fixed for the pass (a new `Shapes` per pass). The
+        // end-of-pass check computes afresh: answers kept during the pass may have a row left out
+        // by the test hook (`dropped`), and the check must see the full ones to catch that.
+        let concrete = !self.mentions_ph(t) && !CHECKING.with(std::cell::Cell::get);
         if concrete {
             if let Some(a) = self.shapes.answers.get(&t) {
                 return a.clone();
