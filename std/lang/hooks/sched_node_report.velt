@@ -10,6 +10,13 @@ import * as loc from "./sched_node_loc";
 import * as t from "./sched_task";
 
 /**
+ * The node whose rejected result this thread is dropping (0: none). Its drop glue reports the
+ * error and ends the process before the reference the dropping code holds is released: with the
+ * debug runtime's counters on, the exit gives that reference back (sched_exit.velt `giveBack`).
+ */
+export const REPORTING = new ThreadLocal<u64>(0);
+
+/**
  * Drops node `n`'s result, which nobody claims. A promise that can reject is reported (by its
  * drop glue, when it holds an error) only once its task's microtasks are drained, as Node
  * reports a rejection nobody handled: until then a combinator may still take it (`handled`).
@@ -42,9 +49,16 @@ function dropNow(n: usize): void {
     const fl = m.load32(n + nd.N_FLAGS);
     const own = (fl & loc.LOC) !== 0 ? loc.current() : 0;
     loc.claim(fl, n + nd.N_POLL);
+    const rejecting = (fl & nd.REJECTING) !== 0;
+    if (rejecting) {
+      REPORTING.set(n as u64);
+    }
     // SAFETY: the slot holds the finished result, `rdrop` its drop glue.
     unsafe {
       stateDrop(rdrop, n + nd.N_HEAD + 16);
+    }
+    if (rejecting) {
+      REPORTING.set(0);
     }
     if ((fl & loc.LOC) !== 0) {
       loc.restore(own);
