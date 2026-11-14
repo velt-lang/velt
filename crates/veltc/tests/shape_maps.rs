@@ -63,3 +63,59 @@ fn shared_map_code_prints_what_per_type_code_prints() {
         assert_eq!(out, want, "{env:?}");
     }
 }
+
+/// Maps whose key types share a shape (`string | number`, `string | i64`) but hash and compare
+/// per member: NaN equals NaN, -0 equals 0 for a `number`, and an `i64` compares by value.
+const UNION_KEYS: &str = "
+function main() {
+  const mn = new Map<string | number, string>();
+  mn.set(NaN, \"nan\");
+  mn.set(-1, \"neg\");
+  mn.set(0, \"zero\");
+  mn.set(\"k\", \"s\");
+  const mi = new Map<string | i64, string>();
+  // -1 and -2 are both NaN bit patterns: as `number` keys they would be one key.
+  const m1: i64 = -1;
+  const m2: i64 = -2;
+  mi.set(m1, \"i-neg\");
+  mi.set(m2, \"i-neg2\");
+  mi.set(\"k\", \"t\");
+  console.log(mn.get(NaN), mn.get(-1), mn.get(-0), mn.get(\"k\"), mi.get(m1), mi.get(m2), mi.get(\"k\"), mn.size, mi.size);
+}
+";
+
+#[test]
+fn shared_map_code_hashes_and_compares_each_key_type_its_own_way() {
+    // One shared instance (its name carries the shape, `~`, mangled `_7e`) ...
+    let shared = map_sets(UNION_KEYS, &[]);
+    assert_eq!(shared.len(), 1, "{shared:#?}");
+    assert!(shared[0].contains("_7e"), "{}", shared[0]);
+    // ... that reaches each key type's own hash and comparison through its dictionary.
+    let want = "nan neg zero s i-neg i-neg2 t 4 3\n";
+    for env in [&[][..], &[("VELT_SHAPES", "off")][..]] {
+        let (ok, out, err) = velt(UNION_KEYS, &["run"], env);
+        assert!(ok, "{err}");
+        assert_eq!(out, want, "{env:?}");
+    }
+}
+
+#[test]
+fn a_shape_of_one_type_is_not_shared() {
+    // A dictionary gains nothing with one member and costs its indirect calls: after the first
+    // pass, a pair whose shape had one member keeps its per-type instance.
+    let one = "
+type A = { a: number; s: string };
+function main() {
+  const ma = new Map<string, A>();
+  ma.set(\"x\", { a: 1, s: \"one\" });
+  ma.set(\"y\", { a: 2, s: \"two\" });
+  console.log(ma.size);
+}
+";
+    let sets = map_sets(one, &[]);
+    assert_eq!(sets.len(), 1, "{sets:#?}");
+    assert!(!sets[0].contains("_7e"), "{}", sets[0]);
+    // Two record types of one layout do share.
+    let two = map_sets(TWO_MAPS, &[]);
+    assert!(two[0].contains("_7e"), "{}", two[0]);
+}
