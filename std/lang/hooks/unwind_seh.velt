@@ -11,10 +11,10 @@
 // So the first raise installs one (`unclaimed`) that ends the process with 101 for Velt's code, as
 // an uncaught panic does elsewhere, and hands any other exception to the filter it replaced.
 
-import { Ptr, StrBytes, byteLength, export as cExport, readCString } from "velt/ffi";
+import { Ptr, StrBytes, byteLength, readCString } from "velt/ffi";
 import { ptrAddress, ptrOf } from "velt/ffi/ptr";
-import { addressLoad, addressStore, exportedAddress } from "velt/lang/intrinsics/address";
-import { addressCall } from "velt/lang/intrinsics/future";
+import { addressLoad, addressStore } from "velt/lang/intrinsics/address";
+import { addressCall, fnAddress } from "velt/lang/intrinsics/future";
 
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function free(p: Ptr<u8>): void;
@@ -59,9 +59,7 @@ const PREVIOUS = new Atomic<u64>(0);
  * with 101, as an uncaught panic does (its message is printed already). Any other exception goes
  * to the filter this one replaced, or the system's (`EXCEPTION_CONTINUE_SEARCH`).
  */
-@cExport("std_unwind_unclaimed")
-function unclaimed(info: Ptr<u8> | null): Ptr<u8> | null {
-  const at = ptrAddress(info!);
+function unclaimed(at: usize): usize {
   // SAFETY: the system passes `EXCEPTION_POINTERS`, whose first word is the exception record,
   // whose first field is the code.
   const code = unsafe { addressLoad<u32>(addressLoad<usize>(at)) };
@@ -72,9 +70,9 @@ function unclaimed(info: Ptr<u8> | null): Ptr<u8> | null {
   const previous = PREVIOUS.load("acquire") as usize;
   if (previous !== 0) {
     // SAFETY: the filter the system had, which takes `EXCEPTION_POINTERS`.
-    return ptrOf<u8>(unsafe { addressCall(previous, at) });
+    return unsafe { addressCall(previous, at) };
   }
-  return null;
+  return 0;
 }
 
 /** Installs `unclaimed`, once. */
@@ -82,8 +80,9 @@ function install(): void {
   if (INSTALLED.load("acquire") !== 0 || INSTALLED.compareExchange(0, 1) !== 0) {
     return;
   }
-  // SAFETY: `unclaimed` takes `EXCEPTION_POINTERS` and returns a filter's answer.
-  const previous = unsafe { SetUnhandledExceptionFilter(exportedAddress(unclaimed)) };
+  // SAFETY: `unclaimed` takes `EXCEPTION_POINTERS` and returns a filter's answer, with the C
+  // calling convention (`fnAddress`).
+  const previous = unsafe { SetUnhandledExceptionFilter(fnAddress(unclaimed)) };
   PREVIOUS.store(previous as u64, "release");
 }
 
