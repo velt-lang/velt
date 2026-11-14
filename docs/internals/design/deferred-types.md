@@ -81,7 +81,7 @@ Substituting into a generic type produces the type that would have been written 
 - **One table of shapes.** Sema exports the concrete anonymous def of every shape lowering sees
   (`hir::Program::anon_shapes`, after readonly erasure, so erased defs are never chosen: R2).
   `velt_vir`'s `Cx::canon` maps every instance onto it, so one shape is one VIR type. Anonymous
-  defs with the same field names agree on `AdtDef::assigned`.
+  defs with the same field names agree on `Program::assigned_objects`.
 - **Recursive object types.** An instance of an object type that reaches itself through its
   fields (`interface List<T> { tail?: List<T> }`, #376) stays as it is, in sema and in
   `velt_vir`: canonicalizing it would canonicalize its own fields without end, and its shape

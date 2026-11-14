@@ -17,6 +17,7 @@ pub(super) fn facts(h: &mut Hashing) -> Vec<(&'static str, u64)> {
         anon_shapes,            // "type tables"
         union_shapes,           // "type tables"
         counted_objects,        // "counted types"
+        assigned_objects,       // "declarations" (a flag sema infers from every body)
         null_proto_records,     // "flags"
         record_fills,           // "flags"
         fn_shapes: _,           // Per function, through its span (`Hashing::function`).
@@ -52,7 +53,10 @@ pub(super) fn facts(h: &mut Hashing) -> Vec<(&'static str, u64)> {
         fn_wrappers: _,         // Per function.
     } = h.p;
     let declarations = (defs.iter()).filter_map(|d| h.declaration(d)).collect();
-    let declarations = unordered(declarations);
+    // Which object types have a field assigned: a flag of each declaration until it became a table
+    // of the program (#2943), and a change of it still changes the declarations.
+    let assigned = h.sorted_names(assigned_objects.iter().copied());
+    let declarations = finish((unordered(declarations), assigned));
     // An implementation stands for itself by its content: its index moves.
     let imp = |h: &mut Hashing, i: u32| -> u64 {
         let Some(hir::ImplDef {

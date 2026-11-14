@@ -11,7 +11,7 @@
 //! `{ a: string }`, no arguments). [`Ctx::subst`] substitutes and then re-interns every
 //! anonymous object type from its substituted fields ([`Ctx::canon`]). Both forms have the same
 //! fields in the same order, so they lay out alike (`velt_vir` maps both to one type), and
-//! `assigned_fields.rs` makes them agree on `AdtDef::assigned`.
+//! `assigned_fields.rs` makes them agree on `Program::assigned_objects`.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 

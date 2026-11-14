@@ -42,8 +42,8 @@ pub(super) struct Summaries {
     sums: FxHashMap<DefId, Summary>,
     /// The variables each closure of the program captures (in the body making it).
     captures: FxHashMap<DefId, Vec<LocalId>>,
-    /// Object types with a field assigned somewhere (`AdtDef::assigned`, known only once sema
-    /// is done): a copy of such a value can drift from the original.
+    /// Object types with a field assigned somewhere (`Program::assigned_objects`, known only once
+    /// sema is done): a copy of such a value can drift from the original.
     pub(super) assigned: FxHashSet<DefId>,
 }
 

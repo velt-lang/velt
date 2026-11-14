@@ -77,7 +77,6 @@ pub(super) fn adt(name: &str, kind: AdtKind, fields: Vec<(&str, TyId, Option<Exp
         c_struct: false,
         private_fields: false,
         opaque: false,
-        assigned: false,
         base: None,
         inherited_inits: vec![],
         ctor: None,

@@ -17,7 +17,7 @@ use crate::hooks;
 pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
     let unchecked = crate::body::lazy_std::stub_unreached(cx);
     let mut memo: FxHashMap<DefId, Vec<Option<hir::Expr>>> = FxHashMap::default();
-    let assigned = crate::assigned_fields::assigned_objects(cx);
+    cx.assigned_objects = crate::assigned_fields::assigned_objects(cx);
     // An object literal's slot method returning a promise that never rejects, in a group whose
     // promises may: async, so its promise has the group's layout.
     for (d, ret) in std::mem::take(&mut cx.promise_forwarders) {
@@ -71,7 +71,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
                 is_decorator: crate::decorators::decl_of(f).is_some(),
                 span: f.span,
             })),
-            DefInfo::Adt(_) => Some(Def::Adt(adt_def(cx, d, &mut memo, assigned.contains(&d)))),
+            DefInfo::Adt(_) => Some(Def::Adt(adt_def(cx, d, &mut memo))),
             DefInfo::Enum(_) => Some(Def::Enum(enum_def(cx, d))),
             DefInfo::Iface(_) => Some(Def::Interface(iface_def(cx, d))),
             DefInfo::Global(g) => g.init.clone().map(|init| {
@@ -238,12 +238,7 @@ fn inherited_inits(cx: &mut Ctx, d: DefId) -> (Vec<hir::FieldInit>, u32) {
     (out, depth)
 }
 
-fn adt_def(
-    cx: &mut Ctx,
-    d: DefId,
-    memo: &mut FxHashMap<DefId, Vec<Option<hir::Expr>>>,
-    assigned: bool,
-) -> AdtDef {
+fn adt_def(cx: &mut Ctx, d: DefId, memo: &mut FxHashMap<DefId, Vec<Option<hir::Expr>>>) -> AdtDef {
     let defaults = field_defaults(cx, d, memo);
     let inherited_inits = inherited_inits(cx, d).0;
     let hidden = cx.hidden_keys();
@@ -300,7 +295,6 @@ fn adt_def(
         c_struct,
         private_fields,
         opaque,
-        assigned,
         base,
         inherited_inits,
         ctor,

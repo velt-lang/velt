@@ -46,7 +46,11 @@ impl Cx<'_> {
             TyKind::Adt(d, _) => match self.hir.def(d) {
                 hir::Def::Adt(a) if a.kind == AdtKind::Class => ShareKind::Object,
                 hir::Def::Adt(a) if a.is_copy => ShareKind::Plain,
-                hir::Def::Adt(a) if a.assigned || a.dispose.is_some() => ShareKind::Object,
+                hir::Def::Adt(a)
+                    if self.hir.assigned_objects.contains(&d) || a.dispose.is_some() =>
+                {
+                    ShareKind::Object
+                }
                 hir::Def::Adt(_) if self.holds_mutex(t, 0, true) => ShareKind::Object,
                 _ => self.value_kind(t),
             },

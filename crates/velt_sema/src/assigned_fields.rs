@@ -1,6 +1,6 @@
-//! Which object types have a field assigned anywhere (`AdtDef::assigned`): sharing such a value
-//! must keep one object, while sharing an object type that is never changed in place may copy
-//! it field by field (semantics stage 2, hir_encodings.md "Sharing").
+//! Which object types have a field assigned anywhere (`Program::assigned_objects`): sharing such
+//! a value must keep one object, while sharing an object type that is never changed in place may
+//! copy it field by field (semantics stage 2, hir_encodings.md "Sharing").
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
