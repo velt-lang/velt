@@ -2,13 +2,13 @@ json_union_errors.velt:27:3: error: `JSON.parse` cannot decode the union `i64 | 
 parse a `JsonValue` and build the union from it
 json_union_errors.velt:28:3: error: `JSON.parse` cannot decode the union `A | B`: `A` and `B` are both objects with no discriminant field and no required field that only one of them has
 give each object member a literal field such as `kind: "a"` (a discriminant), or parse a `JsonValue` and build the union from it
-json_union_errors.velt:29:3: error: `JSON.parse` cannot decode the union `C | Map<string, i64>`: `Map<string, i64>` takes any JSON object
+json_union_errors.velt:29:3: error: `JSON.parse` cannot decode the union `Map<string, i64> | C`: `Map<string, i64>` takes any JSON object
 parse a `JsonValue` and build the union from it
 json_union_errors.velt:30:3: error: `JSON.parse` cannot decode the union `string[] | i64[]`: `string[]` and `i64[]` are both JSON arrays
 parse a `JsonValue` and build the union from it
 json_union_errors.velt:31:3: error: `JSON.parse` cannot decode the union `JsonValue | C`: a `JsonValue` member takes any JSON value
 parse a `JsonValue` and build the union from it
-json_union_errors.velt:34:3: error: `JSON.parse` cannot decode the union `E | "a"`: `E.A` and `"a"` are both the JSON string "a"
+json_union_errors.velt:34:3: error: `JSON.parse` cannot decode the union `"a" | E`: `"a"` and `E.A` are both the JSON string "a"
 give each member its own values, or parse a `JsonValue` and build the union from it
 json_union_errors.velt:35:3: error: `JSON.parse` cannot decode the union `E | F`: `E.A` and `F.A2` are both the JSON string "a"
 give each member its own values, or parse a `JsonValue` and build the union from it
@@ -16,7 +16,7 @@ json_union_errors.velt:36:3: error: `JSON.parse` cannot decode the union `1 | N`
 give each member its own values, or parse a `JsonValue` and build the union from it
 json_union_errors.velt:37:3: error: `JSON.parse` cannot decode the union `string | 1 | 1.0`: `1` and `1.0` are both the JSON number 1
 give each member its own values, or parse a `JsonValue` and build the union from it
-json_union_errors.velt:38:3: error: `JSON.parse` cannot decode the union `F | "b"`: `F.B` and `"b"` are both the JSON string "b"
+json_union_errors.velt:38:3: error: `JSON.parse` cannot decode the union `"b" | F`: `"b"` and `F.B` are both the JSON string "b"
 give each member its own values, or parse a `JsonValue` and build the union from it
 json_union_errors.velt:39:3: error: `JSON.parse` cannot decode the union `K1 | K2`: `K1.kind` and `K2.kind` are both the JSON number 1
 give each member its own values, or parse a `JsonValue` and build the union from it

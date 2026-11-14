@@ -10,7 +10,7 @@ possible values: "circle", "rect"
 discriminated_errors.velt:35:30: error: `"square"` is not a valid `kind` for `Shape`
 expected one of "circle", "rect"
 discriminated_errors.velt:36:28: error: mismatched types
-expected "up" | "down", found "left"
+expected "down" | "up", found "left"
 discriminated_errors.velt:37:20: error: mismatched types
 expected 1 | 2, found 3
 discriminated_errors.velt:38:13: error: cannot cast `Mode` as `i64`

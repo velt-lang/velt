@@ -3,8 +3,8 @@
 //! per member.
 //!
 //! Canonical form: nested unions and `| null` are flattened, members deduplicated, `never`
-//! dropped and sorted (concrete types first, then by interned id), so `A | B` and `B | A` are the
-//! same type. A single non-null member is that type itself (`T | null` stays `Option<T>`);
+//! dropped and sorted (concrete types first, then by `Ctx::canon_key`, a spelling that is the
+//! same in every program), so `A | B` and `B | A` are the same type. A single non-null member is that type itself (`T | null` stays `Option<T>`);
 //! `null` together with several members is `Option<union>`. Like anonymous object types, the enum
 //! is generic over the type parameters its members mention (renumbered by first occurrence).
 
@@ -111,9 +111,17 @@ impl Ctx<'_> {
                 members.push(t);
             }
         }
-        let ty = &self.ty;
-        let vars = &self.fn_sites.var_sets;
-        members.sort_by_key(|t| (has_params(ty, *t), vars.order_key(*t), t.0));
+        // By a spelling that is the same in every program (`canon_key`), so a union's variants
+        // don't depend on what the program interned first (#2943). A member with an error-set
+        // variable sorts as the type it stands for (`VarSets::order_key`).
+        let mut keyed: Vec<(bool, std::rc::Rc<str>, u32, TyId)> = (members.iter())
+            .map(|t| {
+                let rep = TyId(self.fn_sites.var_sets.order_key(*t));
+                (has_params(&self.ty, *t), self.canon_key(rep), t.0, *t)
+            })
+            .collect();
+        keyed.sort();
+        let members: Vec<TyId> = keyed.into_iter().map(|k| k.3).collect();
         let core = match members.len() {
             0 if nothing == Some(Nothing::Null) => return self.ty.null_alone(),
             0 if nothing == Some(Nothing::Undefined) => return self.ty.undefined(),
@@ -319,9 +327,8 @@ impl Ctx<'_> {
         let mut parts: Vec<String> = (members.iter())
             .map(|t| self.display_applied(*t, &names))
             .collect();
-        // Members are ordered by interned id, which differs between programs; a union of
-        // named types (an error set: `RangeError | TypeError`) is shown sorted by name, so the
-        // same type reads the same from every entry file.
+        // A union of named types (an error set: `RangeError | TypeError`) is shown sorted by
+        // name, so the same type reads the same from every entry file.
         if members.iter().all(|t| self.is_named_ty(*t)) {
             parts.sort();
         }

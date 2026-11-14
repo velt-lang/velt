@@ -20,7 +20,7 @@ export function test_client_messages() {
 }
 
 export function test_bad_client_messages() {
-  assertEq(clientError(`{"type":"dance"}`), `expected one of "join", "say", "leave" at $.type`);
+  assertEq(clientError(`{"type":"dance"}`), `expected one of "join", "leave", "say" at $.type`);
   assertEq(clientError(`{"type":"say","text":5}`), "expected string at $.text");
 }
 

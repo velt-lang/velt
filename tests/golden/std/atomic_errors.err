@@ -5,19 +5,19 @@ atomic_errors.velt:7:15: error: `Atomic<T>` needs a number type, `bool`, `string
   = note: the compiler picks the instruction by the type, so it must be known here; for other values, use a `Mutex<T>`, or `shared(…)` for an immutable one
 
 atomic_errors.velt:10:8: error: mismatched types
-  = note: expected "relaxed" | "acquire" | "seqcst", found string
+  = note: expected "acquire" | "relaxed" | "seqcst", found string
 
 atomic_errors.velt:11:8: error: mismatched types
-  = note: expected "relaxed" | "acquire" | "seqcst", found "release"
+  = note: expected "acquire" | "relaxed" | "seqcst", found "release"
 
 atomic_errors.velt:12:12: error: mismatched types
-  = note: expected "relaxed" | "seqcst" | "release", found "acquire"
+  = note: expected "relaxed" | "release" | "seqcst", found "acquire"
 
 atomic_errors.velt:13:35: error: mismatched types
-  = note: expected "relaxed" | "acquire" | "seqcst", found "release"
+  = note: expected "acquire" | "relaxed" | "seqcst", found "release"
 
 atomic_errors.velt:14:14: error: mismatched types
-  = note: expected "acquire" | "seqcst" | "release" | "acqrel", found "relaxed"
+  = note: expected "acqrel" | "acquire" | "release" | "seqcst", found "relaxed"
 
 atomic_errors.velt:16:1: error: `add` needs an `Atomic` of a number, found `Atomic<boolean>`
 

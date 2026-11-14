@@ -1,0 +1,20 @@
+// A mapped type's fields come in the order TypeScript gives them: the keys as written (also through
+// an alias), and what `Exclude<keyof P, …>` leaves in `P`'s order; integer keys first, as JS
+// orders an object's keys. Union members are in a canonical order (#2943), not as written.
+// Expected output: Node's.
+type RK = { [K in "zz9" | "aa9" | "mm9"]: number };
+type Keys = "zz6" | "aa6";
+type RK2 = { [K in Keys]: number };
+type P = { qq7: number; bb7: string; kk7: boolean; dd7: number };
+type Ex = { [K in Exclude<keyof P, "dd7">]: string };
+type Num = { [K in 3 | 1 | "b" | "a"]: K };
+function main() {
+  const r: RK = { zz9: 1, aa9: 2, mm9: 3 };
+  console.log(r, JSON.stringify(r));
+  const r2: RK2 = { zz6: 1, aa6: 2 };
+  console.log(r2, JSON.stringify(r2));
+  const e: Ex = { qq7: "1", bb7: "2", kk7: "3" };
+  console.log(JSON.stringify(e));
+  const n: Num = { 3: 3, 1: 1, b: "b", a: "a" };
+  console.log(JSON.stringify(n));
+}

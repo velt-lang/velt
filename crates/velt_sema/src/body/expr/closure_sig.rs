@@ -103,6 +103,14 @@ impl FnCx<'_, '_> {
                     out.push(m);
                 }
             }
+            // Among those returning a value, one returning `any` or `unknown` first: it takes the
+            // arrow's result as it is, where another might convert it (`(x) => any` before
+            // `(x) => string`). The union's order is canonical (`Ctx::canon_key`), not as
+            // written, so it can't decide this.
+            out.sort_by_key(|m| match self.cx.ty.kind(*m) {
+                TyKind::FnPtr { ret, .. } => self.cx.dynamic(*ret).is_none(),
+                _ => true,
+            });
             out.append(&mut voids);
             out.append(&mut later);
         }
