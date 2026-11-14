@@ -106,6 +106,28 @@ export function isJoin(f: usize): bool {
   return poll === polls || poll === solo || poll === lazy || poll === fnAddress(joinPanicked);
 }
 
+/**
+ * `rootDone`'s join slot of task `k` at a lazy worker 0 (sched_lock.velt `LK_LAZY`, the operation
+ * of kind `kind` counted): no lock, in line; the joiner is woken behind the tasks queued already,
+ * as `joinDone`'s.
+ */
+@inline
+export function joinDoneLazy(e: usize, k: usize, kind: u32): void {
+  const s = m.ld32(k + t.T_JOIN_STATE);
+  const joiner = m.ld(k + t.T_JOINER);
+  m.st(k + t.T_JOINER, 0);
+  m.st32(k + t.T_JOIN_STATE, (s | t.J_DONE) & ~t.J_LOCK);
+  lk.done(kind);
+  if (joiner !== 0) {
+    m.st32(e + t.E_DISPATCH, t.D_OUTPUT);
+    m.wakeOwned(joiner);
+    m.st32(e + t.E_DISPATCH, 0);
+  }
+  if ((s & t.J_HANDLE) === 0) {
+    dropResult(k);
+  }
+}
+
 /** `joinPoll` while other threads may reach the slot (or a lazy worker 0 counts its operation). */
 @noInline
 function joinPollLocking(f: usize, cx: usize): u32 {
