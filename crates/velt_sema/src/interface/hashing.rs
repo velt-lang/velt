@@ -279,13 +279,13 @@ impl<'p> Hashing<'p> {
                     ty,
                     init: _, // An expression: a declaration change detection sees.
                     span: _,
-                    slot,
+                    is_slot,
                     c_const,
                     c_global,
                 } = g;
                 // `CConst` and `CGlobal` hold no ids.
                 let c = format!("{c_const:?}{c_global:?}");
-                (name.clone(), finish((4u8, self.ty(*ty), slot, c)))
+                (name.clone(), finish((4u8, self.ty(*ty), is_slot, c)))
             }
         })
     }

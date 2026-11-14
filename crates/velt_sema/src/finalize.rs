@@ -80,7 +80,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
                     ty: g.ty,
                     init,
                     span: g.span,
-                    slot: None,
+                    is_slot: false,
                     c_const: g.c_const.map(|ty| CConst { ty, value: None }),
                     c_global: g.c_global.clone(),
                 })

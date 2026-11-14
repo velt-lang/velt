@@ -27,9 +27,11 @@ pub struct GlobalDef {
     /// and a module-level `let` (`slot`), which the module state's initializer evaluates once.
     pub init: Expr,
     pub span: Span,
-    /// The slot of a module-level `let` in `Program::module_state`: `Global(d)` is then a place
-    /// that is read, written and borrowed like a field.
-    pub slot: Option<u32>,
+    /// A module-level `let`: a slot of `Program::module_state` (its index is its position in
+    /// `ModuleState::slots`, a fact of the whole program, so a std global is the same definition
+    /// in every program, #2943). `Global(d)` is then a place that is read, written and borrowed
+    /// like a field.
+    pub is_slot: bool,
     /// `declare c const` (docs/internals/design/c-ffi.md): `init` is a placeholder, and lowering
     /// reads the value the C headers gave. Additive.
     pub c_const: Option<CConst>,

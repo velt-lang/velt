@@ -72,6 +72,10 @@ impl<'h> Cx<'h> {
             statics: vec![],
             module_desc: None,
             static_atomics: FxHashMap::default(),
+            slot_index: (hir.module_state.iter())
+                .flat_map(|m| m.slots.iter().enumerate())
+                .map(|(i, &d)| (d, i as u32))
+                .collect(),
             fut_header: None,
             sched_tasks: false,
             sched_used: false,

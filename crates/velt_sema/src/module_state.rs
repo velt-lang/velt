@@ -247,7 +247,7 @@ fn reads(e: &hir::Expr, f: &mut dyn FnMut(DefId, velt_common::Span)) {
     crate::visit::expr(&mut e, &mut V(f));
 }
 
-/// The program's module state, with each slot's global numbered (`GlobalDef::slot`); the root
+/// The program's module state, with each slot's global marked (`GlobalDef::is_slot`); the root
 /// file's slots are initialized by its top-level statements (`entry`, [`defer_root`]).
 pub(crate) fn build(cx: &mut Ctx, entry: Option<DefId>) -> Option<hir::ModuleState> {
     if cx.module_slots.is_empty() {
@@ -255,11 +255,11 @@ pub(crate) fn build(cx: &mut Ctx, entry: Option<DefId>) -> Option<hir::ModuleSta
     }
     let slots = cx.module_slots.clone();
     let mut tys = Vec::with_capacity(slots.len());
-    for (i, &d) in slots.iter().enumerate() {
+    for &d in &slots {
         let Some(Some(hir::Def::Global(g))) = cx.defs.get_mut(d.0 as usize) else {
             panic!("ICE: module state slot is not a global");
         };
-        g.slot = Some(i as u32);
+        g.is_slot = true;
         tys.push(g.ty);
     }
     let ty = cx.ty.intern(TyKind::Tuple(tys));

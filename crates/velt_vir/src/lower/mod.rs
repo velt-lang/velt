@@ -321,6 +321,8 @@ struct Cx<'h> {
     tables: FxHashMap<hir::DefId, Option<(StaticId, usize)>>,
     /// Each static atomic's data so far, `None` for a global that is not one (static_atomic.rs).
     static_atomics: FxHashMap<hir::DefId, Option<StaticId>>,
+    /// Each module-level `let`'s slot in the module state (its position in `ModuleState::slots`).
+    slot_index: FxHashMap<hir::DefId, u32>,
     fut_header: Option<crate::vir::AggId>, // a heap future's header (raw_memory.rs `fut_header`)
     sched_tasks: bool, // the executor in Velt's hooks start promises or spawn tasks (sched.rs)
     sched_used: bool,  // a task or timer hook of the executor in Velt is called (module_state.rs)

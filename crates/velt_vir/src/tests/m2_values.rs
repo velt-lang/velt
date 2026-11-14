@@ -29,7 +29,7 @@ fn globals_are_rematerialized_constants() {
         ty: vec2,
         init: adt_lit(vd, vec![flt(0.5, t.f64), flt(2.0, t.f64)], vec2),
         span: SP,
-        slot: None,
+        is_slot: false,
         c_const: None,
         c_global: None,
     }));
@@ -38,7 +38,7 @@ fn globals_are_rematerialized_constants() {
         ty: t.str,
         init: s("hello", t),
         span: SP,
-        slot: None,
+        is_slot: false,
         c_const: None,
         c_global: None,
     }));

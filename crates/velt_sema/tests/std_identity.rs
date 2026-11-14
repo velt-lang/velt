@@ -60,3 +60,19 @@ fn a_std_definition_hashes_the_same_in_another_program() {
     // The same program checked twice gives the same summary.
     assert_eq!(hello, std_defs(&ok_src(HELLO)));
 }
+
+/// A module-level `let` of std (`sessionStorage`) is the same definition whether or not the
+/// program's class objects come before it in the module state: its slot number is the
+/// program's (`ModuleState::slots`), not the definition's (#2943).
+#[test]
+fn a_std_module_let_is_the_same_whatever_slots_come_first() {
+    let plain = "function main() { console.log(sessionStorage.length); }";
+    let with_objects = "function main() { const s: any = Set; const m: any = Map; console.log(typeof s, typeof m, sessionStorage.length); }";
+    let a = std_defs(&ok_src(plain));
+    let b = std_defs(&ok_src(with_objects));
+    let name = "std/lang/storage/storage::sessionStorage";
+    let find =
+        |defs: &[velt_sema::interface::StdDef]| defs.iter().find(|d| d.name == name).cloned();
+    assert!(find(&a).is_some(), "{name} is not checked");
+    assert_eq!(find(&a), find(&b));
+}
