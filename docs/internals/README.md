@@ -245,6 +245,10 @@ Decisions and their rationale, including what is still planned:
 - [Source generators](design/source-generators.md): generic functions whose bodies a library's
   generator, written in Velt, produces per type at compile time from a read-only type model;
   std's JSON, equality, clone and inspect move onto it (proposed).
+- [Separate compilation](design/build-architecture.md): std and packages checked and compiled once
+  per machine (shipped prebuilt), a build doing only the app, generic instances, a glue unit and a
+  link; the boundary rule, stable identity, the std identity oracle and the phases (accepted,
+  issue #2943).
 - [Compiling std's Velt code once](design/std-object.md): a cached, optimized object of std's
   non-generic functions that programs link, with a VIR fingerprint check per function
   (proposed, issue #1728).

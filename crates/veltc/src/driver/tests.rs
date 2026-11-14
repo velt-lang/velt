@@ -109,14 +109,18 @@ fn codegen_does_not_verify_what_the_driver_verified() {
     assert!(codegen, "{:?}", sess.memory);
 }
 
-/// `-v` counts the std lines that were loaded, and says nothing of them when none were.
+/// `-v` counts the std lines that were loaded and the others, and says nothing of them when none
+/// were.
 #[test]
 fn timings_count_the_std_lines_loaded() {
     let mut sess = Session::new();
     assert!(!sess.render_timings().contains("std lines"));
     let file = sess.sm.add("std/a.velt", "one\ntwo\nthree\n");
+    sess.sm.add("main.velt", "main\n");
     sess.std_files = vec![file];
-    assert!(sess.render_timings().contains("velt: 3 std lines loaded\n"));
+    let text = sess.render_timings();
+    assert!(text.contains("velt: 3 std lines loaded\n"), "{text}");
+    assert!(text.contains("velt: 1 other lines loaded\n"), "{text}");
 }
 
 /// Each line shows its own reading when a stage is recorded more than once, and a stage recorded

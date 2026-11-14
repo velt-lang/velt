@@ -27,7 +27,10 @@
 //! `fresh_returns`), which the per-function passes read from the kept checking context.
 
 mod hashing;
+mod std_defs;
 mod tables;
+
+pub use std_defs::{std_def_texts, std_defs, StdDef};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 

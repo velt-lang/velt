@@ -46,6 +46,13 @@ impl Session {
                 .map(|f| self.sm.get(*f).src.lines().count())
                 .sum();
             s.push_str(&format!("velt: {std_lines} std lines loaded\n"));
+            // The rest: the program's own modules, its packages' and generated code, so a report
+            // shows how much of what a build checks is std (#2943).
+            let all: usize = (self.sm.files()).map(|(_, f)| f.src.lines().count()).sum();
+            s.push_str(&format!(
+                "velt: {} other lines loaded\n",
+                all.saturating_sub(std_lines)
+            ));
             s.push_str(&format!(
                 "velt: {} sema rounds\n",
                 velt_sema::check_rounds()

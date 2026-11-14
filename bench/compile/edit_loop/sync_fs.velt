@@ -1,0 +1,9 @@
+// The sync twin of async_fs.velt (bench/compile/edit_loop.sh): the same work without the executor.
+import { readFileSync, writeFileSync } from "velt/fs";
+import { tmpdir } from "velt/os";
+
+function main() {
+  const path = `${tmpdir()}/velt-edit-loop-sync.txt`;
+  writeFileSync(path, "hello sync\n");
+  console.log(readFileSync(path).length);
+}
