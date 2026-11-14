@@ -17,8 +17,11 @@ export function nodeClone(w: usize): usize {
 
 @cExport("std_sched_node_wake")
 export function nodeWake(w: usize): void {
+  // Counted until the reference is back (sched_wake.velt `settleWakes`).
+  wk.wakingStarts();
   wake(w);
   nd.release(w);
+  wk.wakingEnds();
 }
 
 @cExport("std_sched_node_wake_by_ref")
