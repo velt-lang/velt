@@ -342,7 +342,15 @@ Built for x64 (`velt_vir::eh::Catching::Seh`, #2925); Windows on arm64 stays `Ca
   with the exception code), so the first raise installs a filter of its own
   (`SetUnhandledExceptionFilter`, `unwind_seh.velt` `unclaimed`) that ends the process with 101
   for Velt's code, as `panicRaise`'s fallback does elsewhere, and hands other exceptions to the
-  filter it replaced.
+  filter it replaced. Raises racing on several threads wait until it is in place (one thread
+  installs; `INSTALLED` goes 0, 1, 2), so none of them reaches the system's filter first. A filter
+  a program or library installs after that replaces it, as any later filter does under
+  structured exceptions: an unclaimed Velt raise then goes to that filter (usually a crash with
+  `0xE0564C54`, not 101).
+- With LLVM, any exception that unwinds through an `@export` frame runs its abort pad: an
+  unhandled foreign exception raised under one, which the thread start's handler finally
+  unwinds, ends a release build with `abort` (`0xC0000409`) instead of its own code, and a C
+  `longjmp` across such a frame (an unwind on Windows, not on Linux and macOS) aborts too.
 
 **WebAssembly.** No unwinding (`velt_rt_wasm` aborts on a panic). `velt_eh_try` is a plain call.
 The exception-handling proposal (`exnref`, `try_table`) could later carry the same design.

@@ -23,6 +23,7 @@ declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 declare c("c") function RaiseException(code: u32, flags: u32, count: u32, args: Ptr<u8>): void;
 declare c("c") function abort(): void;
 declare c("c") function SetUnhandledExceptionFilter(filter: usize): usize;
+declare c("c") function SwitchToThread(): i32;
 declare function velt_rt_exit(code: i32): never;
 declare function velt_rt_flush(): void;
 
@@ -49,8 +50,16 @@ const CODE: u32 = 0xe0564c54;
 /** `EXCEPTION_NONCONTINUABLE`: the raise never returns to its caller once claimed. */
 const NONCONTINUABLE: u32 = 1;
 
-/** Whether `unclaimed` is installed (1), and the filter it replaced (0 for none). */
-const INSTALLED = new Atomic<u32>(0);
+/** `unclaimed`'s install (`INSTALLED`): not begun, under way (one thread installs), done. */
+const NOT_INSTALLED: u32 = 0;
+const INSTALLING: u32 = 1;
+const DONE: u32 = 2;
+
+/**
+ * Where `unclaimed`'s install is, and the filter it replaced (0 for none). `PREVIOUS` is stored
+ * before `INSTALLED` turns `DONE` (release), so whoever reads `DONE` (acquire) reads it.
+ */
+const INSTALLED = new Atomic<u32>(NOT_INSTALLED);
 const PREVIOUS = new Atomic<u64>(0);
 
 /**
@@ -67,6 +76,9 @@ function unclaimed(at: usize): usize {
     velt_rt_flush();
     velt_rt_exit(101);
   }
+  // Another thread's exception can come here between `SetUnhandledExceptionFilter` and the store
+  // of the filter it replaced: that is read once the install is done.
+  awaitInstalled();
   const previous = PREVIOUS.load("acquire") as usize;
   if (previous !== 0) {
     // SAFETY: the filter the system had, which takes `EXCEPTION_POINTERS`.
@@ -75,15 +87,44 @@ function unclaimed(at: usize): usize {
   return 0;
 }
 
-/** Installs `unclaimed`, once. */
+/**
+ * Installs `unclaimed`, once, and returns when it is in place: a raise on another thread at the
+ * same moment waits for the thread that installs (whose raise, unclaimed, would otherwise reach
+ * the filter before it).
+ */
 function install(): void {
-  if (INSTALLED.load("acquire") !== 0 || INSTALLED.compareExchange(0, 1) !== 0) {
+  if (INSTALLED.load("acquire") === DONE) {
+    return;
+  }
+  if (INSTALLED.compareExchange(NOT_INSTALLED, INSTALLING) !== NOT_INSTALLED) {
+    awaitInstalled();
     return;
   }
   // SAFETY: `unclaimed` takes `EXCEPTION_POINTERS` and returns a filter's answer, with the C
   // calling convention (`fnAddress`).
   const previous = unsafe { SetUnhandledExceptionFilter(fnAddress(unclaimed)) };
-  PREVIOUS.store(previous as u64, "release");
+  PREVIOUS.store(previous as u64, "relaxed");
+  INSTALLED.store(DONE, "release");
+}
+
+/**
+ * Waits until `install` is done (another thread installs: a few instructions without a lock or
+ * a wait of their own), spinning a while, then giving the core away between looks, as the
+ * scheduler's spin lock does (sched_mem.velt `spinLock`), so an installer the OS took off its
+ * core gets to run.
+ */
+function awaitInstalled(): void {
+  let spins: u32 = 0;
+  while (INSTALLED.load("acquire") !== DONE) {
+    if (spins < 64) {
+      spins++;
+    } else {
+      // SAFETY: no precondition.
+      unsafe {
+        SwitchToThread();
+      }
+    }
+  }
 }
 
 /**
