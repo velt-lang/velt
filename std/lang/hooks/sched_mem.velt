@@ -216,6 +216,12 @@ export function cas(a: usize, expected: usize, v: usize): usize {
 
 /** Spin locks that gave the core away (sched_debug.velt's view). */
 export const SPIN_YIELDS = new Atomic<usize>(0);
+/**
+ * A reactor whose sockets each have a poll request (Windows' AFD polls, reactor_afd_poll.velt):
+ * requests lost (a poll or a submission failed) and made anew by `rearm` (sched_debug.velt's view).
+ */
+export const POLLS_LOST = new Atomic<usize>(0);
+export const POLLS_REOPENED = new Atomic<usize>(0);
 
 /**
  * Takes the spin lock word at `a` (0 free, 1 held), after a first attempt failed: spins a while,

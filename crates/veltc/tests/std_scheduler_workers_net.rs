@@ -8,6 +8,11 @@ mod runtime_support;
 mod sched_workers_support;
 mod test_dir;
 
+use std::io::Read;
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
 use sched_workers_support::{build_and_run_with, has_threads, manifest, prints};
 
 #[test]
@@ -351,10 +356,11 @@ async function main() {
     );
 }
 
-/// [`prints`] for a program that once hung in CI on Windows only (#2905), never locally: run
-/// with the executor's debug view (`VELT_SCHED_DEBUG`, a line of the workers' and the monitor's
-/// state to stderr every 500 ms) and killed after a minute, so a hang fails with that trace (its
-/// last lines) instead of a nextest timeout with no output. Only stdout is compared.
+/// [`prints`] for a program that once hung in CI on Windows only (#2905), never locally: built
+/// and run with time limits (a minute each), the run with the executor's debug view
+/// (`VELT_SCHED_DEBUG`, a line of the workers' and the monitor's state to stderr every 500 ms),
+/// so a hang fails naming the step that hung, with the end of its output (the trace's last
+/// lines), instead of a nextest timeout with no output. Only stdout is compared.
 fn prints_traced(name: &str, src: &str, want: &str) {
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
@@ -363,53 +369,90 @@ fn prints_traced(name: &str, src: &str, want: &str) {
     let exe = dir
         .path()
         .join(format!("{name}{}", if cfg!(windows) { ".exe" } else { "" }));
-    let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+    let mut build = no_window::command(env!("CARGO_BIN_EXE_velt"));
+    build
         .arg("build")
         .arg(&file)
         .arg("-o")
         .arg(&exe)
         .current_dir(dir.path())
-        .env("VELT_SCHEDULER", "std")
-        .output()
-        .unwrap();
-    assert!(
-        o.status.success(),
-        "{name}: {}",
-        String::from_utf8_lossy(&o.stderr)
-    );
-    let mut child = no_window::command(&exe)
-        .env("VELT_THREADS", "4")
+        .env("VELT_SCHEDULER", "std");
+    let (status, _, err) = run_limited(build, MINUTE);
+    let Some(status) = status else {
+        panic!(
+            "{name}: `velt build` still running after a minute (#2905):\n{}",
+            tail(&err)
+        );
+    };
+    assert!(status.success(), "{name}: {err}");
+    let mut run = no_window::command(&exe);
+    run.env("VELT_THREADS", "4")
         .env("VELT_SCHED_DEBUG", "500")
-        .env_remove("VELT_SCHEDULER")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    // A watchdog, not a synchronization: the program ends in well under a second when it works.
-    let start = std::time::Instant::now();
-    let mut hung = false;
-    while child.try_wait().unwrap().is_none() {
-        if start.elapsed() > std::time::Duration::from_secs(60) {
-            child.kill().unwrap();
-            hung = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    let o = child.wait_with_output().unwrap();
-    let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
-    let err = String::from_utf8_lossy(&o.stderr).replace("\r\n", "\n");
-    let tail: Vec<&str> = err.lines().rev().take(40).collect();
-    let tail: Vec<&str> = tail.into_iter().rev().collect();
-    assert!(
-        !hung,
-        "{name}: still running after a minute (#2905); stdout so far:\n{out}\nlast of the trace:\n{}",
-        tail.join("\n")
-    );
+        .env_remove("VELT_SCHEDULER");
+    let (status, out, err) = run_limited(run, MINUTE);
+    let Some(status) = status else {
+        panic!(
+            "{name}: still running after a minute (#2905); stdout so far:\n{out}\nlast of the trace:\n{}",
+            tail(&err)
+        );
+    };
     assert_eq!(
-        (o.status.code(), out.as_str()),
+        (status.code(), out.as_str()),
         (Some(0), want),
         "{name}: 4 workers; trace:\n{}",
-        tail.join("\n")
+        tail(&err)
     );
+}
+
+/// [`prints_traced`]'s limit on each step.
+const MINUTE: Duration = Duration::from_secs(60);
+
+/// Runs `cmd` until it ends or `limit` passes (then it is killed): its exit status (`None` when
+/// killed), stdout and stderr (`\r\n` made `\n`). Threads read the pipes as the output comes, since
+/// a child whose pipe is full stops writing (a hang's trace would end there, not at the hang).
+fn run_limited(mut cmd: Command, limit: Duration) -> (Option<ExitStatus>, String, String) {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = reader(child.stdout.take().unwrap());
+    let err = reader(child.stderr.take().unwrap());
+    let start = Instant::now();
+    // A watchdog, not a synchronization: each step ends in seconds when it works.
+    let status = loop {
+        if let Some(st) = child.try_wait().unwrap() {
+            break Some(st);
+        }
+        if start.elapsed() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    // A child of a killed step (a linker) may hold a pipe open: what came within a few seconds.
+    let text = |r: mpsc::Receiver<Vec<u8>>| {
+        let bytes = r.recv_timeout(Duration::from_secs(5)).unwrap_or_default();
+        String::from_utf8_lossy(&bytes).replace("\r\n", "\n")
+    };
+    (status, text(out), text(err))
+}
+
+/// A thread reading `pipe` to its end, which sends what it read.
+fn reader(mut pipe: impl Read + Send + 'static) -> mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = pipe.read_to_end(&mut bytes);
+        let _ = tx.send(bytes);
+    });
+    rx
+}
+
+/// The last 40 lines of `text`.
+fn tail(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(40)..].join("\n")
 }
