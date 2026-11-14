@@ -731,8 +731,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::WeakMapDelete
         | I::WeakMapValue
         | I::WeakRefNew
-        // std/lang/hooks/inspect.velt: every value it writes was the argument of a `console.log`,
-        // `String(x)`, `inspect` or error report, counted there.
         | I::InspectNested
         | I::WeakRefDeref => false,
         I::StrWord0 | I::StrWord1 | I::StrWord2 | I::StrDataAddress => false,

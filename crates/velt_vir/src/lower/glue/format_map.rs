@@ -13,7 +13,6 @@ use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
 use super::format_array::MAX_ARRAY_LENGTH;
 use crate::lower::glue::literals::inspect_key;
-use crate::lower::hook_calls::{self as hooks, ty, HookTy};
 use crate::lower::json::RecordOrder;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
@@ -172,10 +171,6 @@ impl FnLower<'_, '_> {
             self.format_entries_named(buf, obj, ty, depth, parts, &own, texts);
             return true;
         }
-        // A `Map` or a `Set`, in std where the program has it checked.
-        if self.format_collection_std(buf, obj, ty, depth) {
-            return true;
-        }
         // (the `Map` holding the entries, its type, key and value types, how they print)
         let (map, map_ty, kt, vt, entries) = if let Some((kt, vt)) = self.prelude_map(ty) {
             (obj.clone(), ty, kt, vt, Entries::Map)
@@ -220,41 +215,6 @@ impl FnLower<'_, '_> {
         }
         self.format_entries(buf, obj, ty, depth, parts, (name, "", cut));
         true
-    }
-
-    /// The prelude `Map` or std's `Set` at `obj` through std/lang/hooks/inspect.velt: false if `ty`
-    /// is neither, or the hook is unchecked.
-    fn format_collection_std(
-        &mut self,
-        buf: &Operand,
-        obj: &Place,
-        ty: TyId,
-        depth: &Operand,
-    ) -> bool {
-        let (b, d) = (ty::Str::arg(buf.clone()), ty::U32::arg(depth.clone()));
-        if let Some((kt, vt)) = self.prelude_map(ty) {
-            let m = ty::Map::arg(Operand::Copy(obj.clone()));
-            return match hooks::inspect_map(self, [kt, vt], b, m, d) {
-                Some(call) => {
-                    _ = call.emit(self);
-                    true
-                }
-                None => false,
-            };
-        }
-        let Some((t, _)) = self.std_set(ty) else {
-            return false;
-        };
-        let map = self.field_place(obj, ty, 0);
-        let id = self.rvalue_temp(Ty::U64, Rvalue::Cast(Operand::Copy(obj.clone()), Ty::U64));
-        let m = ty::Map::arg(Operand::Copy(map));
-        match hooks::inspect_set(self, [t], b, m, ty::U64::arg(id), d) {
-            Some(call) => {
-                _ = call.emit(self);
-                true
-            }
-            None => false,
-        }
     }
 
     /// `(base, name)` if `ty` is a user class extending the prelude `Map` or std's `Set`

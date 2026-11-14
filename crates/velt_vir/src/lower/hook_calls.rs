@@ -61,7 +61,6 @@ pub mod ty {
         Error,
         HostRef,
         HostSettled,
-        Map,
         Ptr,
         Record
     );

@@ -650,8 +650,6 @@ fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
     let shapes = [
         "std/lang/hooks/inspect::openObject",
         "std/lang/hooks/inspect::inspectArray",
-        "std/lang/hooks/inspect::inspectMap",
-        "std/lang/hooks/inspect::inspectSet",
     ];
     for src in [
         "function main() {\n  console.log(\"hi\");\n}\n",
