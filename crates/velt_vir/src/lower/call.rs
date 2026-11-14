@@ -154,7 +154,7 @@ impl FnLower<'_, '_> {
         };
         // An index's conversion (`xs[i]` with a number `i`) reads only the number it is given.
         if quiet || f.name == FLOAT_INDEX {
-            self.note_quiet_call(fid, def);
+            self.note_quiet_call(fid, def, by_arg);
         }
         let outer = std::mem::replace(&mut self.frozen_args, frozen != 0);
         let to_caller = std::mem::replace(&mut self.args_to_caller, plain);
